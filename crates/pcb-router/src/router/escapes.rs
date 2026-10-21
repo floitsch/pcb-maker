@@ -21,8 +21,9 @@ impl Router {
         const WANTED: usize = 12;
         let class = self.board.classes[self.board.nets[net as usize].class];
         let statics = &self.statics[self.board.nets[net as usize].class];
-        let widths = if self.board.neck_width < class.trace_width {
-            vec![class.trace_width, self.board.neck_width]
+        let neck_width = self.neck_width_of(self.board.nets[net as usize].class);
+        let widths = if neck_width < class.trace_width {
+            vec![class.trace_width, neck_width]
         } else {
             vec![class.trace_width]
         };
@@ -266,7 +267,7 @@ impl Router {
         end: crate::geometry::Point,
         width: f64,
     ) -> bool {
-        let class = self.board.classes[self.board.nets[net as usize].class];
+        let class_index = self.board.nets[net as usize].class;
         let half_width = width / 2.0;
         self.board.obstacles.iter().all(|obstacle| {
             if obstacle.net == Some(net)
@@ -291,7 +292,7 @@ impl Router {
             let required = half_width - STUB_FIT
                 + match obstacle.kind {
                     crate::board::ObstacleKind::Copper => {
-                        self.board.copper_clearance(&class, obstacle)
+                        self.obstacle_clearance(class_index, crate::rules::TRACK, obstacle, layer)
                     }
                     crate::board::ObstacleKind::Keepout => obstacle.clearance,
                     crate::board::ObstacleKind::Hole => {

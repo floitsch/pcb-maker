@@ -276,47 +276,104 @@ KiCad 10.0.7's DRC reads it:
 
   KiCad applies the last matching rule (`EvalRules`); the router keeps,
   for each value, the largest of every rule that can match: never less
-  than KiCad asks. Lowered: `clearance` per net (a rule on one set of nets
+  than KiCad asks. For clearance, hole clearance, edge clearance and hole
+  to hole, a rule does not count where a later rule with a minimum of the
+  same constraint surely matches (JLCPCB's template ends with "Min.
+  Spacing" 0.127 mm on everything, after "Pad to Track" 0.2 mm: KiCad
+  checks 0.127 between pads and tracks, AMLing2's drone carrier); the
+  nets are grouped by the later conditions too. Lowered: `clearance` per net (a rule on one set of nets
   against every net raises that set; against every pair, every net),
-  `track_width` min, max and opt per net (a rule on every net also floors
-  the neck-down and narrow-signal widths), `via_diameter`, `hole_size`
-  (vias) and `annular_width` per net, and `edge_clearance`,
-  `hole_clearance` and `hole_to_hole` for the board (the router has one
-  value each). A rule between two sets of nets (primary against
-  secondary) is not lowered: one clearance a net would keep it from
-  every net, the set's own nets too (ChengminLi's flyback: 2.5 mm between
-  the sides left 11 connections open where the designer's placement keeps
-  the sides apart); nor a rule that matches pads or vias against tracks
-  but no two tracks (JLCPCB's and PCBWay's "Pad to Track"): it would hold
-  between tracks too (AMLing2's drone carrier, 0.2 mm over classes of
-  0.127: 10 open connections to 35, where KiCad had found none of it);
-  nor a rule whose project severity (or its own
-  `(severity ...)`) is below an error (hole_to_hole is a warning by
-  KiCad's default, also under its KiCad 8 name `hole_near_hole`). Every
-  constraint of every rule is in `board-router.json`'s
-  `rules.custom_rules` with a status: `applied`, `approximated` (kept
-  more widely: every layer, every item type), `no_effect` (the classes
-  and board setup keep at least as much, or nothing routed matches),
-  `not_routing` (silk, text, courtyards, pad holes, zone connections,
-  assertions), `skipped` (severity, or a layer the board lacks) or
-  `unmodelled` (creepage, length, skew, diff pairs, physical clearances,
-  disallows other than blind, buried and micro vias, pair rules, pad to
-  track rules, rules on what is unknown). `rules.unmodelled` lists the last one line each; the
-  verdict's next_actions name them when a route is incomplete, and
-  `drc-kicad-board` prints them on a `next:` line when KiCad finds
+  `track_width` min, max and opt per net (a rule's minimum also floors
+  the neck-downs and the narrow-signal width of the nets it matches: the
+  router's `width_floor`), `via_diameter`, `hole_size` (vias) and
+  `annular_width` per net, and `edge_clearance`, `hole_clearance` and
+  `hole_to_hole` for the board (the router has one value each). A
+  clearance that no per-net value keeps exactly is a pair rule of the
+  router (`ClearanceRule`, "Rules beyond the classes" below): a rule
+  between two sets of nets (ChengminLi's flyback, 2.5 mm primary to
+  secondary), one from some item kinds only (JLCPCB's and PCBWay's "Pad
+  to Track": tracks against pads), one on some layers (`(layer outer)`,
+  `(layer inner)`). Per pair of the condition's net groups and both ways
+  round, the lowering evaluates the condition for each pair of kinds (a
+  track or a via against a track, a via, an SMD or a plated pad) on each
+  layer and lists the layers it holds on; a rule true for every kind on
+  every layer that raising a set of nets keeps goes to the per-net
+  clearances as before. The router's pads are one kind: a rule on SMD
+  pads holds for plated pads too (`approximated`). A rule whose project
+  severity (or its own `(severity ...)`) is below an error is not
+  lowered (hole_to_hole is a warning by KiCad's default, also under its
+  KiCad 8 name `hole_near_hole`). Every constraint of every rule is in
+  `board-router.json`'s `rules.custom_rules` with a status: `applied`,
+  `approximated` (kept more widely: every layer, SMD and plated pads
+  alike), `no_effect` (the classes and board setup keep at least as much,
+  or nothing routed matches), `not_routing` (silk, text, courtyards, pad
+  holes, zone connections, assertions), `skipped` (severity, or a layer
+  the board lacks) or `unmodelled` (creepage, length, skew, diff pairs,
+  physical clearances, disallows other than blind, buried and micro vias,
+  rules on what is unknown). `rules.unmodelled` lists the last one line
+  each; the verdict's next_actions name them when a route is incomplete,
+  and `drc-kicad-board` prints them on a `next:` line when KiCad finds
   errors.
 
-  What the lowering cannot do yet, for the router (crates/pcb-router)
-  and the lowering (board_router/lower.rs): a clearance per pair of nets
-  (rules between two sets), per item type (pad to track only: a floor on
-  the pad obstacles' `clearance`, where lower.rs now starts it at 0, would
-  keep it exactly) and per layer; a width floor per net for neck-downs and the narrow-signal step
-  (the floor is the board's); the edge clearance from NPTH holes and
-  from Margin graphics (KiCad's copper_edge_clearance names "NPTH pad of
-  J1" and "Segment on Margin"; the router keeps the hole clearance from
-  NPTH holes and ignores Margin); hole to hole between a via and a pad
-  hole of its own net (Squantor's nuclone: VSS via 0.464 from a VSS pad
-  hole at 0.5).
+  What the lowering cannot do yet: the edge clearance from NPTH holes
+  and from Margin graphics (KiCad's copper_edge_clearance names "NPTH pad
+  of J1" and "Segment on Margin"; the router keeps the hole clearance from
+  NPTH holes and ignores Margin: lowering, board_router/lower.rs); a
+  later rule that loosens an earlier one only inside an area or a
+  courtyard (ChengminLi's "YPS jumper pins (intended bridge)", 0.5 mm
+  between the Y capacitor jumper's primary and secondary pins under the
+  2.5 mm isolation: the router keeps 2.5 mm there and cannot reach the
+  jumper's pins, 2.54 mm apart); clearances of pours (the pour model
+  keeps the classes', not the pair rules', from other nets' tracks).
+
+### Rules beyond the classes (2026-10-21)
+
+`Config::net_rules` (`crates/pcb-router/src/rules.rs`), filled by
+`project_rules.rs` and copied by `core_config`, holds what the classes
+cannot say: a track width floor per net, clearance rules between two
+sets of nets per pair of item kinds and per layer, and the hole-to-hole
+spacing a via keeps from a pad hole of its own net. `None` (a project
+without them) routes as before, byte for byte.
+
+- **Classes split by group.** `ClassRules::split` puts nets in groups
+  (the nets no rule tells apart: the same side of every rule) and gives a
+  net a class of its own group and width floor; a class keeps its index
+  for the first nets that need no other, so rules that split nothing (the
+  same-net hole spacing alone, a rule the classes keep) leave the board's
+  classes, the lattice and every stamp as they were (Castor, k30 and
+  jetson, whose projects rate hole to hole an error, route with identical
+  fingerprints).
+- **Width floors.** A net's class width rises to its floor, and its neck
+  class is the board's neck width or its floor, the wider
+  (`with_neck_classes`, `neck_width_of` for stubs and escapes): a
+  `track_width (min ...)` rule on some nets holds in their neck-downs and
+  in the narrow-signal step (the lowering sets the narrow width as the
+  class width; the floor raises it again).
+- **Pair clearances.** `Resolved` tabulates, per pair of groups, pair of
+  kinds (track, via, pad) and layer variant (layers the same rules hold
+  on), the clearance the rules ask beyond the classes. The stamps are
+  built per pair of classes and per layer variant (`stamps[class][variant
+  * classes + querying]`; one variant without layer-qualified rules):
+  track to track, track to via and via to track per variant, via to via
+  the largest of every layer's (a through via meets the other via on
+  every layer). A node stamps its layer's footprints; a step from a layer
+  of another variant stamps whole footprints, not the leading edge. The
+  static maps keep a pad, an existing track or an existing via (told
+  apart by the lowering's labels; copper graphics are none of them) at
+  the class's clearance or the rule's, per layer for tracks and the
+  largest over the obstacle's layers for vias; the pad stubs
+  (`stub_is_clear`) too. A pad also keeps what its net's tracks keep: the
+  net leaves it by a stub off the lattice that only the pad's clearance
+  protects (tuxkeychain's outer-layer 0.127 mm over classes of 0.1 left
+  stubs 0.104 mm from other tracks without it). Stubs of two nets leaving
+  neighbouring pads are still not checked against each other. The internal verifier checks the classes'
+  clearances only; KiCad checks the rest.
+- **Same-net hole to hole.** Where the project rates hole_to_hole findings
+  errors (KiCad 8's `hole_near_hole` too), a via keeps the board's hole to
+  hole from the plated holes of its own net's pads (KiCad checks drilled
+  holes whatever their nets: nuclone's VSS via 0.464 mm from J3's VSS pad
+  hole at 0.5). Before, its own net was exempt from the hole and kept only
+  the pad copper's rule.
 
 ### Memory (2026-10-03)
 
@@ -1216,8 +1273,9 @@ followed them).
   smaller zones are treated as routing. Arcs in existing copper are refused.
 - 45° lattice output, no any-angle/arc post-processing yet.
 - Rules come from the `.kicad_pro` (net classes, patterns, minimums) and
-  the `.kicad_dru` ("Project rules" above); clearances are per net, not
-  per net pair, item type or layer, and rules on areas, creepage and
+  the `.kicad_dru` ("Project rules" above); clearances are per net and,
+  where a rule names two sets of nets, some item kinds or some layers,
+  per pair ("Rules beyond the classes"); rules on areas, creepage and
   lengths are reported, not kept.
 - Nets with disjoint search windows are routed in parallel; on large boards
   with long nets almost nothing is disjoint and the router is effectively

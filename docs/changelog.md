@@ -144,6 +144,143 @@ identical on all 46 rows (787 unconnected, 4022 vias, 1275 s, 14 passes,
 0 cut) apart from timing and `repairs`. Logs in build/ladder3 (qb-, qb2-,
 short-, short2-, expansion-, expansion2-).
 
+## Committed on 2026-10-21 (router rule features)
+
+The project rules work (below) lowered the project's rules but left
+three kinds the router could not keep: width floors per net, clearances
+between two sets of nets, per item type and per layer, and the hole to
+hole spacing within a net. This adds them to the router
+(`crates/pcb-router/src/rules.rs`, `Config::net_rules`) and to the
+lowering (`project_rules.rs`, `project_rules/dru.rs`); docs/router.md,
+"Project rules" and "Rules beyond the classes".
+
+Binaries: x1277 is main before (5a99d89; main's x1315 after the ladder
+refactor routes identically), x1320 this work on 98efa4a, x1322 the
+commit (rebased on 6f10989, with the two changes the expansion tier
+asked for, below). x1321 was not measured.
+
+**What changed.**
+
+- `pcb_router::NetRules` (`Config::net_rules`, `None` by default):
+  `width_floor` per net name, `clearances` (`ClearanceRule`: two sides
+  as net names or every item, the pairs of item kinds as bits of track
+  or via against track, via or pad, the layers, the clearance) and
+  `same_net_hole_to_hole`. `KiCadBoardRouterConfig::net_rules` (a skipped
+  field, one line in board_router/config.rs) carries it from
+  `resolve_project_rules` to `core_config` (one line in
+  board_router/route.rs); main.rs's file merge copies it.
+- The router splits its rule classes by group (the nets no rule tells
+  apart) and width floor, keeping a class's index for the first nets
+  that need no other: rules that split nothing route byte for byte as
+  without them. Stamps are built per pair of classes and per layer
+  variant (one without layer-qualified rules); static maps keep pads,
+  existing tracks and vias at the rules' clearance per layer; pad stubs
+  (`stub_is_clear`) too. A net's neck class is its floor where that is
+  wider than the board's neck; stubs and escapes take it.
+- Same-net hole to hole: where the project rates hole_to_hole an error,
+  a via keeps the board's hole to hole from its own net's pad holes.
+- The lowering evaluates a clearance rule per pair of net groups, pair
+  of item kinds and layer; a rule true everywhere for a set that raising
+  covers stays a per-net clearance, anything else becomes a pair rule
+  (`applied`; `approximated` where it tells SMD from plated pads). A
+  per-net `track_width` minimum floors that net's neck-downs and narrow
+  width (`applied` where it was `approximated`).
+- KiCad applies the last matching rule: a clearance, hole clearance,
+  edge clearance or hole-to-hole rule no longer counts where a later rule
+  with a minimum of the same constraint surely matches the pair (the
+  groups tell apart what the later conditions do). JLCPCB's template
+  ends with "Min. Spacing" 0.127 mm on everything, after its "Pad to
+  Track" 0.2 mm: KiCad checks 0.127 between pads and tracks (AMLing2's
+  drone carrier, where KiCad found none of the 0.2), and so does the
+  router now (`no_effect`, "a later rule takes every pair it matches").
+- A pad keeps what tracks of its net keep from other nets' copper too:
+  its net leaves it by a stub off the lattice that only the pad's
+  clearance protects (x1320's tuxkeychain: 0.127 mm between outer-layer
+  tracks over classes of 0.1 left stubs 0.104 mm from other tracks).
+
+**Route mode on the 20 rules boards** (rules-tasks.json, 30 s, 8 x 1),
+x1277 against x1322 (x1320 the same rows): 17 rows identical (routed,
+vias, length, KiCad's findings, work); passes 11 to 12, new errors
+(strict) 38 to 19, unconnected 2 to 6, vias 494 to 493.
+
+| board | rule | x1277 | x1322 |
+| --- | --- | --- | --- |
+| nuclone (Squantor) | hole to hole 0.5 (error), same net | 18/18, hole_to_hole 2 | 18/18, pass |
+| ChengminLi flyback | 2.5 mm primary to secondary, pair rule | 38/38, clearance 1 | 35/38, 2 unconnected, no error |
+| kisurf issue24211 | 8 mm feedback to switch node, pair rule | 34/34, clearance 11 (strict 17) | 32/34, 2 unconnected, no clearance (strict: starved_thermal 1) |
+| the other 17 | | | identical |
+
+ChengminLi's two open connections are the pins of the Y capacitor's
+jumper YPS (primary PSY1, PSY2 and secondary SGND, 2.54 mm apart): its
+file loosens the isolation there by a later rule, "YPS jumper pins
+(intended bridge)", 0.5 mm between items inside YPS's courtyard, which
+the router cannot evaluate (`intersectsCourtyard`): it keeps 2.5 mm and
+no track reaches those pads (diagnostics.dead_pads names them). kisurf's
+rule asks 8 mm between the feedback and the switch node, whose pins sit
+on one part (U4.2 and U4.8, 3 mm apart): no track can leave either pin
+and keep it; the designer's own board breaks it (10 findings). Both are
+dead pads of the rule, not of the router; the earlier per-set raise
+(x1270) had left 19 and 8 open there.
+
+**Expansion tier** (x1277 against x1322, 8 x 1, no row cut): 45 rows
+identical, unconnected 787 to 787, new errors (strict) 17 to 15, vias
+4022 to 4022, 14 passes both. tuxkeychain: 37/42 to 38/42 routed, 5
+unconnected both, clearance 15 to 13: the 9 "Pad to Track clearance"
+findings (vias 0.187 mm from tracks under 0.2, the rule matches plated
+items: vias here) are gone; 3 tracks of GND and HPL 0.104 mm apart
+where both leave neighbouring pads by stubs under the outer-layer 0.127
+rule, and 10 (was 6) tracks and vias within 0.1 of a copper graphic
+polygon without a net (GRAPHIC3: the lowering's graphics, not a rule)
+remain. AMLing2 (x1320 without the later-rule change: 10 to 30
+unconnected, the "Pad to Track" 0.2 kept) is identical to x1277.
+
+**Short tier** (x1277 against x1320 and x1322, tasks v7, 4 x 2): all
+12 rows identical on both; no short-tier project has a .kicad_dru rule.
+
+**Fingerprints**: Castor, k30-SBC and jetson (projects rating hole to
+hole an error, so their rules hold the same-net spacing and split
+nothing) and Sisu, route mode from the v16 layouts with
+`PCB_ROUTER_FINGERPRINT`, 30 s: every phase fingerprint of x1320 and
+x1322 equals x1277's.
+
+**Anthracite** (the coordinator's question on the project rules
+change): GNDPWR is in `power` (explicitly, priority 4) and `GND` (by
+pattern, priority 0); KiCad's composite class takes GND's width 0.2 and
+via 0.6, as the router does since x1275 (the clearance is 0.15 in
+both). A class width is no minimum in KiCad's DRC, so the narrow width
+need not keep 0.5. The thermal spokes follow the zone, not the class:
+the spoke model draws them at the zone's thermal_bridge_width
+(`thermal_reach - thermal_gap`) and drops those narrower than its
+min_thickness (`kicad_spokes`). starved_thermal 1 to 4 came with 2 to
+0 unconnected: different pads (J107, J106, R503, R703 against J104),
+other routing.
+
+**What stays unmodelled**: rules on areas, courtyards, footprints,
+component classes (their conditions are unknown), also where a later
+such rule loosens an earlier one (ChengminLi's jumpers); creepage,
+lengths, skew, diff pairs, physical clearances, disallows other than
+blind, buried and micro vias; the edge clearance from NPTH holes and
+Margin graphics; pair rules in the pour model (fills keep the classes'
+clearance from other nets' tracks) and in the internal verifier (KiCad
+checks them); stubs of two nets leaving neighbouring pads are not
+checked against each other (tuxkeychain's 3).
+
+Unit tests: pcb-router `router::rule_tests` (a pad-to-track rule keeps
+tracks from pads only, a rule between two sets splits their classes with
+stamps per layer variant, a width floor holds for the neck, the same-net
+hole spacing blocks a via the copper rule allows, rules that split
+nothing route identically); project_rules::dru (pair rules between two
+classes, item types and layers as pair rules on two and four layers,
+SMD pads approximated, the last matching rule); project_rules (a per-net
+width floor, a project with an isolation rule, JLCPCB's pad to track
+and an outer-layer via rule, hole_near_hole as an error). `bash
+scripts/check.sh` and the clippy gate pass.
+
+Logs: build/rules-x1277, -x1320, -x1322; build/expansion-x1277, -x1320,
+-x1322; build/short-x1277, -x1320, -x1322. x1322's tiers ran with
+`--no-lock` while the designer tier (x1315) held the lock for hours
+(results count work, not wall time).
+
 ## Committed on 2026-10-21 (config reference and stale docs)
 
 Review finding 10: the agent-facing surface is about 130 config keys and

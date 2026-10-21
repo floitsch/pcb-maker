@@ -521,6 +521,7 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
         verbose: true,
         deadline: config.deadline,
         deadline_work: config.router_deadline_work,
+        net_rules: config.net_rules.clone(),
         ..core::Config::default()
     };
     if let Some(via_cost) = config.via_cost_mm {

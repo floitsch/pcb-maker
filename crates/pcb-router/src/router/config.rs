@@ -234,6 +234,11 @@ pub struct Config {
     /// on how busy the machine is (the layout sets it from its own budget;
     /// `deadline` stays as the guard against load).
     pub deadline_work: Option<f64>,
+    /// Rules beyond the net classes (`crate::rules`): per-net width
+    /// floors, clearances between sets of nets, per item type and per
+    /// layer, and the same-net hole-to-hole spacing. `None` (or empty
+    /// rules): the classes alone, as before.
+    pub net_rules: Option<std::sync::Arc<crate::rules::NetRules>>,
 }
 
 impl Default for Config {
@@ -300,6 +305,7 @@ impl Default for Config {
             verbose: false,
             deadline: None,
             deadline_work: None,
+            net_rules: None,
         }
     }
 }

@@ -366,6 +366,9 @@ pub struct KiCadBoardRouterConfig {
     /// (`project_rules`; reported in `rules`, not read from a file).
     #[serde(skip)]
     pub project_rules: Option<crate::project_rules::KiCadProjectRulesReport>,
+    /// Router `net_rules` (`project_rules`; not read from a file).
+    #[serde(skip)]
+    pub net_rules: Option<std::sync::Arc<pcb_router::NetRules>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]

@@ -1,0 +1,342 @@
+// Copyright (C) 2026 Toit contributors.
+// Use of this source code is governed by an MIT-style license that can be
+// found in the LICENSE file.
+
+//! The rules beyond the net classes (`crate::rules`, `Config::net_rules`).
+
+use super::*;
+use crate::board::{Net, Obstacle, ObstacleKind, RuleClass, Terminal};
+use crate::geometry::{Shape, point_segment_distance};
+use crate::rules::{ALL_KINDS, ClearanceRule, NetRules, PAD, TRACK, kind_bit};
+
+fn pad(center: [f64; 2], radius: f64, layers: u32, net: Option<NetId>, label: &str) -> Obstacle {
+    Obstacle {
+        shape: Shape::Circle { center, radius },
+        layers,
+        kind: ObstacleKind::Copper,
+        net,
+        clearance: 0.0,
+        clearance_override: None,
+        blocks_tracks: true,
+        blocks_vias: true,
+        label: label.into(),
+    }
+}
+
+fn terminal(pad: usize, at: [f64; 2], layers: u32, label: &str) -> Terminal {
+    Terminal {
+        anchor: at,
+        layers,
+        pad,
+        contact: None,
+        label: label.into(),
+    }
+}
+
+/// Nets `A` (pads at (1, 5) and (9, 5)) and `B` (pads at (1, 8) and (9,
+/// 8)) on `layer_count` layers, and a pad of no net at (5, 5.55), 0.55 mm
+/// above A's straight line.
+fn two_nets(layer_count: usize) -> Board {
+    let obstacles = vec![
+        pad([1.0, 5.0], 0.2, 1, Some(0), "A.1"),
+        pad([9.0, 5.0], 0.2, 1, Some(0), "A.2"),
+        pad([1.0, 8.0], 0.2, 1, Some(1), "B.1"),
+        pad([9.0, 8.0], 0.2, 1, Some(1), "B.2"),
+        pad([5.0, 5.55], 0.2, 1, None, "U1.1"),
+    ];
+    Board {
+        layer_count,
+        outline: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
+        edge_clearance: 0.1,
+        hole_clearance: 0.25,
+        hole_to_hole: 0.25,
+        classes: vec![RuleClass {
+            trace_width: 0.25,
+            clearance: 0.2,
+            via_diameter: 0.6,
+            via_drill: 0.3,
+        }],
+        neck_width: 0.15,
+        obstacles,
+        nets: vec![
+            Net {
+                name: "A".into(),
+                class: 0,
+                terminals: vec![
+                    terminal(0, [1.0, 5.0], 1, "A.1"),
+                    terminal(1, [9.0, 5.0], 1, "A.2"),
+                ],
+            },
+            Net {
+                name: "B".into(),
+                class: 0,
+                terminals: vec![
+                    terminal(2, [1.0, 8.0], 1, "B.1"),
+                    terminal(3, [9.0, 8.0], 1, "B.2"),
+                ],
+            },
+        ],
+        planes: Vec::new(),
+        solid_pads: Vec::new(),
+        isolated_pads: Vec::new(),
+        solid_pad_obstacles: Vec::new(),
+        isolated_pad_obstacles: Vec::new(),
+        pad_spokes: Default::default(),
+        merged_pads: Vec::new(),
+    }
+}
+
+fn config(rules: Option<NetRules>) -> Config {
+    Config {
+        pitches: vec![0.1],
+        net_rules: rules.map(Arc::new),
+        ..Config::default()
+    }
+}
+
+/// The closest a net's tracks come to `point`.
+fn closest(result: &RoutingResult, net: usize, point: [f64; 2]) -> f64 {
+    result.routes[net]
+        .segments
+        .iter()
+        .map(|segment| point_segment_distance(point, segment.start, segment.end))
+        .fold(f64::INFINITY, f64::min)
+}
+
+#[test]
+fn a_pad_to_track_rule_keeps_tracks_from_pads_only() {
+    let board = two_nets(1);
+    // The classes alone: A passes the pad within 0.8 mm of its centre
+    // (0.525 needed).
+    let plain = route(&board, &config(None));
+    assert!(
+        plain
+            .status
+            .iter()
+            .all(|status| *status == NetStatus::Routed)
+    );
+    assert!(closest(&plain, 0, [5.0, 5.55]) < 0.8);
+    // JLCPCB's "Pad to Track" 0.5 mm, every net: 0.125 + 0.5 + 0.2 from
+    // the pad's centre.
+    let rules = NetRules {
+        clearances: vec![ClearanceRule {
+            first: None,
+            second: None,
+            kinds: kind_bit(TRACK, PAD),
+            layers: 0,
+            clearance: 0.5,
+        }],
+        ..NetRules::default()
+    };
+    let ruled = route(&board, &config(Some(rules)));
+    assert!(
+        ruled
+            .status
+            .iter()
+            .all(|status| *status == NetStatus::Routed)
+    );
+    assert!(closest(&ruled, 0, [5.0, 5.55]) >= 0.825 - 1.0e-6);
+    // Tracks against tracks keep the classes' clearance: the rule did
+    // not widen the stamps.
+    let router = Router::new(
+        &board,
+        &config(Some(NetRules {
+            clearances: vec![ClearanceRule {
+                first: None,
+                second: None,
+                kinds: kind_bit(TRACK, PAD),
+                layers: 0,
+                clearance: 0.5,
+            }],
+            ..NetRules::default()
+        })),
+    );
+    let base = Router::new(&board, &config(None));
+    assert_eq!(
+        router.stamps[0][0].trace_to_trace,
+        base.stamps[0][0].trace_to_trace
+    );
+}
+
+#[test]
+fn a_rule_between_two_sets_of_nets_splits_their_classes() {
+    let mut board = two_nets(2);
+    // A third net C of the same class, not named by the rule.
+    board
+        .obstacles
+        .push(pad([1.0, 2.0], 0.2, 1, Some(2), "C.1"));
+    board
+        .obstacles
+        .push(pad([9.0, 2.0], 0.2, 1, Some(2), "C.2"));
+    board.nets.push(Net {
+        name: "C".into(),
+        class: 0,
+        terminals: vec![
+            terminal(5, [1.0, 2.0], 1, "C.1"),
+            terminal(6, [9.0, 2.0], 1, "C.2"),
+        ],
+    });
+    let rules = NetRules {
+        clearances: vec![ClearanceRule {
+            first: Some(vec!["A".into()]),
+            second: Some(vec!["B".into()]),
+            kinds: ALL_KINDS,
+            // Layer 1 only.
+            layers: 0b10,
+            clearance: 1.0,
+        }],
+        ..NetRules::default()
+    };
+    let router = Router::new(&board, &config(Some(rules)));
+    let class = |net: usize| router.board.nets[net].class;
+    // A, B and C each have a class of their own now (A's is the
+    // original, the first net's).
+    assert_eq!(class(0), 0);
+    assert_ne!(class(0), class(1));
+    assert_ne!(class(1), class(2));
+    assert_ne!(class(0), class(2));
+    let split = router.class_rules.as_ref().unwrap();
+    assert_eq!(split.resolved.variants, 2);
+    let classes = router.board.classes.len();
+    let radius = |stamps: &Stamps| {
+        stamps
+            .trace_to_trace
+            .iter()
+            .map(|(dx, dy)| ((*dx * *dx + *dy * *dy) as f64).sqrt())
+            .fold(0.0, f64::max)
+            * 0.1
+    };
+    let on = |own: usize, other: usize, layer: usize| {
+        &router.stamps[class(own)][split.resolved.layer_variant[layer] * classes + class(other)]
+    };
+    // A against B: the rule's 1.0 + 0.25 on layer 1, the classes' 0.45
+    // on layer 0; A against C (and B against C) the classes' everywhere.
+    assert!(radius(on(0, 1, 1)) > 1.2 && radius(on(0, 1, 1)) < 1.25);
+    assert!(radius(on(1, 0, 1)) > 1.2);
+    assert!(radius(on(0, 1, 0)) < 0.45);
+    assert!(radius(on(0, 2, 1)) < 0.45);
+    assert!(radius(on(1, 2, 1)) < 0.45);
+    // Vias meet on every layer: the rule's everywhere.
+    let via = |stamps: &Stamps| {
+        stamps
+            .via_to_via
+            .iter()
+            .map(|(dx, dy)| ((*dx * *dx + *dy * *dy) as f64).sqrt())
+            .fold(0.0, f64::max)
+            * 0.1
+    };
+    assert!(via(on(0, 1, 0)) > 1.5);
+    assert!(via(on(0, 2, 0)) < 0.9);
+}
+
+#[test]
+fn a_net_width_floor_holds_for_its_neck_too() {
+    let board = two_nets(1);
+    let rules = NetRules {
+        width_floor: [("A".to_string(), 0.3)].into(),
+        ..NetRules::default()
+    };
+    let router = Router::new(&board, &config(Some(rules)));
+    let a = router.board.nets[0].class;
+    let b = router.board.nets[1].class;
+    assert_eq!(router.board.classes[a].trace_width, 0.3);
+    // No neck narrower than its floor.
+    assert_eq!(router.neck_of[a], None);
+    assert_eq!(router.neck_width_of(a), 0.3);
+    // B keeps the class width and the board's neck.
+    assert_eq!(router.board.classes[b].trace_width, 0.25);
+    let neck = router.neck_of[b].unwrap();
+    assert_eq!(router.board.classes[neck].trace_width, 0.15);
+    assert_eq!(router.neck_width_of(b), 0.15);
+    let result = route(
+        &board,
+        &config(Some(NetRules {
+            width_floor: [("A".to_string(), 0.3)].into(),
+            ..NetRules::default()
+        })),
+    );
+    assert!(
+        result.routes[0]
+            .segments
+            .iter()
+            .all(|segment| segment.width >= 0.3 - 1.0e-9)
+    );
+}
+
+#[test]
+fn a_via_keeps_the_hole_to_hole_spacing_from_its_own_nets_pad_hole() {
+    let mut board = two_nets(2);
+    board.classes[0] = RuleClass {
+        trace_width: 0.2,
+        clearance: 0.1,
+        via_diameter: 0.4,
+        via_drill: 0.2,
+    };
+    board.hole_to_hole = 0.5;
+    board.hole_clearance = 0.2;
+    // A through-hole pad of A at (5, 3): 1.3 copper, 1.0 drill.
+    let copper = board.obstacles.len();
+    board.obstacles.push(Obstacle {
+        layers: 0b11,
+        ..pad([5.0, 3.0], 0.65, 0b11, Some(0), "J3.5")
+    });
+    board.obstacles.push(Obstacle {
+        kind: ObstacleKind::Hole,
+        layers: 0b11,
+        ..pad([5.0, 3.0], 0.5, 0b11, Some(0), "J3.5 plated hole")
+    });
+    board.nets[0]
+        .terminals
+        .push(terminal(copper, [5.0, 3.0], 0b11, "J3.5"));
+    // A node 1.0 mm from the hole's centre: the copper rule (0.65 + 0.2
+    // + 0.1) lets A's via there, the hole to hole (0.5 + 0.5 + 0.1) does
+    // not; B's via never.
+    let check = |rules: Option<NetRules>| {
+        let router = Router::new(&board, &config(rules));
+        let node = router.grid.nearest_node([6.0, 3.0]).unwrap();
+        let at = router.grid.center_of(node);
+        assert!((crate::geometry::distance(at, [5.0, 3.0]) - 1.0).abs() < 0.06);
+        let statics = &router.statics[router.board.nets[0].class];
+        (statics.via_allowed(node, 0), statics.via_allowed(node, 1))
+    };
+    assert_eq!(check(None), (true, false));
+    assert_eq!(
+        check(Some(NetRules {
+            same_net_hole_to_hole: 0.5,
+            ..NetRules::default()
+        })),
+        (false, false)
+    );
+}
+
+#[test]
+fn rules_that_split_nothing_route_as_without_them() {
+    let board = two_nets(2);
+    let plain = route(&board, &config(None));
+    for rules in [
+        NetRules::default(),
+        NetRules {
+            same_net_hole_to_hole: 0.25,
+            ..NetRules::default()
+        },
+        // A rule the classes already keep.
+        NetRules {
+            clearances: vec![ClearanceRule {
+                first: Some(vec!["A".into()]),
+                second: None,
+                kinds: ALL_KINDS,
+                layers: 0,
+                clearance: 0.1,
+            }],
+            ..NetRules::default()
+        },
+    ] {
+        let ruled = route(&board, &config(Some(rules)));
+        assert_eq!(plain.iterations, ruled.iterations);
+        assert_eq!(plain.expansions, ruled.expansions);
+        for (a, b) in plain.routes.iter().zip(&ruled.routes) {
+            assert_eq!(a.segments, b.segments);
+            assert_eq!(a.vias, b.vias);
+        }
+    }
+}

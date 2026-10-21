@@ -37,8 +37,9 @@ impl Router {
                     // The pad stub at the node's width, or the neck if the
                     // full width does not fit.
                     let mut widths = vec![self.width_at(net, node.cell)];
-                    if self.board.neck_width < widths[0] {
-                        widths.push(self.board.neck_width);
+                    let neck_width = self.neck_width_of(self.board.nets[net as usize].class);
+                    if neck_width < widths[0] {
+                        widths.push(neck_width);
                     }
                     for width in widths {
                         if self.stub_is_clear(net, node.layer as usize, anchor, center, width)

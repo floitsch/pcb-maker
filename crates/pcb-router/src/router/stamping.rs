@@ -131,8 +131,13 @@ impl Router {
         let diagonal_base = self.board.classes.len() * (layers + 1);
         let size = (nx, ny);
         let words = self.grid.cells().div_ceil(64);
+        let class_rules = &self.class_rules;
+        let variant_of = |layer: usize| {
+            class_rules
+                .as_ref()
+                .map_or(0, |split| split.resolved.layer_variant[layer])
+        };
         for querying in 0..self.board.classes.len() {
-            let stamps = &self.stamps[class][querying];
             let marks = &mut self.stamp_mark;
             let base = querying * (layers + 1);
             let mut first = 0;
@@ -150,7 +155,15 @@ impl Router {
                             }
                             _ => class,
                         };
-                        let stub_stamps = &self.stamps[stub_class][querying];
+                        let stub_stamps = match &self.class_rules {
+                            None => &self.stamps[stub_class][querying],
+                            Some(split) => {
+                                &self.stamps[stub_class][split.resolved.layer_variant
+                                    [end.layer as usize]
+                                    * self.board.classes.len()
+                                    + querying]
+                            }
+                        };
                         let reach = stub_stamps.fresh.reach;
                         for cell in cells {
                             let map = base + end.layer as usize;
@@ -199,7 +212,9 @@ impl Router {
                 for (index, node) in branch.nodes.iter().enumerate() {
                     // A node in a neck zone stamps its narrower footprint.
                     let node_class = classes[index];
-                    let own = &self.stamps[node_class][querying];
+                    let variant = variant_of(node.layer as usize);
+                    let own =
+                        &self.stamps[node_class][variant * self.board.classes.len() + querying];
                     let reach = own.fresh.reach;
                     let x = node.cell as i64 % nx;
                     let y = node.cell as i64 / nx;
@@ -214,7 +229,13 @@ impl Router {
                         let (dx, dy) =
                             (x - previous.cell as i64 % nx, y - previous.cell as i64 / nx);
                         is_via = previous.cell == node.cell && previous.layer != node.layer;
-                        if classes[index - 1] == node_class && dx.abs() <= 1 && dy.abs() <= 1 {
+                        // (A step from a layer of another stamp variant
+                        // stamps whole footprints.)
+                        if classes[index - 1] == node_class
+                            && dx.abs() <= 1
+                            && dy.abs() <= 1
+                            && variant_of(previous.layer as usize) == variant
+                        {
                             step = Some(((dx + 1) * 3 + dy + 1) as usize);
                         }
                         if !is_via && dx != 0 && dy != 0 {
@@ -283,8 +304,15 @@ impl Router {
                     // A via through several layers at one cell: the via
                     // before stamped the same footprints at the same cell.
                     if is_via && !via_before {
-                        let reach = stamps.fresh.reach;
                         for layer in 0..layers {
+                            let stamps = match &self.class_rules {
+                                None => &self.stamps[class][querying],
+                                Some(split) => {
+                                    &self.stamps[class][split.resolved.layer_variant[layer]
+                                        * self.board.classes.len()
+                                        + querying]
+                                }
+                            };
                             let map = base + layer;
                             mark_footprint(
                                 marks,
@@ -295,9 +323,12 @@ impl Router {
                                 &stamps.via_to_trace,
                                 (1, 1),
                                 size,
-                                reach,
+                                stamps.fresh.reach,
                             );
                         }
+                        // Via to via is the largest of every layer's.
+                        let stamps = &self.stamps[class][querying];
+                        let reach = stamps.fresh.reach;
                         let map = base + layers;
                         mark_footprint(
                             marks,
@@ -311,6 +342,14 @@ impl Router {
                             reach,
                         );
                         for layer in 0..layers {
+                            let stamps = match &self.class_rules {
+                                None => &self.stamps[class][querying],
+                                Some(split) => {
+                                    &self.stamps[class][split.resolved.layer_variant[layer]
+                                        * self.board.classes.len()
+                                        + querying]
+                                }
+                            };
                             for orientation in 0..2 {
                                 let map =
                                     diagonal_base + (querying * layers + layer) * 2 + orientation;
@@ -323,7 +362,7 @@ impl Router {
                                     &stamps.diagonal_block_via[orientation],
                                     (1, 1),
                                     size,
-                                    reach,
+                                    stamps.fresh.reach,
                                 );
                             }
                         }

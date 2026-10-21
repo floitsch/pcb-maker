@@ -15,6 +15,7 @@ pub(crate) mod global;
 pub mod grid;
 pub mod pour;
 pub mod router;
+pub mod rules;
 pub mod verify;
 
 pub use board::{
@@ -23,4 +24,5 @@ pub use board::{
 };
 pub use geometry::{Point, Shape};
 pub use router::{Config, DeadPad, Diagnostics, HotSpot, NetStatus, RoutingResult, route};
+pub use rules::{ClearanceRule, NetRules};
 pub use verify::{Violation, verify};

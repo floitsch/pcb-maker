@@ -7,33 +7,70 @@
 use super::*;
 
 impl Router {
-    /// `board` with a neck variant of every class wider than the neck (for
-    /// routing next to fine-pitch pads), and per class its neck class.
-    pub(super) fn with_neck_classes(board: &Board, config: &Config) -> (Board, Vec<Option<usize>>) {
-        let mut board = board.clone();
+    /// `board` with its classes split by the rules beyond the net classes
+    /// (`Config::net_rules`, `crate::rules::ClassRules::split`) and a neck
+    /// variant of every class wider than its neck (for routing next to
+    /// fine-pitch pads), per class its neck class, and the split's rules
+    /// (`None` without rules: the board's classes as they are).
+    pub(super) fn with_neck_classes(
+        board: &Board,
+        config: &Config,
+    ) -> (Board, Vec<Option<usize>>, Option<Arc<ClassRules>>) {
+        let (mut board, mut class_rules) = match config
+            .net_rules
+            .as_deref()
+            .filter(|rules| !rules.is_empty())
+        {
+            Some(rules) => {
+                let (board, class_rules) = ClassRules::split(board, rules);
+                (board, Some(class_rules))
+            }
+            None => (board.clone(), None),
+        };
         let mut neck_of = vec![None; board.classes.len()];
         if config.neck_reach > 0.0 {
             for (class, neck_class) in neck_of.iter_mut().enumerate() {
                 let rules = board.classes[class];
-                if rules.trace_width > board.neck_width + 1.0e-9 {
+                let neck_width = class_rules
+                    .as_ref()
+                    .map_or(board.neck_width, |split| split.neck_width(&board, class));
+                if rules.trace_width > neck_width + 1.0e-9 {
                     let neck = RuleClass {
-                        trace_width: board.neck_width,
+                        trace_width: neck_width,
                         ..rules
                     };
-                    let index = board
-                        .classes
-                        .iter()
-                        .position(|existing| *existing == neck)
-                        .unwrap_or_else(|| {
-                            board.classes.push(neck);
-                            board.classes.len() - 1
-                        });
+                    let index = match &mut class_rules {
+                        None => board
+                            .classes
+                            .iter()
+                            .position(|existing| *existing == neck)
+                            .unwrap_or_else(|| {
+                                board.classes.push(neck);
+                                board.classes.len() - 1
+                            }),
+                        Some(split) => {
+                            let (group, floor) =
+                                (split.class_group[class], split.class_floor[class]);
+                            (0..board.classes.len())
+                                .find(|&existing| {
+                                    board.classes[existing] == neck
+                                        && split.class_group[existing] == group
+                                        && split.class_floor[existing] == floor
+                                })
+                                .unwrap_or_else(|| {
+                                    board.classes.push(neck);
+                                    split.class_group.push(group);
+                                    split.class_floor.push(floor);
+                                    board.classes.len() - 1
+                                })
+                        }
+                    };
                     *neck_class = Some(index);
                 }
             }
         }
         neck_of.resize(board.classes.len(), None);
-        (board, neck_of)
+        (board, neck_of, class_rules.map(Arc::new))
     }
 
     /// `new`, or the error of a board the router's maps cannot hold
@@ -59,7 +96,7 @@ impl Router {
 
     pub(super) fn build(board: &Board, config: &Config) -> Self {
         let built = std::time::Instant::now();
-        let (board, neck_of) = Self::with_neck_classes(board, config);
+        let (board, neck_of, class_rules) = Self::with_neck_classes(board, config);
         let board = &board;
         let grid = Grid::choose(board, &config.pitches);
         if config.verbose {
@@ -78,19 +115,49 @@ impl Router {
         }
         let searched = searched_classes(board, &neck_of);
         let statics: Vec<_> = (0..board.classes.len())
-            .map(|class| StaticMaps::build(board, &grid, class, searched[class]))
+            .map(|class| {
+                StaticMaps::build_with_rules(
+                    board,
+                    &grid,
+                    class,
+                    searched[class],
+                    class_rules.as_deref(),
+                )
+            })
             .collect();
         let maps = board.classes.len() * (layers + 1) + board.classes.len() * layers * 2;
         let step = grid.pitch * std::f64::consts::SQRT_2;
-        let stamps = board
-            .classes
-            .iter()
-            .map(|own| {
-                board
-                    .classes
-                    .iter()
-                    .map(|other| {
+        let variants = class_rules
+            .as_ref()
+            .map_or(1, |split| split.resolved.variants);
+        let stamps = (0..board.classes.len())
+            .map(|own_class| {
+                let own = &board.classes[own_class];
+                (0..variants)
+                    .flat_map(|variant| {
+                        (0..board.classes.len()).map(move |other_class| (variant, other_class))
+                    })
+                    .map(|(variant, other_class)| {
+                        let other = &board.classes[other_class];
                         let clearance = own.clearance.max(other.clearance);
+                        // The rules beyond the classes, per pair of item
+                        // kinds (a via meets the other item on every layer).
+                        let rule = |own_kind: usize, other_kind: usize| {
+                            class_rules.as_ref().map_or(clearance, |split| {
+                                let (a, b) =
+                                    (split.class_group[own_class], split.class_group[other_class]);
+                                let extra = if own_kind == crate::rules::VIA
+                                    && other_kind == crate::rules::VIA
+                                {
+                                    split.resolved.extra_anywhere(a, own_kind, b, other_kind)
+                                } else {
+                                    split.resolved.extra(a, own_kind, b, other_kind, variant)
+                                };
+                                clearance.max(extra)
+                            })
+                        };
+                        use crate::rules::{TRACK, VIA};
+                        let trace_clearance = rule(TRACK, TRACK);
                         // Exact: a node at the radius is legal, and the
                         // steps between nodes are covered apart (see
                         // `diagonal_extra`; the search checks the cells a
@@ -98,18 +165,19 @@ impl Router {
                         let with_margin = |radius: f64| radius;
                         let snap = grid.pitch * 0.75 + step * step / (4.0 * grid.pitch);
                         let trace_radius =
-                            own.trace_width / 2.0 + other.trace_width / 2.0 + clearance;
+                            own.trace_width / 2.0 + other.trace_width / 2.0 + trace_clearance;
                         // Copper keeps the copper clearance from a via's
                         // ring and the hole clearance from its drill;
                         // with a thin ring the hole rule is the larger
                         // (the laptop motherboard: 154 KiCad findings).
                         let hole = board.hole_clearance;
                         let via_radius =
-                            (own.trace_width / 2.0 + other.via_diameter / 2.0 + clearance)
+                            (own.trace_width / 2.0 + other.via_diameter / 2.0 + rule(TRACK, VIA))
                                 .max(own.trace_width / 2.0 + other.via_drill / 2.0 + hole);
                         let own_via_radius =
-                            (own.via_diameter / 2.0 + other.trace_width / 2.0 + clearance)
+                            (own.via_diameter / 2.0 + other.trace_width / 2.0 + rule(VIA, TRACK))
                                 .max(own.via_drill / 2.0 + other.trace_width / 2.0 + hole);
+                        let via_clearance = rule(VIA, VIA);
                         Stamps {
                             diagonal_to_trace: diagonal_extra(trace_radius, grid.pitch),
                             diagonal_to_via: diagonal_extra(via_radius, grid.pitch),
@@ -121,21 +189,25 @@ impl Router {
                             stub_diagonal_block: diagonal_block(trace_radius + snap, grid.pitch),
                             stub_to_trace: disc(
                                 with_margin(
-                                    own.trace_width / 2.0 + other.trace_width / 2.0 + clearance,
+                                    own.trace_width / 2.0
+                                        + other.trace_width / 2.0
+                                        + trace_clearance,
                                 ) + snap,
                                 grid.pitch,
                             ),
                             stub_to_via: disc(with_margin(via_radius) + snap, grid.pitch),
                             trace_to_trace: disc(
                                 with_margin(
-                                    own.trace_width / 2.0 + other.trace_width / 2.0 + clearance,
+                                    own.trace_width / 2.0
+                                        + other.trace_width / 2.0
+                                        + trace_clearance,
                                 ),
                                 grid.pitch,
                             ),
                             trace_to_via: disc(with_margin(via_radius), grid.pitch),
                             via_to_trace: disc(with_margin(own_via_radius), grid.pitch),
                             via_to_via: disc(
-                                (own.via_diameter / 2.0 + other.via_diameter / 2.0 + clearance)
+                                (own.via_diameter / 2.0 + other.via_diameter / 2.0 + via_clearance)
                                     .max(
                                         own.via_drill / 2.0
                                             + other.via_drill / 2.0
@@ -214,6 +286,7 @@ impl Router {
             tile_covered: vec![vec![0.0; tiles_x * tiles_y]; layers],
             layer_cut: vec![1.0; layers],
             neck_of,
+            class_rules,
             searched,
             exclusive: (0..layers)
                 .map(|layer| {
@@ -361,6 +434,35 @@ impl Router {
                     .collect()
             })
             .collect();
+    }
+
+    /// The neck width of `class`: the board's, or the floor of the class's
+    /// nets where that is wider (`crate::rules::NetRules::width_floor`).
+    pub(super) fn neck_width_of(&self, class: usize) -> f64 {
+        self.class_rules
+            .as_ref()
+            .map_or(self.board.neck_width, |split| {
+                split.neck_width(&self.board, class)
+            })
+    }
+
+    /// The clearance copper of `class` (an item of `kind`, `crate::rules`)
+    /// keeps from copper `obstacle` on `layer`: the classes' and the
+    /// rules beyond them.
+    pub(super) fn obstacle_clearance(
+        &self,
+        class: usize,
+        kind: usize,
+        obstacle: &crate::board::Obstacle,
+        layer: usize,
+    ) -> f64 {
+        let clearance = self
+            .board
+            .copper_clearance(&self.board.classes[class], obstacle);
+        match &self.class_rules {
+            None => clearance,
+            Some(split) => clearance.max(split.obstacle_extra(class, kind, obstacle, layer)),
+        }
     }
 
     pub fn grid(&self) -> &Grid {

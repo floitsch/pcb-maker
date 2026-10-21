@@ -915,9 +915,12 @@ fn leaf_on(leaf: &Ex, net: &NetFacts) -> T3 {
 // The lowering.
 
 /// What the lowering needs of the board.
+#[derive(Clone)]
 pub(crate) struct BoardFacts {
     /// The nets with pads.
     pub nets: Vec<NetFacts>,
+    /// In the router's order (F.Cu, the inner layers, B.Cu): a layer's
+    /// index is its bit in `PairClearance::layers`.
     pub copper_layers: Vec<String>,
     /// The kinds of pad the board has.
     pub pad_kinds: BTreeSet<Kind>,
@@ -949,6 +952,28 @@ pub struct KiCadCustomRuleReport {
     pub detail: String,
 }
 
+/// A clearance between the items of two sets of nets (router
+/// `ClearanceRule`): an item of kind A (`ROUTED_KINDS`) of a net of `first`
+/// against one of kind B (`OTHER_KINDS`) of a net of `second`, on
+/// `layers`.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct PairClearance {
+    /// Indices into `BoardFacts::nets`; `None`: every item, of no net too.
+    pub first: Option<Vec<usize>>,
+    pub second: Option<Vec<usize>>,
+    /// Bit `3 * a + b` for kinds `ROUTED_KINDS[a]` and `OTHER_KINDS[b]`
+    /// (pcb_router::rules::kind_bit).
+    pub kinds: u16,
+    /// Bit per index of `BoardFacts::copper_layers`; all of them for a
+    /// rule on every layer.
+    pub layers: u32,
+    pub clearance: f64,
+}
+
+/// The kinds the router lays (A of a clearance) and the kinds they meet
+/// (B), in the router's order (pcb_router::rules::TRACK, VIA, PAD).
+const ROUTED_KINDS: [Kind; 2] = [Kind::Track, Kind::Via];
+
 /// The rules a .kicad_dru gives the router.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Lowered {
@@ -971,6 +996,10 @@ pub(crate) struct Lowered {
     pub edge_clearance: f64,
     pub hole_clearance: f64,
     pub hole_to_hole: f64,
+    /// Clearances the per-net values cannot keep exactly: between two
+    /// sets of nets, from some item types only (pads to tracks), on some
+    /// layers only (router `ClearanceRule`s).
+    pub pair_clearances: Vec<PairClearance>,
     pub report: Vec<KiCadCustomRuleReport>,
     /// Routing rules the router does not keep, one line each, for the
     /// verdict.
@@ -980,7 +1009,7 @@ pub(crate) struct Lowered {
 /// The project's severity of the findings a constraint makes, with
 /// KiCad's defaults (board_design_settings.cpp: hole_to_hole is a
 /// warning, the others errors).
-fn finding_severity(kind: &str, severities: &BTreeMap<String, String>) -> String {
+pub(crate) fn finding_severity(kind: &str, severities: &BTreeMap<String, String>) -> String {
     let (key, default) = match kind {
         "clearance" => ("clearance", "error"),
         "track_width" => ("track_width", "error"),
@@ -1112,13 +1141,65 @@ pub(crate) fn lower(
         name: String::new(),
         classes: vec!["Default".into()],
     };
-    for rule in rules {
+    let conditions: Vec<Option<Ex>> = rules
+        .iter()
+        .map(|rule| match rule.condition.as_deref() {
+            None => Some(Ex::Number(1.0)),
+            Some(text) => parse_condition(text).ok(),
+        })
+        .collect();
+    for (index, rule) in rules.iter().enumerate() {
         for constraint in &rule.constraints {
-            lower_constraint(&mut lowered, rule, constraint, board, severities, &no_net);
+            // KiCad applies the last matching rule of a constraint: a later
+            // rule with a minimum of the same constraint takes the pairs it
+            // surely matches (JLCPCB's template: "Pad to Track" 0.2 mm and,
+            // after it, "Min. Spacing" 0.127 on everything; AMLing2's drone
+            // carrier, where KiCad finds no track 0.13 mm from a pad).
+            let later: Vec<Later> = if SHADOWED.contains(&constraint.kind.as_str()) {
+                rules[index + 1..]
+                    .iter()
+                    .zip(&conditions[index + 1..])
+                    .filter(|(other, _)| {
+                        other
+                            .constraints
+                            .iter()
+                            .any(|own| own.kind == constraint.kind && own.min.is_some())
+                    })
+                    .filter_map(|(other, condition)| {
+                        Some((
+                            condition.as_ref()?,
+                            rule_layers(other, &board.copper_layers),
+                        ))
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            lower_constraint(
+                &mut lowered,
+                rule,
+                constraint,
+                board,
+                severities,
+                &no_net,
+                &later,
+            );
         }
     }
     lowered
 }
+
+/// Constraints a later rule takes from an earlier one where it surely
+/// matches (`lower`).
+const SHADOWED: [&str; 4] = [
+    "clearance",
+    "hole_clearance",
+    "edge_clearance",
+    "hole_to_hole",
+];
+
+/// A later rule's condition and layers (`lower`).
+type Later<'a> = (&'a Ex, Vec<&'a str>);
 
 /// The routed kinds (A) and the kinds they meet (B) a constraint is
 /// checked between, `None` for B when KiCad checks the item alone.
@@ -1149,7 +1230,23 @@ fn lower_constraint(
     board: &BoardFacts,
     severities: &BTreeMap<String, String>,
     no_net: &NetFacts,
+    later: &[Later],
 ) {
+    // Whether a later rule surely takes the pair (`lower`); remembered for
+    // the report.
+    let shadowed_any = std::cell::Cell::new(false);
+    let shadowed = |truth: T3, a: Item, b: Option<Item>, same: bool| -> T3 {
+        if truth != T3::False
+            && later.iter().any(|(condition, layers)| {
+                layers.contains(&a.layer) && pair_truth(condition, a, b, same) == T3::True
+            })
+        {
+            shadowed_any.set(true);
+            T3::False
+        } else {
+            truth
+        }
+    };
     let kind = constraint.kind.as_str();
     if NOT_ROUTING.contains(&kind) {
         lowered.note(
@@ -1291,7 +1388,12 @@ fn lower_constraint(
         return;
     }
     let (a_kinds, b_kinds) = kinds_of(kind, &board.pad_kinds);
-    let groups = net_groups(&condition, &board.nets);
+    // The groups tell apart what the later rules' conditions do too (a
+    // later rule may take some of the nets of one group of this rule).
+    let grouping = later.iter().fold(condition.clone(), |all, (other, _)| {
+        Ex::And(Box::new(all), Box::new((*other).clone()))
+    });
+    let groups = net_groups(&grouping, &board.nets);
     let representative = |group: &[usize]| &board.nets[group[0]];
     let mut unknown = false;
     // Pairs, for clearances: which group pairs the rule matches.
@@ -1315,7 +1417,14 @@ fn lower_constraint(
                         layer,
                     };
                     match b_kinds {
-                        None => result = result.or(pair_truth(&condition, a, None, false)),
+                        None => {
+                            result = result.or(shadowed(
+                                pair_truth(&condition, a, None, false),
+                                a,
+                                None,
+                                false,
+                            ))
+                        }
                         Some(b_kinds) => {
                             for b_kind in b_kinds {
                                 let b_net = match b_kind {
@@ -1332,7 +1441,12 @@ fn lower_constraint(
                                         layer
                                     },
                                 };
-                                result = result.or(pair_truth(&condition, a, Some(b), same));
+                                result = result.or(shadowed(
+                                    pair_truth(&condition, a, Some(b), same),
+                                    a,
+                                    Some(b),
+                                    same,
+                                ));
                             }
                         }
                     }
@@ -1392,7 +1506,11 @@ fn lower_constraint(
                         rule,
                         constraint,
                         "no_effect",
-                        "matches nothing the router lays on this board".into(),
+                        if shadowed_any.get() {
+                            "a later rule takes everything it matches (KiCad applies the last matching rule)".into()
+                        } else {
+                            "matches nothing the router lays on this board".into()
+                        },
                     ),
                     T3::True => {
                         let (target, before) = match kind {
@@ -1475,15 +1593,14 @@ fn lower_constraint(
                     rule,
                     constraint,
                     "no_effect",
-                    "matches no pair of routed items of two nets on this board".into(),
+                    if shadowed_any.get() {
+                        "a later rule takes every pair it matches (KiCad applies the last matching rule)".into()
+                    } else {
+                        "matches no pair of routed items of two nets on this board".into()
+                    },
                 );
                 return;
             }
-            // A rule on pads or vias against tracks alone (JLCPCB's "Pad
-            // to Track"): one clearance a net would keep it between tracks
-            // too (AMLing2's drone carrier: 0.2 mm over classes of 0.127
-            // took 10 open connections to 35, where KiCad had found none
-            // of it).
             let binds = |pairs: &BTreeSet<(usize, usize)>| {
                 pairs.iter().any(|&(i, j)| {
                     groups[i]
@@ -1492,37 +1609,77 @@ fn lower_constraint(
                         .any(|&net| board.current[net].clearance_mm < value - 1.0e-9)
                 })
             };
-            if !matched.iter().any(|(i, j)| {
-                truth_kinds(
-                    Some(representative(&groups[*i])),
-                    Some(representative(&groups[*j])),
-                    false,
-                    true,
-                ) == T3::True
-            }) {
-                if binds(&matched) {
-                    lowered.note(
-                        rule,
-                        constraint,
-                        "unmodelled",
-                        format!(
-                            "clearance {} from pads or vias to tracks only: one clearance a net would keep it between tracks too",
-                            mm(value)
-                        ),
-                    );
-                } else {
-                    lowered.note(
-                        rule,
-                        constraint,
-                        "no_effect",
-                        format!(
-                            "clearance {} from pads or vias to tracks: the net classes keep at least as much",
-                            mm(value)
-                        ),
-                    );
+            // Per pair of groups (A's, B's): per kind of A (a track, a via)
+            // and of B (a track, a via, a pad), the layers the rule holds on.
+            let all_layers: u32 = if board.copper_layers.len() >= 32 {
+                u32::MAX
+            } else {
+                (1u32 << board.copper_layers.len()) - 1
+            };
+            let pad_kinds: Vec<Kind> = [Kind::SmdPad, Kind::PlatedPad]
+                .into_iter()
+                .filter(|kind| board.pad_kinds.contains(kind))
+                .collect();
+            let other_kinds: [Vec<Kind>; 3] = [vec![Kind::Track], vec![Kind::Via], pad_kinds];
+            // Whether the rule tells SMD from plated pads apart somewhere
+            // (the router's pads are one kind: it keeps the rule from both).
+            let mut pad_types_differ = false;
+            let mut masks = |a: usize, b: usize| -> [[u32; 3]; 2] {
+                let mut result = [[0u32; 3]; 2];
+                for (ai, a_kind) in ROUTED_KINDS.iter().enumerate() {
+                    for (bi, b_kinds) in other_kinds.iter().enumerate() {
+                        let mut per_kind = Vec::new();
+                        for b_kind in b_kinds {
+                            let mut mask = 0u32;
+                            for (index, layer) in board.copper_layers.iter().enumerate() {
+                                if !layers.contains(&layer.as_str()) {
+                                    continue;
+                                }
+                                let a_item = Item {
+                                    kind: *a_kind,
+                                    net: Some(representative(&groups[a])),
+                                    layer,
+                                };
+                                let b_item = Item {
+                                    kind: *b_kind,
+                                    net: Some(representative(&groups[b])),
+                                    layer,
+                                };
+                                let truth = shadowed(
+                                    pair_truth(&condition, a_item, Some(b_item), false),
+                                    a_item,
+                                    Some(b_item),
+                                    false,
+                                );
+                                // (Unknown where the whole was known: kept.)
+                                if truth != T3::False {
+                                    mask |= 1 << index;
+                                }
+                            }
+                            per_kind.push(mask);
+                        }
+                        if per_kind.windows(2).any(|pair| pair[0] != pair[1]) {
+                            pad_types_differ = true;
+                        }
+                        result[ai][bi] = per_kind.into_iter().fold(0, |all, mask| all | mask);
+                    }
                 }
-                return;
+                result
+            };
+            let mut tables = BTreeMap::new();
+            for &(i, j) in &matched {
+                tables.insert((i, j), masks(i, j));
+                if i != j {
+                    tables.insert((j, i), masks(j, i));
+                }
             }
+            let uniform = tables.values().all(|table| {
+                table.iter().all(|row| {
+                    row.iter()
+                        .zip(&other_kinds)
+                        .all(|(mask, kinds)| kinds.is_empty() || *mask == all_layers)
+                })
+            });
             // Groups that match every group, themselves included: the
             // rule is theirs against anything, and raising them keeps
             // every matched pair, as KiCad's larger-of-two does. Failing
@@ -1543,45 +1700,116 @@ fn lower_constraint(
                         .all(|j| matched.contains(&(i.min(j), i.max(j))))
                 })
                 .collect();
-            let raise = if covers(&star) {
-                star
+            let raise = if !uniform {
+                None
+            } else if covers(&star) {
+                Some(star)
             } else if covers(&present) {
-                present
+                Some(present)
             } else {
-                // A rule between two sets of nets (primary against
-                // secondary): one clearance a net would keep it from every
-                // net, the primary's own nets too (ChengminLi's flyback:
-                // 2.5 mm between the sides left 11 connections open where
-                // the designer's placement had kept the sides apart).
-                let binds = matched.iter().any(|(i, j)| {
-                    groups[*i]
-                        .iter()
-                        .chain(groups[*j].iter())
-                        .any(|&net| board.current[net].clearance_mm < value - 1.0e-9)
-                });
+                None
+            };
+            let Some(raise) = raise else {
+                // A rule between two sets of nets (ChengminLi's flyback:
+                // 2.5 mm primary to secondary), from some item types only
+                // (JLCPCB's "Pad to Track": 0.2 mm from pads to tracks over
+                // classes of 0.127 on AMLing2's drone carrier), or on some
+                // layers only: one clearance a net would keep it from
+                // every net, every item, on every layer, so it is a pair
+                // rule of the router (`pcb_router::ClearanceRule`).
                 let sides: BTreeSet<usize> = matched.iter().flat_map(|(i, j)| [*i, *j]).collect();
                 let nets: usize = sides.iter().map(|g| groups[*g].len()).sum();
-                if binds {
-                    lowered.note(
-                        rule,
-                        constraint,
-                        "unmodelled",
-                        format!(
-                            "clearance {} between two sets of nets ({nets} nets): the router has one clearance a net, which would keep it from every net",
-                            mm(value)
-                        ),
-                    );
-                } else {
+                if !binds(&matched) {
                     lowered.note(
                         rule,
                         constraint,
                         "no_effect",
                         format!(
-                            "clearance {} between two sets of nets: the net classes keep at least as much",
-                            mm(value)
+                            "clearance {} {}: the net classes keep at least as much",
+                            mm(value),
+                            if sides.len() > 1 {
+                                "between two sets of nets"
+                            } else {
+                                "on some item kinds or layers"
+                            }
                         ),
                     );
+                    return;
                 }
+                let side = |group: usize| (groups.len() > 1).then(|| groups[group].clone());
+                let mut kinds_seen = 0u16;
+                let mut layers_seen = 0u32;
+                for (&(a, b), table) in &tables {
+                    let mut by_layers: BTreeMap<u32, u16> = BTreeMap::new();
+                    for (ai, row) in table.iter().enumerate() {
+                        for (bi, mask) in row.iter().enumerate() {
+                            if *mask != 0 {
+                                *by_layers.entry(*mask).or_default() |= 1 << (ai * 3 + bi);
+                            }
+                        }
+                    }
+                    for (mask, kinds) in by_layers {
+                        kinds_seen |= kinds;
+                        layers_seen |= mask;
+                        let pair = PairClearance {
+                            first: side(a),
+                            second: side(b),
+                            kinds,
+                            layers: mask,
+                            clearance: value,
+                        };
+                        if !lowered.pair_clearances.contains(&pair) {
+                            lowered.pair_clearances.push(pair);
+                        }
+                    }
+                }
+                let kind_names = ["track", "via", "pad"];
+                let mut kinds_text: Vec<String> = Vec::new();
+                for ai in 0..2 {
+                    for bi in 0..3 {
+                        if kinds_seen & (1 << (ai * 3 + bi)) != 0 {
+                            kinds_text.push(format!("{} to {}", kind_names[ai], kind_names[bi]));
+                        }
+                    }
+                }
+                let layers_text = if layers_seen == all_layers {
+                    "every layer".to_string()
+                } else {
+                    board
+                        .copper_layers
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| layers_seen & (1 << index) != 0)
+                        .map(|(_, name)| name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
+                let mut detail = format!(
+                    "clearance {} as a pair rule: {} ({}; {})",
+                    mm(value),
+                    if groups.len() == 1 {
+                        "every net".to_string()
+                    } else if sides.len() > 1 {
+                        format!("between sets of nets, {nets} nets")
+                    } else {
+                        format!("within a set of {nets} nets")
+                    },
+                    kinds_text.join(", "),
+                    layers_text
+                );
+                if pad_types_differ {
+                    detail.push_str(" (SMD and plated pads alike: the router has one pad kind)");
+                }
+                lowered.note(
+                    rule,
+                    constraint,
+                    if pad_types_differ {
+                        "approximated"
+                    } else {
+                        "applied"
+                    },
+                    detail,
+                );
                 return;
             };
             let every = raise.len() == groups.len();
@@ -1771,15 +1999,22 @@ fn lower_constraint(
                     format!("{} of {} nets", applies.len(), board.nets.len())
                 }
             );
-            let approximated = rule.layer.is_some() && layers.len() < board.copper_layers.len()
-                || (kind == "track_width" && !every && constraint.min.is_some());
-            if rule.layer.is_some() && layers.len() < board.copper_layers.len() {
+            let approximated = rule.layer.is_some() && layers.len() < board.copper_layers.len();
+            if approximated {
                 detail.push_str(" (on every layer: the router has one width a net)");
             }
-            if kind == "track_width" && !every && constraint.min.is_some() {
-                detail.push_str(
-                    " (the class widths; neck-downs and the narrow-signal step are the board's)",
-                );
+            // A minimum on some nets floors their neck-downs and their
+            // narrow-signal width as well (router `width_floor`).
+            let floors_net_necks = kind == "track_width"
+                && !every
+                && constraint
+                    .min
+                    .is_some_and(|min| min > board.neck_width + 1.0e-9);
+            if floors_net_necks {
+                detail.push_str(&format!(
+                    "; their neck-downs rise from {} to it",
+                    mm(board.neck_width)
+                ));
             }
             // A board-wide minimum also floors the neck-downs.
             let floors_necks = kind == "track_width"
@@ -1793,7 +2028,7 @@ fn lower_constraint(
                     mm(board.neck_width)
                 ));
             }
-            if !changes && !floors_necks {
+            if !changes && !floors_necks && !floors_net_necks {
                 detail.push_str(": the net classes and the board setup keep it");
                 lowered.note(rule, constraint, "no_effect", detail);
                 return;
@@ -1928,7 +2163,7 @@ mod tests {
     }
 
     #[test]
-    fn a_rule_between_two_classes_is_unmodelled_unless_one_is_every_other_net() {
+    fn a_rule_between_two_classes_is_a_pair_rule_unless_one_is_every_other_net() {
         let board = board(&[
             ("HV", &["HV"]),
             ("GND_PRE", &["PRE"]),
@@ -1939,24 +2174,52 @@ mod tests {
             "(rule iso (condition \"A.NetClass == 'HV' && B.NetClass == 'PRE'\") (constraint clearance (min 4mm)))",
             &board,
         );
-        // One clearance a net would keep 4 mm from every net: not
-        // lowered, named for the verdict.
-        assert_eq!(rules.report[0].status, "unmodelled");
+        // One clearance a net would keep 4 mm from every net: a pair rule
+        // between the two sets instead, every item kind, every layer,
+        // both ways round.
+        assert_eq!(rules.report[0].status, "applied");
+        assert!(
+            rules.report[0]
+                .detail
+                .contains("between sets of nets, 2 nets")
+        );
         assert_eq!(rules.clearance, [0.0; 4]);
         assert_eq!(rules.clearance_all, 0.0);
-        assert!(rules.unmodelled[0].contains("between two sets of nets (2 nets)"));
+        assert!(rules.unmodelled.is_empty());
+        assert_eq!(rules.pair_clearances.len(), 2);
+        for pair in &rules.pair_clearances {
+            assert_eq!(pair.kinds, 0b111_111);
+            assert_eq!(pair.layers, 0b11);
+            assert_eq!(pair.clearance, 4.0);
+        }
+        type Sides = (Option<Vec<usize>>, Option<Vec<usize>>);
+        let sides: BTreeSet<Sides> = rules
+            .pair_clearances
+            .iter()
+            .map(|pair| (pair.first.clone(), pair.second.clone()))
+            .collect();
+        assert_eq!(
+            sides,
+            [
+                (Some(vec![0]), Some(vec![1])),
+                (Some(vec![1]), Some(vec![0]))
+            ]
+            .into()
+        );
         // Against everything else, a class's rule is the class's.
         let rules = lowered(
             "(rule iso (condition \"A.NetClass == 'HV' && B.NetClass != 'HV'\") (constraint clearance (min 4mm)))",
             &board,
         );
         assert_eq!(rules.clearance, [4.0, 0.0, 0.0, 0.0]);
+        assert!(rules.pair_clearances.is_empty());
         // Looser than the classes: nothing to keep.
         let rules = lowered(
             "(rule iso (condition \"A.NetClass == 'HV' && B.NetClass == 'PRE'\") (constraint clearance (min 0.05mm)))",
             &board,
         );
         assert_eq!(rules.report[0].status, "no_effect");
+        assert!(rules.pair_clearances.is_empty());
     }
 
     #[test]
@@ -1981,7 +2244,7 @@ mod tests {
     }
 
     #[test]
-    fn item_types_and_layers_widen_to_the_net() {
+    fn item_types_and_layers_are_pair_rules() {
         let board = board(&[("A", &["Default"]), ("B", &["Default"])]);
         let rules = lowered(
             "(rule tp (layer outer) (condition \"A.Type == 'pad' && B.Type == 'track' && A.Net != B.Net\") (constraint clearance (min 0.2)))
@@ -1989,19 +2252,104 @@ mod tests {
              (rule in (layer inner) (constraint clearance (min 0.9)))",
             &board,
         );
-        // Pad to track alone: a clearance a net would hold between tracks.
+        // Pad to track alone (JLCPCB's): a pair rule of tracks against
+        // pads, on every net (no side named), not a clearance a net would
+        // also hold between tracks.
         assert_eq!(rules.clearance_all, 0.0);
-        assert_eq!(rules.report[0].status, "unmodelled");
+        assert_eq!(rules.report[0].status, "applied");
+        assert_eq!(
+            rules.pair_clearances,
+            [PairClearance {
+                first: None,
+                second: None,
+                kinds: 1 << 2,
+                layers: 0b11,
+                clearance: 0.2,
+            }]
+        );
         let tracks = lowered(
             "(rule tt (layer outer) (condition \"A.Type == 'track' && B.Type == A.Type\") (constraint clearance (min 0.2)))",
             &board,
         );
-        assert_eq!(tracks.clearance_all, 0.2);
-        assert_eq!(tracks.report[0].status, "approximated");
+        assert_eq!(tracks.clearance_all, 0.0);
+        assert_eq!(tracks.report[0].status, "applied");
+        assert_eq!(tracks.pair_clearances[0].kinds, 1);
         // Pad to pad is the placement's, not the router's.
         assert_eq!(rules.report[1].status, "no_effect");
         // A two-layer board has no inner layer.
         assert_eq!(rules.report[2].status, "skipped");
+        // On four layers: the inner layers only.
+        let mut four = board.clone();
+        four.copper_layers = vec![
+            "F.Cu".into(),
+            "In1.Cu".into(),
+            "In2.Cu".into(),
+            "B.Cu".into(),
+        ];
+        let inner = lowered(
+            "(rule in (layer inner) (constraint clearance (min 0.9)))",
+            &four,
+        );
+        assert_eq!(inner.clearance_all, 0.0);
+        assert_eq!(inner.report[0].status, "applied");
+        assert_eq!(inner.pair_clearances[0].layers, 0b0110);
+        assert_eq!(inner.pair_clearances[0].kinds, 0b111_111);
+        // An SMD pad rule holds for plated pads too (one pad kind).
+        let smd = lowered(
+            "(rule smd (condition \"A.Pad_Type == 'SMD' && B.Type == 'track'\") (constraint clearance (min 0.3)))",
+            &board,
+        );
+        assert_eq!(smd.report[0].status, "approximated");
+        assert_eq!(smd.pair_clearances[0].kinds, 1 << 2);
+    }
+
+    #[test]
+    fn a_later_rule_takes_the_pairs_it_surely_matches() {
+        let board = board(&[("A", &["Default"]), ("B", &["Default"]), ("HV", &["HV"])]);
+        // JLCPCB's template: "Pad to Track" 0.2, then 0.127 on everything,
+        // which KiCad applies (the last matching rule).
+        let rules = lowered(
+            "(rule pt (condition \"A.Type == 'Pad' && B.Type == 'Track'\") (constraint clearance (min 0.2)))
+             (rule all (constraint clearance (min 0.127)))",
+            &board,
+        );
+        assert_eq!(rules.report[0].status, "no_effect");
+        assert!(rules.report[0].detail.contains("later rule"));
+        assert!(rules.pair_clearances.is_empty());
+        // The other way round, the pad rule is the last one for pads.
+        let rules = lowered(
+            "(rule all (constraint clearance (min 0.127)))
+             (rule pt (condition \"A.Type == 'Pad' && B.Type == 'Track'\") (constraint clearance (min 0.2)))",
+            &board,
+        );
+        assert_eq!(rules.report[1].status, "applied");
+        // (The general rule then holds for every pair but tracks to pads.)
+        assert_eq!(rules.pair_clearances.len(), 2);
+        assert!(
+            rules
+                .pair_clearances
+                .iter()
+                .any(|pair| pair.clearance == 0.2 && pair.kinds == 1 << 2)
+        );
+        assert!(
+            rules
+                .pair_clearances
+                .iter()
+                .any(|pair| pair.clearance == 0.127 && pair.kinds == 0b111_111 & !(1 << 2))
+        );
+        // A later rule on some nets takes their pairs only: the general
+        // 0.3 holds between A and B, not with HV.
+        let rules = lowered(
+            "(rule all (constraint clearance (min 0.3)))
+             (rule hv (condition \"A.NetClass == 'HV'\") (constraint clearance (min 0.05)))",
+            &board,
+        );
+        assert_eq!(rules.clearance_all, 0.0);
+        assert_eq!(rules.report[0].status, "applied");
+        let pair = &rules.pair_clearances[0];
+        assert_eq!(pair.clearance, 0.3);
+        assert_eq!(pair.first, Some(vec![0, 1]));
+        assert_eq!(pair.second, Some(vec![0, 1]));
     }
 
     #[test]

@@ -48,7 +48,7 @@ impl TileFrame {
 /// The lattice `Router::new` would choose for `board` with `config`
 /// (neck classes added first, as the router does), as tiles.
 pub fn tile_frame(board: &Board, config: &super::Config) -> TileFrame {
-    let (board, _) = Router::with_neck_classes(board, config);
+    let (board, _, _) = Router::with_neck_classes(board, config);
     TileFrame::of_grid(&Grid::choose(&board, &config.pitches))
 }
 

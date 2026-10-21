@@ -17,6 +17,7 @@ use std::sync::Arc;
 
 use crate::board::{Board, NetId, NetRoute, RuleClass, Segment, Via};
 use crate::grid::{DIRECTIONS, Grid, SAFETY, StaticMaps};
+use crate::rules::ClassRules;
 mod batching;
 mod build;
 mod cleanup;
@@ -909,7 +910,9 @@ pub struct Router {
     /// two offsets reach counts once; cleared again from the stamped list.
     stamp_mark: Vec<u64>,
     history: Vec<Vec<f32>>,
-    /// `stamps[net class][querying class]`
+    /// `stamps[net class][variant * classes + querying class]`, the
+    /// variant the layer's (`Router::stamps_on`; one variant without
+    /// layer-qualified rules).
     stamps: Vec<Vec<Stamps>>,
     nets: Vec<NetState>,
     direction_cost: Vec<[f32; 8]>,
@@ -961,6 +964,9 @@ pub struct Router {
     /// Per rule class: the class with the neck width instead of the track
     /// width (an added class), if the track is wider.
     neck_of: Vec<Option<usize>>,
+    /// The rules beyond the net classes, resolved against the board's
+    /// split classes (`Config::net_rules`); `None` without them.
+    class_rules: Option<Arc<ClassRules>>,
     /// Per rule class: whether a search runs with it (see
     /// `searched_classes`). The others (pour brushes) have no `hot`
     /// records and no via owners or free-layer words in their static maps.
@@ -998,5 +1004,7 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
     Router::new(board, config).run()
 }
 
+#[cfg(test)]
+mod rule_tests;
 #[cfg(test)]
 mod tests;

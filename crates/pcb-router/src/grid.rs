@@ -498,6 +498,20 @@ fn claim16(cell: &mut u16, net: Option<NetId>) {
 impl StaticMaps {
     /// `searched`: whether a search runs with this class (see the type).
     pub fn build(board: &Board, grid: &Grid, class: ClassId, searched: bool) -> Self {
+        Self::build_with_rules(board, grid, class, searched, None)
+    }
+
+    /// `build` with the rules beyond the net classes (`crate::rules`):
+    /// a pad, an existing track or via keeps what the rules ask of this
+    /// class's tracks (per layer) and vias, and a via keeps the same-net
+    /// hole-to-hole spacing from its own net's plated holes.
+    pub fn build_with_rules(
+        board: &Board,
+        grid: &Grid,
+        class: ClassId,
+        searched: bool,
+        net_rules: Option<&crate::rules::ClassRules>,
+    ) -> Self {
         // Input-reachable only through a caller that skips the check
         // (`check_capacity`; the router's build checks it first).
         assert!(
@@ -646,6 +660,40 @@ impl StaticMaps {
             };
             let trace_reach = trace_reach + SAFETY;
             let via_reach = via_reach + SAFETY;
+            // The rules beyond the classes: per layer for tracks, for vias
+            // the largest over the obstacle's layers.
+            let mut ruled_trace: Option<Vec<f64>> = None;
+            let mut via_reach = via_reach;
+            if let Some(split) = net_rules
+                && obstacle.kind == ObstacleKind::Copper
+            {
+                let per_layer: Vec<f64> = (0..board.layer_count)
+                    .map(|layer| {
+                        (half_width
+                            + split.obstacle_extra(class, crate::rules::TRACK, obstacle, layer)
+                            + SAFETY)
+                            .max(trace_reach)
+                    })
+                    .collect();
+                if per_layer.iter().any(|reach| *reach > trace_reach) {
+                    ruled_trace = Some(per_layer);
+                }
+                via_reach = via_reach.max(
+                    via_radius
+                        + split.obstacle_extra_via(class, obstacle, board.layer_count)
+                        + SAFETY,
+                );
+            }
+            let trace_reach = ruled_trace.as_ref().map_or(trace_reach, |per_layer| {
+                per_layer.iter().copied().fold(trace_reach, f64::max)
+            });
+            // A via of the hole's own net keeps the same-net hole-to-hole
+            // spacing from its drill (KiCad's hole_to_hole holds within a
+            // net: nuclone's VSS via 0.464 mm from J3's VSS pad hole).
+            let same_net_hole = net_rules
+                .map_or(0.0, |split| split.resolved.same_net_hole_to_hole)
+                .max(0.0);
+            let own_hole_reach = rules.via_drill / 2.0 + same_net_hole + SAFETY;
             let margin = step * step / (8.0 * trace_reach);
             let bounds = obstacle.shape.aabb();
 
@@ -700,7 +748,8 @@ impl StaticMaps {
                 for y in y0..=y1 {
                     for x in x0..=x1 {
                         let center = grid.center(x, y);
-                        if distance_at(x, y, center) < via_reach {
+                        let distance = distance_at(x, y, center);
+                        if distance < via_reach {
                             let index = grid.index(x, y);
                             if searched {
                                 via_owner[index] = match (own_vias, own_hole) {
@@ -713,8 +762,10 @@ impl StaticMaps {
                                         owner16(net)
                                     }
                                     (_, Some(net))
-                                        if !via_blocked[index]
-                                            || via_owner[index] == owner16(net) =>
+                                        if (!via_blocked[index]
+                                            || via_owner[index] == owner16(net))
+                                            && !(same_net_hole > 0.0
+                                                && distance < own_hole_reach) =>
                                     {
                                         owner16(net)
                                     }
@@ -737,6 +788,10 @@ impl StaticMaps {
                 if obstacle.layers & (1 << layer) == 0 {
                     continue;
                 }
+                let (trace_reach, margin) = match &ruled_trace {
+                    None => (trace_reach, margin),
+                    Some(per_layer) => (per_layer[layer], step * step / (8.0 * per_layer[layer])),
+                };
                 for y in y0..=y1 {
                     for x in x0..=x1 {
                         let index = grid.index(x, y);

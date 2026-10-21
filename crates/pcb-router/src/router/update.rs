@@ -13,9 +13,18 @@ impl Router {
     /// objects. Returns the number of nets rerouted. Everything else keeps
     /// its copper, occupancy, and history.
     pub fn update(&mut self, board: &Board) -> Result<usize, String> {
-        let (board, neck_of) = Self::with_neck_classes(board, &self.config);
+        let (board, neck_of, class_rules) = Self::with_neck_classes(board, &self.config);
         let board = &board;
-        if neck_of != self.neck_of {
+        let same_rules = match (&class_rules, &self.class_rules) {
+            (None, None) => true,
+            (Some(new), Some(old)) => {
+                new.class_group == old.class_group
+                    && new.class_floor == old.class_floor
+                    && new.resolved.net_group == old.resolved.net_group
+            }
+            _ => false,
+        };
+        if neck_of != self.neck_of || !same_rules {
             return Err("incremental update needs the same nets and rules".into());
         }
         if board.nets.len() != self.board.nets.len()
@@ -36,11 +45,18 @@ impl Router {
             map.fill(0);
         }
         self.board = board.clone();
+        self.class_rules = class_rules;
         self.searched = searched_classes(&self.board, &self.neck_of);
         self.statics = Arc::new(
             (0..self.board.classes.len())
                 .map(|class| {
-                    StaticMaps::build(&self.board, &self.grid, class, self.searched[class])
+                    StaticMaps::build_with_rules(
+                        &self.board,
+                        &self.grid,
+                        class,
+                        self.searched[class],
+                        self.class_rules.as_deref(),
+                    )
                 })
                 .collect(),
         );

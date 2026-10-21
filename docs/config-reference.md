@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 80 | 70 | 10 | 80 | 17 |
+| [Router settings](#router-settings) | 81 | 70 | 11 | 81 | 17 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 0 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 0 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 3 | 3 | 0 | 3 | 0 |
@@ -33,7 +33,7 @@ The environment variables are indexed in the hand-over
 | [Router report: rules](#router-report-rules) | 5 | - | 0 | 5 | - |
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 5 | - | 0 | 5 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
-| [Router core](#router-core) | 55 | - | 0 | 55 | - |
+| [Router core](#router-core) | 56 | - | 0 | 56 | - |
 | [Placer settings](#placer-settings) | 43 | 41 | 2 | 43 | 11 |
 | [Layout settings](#layout-settings) | 15 | 15 | 0 | 15 | 6 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
@@ -127,6 +127,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `pin_swaps` | `Option<PathBuf>` | unset | placer.md | Interchangeable pins (`pin-swaps.json`; relative to the source directory). The nets on them are permuted before routing, in the board and the schematic. |
 | `pin_swap` | `KiCadPinSwapConfig` | its own table | - | The pin-swap estimate's settings, for `pin_swaps`. |
 | `project_rules` (internal) | `Option<crate::project_rules::KiCadProjectRulesReport>` | unset (internal) | - | What the project's rules gave the router beyond its classes (`project_rules`; reported in `rules`, not read from a file). |
+| `net_rules` (internal) | `Option<std::sync::Arc<pcb_router::NetRules>>` | unset (internal) | - | Router `net_rules` (`project_rules`; not read from a file). |
 
 ## Router settings: topological
 
@@ -285,6 +286,7 @@ One constraint of one rule of the project's `.kicad_dru`. Source: `KiCadCustomRu
 | `verbose` | `bool` | `false` | the KiCad layer | Print progress to stderr: one line per negotiation iteration and what the clean-up, the via reduction and the spoke repairs did (the KiCad router always sets it). |
 | `deadline` | `Option<std::time::Instant>` | unset | `deadline` | A wall-clock time by which routing returns what it has, however much work its budgets still allow: every budget counts as spent from then on (an agent waits for the result). |
 | `deadline_work` | `Option<f64>` | unset | `router_deadline_work` | The work (this router's own, in seconds of an idle machine) at which routing returns what it has, as at `deadline`: the caller's deadline counted in work, so that where a run stops does not depend on how busy the machine is (the layout sets it from its own budget; `deadline` stays as the guard against load). |
+| `net_rules` | `Option<std::sync::Arc<crate::rules::NetRules>>` | unset | `net_rules` | Rules beyond the net classes (`crate::rules`): per-net width floors, clearances between sets of nets, per item type and per layer, and the same-net hole-to-hole spacing. `None` (or empty rules): the classes alone, as before. |
 
 ## Placer settings
 

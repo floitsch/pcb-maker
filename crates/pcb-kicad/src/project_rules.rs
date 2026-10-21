@@ -127,9 +127,12 @@ struct ClassSpec {
     drill: Option<f64>,
 }
 
-/// The copper layer names of a board's `(layers ...)`.
+/// The copper layer names of a board's `(layers ...)`, in the router's
+/// order (F.Cu, In1.Cu, In2.Cu, ..., B.Cu: the lowering's `LayerTable`),
+/// so that a layer's index is the router's.
 fn copper_layer_names(pcb: &Expr) -> Vec<String> {
-    pcb.child("layers")
+    let mut names: Vec<String> = pcb
+        .child("layers")
         .map(|layers| {
             layers
                 .children()
@@ -139,7 +142,20 @@ fn copper_layer_names(pcb: &Expr) -> Vec<String> {
                 .map(str::to_string)
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    names.sort_by_key(|name| match name.as_str() {
+        "F.Cu" => (0, 0),
+        "B.Cu" => (2, 0),
+        other => (
+            1,
+            other
+                .trim_start_matches("In")
+                .trim_end_matches(".Cu")
+                .parse()
+                .unwrap_or(u32::MAX),
+        ),
+    });
+    names
 }
 
 /// Resolves per-connection rules for every net on `pcb` from the project
@@ -383,6 +399,21 @@ pub fn resolve_project_rules(
         narrowest.clamp(0.1, 0.127)
     };
     let mut narrow_signal = narrow_signal.is_finite().then_some(narrow_signal);
+    let severities: BTreeMap<String, String> =
+        project["board"]["design_settings"]["rule_severities"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_string())))
+            .collect();
+    // The router's rules beyond the classes (`pcb_router::NetRules`).
+    let mut net_rules = pcb_router::NetRules::default();
+    // KiCad's hole_to_hole holds between the holes of one net too (a via
+    // beside a pad hole of its own net: nuclone's VSS); the router keeps
+    // it where the project rates the findings errors.
+    if dru::finding_severity("hole_to_hole", &severities) == "error" {
+        net_rules.same_net_hole_to_hole = hole_to_hole;
+    }
 
     // The project's custom rules.
     let dru_path = project_path.with_extension("kicad_dru");
@@ -398,13 +429,6 @@ pub fn resolve_project_rules(
                 report.custom_rules_error = Some(error);
             }
             Ok(rules) => {
-                let severities: BTreeMap<String, String> =
-                    project["board"]["design_settings"]["rule_severities"]
-                        .as_object()
-                        .into_iter()
-                        .flatten()
-                        .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_string())))
-                        .collect();
                 let current = net_facts
                     .iter()
                     .map(|net| connection_rules[normalize_net(&net.name)].clone())
@@ -429,6 +453,32 @@ pub fn resolve_project_rules(
                 hole_to_hole = hole_to_hole.max(lowered.hole_to_hole);
                 neck = neck.max(lowered.width_min_all);
                 narrow_signal = narrow_signal.map(|width| width.max(lowered.width_min_all));
+                // A net's own minimum floors its neck-downs and its narrow
+                // width (the classes are raised by `apply_custom`).
+                for (index, net) in board.nets.iter().enumerate() {
+                    let floor = lowered.width_min[index].max(lowered.width_min_all);
+                    if floor > neck + 1.0e-9 {
+                        net_rules
+                            .width_floor
+                            .insert(normalize_net(&net.name).to_string(), floor);
+                    }
+                }
+                let names = |nets: &Option<Vec<usize>>| {
+                    nets.as_ref().map(|nets| {
+                        nets.iter()
+                            .map(|&index| normalize_net(&board.nets[index].name).to_string())
+                            .collect::<Vec<_>>()
+                    })
+                };
+                for pair in &lowered.pair_clearances {
+                    net_rules.clearances.push(pcb_router::ClearanceRule {
+                        first: names(&pair.first),
+                        second: names(&pair.second),
+                        kinds: pair.kinds,
+                        layers: pair.layers,
+                        clearance: pair.clearance,
+                    });
+                }
                 report.custom_rules = lowered.report;
                 report.unmodelled.extend(lowered.unmodelled);
             }
@@ -464,6 +514,7 @@ pub fn resolve_project_rules(
         connection_width_severity: (minimum("min_connection") > 0.0)
             .then(|| severity.unwrap_or_else(|| "warning".into())),
         project_rules: Some(report),
+        net_rules: (!net_rules.is_empty()).then(|| std::sync::Arc::new(net_rules)),
         ..KiCadBoardRouterConfig::default()
     };
     // The narrow-signal and neck widths, too (the classes are floored
@@ -828,7 +879,7 @@ mod tests {
             [
                 ("HV isolation", "applied"),
                 ("Track width, outer", "no_effect"),
-                ("Wide USB", "approximated"),
+                ("Wide USB", "applied"),
                 ("Edge", "approximated"),
                 ("PTH to track", "approximated"),
                 ("Creepage", "unmodelled"),
@@ -838,6 +889,89 @@ mod tests {
         );
         assert_eq!(report.unmodelled.len(), 2);
         assert!(report.unmodelled[1].contains("A.insidearea()"));
+        // USB_DP's minimum floors its neck-downs (the others keep the
+        // board's 0.15); hole to hole is a warning by KiCad's default.
+        let net_rules = config.net_rules.unwrap();
+        assert_eq!(net_rules.width_floor, [("USB_DP".to_string(), 0.25)].into());
+        assert!(net_rules.clearances.is_empty());
+        assert_eq!(net_rules.same_net_hole_to_hole, 0.0);
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn pair_item_and_layer_clearances_become_router_rules() {
+        let (directory, project) = project_directory(
+            "pairs",
+            r#"{"board": {"design_settings": {"rules": {"min_track_width": 0.15, "min_hole_to_hole": 0.5},
+                                              "rule_severities": {"hole_near_hole": "error"}}},
+                "net_settings": {
+                  "classes": [
+                    {"name": "Default", "clearance": 0.127, "track_width": 0.2, "via_diameter": 0.6, "via_drill": 0.3},
+                    {"name": "PRI", "clearance": 0.2, "track_width": 0.5}],
+                  "netclass_patterns": [{"netclass": "PRI", "pattern": "*POE*"}]}}"#,
+            Some(
+                r#"(version 1)
+(rule "Isolation" (condition "A.NetClass == 'PRI' && B.NetClass == 'Default'") (constraint clearance (min 2.5mm)))
+(rule "Pad to Track" (condition "A.Type == 'Pad' && B.Type == 'Track'") (constraint clearance (min 0.2mm)))
+(rule "Outer" (layer outer) (condition "A.Type == 'Via' && B.Type == 'Via'") (constraint clearance (min 0.3mm)))"#,
+            ),
+        );
+        let config = resolve_project_rules(&project, &directory.join("board.kicad_pcb")).unwrap();
+        // No net's own clearance rises: SDA keeps 0.127 against SDA's
+        // kind, the primary nets their 0.2.
+        assert_eq!(config.connection_rules["SDA"].clearance_mm, 0.127);
+        assert_eq!(config.connection_rules["POE_RAW"].clearance_mm, 0.2);
+        let report = config.project_rules.as_ref().unwrap();
+        let status: Vec<&str> = report
+            .custom_rules
+            .iter()
+            .map(|rule| rule.status.as_str())
+            .collect();
+        assert_eq!(status, ["applied", "applied", "applied"]);
+        assert!(report.unmodelled.is_empty());
+        let net_rules = config.net_rules.unwrap();
+        // KiCad 8's hole_near_hole as an error: within a net too.
+        assert_eq!(net_rules.same_net_hole_to_hole, 0.5);
+        let isolation: Vec<&pcb_router::ClearanceRule> = net_rules
+            .clearances
+            .iter()
+            .filter(|rule| rule.clearance == 2.5)
+            .collect();
+        assert_eq!(isolation.len(), 2);
+        let primary = Some(vec!["POE_RAW".to_string(), "V_POE_GOOD".to_string()]);
+        let secondary = Some(vec!["SDA".to_string(), "USB_DP".to_string()]);
+        assert!(
+            isolation
+                .iter()
+                .any(|rule| rule.first == primary && rule.second == secondary)
+        );
+        // The later rules take tracks against pads and vias against vias
+        // from it (KiCad applies the last matching rule).
+        use pcb_router::rules::{ALL_KINDS, PAD, TRACK, VIA, kind_bit};
+        assert!(
+            isolation
+                .iter()
+                .all(|rule| rule.kinds == ALL_KINDS & !kind_bit(TRACK, PAD) & !kind_bit(VIA, VIA))
+        );
+        let pad = net_rules
+            .clearances
+            .iter()
+            .find(|rule| rule.clearance == 0.2)
+            .unwrap();
+        assert_eq!((&pad.first, &pad.second), (&None, &None));
+        assert_eq!(
+            pad.kinds,
+            pcb_router::rules::kind_bit(pcb_router::rules::TRACK, pcb_router::rules::PAD)
+        );
+        let vias = net_rules
+            .clearances
+            .iter()
+            .find(|rule| rule.clearance == 0.3)
+            .unwrap();
+        assert_eq!(
+            vias.kinds,
+            pcb_router::rules::kind_bit(pcb_router::rules::VIA, pcb_router::rules::VIA)
+        );
         fs::remove_dir_all(&directory).unwrap();
     }
 
