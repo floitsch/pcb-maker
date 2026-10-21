@@ -126,11 +126,135 @@ class StrictRule(unittest.TestCase):
         ours = finding("hole_clearance", ("a", (1.0, 1.0)))
         reference = [finding("hole_clearance", ("z", (float(i), 40.0))) for i in range(run.KICAD_FINDING_CAP)]
         split = run.strict_findings([ours], reference + [ours])
-        self.assertEqual(split, {"new": {"hole_clearance": 1}, "preexisting": {}, "unknown": ["hole_clearance"]})
+        self.assertEqual(split, {"new": {"hole_clearance": 1}, "preexisting": {}, "unknown": ["hole_clearance"],
+                                 "mask_openings": 0})
 
     def test_without_a_baseline_every_finding_counts(self):
         split = run.strict_findings([finding("clearance", ("a", (1.0, 1.0)))], None)
         self.assertEqual(split["new"], {"clearance": 1})
+
+
+def bridge(*items):
+    """A KiCad solder_mask_bridge violation: items as (description, uuid, (x, y))."""
+    return {"type": "solder_mask_bridge", "severity": "error",
+            "description": "Front solder mask aperture bridges items with different nets",
+            "items": [{"description": description, "uuid": uuid, "pos": {"x": at[0], "y": at[1]}}
+                      for description, uuid, at in items]}
+
+
+OPENING = ("Rectangle of J_LCD1 on F.Mask", "r1", (38.9, 56.0))
+J2_PAD = ("Pad 3 [GND] of J2 on F.Cu", "p3", (10.0, 10.0))
+J2_PAD4 = ("Pad 4 [VCC] of J2 on F.Cu", "p4", (10.5, 10.0))
+POUR = ("Zone [GND] on F.Cu, priority 0", "z1", (13.0, 30.1))
+
+
+def track(uuid, net="LCD_SCLK", at=(46.8, 57.5)):
+    return (f"Track [{net}] on F.Cu, length 1.6626 mm", uuid, at)
+
+
+class StrictMaskOpenings(unittest.TestCase):
+    """The strict rule's pre-bridged mask openings (rule 2): a solder mask
+    bridge of a designer's opening that bridges on the designer's board
+    already, with one of our tracks, is not ours."""
+
+    def split(self, ours, stripped, designer=None):
+        report = lambda violations: run.counting_findings({"violations": violations})  # noqa: E731
+        return run.strict_findings(report(ours), report(stripped),
+                                   None if designer is None else report(designer))
+
+    def test_an_opening_bridged_on_the_stripped_board_bridges_our_track(self):
+        # Stripped: the opening shows the pour (opening and zone). Ours:
+        # the same pair (the same place) and the opening with our track.
+        split = self.split([bridge(OPENING, POUR), bridge(OPENING, track("t9"))], [bridge(OPENING, POUR)])
+        self.assertEqual((split["new"], split["preexisting"], split["mask_openings"]),
+                         ({}, {"solder_mask_bridge": 1}, 1))
+
+    def test_an_opening_the_designer_shipped_bridged(self):
+        # Not on the stripped board (the designer's tracks went with the
+        # strip), but on the designer's own: their track under it.
+        ours = [bridge(OPENING, track("t9"))]
+        self.assertEqual(self.split(ours, [])["new"], {"solder_mask_bridge": 1})
+        split = self.split(ours, [], [bridge(OPENING, track("designer-t1", "LCD_DC", (47.0, 58.0)))])
+        self.assertEqual((split["new"], split["mask_openings"]), ({}, 1))
+
+    def test_matched_by_position_when_the_uuid_differs(self):
+        moved = ("Rectangle of J_LCD1 on F.Mask", "new-uuid", (38.92, 56.0))
+        split = self.split([bridge(moved, track("t9"))], [bridge(OPENING, POUR)])
+        self.assertEqual(split["mask_openings"], 1)
+        far = ("Rectangle of J_LCD1 on F.Mask", "new-uuid", (60.0, 56.0))
+        self.assertEqual(self.split([bridge(far, track("t9"))], [bridge(OPENING, POUR)])["new"],
+                         {"solder_mask_bridge": 1})
+
+    def test_a_pad_aperture_over_pads_of_several_nets_bridges_a_track_leaving_a_pad(self):
+        split = self.split([bridge(J2_PAD, track("t9", "VCC", (10.6, 10.2)))], [bridge(J2_PAD, J2_PAD4)])
+        self.assertEqual((split["new"], split["mask_openings"]), ({}, 1))
+
+    def test_our_via_under_a_bridged_aperture_counts(self):
+        via = ("Via [SDA] on F.Cu - B.Cu", "v1", (10.2, 10.1))
+        split = self.split([bridge(J2_PAD, via), bridge(via, J2_PAD)], [bridge(J2_PAD, J2_PAD4)])
+        self.assertEqual((split["new"], split["mask_openings"]), ({"solder_mask_bridge": 2}, 0))
+
+    def test_a_pad_of_another_part_under_a_bridged_aperture_counts(self):
+        other = ("Pad 1 [SDA] of R5 on F.Cu", "q1", (10.3, 10.4))
+        split = self.split([bridge(J2_PAD, other)], [bridge(J2_PAD, J2_PAD4)])
+        self.assertEqual(split["new"], {"solder_mask_bridge": 1})
+
+    def test_two_of_our_own_items_count(self):
+        via = ("Via [SDA] on F.Cu - B.Cu", "v1", (20.0, 20.0))
+        split = self.split([bridge(via, track("t9", at=(20.1, 20.0)))], [bridge(OPENING, POUR)])
+        self.assertEqual(split["new"], {"solder_mask_bridge": 1})
+
+    def test_an_opening_bridged_nowhere_counts(self):
+        text = ("PCB text '0bsilab' on F.Mask", "x1", (89.7, 84.1))
+        split = self.split([bridge(text, track("t9"))], [bridge(OPENING, POUR)], [bridge(OPENING, POUR)])
+        self.assertEqual(split["new"], {"solder_mask_bridge": 1})
+
+    def test_without_a_baseline_every_bridge_counts(self):
+        ours = run.counting_findings({"violations": [bridge(OPENING, track("t9"))]})
+        designer = run.counting_findings({"violations": [bridge(OPENING, POUR)]})
+        self.assertEqual(run.strict_findings(ours, None, designer)["new"], {"solder_mask_bridge": 1})
+
+    def test_openings_are_mask_graphics_and_pads(self):
+        for description in ("Rectangle of J_LCD1 on F.Mask", "PCB text 'RX' on B.Mask", "Pad 1 [GND] of U3 on B.Mask",
+                            "Pad 3 [GND] of J2 on F.Cu", "PTH pad 1 [VCC] of SW4", "NPTH pad of SW4"):
+            self.assertTrue(run.mask_opening((None, None, description)), description)
+        for description in ("Track [GND] on F.Cu, length 1.0 mm", "Via [GND] on F.Cu - B.Cu",
+                            "Zone [GND] on F.Cu, priority 0", "Segment [GND] of U1 on F.Cu", ""):
+            self.assertFalse(run.mask_opening((None, None, description)), description)
+
+    def test_the_row_carries_the_rule_and_the_subtracted_count(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            work = Path(scratch)
+            (work / "result").mkdir()
+            (work / "result/drc.json").write_text(json.dumps(
+                {"violations": [bridge(OPENING, track("t9")), bridge(J2_PAD, ("Via [SDA] on F.Cu - B.Cu", "v1",
+                                                                                (10.2, 10.1)))],
+                 "unconnected_items": []}))
+            (work / run.DESIGNER_BRIDGES).write_text(json.dumps({"violations": [bridge(OPENING, track("d1"))]}))
+            baseline = run.StrictBaseline(work, "board", work, None)
+            baseline.enabled, baseline.taken, baseline.result = True, True, []
+            row = {"native": {"errors": {}, "unconnected": 0}}
+            run.strict_row(row, run.strict_native(work / "result", baseline))
+            self.assertEqual((row["strict_rule"], row["strict_mask_openings"], row["new_findings_strict"],
+                              row["pass_strict"]), (run.STRICT_RULE, 1, {"solder_mask_bridge": 1}, False))
+
+    def test_the_designers_bridges_are_kept_for_the_rule(self):
+        # A stand-in for the binary: drc-kicad-board writes a report with a
+        # bridge and a clearance finding.
+        with tempfile.TemporaryDirectory() as scratch:
+            scratch = Path(scratch)
+            report = {"violations": [bridge(OPENING, POUR),
+                                     {"type": "clearance", "severity": "error", "items": []}]}
+            binary = scratch / "pcb-maker"
+            binary.write_text("#!/bin/sh\nif [ \"$1\" = --help ]; then echo drc-kicad-board; exit 0; fi\n"
+                              f"printf '%s' '{json.dumps(report)}' > \"$4\"\n")
+            binary.chmod(0o755)
+            work = scratch / "work"
+            work.mkdir()
+            counts = run.designer_findings(scratch, "board", work, binary)
+            self.assertEqual(counts, {"solder_mask_bridge": 1, "clearance": 1})
+            kept = json.loads((work / run.DESIGNER_BRIDGES).read_text())["violations"]
+            self.assertEqual([violation["type"] for violation in kept], ["solder_mask_bridge"])
 
 
 class CommittedTaskLists(unittest.TestCase):

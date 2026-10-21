@@ -412,7 +412,11 @@ board. `--reference none` counts every error. The reference is checked
 errors that count. A reference with its tracks stripped (a board as handed
 to the router) says what the fixed geometry brings on its own; the
 benchmarks' strict rule uses the designer's board stripped so
-(`strip-kicad-tracks`: tracks, vias and small zones).
+(`strip-kicad-tracks`: tracks, vias and small zones), and since its rule 2
+(run.py, 2026-10-22) also leaves out a solder mask bridge between a track
+and a designer's mask opening that bridges on that board or on the
+designer's own (benchmarks/agent-tasks/README.md, "How to measure"); the
+verdict here does not.
 
 `<out-dir>/verdict.json` is written for every run that got as far as an
 output directory, also for an error (with `error`) or when the layout

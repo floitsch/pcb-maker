@@ -22,7 +22,10 @@ designer's board's count of its type (`pass`). The strict rule
 designer's board has at the same place: KiCad's DRC of the designer's board
 with its tracks, vias and small zones stripped (what the fixed geometry
 brings on its own; `strict_findings`), a type it has at KiCad's cap not at
-all. `clean_without_subtraction` says the result has no error that counts
+all; since rule 2 (`strict_rule`) neither a solder mask bridge between one
+of our tracks and a designer's mask opening that bridges on the stripped
+or the designer's own board already (`strict_mask_openings`, README.md
+"How to measure"). `clean_without_subtraction` says the result has no error that counts
 before any subtraction. `repairs` is the binary's verdict's (island stubs,
 connection-width repair tracks, the pour mode kept).
 
@@ -218,9 +221,26 @@ KICAD_FINDING_CAP = 199
 SAME_PLACE_MM = 0.05
 
 
+# The strict rule's version, in every judged row (`strict_rule`) and in
+# summary.json; compare.py warns when two runs were judged under different
+# ones. 1: the designer's findings at the same place (2026-10-19). 2: also
+# solder mask bridges of a designer's opening that bridges on the
+# designer's board already (2026-10-22, `strict_mask_openings`).
+STRICT_RULE = 2
+# The designer's own board's solder mask bridges, kept in a task's work
+# directory by designer_findings for the strict rule.
+DESIGNER_BRIDGES = "designer-mask-bridges.json"
+# KiCad's item descriptions: a graphic or a pad on a mask layer names the
+# layer ("Rectangle of J_LCD1 on F.Mask", "PCB text 'RX' on B.Mask"); a
+# pad's aperture is the pad's ("Pad 3 [GND] of J2 on F.Cu", "PTH pad 1
+# [VCC] of SW4", "NPTH pad of SW4").
+MASK_LAYER = re.compile(r"\b[FB]\.Mask\b")
+PAD_ITEM = re.compile(r"^(?:N?PTH )?[Pp]ad\b")
+
+
 def counting_findings(drc):
     """The findings of a DRC report that count (errors, not excluded, not
-    cosmetic): (type, [(uuid, (x, y))]) each."""
+    cosmetic): (type, [(uuid, (x, y), description)]) each."""
     findings = []
     for violation in drc.get("violations", []):
         if violation.get("severity") != "error" or violation.get("excluded") or COSMETIC.match(violation["type"]):
@@ -228,9 +248,51 @@ def counting_findings(drc):
         items = []
         for item in violation.get("items", []):
             position = item.get("pos")
-            items.append((item.get("uuid"), (position["x"], position["y"]) if position else None))
+            items.append((item.get("uuid"), (position["x"], position["y"]) if position else None,
+                          item.get("description") or ""))
         findings.append((violation["type"], items))
     return findings
+
+
+def mask_opening(item):
+    """Whether a finding's item is a mask opening: a graphic (or a pad
+    without copper there) on F.Mask or B.Mask, or a pad (its aperture)."""
+    description = item[2] if len(item) > 2 else ""
+    if description.startswith(("Track", "Via", "Zone")):
+        return False
+    return bool(PAD_ITEM.match(description) or MASK_LAYER.search(description))
+
+
+def bridged_openings(findings):
+    """The mask openings of the solder_mask_bridge findings among
+    `findings` (counting_findings of a designer's board): [(uuid, at)]."""
+    return [(item[0], item[1]) for kind, items in findings or [] if kind == "solder_mask_bridge"
+            for item in items if mask_opening(item)]
+
+
+def prebridged(finding, openings):
+    """Whether `finding` is a solder mask bridge between a mask opening
+    that bridges on the designer's board already (`openings`, matched by
+    uuid or by position within SAME_PLACE_MM) and a track or a zone: the
+    bridge is the opening's (the designer's tracks along it stripped, the
+    pour shows through; an aperture over pads of several nets bridges
+    whatever leaves a pad inside). A via under an opening, a pad of
+    another part and two items of ours are not."""
+    kind, items = finding
+    if kind != "solder_mask_bridge" or len(items) != 2:
+        return False
+    for index, item in enumerate(items):
+        other = items[1 - index]
+        other_description = other[2] if len(other) > 2 else ""
+        if not mask_opening(item) or not other_description.startswith(("Track", "Zone")):
+            continue
+        uuid, at = item[0], item[1]
+        for theirs, there in openings:
+            if uuid is not None and uuid == theirs:
+                return True
+            if at is not None and there is not None and _distance(at, there) <= SAME_PLACE_MM:
+                return True
+    return False
 
 
 def same_place(ours, theirs):
@@ -240,11 +302,11 @@ def same_place(ours, theirs):
     same positions (verdict.rs, same_place)."""
     if ours[0] != theirs[0] or not ours[1] or len(ours[1]) != len(theirs[1]):
         return False
-    mine = [uuid for uuid, _ in ours[1]]
-    reference = [uuid for uuid, _ in theirs[1]]
+    mine = [item[0] for item in ours[1]]
+    reference = [item[0] for item in theirs[1]]
     if None not in mine and None not in reference and sorted(mine) == sorted(reference):
-        at_ours = {uuid: at for uuid, at in ours[1]}
-        at_theirs = {uuid: at for uuid, at in theirs[1]}
+        at_ours = {item[0]: item[1] for item in ours[1]}
+        at_theirs = {item[0]: item[1] for item in theirs[1]}
         rigid = True
         for index, first in enumerate(mine):
             for second in mine[index + 1:]:
@@ -256,10 +318,12 @@ def same_place(ours, theirs):
         if rigid:
             return True
     used = [False] * len(theirs[1])
-    for _, at in ours[1]:
+    for item in ours[1]:
+        at = item[1]
         if at is None:
             return False
-        for index, (_, other) in enumerate(theirs[1]):
+        for index, their_item in enumerate(theirs[1]):
+            other = their_item[1]
             if not used[index] and other is not None and _distance(at, other) <= SAME_PLACE_MM:
                 used[index] = True
                 break
@@ -272,16 +336,24 @@ def _distance(a, b):
     return ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
 
 
-def strict_findings(ours, reference):
+def strict_findings(ours, reference, designer=None):
     """Splits our findings (counting_findings) into the reference's at the
     same place and our own: {"new": {type: n}, "preexisting": {type: n},
-    "unknown": [types the reference has at KiCad's cap]}; every finding of
-    an unknown type is new. `reference` None: no baseline, all are new."""
-    reference = reference or []
+    "unknown": [types the reference has at KiCad's cap], "mask_openings":
+    n}; every finding of an unknown type is new. `reference` None: no
+    baseline, all are new. A solder mask bridge that is not the
+    reference's is still not ours when a mask opening of it bridges on the
+    reference (the stripped designer board) or on `designer` (the
+    designer's own board, tracks and all: shipped bridged) and the other
+    item is a track or a zone (`prebridged`); those are counted in
+    "mask_openings", in neither "new" nor "preexisting"."""
+    if reference is None:
+        reference, designer = [], None
     counts = {}
     for kind, _ in reference:
         counts[kind] = counts.get(kind, 0) + 1
-    new, preexisting, unknown = {}, {}, []
+    openings = bridged_openings(reference) + bridged_openings(designer)
+    new, preexisting, unknown, mask_openings = {}, {}, [], 0
     used = [False] * len(reference)
     for finding in ours:
         kind = finding[0]
@@ -296,8 +368,11 @@ def strict_findings(ours, reference):
                 preexisting[kind] = preexisting.get(kind, 0) + 1
                 break
         else:
-            new[kind] = new.get(kind, 0) + 1
-    return {"new": new, "preexisting": preexisting, "unknown": unknown}
+            if prebridged(finding, openings):
+                mask_openings += 1
+            else:
+                new[kind] = new.get(kind, 0) + 1
+    return {"new": new, "preexisting": preexisting, "unknown": unknown, "mask_openings": mask_openings}
 
 
 class StrictBaseline:
@@ -344,6 +419,16 @@ class StrictBaseline:
             shutil.rmtree(project, ignore_errors=True)
         return self.result
 
+    def designer(self):
+        """The designer's own board's solder mask bridges (designer_findings
+        keeps them as `designer-mask-bridges.json`): counting_findings, or
+        None where there is no such file."""
+        report = self.work / DESIGNER_BRIDGES
+        try:
+            return counting_findings(json.loads(report.read_text()))
+        except (OSError, ValueError):
+            return None
+
 
 def strict_native(result_directory, baseline):
     """The strict rule on the result's drc.json: strict_findings against the
@@ -355,7 +440,9 @@ def strict_native(result_directory, baseline):
     drc = json.loads(report.read_text())
     ours = counting_findings(drc)
     reference = baseline.findings() if (ours and baseline is not None) else None
-    split = strict_findings(ours, reference)
+    designer = baseline.designer() if (reference is not None and any(
+        kind == "solder_mask_bridge" for kind, _ in ours)) else None
+    split = strict_findings(ours, reference, designer)
     split["clean"] = not ours and not drc.get("unconnected_items")
     if ours and baseline is not None and baseline.enabled and reference is None:
         split["baseline_error"] = baseline.error or "no baseline"
@@ -367,9 +454,14 @@ def strict_row(row, strict, unexpected=()):
     if strict is None:
         row["pass_strict"] = False
         return
+    row["strict_rule"] = STRICT_RULE
     row["new_findings_strict"] = strict["new"]
     if strict["preexisting"]:
         row["preexisting_strict"] = strict["preexisting"]
+    if strict.get("mask_openings"):
+        # Solder mask bridges of a designer's opening that bridges on the
+        # designer's board already (prebridged): not counted, not hidden.
+        row["strict_mask_openings"] = strict["mask_openings"]
     if strict["unknown"]:
         row["strict_unknown"] = strict["unknown"]
     if strict.get("baseline_error"):
@@ -481,9 +573,15 @@ def designer_findings(directory, board_id, work, binary=None):
     if not report.exists():
         return {}
     counts = {}
-    for violation in json.loads(report.read_text()).get("violations", []):
+    violations = json.loads(report.read_text()).get("violations", [])
+    for violation in violations:
         if violation.get("severity") == "error" and not violation.get("excluded") and not COSMETIC.match(violation["type"]):
             counts[violation["type"]] = counts.get(violation["type"], 0) + 1
+    # The strict rule's openings that the designer shipped bridged
+    # (StrictBaseline.designer): the solder mask bridges alone, small.
+    bridges = [violation for violation in violations if violation.get("type") == "solder_mask_bridge"]
+    if bridges:
+        (work / DESIGNER_BRIDGES).write_text(json.dumps({"violations": bridges}))
     shutil.rmtree(reference, ignore_errors=True)
     return counts
 
@@ -1807,10 +1905,10 @@ def main():
     print(f"{passed}/{len(ordered)} tasks pass ({wall:.0f} s wall, "
           f"largest peak {peak / 1024:.1f} GB"
           + (f"; {spliced_count} rows spliced from {arguments.splice_from}" if spliced_count else "") + ")"
-          + f"; strict rule: {strict} pass")
+          + f"; strict rule {STRICT_RULE}: {strict} pass")
     # Continuous measures, usable from one run (README.md, "How to measure").
     summary = objectives(ordered)
-    summary.update(wall_seconds=round(wall), budget_scale=arguments.budget_scale,
+    summary.update(wall_seconds=round(wall), budget_scale=arguments.budget_scale, strict_rule=STRICT_RULE,
                    mode="schematic" if arguments.schematic else "route" if arguments.route_from
                    or arguments.designer else run_mode(tasks),
                    spliced=spliced_count,

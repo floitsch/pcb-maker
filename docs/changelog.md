@@ -11,6 +11,72 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-22 (strict rule: pre-bridged mask openings)
+
+The remaining solder mask bridges of lowering gaps 2 (56 on 8 intake
+boards; Sisu's 14 to 17 strict findings in the fingerprint, layout and
+designer rows) are openings the designer drew along their own tracks over
+a pour, or apertures over pads of several nets: once the tracks are
+stripped the pour shows through, and any track of ours leaving a pad
+inside bridges to it. The strict rule subtracted only the stripped
+designer board's own pairs at the same place, never the opening and our
+track. A harness change (branch strict-mask-bridges), no Rust.
+
+**Rule 2** (run.py's `strict_findings`, `prebridged`; README.md "How to
+measure", "The strict rule"): a solder_mask_bridge finding that is not
+the designer's at the same place is still not counted when one item is a
+mask opening (a graphic on F.Mask or B.Mask, or a pad's aperture, by
+KiCad's item description) that bridges on the stripped designer board
+(`baseline-drc.json`) or on the designer's own board with its tracks
+(they shipped it bridged), matched by the opening's uuid or by position
+within 0.05 mm, and the other item is a track or a zone. Our vias under
+an opening, a pad of another part under an aperture, two items of ours
+and an opening that bridges on neither designer board still count. The
+designer's own board's bridges are kept by `designer_findings` (the DRC
+it already ran) as `designer-mask-bridges.json` in the task's work
+directory. Rows gain `strict_rule` (2; rows without it are rule 1) and
+`strict_mask_openings` (the findings this rule left out, in neither
+`new_findings_strict` nor `preexisting_strict`); summary.json gains
+`strict_rule`. compare.py sums `strict_mask_openings` in the objectives
+("N mask-opening bridges not counted") and prints STRICT RULES DIFFER
+before the table when the two runs' rows were judged under different
+rules. The binary's verdict (verdict.rs) keeps rule 1 (docs/agents.md
+says so). Unit tests: test_run.py's StrictMaskOpenings on synthetic KiCad
+report pairs (an opening bridged on the stripped board, one only on the
+designer's own, position matching, an aperture over pads of several nets,
+our via and another part's pad under a bridged aperture, two of our own
+items, an opening bridged nowhere, no baseline, the row fields, the kept
+designer bridges through a stand-in binary); test_compare.py's
+StrictRules.
+
+**Re-judged without rerouting** (a scratch script over the stored task
+directories: the result's drc.json, the stored baseline-drc.json, the
+designer's own board through drc-kicad-board's cache; rule 1 re-judged
+first reproduced every stored row's `new_findings_strict`):
+
+| run | rows | pass_strict rule 1 -> 2 | strict new errors | bridges not counted | boards changed |
+| --- | --- | --- | --- | --- | --- |
+| short tier, build/short-cuts-x1371 | 12 | 7 -> 7 | 205 -> 205 | 0 | none (no strict bridge) |
+| expansion tier, build/expansion-cuts-x1371 | 46 | 16 -> 16 | 1 -> 1 | 0 | none (no strict bridge) |
+| designer tier, build/designer-x1315 | 109 | 50 -> 50 | 1256 -> 1239 | 17 | Sisu |
+| layout sweep, build/github-layout-v18b (41 rows of v18a) | 109 | 42 -> 42 | 1555 -> 1541 | 14 | Sisu |
+| layout sweep, build/github-layout-v18c (105 rows of v18b) | 109 | 42 -> 42 | 1550 -> 1536 | 14 | Sisu |
+| fingerprints, build/fp-cuts-x1371 | 4 | 0 -> 0 | 22 -> 8 | 14 | Sisu |
+
+No strict verdict changes: Sisu's strict solder_mask_bridge findings
+(17 in the designer tier, 14 in the layout sweep and the fingerprint row)
+all go, but it stays failed on KiCad's unconnected items (18 and 15; the
+designer row keeps one starved_thermal). Every one is J_LCD1's "Rectangle
+of J_LCD1 on F.Mask" with one of our LCD tracks; the stripped designer
+board has no bridge there, the designer's own board 22: the rectangle
+with their LCD_DC track and with the GND zone. The bridges still counted
+are ours or unknown: PolyKybd 5x4 (an NPTH pad against a kibuzzard logo
+footprint), Quanta75 RP2040Stamp (our I2C1-SDA track under the
+'0bsilab' F.Mask text, which bridges on neither designer board), vaio_re
+in v18a (six pads of our C98, C84 and PD4 placed under J1's NPTH
+aperture), protoesp and byrantech's motherboard (199, KiCad's cap on the
+stripped board: unknown).
+
 ## Committed on 2026-10-22 (wall guard cuts at small budgets)
 
 A cut row is not the binary's deterministic answer, so cuts must be rare

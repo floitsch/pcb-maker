@@ -61,6 +61,19 @@ class Gap(unittest.TestCase):
         self.assertEqual(totals["layout_without_result"], ["c"])
 
 
+class StrictRules(unittest.TestCase):
+    def test_runs_judged_under_different_rules_are_named(self):
+        old = [row("a", "1/1", 0, 0, 0, new_findings_strict={}), row("b", "1/1", 0, 0, 0)]
+        new = [row("a", "1/1", 0, 0, 0, new_findings_strict={}, strict_rule=2, strict_mask_openings=3)]
+        self.assertEqual(compare.strict_rules(old), [1])
+        self.assertIsNone(compare.rules_warning(new, new))
+        self.assertIn("1 before, 2 after", compare.rules_warning(old, new))
+        self.assertIsNone(compare.rules_warning(old, [row("c", "1/1", 0, 0, 0)]))
+        o = compare.objectives(new)
+        self.assertEqual(o["strict_mask_openings"], 3)
+        self.assertIn("3 mask-opening bridges not counted", compare.objectives_line(o))
+
+
 class Measures(unittest.TestCase):
     def test_a_score_report_gives_every_measure(self):
         report = {"economy": {"vias": 3, "track_length_mm": 12.5},

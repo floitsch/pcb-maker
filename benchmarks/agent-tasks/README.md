@@ -166,6 +166,34 @@ measurement). The discipline:
   Over v16 against v17 (103 boards with the same input): vias x0.70 ->
   x0.72 of the designer's, length x1.03 -> x1.03, open 0.009 -> 0.009 of
   the connections (mean 0.164 -> 0.113).
+- **The strict rule** (`pass_strict`, `new_findings_strict`; run.py's
+  `strict_findings`, docs/agents.md "The pass rule"): a KiCad finding of
+  ours counts unless the designer's board with its tracks, vias and
+  small zones stripped (`baseline-drc.json`, through the DRC cache) has
+  it at the same place: the same type and the same items (uuids) the
+  same distances apart, or items at the same positions within 0.05 mm,
+  each designer finding answering for one; a type the designer has at
+  KiCad's cap (199 or more) is not subtracted at all
+  (`strict_unknown`). Since rule 2 (2026-10-22, `strict_rule` in every
+  judged row and in summary.json; rows without it are rule 1) a
+  **solder mask bridge of a pre-bridged opening** is not counted
+  either: one item is a mask opening (a graphic on F.Mask or B.Mask, or
+  a pad's aperture) that bridges on the stripped designer board or on
+  the designer's own board with its tracks (they shipped it bridged:
+  `designer_findings` keeps those findings as
+  `designer-mask-bridges.json`), matched by the opening's uuid or by its
+  position within 0.05 mm, and the other item is a track or a zone. These
+  are openings drawn along the designer's own tracks over a pour (the
+  pour shows through once the tracks are stripped) and apertures over
+  pads of several nets (a track leaving a pad inside bridges): the
+  bridge is the opening's, not the routing's. Every other bridge counts:
+  two items of ours, our via under an opening, a pad of another part
+  under an aperture, an opening that bridges nowhere on the designer's
+  boards (Quanta75's '0bsilab' mask text over a pour with our track
+  under it). The count is the row's `strict_mask_openings` (in neither
+  `new_findings_strict` nor `preexisting_strict`); compare.py sums it in
+  the objectives and says in capitals when two runs were judged under
+  different rules. The binary's own verdict (verdict.rs) keeps rule 1.
 - **Placement or routing?** The designer tier (`--tier designer`, section
   below) routes every board on the designer's own placement;
   `compare.py --gap <layout log> <designer log>` splits the layout's open

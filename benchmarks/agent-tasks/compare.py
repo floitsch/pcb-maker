@@ -30,6 +30,12 @@ the pass count; the objectives add the strict new errors and the repairs
 the binary reported (connection-width tracks and their length, island
 stubs where counted, rows kept with the pours as tracks).
 
+Rows record the strict rule's version they were judged under
+(`strict_rule`; rows without it are rule 1): when the two runs' rows
+differ, a line in capitals says so before the table. Rule 2 does not count
+the solder mask bridges of a designer's opening that already bridges
+(`strict_mask_openings`, summed in the objectives).
+
 The first line names each run's task list (run.py's `tasks` and
 `tasks_sha256` rows; for logs before them, the build/github-tasks-*
 lists whose constraints every prepared board contains). When the lists
@@ -255,6 +261,32 @@ def strict_errors(row):
     return sum((row.get("new_findings_strict") or {}).values())
 
 
+def strict_rule(row):
+    """The strict rule's version a row was judged under (run.py's
+    STRICT_RULE; rows of rule 1 do not say): None for a row without it."""
+    if row is None or "new_findings_strict" not in row:
+        return None
+    return row.get("strict_rule", 1)
+
+
+def strict_rules(rows):
+    """The strict rules a run's rows were judged under, sorted."""
+    return sorted({rule for rule in map(strict_rule, rows) if rule is not None})
+
+
+def rules_warning(before_rows, after_rows):
+    """A line when two runs were judged under different strict rules (or one
+    run under several): their pass_strict and strict errors then differ by
+    the rule as well. None when they agree."""
+    before, after = strict_rules(before_rows), strict_rules(after_rows)
+    if not before or not after or (before == after and len(before) == 1):
+        return None
+    text = "/".join(map(str, before)) + " before, " + "/".join(map(str, after)) + " after"
+    return (f"STRICT RULES DIFFER ({text}): the strict columns compare judgements as well as boards "
+            "(rule 2 does not count solder mask bridges of a designer's opening that bridges already, "
+            "strict_mask_openings)")
+
+
 def strict_cell(row):
     verdict = passes_strict(row)
     return "-" if verdict is None else "yes" if verdict else "no"
@@ -287,6 +319,7 @@ def objectives(rows):
         "strict_rows": len(with_strict),
         "passes_strict": sum(1 for row in with_strict if passes_strict(row)),
         "new_errors_strict": sum(strict_errors(row) for row in with_strict if unconnected(row) is not None),
+        "strict_mask_openings": sum(row.get("strict_mask_openings") or 0 for row in with_strict),
         "repair_rows": len(with_repairs),
         "neck_tracks": sum(repairs.get("neck_tracks") or 0 for repairs in with_repairs),
         "neck_track_mm": round(sum(repairs.get("neck_track_mm") or 0 for repairs in with_repairs), 2),
@@ -439,6 +472,8 @@ def objectives_line(o, label="objectives"):
     text = f"{label}: unconnected {o['unconnected']}, new errors {o['new_errors']}"
     if o.get("strict_rows"):
         text += f" (strict {o['new_errors_strict']}"
+        if o.get("strict_mask_openings"):
+            text += f", {o['strict_mask_openings']} mask-opening bridges not counted"
         text += f", {o['strict_rows']} rows)" if o["strict_rows"] != o["rows"] else ")"
     text += f", vias {o['vias']}, length {o['length_mm']:.0f} mm, CPU {o['cpu_seconds']} s"
     if o["work_rows"]:
@@ -609,6 +644,9 @@ def main():
         elif other_inputs(before[name], after[name]):
             other_input.add(name)
     lists = f"before {before_list}; after {after_list}"
+    warning = rules_warning([before[n] for n in common], [after[n] for n in common])
+    if warning:
+        print(warning)
     if lists_differ(before_identity, after_identity):
         print(f"TASK LISTS DIFFER, {len(other_input)} BOARDS ON OTHER INPUTS (INPUT): {lists}")
     elif other_input:
