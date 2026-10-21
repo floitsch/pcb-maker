@@ -429,6 +429,40 @@ fn a_via_keeps_its_ring_out_of_a_listed_smd_pad_even_of_its_own_net() {
 }
 
 #[test]
+fn an_exposed_pads_own_vias_do_not_depend_on_the_order_of_the_pads() {
+    // A listed pin of A 0.05 mm right of A's exposed pad (1.4 mm square,
+    // not listed): a node inside the pad within the pin's via reach (5.3:
+    // 0.45 from the pin, the via's ring 0.1 inside the pad's edge) holds
+    // A's via whether the pin comes before the pad or after it.
+    let allowed = |pin_first: bool| {
+        let mut board = two_nets(2);
+        let pin = Obstacle {
+            shape: Shape::Polygon {
+                points: vec![[5.75, 2.85], [6.25, 2.85], [6.25, 3.15], [5.75, 3.15]],
+            },
+            ..pad([6.0, 3.0], 0.25, 1, Some(0), "U1.1")
+        };
+        let pin_index = if pin_first {
+            board.obstacles.push(pin);
+            square_pad(&mut board);
+            board.obstacles.len() - 2
+        } else {
+            square_pad(&mut board);
+            board.obstacles.push(pin);
+            board.obstacles.len() - 1
+        };
+        board.no_via_pads = vec![pin_index];
+        let router = Router::new(&board, &config(None));
+        let node = router.grid.nearest_node([5.3, 3.0]).unwrap();
+        assert!((router.grid.center_of(node)[0] - 5.3).abs() < 1.0e-6);
+        let statics = &router.statics[router.board.nets[0].class];
+        (statics.via_allowed(node, 0), statics.via_allowed(node, 1))
+    };
+    assert_eq!(allowed(false), (true, false));
+    assert_eq!(allowed(true), (true, false));
+}
+
+#[test]
 fn a_pad_of_a_pour_net_gets_its_via_beside_the_pad() {
     // A's pads on the front, its pour on the back of the whole board: the
     // pads reach it by vias, which stay out of the listed pads.

@@ -896,8 +896,14 @@ impl StaticMaps {
                             let index = grid.index(x, y);
                             if searched {
                                 via_owner[index] = match (own_vias, own_hole) {
+                                    // A node an earlier obstacle left to the
+                                    // net (its pin's `beside` arm) stays the
+                                    // net's: the map does not depend on
+                                    // whether a QFN's pins come before its
+                                    // exposed pad.
                                     (Some(net), _)
-                                        if !via_blocked[index]
+                                        if (!via_blocked[index]
+                                            || via_owner[index] == owner16(net))
                                             && obstacle
                                                 .shape
                                                 .contains_disc(center, via_radius + SAFETY) =>
