@@ -726,6 +726,7 @@ fn is_unconnected(net: &Option<String>) -> bool {
 fn build_problem(
     spec: &KiCadPinSwapSpec,
     pads: &BoardPads,
+    names: &NetNames,
     config: &KiCadPinSwapConfig,
 ) -> Result<Problem, String> {
     if spec.version != 1 {
@@ -775,7 +776,7 @@ fn build_problem(
             for payload in &group_payloads {
                 let mut mask: Vec<bool> = Vec::new();
                 for net in payload.iter().flatten() {
-                    let Some(pins) = group.restrictions.get(normalize_net(net)) else {
+                    let Some(pins) = group.restrictions.get(names.normalize(net)) else {
                         continue;
                     };
                     let pins = pins
@@ -1354,6 +1355,7 @@ fn no_connect_expr(at: [f64; 2]) -> Expr {
 fn apply_to_schematic(
     schematic: &mut Expr,
     changes: &HashMap<PinKey, NetChange>,
+    names: &NetNames,
 ) -> Result<usize, String> {
     let pins = schematic_pins(schematic)?;
     let items = schematic.children();
@@ -1426,7 +1428,7 @@ fn apply_to_schematic(
                             key.reference, key.pad
                         ));
                     }
-                    let name = normalize_net(after.as_deref().unwrap()).to_string();
+                    let name = names.normalize(after.as_deref().unwrap()).to_string();
                     for label in pin_labels {
                         relabel.push((label, name.clone()));
                     }
@@ -1443,7 +1445,10 @@ fn apply_to_schematic(
                             .filter(|(_, at)| same_point(*at, pin.at))
                             .map(|(index, _)| *index),
                     );
-                    add.push(label_expr(normalize_net(after.as_deref().unwrap()), pin.at));
+                    add.push(label_expr(
+                        names.normalize(after.as_deref().unwrap()),
+                        pin.at,
+                    ));
                 }
                 (false, false) => {}
             }
@@ -1499,7 +1504,7 @@ fn apply_to_schematic(
         remove.extend(cut_wires);
         if before_connected {
             let (rest, rest_points) = wire_network(cut, &wires, &remove);
-            let old = normalize_net(before.as_deref().unwrap());
+            let old = names.normalize(before.as_deref().unwrap());
             let named = labels
                 .iter()
                 .any(|(_, at, name)| name == old && on_network(*at, &rest_points, &rest, &wires));
@@ -1508,7 +1513,10 @@ fn apply_to_schematic(
             }
         }
         if after_connected {
-            add.push(label_expr(normalize_net(after.as_deref().unwrap()), pin.at));
+            add.push(label_expr(
+                names.normalize(after.as_deref().unwrap()),
+                pin.at,
+            ));
         } else {
             add.push(no_connect_expr(pin.at));
         }
@@ -1558,7 +1566,7 @@ fn choose(
     config: &KiCadPinSwapConfig,
 ) -> Result<Choice, String> {
     let pads = board_pads(pcb)?;
-    let problem = build_problem(spec, &pads, config)?;
+    let problem = build_problem(spec, &pads, &NetNames::of(pcb), config)?;
     let before = State::new(&problem, config).estimate();
     let state = optimize(&problem, config);
     let after = state.estimate();
@@ -1593,6 +1601,8 @@ fn swap_pins(
     config: &KiCadPinSwapConfig,
 ) -> Result<KiCadPinSwapResult, String> {
     let started = Instant::now();
+    // The board's net facts as read before the swap writes it.
+    let names = NetNames::of(pcb);
     let (changes, before, after, groups, units) = choose(pcb, spec, config)?;
     if let Some((key, (_, after))) = changes
         .iter()
@@ -1624,7 +1634,7 @@ fn swap_pins(
     };
     let written = apply_to_board(pcb, &targets, &pin_names)?;
     let schematic_labels_changed = match schematic {
-        Some(schematic) => apply_to_schematic(schematic, &changes)?,
+        Some(schematic) => apply_to_schematic(schematic, &changes, &names)?,
         None => 0,
     };
     let mut report: Vec<KiCadPinChange> = changes

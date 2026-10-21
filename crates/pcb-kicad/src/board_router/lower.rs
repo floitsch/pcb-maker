@@ -132,61 +132,6 @@ impl LayerTable {
     }
 }
 
-thread_local! {
-    /// `unconnected-(...)` nets that nevertheless join two or more pads: a
-    /// reversible footprint's duplicate pad numbers on both sides. KiCad
-    /// wants them connected and reports them unconnected otherwise.
-    static JUMPER_NETS: std::cell::RefCell<std::collections::HashSet<String>> = Default::default();
-}
-
-/// Records the `unconnected-(...)` nets of `pcb` that hold two or more
-/// pads, for `routable_net` (on this thread, for the lowering that follows).
-fn note_jumper_nets(pcb: &Expr) {
-    let mut pads: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
-    for footprint in pcb
-        .children()
-        .iter()
-        .filter(|item| item.head() == Some("footprint"))
-    {
-        for pad in footprint
-            .children()
-            .iter()
-            .filter(|item| item.head() == Some("pad"))
-        {
-            if let Some(net) = node_net(pad)
-                && net
-                    .rsplit('/')
-                    .next()
-                    .unwrap_or(net)
-                    .starts_with("unconnected-(")
-            {
-                *pads.entry(net).or_default() += 1;
-            }
-        }
-    }
-    JUMPER_NETS.with(|jumpers| {
-        *jumpers.borrow_mut() = pads
-            .into_iter()
-            .filter(|(_, count)| *count >= 2)
-            .map(|(net, _)| net.to_string())
-            .collect();
-    });
-}
-
-/// Whether a net (by its raw name, sheet path included) is routed. A net
-/// named by a number is a net like any other (`net_name_from_form` tells
-/// a code from a name); an `unconnected-(...)` net is a single pin unless
-/// two pads share it.
-pub(crate) fn routable_net(raw: &str) -> bool {
-    !raw.is_empty()
-        && (!raw
-            .rsplit('/')
-            .next()
-            .unwrap_or(raw)
-            .starts_with("unconnected-(")
-            || JUMPER_NETS.with(|jumpers| jumpers.borrow().contains(raw)))
-}
-
 /// The drilled hole of a pad: a circle, or a capsule for a slot
 /// (`(drill oval 1 7)`), centred on the pad.
 fn drill_shape(pad: &Expr, center: [f64; 2]) -> Result<Option<core::Shape>, String> {
@@ -344,8 +289,9 @@ fn lower_board(
     config: &KiCadBoardRouterConfig,
     connect_pours: bool,
 ) -> Result<Lowered, String> {
-    note_jumper_nets(pcb);
-    crate::note_net_names(pcb);
+    // The board's net facts; noted on this thread too, for the writer and
+    // the project rules that read them after (`note_net_names`).
+    let net_names = crate::note_net_names(pcb);
     let board_version = form_atom(pcb, "version", 1).and_then(|version| version.parse().ok());
     // KiCad 9 and before name the net of a track, via or graphic by code.
     let net_codes = crate::net_codes(pcb);
@@ -700,7 +646,7 @@ fn lower_board(
                     // everyone; the board's hole clearance applies. Holes of
                     // mechanical (unplated) pads always are.
                     let hole = (pad_type == "thru_hole"
-                        && !node_net(pad).is_some_and(routable_net))
+                        && !node_net(pad).is_some_and(|raw| net_names.routable(raw)))
                         || pad_type == "np_thru_hole";
                     if hole && let Some(shape) = drill_shape(pad, lowered.center)? {
                         // KiCad 10.0.7's copper_edge_clearance takes an
@@ -784,10 +730,10 @@ fn lower_board(
                         }
                         continue;
                     }
-                    let net_name = node_net(pad).map(normalize_net);
+                    let net_name = node_net(pad).map(|raw| net_names.normalize(raw));
                     let net = node_net(pad)
-                        .filter(|raw| routable_net(raw))
-                        .map(normalize_net)
+                        .filter(|raw| net_names.routable(raw))
+                        .map(|raw| net_names.normalize(raw))
                         .map(|name| net_id(name, &mut nets, &mut classes))
                         .transpose()?;
                     // A positive pad or footprint override replaces the
@@ -1148,8 +1094,8 @@ fn lower_board(
                     continue;
                 };
                 let net = item_net(item, &net_codes)
-                    .filter(|raw| routable_net(raw))
-                    .map(normalize_net)
+                    .filter(|raw| net_names.routable(raw))
+                    .map(|raw| net_names.normalize(raw))
                     .map(|name| net_id(name, &mut nets, &mut classes))
                     .transpose()?;
                 obstacles.push(core::Obstacle {
@@ -1170,8 +1116,8 @@ fn lower_board(
             }
             Some("via") => {
                 let net = item_net(item, &net_codes)
-                    .filter(|raw| routable_net(raw))
-                    .map(normalize_net)
+                    .filter(|raw| net_names.routable(raw))
+                    .map(|raw| net_names.normalize(raw))
                     .map(|name| net_id(name, &mut nets, &mut classes))
                     .transpose()?;
                 obstacles.push(core::Obstacle {
@@ -1308,10 +1254,10 @@ fn lower_board(
                 let kind = item.head().unwrap_or("graphic").to_string();
                 if copper != 0 {
                     let net = item_net(item, &net_codes)
-                        .filter(|raw| routable_net(raw))
-                        .map(|raw| normalize_net(raw).to_string());
+                        .filter(|raw| net_names.routable(raw))
+                        .map(|raw| net_names.normalize(raw).to_string());
                     let clearance = item_net(item, &net_codes)
-                        .map(normalize_net)
+                        .map(|raw| net_names.normalize(raw))
                         .and_then(|name| config.connection_rules.get(name))
                         .map_or(no_net_clearance, |rules| rules.clearance_mm);
                     let mut copper_shapes = shapes.clone();

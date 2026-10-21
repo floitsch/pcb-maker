@@ -46,6 +46,7 @@ pub(crate) fn planned_pours(
     if inner.len() < 2 || !pours(pcb, &layers)?.is_empty() {
         return Ok(Vec::new());
     }
+    let net_names = NetNames::of(pcb);
     let mut pads: BTreeMap<String, usize> = BTreeMap::new();
     for footprint in pcb
         .children()
@@ -57,7 +58,7 @@ pub(crate) fn planned_pours(
             .iter()
             .filter(|item| item.head() == Some("pad"))
         {
-            if let Some(net) = node_net(pad).filter(|net| routable_net(net)) {
+            if let Some(net) = node_net(pad).filter(|net| net_names.routable(net)) {
                 *pads.entry(net.to_string()).or_default() += 1;
             }
         }
@@ -92,6 +93,7 @@ pub(crate) fn planned_pours(
 
 /// Adds a zone over the board outline for every request.
 pub(crate) fn add_pour_zones(pcb: &mut Expr, requests: &[KiCadPourRequest]) -> Result<(), String> {
+    let net_names = NetNames::of(pcb);
     if requests.is_empty() {
         return Ok(());
     }
@@ -138,7 +140,7 @@ pub(crate) fn add_pour_zones(pcb: &mut Expr, requests: &[KiCadPourRequest]) -> R
             .or_else(|| form_atom(zone, "layer", 1).map(|layer| vec![layer.to_string()]))
             .unwrap_or_default();
         for layer in names {
-            existing.insert((normalize_net(net).to_string(), layer));
+            existing.insert((net_names.normalize(net).to_string(), layer));
         }
     }
     let mut zones = Vec::new();
@@ -170,7 +172,7 @@ pub(crate) fn add_pour_zones(pcb: &mut Expr, requests: &[KiCadPourRequest]) -> R
             for byte in net.bytes().chain(layer.bytes()) {
                 hash = (hash ^ byte as u64).wrapping_mul(0x100_0000_01b3);
             }
-            let name = format!("plane {} {layer}", normalize_net(&net));
+            let name = format!("plane {} {layer}", net_names.normalize(&net));
             if request.plane && !names.contains(&name) {
                 let hash = hash.rotate_left(17) ^ 0x9e37_79b9_7f4a_7c15;
                 zones.push(parse(&format!(
@@ -187,7 +189,7 @@ pub(crate) fn add_pour_zones(pcb: &mut Expr, requests: &[KiCadPourRequest]) -> R
                     points.join(" ")
                 ))?);
             }
-            if existing.contains(&(normalize_net(&net).to_string(), layer.clone())) {
+            if existing.contains(&(net_names.normalize(&net).to_string(), layer.clone())) {
                 eprintln!(
                     "pour for {} on {layer}: the board has one already",
                     request.net

@@ -708,9 +708,9 @@ fn max_error(pcb: &Expr) -> f64 {
         .unwrap_or(0.005)
 }
 
-fn net_matches(name: &str, wanted: &str) -> bool {
+fn net_matches(names: &NetNames, name: &str, wanted: &str) -> bool {
     name == wanted
-        || normalize_net(wanted) == name
+        || names.normalize(wanted) == name
         || name.strip_prefix('/') == Some(wanted)
         || wanted.strip_prefix('/') == Some(name)
 }
@@ -885,6 +885,7 @@ fn repair_with(
     let filled = parse(&filled?)?;
     let pcb = parse(&original)?;
     let lowered = crate::board_router::lower(&pcb, config, true)?;
+    let net_names = NetNames::of(&pcb);
     let board = &lowered.board;
     let layers = LayerTable::from_pcb(&pcb)?;
     let minimum = minimum_connection(directory, board_id);
@@ -910,14 +911,14 @@ fn repair_with(
         let Some(net) = board
             .nets
             .iter()
-            .position(|net| net_matches(&net.name, &net_name))
+            .position(|net| net_matches(&net_names, &net.name, &net_name))
             .map(|net| net as core::NetId)
         else {
             continue;
         };
         let mut copper = Copper::default();
         for (fill_net, fill_layer, outline) in &fills {
-            if fill_layer == &layer_name && net_matches(fill_net, &net_name) {
+            if fill_layer == &layer_name && net_matches(&net_names, fill_net, &net_name) {
                 copper.polygons.push(outline.clone());
             }
         }
@@ -946,13 +947,13 @@ fn repair_with(
             fills: fills
                 .iter()
                 .filter(|(fill_net, fill_layer, _)| {
-                    fill_layer == &layer_name && !net_matches(fill_net, &net_name)
+                    fill_layer == &layer_name && !net_matches(&net_names, fill_net, &net_name)
                 })
                 .map(|(fill_net, _, outline)| {
                     let theirs = board
                         .nets
                         .iter()
-                        .find(|net| net_matches(&net.name, fill_net))
+                        .find(|net| net_matches(&net_names, &net.name, fill_net))
                         .map_or(0.0, |net| board.classes[net.class].clearance);
                     (outline.clone(), theirs)
                 })
@@ -967,7 +968,9 @@ fn repair_with(
                             board
                                 .nets
                                 .iter()
-                                .position(|candidate| net_matches(&candidate.name, name))
+                                .position(|candidate| {
+                                    net_matches(&net_names, &candidate.name, name)
+                                })
                                 .map(|net| net as core::NetId)
                         }),
                     )

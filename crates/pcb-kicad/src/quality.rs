@@ -312,7 +312,7 @@ fn round(value: f64) -> f64 {
     (value * 100.0).round() / 100.0
 }
 
-fn parts_of(pcb: &Expr) -> Result<Vec<Part>, String> {
+fn parts_of(pcb: &Expr, names: &NetNames) -> Result<Vec<Part>, String> {
     let mut parts = Vec::new();
     for footprint in pcb
         .children()
@@ -351,8 +351,8 @@ fn parts_of(pcb: &Expr) -> Result<Vec<Part>, String> {
                     .unwrap_or("")
                     .to_string(),
                 net: node_net(pad)
-                    .filter(|raw| board_router::routable_net(raw))
-                    .map(|raw| normalize_net(raw).to_string()),
+                    .filter(|raw| names.routable(raw))
+                    .map(|raw| names.normalize(raw).to_string()),
                 center: [at[0] + offset[0], at[1] + offset[1]],
                 half: [
                     (cos.abs() * size[0] + sin.abs() * size[1]) / 2.0,
@@ -445,7 +445,9 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
     let text = fs::read_to_string(&board_path)
         .map_err(|error| format!("failed to read {}: {error}", board_path.display()))?;
     let pcb = parse(&text)?;
-    let parts = parts_of(&pcb)?;
+    // The board's own net facts, whatever this thread lowered before.
+    let names = NetNames::of(&pcb);
+    let parts = parts_of(&pcb, &names)?;
     let layers = board_router::LayerTable::from_pcb(&pcb)?;
     let outline = outline::board_loops(&pcb).ok().map(|loops| {
         loops.outline.iter().fold(
@@ -476,7 +478,7 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
                     end: form_xy(item, "end")?,
                     width: form_f64(item, "width", 1).unwrap_or(0.0),
                     layer: form_atom(item, "layer", 1).unwrap_or("").to_string(),
-                    net: node_net(item).map(|raw| normalize_net(raw).to_string()),
+                    net: node_net(item).map(|raw| names.normalize(raw).to_string()),
                 });
             }
             Some("via") => {
@@ -1005,7 +1007,7 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         .filter_map(|zone| {
             let net = form_atom(zone, "net_name", 1)
                 .or_else(|| node_net(zone))
-                .map(|raw| normalize_net(raw).to_string())?;
+                .map(|raw| names.normalize(raw).to_string())?;
             let layers: Vec<String> = zone
                 .child("layers")
                 .map(|layers| {
@@ -1123,7 +1125,7 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         }
         let Some(net) = form_atom(zone, "net_name", 1)
             .or_else(|| node_net(zone))
-            .map(|raw| normalize_net(raw).to_string())
+            .map(|raw| names.normalize(raw).to_string())
         else {
             continue;
         };
@@ -1300,6 +1302,37 @@ mod tests {
         assert_eq!(pin("U1:1"), None);
         // C3, C4 (bulk, at the regulator) and C5.
         assert_eq!(decoupling.capacitors, 3);
+    }
+
+    #[test]
+    fn the_score_reads_net_names_by_the_board_it_scores() {
+        // Pads on "GND" and on "/GND" (gametank's "/A15" beside "A15"):
+        // two nets, whatever board this thread lowered before. A track of
+        // "/GND" on the GND pour's layer cuts it.
+        crate::note_net_names(&parse("(kicad_pcb)").unwrap());
+        let board = r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+            (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+            (footprint "R_0805" (layer "F.Cu") (at 10 10) (property "Reference" "R1") (property "Value" "10k")
+              (pad "1" smd rect (at -1 0) (size 1 1) (layers "F.Cu") (net "GND"))
+              (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net "/GND")))
+            (footprint "R_0805" (layer "F.Cu") (at 30 10) (property "Reference" "R2") (property "Value" "10k")
+              (pad "1" smd rect (at -1 0) (size 1 1) (layers "F.Cu") (net "GND"))
+              (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net "/GND")))
+            (segment (start 11 10) (end 31 10) (width 0.25) (layer "B.Cu") (net "/GND"))
+            (zone (net_name "GND") (layer "B.Cu") (polygon (pts (xy 0 0) (xy 40 0) (xy 40 20) (xy 0 20)))))"#;
+        let directory =
+            std::env::temp_dir().join(format!("pcb-maker-net-names-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("b.kicad_pcb"), board).unwrap();
+        let report = score_kicad_board(&directory, "b");
+        fs::remove_dir_all(&directory).ok();
+        let report = report.unwrap();
+        let plane = report
+            .planes
+            .iter()
+            .find(|plane| plane.net == "GND" && plane.layer == "B.Cu")
+            .expect("the GND pour");
+        assert_eq!(plane.cut_by_mm, 20.0);
     }
 
     #[test]

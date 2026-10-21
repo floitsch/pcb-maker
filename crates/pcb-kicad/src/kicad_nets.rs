@@ -7,14 +7,18 @@ use super::*;
 
 /// The net names `root` and the forms in it name (with a stack, not
 /// recursion: a tree built in code is not bound by the parser's nesting).
-pub(crate) fn collect_named_nets(root: &Expr, named_nets: &mut BTreeSet<String>) {
+pub(crate) fn collect_named_nets(
+    root: &Expr,
+    names: &NetNames,
+    named_nets: &mut BTreeSet<String>,
+) {
     let mut pending = vec![root];
     while let Some(node) = pending.pop() {
         if node.head() == Some("net")
             && let Some(name) = net_name_from_form(node)
             && !name.is_empty()
         {
-            named_nets.insert(normalize_net(name).to_string());
+            named_nets.insert(names.normalize(name).to_string());
         }
         pending.extend(
             node.children()
@@ -102,59 +106,145 @@ pub(crate) fn canonicalize_copper_net_names(pcb: &mut Expr, names: &BTreeMap<Str
     }
 }
 
+/// What reading a net's name needs to know of the board it is on: its
+/// bare net names (its global labels and power nets: a connection id
+/// drops one hierarchical slash, which must not fold `/VBUS`, a root-sheet
+/// label, into `VBUS` when the board has both; a business-card panel had
+/// both, and lowering rejected it as ambiguous; gametank's expansion-port
+/// board has pads on "/A15" and on "A15") and its `unconnected-(...)` nets
+/// that join two pads or more (a reversible footprint's duplicate pad
+/// numbers on both sides: KiCad wants them connected).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct NetNames {
+    bare: std::collections::HashSet<String>,
+    jumpers: std::collections::HashSet<String>,
+}
+
+impl NetNames {
+    /// The facts of `pcb`'s nets.
+    pub(crate) fn of(pcb: &Expr) -> NetNames {
+        // The net table; a KiCad 10 board has none (its items name their
+        // nets), so the pads' names too.
+        let table = pcb
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("net"))
+            .filter_map(|item| item.children().get(2).and_then(Expr::atom));
+        let pads: Vec<&str> = pcb
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("footprint"))
+            .flat_map(|footprint| footprint.children())
+            .filter(|item| item.head() == Some("pad"))
+            .filter_map(node_net)
+            .collect();
+        let bare = table
+            .chain(pads.iter().copied())
+            .filter(|name| !name.starts_with('/') && !name.is_empty())
+            .map(str::to_string)
+            .collect();
+        let mut unconnected: std::collections::HashMap<&str, usize> =
+            std::collections::HashMap::new();
+        for net in pads {
+            if net
+                .rsplit('/')
+                .next()
+                .unwrap_or(net)
+                .starts_with("unconnected-(")
+            {
+                *unconnected.entry(net).or_default() += 1;
+            }
+        }
+        let jumpers = unconnected
+            .into_iter()
+            .filter(|(_, count)| *count >= 2)
+            .map(|(net, _)| net.to_string())
+            .collect();
+        NetNames { bare, jumpers }
+    }
+
+    /// A pad's or an item's net name as a connection: without the
+    /// hierarchical slash unless the board has a bare net of that name.
+    pub(crate) fn normalize<'a>(&self, net: &'a str) -> &'a str {
+        match net.strip_prefix('/') {
+            Some(bare) if !self.bare.contains(bare) => bare,
+            _ => net,
+        }
+    }
+
+    /// Whether a net (by its raw name, sheet path included) is routed. A
+    /// net named by a number is a net like any other (`net_name_from_form`
+    /// tells a code from a name); an `unconnected-(...)` net is a single
+    /// pin unless two pads share it.
+    pub(crate) fn routable(&self, raw: &str) -> bool {
+        !raw.is_empty()
+            && (!raw
+                .rsplit('/')
+                .next()
+                .unwrap_or(raw)
+                .starts_with("unconnected-(")
+                || self.jumpers.contains(raw))
+    }
+
+    /// The net name copper of `connection` is written with: the connection
+    /// with the hierarchical slash it dropped, or as it is when the board
+    /// has a bare net of that name (`/A15` then is another net, its
+    /// connection `/A15`, written `//A15`); `canonicalize_copper_net_names`
+    /// then takes the pads' own spelling.
+    pub(crate) fn written(&self, connection: &str) -> String {
+        if self.bare.contains(connection) {
+            connection.to_string()
+        } else {
+            format!("/{connection}")
+        }
+    }
+}
+
 thread_local! {
-    /// The board's net names without a leading slash (its global labels
-    /// and power nets), noted by `note_net_names`: a connection id drops
-    /// one hierarchical slash, which must not fold `/VBUS` (a root-sheet
-    /// label) into `VBUS` when the board has both (a business-card panel
-    /// had both, and lowering rejected it as ambiguous).
-    static BARE_NETS: std::cell::RefCell<std::collections::HashSet<String>> = Default::default();
+    /// The `NetNames` of the board this thread reads, noted by
+    /// `note_net_names`, for the free functions below: the lowering, the
+    /// project rules, the placer's lowering and the copper writer, which
+    /// note it at their entry. The score, the statistics, the description,
+    /// the pour plan, the neck repair, the pin swap and the pours read
+    /// `NetNames::of` the board they have instead.
+    static NET_NAMES: std::cell::RefCell<Option<NetNames>> = const { std::cell::RefCell::new(None) };
 }
 
-/// Records `pcb`'s bare net names for `normalize_net` (on this thread,
-/// for the lowering that follows).
-pub(crate) fn note_net_names(pcb: &Expr) {
-    // The net table; a KiCad 10 board has none (its items name their
-    // nets), so the pads' names too: gametank's expansion-port board has
-    // pads on "/A15" and on "A15", one net read before.
-    let table = pcb
-        .children()
-        .iter()
-        .filter(|item| item.head() == Some("net"))
-        .filter_map(|item| item.children().get(2).and_then(Expr::atom));
-    let pads = pcb
-        .children()
-        .iter()
-        .filter(|item| item.head() == Some("footprint"))
-        .flat_map(|footprint| footprint.children())
-        .filter(|item| item.head() == Some("pad"))
-        .filter_map(node_net);
-    let bare: std::collections::HashSet<String> = table
-        .chain(pads)
-        .filter(|name| !name.starts_with('/') && !name.is_empty())
-        .map(str::to_string)
-        .collect();
-    BARE_NETS.with(|names| *names.borrow_mut() = bare);
+/// Notes `pcb`'s `NetNames` for `normalize_net`, `routable_net` and
+/// `written_net_name` on this thread, and returns them.
+pub(crate) fn note_net_names(pcb: &Expr) -> NetNames {
+    let names = NetNames::of(pcb);
+    NET_NAMES.with(|noted| *noted.borrow_mut() = Some(names.clone()));
+    names
 }
 
-/// The net name copper of `connection` is written with: the connection
-/// with the hierarchical slash it dropped, or as it is when the board has
-/// a bare net of that name (`/A15` then is another net, its connection
-/// `/A15`, written `//A15`); `canonicalize_copper_net_names` then takes
-/// the pads' own spelling.
+fn with_noted<T>(read: impl FnOnce(&NetNames) -> T) -> T {
+    NET_NAMES.with(|noted| {
+        let noted = noted.borrow();
+        debug_assert!(
+            noted.is_some(),
+            "net names read before a board noted them (note_net_names)"
+        );
+        match noted.as_ref() {
+            Some(names) => read(names),
+            None => read(&NetNames::default()),
+        }
+    })
+}
+
+/// `NetNames::written` of the noted board.
 pub(crate) fn written_net_name(connection: &str) -> String {
-    if BARE_NETS.with(|names| names.borrow().contains(connection)) {
-        connection.to_string()
-    } else {
-        format!("/{connection}")
-    }
+    with_noted(|names| names.written(connection))
 }
 
+/// `NetNames::normalize` of the noted board.
 pub(crate) fn normalize_net(net: &str) -> &str {
-    match net.strip_prefix('/') {
-        Some(bare) if !BARE_NETS.with(|names| names.borrow().contains(bare)) => bare,
-        _ => net,
-    }
+    with_noted(|names| names.normalize(net))
+}
+
+/// `NetNames::routable` of the noted board.
+pub(crate) fn routable_net(raw: &str) -> bool {
+    with_noted(|names| names.routable(raw))
 }
 
 pub(crate) fn node_net(node: &Expr) -> Option<&str> {

@@ -33,6 +33,7 @@ pub struct KiCadNetClassRequest {
 /// The board's nets (raw names) each class takes; a net goes to the first
 /// class naming it. A pattern that matches no net is an error.
 fn assign(pcb: &Expr, classes: &[KiCadNetClassRequest]) -> Result<Vec<Vec<String>>, String> {
+    let names = NetNames::of(pcb);
     let mut nets = BTreeSet::new();
     for footprint in pcb
         .children()
@@ -76,7 +77,7 @@ fn assign(pcb: &Expr, classes: &[KiCadNetClassRequest]) -> Result<Vec<Vec<String
             let matched: Vec<&String> = nets
                 .iter()
                 .filter(|net| {
-                    wildcard_match(pattern, net) || wildcard_match(pattern, normalize_net(net))
+                    wildcard_match(pattern, net) || wildcard_match(pattern, names.normalize(net))
                 })
                 .collect();
             if matched.is_empty() {
@@ -102,10 +103,11 @@ pub(super) fn with_net_classes(
     pcb: &Expr,
 ) -> Result<KiCadBoardRouterConfig, String> {
     let mut config = config.clone();
+    let names = NetNames::of(pcb);
     let assigned = assign(pcb, &config.net_classes)?;
     for (class, members) in config.net_classes.clone().iter().zip(assigned) {
         for net in members {
-            let key = normalize_net(&net).to_string();
+            let key = names.normalize(&net).to_string();
             let mut rules = config
                 .connection_rules
                 .get(&key)

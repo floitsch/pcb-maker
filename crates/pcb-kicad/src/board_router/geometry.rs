@@ -783,6 +783,7 @@ pub(crate) struct Pour {
 }
 
 pub(crate) fn pours(pcb: &Expr, layers: &LayerTable) -> Result<Vec<Pour>, String> {
+    let names = NetNames::of(pcb);
     let mut result = Vec::new();
     for zone in pcb
         .children()
@@ -791,8 +792,8 @@ pub(crate) fn pours(pcb: &Expr, layers: &LayerTable) -> Result<Vec<Pour>, String
     {
         let Some(net) = form_atom(zone, "net_name", 1)
             .or_else(|| node_net(zone))
-            .filter(|raw| routable_net(raw))
-            .map(normalize_net)
+            .filter(|raw| names.routable(raw))
+            .map(|raw| names.normalize(raw))
         else {
             continue;
         };

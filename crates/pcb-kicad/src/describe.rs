@@ -140,6 +140,7 @@ pub fn describe_kicad_board(
     let text = fs::read_to_string(&board_path)
         .map_err(|error| format!("failed to read {}: {error}", board_path.display()))?;
     let pcb = parse(&text)?;
+    let names = NetNames::of(&pcb);
     let board_edge = pcb.children().iter().any(|item| {
         item.head().is_some_and(|head| head.starts_with("gr_"))
             && item
@@ -219,8 +220,8 @@ pub fn describe_kicad_board(
                 Some("thru_hole" | "np_thru_hole")
             );
             let net = node_net(pad)
-                .filter(|raw| board_router::routable_net(raw))
-                .map(|raw| normalize_net(raw).to_string());
+                .filter(|raw| names.routable(raw))
+                .map(|raw| names.normalize(raw).to_string());
             if let Some(net) = &net {
                 nets.entry(net.clone())
                     .or_default()
@@ -351,6 +352,47 @@ pub fn describe_kicad_board(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_hierarchical_and_a_bare_net_of_one_name_stay_two_nets() {
+        // gametank's expansion-port board: pads on "/A15" and on "A15",
+        // two nets, whatever board this thread lowered before.
+        crate::note_net_names(&parse("(kicad_pcb)").unwrap());
+        let board = r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+            (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+            (footprint "R_0805" (layer "F.Cu") (at 10 10) (property "Reference" "R1") (property "Value" "10k")
+              (pad "1" smd rect (at -1 0) (size 1 1) (layers "F.Cu") (net "A15"))
+              (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net "/A15")))
+            (footprint "R_0805" (layer "F.Cu") (at 30 10) (property "Reference" "R2") (property "Value" "10k")
+              (pad "1" smd rect (at -1 0) (size 1 1) (layers "F.Cu") (net "A15"))
+              (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net "/A15"))))"#;
+        let directory =
+            std::env::temp_dir().join(format!("pcb-maker-describe-nets-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("b.kicad_pcb"), board).unwrap();
+        let description = describe_kicad_board(&directory, "b");
+        fs::remove_dir_all(&directory).ok();
+        let mut nets: Vec<(String, Vec<String>)> = description
+            .unwrap()
+            .nets
+            .into_iter()
+            .map(|net| (net.name, net.pads))
+            .collect();
+        nets.sort();
+        assert_eq!(
+            nets,
+            [
+                (
+                    "/A15".to_string(),
+                    vec!["R1:2".to_string(), "R2:2".to_string()]
+                ),
+                (
+                    "A15".to_string(),
+                    vec!["R1:1".to_string(), "R2:1".to_string()]
+                )
+            ]
+        );
+    }
 
     #[test]
     fn general_purpose_pins_by_function() {

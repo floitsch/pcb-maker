@@ -126,6 +126,7 @@ pub fn inspect_kicad_routable_connections(
     if pcb.head() != Some("kicad_pcb") {
         return Err(format!("{} is not a kicad_pcb document", path.display()));
     }
+    let names = NetNames::of(&pcb);
     let mut connection_order = Vec::new();
     let mut seen = BTreeSet::new();
     for net in pcb
@@ -133,7 +134,7 @@ pub fn inspect_kicad_routable_connections(
         .iter()
         .filter(|item| item.head() == Some("net"))
     {
-        if let Some(name) = net_name_from_form(net).map(normalize_net)
+        if let Some(name) = net_name_from_form(net).map(|raw| names.normalize(raw))
             && !name.is_empty()
             && !name.starts_with("unconnected-(")
             && seen.insert(name.to_string())
@@ -154,7 +155,7 @@ pub fn inspect_kicad_routable_connections(
             .filter(|item| item.head() == Some("pad"))
         {
             let Some(connection) = node_net(pad)
-                .map(normalize_net)
+                .map(|raw| names.normalize(raw))
                 .filter(|name| !name.is_empty() && !name.starts_with("unconnected-("))
             else {
                 continue;
@@ -213,7 +214,7 @@ pub(crate) fn board_statistics(pcb: &Expr) -> Result<KiCadBoardStatistics, Strin
         stored_segment_length_mm += (end[0] - start[0]).hypot(end[1] - start[1]);
     }
     let mut named_nets = BTreeSet::new();
-    collect_named_nets(pcb, &mut named_nets);
+    collect_named_nets(pcb, &NetNames::of(pcb), &mut named_nets);
     let zones = pcb
         .children()
         .iter()
@@ -277,6 +278,7 @@ fn physical_copper_statistics(
     pcb: &Expr,
     stored_segment_length_mm: f64,
 ) -> Result<KiCadPhysicalCopperStatistics, String> {
+    let names = NetNames::of(pcb);
     let copper_layers = board_copper_layers(pcb);
     let mut layers = copper_layers
         .iter()
@@ -305,7 +307,7 @@ fn physical_copper_statistics(
             .to_string();
         // Copper on no net (stray or decorative tracks) still counts.
         let net = node_net(item)
-            .map(normalize_net)
+            .map(|raw| names.normalize(raw))
             .filter(|net| !net.is_empty())
             .unwrap_or("(no net)")
             .to_string();

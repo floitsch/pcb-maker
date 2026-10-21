@@ -23,7 +23,7 @@ pub(super) fn keep_short(name: &str) -> bool {
 
 /// Whether a net (by its raw name) connects parts; see `routable_net`.
 pub(super) fn placer_net(raw: &str) -> bool {
-    board_router::routable_net(raw)
+    routable_net(raw)
 }
 
 pub(crate) struct LoweredPlacement {
@@ -517,7 +517,9 @@ pub(crate) fn lower_placement(
     pcb: &Expr,
     config: &KiCadBoardPlacerConfig,
 ) -> Result<LoweredPlacement, String> {
-    crate::note_net_names(pcb);
+    // The board's net facts; noted on this thread too, for the placer's
+    // other readers of the board (`note_net_names`).
+    let net_names = crate::note_net_names(pcb);
     let loops = outline::board_loops(pcb)?;
     let mut net_ids = BTreeMap::<String, usize>::new();
     let mut components = Vec::new();
@@ -541,7 +543,7 @@ pub(crate) fn lower_placement(
     let layer_table = crate::board_router::LayerTable::from_pcb(pcb)?;
     let pour_nets: BTreeSet<String> = crate::board_router::pours(pcb, &layer_table)?
         .into_iter()
-        .map(|pour| normalize_net(&pour.net).to_string())
+        .map(|pour| net_names.normalize(&pour.net).to_string())
         .collect();
     let copper_layers = layer_table.len();
     let routing_layers = match copper_layers {
@@ -763,8 +765,8 @@ pub(crate) fn lower_placement(
                 }
             }
             let Some(net) = node_net(pad)
-                .filter(|raw| placer_net(raw))
-                .map(normalize_net)
+                .filter(|raw| net_names.routable(raw))
+                .map(|raw| net_names.normalize(raw))
             else {
                 continue;
             };

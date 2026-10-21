@@ -191,7 +191,7 @@ pub fn resolve_project_rules(
     // slash (meshsat's "/VIN_CELL" and "VIN_CELL": keyed "VIN_CELL" while
     // the lowering asked for "/VIN_CELL", the net routed at Default's 0.14
     // instead of its class CELL's 0.15).
-    crate::note_net_names(&pcb);
+    let net_names = crate::note_net_names(&pcb);
     let mut report = KiCadProjectRulesReport::default();
 
     let rules = &project["board"]["design_settings"]["rules"];
@@ -362,7 +362,7 @@ pub fn resolve_project_rules(
         }
         if let Some(name) = listed
             .get(text.as_ref())
-            .or_else(|| listed.get(normalize_net(&text)))
+            .or_else(|| listed.get(net_names.normalize(&text)))
         {
             add(name);
         }
@@ -389,7 +389,7 @@ pub fn resolve_project_rules(
                 classes.iter().map(|spec| spec.name.clone()).collect()
             },
         });
-        connection_rules.insert(normalize_net(&raw).to_string(), rules);
+        connection_rules.insert(net_names.normalize(&raw).to_string(), rules);
     }
     let mut default_rules = default_rules;
     // The narrowest width of the project's classes, used or not.
@@ -449,7 +449,7 @@ pub fn resolve_project_rules(
             Ok(rules) => {
                 let current = net_facts
                     .iter()
-                    .map(|net| connection_rules[normalize_net(&net.name)].clone())
+                    .map(|net| connection_rules[net_names.normalize(&net.name)].clone())
                     .collect();
                 let board = dru::BoardFacts {
                     nets: net_facts,
@@ -461,7 +461,7 @@ pub fn resolve_project_rules(
                 };
                 let lowered = dru::lower(&rules, &board, &severities);
                 for (index, net) in board.nets.iter().enumerate() {
-                    if let Some(rules) = connection_rules.get_mut(normalize_net(&net.name)) {
+                    if let Some(rules) = connection_rules.get_mut(net_names.normalize(&net.name)) {
                         apply_custom(rules, &lowered, Some(index));
                     }
                 }
@@ -478,13 +478,13 @@ pub fn resolve_project_rules(
                     if floor > neck + 1.0e-9 {
                         net_rules
                             .width_floor
-                            .insert(normalize_net(&net.name).to_string(), floor);
+                            .insert(net_names.normalize(&net.name).to_string(), floor);
                     }
                 }
                 let names = |nets: &Option<Vec<usize>>| {
                     nets.as_ref().map(|nets| {
                         nets.iter()
-                            .map(|&index| normalize_net(&board.nets[index].name).to_string())
+                            .map(|&index| net_names.normalize(&board.nets[index].name).to_string())
                             .collect::<Vec<_>>()
                     })
                 };
