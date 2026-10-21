@@ -1527,6 +1527,70 @@ mod pour_request_tests {
         };
         assert!(listed(&allowed).is_empty());
     }
+
+    #[test]
+    fn a_two_sided_or_split_exposed_pad_is_one_exposed_pad() {
+        // U1: Sisu's U2.11, an exposed pad drawn twice at one place (F.Cu
+        // and B.Cu, 1.2 x 2 mm) with a thermal via between, six pins
+        // around. U2: an exposed pad split into four same-number pieces
+        // of 1 x 1 mm (0.1 mm apart), with paste-only apertures that
+        // carry no copper. U3: two same-number tabs far apart beside a
+        // row of pins (a connector's shield pads): not exposed.
+        let pcb = parse(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+              (footprint "dfn" (at 5 5) (property "Reference" "U1")
+                (pad "1" smd rect (at -1 -0.65) (size 0.6 0.3) (layers "F.Cu") (net "A"))
+                (pad "2" smd rect (at -1 0) (size 0.6 0.3) (layers "F.Cu") (net "B"))
+                (pad "3" smd rect (at -1 0.65) (size 0.6 0.3) (layers "F.Cu") (net "A"))
+                (pad "4" smd rect (at 1 0.65) (size 0.6 0.3) (layers "F.Cu") (net "B"))
+                (pad "5" smd rect (at 1 0) (size 0.6 0.3) (layers "F.Cu") (net "A"))
+                (pad "6" smd rect (at 1 -0.65) (size 0.6 0.3) (layers "F.Cu") (net "B"))
+                (pad "11" smd rect (at 0 0) (size 1.2 2) (layers "F.Cu" "F.Paste" "F.Mask") (net "GND"))
+                (pad "11" smd rect (at 0 0) (size 1.2 2) (layers "B.Cu") (net "GND"))
+                (pad "11" thru_hole circle (at 0 0) (size 0.5 0.5) (drill 0.3) (layers "*.Cu") (net "GND")))
+              (footprint "qfn" (at 15 5) (property "Reference" "U2")
+                (pad "1" smd rect (at -2 0) (size 0.6 0.3) (layers "F.Cu") (net "A"))
+                (pad "2" smd rect (at 2 0) (size 0.6 0.3) (layers "F.Cu") (net "B"))
+                (pad "3" smd rect (at 0 -2) (size 0.3 0.6) (layers "F.Cu") (net "A"))
+                (pad "4" smd rect (at 0 2) (size 0.3 0.6) (layers "F.Cu") (net "B"))
+                (pad "5" smd rect (at -0.55 -0.55) (size 1 1) (layers "F.Cu" "F.Mask") (net "GND"))
+                (pad "5" smd rect (at 0.55 -0.55) (size 1 1) (layers "F.Cu" "F.Mask") (net "GND"))
+                (pad "5" smd rect (at -0.55 0.55) (size 1 1) (layers "F.Cu" "F.Mask") (net "GND"))
+                (pad "5" smd rect (at 0.55 0.55) (size 1 1) (layers "F.Cu" "F.Mask") (net "GND"))
+                (pad "" smd rect (at -0.5 -0.5) (size 0.8 0.8) (layers "F.Paste"))
+                (pad "" smd rect (at 0.5 0.5) (size 0.8 0.8) (layers "F.Paste")))
+              (footprint "usb" (at 30 10) (property "Reference" "U3")
+                (pad "1" smd rect (at -1 0) (size 0.4 1.3) (layers "F.Cu") (net "A"))
+                (pad "2" smd rect (at 0 0) (size 0.4 1.3) (layers "F.Cu") (net "B"))
+                (pad "3" smd rect (at 1 0) (size 0.4 1.3) (layers "F.Cu") (net "A"))
+                (pad "6" smd rect (at -4 2) (size 1.5 1.5) (layers "F.Cu") (net "GND"))
+                (pad "6" smd rect (at 4 2) (size 1.5 1.5) (layers "F.Cu") (net "GND"))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        let listed: Vec<&str> = board
+            .no_via_pads
+            .iter()
+            .map(|index| board.obstacles[*index].label.as_str())
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                "U1.1", "U1.2", "U1.3", "U1.4", "U1.5", "U1.6", "U2.1", "U2.2", "U2.3", "U2.4",
+                "U3.1", "U3.2", "U3.3", "U3.6", "U3.6"
+            ]
+        );
+    }
 }
 
 mod narrow_step_tests {

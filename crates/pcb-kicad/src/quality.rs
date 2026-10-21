@@ -174,38 +174,33 @@ struct Pad {
 }
 
 /// A part's exposed pad (a QFN's thermal pad), as the router's lowering
-/// finds it: the largest SMD pad with copper, at least twice any other's
-/// area, its centre strictly inside the box of the centres of at least
-/// three other pads with copper.
-fn exposed_pad(part: &Part) -> Option<usize> {
-    let pads: Vec<(usize, &Pad)> = part
-        .pads
-        .iter()
-        .enumerate()
-        .filter(|(_, pad)| pad.copper)
+/// finds it (`board_router::exposed_pad`: same-number copies and pieces
+/// one pad), by the indices of its pads: the largest SMD pad with copper,
+/// at least twice any other's area, its centre strictly inside the box of
+/// the centres of at least three other pads with copper.
+fn exposed_pad(part: &Part) -> Vec<usize> {
+    let with_copper: Vec<usize> = (0..part.pads.len())
+        .filter(|index| part.pads[*index].copper)
         .collect();
-    if pads.len() < 4 {
-        return None;
-    }
-    let area = |pad: &Pad| 4.0 * pad.half[0] * pad.half[1];
-    let (largest, pad) = pads
+    let boxes: Vec<board_router::PadBox> = with_copper
         .iter()
-        .filter(|(_, pad)| pad.smd)
-        .max_by(|a, b| area(a.1).total_cmp(&area(b.1)))
-        .copied()?;
-    let others = || pads.iter().filter(move |(index, _)| *index != largest);
-    if others().any(|(_, other)| other.smd && 2.0 * area(other) > area(pad)) {
-        return None;
-    }
-    (0..2)
-        .all(|axis| {
-            let (low, high) = others()
-                .fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), (_, o)| {
-                    (l.min(o.center[axis]), h.max(o.center[axis]))
-                });
-            low < pad.center[axis] && pad.center[axis] < high
+        .map(|index| {
+            let pad = &part.pads[*index];
+            board_router::PadBox {
+                number: pad.name.trim_matches('"').to_string(),
+                center: pad.center,
+                smd: pad.smd,
+                bounds: [
+                    [pad.center[0] - pad.half[0], pad.center[1] - pad.half[1]],
+                    [pad.center[0] + pad.half[0], pad.center[1] + pad.half[1]],
+                ],
+            }
         })
-        .then_some(largest)
+        .collect();
+    board_router::exposed_pad(&boxes)
+        .into_iter()
+        .map(|index| with_copper[index])
+        .collect()
 }
 
 struct Part {
@@ -903,7 +898,7 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
     // puts a pad's own via, is not in it). An exposed pad's
     // thermal vias are the designer's (the router's rule: docs/router.md,
     // "Vias in pads").
-    let exposed: Vec<Option<usize>> = parts.iter().map(exposed_pad).collect();
+    let exposed: Vec<Vec<usize>> = parts.iter().map(exposed_pad).collect();
     let mut vias_in_pads = 0;
     for (at, drill) in &vias {
         let inside = parts
@@ -913,7 +908,7 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
                 part.pads
                     .iter()
                     .enumerate()
-                    .filter(move |(index, _)| Some(*index) != *exposed)
+                    .filter(move |(index, _)| !exposed.contains(index))
                     .map(|(_, pad)| pad)
             })
             .any(|pad| {
@@ -1311,7 +1306,8 @@ mod tests {
     fn a_via_counts_in_a_small_smd_pad_not_beside_it_nor_in_an_exposed_pad() {
         // R1's pad 1 holds a via; one sits off pad 2's corner (its drill
         // clear of the copper, inside the old box test's margin); U1's
-        // exposed pad holds a thermal via; a paste-only aperture of U1 has
+        // exposed pad, drawn on both sides (Sisu's U2.11), holds a thermal
+        // via; a paste-only aperture of U1 has
         // a via over it; Q1's pad turned 45 degrees and its round pad have
         // vias inside their boxes, outside their copper.
         let board = r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
@@ -1325,6 +1321,7 @@ mod tests {
               (pad "3" smd rect (at 0 -1.5) (size 0.3 0.6) (layers "F.Cu") (net 1 "A"))
               (pad "4" smd rect (at 0 1.5) (size 0.3 0.6) (layers "F.Cu") (net 2 "B"))
               (pad "5" smd rect (at 0 0) (size 1.7 1.7) (layers "F.Cu") (net 3 "GND"))
+              (pad "5" smd rect (at 0 0) (size 1.7 1.7) (layers "B.Cu") (net 3 "GND"))
               (pad "" smd rect (at 3 3) (size 0.8 0.8) (layers "F.Paste")))
             (via (at 9.5 10) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
             (via (at 10.92 10.42) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 2))
