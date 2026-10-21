@@ -11,6 +11,50 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## GPU grid A* prototype (2026-10-21)
+
+A bounded go/no-go experiment on branch `gpu-astar-prototype` (not for
+main): the router's lattice A* as a wgpu compute kernel, against a CPU
+reference that reproduces the router's search, on dumped negotiation
+searches of real boards. Details, tables and how to run it:
+[crates/pcb-gpu-proto/README.md](../crates/pcb-gpu-proto/README.md).
+**No-go.**
+
+- The dump (`PCB_GPU_DUMP`, `PCB_GPU_STATS`; a patch to pcb-router kept on
+  the branch as its own commit): every negotiation search of iteration 1
+  of `bench-search ... 3 auto` on the v16 placements of Castor, k30-SBC and
+  jetson-nano, 1416 searches, with what each reads resolved for its net
+  over the region it can touch, and the router's path and expansions.
+- Determinism: the CPU reference equals the router on all 1416 searches
+  (path node for node, expansions), and the GPU kernel (one search per
+  workgroup, invocation 0 pops a four-way heap of the router's keys, eight
+  plus layer-count invocations evaluate the steps at once) equals the
+  reference on all of them at 1, 8, 64 and 256 searches a launch and in the
+  negotiation's own batches, with and without guards against fused
+  multiply-adds. Device: GTX 1650, driver 615.78.08, Vulkan, wgpu 30.0.1.
+- Speed: one GPU search 0.18-0.21 M expansions a second (4.5-5.5
+  microseconds an expansion: a chain of 17-22 dependent global reads at
+  150-255 ns, measured by a pointer chase), 256 a launch 2.4-3.0 M (a launch
+  lasts as long as its longest search), the negotiation's own batches
+  0.18-0.22 M; the CPU reference 3.4-4.8 M on one thread, the router 3.0-3.6
+  M (route mode, `profile rate`, x1184). Launch overhead about 0.05-0.07 ms.
+  Windows are the whole board (corridors confine the search), so dense node
+  arrays need 16-32 MB a search; the searches touch 0.4-1.8 MB (median).
+- The share a GPU could take at identical results: the parallel batches,
+  1-4 % of the wall clock in route mode (Castor 1.6 %, k30-SBC 0.8 %,
+  jetson 3.9 %), about two nets each (2.1-2.3). A single search split with
+  the router's order (speculative rounds of the next K pops, an ordered
+  commit, cut where a pushed key undercuts) commits 10-17 expansions a round
+  at K of 64-128 (`lookahead`): CPU parity on this card at best, behind an
+  exact batched GPU heap.
+- What would have to change first: the negotiation offering hundreds of
+  independent searches per synchronisation at identical results (Jacobi and
+  speculative batches were measured worse and removed on 2026-10-16; the
+  parked corridor graph is the remaining candidate), or an exact batched
+  device heap with a much lower dependent-read latency; and paged node
+  storage. The README lists what a production backend would need besides.
+
+
 ## Committed on 2026-10-16 (quality: pcb-kicad)
 
 A code-quality pass over the layout, router and placer adapters of
