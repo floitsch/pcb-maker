@@ -169,7 +169,7 @@ the 0.05 mm rung and left the narrow-signal step 52 s of work instead of
 to 41 (its tracks rung, 634 to 132 open, became the best and its narrow
 attempt ripped +3V3E up whole: 3 of 43 pads).
 
-### KiCad's connectivity (2026-10-22)
+### KiCad's connectivity (2026-10-21)
 
 In the 5 834-board intake, 192 boards (119 with nothing but unconnected
 items beyond the designer's findings) were complete by the router's count
@@ -182,7 +182,7 @@ holds:
 - **Terminals are KiCad's items.** Pads of one number are one terminal
   only where they overlap on a copper layer they share (an exposed pad's
   thermal vias, a pad with holes in it), and the overlap is transitive
-  (2026-10-22): an exposed pad on F.Cu and its copy on B.Cu are one item
+  (2026-10-21): an exposed pad on F.Cu and its copy on B.Cu are one item
   through the thermal vias that overlap both (MSign's U1.21, Sisu's
   U2.11), a reversible diode's SMD pads on both sides one through its
   through-hole pad (urchin's and eternal-keypad's D_SMD_TH), so pads of
@@ -234,7 +234,7 @@ holds:
   adds connections in KiCad, so the check cannot judge a pour net).
 
 - **A via of the net in a hatched zone has a thermal relief**
-  (2026-10-22). KiCad 10 treats such a via like a thermal pad where the
+  (2026-10-21). KiCad 10 treats such a via like a thermal pad where the
   zone's pads connect by thermals (knockoutThermalReliefs: a relief of
   the thermal gap, a ring, four spokes; with `connect_pads yes` or
   `thru_hole_only` it connects solidly, `Hatch::via_reliefs`). The fill
@@ -292,7 +292,7 @@ clearance 0.25: a via 0.769 from the centre kept the copper rule and was
 tracks end on the drill; its vias keep the pad copper's rule
 (`StaticMaps::via_owner`).
 
-### Board edges and copper of no net (2026-10-22)
+### Board edges and copper of no net (2026-10-21)
 
 KiCad 10.0.7's copper_edge_clearance measures copper against more than
 the outline (checked with kicad-cli on boards made for it): an unplated
@@ -335,7 +335,7 @@ with a `chamfer_ratio` of 0 is sharp, not rounded (`roundrect_pad.rs`;
 AQEYE's solder jumpers: tracks 0.126 mm from the sharp inner corners
 under 0.2, checked with kicad-cli).
 
-### Dimensions, text boxes, cached copper texts and padstacks (2026-10-22)
+### Dimensions, text boxes, cached copper texts and padstacks (2026-10-21)
 
 Checked with kicad-cli 10.0.7 on boards made for each (the unit tests in
 `board_router/tests.rs`, lowering_gap_tests, use the same boards):
@@ -423,7 +423,7 @@ A pad whose layers open the mask on a side it has no copper on (c-lydia's
 U3: `(layers "F.Mask" "B.Cu" "F.Paste")`) bridges other nets' copper under
 that opening to itself ("Front solder mask aperture ... Track on F.Cu ||
 Pad on B.Cu"): the aperture is lowered on that side too, of the pad's net,
-whatever the copper clearance (2026-10-22).
+whatever the copper clearance (2026-10-21).
 
 Openings the designer drew along their own tracks (AntonSievering's
 0.54 mm F.Mask strips along RF lines, a pad at one end, over the GND pour;
@@ -438,7 +438,7 @@ the bridge. The same holds for an opening over pads of several nets
 (Sisu's J_LCD1 rectangle, ringshout's J2): a track leaving a pad inside it
 bridges. The strict rule subtracts the designer's own pairs (opening and
 pad, opening and zone) but not the opening and our track; see
-docs/changelog.md, "Committed on 2026-10-22 (lowering gaps 2)".
+docs/changelog.md, "Committed on 2026-10-21 (lowering gaps 2)".
 
 ### Project rules (2026-10-21)
 
@@ -462,7 +462,7 @@ KiCad 10.0.7's DRC reads it:
   of nets keeps the larger of the two clearances, as in KiCad. The rules
   are keyed by connection as the lowering looks them up: a board with a
   bare net beside a hierarchical one of that name (meshsat's
-  `/VIN_CELL` and `VIN_CELL`) keeps the slash (since 2026-10-22; before,
+  `/VIN_CELL` and `VIN_CELL`) keeps the slash (since 2026-10-21; before,
   the hierarchical net fell back to Default's rules).
 - **Custom rules** (`<project>.kicad_dru`, `project_rules/dru.rs`). The
   file is parsed (comments, units mm/mil/in/um, escapes) and each
@@ -521,7 +521,7 @@ KiCad 10.0.7's DRC reads it:
   errors.
 
   What the lowering cannot do yet (the edge clearance from NPTH slots
-  and Margin graphics it does since 2026-10-22, "Board edges and copper
+  and Margin graphics it does since 2026-10-21, "Board edges and copper
   of no net" above): a
   later rule that loosens an earlier one only inside an area or a
   courtyard (ChengminLi's "YPS jumper pins (intended bridge)", 0.5 mm
@@ -714,7 +714,7 @@ zone_filler.cpp and drc_test_provider_zone_connections.cpp of KiCad 10:
   itself keeping every clearance: KiCad tests the point, so an end a few
   microns inside another pad's clearance drops the spoke where a brush
   centre beside it would still fit within the probe's tolerance;
-  anthracite's R503.2, 2026-10-22) or in another pad's spoke whose end
+  anthracite's R503.2, 2026-10-21) or in another pad's spoke whose end
   lies in this one (pads side by side);
 - it is as wide as the zone's spoke width but no wider than the pad, and
   none is drawn when that is narrower than the minimum width; other nets'
@@ -1162,7 +1162,7 @@ negotiation a rung and 75 s a probe, the narrow-signal step had the
 budget plus a half, and only the regular ladder's next rung checked the
 budget. The layout's ladder (its deadline_work path) is unchanged.
 
-Since 2026-10-22 route mode's ladder also counts each attempt's manual
+Since 2026-10-21 route mode's ladder also counts each attempt's manual
 spokes (the pour analyses and fill probes that repair starved thermals
 after the negotiation, `add_manual_spokes`; `manual_spokes_work_seconds`
 in board-router.json): no work deadline ends them, and on Vortac's
@@ -1235,7 +1235,7 @@ attempt of the final ladder, the neck repair's checks and its KiCad fill)
 counts a modelled cost in the layout's work: `CHECK_SECONDS` (3.6 s) plus
 `SECONDS_PER_THOUSAND_HATCH_HOLES` (1.7 s) per thousand holes of the
 board's hatched copper zones (area on each copper layer over the square of
-the hatch pitch), and since 2026-10-22 `COMPLEX_OUTLINE_SECONDS` (20 s)
+the hatch pitch), and since 2026-10-21 `COMPLEX_OUTLINE_SECONDS` (20 s)
 for a board with more than `COMPLEX_OUTLINE_ITEMS` (200) graphic items on
 Edge.Cuts (the slow plain boards were the complex outlines: katia,
 ghoul, ULK, slab-pcb, SmartSpin2k's panel, 15 to 34 s against 3.6), at
@@ -1364,11 +1364,11 @@ conflict bookkeeping (its limit is search expansions; at one thread its
 wall time runs 10-40 % ahead of search and pour work), the pour analyses
 in the layout's work tallies and in `deadline_work` (those still count
 search expansions). Route mode's ladder counts the manual spokes' since
-2026-10-22 ("The work bound in route mode") and every pour analysis,
+2026-10-21 ("The work bound in route mode") and every pour analysis,
 lattice build and lowering since the same day ("All the work charged"
 below).
 
-**The manual spokes** (2026-10-22). `add_manual_spokes` runs after
+**The manual spokes** (2026-10-21). `add_manual_spokes` runs after
 every finish: per starved pad a full pour analysis, then one per
 candidate track it tries (Vortac's panel: 34 tracks, 27 s of analyses
 in 28 s of wall clock per attempt, and its fill probes were not counted
@@ -1385,7 +1385,7 @@ boards with manual spokes (CompassTag, RS485M, Zulassungskarte,
 ch32v003, backplane, nervous-ecg) the boards and the fingerprints are
 those of x1366; Vortac's phase went from 28 s to 13 s.
 
-**Where the wall clock went** (2026-10-22). Every route ends with a
+**Where the wall clock went** (2026-10-21). Every route ends with a
 `wall accounting:` line and board-router.json's `wall_accounting`: the
 ladder's wall clock and work, the machine's measured share of the work
 rate and the guards' stretch (below), then thread seconds (routers side
@@ -1397,7 +1397,7 @@ starts with the ladder's work by kind (search, pour, lattices,
 lowerings, KiCad's checks; `wall_accounting.charged`) and gives the
 lattices' and lowerings' modelled work beside their thread seconds.
 
-**All the work charged** (2026-10-22). Route mode's ladder counted an
+**All the work charged** (2026-10-21). Route mode's ladder counted an
 attempt's search expansions and its manual spokes; the rest of what a
 router does cost wall clock and no work: the negotiation's pour refresh
 and the finishing phases' pour checks (on the expansion tier 0 to 15 s
@@ -1412,9 +1412,9 @@ decisions follow the load):
 |---|---|---|---|
 | search | every phase's searches | `expansions_per_second` (3.15e6 a second) | 2026-10-16, unchanged |
 | pour analyses and fill probes | the negotiation's pour refresh, `unfinished` (the probes' ranking), resolve, clean-up, via reduction, thermal spokes, stitching, manual spokes (`RoutingResult::pour_work`, `Router::pour_work`) | `POUR_NODE_NANOS` 23 per node inside the pour, `POUR_STAMP_NANOS` 6 per stamp, `PROBE_ITEM_NANOS` 9, `PROBE_QUERY_NANOS` 850, `PROBE_VERTEX_NANOS` 9 | 2026-10-15, unchanged (0.89 to 1.12 of the analyses' wall clock per board) |
-| lattice builds | `Router::new`: the static maps of every class (the outline, every obstacle's nodes, the tight steps), the nets' terminals and pour masks, the occupancy and search records (`BuildCounts`, `RoutingResult::build_work`) | `BUILD_MAP_NANOS` 22 per node of every class's maps (cells x layers x classes), `BUILD_TEST_NANOS` 11 per node tested, `BUILD_EDGE_NANOS` 2.75 per shape edge measured, `BUILD_STEP_NANOS` 22 per edge a tight node's eight steps measure | 2026-10-22, below |
-| lowerings | `lower`, per attempt and per rung probe's board | `LOWERING_EXPRESSION_NANOS` 26 per expression of the board file | 2026-10-22, below |
-| KiCad's checks | layouts only | `CHECK_SECONDS` 3.6 s and the hatch and outline terms | 2026-10-15 and 2026-10-22, unchanged |
+| lattice builds | `Router::new`: the static maps of every class (the outline, every obstacle's nodes, the tight steps), the nets' terminals and pour masks, the occupancy and search records (`BuildCounts`, `RoutingResult::build_work`) | `BUILD_MAP_NANOS` 22 per node of every class's maps (cells x layers x classes), `BUILD_TEST_NANOS` 11 per node tested, `BUILD_EDGE_NANOS` 2.75 per shape edge measured, `BUILD_STEP_NANOS` 22 per edge a tight node's eight steps measure | 2026-10-21, below |
+| lowerings | `lower`, per attempt and per rung probe's board | `LOWERING_EXPRESSION_NANOS` 26 per expression of the board file | 2026-10-21, below |
+| KiCad's checks | layouts only | `CHECK_SECONDS` 3.6 s and the hatch and outline terms | 2026-10-15 and 2026-10-21, unchanged |
 
 All are seconds of the reference at one thread, scaled to the process's
 rate as the pour model is (`reference_time_scale`). The build's
@@ -1584,7 +1584,7 @@ the load changing after the measurement), not a budget; a run that hangs
 still ends. run.py's timeout follows it: the budget times the guard plus
 300 s, at least 1800 s. `PCB_ROUTER_NO_WALL_GUARD` still drops it.
 
-**The guards stretch for pinned rates** (2026-10-22). With the rates
+**The guards stretch for pinned rates** (2026-10-21). With the rates
 pinned (`PCB_WORK_RATE`, the router settings `work_rate`), a second of
 work is a second of the pinned machine's, not of this one: the tiers pin
 the reference's, and at a load of 25 this machine measures 0.4 to 0.6 of

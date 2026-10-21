@@ -200,7 +200,7 @@ pub const PROBE_VERTEX_NANOS: u64 = 9;
 /// tests measure and per edge a node near an obstacle measures its eight
 /// steps against (a segment against a segment). Route mode's ladder
 /// charges it with each attempt (docs/router.md, "All the work
-/// charged"). Fitted 2026-10-22 on 83 distinct builds of the expansion
+/// charged"). Fitted 2026-10-21 on 83 distinct builds of the expansion
 /// tier's boards and the named boards (route mode at 4 s, one thread,
 /// the fastest of each build's repeats, scaled by the machine's measured
 /// share at load 20 to 30): the sum 1.0 of the measured, per board 0.6

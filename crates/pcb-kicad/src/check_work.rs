@@ -50,7 +50,7 @@ pub(crate) const MAX_CHECK_SECONDS: f64 = 50.0;
 
 /// A board whose outline is drawn in more than this many graphic items on
 /// Edge.Cuts (a panel's tabs and mouse bites, a keyboard's cut-outs)
-/// counts `COMPLEX_OUTLINE_SECONDS` more per check (2026-10-22).
+/// counts `COMPLEX_OUTLINE_SECONDS` more per check (2026-10-21).
 pub(crate) const COMPLEX_OUTLINE_ITEMS: usize = 200;
 
 /// What a complex outline adds to a check. The slow boards without

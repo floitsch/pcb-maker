@@ -346,7 +346,7 @@ pub(crate) struct Ladder<'a> {
     first_negotiation: f64,
     /// Route mode: whether an attempt's manual spokes count in the
     /// ladder's work beside its search (`result_work`; not under
-    /// `PCB_LADDER_UNCHARGED_SPOKES`, the count before 2026-10-22).
+    /// `PCB_LADDER_UNCHARGED_SPOKES`, the count before 2026-10-21).
     charges_spokes: bool,
     /// Route mode: whether all of an attempt's work counts (`result_work`:
     /// its search, every pour analysis and fill probe, its lattice's build
@@ -670,7 +670,7 @@ impl<'a> Ladder<'a> {
     /// pour analysis and fill probe of the attempt (its negotiation's pour
     /// refresh, the finishing phases' pour checks, the manual spokes), its
     /// lattice's build and its board's lowering, each modelled from what
-    /// it counted (`charges_all`, since 2026-10-22: brickpico's via
+    /// it counted (`charges_all`, since 2026-10-21: brickpico's via
     /// reduction did 8.5 s of pour work beside 25 s of search, ChengminLi
     /// built 15 lattices in 40 thread seconds); under
     /// `PCB_LADDER_UNCHARGED_POUR` its manual spokes alone (pour analyses

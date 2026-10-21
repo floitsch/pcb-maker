@@ -70,7 +70,7 @@ binary (`build/designer-x1315b.log`): 50 strict passes; on the 97 target
 boards with both results, placement 71 % and routing 29 % of the open
 connections (`compare.py --gap`). `build/github-layout-v18.log`; table,
 gap split and the boards in
-[benchmarks.md](benchmarks.md#layout-sweep-v18-2026-10-22).
+[benchmarks.md](benchmarks.md#layout-sweep-v18-2026-10-21).
 
 **Quick tier** (30 boards, full budget, the merge gate):
 `build/quick30-x1152.log` (x1152 = main 015676c, tasks v6): **24 of 30
@@ -335,11 +335,11 @@ Switches and experiment hooks (change the result):
 - `PCB_ROUTER_NO_LOST_SPOKES`: turns off the router's `lost_spoke_repair` (other nets rerouted around a starved pad's cut spokes after the clean-up).
 - `PCB_ROUTER_SEED`: `N`: perturbs the net order and seeds the history with noise, so that one board routes many ways.
 - `PCB_NARROW_RESERVE`: `share`: the share of the ladder's first attempt's work kept back for the narrow-signal step (wins over the router setting `narrow_reserve_share`; default 0.75).
-- `PCB_WALL_STRETCH_MAX`: `cap`: the most the wall-clock guards stretch for pinned rates faster than the machine measured (the pinned rate over the measured; default 4, 1: no stretch, the guards before 2026-10-22).
-- `PCB_LADDER_UNCHARGED_SPOKES`: route mode's ladder counts the attempts' search expansions alone, not their manual spokes (the count before 2026-10-22; for attributing rows).
-- `PCB_LADDER_UNCHARGED_POUR`: route mode's ladder counts the attempts' search expansions and manual spokes only, not their other pour analyses, lattice builds and lowerings, and its shares stay search work (the count before 2026-10-22, all pour work charged; for attributing rows).
+- `PCB_WALL_STRETCH_MAX`: `cap`: the most the wall-clock guards stretch for pinned rates faster than the machine measured (the pinned rate over the measured; default 4, 1: no stretch, the guards before 2026-10-21).
+- `PCB_LADDER_UNCHARGED_SPOKES`: route mode's ladder counts the attempts' search expansions alone, not their manual spokes (the count before 2026-10-21; for attributing rows).
+- `PCB_LADDER_UNCHARGED_POUR`: route mode's ladder counts the attempts' search expansions and manual spokes only, not their other pour analyses, lattice builds and lowerings, and its shares stay search work (the count before 2026-10-21, all pour work charged; for attributing rows).
 - `PCB_LADDER_SEARCH_SHARES`: route mode's ladder charges all the work but gives each router its share as search work, not scaled by the routers' share of search so far (for attributing rows).
-- `PCB_LADDER_NO_FIRST_ITERATION_GATE`: route mode's steps start without room for their first negotiation iteration (the rule before 2026-10-22; for attributing rows).
+- `PCB_LADDER_NO_FIRST_ITERATION_GATE`: route mode's steps start without room for their first negotiation iteration (the rule before 2026-10-21; for attributing rows).
 - `PCB_PROBES_SIDE_BY_SIDE`: `N`: at most N probes of the probe ladder at once (1: one after the other).
 
 Diagnostics (stderr unless said; the result does not change):

@@ -11,7 +11,7 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
-## Measured on 2026-10-22 (layout sweep v18, designer tier)
+## Measured on 2026-10-21 (layout sweep v18, designer tier)
 
 The deciding measurement for where the next work goes: the full layout
 sweep and the designer tier on one binary, x1315 (main 35456a1; 6f10989
@@ -53,12 +53,12 @@ placements), and pads of one footprint with one number (jiran's USB
 shield, 15 items in all). Four boards fail the strict rule on starved
 thermals alone (mackerel-30-proto, rosco, coco2, k30-SBC).
 
-Recommendation in [benchmarks.md](benchmarks.md#layout-sweep-v18-2026-10-22):
+Recommendation in [benchmarks.md](benchmarks.md#layout-sweep-v18-2026-10-21):
 routing-aware placement, with a coarse global route as its fast
 routability measure (RUDY and the probe were too weak or too slow), after
 the cheap fixes (net ties, starved thermals). README.md's headline, the
 hand-over and the tasks README carry the new numbers.
-## Committed on 2026-10-22 (all pour work charged)
+## Committed on 2026-10-21 (all pour work charged)
 
 Route mode's ladder counted an attempt's search expansions and, since
 the wall-guard work just below, its manual spokes; the negotiation's
@@ -221,7 +221,7 @@ verdict's fields), config reference (`PCB_LADDER_UNCHARGED_POUR`,
 Logs: build/expansion-charge-x1381, -x1381-old, -x1381-searchshares,
 -x1382-pour, -x1382-build, -x1383, -x1384; build/short-charge-x1381;
 build/fp-charge-x1381.
-## Committed on 2026-10-22 (strict rule: pre-bridged mask openings)
+## Committed on 2026-10-21 (strict rule: pre-bridged mask openings)
 
 The remaining solder mask bridges of lowering gaps 2 (56 on 8 intake
 boards; Sisu's 14 to 17 strict findings in the fingerprint, layout and
@@ -287,7 +287,7 @@ in v18a (six pads of our C98, C84 and PD4 placed under J1's NPTH
 aperture), protoesp and byrantech's motherboard (199, KiCad's cap on the
 stripped board: unknown).
 
-## Committed on 2026-10-22 (wall guard cuts at small budgets)
+## Committed on 2026-10-21 (wall guard cuts at small budgets)
 
 A cut row is not the binary's deterministic answer, so cuts must be rare
 and explained. In route mode at 30 s, VortacDesign's and FoCTow's
@@ -511,7 +511,7 @@ Logs: build/expansion-cuts-x1370, -x1370-old, -x1371;
 build/short-cuts-x1370, -x1371; build/fp-cuts-x1370, -x1370-old,
 -x1371.
 
-## Committed on 2026-10-22 (lowering gaps 2)
+## Committed on 2026-10-21 (lowering gaps 2)
 
 The finding types the previous lowering round left ("Lowering gaps in the
 intake's findings" below): solder mask bridges, dimensions and texts on
@@ -701,7 +701,7 @@ build/short-lower2-x1367; build/fp-lower2-x1366, -x1367;
 build/expansion-lower2-x1351, -x1352, -x1352-recut; build/short-lower2-x1351,
 -x1352; build/fp-lower2-x1351, -x1352.
 
-## Committed on 2026-10-22 (pour model after connectivity)
+## Committed on 2026-10-21 (pour model after connectivity)
 
 The connectivity agreement (below) made the router's "complete" what
 KiCad finds connected on 63 of the 65 boards, but cost rows: MSign (15
@@ -899,7 +899,7 @@ eternal-keypad's ProMicro pads (per-label zone connections, above);
 robotique's BioGenius (a dimension on copper, the lowering gaps 2
 package's).
 
-## Committed on 2026-10-22 (KiCad connectivity agreement)
+## Committed on 2026-10-21 (KiCad connectivity agreement)
 
 In the expansion intake (be4b012, 5 834 boards) 192 boards were complete
 by the router's count (every connection routed, no unconnected
@@ -1173,7 +1173,7 @@ on F.Cu and again on B.Cu at one place is two terminals now (183/192 to
 
 **Gates**: `bash scripts/check.sh` and the clippy gate pass.
 
-## Committed on 2026-10-22 (lowering gaps)
+## Committed on 2026-10-21 (lowering gaps)
 
 The two rules agents named KiCad findings the router could not see: the
 edge clearance from NPTH holes and Margin graphics, copper graphics of no

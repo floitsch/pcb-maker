@@ -160,17 +160,17 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_WALL_STRETCH_MAX",
         Kind::Switch,
-        "`cap`: the most the wall-clock guards stretch for pinned rates faster than the machine measured (the pinned rate over the measured; default 4, 1: no stretch, the guards before 2026-10-22).",
+        "`cap`: the most the wall-clock guards stretch for pinned rates faster than the machine measured (the pinned rate over the measured; default 4, 1: no stretch, the guards before 2026-10-21).",
     ),
     (
         "PCB_LADDER_UNCHARGED_SPOKES",
         Kind::Switch,
-        "route mode's ladder counts the attempts' search expansions alone, not their manual spokes (the count before 2026-10-22; for attributing rows).",
+        "route mode's ladder counts the attempts' search expansions alone, not their manual spokes (the count before 2026-10-21; for attributing rows).",
     ),
     (
         "PCB_LADDER_UNCHARGED_POUR",
         Kind::Switch,
-        "route mode's ladder counts the attempts' search expansions and manual spokes only, not their other pour analyses, lattice builds and lowerings, and its shares stay search work (the count before 2026-10-22, all pour work charged; for attributing rows).",
+        "route mode's ladder counts the attempts' search expansions and manual spokes only, not their other pour analyses, lattice builds and lowerings, and its shares stay search work (the count before 2026-10-21, all pour work charged; for attributing rows).",
     ),
     (
         "PCB_LADDER_SEARCH_SHARES",
@@ -180,7 +180,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_LADDER_NO_FIRST_ITERATION_GATE",
         Kind::Switch,
-        "route mode's steps start without room for their first negotiation iteration (the rule before 2026-10-22; for attributing rows).",
+        "route mode's steps start without room for their first negotiation iteration (the rule before 2026-10-21; for attributing rows).",
     ),
     (
         "PCB_PROBES_SIDE_BY_SIDE",

@@ -35,7 +35,7 @@ use serde::Serialize;
 pub const MAX_WALL_STRETCH: f64 = 4.0;
 
 /// The variable that sets another cap than `MAX_WALL_STRETCH` (1: no
-/// stretch, the guards as before 2026-10-22).
+/// stretch, the guards as before 2026-10-21).
 pub const WALL_STRETCH_VARIABLE: &str = "PCB_WALL_STRETCH_MAX";
 
 /// The variable that pins the rates.

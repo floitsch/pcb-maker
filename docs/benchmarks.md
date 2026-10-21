@@ -1262,7 +1262,7 @@ with the 1.57x larger work budget. The two cuts ran at loads 1 and 66.
 Compare with
 `python3 benchmarks/agent-tasks/compare.py build/github-layout-v16.log build/github-layout-v17.log`.
 
-## Layout sweep v18 (2026-10-22)
+## Layout sweep v18 (2026-10-21)
 
 `build/github-layout-v18.log`, binary x1315 (main 35456a1: project rules
 at scale, runtime calibration, the ladder's work bound and fault
@@ -1457,7 +1457,7 @@ What blocks boards at scale, ranked by boards a single new finding type
 blocks: KiCad disagreeing with the router's "complete" (119: stacked
 same-number F/B pads, tracks ending at a pad on the other side, pour to pad
 after refill; 192 boards complete by the router's count with KiCad
-unconnected items in all, classified and fixed on 2026-10-22: docs/changelog.md,
+unconnected items in all, classified and fixed on 2026-10-21: docs/changelog.md,
 "KiCad connectivity agreement"), starved thermals (103), track_width (82, almost all inferred
 rules against KiCad's 0.2 mm default), clearance from `.kicad_dru` and
 netclass rules (16), copper edge clearance (15), mask bridges (8). 1 297 of

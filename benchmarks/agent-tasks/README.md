@@ -176,7 +176,7 @@ measurement). The discipline:
   same distances apart, or items at the same positions within 0.05 mm,
   each designer finding answering for one; a type the designer has at
   KiCad's cap (199 or more) is not subtracted at all
-  (`strict_unknown`). Since rule 2 (2026-10-22, `strict_rule` in every
+  (`strict_unknown`). Since rule 2 (2026-10-21, `strict_rule` in every
   judged row and in summary.json; rows without it are rule 1) a
   **solder mask bridge of a pre-bridged opening** is not counted
   either: one item is a mask opening (a graphic on F.Mask or B.Mask, or
@@ -264,7 +264,7 @@ measurement). The discipline:
   `--no-lock` skips it (a run that must not wait, beside a tier you know
   of). Start only with the load under 40 (`uptime`) and more than 20 GB
   available (`free -g`). Results above a load of about 45 were unsound
-  (the wall-clock guard fired and the rows were CUT); since 2026-10-22
+  (the wall-clock guard fired and the rows were CUT); since 2026-10-21
   the guards stretch by the pinned rate over the measured one (at most
   four times, `wall_stretch` in the rows), so a loaded machine takes
   longer instead, and rows are cut only below a quarter of the
@@ -962,11 +962,11 @@ the rows are uncut (CUT rows are marked).
 and seconds from its v17 layout row (x1170).
 
 The first full run with a layout sweep of the same binary (x1315,
-2026-10-22; the two boards it timed out on rerun at 2 x 2 into
+2026-10-21; the two boards it timed out on rerun at 2 x 2 into
 `build/designer-x1315b`, timing out again): 50 of 109 pass the strict
 rule (58 the per-type rule); over the 97 target boards with both results
 the layout leaves 1483 open, the designer route 430: placement 71 %,
-routing 29 % ([docs/benchmarks.md](../../docs/benchmarks.md#layout-sweep-v18-2026-10-22)).
+routing 29 % ([docs/benchmarks.md](../../docs/benchmarks.md#layout-sweep-v18-2026-10-21)).
 
 ## Route mode (`--route-from`)
 

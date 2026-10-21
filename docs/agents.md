@@ -394,7 +394,7 @@ graphics with a net are terminals, the pour model connects only what
 KiCad's refilled fill connects, and the emitted tracks are checked as
 KiCad joins them): on 65 intake boards that the router used to call
 complete while KiCad found unconnected items it agrees with KiCad on 63
-(2026-10-22). It still checks no other DRC rule, and the pour model is a
+(2026-10-21). It still checks no other DRC rule, and the pour model is a
 model: run KiCad's check before using the board. A check that ran
 but whose report is missing or unreadable when the verdict reads it is an
 internal error (exit 4), never a verdict on the router's count. The old
@@ -413,7 +413,7 @@ errors that count. A reference with its tracks stripped (a board as handed
 to the router) says what the fixed geometry brings on its own; the
 benchmarks' strict rule uses the designer's board stripped so
 (`strip-kicad-tracks`: tracks, vias and small zones), and since its rule 2
-(run.py, 2026-10-22) also leaves out a solder mask bridge between a track
+(run.py, 2026-10-21) also leaves out a solder mask bridge between a track
 and a designer's mask opening that bridges on that board or on the
 designer's own (benchmarks/agent-tasks/README.md, "How to measure"); the
 verdict here does not.
@@ -445,7 +445,7 @@ A finished run also carries it as `verdict` in its report:
 | `work_rate`, `placer_work_rate`, `work_rate_source` | The search expansions and placement units a second of work stood for, and where they came from: `measured` (the start-up calibration), `PCB_WORK_RATE`, `config` (the router settings `work_rate`, `placer_work_rate`) or `reference`. |
 | `work_rate_measured`, `placer_work_rate_measured` | What the start-up calibration measured (also beside a pinned rate). |
 | `kicad_check_work_seconds` | Layouts: the part of `work_seconds` that is KiCad's checks inside the layout (the board kept, the final ladder's attempts, the neck repair), each counted at a cost modelled from the board, the same whether the DRC cache answered it or not. |
-| `pour_work_seconds`, `lattice_work_seconds` | `route-kicad-board`: the parts of `work_seconds` that are the pour analyses and fill probes (every phase's: the negotiation's pour refresh, the clean-up's and the via reduction's pour checks, the manual spokes) and the routers' lattice builds with the board's lowerings, each modelled from what it counted, the same on every machine; the rest is search. Since 2026-10-22 route mode's budget counts all of them (a 30 s budget used to buy 30 s of search and leave the pour work, up to 47 s on a panel, on top). |
+| `pour_work_seconds`, `lattice_work_seconds` | `route-kicad-board`: the parts of `work_seconds` that are the pour analyses and fill probes (every phase's: the negotiation's pour refresh, the clean-up's and the via reduction's pour checks, the manual spokes) and the routers' lattice builds with the board's lowerings, each modelled from what it counted, the same on every machine; the rest is search. Since 2026-10-21 route mode's budget counts all of them (a 30 s budget used to buy 30 s of search and leave the pour work, up to 47 s on a panel, on top). |
 | `skipped` | Steps of the router's attempt ladder that did not run while the board was incomplete, with why (`the narrow-signal step (signals at 0.15 mm) did not run: the ladder's budget was used (ladder_budget_seconds)`). |
 | `outputs` | Absolute paths: `project`, `board`, `drc`, `report`, `verdict`, `placement`. |
 | `next_actions` | What to do next, factual: where nets fought, which pads no track enters, which findings are new, which budget ran out. |

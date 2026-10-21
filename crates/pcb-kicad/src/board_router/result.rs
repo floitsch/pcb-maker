@@ -184,7 +184,7 @@ pub struct KiCadWallAccounting {
 /// The ladder's work by kind, in seconds of work (`Ladder::charge`): the
 /// search expansions, the pour analyses and fill probes, the lattice
 /// builds, the lowerings, KiCad's checks (a layout's). Route mode charges
-/// all of them since 2026-10-22 (under `PCB_LADDER_UNCHARGED_POUR` the
+/// all of them since 2026-10-21 (under `PCB_LADDER_UNCHARGED_POUR` the
 /// search and, as pour work, the manual spokes).
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct KiCadWorkCharges {

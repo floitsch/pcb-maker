@@ -225,7 +225,7 @@ SAME_PLACE_MM = 0.05
 # summary.json; compare.py warns when two runs were judged under different
 # ones. 1: the designer's findings at the same place (2026-10-19). 2: also
 # solder mask bridges of a designer's opening that bridges on the
-# designer's board already (2026-10-22, `strict_mask_openings`).
+# designer's board already (2026-10-21, `strict_mask_openings`).
 STRICT_RULE = 2
 # The designer's own board's solder mask bridges, kept in a task's work
 # directory by designer_findings for the strict rule.
