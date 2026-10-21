@@ -11,16 +11,20 @@
 //!
 //! - the board and the constraints at one size (`KiCadFreeDimensionPlan`):
 //!   the outline's edge moves, and so does everything within `band_mm` of
-//!   it (fixed parts by their origin, board texts by their anchor, drawn
-//!   shapes and zones point by point, constraint boxes by their side
-//!   nearest the edge); the rest stays where it is in board coordinates.
-//!   A size where a fixed part or a rule area that lay inside the outline
-//!   would end outside it, or where a fixed part carried by the edge would
-//!   land on one that stays, is infeasible without a run;
+//!   it (footprints by their origin, the parts the layout holds also by
+//!   their body, board texts and other rigid items by their box, drawn
+//!   shapes and zones point by point, a zone that would fold cut at the
+//!   new edge, arcs by their ends, constraint boxes side by side); the
+//!   rest stays where it is in board coordinates. A size where a held part,
+//!   a rule area or a drawn item that lay inside the outline would end
+//!   outside it, a drawn shape would fold, a box would vanish, or a held
+//!   part carried by the edge would land on one that stays, is infeasible
+//!   without a run;
 //! - the search over the sizes (`KiCadFreeDimensionSearch`): probes at a
-//!   reduced budget from the smallest size upward, several side by side,
-//!   the first clean size confirmed at the full budget; without a clean
-//!   size the closest one gets the full budget instead;
+//!   reduced budget from the smallest size upward, several side by side;
+//!   then everything left goes to full runs: a smaller size that came
+//!   close, else the smallest clean size again, or without a clean size
+//!   the closest one;
 //! - a probe's outcome as read from its verdict, and the choice.
 //!
 //! The command (`layout-kicad-board` with the key) runs each probe as a
@@ -65,22 +69,26 @@ pub struct KiCadFreeDimension {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accept: Option<String>,
     /// What moves with the edge: everything within this distance of it
-    /// (fixed parts by their origin, board texts by their anchor, drawn
-    /// shapes and zones point by point, constraint boxes by their side
-    /// nearest the edge). Default 0.5 mm: what lies on the edge.
+    /// (footprints by their origin, held parts also by their body, board
+    /// texts and other rigid items by their box, drawn shapes and zones
+    /// point by point, arcs by their ends, constraint boxes side by side).
+    /// Default 0.5 mm: what lies on the edge.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub band_mm: Option<f64>,
     /// The work budget of one probe (default a third of
     /// `confirm_seconds`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub probe_seconds: Option<f64>,
-    /// The work budget of the confirmation at the chosen size (default a
-    /// third of the layout's `total_seconds`, which is the whole search's
-    /// budget).
+    /// The work kept for the full runs after the probes (default a third
+    /// of the layout's `total_seconds`, which is the whole search's
+    /// budget): probes start only while it stays. The full runs (a smaller
+    /// size retried, the confirmation, the closest size) get everything
+    /// left.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub confirm_seconds: Option<f64>,
     /// Probes run side by side (default: a quarter of the threads, at
-    /// most 4, at most one per 3 GB of available memory).
+    /// most 4, at most one per 3 GB of available memory). Each gets this
+    /// share of the threads and of the memory (`PCB_MAKER_MEMORY_MB`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parallel: Option<usize>,
 }
@@ -235,7 +243,7 @@ pub struct KiCadFreeDimensionPlan {
     /// board's Edge.Cuts).
     from_constraints: bool,
     /// The footprints (indices among the board's children) that keep
-    /// their pose: `fixed`, locked, placed exactly.
+    /// their pose: the parts the placer holds (`held_parts`).
     fixed: Vec<usize>,
     /// The extent along the free axis as given.
     pub extent_mm: f64,
@@ -261,14 +269,15 @@ pub struct KiCadFreeDimensionVariant {
 
 impl KiCadFreeDimensionPlan {
     /// Reads the board (`board_text`) and its constraints (resolved, not a
-    /// file) for `free`. `fixed` and `fixed_patterns` are the placer
-    /// config's. Refuses an outline that is not a rectangle (input error).
+    /// file) for `free`, with the placer config `placer` (its `fixed`,
+    /// `fixed_patterns`, `free`, `edge_keep_mm`: which parts are held,
+    /// `held_parts`, as the layout decides it). Refuses an outline that is
+    /// not a rectangle (input error).
     pub fn new(
         free: &KiCadFreeDimension,
         board_text: &str,
         constraints: Option<KiCadPlacementConstraints>,
-        fixed: &[String],
-        fixed_patterns: &[String],
+        placer: &crate::KiCadBoardPlacerConfig,
     ) -> Result<Self, String> {
         let (axis, sign) = free.axis_and_sign()?;
         free.accept_rule()?;
@@ -292,53 +301,27 @@ impl KiCadFreeDimensionPlan {
                 "free_dimension: band_mm {band} reaches across the board ({extent_mm} mm): everything would move"
             )));
         }
-        let mut patterns: Vec<&str> = fixed
-            .iter()
-            .chain(fixed_patterns)
-            .map(String::as_str)
-            .collect();
-        let mut placed_exactly = Vec::new();
-        let mut move_all = false;
-        if let Some(constraints) = &constraints {
-            patterns.extend(constraints.fixed.iter().map(String::as_str));
-            move_all = constraints.move_all;
-            for place in &constraints.place {
-                if place.x.is_some() && place.y.is_some() {
-                    placed_exactly.push(place.part.as_str());
-                }
-            }
-            for addition in &constraints.add {
-                if addition.x.is_some() && addition.y.is_some() {
-                    placed_exactly.push(addition.part.as_str());
-                }
-            }
-        }
+        // The parts the layout holds, decided as the layout decides it.
+        let mut held_config = placer.clone();
+        held_config.constraints = constraints
+            .clone()
+            .map(crate::placement_constraints::KiCadConstraintsSource::Inline);
+        let held = crate::placement_constraints::held_parts_as_given(&pcb, &held_config).map_err(
+            |error| {
+                input_error(format!(
+                    "free_dimension: deciding which parts stay where they are: {error}"
+                ))
+            },
+        )?;
         let fixed = pcb
             .children()
             .iter()
             .enumerate()
             .filter(|(_, item)| item.head() == Some("footprint"))
-            .filter(|(_, footprint)| {
-                let reference = footprint_reference(footprint).unwrap_or_default();
-                let locked = footprint.child("locked").is_some()
-                    || footprint
-                        .children()
-                        .iter()
-                        .any(|child| child.atom() == Some("locked"));
-                let netless = !move_all
-                    && !footprint
-                        .children()
-                        .iter()
-                        .filter(|child| child.head() == Some("pad"))
-                        .any(|pad| pad.child("net").is_some());
-                locked
-                    || netless
-                    || placed_exactly.contains(&reference.as_str())
-                    || patterns
-                        .iter()
-                        .any(|pattern| crate::board_placer::glob_matches(pattern, &reference))
-            })
             .map(|(index, _)| index)
+            .enumerate()
+            .filter(|(footprint, _)| held.holds(*footprint))
+            .map(|(_, index)| index)
             .collect();
         Ok(Self {
             text: board_text.to_string(),
@@ -353,6 +336,14 @@ impl KiCadFreeDimensionPlan {
             extent_mm,
             edge: free.edge.clone(),
         })
+    }
+
+    /// The references of the parts held (for the reports and tests).
+    pub fn fixed_references(&self) -> Vec<String> {
+        self.fixed
+            .iter()
+            .map(|index| footprint_reference(&self.pcb.children()[*index]).unwrap_or_default())
+            .collect()
     }
 
     /// The moving edge's coordinate as given.
@@ -370,6 +361,34 @@ impl KiCadFreeDimensionPlan {
         self.sign * (self.edge_coordinate() - coordinate) <= self.band + 1.0e-6
     }
 
+    /// A box's side nearest the moving edge, along the free axis.
+    fn near(&self, bounds: &Box4) -> f64 {
+        if self.sign > 0.0 {
+            bounds[2 + self.axis]
+        } else {
+            bounds[self.axis]
+        }
+    }
+
+    /// Whether moving the points of an item that lie in the band by
+    /// `shift` would carry one past a point that stays (a shrink past the
+    /// band: a polygon would fold over itself).
+    fn folds(&self, coordinates: &[f64], shift: f64) -> bool {
+        if self.sign * shift >= 0.0 {
+            return false;
+        }
+        let mut nearest_moved = f64::INFINITY;
+        let mut farthest_kept = f64::NEG_INFINITY;
+        for coordinate in coordinates {
+            if self.in_band(*coordinate) {
+                nearest_moved = nearest_moved.min(self.sign * (coordinate + shift));
+            } else {
+                farthest_kept = farthest_kept.max(self.sign * coordinate);
+            }
+        }
+        nearest_moved <= farthest_kept + 1.0e-6
+    }
+
     /// The outline's box at `size`.
     pub fn outline_at(&self, size: f64) -> Box4 {
         let mut outline = self.outline;
@@ -385,9 +404,28 @@ impl KiCadFreeDimensionPlan {
     /// The board and constraints at `size`, or why that size cannot work
     /// (`Err`, each reason one line).
     pub fn variant(&self, size: f64) -> Result<KiCadFreeDimensionVariant, Vec<String>> {
+        let (variant, reasons) = self.build(size)?;
+        if reasons.is_empty() {
+            Ok(variant)
+        } else {
+            Err(reasons)
+        }
+    }
+
+    /// The board at `size` whatever stands in the way (a reference board
+    /// moved as the input is: its findings must stay where the input's
+    /// items go).
+    pub fn moved_board(&self, size: f64) -> Result<String, Vec<String>> {
+        self.build(size).map(|(variant, _)| variant.board)
+    }
+
+    /// The board and constraints at `size`, and the reasons that size
+    /// cannot work (none: it can).
+    fn build(&self, size: f64) -> Result<(KiCadFreeDimensionVariant, Vec<String>), Vec<String>> {
         let axis = self.axis;
         let shift = round_mm(self.sign * (size - self.extent_mm));
         let new_outline = self.outline_at(size);
+        let new_edge = self.edge_coordinate() + shift;
         let mut reasons = Vec::new();
         if size <= 0.0 {
             return Err(vec![format!("{size} mm is not a size")]);
@@ -397,8 +435,16 @@ impl KiCadFreeDimensionPlan {
         let mut moved_items = 0;
         // Fixed footprints' bodies before and after, and whether they move.
         let mut bodies: Vec<(String, Box4, Box4, bool, Option<bool>)> = Vec::new();
+        // Zones clipped away whole.
+        let mut vanished = Vec::new();
         let Expr::List(items) = &mut pcb else {
             return Err(vec!["the board is not a list".into()]);
+        };
+        // Whether an item that lay on the board would end beyond the
+        // outline.
+        let leaves = |before: Option<Box4>, after: Option<Box4>| {
+            matches!((before, after), (Some(before), Some(after))
+                if inside(&before, &self.outline, 0.01) && !inside(&after, &new_outline, 0.01))
         };
         for (index, item) in items.iter_mut().enumerate() {
             let Some(head) = item.head().map(str::to_string) else {
@@ -409,8 +455,15 @@ impl KiCadFreeDimensionPlan {
                     let Ok(at) = form_at(item) else {
                         continue;
                     };
-                    let moves = shift != 0.0 && self.in_band(at[axis]);
                     let before = footprint_box(item);
+                    let fixed = self.fixed.contains(&index);
+                    // A fixed part moves when its origin or its body lies in
+                    // the band (a centre-origin connector at the edge, a
+                    // module over it); the others, which the placer places
+                    // again, by their origin.
+                    let anchored = self.in_band(at[axis])
+                        || (fixed && before.is_some_and(|body| self.in_band(self.near(&body))));
+                    let moves = shift != 0.0 && anchored;
                     if moves {
                         let mut position = [at[0], at[1]];
                         position[axis] += shift;
@@ -427,9 +480,7 @@ impl KiCadFreeDimensionPlan {
                         }
                         moved_footprints.push(footprint_reference(item).unwrap_or_default());
                     }
-                    if self.fixed.contains(&index)
-                        && let Some(before) = before
-                    {
+                    if fixed && let Some(before) = before {
                         let mut after = before;
                         if moves {
                             after[axis] += shift;
@@ -444,45 +495,122 @@ impl KiCadFreeDimensionPlan {
                         ));
                     }
                 }
-                "gr_line" | "gr_rect" | "gr_poly" | "gr_curve" | "segment" | "zone" => {
+                "zone" => {
                     let before = points_box(item);
                     let mut changed = false;
-                    shift_points(
-                        item,
-                        axis,
-                        shift,
-                        &|coordinate| self.in_band(coordinate),
-                        &mut changed,
-                    );
+                    // Each outline of the zone on its own: one that would
+                    // fold is cut at the new edge instead (a pour's notch
+                    // just past the band; KiCad clips a pour to the board
+                    // anyway).
+                    let mut lists = Vec::new();
+                    collect_point_lists(item, &mut Vec::new(), &mut lists);
+                    let folding = lists.iter().any(|(_, coordinates)| {
+                        let along: Vec<f64> = coordinates.iter().map(|point| point[axis]).collect();
+                        self.folds(&along, shift)
+                    });
+                    if folding {
+                        match clip_zone(item, axis, self.sign, new_edge) {
+                            Ok(true) => vanished.push(index),
+                            Ok(false) => {}
+                            Err(why) => reasons.push(format!("the zone {} {why}", zone_name(item))),
+                        }
+                        changed = true;
+                    } else if shift != 0.0 {
+                        shift_points(
+                            item,
+                            axis,
+                            shift,
+                            &|coordinate| self.in_band(coordinate),
+                            &mut changed,
+                        );
+                    }
                     if changed {
                         moved_items += 1;
                     }
                     // A rule area that lay on the board and would not.
-                    if head == "zone"
-                        && item.child("keepout").is_some()
-                        && let (Some(before), Some(after)) = (before, points_box(item))
-                        && inside(&before, &self.outline, 0.01)
-                        && !inside(&after, &new_outline, 0.01)
-                    {
+                    if item.child("keepout").is_some() && leaves(before, points_box(item)) {
                         reasons.push(format!(
                             "the rule area {} would reach beyond the outline",
                             zone_name(item)
                         ));
                     }
                 }
-                "gr_text" | "gr_text_box" | "gr_circle" | "gr_arc" | "arc" | "via" | "image"
-                | "target" | "dimension" | "table" => {
+                "gr_line" | "gr_rect" | "gr_poly" | "gr_curve" | "segment" => {
+                    let before = points_box(item);
+                    let mut along = Vec::new();
+                    collect_axis(item, axis, &mut along);
+                    // Tracks go with the layout (it strips them); drawn
+                    // shapes must not fold nor leave the board.
+                    let drawn = head != "segment";
+                    if drawn && self.folds(&along, shift) {
+                        reasons.push(format!(
+                            "the {head} {} would fold: the edge would carry its points in the band past the ones beyond it",
+                            item_label(item)
+                        ));
+                        continue;
+                    }
+                    let mut changed = false;
+                    if shift != 0.0 {
+                        shift_points(
+                            item,
+                            axis,
+                            shift,
+                            &|coordinate| self.in_band(coordinate),
+                            &mut changed,
+                        );
+                    }
+                    if changed {
+                        moved_items += 1;
+                    }
+                    if drawn && leaves(before, points_box(item)) {
+                        reasons.push(format!(
+                            "the {head} {} would end beyond the outline",
+                            item_label(item)
+                        ));
+                    }
+                }
+                "gr_arc" | "arc" => {
+                    let before = points_box(item);
                     if shift != 0.0
-                        && let Some(point) = reference_point(item)
-                        && self.in_band(point[axis])
+                        && move_arc(item, axis, shift, &|coordinate| self.in_band(coordinate))
                     {
+                        moved_items += 1;
+                    }
+                    if head == "gr_arc" && leaves(before, points_box(item)) {
+                        reasons.push(format!(
+                            "the gr_arc {} would end beyond the outline",
+                            item_label(item)
+                        ));
+                    }
+                }
+                "gr_text" | "gr_text_box" | "gr_circle" | "via" | "image" | "target"
+                | "dimension" | "table" => {
+                    // Rigid: by the side of its box nearest the edge (a
+                    // text's box, a circle's), so that what reaches into
+                    // the band moves whole.
+                    let Some(before) = rigid_box(item) else {
+                        continue;
+                    };
+                    let mut after = before;
+                    if shift != 0.0 && self.in_band(self.near(&before)) {
                         let mut changed = false;
                         shift_points(item, axis, shift, &|_| true, &mut changed);
+                        after[axis] += shift;
+                        after[axis + 2] += shift;
                         moved_items += 1;
+                    }
+                    if head != "via" && leaves(Some(before), Some(after)) {
+                        reasons.push(format!(
+                            "the {head} {} would end beyond the outline",
+                            item_label(item)
+                        ));
                     }
                 }
                 _ => {}
             }
+        }
+        for index in vanished.into_iter().rev() {
+            items.remove(index);
         }
         // Fixed parts that end outside, or on each other.
         for (reference, before, after, _, _) in &bodies {
@@ -530,50 +658,63 @@ impl KiCadFreeDimensionPlan {
                     outline.width = Some(round_mm(new_outline[2] - new_outline[0]));
                     outline.height = Some(round_mm(new_outline[3] - new_outline[1]));
                 }
-                let mut moved_box =
-                    |x: &mut [f64; 2], y: &mut [f64; 2], origin: Option<&str>, what: &str| {
-                        let relative = origin != Some("absolute");
-                        let mut range = [*x, *y];
-                        if relative {
-                            for (index, range) in range.iter_mut().enumerate() {
-                                range[0] += old_corner[index];
-                                range[1] += old_corner[index];
-                            }
+                // A box: each side along the free axis that lies in the
+                // band moves (a box at the edge moves whole, one reaching
+                // from the edge across the board stretches); one whose
+                // near side would pass its far side cannot work.
+                let mut moved_box = |x: &mut [f64; 2],
+                                     y: &mut [f64; 2],
+                                     origin: Option<&str>,
+                                     what: &str| {
+                    let relative = origin != Some("absolute");
+                    let mut range = [*x, *y];
+                    if relative {
+                        for (index, range) in range.iter_mut().enumerate() {
+                            range[0] += old_corner[index];
+                            range[1] += old_corner[index];
                         }
-                        let before = [range[0][0], range[1][0], range[0][1], range[1][1]];
-                        let near = if self.sign > 0.0 {
-                            range[axis][0].max(range[axis][1])
-                        } else {
-                            range[axis][0].min(range[axis][1])
-                        };
-                        if shift != 0.0 && self.in_band(near) {
-                            range[axis][0] += shift;
-                            range[axis][1] += shift;
-                            moved_constraints += 1;
-                        }
-                        let after = [range[0][0], range[1][0], range[0][1], range[1][1]];
-                        let ordered = |b: Box4| {
-                            [
-                                b[0].min(b[2]),
-                                b[1].min(b[3]),
-                                b[0].max(b[2]),
-                                b[1].max(b[3]),
-                            ]
-                        };
-                        if inside(&ordered(before), &self.outline, 0.01)
-                            && !inside(&ordered(after), &new_outline, 0.01)
-                        {
-                            reasons.push(format!("the {what} box would reach beyond the outline"));
-                        }
-                        if relative {
-                            for (index, range) in range.iter_mut().enumerate() {
-                                range[0] -= new_corner[index];
-                                range[1] -= new_corner[index];
-                            }
-                        }
-                        *x = [round_mm(range[0][0]), round_mm(range[0][1])];
-                        *y = [round_mm(range[1][0]), round_mm(range[1][1])];
+                    }
+                    let ordered = |b: Box4| {
+                        [
+                            b[0].min(b[2]),
+                            b[1].min(b[3]),
+                            b[0].max(b[2]),
+                            b[1].max(b[3]),
+                        ]
                     };
+                    let before = [range[0][0], range[1][0], range[0][1], range[1][1]];
+                    // The side nearest the edge, and the other.
+                    let near_side =
+                        usize::from((self.sign > 0.0) == (range[axis][1] >= range[axis][0]));
+                    let far_side = 1 - near_side;
+                    if shift != 0.0 && self.in_band(range[axis][near_side]) {
+                        let far_moves = self.in_band(range[axis][far_side]);
+                        range[axis][near_side] += shift;
+                        if far_moves {
+                            range[axis][far_side] += shift;
+                        }
+                        moved_constraints += 1;
+                        if self.sign * (range[axis][near_side] - range[axis][far_side]) <= 1.0e-6 {
+                            reasons.push(format!(
+                                    "the {what} box would vanish: the edge would carry its side past its far side"
+                                ));
+                        }
+                    }
+                    let after = [range[0][0], range[1][0], range[0][1], range[1][1]];
+                    if inside(&ordered(before), &self.outline, 0.01)
+                        && !inside(&ordered(after), &new_outline, 0.01)
+                    {
+                        reasons.push(format!("the {what} box would reach beyond the outline"));
+                    }
+                    if relative {
+                        for (index, range) in range.iter_mut().enumerate() {
+                            range[0] -= new_corner[index];
+                            range[1] -= new_corner[index];
+                        }
+                    }
+                    *x = [round_mm(range[0][0]), round_mm(range[0][1])];
+                    *y = [round_mm(range[1][0]), round_mm(range[1][1])];
+                };
                 for keepout in &mut constraints.keepout {
                     moved_box(
                         &mut keepout.x,
@@ -635,24 +776,24 @@ impl KiCadFreeDimensionPlan {
                 Some(constraints)
             }
         };
-        if !reasons.is_empty() {
-            reasons.sort();
-            reasons.dedup();
-            return Err(reasons);
-        }
-        Ok(KiCadFreeDimensionVariant {
-            size_mm: size,
-            board: if shift == 0.0 {
-                self.text.clone()
-            } else {
-                crate::kicad_sexpr::encode(&pcb)
+        reasons.sort();
+        reasons.dedup();
+        Ok((
+            KiCadFreeDimensionVariant {
+                size_mm: size,
+                board: if shift == 0.0 {
+                    self.text.clone()
+                } else {
+                    crate::kicad_sexpr::encode(&pcb)
+                },
+                constraints,
+                outline: new_outline,
+                moved_footprints,
+                moved_items,
+                moved_constraints,
             },
-            constraints,
-            outline: new_outline,
-            moved_footprints,
-            moved_items,
-            moved_constraints,
-        })
+            reasons,
+        ))
     }
 }
 
@@ -968,13 +1109,362 @@ fn points_box(node: &Expr) -> Option<Box4> {
     bounds[0].is_finite().then_some(bounds)
 }
 
+/// The coordinates along `axis` of every point form below `node`.
+fn collect_axis(node: &Expr, axis: usize, out: &mut Vec<f64>) {
+    if let Some(head) = node.head()
+        && POINT_HEADS.contains(&head)
+    {
+        if let Some(value) = node
+            .children()
+            .get(1 + axis)
+            .and_then(Expr::atom)
+            .and_then(|atom| atom.parse::<f64>().ok())
+        {
+            out.push(value);
+        }
+        return;
+    }
+    for child in node.children().iter().skip(1) {
+        collect_axis(child, axis, out);
+    }
+}
+
+/// Every `pts` list below `node` (by its path of child indices) with its
+/// `xy` points.
+fn collect_point_lists(
+    node: &Expr,
+    path: &mut Vec<usize>,
+    out: &mut Vec<(Vec<usize>, Vec<[f64; 2]>)>,
+) {
+    if node.head() == Some("pts") {
+        let points = node
+            .children()
+            .iter()
+            .filter(|xy| xy.head() == Some("xy"))
+            .filter_map(|xy| {
+                let value = |index: usize| {
+                    xy.children()
+                        .get(index)
+                        .and_then(Expr::atom)
+                        .and_then(|atom| atom.parse::<f64>().ok())
+                };
+                Some([value(1)?, value(2)?])
+            })
+            .collect();
+        out.push((path.clone(), points));
+        return;
+    }
+    for (index, child) in node.children().iter().enumerate().skip(1) {
+        path.push(index);
+        collect_point_lists(child, path, out);
+        path.pop();
+    }
+}
+
+/// `polygon` cut by the half-plane `sign * (edge - point[axis]) >= 0`
+/// (the board's side of the new edge), Sutherland-Hodgman.
+pub(crate) fn clip_polygon(
+    polygon: &[[f64; 2]],
+    axis: usize,
+    sign: f64,
+    edge: f64,
+) -> Vec<[f64; 2]> {
+    let inside = |point: &[f64; 2]| sign * (edge - point[axis]) >= -1.0e-9;
+    let mut out = Vec::new();
+    for (index, current) in polygon.iter().enumerate() {
+        let previous = polygon[(index + polygon.len() - 1) % polygon.len()];
+        let crossing = |a: [f64; 2], b: [f64; 2]| {
+            let t = (edge - a[axis]) / (b[axis] - a[axis]);
+            let mut point = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
+            point[axis] = edge;
+            point
+        };
+        match (inside(&previous), inside(current)) {
+            (true, true) => out.push(*current),
+            (true, false) => out.push(crossing(previous, *current)),
+            (false, true) => {
+                out.push(crossing(previous, *current));
+                out.push(*current);
+            }
+            (false, false) => {}
+        }
+    }
+    out.dedup_by(|a, b| (a[0] - b[0]).abs() < 1.0e-6 && (a[1] - b[1]).abs() < 1.0e-6);
+    out
+}
+
+/// Cuts every outline of a zone (its `polygon` and its fills) at the new
+/// edge. `Ok(true)`: nothing of the zone's outline is left (the zone goes);
+/// `Err`: an outline with arcs, which is not cut.
+fn clip_zone(zone: &mut Expr, axis: usize, sign: f64, edge: f64) -> Result<bool, String> {
+    let mut lists = Vec::new();
+    collect_point_lists(zone, &mut Vec::new(), &mut lists);
+    for (path, _) in &lists {
+        let node = path
+            .iter()
+            .fold(&*zone, |node, index| &node.children()[*index]);
+        if node
+            .children()
+            .iter()
+            .skip(1)
+            .any(|child| child.head() != Some("xy"))
+        {
+            return Err(
+                "would fold, and its outline has arcs: it cannot be cut at the new edge".into(),
+            );
+        }
+    }
+    let mut gone = false;
+    let mut empty_fills = Vec::new();
+    for (path, points) in lists {
+        let clipped = clip_polygon(&points, axis, sign, edge);
+        let Some(node) = path_node(zone, &path) else {
+            continue;
+        };
+        let Expr::List(items) = node else {
+            continue;
+        };
+        items.truncate(1);
+        for point in &clipped {
+            items.push(Expr::List(vec![
+                Expr::Atom("xy".into()),
+                number(point[0]),
+                number(point[1]),
+            ]));
+        }
+        if clipped.len() < 3 {
+            // The zone's own outline gone: the zone goes; a fill gone:
+            // that fill goes.
+            let owner = path.first().map(|index| zone.children()[*index].head());
+            if owner == Some(Some("polygon")) {
+                gone = true;
+            } else if let Some(first) = path.first() {
+                empty_fills.push(*first);
+            }
+        }
+    }
+    if let Expr::List(items) = zone {
+        empty_fills.sort_unstable();
+        empty_fills.dedup();
+        for index in empty_fills.into_iter().rev() {
+            items.remove(index);
+        }
+    }
+    Ok(gone)
+}
+
+fn path_node<'a>(node: &'a mut Expr, path: &[usize]) -> Option<&'a mut Expr> {
+    let mut node = node;
+    for index in path {
+        let Expr::List(items) = node else {
+            return None;
+        };
+        node = items.get_mut(*index)?;
+    }
+    Some(node)
+}
+
+/// An item for a reason: its layer and its first point.
+fn item_label(item: &Expr) -> String {
+    let layer = form_atom(item, "layer", 1).unwrap_or("");
+    match points_box(item) {
+        Some(bounds) => format!(
+            "on {layer} at ({}, {})",
+            format_mm(bounds[0]),
+            format_mm(bounds[1])
+        ),
+        None => format!("on {layer}"),
+    }
+}
+
+/// Moves an arc (start, mid, end) with the edge: whole when both ends lie
+/// in the band, not at all when neither does, and when one does, that end
+/// moves and the arc keeps its shape between its ends (its middle mapped
+/// by the similarity that takes the old ends to the new), so that what is
+/// joined to either end stays joined. An arc without a middle (the old
+/// centre form) moves whole by its first point. Returns whether it moved.
+fn move_arc(item: &mut Expr, axis: usize, shift: f64, in_band: &dyn Fn(f64) -> bool) -> bool {
+    let (Ok(start), Ok(mid), Ok(end)) = (
+        form_xy(item, "start"),
+        form_xy(item, "mid"),
+        form_xy(item, "end"),
+    ) else {
+        let Some(point) = reference_point(item) else {
+            return false;
+        };
+        if !in_band(point[axis]) {
+            return false;
+        }
+        let mut changed = false;
+        shift_points(item, axis, shift, &|_| true, &mut changed);
+        return changed;
+    };
+    let (start_moves, end_moves) = (in_band(start[axis]), in_band(end[axis]));
+    if !start_moves && !end_moves {
+        return false;
+    }
+    let mut changed = false;
+    if start_moves && end_moves {
+        shift_points(item, axis, shift, &|_| true, &mut changed);
+        return changed;
+    }
+    let mut new_start = start;
+    let mut new_end = end;
+    if start_moves {
+        new_start[axis] += shift;
+    } else {
+        new_end[axis] += shift;
+    }
+    let old = [end[0] - start[0], end[1] - start[1]];
+    let new = [new_end[0] - new_start[0], new_end[1] - new_start[1]];
+    let length = old[0] * old[0] + old[1] * old[1];
+    if length < 1.0e-12 {
+        shift_points(item, axis, shift, &|_| true, &mut changed);
+        return changed;
+    }
+    // new / old as complex numbers.
+    let ratio = [
+        (new[0] * old[0] + new[1] * old[1]) / length,
+        (new[1] * old[0] - new[0] * old[1]) / length,
+    ];
+    let offset = [mid[0] - start[0], mid[1] - start[1]];
+    let new_mid = [
+        new_start[0] + offset[0] * ratio[0] - offset[1] * ratio[1],
+        new_start[1] + offset[0] * ratio[1] + offset[1] * ratio[0],
+    ];
+    for (head, point) in [("start", new_start), ("mid", new_mid), ("end", new_end)] {
+        if let Some(Expr::List(form)) = item_child_mut(item, head)
+            && form.len() >= 3
+        {
+            form[1] = number(point[0]);
+            form[2] = number(point[1]);
+        }
+    }
+    true
+}
+
+fn item_child_mut<'a>(item: &'a mut Expr, head: &str) -> Option<&'a mut Expr> {
+    let Expr::List(items) = item else {
+        return None;
+    };
+    items.iter_mut().find(|child| child.head() == Some(head))
+}
+
+/// The box of a rigid item: a text's from its font, length and
+/// justification, a circle's from its radius, a via's from its size,
+/// else the box of its points.
+fn rigid_box(item: &Expr) -> Option<Box4> {
+    match item.head() {
+        Some("gr_text") => text_box(item).or_else(|| points_box(item)),
+        Some("gr_circle") => {
+            let center = form_xy(item, "center").ok()?;
+            let end = form_xy(item, "end").ok()?;
+            let radius = distance_squared(center, end).sqrt();
+            Some([
+                center[0] - radius,
+                center[1] - radius,
+                center[0] + radius,
+                center[1] + radius,
+            ])
+        }
+        Some("via") => {
+            let at = form_xy(item, "at").ok()?;
+            let half = form_atom(item, "size", 1)
+                .and_then(|size| size.parse::<f64>().ok())
+                .unwrap_or(0.0)
+                / 2.0;
+            Some([at[0] - half, at[1] - half, at[0] + half, at[1] + half])
+        }
+        _ => points_box(item),
+    }
+}
+
+/// A board text's box, estimated: each character as wide as the font,
+/// lines 1.6 heights apart, placed by its justification and turned by
+/// its angle about its anchor.
+fn text_box(item: &Expr) -> Option<Box4> {
+    let at = item.child("at")?;
+    let value = |index: usize| {
+        at.children()
+            .get(index)
+            .and_then(Expr::atom)
+            .and_then(|atom| atom.parse::<f64>().ok())
+    };
+    let (x, y, angle) = (value(1)?, value(2)?, value(3).unwrap_or(0.0));
+    let text = item.children().get(1)?.atom()?;
+    let effects = item.child("effects");
+    let font = effects.and_then(|effects| effects.child("font"));
+    let size = |index: usize| {
+        font.and_then(|font| form_atom(font, "size", index))
+            .and_then(|size| size.parse::<f64>().ok())
+            .unwrap_or(1.0)
+    };
+    let (height, width) = (size(1), size(2));
+    let lines: Vec<&str> = text
+        .split(['\n'])
+        .flat_map(|line| line.split("\\n"))
+        .collect();
+    let longest = lines
+        .iter()
+        .map(|line| line.chars().count())
+        .max()
+        .unwrap_or(0) as f64;
+    let box_width = longest * width;
+    let box_height = height * (1.0 + 1.6 * (lines.len().max(1) - 1) as f64);
+    let justify: Vec<&str> = effects
+        .and_then(|effects| effects.child("justify"))
+        .map(|justify| {
+            justify
+                .children()
+                .iter()
+                .skip(1)
+                .filter_map(Expr::atom)
+                .collect()
+        })
+        .unwrap_or_default();
+    let x0 = if justify.contains(&"left") {
+        0.0
+    } else if justify.contains(&"right") {
+        -box_width
+    } else {
+        -box_width / 2.0
+    };
+    let y0 = if justify.contains(&"top") {
+        0.0
+    } else if justify.contains(&"bottom") {
+        -box_height
+    } else {
+        -box_height / 2.0
+    };
+    let mut bounds = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
+    for (dx, dy) in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)] {
+        let local = [x0 + dx * box_width, y0 + dy * box_height];
+        let offset = rotate_vector(local, -angle);
+        let point = [x + offset[0], y + offset[1]];
+        bounds = [
+            bounds[0].min(point[0]),
+            bounds[1].min(point[1]),
+            bounds[2].max(point[0]),
+            bounds[3].max(point[1]),
+        ];
+    }
+    Some(bounds)
+}
+
 /// One layout of the search (or a size that needed none), as
 /// `free-dimension.json` lists it.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct KiCadFreeDimensionRun {
     pub size_mm: f64,
-    /// `probe` (the reduced budget), `confirm` (the full budget at the
-    /// chosen size), `closest` (the full budget at the size that came
+    /// `probe` (the reduced budget), `confirm` (the budget left at the
+    /// smallest clean size), `retry` (the budget left at a smaller size
+    /// that came close, after a clean probe: the results are not
+    /// monotone), `closest` (the budget left at the size that came
     /// closest, when no probe was clean) or `infeasible` (no run).
     pub kind: String,
     /// The run's work budget (`total_seconds`).
@@ -1122,6 +1612,16 @@ impl KiCadFreeDimensionRun {
         self.kind != "infeasible" && self.status != "no_verdict"
     }
 
+    /// Not clean, but close: every part placed, KiCad checked it, and its
+    /// unconnected items and errors at most `CLOSE_FINDINGS` together.
+    fn close(&self) -> bool {
+        self.is_run()
+            && self.unplaced == 0
+            && self
+                .kicad_unconnected
+                .is_some_and(|open| open + self.errors <= CLOSE_FINDINGS)
+    }
+
     /// One line: size, budget, outcome.
     pub fn summary(&self) -> String {
         if self.kind == "infeasible" {
@@ -1176,8 +1676,9 @@ pub enum KiCadFreeDimensionStep {
         sizes: Vec<f64>,
         budget: f64,
     },
-    /// Lay out one size at a larger budget: `confirm` (a clean probe's
-    /// size) or `closest` (no probe was clean).
+    /// Lay out one size at the budget left: `confirm` (the smallest clean
+    /// size), `retry` (a smaller size that came close) or `closest` (no
+    /// probe was clean).
     Full {
         size: f64,
         budget: f64,
@@ -1188,8 +1689,11 @@ pub enum KiCadFreeDimensionStep {
 
 /// The search over the sizes: probes from the smallest size upward, in
 /// batches of `parallel`, while the budget leaves room for the full run;
-/// then the full run at the first clean size, or at the size that came
-/// closest. Every run's work counts against `total_seconds`.
+/// then the full runs, each with everything left of `total_seconds`: after
+/// a clean probe, the largest smaller size that came close (`close`), else
+/// the smallest clean size again (the confirmation); without a clean probe
+/// the size that came closest. Every run's work counts against
+/// `total_seconds`.
 #[derive(Clone, Debug)]
 pub struct KiCadFreeDimensionSearch {
     pending: VecDeque<f64>,
@@ -1198,8 +1702,15 @@ pub struct KiCadFreeDimensionSearch {
     pub total_seconds: f64,
     pub parallel: usize,
     pub runs: Vec<KiCadFreeDimensionRun>,
-    full_done: bool,
+    probing_done: bool,
 }
+
+/// A probe that was not clean "came close" when every part was placed and
+/// KiCad's unconnected items and errors are at most this many together:
+/// worth the full budget after a larger size was clean (the fence's two
+/// layers: 38 mm 3 unconnected, 40 and 42 mm a starved thermal each, 44
+/// mm clean).
+pub const CLOSE_FINDINGS: usize = 4;
 
 impl KiCadFreeDimensionSearch {
     /// `sizes`: the feasible sizes; `runs`: the infeasible ones, listed.
@@ -1220,7 +1731,7 @@ impl KiCadFreeDimensionSearch {
             total_seconds,
             parallel: parallel.max(1),
             runs: infeasible,
-            full_done: false,
+            probing_done: false,
         }
     }
 
@@ -1255,10 +1766,11 @@ impl KiCadFreeDimensionSearch {
         self.pending.iter().copied().collect()
     }
 
-    fn first_clean_probe(&self) -> Option<&KiCadFreeDimensionRun> {
+    /// The smallest clean run (any kind).
+    fn smallest_clean(&self) -> Option<&KiCadFreeDimensionRun> {
         self.runs
             .iter()
-            .filter(|run| run.kind == "probe" && run.clean)
+            .filter(|run| run.clean && run.is_run())
             .min_by(|a, b| a.size_mm.total_cmp(&b.size_mm))
     }
 
@@ -1269,50 +1781,82 @@ impl KiCadFreeDimensionSearch {
             .min_by_key(|run| run.distance())
     }
 
+    /// Whether a size had a run at more than the probe budget.
+    fn had_full_run(&self, size: f64) -> bool {
+        self.runs
+            .iter()
+            .any(|run| run.is_run() && run.kind != "probe" && (run.size_mm - size).abs() < 1.0e-6)
+    }
+
     pub fn next_step(&mut self) -> KiCadFreeDimensionStep {
-        if self.full_done {
-            return KiCadFreeDimensionStep::Done;
-        }
         let left = self.total_seconds - self.spent();
-        if let Some(clean) = self.first_clean_probe() {
-            let budget = self.confirm_seconds.min(left);
-            if budget > clean.budget_seconds + 1.0e-6 {
+        if !self.probing_done {
+            if self.smallest_clean().is_none() {
+                let room = left - self.confirm_seconds;
+                let count = ((room + 1.0e-6) / self.probe_seconds).floor().max(0.0) as usize;
+                let count = count.min(self.parallel).min(self.pending.len());
+                if count > 0 {
+                    return KiCadFreeDimensionStep::Probe {
+                        sizes: self.pending.drain(..count).collect(),
+                        budget: self.probe_seconds,
+                    };
+                }
+            }
+            self.probing_done = true;
+        }
+        // The final runs, each with all that is left: worth it only with
+        // more than the run it repeats had.
+        let worth = |run: &KiCadFreeDimensionRun| left > run.budget_seconds + 1.0e-6;
+        if let Some(clean) = self.smallest_clean().cloned() {
+            // A smaller size that came close, the largest first (results
+            // are not monotone: it may be clean at the full budget).
+            let retry = self
+                .runs
+                .iter()
+                .filter(|run| {
+                    run.kind == "probe"
+                        && !run.clean
+                        && run.size_mm < clean.size_mm - 1.0e-6
+                        && run.close()
+                        && !self.had_full_run(run.size_mm)
+                })
+                .max_by(|a, b| a.size_mm.total_cmp(&b.size_mm))
+                .cloned();
+            if let Some(retry) = retry
+                && worth(&retry)
+            {
+                return KiCadFreeDimensionStep::Full {
+                    size: retry.size_mm,
+                    budget: left,
+                    kind: "retry",
+                };
+            }
+            if clean.kind == "probe" && !self.had_full_run(clean.size_mm) && worth(&clean) {
                 return KiCadFreeDimensionStep::Full {
                     size: clean.size_mm,
-                    budget,
+                    budget: left,
                     kind: "confirm",
                 };
             }
             return KiCadFreeDimensionStep::Done;
         }
-        let room = left - self.confirm_seconds;
-        let count = ((room + 1.0e-6) / self.probe_seconds).floor().max(0.0) as usize;
-        let count = count.min(self.parallel).min(self.pending.len());
-        if count > 0 {
-            return KiCadFreeDimensionStep::Probe {
-                sizes: self.pending.drain(..count).collect(),
-                budget: self.probe_seconds,
+        if let Some(closest) = self.closest().cloned()
+            && !self.had_full_run(closest.size_mm)
+            && !self.runs.iter().any(|run| run.kind == "closest")
+            && worth(&closest)
+        {
+            return KiCadFreeDimensionStep::Full {
+                size: closest.size_mm,
+                budget: left,
+                kind: "closest",
             };
-        }
-        if let Some(closest) = self.closest() {
-            let budget = self.confirm_seconds.min(left);
-            if budget > closest.budget_seconds + 1.0e-6 {
-                return KiCadFreeDimensionStep::Full {
-                    size: closest.size_mm,
-                    budget,
-                    kind: "closest",
-                };
-            }
         }
         KiCadFreeDimensionStep::Done
     }
 
     pub fn record(&mut self, runs: Vec<KiCadFreeDimensionRun>) {
-        if runs
-            .iter()
-            .any(|run| run.kind == "confirm" || run.kind == "closest")
-        {
-            self.full_done = true;
+        if runs.iter().any(|run| run.kind != "probe") {
+            self.probing_done = true;
         }
         self.runs.extend(runs);
     }
@@ -1330,8 +1874,11 @@ impl KiCadFreeDimensionSearch {
             .filter(|(_, run)| run.clean && run.is_run())
             .min_by_key(|(_, run)| ((run.size_mm * 1000.0).round() as i64, budget_order(run)))
             .map(|(index, _)| index);
-        let probed: Vec<&KiCadFreeDimensionRun> =
-            self.runs.iter().filter(|run| run.kind == "probe").collect();
+        let probed: Vec<&KiCadFreeDimensionRun> = self
+            .runs
+            .iter()
+            .filter(|run| run.kind != "infeasible" && run.kind != "confirm")
+            .collect();
         let (index, reason) = match clean {
             Some(index) => {
                 let run = &self.runs[index];
@@ -1341,8 +1888,13 @@ impl KiCadFreeDimensionSearch {
                         .filter(|other| other.size_mm < run.size_mm - 1.0e-6)
                         .map(|other| {
                             format!(
-                                "{} mm {}",
+                                "{} mm {}{}",
                                 format_mm(other.size_mm),
+                                if other.kind == "probe" {
+                                    String::new()
+                                } else {
+                                    format!("{} at {:.0} s ", other.kind, other.budget_seconds)
+                                },
                                 other.kicad_unconnected.map_or(
                                     "unchecked".into(),
                                     |count| format!("{count} open, {} errors", other.errors)
@@ -1353,10 +1905,13 @@ impl KiCadFreeDimensionSearch {
                 let mut reason = format!(
                     "{} mm is the smallest clean size ({}) of those probed at {:.0} s",
                     format_mm(run.size_mm),
-                    if run.kind == "probe" {
-                        "its probe"
-                    } else {
-                        "confirmed at the full budget"
+                    match run.kind.as_str() {
+                        "probe" => "its probe".to_string(),
+                        "retry" => format!(
+                            "retried at {:.0} s after a larger size was clean",
+                            run.budget_seconds
+                        ),
+                        _ => format!("at {:.0} s", run.budget_seconds),
                     },
                     self.probe_seconds
                 );
@@ -1485,6 +2040,7 @@ mod tests {
     /// a free part in the middle, a label at the bottom edge, a keepout
     /// rule area at the bottom and a pour over the whole board.
     const BOARD: &str = r#"(kicad_pcb (version 20240108)
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
   (footprint "R" (layer "F.Cu") (at 120 127 0)
     (property "Reference" "J1" (at 0 0 0) (layer "F.SilkS"))
     (fp_line (start -2 -1) (end 2 -1) (layer "F.CrtYd"))
@@ -1506,11 +2062,19 @@ mod tests {
     (polygon (pts (xy 100 100) (xy 150 100) (xy 150 130) (xy 100 130))))
 )"#;
 
+    /// A placer config fixing `fixed`.
+    fn placer(fixed: &[&str]) -> crate::KiCadBoardPlacerConfig {
+        crate::KiCadBoardPlacerConfig {
+            fixed: fixed.iter().map(|name| name.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
     fn plan(
         free: &KiCadFreeDimension,
         constraints: Option<KiCadPlacementConstraints>,
     ) -> KiCadFreeDimensionPlan {
-        KiCadFreeDimensionPlan::new(free, BOARD, constraints, &["J1".into()], &[]).unwrap()
+        KiCadFreeDimensionPlan::new(free, BOARD, constraints, &placer(&["J1"])).unwrap()
     }
 
     fn footprint_at(board: &str, reference: &str) -> [f64; 3] {
@@ -1627,8 +2191,9 @@ mod tests {
         assert_eq!(constraints.keepout[1].y, [30.0, 35.0]);
         // Absolute and far from the edge: unchanged.
         assert_eq!(constraints.keepout[2].y, [125.0, 128.0]);
-        // A region from the top edge: its top side is on the edge, it moves.
-        assert_eq!(constraints.region[0].y, Some([0.0, 10.0]));
+        // A region from the top edge 10 mm down: its top side is on the
+        // edge and moves, its lower side stays: it stretches.
+        assert_eq!(constraints.region[0].y, Some([0.0, 20.0]));
         assert_eq!(constraints.place[0].y, Some(1.0));
         assert_eq!(variant.moved_constraints, 3);
         let pcb = parse(&variant.board).unwrap();
@@ -1668,26 +2233,30 @@ mod tests {
             "version": 1, "outline": {"polygon": [[0, 0], [10, 0], [10, 10]]}
         }))
         .unwrap();
-        let error = KiCadFreeDimensionPlan::new(&free("bottom"), BOARD, Some(polygon), &[], &[])
-            .unwrap_err();
+        let error =
+            KiCadFreeDimensionPlan::new(&free("bottom"), BOARD, Some(polygon), &placer(&[]))
+                .unwrap_err();
         assert!(error.contains("rectangular"), "{error}");
         let automatic: KiCadPlacementConstraints =
             serde_json::from_value(serde_json::json!({"version": 1, "outline": {}})).unwrap();
-        let error = KiCadFreeDimensionPlan::new(&free("bottom"), BOARD, Some(automatic), &[], &[])
-            .unwrap_err();
+        let error =
+            KiCadFreeDimensionPlan::new(&free("bottom"), BOARD, Some(automatic), &placer(&[]))
+                .unwrap_err();
         assert!(error.contains("width and a height"), "{error}");
         let arc = BOARD.replace(
             "(gr_rect (start 100 100) (end 150 130)",
             "(gr_arc (start 100 100) (mid 125 90) (end 150 100) (layer \"Edge.Cuts\")) (gr_line (start 150 100) (end 150 130) (layer \"Edge.Cuts\")) (gr_line (start 150 130) (end 100 130) (layer \"Edge.Cuts\")) (gr_line (start 100 130) (end 100 100)",
         );
-        let error = KiCadFreeDimensionPlan::new(&free("bottom"), &arc, None, &[], &[]).unwrap_err();
+        let error =
+            KiCadFreeDimensionPlan::new(&free("bottom"), &arc, None, &placer(&[])).unwrap_err();
         assert!(error.contains("gr_arc"), "{error}");
         // Four lines along a box are a rectangle.
         let lines = BOARD.replace(
             "(gr_rect (start 100 100) (end 150 130)",
             "(gr_line (start 100 100) (end 150 100) (layer \"Edge.Cuts\")) (gr_line (start 150 100) (end 150 130) (layer \"Edge.Cuts\")) (gr_line (start 150 130) (end 100 130) (layer \"Edge.Cuts\")) (gr_line (start 100 130) (end 100 100)",
         );
-        let plan = KiCadFreeDimensionPlan::new(&free("bottom"), &lines, None, &[], &[]).unwrap();
+        let plan =
+            KiCadFreeDimensionPlan::new(&free("bottom"), &lines, None, &placer(&[])).unwrap();
         let variant = plan.variant(32.0).unwrap();
         let pcb = parse(&variant.board).unwrap();
         let ends: Vec<[f64; 2]> = pcb
@@ -1707,7 +2276,7 @@ mod tests {
         );
         let mut wide = free("bottom");
         wide.band_mm = Some(30.0);
-        assert!(KiCadFreeDimensionPlan::new(&wide, BOARD, None, &[], &[]).is_err());
+        assert!(KiCadFreeDimensionPlan::new(&wide, BOARD, None, &placer(&[])).is_err());
     }
 
     #[test]
@@ -1733,8 +2302,7 @@ mod tests {
         let mut carried = free("bottom");
         carried.band_mm = Some(4.0);
         let plan =
-            KiCadFreeDimensionPlan::new(&carried, BOARD, None, &["J1".into(), "U1".into()], &[])
-                .unwrap();
+            KiCadFreeDimensionPlan::new(&carried, BOARD, None, &placer(&["J1", "U1"])).unwrap();
         let reasons = plan.variant(15.5).unwrap_err();
         assert!(
             reasons.iter().any(|reason| reason
@@ -1746,13 +2314,239 @@ mod tests {
             "version": 1, "keepout": [{"x": [5, 10], "y": [20, 25]}]
         }))
         .unwrap();
-        let plan = KiCadFreeDimensionPlan::new(&free("bottom"), BOARD, Some(constraints), &[], &[])
-            .unwrap();
+        let plan =
+            KiCadFreeDimensionPlan::new(&free("bottom"), BOARD, Some(constraints), &placer(&[]))
+                .unwrap();
         let reasons = plan.variant(24.0).unwrap_err();
         assert!(
             reasons.iter().any(|reason| reason.contains("keepout box")),
             "{reasons:?}"
         );
+    }
+
+    /// A 50 x 30 mm board at (100, 100) with `items` on it.
+    fn board_with(items: &str) -> String {
+        format!(
+            r#"(kicad_pcb (version 20240108)
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+  (gr_rect (start 100 100) (end 150 130) (stroke (width 0.1) (type solid)) (fill no) (layer "Edge.Cuts"))
+  {items})"#
+        )
+    }
+
+    fn item_box(board: &str, head: &str) -> Box4 {
+        let pcb = parse(board).unwrap();
+        let item = pcb
+            .children()
+            .iter()
+            .find(|item| item.head() == Some(head))
+            .unwrap();
+        points_box(item).unwrap()
+    }
+
+    #[test]
+    fn a_pour_whose_notch_lies_past_the_band_is_cut_at_the_new_edge() {
+        // GND over the board with a 2 mm notch at the bottom edge: its
+        // corners on the edge move, the notch's floor (2 mm in) does not.
+        let text = board_with(
+            r#"(zone (net 2) (net_name "GND") (layer "B.Cu") (name "gnd")
+    (polygon (pts (xy 100 100) (xy 150 100) (xy 150 130) (xy 130 130) (xy 130 128) (xy 120 128) (xy 120 130) (xy 100 130)))
+    (filled_polygon (layer "B.Cu") (pts (xy 101 101) (xy 149 101) (xy 149 129) (xy 101 129))))"#,
+        );
+        let plan = KiCadFreeDimensionPlan::new(&free("bottom"), &text, None, &placer(&[])).unwrap();
+        // Growing: the edge's points move, the notch stays (it deepens).
+        let grown = plan.variant(34.0).unwrap();
+        assert_eq!(item_box(&grown.board, "zone"), [100.0, 100.0, 150.0, 134.0]);
+        // Shrinking 4 mm: moving the corners to 126 would carry them past
+        // the notch's floor at 128 (a folded polygon): cut instead.
+        let shrunk = plan.variant(26.0).unwrap();
+        let pcb = parse(&shrunk.board).unwrap();
+        let zone = pcb.child("zone").unwrap();
+        let mut lists = Vec::new();
+        collect_point_lists(zone, &mut Vec::new(), &mut lists);
+        let sorted = |points: &[[f64; 2]]| {
+            let mut points = points.to_vec();
+            points.sort_by(|a, b| a[0].total_cmp(&b[0]).then(a[1].total_cmp(&b[1])));
+            points
+        };
+        assert_eq!(
+            sorted(&lists[0].1),
+            vec![
+                [100.0, 100.0],
+                [100.0, 126.0],
+                [150.0, 100.0],
+                [150.0, 126.0]
+            ]
+        );
+        // The fill is cut too.
+        assert_eq!(
+            sorted(&lists[1].1),
+            vec![
+                [101.0, 101.0],
+                [101.0, 126.0],
+                [149.0, 101.0],
+                [149.0, 126.0]
+            ]
+        );
+    }
+
+    #[test]
+    fn drawn_shapes_texts_and_cutouts_past_the_band_make_a_shrink_infeasible() {
+        // A silkscreen frame from 0.2 mm (in the band) to 2 mm (not) from
+        // the edge: shrinking 3 mm folds it.
+        let frame = board_with(
+            r#"(gr_poly (pts (xy 102 128) (xy 148 128) (xy 148 129.8) (xy 102 129.8)) (layer "F.SilkS"))"#,
+        );
+        let plan =
+            KiCadFreeDimensionPlan::new(&free("bottom"), &frame, None, &placer(&[])).unwrap();
+        let reasons = plan.variant(27.0).unwrap_err();
+        assert!(
+            reasons[0].starts_with("the gr_poly on F.SilkS") && reasons[0].contains("fold"),
+            "{reasons:?}"
+        );
+        // Growing stretches it.
+        let grown = plan.variant(32.0).unwrap();
+        assert_eq!(
+            item_box(&grown.board, "gr_poly"),
+            [102.0, 128.0, 148.0, 131.8]
+        );
+        // An inner cutout 3 mm from the edge stays, and a shrink past it
+        // is infeasible.
+        let cutout =
+            board_with(r#"(gr_circle (center 140 126) (end 141 126) (layer "Edge.Cuts"))"#);
+        let plan =
+            KiCadFreeDimensionPlan::new(&free("bottom"), &cutout, None, &placer(&[])).unwrap();
+        assert!(plan.variant(27.5).is_ok());
+        let reasons = plan.variant(26.5).unwrap_err();
+        assert!(
+            reasons[0].starts_with("the gr_circle on Edge.Cuts")
+                && reasons[0].ends_with("would end beyond the outline"),
+            "{reasons:?}"
+        );
+        // A text by its box: one whose box reaches into the band moves
+        // whole although its anchor is 0.8 mm from the edge; one whose box
+        // ends 1 mm from it stays, and a shrink past it is infeasible.
+        let texts = board_with(
+            r#"(gr_text "AT EDGE" (at 110 129.2 0) (layer "F.SilkS") (effects (font (size 1.5 1.5))))
+  (gr_text "INSIDE" (at 130 128.5 0) (layer "F.SilkS") (effects (font (size 1 1))))"#,
+        );
+        let plan =
+            KiCadFreeDimensionPlan::new(&free("bottom"), &texts, None, &placer(&[])).unwrap();
+        let variant = plan.variant(29.5).unwrap();
+        let pcb = parse(&variant.board).unwrap();
+        let anchors: Vec<[f64; 3]> = pcb
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("gr_text"))
+            .map(|item| form_at(item).unwrap())
+            .collect();
+        assert_eq!(anchors, vec![[110.0, 128.7, 0.0], [130.0, 128.5, 0.0]]);
+        let reasons = plan.variant(28.5).unwrap_err();
+        assert!(
+            reasons
+                .iter()
+                .any(|reason| reason.starts_with("the gr_text on F.SilkS at (130, 128.5)")),
+            "{reasons:?}"
+        );
+    }
+
+    #[test]
+    fn an_arc_across_the_band_keeps_what_is_joined_to_its_ends() {
+        // A track arc from the edge band (y 129.8) to (115, 125), joined
+        // there to a segment that stays.
+        let text = board_with(
+            r#"(arc (start 110 129.8) (mid 113.5 128.4) (end 115 125) (width 0.2) (layer "F.Cu") (net 1))
+  (segment (start 115 125) (end 120 120) (width 0.2) (layer "F.Cu") (net 1))
+  (gr_arc (start 120 129.9) (mid 125 129.6) (end 130 129.9) (layer "F.SilkS"))"#,
+        );
+        let plan = KiCadFreeDimensionPlan::new(&free("bottom"), &text, None, &placer(&[])).unwrap();
+        let variant = plan.variant(34.0).unwrap();
+        let pcb = parse(&variant.board).unwrap();
+        let arc = pcb.child("arc").unwrap();
+        let (start, mid, end) = (
+            form_xy(arc, "start").unwrap(),
+            form_xy(arc, "mid").unwrap(),
+            form_xy(arc, "end").unwrap(),
+        );
+        assert_eq!(start, [110.0, 133.8]);
+        assert_eq!(end, [115.0, 125.0]);
+        assert_eq!(
+            form_xy(pcb.child("segment").unwrap(), "start").unwrap(),
+            end
+        );
+        // The same shape between the new ends: the middle as far from
+        // the chord, in proportion.
+        let side = |a: [f64; 2], b: [f64; 2], p: [f64; 2]| {
+            ((b[0] - a[0]) * (p[1] - a[1]) - (b[1] - a[1]) * (p[0] - a[0])) / distance_squared(a, b)
+        };
+        let before = side([110.0, 129.8], [115.0, 125.0], [113.5, 128.4]);
+        assert!((side(start, end, mid) - before).abs() < 1.0e-5, "{mid:?}");
+        // An arc wholly in the band moves whole.
+        let silk = pcb.child("gr_arc").unwrap();
+        assert_eq!(form_xy(silk, "mid").unwrap(), [125.0, 133.6]);
+    }
+
+    #[test]
+    fn a_box_reaching_across_the_board_stretches_and_may_vanish() {
+        let constraints: KiCadPlacementConstraints = serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "keepout": [{"x": [5, 10], "y": [5, 29.8]}],
+            "region": [{"parts": ["U1"], "x": [0, 50], "y": [29.9, 2]}]
+        }))
+        .unwrap();
+        let text = board_with(
+            r#"(footprint "r" (layer "F.Cu") (at 125 115 0)
+    (property "Reference" "U1" (at 0 0 0) (layer "F.SilkS"))
+    (fp_rect (start -1 -1) (end 1 1) (layer "F.CrtYd"))
+    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "A")))"#,
+        );
+        let plan =
+            KiCadFreeDimensionPlan::new(&free("bottom"), &text, Some(constraints), &placer(&[]))
+                .unwrap();
+        // Growing: the side at the edge moves, the far side stays.
+        let grown = plan.variant(34.0).unwrap().constraints.unwrap();
+        assert_eq!(grown.keepout[0].y, [5.0, 33.8]);
+        // Given high to low: the same.
+        assert_eq!(grown.region[0].y, Some([33.9, 2.0]));
+        let shrunk = plan.variant(16.0).unwrap().constraints.unwrap();
+        assert_eq!(shrunk.keepout[0].y, [5.0, 15.8]);
+        // Its side at the edge would pass its far side.
+        let reasons = plan.variant(5.0).unwrap_err();
+        assert!(
+            reasons.iter().any(|reason| reason
+                == "the keepout box would vanish: the edge would carry its side past its far side"),
+            "{reasons:?}"
+        );
+    }
+
+    #[test]
+    fn a_fixed_part_whose_body_reaches_the_edge_moves_with_it() {
+        // J9's origin is 3 mm from the edge (outside the default band), its
+        // body reaches the edge.
+        let text = board_with(
+            r#"(footprint "conn" (layer "F.Cu") (at 125 127 0)
+    (property "Reference" "J9" (at 0 0 0) (layer "F.SilkS"))
+    (fp_rect (start -3 -1) (end 3 3) (layer "F.CrtYd"))
+    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "A")))
+  (footprint "r" (layer "F.Cu") (at 115 127 0)
+    (property "Reference" "R9" (at 0 0 0) (layer "F.SilkS"))
+    (fp_rect (start -1 -1) (end 1 1) (layer "F.CrtYd"))
+    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "A")))"#,
+        );
+        // A band of 2 mm: R9's body (2 mm from the edge) reaches into it,
+        // its origin (3 mm) does not.
+        let mut dimension = free("bottom");
+        dimension.band_mm = Some(2.0);
+        let plan = KiCadFreeDimensionPlan::new(&dimension, &text, None, &placer(&["J9"])).unwrap();
+        assert_eq!(plan.fixed_references(), vec!["J9".to_string()]);
+        let grown = plan.variant(34.0).unwrap();
+        assert_eq!(footprint_at(&grown.board, "J9"), [125.0, 131.0, 0.0]);
+        // R9 is placed again: by its origin, it stays.
+        assert_eq!(footprint_at(&grown.board, "R9"), [115.0, 127.0, 0.0]);
+        assert_eq!(grown.moved_footprints, vec!["J9".to_string()]);
+        // Shrinking carries it too, instead of stranding it.
+        let shrunk = plan.variant(28.0).unwrap();
+        assert_eq!(footprint_at(&shrunk.board, "J9"), [125.0, 125.0, 0.0]);
     }
 
     fn outcome(
@@ -1835,9 +2629,11 @@ mod tests {
                     sizes: vec![34.0, 36.0, 38.0, 40.0],
                     budget: 100.0
                 },
+                // Everything left (1500 less four probes), not 300; 34 mm
+                // (12 open) did not come close.
                 KiCadFreeDimensionStep::Full {
                     size: 36.0,
-                    budget: 300.0,
+                    budget: 1100.0,
                     kind: "confirm"
                 },
                 KiCadFreeDimensionStep::Done
@@ -1863,6 +2659,8 @@ mod tests {
         drive(&mut search, |size, budget| {
             if size == 36.0 && budget < 200.0 {
                 (0, 0)
+            } else if size == 34.0 {
+                (12, 1)
             } else {
                 (3, 1)
             }
@@ -1874,6 +2672,102 @@ mod tests {
         );
         assert!(reason.contains("the probe's result is kept"), "{reason}");
         assert!(search.runs[index].chosen);
+    }
+
+    #[test]
+    fn a_smaller_size_that_came_close_is_retried_with_all_that_is_left() {
+        // 34 open, 36 one starved thermal, 38 clean: 36 again with the
+        // rest, and clean there (results are not monotone in the budget).
+        let mut search = KiCadFreeDimensionSearch::new(
+            vec![34.0, 36.0, 38.0, 40.0],
+            Vec::new(),
+            100.0,
+            300.0,
+            1000.0,
+            2,
+        );
+        let steps = drive(&mut search, |size, budget| match size as i64 {
+            34 => (20, 0),
+            36 if budget < 200.0 => (0, 1),
+            _ => (0, 0),
+        });
+        assert_eq!(
+            steps,
+            vec![
+                KiCadFreeDimensionStep::Probe {
+                    sizes: vec![34.0, 36.0],
+                    budget: 100.0
+                },
+                KiCadFreeDimensionStep::Probe {
+                    sizes: vec![38.0, 40.0],
+                    budget: 100.0
+                },
+                KiCadFreeDimensionStep::Full {
+                    size: 36.0,
+                    budget: 600.0,
+                    kind: "retry"
+                },
+                KiCadFreeDimensionStep::Done
+            ]
+        );
+        let (index, reason) = search.choose(&free("bottom")).unwrap();
+        assert_eq!(
+            (search.runs[index].size_mm, search.runs[index].kind.as_str()),
+            (36.0, "retry")
+        );
+        assert!(reason.contains("retried at 600 s"), "{reason}");
+        // The retry not clean: the clean probe stays the result.
+        let mut search = KiCadFreeDimensionSearch::new(
+            vec![34.0, 36.0, 38.0, 40.0],
+            Vec::new(),
+            100.0,
+            300.0,
+            1000.0,
+            2,
+        );
+        drive(&mut search, |size, _| match size as i64 {
+            34 => (20, 0),
+            36 => (0, 1),
+            _ => (0, 0),
+        });
+        let (index, reason) = search.choose(&free("bottom")).unwrap();
+        assert_eq!(
+            (search.runs[index].size_mm, search.runs[index].kind.as_str()),
+            (38.0, "probe")
+        );
+        assert!(
+            reason.contains("36 mm retry at 600 s 0 open, 1 errors"),
+            "{reason}"
+        );
+    }
+
+    #[test]
+    fn one_at_a_time_a_clean_first_probe_is_confirmed_with_the_rest() {
+        let mut search = KiCadFreeDimensionSearch::new(
+            vec![34.0, 36.0, 38.0],
+            Vec::new(),
+            100.0,
+            300.0,
+            1500.0,
+            1,
+        );
+        let steps = drive(&mut search, |_, _| (0, 0));
+        assert_eq!(
+            steps,
+            vec![
+                KiCadFreeDimensionStep::Probe {
+                    sizes: vec![34.0],
+                    budget: 100.0
+                },
+                KiCadFreeDimensionStep::Full {
+                    size: 34.0,
+                    budget: 1400.0,
+                    kind: "confirm"
+                },
+                KiCadFreeDimensionStep::Done
+            ]
+        );
+        assert_eq!(search.spent(), 1500.0);
     }
 
     #[test]

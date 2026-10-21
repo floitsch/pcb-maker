@@ -584,10 +584,25 @@ pub(crate) fn far_from_complete(open: usize, terminals: usize) -> bool {
 /// remainder (jetson: 302 s of negotiation left 28 nets in conflict and
 /// 23 unconnected, 408 s 21 and 18; 0.85 of the rest, 462 s, plateaued at
 /// 21 and ended at 21 unconnected).
+///
+/// The caps grow with the work left, as the ladder's budget does
+/// (2026-10-21): the clean-up at most 120 s or a twentieth of what is
+/// left, the negotiation at most 900 s or half of it. Up to 1800 s left
+/// that is the split it always was; a layout of 3000 to 6000 s on this
+/// path used to end near its first route and twice 1020 s, with the rest
+/// of its budget unused, and now gives the attempt about half of what is
+/// left and the attempt in the other pour mode most of the rest.
 pub(crate) fn direct_narrow_budget(work_left: f64) -> (f64, f64) {
-    let cleanup = (0.1 * work_left).clamp(30.0, 120.0);
-    let negotiation = (0.75 * (work_left - cleanup)).clamp(60.0, 900.0);
+    let cleanup = (0.1 * work_left).clamp(30.0, (0.05 * work_left).max(120.0));
+    let negotiation = (0.75 * (work_left - cleanup)).clamp(60.0, (0.5 * work_left).max(900.0));
     (negotiation, cleanup)
+}
+
+/// The KiCad checks the neck repair may make with `work_left` of a
+/// layout's work, a check counting `check_seconds` (`None`: checks cost
+/// nothing, the repair's own limit holds).
+pub(crate) fn neck_check_bound(work_left: f64, check_seconds: f64) -> Option<usize> {
+    (check_seconds > 0.0).then(|| (work_left.max(0.0) / check_seconds).floor() as usize)
 }
 
 /// The work the attempt after the narrow-signal attempt run alone (that
@@ -2001,7 +2016,14 @@ pub fn layout_kicad_board(
                 None
             };
             if let Some(mut continuation_config) = continuation_config {
-                continuation_config.ladder_budget_seconds = Some(left.min(1200.0));
+                // The work left, as the ladder's (until 2026-10-21 at most
+                // 1200 s), or less where the router config says so.
+                continuation_config.ladder_budget_seconds = Some(
+                    router_config
+                        .ladder_budget_seconds
+                        .map_or(left, |budget| budget.min(left))
+                        .max(0.0),
+                );
                 continuation_config.deadline_work = Some(left.max(0.0));
                 continuation_config.kicad_check_top = Some(KICAD_CHECK_TOP);
                 continuation_config.solid_starved_thermals = Some(false);
@@ -2069,15 +2091,19 @@ pub fn layout_kicad_board(
     }
     // KiCad's connection_width necks on the board kept (a no-op when the
     // route mode ladder above has repaired it already). It improves the
-    // board: past the deadline it is skipped.
+    // board: past the deadline it is skipped, and its checks stay within
+    // the layout's work left (`neck_check_bound`; they used to be charged
+    // after it, past `total_seconds` by up to eight checks).
     if (routed.native.is_some() || router_config.skip_native_verification)
         && stop.allows(LayoutStep::NeckRepair)
     {
+        let left = work_deadline - work - pool_excess - routed.work_seconds;
         let checks = crate::board_router::repair_necks(
             &mut routed,
             &output_directory.join("result"),
             board_id,
             router_config,
+            neck_check_bound(left, check_seconds),
         )?;
         // Its checks count as work (after every decision: only the tally).
         routed.work_seconds += checks_charged.add(checks);
@@ -2267,13 +2293,26 @@ mod budget_tests {
         // Little left: the floors.
         assert!(close(direct_narrow_budget(200.0), (127.5, 30.0)));
         assert_eq!(direct_narrow_budget(90.0), (60.0, 30.0));
-        // Much left: the caps.
-        assert_eq!(direct_narrow_budget(2000.0), (900.0, 120.0));
+        // Much left: the caps, unchanged up to 1800 s.
+        assert_eq!(direct_narrow_budget(1500.0), (900.0, 120.0));
+        assert_eq!(direct_narrow_budget(1800.0), (900.0, 120.0));
+        // More: they grow with it (half and a twentieth).
+        assert!(close(direct_narrow_budget(2000.0), (1000.0, 120.0)));
+        assert!(close(direct_narrow_budget(3000.0), (1500.0, 150.0)));
+        assert!(close(direct_narrow_budget(6000.0), (3000.0, 300.0)));
         // Negotiation and clean-up never take more than is left.
-        for left in [240.0, 400.0, 800.0, 1200.0] {
+        for left in [240.0, 400.0, 800.0, 1200.0, 2000.0, 3000.0, 6000.0] {
             let (negotiation, cleanup) = direct_narrow_budget(left);
             assert!(negotiation + cleanup < left);
         }
+    }
+
+    #[test]
+    fn the_neck_repair_checks_stay_within_the_work_left() {
+        assert_eq!(neck_check_bound(100.0, 20.0), Some(5));
+        assert_eq!(neck_check_bound(59.0, 20.0), Some(2));
+        assert_eq!(neck_check_bound(-10.0, 20.0), Some(0));
+        assert_eq!(neck_check_bound(100.0, 0.0), None);
     }
 
     #[test]

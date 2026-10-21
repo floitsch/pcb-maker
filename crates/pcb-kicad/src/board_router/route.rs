@@ -245,7 +245,7 @@ pub fn route_kicad_board(
     // The neck repair improves a checked board; past the deadline it is
     // skipped (up to six more KiCad checks, uncounted as work).
     if result.native.is_some() && !ladder.past_deadline() {
-        let checks = repair_necks(&mut result, output_directory, board_id, config)?;
+        let checks = repair_necks(&mut result, output_directory, board_id, config, None)?;
         ladder.charge_checks(checks);
     }
     result.cut = core::router::wall_cuts();
@@ -838,19 +838,24 @@ pub(crate) fn finish_routed_board(
 /// changed, takes its new native check and starved thermals.
 /// Returns the KiCad runs it made: its DRC checks and, when it repaired
 /// anything, KiCad's fill of a scratch copy (each a check's work,
-/// `check_work`).
+/// `check_work`). `max_checks`: the KiCad runs its work may take (a
+/// layout's work left over a check's work); with fewer than
+/// `NECK_MIN_CHECKS` the repair does not run, and the note says so.
 pub(crate) fn repair_necks(
     result: &mut KiCadBoardRouterResult,
     directory: &Path,
     board_id: &str,
     config: &KiCadBoardRouterConfig,
+    max_checks: Option<usize>,
 ) -> Result<usize, String> {
     if config.skip_native_verification {
         return Ok(0);
     }
     let calls = crate::drc_cache_counts().calls;
     let mut fills = 0;
-    if let Some(repair) = crate::necks::repair_connection_width(directory, board_id, config)? {
+    if let Some(repair) =
+        crate::necks::repair_connection_width(directory, board_id, config, max_checks)?
+    {
         fills = repair.kicad_fills;
         if repair.kept {
             result.native = Some(verify_materialized_rung(directory, board_id)?);

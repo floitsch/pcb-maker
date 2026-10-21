@@ -14,7 +14,8 @@
 //!
 //! Every command that places or routes a board sorts it first
 //! ([`parse_board`]): footprints by reference (natural order: R2 before
-//! R10), then uuid, then their canonical text; inside a footprint the pads
+//! R10), then uuid, then the file's order (never their text, which holds
+//! their pose); inside a footprint the pads
 //! by number (natural), then position, the graphics (`fp_*`) by layer and
 //! text without their uuid, the zones by text without their uuid. Each
 //! kind keeps the places it had among the footprint's or board's items, so
@@ -221,7 +222,8 @@ fn graphic(head: &str) -> bool {
 }
 
 /// Sorts the items of `items` for which `kind` is true among the places
-/// they hold, by `compare` on a key computed once per item.
+/// they hold, by `compare` on a key computed once per item. Stable: items
+/// `compare` finds equal keep their order.
 fn sort_in_place<K>(
     items: &mut [Expr],
     kind: impl Fn(&Expr) -> bool,
@@ -323,6 +325,11 @@ pub(crate) fn canonical_order(pcb: &mut Expr) {
     {
         canonical_footprint(item);
     }
+    // Ties (the same reference and the same or no uuid) keep the file's
+    // order (the sort is stable). Their text used to break them, and it
+    // holds the pose: a placed board read back could order two such
+    // footprints the other way round from the board they were placed
+    // from, and the layout, which writes poses by index, swap them.
     sort_in_place(
         items,
         |item| item.head() == Some("footprint"),
@@ -330,14 +337,9 @@ pub(crate) fn canonical_order(pcb: &mut Expr) {
             (
                 footprint_reference(footprint).unwrap_or_default(),
                 footprint_uuid(footprint).unwrap_or_default(),
-                encode_canonical(footprint),
             )
         },
-        |a, b| {
-            natural_cmp(&a.0, &b.0)
-                .then_with(|| a.1.cmp(&b.1))
-                .then_with(|| a.2.cmp(&b.2))
-        },
+        |a, b| natural_cmp(&a.0, &b.0).then_with(|| a.1.cmp(&b.1)),
     );
 }
 
@@ -468,6 +470,42 @@ mod tests {
         let mut again = first.clone();
         canonical_order(&mut again);
         assert_eq!(again, first);
+    }
+
+    #[test]
+    fn footprints_that_tie_keep_the_files_order_whatever_their_poses() {
+        // Two footprints with one reference and no uuid (a hand-drawn
+        // board's two "H" holes), alike but for their pose and a pad: the
+        // file's order decides, not their text (which holds the pose), so
+        // a placed board read back keeps the order of the board it was
+        // placed from, and poses written by index stay with their
+        // footprint.
+        let board = |first: [f64; 2], second: [f64; 2]| {
+            format!(
+                "(kicad_pcb (version 1) (footprint \"h\" (property \"Reference\" \"H\") (at {} {}) (pad \"1\" np_thru_hole circle (at 0 0) (size 3 3))) (footprint \"h\" (property \"Reference\" \"H\") (at {} {}) (pad \"1\" np_thru_hole circle (at 0 0) (size 2 2))) (footprint \"r\" (property \"Reference\" \"A1\") (uuid \"u\") (at 0 0)))",
+                first[0], first[1], second[0], second[1]
+            )
+        };
+        let sizes = |pcb: &Expr| -> Vec<String> {
+            pcb.children()
+                .iter()
+                .filter(|item| item.head() == Some("footprint"))
+                .map(|item| {
+                    item.child("pad")
+                        .and_then(|pad| form_atom(pad, "size", 1))
+                        .unwrap_or("-")
+                        .to_string()
+                })
+                .collect()
+        };
+        // The first in the file at (9, 9): by its text it came second.
+        let source = parse_board(&board([9.0, 9.0], [1.0, 1.0])).unwrap();
+        assert_eq!(sizes(&source), ["-", "3", "2"]);
+        // Placed with the poses exchanged: the order is the same.
+        let placed = parse_board(&board([1.0, 1.0], [9.0, 9.0])).unwrap();
+        assert_eq!(sizes(&placed), ["-", "3", "2"]);
+        let written = parse_board(&crate::kicad_sexpr::encode(&placed)).unwrap();
+        assert_eq!(sizes(&written), sizes(&placed));
     }
 
     #[test]

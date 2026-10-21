@@ -1183,47 +1183,87 @@ fn apply_shaped_outline(
 /// not there on purpose (unlike parts inside a designer's rule area).
 pub(super) const KEEPOUT_NAME: &str = "constraint keepout";
 
-/// The parts the placer leaves where the input has them: the `fixed`
-/// references and `fixed_patterns`, locked footprints and footprints
-/// without a net, unless `free` names them (the placer's defaults but the
-/// edge's, which depend on the outline).
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct HeldParts<'a> {
-    pub fixed: &'a [String],
-    pub fixed_patterns: &'a [String],
-    pub free: &'a [String],
+/// The parts the placer leaves where the input has them, one flag per
+/// footprint in the board's order (`held_parts`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct HeldParts(pub Vec<bool>);
+
+impl HeldParts {
+    /// Whether the board's footprint `index` (among its footprints) is held.
+    pub(crate) fn holds(&self, index: usize) -> bool {
+        self.0.get(index).copied().unwrap_or(false)
+    }
 }
 
-impl<'a> HeldParts<'a> {
-    pub(crate) fn of(config: &'a KiCadBoardPlacerConfig) -> Self {
-        Self {
-            fixed: &config.fixed,
-            fixed_patterns: &config.fixed_patterns,
-            free: &config.free,
+/// The one notion of a held part (2026-10-21): the footprints of `pcb`
+/// that the placer leaves where they are, as the lowering decides it with
+/// `config` (its constraints resolved, the outline they give applied to
+/// `pcb` already). Held are
+/// - the placer's `fixed` and `fixed_patterns`, constraints.json's `fixed`
+///   and parts it places with `x` and `y` (or adds there);
+/// - by default, unless `free` names them: locked footprints, footprints
+///   without a net, and parts at the edge (a body off the outline, a
+///   connector within `edge_keep_mm` of it, a part in a designer's rule
+///   area that forbids footprints);
+/// - but not the default ones a constraint names (an edge, a region, a
+///   side, a place without coordinates) nor, under `move_all`, any part
+///   but locked ones, artwork and parts nobody can name.
+///
+/// The keepout constraints (which rule areas allow footprints), the free
+/// dimension (which parts must stay inside the outline) and the placer
+/// itself use it.
+pub(crate) fn held_parts(pcb: &Expr, config: &KiCadBoardPlacerConfig) -> Result<HeldParts, String> {
+    let mut config = config.clone();
+    let mut board = pcb.clone();
+    if let Some(KiCadConstraintsSource::Inline(constraints)) = &mut config.constraints {
+        expand_additions(constraints, &board)?;
+        // A part on `"edge": "any"` moves whichever edge it settles to.
+        for entry in &mut constraints.edge {
+            if entry.edge == "any" {
+                entry.edge = "bottom".into();
+            }
         }
+        apply_sides(&mut board, constraints)?;
     }
-
-    fn holds(&self, reference: &str, footprint: &Expr) -> bool {
-        if self.fixed.iter().any(|name| name == reference)
-            || self
-                .fixed_patterns
-                .iter()
-                .any(|pattern| glob_matches(pattern, reference))
-        {
-            return true;
-        }
-        let locked = footprint.child("locked").is_some()
-            || footprint
-                .children()
-                .iter()
-                .any(|child| child.atom() == Some("locked"));
-        let netless = !footprint
-            .children()
+    let footprints = board
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+        .count();
+    let lowered = crate::board_placer::lower_placement(&board, &config)?;
+    Ok(HeldParts(
+        lowered.problem.components[..footprints]
             .iter()
-            .filter(|child| child.head() == Some("pad"))
-            .any(|pad| pad.child("net").is_some());
-        (locked || netless) && !self.free.iter().any(|name| name == reference)
+            .map(|component| component.fixed)
+            .collect(),
+    ))
+}
+
+/// `held_parts` for a board as given, with the outline its constraints
+/// give (a rectangle of `width` and `height`, an outline sized from the
+/// parts) applied first.
+pub(crate) fn held_parts_as_given(
+    pcb: &Expr,
+    config: &KiCadBoardPlacerConfig,
+) -> Result<HeldParts, String> {
+    let Some(KiCadConstraintsSource::Inline(constraints)) = &config.constraints else {
+        return held_parts(pcb, config);
+    };
+    let Some(outline) = &constraints.outline else {
+        return held_parts(pcb, config);
+    };
+    let mut board = pcb.clone();
+    let mut part_area = 0.0;
+    for footprint in board
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        let (_, size, _) = crate::board_placer::local_body(footprint)?;
+        part_area += (size[0] + config.spacing_mm) * (size[1] + config.spacing_mm);
     }
+    apply_outline(&mut board, outline, part_area)?;
+    held_parts(&board, config)
 }
 
 /// A keepout's box on the board ([x0, y0, x1, y1]) for an outline whose
@@ -1307,7 +1347,7 @@ fn courtyard_box(footprint: &Expr) -> Result<Option<([f64; 4], usize)>, String> 
 pub(crate) fn held_parts_in_keepouts(
     pcb: &Expr,
     keepouts: &[KiCadKeepoutConstraint],
-    held: HeldParts,
+    held: &HeldParts,
 ) -> Result<Vec<Vec<String>>, String> {
     if keepouts.is_empty() {
         return Ok(Vec::new());
@@ -1319,15 +1359,16 @@ pub(crate) fn held_parts_in_keepouts(
         .map(|(number, keepout)| keepout_box(keepout, number, corner))
         .collect::<Result<_, _>>()?;
     let mut inside = vec![Vec::new(); keepouts.len()];
-    for footprint in pcb
+    for (index, footprint) in pcb
         .children()
         .iter()
         .filter(|item| item.head() == Some("footprint"))
+        .enumerate()
     {
-        let reference = footprint_reference(footprint).unwrap_or_default();
-        if !held.holds(&reference, footprint) {
+        if !held.holds(index) {
             continue;
         }
+        let reference = footprint_reference(footprint).unwrap_or_default();
         let Some((courtyard, side)) = courtyard_box(footprint)? else {
             continue;
         };
@@ -1371,7 +1412,7 @@ pub(crate) fn held_parts_warning(
         keepout.y[1],
         parts.join(", "),
         if keepout.copper {
-            ", and tracks, vias and pours stay out of it"
+            ", and tracks, vias and pours stay out of it (pads inside it are reached from outside the box only)"
         } else {
             ""
         }
@@ -1417,7 +1458,11 @@ pub fn keepout_warnings(
         }
         apply_outline(&mut pcb, outline, part_area)?;
     }
-    let held = held_parts_in_keepouts(&pcb, &constraints.keepout, HeldParts::of(&resolved))?;
+    let held = held_parts_in_keepouts(
+        &pcb,
+        &constraints.keepout,
+        &held_parts(&pcb, &resolved).unwrap_or_default(),
+    )?;
     Ok(held
         .iter()
         .enumerate()
@@ -1530,7 +1575,7 @@ fn box_overlap(a: [f64; 4], b: [f64; 4]) -> f64 {
 /// what overlaps (`courtyards`, `pads on F.Cu`).
 pub(crate) fn held_parts_overlapping(
     pcb: &Expr,
-    held: HeldParts,
+    held: &HeldParts,
 ) -> Result<Vec<(String, String, String)>, String> {
     struct Part {
         reference: String,
@@ -1538,10 +1583,11 @@ pub(crate) fn held_parts_overlapping(
         pads: Vec<PadBox>,
     }
     let mut parts = Vec::new();
-    for footprint in pcb
+    for (index, footprint) in pcb
         .children()
         .iter()
         .filter(|item| item.head() == Some("footprint"))
+        .enumerate()
     {
         let reference = footprint_reference(footprint).unwrap_or_default();
         let wired = footprint
@@ -1549,7 +1595,7 @@ pub(crate) fn held_parts_overlapping(
             .iter()
             .filter(|child| child.head() == Some("pad"))
             .any(|pad| pad.child("net").is_some());
-        if !wired || !held.holds(&reference, footprint) {
+        if !wired || !held.holds(index) {
             continue;
         }
         parts.push(Part {
@@ -1618,7 +1664,10 @@ pub fn overlap_warnings(
     let text = fs::read_to_string(&path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
     let pcb = parse(&text)?;
-    Ok(held_parts_overlapping(&pcb, HeldParts::of(&resolved))?
+    // The parts the layout holds (`held_parts`); a board the lowering
+    // refuses is the placement's to report, not the input check's.
+    let held = held_parts_as_given(&pcb, &resolved).unwrap_or_default();
+    Ok(held_parts_overlapping(&pcb, &held)?
         .into_iter()
         .map(|(first, second, what)| overlap_warning(&first, &second, &what))
         .collect())
@@ -1663,7 +1712,7 @@ pub(crate) fn outline_corner(pcb: &Expr) -> Result<[f64; 2], String> {
 pub(super) fn apply_keepouts(
     pcb: &mut Expr,
     keepouts: &[KiCadKeepoutConstraint],
-    held: HeldParts,
+    held: &HeldParts,
 ) -> Result<Vec<String>, String> {
     let Expr::List(items) = pcb else {
         return Err("PCB root is not a list".into());
@@ -3756,11 +3805,7 @@ mod tests {
                 .cloned()
                 .collect()
         };
-        let held = HeldParts {
-            fixed: &[],
-            fixed_patterns: &[],
-            free: &[],
-        };
+        let held = &HeldParts::default();
         apply_keepouts(
             &mut pcb,
             &keepouts(r#"{"version": 1, "keepout": [{"x": [0, 5], "y": [2, 4], "copper": true}, {"x": [1, 2], "y": [1, 2], "side": "back"}]}"#),
@@ -3808,10 +3853,92 @@ mod tests {
     }
 
     #[test]
+    fn one_notion_of_a_held_part_covers_every_case() {
+        // A 50 x 40 mm board; each part is held or not for one reason.
+        let part = |reference: &str, at: [f64; 2], extra: &str, net: bool| {
+            format!(
+                r#"(footprint "p" (layer "F.Cu") (at {} {}) {extra} (property "Reference" "{reference}")
+              (fp_rect (start -1 -1) (end 1 1) (layer "F.CrtYd"))
+              (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu"){}))"#,
+                at[0],
+                at[1],
+                if net { " (net 1 \"A\")" } else { "" }
+            )
+        };
+        let header = r#"(footprint "hdr" (layer "F.Cu") (at 30 21.5) (property "Reference" "J1")
+              (fp_rect (start -6 -1.2) (end 6 1.2) (layer "F.CrtYd"))
+              (pad "1" thru_hole circle (at -3.81 0) (size 1.7 1.7) (drill 1) (layers "*.Cu") (net 1 "A"))
+              (pad "2" thru_hole circle (at -1.27 0) (size 1.7 1.7) (drill 1) (layers "*.Cu") (net 1 "A"))
+              (pad "3" thru_hole circle (at 1.27 0) (size 1.7 1.7) (drill 1) (layers "*.Cu") (net 1 "A"))
+              (pad "4" thru_hole circle (at 3.81 0) (size 1.7 1.7) (drill 1) (layers "*.Cu") (net 1 "A")))"#;
+        let parts = [
+            part("R1", [30.0, 40.0], "", true),             // plain: moves
+            part("F1", [20.0, 40.0], "", true),             // placer fixed
+            part("P1", [25.0, 40.0], "", true),             // fixed_patterns
+            part("C1", [35.0, 40.0], "", true),             // constraints fixed
+            part("X1", [40.0, 40.0], "", true),             // place with x and y
+            part("X2", [45.0, 40.0], "", true),             // place by a word
+            part("L1", [30.0, 30.0], "(locked yes)", true), // locked
+            part("L2", [35.0, 30.0], "(locked yes)", true), // locked, on an edge constraint
+            part("N1", [40.0, 30.0], "", false),            // no net
+            part("N2", [45.0, 30.0], "", false),            // no net, free
+            part("E1", [11.0, 40.0], "", true),             // body over the outline
+            header.to_string(),                             // a connector at the edge
+        ];
+        let text = format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (gr_rect (start 10 20) (end 60 60) (layer "Edge.Cuts")) {})"#,
+            parts.join("\n")
+        );
+        let pcb = parse(&text).unwrap();
+        let constraints: KiCadPlacementConstraints = serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "fixed": ["C1"],
+            "place": [{"part": "X1", "x": 30, "y": 20}, {"part": "X2", "at": "center"}],
+            "edge": [{"part": "L2", "edge": "any"}]
+        }))
+        .unwrap();
+        let config = KiCadBoardPlacerConfig {
+            fixed: vec!["F1".into()],
+            fixed_patterns: vec!["P*".into()],
+            free: vec!["N2".into()],
+            constraints: Some(KiCadConstraintsSource::Inline(constraints.clone())),
+            ..Default::default()
+        };
+        let held_names = |held: &HeldParts| -> Vec<String> {
+            pcb.children()
+                .iter()
+                .filter(|item| item.head() == Some("footprint"))
+                .enumerate()
+                .filter(|(index, _)| held.holds(*index))
+                .map(|(_, footprint)| footprint_reference(footprint).unwrap_or_default())
+                .collect()
+        };
+        assert_eq!(
+            held_names(&held_parts(&pcb, &config).unwrap()),
+            ["F1", "P1", "C1", "X1", "L1", "N1", "E1", "J1"]
+        );
+        // move_all: every part is placed but locked ones and those
+        // constraints.json fixes or places (docs/constraints.md); the
+        // placer's own `fixed` list and the defaults go too.
+        let mut all = constraints;
+        all.move_all = true;
+        let config = KiCadBoardPlacerConfig {
+            constraints: Some(KiCadConstraintsSource::Inline(all)),
+            ..config
+        };
+        assert_eq!(
+            held_names(&held_parts(&pcb, &config).unwrap()),
+            ["C1", "X1", "L1"]
+        );
+    }
+
+    #[test]
     fn a_keepout_over_a_fixed_part_allows_footprints_and_warns() {
         // J2 (fixed) reaches 1 mm into the first box; R1 (movable) lies in
         // the second; H1 (no net) is in the third, on the back only.
-        let board = r#"(kicad_pcb (gr_rect (start 10 20) (end 60 60) (layer "Edge.Cuts"))
+        let board = r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (gr_rect (start 10 20) (end 60 60) (layer "Edge.Cuts"))
             (footprint "conn" (layer "F.Cu") (at 20 25 90) (property "Reference" "J2")
               (fp_rect (start -1 -3) (end 1 3) (layer "F.CrtYd"))
               (pad "1" thru_hole circle (at 0 0) (size 1.7 1.7) (drill 1) (layers "*.Cu") (net 1 "A")))
@@ -3830,13 +3957,12 @@ mod tests {
             )
             .unwrap()
             .keepout;
-        let fixed = ["J2".to_string()];
-        let held = HeldParts {
-            fixed: &fixed,
-            fixed_patterns: &[],
-            free: &[],
-        };
         let mut pcb = parse(board).unwrap();
+        let config = KiCadBoardPlacerConfig {
+            fixed: vec!["J2".into()],
+            ..Default::default()
+        };
+        let held = &held_parts(&pcb, &config).unwrap();
         // J2 at (20, 25) turned a quarter: its courtyard is x 17..23, y
         // 24..26 on the board; the first box (from the corner (10, 20)) x
         // 22..30, y 20..24 only touches it. H1 (no net: held) lies in the
@@ -3884,12 +4010,28 @@ mod tests {
             .unwrap();
         assert!(zone.contains("(footprints allowed)") && zone.contains("(tracks not_allowed)"));
         // Not fixed: the movable part is the placer's to move.
-        let movable = HeldParts {
-            fixed: &[],
-            fixed_patterns: &[],
-            free: &["H1".to_string()],
+        let movable = KiCadBoardPlacerConfig {
+            free: vec!["H1".into()],
+            ..Default::default()
         };
-        assert!(apply_keepouts(&mut pcb, &over, movable).unwrap().is_empty());
+        let movable = held_parts(&pcb, &movable).unwrap();
+        assert!(
+            apply_keepouts(&mut pcb, &over, &movable)
+                .unwrap()
+                .is_empty()
+        );
+        // Fixed by constraints.json: held as by the placer's own list (the
+        // fence's issue 15 for that input).
+        let constraints: KiCadPlacementConstraints =
+            serde_json::from_str(r#"{"version": 1, "fixed": ["J2"]}"#).unwrap();
+        let by_constraints = KiCadBoardPlacerConfig {
+            free: vec!["H1".into()],
+            constraints: Some(KiCadConstraintsSource::Inline(constraints)),
+            ..Default::default()
+        };
+        let by_constraints = held_parts(&pcb, &by_constraints).unwrap();
+        let warnings = apply_keepouts(&mut pcb, &over, &by_constraints).unwrap();
+        assert!(warnings[0].contains("(J2)"), "{warnings:?}");
     }
 
     #[test]
@@ -3903,7 +4045,8 @@ mod tests {
         fs::create_dir_all(&directory).unwrap();
         fs::write(
             directory.join("b.kicad_pcb"),
-            r#"(kicad_pcb (gr_rect (start 10 20) (end 60 60) (layer "Edge.Cuts"))
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (gr_rect (start 10 20) (end 60 60) (layer "Edge.Cuts"))
             (footprint "hole" (layer "B.Cu") (at 30 50) (property "Reference" "H1")
               (fp_circle (center 0 0) (end 2 0) (layer "B.CrtYd"))
               (pad "" np_thru_hole circle (at 0 0) (size 3 3) (drill 3) (layers "*.Cu"))))"#,
@@ -3939,7 +4082,7 @@ mod tests {
             )
         };
         let board = format!(
-            "(kicad_pcb (gr_rect (start 0 0) (end 30 20) (layer \"Edge.Cuts\")) {} {} {} {} {})",
+            "(kicad_pcb (layers (0 \"F.Cu\" signal) (31 \"B.Cu\" signal)) (gr_rect (start 0 0) (end 30 20) (layer \"Edge.Cuts\")) {} {} {} {} {})",
             part("C1", 10.0, 10.0, "F"),
             part("C2", 10.0, 10.0, "F"),
             part("C3", 12.0, 10.0, "F"),
@@ -3953,12 +4096,12 @@ mod tests {
             "C3".to_string(),
             "U1".to_string(),
         ];
-        let held = HeldParts {
-            fixed: &fixed,
-            fixed_patterns: &[],
-            free: &[],
+        let config = KiCadBoardPlacerConfig {
+            fixed: fixed.to_vec(),
+            ..Default::default()
         };
-        let pairs = held_parts_overlapping(&pcb, held).unwrap();
+        let held = held_parts(&pcb, &config).unwrap();
+        let pairs = held_parts_overlapping(&pcb, &held).unwrap();
         assert_eq!(
             pairs,
             [(
@@ -3974,11 +4117,11 @@ mod tests {
         );
         // Not fixed, C2 is the placer's to move: nothing to warn of.
         let fixed = ["C1".to_string(), "C3".to_string(), "U1".to_string()];
-        let held = HeldParts {
-            fixed: &fixed,
-            fixed_patterns: &[],
-            free: &[],
+        let config = KiCadBoardPlacerConfig {
+            fixed: fixed.to_vec(),
+            ..Default::default()
         };
-        assert!(held_parts_overlapping(&pcb, held).unwrap().is_empty());
+        let held = held_parts(&pcb, &config).unwrap();
+        assert!(held_parts_overlapping(&pcb, &held).unwrap().is_empty());
     }
 }

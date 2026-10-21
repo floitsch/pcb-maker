@@ -369,8 +369,9 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   "bottom", "min": 34, "max": 60, "step": 2`, optional `prefer_below`
   price thresholds and `band_mm`, what moves with the edge): the layout
   runs at a third of a third of `total_seconds` per size, several sizes
-  side by side, from the smallest upward, lays the first clean size out
-  again at a third of `total_seconds`, and returns that layout as its
+  side by side, from the smallest upward, then gives everything left to
+  a smaller size that came close (results are not monotone) or to the
+  first clean size again, and returns the smallest clean layout as its
   result, with `free-dimension.json` listing every size tried
   ([constraints.md](constraints.md#a-free-dimension-free_dimension)).
   `total_seconds` is then the whole search's budget: give it several
@@ -634,7 +635,7 @@ A finished run also carries it as `verdict` in its report:
 | `next_actions` | What to do next, factual: the input check's and the placement's warnings first (keepouts over held parts, `constraint_warnings`, a missing kicad-cli where the run went on without it), then where nets fought, which pads no track enters and the nets KiCad finds unconnected, the new DRC errors by type (the largest four each with KiCad's rule, the nets or items, and the setting or step for that type), which budget ran out. |
 | `drc_cache` | `{calls, hits}`: KiCad DRC runs the process asked for (its attempts, the reference) and how many the DRC cache answered (see below). |
 | `room` | Placement and layout (also an input error that a constraint needs more room than the outline has): the room as numbers, below. Absent for a route. |
-| `free_dimension` | A layout with `free_dimension`: `chosen` (the size in mm), `kind` (`probe`, `confirm` or `closest`: which run the result is), `clean`, `probes` (layouts run), `reason` (the smaller sizes and how they failed, a price threshold exceeded, sizes left untried), `edge`, the search's `work_seconds` and `wall_seconds` (the verdict's own fields are the chosen layout's), `report` (`free-dimension.json`). |
+| `free_dimension` | A layout with `free_dimension`: `chosen` (the size in mm), `kind` (`probe`, `retry`, `confirm` or `closest`: which run the result is), `clean`, `probes` (layouts run), `reason` (the smaller sizes and how they failed, a price threshold exceeded, sizes left untried), `edge`, the search's `work_seconds` and `wall_seconds` (the verdict's own fields are the chosen layout's), `report` (`free-dimension.json`). |
 
 `room` says how full the board is and how large it would need to be, so
 that an agent enlarges it in one step:

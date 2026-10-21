@@ -539,7 +539,11 @@ Now every command that places or routes sorts the board as it reads it
 (`canonical_order::parse_board` in pcb-kicad: `place-kicad-board`, the
 layout's outline sizing, placement and reads of the placed board, the
 router's every attempt, the congestion score): footprints by reference
-in natural order (R2 before R10), then uuid, then their text; inside a
+in natural order (R2 before R10), then uuid, then the file's order
+(until 2026-10-21 their text, which holds the pose: two footprints with
+one reference and no uuid could come back from the placed board in the
+other order, and the layout, which writes poses by index, swap them;
+only such ties depend on the file's order now); inside a
 footprint the pads by number (natural), then position, the `fp_*`
 graphics by layer and content without their uuid, the footprint's zones
 by content; each kind keeps the places it held among the items, the rest
@@ -721,6 +725,31 @@ courtyard, a chip's name on its outline. For such tasks
 tier). The schematic tier's boards have no board texts or silkscreen
 graphics (the import writes none): their placements with x1385
 and x1417 are byte-identical.
+
+## One notion of a held part (2026-10-21)
+
+Which parts the placer leaves where the input has them used to be
+decided three times: by the lowering (the placer's `fixed` and
+`fixed_patterns`, constraints.json's `fixed`, parts placed with `x` and
+`y`, by default locked parts, parts without a net and parts at the edge,
+and the parts a constraint or `move_all` frees), by the keepout
+constraints (`HeldParts`: the placer's lists, locked and netless parts,
+less `free`) and by the free dimension (its own variant, without `free`
+and the edge). A keepout over a part fixed by constraints.json or over a
+connector at the edge was written footprints not allowed, and KiCad
+reported the part (the fence's issue 15 for that input); a part a
+constraint frees got footprints allowed and a warning.
+
+Now one function decides it from the lowering (`held_parts` in
+placement_constraints.rs: the board with the outline and sides the
+constraints give, lowered with the placer config, each footprint's
+`fixed`), and the keepout constraints (which rule areas allow
+footprints, the input-time warning) and the free dimension (which parts
+must stay inside the outline, which move with the edge by their body)
+take it from there. Under `move_all` the placer's own `fixed` list goes
+too, as the lowering has always had it: every part is placed but locked
+ones and those constraints.json fixes or places. The unit test
+`one_notion_of_a_held_part_covers_every_case` enumerates the cases.
 
 ## What went wrong on the way (kept as lessons)
 

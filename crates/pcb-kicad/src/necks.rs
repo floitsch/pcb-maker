@@ -722,6 +722,7 @@ pub(crate) fn repair_connection_width(
     directory: &Path,
     board_id: &str,
     config: &KiCadBoardRouterConfig,
+    max_checks: Option<usize>,
 ) -> Result<Option<NeckRepair>, String> {
     if env::var_os("PCB_KICAD_NO_NECK_REPAIR").is_some() {
         return Ok(None);
@@ -746,8 +747,32 @@ pub(crate) fn repair_connection_width(
         after: before.len(),
         ..Default::default()
     };
+    // Within a work bound (a layout's work left, in checks): the fill, at
+    // least one trial and the board as chosen.
+    let trials = match max_checks {
+        None => NECK_TRIALS,
+        Some(checks) if checks >= NECK_MIN_CHECKS => (checks - 2).min(NECK_TRIALS),
+        Some(checks) => {
+            repair.note = Some(format!(
+                "not run: the work left pays for {checks} KiCad checks, the repair needs {NECK_MIN_CHECKS} (a fill, a trial, the board as chosen)"
+            ));
+            eprintln!(
+                "connection width: {} necks in KiCad's report; the repair was not run: the work left pays for {checks} KiCad checks",
+                repair.before
+            );
+            return Ok(Some(repair));
+        }
+    };
     let saved = Saved::take(directory, board_id)?;
-    let outcome = repair_with(directory, board_id, config, &report, &before, &mut repair);
+    let outcome = repair_with(
+        directory,
+        board_id,
+        config,
+        &report,
+        &before,
+        trials,
+        &mut repair,
+    );
     if let Err(error) = outcome {
         // A check failed and the board in the directory may be a trial's
         // without its report: back to the board and the reports as they
@@ -832,7 +857,7 @@ pub fn repair_kicad_necks(
     board_id: &str,
     config: &KiCadBoardRouterConfig,
 ) -> Result<Option<NeckRepair>, String> {
-    repair_connection_width(directory, board_id, config)
+    repair_connection_width(directory, board_id, config, None)
 }
 
 fn error_counts(report: &serde_json::Value) -> (BTreeMap<String, usize>, usize) {
@@ -850,12 +875,21 @@ fn error_counts(report: &serde_json::Value) -> (BTreeMap<String, usize>, usize) 
     )
 }
 
+/// The trials (KiCad checks of the board with some repair tracks) the
+/// repair makes at most.
+pub(crate) const NECK_TRIALS: usize = 6;
+
+/// The KiCad checks a repair needs at least: the fill, one trial and the
+/// board as chosen (`repair_connection_width`'s `max_checks`).
+pub(crate) const NECK_MIN_CHECKS: usize = 3;
+
 fn repair_with(
     directory: &Path,
     board_id: &str,
     config: &KiCadBoardRouterConfig,
     report: &serde_json::Value,
     before: &[Finding],
+    trials: usize,
     repair: &mut NeckRepair,
 ) -> Result<(), String> {
     let board_path = directory.join(format!("{board_id}.kicad_pcb"));
@@ -1061,7 +1095,7 @@ fn repair_with(
         std::collections::VecDeque::from([(0..tracks.len()).collect::<Vec<_>>()]);
     let mut checks = 0;
     while let Some(group) = queue.pop_front() {
-        if checks >= 6 {
+        if checks >= trials {
             break;
         }
         checks += 1;

@@ -5,7 +5,7 @@
 use super::*;
 use crate::placement_constraints::{
     HeldParts, KEEPOUT_NAME, KiCadConstraintStatus, KiCadConstraintsSource, apply_constraints,
-    apply_keepouts, apply_outline, apply_sides, constraint_report, resolve_constraints,
+    apply_keepouts, apply_outline, apply_sides, constraint_report, held_parts, resolve_constraints,
 };
 
 mod bodies;

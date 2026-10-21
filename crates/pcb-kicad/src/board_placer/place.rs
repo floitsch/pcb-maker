@@ -85,7 +85,12 @@ pub fn place_kicad_board(
     }
     let mut keepout_warnings = Vec::new();
     if let Some(KiCadConstraintsSource::Inline(constraints)) = &config.constraints {
-        keepout_warnings = apply_keepouts(&mut pcb, &constraints.keepout, HeldParts::of(config))
+        let held = if constraints.keepout.is_empty() {
+            HeldParts::default()
+        } else {
+            held_parts(&pcb, config).map_err(crate::verdict::input_error)?
+        };
+        keepout_warnings = apply_keepouts(&mut pcb, &constraints.keepout, &held)
             .map_err(crate::verdict::input_error)?;
         apply_sides(&mut pcb, constraints).map_err(crate::verdict::input_error)?;
     }

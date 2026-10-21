@@ -1329,7 +1329,11 @@ In a layout, a board far from complete after its first route where the
 step applies gets the step alone instead of the ladder (2026-10-15): one
 attempt with the first route's pour mode, signals narrow, refine pitches
 off, negotiating three quarters of what is left after a clean-up capped
-at a tenth of it (30-120 s; `direct_narrow_budget`), its work deadline the
+at a tenth of it (30-120 s; `direct_narrow_budget`; since 2026-10-21 the
+caps grow with what is left, the negotiation at most 900 s or half of
+it, the clean-up at most 120 s or a twentieth: unchanged up to 1800 s
+left, where a layout of 3000 to 6000 s used to end near its first route
+and twice 1020 s), its work deadline the
 layout's end; the layout keeps it if KiCad finds it better than the first
 route. Far from complete is the old "many open" (more than 5 % of the
 terminals, four layers with pours: no moves, no resume, no polish; a
@@ -1347,7 +1351,7 @@ When that attempt leaves at least 240 s of the layout's work and
 connections open, the attempt runs once more in the other pour mode (pour
 nets as tracks after pours connected, and the other way round), with the
 same split of what is left (`direct_narrow_budget`) and that work as its
-deadline; the layout keeps the better board as before (KiCad's open
+deadline and its ladder's budget (until 2026-10-21 at most 1200 s); the layout keeps the better board as before (KiCad's open
 items, then starved thermals). vaio_re: 410 s left, the tracks attempt
 55 open against 76, KiCad 35 to 21 unconnected. A second seed round, the
 class-width ladder and probing both pour modes for the attempt itself
@@ -1460,7 +1464,11 @@ board left unchecked is never kept by the layout.
 **KiCad's checks as work** (2026-10-15, check_work.rs). In a layout every
 KiCad check (the board kept after the moves and the polish, each checked
 attempt of the final ladder, the neck repair's checks and its KiCad fill)
-counts a modelled cost in the layout's work: `CHECK_SECONDS` (3.6 s) plus
+counts a modelled cost in the layout's work (the neck repair's within the
+work left since 2026-10-21: as many checks as it pays for, at least a fill,
+a trial and the board as chosen, else the repair does not run and its
+note says so; it used to be charged after it, past `total_seconds` by up
+to eight checks): `CHECK_SECONDS` (3.6 s) plus
 `SECONDS_PER_THOUSAND_HATCH_HOLES` (1.7 s) per thousand holes of the
 board's hatched copper zones (area on each copper layer over the square of
 the hatch pitch), and since 2026-10-21 `COMPLEX_OUTLINE_SECONDS` (20 s)

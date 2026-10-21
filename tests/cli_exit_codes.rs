@@ -959,7 +959,7 @@ fn a_free_dimension_searches_the_sizes_and_keeps_one_layout() {
         serde_json::from_str(&fs::read_to_string(out.join("free-dimension.json")).unwrap())
             .unwrap();
     let runs = table["runs"].as_array().unwrap();
-    // The probes, two side by side, then the closest at the full budget.
+    // The probes, two side by side, then the closest with the rest.
     let kinds: Vec<(f64, &str, f64)> = runs
         .iter()
         .map(|run| {
@@ -970,13 +970,18 @@ fn a_free_dimension_searches_the_sizes_and_keeps_one_layout() {
             )
         })
         .collect();
+    // The closest gets all that is left of the 30 s, not confirm_seconds.
+    let probes_work: f64 = runs[..3]
+        .iter()
+        .map(|run| run["work_seconds"].as_f64().unwrap())
+        .sum();
     assert_eq!(
         kinds,
         vec![
             (16.0, "probe", 2.0),
             (20.0, "probe", 2.0),
             (24.0, "probe", 2.0),
-            (16.0, "closest", 6.0)
+            (16.0, "closest", 30.0 - probes_work)
         ],
         "{table}"
     );
