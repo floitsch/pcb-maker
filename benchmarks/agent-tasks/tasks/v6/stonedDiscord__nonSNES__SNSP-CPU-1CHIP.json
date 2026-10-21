@@ -1,0 +1,23 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "F1",
+  "SW1",
+  "P1",
+  "J1",
+  "P4",
+  "RF1",
+  "U5",
+  "U1",
+  "TP44",
+  "TP46",
+  "TP45"
+ ],
+ "edge": [],
+ "rotation": [],
+ "hollow": [
+  "U5",
+  "U1"
+ ]
+}

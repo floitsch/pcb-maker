@@ -1,0 +1,14 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "J6",
+  "J3",
+  "D29",
+  "R4",
+  "D58",
+  "R5"
+ ],
+ "edge": [],
+ "rotation": []
+}

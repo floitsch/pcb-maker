@@ -1,0 +1,92 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "R2",
+  "R3",
+  "C20",
+  "C18",
+  "C22",
+  "R4",
+  "C19",
+  "C21",
+  "J1",
+  "R1",
+  "U9",
+  "C17",
+  "U1",
+  "SW2",
+  "R23",
+  "C35",
+  "R10",
+  "R29",
+  "C34"
+ ],
+ "edge": [
+  {
+   "part": "J13",
+   "edge": "top",
+   "max_mm": 0.61
+  },
+  {
+   "part": "J22",
+   "edge": "bottom",
+   "max_mm": 1.85
+  },
+  {
+   "part": "J16",
+   "edge": "bottom",
+   "max_mm": 2.17
+  },
+  {
+   "part": "J20",
+   "edge": "right",
+   "max_mm": 1.35
+  },
+  {
+   "part": "J19",
+   "edge": "top",
+   "max_mm": 1.27
+  },
+  {
+   "part": "J3",
+   "edge": "bottom",
+   "max_mm": 2.25
+  },
+  {
+   "part": "J4",
+   "edge": "bottom",
+   "max_mm": 2.43
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J13",
+   "angle": 180.0
+  },
+  {
+   "part": "J22",
+   "angle": 90.0
+  },
+  {
+   "part": "J16",
+   "angle": 90.0
+  },
+  {
+   "part": "J20",
+   "angle": 0.0
+  },
+  {
+   "part": "J19",
+   "angle": 90.0
+  },
+  {
+   "part": "J3",
+   "angle": 90.0
+  },
+  {
+   "part": "J4",
+   "angle": 90.0
+  }
+ ]
+}

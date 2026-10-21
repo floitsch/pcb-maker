@@ -1,0 +1,24 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "U201",
+  "J1301",
+  "J1101",
+  "U802",
+  "J401"
+ ],
+ "edge": [
+  {
+   "part": "J1007",
+   "edge": "right",
+   "max_mm": 1.75
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J1007",
+   "angle": 0.0
+  }
+ ]
+}

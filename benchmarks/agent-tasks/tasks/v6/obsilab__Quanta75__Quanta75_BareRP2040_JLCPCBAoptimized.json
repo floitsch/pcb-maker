@@ -1,0 +1,43 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "SW27",
+  "SW42",
+  "SW76",
+  "D42",
+  "J3",
+  "D27"
+ ],
+ "edge": [
+  {
+   "part": "J1",
+   "edge": "top",
+   "max_mm": 1.35
+  },
+  {
+   "part": "J7",
+   "edge": "top",
+   "max_mm": 1.36
+  },
+  {
+   "part": "J9",
+   "edge": "top",
+   "max_mm": 1.36
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J1",
+   "angle": 0.0
+  },
+  {
+   "part": "J7",
+   "angle": 0.0
+  },
+  {
+   "part": "J9",
+   "angle": 0.0
+  }
+ ]
+}

@@ -1,0 +1,10 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "U1",
+  "C1"
+ ],
+ "edge": [],
+ "rotation": []
+}

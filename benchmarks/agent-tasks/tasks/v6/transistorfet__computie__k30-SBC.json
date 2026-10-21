@@ -1,0 +1,38 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "J1"
+ ],
+ "edge": [
+  {
+   "part": "J7",
+   "edge": "top",
+   "max_mm": 1.72
+  },
+  {
+   "part": "J8",
+   "edge": "top",
+   "max_mm": 1.72
+  },
+  {
+   "part": "J9",
+   "edge": "top",
+   "max_mm": 1.72
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J7",
+   "angle": 0.0
+  },
+  {
+   "part": "J8",
+   "angle": 0.0
+  },
+  {
+   "part": "J9",
+   "angle": 0.0
+  }
+ ]
+}

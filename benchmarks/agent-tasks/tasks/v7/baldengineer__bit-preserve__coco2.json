@@ -1,0 +1,21 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "IC14",
+  "SW2"
+ ],
+ "edge": [
+  {
+   "part": "CN1",
+   "edge": "right",
+   "max_mm": 1.47
+  }
+ ],
+ "rotation": [
+  {
+   "part": "CN1",
+   "angle": 270.0
+  }
+ ]
+}

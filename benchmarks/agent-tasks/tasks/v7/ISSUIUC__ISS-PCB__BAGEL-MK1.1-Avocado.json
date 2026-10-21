@@ -1,0 +1,48 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "U102",
+  "D105",
+  "D104",
+  "R701",
+  "U201",
+  "R601",
+  "R201",
+  "R301",
+  "U701",
+  "U601",
+  "U301"
+ ],
+ "edge": [
+  {
+   "part": "J107",
+   "edge": "top",
+   "max_mm": 0.89
+  },
+  {
+   "part": "J112",
+   "edge": "top",
+   "max_mm": 1.64
+  },
+  {
+   "part": "J111",
+   "edge": "top",
+   "max_mm": 1.41
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J107",
+   "angle": 10.0
+  },
+  {
+   "part": "J112",
+   "angle": 290.0
+  },
+  {
+   "part": "J111",
+   "angle": 0.0
+  }
+ ]
+}

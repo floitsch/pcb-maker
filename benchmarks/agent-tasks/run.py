@@ -64,7 +64,7 @@ from pathlib import Path, PurePosixPath
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from compare import by_name, constraints_digest, objectives, objectives_line, rows_of  # noqa: E402
+from compare import by_name, constraints_digest, objectives, objectives_line, rows_of, task_digest  # noqa: E402
 import schematic  # noqa: E402
 ROOT = HERE.parents[1]
 # Benchmark tiers: subsets of a task list with their reasons (README.md).
@@ -670,6 +670,25 @@ class MemoryGate:
                 self.running.pop(token, None)
 
 
+def task_directory(task):
+    """The task's board directory: relative to the checkout, or absolute.
+    The committed lists (tasks/v6, tasks/v7) name the main checkout's
+    absolute paths, kept so that their SHA-256 stays the reference logs';
+    where such a path is not there (another machine, CI), the same
+    benchmarks/real/external path under this checkout is used."""
+    directory = Path(task["directory"])
+    if not directory.is_absolute():
+        return ROOT / directory
+    if not directory.exists():
+        parts = directory.parts
+        for index in range(len(parts) - 2):
+            if parts[index:index + 3] == ("benchmarks", "real", "external"):
+                candidate = ROOT.joinpath(*parts[index:])
+                if candidate.exists():
+                    return candidate
+    return directory
+
+
 def run_task(task, arguments):
     # Admitted before the designer's DRC: kicad-cli takes 2.2 GB on any
     # board, and twelve jobs start with it at once.
@@ -701,9 +720,7 @@ def run_admitted(task, arguments, token):
     if task.get("mode") == "route":
         return route_task_admitted(task, arguments, token)
     name = task["name"]
-    directory = Path(task["directory"])
-    if not directory.is_absolute():
-        directory = ROOT / directory
+    directory = task_directory(task)
     work = arguments.output / name
     if work.exists():
         shutil.rmtree(work)
@@ -858,9 +875,7 @@ def schematic_admitted(task, arguments, token):
     The pass rule is the layout's, and every footprint must have been
     found; the row says where the flow stopped and why."""
     name = task["name"]
-    directory = Path(task["directory"])
-    if not directory.is_absolute():
-        directory = ROOT / directory
+    directory = task_directory(task)
     board_id = task["board_id"]
     work = arguments.output / name
     if work.exists():
@@ -1023,9 +1038,7 @@ def route_admitted(task, arguments, token):
     The row and the pass rule are the layout's; constraints are not checked
     (the placement is given)."""
     name = task["name"]
-    directory = Path(task["directory"])
-    if not directory.is_absolute():
-        directory = ROOT / directory
+    directory = task_directory(task)
     work = arguments.output / name
     if work.exists():
         shutil.rmtree(work)
@@ -1271,9 +1284,7 @@ def route_task_admitted(task, arguments, token):
     the licence, `fetched`, `source_sha256` and the intake's outcome class
     (`outcome`)."""
     name = task["name"]
-    directory = Path(task["directory"])
-    if not directory.is_absolute():
-        directory = ROOT / directory
+    directory = task_directory(task)
     board_id = task["board_id"]
     work = arguments.output / name
     if work.exists():
@@ -1537,7 +1548,7 @@ def main():
             task = {**task, "peak_rss_mb": entry.get("peak_rss_mb"), "expected_seconds": entry.get("seconds")}
             if task["peak_rss_mb"] is None:
                 del task["peak_rss_mb"]
-        directory = Path(task["directory"]) if Path(task["directory"]).is_absolute() else ROOT / task["directory"]
+        directory = task_directory(task)
         # A route-mode task with a source is fetched when its job runs.
         if not directory.exists() and not (task.get("mode") == "route" and task.get("source")):
             print(f"skipping {task['name']}: {directory} not found")
@@ -1549,6 +1560,22 @@ def main():
             print(f"tier {arguments.tier}: {len(missing)} boards not in {arguments.tasks}: {missing}", file=sys.stderr)
         # The longest first, so that the last job is not a slow one.
         tasks.sort(key=lambda task: -(task.get("expected_seconds") or 0))
+    # Each row names its input beyond the constraints compare.py checks:
+    # the task's entry and the designer's board (compare.py marks a board
+    # whose task or board differ INPUT).
+    identities = {}
+    for task in tasks:
+        constraints = None
+        if task.get("constraints"):
+            try:
+                constraints = json.loads((arguments.tasks.parent / task["constraints"]).read_text())
+            except (OSError, ValueError):
+                pass
+        identity = {"task_sha256": task_digest(task, constraints)}
+        board = task_directory(task) / f"{task['board_id']}.kicad_pcb"
+        if board.is_file():
+            identity["board_sha256"] = file_sha256(board)
+        identities[task["name"]] = identity
     rows = {}
     if arguments.splice_from is not None:
         spliced = spliced_rows(arguments.splice_from, left_out)
@@ -1585,7 +1612,8 @@ def main():
 
         for future in as_completed([pool.submit(guarded, task) for task in tasks]):
             row = future.result()
-            row.update(tasks=arguments.tasks_label, tasks_sha256=arguments.tasks_sha256)
+            row.update(tasks=arguments.tasks_label, tasks_sha256=arguments.tasks_sha256,
+                       **identities.get(row["name"], {}))
             rows[row["name"]] = row
             print(json.dumps(row), flush=True)
     wall = time.monotonic() - started

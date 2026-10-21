@@ -1,0 +1,78 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "C19",
+  "J1",
+  "J2",
+  "R12",
+  "U2"
+ ],
+ "edge": [
+  {
+   "part": "J3",
+   "edge": "bottom",
+   "max_mm": 1.5
+  },
+  {
+   "part": "J4",
+   "edge": "bottom",
+   "max_mm": 1.5
+  },
+  {
+   "part": "J7",
+   "edge": "bottom",
+   "max_mm": 1.5
+  },
+  {
+   "part": "J6",
+   "edge": "bottom",
+   "max_mm": 2.3
+  },
+  {
+   "part": "J10",
+   "edge": "bottom",
+   "max_mm": 2.3
+  },
+  {
+   "part": "J5",
+   "edge": "bottom",
+   "max_mm": 2.3
+  },
+  {
+   "part": "J8",
+   "edge": "bottom",
+   "max_mm": 2.3
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J3",
+   "angle": 0.0
+  },
+  {
+   "part": "J4",
+   "angle": 0.0
+  },
+  {
+   "part": "J7",
+   "angle": 0.0
+  },
+  {
+   "part": "J6",
+   "angle": 0.0
+  },
+  {
+   "part": "J10",
+   "angle": 0.0
+  },
+  {
+   "part": "J5",
+   "angle": 0.0
+  },
+  {
+   "part": "J8",
+   "angle": 0.0
+  }
+ ]
+}

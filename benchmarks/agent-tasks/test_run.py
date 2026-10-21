@@ -1,6 +1,7 @@
 # Copyright (C) 2026 Toit contributors.
 """Tests of run.py's defaults: python3 -m unittest benchmarks/agent-tasks/test_run.py"""
 
+import json
 import os
 import shutil
 import subprocess
@@ -11,7 +12,10 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import compare  # noqa: E402
 import run  # noqa: E402
+
+HERE = Path(__file__).resolve().parent
 
 
 class Parallelism(unittest.TestCase):
@@ -66,6 +70,55 @@ class StrictRule(unittest.TestCase):
     def test_without_a_baseline_every_finding_counts(self):
         split = run.strict_findings([finding("clearance", ("a", (1.0, 1.0)))], None)
         self.assertEqual(split["new"], {"clearance": 1})
+
+
+class CommittedTaskLists(unittest.TestCase):
+    """benchmarks/agent-tasks/tasks/v6 and v7: the lists the tiers run."""
+
+    def load(self, version):
+        directory = HERE / "tasks" / version
+        tasks = json.loads((directory / "tasks.json").read_text())["tasks"]
+        return directory, {task["name"]: task for task in tasks}
+
+    def test_every_task_has_its_constraint_file(self):
+        for version in ("v6", "v7"):
+            directory, tasks = self.load(version)
+            for task in tasks.values():
+                if task.get("constraints"):
+                    self.assertTrue((directory / task["constraints"]).is_file(), (version, task["name"]))
+
+    def test_tiers_name_the_committed_list_and_its_boards(self):
+        for tier in ("quick", "short", "schematic"):
+            entry = json.loads(run.TIERS[tier].read_text())
+            self.assertEqual(entry["tasks"], "benchmarks/agent-tasks/tasks/v7/tasks.json", tier)
+            _, tasks = self.load("v7")
+            self.assertLessEqual(set(entry["boards"]), set(tasks), tier)
+
+    def test_v6_and_v7_differ_only_on_six_panels(self):
+        # The quick and short tiers moved from v6 to v7 (2026-10-21): none of
+        # their boards is one of the six, so their older v6 logs stay bases.
+        directory6, tasks6 = self.load("v6")
+        directory7, tasks7 = self.load("v7")
+        self.assertEqual(set(tasks6), set(tasks7))
+        differ = {name for name in tasks7 if compare.task_digest(
+            tasks6[name], json.loads((directory6 / tasks6[name]["constraints"]).read_text()))
+            != compare.task_digest(tasks7[name], json.loads((directory7 / tasks7[name]["constraints"]).read_text()))}
+        self.assertEqual(len(differ), 6)
+        for tier in ("quick", "short"):
+            self.assertFalse(differ & set(json.loads(run.TIERS[tier].read_text())["boards"]), tier)
+
+    def test_an_absolute_directory_elsewhere_falls_back_to_this_checkout(self):
+        task = {"directory": "/nowhere/pcb-maker/benchmarks/real/external/github/x"}
+        with tempfile.TemporaryDirectory() as root:
+            board = Path(root) / "benchmarks/real/external/github/x"
+            board.mkdir(parents=True)
+            old = run.ROOT
+            run.ROOT = Path(root)
+            try:
+                self.assertEqual(run.task_directory(task), board)
+            finally:
+                run.ROOT = old
+        self.assertEqual(run.task_directory({"directory": "benchmarks/x"}), run.ROOT / "benchmarks/x")
 
 
 @unittest.skipUnless(Path("/proc/locks").exists() and shutil.which("flock"), "needs /proc/locks and flock(1)")

@@ -1,0 +1,20 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "J6",
+  "SW3",
+  "SW7",
+  "SW5",
+  "SW4",
+  "U4",
+  "SW8",
+  "SW2",
+  "J1",
+  "SW1",
+  "SW10",
+  "SW9"
+ ],
+ "edge": [],
+ "rotation": []
+}

@@ -1,0 +1,13 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "USB2",
+  "USB1",
+  "SW21",
+  "SW3",
+  "SW4"
+ ],
+ "edge": [],
+ "rotation": []
+}

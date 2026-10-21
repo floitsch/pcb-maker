@@ -1,0 +1,48 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "J9",
+  "TP1",
+  "TP4",
+  "J10",
+  "BT1",
+  "H4",
+  "J1",
+  "J7",
+  "TP2",
+  "L5",
+  "R54",
+  "U30",
+  "C90",
+  "L4"
+ ],
+ "edge": [
+  {
+   "part": "J8",
+   "edge": "left",
+   "max_mm": 1.26
+  },
+  {
+   "part": "J3",
+   "edge": "left",
+   "max_mm": 1.34
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J8",
+   "angle": 90.0
+  },
+  {
+   "part": "J3",
+   "angle": 270.0
+  }
+ ],
+ "hollow": [
+  "BT1",
+  "J1",
+  "J7",
+  "U30"
+ ]
+}

@@ -1,0 +1,31 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "SW1",
+  "J100",
+  "J101",
+  "U200",
+  "J300",
+  "SW2",
+  "U100",
+  "J1"
+ ],
+ "edge": [
+  {
+   "part": "J200",
+   "edge": "bottom",
+   "max_mm": 1.34
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J200",
+   "angle": 90.0
+  }
+ ],
+ "hollow": [
+  "U200",
+  "U100"
+ ]
+}

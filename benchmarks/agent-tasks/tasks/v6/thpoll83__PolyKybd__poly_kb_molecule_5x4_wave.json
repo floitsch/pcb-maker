@@ -1,0 +1,375 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "SW1",
+  "SW1",
+  "SW1",
+  "SW1",
+  "SW1",
+  "SW1",
+  "SW1",
+  "SW1",
+  "SW1",
+  "SW1",
+  "SW1",
+  "SW1",
+  "SW1",
+  "SW1",
+  "SW1",
+  "SW1",
+  "SW1",
+  "SW1",
+  "SW1",
+  "SW1",
+  "C1",
+  "C4",
+  "C5",
+  "C6",
+  "D1",
+  "C1",
+  "R1",
+  "D1",
+  "R1",
+  "R1",
+  "R1",
+  "D1",
+  "C5",
+  "C1",
+  "C6",
+  "D1",
+  "C6",
+  "R1",
+  "C4",
+  "C6",
+  "C5",
+  "C6",
+  "C6",
+  "C4",
+  "D1",
+  "C1",
+  "R1",
+  "C5",
+  "D1",
+  "R1",
+  "C6",
+  "D1",
+  "C1",
+  "D1",
+  "C6",
+  "C4",
+  "C6",
+  "C5",
+  "D1",
+  "R1",
+  "C6",
+  "C6",
+  "C1",
+  "C4",
+  "C1",
+  "C5",
+  "R1",
+  "R1",
+  "R1",
+  "C5",
+  "C4",
+  "C5",
+  "C4",
+  "R1",
+  "C4",
+  "C6",
+  "C5",
+  "D1",
+  "C4",
+  "C4",
+  "D1",
+  "D1",
+  "D1",
+  "C1",
+  "C6",
+  "C1",
+  "C5",
+  "C6",
+  "R1",
+  "C5",
+  "D1",
+  "C1",
+  "D1",
+  "R1",
+  "R1",
+  "C1",
+  "C1",
+  "C6",
+  "C5",
+  "C6",
+  "C4",
+  "C6",
+  "C1",
+  "C4",
+  "C1",
+  "C4",
+  "C4",
+  "C1",
+  "C6",
+  "D1",
+  "C4",
+  "C5",
+  "C4",
+  "C4",
+  "C5",
+  "C1",
+  "D1",
+  "D1",
+  "R1",
+  "C4",
+  "C1",
+  "D1",
+  "C5",
+  "C6",
+  "D1",
+  "C5",
+  "C5",
+  "C1",
+  "C5",
+  "R1",
+  "R1",
+  "C5",
+  "C1",
+  "C4",
+  "R1",
+  "R1",
+  "C6",
+  "C1",
+  "C4",
+  "C5"
+ ],
+ "edge": [
+  {
+   "part": "J3",
+   "edge": "left",
+   "max_mm": 0.52
+  },
+  {
+   "part": "J4",
+   "edge": "right",
+   "max_mm": 0.52
+  },
+  {
+   "part": "J4",
+   "edge": "right",
+   "max_mm": 0.52
+  },
+  {
+   "part": "J4",
+   "edge": "right",
+   "max_mm": 0.52
+  },
+  {
+   "part": "J7",
+   "edge": "bottom",
+   "max_mm": 0.51
+  },
+  {
+   "part": "J8",
+   "edge": "top",
+   "max_mm": 0.51
+  },
+  {
+   "part": "J3",
+   "edge": "left",
+   "max_mm": 0.52
+  },
+  {
+   "part": "J9",
+   "edge": "bottom",
+   "max_mm": 0.51
+  },
+  {
+   "part": "J9",
+   "edge": "bottom",
+   "max_mm": 0.51
+  },
+  {
+   "part": "J3",
+   "edge": "left",
+   "max_mm": 0.52
+  },
+  {
+   "part": "J4",
+   "edge": "right",
+   "max_mm": 0.52
+  },
+  {
+   "part": "J3",
+   "edge": "left",
+   "max_mm": 0.52
+  },
+  {
+   "part": "J7",
+   "edge": "bottom",
+   "max_mm": 0.51
+  },
+  {
+   "part": "J2",
+   "edge": "top",
+   "max_mm": 0.51
+  },
+  {
+   "part": "J5",
+   "edge": "left",
+   "max_mm": 0.52
+  },
+  {
+   "part": "J5",
+   "edge": "top",
+   "max_mm": 2.02
+  },
+  {
+   "part": "J1",
+   "edge": "top",
+   "max_mm": 0.81
+  },
+  {
+   "part": "J6",
+   "edge": "right",
+   "max_mm": 0.52
+  },
+  {
+   "part": "J5",
+   "edge": "left",
+   "max_mm": 0.52
+  },
+  {
+   "part": "J5",
+   "edge": "bottom",
+   "max_mm": 0.52
+  },
+  {
+   "part": "J5",
+   "edge": "left",
+   "max_mm": 0.52
+  },
+  {
+   "part": "J6",
+   "edge": "right",
+   "max_mm": 0.52
+  },
+  {
+   "part": "J6",
+   "edge": "right",
+   "max_mm": 0.52
+  },
+  {
+   "part": "J5",
+   "edge": "left",
+   "max_mm": 0.52
+  },
+  {
+   "part": "J6",
+   "edge": "right",
+   "max_mm": 0.52
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J3",
+   "angle": 270.0
+  },
+  {
+   "part": "J4",
+   "angle": 270.0
+  },
+  {
+   "part": "J4",
+   "angle": 270.0
+  },
+  {
+   "part": "J4",
+   "angle": 270.0
+  },
+  {
+   "part": "J7",
+   "angle": 0.0
+  },
+  {
+   "part": "J8",
+   "angle": 0.0
+  },
+  {
+   "part": "J3",
+   "angle": 270.0
+  },
+  {
+   "part": "J9",
+   "angle": 0.0
+  },
+  {
+   "part": "J9",
+   "angle": 0.0
+  },
+  {
+   "part": "J3",
+   "angle": 270.0
+  },
+  {
+   "part": "J4",
+   "angle": 270.0
+  },
+  {
+   "part": "J3",
+   "angle": 270.0
+  },
+  {
+   "part": "J7",
+   "angle": 0.0
+  },
+  {
+   "part": "J2",
+   "angle": 0.0
+  },
+  {
+   "part": "J5",
+   "angle": 270.0
+  },
+  {
+   "part": "J5",
+   "angle": 270.0
+  },
+  {
+   "part": "J1",
+   "angle": 0.0
+  },
+  {
+   "part": "J6",
+   "angle": 270.0
+  },
+  {
+   "part": "J5",
+   "angle": 270.0
+  },
+  {
+   "part": "J5",
+   "angle": 270.0
+  },
+  {
+   "part": "J5",
+   "angle": 270.0
+  },
+  {
+   "part": "J6",
+   "angle": 270.0
+  },
+  {
+   "part": "J6",
+   "angle": 270.0
+  },
+  {
+   "part": "J5",
+   "angle": 270.0
+  },
+  {
+   "part": "J6",
+   "angle": 270.0
+  }
+ ]
+}

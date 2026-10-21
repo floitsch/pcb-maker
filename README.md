@@ -223,14 +223,15 @@ quick tier (30 boards, full budget) as the merge gate, and the schematic
 tier (12 boards laid out from the designer's schematic, as an agent
 would). The tiers run 2 search threads a board and physical cores / 2
 boards at once (8 x 2 on a 16-core machine); one benchmark at a time, so
-they take a lock:
+run.py takes a lock (build/quick-tier.lock) and waits for it. The task
+lists are committed (benchmarks/agent-tasks/tasks/v7, made by
+from_pcbench.py from benchmarks/github/boards.json):
 
 ```sh
 python3 benchmarks/github/harvest.py fetch                      # the harvested boards
-benchmarks/agent-tasks/from_pcbench.py build/github-tasks-v7 --corpus benchmarks/github/boards.json
-flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/layout \
-  --tasks build/github-tasks-v7/tasks.json --jobs 8 --threads 2  # the full sweep, a night
-flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/short --tier short
+benchmarks/agent-tasks/run.py build/layout \
+  --tasks benchmarks/agent-tasks/tasks/v7/tasks.json --jobs 8 --threads 2  # the full sweep, a night
+benchmarks/agent-tasks/run.py build/short --tier short             # takes build/quick-tier.lock itself
 benchmarks/github/freerouting.py build/freerouting --ours      # both routers, headless
 ```
 

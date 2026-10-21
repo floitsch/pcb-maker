@@ -110,7 +110,7 @@ benchmarks/agent-tasks/compare.py build/short-x1170.log build/short-x1180.log
 ```
 
 The full sweep: `benchmarks/agent-tasks/run.py build/github-layout-v17
---tasks build/github-tasks-v7/tasks.json --binary $B --jobs 8 --threads 2`
+--tasks benchmarks/agent-tasks/tasks/v7/tasks.json --binary $B --jobs 8 --threads 2`
 under the same lock (run.py takes it for a whole task list too). Router questions go to route mode on fixed
 placements (`--route-from <earlier output dir>`), CPU claims to pinned
 simultaneous pairs; the discipline is in the tasks README, "How to
@@ -251,7 +251,7 @@ Numbers are kept from earlier hand-overs (other docs cite "open problem
 | Sweep logs | `build/github-layout-v16.log` and `build/github-layout-v16/` (v17: `build/github-layout-v17*` once it lands), `build/github-freerouting-x738*.log` |
 | Tier references | `build/quick30-x1152.log`, `build/short-x1170.log` (complete: `build/short-x1083.log`), `build/sch-x1161.log` |
 | Snapshot binaries | `build/bin/pcb-maker-xNNN` (x1170 = main 54eff39); `scripts/snapshot.sh <n>` builds and copies one, never over an existing number |
-| Tasks | `build/github-tasks-v6/` (quick and short tiers) and `build/github-tasks-v7/` (v6 plus uuids on six panels: schematic tier, v17), from `benchmarks/agent-tasks/from_pcbench.py --corpus benchmarks/github/boards.json`; tier lists in `benchmarks/agent-tasks/{quick,short,schematic}.json` |
+| Tasks | committed in `benchmarks/agent-tasks/tasks/v7/` (every tier since 2026-10-21) and `tasks/v6/` (the quick and short tiers before; v7 is v6 plus uuids on six panels, none in those tiers), copies of `build/github-tasks-v6/` and `-v7/`, from `benchmarks/agent-tasks/from_pcbench.py --corpus benchmarks/github/boards.json`; tier lists in `benchmarks/agent-tasks/{quick,short,schematic}.json` |
 | Harvested boards | `benchmarks/real/external/github/` (not in git; `benchmarks/github/manifest.json` has origin and licence); their schematics in `benchmarks/real/external/github-sch/` (`benchmarks/github/schematics.json`) |
 | Code | `crates/pcb-router`, `pcb-placer`, `pcb-kicad`, `pcb-congestion`, `pcb-topo`; the command line in `src/` (agent commands in `agent_cli.rs`, the rest in `main.rs`); `pcb-engine`, `pcb-grid-router`, `layout-trace-model` and `pcb-core` only for `pcb-kicad`'s research modules, until those go ([README](../README.md#repository)) |
 | The removed research stack | git history up to be4b012: the crates layout-trace-routing, pcb-routing, pcb-coordinator, pcb-placement, pcb-validate, pcb-viewer, pcb-benchmark and pcb-pipeline, 54 research commands (check, validate, place, route-grid, the semantic ladder, the route candidates, benchmark-route-*, ...), their tests and fixtures; list in [changelog.md](changelog.md#committed-on-2026-10-20-quality-research-stack-removed) |
@@ -385,11 +385,12 @@ experiment hooks in the code, undocumented on purpose: `PCB_TOPO_*`,
 - `pgrep -f` and `pkill -f` match their own shell: a waiter on `pgrep`
   never ends, `pkill` kills the session. Kill by PID.
 - No backticks in `git commit -m`.
-- One task list per benchmark comparison: quick and short tiers default to
-  github-tasks-v6, the schematic tier to v7; a log against one on the
-  other list compares inputs, not binaries. compare.py's first line names
-  both lists and says TASK LISTS DIFFER; rows on other prepared constraints
-  are marked INPUT.
+- One task list per benchmark comparison: every tier defaults to the
+  committed benchmarks/agent-tasks/tasks/v7 (the quick and short tiers to
+  github-tasks-v6 before 2026-10-21; their boards are the same in both); a
+  log against another list compares inputs, not binaries. compare.py's
+  first line names both lists and says TASK LISTS DIFFER; rows on other
+  prepared constraints, task entries or designer boards are marked INPUT.
 - Benchmarks use a copied binary (`build/bin`); one tier at a time under
   build/quick-tier.lock (run.py takes it; `--no-lock` to skip), load under 40, 20 GB free; above a load
   of about 45 the wall guard cuts rows (CUT is no evidence). Pin CPU

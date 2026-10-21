@@ -1,0 +1,52 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "U1",
+  "MK1",
+  "MK2",
+  "MK4",
+  "MK3",
+  "J1",
+  "J4",
+  "J3",
+  "TP12",
+  "TP11",
+  "TP10",
+  "TP8",
+  "TP9",
+  "TP13",
+  "TP15"
+ ],
+ "edge": [
+  {
+   "part": "J2",
+   "edge": "top",
+   "max_mm": 1.0
+  },
+  {
+   "part": "J5",
+   "edge": "top",
+   "max_mm": 1.7
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J2",
+   "angle": 90.0
+  },
+  {
+   "part": "J5",
+   "angle": 90.0
+  }
+ ],
+ "hollow": [
+  "U1",
+  "MK1",
+  "MK4",
+  "MK3",
+  "J1",
+  "J4",
+  "J3"
+ ]
+}

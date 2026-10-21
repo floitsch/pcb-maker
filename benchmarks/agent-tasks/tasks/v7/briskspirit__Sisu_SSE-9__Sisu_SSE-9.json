@@ -1,0 +1,23 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "U1",
+  "LS1",
+  "SW1",
+  "J8"
+ ],
+ "edge": [
+  {
+   "part": "J5",
+   "edge": "left",
+   "max_mm": 1.79
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J5",
+   "angle": 180.0
+  }
+ ]
+}

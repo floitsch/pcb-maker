@@ -1,0 +1,72 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "U17",
+  "J8",
+  "R57",
+  "J20",
+  "R56",
+  "J4",
+  "U14",
+  "J3",
+  "J6",
+  "J7",
+  "J17"
+ ],
+ "edge": [
+  {
+   "part": "J11",
+   "edge": "top",
+   "max_mm": 2.04
+  },
+  {
+   "part": "J9",
+   "edge": "top",
+   "max_mm": 2.05
+  },
+  {
+   "part": "J15",
+   "edge": "bottom",
+   "max_mm": 0.56
+  },
+  {
+   "part": "J18",
+   "edge": "right",
+   "max_mm": 0.64
+  },
+  {
+   "part": "J14",
+   "edge": "bottom",
+   "max_mm": 0.56
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J11",
+   "angle": 0.0
+  },
+  {
+   "part": "J9",
+   "angle": 0.0
+  },
+  {
+   "part": "J15",
+   "angle": 0.0
+  },
+  {
+   "part": "J18",
+   "angle": 90.0
+  },
+  {
+   "part": "J14",
+   "angle": 0.0
+  }
+ ],
+ "hollow": [
+  "U17",
+  "J3",
+  "J7",
+  "J17"
+ ]
+}

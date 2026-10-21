@@ -1,0 +1,22 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "SW4",
+  "J1",
+  "SW2"
+ ],
+ "edge": [
+  {
+   "part": "J8",
+   "edge": "top",
+   "max_mm": 2.37
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J8",
+   "angle": 90.0
+  }
+ ]
+}

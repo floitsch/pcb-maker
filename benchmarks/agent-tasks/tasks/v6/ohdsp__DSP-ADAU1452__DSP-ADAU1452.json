@@ -1,0 +1,11 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "U402",
+  "U204",
+  "R242"
+ ],
+ "edge": [],
+ "rotation": []
+}

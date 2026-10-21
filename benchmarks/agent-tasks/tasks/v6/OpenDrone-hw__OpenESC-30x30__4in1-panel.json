@@ -1,0 +1,28 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "U4",
+  "U3",
+  "U4",
+  "J1",
+  "U3"
+ ],
+ "edge": [
+  {
+   "part": "J1",
+   "edge": "top",
+   "max_mm": 0.9
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J1",
+   "angle": 0.0
+  }
+ ],
+ "hollow": [
+  "U4",
+  "U3"
+ ]
+}

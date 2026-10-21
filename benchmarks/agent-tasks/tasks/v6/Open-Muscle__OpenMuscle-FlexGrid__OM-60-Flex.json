@@ -1,0 +1,27 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [],
+ "edge": [
+  {
+   "part": "J2",
+   "edge": "top",
+   "max_mm": 0.71
+  },
+  {
+   "part": "J3",
+   "edge": "left",
+   "max_mm": 0.52
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J2",
+   "angle": 0.0
+  },
+  {
+   "part": "J3",
+   "angle": 0.0
+  }
+ ]
+}

@@ -1,0 +1,36 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "RV3",
+  "J5",
+  "J10",
+  "RV2",
+  "J4",
+  "RV4",
+  "J3",
+  "J6",
+  "RV7",
+  "R69",
+  "C6",
+  "J2",
+  "TP7",
+  "D5",
+  "D4",
+  "D3",
+  "D6"
+ ],
+ "edge": [
+  {
+   "part": "J1",
+   "edge": "top",
+   "max_mm": 1.4
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J1",
+   "angle": 180.0
+  }
+ ]
+}

@@ -1,0 +1,33 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "U9",
+  "U10",
+  "U7",
+  "J9",
+  "U8"
+ ],
+ "edge": [
+  {
+   "part": "J10",
+   "edge": "right",
+   "max_mm": 1.59
+  },
+  {
+   "part": "J7",
+   "edge": "top",
+   "max_mm": 0.93
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J10",
+   "angle": 0.0
+  },
+  {
+   "part": "J7",
+   "angle": 270.0
+  }
+ ]
+}

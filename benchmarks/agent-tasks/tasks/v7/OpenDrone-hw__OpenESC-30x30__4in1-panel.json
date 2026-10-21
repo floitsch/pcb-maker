@@ -1,0 +1,30 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "U4",
+  "U3",
+  "U4",
+  "J1",
+  "U3"
+ ],
+ "edge": [
+  {
+   "part": "J1",
+   "edge": "top",
+   "max_mm": 0.9,
+   "uuid": "a87a6e5a-94c9-4348-9a81-94e3fb799bdc"
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J1",
+   "angle": 0.0,
+   "uuid": "a87a6e5a-94c9-4348-9a81-94e3fb799bdc"
+  }
+ ],
+ "hollow": [
+  "U4",
+  "U3"
+ ]
+}

@@ -1,0 +1,88 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "R9",
+  "R10",
+  "R16",
+  "R17",
+  "SW2",
+  "U6",
+  "U1",
+  "CN10",
+  "C3",
+  "CN20",
+  "C12",
+  "D12",
+  "U4",
+  "C13",
+  "P1"
+ ],
+ "edge": [
+  {
+   "part": "CN11",
+   "edge": "left",
+   "max_mm": 1.71
+  },
+  {
+   "part": "CN12",
+   "edge": "top",
+   "max_mm": 2.15
+  },
+  {
+   "part": "CN14",
+   "edge": "top",
+   "max_mm": 1.25
+  },
+  {
+   "part": "CN36",
+   "edge": "bottom",
+   "max_mm": 2.12
+  },
+  {
+   "part": "CN1",
+   "edge": "right",
+   "max_mm": 1.1
+  },
+  {
+   "part": "CN2",
+   "edge": "right",
+   "max_mm": 1.1
+  },
+  {
+   "part": "CN39",
+   "edge": "left",
+   "max_mm": 1.5
+  }
+ ],
+ "rotation": [
+  {
+   "part": "CN11",
+   "angle": 270.0
+  },
+  {
+   "part": "CN12",
+   "angle": 270.0
+  },
+  {
+   "part": "CN14",
+   "angle": 90.0
+  },
+  {
+   "part": "CN36",
+   "angle": 180.0
+  },
+  {
+   "part": "CN1",
+   "angle": 270.0
+  },
+  {
+   "part": "CN2",
+   "angle": 270.0
+  },
+  {
+   "part": "CN39",
+   "angle": 270.0
+  }
+ ]
+}

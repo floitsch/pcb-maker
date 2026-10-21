@@ -1,0 +1,25 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "KEY35",
+  "J5",
+  "KEY30",
+  "KEY29",
+  "TRRS2",
+  "KEY34",
+  "D31",
+  "D33",
+  "TRRS1",
+  "D32"
+ ],
+ "edge": [],
+ "rotation": [],
+ "hollow": [
+  "KEY35",
+  "KEY30",
+  "TRRS2",
+  "KEY34",
+  "TRRS1"
+ ]
+}

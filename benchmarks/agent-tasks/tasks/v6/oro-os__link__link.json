@@ -1,0 +1,34 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "J19",
+  "H1",
+  "LED9",
+  "J8",
+  "C17",
+  "R51",
+  "H4",
+  "J1",
+  "H3",
+  "U1",
+  "J9",
+  "J7",
+  "J3",
+  "H2",
+  "J6"
+ ],
+ "edge": [
+  {
+   "part": "J2",
+   "edge": "bottom",
+   "max_mm": 1.66
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J2",
+   "angle": 0.0
+  }
+ ]
+}

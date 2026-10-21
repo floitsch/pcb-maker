@@ -46,7 +46,8 @@ benchmarks/agent-tasks/run.py build/agent-tasks
 - **Kept from the design:** the outline, and every connector the designer
   placed within 2 mm of an edge, on that edge and in its orientation
   (where a reference repeats, a panel's copies, each entry names its
-  footprint by `uuid`; since tasks v7, `build/github-tasks-v7`, which is
+  footprint by `uuid`; since tasks v7, `benchmarks/agent-tasks/tasks/v7`
+  (committed; first made as `build/github-tasks-v7`), which is
   v6 with these uuids on six panels).
 - **Kept where they are:** parts hanging over the outline, and parts whose
   courtyard holds other parts (a shield's outline, a module above parts),
@@ -173,6 +174,21 @@ measurement). The discipline:
   v6 rerun before it is a base. Not checked:
   the prepared board itself (run.py's unplace rules can move a part
   without changing the constraints, as WLED_Matrix's LDO1 in x782).
+- **The task lists are committed** (2026-10-21): `benchmarks/agent-tasks/tasks/v6`
+  and `tasks/v7` (tasks.json and the constraint files, 170 KB each,
+  copies of `build/github-tasks-v6` and `-v7`); every tier defaults to
+  `tasks/v7`. v6 and v7 differ only in six panels (the PolyKybd molecules
+  and OpenESC's 4in1-panel), none in the quick or short tier, so v6 tier
+  logs stay bases (test_run.py checks it). Their tasks.json is the same
+  file in v2 to v7 (sha256 c8f95caf5089): `tasks_sha256` never told the
+  lists apart, the constraint files did. So since 2026-10-21 each row also
+  records `task_sha256` (the task's entry with its constraints' digest in
+  place of the file name, without where the board lies) and
+  `board_sha256` (the designer's board), and compare.py marks a board
+  INPUT when either differs. The lists keep the main checkout's absolute
+  board directories (so that their SHA-256 stays the reference logs');
+  run.py finds the same `benchmarks/real/external/...` path under its own
+  checkout where that one is not there.
 - **One tier at a time on the machine**: since 2026-10-21 run.py takes
   `build/quick-tier.lock` itself (an exclusive flock) for every tier run
   and every run of a whole task list (not for a few boards given with
@@ -230,7 +246,9 @@ benchmarks/agent-tasks/run.py build/quick-x161 --tier quick \
 benchmarks/agent-tasks/compare.py build/quick-x160.log build/quick-x161.log --markdown
 ```
 
-`quick.json` lists the boards (by task name in its task list,
+`quick.json` lists the boards (by task name in its task list, the
+committed `benchmarks/agent-tasks/tasks/v7/tasks.json` since 2026-10-21,
+whose quick and short boards are v6's to the byte;
 `build/github-tasks-v6/tasks.json` since 2026-10-14, the list of the v14
 and v15 sweeps; `build/github-tasks-v5/tasks.json`, made by
 `from_pcbench.py --corpus benchmarks/github/boards.json`, before: the tier

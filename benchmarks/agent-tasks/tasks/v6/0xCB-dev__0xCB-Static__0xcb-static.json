@@ -1,0 +1,26 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "MX41",
+  "MX40",
+  "MX40_1",
+  "MX18",
+  "MX40_2",
+  "MX12",
+  "J1"
+ ],
+ "edge": [
+  {
+   "part": "J2",
+   "edge": "left",
+   "max_mm": 1.43
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J2",
+   "angle": 0.0
+  }
+ ]
+}

@@ -1,0 +1,12 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "M1",
+  "M2",
+  "M3",
+  "M4"
+ ],
+ "edge": [],
+ "rotation": []
+}

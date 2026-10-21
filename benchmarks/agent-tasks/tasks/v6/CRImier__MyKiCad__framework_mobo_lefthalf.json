@@ -1,0 +1,18 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "J2",
+  "J5",
+  "M1",
+  "J1",
+  "U3",
+  "R32",
+  "R31"
+ ],
+ "edge": [],
+ "rotation": [],
+ "hollow": [
+  "J1"
+ ]
+}

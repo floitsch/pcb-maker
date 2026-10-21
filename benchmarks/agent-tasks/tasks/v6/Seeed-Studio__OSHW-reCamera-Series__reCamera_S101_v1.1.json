@@ -1,0 +1,26 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "C7",
+  "C16",
+  "C9",
+  "C15",
+  "C17",
+  "C8",
+  "J1"
+ ],
+ "edge": [
+  {
+   "part": "J3",
+   "edge": "right",
+   "max_mm": 0.55
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J3",
+   "angle": 180.0
+  }
+ ]
+}

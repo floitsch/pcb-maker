@@ -1,6 +1,6 @@
 {
  "description": "Schematic tier: 12 harvested boards with a usable schematic (harvest_schematics.py), each imported from its schematic with import-kicad-netlist, given the task list's constraints (moved onto the new footprints by schematic.py), laid out at a third of the work budget and checked with drc-kicad-board. Chosen for mixed size (8 two-layer, 2 four-layer, 2 six-layer; 25 to 443 parts) and for what each exercises in the import (why). Per board: layers, sheets, parts on the designer's board and from the import, board-only parts, footprints missing before the libraries were added, the v16 layout sweep's full-budget seconds and work, and seconds (the expected time at a third of the budget, which orders the runner) and peak_rss_mb (the memory gate) from the tier's first run (x1002, 2026-10-15, 4 jobs x 2 threads, build/sch-x1002.log), whose rows are under x1002. README.md, 'The schematic tier'.",
- "tasks": "build/github-tasks-v7/tasks.json",
+ "tasks": "benchmarks/agent-tasks/tasks/v7/tasks.json",
  "budget_scale": 0.3333,
  "boards": {
   "bitshiftcrazy__spell_tome__spell_tome_bottom": {

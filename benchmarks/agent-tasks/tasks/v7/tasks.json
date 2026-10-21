@@ -1,0 +1,1531 @@
+{
+ "comment": "Generates agent layout tasks from PCBench boards, or from any board list",
+ "tasks": [
+  {
+   "name": "antmicro__jetson-nano-baseboard__jetson-nano-baseboard",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/antmicro__jetson-nano-baseboard__jetson-nano-baseboard",
+   "board_id": "jetson-nano-baseboard",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    125.0712,
+    102.40601999999998
+   ],
+   "constraints": "antmicro__jetson-nano-baseboard__jetson-nano-baseboard.json",
+   "router": {}
+  },
+  {
+   "name": "oro-os__link__link",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/oro-os__link__link",
+   "board_id": "link",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    168.91,
+    102.235
+   ],
+   "constraints": "oro-os__link__link.json",
+   "router": {}
+  },
+  {
+   "name": "byrantech__laptop__motherboard",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/byrantech__laptop__motherboard",
+   "board_id": "motherboard",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    142.466975,
+    104.4
+   ],
+   "constraints": "byrantech__laptop__motherboard.json",
+   "router": {}
+  },
+  {
+   "name": "OpenDrone-hw__OpenRX__OpenRX-panel-rev2",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/OpenDrone-hw__OpenRX__OpenRX-panel-rev2",
+   "board_id": "OpenRX-panel-rev2",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    132.075,
+    109.35
+   ],
+   "constraints": "OpenDrone-hw__OpenRX__OpenRX-panel-rev2.json",
+   "router": {}
+  },
+  {
+   "name": "OpenDrone-hw__OpenESC-30x30__4in1-panel",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/OpenDrone-hw__OpenESC-30x30__4in1-panel",
+   "board_id": "4in1-panel",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    75.63257000000046,
+    67.5125
+   ],
+   "constraints": "OpenDrone-hw__OpenESC-30x30__4in1-panel.json",
+   "router": {}
+  },
+  {
+   "name": "tengigabytes__MokyaLora__MokyaLora",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/tengigabytes__MokyaLora__MokyaLora",
+   "board_id": "MokyaLora",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    130.0,
+    93.0
+   ],
+   "constraints": "tengigabytes__MokyaLora__MokyaLora.json",
+   "router": {}
+  },
+  {
+   "name": "briskspirit__Sisu_SSE-9__Sisu_SSE-9",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/briskspirit__Sisu_SSE-9__Sisu_SSE-9",
+   "board_id": "Sisu_SSE-9",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    43.88796,
+    96.701987
+   ],
+   "constraints": "briskspirit__Sisu_SSE-9__Sisu_SSE-9.json",
+   "router": {}
+  },
+  {
+   "name": "OpenDrone-hw__OpenESC-20x20__4in1-mini",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/OpenDrone-hw__OpenESC-20x20__4in1-mini",
+   "board_id": "4in1-mini",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    76.00000000000225,
+    48.900000000000006
+   ],
+   "constraints": "OpenDrone-hw__OpenESC-20x20__4in1-mini.json",
+   "router": {}
+  },
+  {
+   "name": "OpenDrone-hw__OpenESC-30x30__4in1",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/OpenDrone-hw__OpenESC-30x30__4in1",
+   "board_id": "4in1",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    75.63257000000046,
+    48.55000000000001
+   ],
+   "constraints": "OpenDrone-hw__OpenESC-30x30__4in1.json",
+   "router": {}
+  },
+  {
+   "name": "apfaudio__eurorack-pmod__eurorack-pmod-pcb",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/apfaudio__eurorack-pmod__eurorack-pmod-pcb",
+   "board_id": "eurorack-pmod-pcb",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    -3.937118000000001,
+    55.0
+   ],
+   "constraints": "apfaudio__eurorack-pmod__eurorack-pmod-pcb.json",
+   "router": {}
+  },
+  {
+   "name": "OpenDrone-hw__OpenFC-Lite__OpenFC",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/OpenDrone-hw__OpenFC-Lite__OpenFC",
+   "board_id": "OpenFC",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    153.091151,
+    87.159697
+   ],
+   "constraints": "OpenDrone-hw__OpenFC-Lite__OpenFC.json",
+   "router": {}
+  },
+  {
+   "name": "CRImier__MyKiCad__framework_mobo_lefthalf",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/CRImier__MyKiCad__framework_mobo_lefthalf",
+   "board_id": "framework_mobo_lefthalf",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    114.025,
+    107.385
+   ],
+   "constraints": "CRImier__MyKiCad__framework_mobo_lefthalf.json",
+   "router": {}
+  },
+  {
+   "name": "thpoll83__PolyKybd__poly_kybd_split72_right",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/thpoll83__PolyKybd__poly_kybd_split72_right",
+   "board_id": "poly_kybd_split72_right",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    120.298,
+    93.70139999999999
+   ],
+   "constraints": "thpoll83__PolyKybd__poly_kybd_split72_right.json",
+   "router": {}
+  },
+  {
+   "name": "thpoll83__PolyKybd__poly_kybd_split72_left",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/thpoll83__PolyKybd__poly_kybd_split72_left",
+   "board_id": "poly_kybd_split72_left",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    120.406,
+    93.70139999999999
+   ],
+   "constraints": "thpoll83__PolyKybd__poly_kybd_split72_left.json",
+   "router": {}
+  },
+  {
+   "name": "thpoll83__PolyKybd__poly_corne_split42_right",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/thpoll83__PolyKybd__poly_corne_split42_right",
+   "board_id": "poly_corne_split42_right",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    120.298,
+    93.70139999999999
+   ],
+   "constraints": "thpoll83__PolyKybd__poly_corne_split42_right.json",
+   "router": {}
+  },
+  {
+   "name": "CRImier__MyKiCad__vaio_re",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/CRImier__MyKiCad__vaio_re",
+   "board_id": "vaio_re",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    157.809951,
+    98.15
+   ],
+   "constraints": "CRImier__MyKiCad__vaio_re.json",
+   "router": {}
+  },
+  {
+   "name": "thpoll83__PolyKybd__poly_corne_split42_left",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/thpoll83__PolyKybd__poly_corne_split42_left",
+   "board_id": "poly_corne_split42_left",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    130.809998,
+    89.3074255
+   ],
+   "constraints": "thpoll83__PolyKybd__poly_corne_split42_left.json",
+   "router": {}
+  },
+  {
+   "name": "vd-rd__sbc_allwinner_a13__module",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/vd-rd__sbc_allwinner_a13__module",
+   "board_id": "module",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    140.0,
+    79.064194
+   ],
+   "constraints": "vd-rd__sbc_allwinner_a13__module.json",
+   "router": {}
+  },
+  {
+   "name": "ISSUIUC__ISS-PCB__BAGEL-MK1.1-Avocado",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/ISSUIUC__ISS-PCB__BAGEL-MK1.1-Avocado",
+   "board_id": "BAGEL-MK1.1-Avocado",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    149.99987798280466,
+    100.00294696386302
+   ],
+   "constraints": "ISSUIUC__ISS-PCB__BAGEL-MK1.1-Avocado.json",
+   "router": {}
+  },
+  {
+   "name": "ISSUIUC__ISS-PCB__BAGEL-MK1",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/ISSUIUC__ISS-PCB__BAGEL-MK1",
+   "board_id": "BAGEL-MK1",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    150.00012009439035,
+    99.99986549984011
+   ],
+   "constraints": "ISSUIUC__ISS-PCB__BAGEL-MK1.json",
+   "router": {}
+  },
+  {
+   "name": "hackclub__OnBoard__krishveercard",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/hackclub__OnBoard__krishveercard",
+   "board_id": "krishveercard",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    106.75,
+    88.25
+   ],
+   "constraints": "hackclub__OnBoard__krishveercard.json",
+   "router": {}
+  },
+  {
+   "name": "earth75__atat-1800__ATAT1800",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/earth75__atat-1800__ATAT1800",
+   "board_id": "ATAT1800",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    237.5,
+    98.75
+   ],
+   "constraints": "earth75__atat-1800__ATAT1800.json",
+   "router": {}
+  },
+  {
+   "name": "emertcakir__OpenAirScope__OpenAirScope",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/emertcakir__OpenAirScope__OpenAirScope",
+   "board_id": "OpenAirScope",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    148.0,
+    109.0
+   ],
+   "constraints": "emertcakir__OpenAirScope__OpenAirScope.json",
+   "router": {}
+  },
+  {
+   "name": "CRImier__MyKiCad__zpn_devboard",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/CRImier__MyKiCad__zpn_devboard",
+   "board_id": "zpn_devboard",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    125.0,
+    100.0
+   ],
+   "constraints": "CRImier__MyKiCad__zpn_devboard.json",
+   "router": {}
+  },
+  {
+   "name": "ISSUIUC__ISS-PCB__MIDAS-MK2.1__MIDAS-MK2.1-revA",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/ISSUIUC__ISS-PCB__MIDAS-MK2.1__MIDAS-MK2.1-revA",
+   "board_id": "MIDAS-MK2.1",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    148.5,
+    105.0
+   ],
+   "constraints": "ISSUIUC__ISS-PCB__MIDAS-MK2.1__MIDAS-MK2.1-revA.json",
+   "router": {}
+  },
+  {
+   "name": "Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1",
+   "board_id": "reCamera S101 v1.1",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    120.005001,
+    74.002107
+   ],
+   "constraints": "Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1.json",
+   "router": {}
+  },
+  {
+   "name": "ISSUIUC__ISS-PCB__MIDAS-MK2",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/ISSUIUC__ISS-PCB__MIDAS-MK2",
+   "board_id": "MIDAS-MK2",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    148.5,
+    105.0
+   ],
+   "constraints": "ISSUIUC__ISS-PCB__MIDAS-MK2.json",
+   "router": {}
+  },
+  {
+   "name": "MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub",
+   "board_id": "Hub",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    156.32,
+    86.191515
+   ],
+   "constraints": "MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub.json",
+   "router": {}
+  },
+  {
+   "name": "Twisted-Fields__rp2040-motor-controller__RP2040_base",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/Twisted-Fields__rp2040-motor-controller__RP2040_base",
+   "board_id": "RP2040_base",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    123.85000000000001,
+    97.275
+   ],
+   "constraints": "Twisted-Fields__rp2040-motor-controller__RP2040_base.json",
+   "router": {}
+  },
+  {
+   "name": "maniekx86__M8SBC-486__homebrew_486",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/maniekx86__M8SBC-486__homebrew_486",
+   "board_id": "homebrew_486",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    96.59,
+    97.86000000000001
+   ],
+   "constraints": "maniekx86__M8SBC-486__homebrew_486.json",
+   "router": {}
+  },
+  {
+   "name": "hackclub__OnBoard__koeg-board-pcb",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/hackclub__OnBoard__koeg-board-pcb",
+   "board_id": "koeg-board-pcb",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    144.75750000000002,
+    96.32916200000001
+   ],
+   "constraints": "hackclub__OnBoard__koeg-board-pcb.json",
+   "router": {}
+  },
+  {
+   "name": "ikajdan__katia__katia",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/ikajdan__katia__katia",
+   "board_id": "katia",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    211.0000015,
+    142.4336755
+   ],
+   "constraints": "ikajdan__katia__katia.json",
+   "router": {}
+  },
+  {
+   "name": "Spaceflight-Rocketry-Giessen-e-V__Telemetry__TelemetryOnboard",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/Spaceflight-Rocketry-Giessen-e-V__Telemetry__TelemetryOnboard",
+   "board_id": "TelemetryOnboard",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    0.0,
+    0.0
+   ],
+   "constraints": "Spaceflight-Rocketry-Giessen-e-V__Telemetry__TelemetryOnboard.json",
+   "router": {}
+  },
+  {
+   "name": "Huaqiu-Electronics__ecad-viewer__video",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/Huaqiu-Electronics__ecad-viewer__video",
+   "board_id": "video",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    209.6135,
+    109.85499999999999
+   ],
+   "constraints": "Huaqiu-Electronics__ecad-viewer__video.json",
+   "router": {}
+  },
+  {
+   "name": "ohdsp__DSP-ADAU1452__DSP-ADAU1452",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/ohdsp__DSP-ADAU1452__DSP-ADAU1452",
+   "board_id": "DSP-ADAU1452",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    157.0,
+    86.0
+   ],
+   "constraints": "ohdsp__DSP-ADAU1452__DSP-ADAU1452.json",
+   "router": {}
+  },
+  {
+   "name": "rosco-m68k__rosco_m68k__rosco_m68k__kicad",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/rosco-m68k__rosco_m68k__rosco_m68k__kicad",
+   "board_id": "rosco_m68k",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    147.9,
+    105.1
+   ],
+   "constraints": "rosco-m68k__rosco_m68k__rosco_m68k__kicad.json",
+   "router": {}
+  },
+  {
+   "name": "byrantech__laptop__power",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/byrantech__laptop__power",
+   "board_id": "power",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    168.2,
+    119.5
+   ],
+   "constraints": "byrantech__laptop__power.json",
+   "router": {}
+  },
+  {
+   "name": "wntrblm__Castor_and_Pollux__mainboard",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/wntrblm__Castor_and_Pollux__mainboard",
+   "board_id": "mainboard",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    75.0,
+    102.69999999999999
+   ],
+   "constraints": "wntrblm__Castor_and_Pollux__mainboard.json",
+   "router": {}
+  },
+  {
+   "name": "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV",
+   "board_id": "SUMEC_MK_IV",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    142.25,
+    103.75
+   ],
+   "constraints": "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV.json",
+   "router": {}
+  },
+  {
+   "name": "0xCB-dev__0xCB-1337__pcb-panel",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/0xCB-dev__0xCB-1337__pcb-panel",
+   "board_id": "pcb-panel",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    105.0,
+    90.5000025
+   ],
+   "constraints": "0xCB-dev__0xCB-1337__pcb-panel.json",
+   "router": {}
+  },
+  {
+   "name": "greatscottgadgets__hackrf__hackrf-one",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/greatscottgadgets__hackrf__hackrf-one",
+   "board_id": "hackrf-one",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    120.0,
+    137.5
+   ],
+   "constraints": "greatscottgadgets__hackrf__hackrf-one.json",
+   "router": {}
+  },
+  {
+   "name": "GlasgowEmbedded__glasgow__glasgow__revC3",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/GlasgowEmbedded__glasgow__glasgow__revC3",
+   "board_id": "glasgow",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    90.0,
+    95.5
+   ],
+   "constraints": "GlasgowEmbedded__glasgow__glasgow__revC3.json",
+   "router": {}
+  },
+  {
+   "name": "Neotron-Compute__Neotron-Pico__neotron-pico",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/Neotron-Compute__Neotron-Pico__neotron-pico",
+   "board_id": "neotron-pico",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    147.32,
+    111.125
+   ],
+   "constraints": "Neotron-Compute__Neotron-Pico__neotron-pico.json",
+   "router": {}
+  },
+  {
+   "name": "ISSUIUC__ISS-PCB__MIDAS-MK1__MIDAS-MK1-revA",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/ISSUIUC__ISS-PCB__MIDAS-MK1__MIDAS-MK1-revA",
+   "board_id": "MIDAS-MK1",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    135.000184,
+    99.99981650000001
+   ],
+   "constraints": "ISSUIUC__ISS-PCB__MIDAS-MK1__MIDAS-MK1-revA.json",
+   "router": {}
+  },
+  {
+   "name": "ISSUIUC__ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/ISSUIUC__ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA",
+   "board_id": "MIDAS-MK1.1",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    135.000184,
+    99.99981650000001
+   ],
+   "constraints": "ISSUIUC__ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA.json",
+   "router": {}
+  },
+  {
+   "name": "crmaykish__mackerel-68k__mackerel-30-proto",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/crmaykish__mackerel-68k__mackerel-30-proto",
+   "board_id": "mackerel-30-proto",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    127.5,
+    95.0
+   ],
+   "constraints": "crmaykish__mackerel-68k__mackerel-30-proto.json",
+   "router": {}
+  },
+  {
+   "name": "0xCB-dev__0xCB-1337__pcb",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/0xCB-dev__0xCB-1337__pcb",
+   "board_id": "pcb",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    104.43722499999998,
+    59.905771
+   ],
+   "constraints": "0xCB-dev__0xCB-1337__pcb.json",
+   "router": {}
+  },
+  {
+   "name": "sporkus__capybully_keyboard__capybully",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/sporkus__capybully_keyboard__capybully",
+   "board_id": "capybully",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    147.95125,
+    91.69750050000016
+   ],
+   "constraints": "sporkus__capybully_keyboard__capybully.json",
+   "router": {}
+  },
+  {
+   "name": "crmaykish__mackerel-68k__mackerel-10-v1",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/crmaykish__mackerel-68k__mackerel-10-v1",
+   "board_id": "mackerel-10-v1",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    125.0,
+    105.0
+   ],
+   "constraints": "crmaykish__mackerel-68k__mackerel-10-v1.json",
+   "router": {}
+  },
+  {
+   "name": "transistorfet__computie__k30-SBC",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/transistorfet__computie__k30-SBC",
+   "board_id": "k30-SBC",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    119.0,
+    88.0
+   ],
+   "constraints": "transistorfet__computie__k30-SBC.json",
+   "router": {}
+  },
+  {
+   "name": "crmaykish__mackerel-68k__mackerel-08-v1",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/crmaykish__mackerel-68k__mackerel-08-v1",
+   "board_id": "mackerel-08-v1",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    110.0,
+    100.0
+   ],
+   "constraints": "crmaykish__mackerel-68k__mackerel-08-v1.json",
+   "router": {}
+  },
+  {
+   "name": "CDFER__Business-Cards__Batch_1",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/CDFER__Business-Cards__Batch_1",
+   "board_id": "Batch 1",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    59.5,
+    99.500001
+   ],
+   "constraints": "CDFER__Business-Cards__Batch_1.json",
+   "router": {}
+  },
+  {
+   "name": "byrantech__laptop__keyboard",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/byrantech__laptop__keyboard",
+   "board_id": "keyboard",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    148.1927885,
+    95.24556050000001
+   ],
+   "constraints": "byrantech__laptop__keyboard.json",
+   "router": {}
+  },
+  {
+   "name": "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized",
+   "board_id": "Quanta75_BareRP2040_JLCPCBAoptimized",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    205.58124999999998,
+    151.0250235
+   ],
+   "constraints": "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized.json",
+   "router": {}
+  },
+  {
+   "name": "CDFER__Business-Cards__USB_Keypad",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/CDFER__Business-Cards__USB_Keypad",
+   "board_id": "USB Keypad",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    42.5,
+    12.5
+   ],
+   "constraints": "CDFER__Business-Cards__USB_Keypad.json",
+   "router": {}
+  },
+  {
+   "name": "CDFER__Business-Cards__WLED_Matrix",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/CDFER__Business-Cards__WLED_Matrix",
+   "board_id": "WLED Matrix",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    42.5,
+    15.0
+   ],
+   "constraints": "CDFER__Business-Cards__WLED_Matrix.json",
+   "router": {}
+  },
+  {
+   "name": "iandchasse__silkscreen-pcb__silkscreen_pcb",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/iandchasse__silkscreen-pcb__silkscreen_pcb",
+   "board_id": "silkscreen_pcb",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    74.237462,
+    92.62496
+   ],
+   "constraints": "iandchasse__silkscreen-pcb__silkscreen_pcb.json",
+   "router": {}
+  },
+  {
+   "name": "anyshake__explorer__Explorer",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/anyshake__explorer__Explorer",
+   "board_id": "Explorer",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    95.0,
+    110.0
+   ],
+   "constraints": "anyshake__explorer__Explorer.json",
+   "router": {}
+  },
+  {
+   "name": "hackclub__OnBoard__woagboard",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/hackclub__OnBoard__woagboard",
+   "board_id": "woagboard",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    141.84999999999621,
+    73.9394354728445
+   ],
+   "constraints": "hackclub__OnBoard__woagboard.json",
+   "router": {}
+  },
+  {
+   "name": "CDFER__Business-Cards__USB_Cable_Tester__PCB",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/CDFER__Business-Cards__USB_Cable_Tester__PCB",
+   "board_id": "USB Cable Tester",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    37.021321,
+    24.021321
+   ],
+   "constraints": "CDFER__Business-Cards__USB_Cable_Tester__PCB.json",
+   "router": {}
+  },
+  {
+   "name": "hackclub__OnBoard__PixelWave",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/hackclub__OnBoard__PixelWave",
+   "board_id": "PixelWave",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    240.67499999999998,
+    128.075
+   ],
+   "constraints": "hackclub__OnBoard__PixelWave.json",
+   "router": {}
+  },
+  {
+   "name": "hackclub__OnBoard__MotionCubeViewAllForces",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/hackclub__OnBoard__MotionCubeViewAllForces",
+   "board_id": "MotionCubeViewAllForces",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    200.375,
+    80.375
+   ],
+   "constraints": "hackclub__OnBoard__MotionCubeViewAllForces.json",
+   "router": {}
+  },
+  {
+   "name": "doudar__SmartSpin2k__SmartSpin2k_Panelized",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/doudar__SmartSpin2k__SmartSpin2k_Panelized",
+   "board_id": "SmartSpin2k_Panelized",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    109.725,
+    117.45
+   ],
+   "constraints": "doudar__SmartSpin2k__SmartSpin2k_Panelized.json",
+   "router": {}
+  },
+  {
+   "name": "thpoll83__PolyKybd__poly_kb_molecule_4x5",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/thpoll83__PolyKybd__poly_kb_molecule_4x5",
+   "board_id": "poly_kb_molecule_4x5",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    74.449198,
+    103.265998
+   ],
+   "constraints": "thpoll83__PolyKybd__poly_kb_molecule_4x5.json",
+   "router": {}
+  },
+  {
+   "name": "thpoll83__PolyKybd__poly_kb_molecule_7x5_wave_left",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/thpoll83__PolyKybd__poly_kb_molecule_7x5_wave_left",
+   "board_id": "poly_kb_molecule_7x5_wave_left",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    87.43950000000001,
+    70.82155
+   ],
+   "constraints": "thpoll83__PolyKybd__poly_kb_molecule_7x5_wave_left.json",
+   "router": {}
+  },
+  {
+   "name": "thpoll83__PolyKybd__poly_kb_molecule_4x4",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/thpoll83__PolyKybd__poly_kb_molecule_4x4",
+   "board_id": "poly_kb_molecule_4x4",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    74.449198,
+    93.740998
+   ],
+   "constraints": "thpoll83__PolyKybd__poly_kb_molecule_4x4.json",
+   "router": {}
+  },
+  {
+   "name": "0xCB-dev__0xCB-1337__panel",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/0xCB-dev__0xCB-1337__panel",
+   "board_id": "panel",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    81.9999665,
+    81.9999655
+   ],
+   "constraints": "0xCB-dev__0xCB-1337__panel.json",
+   "router": {}
+  },
+  {
+   "name": "stonedDiscord__nonSNES__SNSP-CPU-01",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/stonedDiscord__nonSNES__SNSP-CPU-01",
+   "board_id": "SNSP-CPU-01",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    171.3865,
+    132.84199999999998
+   ],
+   "constraints": "stonedDiscord__nonSNES__SNSP-CPU-01.json",
+   "router": {}
+  },
+  {
+   "name": "thpoll83__PolyKybd__poly_kb_molecule_5x4_wave",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/thpoll83__PolyKybd__poly_kb_molecule_5x4_wave",
+   "board_id": "poly_kb_molecule_5x4_wave",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    101.727,
+    61.296549999999996
+   ],
+   "constraints": "thpoll83__PolyKybd__poly_kb_molecule_5x4_wave.json",
+   "router": {}
+  },
+  {
+   "name": "thpoll83__PolyKybd__poly_kb_molecule_5x2_shifted",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/thpoll83__PolyKybd__poly_kb_molecule_5x2_shifted",
+   "board_id": "poly_kb_molecule_5x2_shifted",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    106.4895,
+    73.2028
+   ],
+   "constraints": "thpoll83__PolyKybd__poly_kb_molecule_5x2_shifted.json",
+   "router": {}
+  },
+  {
+   "name": "stonedDiscord__MegaDrive__MegaDrive",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/stonedDiscord__MegaDrive__MegaDrive",
+   "board_id": "MegaDrive",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    157.226,
+    118.61800000000001
+   ],
+   "constraints": "stonedDiscord__MegaDrive__MegaDrive.json",
+   "router": {}
+  },
+  {
+   "name": "obsilab__Quanta75__Quanta75_RP2040Stamp_JLCPCBAoptimized",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/obsilab__Quanta75__Quanta75_RP2040Stamp_JLCPCBAoptimized",
+   "board_id": "Quanta75_RP2040Stamp_JLCPCBAoptimized",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    205.581225,
+    147.6375
+   ],
+   "constraints": "obsilab__Quanta75__Quanta75_RP2040Stamp_JLCPCBAoptimized.json",
+   "router": {}
+  },
+  {
+   "name": "stonedDiscord__nonSNES__SNSP-CPU-1CHIP",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/stonedDiscord__nonSNES__SNSP-CPU-1CHIP",
+   "board_id": "SNSP-CPU-1CHIP",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    107.549215,
+    97.7265
+   ],
+   "constraints": "stonedDiscord__nonSNES__SNSP-CPU-1CHIP.json",
+   "router": {}
+  },
+  {
+   "name": "CRImier__MyKiCad__protoesp",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/CRImier__MyKiCad__protoesp",
+   "board_id": "protoesp",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    98.75,
+    95.0
+   ],
+   "constraints": "CRImier__MyKiCad__protoesp.json",
+   "router": {}
+  },
+  {
+   "name": "tzarc__keyboards__ghoul",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/tzarc__keyboards__ghoul",
+   "board_id": "ghoul",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    135.731136,
+    57.913070499999996
+   ],
+   "constraints": "tzarc__keyboards__ghoul.json",
+   "router": {}
+  },
+  {
+   "name": "zli117__CyberKeeb2040__MainBoard",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/zli117__CyberKeeb2040__MainBoard",
+   "board_id": "MainBoard",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    154.4,
+    72.125
+   ],
+   "constraints": "zli117__CyberKeeb2040__MainBoard.json",
+   "router": {}
+  },
+  {
+   "name": "headblockhead__slab-pcb__interchange-pcb-right",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/headblockhead__slab-pcb__interchange-pcb-right",
+   "board_id": "interchange-pcb-right",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    149.0,
+    98.0
+   ],
+   "constraints": "headblockhead__slab-pcb__interchange-pcb-right.json",
+   "router": {}
+  },
+  {
+   "name": "ebastler__osprey__osprey_rev_a",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/ebastler__osprey__osprey_rev_a",
+   "board_id": "osprey_rev_a",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    3.588640791463149e-05,
+    -2.4721034231456187
+   ],
+   "constraints": "ebastler__osprey__osprey_rev_a.json",
+   "router": {}
+  },
+  {
+   "name": "hackclub__OnBoard__keyboar_",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/hackclub__OnBoard__keyboar_",
+   "board_id": "keyboar!",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    205.978125,
+    112.5140625
+   ],
+   "constraints": "hackclub__OnBoard__keyboar_.json",
+   "router": {}
+  },
+  {
+   "name": "baldengineer__bit-preserve__coco2",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/baldengineer__bit-preserve__coco2",
+   "board_id": "coco2",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    204.3164,
+    123.799
+   ],
+   "constraints": "baldengineer__bit-preserve__coco2.json",
+   "router": {}
+  },
+  {
+   "name": "Ladniy__jiran-ble-lite__jiran-ble-lite",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/Ladniy__jiran-ble-lite__jiran-ble-lite",
+   "board_id": "jiran-ble-lite",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    213.229075,
+    92.075
+   ],
+   "constraints": "Ladniy__jiran-ble-lite__jiran-ble-lite.json",
+   "router": {}
+  },
+  {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001_core",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/tubbytwins__bumwings-kbd__bumwings_v001_core",
+   "board_id": "bumwings_v001_core",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    204.81263548169983,
+    110.32164335147371
+   ],
+   "constraints": "tubbytwins__bumwings-kbd__bumwings_v001_core.json",
+   "router": {}
+  },
+  {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001R64_nano_sd",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/tubbytwins__bumwings-kbd__bumwings_v001R64_nano_sd",
+   "board_id": "bumwings_v001R64_nano_sd",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    196.32657207081257,
+    164.29852715759645
+   ],
+   "constraints": "tubbytwins__bumwings-kbd__bumwings_v001R64_nano_sd.json",
+   "router": {}
+  },
+  {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001R64_xiao_sd",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/tubbytwins__bumwings-kbd__bumwings_v001R64_xiao_sd",
+   "board_id": "bumwings_v001R64_xiao_sd",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    196.32657207081257,
+    164.29852715759645
+   ],
+   "constraints": "tubbytwins__bumwings-kbd__bumwings_v001R64_xiao_sd.json",
+   "router": {}
+  },
+  {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001R64_rp2040zero_sd",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/tubbytwins__bumwings-kbd__bumwings_v001R64_rp2040zero_sd",
+   "board_id": "bumwings_v001R64_rp2040zero_sd",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    196.32657207081257,
+    164.29852715759645
+   ],
+   "constraints": "tubbytwins__bumwings-kbd__bumwings_v001R64_rp2040zero_sd.json",
+   "router": {}
+  },
+  {
+   "name": "0xCB-dev__0xCB-Static__0xcb-static",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/0xCB-dev__0xCB-Static__0xcb-static",
+   "board_id": "0xcb-static",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    152.077213,
+    94.228714
+   ],
+   "constraints": "0xCB-dev__0xCB-Static__0xcb-static.json",
+   "router": {}
+  },
+  {
+   "name": "headblockhead__slab-pcb__slab-pcb-left",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/headblockhead__slab-pcb__slab-pcb-left",
+   "board_id": "slab-pcb-left",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    151.0,
+    88.0
+   ],
+   "constraints": "headblockhead__slab-pcb__slab-pcb-left.json",
+   "router": {}
+  },
+  {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001_xiao",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/tubbytwins__bumwings-kbd__bumwings_v001_xiao",
+   "board_id": "bumwings_v001_xiao",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    204.81263548169983,
+    110.32164335147371
+   ],
+   "constraints": "tubbytwins__bumwings-kbd__bumwings_v001_xiao.json",
+   "router": {}
+  },
+  {
+   "name": "Goga64__ULK__ULK_sl_PG1316s",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/Goga64__ULK__ULK_sl_PG1316s",
+   "board_id": "ULK_sl_PG1316s",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    148.4415,
+    64.83675000000001
+   ],
+   "constraints": "Goga64__ULK__ULK_sl_PG1316s.json",
+   "router": {}
+  },
+  {
+   "name": "Goga64__ULK__ULK",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/Goga64__ULK__ULK",
+   "board_id": "ULK",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    148.44660000000002,
+    64.83175
+   ],
+   "constraints": "Goga64__ULK__ULK.json",
+   "router": {}
+  },
+  {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001_xiao_s",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/tubbytwins__bumwings-kbd__bumwings_v001_xiao_s",
+   "board_id": "bumwings_v001_xiao_s",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    215.94902590856665,
+    122.92568678535706
+   ],
+   "constraints": "tubbytwins__bumwings-kbd__bumwings_v001_xiao_s.json",
+   "router": {}
+  },
+  {
+   "name": "duckyb__urchin__main",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/duckyb__urchin__main",
+   "board_id": "main",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    128.3991065,
+    61.00006255429359
+   ],
+   "constraints": "duckyb__urchin__main.json",
+   "router": {}
+  },
+  {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001R55_xiao_sd",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/tubbytwins__bumwings-kbd__bumwings_v001R55_xiao_sd",
+   "board_id": "bumwings_v001R55_xiao_sd",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    211.31161541956513,
+    126.73118460568237
+   ],
+   "constraints": "tubbytwins__bumwings-kbd__bumwings_v001R55_xiao_sd.json",
+   "router": {}
+  },
+  {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/tubbytwins__bumwings-kbd__bumwings_v001",
+   "board_id": "bumwings_v001",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    204.81263548169983,
+    110.32164335147371
+   ],
+   "constraints": "tubbytwins__bumwings-kbd__bumwings_v001.json",
+   "router": {}
+  },
+  {
+   "name": "tubbytwins__bumwings-kbd__bumwings_v001R55_rp2040zero_sd",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/tubbytwins__bumwings-kbd__bumwings_v001R55_rp2040zero_sd",
+   "board_id": "bumwings_v001R55_rp2040zero_sd",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    208.95888629925184,
+    126.42144261077422
+   ],
+   "constraints": "tubbytwins__bumwings-kbd__bumwings_v001R55_rp2040zero_sd.json",
+   "router": {}
+  },
+  {
+   "name": "sporkus__le_chiffre_keyboard_stm32__stm32_chiffre_36keys",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/sporkus__le_chiffre_keyboard_stm32__stm32_chiffre_36keys",
+   "board_id": "stm32_chiffre_36keys",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    146.63947167806975,
+    103.360285
+   ],
+   "constraints": "sporkus__le_chiffre_keyboard_stm32__stm32_chiffre_36keys.json",
+   "router": {}
+  },
+  {
+   "name": "sporkus__le_chiffre_keyboard_stm32__stm32_hotswap_chiffre",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/sporkus__le_chiffre_keyboard_stm32__stm32_hotswap_chiffre",
+   "board_id": "stm32_hotswap_chiffre",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    146.63947167806975,
+    103.360285
+   ],
+   "constraints": "sporkus__le_chiffre_keyboard_stm32__stm32_hotswap_chiffre.json",
+   "router": {}
+  },
+  {
+   "name": "siderakb__ergo-snm-keyboard__ErgoSNM_keyboard",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/siderakb__ergo-snm-keyboard__ErgoSNM_keyboard",
+   "board_id": "ErgoSNM_keyboard",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    147.71880950000002,
+    93.18541
+   ],
+   "constraints": "siderakb__ergo-snm-keyboard__ErgoSNM_keyboard.json",
+   "router": {}
+  },
+  {
+   "name": "duckyb__eternal-keypad__eternal-keypad",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/duckyb__eternal-keypad__eternal-keypad",
+   "board_id": "eternal-keypad",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    132.55625,
+    87.3125
+   ],
+   "constraints": "duckyb__eternal-keypad__eternal-keypad.json",
+   "router": {}
+  },
+  {
+   "name": "ASH-ART__Qfwfq__qfwfq",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/ASH-ART__Qfwfq__qfwfq",
+   "board_id": "qfwfq",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    128.5875,
+    66.802
+   ],
+   "constraints": "ASH-ART__Qfwfq__qfwfq.json",
+   "router": {}
+  },
+  {
+   "name": "little-red-rover__little-red-rover__little_red_rover",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/little-red-rover__little-red-rover__little_red_rover",
+   "board_id": "little_red_rover",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    150.07233316827296,
+    99.91
+   ],
+   "constraints": "little-red-rover__little-red-rover__little_red_rover.json",
+   "router": {}
+  },
+  {
+   "name": "0xCB-dev__0xCB-1337__1337-v4.0",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/0xCB-dev__0xCB-1337__1337-v4.0",
+   "board_id": "1337-v4.0",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    104.459229,
+    65.370771
+   ],
+   "constraints": "0xCB-dev__0xCB-1337__1337-v4.0.json",
+   "router": {}
+  },
+  {
+   "name": "Open-Muscle__OpenMuscle-FlexGrid__OM-60-Flex",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/Open-Muscle__OpenMuscle-FlexGrid__OM-60-Flex",
+   "board_id": "OM-60-Flex",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    150.7820585,
+    62.406913
+   ],
+   "constraints": "Open-Muscle__OpenMuscle-FlexGrid__OM-60-Flex.json",
+   "router": {}
+  },
+  {
+   "name": "Open-Muscle__OpenMuscle-FlexGrid__OM-FlexGrid-Flex__OM-FlexGrid-Flex",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/Open-Muscle__OpenMuscle-FlexGrid__OM-FlexGrid-Flex__OM-FlexGrid-Flex",
+   "board_id": "OM-FlexGrid-Flex",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    147.5049855,
+    95.849998
+   ],
+   "constraints": "Open-Muscle__OpenMuscle-FlexGrid__OM-FlexGrid-Flex__OM-FlexGrid-Flex.json",
+   "router": {}
+  },
+  {
+   "name": "Jana-Marie__ligra__ligra_back",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/Jana-Marie__ligra__ligra_back",
+   "board_id": "ligra_back",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    200.0000005,
+    -99.8
+   ],
+   "constraints": "Jana-Marie__ligra__ligra_back.json",
+   "router": {}
+  },
+  {
+   "name": "bitshiftcrazy__d20_pcb__d20_pcb",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/bitshiftcrazy__d20_pcb__d20_pcb",
+   "board_id": "d20_pcb",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    136.0526845,
+    95.897887
+   ],
+   "constraints": "bitshiftcrazy__d20_pcb__d20_pcb.json",
+   "router": {}
+  },
+  {
+   "name": "hackclub__OnBoard__E-Fidget-Lite",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/hackclub__OnBoard__E-Fidget-Lite",
+   "board_id": "E-Fidget-Lite",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    126.64340299999986,
+    81.03000000000006
+   ],
+   "constraints": "hackclub__OnBoard__E-Fidget-Lite.json",
+   "router": {}
+  },
+  {
+   "name": "tomunderwood99__CharlieBoard__Blue_Line",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/tomunderwood99__CharlieBoard__Blue_Line",
+   "board_id": "Blue Line",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    142.375546,
+    149.251172
+   ],
+   "constraints": "tomunderwood99__CharlieBoard__Blue_Line.json",
+   "router": {}
+  },
+  {
+   "name": "bitshiftcrazy__spell_tome__spell_tome_bottom",
+   "directory": "/home/flo/programming/pcb-maker/benchmarks/real/external/github/bitshiftcrazy__spell_tome__spell_tome_bottom",
+   "board_id": "spell_tome_bottom",
+   "designer_budget": true,
+   "unplace": true,
+   "remove_outline": false,
+   "stack_at": [
+    109.2708005,
+    108.6358
+   ],
+   "constraints": "bitshiftcrazy__spell_tome__spell_tome_bottom.json",
+   "router": {}
+  }
+ ]
+}

@@ -1,0 +1,17 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "SW5",
+  "SW30",
+  "SW75",
+  "J1",
+  "D6",
+  "D76",
+  "J2",
+  "D31",
+  "J3"
+ ],
+ "edge": [],
+ "rotation": []
+}

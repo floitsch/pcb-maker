@@ -73,6 +73,28 @@ def constraints_digest(constraints):
     return hashlib.sha256(json.dumps(constraints, sort_keys=True).encode()).hexdigest()
 
 
+def task_digest(task, constraints):
+    """sha256 of a task's entry as run.py reads it (run.py's `task_sha256`):
+    every field but where the board lies (`directory`) and a tier's
+    estimates, with its constraints (constraints_digest) in place of the
+    constraint file's name. tasks.json alone does not tell the lists apart:
+    github-tasks-v2 to v7 have the same tasks.json (sha256 c8f95caf5089)
+    and differ only in their constraint files."""
+    entry = {key: value for key, value in task.items()
+             if key not in ("directory", "peak_rss_mb", "expected_seconds")}
+    if "constraints" in entry:
+        entry["constraints"] = constraints_digest(constraints) if constraints is not None else None
+    return hashlib.sha256(json.dumps(entry, sort_keys=True).encode()).hexdigest()
+
+
+def other_inputs(before, after):
+    """The fields that show two rows of a board ran on other inputs: the
+    task's entry (`task_sha256`) or the designer's board (`board_sha256`),
+    where both rows record them."""
+    return [key for key in ("task_sha256", "board_sha256")
+            if before.get(key) and after.get(key) and before[key] != after[key]]
+
+
 def prepared_constraints(directory, name):
     try:
         return json.loads((directory / name / "source" / "constraints.json").read_text())
@@ -101,11 +123,22 @@ def contains(task, prepared):
 
 def candidate_lists(path):
     found = []
-    for base in (output_directory(path).resolve().parent, ROOT / "build"):
-        for candidate in sorted(base.glob("github-tasks-*/tasks.json")):
+    for base, pattern in ((output_directory(path).resolve().parent, "github-tasks-*/tasks.json"),
+                          (ROOT / "build", "github-tasks-*/tasks.json"),
+                          (ROOT / "benchmarks/agent-tasks/tasks", "*/tasks.json")):
+        for candidate in sorted(base.glob(pattern)):
             if candidate.resolve() not in [c.resolve() for c in found]:
                 found.append(candidate)
     return found
+
+
+def list_name(label):
+    """The list a task-list path names, the same for build/github-tasks-v7
+    and its committed copy benchmarks/agent-tasks/tasks/v7."""
+    parent = Path(label).parent
+    if parent.parent.name == "tasks" and parent.parent.parent.name == "agent-tasks":
+        return f"github-tasks-{parent.name}"
+    return parent.name
 
 
 def task_list(path, rows):
@@ -117,10 +150,10 @@ def task_list(path, rows):
                 if row.get("tasks") and not row.get("spliced")}
     if len(recorded) == 1:
         label, digest = next(iter(recorded))
-        return f"{label} (sha256 {(digest or '?')[:12]})", ("recorded", digest, {Path(label).parent.name})
+        return f"{label} (sha256 {(digest or '?')[:12]})", ("recorded", digest, {list_name(label)})
     if len(recorded) > 1:
         labels = ", ".join(sorted(str(label) for label, _ in recorded))
-        return f"several: {labels}", ("recorded", "several:" + labels, {Path(label).parent.name for label, _ in recorded})
+        return f"several: {labels}", ("recorded", "several:" + labels, {list_name(label) for label, _ in recorded})
     directory = output_directory(path)
     prepared = {row["name"]: prepared_constraints(directory, row["name"]) for row in rows
                 if row.get("mode") != "route"}
@@ -146,12 +179,13 @@ def task_list(path, rows):
         if ok:
             matching.append(candidate)
     if len(matching) == 1:
-        label = f"build/{matching[0].parent.name}/tasks.json"
-        return f"{label} (inferred from {len(prepared)} prepared boards)", ("inferred", None, {matching[0].parent.name})
+        label = str(matching[0].relative_to(ROOT)) if matching[0].is_relative_to(ROOT) else str(matching[0])
+        return (f"{label} (inferred from {len(prepared)} prepared boards)",
+                ("inferred", None, {list_name(matching[0])}))
     if matching:
-        names = ", ".join(c.parent.name for c in matching)
+        names = ", ".join(sorted({list_name(c) for c in matching}))
         return (f"no tasks field; one of {names} (inferred from {len(prepared)} prepared boards)",
-                ("inferred", None, {c.parent.name for c in matching}))
+                ("inferred", None, {list_name(c) for c in matching}))
     return "unknown (no tasks field; no build/github-tasks-* list matches)", None
 
 
@@ -328,6 +362,8 @@ def main():
         digest_before = input_digest(before[name], output_directory(arguments.before))
         digest_after = input_digest(after[name], after_directory[name])
         if digest_before is not None and digest_after is not None and digest_before != digest_after:
+            other_input.add(name)
+        elif other_inputs(before[name], after[name]):
             other_input.add(name)
     lists = f"before {before_list}; after {after_list}"
     if lists_differ(before_identity, after_identity):

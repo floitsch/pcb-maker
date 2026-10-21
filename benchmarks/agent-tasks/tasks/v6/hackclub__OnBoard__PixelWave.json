@@ -1,0 +1,31 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "SW1",
+  "R18",
+  "R11",
+  "R3",
+  "R10",
+  "U5",
+  "R6",
+  "R12",
+  "C315",
+  "U2",
+  "C314",
+  "U3"
+ ],
+ "edge": [
+  {
+   "part": "J1",
+   "edge": "left",
+   "max_mm": 1.9
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J1",
+   "angle": 0.0
+  }
+ ]
+}

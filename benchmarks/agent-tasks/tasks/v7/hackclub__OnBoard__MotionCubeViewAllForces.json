@@ -1,0 +1,20 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "D4",
+  "U2",
+  "C9",
+  "U5",
+  "C10",
+  "U1",
+  "SW2",
+  "R5",
+  "D1",
+  "D2",
+  "C6",
+  "D3"
+ ],
+ "edge": [],
+ "rotation": []
+}

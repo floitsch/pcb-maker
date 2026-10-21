@@ -1,0 +1,59 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "BUS1",
+  "P1",
+  "P2",
+  "P3",
+  "P8",
+  "P12",
+  "U1",
+  "U8",
+  "U9",
+  "J4",
+  "C33",
+  "C34",
+  "C36",
+  "C37",
+  "C42",
+  "C51",
+  "C52",
+  "R6",
+  "R15",
+  "R36",
+  "R37",
+  "R38"
+ ],
+ "edge": [
+  {
+   "part": "P10",
+   "edge": "top",
+   "max_mm": 1.24
+  },
+  {
+   "part": "X1",
+   "edge": "top",
+   "max_mm": 0.88
+  },
+  {
+   "part": "X3",
+   "edge": "top",
+   "max_mm": 0.71
+  }
+ ],
+ "rotation": [
+  {
+   "part": "P10",
+   "angle": 0.0
+  },
+  {
+   "part": "X1",
+   "angle": 180.0
+  },
+  {
+   "part": "X3",
+   "angle": 180.0
+  }
+ ]
+}

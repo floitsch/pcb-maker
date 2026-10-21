@@ -1,0 +1,24 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "J3",
+  "J1",
+  "BT4",
+  "U5",
+  "H3"
+ ],
+ "edge": [
+  {
+   "part": "J5",
+   "edge": "right",
+   "max_mm": 0.7
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J5",
+   "angle": 0.0
+  }
+ ]
+}

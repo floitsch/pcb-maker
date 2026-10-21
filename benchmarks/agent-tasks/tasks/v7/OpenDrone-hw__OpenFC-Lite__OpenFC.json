@@ -1,0 +1,242 @@
+{
+ "version": 1,
+ "move_all": true,
+ "fixed": [
+  "U9",
+  "Card1",
+  "USB1"
+ ],
+ "edge": [
+  {
+   "part": "J38",
+   "edge": "right",
+   "max_mm": 2.11
+  },
+  {
+   "part": "J27",
+   "edge": "right",
+   "max_mm": 2.1
+  },
+  {
+   "part": "J48",
+   "edge": "bottom",
+   "max_mm": 2.11
+  },
+  {
+   "part": "J5",
+   "edge": "top",
+   "max_mm": 2.05
+  },
+  {
+   "part": "J51",
+   "edge": "bottom",
+   "max_mm": 2.13
+  },
+  {
+   "part": "J30",
+   "edge": "right",
+   "max_mm": 2.1
+  },
+  {
+   "part": "J12",
+   "edge": "left",
+   "max_mm": 2.12
+  },
+  {
+   "part": "J36",
+   "edge": "right",
+   "max_mm": 2.1
+  },
+  {
+   "part": "J25",
+   "edge": "left",
+   "max_mm": 2.12
+  },
+  {
+   "part": "J32",
+   "edge": "right",
+   "max_mm": 2.1
+  },
+  {
+   "part": "J14",
+   "edge": "top",
+   "max_mm": 2.05
+  },
+  {
+   "part": "J9",
+   "edge": "top",
+   "max_mm": 2.05
+  },
+  {
+   "part": "J13",
+   "edge": "top",
+   "max_mm": 2.05
+  },
+  {
+   "part": "J8",
+   "edge": "left",
+   "max_mm": 2.12
+  },
+  {
+   "part": "J1",
+   "edge": "left",
+   "max_mm": 2.12
+  },
+  {
+   "part": "J53",
+   "edge": "bottom",
+   "max_mm": 2.13
+  },
+  {
+   "part": "J55",
+   "edge": "bottom",
+   "max_mm": 2.08
+  },
+  {
+   "part": "J34",
+   "edge": "right",
+   "max_mm": 2.1
+  },
+  {
+   "part": "J21",
+   "edge": "left",
+   "max_mm": 2.12
+  },
+  {
+   "part": "J2",
+   "edge": "left",
+   "max_mm": 2.12
+  },
+  {
+   "part": "J29",
+   "edge": "top",
+   "max_mm": 2.05
+  },
+  {
+   "part": "J49",
+   "edge": "bottom",
+   "max_mm": 2.11
+  },
+  {
+   "part": "J31",
+   "edge": "top",
+   "max_mm": 2.05
+  },
+  {
+   "part": "CN1",
+   "edge": "right",
+   "max_mm": 2.05
+  },
+  {
+   "part": "P1",
+   "edge": "top",
+   "max_mm": 2.04
+  }
+ ],
+ "rotation": [
+  {
+   "part": "J38",
+   "angle": 180.0
+  },
+  {
+   "part": "J27",
+   "angle": 0.0
+  },
+  {
+   "part": "J48",
+   "angle": 270.0
+  },
+  {
+   "part": "J5",
+   "angle": 90.0
+  },
+  {
+   "part": "J51",
+   "angle": 270.0
+  },
+  {
+   "part": "J30",
+   "angle": 0.0
+  },
+  {
+   "part": "J12",
+   "angle": 180.0
+  },
+  {
+   "part": "J36",
+   "angle": 180.0
+  },
+  {
+   "part": "J25",
+   "angle": 180.0
+  },
+  {
+   "part": "J32",
+   "angle": 0.0
+  },
+  {
+   "part": "J14",
+   "angle": 90.0
+  },
+  {
+   "part": "J9",
+   "angle": 90.0
+  },
+  {
+   "part": "J13",
+   "angle": 90.0
+  },
+  {
+   "part": "J8",
+   "angle": 180.0
+  },
+  {
+   "part": "J1",
+   "angle": 180.0
+  },
+  {
+   "part": "J53",
+   "angle": 270.0
+  },
+  {
+   "part": "J55",
+   "angle": 90.0
+  },
+  {
+   "part": "J34",
+   "angle": 180.0
+  },
+  {
+   "part": "J21",
+   "angle": 180.0
+  },
+  {
+   "part": "J2",
+   "angle": 180.0
+  },
+  {
+   "part": "J29",
+   "angle": 270.0
+  },
+  {
+   "part": "J49",
+   "angle": 270.0
+  },
+  {
+   "part": "J31",
+   "angle": 270.0
+  },
+  {
+   "part": "CN1",
+   "angle": 270.0
+  },
+  {
+   "part": "P1",
+   "angle": 0.0
+  }
+ ],
+ "hollow": [
+  "Card1",
+  "USB1"
+ ]
+}
