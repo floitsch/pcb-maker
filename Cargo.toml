@@ -12,12 +12,14 @@ members = [
     "crates/pcb-placer",
     "crates/pcb-router",
     "crates/pcb-congestion",
+    "crates/pcb-global",
     "crates/pcb-topo",
     "tools/config-reference",
 ]
 resolver = "3"
 
 [dependencies]
+pcb-global = { path = "crates/pcb-global" }
 pcb-kicad = { path = "crates/pcb-kicad" }
 serde = "1.0"
 serde_json = { version = "1.0", features = ["float_roundtrip"] }

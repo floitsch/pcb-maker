@@ -605,11 +605,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "pcb-global"
+version = "0.1.0"
+dependencies = [
+ "pcb-router",
+ "serde",
+]
+
+[[package]]
 name = "pcb-kicad"
 version = "0.1.0"
 dependencies = [
  "libc",
  "pcb-congestion",
+ "pcb-global",
  "pcb-placer",
  "pcb-router",
  "pcb-topo",
@@ -625,6 +634,7 @@ name = "pcb-maker"
 version = "0.1.0"
 dependencies = [
  "config-reference",
+ "pcb-global",
  "pcb-kicad",
  "serde",
  "serde_json",

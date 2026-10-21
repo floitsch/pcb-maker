@@ -939,7 +939,7 @@ def run_admitted(task, arguments, token):
     # rules) instead of comparing it.
     constraints_sha256 = constraints_digest(constraints)
     layout = {"placer": {"constraints": "constraints.json", **task.get("placer", {}), **arguments.placer},
-              **task.get("layout", {})}
+              **task.get("layout", {}), **arguments.layout}
     if arguments.budget_scale != 1:
         # The layout's budgets in work (docs/router.md, "Determinism and the
         # wall clock"); the defaults are KiCadBoardLayoutConfig's.
@@ -1152,7 +1152,7 @@ def schematic_admitted(task, arguments, token):
     (project / "constraints.json").write_text(json.dumps(constraints, indent=1))
     row["constraints_sha256"] = constraints_digest(constraints)
     layout = {"placer": {"constraints": "constraints.json", **task.get("placer", {}), **arguments.placer},
-              **task.get("layout", {})}
+              **task.get("layout", {}), **arguments.layout}
     if arguments.budget_scale != 1:
         for key, default in LAYOUT_BUDGETS.items():
             layout[key] = round(layout.get(key, default) * arguments.budget_scale)
@@ -1701,6 +1701,9 @@ def main():
                         help="only the boards of a tier (quick: quick.json, many small boards side by side)")
     parser.add_argument("--placer", type=json.loads, default={},
                         help="placer settings for every board, as JSON (e.g. '{\"halo_scale\": 0.75}')")
+    parser.add_argument("--layout", type=json.loads, default={},
+                        help="layout settings for every board, as JSON, over the task's "
+                             "(e.g. '{\"congestion_score\": \"global\"}')")
     parser.add_argument("--jobs", type=int, default=None,
                         help="boards at once (default: with --tier and no --threads the physical cores / "
                              "TIER_THREADS, else 1)")

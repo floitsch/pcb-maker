@@ -40,6 +40,13 @@ pub(crate) fn score_board(
     let inferred = std::time::Instant::now();
     let value = match (score, model) {
         ("rudy", _) => rudy,
+        // The global route's demand above half the boundaries' capacity
+        // (docs/global-route.md; an experiment).
+        ("global", _) => {
+            pcb_global::route(board, &pcb_global::GlobalConfig::default())
+                .score
+                .soft_overflow[0]
+        }
         (_, None) => {
             return Err(format!(
                 "congestion score {score:?} needs a congestion_model"

@@ -45,6 +45,7 @@ pub use silkscreen::repair_kicad_silkscreen;
 mod board_layout;
 mod congestion_rank;
 mod congestion_samples;
+mod global_route;
 pub use board_layout::{
     KiCadBoardLayoutConfig, KiCadBoardLayoutMove, KiCadBoardLayoutResult, KiCadOutlineTrial,
     KiCadSwappable, layout_kicad_board,
@@ -54,6 +55,7 @@ pub use congestion_samples::{
     KiCadCongestionJob, KiCadCongestionSampleReport, KiCadCongestionVariant, KiCadPerturbation,
     export_congestion_samples,
 };
+pub use global_route::{KiCadGlobalRouteReport, KiCadProbeReport, global_route_kicad_board};
 mod board_placer;
 mod canonical_order;
 pub use board_placer::{

@@ -1,0 +1,11 @@
+[package]
+name = "pcb-global"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "A coarse global router on tiles: per-layer boundary capacities, negotiated congestion, overflow as a routability measure and per-net corridors"
+publish = false
+
+[dependencies]
+pcb-router = { path = "../pcb-router" }
+serde = { version = "1.0", features = ["derive"] }

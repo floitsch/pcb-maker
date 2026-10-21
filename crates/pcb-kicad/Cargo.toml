@@ -8,6 +8,7 @@ publish = false
 
 [dependencies]
 pcb-congestion = { path = "../pcb-congestion" }
+pcb-global = { path = "../pcb-global" }
 pcb-placer = { path = "../pcb-placer" }
 pcb-router = { path = "../pcb-router" }
 pcb-topo = { path = "../pcb-topo" }

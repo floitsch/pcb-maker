@@ -282,6 +282,7 @@ const RESEARCH_USAGE: &[&str] = &[
     "export-congestion-sample <source-directory> <board-id> <output-directory> [job.json] [router-config.json|auto]",
     "score-congestion-sample <sample.json> <model.onnx>",
     "score-congestion <source-directory> <board-id> <model.onnx> [router-config.json|auto]",
+    "global-route-kicad-board <source-directory> <board-id> [router-config.json|auto] [--global <global.json>] [--probe <work-seconds>] [--corridors <out.json>]",
     "dump-pour-map <source-directory> <board-id> <output-directory> [config.json|auto]",
     "bench-search <source-directory> <board-id> <iterations> [config.json|auto]",
     "calibrate-work-rate [rounds]",
@@ -570,6 +571,56 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             println!(
                 "{}",
                 serde_json::to_string(&score).map_err(|error| error.to_string())?
+            );
+            Ok(())
+        }
+        "global-route-kicad-board" => {
+            let usage = "usage: pcb-maker global-route-kicad-board <source-directory> <board-id> [router-config.json|auto] [--global <global.json>] [--probe <work-seconds>] [--corridors <out.json>]";
+            let source = arguments.next().ok_or_else(|| usage.to_string())?;
+            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            let mut router_path = None;
+            let mut config = pcb_global::GlobalConfig::default();
+            let mut probe = None;
+            let mut corridors = None;
+            while let Some(argument) = arguments.next() {
+                match argument.as_str() {
+                    "--global" => {
+                        let path = arguments.next().ok_or_else(|| usage.to_string())?;
+                        config = serde_json::from_str(
+                            &std::fs::read_to_string(&path)
+                                .map_err(|error| format!("failed to read {path}: {error}"))?,
+                        )
+                        .map_err(|error| format!("{path}: {error}"))?;
+                    }
+                    "--probe" => {
+                        let value = arguments.next().ok_or_else(|| usage.to_string())?;
+                        probe = Some(
+                            value
+                                .parse::<f64>()
+                                .map_err(|_| format!("--probe: not a number: {value}"))?,
+                        );
+                    }
+                    "--corridors" => {
+                        corridors = Some(arguments.next().ok_or_else(|| usage.to_string())?);
+                    }
+                    _ if router_path.is_none() && !argument.starts_with("--") => {
+                        router_path = Some(argument)
+                    }
+                    _ => return Err(usage.into()),
+                }
+            }
+            let router = board_router_config(router_path.as_deref(), &source, &board_id)?;
+            let report = pcb_kicad::global_route_kicad_board(
+                Path::new(&source),
+                &board_id,
+                &router,
+                &config,
+                probe,
+                corridors.as_deref().map(Path::new),
+            )?;
+            println!(
+                "{}",
+                serde_json::to_string(&report).map_err(|error| error.to_string())?
             );
             Ok(())
         }

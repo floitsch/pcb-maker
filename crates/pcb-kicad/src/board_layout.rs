@@ -73,6 +73,9 @@ pub struct KiCadBoardLayoutConfig {
     ///   against the plain race of three seeds);
     /// - `none`: the plain race (the placer's `placement_seeds`, all
     ///   probed);
+    /// - `global`: the coarse global route's usage above half the tile
+    ///   boundaries' capacity (`pcb-global`, docs/global-route.md; an
+    ///   experiment);
     /// - with `congestion_model` (an ONNX file, an experiment): `open`
     ///   (its predicted unfinished nets), `overflow` (its predicted
     ///   overflow summed over the board), or `open+rudy` (the sum of a
