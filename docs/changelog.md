@@ -44,7 +44,7 @@ laptop motherboard 0.24 s.
 placement against the designer's on every board (209 placements with a
 final result, 43 boards whose finals differ): the soft overflow at 0.5
 orders 0.791 of the pairs as their finals (RUDY 0.523, the global
-route's wirelength 0.663; PROBE_LINE), right on 12 of the 18 boards that
+route's wirelength 0.663; on the 23 pairs with probes on both sides the soft overflow 0.783, the 75 s probe 0.739, RUDY 0.543), right on 12 of the 18 boards that
 pass the strict rule on one placement only (8 of the 11 decided by open
 connections; 7 differ only in starved thermals and other findings).
 Robust: 0.70-0.79 at tiles of 1.0, 1.5 and 2.0 mm, with 0.7 of the
@@ -56,7 +56,17 @@ unstable across the variants (0.0 to 0.33). Reading: it tells a
 structurally less routable placement from a routable one, not one seed
 from another; the phase-1 rule holds on its paired clause only.
 
-PROTOTYPE_LINE
+**Prototype** (the paired clause held): the race's pre-ranking by the
+global route (`congestion_score: "global"`, x1442) against RUDY (x1385)
+on the eleven dense boards at the task budgets: KiCad unconnected 1096 ->
+1140, strict passes 0 -> 0; seven boards identical (four keep only three
+seeds, nothing to rank; three keep the same seed), protoesp the same seed
+and one more open (its continuation's work moved by the other probes'),
+4in1-mini 57 -> 74 and DSP-ADAU1452 49 -> 56 (seeds with better probes
+that finished worse), the 0xCB panel 65 -> 84 (RUDY's best seed ranked
+out). Not a default. Next: use the measure where placements differ in
+structure (an anneal term or moves), not between seeds; the corridors
+for the detailed router.
 
 **Unchanged by default.** Short tier (6 x 2, `--no-lock`) x1441 against
 build/short-charge-x1381: 12 rows and the 12 result boards identical.

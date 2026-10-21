@@ -139,7 +139,39 @@ python3 -I experiments/global-route/validate.py run build/global-route-probes --
 python3 -I experiments/global-route/validate.py analyse build/global-route-dev2a --probes build/global-route-probes
 ```
 
-PROBE_TABLE_PLACEHOLDER
+| Statistic (default variant) | pooled Spearman (209) | pair accuracy (43 pairs) | as a within-board Spearman | strict-discordant right (of 18) |
+| --- | ---: | ---: | ---: | ---: |
+| **soft overflow at 0.5** | 0.381 | **0.791** | 0.581 | 12 |
+| soft overflow at 0.75 | 0.392 | 0.767 | 0.535 | 13 |
+| ACE 5 % | 0.369 | 0.744 | 0.488 | 12 |
+| overflowed nets | 0.498 | 0.651 | 0.302 | 10 |
+| detour fraction | 0.537 | 0.640 | 0.279 | 8.5 |
+| total overflow | 0.424 | 0.581 | 0.163 | 9 |
+| max overflow | 0.409 | 0.558 | 0.116 | 10.5 |
+| the global route's wirelength | 0.251 | 0.663 | 0.326 | 10 |
+| RUDY over capacity (the race's) | 0.309 | 0.523 | 0.047 | 12.5 |
+
+(Ties count half. With two placements a board, a within-board Spearman
+is +1 or -1 per pair: its mean is twice the pair accuracy less one.
+Pooled Spearman mixes boards and mostly measures board size.)
+
+The race's 75 s probe on the same placements (`--probe 75`, one thread,
+x1440-x1442's router, which is x1385's): 149 of the 218 placements, the
+boards whose v18 layout peaked below 3 GB first; the rest were not
+probed (memory was exhausted on the machine, and the tier lock had a long
+queue). On the 141 placements with a probe and a final, and the 23 pairs
+among them whose finals differ:
+
+| Statistic | pooled Spearman (141) | pair accuracy (23) | strict-discordant right (of 11) |
+| --- | ---: | ---: | ---: |
+| soft overflow at 0.5 | 0.330 | **0.783** | 7 |
+| overflowed nets | 0.420 | 0.717 | 6 |
+| the 75 s probe | **0.811** | 0.739 | 6 |
+| RUDY | 0.294 | 0.543 | 7.5 |
+
+Across boards the probe tracks the scale of the open count (it routes);
+within a pair (ours against the designer's) the global route is as good
+or better, in a hundredth of the time and without a router's memory.
 
 **Set 2: the placer's seeds of one board** (the race's question): the
 historical cohort where the probe's 0.55 and RUDY's 0.30 were measured
@@ -227,7 +259,46 @@ similar seeds; for that the probe stays.
 
 ## Prototype: the placement race ranked by the global route
 
-PROTOTYPE_PLACEHOLDER
+`congestion_score: "global"` in layout.json (x1442, opt-in): the race's
+pre-ranking scores the placer's legal seeds by the global route's soft
+overflow at 0.5 instead of RUDY, and probes the best three as before
+(`congestion_rank.rs`; one hook in `board_layout.rs`, which let the
+pre-ranking run for this score). Cost: 0.1-0.4 s for all candidates on
+these boards. Layouts of the eleven dense boards at the task budgets
+(tasks v7, 2 x 2, run.py `--layout '{"congestion_score": "global"}'`),
+x1385 (main 043c247) against x1442 (043c247 plus this package; the
+router and the default layout are unchanged): build/global-dense-x1385,
+build/global-dense-x1442 (4in1-mini, 4in1) and -x1442b (the other nine,
+under the tier lock). No row cut, no row lost to memory.
+
+| Board | seeds kept | probed: RUDY / global (best race probe) | KiCad unconnected x1385 / x1442 | vias |
+| --- | ---: | --- | ---: | ---: |
+| video | 3 | all three, no pre-ranking | 196 / 196 | 1670 / 1670 |
+| OpenESC 4in1 | 3 | all three | 111 / 111 | 145 / 145 |
+| Glasgow | 3 | all three | 170 / 170 | 221 / 221 |
+| SmartSpin2k | 3 | all three | 39 / 39 | 1139 / 1139 |
+| MegaDrive | 5 | 1, 2, 0 / 0, 1, 2 (313 both) | 201 / 201 | 1864 / 1864 |
+| SNSP-CPU-01 | 16 | 0, 9, 1 / 6, 0, 1 (321 both: seed 0) | 133 / 133 | 1686 / 1686 |
+| split72_left | 7 | 2, 6, 5 / 1, 2, 3 (180 both: seed 2) | 40 / 40 | 872 / 872 |
+| protoesp | 11 | 1, 4, 2 / 1, 0, 2 (84 both: seed 1) | 35 / 36 | 381 / 350 |
+| 4in1-mini | 4 | 0, 3, 2 (113) / 2, 1, 3 (86) | **57 / 74** | 165 / 131 |
+| DSP-ADAU1452 | 10 | 0, 1, 3 (207) / 7, 3, 2 (178) | **49 / 56** | 268 / 279 |
+| 0xCB panel | 10 | 2, 0, 7 (61) / 6, 8, 0 (173) | **65 / 84** | 247 / 234 |
+| sum | | | **1096 / 1140** | |
+
+Strict passes 0 / 0. Four boards keep only three seeds within the
+placement budget, so there is nothing to pre-rank (the same rows to the
+via). Three keep the same seed and the same row. protoesp keeps the same
+seed, but the race's other two probes spent other work, so the first
+route's continuation had 583 s of work instead of 579 and ended one open
+connection worse. On three boards the global route probed other seeds:
+on 4in1-mini and DSP-ADAU1452 it found seeds whose race probe was better
+(86 against 113, 178 against 207 unfinished nets) that finished worse
+(the probe's own misjudgement: 0.55 against the finals); on the 0xCB
+panel it ranked out the seed RUDY found (61 unfinished, the best by far)
+and kept one at 173. As set 2 predicts: among seeds of one board the
+global route is no better a pre-ranker than RUDY. Not a default; the
+option stays as an experiment.
 
 ## Next
 
