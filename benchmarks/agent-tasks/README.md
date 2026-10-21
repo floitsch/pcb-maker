@@ -160,6 +160,15 @@ measurement). The discipline:
   Over v16 against v17 (103 boards with the same input): vias x0.70 ->
   x0.72 of the designer's, length x1.03 -> x1.03, open 0.009 -> 0.009 of
   the connections (mean 0.164 -> 0.113).
+- **Placement or routing?** The designer tier (`--tier designer`, section
+  below) routes every board on the designer's own placement;
+  `compare.py --gap <layout log> <designer log>` splits the layout's open
+  connections into a placement gap and a routing gap. Run it before
+  deciding which side the next work goes to.
+- **CI** (`.github/workflows/check.yml`): check.sh without the
+  walkthrough (with the router's fingerprint test at 1 and 4 threads),
+  clippy and rustfmt as gates, the walkthrough where kicad-cli is
+  installed. It guards the code, not the benchmarks: tiers run here.
 - **Router questions in route mode** (`--route-from <earlier output
   directory>`): the same placements routed again, no placement race, no
   legaliser wall time.

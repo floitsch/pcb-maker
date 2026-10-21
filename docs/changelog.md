@@ -11,6 +11,107 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (harness validity)
+
+An independent review found the benchmark harness reproducible but weak on
+validity. Seven fixes on branch `harness-validity`, one commit each; no
+Rust change but one test file.
+
+1. **The lock is run.py's.** A tier run, or a run of a whole task list,
+   takes `build/quick-tier.lock` itself (an exclusive flock, a blocking
+   wait like flock(1)'s, so that it waits its turn beside the older
+   `flock ... run.py` habit, which still works: a caller that holds the
+   lock lets the run through) and prints who holds it (pid and command
+   line from /proc/locks, again when the holder changes). `--no-lock`
+   skips it. A first version polled with LOCK_NB and lost every release
+   to flock(1)'s blocking waiters.
+2. **The task lists are committed**: `benchmarks/agent-tasks/tasks/v6` and
+   `v7` (170 KB each); every tier defaults to `tasks/v7` (v6 and v7 differ
+   on six panels, none in the quick or short tier). Finding: tasks.json is
+   the same file in github-tasks-v2 to v7 (sha256 c8f95caf5089), so
+   `tasks_sha256` never told the lists apart; rows now also record
+   `task_sha256` (the entry with its constraints' digest) and
+   `board_sha256`, and compare.py marks a board INPUT when either differs.
+3. **Objectives against the designer**: compare.py and run.py's last line
+   give per-board medians (vias and length over the designer's, KiCad's
+   unconnected items over the connections, the ground pours' cut by other
+   tracks where rows carry scores) beside the raw sums;
+   `designer-numbers.json` holds the designer's numbers (score-kicad-board,
+   15 s for the 109 boards); `run.py --quality` writes quality.py's
+   measures of both boards into each row (0.1 s a board), `compare.py
+   --score` scores older runs. v16 against v17 (103 boards with the same
+   input): vias x0.70 -> x0.72 of the designer's, length x1.03 -> x1.03,
+   open 0.009 -> 0.009 of the connections (mean 0.164 -> 0.113).
+4. **The designer tier** (`--tier designer`, `designer.json`): every
+   corpus board routed on the designer's placement, stripped as the layout
+   tier strips it, its own rules, 1500 s of work; `compare.py --gap`
+   gives per board the placement gap (layout open less designer-route
+   open) and the routing gap (designer-route open), with corpus totals:
+   the deciding experiment for placement versus routing work
+   (benchmarks/agent-tasks/README.md, "The designer tier"). Six boards
+   proved the path (below); the full tier (about 5 hours) is not run yet.
+5. **Licences** (benchmarks/github/licences.py, README "Licences"):
+   harvest.py gates `fetch` as harvest_schematics.py does
+   (`--allow-unlicensed` for private benchmarking), every board carries a
+   licence class, and training data (`fetch --training`, the expansion
+   harvest's `nn_license_eligible`) is permissive only. The corpus: 109
+   boards, 42 without an SPDX licence (24 of them with a licence file
+   granting one), 32 permissive, 12 weak-copyleft, 27 copyleft, 16
+   unclassified, 4 restricted, 18 unlicensed (private benchmarking only;
+   seven in the quick tier, MIDAS-MK1.1 in the short tier). The congestion
+   model's training manifest (700 boards) is 205 permissive by SPDX.
+6. **CI** (`.github/workflows/check.yml`): check.sh without the
+   walkthrough, a lint job (`cargo fmt --all --check`, clean; `cargo clippy
+   --release -p pcb-router -p pcb-kicad -p pcb-placer -- -D warnings`, red:
+   20 lints left in pcb-kicad, outside the modules made clippy-clean on
+   2026-10-20), the walkthrough where kicad-cli is installed (else a
+   notice). `tests/router_fingerprint.rs`: route mode on the fence's
+   2-layer board, 2 s of ladder work and 6 iterations, identical
+   `PCB_ROUTER_FINGERPRINT` lines at 1 and 4 threads (about 15 s a run,
+   no kicad-cli). act is not installed: the workflow was dry-parsed.
+7. **`scripts/prune.sh`** lists (and with `--yes` removes) merged, idle,
+   clean worktrees and snapshots no committed file names. Listed on
+   2026-10-21, nothing removed: no worktree (every merged one was active
+   within the week; the first listing ran `git status` in each and so
+   refreshed their indexes), 102 snapshots (4 GB of 18).
+
+**Checks.** `bash scripts/check.sh` passes (the fingerprint test included);
+the Python tests of benchmarks/agent-tasks, benchmarks/github and
+benchmarks/expansion pass (the expansion's
+`test_timeout_kills_descendants_and_keeps_cpu_measurement` fails about
+one run in three under load, on main as well). The short tier through the
+new in-script lock and the committed v7 list
+(`build/short-x1224-harness.log`, x1224, 4 x 2) against
+`build/short-x1170.log` (v6): "12 boards in both: better 0, same 12,
+worse 0", every row's routed count, KiCad findings, vias, length,
+first-route open terminals and prepared constraints identical (work
+2501 -> 2504 s, MIDAS-MK1.1's +2.4 s as on x1223). It waited 3037 s for the
+lock behind the designer run and another agent's run, naming each.
+
+**The designer tier on six boards** (`build/designer6-x1225.log`, x1225,
+4 x 2, 2816 s wall), joined with v17 (x1170) by `compare.py --gap`:
+
+| Board | Connections | Layout open (v17) | Designer-route open | Placement gap | Routing gap |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| ecad-viewer video | 371 | 201 | 0 | 201 | 0 |
+| OpenESC-30x30 4in1 | 152 | 111 | 0 | 111 | 0 |
+| nonSNES SNSP-CPU-01 | 363 | 136 | 27 | 109 | 27 |
+| DSP-ADAU1452 | 190 | 68 | 3 | 65 | 3 |
+| OnBoard woagboard | 91 | 8 | 1 | 7 | 1 |
+| Business-Cards Batch_1 | 204 | 415 | 453 | -38 | 453 |
+
+Totals: layout open 939, designer-route open 484; placement gap +455
+(worse on 5 boards, better on 1), routing gap 484 (on 4 boards): 48 %
+placement, 52 % routing, and the routing share is Batch_1 alone (453 of
+484; KiCad counts 453 unconnected items on a panel of 204 connections, the
+router 102 open). Without Batch_1 the five boards are 94 % placement gap
+(493 of 524 open), so on these boards placement is the work; whether the
+corpus agrees is the full tier's question (about 5 hours). No row was cut;
+x1225 predates the ladder's work bound (4in1 used 2427 s of work against
+the 1500 s budget), so the full tier should run on a binary with it.
+Both comparisons are across binaries (x1170 layout, x1225 route): for
+a decision, run the layout and the designer tier on one binary.
+
 ## Committed on 2026-10-21 (verdict integrity)
 
 Three defects an independent review found in the verdict
@@ -119,6 +220,7 @@ WLED_Matrix's connection_width 1, hidden before by the designer's
 connection_width elsewhere, and its copper_edge_clearance 1). Repairs: 7
 neck tracks (1.31 mm: WLED_Matrix 4, USB_Keypad 3), one board kept with
 pours as tracks (WLED_Matrix). Binary of the rebased commit: x1291.
+
 ## GPU grid A* prototype (2026-10-21)
 
 A bounded go/no-go experiment on branch `gpu-astar-prototype` (not for
