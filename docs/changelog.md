@@ -11,6 +11,169 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (quality: pcb-kicad research removed, lib.rs split)
+
+The last package of the quality pass: pcb-kicad's research code removed
+and what is left of lib.rs split into modules, with placements and routes
+unchanged. Branch `quality-kicad-research`, five commits on b306347
+(written on 0d13e80, rebased four times); snapshots x1250 (the four steps
+on 0d13e80), x1251 (on 1819890), x1252 (on 9da1213), x1253 (the five on
+6868f9a), x1254 (on b306347). **The last commit holding the removed code
+is b306347**; check it out to run or read any of it. Rust goes from
+120 258 to 82 959 lines (on b306347).
+
+**How the reachability was found.** pcb-kicad built as a binary rooted at
+lib.rs, with src/main.rs, agent_cli.rs and freerouting_backend.rs as its
+modules and every `pub` made `pub(crate)`: rustc's dead-code pass then
+reports every item no command reaches (board_layout, board_router,
+board_placer, verdict and the agent commands included, since main reaches
+them). The removal was driven by that report and the compiler's errors
+(impls of removed types, use lists), every step checked by the build.
+
+| Step | What | Rust lines |
+| --- | --- | ---: |
+| 1 | nine research commands of src/main.rs and the island-bridge stage of route-kicad-board-freerouting; eight experiment scripts that only drove them | -469 (Python -1 012) |
+| 2 | pcb-kicad's research modules and the research half of lib.rs (17 367 to 4 652 lines), their tests | -29 270 |
+| 3 | the crates layout-trace-model, pcb-core, pcb-engine, pcb-grid-router; four benchmarks/imported fixtures | -7 731 |
+| 4 | lib.rs split into eleven modules as moves (lib.rs 145 lines) | +165 (headers, rustfmt reflows) |
+| 5 | pcb-kicad clippy-clean for the CI gate | +6 |
+
+**Commands removed** (9): route-kicad-board-adaptive,
+route-kicad-board-sequential, resume-kicad-board-sequential,
+discover-kicad-vias, refine-kicad-vias (only experiments/whole-board drove
+them), inspect-kicad-routing-cut, inspect-kicad-terminal-access,
+inspect-kicad-route-obstructions (they inspect the research grid router)
+and bridge-kicad-open-connections with route-kicad-board-freerouting's
+optional `island_bridges` stage: no benchmark configuration sets it
+(benchmarks/corpus/freerouting.json does not, and
+benchmarks/github/freerouting.py runs the Freerouting jar itself, never
+this command), and keeping it would have kept the research grid router it
+routed with. The scripts removed with them: completion_stop_controls,
+lazy_forecast_controls, route_placement_case, route_one_sweep (and its
+test), routing_interference_order, run_via_discovery,
+inspect_terminal_access and, in step 2 with island_bridge.rs that embedded
+it, inspect_native_islands (and its test). area_probe.py still names
+route-kicad-board-adaptive but already depended on `place`, removed on
+2026-10-20; inspect_routing_cut.py stays because audit_partial_ripup.py
+(a helper the Freerouting backend bundles) imports its renderer.
+
+**Commands kept**: the agent commands; verify-kicad-rung (the
+verification path board_router calls, `verify_materialized_rung`),
+normalize-kicad-footprint-links (benchmarks/real/*/prepare.sh),
+shrink-kicad-board (benchmarks/corpus/run.py), inspect-kicad-board
+(pcbench/manifest.py, tscircuit, the Freerouting helpers) and
+inspect-kicad-connections (small: board_stats), render-kicad-layers
+(small: layer_render), score-congestion, score-congestion-sample,
+export-congestion-sample (`congestion_samples::race_core_config` is the
+race's), dump-pour-map, repair-kicad-necks, bench-search and
+route-kicad-board-freerouting (benchmarks/corpus/run.py) with its external
+stage and final-selection.json (a finished, preserved import with only
+native opens is still the selection).
+
+**Removed in pcb-kicad** (step 2): the modules connection_insertion,
+semantic_template, sequential_router, joint_relaxation, adaptive_routing,
+compound_recovery, sequential_resume, sequential_order_search,
+connection_order, restoration_recovery, partial_ripup, island_bridge,
+pad_pair, via_discovery, coupled_vias, routing_cut, terminal_access,
+route_obstructions, route_failure, routing_demand (with its dense
+reference), routing_grid, routing_cost, grid_alignment,
+pad_layer_contacts and the route_union and rule_area test modules; in
+lib.rs the research routing model (KiCadGridRouteConfig,
+KiCadRoutingModel, the obstacle grid, grid-path materialisation), via
+actions, route relaxation and shortening, reference fields, route
+candidates and their import, ground zones, yielding diagnosis, the
+semantic ladder's materialisation and the route-only verification. Kept:
+`KiCadConnectionRoutingRules` (its resolve, validate and apply went),
+`pad_clearance`, roundrect_pad, electrical_terminals' `plated_pad` and
+`contact_layers` (layer_render), shrink.rs, `verify_materialized_rung`.
+Beyond deletions: the route-graph normalisation no longer counts contacts
+and inserted points (only research read them) and `LoweredPad` loses its
+unread `layers`. pcb-kicad loses 157 tests (367 and one ignored to 210
+on 0d13e80; 225 remain on 9da1213), all of removed code. route_obstructions' roundrect tests
+went with it: they test its obstruction report, and roundrect_pad.rs's
+own tests cover the corner gap and the rejected shapes. The pad and outline
+geometry tests stay, on a test-only `geometry_queries` module (the
+`contains` and `intersects_segment` queries the research model used, as
+their oracle).
+
+**lib.rs split** (step 4): kicad_sexpr (383 lines: Expr, parser, writer,
+forms), kicad_nets (292), copper_emit (241), geometry (67),
+copper_geometry (808), route_graph (289), board_stats (1 014),
+verification (678), fs_util (90), layer_render (472), footprint_links
+(336); lib.rs keeps the module list and re-exports (145, a crate doc). A
+line multiset check of old against new finds only the module headers,
+`use` lines and two rustfmt reflows. Each module takes the crate's names
+with `use super::*` and lib.rs each module's with a glob, so paths inside
+the crate stay; items, fields and methods another module uses are
+`pub(crate)`, the rest private (all made private, then the ones the
+compiler asked for restored). Two line changes:
+`kicad_verifier_implementation_sha256` also hashes kicad_sexpr.rs,
+kicad_nets.rs, verification.rs and fs_util.rs (lib.rs held them, and the
+verification cache must still invalidate when they change: its keys change
+once), and native_report's tests name `crate::verification::`.
+
+**Clippy** (step 5): what the removal left of the CI gate's lints
+(`cargo clippy --release -p pcb-router -p pcb-kicad -p pcb-placer -- -D
+warnings`, 20 lints at 6868f9a, 9 of them in removed code) fixed in the
+production code: let chains for two collapsible ifs (native_report),
+`as_chunks` (congestion_rank), a function for a closure (labels), `if let`
+for a single match and `split_whitespace` without `trim_start`
+(netlist_import), type aliases `PinNet`, `NetChange` and `Choice`
+(netlist_import, pin_swap), the positive-size check by `partial_cmp` (NaN
+still rejected, net_classes), an iterator in shrink; with `--all-targets`
+also two test asserts. The gate passes, pcb-kicad with `--all-targets`
+too.
+
+Not built any more: experiments/engine-playback (a standalone crate on
+pcb-core and pcb-engine), like experiments/placement-exploration since
+2026-10-20.
+
+**Gates.** After every step `scripts/check.sh` (the library tests, the CLI
+exit-code, walkthrough and native-verification suites, the Python tests)
+and `cargo clippy --release --workspace`: no new warnings (22 at 0d13e80,
+13 after step 2, the 9 gone in removed code). place-kicad-board on the
+short tier's prepared x1170 sources (each board's layout.json, 4 threads,
+`PCB_PLACER_WORK_SECONDS=120`): spell_tome_bottom, USB_Cable_Tester,
+urchin, eternal-keypad, OpenFC and Blue_Line byte-identical between x1225
+(main's) and x1250 (`build/qe-place`, `build/qe-place2`).
+Short tier (tasks v6, 6 jobs x 4 threads, under the lock): x1250 (the
+four steps on 0d13e80) and x1251 (rebased on 1819890) against
+build/short-x1170.log: 11 of 12 rows identical but CPU, wall, load and
+memory, and MIDAS-MK1.1's work 285.1 to 287.5 s, which is main's MIDAS
+change (x1223 has it); against main's own x1223 and x1261 every row is
+identical, and every routed board byte-identical to x1230 (the writer's
+footprint-graphics order of 3d28004 makes x1170's and x1223's files
+differ from all later ones) and to x1261: 7/12, unconnected 19, new errors
+2, vias 1134, length 21228 mm, work 2504 s, cut 0, first-route open
+terminals 26. Schematic tier (x1250) against build/sch-x1161.log: the rows
+differ in `work_seconds` and `kicad_check_work_seconds` only (x1161
+predates the check work accounting), and TelemetryOnboard 108/108 to
+107/108, as the pcb-kicad quality pass found (x1170 gives it too); against
+x1194, that pass's last schematic run, every row identical but the DRC
+line's report path and cache hit, every board the same lines in another
+order (3d28004's footprint graphics); 9/12, unconnected 5, vias 3190.
+Expansion tier (8 jobs x 1 thread): x1250 against
+build/expansion-x1231.log: all 28 rows uncut in both identical (13 cut in
+x1231, 18 in x1250 at that load). x1252 against build/expansion-x1261.log
+(main's reference since the bounded route-mode budgets): no row cut in
+either; routed, vias, length, KiCad's counts, work, open, outcome and pass
+identical on all 46 rows and every routed board byte-identical; the rows
+differ only in what main's 9da1213 and 6868f9a add (`verdict`
+router_complete_unverified and exit 1 for the 13 complete rows, as the
+tier skips KiCad in route mode; the strict and repair fields). x1253
+(the five steps on 6868f9a), short tier: every routed board byte-identical
+to x1251's, the same objectives. **On the final base** (b306347, main's
+thermals package; x1254): the short tier against a run of main's x1244
+(`build/short-x1244q.log`) and the expansion tier against
+build/expansion-x1244.log, every row identical but CPU, wall, load and
+memory and every routed board byte-identical (short: 7/12, unconnected 19,
+new errors 2, vias 1125, length 21142 mm, work 2517 s; expansion: 15/46,
+unconnected 807, vias 4038, work 1279 s, cut 0); the outcomes as in
+build/short-x1170.log (7/12, unconnected 19), whose copper the thermals
+package changed. scripts/check.sh, the clippy gate and rustfmt pass on
+b306347.
+
+
 ## Committed on 2026-10-21 (starved thermals at scale)
 
 starved_thermal was the second largest finding type the router adds

@@ -23,5 +23,5 @@ ladders, the exact-routing rungs and mechanism controls in `small`,
 `smoke`, `analysis-lab`, `competitive`, `esp32-pad-gaps` and `imported`)
 were removed with the research stack on 2026-10-20 (git history up to
 commit be4b012); the last four `imported` layout-trace fixtures went with
-`pcb-kicad`'s semantic template on 2026-10-21 (history up to 0d13e80). See
+`pcb-kicad`'s semantic template on 2026-10-21 (history up to b306347). See
 [docs/changelog.md](../docs/changelog.md).

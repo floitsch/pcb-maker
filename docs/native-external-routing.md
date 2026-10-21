@@ -52,7 +52,7 @@ field is separate from the final native validity check.
 The optional island-bridge stage (`island_bridges`, which ran
 `bridge-kicad-open-connections` on the open connections Freerouting left) was
 removed on 2026-10-21 with the research grid router it used; it is in git
-history up to 0d13e80.
+history up to b306347.
 
 `experiments/whole-board/area_probe.py` (`--freerouting-config external.json`
 with `--route`) predates the removal of the research commands it also calls

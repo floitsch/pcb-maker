@@ -242,7 +242,7 @@ benchmarks/github/freerouting.py build/freerouting --ours      # both routers, h
 | `crates/pcb-router` | the format-independent routing core: geometry, lattice, negotiation, pours, verifier |
 | `crates/pcb-placer` | the electrostatic placer, annealer, legaliser and playback |
 | `crates/pcb-kicad` | KiCad S-expression parsing and writing, project rules, the board adapters, native verification |
-| `src/` | the `pcb-maker` command line: `main.rs` (dispatch, the research and benchmark commands), `agent_cli.rs` (the agent commands), `freerouting_backend.rs` |
+| `src/` | the `pcb-maker` command line: `main.rs` (dispatch, the inspection and benchmark commands), `agent_cli.rs` (the agent commands), `freerouting_backend.rs` |
 | `benchmarks/corpus` | the KiCad-demo corpus runner (route and layout) |
 | `benchmarks/github` | the harvested open-source boards: harvest, manifest, Freerouting comparison |
 | `benchmarks/pcbench` | 617 open-source boards (PCBench through PCBWorld's D3 preparation): fetch, manifest, runner, triage |
@@ -252,15 +252,20 @@ benchmarks/github/freerouting.py build/freerouting --ours      # both routers, h
 | `scripts/` | `worktree.sh`, `check.sh` (the test set), `snapshot.sh`, `check_links.py` |
 
 `crates/pcb-topo` is a TopoR-style topological router, an experiment the
-board router can call. `pcb-engine`,
-`pcb-grid-router`, `layout-trace-model` and `pcb-core` are earlier
-approaches kept only because research modules of `pcb-kicad` (the semantic
-ladder, the sequential and adaptive routers, the routing-cut inspection)
-still use them; they go with those modules. The rest of the research stack
-(`layout-trace-routing`, `pcb-routing`, `pcb-coordinator`, `pcb-placement`,
-`pcb-validate`, `pcb-viewer`, `pcb-benchmark`, `pcb-pipeline`, their
-commands and fixtures) was removed on 2026-10-20 and is in git history up to
-commit be4b012. The
+board router can call. `pcb-kicad`'s modules: the KiCad file layer
+(`kicad_sexpr`, `kicad_nets`, `copper_emit`), geometry (`geometry`,
+`copper_geometry`, `outline`, `roundrect_pad`), the adapters to the placer
+and the router (`board_placer/`, `board_router/`, `board_layout`), KiCad's
+checks (`verification`, `native_report`, `drc_cache`, `verdict`) and the
+agent commands' tools; `lib.rs` lists them. The research stack of August
+and September 2026 is in git history: the crates `layout-trace-routing`,
+`pcb-routing`, `pcb-coordinator`, `pcb-placement`, `pcb-validate`,
+`pcb-viewer`, `pcb-benchmark`, `pcb-pipeline` and their commands up to
+commit be4b012 (removed 2026-10-20); `pcb-kicad`'s research modules (the
+semantic ladder, the sequential and adaptive routers, the grid router's
+inspections, via actions and route relaxation) with the crates
+`pcb-engine`, `pcb-grid-router`, `layout-trace-model` and `pcb-core` up to
+b306347 (removed 2026-10-21). The
 [trust audit](docs/reviews/2026-09-21-trust-audit.md) explains what was
 kept and why.
 
