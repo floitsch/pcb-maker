@@ -739,10 +739,11 @@ impl<'a> FillProbe<'a> {
                 if obstacle.net == Some(self.net) || !obstacle.blocks_tracks {
                     continue;
                 }
-                // Mask openings do not stop a fill (the static maps' fill
-                // trace).
-                if obstacle.kind == ObstacleKind::Keepout
-                    && obstacle.label.starts_with("solder mask opening")
+                // Mask openings and rule areas that let pours in do not
+                // stop a fill (the static maps' fill trace).
+                if (obstacle.kind == ObstacleKind::Keepout
+                    && obstacle.label.starts_with("solder mask opening"))
+                    || board.fill_passes.binary_search(&position).is_ok()
                 {
                     continue;
                 }

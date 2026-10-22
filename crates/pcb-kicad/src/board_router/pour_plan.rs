@@ -23,6 +23,113 @@ pub struct KiCadPourRequest {
     /// it too.
     #[serde(default)]
     pub plane: bool,
+    /// Regions where the pour stays whole on these layers (default none):
+    /// other nets' tracks on the layer and other nets' vias keep out, the
+    /// pour's own net may go there. Each is a box or the boxes of named
+    /// parts; a rule area named `keep whole <net> <layer>` marks each
+    /// (everything allowed for KiCad, which has no rule by net; the router
+    /// lowers it by its name).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keep_whole: Vec<KiCadKeepWhole>,
+}
+
+/// A region where a pour stays whole (`KiCadPourRequest::keep_whole`):
+/// the boxes of the parts `parts` names (references or globs, each part's
+/// courtyard, else its pads), or the box `x`, `y`, each grown by
+/// `margin_mm`. The parts are where the board has them when the pours are
+/// added (a layout: after placement).
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct KiCadKeepWhole {
+    /// Parts by reference, or globs (`U*`); one region per part.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub parts: Vec<String>,
+    /// A box, from-to in mm, from the outline's top-left corner unless
+    /// `origin` is `absolute` (as constraints.json's keepouts).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x: Option<[f64; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub y: Option<[f64; 2]>,
+    /// `board` (default: the outline's top-left corner) or `absolute`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    /// How far each region reaches beyond its box (default 0.5 mm for
+    /// parts, 0 for a box).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub margin_mm: Option<f64>,
+}
+
+/// The name of the rule areas that mark where a pour stays whole: `keep
+/// whole <net> <layer>`.
+pub(crate) const KEEP_WHOLE_NAME: &str = "keep whole";
+
+/// The regions of `entries` on `pcb` as boxes [x0, y0, x1, y1].
+pub(crate) fn keep_whole_boxes(
+    pcb: &Expr,
+    net: &str,
+    entries: &[KiCadKeepWhole],
+) -> Result<Vec<[f64; 4]>, String> {
+    let mut boxes = Vec::new();
+    for entry in entries {
+        if entry.parts.is_empty() == (entry.x.is_none() || entry.y.is_none()) {
+            return Err(format!(
+                "keep_whole of the {net} pour: give either parts or both x and y"
+            ));
+        }
+        if !entry.parts.is_empty() {
+            let margin = entry.margin_mm.unwrap_or(0.5);
+            for pattern in &entry.parts {
+                let mut found = false;
+                for footprint in pcb
+                    .children()
+                    .iter()
+                    .filter(|item| item.head() == Some("footprint"))
+                {
+                    let reference = footprint_reference(footprint).unwrap_or_default();
+                    if !crate::board_placer::glob_matches(pattern, &reference) {
+                        continue;
+                    }
+                    found = true;
+                    if let Some(bounds) = crate::placement_constraints::part_box(footprint)? {
+                        boxes.push([
+                            bounds[0] - margin,
+                            bounds[1] - margin,
+                            bounds[2] + margin,
+                            bounds[3] + margin,
+                        ]);
+                    }
+                }
+                if !found {
+                    return Err(format!(
+                        "keep_whole of the {net} pour: no part matches {pattern:?}"
+                    ));
+                }
+            }
+            continue;
+        }
+        let (x, y) = (entry.x.unwrap_or_default(), entry.y.unwrap_or_default());
+        let offset = match entry.origin.as_deref() {
+            None | Some("board") => crate::placement_constraints::outline_corner(pcb)?,
+            Some("absolute") => [0.0, 0.0],
+            Some(other) => {
+                return Err(format!(
+                    "keep_whole of the {net} pour: unknown origin {other:?} (board or absolute)"
+                ));
+            }
+        };
+        let margin = entry.margin_mm.unwrap_or(0.0);
+        let bounds = [
+            offset[0] + x[0].min(x[1]) - margin,
+            offset[1] + y[0].min(y[1]) - margin,
+            offset[0] + x[0].max(x[1]) + margin,
+            offset[1] + y[0].max(y[1]) + margin,
+        ];
+        if !(bounds[2] > bounds[0] && bounds[3] > bounds[1]) {
+            return Err(format!("keep_whole of the {net} pour: an empty box"));
+        }
+        boxes.push(bounds);
+    }
+    Ok(boxes)
 }
 
 /// The pours to add to `pcb`: the requested ones, or else the automatic
@@ -76,6 +183,7 @@ pub(crate) fn planned_pours(
             layers: vec![inner[0].clone()],
             clearance_mm: None,
             plane: false,
+            keep_whole: Vec::new(),
         });
     }
     if let Some(rail) =
@@ -86,6 +194,7 @@ pub(crate) fn planned_pours(
             layers: vec![inner[inner.len() - 1].clone()],
             clearance_mm: None,
             plane: false,
+            keep_whole: Vec::new(),
         });
     }
     Ok(requests)
@@ -189,6 +298,31 @@ pub(crate) fn add_pour_zones(pcb: &mut Expr, requests: &[KiCadPourRequest]) -> R
                     points.join(" ")
                 ))?);
             }
+            if !request.keep_whole.is_empty() {
+                let name = format!("{KEEP_WHOLE_NAME} {} {layer}", net_names.normalize(&net));
+                for (index, [x0, y0, x1, y1]) in
+                    keep_whole_boxes(pcb, &request.net, &request.keep_whole)?
+                        .into_iter()
+                        .enumerate()
+                {
+                    let mut hash = hash.rotate_left(29) ^ 0x2545_f491_4f6c_dd1d;
+                    for byte in format!("{index} {x0} {y0} {x1} {y1}").bytes() {
+                        hash = (hash ^ byte as u64).wrapping_mul(0x100_0000_01b3);
+                    }
+                    zones.push(parse(&format!(
+                        "(zone (layer {layer:?}) (uuid \"{:08x}-{:04x}-4{:03x}-8{:03x}-{:012x}\") (name {name:?}) \
+                         (hatch edge 0.5) (connect_pads (clearance 0)) (min_thickness 0.25) \
+                         (keepout (tracks allowed) (vias allowed) (pads allowed) (copperpour allowed) (footprints allowed)) \
+                         (fill (thermal_gap 0.5) (thermal_bridge_width 0.5)) \
+                         (polygon (pts (xy {x0} {y0}) (xy {x1} {y0}) (xy {x1} {y1}) (xy {x0} {y1}))))",
+                        hash >> 32,
+                        (hash >> 16) & 0xffff,
+                        hash & 0xfff,
+                        (hash >> 12) & 0xfff,
+                        hash & 0xffff_ffff_ffff,
+                    ))?);
+                }
+            }
             if existing.contains(&(net_names.normalize(&net).to_string(), layer.clone())) {
                 eprintln!(
                     "pour for {} on {layer}: the board has one already",
@@ -213,6 +347,18 @@ pub(crate) fn add_pour_zones(pcb: &mut Expr, requests: &[KiCadPourRequest]) -> R
     let Expr::List(items) = pcb else {
         return Err("PCB root is not a list".into());
     };
+    // Regions of an earlier run (a routed board routed again) give way to
+    // this request's.
+    if requests
+        .iter()
+        .any(|request| !request.keep_whole.is_empty())
+    {
+        items.retain(|item| {
+            !(item.head() == Some("zone")
+                && form_atom(item, "name", 1)
+                    .is_some_and(|name| name.starts_with(&format!("{KEEP_WHOLE_NAME} "))))
+        });
+    }
     items.extend(zones);
     Ok(())
 }

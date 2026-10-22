@@ -609,12 +609,15 @@ pub struct KiCadRunFacts {
     /// (`KiCadProjectRulesReport::unmodelled`).
     pub unmodelled_rules: Vec<String>,
     /// What the input check found before the run (a keepout over a fixed
-    /// part: `keepout_warnings`); next_actions repeat them.
+    /// part: `keepout_warnings`; fixed parts on top of each other:
+    /// `overlap_warnings`); next_actions repeat them.
     pub input_warnings: Vec<String>,
     /// The board's own texts and silkscreen graphics that parts lie on
     /// after a layout (`KiCadLabelReport::overlaps`): they stay where the
     /// input put them.
     pub board_mark_overlaps: Vec<String>,
+    /// How whole the pours stayed (`KiCadBoardRouterResult::pour_quality`).
+    pub pours: Vec<crate::board_router::KiCadPourQuality>,
 }
 
 impl KiCadRunFacts {
@@ -648,6 +651,7 @@ impl KiCadRunFacts {
             unmodelled_rules: Vec::new(),
             input_warnings: Vec::new(),
             board_mark_overlaps: Vec::new(),
+            pours: Vec::new(),
         }
     }
 
@@ -778,6 +782,13 @@ pub struct KiCadVerdict {
     /// The result-changing environment variables that were set
     /// (`RESULT_ENVIRONMENT`), with their values.
     pub environment: BTreeMap<String, String>,
+    /// How whole the pours stayed, per zone and layer, by the pour model on
+    /// the board written: pieces, the largest piece's share of the pour's
+    /// area, copper coverage, other nets' tracks cutting it
+    /// (`KiCadPourQuality`). Absent without pours. It does not decide the
+    /// status; a pour in many pieces adds a next action.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pours: Vec<crate::board_router::KiCadPourQuality>,
 }
 
 fn counts(map: &BTreeMap<String, usize>) -> String {
@@ -1021,6 +1032,13 @@ fn next_actions(
     }
     if facts.routes && status != KiCadRunStatus::Complete && !facts.unmodelled_rules.is_empty() {
         actions.push(unmodelled_rules_action(&facts.unmodelled_rules));
+    }
+    for pour in facts.pours.iter().filter(|pour| pour.in_many_pieces()) {
+        actions.push(format!(
+            "the {} pour is in many pieces ({}): \"keep_whole\" in its add_pours entry keeps other nets' tracks and vias out of it under named parts or a box, so its main piece stays whole there; more room or layers give it more",
+            pour.net,
+            pour.line()
+        ));
     }
     if facts.routes && facts.native.is_none() {
         actions.push("KiCad's check did not run (PCB_SKIP_NATIVE or skip_native_verification): the router's own count is no verdict; run KiCad's DRC (pcb-maker drc-kicad-board) before using the board".into());
@@ -1285,6 +1303,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         room: facts.room.clone(),
         repairs: facts.repairs.clone(),
         environment: result_environment(),
+        pours: facts.pours.clone(),
     }
 }
 
@@ -1371,6 +1390,7 @@ pub fn route_facts(
     // What the board's reading left out (copper on a layer the stack
     // lacks): the next_actions lead with it.
     facts.input_warnings = result.warnings.clone();
+    facts.pours = result.pour_quality.clone();
     Ok(facts)
 }
 
@@ -1777,6 +1797,49 @@ mod tests {
         let verdict = judge(&facts);
         assert_eq!(verdict.exit_code, EXIT_INCOMPLETE);
         assert!(verdict.next_actions[0].contains("92 %"));
+    }
+
+    #[test]
+    fn a_pour_in_many_pieces_is_reported_and_gets_a_next_action() {
+        let mut facts = routed(DrcTally::default());
+        let pour = |pieces: usize, largest: f64| crate::board_router::KiCadPourQuality {
+            net: "GND".into(),
+            layer: "B.Cu".into(),
+            pieces,
+            largest_share: largest / 2591.0,
+            coverage: 638.0 / 2591.0,
+            largest_mm2: largest,
+            copper_mm2: 638.0,
+            area_mm2: 2591.0,
+            islands_removed: 4,
+            cut_mm: 1453.0,
+        };
+        // Whole: in the verdict, no action.
+        facts.pours = vec![pour(3, 600.0)];
+        let verdict = judge(&facts);
+        assert_eq!(verdict.exit_code, EXIT_COMPLETE);
+        assert_eq!(verdict.pours.len(), 1);
+        assert!(
+            verdict.next_actions.is_empty(),
+            "{:?}",
+            verdict.next_actions
+        );
+        // 43 pieces: complete still, with the action naming keep_whole.
+        facts.pours = vec![pour(43, 120.0)];
+        let verdict = judge(&facts);
+        assert_eq!(verdict.exit_code, EXIT_COMPLETE);
+        assert_eq!(verdict.next_actions.len(), 1);
+        assert!(
+            verdict.next_actions[0].contains("GND on B.Cu: 43 pieces, the largest 5 % of the pour")
+                && verdict.next_actions[0].contains("keep_whole"),
+            "{}",
+            verdict.next_actions[0]
+        );
+        // Few pieces, but the largest holds less than half the copper.
+        facts.pours = vec![pour(4, 200.0)];
+        assert_eq!(judge(&facts).next_actions.len(), 1);
+        let json = serde_json::to_value(judge(&facts)).unwrap();
+        assert_eq!(json["pours"][0]["pieces"], 4);
     }
 
     #[test]

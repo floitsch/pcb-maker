@@ -1396,6 +1396,7 @@ mod pour_request_tests {
             layers: layers.iter().map(|layer| layer.to_string()).collect(),
             clearance_mm: None,
             plane: false,
+            keep_whole: Vec::new(),
         };
         add_pour_zones(&mut pcb, &[request(&["F.Cu", "B.Cu"])]).unwrap();
         let zones: Vec<_> = pcb
@@ -1435,6 +1436,7 @@ mod pour_request_tests {
             layers: vec!["In1.Cu".into()],
             clearance_mm: None,
             plane: true,
+            keep_whole: Vec::new(),
         };
         add_pour_zones(&mut pcb, std::slice::from_ref(&plane)).unwrap();
         add_pour_zones(&mut pcb, std::slice::from_ref(&plane)).unwrap();
@@ -1469,6 +1471,122 @@ mod pour_request_tests {
             .find(|obstacle| obstacle.label == "plane GND In1.Cu")
             .unwrap();
         assert!(keepout.blocks_tracks && !keepout.blocks_vias && keepout.layers == 0b10);
+        // The plane's own fill still fills In1.Cu in the pour model, as
+        // without the rule area (the rule area hid it before 2026-10-21).
+        let report = |pcb: &Expr| {
+            let board = lower(pcb, &config, true).unwrap().board;
+            let mut router = core::router::Router::new(&board, &core_config(&config));
+            router.adopt_existing_copper();
+            router.pour_report()
+        };
+        let mut bare = pcb.clone();
+        if let Expr::List(items) = &mut bare {
+            items.retain(|item| form_atom(item, "name", 1) != Some("plane GND In1.Cu"));
+        }
+        let with_area = report(&pcb);
+        assert!(with_area[0].inside_mm2 > 150.0, "{with_area:?}");
+        assert_eq!(with_area, report(&bare));
+    }
+
+    #[test]
+    fn keep_whole_keeps_other_nets_off_the_pour_under_a_part() {
+        // A 2-layer board with GND poured on B.Cu; U1 at (10, 5) and a
+        // box at the right end are to stay whole.
+        let mut pcb = parse(
+            r#"(kicad_pcb
+          (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+          (gr_rect (start 0 0) (end 30 10) (layer "Edge.Cuts"))
+          (footprint "u" (at 10 5) (property "Reference" "U1")
+            (fp_rect (start -2 -2) (end 2 2) (layer "F.CrtYd"))
+            (pad "1" smd rect (at -1 0) (size 0.5 0.5) (layers "F.Cu") (net "/GND"))
+            (pad "2" smd rect (at 1 0) (size 0.5 0.5) (layers "F.Cu") (net "/A")))
+          (footprint "r" (at 3 5) (property "Reference" "R1")
+            (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net "/GND"))
+            (pad "2" smd rect (at 1 0) (size 0.5 0.5) (layers "F.Cu") (net "/A"))))"#,
+        )
+        .unwrap();
+        let request: KiCadPourRequest = serde_json::from_str(
+            r#"{"net": "GND", "layers": ["B.Cu"], "keep_whole": [{"parts": ["U*"]}, {"x": [25, 28], "y": [2, 8]}]}"#,
+        )
+        .unwrap();
+        add_pour_zones(&mut pcb, std::slice::from_ref(&request)).unwrap();
+        // Twice: the regions of the earlier call give way.
+        add_pour_zones(&mut pcb, std::slice::from_ref(&request)).unwrap();
+        let areas: Vec<String> = pcb
+            .children()
+            .iter()
+            .filter(|item| {
+                item.head() == Some("zone")
+                    && form_atom(item, "name", 1) == Some("keep whole GND B.Cu")
+            })
+            .map(|zone| encode(zone).to_string())
+            .collect();
+        assert_eq!(areas.len(), 2, "{areas:?}");
+        let areas: Vec<String> = areas
+            .iter()
+            .map(|area| area.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect();
+        // U1's courtyard (8..12, 3..7) grown by 0.5 mm; KiCad checks
+        // nothing there (it has no rule by net).
+        assert!(
+            areas[0].contains("(xy 7.5 2.5)")
+                && areas[0].contains("(xy 12.5 7.5)")
+                && areas[0].contains("(tracks allowed) (vias allowed)"),
+            "{}",
+            areas[0]
+        );
+        assert!(areas[1].contains("(xy 25 2)") && areas[1].contains("(xy 28 8)"));
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, true).unwrap().board;
+        let net =
+            |name: &str| board.nets.iter().position(|net| net.name == name).unwrap() as core::NetId;
+        let (ground, signal) = (net("GND"), net("A"));
+        let region = board
+            .obstacles
+            .iter()
+            .find(|obstacle| obstacle.label == "keep whole GND B.Cu")
+            .unwrap();
+        assert!(
+            region.net == Some(ground)
+                && region.blocks_tracks
+                && region.blocks_vias
+                && region.layers == 0b10
+        );
+        let pitch = 0.1;
+        let grid = core::grid::Grid {
+            origin: [0.05, 0.05],
+            pitch,
+            nx: 299,
+            ny: 99,
+        };
+        let maps =
+            core::grid::StaticMaps::build(&board, &grid, board.nets[signal as usize].class, true);
+        // In the box at the right end: another net's track on B.Cu and its
+        // via are out, GND's pass and its fill fills; F.Cu is free.
+        let inside = grid.nearest_node([26.5, 5.0]).unwrap();
+        assert!(!maps.trace_allowed(1, inside, signal));
+        assert!(!maps.via_allowed(inside, signal));
+        assert!(maps.trace_allowed(1, inside, ground));
+        assert!(maps.via_allowed(inside, ground));
+        assert!(maps.fill_allowed(1, inside, ground));
+        assert!(maps.trace_allowed(0, inside, signal));
+        // Outside: free for both.
+        let outside = grid.nearest_node([20.0, 5.0]).unwrap();
+        assert!(maps.trace_allowed(1, outside, signal) && maps.via_allowed(outside, signal));
+        // An unknown part is an input error.
+        let unknown: KiCadPourRequest = serde_json::from_str(
+            r#"{"net": "GND", "layers": ["B.Cu"], "keep_whole": [{"parts": ["Q9"]}]}"#,
+        )
+        .unwrap();
+        assert!(add_pour_zones(&mut pcb, &[unknown]).is_err());
     }
 
     #[test]

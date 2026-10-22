@@ -84,6 +84,7 @@ fn two_nets(layer_count: usize) -> Board {
         pad_spokes: Default::default(),
         merged_pads: Vec::new(),
         no_via_pads: Vec::new(),
+        fill_passes: Vec::new(),
     }
 }
 

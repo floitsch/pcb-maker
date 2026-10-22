@@ -24,10 +24,10 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 84 | 72 | 12 | 84 | 28 |
+| [Router settings](#router-settings) | 84 | 72 | 12 | 84 | 30 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 0 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 0 |
-| [Router settings: add_pours entries](#router-settings-add_pours-entries) | 4 | 4 | 0 | 4 | 3 |
+| [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
 | [Router settings: net_classes entries](#router-settings-net_classes-entries) | 6 | 6 | 0 | 6 | 1 |
 | [Router settings: connection rules](#router-settings-connection-rules) | 4 | 4 | 0 | 4 | 0 |
 | [Router report: rules](#router-report-rules) | 5 | - | 0 | 5 | - |
@@ -75,7 +75,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `kicad_spokes` | `Option<bool>` | unset | router.md | Thermal spokes as KiCad draws and counts them (default on; see `pcb_router::Config::kicad_spokes`). |
 | `manual_spokes` | `Option<bool>` | unset | router.md | Straight tracks from pads short of KiCad's two spokes into their pour (default on; see `pcb_router::Config::manual_spokes`). |
 | `neck_reach_mm` | `Option<f64>` | unset | - | Reach of the neck width around narrow pads (default 1.5 mm; 0 off). |
-| `plane_cut_cost` | `Option<f64>` | unset | - | Cost factor of a track (or via) cutting a plane (default 3). |
+| `plane_cut_cost` | `Option<f64>` | unset | router.md | Cost factor of a track (or via) cutting a plane (default 3). |
 | `present_cap` | `Option<f64>` | unset | - | Router `present_cap`: the highest price of sharing (default 1e4). |
 | `neck_width_mm` | `Option<f64>` | unset | - | Narrowest track the board allows (neck-downs out of small pads). |
 | `min_connection_mm` | `Option<f64>` | unset | router.md | The board setup's minimum connection width (`rules.min_connection`) as a floor on every track width the router chooses: class widths, the narrow-signal width, neck-downs, stubs and spokes. Set from the project when KiCad's connection_width check reports at error severity, and at warning severity with `PCB_MIN_CONNECTION_FLOOR=warning` (`project_rules:: connection_width_floor`, `apply_width_floor`); `None`: no floor. |
@@ -125,7 +125,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `topological_rounds` | `Option<usize>` | unset | - | Rip-up rounds of the topological engine (default 30). |
 | `topological` | `KiCadTopologicalConfig` | its own table | - | Weights of the topological engine (defaults in `pcb_topo::Config`). |
 | `tighten` | `bool` | `false` | - | Pull the lattice router's tracks tight afterwards (any-angle tracks with arcs, as the topological engine draws them), wherever the result stays legal. |
-| `pours` | `KiCadPourMode` | `"auto"` | - | How nets with copper pours are connected. |
+| `pours` | `KiCadPourMode` | `"auto"` | router.md | How nets with copper pours are connected. |
 | `add_pours` | `Vec<KiCadPourRequest>` | `[]` | router.md | Copper pours to add before routing, such as a ground plane on the bottom: each covers the board outline on its layers. |
 | `net_classes` | `Vec<crate::net_classes::KiCadNetClassRequest>` | `[]` | - | Net classes to add: track width, clearance and vias for named nets, ahead of the project's own classes and written into its `.kicad_pro`. |
 | `pin_swaps` | `Option<PathBuf>` | unset | placer.md | Interchangeable pins (`pin-swaps.json`; relative to the source directory). The nets on them are permuted before routing, in the board and the schematic. |
@@ -170,6 +170,7 @@ One entry of `add_pours`. Source: `KiCadPourRequest` in [crates/pcb-kicad/src/bo
 | `add_pours[].layers` | `Vec<String>` | required | router.md | Copper layers, such as `B.Cu`. |
 | `add_pours[].clearance_mm` | `Option<f64>` | optional | - | Clearance between the pour and other nets (default 0.3 mm). |
 | `add_pours[].plane` | `bool` | optional | router.md | A plane (default false): no track of any net on these layers, only vias through them, so the pour stays whole on every rung of the ladder (exclusive_planes holds only on some). A rule area keeping tracks off each layer (`plane <net> <layer>`) is written beside the zone, also where the board has the zone already, so KiCad checks it too. |
+| `add_pours[].keep_whole` | `Vec<KiCadKeepWhole>` | optional | router.md | Regions where the pour stays whole on these layers (default none): other nets' tracks on the layer and other nets' vias keep out, the pour's own net may go there. Each is a box or the boxes of named parts; a rule area named `keep whole <net> <layer>` marks each (everything allowed for KiCad, which has no rule by net; the router lowers it by its name). |
 
 ## Router settings: net_classes entries
 

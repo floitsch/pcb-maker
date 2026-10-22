@@ -11,6 +11,128 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (fence benchmark pass)
+
+Every breadboard-fence benchmark run with x1404, the issues of the fence
+report that are not the placer's, and one measurement of each. Branch
+fence-benchmark; snapshots x1460 (the first build), x1461 (slivers out of
+the piece count; the runs on x1461), x1462 (rebased on 2094b6b; the
+keep_whole runs and the Sisu and DSP layouts), x1463 (the commit: the bounded round removed). Results:
+benchmarks/fence/README.md ("benchmark pass" rows, issue log), docs
+benchmarks.md "Fence (2026-10-21)". Machine rule: one run at a time,
+layouts outside the lock at 16 GB available, the free-dimension search
+under it.
+
+**The pours' verdict** (issue 17; docs/router.md "Copper pours",
+docs/agents.md). After the final route (route mode's ladder, not a
+layout's own ladders; a layout's board kept) the written board is
+lowered with its tracks and vias as copper and a router built on it
+without routing (`measure_pours`, `Router::pour_report`): per pour and
+layer, the pieces holding copper of the net (KiCad removes the others),
+their areas (free nodes times the pitch squared plus half the brush
+along the rim; slivers under 0.25 mm² left out), the pour's area inside
+the outline, and other nets' track length on the layer. The verdict's
+`pours`, board-router.json's `pour_quality` and score-kicad-board's
+`pours` carry it; more than 5 pieces, or a largest piece under half the
+copper, adds a next action naming `keep_whole`. It counts as no work
+and decides nothing. Against pour-pieces.py (KiCad's fill), mm² of
+copper and pieces: fence 2 layers x1403 403.5/411, 16/16; the
+free-dimension probes of x1420 at 40/44/46/48 mm 1108/1099, 48/45;
+1163/1160, 37/41; 1080/1071, 31/29; 1305/1291, 41/42; this pass at 34 mm
+195/230, 23/19 (the worst); 46 mm 440.5/441, 9/10; four layers In1.Cu
+1 piece 2048 against 3 pieces (2019 and two of 2 mm²).
+
+**A rule area that lets pours in no longer hides the fill.** Writing
+the verdict showed the four-layer fence's In1.Cu GND with no fill at all
+in the model: its `GND plane: no tracks` rule area (tracks out,
+copperpour allowed) was stamped into the trace map the fill reads, as
+was the `plane <net> <layer>` area of an `add_pours` plane (ded766d),
+which hid its own plane. Such areas (`Board::fill_passes`, in the
+statics key) now come after the rest like mask openings, so the fill
+trace keeps what lies under them, and the fill probe skips them. Unit
+test: the plane request's In1.Cu report equals the board's without the
+area. The fence four layers x1404 to x1461: complete and clean both,
+181 to 179 vias, 3698 to 3930 mm, work 233 to 312 s. No fingerprint
+board and no short-tier board but USB_Cable_Tester (3 such areas, its
+row unchanged) has one.
+
+**keep_whole** (issue 17). `add_pours[].keep_whole`: parts (globs, each
+courtyard, else its pads, plus `margin_mm` 0.5) or boxes (from the
+outline's corner, `origin`, `margin_mm` 0). Each is written as a rule
+area `keep whole <net> <layer>` with everything allowed (KiCad has no
+rule by net), lowered by its name as a keepout whose net is the pour's:
+other nets' tracks off the layer, their vias out (`via_owner` names the
+pour's net), the pour's net passes and fills. An earlier run's regions
+give way; an unknown part is an input error. Unit test (maps inside and
+outside a region, the areas written twice, the error). The fence at 46
+mm (router-cut10, layout-long), before x1404: 134/134, one starved
+thermal, 231 vias, pour 10 pieces, largest 293, 441 mm² (13 %). With
+x1462: under U1, U4, U5 6 unconnected, pour 18 pieces, largest 408, 994
+mm²; those and a strip x 2-74.2 y 27-28.5 9 unconnected, largest 719,
+1163 mm²; the strip alone **complete and clean**, 287 vias, pour 15
+pieces, largest 373, 657 mm² (19 %). Under the chips the escapes lose
+their vias; across the middle band the vertical rows go over on the top
+for 1.5 mm and keep their order. The free dimension's
+size (44 mm: the search itself waited behind 47 runs on the tier lock
+and was not rerun; its 44 mm input laid out singly): before x1404
+complete and clean, pour 41 pieces, largest 389, 1425 mm² (42 %); the
+strip at the same place in the band (y 28.25-29.75) complete and clean,
+495 vias against 395, 39 pieces, largest 630, 1284 mm² (38 %).
+
+**Fixed parts on top of each other** (issue 5).
+`held_parts_overlapping` (placement_constraints.rs): pairs of held
+parts with a net (`fixed`, `fixed_patterns`, locked) whose courtyards
+on one side share half the smaller one, or whose pads meet on a copper
+layer; `placement_input_warnings` (keepouts, then overlaps) is what
+layout-kicad-board and place-kicad-board check before the run, printed
+and first in next_actions. Unit test: C1 and C2 at one spot warned, C3
+touching and a movable R1 and a back-side U1 not. The placer's own
+"fixed parts X and Y overlap" (its constraint warnings, board-placer.json)
+stays.
+
+**swap_candidates by electrical type** (issue 3, open item F).
+describe-kicad-board read only the pads' `pinfunction`; the fence's
+board has none (its CH32X035's names, PA15, PA0/A0, ..., are in the
+schematic). A part whose pads name no function is now listed by its
+pins' types (`by: electrical type`, its symbol `unit`): bidirectional or
+passive pins of one unit (the pad's `pintype`, else the schematic's
+symbol, sheets followed), on signal nets reaching another part, at
+least three on three nets, not diodes, transistors, switches, crystals
+and the like by passive pins; pad numbers are the globs. The fence: U1
+(44 pins), U4 and U5 (24 X and Y ports each), RN1-RN8. Parts with pad
+functions keep the name rule: the short tier's lists (0xCB, USB_Keypad,
+WLED_Matrix, urchin, MIDAS, OpenFC: GPIO*, PA*, IO*, P0.*) unchanged.
+Unit test.
+
+**The 5 % rule** (open item B; the placer review's finding 7). The
+rule's reason is time (Sisu: moves took the final ladder's time, 108
+open in the layout against 20 in route mode), and since 2026-10-07
+(5f6dc2f) it holds only on four layers with pours: the two-layer fence
+gets its moves (34 mm: 6 trials, none kept; README row B was out of
+date). A bounded round there (at most 4 parts in a tenth of the
+budget) was built and measured, then removed: the short tier never
+reaches it (12 rows and result boards identical), Sisu at a third of
+its budget is the narrow step's (37 open, more than 2 % but not 5 %:
+unchanged), and DSP-ADAU1452 at a third, 100 open after the first
+route, tried R237 three ways: 224 to 285 open each (32 nets rerouted
+in that congestion do not settle), none kept, the same board with 89 s
+more work (368 to 457 s). The comment at the rule says so.
+
+**Measurements.** Fingerprints (Castor, k30, jetson, Sisu; route mode
+from v16, 1 x 4, budget scale 0.25, `PCB_ROUTER_FINGERPRINT=1
+PCB_ROUTER_NO_WALL_GUARD=1`) x1461 against x1404 (build/fp-fence3-*):
+every fingerprint and every routed board identical (against
+build/fp-fence-x1402, jetson after clean-up and Sisu differ as they do
+for x1404 itself). Short tier (3 x 2) x1461 against
+build/short-fence-x1403.log: all 12 rows identical and the 12 result
+boards byte for byte. `bash scripts/check.sh` and the clippy gate pass.
+
+**Not done.** Issue 14 (silkscreen text, the placer's). Fewer pour
+pieces at 46 mm (keep_whole grows the main piece, not the count); a
+keep_whole region over another net's pad on the layer leaves that pad
+only the other side. The model's copper on the 34 mm board is 15 %
+under KiCad's.
+
 ## Committed on 2026-10-21 (lowering review fixes)
 
 The findings of docs/reviews/2026-10-21-review-lowering.md in its order.

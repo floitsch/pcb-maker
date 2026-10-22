@@ -1402,6 +1402,12 @@ pub fn layout_kicad_board(
     // Where the ladder has no other way of connecting the pours to try
     // (no pours, or two layers), the moves are the only lever left (the
     // breadboard fence on two layers: 41 open, no move was ever tried).
+    // A bounded round instead of none (at most four parts in a tenth of
+    // the budget, tried 2026-10-21) lost time for nothing: DSP-ADAU1452 at
+    // a third of its budget, 100 open after the first route, its three
+    // trials rerouted 32 nets each and left 224 to 285 open (a reroute in
+    // that congestion does not settle), none kept, 89 s of work more for
+    // the same board.
     let terminals: usize = board.nets.iter().map(|net| net.terminals.len()).sum();
     let ladder_has_rungs = connect && layers.names.len() >= 4;
     let many_open = ladder_has_rungs && best.0 > ((terminals as f64 * 0.05) as usize).max(10);
@@ -2076,7 +2082,15 @@ pub fn layout_kicad_board(
         // Its checks count as work (after every decision: only the tally).
         routed.work_seconds += checks_charged.add(checks);
     }
+    // How whole the pours stayed on the board kept (a report: after every
+    // decision, counted as no work).
+    routed.pour_quality = crate::board_router::measured_pours(
+        &output_directory.join("result"),
+        board_id,
+        router_config,
+    );
     if solidified
+        || !routed.pour_quality.is_empty()
         || routed
             .neck_repair
             .as_ref()

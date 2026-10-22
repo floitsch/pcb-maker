@@ -688,7 +688,8 @@ fn print_layout(result: &pcb_kicad::KiCadBoardLayoutResult) -> Result<(), String
 
 /// Reads a constraints file the placer config names, and returns what the
 /// input check warns of (printed now, before the run): keepouts over parts
-/// the placer keeps where they are (`pcb_kicad::keepout_warnings`).
+/// the placer keeps where they are, and such parts on top of each other
+/// (`pcb_kicad::placement_input_warnings`).
 fn check_constraints(
     source: &str,
     board_id: &str,
@@ -698,8 +699,8 @@ fn check_constraints(
         pcb_kicad::read_placement_constraints(&Path::new(source).join(path))
             .map_err(Failure::Usage)?;
     }
-    let warnings =
-        pcb_kicad::keepout_warnings(Path::new(source), board_id, placer).map_err(Failure::Usage)?;
+    let warnings = pcb_kicad::placement_input_warnings(Path::new(source), board_id, placer)
+        .map_err(Failure::Usage)?;
     for warning in &warnings {
         eprintln!("warning: {warning}");
     }

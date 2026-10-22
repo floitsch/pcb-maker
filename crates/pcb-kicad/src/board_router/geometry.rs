@@ -720,6 +720,52 @@ fn rule_area_circle(zone: &Expr) -> Option<Vec<[f64; 2]>> {
     })
 }
 
+/// Whether a rule area lets pours in (`(copperpour allowed)`, KiCad's
+/// default).
+pub(super) fn rule_area_allows_pours(zone: &Expr) -> bool {
+    zone.child("keepout")
+        .and_then(|keepout| keepout.child("copperpour"))
+        .and_then(|form| form.children().get(1))
+        .and_then(Expr::atom)
+        != Some("not_allowed")
+}
+
+/// A region where a pour stays whole: its pour net, copper layers, polygon
+/// and the rule area's name.
+pub(super) type KeepWholeRegion = (String, core::LayerMask, Vec<[f64; 2]>, String);
+
+/// A rule area that marks where a pour stays whole (`keep whole <net>
+/// <layer>`, written for `add_pours`' `keep_whole`): its pour net, copper
+/// layers, polygon and name; `None` for any other rule area.
+pub(super) fn keep_whole_region(
+    zone: &Expr,
+    layers: &LayerTable,
+) -> Result<Option<KeepWholeRegion>, String> {
+    let Some(name) = form_atom(zone, "name", 1) else {
+        return Ok(None);
+    };
+    let Some(rest) = name
+        .strip_prefix(KEEP_WHOLE_NAME)
+        .and_then(|rest| rest.strip_prefix(' '))
+    else {
+        return Ok(None);
+    };
+    // The net is everything before the layer (the last word).
+    let Some((net, _)) = rest.rsplit_once(' ') else {
+        return Ok(None);
+    };
+    let mask = layers.mask_of_item(zone)?;
+    if mask == 0 {
+        return Ok(None);
+    }
+    Ok(Some((
+        normalize_net(net).to_string(),
+        mask,
+        rule_area_polygon_points(zone)?,
+        name.to_string(),
+    )))
+}
+
 /// A rule area that keeps tracks or vias out, as an obstacle. Zones inside
 /// footprints are stored in board coordinates too.
 pub(super) fn rule_area_obstacle(

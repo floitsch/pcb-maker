@@ -40,6 +40,7 @@ mod planner;
 mod pour_analysis;
 mod pour_dump;
 mod pour_refresh;
+mod pour_report;
 mod prepare;
 mod profile;
 mod resolve;
@@ -57,6 +58,7 @@ pub use build::{
     BuildCounts, SharedBuild, StaticMapsHold, held_maps_bytes, hold_static_maps, static_maps_key,
 };
 pub use config::Config;
+pub use pour_report::PourLayerReport;
 pub use profile::{ProcessAccounting, build_totals, process_accounting};
 pub use result::{DeadPad, Diagnostics, HotSpot, NetStatus, RoutingResult};
 pub use wall::{WALL_CUTS, note_wall_cut, wall_cuts, wall_guard};

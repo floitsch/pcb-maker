@@ -184,6 +184,11 @@ pub struct Board {
     /// pad). Other surface pads of a net keep the rule of before: that
     /// net's vias may lie wholly inside them (`StaticMaps::via_owner`).
     pub no_via_pads: Vec<usize>,
+    /// Keepouts a pour's fill passes, as indices into `obstacles` (sorted):
+    /// rule areas that keep tracks out but let pours in (KiCad fills them:
+    /// a plane layer's `no tracks` area, an `add_pours` plane). The static
+    /// maps keep them out of the fill trace, as solder mask openings.
+    pub fill_passes: Vec<usize>,
 }
 
 /// A pad merged into its net's terminal `host` (`Board::merged_pads`).

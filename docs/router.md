@@ -855,6 +855,47 @@ keepout on every rung and KiCad checks. `exclusive_planes` keeps other
 nets off only on the rungs that use it (the plane-stub and tracks rungs
 let them in).
 
+A rule area that keeps tracks out but lets pours in (`(copperpour
+allowed)`: such a `plane` area, a hand-drawn "no tracks on the plane"
+area) does not stop the pour's fill in the model either
+(`Board::fill_passes`: the static maps take it after the rest, as solder
+mask openings, so the fill trace keeps what lies under it). Before
+2026-10-21 it did: the fence's four-layer boards, whose In1.Cu GND zone
+carries a `GND plane: no tracks` area, routed as if the plane had no
+fill at all (GND by tracks and vias), and an `add_pours` plane hid its
+own fill.
+
+**A pour kept whole where it matters** (2026-10-21). On two layers a
+`plane` is no answer (every crossing needs the back), and
+`plane_cut_cost` did not stop the cutting on the fence (37 pieces at 46
+mm). `keep_whole` in an `add_pours` entry names regions, parts or boxes,
+where the pour stays one piece: each is written as a rule area `keep
+whole <net> <layer>` with everything allowed (KiCad has no rule by net:
+the area only marks the region), and the lowering makes it a keepout of
+that net (`Obstacle::net` the pour's): other nets' tracks stay off the
+layer there, their vias out (`StaticMaps::via_owner` names the pour's
+net in it), the pour's own tracks and vias pass, and its fill fills it.
+The router's verifier checks other nets' copper against it.
+
+**How whole the pours stayed.** After the final route (route mode's
+ladder; a layout's board kept) the board written is lowered with its
+tracks and vias as copper, a router is built on it without routing, and
+its pour analysis labels the pieces per pour and layer
+(`Router::pour_report`): the pieces holding copper of the net (what
+KiCad keeps), each one's area (its free lattice nodes times the pitch
+squared, plus half the brush along its rim), slivers under 0.25 mm² left
+out, and the pour's area inside the outline. The verdict's `pours` and
+board-router.json's `pour_quality` carry it with other nets' track
+length on the layer (`cut_mm`, as score-kicad-board's `cut_by_mm`), and a
+pour in more than 5 pieces, or whose largest piece holds less than half
+its copper, gets a next action. It counts as no work and decides
+nothing. Against KiCad's own fill (benchmarks/fence/pour-pieces.py) on
+the fence's two-layer boards at 34, 40, 44, 46 and 48 mm: the copper
+within 2 % (403.5 against 411 mm², 1080 against 1071), the largest
+piece within 6 %, the pieces within about 10 % (16 and 16, 48 and 45,
+37 and 41, 31 and 29, 41 and 42); four layers, In1.Cu: 1 piece of 2045
+mm² against KiCad's 2016 mm² and two slivers of 2 mm².
+
 ### Thermal spokes as KiCad counts them
 
 A pad joins a pour through thermal spokes, and KiCad's DRC reports a
@@ -1291,7 +1332,9 @@ off, negotiating three quarters of what is left after a clean-up capped
 at a tenth of it (30-120 s; `direct_narrow_budget`), its work deadline the
 layout's end; the layout keeps it if KiCad finds it better than the first
 route. Far from complete is the old "many open" (more than 5 % of the
-terminals, four layers with pours: no moves, no resume, no polish) or,
+terminals, four layers with pours: no moves, no resume, no polish; a
+bounded round of moves there, tried on 2026-10-21, only lost time: see
+the changelog's fence benchmark pass) or,
 where the step applies, more than 2 % (at least 10): jetson's 31 open (its
 limit 27) used to send it into moves and a resume (388 s of
 work for 31 to 25 open) that left 218 s and no ladder. The ladder's

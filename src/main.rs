@@ -516,9 +516,15 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
                 return Err(usage.into());
             }
             let report = pcb_kicad::score_kicad_board(Path::new(&directory), &board_id)?;
+            let mut json = serde_json::to_value(&report).map_err(|error| error.to_string())?;
+            // The pours' pieces by the router's pour model (the verdict's
+            // `pours`), with the project's rules.
+            let config = board_router_config(None, &directory, &board_id)?;
+            let pours = pcb_kicad::measure_pours(Path::new(&directory), &board_id, &config)?;
+            json["pours"] = serde_json::to_value(&pours).map_err(|error| error.to_string())?;
             println!(
                 "{}",
-                serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
+                serde_json::to_string_pretty(&json).map_err(|error| error.to_string())?
             );
             Ok(())
         }

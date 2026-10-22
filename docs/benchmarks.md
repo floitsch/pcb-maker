@@ -20,6 +20,21 @@ cargo build --release
 python3 benchmarks/corpus/run.py build/corpus   # add --only NAME... or --skip-layout
 ```
 
+## Fence (2026-10-21)
+
+Every breadboard-fence benchmark run once with x1404 (main at the fence
+report's router side) and, where this pass changed something, with
+x1462 (branch fence-benchmark): the table is in
+[benchmarks/fence/README.md](../benchmarks/fence/README.md#results)
+("benchmark pass" rows), with vias in pads by pcbnew's HitTest (0 on
+every board) and the GND pour by KiCad's fill (`pour-pieces.py`) and by
+the router's pour model (the verdict's new `pours`). In short: v5 four
+layers complete and clean; v5 two layers at 34 mm 5 unconnected; at 46 mm
+every connection with one starved thermal, and complete and clean with
+a `keep_whole` strip that grew the pour's largest piece from 293 to 373
+mm² (at 44 mm, the free dimension's size: 389 to 630 mm², clean both); v1 two layers 100/100 for the first time (one starved thermal);
+the corpus's v4 four-layer boards complete and clean in both modes.
+
 ## Results (route column 2026-09-22 evening, layout column earlier that day; one thread)
 
 Tracks and vias are stripped; copper pours stay (where copper is poured is a

@@ -716,6 +716,12 @@ impl StaticMaps {
             obstacle.kind == ObstacleKind::Keepout
                 && obstacle.label.starts_with("solder mask opening")
         };
+        // So do the rule areas that keep tracks out but let pours in
+        // (`Board::fill_passes`: a plane layer's `no tracks` area), which
+        // hid the plane's fill from the pour model before 2026-10-21.
+        let passes = |index: usize, obstacle: &&crate::board::Obstacle| {
+            mask_opening(obstacle) || board.fill_passes.binary_search(&index).is_ok()
+        };
         // A pad's own clearance override replaces the zone's clearance in
         // KiCad's fill also where it is smaller than this class's (which
         // the tracks keep): such pads come after the others, and the fill
@@ -730,7 +736,7 @@ impl StaticMaps {
             .obstacles
             .iter()
             .enumerate()
-            .filter(|(_, obstacle)| !mask_opening(obstacle) && !overridden(obstacle))
+            .filter(|(index, obstacle)| !passes(*index, obstacle) && !overridden(obstacle))
             .chain(
                 board
                     .obstacles
@@ -743,12 +749,12 @@ impl StaticMaps {
                     .obstacles
                     .iter()
                     .enumerate()
-                    .filter(|(_, obstacle)| mask_opening(obstacle)),
+                    .filter(|(index, obstacle)| passes(*index, obstacle)),
             )
             .collect();
         let first_apart = ordered
             .iter()
-            .position(|(_, obstacle)| mask_opening(obstacle) || overridden(obstacle));
+            .position(|(index, obstacle)| passes(*index, obstacle) || overridden(obstacle));
         let mut fill_trace: Option<FillTrace> = None;
         for (position, (obstacle_index, obstacle)) in ordered.into_iter().enumerate() {
             if Some(position) == first_apart {
@@ -885,6 +891,12 @@ impl StaticMaps {
                 // is exempt, as in KiCad (tracks end on the drill), and
                 // keeps the pad copper's rule.
                 let own_hole = obstacle.net.filter(|_| obstacle.kind == ObstacleKind::Hole);
+                // A region where a pour stays whole (`keep whole <net>
+                // <layer>`) keeps other nets' vias out; its net's pass.
+                let keep_whole = obstacle.net.filter(|_| {
+                    obstacle.kind == ObstacleKind::Keepout
+                        && obstacle.label.starts_with("keep whole ")
+                });
                 let nodes = ((x1 - x0 + 1) * (y1 - y0 + 1)) as u64;
                 tests += nodes;
                 vertex_tests += nodes * corners;
@@ -918,11 +930,17 @@ impl StaticMaps {
                                     {
                                         owner16(net)
                                     }
-                                    _ => match beside {
-                                        Some(net)
+                                    _ => match (beside, keep_whole) {
+                                        (Some(net), _)
                                             if (!via_blocked[index]
                                                 || via_owner[index] == owner16(net))
                                                 && distance >= via_radius + SAFETY =>
+                                        {
+                                            owner16(net)
+                                        }
+                                        (None, Some(net))
+                                            if !via_blocked[index]
+                                                || via_owner[index] == owner16(net) =>
                                         {
                                             owner16(net)
                                         }
@@ -1224,6 +1242,7 @@ mod tests {
             pad_spokes: Default::default(),
             merged_pads: Vec::new(),
             no_via_pads: Vec::new(),
+            fill_passes: Vec::new(),
         }
     }
 

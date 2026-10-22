@@ -327,6 +327,11 @@ fn lower_board(
     // Rule areas that keep zone fills out: (layers, polygon).
     let mut pour_keepouts: Vec<PourKeepout> = Vec::new();
     let mut solid_pads: Vec<String> = Vec::new();
+    // Regions where a pour stays whole (`keep_whole`): their rule areas'
+    // pour net, layers and polygon, lowered once the nets are known.
+    let mut keep_whole: Vec<KeepWholeRegion> = Vec::new();
+    // Rule areas the fill passes (`core::Board::fill_passes`).
+    let mut fill_passes: Vec<usize> = Vec::new();
     // Openings in the solder mask (graphics on a mask layer), placed once
     // the pads under them are known.
     // The margin is how far the opening reaches past its shapes (a
@@ -1317,7 +1322,15 @@ fn lower_board(
             }
             Some("zone") if is_rule_area(item) => {
                 if let Some(obstacle) = rule_area_obstacle(item, &layers, "unnamed rule area")? {
+                    // Tracks out, pours in (a plane layer's `no tracks`
+                    // area): KiCad fills it, so the pour model does too.
+                    if obstacle.blocks_tracks && rule_area_allows_pours(item) {
+                        fill_passes.push(obstacles.len());
+                    }
                     obstacles.push(obstacle);
+                }
+                if let Some(region) = keep_whole_region(item, &layers)? {
+                    keep_whole.push(region);
                 }
                 if let Some(keepout) = pour_keepout(item, &layers)? {
                     pour_keepouts.push(keepout);
@@ -1646,6 +1659,25 @@ fn lower_board(
             label: "board cutout".into(),
         });
     }
+    // A region where a pour stays whole keeps other nets' tracks off its
+    // layers and their vias out; the pour's own net may pass (and its
+    // fill fills it).
+    for (net, mask, points, label) in keep_whole {
+        let Some(id) = net_ids_lookup(&nets, &net) else {
+            continue;
+        };
+        obstacles.push(core::Obstacle {
+            shape: core::Shape::Polygon { points },
+            layers: mask,
+            kind: core::ObstacleKind::Keepout,
+            net: Some(id),
+            clearance: 0.0,
+            clearance_override: None,
+            blocks_tracks: true,
+            blocks_vias: true,
+            label,
+        });
+    }
     let board_area = polygon_area(&loops.outline);
     let mut planes = Vec::new();
     for pour in &pours {
@@ -1778,6 +1810,7 @@ fn lower_board(
                 no_via_pads.sort_unstable();
                 no_via_pads
             },
+            fill_passes,
         },
         expressions: 0,
     })

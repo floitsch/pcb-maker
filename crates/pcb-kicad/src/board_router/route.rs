@@ -272,6 +272,12 @@ pub fn route_kicad_board(
     if final_open.0 > 0 || final_open.1 > 0 {
         result.skipped = std::mem::take(&mut ladder.skipped);
     }
+    // How whole the pours stayed, after every decision (it counts as no
+    // work). A layout's own ladders (`kicad_kept` set) leave it to the
+    // layout, which measures the board it keeps.
+    if config.kicad_kept.is_none() {
+        result.pour_quality = measured_pours(output_directory, board_id, config);
+    }
     let report_path = output_directory.join("board-router.json");
     crate::write_atomically(
         &report_path,
@@ -816,6 +822,7 @@ pub(crate) fn finish_routed_board(
         wall_accounting: None,
         kept_copper: None,
         warnings: input_warnings(pcb),
+        pour_quality: Vec::new(),
     };
     let report_path = output_directory.join("board-router.json");
     fs::write(

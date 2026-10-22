@@ -192,7 +192,8 @@ The file lists what constraints refer to:
 - every net with its pads (`REF:PAD`, the form `pin_of` takes) and its track
   width and clearance;
 - `swap_candidates`: parts whose general-purpose pins the layout could
-  reassign (see pin swapping below).
+  reassign (see pin swapping below), by their pad functions or, where
+  the board names none, by their pins' electrical types.
 
 ## 2. Say what you want: `constraints.json`
 
@@ -217,7 +218,12 @@ Full reference: [constraints.md](constraints.md).
   On a polygon, `edge` means the nearest side of the polygon facing that
   way.
 - **`edge`, `region`, `keepout`, `rotation` and `fixed`** decide where parts may be;
-  **`back`/`front`** on which side.
+  **`back`/`front`** on which side. Parts the placer keeps where they are
+  (`fixed`, `fixed_patterns`, locked) that lie on top of each other (a
+  glob that fixed parts still stacked at their import position) are
+  warned of before the run, in the log and first in the verdict's
+  next_actions: `fixed parts C1 and C2 overlap (courtyards and pads on
+  F.Cu)`.
 - **`hollow`** lets parts sit inside a big part's outline (a shield, a
   module above parts): only its pads block. Parts with holes still stay
   out of its courtyard's shapes, as KiCad forbids holes inside a
@@ -276,6 +282,7 @@ Router side (the file passed in place of `auto`):
 | --- | --- |
 | "Ground plane on the bottom" | `"add_pours": [{"net": "GND", "layers": ["B.Cu"]}]` |
 | "In1 is a solid ground plane, no traces on it" | `"add_pours": [{"net": "GND", "layers": ["In1.Cu"], "plane": true}]` |
+| "Keep the bottom ground solid under the MCU" | `"add_pours": [{"net": "GND", "layers": ["B.Cu"], "keep_whole": [{"parts": ["U1"]}]}]` |
 | "Our fab fills and caps vias, vias in pads are fine" | `"via_in_pad": true` |
 | "Power traces 0.8 mm wide" | `"net_classes": [{"name": "Power", "nets": ["VBUS", "+5V", "GND"], "track_width_mm": 0.8}]` |
 
@@ -316,6 +323,20 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     the plane whole. This replaces drawing the rule area by hand (a
     per-layer net restriction in KiCad's sense does not exist; the rule
     area is how KiCad says it).
+  - `keep_whole` in an `add_pours` entry: regions where that pour stays
+    whole on its layers, for a two-layer board's ground that `plane`
+    would make unroutable. Each entry is `{"parts": ["U1", "U4"]}` (each
+    part's courtyard, else its pads, grown by `margin_mm`, default 0.5)
+    or a box `{"x": [0, 76.2], "y": [30, 33]}` (from the outline's
+    top-left corner unless `"origin": "absolute"`; `margin_mm` default
+    0). Other nets' tracks stay off the layer there and their vias out;
+    the pour's own net may pass, so its fill there is one piece. Each
+    region is written as a rule area `keep whole <net> <layer>` with
+    everything allowed (KiCad has no rule by net; it only marks the
+    region), which the router lowers by its name. The parts are taken
+    where they are when the pours are added (in a layout, after
+    placement). Another net's pad on that layer inside a region can
+    only be left on the other side: keep regions off them.
   - `via_in_pad` (default false): no via inside an SMD pad, but an exposed
     (thermal) pad; a pad's own net's vias sit beside it. A via in a
     reflowed pad takes its solder; set it true only for filled and capped
@@ -362,7 +383,19 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   ([pin-swap.md](pin-swap.md)). `describe-kicad-board` lists
   `swap_candidates`: parts (not connectors) with three or more connected
   general-purpose pins (`GPIO12`, `IO5`, `PA3`, `P0.13`) and the globs for
-  them. Ask whether the firmware can use any of them for any signal (a
+  them (`by: function`). A part whose pads name no function on the board
+  (a generated board: the names are in the schematic only) is listed by
+  its pins' electrical types instead (`by: electrical type`, with its
+  symbol `unit`): bidirectional or passive pins of one symbol unit, on
+  signal nets (not ground or a rail) that reach another part, three or
+  more on three nets, the type from the pad's `pintype` or else from the
+  schematic's symbol, and the pad numbers as the globs. Not diodes,
+  transistors, switches, crystals and the like by their passive pins. A
+  resistor network's elements are listed pin by pin; in `pin-swaps.json`
+  they swap as pairs (units). On the breadboard fence (its CH32X035's
+  pins are PA15, PA0/A0, ... in the schematic only) that is U1 (44
+  bidirectional pins), U4 and U5 (the switches' 24 passive X and Y ports)
+  and RN1-RN8. Ask whether the firmware can use any of them for any signal (a
   GPIO matrix, PIO, bit-banged buses) and which pins are special (boot
   straps, a UART the bootloader uses, ADC-only pins): those go in
   `except`.
@@ -584,6 +617,7 @@ A finished run also carries it as `verdict` in its report:
 | `preexisting_unknown` | Types the reference has at KiCad's cap (199 or more): not subtracted. |
 | `clean_without_subtraction` | KiCad checked the result and finds no unconnected item and no error that counts, with nothing subtracted. |
 | `repairs` | What the run added for KiCad's DRC that changes no connection: `neck_tracks` and `neck_track_mm` (the connection-width repair's tracks kept, docs/router.md "KiCad's connection width"), `island_stubs` (a pad's own track into its pour island; `null`: not counted yet), `pour_mode` (the kept board's `pours`: `connect`, `tracks`, `none`, ...) and `pours_as_tracks`. Routes and layouts; also at the top of `board-router.json` and `board-layout.json`. |
+| `pours` | How whole the pours stayed, per zone and layer, by the router's pour model on the board written (after the final route; not a decision): `pieces` (the fill's pieces holding copper of the net, slivers under 0.25 mm² left out; KiCad removes the others, `islands_removed`), `largest_share` (the largest piece over the pour's area inside the outline), `coverage` (the copper over that area), `largest_mm2`, `copper_mm2`, `area_mm2`, `cut_mm` (other nets' tracks on the layer). A pour in more than 5 pieces, or whose largest piece holds less than half its copper, adds a next action naming `keep_whole`. Against KiCad's own fill (`benchmarks/fence/pour-pieces.py`) on the fence: copper within 2 %, pieces within about 10 %. Also `pour_quality` in `board-router.json`; score-kicad-board's `pours`. |
 | `environment` | The result-changing environment variables that were set, with their values: `PCB_ROUTER_SEED`, `PCB_ROUTER_SEEDS`, `PCB_ROUTER_ISLAND_STUBS`, `PCB_ROUTER_NO_WALL_GUARD`, `PCB_SKIP_NATIVE`, `PCB_MIN_CONNECTION_FLOOR`, `PCB_KICAD_NO_NECK_REPAIR`, `PCB_KICAD_TIMEOUT`, `PCB_MAKER_KICAD_USER_LIBS`, `PCB_PLACER_WORK_SECONDS`, `PCB_NARROW_RESERVE`, `PCB_PROBES_SIDE_BY_SIDE`, `PCB_LADDER_STATS`, `PCB_WORK_RATE`, `PCB_MAKER_TEST_PANIC_ATTEMPT`. Empty when none is. |
 | `cosmetic_findings`, `warnings`, `schematic_parity_issues` | Counted, not judged. |
 | `schematic_parity_by_type` | `schematic_parity_issues` by KiCad's type (`net_conflict`, `missing_footprint`, ...). When every one is a pin the footprint has no pad for (`net_conflict` "No pad found for pin", a no-connect pin), `next_actions` says there is nothing to do. |
@@ -825,7 +859,9 @@ puts the same report into `board-layout.json` as `quality`. It covers:
 - crystal path lengths; switching inductors (a regulator's) near
   crystals, antenna modules and analog parts (op-amps, ADCs, codecs,
   references);
-- how much other copper cuts the ground pours (return paths);
+- how much other copper cuts the ground pours (return paths), and every
+  pour's pieces, largest piece and coverage by the router's pour model
+  (`pours`, as in the verdict);
 - hot parts (a regulator's tab, an exposed pad): the pad's area, the
   planes of its net over it, vias in it and track copper near it. A pour
   of that net (`add_pours`) is the cheapest heat sink;

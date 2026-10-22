@@ -101,7 +101,7 @@ mod placement_constraints;
 mod placement_room;
 pub use placement_constraints::{
     KiCadConstraintStatus, KiCadConstraintsSource, KiCadPlacementConstraints, keepout_warnings,
-    read_placement_constraints,
+    overlap_warnings, placement_input_warnings, read_placement_constraints,
 };
 pub use placement_room::{KiCadRoom, TARGET_UTILIZATION, noted_room};
 pub mod free_dimension;
@@ -120,8 +120,9 @@ pub use shrink::{KiCadShrinkReport, shrink_kicad_board};
 mod project_rules;
 pub use board_router::{
     KiCadBoardRouterConfig, KiCadBoardRouterNet, KiCadBoardRouterResult, KiCadBoardRouterViolation,
-    KiCadExistingTracks, KiCadKeptCopper, KiCadPourMode, bench_kicad_search, dump_kicad_pour_map,
-    route_kicad_board, write_kicad_board_without_tracks,
+    KiCadExistingTracks, KiCadKeepWhole, KiCadKeptCopper, KiCadPourMode, KiCadPourQuality,
+    bench_kicad_search, dump_kicad_pour_map, measure_pours, route_kicad_board,
+    write_kicad_board_without_tracks,
 };
 pub use project_rules::{resolve_project_rules, router_config_over_project};
 

@@ -1426,7 +1426,226 @@ pub fn keepout_warnings(
         .collect())
 }
 
-fn outline_corner(pcb: &Expr) -> Result<[f64; 2], String> {
+/// A pad's box on the board and its copper layers' names.
+type PadBox = ([f64; 4], Vec<String>);
+
+/// Pads of a footprint as boxes on the board: [x0, y0, x1, y1] and the
+/// copper layers' names (`*.Cu` and `F&B.Cu` stand for both outer sides).
+fn pad_boxes(footprint: &Expr) -> Result<Vec<PadBox>, String> {
+    let at = form_at(footprint)?;
+    let mut boxes = Vec::new();
+    for pad in footprint
+        .children()
+        .iter()
+        .filter(|child| child.head() == Some("pad"))
+    {
+        let (Ok(position), Ok(size)) = (form_xy(pad, "at"), form_xy(pad, "size")) else {
+            continue;
+        };
+        // KiCad stores a pad's angle as the absolute one.
+        let angle = pad
+            .child("at")
+            .and_then(|form| form.children().get(3))
+            .and_then(Expr::atom)
+            .and_then(|value| value.parse::<f64>().ok())
+            .unwrap_or(0.0)
+            .to_radians();
+        let offset = rotate_vector(position, -at[2]);
+        let center = [at[0] + offset[0], at[1] + offset[1]];
+        let (sin, cos) = angle.sin_cos();
+        let half = [
+            (size[0] * cos).abs() / 2.0 + (size[1] * sin).abs() / 2.0,
+            (size[0] * sin).abs() / 2.0 + (size[1] * cos).abs() / 2.0,
+        ];
+        let layers: Vec<String> = pad
+            .child("layers")
+            .map(|layers| {
+                layers
+                    .children()
+                    .iter()
+                    .skip(1)
+                    .filter_map(Expr::atom)
+                    .filter(|name| name.ends_with(".Cu"))
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if layers.is_empty() {
+            continue;
+        }
+        boxes.push((
+            [
+                center[0] - half[0],
+                center[1] - half[1],
+                center[0] + half[0],
+                center[1] + half[1],
+            ],
+            layers,
+        ));
+    }
+    Ok(boxes)
+}
+
+/// A part's box on the board: its courtyard's, else its pads' (`None`
+/// without either).
+pub(crate) fn part_box(footprint: &Expr) -> Result<Option<[f64; 4]>, String> {
+    if let Some((courtyard, _)) = courtyard_box(footprint)? {
+        return Ok(Some(courtyard));
+    }
+    Ok(pad_boxes(footprint)?
+        .into_iter()
+        .map(|(bounds, _)| bounds)
+        .reduce(|a, b| {
+            [
+                a[0].min(b[0]),
+                a[1].min(b[1]),
+                a[2].max(b[2]),
+                a[3].max(b[3]),
+            ]
+        }))
+}
+
+/// Whether two pads' copper layer lists share a layer (`*.Cu` and
+/// `F&B.Cu` reach both outer sides, which is what the parts' pads use).
+fn pad_layers_meet(a: &[String], b: &[String]) -> bool {
+    let wide = |name: &str| name == "*.Cu" || name == "F&B.Cu";
+    a.iter()
+        .any(|x| b.iter().any(|y| x == y || wide(x) || wide(y)))
+}
+
+/// The area two boxes share.
+fn box_overlap(a: [f64; 4], b: [f64; 4]) -> f64 {
+    let w = a[2].min(b[2]) - a[0].max(b[0]);
+    let h = a[3].min(b[3]) - a[1].max(b[1]);
+    if w > 0.0 && h > 0.0 { w * h } else { 0.0 }
+}
+
+/// Pairs of parts the placer keeps where they are (`HeldParts`), each with
+/// a pad on a net, that lie on top of each other: their courtyards on one
+/// side share half the smaller one or more, or pads of the two meet on a
+/// copper layer (by 0.02 mm or more). A stack the input fixed places and
+/// routes without a word otherwise, and the board comes back with opens
+/// (fence issue 5: a fixed_patterns glob that fixed six resistors stacked
+/// at their initial position). Each pair once, in reference order, with
+/// what overlaps (`courtyards`, `pads on F.Cu`).
+pub(crate) fn held_parts_overlapping(
+    pcb: &Expr,
+    held: HeldParts,
+) -> Result<Vec<(String, String, String)>, String> {
+    struct Part {
+        reference: String,
+        courtyard: Option<([f64; 4], usize)>,
+        pads: Vec<PadBox>,
+    }
+    let mut parts = Vec::new();
+    for footprint in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        let reference = footprint_reference(footprint).unwrap_or_default();
+        let wired = footprint
+            .children()
+            .iter()
+            .filter(|child| child.head() == Some("pad"))
+            .any(|pad| pad.child("net").is_some());
+        if !wired || !held.holds(&reference, footprint) {
+            continue;
+        }
+        parts.push(Part {
+            courtyard: courtyard_box(footprint)?,
+            pads: pad_boxes(footprint)?,
+            reference,
+        });
+    }
+    parts.sort_by(|a, b| crate::canonical_order::natural_cmp(&a.reference, &b.reference));
+    let mut pairs = Vec::new();
+    for (index, first) in parts.iter().enumerate() {
+        for second in &parts[index + 1..] {
+            let mut what = Vec::new();
+            if let (Some((a, side_a)), Some((b, side_b))) = (first.courtyard, second.courtyard)
+                && side_a == side_b
+            {
+                let smaller = ((a[2] - a[0]) * (a[3] - a[1])).min((b[2] - b[0]) * (b[3] - b[1]));
+                if smaller > 0.0 && box_overlap(a, b) >= 0.5 * smaller {
+                    what.push("courtyards".to_string());
+                }
+            }
+            let mut layers: Vec<String> = Vec::new();
+            for (a, layers_a) in &first.pads {
+                for (b, layers_b) in &second.pads {
+                    let shrunk =
+                        |r: &[f64; 4]| [r[0] + 0.01, r[1] + 0.01, r[2] - 0.01, r[3] - 0.01];
+                    if box_overlap(shrunk(a), shrunk(b)) > 0.0
+                        && pad_layers_meet(layers_a, layers_b)
+                    {
+                        let layer = layers_a
+                            .iter()
+                            .find(|x| layers_b.contains(x))
+                            .or(layers_a.first())
+                            .cloned()
+                            .unwrap_or_default();
+                        if !layers.contains(&layer) {
+                            layers.push(layer);
+                        }
+                    }
+                }
+            }
+            if !layers.is_empty() {
+                what.push(format!("pads on {}", layers.join(", ")));
+            }
+            if !what.is_empty() {
+                pairs.push((
+                    first.reference.clone(),
+                    second.reference.clone(),
+                    what.join(" and "),
+                ));
+            }
+        }
+    }
+    Ok(pairs)
+}
+
+/// The input check's warnings for fixed parts on top of each other
+/// (`held_parts_overlapping`) on the project's board, before the run.
+pub fn overlap_warnings(
+    source_directory: &Path,
+    board_id: &str,
+    config: &KiCadBoardPlacerConfig,
+) -> Result<Vec<String>, String> {
+    let resolved = resolve_constraints(config, source_directory)?;
+    let path = source_directory.join(format!("{board_id}.kicad_pcb"));
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let pcb = parse(&text)?;
+    Ok(held_parts_overlapping(&pcb, HeldParts::of(&resolved))?
+        .into_iter()
+        .map(|(first, second, what)| overlap_warning(&first, &second, &what))
+        .collect())
+}
+
+/// The warning for two held parts on top of each other.
+pub(crate) fn overlap_warning(first: &str, second: &str, what: &str) -> String {
+    format!(
+        "fixed parts {first} and {second} overlap ({what}): the placer keeps both where the input has them and their pads cannot both be connected; give one its own place (place, or free it from fixed and fixed_patterns)"
+    )
+}
+
+/// What the input check warns of before a placement runs: keepouts over
+/// held parts (`keepout_warnings`), then held parts on top of each other
+/// (`overlap_warnings`). The commands print them and the verdict's
+/// next_actions repeat them.
+pub fn placement_input_warnings(
+    source_directory: &Path,
+    board_id: &str,
+    config: &KiCadBoardPlacerConfig,
+) -> Result<Vec<String>, String> {
+    let mut warnings = keepout_warnings(source_directory, board_id, config)?;
+    warnings.extend(overlap_warnings(source_directory, board_id, config)?);
+    Ok(warnings)
+}
+
+pub(crate) fn outline_corner(pcb: &Expr) -> Result<[f64; 2], String> {
     Ok(outline::board_loops(pcb)?
         .outline
         .iter()
@@ -3704,5 +3923,62 @@ mod tests {
             assert!(warnings[0].contains("(H1)"), "{}", warnings[0]);
         }
         fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn fixed_parts_at_one_spot_are_warned_of() {
+        // C1 and C2 fixed at one spot; C3 fixed beside them (courtyards
+        // touch); R1 movable on top of C1; U1 on the back under C1 (its
+        // courtyard on the other side, its pads on B.Cu).
+        let part = |reference: &str, x: f64, y: f64, layer: &str| {
+            format!(
+                r#"(footprint "c" (layer "{layer}.Cu") (at {x} {y}) (property "Reference" "{reference}")
+                  (fp_rect (start -1 -0.5) (end 1 0.5) (layer "{layer}.CrtYd"))
+                  (pad "1" smd rect (at -0.5 0) (size 0.6 0.6) (layers "{layer}.Cu") (net 1 "A"))
+                  (pad "2" smd rect (at 0.5 0) (size 0.6 0.6) (layers "{layer}.Cu") (net 2 "B")))"#
+            )
+        };
+        let board = format!(
+            "(kicad_pcb (gr_rect (start 0 0) (end 30 20) (layer \"Edge.Cuts\")) {} {} {} {} {})",
+            part("C1", 10.0, 10.0, "F"),
+            part("C2", 10.0, 10.0, "F"),
+            part("C3", 12.0, 10.0, "F"),
+            part("R1", 10.0, 10.0, "F"),
+            part("U1", 10.0, 10.0, "B"),
+        );
+        let pcb = parse(&board).unwrap();
+        let fixed = [
+            "C1".to_string(),
+            "C2".to_string(),
+            "C3".to_string(),
+            "U1".to_string(),
+        ];
+        let held = HeldParts {
+            fixed: &fixed,
+            fixed_patterns: &[],
+            free: &[],
+        };
+        let pairs = held_parts_overlapping(&pcb, held).unwrap();
+        assert_eq!(
+            pairs,
+            [(
+                "C1".to_string(),
+                "C2".to_string(),
+                "courtyards and pads on F.Cu".to_string()
+            )]
+        );
+        let warning = overlap_warning(&pairs[0].0, &pairs[0].1, &pairs[0].2);
+        assert!(
+            warning.starts_with("fixed parts C1 and C2 overlap"),
+            "{warning}"
+        );
+        // Not fixed, C2 is the placer's to move: nothing to warn of.
+        let fixed = ["C1".to_string(), "C3".to_string(), "U1".to_string()];
+        let held = HeldParts {
+            fixed: &fixed,
+            fixed_patterns: &[],
+            free: &[],
+        };
+        assert!(held_parts_overlapping(&pcb, held).unwrap().is_empty());
     }
 }

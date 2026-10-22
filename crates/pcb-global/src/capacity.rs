@@ -586,6 +586,7 @@ pub(crate) mod tests {
             pad_spokes: Default::default(),
             merged_pads: Vec::new(),
             no_via_pads: Default::default(),
+            fill_passes: Vec::new(),
         }
     }
 

@@ -302,6 +302,7 @@ fn diagonal_channel(notch: bool) -> (Router, [f64; 2]) {
         pad_spokes: Default::default(),
         merged_pads: Vec::new(),
         no_via_pads: Vec::new(),
+        fill_passes: Vec::new(),
     };
     let config = Config {
         pitches: vec![0.1],
@@ -387,6 +388,7 @@ fn walled_in_pad() -> Router {
         pad_spokes: Default::default(),
         merged_pads: Vec::new(),
         no_via_pads: Vec::new(),
+        fill_passes: Vec::new(),
     };
     let config = Config {
         pitches: vec![0.1],
@@ -464,6 +466,7 @@ fn halves(apart_trees: bool) -> Router {
         pad_spokes: Default::default(),
         merged_pads: Vec::new(),
         no_via_pads: Vec::new(),
+        fill_passes: Vec::new(),
     };
     let config = Config {
         pitches: vec![0.1],
@@ -599,6 +602,7 @@ fn crossed_net() -> Router {
         pad_spokes: Default::default(),
         merged_pads: Vec::new(),
         no_via_pads: Vec::new(),
+        fill_passes: Vec::new(),
     };
     let config = Config {
         pitches: vec![0.1],
@@ -826,6 +830,7 @@ fn board(
         pad_spokes: Default::default(),
         merged_pads: Vec::new(),
         no_via_pads: Vec::new(),
+        fill_passes: Vec::new(),
     }
 }
 

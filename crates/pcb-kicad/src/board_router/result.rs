@@ -148,6 +148,13 @@ pub struct KiCadBoardRouterResult {
     /// text box without its box. Empty on an ordinary board.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    /// How whole the pours stayed on the board written, per zone and
+    /// layer: pieces, the largest one's share, coverage, the other nets'
+    /// tracks that cut it (`KiCadPourQuality`), measured by the pour model
+    /// after the final route (route mode and a layout's result; not a
+    /// layout's own ladder attempts). The verdict's `pours`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pour_quality: Vec<KiCadPourQuality>,
 }
 
 /// Where a route's wall clock went, beside its work: the routers' phases
