@@ -155,6 +155,11 @@ pub(crate) struct MemoryInputs {
     /// MemTotal and MemAvailable.
     pub total_mb: Option<f64>,
     pub available_mb: Option<f64>,
+    /// The static maps and the connected pours' masks the process holds
+    /// (pcb-router's `held_maps_bytes`: its routers' and the ladder's
+    /// holds), in the resident size above.
+    pub held_statics_mb: f64,
+    pub held_masks_mb: f64,
 }
 
 const BYTES_PER_MB: f64 = 1024.0 * 1024.0;
@@ -226,6 +231,9 @@ impl MemoryInputs {
             available_mb: kilobytes_field(&meminfo, "MemAvailable:"),
             ..Self::default()
         };
+        let (statics, masks) = pcb_router::router::held_maps_bytes();
+        inputs.held_statics_mb = statics as f64 / BYTES_PER_MB;
+        inputs.held_masks_mb = masks as f64 / BYTES_PER_MB;
         let (v2, v1) = cgroup_paths(&fs::read_to_string("/proc/self/cgroup").unwrap_or_default());
         if let Some(path) = v2 {
             // Every level's memory.max holds, the root's included.
@@ -277,6 +285,13 @@ fn address_space_limit_mb() -> Option<f64> {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct MemoryLimits {
     pub limits: Vec<MemoryLimit>,
+    /// The static maps and pour masks held in the process as the limits
+    /// were read (`MemoryInputs::held_statics_mb`), named in `describe`:
+    /// they are in its resident size, so what is free under each limit
+    /// counts them; the ladder holds a phase's maps (`Ladder::new_phase`)
+    /// and releases them when the phase ends.
+    pub held_statics_mb: f64,
+    pub held_masks_mb: f64,
 }
 
 impl MemoryLimits {
@@ -349,7 +364,11 @@ impl MemoryLimits {
                 shared: true,
             });
         }
-        Self { limits }
+        Self {
+            limits,
+            held_statics_mb: inputs.held_statics_mb,
+            held_masks_mb: inputs.held_masks_mb,
+        }
     }
 
     /// The machine's available memory (MemAvailable).
@@ -397,20 +416,41 @@ impl MemoryLimits {
     /// fixed number, so that what the ladder attempts does not depend on
     /// what else runs).
     pub(crate) fn too_small_for(&self, maps_mb: f64, routers: usize) -> Option<&MemoryLimit> {
+        self.too_small_for_beside(maps_mb, routers, 0.0)
+    }
+
+    /// `too_small_for` with `beside_mb` held beside the routers (the rung
+    /// probes' other static maps, `Ladder::probes`).
+    pub(crate) fn too_small_for_beside(
+        &self,
+        maps_mb: f64,
+        routers: usize,
+        beside_mb: f64,
+    ) -> Option<&MemoryLimit> {
         self.limits
             .iter()
             .filter(|limit| !limit.shared)
-            .find(|limit| routers as f64 * limit.router_mb(maps_mb) > limit.limit_mb)
+            .find(|limit| {
+                routers as f64 * limit.router_mb(maps_mb) + beside_mb.max(0.0) > limit.limit_mb
+            })
     }
 
     /// One line for the log: every limit, the tightest first.
     pub(crate) fn describe(&self) -> String {
         let mut limits: Vec<&MemoryLimit> = self.limits.iter().collect();
         limits.sort_by(|a, b| a.usable_mb().total_cmp(&b.usable_mb()));
+        let held = if self.held_statics_mb + self.held_masks_mb >= 0.5 {
+            format!(
+                "; held: static maps {:.0} MB, pour masks {:.0} MB",
+                self.held_statics_mb, self.held_masks_mb
+            )
+        } else {
+            String::new()
+        };
         if limits.is_empty() {
-            return "no memory limit known".into();
+            return format!("no memory limit known{held}");
         }
-        limits
+        let described = limits
             .iter()
             .map(|limit| {
                 format!(
@@ -426,7 +466,8 @@ impl MemoryLimits {
                 )
             })
             .collect::<Vec<_>>()
-            .join("; ")
+            .join("; ");
+        format!("{described}{held}")
     }
 }
 
@@ -443,6 +484,19 @@ pub(crate) fn fit_note(maps_mb: f64, limit: Option<&MemoryLimit>) -> String {
         ),
         None => "no memory limit known".into(),
     }
+}
+
+/// The megabytes of a router's static maps, from its memory report
+/// (`...: statics N, ...`).
+pub(crate) fn statics_mb_of(report: &str) -> Option<f64> {
+    report
+        .split_once("): statics ")?
+        .1
+        .split_once(',')?
+        .0
+        .trim()
+        .parse::<f64>()
+        .ok()
 }
 
 /// The megabytes of a router's lattice maps, from its memory report

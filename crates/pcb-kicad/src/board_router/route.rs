@@ -329,12 +329,24 @@ impl LadderRunner for KiCadRunner<'_> {
         &self,
         board: &core::Board,
         attempt: &KiCadBoardRouterConfig,
-    ) -> (core::router::StaticMapsHold, f64) {
+    ) -> core::router::StaticMapsHold {
         core::router::hold_static_maps(board, &core_config(attempt))
+    }
+
+    fn hold_key(&self, hold: &core::router::StaticMapsHold) -> Option<u128> {
+        hold.key()
+    }
+
+    fn statics_key(&self, board: &core::Board, attempt: &KiCadBoardRouterConfig) -> Option<u128> {
+        core::router::static_maps_key(board, &core_config(attempt))
     }
 
     fn maps_mb(&self, router: &core::router::Router) -> Option<f64> {
         maps_mb_of(&router.memory_report())
+    }
+
+    fn statics_mb(&self, router: &core::router::Router) -> Option<f64> {
+        statics_mb_of(&router.memory_report())
     }
 
     fn probe(&self, router: &mut core::router::Router, work: f64, mode: usize) -> usize {
@@ -371,6 +383,7 @@ impl LadderRunner for KiCadRunner<'_> {
             expansions: router.expansions(),
             pour: router.pour_work(),
             build: router.build_work(),
+            shared: router.shared_build(),
         }
     }
 
@@ -435,6 +448,23 @@ impl LadderRunner for KiCadRunner<'_> {
         )
     }
 
+    fn route_lowered(
+        &self,
+        directory: &Path,
+        attempt: &KiCadBoardRouterConfig,
+        connect: bool,
+        board: core::Board,
+    ) -> Result<KiCadBoardRouterResult, String> {
+        route_kicad_board_lowered(
+            self.source_directory,
+            self.board_id,
+            directory,
+            attempt,
+            connect,
+            Some((board, self.lowering_work)),
+        )
+    }
+
     fn check(&self, result: &mut KiCadBoardRouterResult, directory: &Path) -> Result<(), String> {
         check_attempt(result, directory, self.board_id)
     }
@@ -461,9 +491,10 @@ pub(super) fn route_seeds(
     // In waves of `side_by_side` (memory), in seed order.
     let seeds: Vec<u64> = (first..first + count.max(1) as u64).collect();
     // The seeds' static maps, held before they start side by side: built
-    // once, their work spread over the seeds (the ladder counts the kept
-    // seed's work once a seed).
-    let (_held, statics) = core::router::hold_static_maps(board, config);
+    // once (or held by the ladder already), and shared (the ladder
+    // charges the kept seed's own maps once a seed and the shared parts
+    // of its build once, `Ladder::lattice_charge`).
+    let _held = core::router::hold_static_maps(board, config);
     let mut results: Vec<(Option<u64>, core::RoutingResult)> = Vec::new();
     let mut maps_mb = 0.0f64;
     for wave in seeds.chunks(side_by_side.max(1)) {
@@ -524,12 +555,11 @@ pub(super) fn route_seeds(
             score.0, score.1, score.2
         );
     }
-    let mut best = scored
+    let best = scored
         .into_iter()
         .min_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal))
         .expect("at least one seed")
         .2;
-    best.build_work += statics / seeds.len() as f64;
     (best, maps_mb)
 }
 
@@ -584,8 +614,7 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
         // A budget given in seconds is turned into work (search
         // expansions), so that results do not depend on the machine's
         // load; the clock stays as a guard.
-        router_config.negotiation_expansions =
-            (seconds * core::router::expansions_per_second()) as u64;
+        router_config.negotiation_expansions = core::router::negotiation_expansions(seconds);
         router_config.negotiation_seconds = seconds * core::router::guard();
         // The polish after it may not take longer than the negotiation was
         // allowed.
@@ -597,8 +626,7 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
         // and video's narrow-signal attempt stopped at 900 s of wall clock
         // wherever the load had brought it (1124 s of work on one run).
         let seconds = router_config.negotiation_seconds;
-        router_config.negotiation_expansions =
-            (seconds * core::router::expansions_per_second()) as u64;
+        router_config.negotiation_expansions = core::router::negotiation_expansions(seconds);
         router_config.negotiation_seconds = seconds * core::router::guard();
     }
     if let Some(length) = config.escape_stub_mm {
@@ -759,6 +787,7 @@ pub(crate) fn finish_routed_board(
         first_iteration_expansions: result.first_iteration_expansions,
         pour_work_seconds: result.pour_work,
         build_work_seconds: result.build_work,
+        shared_build: result.shared_build,
         lowering_work_seconds: 0.0,
         wall_accounting: None,
         kept_copper: None,

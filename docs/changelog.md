@@ -11,6 +11,159 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (ladder review fixes)
+
+The fixes of docs/reviews/2026-10-21-review-ladder-work.md. Branch
+ladder-review-fixes; snapshots x1520 (the first version: the probes'
+maps released when the probes end), x1521 (carried into the regular
+pitch; the measurements) and x1522 (x1521 rebased on 2094b6b, the
+pre-routed nets: a rung the ladder lowered has its kept copper from the
+runner's lowering; Vortac's determinism run identical to x1521's).
+Details: docs/router.md, "The canonical charge".
+
+**Finding 1, the charged work by the free memory.** A router's build is
+now priced as if it built everything itself (`Router::build_work`,
+`build_counts`), whether it built its static maps and pour masks or
+found them, and names the parts routers of the same inputs share, keyed
+(`Router::shared_build`, `SharedBuild`: the static maps beyond its own
+maps, the connected pours' masks). The ladder charges each shared part
+once a phase (the probes with the regular pitch after them, each finer
+pitch, each seed round, each step; `Ladder::new_phase`,
+`lattice_charge`), the first time a router of its key is charged in the
+rungs' order, and the routers their own maps. Of the review's two
+options this is the second (the hold-once one, made independent of
+waves by keying the charge on the ladder's order, not on which hold ran
+first): its total is what the ladder charges running one router at a
+time, each phase building each key's maps once and the later routers
+sharing them, and what is charged once is built once (the ladder holds a
+phase's maps: every rung's, a lone rung's as a wave's). The first option
+(a found map at a whole build's price) would charge four lattices for
+four probes that build one, and `retry` builds for seeds that share one:
+work no run does. The scripted-runner test
+`route_mode_charges_the_same_one_at_a_time_and_side_by_side` (probed
+four-layer, unprobed four-layer and two-layer ladders with the memory of
+one router at a time and of 32 GB) asserts the same charges, work and
+kept board; before, a wave's hold lowered its rungs a second time (and
+only a wave), so it fails on the lowerings alone.
+
+**Finding 2, the probes' hold.** Held and charged only once the first
+probe's router passed the memory gate (before, built and charged before
+it, also when no probe then ran); the gate counts the other rungs'
+static maps beside the two routers (`too_small_for_beside`, the
+distinct keys beyond the first router's at its `statics` size), and the
+probes charge their maps as they are judged (a probe the order never
+reaches charges nothing, as its search).
+
+**Finding 3, retention.** The strong `cache.1` is gone: the static maps'
+cache and `POUR_MASKS` are weak entries, held by routers and holds
+alone. The ladder's phase holds are its explicit retention: released
+when the pitch ends, before the seed retry (all but the retried rung's
+maps), per seed round and per step; the probes' holds go on into the
+regular pitch (its rungs lower the same boards) and end with it.
+`MemoryLimits` names what is held (`held: static maps N MB, pour masks M
+MB` in the `memory limits:` line, `held_maps_bytes`); it is in the
+resident size every limit's free memory counts. The pour masks need no
+byte bound now: nothing outlives the holds. A layout's move routers no
+longer keep the last router's maps.
+
+**Finding 5, lowerings.** A rung's board is lowered once, for its hold,
+and routed as lowered (`LadderRunner::route_lowered`); seeds charge
+their one lowering once (it was `retry` times). The probes' lowerings and
+the regular rungs' are both done and each charged once.
+
+**Finding 6, `run_work`.** Search work against search work: the rungs'
+and the continuation's total is the budget at the routers' search
+fraction (`PitchPlan::total`, `built_router_work`), as what is left is.
+
+**Finding 7, a negotiation of nothing.** `negotiation_expansions(seconds)`
+is at least one expansion (0 means no limit): a bound of nothing stops
+the negotiation after its first iteration by its own limit (probe,
+resume, `core_config`).
+
+**Finding 8, the panic hook.** main.rs keeps the last panic's message
+and place; the uncaught panic is reported by its own payload (with the
+hook's place when that panic is the last one), and `is_closed_stdout`
+tests the uncaught panic's message (unit test
+`the_uncaught_panic_is_reported_with_its_own_message`).
+
+**Finding 9, the build race.** A router that loses the race of two
+builds of one key did the build: it counts as built (`shared_statics`).
+
+**Finding 10, the wall accounting.** The holds' builds count in
+`BUILD_WORK_NANOS` and a router counts what it built
+(`physical_build_work`), so `wall_accounting.lattice_work_seconds` is
+the lattice work done (the charged lattice work where the ladder charged
+every router built: Vortac 1.5 to 1.6 s done for 1.3 charged, the
+difference small routers built before the ladder and a wave's rung the
+order never reached; x1404 had 0.5 done for 1.3 charged, the holds
+missing).
+
+**Nit.** `PCB_LADDER_UNCHARGED_SPOKES` is `PCB_LADDER_SEARCH_ONLY` (it
+turned off all charging beyond the search and the shares' conversion,
+not only the spokes); config reference regenerated.
+
+**The determinism check** (each board alone, route mode at 30 s, one
+thread, the reference's rates pinned, `PCB_ROUTER_NO_WALL_GUARD=1`,
+`PCB_MAKER_MEMORY_MB` small enough for one router at a time where the
+probes' gate still passes, then 64000; Vortac's panel, MSign, ChengminLi's
+flyback; work and the charges from `wall_accounting`):
+
+| board | side by side, small / large | x1404 small | x1404 large | x1521 small and large (identical) |
+|---|---|---|---|---|
+| Vortac_Panel_REV1 (1900 MB) | probes 2, 1, 1 then rungs 1 / probes 4, rungs 3 | work 34.9726, lowerings 0.0331 | work 34.9792, lowerings 0.0397 | work 34.9726, lattices 1.2990, lowerings 0.0331 |
+| MSign (3200 MB) | probes 1 / 4 | 32.346 | 32.346 | 32.346, lattices 1.3466 |
+| ChengminLi flyback (4000 MB) | rungs 1, seeds 1 / rungs 2 | 24.1777, lattices 3.460, lowerings 0.0091 | 24.1800, lowerings 0.0113 | 23.9813, lattices 3.2667, lowerings 0.0057 |
+
+Rows and boards are identical in all twelve runs (Vortac 50/61, 125
+unconnected, 54 vias; MSign 155/188, 346, 183; ChengminLi 35/38, 4,
+11; the result boards byte for byte per board). On x1404 the charged
+work already differed with the memory (the wave's second lowering;
+none of these three had a router find another's maps in a way that
+moved the lattices) without moving a board; on x1521 it does not.
+x1520 released the probes' maps when the probes ended, so Vortac's
+regular rungs rebuilt them and charged 2.265 s of lattices (x1404 had
+charged them as found, the last held maps still in the process); x1521
+carries them into the regular pitch: 1.299, x1404's.
+
+**Expansion tier** (8 x 1, `--no-lock --min-free-gb 14`, no OOM kill)
+x1521 against build/expansion-fence-x1404.log: all 46 rows the same
+result and the 46 result boards byte for byte; work moved on four rows
+by 0.1 s (Miniboard 28.9 to 28.8, LC_PAMV4b 27.5 to 27.6, Barklind
+25.2 to 25.3, pdlc 31.5 to 31.6: their seeds' one lowering, a found map
+now charged at its canonical price), not enough to move a share past a
+decision. Against build/expansion-probe-x1394.log it is x1404's
+comparison exactly: unconnected 786 to 750, passes 16 to 18, new
+errors 4 to 2, better 13, worse 10.
+
+**Short tier** (3 x 2, `--no-lock --min-free-gb 14`) x1521 against
+build/short-fence-x1403.log: all 12 rows identical and the 12 result
+boards byte for byte (a layout's ladder charges search; the maps are
+the same maps).
+
+**Fingerprints** (Castor, k30-SBC, jetson, Sisu; route mode from v16,
+1 x 4, budget scale 0.25, `PCB_ROUTER_FINGERPRINT=1
+PCB_ROUTER_NO_WALL_GUARD=1`) x1521 against build/fp-fence-x1402: Castor
+and k30 every fingerprint and the board identical (work 170.5 to 174.2
+and 285.6 to 284.6 s: x1404's as well); jetson and Sisu changed, but
+their boards, rows and work are build/fp-base-x1404's exactly (jetson
+20 unconnected, 597 vias, 10784.0 mm; Sisu 24, 386, 5634.7 mm): the
+change is x1404's (its routing after x1402), none of this package's
+(Castor's work 174.1 to 174.2 against x1404, its probes' lattices at
+the canonical price).
+
+Unit tests: route_mode_charges_the_same_one_at_a_time_and_side_by_side,
+route_mode_charges_all_the_work (one lowering a seed round),
+routers_of_one_board_and_lattice_share_their_static_maps (the canonical
+counts, the shared parts and their keys, the hold's work, nothing kept
+after the holders), a_negotiation_bound_of_nothing_is_one_expansion,
+the_uncaught_panic_is_reported_with_its_own_message. `bash
+scripts/check.sh` and the clippy gate pass. Docs: router.md (The
+canonical charge, the static maps, the work bound's switches), config
+reference (`PCB_LADDER_SEARCH_ONLY`, `share_static_maps`).
+
+Logs: build/expansion-ladfix-x1521, build/short-ladfix-x1521,
+build/fp-ladfix-x1521; the determinism runs' boards and logs were in
+the agent's scratchpad (ladfix1-det).
 ## Committed on 2026-10-21 (net ties, same-number pads, starved thermals)
 
 The three cheap fixes of the v18 gap analysis (docs/benchmarks.md,

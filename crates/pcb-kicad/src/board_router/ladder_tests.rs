@@ -46,6 +46,8 @@ struct Outcome {
 /// A probing router of the scripted runner.
 struct FakeProbe {
     mode: usize,
+    /// Its static maps' key (`statics_key_of`).
+    key: u128,
     expansions: u64,
     pour: f64,
     /// Its limit counts its pour work (`limits_count_all`).
@@ -76,6 +78,31 @@ struct Fake {
     probe_pours: Vec<f64>,
     build: f64,
     lowering: f64,
+    /// The part of `build` routers of the same static maps share
+    /// (`SharedBuild::statics`, keyed by `statics_key_of`).
+    shared_statics: f64,
+    /// The memory limits as the runner measures them (how many routers
+    /// run side by side).
+    limits: MemoryLimits,
+}
+
+/// The scripted runner's static maps' key of a rung on a lattice: the
+/// exclusive planes act on the router, not on the maps (the connect
+/// rung's), every other rung and pitch has its own.
+fn statics_key_of(attempt: &KiCadBoardRouterConfig, connect: bool) -> u128 {
+    let rung = match rung_of(attempt, connect) {
+        "exclusive" => "connect",
+        rung => rung,
+    };
+    let pitch = attempt
+        .grid_pitches_mm
+        .as_ref()
+        .map_or(0, |pitches| (pitches[0] * 1.0e4).round() as u128);
+    let index = ["connect", "skeleton", "stubs", "tracks"]
+        .iter()
+        .position(|other| *other == rung)
+        .unwrap_or(9) as u128;
+    1 + index * 100_000 + pitch
 }
 
 impl Fake {
@@ -95,6 +122,16 @@ impl Fake {
             probe_pours: Vec::new(),
             build: 0.0,
             lowering: 0.0,
+            shared_statics: 0.0,
+            limits: machine(),
+        }
+    }
+
+    /// A routed or probing router's shared parts (`RouterWork::shared`).
+    fn shared(&self, key: u128) -> core::router::SharedBuild {
+        core::router::SharedBuild {
+            statics: (self.shared_statics > 0.0).then_some((key, self.shared_statics)),
+            masks: None,
         }
     }
 
@@ -171,6 +208,7 @@ fn report(open: usize, work: f64, pitch: f64) -> KiCadBoardRouterResult {
         first_iteration_expansions: 0,
         pour_work_seconds: 0.0,
         build_work_seconds: 0.0,
+        shared_build: Default::default(),
         lowering_work_seconds: 0.0,
         wall_accounting: None,
         kept_copper: None,
@@ -184,34 +222,48 @@ fn write_board(directory: &Path, what: &str) -> Result<(), String> {
 }
 
 impl LadderRunner for Fake {
-    type Board = usize;
+    /// The board's static maps' key.
+    type Board = u128;
     type Probe = FakeProbe;
     type Routed = Outcome;
-    type Hold = ();
+    type Hold = u128;
 
-    fn lower(&self, _: &KiCadBoardRouterConfig, _: bool) -> Result<usize, String> {
-        Ok(0)
+    fn lower(&self, attempt: &KiCadBoardRouterConfig, connect: bool) -> Result<u128, String> {
+        Ok(statics_key_of(attempt, connect))
     }
 
-    fn size(&self, _: &usize) -> (usize, usize) {
+    fn size(&self, _: &u128) -> (usize, usize) {
         (self.layers, self.connections)
     }
 
-    fn build(&self, _: &usize, attempt: &KiCadBoardRouterConfig, _: bool) -> FakeProbe {
+    fn build(&self, board: &u128, attempt: &KiCadBoardRouterConfig, _: bool) -> FakeProbe {
         FakeProbe {
             mode: usize::MAX,
+            key: *board,
             expansions: 0,
             pour: 0.0,
             counts_all: attempt.limits_count_all,
         }
     }
 
-    fn hold(&self, _: &usize, _: &KiCadBoardRouterConfig) -> ((), f64) {
-        ((), 0.0)
+    fn hold(&self, board: &u128, _: &KiCadBoardRouterConfig) -> u128 {
+        *board
+    }
+
+    fn hold_key(&self, hold: &u128) -> Option<u128> {
+        Some(*hold)
+    }
+
+    fn statics_key(&self, board: &u128, _: &KiCadBoardRouterConfig) -> Option<u128> {
+        Some(*board)
     }
 
     fn maps_mb(&self, _: &FakeProbe) -> Option<f64> {
         Some(100.0)
+    }
+
+    fn statics_mb(&self, _: &FakeProbe) -> Option<f64> {
+        Some(40.0)
     }
 
     fn probe(&self, probe: &mut FakeProbe, work: f64, mode: usize) -> usize {
@@ -237,10 +289,11 @@ impl LadderRunner for Fake {
             expansions: probe.expansions,
             pour: probe.pour,
             build: self.build,
+            shared: self.shared(probe.key),
         }
     }
 
-    fn lowering_work(&self, _: &usize) -> f64 {
+    fn lowering_work(&self, _: &u128) -> f64 {
         self.lowering
     }
 
@@ -264,13 +317,14 @@ impl LadderRunner for Fake {
                 expansions,
                 pour: probe.pour + self.pour,
                 build: self.build,
+                shared: self.shared(probe.key),
             },
         )
     }
 
     fn write(
         &self,
-        _: &usize,
+        _: &u128,
         routed: Outcome,
         _: &KiCadBoardRouterConfig,
         directory: &Path,
@@ -281,6 +335,17 @@ impl LadderRunner for Fake {
         result.pour_work_seconds = self.probe_pour + self.pour;
         result.build_work_seconds = self.build;
         Ok(result)
+    }
+
+    fn route_lowered(
+        &self,
+        directory: &Path,
+        attempt: &KiCadBoardRouterConfig,
+        connect: bool,
+        board: u128,
+    ) -> Result<KiCadBoardRouterResult, String> {
+        assert_eq!(board, statics_key_of(attempt, connect));
+        self.route(directory, attempt, connect)
     }
 
     fn route(
@@ -310,6 +375,7 @@ impl LadderRunner for Fake {
         result.manual_spokes_work_seconds = self.spokes;
         result.pour_work_seconds = self.pour + self.spokes;
         result.build_work_seconds = self.build;
+        result.shared_build = self.shared(statics_key_of(attempt, connect));
         result.lowering_work_seconds = self.lowering;
         result.first_iteration_expansions =
             (self.first_iteration.min(work) * core::router::expansions_per_second()).round() as u64;
@@ -325,7 +391,7 @@ impl LadderRunner for Fake {
     }
 
     fn memory_limits(&self) -> MemoryLimits {
-        machine()
+        self.limits.clone()
     }
 }
 
@@ -704,8 +770,9 @@ fn route_mode_charges_all_the_work() {
         (charged.lattice_seconds - attempts).abs() < 1e-6,
         "{charged:?}"
     );
+    // One lowering an attempt (seeds share theirs) and the probes' first.
     assert!(
-        (charged.lowering_seconds - 0.5 * (attempts + 1.0)).abs() < 1e-6,
+        (charged.lowering_seconds - 0.5 * (routes.len() as f64 + 1.0)).abs() < 1e-6,
         "{charged:?}"
     );
     assert_eq!(charged.kicad_check_seconds, 0.0);
@@ -1059,4 +1126,122 @@ fn a_finer_pitch_that_does_not_fit_the_machine_is_skipped_by_its_maps() {
         "{:?}",
         ladder.skipped
     );
+}
+
+/// A machine where one router fits at a time (`routers_that_fit` gives 1).
+fn one_at_a_time() -> MemoryLimits {
+    MemoryLimits::resolve(&MemoryInputs {
+        virtual_mb: 400.0,
+        resident_mb: 100.0,
+        total_mb: Some(64000.0),
+        available_mb: Some(1500.0),
+        ..MemoryInputs::default()
+    })
+}
+
+/// The ladder's charged work, routes and kept board with the memory
+/// limits `limits` (how many routers run side by side).
+fn charged_with(
+    config: &KiCadBoardRouterConfig,
+    name: &str,
+    layers: usize,
+    probes: bool,
+    limits: MemoryLimits,
+) -> (KiCadWorkCharges, f64, Vec<Routed>, (usize, String)) {
+    // (A rung that ran in a wave and that the order then skipped is in
+    // the routes but charged nothing.)
+    let out = output(name);
+    let mut fake = Fake::new(|routed| {
+        Some(if routed.narrow {
+            Outcome { open: 1, work: 4.0 }
+        } else if routed.seeds > 1 {
+            Outcome { open: 4, work: 3.0 }
+        } else {
+            Outcome {
+                open: if routed.rung == "tracks" { 6 } else { 5 },
+                work: 6.0,
+            }
+        })
+    });
+    fake.layers = layers;
+    if probes {
+        fake.connections = 200;
+        fake.probes = vec![30, 10, 20, 40];
+        fake.continued = Outcome { open: 3, work: 8.0 };
+        fake.probe_pour = 0.5;
+    }
+    fake.pour = 1.0;
+    fake.build = 1.0;
+    fake.shared_statics = 0.6;
+    fake.lowering = 0.25;
+    fake.limits = limits;
+    let mut ladder = ladder(config, &out, layers);
+    ladder.run(&fake).unwrap();
+    (
+        ladder.charged,
+        ladder.work,
+        fake.routes(),
+        kept(&ladder, &out),
+    )
+}
+
+/// Route mode: the work the ladder charges, and so every share after it,
+/// is the same whether its rungs, probes and seeds run one at a time or
+/// side by side (which follows the memory available): a router charges
+/// its own maps and each shared part of a build (the static maps, the
+/// pours' masks) is charged once a phase, by the first router of its key
+/// in the rungs' order; the ladder holds the maps for the phase so that
+/// what it charges once is built once; a rung's board is lowered once
+/// whether it runs alone or in a wave. Until 2026-10-21 a router that
+/// found its maps in the process charged its own, one that did not the
+/// whole build, and a wave's hold lowered its rungs a second time.
+#[test]
+fn route_mode_charges_the_same_one_at_a_time_and_side_by_side() {
+    for (layers, probes) in [(4, false), (4, true), (2, false)] {
+        let config = with_narrow_step(route_mode(100.0));
+        let name = format!("side-by-side-{layers}-{probes}");
+        let alone = charged_with(
+            &config,
+            &format!("{name}-1"),
+            layers,
+            probes,
+            one_at_a_time(),
+        );
+        let wide = charged_with(&config, &format!("{name}-3"), layers, probes, machine());
+        // The charges, the work and the kept board are the same; so is
+        // every router's limit (a wave also routes a rung the order then
+        // skips: it counts for nothing).
+        assert_eq!(
+            (alone.0, alone.1, &alone.3),
+            (wide.0, wide.1, &wide.3),
+            "{layers} layers, probes {probes}"
+        );
+        assert!(
+            alone.2.iter().all(|routed| wide.2.contains(routed)),
+            "{:?} {:?}",
+            alone.2,
+            wide.2
+        );
+        let (charged, work, routes, _) = alone;
+        // Rungs sharing maps charged them once: less than a whole build
+        // a router.
+        let routers = routes.iter().map(|routed| routed.seeds as f64).sum::<f64>()
+            + if probes { 4.0 } else { 0.0 };
+        assert!(
+            charged.lattice_seconds < routers - 1e-6,
+            "{charged:?} {routes:?}"
+        );
+        assert!(
+            charged.lattice_seconds >= routers * 0.4 - 1e-6,
+            "{charged:?}"
+        );
+        // One lowering a rung's route, a seed round's or a step's (and
+        // each probe's board).
+        let lowerings = routes.len() as f64 + if probes { 4.0 } else { 1.0 };
+        assert!(
+            (charged.lowering_seconds - 0.25 * lowerings).abs() < 1e-6,
+            "{charged:?} {routes:?}"
+        );
+        assert!(work > 0.0);
+    }
 }

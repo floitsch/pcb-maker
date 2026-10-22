@@ -53,8 +53,12 @@ pub struct RoutingResult {
     pub pour_work: f64,
     /// The work of building this router (`Router::new`: its lattice's
     /// static maps, the nets' terminals and pour masks), modelled from
-    /// its counts (`BuildCounts`), in seconds of an idle machine.
+    /// its counts (`BuildCounts`), in seconds of an idle machine: the
+    /// same whether it built its static maps or found them.
     pub build_work: f64,
+    /// The parts of `build_work` routers of the same inputs share, keyed
+    /// (`Router::shared_build`).
+    pub shared_build: super::SharedBuild,
 }
 
 /// A machine-readable account of what stood in the way.

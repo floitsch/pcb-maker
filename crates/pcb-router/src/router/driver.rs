@@ -55,7 +55,7 @@ impl Router {
             self.config.negotiation_expansions,
         );
         self.config.negotiation_seconds = seconds * guard();
-        self.config.negotiation_expansions = (seconds * expansions_per_second()) as u64;
+        self.config.negotiation_expansions = negotiation_expansions(seconds);
         self.negotiate(&order, order.clone());
         (
             self.config.negotiation_seconds,
@@ -89,7 +89,7 @@ impl Router {
             self.config.negotiation_expansions,
         );
         self.config.negotiation_seconds = seconds * guard();
-        self.config.negotiation_expansions = (seconds * expansions_per_second()) as u64;
+        self.config.negotiation_expansions = negotiation_expansions(seconds);
         self.hopeless = false;
         let order = self.routing_order();
         let pending: Vec<NetId> = order
@@ -368,6 +368,7 @@ impl Router {
             first_iteration_expansions: self.first_iteration_expansions,
             pour_work: self.pour_work_seconds(),
             build_work: self.build_work,
+            shared_build: self.shared_build(),
         }
     }
 

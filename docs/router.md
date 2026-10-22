@@ -1291,7 +1291,8 @@ its deadline: megaduck's narrow-signal step started with 3.9 s left and
 did 17.6 s in its one iteration (45 s of work for a bound of 32 s); the
 step is then skipped, with why; nor with less than a fifth of the
 first attempt's work (since the same day, `step_cost_fits`: "The probes'
-overhead" below). `PCB_LADDER_UNCHARGED_SPOKES` and
+overhead" below). `PCB_LADDER_SEARCH_ONLY` (until the ladder review
+fixes `PCB_LADDER_UNCHARGED_SPOKES`) and
 `PCB_LADDER_NO_FIRST_ITERATION_GATE` restore the count and the start rule
 before (for attributing rows). The layout's ladder counts neither.
 Since the same day route mode's ladder counts all of an attempt's work
@@ -1619,21 +1620,20 @@ hidden, each part still charged:
   lattice, which classes are searched and the rules beyond the classes,
   so routers of the same inputs share them now (`shared_statics`, a
   process-wide cache by a 128-bit key of those inputs' exact debug
-  forms, the last built kept and the others while a router holds them;
-  `Config::share_static_maps`). A router that shares them counts its own
-  maps only: `BuildCounts::shared_map_nodes` at
-  `BUILD_SHARED_MAP_NANOS` (12 ns a node; fitted on the shared builds of
+  forms, while a router or a hold holds them; `Config::share_static_maps`).
+  A router that shares them builds its own maps only
+  (`BUILD_SHARED_MAP_NANOS`, 12 ns a node; fitted on the shared builds of
   eleven probed boards at 4 s, the fastest of each board's repeats scaled
   by the measured share, 11.7 over their sum, 7.0 to 20.6 a board) and
-  its nets' preparation. Before routers start side by side (the probes,
-  a wave of rungs, the seeds) the ladder holds their maps in rung order
-  (`hold_static_maps`, `LadderRunner::hold`), so that which router starts
-  first does not decide who counts the build: the probes' build is
-  counted once with the probes, a wave's with the rung that is first of
-  its maps, the seeds' spread over them. The connected pours' masks
-  (`compute_pour_masks`) are held with them by the board's pours
+  its nets' preparation. The ladder holds the maps of the routers it
+  starts (`hold_static_maps`, `LadderRunner::hold`), so that which router
+  starts first does not decide who builds them. The connected pours'
+  masks (`compute_pour_masks`) are held with them by the board's pours
   (`POUR_MASKS`): the three connected probes lower one board. The routing
-  is the same (`PCB_ROUTER_NO_SHARED_STATICS` builds them all anew).
+  is the same (`PCB_ROUTER_NO_SHARED_STATICS` builds them all anew). How
+  the shared build is charged: "The canonical charge" below (until the
+  ladder review fixes a router that found its maps counted its own maps
+  only, so the charge followed what the process happened to hold).
 - *The continuation's share.* The leader's continuation builds no
   lattice: its share of the bound becomes search work by its own probe's
   proportion of search and pour work (`built_router_work`), not by all
@@ -1668,6 +1668,89 @@ the connected probes' pour refresh at the analyses' remaining cost (the
 nodes inside the pour and the spoke queries: Vortac 1.9 to 4.5 s a
 probe), the key of the static maps (the obstacles' debug form, in the
 fitted constant).
+
+**The canonical charge** (2026-10-21, ladder review fixes). With the
+static maps shared, who found its maps and who built them depended on
+the order routers were built in, and that on how many rungs, probes and
+seeds ran side by side, which follows the memory available
+(MemAvailable, a cgroup's use): a router that found the maps of an
+earlier one (the last built stayed in the process) counted its own
+maps, one that did not the whole build, and the difference (0.3 to 6 s
+of work a board) went into every share after it. So the charged work,
+and the routing, depended on the machine's free memory
+(docs/reviews/2026-10-21-review-ladder-work.md, finding 1). Now:
+
+- *A router's price is canonical.* `Router::build_work` is the build as
+  if the router built everything itself (`build_counts`: every class's
+  nodes at `BUILD_MAP_NANOS`, the static maps' tests, the nets'
+  preparation and their pours' masks), whether it built its maps or
+  found them, and `Router::shared_build` names the parts routers of the
+  same inputs share, each with its key: the static maps beyond the
+  router's own (nodes at `BUILD_MAP_NANOS` less `BUILD_SHARED_MAP_NANOS`,
+  their tests, edges and tight steps; `statics_key`) and the connected
+  pours' masks (`pour_masks_key`). A router's own counts do not depend on
+  the cache any more (a first attempt that stops on all its work,
+  `limits_count_all`, stops where it did when it built them).
+- *The ladder charges each shared part once a phase.* A phase is the
+  probes, a pitch's rungs (with the last rung's seed retry), a seed
+  round, a step (`Ladder::new_phase`). In the rungs' order, the first
+  router of a key charges the shared parts, the others their own maps
+  (`Ladder::lattice_charge`); seeds charge their own maps once a seed
+  and the shared parts once. Charging happens in the order the ladder
+  judges the attempts, which does not depend on how many ran at once,
+  and a rung that ran in a wave and that the order never reached
+  charges nothing, as before. The total is what a single-threaded run
+  of the ladder charges: one router after the other, each phase building
+  each key's maps once and every later router of the phase sharing them
+  (with the canonical price, a single-threaded run and a run with three
+  side by side charge the same; charging a found map as a whole build
+  instead would charge four lattices for four probes that build one,
+  and seeds `retry` builds for one).
+- *What is charged once is built once.* The ladder holds the maps of
+  every rung it starts for the rest of the pitch, a lone rung's as a
+  wave's (`rung_wave`): the pitch's later rungs and the last rung's seeds
+  find them. The probes hold theirs once the first probe's router
+  passed the memory gate, and the regular pitch after them goes on with
+  the probes' phase (the same boards: its rungs find the maps, `carried`;
+  without that a probed board's regular rungs rebuilt them, which x1404
+  charged as found when the last held maps were still in the process); a
+  seed round and a step hold their own (`route_seeds`, the router). Before the seed retry the
+  pitch releases every rung's maps but the retried rung's. Nothing else
+  keeps maps: the cache's entries are weak (until now the last maps
+  built stayed for the process's life, `cache.1`: a router's worth after
+  a 0.05 mm rung, and one set across a layout's move routers), and the
+  pours' masks are held by the holds alone (they were the last four
+  boards' for the process's life). `wall_accounting.lattice_work_seconds`
+  counts what the holds built beside the routers' own builds
+  (`physical_build_work`), so it is the charged lattice work where the
+  ladder ran every router it charged (it still counts builds outside the
+  ladder's charge: rungs of a wave the order never reached, routers built
+  before the ladder).
+- *One lowering an attempt.* A rung's board is lowered once, for its
+  hold, and routed as lowered (`LadderRunner::route_lowered`); a wave's
+  hold lowered its rungs a second time before (and only a wave of two or
+  more: the lowerings charged followed the side-by-side count too). Seeds
+  share one lowering and charge it once (it was charged `retry` times).
+  The probes' boards are lowered for the probes and the regular pitch's
+  rungs lower theirs again: two lowerings done, each charged once.
+- *The memory.* The probes' memory gate counts the other rungs' static
+  maps held beside the two routers (`too_small_for_beside`: the distinct
+  keys beyond the first router's, at its `statics` size), and nothing is
+  held or charged before it passes. `MemoryLimits` names the static maps
+  and pour masks the process holds (`held: static maps N MB, pour masks M
+  MB` in the `memory limits:` line; `held_maps_bytes`); they are in the
+  resident size every limit's free memory is measured from.
+
+The determinism check (VortacDesign, MSign, ChengminLi alone, with
+`PCB_MAKER_MEMORY_MB` small enough for one router at a time and large)
+and the tiers are in docs/changelog.md (ladder review fixes). Smaller
+fixes of the same review: a negotiation bound of nothing is one search
+expansion (`negotiation_expansions`; 0 means no limit, and the bound
+held only because the work deadline was reached too), the router's
+`run_work` is search work against search work (the via reduction's extra
+allowance compared search work left with half of all the work), and
+`PCB_LADDER_SEARCH_ONLY` names what `PCB_LADDER_UNCHARGED_SPOKES` did
+(the search alone, not only the spokes).
 
 **The search's calibration** (2026-10-16). `EXPANSIONS_PER_SECOND` is
 the reference's rate: search expansions per second of a router's phases

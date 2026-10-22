@@ -168,9 +168,9 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "`cap`: the most the wall-clock guards stretch for pinned rates faster than the machine measured (the pinned rate over the measured; default 4, 1: no stretch, the guards before 2026-10-21).",
     ),
     (
-        "PCB_LADDER_UNCHARGED_SPOKES",
+        "PCB_LADDER_SEARCH_ONLY",
         Kind::Switch,
-        "route mode's ladder counts the attempts' search expansions alone, not their manual spokes (the count before 2026-10-21; for attributing rows).",
+        "route mode's ladder counts the attempts' search expansions alone: no manual spokes, pour analyses, lattices or lowerings, and its shares stay search work (the count before 2026-10-21; for attributing rows; was `PCB_LADDER_UNCHARGED_SPOKES`, which named only the spokes).",
     ),
     (
         "PCB_LADDER_UNCHARGED_POUR",

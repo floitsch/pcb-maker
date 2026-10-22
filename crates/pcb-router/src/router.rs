@@ -53,7 +53,9 @@ mod update;
 mod vias;
 mod wall;
 
-pub use build::{BuildCounts, StaticMapsHold, hold_static_maps};
+pub use build::{
+    BuildCounts, SharedBuild, StaticMapsHold, held_maps_bytes, hold_static_maps, static_maps_key,
+};
 pub use config::Config;
 pub use profile::{ProcessAccounting, build_totals, process_accounting};
 pub use result::{DeadPad, Diagnostics, HotSpot, NetStatus, RoutingResult};
@@ -101,6 +103,15 @@ pub fn expansions_per_second() -> f64 {
         0 => REFERENCE_EXPANSIONS_PER_SECOND,
         bits => f64::from_bits(bits),
     }
+}
+
+/// A negotiation's limit of `seconds` of work as search expansions
+/// (`Config::negotiation_expansions`), at least one: 0 means no limit
+/// there, so a bound of nothing (the ladder's `bounded_negotiation` with
+/// nothing left) stops the negotiation after its first iteration by this
+/// limit, not by the work deadline that happens to be reached too.
+pub fn negotiation_expansions(seconds: f64) -> u64 {
+    ((seconds.max(0.0) * expansions_per_second()) as u64).max(1)
 }
 
 /// Sets the rate of `expansions_per_second` for the rest of the process
@@ -339,8 +350,14 @@ struct NetState {
     /// routes at the neck width.
     neck_zones: Vec<(usize, usize, usize, usize)>,
     /// What preparing the net took, counted (`BuildCounts`): nodes tested
-    /// and the shape edges measured (its terminals' nodes, its pour masks).
+    /// and the shape edges measured (its terminals' nodes).
     prepare_counts: [u64; 2],
+    /// The same of its connected pours' masks, whether computed here or
+    /// found (`POUR_MASKS`: the canonical price, `SharedBuild::masks`).
+    mask_counts: [u64; 2],
+    /// Whether its masks were found rather than computed here (the work
+    /// this process did, `Router::physical_build_work`).
+    masks_found: bool,
 }
 
 #[derive(Clone)]
@@ -964,8 +981,10 @@ pub struct Router {
     /// Shared by the copies of a router (they change only with the board,
     /// in `update`, which replaces them).
     statics: Arc<Vec<StaticMaps>>,
-    /// Whether another router built `statics` (`shared_statics`): its
-    /// build is not this router's work.
+    /// Whether another router (or a hold) built `statics`
+    /// (`shared_statics`): the work this process did for them is not this
+    /// router's (`physical_build_work`); its charge is the same either way
+    /// (`build_work`, `shared_build`).
     statics_shared: bool,
     /// The static maps' key when they are shared (`statics_key`): the
     /// pour masks held for them are this router's too.

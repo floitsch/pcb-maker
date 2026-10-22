@@ -313,6 +313,7 @@ impl Router {
             first_iteration_expansions: self.first_iteration_expansions,
             pour_work: self.pour_work_seconds(),
             build_work: self.build_work,
+            shared_build: self.shared_build(),
         }
     }
 

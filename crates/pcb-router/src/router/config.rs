@@ -252,8 +252,10 @@ pub struct Config {
     /// Share the static maps (the outline, every obstacle's nodes, the
     /// tight steps of every class) with the other routers built from the
     /// same board, lattice and classes (`hold_static_maps`): a router
-    /// then builds only its own maps and counts only their work. False
-    /// builds them anew (tests that count a build's work).
+    /// then builds only its own maps; what it counts is the same either
+    /// way (`build_work`, with the shared parts keyed in `shared_build`
+    /// for the ladder to charge once). False builds them anew and keys
+    /// nothing (every router's build charged whole).
     pub share_static_maps: bool,
     /// The work deadline (`deadline_work`) and the negotiation's work
     /// limit (`negotiation_expansions`, in seconds at the reference's

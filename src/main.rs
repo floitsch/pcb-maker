@@ -7,8 +7,12 @@ mod freerouting_backend;
 
 use std::{env, fs, path::Path, process::ExitCode};
 
-/// The first panic's message and place, for the one line `main` prints.
-static PANIC: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+/// The last panic's message (its first line) and place, for the one line
+/// `main` prints: the uncaught panic is the last (a panic the ladder
+/// caught and isolated came before it; until 2026-10-21 the first was
+/// kept, and an uncaught panic after an isolated attempt's was reported
+/// with the attempt's message).
+static PANIC: std::sync::Mutex<Option<(String, String)>> = std::sync::Mutex::new(None);
 
 fn main() -> ExitCode {
     // A panic is reported as one line (and in the run's report) by `main`;
@@ -25,10 +29,8 @@ fn main() -> ExitCode {
             .location()
             .map(|location| format!(" at {}:{}", location.file(), location.line()))
             .unwrap_or_default();
-        if let Ok(mut first) = PANIC.lock()
-            && first.is_none()
-        {
-            *first = Some(format!("{}{place}", message.lines().next().unwrap_or("")));
+        if let Ok(mut last) = PANIC.lock() {
+            *last = Some((message.lines().next().unwrap_or("").to_string(), place));
         }
         if env::var_os("RUST_BACKTRACE").is_some() && !is_closed_stdout(&message) {
             default_hook(info);
@@ -38,20 +40,18 @@ fn main() -> ExitCode {
     let outcome = std::panic::catch_unwind(|| dispatch(arguments));
     let code = match outcome {
         Ok(code) => code,
-        Err(_) => {
-            let message = PANIC
-                .lock()
-                .ok()
-                .and_then(|first| first.clone())
-                .unwrap_or_else(|| "unknown panic".into());
+        Err(payload) => {
+            let payload = payload_message(payload.as_ref());
             // A closed stdout (`pcb-maker --help | head`) ends the process
             // quietly: exit 0, or the verdict's code when the run had one.
-            if is_closed_stdout(&message) {
+            // Tested on the uncaught panic's own message.
+            if is_closed_stdout(&payload) {
                 return ExitCode::from(
                     agent_cli::decided_exit().unwrap_or(pcb_kicad::EXIT_COMPLETE),
                 );
             }
-            let message = format!("internal error (panic): {message}");
+            let last = PANIC.lock().ok().and_then(|last| last.clone());
+            let message = format!("internal error (panic): {}", uncaught(&payload, last));
             agent_cli::report_failure(pcb_kicad::KiCadRunStatus::InternalError, &message);
             eprintln!("error: {message}");
             pcb_kicad::EXIT_INTERNAL
@@ -63,6 +63,26 @@ fn main() -> ExitCode {
 /// Whether a panic message is std's for printing to a closed stdout.
 fn is_closed_stdout(message: &str) -> bool {
     message.starts_with("failed printing to stdout") && message.contains("Broken pipe")
+}
+
+/// A panic payload's message.
+fn payload_message(payload: &(dyn std::any::Any + Send)) -> String {
+    payload
+        .downcast_ref::<&str>()
+        .map(|text| text.to_string())
+        .or_else(|| payload.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic".into())
+}
+
+/// The line for the uncaught panic of message `payload`: its first line,
+/// with the place the hook recorded for the last panic when that panic is
+/// this one (a panic re-raised from a thread runs no hook again).
+fn uncaught(payload: &str, last: Option<(String, String)>) -> String {
+    let first_line = payload.lines().next().unwrap_or("");
+    match last {
+        Some((message, place)) if message == first_line => format!("{message}{place}"),
+        _ => first_line.to_string(),
+    }
 }
 
 /// Runs a command and returns its exit code (`agent_cli::EXIT_CODES`).
@@ -786,5 +806,31 @@ fn board_router_config(
             config.apply_width_floor();
             Ok(config)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_uncaught_panic_is_reported_with_its_own_message() {
+        // The last panic the hook saw is the uncaught one: its place.
+        let last = Some(("index out of bounds".to_string(), " at a.rs:3".to_string()));
+        assert_eq!(
+            uncaught("index out of bounds\nmore", last.clone()),
+            "index out of bounds at a.rs:3"
+        );
+        // A panic the hook saw before (an isolated attempt's) is not this
+        // one: the payload's message, without a place.
+        assert_eq!(uncaught("the board's limit", last), "the board's limit");
+        assert_eq!(uncaught("x", None), "x");
+        // The closed-stdout test reads the uncaught panic's message.
+        assert!(is_closed_stdout(
+            "failed printing to stdout: Broken pipe (os error 32)"
+        ));
+        assert!(!is_closed_stdout("index out of bounds"));
+        let payload: Box<dyn std::any::Any + Send> = Box::new(String::from("owned"));
+        assert_eq!(payload_message(payload.as_ref()), "owned");
     }
 }

@@ -3893,13 +3893,11 @@ fn a_build_is_priced_by_its_counts() {
     // nanoseconds, scaled to the process's rate as the pour model is.
     let counts = BuildCounts {
         map_nodes: 1_000_000,
-        shared_map_nodes: 500_000,
         tests: 2_000_000,
         edges: 3_000_000,
         step_edges: 400_000,
     };
     let nanos = 1.0e6 * BUILD_MAP_NANOS
-        + 5.0e5 * BUILD_SHARED_MAP_NANOS
         + 2.0e6 * BUILD_TEST_NANOS
         + 3.0e6 * BUILD_EDGE_NANOS
         + 4.0e5 * BUILD_STEP_NANOS;
@@ -3948,11 +3946,13 @@ fn a_build_counts_its_maps_tests_and_pour_masks() {
 
 #[test]
 fn routers_of_one_board_and_lattice_share_their_static_maps() {
-    // A router whose static maps another router of the same board,
-    // lattice and classes built shares them and counts only its own maps
-    // (`shared_map_nodes` at `BUILD_SHARED_MAP_NANOS`, the nets' tests);
-    // `hold_static_maps` counts the rest once. The board and the pitch are
-    // this test's own (the maps are shared across the process).
+    // A router whose static maps another router or a hold of the same
+    // board, lattice and classes built shares them; what it counts is the
+    // same either way (the canonical price: `build_work` as if it built
+    // everything, the shared parts keyed in `shared_build`), and what the
+    // process did is its own maps (`physical_build_work`). The board and
+    // the pitch are this test's own (the maps are shared across the
+    // process).
     let board = one_spoke_board();
     let config = Config {
         pitches: vec![0.0913],
@@ -3965,29 +3965,46 @@ fn routers_of_one_board_and_lattice_share_their_static_maps() {
             ..config.clone()
         },
     );
-    let (held, statics) = hold_static_maps(&board, &config);
-    assert!(statics > 0.0);
+    let held = hold_static_maps(&board, &config);
+    assert!(held.built_work() > 0.0);
+    assert_eq!(held.key(), static_maps_key(&board, &config));
+    assert!(held.bytes() > 0);
     let shared = Router::new(&board, &config);
     assert!(shared.statics_shared && !alone.statics_shared);
     assert!(Arc::ptr_eq(
         &shared.statics,
         &Router::new(&board, &config).statics
     ));
-    let counts = shared.build_counts();
-    assert_eq!(counts.map_nodes, 0);
-    assert_eq!(counts.shared_map_nodes, alone.build_counts().map_nodes);
-    assert_eq!(counts.step_edges, 0);
-    // The held build and a shared router's own work are one build's.
-    assert!((statics + shared.build_work() - alone.build_work()).abs() < 1.0e-9);
+    // The same counts and work as a router that built them all.
+    assert_eq!(shared.build_counts(), alone.build_counts());
+    assert!((shared.build_work() - alone.build_work()).abs() < 1.0e-12);
+    let parts = shared.shared_build();
+    assert_eq!(parts.key(), held.key());
+    assert!(alone.shared_build().statics.is_none());
+    // The hold built the shared parts; the router did its own maps.
+    assert!((held.built_work() - parts.total()).abs() < 1.0e-9);
+    assert!(
+        (shared.physical_build_work() + parts.total() - alone.build_work()).abs() < 1.0e-9,
+        "{} {} {}",
+        shared.physical_build_work(),
+        parts.total(),
+        alone.build_work()
+    );
     // A second hold finds them: no work.
-    assert_eq!(hold_static_maps(&board, &config).1, 0.0);
+    assert_eq!(hold_static_maps(&board, &config).built_work(), 0.0);
+    // Held maps count in the process's held bytes.
+    assert!(held_maps_bytes().0 > 0);
     // The maps are the same as built alone; so is the routing.
     assert_eq!(shared.statics.len(), alone.statics.len());
     for (a, b) in shared.statics.iter().zip(alone.statics.iter()) {
         assert_eq!(a.trace, b.trace);
         assert_eq!(a.via_blocked, b.via_blocked);
     }
+    // Nothing keeps them once their holders are gone (until 2026-10-21
+    // the last maps built stayed for the process's life).
     drop(held);
+    drop(shared);
+    assert!(hold_static_maps(&board, &config).built_work() > 0.0);
     let mut one = Router::new(&board, &config);
     let mut two = Router::new(
         &board,
@@ -3999,4 +4016,17 @@ fn routers_of_one_board_and_lattice_share_their_static_maps() {
     one.run_in_place();
     two.run_in_place();
     assert_eq!(one.fingerprint(), two.fingerprint());
+}
+
+#[test]
+fn a_negotiation_bound_of_nothing_is_one_expansion() {
+    // 0 in `negotiation_expansions` means no limit: a bound of no work
+    // (the ladder's share with nothing left) is the least limit there is,
+    // so the negotiation stops after its first iteration by it.
+    assert_eq!(negotiation_expansions(0.0), 1);
+    assert_eq!(negotiation_expansions(-1.0), 1);
+    assert_eq!(
+        negotiation_expansions(2.0),
+        (2.0 * expansions_per_second()) as u64
+    );
 }

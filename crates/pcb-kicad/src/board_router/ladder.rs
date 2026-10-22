@@ -41,12 +41,15 @@ pub(crate) struct ResumeLimits {
 /// What a router did, as route mode's ladder charges it: its search
 /// expansions, and the work of its pour analyses and fill probes and of
 /// its build (seconds of an idle machine: pcb-router's `Router::pour_work`
-/// and `Router::build_work`).
+/// and `Router::build_work`, the latter as if it built everything itself),
+/// with the parts of its build routers of the same inputs share
+/// (`Router::shared_build`: the ladder charges each once a phase).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(crate) struct RouterWork {
     pub expansions: u64,
     pub pour: f64,
     pub build: f64,
+    pub shared: core::router::SharedBuild,
 }
 
 /// What the ladder routes and checks with. route.rs's `KiCadRunner` routes
@@ -59,7 +62,7 @@ pub(crate) trait LadderRunner: Sync {
     /// A continued router's routing.
     type Routed: Send;
     /// Static maps held while routers run side by side (`hold`).
-    type Hold: Send;
+    type Hold: Send + 'static;
 
     /// The board of one rung as its probe routes it.
     fn lower(&self, attempt: &KiCadBoardRouterConfig, connect: bool)
@@ -73,14 +76,22 @@ pub(crate) trait LadderRunner: Sync {
         attempt: &KiCadBoardRouterConfig,
         quiet: bool,
     ) -> Self::Probe;
-    /// Holds the static maps of a router of `board` routed as `attempt`
-    /// says, with the work of building them (0 when another router's
-    /// are there, `hold_static_maps`): the routers started side by side
-    /// then share them, and each counts the same work whichever starts
-    /// first.
-    fn hold(&self, board: &Self::Board, attempt: &KiCadBoardRouterConfig) -> (Self::Hold, f64);
+    /// Holds the static maps (and connected pours' masks) of a router of
+    /// `board` routed as `attempt` says (`hold_static_maps`): the routers
+    /// of the ladder's phase share them, whichever starts first. The hold
+    /// charges nothing: the ladder charges what the routers report
+    /// (`RouterWork::shared`, once a key a phase).
+    fn hold(&self, board: &Self::Board, attempt: &KiCadBoardRouterConfig) -> Self::Hold;
+    /// The key of a hold's static maps (None: not shared).
+    fn hold_key(&self, hold: &Self::Hold) -> Option<u128>;
+    /// The key of the static maps a router of `board` routed as `attempt`
+    /// says would have (`static_maps_key`; None: not shared).
+    fn statics_key(&self, board: &Self::Board, attempt: &KiCadBoardRouterConfig) -> Option<u128>;
     /// A built router's lattice maps in megabytes (its memory report).
     fn maps_mb(&self, probe: &Self::Probe) -> Option<f64>;
+    /// A built router's static maps in megabytes (its memory report's
+    /// `statics`): what each further set held beside it takes.
+    fn statics_mb(&self, probe: &Self::Probe) -> Option<f64>;
     /// Negotiates `work` seconds of work; the nets left unfinished.
     fn probe(&self, probe: &mut Self::Probe, work: f64, mode: usize) -> usize;
     /// What the router did so far, as the ladder charges it.
@@ -107,6 +118,15 @@ pub(crate) trait LadderRunner: Sync {
         directory: &Path,
         attempt: &KiCadBoardRouterConfig,
         connect: bool,
+    ) -> Result<KiCadBoardRouterResult, String>;
+    /// `route` on `board`, which the ladder lowered for the attempt (for
+    /// its hold): the attempt's one lowering, charged with it.
+    fn route_lowered(
+        &self,
+        directory: &Path,
+        attempt: &KiCadBoardRouterConfig,
+        connect: bool,
+        board: Self::Board,
     ) -> Result<KiCadBoardRouterResult, String>;
     /// KiCad's check of an attempt routed without it (`check_attempt`).
     fn check(&self, result: &mut KiCadBoardRouterResult, directory: &Path) -> Result<(), String>;
@@ -296,7 +316,10 @@ struct PitchPlan {
     /// Route mode: whether the rungs' limits count all their work
     /// (`limits_count_all`: no proportion of search known yet).
     counts_all: bool,
-    /// What is left of the ladder's budget as the pitch starts.
+    /// The ladder's budget and what is left of it as the pitch starts, as
+    /// the routers' limits count them (`router_work`: search work in route
+    /// mode with all work charged; the router's `run_work`).
+    total: f64,
     left: f64,
     /// What is left of the work deadline as the pitch starts.
     work_left: f64,
@@ -360,7 +383,8 @@ pub(crate) struct Ladder<'a> {
     first_negotiation: f64,
     /// Route mode: whether an attempt's manual spokes count in the
     /// ladder's work beside its search (`result_work`; not under
-    /// `PCB_LADDER_UNCHARGED_SPOKES`, the count before 2026-10-21).
+    /// `PCB_LADDER_SEARCH_ONLY`, the count before 2026-10-21, which counts
+    /// nothing but the search).
     charges_spokes: bool,
     /// Route mode: whether all of an attempt's work counts (`result_work`:
     /// its search, every pour analysis and fill probe, its lattice's build
@@ -373,6 +397,13 @@ pub(crate) struct Ladder<'a> {
     converts_shares: bool,
     /// The ladder's work by kind (`work` is their sum).
     pub(crate) charged: KiCadWorkCharges,
+    /// The shared parts of builds charged in this phase (`new_phase`), as
+    /// (the static maps' key, the part's key): a router of the same maps
+    /// charges only its own (`lattice_charge`).
+    paid: Vec<(u128, u128)>,
+    /// The probes' holds, carried into the regular pitch (the same rungs'
+    /// maps; its rungs find them and the phase goes on), with their keys.
+    carried: Vec<(Option<u128>, Box<dyn std::any::Any + Send>)>,
     /// Route mode: the work of the ladder's first attempt up to the end of
     /// its first negotiation iteration (0: none yet), which a fresh router
     /// does whatever its work deadline: no step starts with less left
@@ -519,15 +550,17 @@ impl<'a> Ladder<'a> {
             reserve_set: false,
             first_negotiation: 0.0,
             charges_spokes: work_bound.is_some()
-                && std::env::var_os("PCB_LADDER_UNCHARGED_SPOKES").is_none(),
+                && std::env::var_os("PCB_LADDER_SEARCH_ONLY").is_none(),
             charges_all: work_bound.is_some()
-                && std::env::var_os("PCB_LADDER_UNCHARGED_SPOKES").is_none()
+                && std::env::var_os("PCB_LADDER_SEARCH_ONLY").is_none()
                 && std::env::var_os("PCB_LADDER_UNCHARGED_POUR").is_none(),
             converts_shares: work_bound.is_some()
-                && std::env::var_os("PCB_LADDER_UNCHARGED_SPOKES").is_none()
+                && std::env::var_os("PCB_LADDER_SEARCH_ONLY").is_none()
                 && std::env::var_os("PCB_LADDER_UNCHARGED_POUR").is_none()
                 && std::env::var_os("PCB_LADDER_SEARCH_SHARES").is_none(),
             charged: KiCadWorkCharges::default(),
+            paid: Vec::new(),
+            carried: Vec::new(),
             first_iteration: 0.0,
             // No attempt starts with less than the last one's work left
             // before the run's nominal end (an attempt checks the deadline
@@ -584,6 +617,8 @@ impl<'a> Ladder<'a> {
     pub(crate) fn run<R: LadderRunner>(&mut self, runner: &R) -> Result<(), String> {
         self.probes(runner)?;
         self.rungs(runner)?;
+        // Probes whose leader finished the board leave their maps unused.
+        self.carried.clear();
         self.clear_rung_directories()?;
         self.seed_rounds(runner)?;
         self.steps(runner)
@@ -709,19 +744,58 @@ impl<'a> Ladder<'a> {
     }
 
     /// Counts an attempt's work `times` (seeds side by side count as
-    /// that many attempts).
+    /// that many attempts): its search, pour work and own maps `times`,
+    /// the shared parts of its build once a phase (`lattice_charge`), its
+    /// lowering once (the seeds share one).
     fn charge_result(&mut self, result: &KiCadBoardRouterResult, times: f64) {
         let search = work_of(result.expansions) * times;
         if self.charges_all {
+            let lattice =
+                self.lattice_charge(result.build_work_seconds, result.shared_build, times);
             self.charge(
                 search,
                 result.pour_work_seconds * times,
-                result.build_work_seconds * times,
-                result.lowering_work_seconds * times,
+                lattice,
+                result.lowering_work_seconds,
             );
         } else {
             self.charge(search, self.extra_charge(result) * times, 0.0, 0.0);
         }
+    }
+
+    /// Starts a phase of the ladder (the probes, a pitch's rungs, a seed
+    /// round, a step): no shared part of a build is paid yet.
+    fn new_phase(&mut self) {
+        self.paid.clear();
+    }
+
+    /// The lattice work to charge for `times` routers of `build` (as if
+    /// each built everything itself) whose shared parts are `shared`:
+    /// their own maps `times`, and each shared part once a phase, the
+    /// first time a router of its key is charged (in the rungs' order, so
+    /// that how many ran side by side changes nothing; the ladder holds
+    /// a phase's maps, so that the parts charged once are built once).
+    /// Until 2026-10-21 the charge followed what the process happened to
+    /// hold (a router that found its maps counted its own), and so the
+    /// side-by-side count and the memory available.
+    fn lattice_charge(&mut self, build: f64, shared: core::router::SharedBuild, times: f64) -> f64 {
+        let mut lattice = (build - shared.total()).max(0.0) * times;
+        let group = shared.key().unwrap_or(0);
+        for (key, work) in shared.parts() {
+            if !self.paid.iter().any(|(_, paid)| *paid == key) {
+                self.paid.push((group, key));
+                lattice += work;
+            }
+        }
+        lattice
+    }
+
+    /// Keeps only the shared parts paid for the static maps `key` (the
+    /// pitch releases the other maps it holds before its last rung's seed
+    /// retry).
+    fn keep_paid(&mut self, key: Option<u128>) {
+        self.paid
+            .retain(|(group, _)| key.is_some_and(|key| key == *group));
     }
 
     /// Route mode, all work charged: the share of the routers' work so far
@@ -1043,6 +1117,7 @@ impl<'a> Ladder<'a> {
             return Ok(());
         }
         let probe_seconds = config.probe_seconds.unwrap_or(75.0);
+        self.new_phase();
         let mut leader: Option<(usize, usize, R::Probe, R::Board, KiCadBoardRouterConfig)> = None;
         // The rungs' boards, in rung order.
         let mut rungs: Vec<(usize, R::Board, KiCadBoardRouterConfig)> = Vec::new();
@@ -1083,27 +1158,23 @@ impl<'a> Ladder<'a> {
             );
             rungs.clear();
         }
-        // The rungs' static maps, held in rung order before any probe's
-        // router is built: the probes share them whichever starts first,
-        // and the ladder counts their build once, here.
-        // Their limits stay search work (the same for every probe: the
-        // ranking compares equal search): with their pour work and lattice
-        // out of their shares (`PCB_LADDER_PROBES_COUNT_ALL`, x1391) the
-        // probes stopped an iteration earlier and two leaders changed on
-        // the expansion tier (ducktop2's for the worse, 1 to 7 open).
+        // The probes' limits stay search work (the same for every probe:
+        // the ranking compares equal search): with their pour work and
+        // lattice out of their shares (`PCB_LADDER_PROBES_COUNT_ALL`,
+        // x1391) the probes stopped an iteration earlier and two leaders
+        // changed on the expansion tier (ducktop2's for the worse, 1 to 7
+        // open).
         let counts_all = !rungs.is_empty()
             && self.limits_count_all()
             && std::env::var_os("PCB_LADDER_PROBES_COUNT_ALL").is_some();
-        let held: Vec<(R::Hold, f64)> = rungs
-            .iter()
-            .map(|(_, board, attempt)| runner.hold(board, attempt))
-            .collect();
-        let statics_total: f64 = held.iter().map(|(_, work)| *work).sum();
-        if self.charges_all {
-            self.charge(0.0, 0.0, statics_total, 0.0);
-        }
-        // Each probe's part of them, for its limit.
-        let statics_share = statics_total / rungs.len().max(1) as f64;
+        // The rungs' static maps, held in rung order once the first
+        // probe's router passed the memory gate (before 2026-10-21 before
+        // it, and their build charged whether the probes then ran or not):
+        // the probes share them whichever starts first. Each probe charges
+        // its own maps and the shared parts of its build the first time
+        // their key is charged (`lattice_charge`).
+        let mut held: Vec<(Option<u128>, R::Hold)> = Vec::new();
+        let probes_count = rungs.len().max(1) as f64;
         for (_, _, attempt) in &mut rungs {
             attempt.limits_count_all = counts_all;
         }
@@ -1144,12 +1215,26 @@ impl<'a> Ladder<'a> {
                     continue;
                 };
                 // The leading router stays in memory while the next probe
-                // runs: under a limit of the process's own that two do not
-                // fit (decided by the limit, not by what is free), the
-                // rungs run one after the other in the regular ladder.
-                if let Some(limit) = self.memory_at_start.too_small_for(megabytes, 2) {
+                // runs, and the other rungs' static maps are held beside
+                // them: under a limit of the process's own that two
+                // routers and those maps do not fit (decided by the limit,
+                // not by what is free), the rungs run one after the other
+                // in the regular ladder.
+                let first_key = runner.statics_key(board, attempt);
+                let mut keys: Vec<u128> = rungs
+                    .iter()
+                    .filter_map(|(_, board, attempt)| runner.statics_key(board, attempt))
+                    .filter(|key| Some(*key) != first_key)
+                    .collect();
+                keys.sort_unstable();
+                keys.dedup();
+                let beside = keys.len() as f64 * runner.statics_mb(&router).unwrap_or(0.0);
+                if let Some(limit) = self
+                    .memory_at_start
+                    .too_small_for_beside(megabytes, 2, beside)
+                {
                     eprintln!(
-                        "ladder: no rung probes: two routers of about {:.0} MB each ({megabytes:.0} MB of maps) do not fit {} of {:.0} MB",
+                        "ladder: no rung probes: two routers of about {:.0} MB each ({megabytes:.0} MB of maps) and {beside:.0} MB of the other rungs' static maps do not fit {} of {:.0} MB",
                         limit.router_mb(megabytes),
                         limit.source,
                         limit.limit_mb
@@ -1158,6 +1243,13 @@ impl<'a> Ladder<'a> {
                     rungs.clear();
                     break;
                 }
+                held = rungs
+                    .iter()
+                    .map(|(_, board, attempt)| {
+                        let hold = runner.hold(board, attempt);
+                        (runner.hold_key(&hold), hold)
+                    })
+                    .collect();
                 first = Some((router, started.elapsed().as_secs_f64()));
                 router_mb_estimate = Some(megabytes);
             }
@@ -1204,10 +1296,12 @@ impl<'a> Ladder<'a> {
                                         test_panic("probe");
                                     }
                                     // Counting all its work, a probe's
-                                    // lattice and its part of the static
-                                    // maps come out of its share.
+                                    // own maps and its part of the shared
+                                    // ones come out of its share.
                                     let limit = if counts_all {
-                                        (probe_work - runner.work(&router).build - statics_share)
+                                        let work = runner.work(&router);
+                                        let shared = work.shared.total();
+                                        (probe_work - (work.build - shared) - shared / probes_count)
                                             .max(0.01)
                                     } else {
                                         probe_work
@@ -1247,11 +1341,14 @@ impl<'a> Ladder<'a> {
                     continue;
                 };
                 let probed = runner.work(&router);
-                if self.charges_all {
-                    self.charge(work_of(probed.expansions), probed.pour, probed.build, 0.0);
+                let lattice = if self.charges_all {
+                    let lattice = self.lattice_charge(probed.build, probed.shared, 1.0);
+                    self.charge(work_of(probed.expansions), probed.pour, lattice, 0.0);
+                    lattice
                 } else {
                     self.charge(work_of(probed.expansions), 0.0, 0.0, 0.0);
-                }
+                    0.0
+                };
                 eprintln!(
                     "probe {}: {unfinished} nets unfinished after {:.0} s{} (work: search {:.2} s, pour {:.2} s, lattice {:.2} s)",
                     self.probe_name(mode),
@@ -1263,7 +1360,7 @@ impl<'a> Ladder<'a> {
                     },
                     work_of(probed.expansions),
                     probed.pour,
-                    probed.build + statics_share
+                    lattice
                 );
                 if leader.as_ref().is_none_or(|(best, ..)| unfinished < *best) {
                     runner.speak(&mut router, attempt);
@@ -1280,7 +1377,12 @@ impl<'a> Ladder<'a> {
                 break;
             }
         }
-        drop(held);
+        // The probes' maps stay held for the regular pitch's rungs (the
+        // same boards: the phase goes on there, `pitch`).
+        self.carried = held
+            .into_iter()
+            .map(|(key, hold)| (key, Box::new(hold) as Box<dyn std::any::Any + Send>))
+            .collect();
         if let Some((_, mode, router, board, mut attempt)) = leader {
             // The continuation and the attempts that vary it count their
             // search (the ladder's shares by the proportion of search).
@@ -1336,9 +1438,11 @@ impl<'a> Ladder<'a> {
             .unwrap_or_else(|| (self.ladder_budget - self.spent(self.work)).max(60.0));
         let probe_work = runner.work(&router);
         let probed = probe_work.expansions;
-        // The router's own probe is in its work already.
+        // The router's own probe is in its work already. Both in search
+        // work (the via reduction compares what is left with half the
+        // whole; until 2026-10-21 the whole was all the work).
         let run_work = (
-            self.ladder_budget,
+            self.built_router_work(self.ladder_budget, &probe_work),
             self.built_router_work(self.ladder_budget - self.spent(self.work), &probe_work)
                 + work_of(probed),
         );
@@ -1577,7 +1681,7 @@ impl<'a> Ladder<'a> {
         if let Some(seconds) = plan.negotiation {
             attempt.negotiation_seconds = Some(seconds);
         }
-        attempt.run_work = Some((self.ladder_budget, plan.left));
+        attempt.run_work = Some((plan.total, plan.left));
         // Every rung of the pitch stops where the run's work ends as
         // the pitch starts (decided before they run, as the budget),
         // less the work kept for the narrow-signal step.
@@ -1659,9 +1763,21 @@ impl<'a> Ladder<'a> {
             route_deadline: None,
             share_fixed: false,
             counts_all: false,
+            total: self.router_work(ladder_budget),
             left: self.router_work((ladder_budget - self.spent(self.work)).max(0.0)),
             work_left: self.work_left().max(0.0),
         };
+        // The pitch is a phase: the static maps its rungs hold
+        // (`rung_wave`) stay held until it ends (or the seed retry of its
+        // last rung, which keeps that rung's), and each shared part of a
+        // build is charged once (`lattice_charge`).
+        // The regular pitch after the probes goes on with their phase:
+        // their maps are held (`carried`) and paid.
+        let mut held = std::mem::take(&mut self.carried);
+        if pitch.is_some() || held.is_empty() {
+            held.clear();
+            self.new_phase();
+        }
         // A probed rung continued with what it had is not run again; the
         // other rungs still get their turn when it left connections open.
         let candidates: Vec<usize> = (0..modes.len())
@@ -1754,7 +1870,7 @@ impl<'a> Ladder<'a> {
                 let side_by_side =
                     self.rungs_side_by_side(runner, candidates.len() - position, pitch);
                 let wave: Vec<usize> = candidates[position..position + side_by_side].to_vec();
-                for (other, result) in self.rung_wave(runner, &wave, pitch, &plan) {
+                for (other, result) in self.rung_wave(runner, &wave, pitch, &plan, &mut held) {
                     ran[other] = Some(result);
                 }
             }
@@ -1819,6 +1935,11 @@ impl<'a> Ladder<'a> {
                 && self.rung_left().is_none_or(|left| left >= retry as f64 * attempt_seconds)
             {
                 seeds_tried = true;
+                // The pitch's other rungs are done: only this rung's maps
+                // stay held (the seeds share them).
+                let key = result.shared_build.key();
+                held.retain(|(held_key, _)| key.is_some() && *held_key == key);
+                self.keep_paid(key);
                 (result, opens, judged) = self.seed_retry(
                     runner,
                     &name,
@@ -1956,34 +2077,29 @@ impl<'a> Ladder<'a> {
         wave: &[usize],
         pitch: &Option<Vec<f64>>,
         plan: &PitchPlan,
+        held: &mut Vec<(Option<u128>, Box<dyn std::any::Any + Send>)>,
     ) -> Vec<(
         usize,
         Result<Result<KiCadBoardRouterResult, String>, String>,
     )> {
         let mut jobs = Vec::new();
-        // Rungs side by side: their static maps, held in rung order before
-        // they start (each rung counts the build of those it is the first
-        // of, and the lowering for it), so that which starts first does
-        // not decide who counts them. A rung alone builds its own.
-        let mut held = Vec::new();
-        let mut statics_work = Vec::new();
+        // Every rung's board, lowered once (its one lowering, charged with
+        // it), and its static maps held in rung order before any starts,
+        // whether one runs or several: which starts first does not decide
+        // who builds them, and they stay held for the pitch's later rungs
+        // and seeds (`lattice_charge` charges each key once a phase).
+        // Until 2026-10-21 only a wave of two or more held them, and the
+        // hold's lowering came on top of the rung's own.
         for &other in wave {
-            if wave.len() < 2 {
-                statics_work.push((0.0, 0.0));
-                continue;
-            }
             let attempt = self.unchecked(&self.rung_attempt(other, pitch, plan));
-            match runner.lower(&attempt, self.modes[other].0) {
+            let board = match runner.lower(&attempt, self.modes[other].0) {
                 Ok(board) => {
-                    let (hold, work) = runner.hold(&board, &attempt);
-                    held.push(hold);
-                    statics_work.push((work, runner.lowering_work(&board)));
+                    let hold = runner.hold(&board, &attempt);
+                    held.push((runner.hold_key(&hold), Box::new(hold)));
+                    Some(board)
                 }
-                Err(_) => statics_work.push((0.0, 0.0)),
-            }
-        }
-        for &other in wave {
-            let attempt = self.unchecked(&self.rung_attempt(other, pitch, plan));
+                Err(_) => None,
+            };
             let panics = self.panic_due("rung");
             jobs.push((
                 other,
@@ -1991,41 +2107,43 @@ impl<'a> Ladder<'a> {
                 self.rung_directory(other),
                 self.modes[other].0,
                 panics,
+                board,
             ));
         }
         std::thread::scope(|scope| {
-            let handles: Vec<_> = jobs
-                .into_iter()
-                .map(|(other, attempt, directory, connect, panics)| {
-                    (
-                        other,
-                        scope.spawn(move || {
-                            isolate(|| {
-                                if directory.exists() {
-                                    fs::remove_dir_all(&directory)
-                                        .map_err(|error| error.to_string())?;
-                                }
-                                if panics {
-                                    test_panic("rung");
-                                }
-                                runner.route(&directory, &attempt, connect)
-                            })
-                        }),
-                    )
-                })
-                .collect();
+            let handles: Vec<_> =
+                jobs.into_iter()
+                    .map(|(other, attempt, directory, connect, panics, board)| {
+                        (
+                            other,
+                            scope.spawn(move || {
+                                isolate(|| {
+                                    if directory.exists() {
+                                        fs::remove_dir_all(&directory)
+                                            .map_err(|error| error.to_string())?;
+                                    }
+                                    if panics {
+                                        test_panic("rung");
+                                    }
+                                    match board {
+                                        Some(board) => runner
+                                            .route_lowered(&directory, &attempt, connect, board),
+                                        None => runner.route(&directory, &attempt, connect),
+                                    }
+                                })
+                            }),
+                        )
+                    })
+                    .collect();
             handles
                 .into_iter()
-                .zip(&statics_work)
-                .map(|((other, handle), (statics, lowering))| {
-                    let mut outcome = handle
-                        .join()
-                        .unwrap_or_else(|payload| Err(panic_message(payload.as_ref())));
-                    if let Ok(Ok(result)) = &mut outcome {
-                        result.build_work_seconds += statics;
-                        result.lowering_work_seconds += lowering;
-                    }
-                    (other, outcome)
+                .map(|(other, handle)| {
+                    (
+                        other,
+                        handle
+                            .join()
+                            .unwrap_or_else(|payload| Err(panic_message(payload.as_ref()))),
+                    )
                 })
                 .collect()
         })
@@ -2224,6 +2342,9 @@ impl<'a> Ladder<'a> {
                 seeded.router_deadline_work = Some(self.router_work(rung_share(left, retry)));
             }
             next_seed += retry as u64;
+            // A round is a phase: its seeds hold their maps (`route_seeds`)
+            // and charge their shared parts once.
+            self.new_phase();
             if scratch.exists() {
                 fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
             }
@@ -2544,6 +2665,8 @@ impl<'a> Ladder<'a> {
         }
         let panics = self.panic_due("step");
         let unchecked = self.unchecked(&attempt);
+        // A step is a phase of its own (a router alone).
+        self.new_phase();
         let routed = isolate(|| {
             if panics {
                 test_panic("step");

@@ -131,9 +131,13 @@ pub struct KiCadBoardRouterResult {
     /// (`RoutingResult::build_work`).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub build_work_seconds: f64,
+    /// The parts of `build_work_seconds` routers of the same inputs share
+    /// (`Router::shared_build`), for the ladder's charge.
+    #[serde(skip)]
+    pub shared_build: pcb_router::router::SharedBuild,
     /// The work of lowering the board for this attempt, modelled
-    /// (`lower::lowering_work`; none where the ladder charged it with the
-    /// rung probes).
+    /// (`lower::lowering_work`; the ladder's lowering of the rung's board
+    /// where it lowered it for its hold).
     #[serde(default, skip_serializing_if = "is_zero")]
     pub lowering_work_seconds: f64,
     /// Where the run's wall clock went (`KiCadWallAccounting`).

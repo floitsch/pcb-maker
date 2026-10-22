@@ -87,7 +87,7 @@ impl Router {
         let started = std::time::Instant::now();
         let router = Self::build(board, config);
         BUILD_WORK_NANOS.fetch_add(
-            (router.build_work * 1.0e9) as u64,
+            (router.physical_build_work() * 1.0e9) as u64,
             std::sync::atomic::Ordering::Relaxed,
         );
         BUILD_CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -353,12 +353,12 @@ impl Router {
             let statics_edges: u64 = router.statics.iter().map(|maps| maps.vertex_tests).sum();
             eprintln!(
                 "build trace: map_nodes {} tests {} edges {} statics_tests {statics_tests} statics_edges {statics_edges} tight {} hot_nodes {} work {:.0} wall {:.0} statics {:.0} stamps {:.0} nets {:.0} rest {:.0} cells {cells} layers {layers} classes {} searched {} obstacles {} netcount {} planes {} shared {}",
-                counts.map_nodes + counts.shared_map_nodes,
+                counts.map_nodes,
                 counts.tests,
                 counts.edges,
                 counts.step_edges,
                 cells * layers * router.searched.iter().filter(|searched| **searched).count(),
-                counts.work_nanos(),
+                router.physical_build_work() * 1.0e9 / reference_time_scale(),
                 total * 1.0e9,
                 statics_built * 1.0e9,
                 (nets_started - statics_built) * 1.0e9,
@@ -382,31 +382,77 @@ impl Router {
         router
     }
 
-    /// What building this router took, counted (`BuildCounts`).
+    /// What building this router took, counted (`BuildCounts`): its maps,
+    /// every class's static maps and its nets' preparation with their pour
+    /// masks, as a router that built them all itself counts them. The same
+    /// whether it built its static maps and masks or found them
+    /// (`shared_statics`, `POUR_MASKS`): the canonical price, so that what
+    /// a router counts does not depend on what else the process holds
+    /// (which followed how many routers ran side by side, and so the free
+    /// memory). What a router of the same maps already paid is
+    /// `shared_build`; what this process did is `physical_build_work`.
     pub(super) fn build_counts(&self) -> BuildCounts {
         let layers = self.board.layer_count as u64;
         let prepared = |index: usize| -> u64 {
             self.nets
                 .iter()
-                .map(|state| state.prepare_counts[index])
+                .map(|state| state.prepare_counts[index] + state.mask_counts[index])
                 .sum()
         };
-        // Static maps another router built count nothing here (`shared_statics`).
-        let statics = |count: fn(&StaticMaps) -> u64| -> u64 {
-            if self.statics_shared {
-                0
-            } else {
-                self.statics.iter().map(count).sum()
-            }
-        };
-        let map_nodes = self.grid.cells() as u64 * layers * self.statics.len() as u64;
+        let statics =
+            |count: fn(&StaticMaps) -> u64| -> u64 { self.statics.iter().map(count).sum() };
         BuildCounts {
-            map_nodes: if self.statics_shared { 0 } else { map_nodes },
-            shared_map_nodes: if self.statics_shared { map_nodes } else { 0 },
+            map_nodes: self.grid.cells() as u64 * layers * self.statics.len() as u64,
             tests: statics(|maps| maps.tests) + prepared(0),
             edges: statics(|maps| maps.vertex_tests) + prepared(1),
             step_edges: statics(|maps| maps.tight_tests),
         }
+    }
+
+    /// The parts of `build_work` routers of the same inputs share
+    /// (`SharedBuild`): the static maps beyond a router's own maps and the
+    /// connected pours' masks, each with its key; none when the maps are
+    /// not shared (`Config::share_static_maps`, `PCB_ROUTER_NO_SHARED_STATICS`).
+    pub fn shared_build(&self) -> SharedBuild {
+        let Some(key) = self.statics_key else {
+            return SharedBuild::default();
+        };
+        let masks: [u64; 2] = [0, 1].map(|index| {
+            self.nets
+                .iter()
+                .map(|state| state.mask_counts[index])
+                .sum::<u64>()
+        });
+        SharedBuild {
+            statics: Some((
+                key,
+                statics_part_work(&self.statics, &self.grid, self.board.layer_count),
+            )),
+            masks: (masks != [0, 0]).then(|| {
+                (
+                    super::prepare::pour_masks_key(key, &self.board),
+                    masks_work(masks),
+                )
+            }),
+        }
+    }
+
+    /// The work this process did building this router: `build_work` less
+    /// the static maps and masks it found (another router's or a hold's).
+    pub(super) fn physical_build_work(&self) -> f64 {
+        let shared = self.shared_build();
+        let masks_found = self.nets.iter().any(|state| state.masks_found);
+        self.build_work
+            - if self.statics_shared {
+                shared.statics.map_or(0.0, |(_, work)| work)
+            } else {
+                0.0
+            }
+            - if masks_found {
+                shared.masks.map_or(0.0, |(_, work)| work)
+            } else {
+                0.0
+            }
     }
 
     /// What the router's lattice maps hold, in megabytes per part, and in
@@ -641,10 +687,6 @@ pub struct BuildCounts {
     /// Lattice nodes of every class's maps (cells times layers times
     /// classes).
     pub map_nodes: u64,
-    /// The same of a router whose static maps another built
-    /// (`shared_statics`): its own maps only (the occupancy, the search
-    /// records, the tile counts).
-    pub shared_map_nodes: u64,
     /// Nodes tested: against the outline and every obstacle in the
     /// static maps, inside the nets' pads and pour boxes.
     pub tests: u64,
@@ -661,7 +703,6 @@ impl BuildCounts {
     /// The build's work in nanoseconds of the reference machine.
     pub fn work_nanos(&self) -> f64 {
         self.map_nodes as f64 * BUILD_MAP_NANOS
-            + self.shared_map_nodes as f64 * BUILD_SHARED_MAP_NANOS
             + self.tests as f64 * BUILD_TEST_NANOS
             + self.edges as f64 * BUILD_EDGE_NANOS
             + self.step_edges as f64 * BUILD_STEP_NANOS
@@ -675,17 +716,102 @@ impl BuildCounts {
     }
 }
 
-/// The static maps of the routers built last, by what they are built from
-/// (`statics_key`): the most recent kept, the others while a router holds
-/// them. The rung probes, the probed rung's continuation, the rungs of a
-/// pitch, the seeds and the steps lower one board with one lattice and
-/// one set of classes again and again, and the static maps (the outline,
-/// every obstacle's nodes, the tight steps: about half of a build) are a
-/// function of those alone.
+/// The parts of a router's build (`RoutingResult::build_work`) that
+/// routers of the same inputs share, each with the key of what it is
+/// built from: the static maps beyond the router's own maps (every
+/// class's nodes at `BUILD_MAP_NANOS` less `BUILD_SHARED_MAP_NANOS`, their
+/// tests, edges and tight steps; `statics_key`) and the connected pours'
+/// masks (`pour_masks_key`). Route mode's ladder charges each key once a
+/// phase, in its rungs' order, and holds the maps for the phase
+/// (`hold_static_maps`), so that what it charges is what was built and
+/// does not depend on how many routers ran side by side.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SharedBuild {
+    pub statics: Option<(u128, f64)>,
+    pub masks: Option<(u128, f64)>,
+}
+
+impl SharedBuild {
+    /// The parts, keyed.
+    pub fn parts(&self) -> impl Iterator<Item = (u128, f64)> {
+        self.statics.into_iter().chain(self.masks)
+    }
+
+    /// The parts' work together.
+    pub fn total(&self) -> f64 {
+        self.parts().map(|(_, work)| work).sum()
+    }
+
+    /// The static maps' key (the parts' group).
+    pub fn key(&self) -> Option<u128> {
+        self.statics.map(|(key, _)| key)
+    }
+}
+
+/// The static maps' part of a build (`SharedBuild::statics`): every
+/// class's nodes beyond a router's own maps, and the maps' counts.
+fn statics_part_work(maps: &[StaticMaps], grid: &Grid, layers: usize) -> f64 {
+    let nodes = (grid.cells() * layers * maps.len()) as f64;
+    let tests: u64 = maps.iter().map(|maps| maps.tests).sum();
+    let edges: u64 = maps.iter().map(|maps| maps.vertex_tests).sum();
+    let steps: u64 = maps.iter().map(|maps| maps.tight_tests).sum();
+    (nodes * (BUILD_MAP_NANOS - BUILD_SHARED_MAP_NANOS)
+        + tests as f64 * BUILD_TEST_NANOS
+        + edges as f64 * BUILD_EDGE_NANOS
+        + steps as f64 * BUILD_STEP_NANOS)
+        / 1.0e9
+        * reference_time_scale()
+}
+
+/// The pour masks' part of a build (`SharedBuild::masks`).
+fn masks_work(counts: [u64; 2]) -> f64 {
+    (counts[0] as f64 * BUILD_TEST_NANOS + counts[1] as f64 * BUILD_EDGE_NANOS) / 1.0e9
+        * reference_time_scale()
+}
+
+/// The static maps routers and holds of this process hold, by what they
+/// are built from (`statics_key`): weak entries, so that nothing outlives
+/// its holders. The rung probes, the probed rung's continuation, the rungs
+/// of a pitch, the seeds and the steps lower one board with one lattice
+/// and one set of classes again and again, and the static maps (the
+/// outline, every obstacle's nodes, the tight steps: about half of a
+/// build) are a function of those alone. Until 2026-10-21 the last maps
+/// built were also kept for the process's life (a router's worth of
+/// memory after a fine rung, and across a layout's move routers); route
+/// mode's ladder holds what a phase shares instead (`hold_static_maps`)
+/// and releases it when the phase ends.
 type StaticsCache = Vec<(u128, std::sync::Weak<Vec<StaticMaps>>)>;
 
-static STATICS_CACHE: std::sync::Mutex<(StaticsCache, Option<Arc<Vec<StaticMaps>>>)> =
-    std::sync::Mutex::new((Vec::new(), None));
+static STATICS_CACHE: std::sync::Mutex<StaticsCache> = std::sync::Mutex::new(Vec::new());
+
+/// The bytes of the static maps and of the pour masks this process holds
+/// (`STATICS_CACHE`, `POUR_MASKS`: every live router's and hold's), for
+/// the ladder's memory accounting.
+pub fn held_maps_bytes() -> (usize, usize) {
+    let statics = {
+        let mut cache = STATICS_CACHE
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        cache.retain(|(_, maps)| maps.strong_count() > 0);
+        cache
+            .iter()
+            .filter_map(|(_, maps)| maps.upgrade())
+            .map(|maps| maps.iter().map(StaticMaps::bytes).sum::<usize>())
+            .sum()
+    };
+    let masks = {
+        let mut cache = super::prepare::POUR_MASKS
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        cache.retain(|(_, masks)| masks.strong_count() > 0);
+        cache
+            .iter()
+            .filter_map(|(_, masks)| masks.upgrade())
+            .map(|masks| super::prepare::mask_set_bytes(&masks))
+            .sum()
+    };
+    (statics, masks)
+}
 
 /// What the static maps are built from, hashed (128 bits): the outline,
 /// the clearances, the classes and the nets' classes, the obstacles, the
@@ -749,9 +875,8 @@ fn shared_statics(
         let mut cache = STATICS_CACHE
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        cache.0.retain(|(_, maps)| maps.strong_count() > 0);
+        cache.retain(|(_, maps)| maps.strong_count() > 0);
         cache
-            .0
             .iter()
             .find(|(other, _)| *other == key)
             .and_then(|(_, maps)| maps.upgrade())
@@ -760,21 +885,20 @@ fn shared_statics(
         return (maps, true, Some(key));
     }
     // Built outside the lock: routers side by side of other inputs build
-    // theirs at the same time (two of the same inputs may both build).
+    // theirs at the same time (two of the same inputs may both build; the
+    // second takes the first's maps, but did the work: not shared).
     let maps = build();
     let mut cache = STATICS_CACHE
         .lock()
         .unwrap_or_else(|poison| poison.into_inner());
     if let Some(existing) = cache
-        .0
         .iter()
         .find(|(other, _)| *other == key)
         .and_then(|(_, maps)| maps.upgrade())
     {
-        return (existing, true, Some(key));
+        return (existing, false, Some(key));
     }
-    cache.0.push((key, Arc::downgrade(&maps)));
-    cache.1 = Some(maps.clone());
+    cache.push((key, Arc::downgrade(&maps)));
     (maps, false, Some(key))
 }
 
@@ -792,37 +916,95 @@ fn build_statics(
     )
 }
 
-/// Static maps held for the routers about to be built (`hold_static_maps`).
+/// Static maps (and the connected pours' masks) held for the routers
+/// about to be built (`hold_static_maps`).
 pub struct StaticMapsHold {
-    _maps: Arc<Vec<StaticMaps>>,
+    maps: Arc<Vec<StaticMaps>>,
+    masks: Option<Arc<super::prepare::PourMaskSet>>,
+    key: Option<u128>,
+    built: f64,
 }
 
-/// The static maps a router of `board` and `config` would build: found
-/// (another router's of the same inputs) or built now, and held while the
-/// returned value lives, with the work of building them (0 when found):
-/// what a router sharing them does not count (`BUILD_MAP_NANOS` less
-/// `BUILD_SHARED_MAP_NANOS` per node, and their tests). The ladder holds
-/// them before it starts routers side by side, so that one builds them in
-/// a known order and each router counts the same work whichever starts
-/// first.
-pub fn hold_static_maps(board: &Board, config: &Config) -> (StaticMapsHold, f64) {
+impl StaticMapsHold {
+    /// The static maps' key (None when they are not shared).
+    pub fn key(&self) -> Option<u128> {
+        self.key
+    }
+
+    /// The work this hold did: the static maps beyond a router's own and
+    /// the masks it built (0 where it found them).
+    pub fn built_work(&self) -> f64 {
+        self.built
+    }
+
+    /// The bytes it holds (the static maps and the masks).
+    pub fn bytes(&self) -> usize {
+        self.maps.iter().map(StaticMaps::bytes).sum::<usize>()
+            + self
+                .masks
+                .as_ref()
+                .map_or(0, |masks| super::prepare::mask_set_bytes(masks))
+    }
+}
+
+/// The inputs of the static maps of a router of `board` and `config`: the
+/// board with its rule and neck classes, the lattice, which classes are
+/// searched.
+fn statics_inputs(
+    board: &Board,
+    config: &Config,
+) -> (Board, Grid, Vec<bool>, Option<Arc<ClassRules>>) {
     let (board, neck_of, class_rules) = Router::with_neck_classes(board, config);
     let grid = Grid::choose(&board, &config.pitches);
     let searched = searched_classes(&board, &neck_of);
+    (board, grid, searched, class_rules)
+}
+
+/// The key of the static maps a router of `board` and `config` would
+/// build (`statics_key`; None when they are not shared).
+pub fn static_maps_key(board: &Board, config: &Config) -> Option<u128> {
+    if !config.share_static_maps || std::env::var_os("PCB_ROUTER_NO_SHARED_STATICS").is_some() {
+        return None;
+    }
+    let (board, grid, searched, class_rules) = statics_inputs(board, config);
+    Some(statics_key(
+        &board,
+        &grid,
+        &searched,
+        class_rules.as_deref(),
+    ))
+}
+
+/// The static maps a router of `board` and `config` would build, and the
+/// masks of its connected pours: found (another router's or hold's of the
+/// same inputs) or built now, and held while the returned value lives. The
+/// ladder holds them before it starts routers side by side and for the
+/// rest of a phase, so that one builds them in a known order and the work
+/// it charges (`SharedBuild`, once a key a phase) is the work done. What
+/// the hold built is added to the process's modelled lattice work
+/// (`ProcessAccounting::build_work_seconds`).
+pub fn hold_static_maps(board: &Board, config: &Config) -> StaticMapsHold {
+    let (board, grid, searched, class_rules) = statics_inputs(board, config);
     let (maps, shared, key) = shared_statics(&board, &grid, &searched, class_rules.as_deref());
     // The connected pours' masks of every net, for the routers of these
     // maps and pours (`Router::prepared_pour_masks`).
-    let mut mask_counts = [0u64; 2];
+    let mut built = if shared {
+        0.0
+    } else {
+        statics_part_work(&maps, &grid, board.layer_count)
+    };
+    let mut masks = None;
     if let Some(key) = key {
         let key = super::prepare::pour_masks_key(key, &board);
         let mut cache = super::prepare::POUR_MASKS
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        if !cache.iter().any(|(other, _)| *other == key) {
-            if cache.len() >= super::prepare::POUR_MASK_KEYS {
-                cache.remove(0);
-            }
-            let mut entry = (key, Vec::new());
+        cache.retain(|(_, masks)| masks.strong_count() > 0);
+        masks = cache
+            .iter()
+            .find(|(other, _)| *other == key)
+            .and_then(|(_, masks)| masks.upgrade());
+        if masks.is_none() {
             let nets: Vec<NetId> = board
                 .planes
                 .iter()
@@ -831,34 +1013,25 @@ pub fn hold_static_maps(board: &Board, config: &Config) -> (StaticMapsHold, f64)
                 .collect::<std::collections::BTreeSet<_>>()
                 .into_iter()
                 .collect();
+            let mut set = Vec::new();
+            let mut counts = [0u64; 2];
             for net in nets {
-                let (plane, plane_class, counts) =
-                    super::prepare::compute_pour_masks(&board, &maps, &grid, net, true);
-                mask_counts[0] += counts[0];
-                mask_counts[1] += counts[1];
-                entry.1.push((net, Arc::new((plane, plane_class))));
+                let mask = super::prepare::compute_pour_masks(&board, &maps, &grid, net, true);
+                counts[0] += mask.2[0];
+                counts[1] += mask.2[1];
+                set.push((net, Arc::new(mask)));
             }
-            cache.push(entry);
+            built += masks_work(counts);
+            let set = Arc::new(set);
+            cache.push((key, Arc::downgrade(&set)));
+            masks = Some(set);
         }
     }
-    let masks = (mask_counts[0] as f64 * BUILD_TEST_NANOS
-        + mask_counts[1] as f64 * BUILD_EDGE_NANOS)
-        / 1.0e9
-        * reference_time_scale();
-    let work = masks
-        + if shared {
-            0.0
-        } else {
-            let nodes = (grid.cells() * board.layer_count * maps.len()) as f64;
-            let tests: u64 = maps.iter().map(|maps| maps.tests).sum();
-            let edges: u64 = maps.iter().map(|maps| maps.vertex_tests).sum();
-            let steps: u64 = maps.iter().map(|maps| maps.tight_tests).sum();
-            (nodes * (BUILD_MAP_NANOS - BUILD_SHARED_MAP_NANOS)
-                + tests as f64 * BUILD_TEST_NANOS
-                + edges as f64 * BUILD_EDGE_NANOS
-                + steps as f64 * BUILD_STEP_NANOS)
-                / 1.0e9
-                * reference_time_scale()
-        };
-    (StaticMapsHold { _maps: maps }, work)
+    BUILD_WORK_NANOS.fetch_add((built * 1.0e9) as u64, std::sync::atomic::Ordering::Relaxed);
+    StaticMapsHold {
+        maps,
+        masks,
+        key,
+        built,
+    }
 }

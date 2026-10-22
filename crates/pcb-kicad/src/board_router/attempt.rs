@@ -90,17 +90,47 @@ pub(super) fn route_kicad_board_once(
     config: &KiCadBoardRouterConfig,
     connect_pours: bool,
 ) -> Result<KiCadBoardRouterResult, String> {
+    route_kicad_board_lowered(
+        source_directory,
+        board_id,
+        output_directory,
+        config,
+        connect_pours,
+        None,
+    )
+}
+
+/// `route_kicad_board_once`, on `lowered` (the board as `lower` gives it
+/// for `config` and `connect_pours`, with its lowering's work) when the
+/// caller lowered it already: the ladder lowers a rung's board for its
+/// hold and routes that board (one lowering an attempt).
+pub(super) fn route_kicad_board_lowered(
+    source_directory: &Path,
+    board_id: &str,
+    output_directory: &Path,
+    config: &KiCadBoardRouterConfig,
+    connect_pours: bool,
+    lowered: Option<(core::Board, f64)>,
+) -> Result<KiCadBoardRouterResult, String> {
     let started = std::time::Instant::now();
     let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
     let source = fs::read_to_string(&source_board)
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
     let pcb = crate::canonical_order::parse_board(&source)?;
-    let Lowered {
-        mut board,
-        expressions,
-    } = lower(&pcb, config, connect_pours)?;
-    // The board's own tracks and vias: what they join is connected.
-    let kept = keep_existing_copper(&mut board);
+    // The board's own tracks and vias: what they join is connected (a
+    // board the ladder lowered had them kept there: the runner's `kept`
+    // reports them).
+    let (board, lowering_work, kept) = match lowered {
+        Some((board, work)) => (board, work, KiCadKeptCopper::default()),
+        None => {
+            let Lowered {
+                mut board,
+                expressions,
+            } = lower(&pcb, config, connect_pours)?;
+            let kept = keep_existing_copper(&mut board);
+            (board, lowering_work_of(expressions), kept)
+        }
+    };
     let layer_names = LayerTable::from_pcb(&pcb)?.names;
     let lowering_seconds = started.elapsed().as_secs_f64();
     let routing_started = std::time::Instant::now();
@@ -167,7 +197,7 @@ pub(super) fn route_kicad_board_once(
         [lowering_seconds, routing_seconds],
     )?;
     written.maps_mb = maps_mb;
-    written.lowering_work_seconds = lowering_work_of(expressions);
+    written.lowering_work_seconds = lowering_work;
     if !kept.nets.is_empty() {
         written.kept_copper = Some(kept);
     }

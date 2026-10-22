@@ -865,6 +865,7 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
         first_iteration_expansions: 0,
         pour_work: 0.0,
         build_work: 0.0,
+        shared_build: Default::default(),
     }
 }
 

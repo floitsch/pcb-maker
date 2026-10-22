@@ -84,9 +84,7 @@ impl Router {
                 }
             }
         }
-        let (plane, plane_class, mask_counts) = self.prepared_pour_masks(net);
-        counts[0] += mask_counts[0];
-        counts[1] += mask_counts[1];
+        let (plane, plane_class, mask_counts, masks_found) = self.prepared_pour_masks(net);
         let on_plane: Vec<bool> = terminal_nodes
             .iter()
             .enumerate()
@@ -168,6 +166,8 @@ impl Router {
             routable,
             neck_zones,
             prepare_counts: counts,
+            mask_counts,
+            masks_found,
             ..Default::default()
         }
     }
@@ -198,24 +198,35 @@ impl Router {
     }
 
     /// `pour_masks_counted(net, true)` as the router's preparation takes
-    /// it: the masks `hold_static_maps` computed for routers of the same
-    /// static maps and pours (`POUR_MASKS`: the rung probes of the
-    /// connected pours lower one board), counting nothing, or computed.
-    pub(super) fn prepared_pour_masks(&self, net: NetId) -> (Vec<Vec<bool>>, Vec<usize>, [u64; 2]) {
+    /// it, and whether it was found: the masks `hold_static_maps` computed
+    /// for routers of the same static maps and pours (`POUR_MASKS`: the
+    /// rung probes of the connected pours lower one board), or computed.
+    /// Their counts are the same either way (the canonical price: what a
+    /// router counts does not depend on what the process holds).
+    pub(super) fn prepared_pour_masks(
+        &self,
+        net: NetId,
+    ) -> (Vec<Vec<bool>>, Vec<usize>, [u64; 2], bool) {
         if let Some(key) = self.statics_key {
             let key = pour_masks_key(key, &self.board);
-            let cache = POUR_MASKS
-                .lock()
-                .unwrap_or_else(|poison| poison.into_inner());
-            if let Some((_, masks)) = cache
-                .iter()
-                .find(|(other, _)| *other == key)
-                .and_then(|(_, nets)| nets.iter().find(|(other, _)| *other == net))
+            let found = {
+                let mut cache = POUR_MASKS
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner());
+                cache.retain(|(_, masks)| masks.strong_count() > 0);
+                cache
+                    .iter()
+                    .find(|(other, _)| *other == key)
+                    .and_then(|(_, masks)| masks.upgrade())
+            };
+            if let Some(masks) = found
+                && let Some((_, mask)) = masks.iter().find(|(other, _)| *other == net)
             {
-                return (masks.0.clone(), masks.1.clone(), [0, 0]);
+                return (mask.0.clone(), mask.1.clone(), mask.2, true);
             }
         }
-        self.pour_masks_counted(net, true)
+        let (plane, plane_class, counts) = self.pour_masks_counted(net, true);
+        (plane, plane_class, counts, false)
     }
 
     /// The rule class `net` routes with at `cell`: its neck class inside
@@ -354,15 +365,30 @@ pub(super) fn compute_pour_masks(
     (plane, plane_class, counts)
 }
 
+/// One net's connected pours' masks: per layer the nodes, the brush class
+/// per layer, and what computing them counted (`compute_pour_masks`).
+pub(super) type PourMask = (Vec<Vec<bool>>, Vec<usize>, [u64; 2]);
+
+/// The masks of every net of a board's connected pours.
+pub(super) type PourMaskSet = Vec<(NetId, Arc<PourMask>)>;
+
 /// The pour masks `hold_static_maps` computed, by the static maps' and the
-/// pours' key (`pour_masks_key`), the last `POUR_MASK_KEYS` keys.
-pub(super) type PourMasks = Vec<(u128, Vec<(NetId, Arc<(Vec<Vec<bool>>, Vec<usize>)>)>)>;
+/// pours' key (`pour_masks_key`), while a hold keeps them (weak entries:
+/// until 2026-10-21 the last four keys were kept for the process's life;
+/// now nothing outlives the holds, `StaticMapsHold`).
+pub(super) type PourMasks = Vec<(u128, std::sync::Weak<PourMaskSet>)>;
 
 pub(super) static POUR_MASKS: std::sync::Mutex<PourMasks> = std::sync::Mutex::new(Vec::new());
 
-/// How many boards' pour masks `POUR_MASKS` keeps (a probed board's four
-/// rungs lower two or three).
-pub(super) const POUR_MASK_KEYS: usize = 4;
+/// The bytes of a mask set (`held_maps_bytes`).
+pub(super) fn mask_set_bytes(set: &PourMaskSet) -> usize {
+    set.iter()
+        .map(|(_, mask)| {
+            mask.0.iter().map(|layer| layer.capacity()).sum::<usize>()
+                + mask.1.capacity() * std::mem::size_of::<usize>()
+        })
+        .sum()
+}
 
 /// What the pour masks are computed from beyond the static maps (their
 /// key, `statics`): every pour's net, layer, class, connection, outline
