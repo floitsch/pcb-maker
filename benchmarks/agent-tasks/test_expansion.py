@@ -15,6 +15,11 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 import run  # noqa: E402
+import os
+
+# The tests' own memory ledger, not the machine's (harness_common.Ledger;
+# their subprocesses inherit it).
+os.environ.setdefault("PCB_MAKER_LEDGER", str(Path(tempfile.gettempdir()) / "pcb-maker-test-ledger.json"))
 
 ROOT = HERE.parents[1]
 

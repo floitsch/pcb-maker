@@ -1331,6 +1331,14 @@ pub const IMPORT_INCOMPLETE: &str = "footprints are missing from the board (the 
 
 /// Runs an agent command; `None` when `command` is not one.
 pub fn run(command: &str, arguments: Vec<String>) -> Option<Result<KiCadRunStatus, Failure>> {
+    // The commands that route or run KiCad's check reserve their memory in
+    // the machine's ledger (`pcb_kicad::ledger`).
+    if matches!(
+        command,
+        "route-kicad-board" | "layout-kicad-board" | "place-kicad-board" | "drc-kicad-board"
+    ) {
+        pcb_kicad::ledger::arm(&ledger_label(command, &arguments));
+    }
     Some(match command {
         "route-kicad-board" => route(arguments),
         "layout-kicad-board" => layout(arguments),
@@ -1361,6 +1369,21 @@ pub fn run(command: &str, arguments: Vec<String>) -> Option<Result<KiCadRunStatu
         }),
         _ => return None,
     })
+}
+
+/// The label of this run's reservation: the command, the board and where
+/// its output goes.
+fn ledger_label(command: &str, arguments: &[String]) -> String {
+    let mut words = vec![command.to_string()];
+    words.extend(
+        arguments
+            .iter()
+            .filter(|argument| !argument.starts_with('-'))
+            .skip(1)
+            .take(2)
+            .cloned(),
+    );
+    words.join(" ")
 }
 
 pub const EXIT_CODES: &str = "\

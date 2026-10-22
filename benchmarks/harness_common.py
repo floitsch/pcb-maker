@@ -192,3 +192,252 @@ def run_group(command, timeout=None, **options):
     if check:
         completed.check_returncode()
     return completed
+
+
+# The machine's memory ledger (crates/pcb-kicad/src/ledger.rs: the same
+# file and rules). Every route, layout and KiCad check of a binary since
+# x1590 reserves its memory in it before it allocates, and the harnesses
+# admit a board against it: the sum of the live reservations and the
+# board's expected size against the machine, so that runs started side by
+# side (other agents' tiers, sweeps, triage) see what the others will take.
+# Until 2026-10-22 each harness judged by MemAvailable alone and runs
+# admitted together grew into each other (two OOM rounds).
+LEDGER_MARGIN_MB = 6144.0
+
+
+def ledger_path(environ=None):
+    """The ledger file PCB_MAKER_LEDGER names (default
+    $XDG_RUNTIME_DIR/pcb-maker-ledger.json, else /tmp/...), None for
+    `off`."""
+    environ = os.environ if environ is None else environ
+    value = (environ.get("PCB_MAKER_LEDGER") or "").strip()
+    if value == "off":
+        return None
+    if value:
+        return Path(value)
+    runtime = environ.get("XDG_RUNTIME_DIR")
+    directory = Path(runtime) if runtime and Path(runtime).is_dir() else Path("/tmp")
+    return directory / "pcb-maker-ledger.json"
+
+
+def _positive_mb(environ, name, allow_zero=False):
+    try:
+        value = float((environ.get(name) or "").strip())
+    except ValueError:
+        return None
+    return value if value == value and value != float("inf") and (value > 0 or allow_zero and value == 0) \
+        else None
+
+
+def memory_total_mb():
+    """MemTotal in MB, None when /proc/meminfo cannot be read."""
+    try:
+        with open("/proc/meminfo") as meminfo:
+            for line in meminfo:
+                if line.startswith("MemTotal:"):
+                    return int(line.split()[1]) / 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def ledger_capacity_mb(environ=None):
+    """What the reservations may take together: PCB_MAKER_LEDGER_TOTAL_MB,
+    else MemTotal less PCB_MAKER_LEDGER_MARGIN_MB (default 6144). None when
+    unknown (no waiting on the ledger then)."""
+    environ = os.environ if environ is None else environ
+    total = _positive_mb(environ, "PCB_MAKER_LEDGER_TOTAL_MB")
+    if total is not None:
+        return total
+    margin = _positive_mb(environ, "PCB_MAKER_LEDGER_MARGIN_MB", allow_zero=True)
+    machine = memory_total_mb()
+    return None if machine is None else max(0.0, machine - (LEDGER_MARGIN_MB if margin is None else margin))
+
+
+def _stat_fields(pid):
+    try:
+        with open(f"/proc/{pid}/stat") as stat:
+            return stat.read().rsplit(")", 1)[1].split()
+    except (OSError, IndexError):
+        return None
+
+
+def start_ticks(pid):
+    """A process's start time in clock ticks after boot, None if unknown."""
+    fields = _stat_fields(pid)
+    try:
+        return int(fields[19]) if fields else None
+    except (IndexError, ValueError):
+        return None
+
+
+def reservation_alive(reservation):
+    """Whether a reservation's process lives (not a zombie) and is the one
+    that reserved (its start time, where recorded)."""
+    fields = _stat_fields(reservation.get("pid", -1))
+    if not fields or fields[0] in ("Z", "X", "x"):
+        return False
+    ticks = reservation.get("start_ticks")
+    try:
+        return ticks is None or int(fields[19]) == ticks
+    except (IndexError, ValueError):
+        return False
+
+
+def resident_mb(pid):
+    """A process's resident size in MB (0 when gone)."""
+    try:
+        with open(f"/proc/{pid}/status") as status:
+            for line in status:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024
+    except (OSError, ValueError, IndexError):
+        pass
+    return 0.0
+
+
+class Ledger:
+    """The machine's memory ledger (`path`), or one of this process alone
+    (`path` None: PCB_MAKER_LEDGER=off). Every update takes an exclusive
+    flock on `<path>.lock`; reservations of dead pids are dropped on every
+    read."""
+
+    def __init__(self, path):
+        self.path = None if path is None else Path(path)
+        self._memory = []
+        self._threads = __import__("threading").Lock()
+
+    @classmethod
+    def from_env(cls, environ=None):
+        return cls(ledger_path(environ))
+
+    def update(self, change):
+        """Applies `change(reservations)` (a list it may change in place)
+        to the live reservations under the lock; returns its result."""
+        import fcntl
+        with self._threads:
+            if self.path is None:
+                self._memory[:] = [r for r in self._memory if reservation_alive(r)]
+                return change(self._memory)
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            with open(str(self.path) + ".lock", "a") as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                stored = (read_json(self.path) or {}).get("reservations", []) if self.path.exists() else []
+                if not isinstance(stored, list):
+                    stored = []
+                reservations = [dict(r) for r in stored if isinstance(r, dict) and reservation_alive(r)]
+                outcome = change(reservations)
+                if reservations != stored:
+                    atomic_json(self.path, {"reservations": reservations}, newline=True)
+                return outcome
+
+    def live(self):
+        return self.update(lambda reservations: [dict(r) for r in reservations])
+
+    def reserve(self, megabytes, label, pid=None):
+        """Adds a reservation of `megabytes` for `pid` (default: this
+        process); returns its key for `move` and `release`."""
+        pid = pid or os.getpid()
+        entry = {"pid": pid, "started": time.time(), "start_ticks": start_ticks(pid),
+                 "megabytes": float(megabytes), "label": label}
+        if entry["start_ticks"] is None:
+            del entry["start_ticks"]
+        self.update(lambda reservations: reservations.append(entry))
+        return (entry["pid"], entry["started"], label)
+
+    def move(self, key, pid):
+        """Hands reservation `key` to process `pid` (the binary it was made
+        for): it lives as long as that process. A binary that reserved for
+        itself already makes it superfluous. Returns the new key."""
+        def change(reservations):
+            mine = [r for r in reservations if (r["pid"], r["started"], r["label"]) == key]
+            if not mine:
+                return None
+            if any(r["pid"] == pid for r in reservations):
+                reservations.remove(mine[0])
+                return None
+            mine[0]["pid"] = pid
+            ticks = start_ticks(pid)
+            if ticks is None:
+                mine[0].pop("start_ticks", None)
+            else:
+                mine[0]["start_ticks"] = ticks
+            return (pid, mine[0]["started"], key[2])
+        return self.update(change)
+
+    def release(self, key):
+        """Removes reservation `key` (gone already: nothing)."""
+        if key is None:
+            return
+        self.update(lambda reservations: reservations.__setitem__(
+            slice(None), [r for r in reservations if (r["pid"], r["started"], r["label"]) != key]))
+
+
+def memory_room(reservations, megabytes, min_free_mb=0.0, capacity_mb=None, available_mb=None,
+                resident=resident_mb, own_pid=None, alone=True):
+    """The one admission rule of the harnesses: whether `megabytes` more
+    fit, and the numbers for the log. Both must hold, unless nothing is
+    reserved (then anything goes alone):
+    - the ledger: the live reservations and `megabytes` within the
+      capacity (ledger_capacity_mb);
+    - the floor: MemAvailable, less what the reserving processes are still
+      expected to grow by (their reservation less their resident size; a
+      reservation of this harness itself counts whole), leaves
+      `min_free_mb` after `megabytes`.
+    `capacity_mb` and `available_mb` None: unknown, that rule holds.
+    `alone` False: the floor holds also when nothing is reserved (triage
+    fails closed)."""
+    own_pid = own_pid or os.getpid()
+    reserved = sum(r.get("megabytes", 0.0) for r in reservations)
+    growth = sum(max(0.0, r.get("megabytes", 0.0) - (0.0 if r.get("pid") == own_pid else resident(r["pid"])))
+                 for r in reservations)
+    ledger_ok = capacity_mb is None or reserved + megabytes <= capacity_mb
+    floor_ok = available_mb is None or available_mb - growth - megabytes >= min_free_mb
+    fits = (ledger_ok and floor_ok) or (alone and not reservations) or (not alone and not reservations and floor_ok)
+    text = (f"{reserved / 1024:.1f} GB reserved by {len(reservations)} run(s)"
+            + ("" if capacity_mb is None else f" of {capacity_mb / 1024:.1f} GB")
+            + ("" if available_mb is None else
+               f", {available_mb / 1024:.1f} GB available ({growth / 1024:.1f} GB still to grow)")
+            + f", {megabytes / 1024:.1f} GB expected, {min_free_mb / 1024:.1f} GB to keep")
+    return fits, text
+
+
+def try_admit(ledger, megabytes, label, min_free_mb=0.0):
+    """Reserves `megabytes` under `label` for this process when they fit
+    (memory_room against the ledger, its capacity and MemAvailable),
+    atomically with the check (under the ledger's lock). Returns the
+    reservation's key (None: no room) and the numbers for the log."""
+    def change(reservations):
+        available = memory_available_bytes()
+        fits, text = memory_room(reservations, megabytes, min_free_mb, ledger_capacity_mb(),
+                                 None if available is None else available / (1024 * 1024))
+        if not fits:
+            return None, text
+        entry = {"pid": os.getpid(), "started": time.time(), "start_ticks": start_ticks(os.getpid()),
+                 "megabytes": float(megabytes), "label": label}
+        if entry["start_ticks"] is None:
+            del entry["start_ticks"]
+        reservations.append(entry)
+        return (entry["pid"], entry["started"], label), text
+    return ledger.update(change)
+
+
+def admit(ledger, megabytes, label, min_free_mb=0.0, poll_seconds=15.0, log=None, stop=None):
+    """Waits until `megabytes` fit and reserves them (try_admit). Returns
+    the reservation's key, None when `stop()` said to give up. `log` gets
+    the waiting lines."""
+    started = time.monotonic()
+    said = None
+    while True:
+        key, text = try_admit(ledger, megabytes, label, min_free_mb)
+        waited = time.monotonic() - started
+        if key is not None:
+            if said is not None and log:
+                log(f"{label}: started after waiting {waited:.0f} s ({text})")
+            return key
+        if said is None and log:
+            log(f"{label}: waiting for memory ({text})")
+        said = text
+        if stop and stop():
+            return None
+        time.sleep(poll_seconds)

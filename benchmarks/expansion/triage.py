@@ -311,70 +311,59 @@ def memory_available():
     return harness_common.memory_available_bytes() or 0
 
 
-def pid_alive(pid):
-    try:
-        os.kill(pid, 0)
-        return True
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-
-
 def shared_memory_gate(args, active=None, admit=False, remove=False):
-    """Update/reserve estimated memory across runners under one persistent flock.
-
-    This file must not be replaced: readers lock the same inode. An admission
-    reserves its additional slot before the worker starts, closing the race
-    between independent orchestrators observing the same available memory.
-    """
+    """Keeps this runner's reservation in the machine's memory ledger
+    (harness_common.Ledger: `--memory-gate`, else PCB_MAKER_LEDGER's):
+    `active` jobs of `--job-memory-gib` each, one entry for the runner.
+    An admission (`admit`) adds a job when harness_common.memory_room
+    admits it (the ledger's reservations of every run on the machine, its
+    capacity, and MemAvailable less what they still grow by leaving
+    `--reserve-gib`; failing closed when nothing is reserved), atomically
+    under the ledger's lock: independent runners observing the same
+    available memory do not both take it. Returns None or the refusal's
+    reason. Dead runners' entries go by the ledger's pid rule."""
     path = getattr(args, 'memory_gate', None)
-    if not path:
-        return None
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open('a+') as stream:
-        fcntl.flock(stream, fcntl.LOCK_EX)
-        stream.seek(0)
-        try:
-            entries = json.load(stream)
-        except ValueError:
-            entries = {}
-        entries = {pid: row for pid, row in entries.items() if pid.isdigit() and pid_alive(int(pid))}
-        own = str(os.getpid())
+    ledger = harness_common.Ledger(path) if path else harness_common.Ledger.from_env()
+    own = os.getpid()
+    job_mb = args.job_memory_gib * 1024 if hasattr(args, 'job_memory_gib') else 0.0
+
+    def change(reservations):
+        mine = [r for r in reservations if r.get('pid') == own and r.get('label', '').startswith('triage')]
+        entry = mine[0] if mine else None
+        for extra in mine[1:]:
+            reservations.remove(extra)
         if remove:
-            entries.pop(own, None)
-        elif active is not None:
-            entries[own] = {'active': active, 'estimate_gib': active * args.job_memory_gib,
-                            'updated_at': time.time()}
-        reason = None
-        if admit:
-            estimates = sum(row.get('estimate_gib', 0) for row in entries.values())
-            if memory_available() < (args.reserve_gib + estimates + args.job_memory_gib) * GIB:
-                reason = 'shared_memory_admission_estimate'
-            else:
-                entries[own]['active'] += 1
-                entries[own]['estimate_gib'] += args.job_memory_gib
-        stream.seek(0)
-        stream.truncate()
-        json.dump(entries, stream, sort_keys=True)
-        stream.write('\n')
-        stream.flush()
-        os.fsync(stream.fileno())
-        return reason
+            if entry is not None:
+                reservations.remove(entry)
+            return None
+        if entry is None:
+            entry = {'pid': own, 'started': time.time(), 'megabytes': 0.0, 'label': 'triage: 0 jobs'}
+            ticks = harness_common.start_ticks(own)
+            if ticks is not None:
+                entry['start_ticks'] = ticks
+            reservations.append(entry)
+        count = round(entry.get('megabytes', 0.0) / job_mb) if active is None and job_mb else (active or 0)
+        entry.update(megabytes=count * job_mb, label=f'triage: {count} jobs')
+        if not admit:
+            return None
+        available = memory_available()
+        fits, _ = harness_common.memory_room(reservations, job_mb, args.reserve_gib * 1024,
+                                             harness_common.ledger_capacity_mb(), available / (1024 * 1024),
+                                             alone=False)
+        if not fits:
+            return 'shared_memory_admission_estimate'
+        count += 1
+        entry.update(megabytes=count * job_mb, label=f'triage: {count} jobs')
+        return None
+    return ledger.update(change)
 
 
 def admission_gate(args, active):
     if shutil.disk_usage(args.output).free < args.min_disk_gib * GIB:
         return 'disk_reserve'
-    if memory_available() < (args.reserve_gib + args.job_memory_gib) * GIB:
-        return 'memory_reserve'
-    # Slow starting jobs can all be admitted before their RSS grows. Reserve an
-    # estimate for each active job on top of currently available memory.
-    if not getattr(args, 'memory_gate', None) and memory_available() < (args.reserve_gib + (active + 1) * args.job_memory_gib) * GIB:
-        return 'memory_admission_estimate'
     if os.getloadavg()[0] > args.max_load:
         return 'load_limit'
+    # The memory: one rule for every harness (harness_common.memory_room).
     return shared_memory_gate(args, active=active, admit=True)
 
 
@@ -411,7 +400,7 @@ def main(argv=None):
     parser.add_argument('--workers', type=int, default=max(1, min(28, (os.cpu_count() or 1) - 3)))
     parser.add_argument('--native-workers', type=int, default=2)
     parser.add_argument('--native-cores', help='optional taskset CPU list for native KiCad only, e.g. 28-31')
-    parser.add_argument('--memory-gate', type=Path, help='optional shared admission JSON/lock across runners')
+    parser.add_argument('--memory-gate', type=Path, help='the memory ledger the runners share (default: the machine\'s, PCB_MAKER_LEDGER)')
     parser.add_argument('--route-seconds', type=float, default=30)
     parser.add_argument('--simple-seconds', type=float, default=3)
     parser.add_argument('--deadline-seconds', type=float, default=90,

@@ -73,6 +73,10 @@ fn scratch(name: &str) -> PathBuf {
 fn binary(threads: usize) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_pcb-maker"));
     command
+        .env(
+            "PCB_MAKER_LEDGER",
+            std::env::temp_dir().join("pcb-maker-test-ledger.json"),
+        )
         .env("RAYON_NUM_THREADS", threads.to_string())
         .env("PCB_WORK_RATE", RATE)
         .env("PCB_MAKER_MEMORY_MB", "4096")

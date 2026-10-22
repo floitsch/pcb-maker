@@ -36,6 +36,10 @@ fn fingerprints(threads: usize) -> Vec<String> {
     fs::write(&router, ROUTER).unwrap();
     let board = Path::new(env!("CARGO_MANIFEST_DIR")).join("benchmarks/fence/v4-2layer/fence");
     let output = Command::new(env!("CARGO_BIN_EXE_pcb-maker"))
+        .env(
+            "PCB_MAKER_LEDGER",
+            std::env::temp_dir().join("pcb-maker-test-ledger.json"),
+        )
         .arg("route-kicad-board")
         .arg(&board)
         .arg("fence")

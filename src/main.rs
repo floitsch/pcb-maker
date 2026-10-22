@@ -41,8 +41,16 @@ fn main() -> ExitCode {
         }
     }));
     pcb_kicad::set_build_version(VERSION);
+    // A run that grows past its reservation in the memory ledger and finds
+    // no room for more ends with exit 4 and the verdict saying so.
+    pcb_kicad::ledger::set_exceeded_handler(|message| {
+        agent_cli::report_failure(pcb_kicad::KiCadRunStatus::InternalError, message);
+    });
     let arguments: Vec<String> = env::args().skip(1).collect();
     let outcome = std::panic::catch_unwind(|| dispatch(arguments));
+    // The reservation goes with the run (a panic included; a signal's
+    // death by the ledger's pid rule).
+    pcb_kicad::ledger::release();
     let code = match outcome {
         Ok(code) => code,
         Err(payload) => {
@@ -269,7 +277,72 @@ const ENVIRONMENT_HELP: &[(&str, &str)] = &[
         "PCB_MAKER_MEMORY_MB",
         "a memory limit in MB: the ladder runs as many routers at once as fit.",
     ),
+    (
+        "PCB_MAKER_LEDGER",
+        "the machine's memory ledger (routes, layouts and KiCad's checks reserve their\nmemory in it and wait for room; pcb-maker ledger lists it); off: none; default\n$XDG_RUNTIME_DIR/pcb-maker-ledger.json, else /tmp/pcb-maker-ledger.json.",
+    ),
+    (
+        "PCB_MAKER_LEDGER_MARGIN_MB",
+        "the memory the ledger keeps free of reservations; default 6144.",
+    ),
+    (
+        "PCB_MAKER_LEDGER_TOTAL_MB",
+        "what the ledger's reservations may take together, in place of the machine's\nmemory less the margin (tests); default unset.",
+    ),
 ];
+
+/// `pcb-maker ledger`: the memory ledger's live reservations, who holds
+/// what, as text or JSON.
+fn print_ledger(json: bool) -> Result<(), String> {
+    use pcb_kicad::ledger;
+    let Some(book) = ledger::Ledger::from_env() else {
+        println!("memory ledger: off (PCB_MAKER_LEDGER=off)");
+        return Ok(());
+    };
+    let live = book
+        .live()
+        .map_err(|error| format!("{}: {error}", book.path().display()))?;
+    let capacity = ledger::capacity_mb();
+    let total = ledger::total_mb(&live);
+    if json {
+        let value = serde_json::json!({
+            "path": book.path(),
+            "capacity_mb": capacity,
+            "reserved_mb": total,
+            "reservations": live,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&value).map_err(|e| e.to_string())?
+        );
+        return Ok(());
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |elapsed| elapsed.as_secs_f64());
+    println!(
+        "memory ledger {}: {total:.0} MB reserved of {} by {} run{}",
+        book.path().display(),
+        capacity.map_or("an unknown capacity".to_string(), |c| format!("{c:.0} MB")),
+        live.len(),
+        if live.len() == 1 { "" } else { "s" }
+    );
+    for reservation in &live {
+        println!(
+            "  pid {:>7}  {:>6.0} MB{}  {:>6.0} s  {}",
+            reservation.pid,
+            reservation.megabytes,
+            reservation
+                .waiting_mb
+                .map_or(String::new(), |wanted| format!(
+                    " (waits for {wanted:.0} MB)"
+                )),
+            (now - reservation.started).max(0.0),
+            reservation.label
+        );
+    }
+    Ok(())
+}
 
 /// The usage line of a research command.
 fn research_usage(command: &str) -> Option<String> {
@@ -282,6 +355,7 @@ fn research_usage(command: &str) -> Option<String> {
 /// Usage lines of the research and benchmark commands, without the
 /// leading `pcb-maker`.
 const RESEARCH_USAGE: &[&str] = &[
+    "ledger [--json]",
     "verify-kicad-rung <directory> <board-id>",
     "normalize-kicad-footprint-links <directory> <board-id> [report.json]",
     "shrink-kicad-board <source.kicad_pcb> <output.kicad_pcb> <factor>",
@@ -304,6 +378,14 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
     let mut arguments = arguments.into_iter();
     let command = arguments.next().unwrap_or_else(|| "help".into());
     match command.as_str() {
+        "ledger" => {
+            let json = match arguments.next().as_deref() {
+                None => false,
+                Some("--json") => true,
+                Some(_) => return Err("usage: pcb-maker ledger [--json]".into()),
+            };
+            print_ledger(json)
+        }
         "verify-kicad-rung" => {
             let directory = arguments.next().ok_or_else(|| {
                 "usage: pcb-maker verify-kicad-rung <directory> <board-id>".to_string()

@@ -10,6 +10,10 @@ import sys
 from types import SimpleNamespace
 import unittest
 
+# The tests' own memory ledger, not the machine's (harness_common.Ledger;
+# their subprocesses inherit it).
+os.environ.setdefault("PCB_MAKER_LEDGER", str(Path(tempfile.gettempdir()) / "pcb-maker-test-ledger.json"))
+
 SPEC = importlib.util.spec_from_file_location('import_pending', Path(__file__).with_name('import_pending.py'))
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)

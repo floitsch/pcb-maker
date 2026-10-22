@@ -15,6 +15,11 @@ fn binary() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_pcb-maker"));
     command
         .env("RAYON_NUM_THREADS", "2")
+        // A ledger of the tests' own, not the machine's.
+        .env(
+            "PCB_MAKER_LEDGER",
+            std::env::temp_dir().join("pcb-maker-test-ledger.json"),
+        )
         .env_remove("PCB_MAKER_TEST_PANIC")
         .env_remove("PCB_WORK_RATE");
     command
@@ -1498,5 +1503,120 @@ fn kicad_cli_is_checked_before_any_work() {
         "{}",
         stderr(&output)
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// Two routes started together under a memory ledger that holds one of
+/// them at a time (`PCB_MAKER_LEDGER_TOTAL_MB`): both wait while a third
+/// process holds most of it, then they go one after the other, never both
+/// reserved at once, and both finish with their verdicts; the ledger is
+/// empty afterwards. `pcb-maker ledger` lists who holds what.
+#[test]
+fn routes_side_by_side_serialise_through_the_memory_ledger() {
+    use pcb_kicad::ledger::{Ledger, Reservation, start_ticks};
+    let root = scratch("ledger");
+    let project = project(&root);
+    let path = root.join("ledger.json");
+    let ledger = Ledger::at(&path);
+    // A third process holding 900 of the 1000 MB.
+    let mut holder = std::process::Command::new("sleep")
+        .arg("60")
+        .spawn()
+        .unwrap();
+    ledger
+        .update(|reservations| {
+            reservations.push(Reservation {
+                pid: holder.id(),
+                started: 0.0,
+                start_ticks: start_ticks(holder.id()),
+                megabytes: 900.0,
+                label: "another run".into(),
+                waiting_mb: None,
+            })
+        })
+        .unwrap();
+    let listed = binary()
+        .env("PCB_MAKER_LEDGER", &path)
+        .env("PCB_MAKER_LEDGER_TOTAL_MB", "1000")
+        .arg("ledger")
+        .output()
+        .unwrap();
+    let listed = String::from_utf8_lossy(&listed.stdout).into_owned();
+    assert!(
+        listed.contains("900 MB reserved of 1000 MB by 1 run"),
+        "{listed}"
+    );
+    assert!(listed.contains("another run"), "{listed}");
+    let routes: Vec<_> = ["a", "b"]
+        .iter()
+        .map(|name| {
+            let out = root.join(name);
+            let child = binary()
+                .env("PCB_MAKER_LEDGER", &path)
+                .env("PCB_MAKER_LEDGER_TOTAL_MB", "1000")
+                .env("PCB_SKIP_NATIVE", "1")
+                .env("PCB_WORK_RATE", "3.15e6,150e6")
+                .args([
+                    "route-kicad-board",
+                    &project.display().to_string(),
+                    "t",
+                    &out.display().to_string(),
+                    "auto",
+                ])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            (out, child)
+        })
+        .collect();
+    let pids: Vec<u32> = routes.iter().map(|(_, child)| child.id()).collect();
+    // Both wait for the holder: they are in the ledger, holding nothing.
+    let started = std::time::Instant::now();
+    loop {
+        let live = ledger.live().unwrap();
+        let waiting = live
+            .iter()
+            .filter(|r| pids.contains(&r.pid) && r.waiting_mb.is_some() && r.megabytes == 0.0)
+            .count();
+        if waiting == 2 {
+            break;
+        }
+        assert!(
+            started.elapsed().as_secs() < 60,
+            "the routes never waited: {live:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    holder.kill().unwrap();
+    holder.wait().unwrap();
+    // From now on at most one of them holds memory at a time.
+    let mut most = 0;
+    let mut ended = false;
+    while !ended {
+        let live = ledger.live().unwrap();
+        most = most.max(
+            live.iter()
+                .filter(|r| pids.contains(&r.pid) && r.megabytes > 0.0)
+                .count(),
+        );
+        ended = live.iter().all(|r| !pids.contains(&r.pid))
+            && pids.iter().all(|pid| !pcb_kicad::ledger::alive(*pid, None));
+        assert!(started.elapsed().as_secs() < 300, "{live:?}");
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert_eq!(most, 1, "both routes held memory at once");
+    for (out, child) in routes {
+        let output = child.wait_with_output().unwrap();
+        let log = stderr(&output);
+        assert_eq!(code(&output), 1, "{log}");
+        assert!(log.contains("memory ledger: waiting to reserve"), "{log}");
+        assert!(log.contains("after waiting"), "{log}");
+        assert_eq!(
+            verdict(&out.join("board-router.json"))["status"],
+            "router_complete_unverified"
+        );
+    }
+    assert_eq!(ledger.live().unwrap(), vec![]);
     fs::remove_dir_all(root).unwrap();
 }

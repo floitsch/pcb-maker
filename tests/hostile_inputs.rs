@@ -54,6 +54,10 @@ fn route(project: &Path, board_id: &str, out: &Path, environment: &[(&str, &str)
         .arg("-c")
         .arg("ulimit -v 6000000; exec \"$0\" \"$@\"")
         .arg(binary)
+        .env(
+            "PCB_MAKER_LEDGER",
+            std::env::temp_dir().join("pcb-maker-test-ledger.json"),
+        )
         .args(["route-kicad-board"])
         .arg(project)
         .arg(board_id)

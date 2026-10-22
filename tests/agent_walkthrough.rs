@@ -31,6 +31,10 @@ fn binary() -> Command {
     // pinned at the reference's, so that a slow test machine does the same
     // work as the machine the expectations come from.
     command
+        .env(
+            "PCB_MAKER_LEDGER",
+            std::env::temp_dir().join("pcb-maker-test-ledger.json"),
+        )
         .env("RAYON_NUM_THREADS", "2")
         .env("PCB_ROUTER_NO_WALL_GUARD", "1")
         .env("PCB_WORK_RATE", "3.15e6,150e6")

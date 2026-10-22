@@ -12,6 +12,10 @@ import time
 import unittest
 import unittest.mock
 
+# The tests' own memory ledger, not the machine's (harness_common.Ledger;
+# their subprocesses inherit it).
+os.environ.setdefault("PCB_MAKER_LEDGER", str(Path(tempfile.gettempdir()) / "pcb-maker-test-ledger.json"))
+
 spec = importlib.util.spec_from_file_location('triage', Path(__file__).with_name('triage.py'))
 triage = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(triage)
@@ -168,11 +172,14 @@ class TriageTests(unittest.TestCase):
             self.assertFalse(process.is_alive())
             with patch.object(triage, 'memory_available', return_value=5 * triage.GIB):
                 self.assertIsNone(triage.shared_memory_gate(args, active=0, admit=True))
-            state = json.loads(gate.read_text())
-            self.assertNotIn(str(process.pid), state)
-            self.assertEqual(state[str(os.getpid())]['active'], 1)
+            # The machine ledger's format (harness_common.Ledger): the dead
+            # runner's entry is gone, this one's holds one job.
+            state = json.loads(gate.read_text())['reservations']
+            self.assertNotIn(process.pid, [entry['pid'] for entry in state])
+            mine = [entry for entry in state if entry['pid'] == os.getpid()]
+            self.assertEqual([(entry['megabytes'], entry['label']) for entry in mine], [(3 * 1024, 'triage: 1 jobs')])
             triage.shared_memory_gate(args, remove=True)
-            self.assertEqual(json.loads(gate.read_text()), {})
+            self.assertEqual(json.loads(gate.read_text())['reservations'], [])
         finally:
             release.set()
             if process.is_alive():

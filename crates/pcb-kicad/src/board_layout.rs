@@ -1268,6 +1268,13 @@ pub fn layout_kicad_board(
                 (available * 0.5 / (router_mb * 1.5)) as usize
             })
             .clamp(1, candidates.len() + 1);
+        // The memory ledger: as many as it has room for, reserved first.
+        let side_by_side = crate::ledger::routers_side_by_side(
+            0.0,
+            router_mb * 1.5,
+            side_by_side,
+            "the placement race's routers",
+        );
         if side_by_side > 1 {
             eprintln!(
                 "placement race: {} placements, {side_by_side} side by side",

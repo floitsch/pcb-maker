@@ -106,6 +106,7 @@ pub use placement_constraints::{
 };
 pub use placement_room::{KiCadRoom, TARGET_UTILIZATION, noted_room};
 pub mod free_dimension;
+pub mod ledger;
 mod outline;
 pub use free_dimension::{
     KiCadFreeDimension, KiCadFreeDimensionPlan, KiCadFreeDimensionRun, KiCadFreeDimensionSearch,

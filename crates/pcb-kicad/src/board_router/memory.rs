@@ -542,6 +542,50 @@ pub(crate) fn check_lattice_fits(
         return refuse(message);
     }
     let maps_mb = size.maps_bytes_floor(board.layer_count, board.classes.len()) / BYTES_PER_MB;
+    let result = lattice_fits(board, config, &size, pitch, maps_mb, refuse);
+    if result.is_ok() {
+        reserve_for_lattice(board, config);
+    }
+    result
+}
+
+/// Reserves in the memory ledger (`crate::ledger`), before any lattice map
+/// is allocated, what the process holds now and a router of the board at
+/// the finest pitch it starts at (`router_peak_mb` of the maps' floor
+/// there, with the safety margin); the ladder raises it for finer
+/// lattices and routers side by side (`Ladder::side_by_side_for`).
+fn reserve_for_lattice(board: &pcb_router::Board, config: &KiCadBoardRouterConfig) {
+    if !crate::ledger::armed() {
+        return;
+    }
+    let finest = config
+        .grid_pitches_mm
+        .iter()
+        .flatten()
+        .chain(pcb_router::router::Config::default().pitches.iter())
+        .copied()
+        .filter(|pitch| pitch.is_finite() && *pitch > 0.0)
+        .fold(f64::INFINITY, f64::min);
+    if !finest.is_finite() {
+        return;
+    }
+    let size = pcb_router::grid::LatticeSize::of(board, finest);
+    let maps_mb = size.maps_bytes_floor(board.layer_count, board.classes.len()) / BYTES_PER_MB;
+    crate::ledger::reserve_at_least(
+        resident_mb() + router_peak_mb(maps_mb, MemoryKind::Resident),
+        &format!("a router of {maps_mb:.0} MB of maps at {finest} mm"),
+    );
+}
+
+/// `check_lattice_fits` against the limits, once the lattice indexes.
+fn lattice_fits(
+    board: &pcb_router::Board,
+    config: &KiCadBoardRouterConfig,
+    size: &pcb_router::grid::LatticeSize,
+    pitch: f64,
+    maps_mb: f64,
+    refuse: impl Fn(String) -> Result<(), String>,
+) -> Result<(), String> {
     let setting = config.memory_mb.map(f64::to_bits);
     let limits = {
         let mut first = LIMITS_AT_FIRST_CHECK

@@ -49,9 +49,11 @@ without a licence), strips the tracks as the intake did and routes with
 `route-kicad-board` and the task's `budget_seconds` of work (README.md,
 "The expansion tier"). `--tier designer` routes every board on the
 designer's own placement (designer_admitted; compare.py --gap joins it
-with a layout run: README.md, "The designer tier"). A tier run, or a run of a whole task list, takes
-build/quick-tier.lock first and waits for it (one tier at a time on the
-machine; `--no-lock` skips it). Every row has `mode` (layout, route or schematic); the run ends with
+with a layout run: README.md, "The designer tier"). Every run
+admits each board against the machine's memory ledger (harness_common.admit;
+README.md, "How to measure"); `--lock` takes build/quick-tier.lock first and
+waits for it (one tier at a time on the machine, the default until
+2026-10-22). Every row has `mode` (layout, route or schematic); the run ends with
 the pass line and a line of continuous objectives (README.md, "How to
 measure"), also written to summary.json."""
 
@@ -839,72 +841,53 @@ def run_measured(command, timeout=None, env=None, on_start=None):
     return code, output, round(usage.ru_maxrss / 1024), round(own), round(usage.ru_utime + usage.ru_stime, 1)
 
 
-def meminfo_gb():
-    """MemAvailable in GB (harness_common's reading), None when unknown."""
-    available = harness_common.memory_available_bytes()
-    return None if available is None else available / (1024 ** 3)
-
-
-def resident_mb(pid):
-    try:
-        with open(f"/proc/{pid}/status") as status:
-            for line in status:
-                if line.startswith("VmRSS:"):
-                    return int(line.split()[1]) / 1024
-    except OSError:
-        pass
-    return 0.0
-
-
 class MemoryGate:
-    """Admits a board when the memory available, less what the boards
-    already running are still expected to grow by, leaves `minimum_gb`
-    after this board's own expected peak. Many jobs started at once all see
-    the memory free that none of them has taken yet (jobs grow for minutes:
-    the router's maps, then the ladder's seeds side by side); the
-    reservation keeps them from overcommitting together."""
+    """Admits a board against the machine's memory ledger
+    (harness_common.admit: the live reservations of every run on the
+    machine and this board's expected peak within the machine's memory
+    less the ledger's margin, and MemAvailable less what the reserving
+    runs are still expected to grow by leaving `minimum_gb`), and reserves
+    the expected peak for it there at once, under the ledger's lock. The
+    reservation is handed to the board's binary when it starts (`started`:
+    it then lives as long as that process; a binary since x1590 replaces
+    it with its own, which grows with the router's maps and KiCad's
+    check) and released when the board is done. Until 2026-10-22 the
+    reservations were this process's alone (other runs on the machine did
+    not see them) and only MemAvailable counted."""
 
-    def __init__(self, minimum_gb):
-        self.minimum_gb = minimum_gb
+    def __init__(self, minimum_gb, ledger=None, poll_seconds=15.0):
+        self.minimum_gb = max(0.0, minimum_gb)
+        self.ledger = ledger if ledger is not None else harness_common.Ledger.from_env()
+        self.poll_seconds = poll_seconds
         self.lock = threading.Lock()
-        # token -> [expected peak in MB, pid or None]
-        self.running = {}
+        # token -> the reservation's key in the ledger
+        self.keys = {}
         self.next_token = 0
 
     def admit(self, what, expected_mb):
-        if self.minimum_gb <= 0:
-            return None
-        waited = 0
-        while True:
-            with self.lock:
-                available = meminfo_gb()
-                if available is None:
-                    return None
-                growth = sum(max(0.0, expected - (resident_mb(pid) if pid else 0.0))
-                             for expected, pid in self.running.values()) / 1024
-                if available - growth - expected_mb / 1024 >= self.minimum_gb or not self.running:
-                    token = self.next_token
-                    self.next_token += 1
-                    self.running[token] = [expected_mb, None]
-                    if waited:
-                        print(f"{what}: started after waiting {waited} s ({available:.0f} GB available, "
-                              f"{growth:.0f} GB reserved)", file=sys.stderr)
-                    return token
-            if waited == 0:
-                print(f"{what}: waiting for memory ({available:.1f} GB available, {growth:.1f} GB reserved, "
-                      f"{expected_mb / 1024:.1f} GB expected, {self.minimum_gb} GB to keep)", file=sys.stderr)
-            time.sleep(15)
-            waited += 15
+        key = harness_common.admit(self.ledger, expected_mb, f"run.py: {what} (expected peak)",
+                                   self.minimum_gb * 1024, poll_seconds=self.poll_seconds,
+                                   log=lambda text: print(text, file=sys.stderr, flush=True))
+        with self.lock:
+            token = self.next_token
+            self.next_token += 1
+            self.keys[token] = key
+        return token
 
     def started(self, token, pid):
         if token is not None:
             with self.lock:
-                self.running[token][1] = pid
+                key = self.keys.get(token)
+            if key is not None:
+                moved = self.ledger.move(key, pid)
+                with self.lock:
+                    self.keys[token] = moved
 
     def done(self, token):
         if token is not None:
             with self.lock:
-                self.running.pop(token, None)
+                key = self.keys.pop(token, None)
+            self.ledger.release(key)
 
 
 def task_directory(task):
@@ -1897,8 +1880,9 @@ def main():
                              "TIER_THREADS; else with several jobs the physical cores shared among them, "
                              "at most 4; with one job: all)")
     parser.add_argument("--min-free-gb", type=float, default=12.0,
-                        help="start a board only when this much memory stays available after the "
-                             "expected peaks of it and the boards running (0: always)")
+                        help="a floor beside the memory ledger: start a board only when this much memory "
+                             "stays available after its expected peak and what the runs in the ledger are "
+                             "still expected to grow by (0: the ledger alone)")
     parser.add_argument("--expected-gb", type=float, default=3.0,
                         help="expected peak of a board the tier does not estimate")
     parser.add_argument("--budget-scale", type=float, default=None,
@@ -1919,9 +1903,12 @@ def main():
                         help="the work rates every board runs at (PCB_WORK_RATE: '<expansions/s>[,<placer "
                              "units/s>]'; 'measured': each binary measures its machine at its start; default: "
                              "PCB_WORK_RATE if set, else the reference's " + REFERENCE_WORK_RATE + ")")
+    parser.add_argument("--lock", action="store_true",
+                        help="take build/quick-tier.lock and wait for it (one tier at a time on the machine); "
+                             "by default runs go side by side and the memory ledger keeps them apart "
+                             "(README.md, \"How to measure\")")
     parser.add_argument("--no-lock", action="store_true",
-                        help="do not take build/quick-tier.lock (by default a tier run or a run of a whole "
-                             "task list takes it and waits for it: one tier at a time on the machine)")
+                        help="the default since 2026-10-22 (no lock); kept for older command lines")
     arguments = parser.parse_args()
     arguments.timeout_given = arguments.timeout is not None
     if arguments.timeout is None:
@@ -1955,7 +1942,9 @@ def main():
         parser.error(f"--splice-from: {arguments.splice_from} not found")
     # One tier at a time: a tier run, or a whole task list, waits for the
     # machine's lock (a few boards given with --only and no tier do not).
-    if not arguments.no_lock and (tier is not None or not arguments.only):
+    # The machine's lock, when asked for (--lock): the memory ledger lets
+    # runs go side by side without it.
+    if arguments.lock and not arguments.no_lock:
         arguments.lock = take_lock()
     # Physical cores, not logical CPUs: the work budgets are calibrated on
     # one search thread a core, and v16's five jobs of four threads on the

@@ -88,11 +88,6 @@ def signature(source_hash, converter_hash, kicad_version):
     return hashlib.sha256(json.dumps([source_hash, converter_hash, kicad_version]).encode()).hexdigest()
 
 
-def available_memory():
-    # Fail closed when available memory cannot be determined.
-    return harness_common.memory_available_bytes() or 0
-
-
 def eligible(row, outcome, source_hash, converter_hash, version):
     """Publish only a currently matching successful conversion and artifact."""
     if row.get('sha256') and source_hash != row['sha256']:
@@ -310,17 +305,26 @@ def main():
     completed = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as executor:
         active = set()
+        # Each conversion reserves its memory in the machine's ledger
+        # (harness_common.try_admit: the rule every harness admits by).
+        ledger = harness_common.Ledger.from_env()
+        reservations = {}
         while (pending or active) and not STOP:
             while pending and len(active) < args.workers:
-                memory_slots = int(max(0, available_memory() - args.reserve_memory_gib * GIB) // (args.memory_per_worker_gib * GIB))
-                if len(active) >= memory_slots:
+                key, _ = harness_common.try_admit(ledger, args.memory_per_worker_gib * 1024,
+                                                  'import_pending: ' + pending[0]['source_id'][:80],
+                                                  args.reserve_memory_gib * 1024)
+                if key is None:
                     break
-                active.add(executor.submit(convert_job, pending.pop(0), args.data, converter_hash, version, args))
+                future = executor.submit(convert_job, pending.pop(0), args.data, converter_hash, version, args)
+                reservations[future] = key
+                active.add(future)
             if not active:
                 print(json.dumps({'status': 'memory_deferred', 'pending': len(pending), 'ready': ready_count}), flush=True)
                 break
             done, active = concurrent.futures.wait(active, timeout=0.5, return_when=concurrent.futures.FIRST_COMPLETED)
             for future in done:
+                ledger.release(reservations.pop(future, None))
                 result = future.result()
                 append_outcome(outcomes_path, result)
                 outcomes[result['source_id']] = result
@@ -329,6 +333,7 @@ def main():
                 print(json.dumps({'source_id': result['source_id'], 'status': result['status'], 'ready': ready_count}), flush=True)
         # Drain interrupted jobs so their cancellation is journaled too.
         for future in concurrent.futures.as_completed(active):
+            ledger.release(reservations.pop(future, None))
             result = future.result()
             append_outcome(outcomes_path, result)
             outcomes[result['source_id']] = result

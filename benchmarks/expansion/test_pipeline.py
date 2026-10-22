@@ -10,6 +10,11 @@ import unittest
 from unittest.mock import patch
 
 import samples
+import os
+
+# The tests' own memory ledger, not the machine's (harness_common.Ledger;
+# their subprocesses inherit it).
+os.environ.setdefault("PCB_MAKER_LEDGER", str(Path(tempfile.gettempdir()) / "pcb-maker-test-ledger.json"))
 
 # This directory's run.py by its path: benchmarks/agent-tasks has a run.py
 # too, and a pytest run over both directories imports whichever came first

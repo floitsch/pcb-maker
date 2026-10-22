@@ -1033,6 +1033,26 @@ impl<'a> Ladder<'a> {
     ) -> (usize, String) {
         let limits = runner.memory_limits();
         let (count, limit) = limits.routers_that_fit(maps_mb, wanted);
+        // The memory ledger: as many of them as it has room for, at least
+        // one, reserved before they are built (`crate::ledger`): the maps
+        // estimate of each (`PEAK_RESIDENT_PER_MAPS`) and the fixed
+        // `RESIDENT_OVERHEAD_MB` once, with the safety margin, beside what
+        // the process holds.
+        let reserved = crate::ledger::routers_side_by_side(
+            RESIDENT_OVERHEAD_MB * MEMORY_SAFETY,
+            maps_mb * PEAK_RESIDENT_PER_MAPS * MEMORY_SAFETY,
+            count,
+            &format!("{count} router(s) of {maps_mb:.0} MB of maps"),
+        );
+        if reserved < count {
+            return (
+                reserved,
+                format!(
+                    "{}; {reserved} fit the memory ledger",
+                    fit_note(maps_mb, limit)
+                ),
+            );
+        }
         (count, fit_note(maps_mb, limit))
     }
 

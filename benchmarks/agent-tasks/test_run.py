@@ -15,6 +15,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import compare  # noqa: E402
 import run  # noqa: E402
 
+# The tests' own memory ledger, not the machine's (harness_common.Ledger;
+# their subprocesses inherit it).
+os.environ.setdefault("PCB_MAKER_LEDGER", str(Path(tempfile.gettempdir()) / "pcb-maker-test-ledger.json"))
+
 HERE = Path(__file__).resolve().parent
 
 
@@ -521,6 +525,117 @@ class TierLock(unittest.TestCase):
                                 capture_output=True, text=True, timeout=30)
         self.assertEqual(result.stdout.strip(), "None", result.stderr)
         self.assertIn("held by this run's caller", result.stderr)
+
+
+class MemoryLedger(unittest.TestCase):
+    """The admission against the machine's memory ledger
+    (harness_common.Ledger, admit, memory_room; run.MemoryGate)."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="pcb-maker-ledger-test-"))
+        self.ledger = run.harness_common.Ledger(self.root / "ledger.json")
+        self.saved = {name: os.environ.get(name) for name in ("PCB_MAKER_LEDGER_TOTAL_MB",)}
+        os.environ["PCB_MAKER_LEDGER_TOTAL_MB"] = "4000"
+        self.children = []
+
+    def tearDown(self):
+        for child in self.children:
+            child.kill()
+            child.wait()
+        for name, value in self.saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        shutil.rmtree(self.root)
+
+    def sleeper(self):
+        child = subprocess.Popen(["sleep", "60"])
+        self.children.append(child)
+        return child
+
+    def test_waits_while_the_reservations_fill_the_machine_and_goes_when_one_ends(self):
+        other = self.sleeper()
+        self.ledger.reserve(3000, "another run", pid=other.pid)
+        gate = run.MemoryGate(0, ledger=self.ledger, poll_seconds=0.05)
+        small = gate.admit("small", 500)
+        self.assertEqual(sum(r["megabytes"] for r in self.ledger.live()), 3500)
+        admitted = []
+        waiter = run.threading.Thread(target=lambda: admitted.append(gate.admit("large", 1500)))
+        waiter.start()
+        time.sleep(0.5)
+        self.assertEqual(admitted, [], "3000 + 500 + 1500 MB do not fit 4000")
+        other.kill()
+        other.wait()
+        waiter.join(10)
+        self.assertEqual(len(admitted), 1)
+        labels = sorted(r["label"] for r in self.ledger.live())
+        self.assertEqual(labels, ["run.py: large (expected peak)", "run.py: small (expected peak)"])
+        gate.done(small)
+        gate.done(admitted[0])
+        self.assertEqual(self.ledger.live(), [])
+
+    def test_alone_a_board_larger_than_the_machine_still_runs(self):
+        gate = run.MemoryGate(0, ledger=self.ledger, poll_seconds=0.05)
+        token = gate.admit("huge", 9000)
+        self.assertEqual([r["megabytes"] for r in self.ledger.live()], [9000])
+        gate.done(token)
+
+    def test_the_reservation_goes_with_the_binary_it_was_made_for(self):
+        gate = run.MemoryGate(0, ledger=self.ledger, poll_seconds=0.05)
+        token = gate.admit("board", 1000)
+        binary = self.sleeper()
+        gate.started(token, binary.pid)
+        live = self.ledger.live()
+        self.assertEqual([(r["pid"], r["megabytes"]) for r in live], [(binary.pid, 1000)])
+        self.assertEqual(live[0]["start_ticks"], run.harness_common.start_ticks(binary.pid))
+        # The binary's death releases it (the pid rule), done() then finds nothing.
+        binary.kill()
+        binary.wait()
+        self.assertEqual(self.ledger.live(), [])
+        gate.done(token)
+        # A binary that reserved for itself first: the harness's goes.
+        token = gate.admit("board", 1000)
+        binary = self.sleeper()
+        self.ledger.reserve(700, "route-kicad-board board", pid=binary.pid)
+        gate.started(token, binary.pid)
+        self.assertEqual([r["megabytes"] for r in self.ledger.live()], [700])
+        gate.done(token)
+
+    def test_the_floor_counts_what_the_reservations_still_grow_by(self):
+        room = run.harness_common.memory_room
+        reservations = [{"pid": 11, "megabytes": 3000.0}, {"pid": 12, "megabytes": 2000.0}]
+        resident = {11: 1000.0, 12: 2500.0}.get
+        # Growth: 2000 (11) and 0 (12, past its reservation); 10000 available.
+        fits, text = room(reservations, 1000, 7000, None, 10000, resident=resident, own_pid=1)
+        self.assertTrue(fits, text)
+        fits, _ = room(reservations, 1001, 7000, None, 10000, resident=resident, own_pid=1)
+        self.assertFalse(fits)
+        # The ledger: 5000 reserved, 1000 more fit 6000, 1001 do not.
+        self.assertTrue(room(reservations, 1000, 0, 6000, None, resident=resident)[0])
+        self.assertFalse(room(reservations, 1001, 0, 6000, None, resident=resident)[0])
+        # Nothing reserved: anything runs alone.
+        self.assertTrue(room([], 1e9, 7000, 6000, 0)[0])
+        self.assertIn("4.9 GB reserved by 2 run(s) of 5.9 GB", room(reservations, 1, 0, 6000, None,
+                                                                     resident=resident)[1])
+
+    def test_dead_and_reused_pids_are_dropped_and_other_fields_kept(self):
+        child = self.sleeper()
+        self.ledger.reserve(100, "live", pid=child.pid)
+        stored = json.loads((self.root / "ledger.json").read_text())
+        stored["reservations"][0]["waiting_mb"] = 300.0
+        stored["reservations"].append({"pid": child.pid, "started": 1.0, "megabytes": 5.0, "label": "reused",
+                                       "start_ticks": run.harness_common.start_ticks(child.pid) + 1})
+        stored["reservations"].append({"pid": 4194311, "started": 1.0, "megabytes": 5.0, "label": "dead"})
+        (self.root / "ledger.json").write_text(json.dumps(stored))
+        live = self.ledger.live()
+        self.assertEqual([(r["label"], r.get("waiting_mb")) for r in live], [("live", 300.0)])
+
+    def test_the_tier_lock_is_opt_in(self):
+        result = subprocess.run([sys.executable, str(HERE / "run.py"), "--help"], capture_output=True, text=True,
+                                timeout=60)
+        self.assertIn("--lock", result.stdout)
+        self.assertIn("memory ledger", result.stdout)
 
 
 if __name__ == "__main__":
