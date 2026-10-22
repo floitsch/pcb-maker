@@ -691,14 +691,14 @@ without a place).
 
 | item | before 2026-10-21 | now (`keep_board_marks`) |
 | --- | --- | --- |
-| footprints' visible Reference and Value fields on the silkscreen | moved to the nearest free spot around the part, turned, shrunk to 0.8 | the same; the board's marks are taken spots they keep off |
+| footprints' visible Reference and Value fields on the silkscreen | moved to the nearest free spot around the part, turned, shrunk to 0.8 | the same; the board's marks are taken spots they keep off (since 2026-10-22 by KiCad's own rules: "The fields on the silkscreen" below) |
 | board texts on F.SilkS and B.SilkS | moved to the nearest spot off the parts' silkscreen and pads (up to 25 mm) | stay |
 | board silkscreen graphics in clusters (not those spanning the board) | moved as one piece (up to 30 mm) | stay |
 | board texts on copper layers (no mask twin) | taken off the board while routing, then moved off the copper and the parts (turned when that fitted) | stay; the router routes around them (as route mode always did) |
 | copper texts with a mask twin, footprints' own texts, texts on other layers, text boxes, dimensions | stay | stay |
 
-`repair-kicad-silkscreen` moves footprints' reference fields and
-silkscreen strokes only; it treats the board's drawings as fixed.
+`repair-kicad-silkscreen` moves footprints' fields and front silkscreen
+strokes only; it treats the board's drawings as fixed.
 
 **What is reported.** A movable part whose silkscreen, pads or label
 (one without a free spot) lies on a silkscreen mark after the layout, or
@@ -725,6 +725,87 @@ courtyard, a chip's name on its outline. For such tasks
 tier). The schematic tier's boards have no board texts or silkscreen
 graphics (the import writes none): their placements with x1385
 and x1417 are byte-identical.
+
+## The fields on the silkscreen (2026-10-22)
+
+Every layout result had KiCad silkscreen findings (`silk_over_copper`,
+`silk_overlap`, `silk_edge_clearance`; the fence's issue 8), and an agent
+had to run `repair-kicad-silkscreen` afterwards. On the fence's v5
+four-layer result (x1539) 11 of its 15 came from footprint fields: four
+labels the polish found "no room" for stayed at their default offset, on
+their own pads (C26, C27) or a neighbour's pad and outline (J2, JP1). The
+old polish judged spots by a rough box (30 % too wide) against pads with
+a 0.1 mm margin and kept a label where it was when nothing was free.
+
+**The scorer** (`silk_fields.rs`) computes KiCad's own rules from our
+geometry, measured against kicad-cli 10.0.7 on test boards:
+- `silk_over_copper`: the field's ink overlaps a mask opening (a pad on
+  `F.Mask`, `B.Mask` or `*.Mask`, grown by its `solder_mask_margin`, its
+  footprint's or the board's `pad_to_mask_clearance`; a graphic on a mask
+  layer). Touching is no finding and `min_silk_clearance` does not apply;
+  copper without a mask opening is none.
+- `silk_overlap`: within `min_silk_clearance` of another silkscreen item:
+  every footprint's graphics and texts, its own included, the other
+  fields (its own Value too), the board's texts and graphics. One finding
+  per item, as KiCad reports them.
+- `silk_edge_clearance`: within `min_silk_clearance` of the outline or a
+  cutout, or off the board.
+- The ink: KiCad's stroke font per printable ASCII character (advance and
+  ink, measured with pcbnew's `GetEffectiveTextShape`), the pen (default
+  an eighth of the size, at most a quarter), justification (a justified
+  text starts 0.658 pens past its anchor), mirroring and KiCad's upright
+  rule (a text at 90 to 270 degrees reads turned half way). Its box agrees
+  with pcbnew's to 0.001 mm on the strings tested; KiCad checks the glyph
+  strokes, so the box is on the safe side (a pad in the notch of a "V" is
+  no finding).
+
+**The candidates.** A field stays where it is if KiCad will find nothing
+there. Else: the four sides of its part's body (courtyard and pads), each
+slid from corner to corner (up to 16 spots) at six distances (0.1 to
+2.2 mm), at the field's angle and a quarter turn, and a grid inside the
+body of a part larger than the text; shrunk to 0.8 (not below the
+project's `min_text_height`, 0.8 mm at least, nor `min_text_thickness`)
+only when no full-size spot is clean. The fewest findings win, then the
+smallest cost: the move in mm, +1.5 off the side the field was on, +0.8
+turned, +3 shrunk, +2.5 on another part's body, +1 on its own from
+outside. Big parts first; a placed field is an obstacle for the rest.
+Fields are the visible Reference and Value (KiCad 8's `property`, KiCad
+6's `fp_text reference` and `value`, written back with `unlocked` kept);
+the footprints' own texts and graphics and the board's (`keep_board_marks`)
+never move.
+
+**No clean spot.** The field stays at its best spot and is reported:
+`labels.silkscreen` in `board-layout.json` and the verdict's
+`silkscreen` fact (`fields`, `moved`, `blocked` with the findings
+predicted there, `hidden`, `predicted` by KiCad's type), and a next
+action. With `"silkscreen": {"hide_when_blocked": true}` in layout.json
+such a field is hidden instead.
+
+**repair-kicad-silkscreen** keeps its pcbnew worker for the front
+strokes (clipped off pads, other silkscreen and the edge) and the
+isolated crosses, which no longer moves the reference fields; then the
+same placement runs on its result (both sides, no shrinking and no
+hiding, so the guards on text, size and visibility hold), also where the
+worker fails (a KiCad 6 board, whose records carry `tstamp`s, not uuids).
+On the fence's v5 four-layer result of x1539: 15 findings before, 2 after
+(J1's back outline over the edge, which the front-only worker leaves).
+
+**Tests.** `the_scorer_predicts_kicads_silkscreen_findings_and_placing_clears_them`
+(kicad-cli on the PATH): a board of fifteen fields in each predicament
+(own pads, a neighbour's pad, its own outline, another label, its Value,
+the edge, a board text, a back THT part, a turned part, copper without a
+mask, 0.05 mm from a pad, 0.15 mm from an outline), at
+`min_silk_clearance` 0 and 0.2: the predictions per field equal KiCad's,
+and after placing KiCad finds nothing. The ink against pcbnew's numbers,
+and a boxed-in field kept or hidden, without KiCad.
+
+**Measured** (changelog, "Committed on 2026-10-22 (silkscreen
+placement)"): the fence's v5 four-layer board 15 -> 4 KiCad silkscreen
+findings (x1592 -> x1552; the 4 are connector outlines over the edge),
+the copper byte-identical; the short tier's cosmetic findings 1951 ->
+1950, its boards byte-identical outside the fields: they hide most of
+their references, and what KiCad reports there is the parts' and the
+board's own graphics.
 
 ## One notion of a held part (2026-10-21)
 
@@ -778,10 +859,12 @@ ones and those constraints.json fixes or places. The unit test
   constraint yet.
 - Congestion drives nudges of individual parts, but does not yet feed the
   global placer's density term (coupling step 3).
-- Reference labels are placed after routing by the polish (`labels`), which
-  keeps them off pads, silkscreen and the board's own marks
-  ([quality.md](quality.md)); the separate
-  repair tool handles most of what is left. A board text that labels a
+- Reference and Value fields are placed after routing by the polish
+  (`labels`, `silk_fields`) where KiCad's silkscreen checks find nothing
+  ("The fields on the silkscreen"); what KiCad still reports on the
+  silkscreen is the footprints' and the board's own graphics (a
+  connector's outline over the edge, a logo footprint over parts), which
+  nothing moves; `repair-kicad-silkscreen` clips front strokes. A board text that labels a
   part the placer moves does not move with it (the benchmark tasks' pin
   names of their connectors): it stays, and the part keeps off it until
   the last level.

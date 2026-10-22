@@ -11,6 +11,74 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-22 (silkscreen placement)
+
+The fence's open item C and issue 8: every result had silkscreen
+findings, and `repair-kicad-silkscreen` was a separate step. Branch
+silkscreen-placement on 313b920; snapshots x1552 (the commit) against
+main's x1592, and x1550 (the same code on af9d32a) against x1539.
+
+**Measured first** (KiCad's findings by cause, `drc.json`): the fence's
+v5 four-layer result of x1539 has 15 (8 `silk_over_copper`, 3
+`silk_overlap`, 4 `silk_edge_clearance`): 4 fields over their own pads
+(C26, C27, which the old polish left at their default offset, "no room"),
+4 over a neighbour's pads, 2 over a neighbour's outline, 1 field on
+another, and 4 connector outlines (J1 back, J4 front) over the edge. The
+short tier (x1521, 12 boards) has 649 (`silk_*` and `text_*`): 8 from
+fields (5 over a neighbour's outline, 1 over the edge, and R6's
+`text_height` and `text_thickness`: the designer's 0.2 mm text), the rest the
+footprints' graphics over each other and over pads (a logo footprint over
+the LEDs of USB_Cable_Tester: 197), the board's own marks under parts
+(Blue_Line's artwork: 180) and outlines over the edge; most of its boards
+hide their references.
+
+**The fields** (silk_fields.rs; docs/placer.md, "The fields on the
+silkscreen"): the polish after routing places every visible Reference and
+Value field (KiCad 8 properties, KiCad 6 `fp_text`) by a scorer that
+computes KiCad's three rules from our geometry: the ink of KiCad's stroke
+font (measured with pcbnew per character: exact to 0.001 mm), mask
+openings (not copper; overlap only), every silkscreen item and the
+outline at the project's `min_silk_clearance`. Candidates: where it is,
+the four sides slid from corner to corner at six distances, a quarter
+turn, inside a large part, shrunk to 0.8 last; fewest findings first,
+then the shortest move on the side it was on. A field without a clean
+spot stays at its best and is reported (`labels.silkscreen` in
+board-layout.json, the verdict's `silkscreen` fact and a next action), or
+is hidden with `"silkscreen": {"hide_when_blocked": true}` (default
+false). Board texts and graphics never move (main's rule).
+
+**repair-kicad-silkscreen** shares the scorer: its pcbnew worker clips
+the front strokes and moves crosses (it no longer moves references), then
+the fields are placed as in the layout (no shrinking, no hiding), also
+where the worker fails (KiCad 6 boards without uuids). On the x1539 fence
+result: 15 findings before, 2 after (J1's back outline).
+
+**Tests**: kicad-cli on a board of fifteen fields in every predicament at
+`min_silk_clearance` 0 and 0.2: the predicted findings per field equal
+KiCad's, and after placing KiCad finds none; the ink against pcbnew's
+numbers; a boxed-in field kept and reported, or hidden. The labels test's
+reference now lies on the board text (the old box overlapped it, the true
+ink does not).
+
+**Measured.** The fence's v5 four-layer board (`layout.json`, single
+layouts outside the tiers): x1539 15 findings, x1550 4; x1592 15, x1552
+4 (all `silk_edge_clearance` of J1's and J4's outlines, which overhang
+the edge); 43 fields, 35 moved, none blocked; the boards byte-identical
+outside the fields on both bases (segments, vias, zones, parts), the
+verdict complete as before. The short tier, 3 x 2 with the ledger
+(`--min-free-gb 10`), x1592 against x1552: cosmetic findings 1951 ->
+1950 (framework_mobo_lefthalf 65 -> 64: a reference over the edge; every
+other board the same), KiCad silkscreen findings 566 -> 565, every
+board's result byte-identical outside the fields, the objectives
+identical (unconnected 21, new errors 3, vias 1183, 21211 mm, work
+2469 s). The short tier's boards hide most references (0xCB, the CDFER
+cards, urchin, Blue_Line show none; reCamera 87, all clean before and
+after): their 576 remaining findings are the footprints' graphics over
+each other and over pads (179 + 142 + 45), the board's marks under parts
+(159) and outlines over the edge (36), and R6's designer text below the
+minimum height (2). Router fingerprints are route mode, where no polish
+runs: not rerun.
+
 ## Committed on 2026-10-22 (memory ledger)
 
 Progress had slowed to the queue for build/quick-tier.lock, and without
