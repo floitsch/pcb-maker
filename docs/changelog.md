@@ -11,6 +11,174 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (free dimension and layout budget fixes)
+
+The review of 2026-10-21 (docs/reviews/2026-10-21-review-placer.md),
+findings 3, 4, 5, 6, 8, 9, 10 and 11: the free dimension's geometry,
+budget, children and reports, one notion of a held part, the layout's
+budget caps and footprint ties. Branch free-dimension-fixes; snapshots
+x1480 (the measurements), x1482 (the commit, on main ad6d9cd).
+
+**Shrinking past the band (3).** A size used to move points within
+`band_mm` of the edge past points that stay, and only fixed parts, rule
+areas and constraint boxes were checked. Now (free_dimension.rs, `build`):
+- a zone whose points in the band would pass points beyond it (a pour's
+  notch just past the band) is cut at the new edge, its outline and its
+  fills (Sutherland-Hodgman, `clip_polygon`; KiCad clips a pour to the
+  board anyway); a drawn shape that would fold (a silkscreen frame) makes
+  the size infeasible;
+- board texts, circles, images, dimensions and vias move whole by the
+  side of their box nearest the edge (a text's box from its font,
+  length, justification and angle), and any drawn item, text or inner
+  cutout that lay on the board and would end beyond the outline makes the
+  size infeasible (copper zones are cut instead, tracks go with the
+  layout);
+- arcs move by their ends: whole with both in the band, not at all with
+  neither, and with one the arc keeps its shape between its new ends (the
+  similarity that maps the old ends to the new takes the middle), so
+  what is joined to either end stays joined;
+- `region` and `keepout` boxes move side by side: a box reaching from the
+  edge across the board stretches (it used to move whole, infeasible at
+  every shrink and short of its far end on growth); one whose near side
+  would pass its far side is infeasible;
+- a held part whose body lies at the edge (within 0.5 mm, or beyond it)
+  moves with the edge though its origin lies outside the band (a
+  centre-origin connector, a module over the edge); a tall one that only
+  reaches into the band stays (the anchor by the body's side in the band
+  carried the fixture F2's header J1, 20 mm tall, off the top at 20 mm);
+  other footprints still go by their origin.
+Unit tests: a pour's notch cut, a frame folding, a cutout and a label
+past the band, a label by its box, an arc keeping its joint, a box
+stretching and vanishing, a held part by its body at the edge and a tall
+one staying. The fixture test F2 (main's, through the binary) now
+retries 20 mm (one unconnected item, close) with what is left before
+confirming 22 mm.
+
+**The budget (4).** The full runs get everything left of
+`total_seconds` (they got `confirm_seconds` at most: a search with a clean
+first probe spent under half its budget). After a clean probe the
+largest smaller size that came close (every part placed, KiCad's
+unconnected items and errors at most 4 together, `CLOSE_FINDINGS`) is
+laid out again with all that is left (`retry`; results are not
+monotone), else the smallest clean size (`confirm`); without a clean
+probe the closest (`closest`). The smallest clean run is the result. The
+docs' example (6000 s, neither key set) affords six probes, not nine.
+
+**Children (5).** Each probe gets threads / `parallel` threads and
+`PCB_MAKER_MEMORY_MB` = (an explicit `PCB_MAKER_MEMORY_MB`, else the
+memory available when the search starts) / `parallel`, the last batch's
+too (it used to get all the threads, and every child planned its routers
+side by side for the whole machine's free memory). A size's probe can
+differ at another `parallel` through the wall guard, and on a board whose
+finer lattice's single router does not fit a probe's share (the ladder
+skips it, as under any explicit limit).
+
+**One notion of a held part (6).** `held_parts` (placement_constraints.rs)
+lowers the board with the placer config and reads each footprint's
+`fixed`: the placer's and constraints.json's `fixed`, parts placed with
+`x` and `y`, by default locked and netless parts and parts at the edge,
+less what `free`, a constraint or `move_all` frees. The keepout
+constraints (footprints allowed or not, the input-time warning) and the
+free dimension take it from there; `HeldParts::of` (the placer's lists,
+locked, netless, less `free`) and the free dimension's own variant are
+gone. A keepout over a part constraints.json fixes now allows footprints
+(issue 15 for that input). Under `move_all` the placer's own `fixed`
+goes too, as the lowering has always had it. Unit test
+`one_notion_of_a_held_part_covers_every_case`.
+
+**Layout budget caps (8).** `direct_narrow_budget`: the clean-up at most
+120 s or a twentieth of the work left, the negotiation at most 900 s or
+half of it (unchanged up to 1800 s left); the attempt in the other pour
+mode gets the work left as its ladder budget (it was at most 1200 s). The
+neck repair runs within the layout's work left: as many KiCad checks as
+it pays for (at least a fill, a trial and the board as chosen, else it
+does not run and its note says so; `neck_check_bound`, `NECK_MIN_CHECKS`).
+
+**Paths (9), the reference (10), ties (11).** The chosen run's paths are
+rewritten by whole components (`from` itself, `from/...`, inside
+sentences; not `from.json`, `from.log`) in every JSON report it holds.
+An explicit `--reference` is moved with each size (its own rectangle's
+edge, the same band and distance; `free-dimension/<size>mm-<kind>/reference/`),
+so a finding shared with it stays at the same place. Footprints with one
+reference and the same or no uuid keep the file's order in the canonical
+order (their text, which holds the pose, used to decide, so a placed
+board read back could swap two of them for the layout's index-based
+poses).
+
+**The fence boards** (benchmarks/fence, frozen; the free dimension
+`{"edge": "bottom", "min": 34, "max": 60, "step": 2, "prefer_below":
+[100], "band_mm": 10, "parallel": 2}` added to the board's own layout
+config, router `auto`, `PCB_WORK_RATE=3.15e6,150e6`, 16 threads, through
+the tier lock; build/dim2). x1404 (main's free-dimension code, the
+"before") against x1480 (this branch before its rebase on main, so the
+difference is this work alone).
+
+Two layers (v5-2layer, JLCPCB's 0.127 mm rules, layout-long.json:
+`total_seconds` 3000, defaults: probes 333 s, 1000 s kept):
+
+| mm | run | budget s x1404 | budget s x1480 | KiCad unconnected | errors | work s | vias | length mm | chosen |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 34 | probe | 333 | 333 | 18 | starved_thermal 1 | 225 | 402 | 3844 | |
+| 36 | probe | 333 | 333 | 10 | starved_thermal 1 | 194 | 458 | 4342 | |
+| 38 | probe | 333 | 333 | 5 | starved_thermal 1 | 106 | 497 | 4547 | |
+| 40 | probe | 333 | 333 | 0 | 0 | 210 | 320 | 4244 | |
+| 40 | confirm | 1000 | 2266 | 0 | 0 | 244 | 320 | 4244 | yes |
+
+40 mm chosen both, 977 s of work both (424 and 352 s wall); every probe
+and the result board byte for byte the same. The confirmation now has
+the 2266 s left instead of 1000 s, and ends at 244 s all the same: the
+layout completes long before either budget, so on this board the budget
+the search leaves unused is the layouts' own early end, not the search's
+split. No smaller size came close (38 mm: 5 unconnected and a starved
+thermal, over `CLOSE_FINDINGS`), so nothing was retried. (The fence
+report's run at 6000 s with probes of 500 s chose 44 mm; at 333 s and
+x1404 40 mm is clean.)
+
+Four layers (v5-4layer, its layout.json with three keepouts,
+`total_seconds` 1500: probes 167 s, 500 s kept):
+
+| mm | run | budget s x1404 | budget s x1480 | KiCad unconnected | errors | work s | vias | length mm | chosen |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 34 | probe | 167 | 167 | 0 | 0 | 113 | 197 | 3752 | |
+| 36 | probe | 167 | 167 | 0 | 0 | 115 | 181 | 3785 | |
+| 34 | confirm | 500 | 1271 | 0 | 0 | 222 | 181 | 3698 | yes |
+
+34 mm both, 451 s of work both, every board byte for byte the same; the
+confirmation's budget 500 to 1271 s, its work 222 s either way. On both
+boards the boards at each size are byte-identical inputs too (the held
+set from the lowering and the new move rules move the same parts and
+items there; the keepouts are written footprints not allowed both ways).
+
+**Probes the same at parallel 1 and 2** (the two-layer board, sizes 34
+and 36 mm, probes of 200 s, `total_seconds` 600, x1480, build/dim2/par1-
+and par2-x1480): parallel 1 gave each probe 16 threads and
+`PCB_MAKER_MEMORY_MB` 30529, parallel 2 8 threads and 15287 each. Both
+probes (34 mm 20 unconnected, 36 mm 9 and two errors), their work
+(148.9 and 161.5 s) and their boards are byte for byte the same, and so
+is the closest run (36 mm with the 290 s left: 7 unconnected) and the
+result; wall 285 s against 213 s.
+
+
+**Short tier** (3 x 2, x1480 against build/short-fence-x1403.log, in
+build/short-dim2-x1480; outside the lock under the coordinator's relaxed
+rule, 18 GB available): 11 of 12
+rows and their result boards byte for byte identical. Every short-tier
+board's budget is 500 s (a third of 1500), under the 1800 s where the
+narrow-signal caps start to grow and the 1200 s the continuation was
+capped at, so those changes cannot show there. USB_Keypad changed by the
+neck repair's work bound: its layout had 28 s of work left before the
+repair (a check counts 14.9 s), the repair needs three checks, so it did
+not run (x1403 ran it, 4 connection_width necks to 1, and ended at 524.0 s
+of work on a 500 s budget); now 479.3 s, the same routes (37/39, 95 vias,
+2 KiCad unconnected, no error that counts either way).
+
+`bash scripts/check.sh` passes (after the rebase on ad6d9cd, x1482) and the clippy gate. Docs: constraints.md
+("A free dimension": what moves, sizes that cannot work, the search,
+threads and memory, the budget, a reference, what comes back; the
+keepout row), placer.md (one notion of a held part, the order's ties),
+router.md (the narrow-signal caps, the neck repair's bound), agents.md,
+config reference.
+
 ## Committed on 2026-10-21 (fence benchmark pass)
 
 Every breadboard-fence benchmark run with x1404, the issues of the fence
