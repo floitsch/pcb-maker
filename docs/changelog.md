@@ -1436,6 +1436,12 @@ gate. `a_placement_does_not_depend_on_the_order_of_the_file` failed in
 some runs before the rebase, on the branch's first commits as on main
 (load-dependent), and passed in check.sh.
 
+**On the net-ties merge** (rebased on 9b1e1ff, x1514 against main's
+x1530, 30 s, one thread): MSign 69 and 69 unconnected (192 vias both,
+boards differ; the first probe 208 to 173 nets unfinished, the ladder
+ends level: the 71 to 42 above was against x1404); Sisu (v18, budget
+scale 0.025) 170 to 158 unconnected, 206 to 243 vias. check.sh passed.
+
 **Not done.** Findings 6 (the redundant terminal scan in
 `copper_components`) and 9 (the per-opening obstacle scans,
 `net_ids_lookup`'s linear search) are left. The terminal merge's overlap
