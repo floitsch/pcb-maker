@@ -61,6 +61,11 @@ impl Router {
         let resolve_started = std::time::Instant::now();
         let mark = self.phase_mark();
         self.resolve_remaining(order);
+        if !self.hopeless {
+            if let Some(settings) = super::trouble::TroubleSettings::from_env() {
+                self.repair_trouble(order, settings);
+            }
+        }
         self.phase_charge(1, mark);
         self.profile.resolve += resolve_started.elapsed().as_secs_f64();
         let cleanup_started = std::time::Instant::now();

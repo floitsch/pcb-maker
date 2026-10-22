@@ -50,6 +50,7 @@ mod sever;
 mod spokes;
 mod stamping;
 mod stitch;
+mod trouble;
 mod update;
 mod vias;
 mod wall;
