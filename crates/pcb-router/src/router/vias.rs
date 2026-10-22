@@ -236,24 +236,42 @@ impl Router {
     /// A copy of the router to go back to, without what a negotiation
     /// leaves as it is (the static maps, the search scratch, the stamp
     /// marks, which are clear between stamps) or what is rebuilt from the
-    /// rest (`hot`): a whole copy doubled the peak memory of every board
-    /// (Castor: 1.39 GB for 0.51 GB of maps).
+    /// rest (`hot`; the occupancy and the tiles' claims, the sum of the
+    /// nets' stamps: `restore_lean`): a whole copy doubled the peak memory
+    /// of every board (Castor: 1.39 GB for 0.51 GB of maps), the
+    /// occupancy's copy was a third of a router's maps until 2026-10-22
+    /// (katia: 741 MB).
     pub(super) fn lean_snapshot(&mut self) -> Router {
         let statics = std::mem::take(&mut self.statics);
         let scratch = std::mem::take(&mut self.scratch);
         let hot = std::mem::take(&mut self.hot);
         let stamp_mark = std::mem::take(&mut self.stamp_mark);
+        let occupancy = std::mem::take(&mut self.occupancy);
+        let tile_claimed = std::mem::take(&mut self.tile_claimed);
         let snapshot = self.clone();
         self.statics = statics;
         self.scratch = scratch;
         self.hot = hot;
         self.stamp_mark = stamp_mark;
+        self.occupancy = occupancy;
+        self.tile_claimed = tile_claimed;
         snapshot
     }
 
     /// Goes back to a `lean_snapshot` taken since the static maps last
     /// changed.
     pub(super) fn restore_lean(&mut self, snapshot: Router) {
+        // The occupancy counts the nets' stamps: the nets whose stamps
+        // changed since the snapshot take theirs off and the snapshot's
+        // back, and the counts (and the tiles' claims) are the snapshot's.
+        for net in 0..self.nets.len() {
+            if self.nets[net].stamped != snapshot.nets[net].stamped {
+                self.unstamp(net as NetId);
+                self.add_stamps(&snapshot.nets[net].stamped);
+            }
+        }
+        let occupancy = std::mem::take(&mut self.occupancy);
+        let tile_claimed = std::mem::take(&mut self.tile_claimed);
         let statics = std::mem::take(&mut self.statics);
         let scratch = std::mem::take(&mut self.scratch);
         let stamp_mark = std::mem::take(&mut self.stamp_mark);
@@ -268,6 +286,8 @@ impl Router {
         self.scratch = scratch;
         self.stamp_mark = stamp_mark;
         self.spare_scratches = spare_scratches;
+        self.occupancy = occupancy;
+        self.tile_claimed = tile_claimed;
         self.build_hot();
     }
 }

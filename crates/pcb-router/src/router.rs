@@ -476,7 +476,7 @@ fn prefetch<T>(value: &T) {
 /// cells fit (the map above the cell's bits; every board measured), else
 /// two. Four bytes a stamp instead of eight: the lists of a big board's
 /// nets were its largest part beside the lattice maps (katia: 250 MB).
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Stamped {
     words: Vec<u32>,
     /// The bits of a packed word below the map; `WIDE_STAMPS` for two

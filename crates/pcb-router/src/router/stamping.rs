@@ -22,6 +22,19 @@ impl Router {
         }
     }
 
+    /// Counts `stamped` on the occupancy (as `stamp` counts a new list).
+    pub(super) fn add_stamps(&mut self, stamped: &Stamped) {
+        for (map, cell) in stamped.iter() {
+            let (map, cell) = (map as usize, cell as usize);
+            self.occupancy[map][cell] += 1;
+            if self.occupancy[map][cell] == 1 {
+                let tile =
+                    (cell / self.grid.nx / TILE) * self.tiles_x + (cell % self.grid.nx) / TILE;
+                self.tile_claimed[map][tile] += 1;
+            }
+        }
+    }
+
     /// Removes the net's copper but its fixed branches, which stay stamped:
     /// a stub or skeleton must hold its ground while other nets are routed
     /// against it, whether or not its net is ripped up at the time.
