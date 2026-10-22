@@ -1442,6 +1442,13 @@ boards differ; the first probe 208 to 173 nets unfinished, the ladder
 ends level: the 71 to 42 above was against x1404); Sisu (v18, budget
 scale 0.025) 170 to 158 unconnected, 206 to 243 vias. check.sh passed.
 
+**Fixture goldens** (tests/fixtures, rebased on b0791ae): F1's lowering
+gains one line, TP1.1's back padstack shape merged into its terminal
+(finding 2); F1's routing fingerprints change from the first
+negotiation: TP1.1 is 1.2 mm on F.Cu and 1.8 on B.Cu, and the terminal's
+B.Cu nodes now lie in the 1.8 mm shape (before in the 1.2 mm front shape
+on every layer). Both rewritten with `PCB_UPDATE_GOLDEN=1`.
+
 **Not done.** Findings 6 (the redundant terminal scan in
 `copper_components`) and 9 (the per-opening obstacle scans,
 `net_ids_lookup`'s linear search) are left. The terminal merge's overlap
