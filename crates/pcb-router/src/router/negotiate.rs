@@ -335,7 +335,7 @@ impl Router {
                         let map = self.map_index(self.node_class(*net, *cell), *layer) as u32;
                         let others: Vec<&str> = (0..self.nets.len())
                             .filter(|other| *other != *net as usize)
-                            .filter(|other| self.nets[*other].stamped.contains(&(map, *cell)))
+                            .filter(|other| self.nets[*other].stamped.contains((map, *cell)))
                             .map(|other| self.board.nets[other].name.as_str())
                             .collect();
                         format!(

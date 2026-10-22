@@ -302,7 +302,7 @@ struct NetState {
     branches: Vec<Branch>,
     connected: Vec<bool>,
     /// (map index, node) pairs this net currently contributes to.
-    stamped: Vec<(u32, u32)>,
+    stamped: Stamped,
     /// Largest anchor-to-pad-node distance per terminal, in millimetres.
     terminal_reach: Vec<f32>,
     routable: bool,
@@ -471,6 +471,76 @@ fn prefetch<T>(value: &T) {
     let _ = value;
 }
 
+/// A net's stamps (`NetState::stamped`): (map index, cell) pairs in
+/// order, packed in one 32-bit word each where the lattice's maps and
+/// cells fit (the map above the cell's bits; every board measured), else
+/// two. Four bytes a stamp instead of eight: the lists of a big board's
+/// nets were its largest part beside the lattice maps (katia: 250 MB).
+#[derive(Clone, Debug, Default)]
+struct Stamped {
+    words: Vec<u32>,
+    /// The bits of a packed word below the map; `WIDE_STAMPS` for two
+    /// words a stamp.
+    shift: u32,
+}
+
+/// `Stamped::shift` where a stamp takes two words.
+const WIDE_STAMPS: u32 = u32::MAX;
+
+impl Stamped {
+    /// An empty list for a lattice of `maps` maps of `cells` cells.
+    fn with_capacity(capacity: usize, maps: usize, cells: usize) -> Self {
+        let shift = usize::BITS - cells.saturating_sub(1).leading_zeros();
+        let packs = shift < 32 && (maps.saturating_sub(1) as u64) < (1u64 << (32 - shift));
+        let shift = if packs { shift } else { WIDE_STAMPS };
+        Self {
+            words: Vec::with_capacity(if packs { capacity } else { capacity * 2 }),
+            shift,
+        }
+    }
+
+    #[inline(always)]
+    fn push(&mut self, map: u32, cell: u32) {
+        if self.shift == WIDE_STAMPS {
+            self.words.push(map);
+            self.words.push(cell);
+        } else {
+            self.words.push(map << self.shift | cell);
+        }
+    }
+
+    fn len(&self) -> usize {
+        if self.shift == WIDE_STAMPS {
+            self.words.len() / 2
+        } else {
+            self.words.len()
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.words.is_empty()
+    }
+
+    #[inline(always)]
+    fn get(&self, index: usize) -> Option<(u32, u32)> {
+        if self.shift == WIDE_STAMPS {
+            Some((*self.words.get(2 * index)?, self.words[2 * index + 1]))
+        } else {
+            let word = *self.words.get(index)?;
+            Some((word >> self.shift, word & ((1u32 << self.shift) - 1)))
+        }
+    }
+
+    /// The (map, cell) pairs in order.
+    fn iter(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
+        (0..self.len()).map(|index| self.get(index).unwrap())
+    }
+
+    fn contains(&self, pair: (u32, u32)) -> bool {
+        self.iter().any(|stamp| stamp == pair)
+    }
+}
+
 /// Marks the offsets around `cell`, mirrored by (`sx`, `sy`), in `map`'s
 /// bitset of `marks` (`words` a map) and lists the newly marked cells of
 /// `map` in `stamped`.
@@ -479,7 +549,7 @@ fn prefetch<T>(value: &T) {
 fn mark_footprint(
     marks: &mut [u64],
     words: usize,
-    stamped: &mut Vec<(u32, u32)>,
+    stamped: &mut Stamped,
     map: usize,
     cell: u32,
     offsets: &[(i32, i32)],
@@ -504,7 +574,7 @@ fn mark_footprint(
             let word = &mut marks[target / 64];
             if *word & bit == 0 {
                 *word |= bit;
-                stamped.push((map as u32, target as u32));
+                stamped.push(map as u32, target as u32);
             }
         }
         return;
@@ -518,7 +588,7 @@ fn mark_footprint(
         let target = (ty * nx + tx) as usize;
         if marks[target / 64] & (1 << (target % 64)) == 0 {
             marks[target / 64] |= 1 << (target % 64);
-            stamped.push((map as u32, target as u32));
+            stamped.push(map as u32, target as u32);
         }
     }
 }
@@ -564,7 +634,7 @@ struct OwnStamps {
 const NO_SLOT: usize = usize::MAX;
 
 impl OwnStamps {
-    fn new(stamped: &[(u32, u32)], maps: &[usize], cells: usize) -> Self {
+    fn new(stamped: &Stamped, maps: &[usize], cells: usize) -> Self {
         let mut slot = vec![NO_SLOT; maps.iter().max().map_or(0, |map| map + 1)];
         let mut count = 0;
         for map in maps {
@@ -574,11 +644,11 @@ impl OwnStamps {
             }
         }
         let mut bits = vec![vec![0u64; cells.div_ceil(64)]; count];
-        for (map, cell) in stamped {
-            if let Some(&index) = slot.get(*map as usize)
+        for (map, cell) in stamped.iter() {
+            if let Some(&index) = slot.get(map as usize)
                 && index != NO_SLOT
             {
-                bits[index][*cell as usize / 64] |= 1 << (*cell % 64);
+                bits[index][cell as usize / 64] |= 1 << (cell % 64);
             }
         }
         Self { slot, bits }

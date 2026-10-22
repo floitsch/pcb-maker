@@ -66,7 +66,7 @@ impl Router {
                         }
                     } else if occupancy > 0 {
                         char::from_digit(occupancy.min(9) as u32, 10).unwrap()
-                    } else if self.statics[class].via_blocked[cell] {
+                    } else if self.statics[class].via_blocked.get(cell) {
                         'v'
                     } else {
                         '.'

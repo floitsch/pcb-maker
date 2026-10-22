@@ -33,7 +33,7 @@ impl Router {
         let via_free: Vec<bool> = self.statics[reference]
             .via_blocked
             .iter()
-            .map(|&blocked| !blocked)
+            .map(|blocked| !blocked)
             .collect();
         let tiles_x = self.tiles_x;
         let tiles = self.tiles_x * self.tiles_y;

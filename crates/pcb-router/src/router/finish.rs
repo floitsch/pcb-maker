@@ -21,8 +21,8 @@ impl Router {
                 }
                 mix(u64::MAX);
             }
-            for (map, cell) in &state.stamped {
-                mix(((*map as u64) << 32) | *cell as u64);
+            for (map, cell) in state.stamped.iter() {
+                mix(((map as u64) << 32) | cell as u64);
             }
         }
         for history in &self.history {

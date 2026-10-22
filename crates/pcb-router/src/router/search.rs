@@ -482,7 +482,7 @@ impl Router {
                 let step = via_cost * cut * (1.0 + history) * (1.0 + present * occupied);
                 let cell_class = if necks { class_xy(x, y) } else { class };
                 let cell_statics = &self.statics[cell_class];
-                let free_layers = cell_statics.free_layers[cell];
+                let free_layers = cell_statics.free_layers.get(cell);
                 // The other layers as a mask (a test against this layer
                 // in the loop mispredicted, its place changing per node).
                 let mut others = (u64::MAX >> (64 - layers)) & !(1u64 << layer);

@@ -43,7 +43,11 @@ fn fresh_footprints_mark_as_whole_ones() {
             }
         }
         let (mut whole_marks, mut fresh_marks) = (vec![0u64; words], vec![0u64; words]);
-        let (mut whole, mut ahead) = (Vec::new(), Vec::new());
+        let lattice = (nx * ny) as usize;
+        let (mut whole, mut ahead) = (
+            Stamped::with_capacity(0, 1, lattice),
+            Stamped::with_capacity(0, 1, lattice),
+        );
         for (index, cell) in cells.iter().enumerate() {
             mark_footprint(
                 &mut whole_marks,
@@ -78,7 +82,10 @@ fn fresh_footprints_mark_as_whole_ones() {
                 fresh.reach,
             );
         }
-        assert_eq!(whole, ahead);
+        assert_eq!(
+            whole.iter().collect::<Vec<_>>(),
+            ahead.iter().collect::<Vec<_>>()
+        );
         assert_eq!(whole_marks, fresh_marks);
     }
     // The bisectors of a diagonal run share no cell (`Router::stamp`
@@ -91,6 +98,34 @@ fn fresh_footprints_mark_as_whole_ones() {
                 .all(|(i, j)| !bisector.contains(&(i + 1, j + 1)))
         );
     }
+}
+
+#[test]
+fn stamps_pack_in_one_word_where_maps_and_cells_fit_else_two() {
+    // katia's lattice: 130 maps of 2775 x 1077 cells, one word a stamp.
+    let cells = 2775 * 1077;
+    let mut packed = Stamped::with_capacity(4, 130, cells);
+    let pairs = [(0, 0), (129, cells as u32 - 1), (7, 12345), (64, 1 << 21)];
+    for (map, cell) in pairs {
+        packed.push(map, cell);
+    }
+    assert_eq!(packed.words.len(), 4);
+    assert_eq!(packed.iter().collect::<Vec<_>>(), pairs);
+    assert_eq!(packed.get(1), Some((129, cells as u32 - 1)));
+    assert_eq!(packed.get(4), None);
+    assert!(packed.contains((7, 12345)) && !packed.contains((7, 12346)));
+    // 2^28 cells leave four bits: 17 maps take two words a stamp.
+    let mut wide = Stamped::with_capacity(2, 17, 1 << 28);
+    wide.push(16, (1 << 28) - 1);
+    wide.push(3, 5);
+    assert_eq!(wide.words.len(), 4);
+    assert_eq!(wide.len(), 2);
+    assert_eq!(
+        wide.iter().collect::<Vec<_>>(),
+        [(16, (1 << 28) - 1), (3, 5)]
+    );
+    // 16 maps still fit.
+    assert_eq!(Stamped::with_capacity(0, 16, 1 << 28).shift, 28);
 }
 
 #[test]

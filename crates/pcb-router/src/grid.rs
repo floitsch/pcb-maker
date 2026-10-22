@@ -533,8 +533,9 @@ pub struct StaticMaps {
     /// The only net exempt from `edge_block` (its own pad, `owner16`), or
     /// `BLOCKED16`.
     pub edge_owner: Vec<Vec<u16>>,
-    /// Per node: a via of this class is forbidden.
-    pub via_blocked: Vec<bool>,
+    /// Per node: a via of this class is forbidden (a bit a node; a byte
+    /// until 2026-10-22).
+    pub via_blocked: NodeBits,
     /// Where `via_blocked` holds only for other nets: inside a net's own
     /// surface pad, deep enough for the whole via (a thermal via in a
     /// ground pad, as designers place them), or within only the hole
@@ -542,7 +543,9 @@ pub struct StaticMaps {
     pub via_owner: Vec<u16>,
     /// Per node: the layers (bits) where `trace` is `FREE`, so that a via
     /// step reads one word instead of one per layer.
-    pub free_layers: Vec<u32>,
+    /// In as few bytes a node as the board's layers need (one up to
+    /// eight layers; four bytes until 2026-10-22).
+    pub free_layers: LayerBits,
     /// `trace` without the solder mask openings, where it differs: what a
     /// pour's fill may cover.
     fill_trace: Option<FillTrace>,
@@ -552,6 +555,85 @@ pub struct StaticMaps {
     pub vertex_tests: u64,
     /// The step-against-shape tests of nodes near an obstacle's edge.
     pub tight_tests: u64,
+}
+
+/// A bit per node (`StaticMaps::via_blocked`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NodeBits {
+    words: Vec<u64>,
+    len: usize,
+}
+
+impl NodeBits {
+    pub fn from_bools(values: &[bool]) -> Self {
+        let mut words = vec![0u64; values.len().div_ceil(64)];
+        for (index, value) in values.iter().enumerate() {
+            if *value {
+                words[index / 64] |= 1 << (index % 64);
+            }
+        }
+        Self {
+            words,
+            len: values.len(),
+        }
+    }
+
+    #[inline(always)]
+    pub fn get(&self, index: usize) -> bool {
+        self.words[index / 64] & (1 << (index % 64)) != 0
+    }
+
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = bool> + '_ {
+        (0..self.len).map(|index| self.get(index))
+    }
+
+    pub fn bytes(&self) -> usize {
+        self.words.capacity() * 8
+    }
+}
+
+/// Per node a set of layers (bits), in the bytes `layers` need
+/// (`StaticMaps::free_layers`).
+#[derive(Clone, Debug)]
+pub struct LayerBits {
+    bytes: Vec<u8>,
+    width: usize,
+}
+
+impl LayerBits {
+    pub fn new(values: &[u32], layers: usize) -> Self {
+        let width = match layers {
+            0..=8 => 1,
+            9..=16 => 2,
+            _ => 4,
+        };
+        let mut bytes = Vec::with_capacity(values.len() * width);
+        for value in values {
+            bytes.extend_from_slice(&value.to_le_bytes()[..width]);
+        }
+        Self { bytes, width }
+    }
+
+    #[inline(always)]
+    pub fn get(&self, index: usize) -> u32 {
+        match self.width {
+            1 => self.bytes[index] as u32,
+            2 => u16::from_le_bytes([self.bytes[2 * index], self.bytes[2 * index + 1]]) as u32,
+            _ => u32::from_le_bytes(self.bytes[4 * index..4 * index + 4].try_into().unwrap()),
+        }
+    }
+
+    pub fn bytes(&self) -> usize {
+        self.bytes.capacity()
+    }
 }
 
 /// The cells where `trace` differs from what a pour's fill may cover (the
@@ -1044,6 +1126,7 @@ impl StaticMaps {
             board.layer_count
         );
         let mut free_layers = vec![0u32; if searched { cells } else { 0 }];
+        let via_blocked = NodeBits::from_bools(&via_blocked);
         if searched {
             for (layer, map) in trace.iter().enumerate() {
                 for (cell, value) in map.iter().enumerate() {
@@ -1059,7 +1142,7 @@ impl StaticMaps {
             edge_owner,
             via_blocked,
             via_owner,
-            free_layers,
+            free_layers: LayerBits::new(&free_layers, board.layer_count),
             fill_trace,
             tests,
             vertex_tests,
@@ -1069,7 +1152,7 @@ impl StaticMaps {
 
     /// Whether `net` may put a via on this node.
     pub fn via_allowed(&self, index: usize, net: NetId) -> bool {
-        !self.via_blocked[index] || self.via_owner[index] == owner16(net)
+        !self.via_blocked.get(index) || self.via_owner[index] == owner16(net)
     }
 
     /// Whether `net` may have a trace centreline on this node.
@@ -1111,9 +1194,9 @@ impl StaticMaps {
         of(&self.trace)
             + of(&self.edge_block)
             + of(&self.edge_owner)
-            + self.via_blocked.capacity()
+            + self.via_blocked.bytes()
             + self.via_owner.capacity() * 2
-            + self.free_layers.capacity() * 4
+            + self.free_layers.bytes()
             + self.fill_trace.as_ref().map_or(0, FillTrace::bytes)
     }
 }
