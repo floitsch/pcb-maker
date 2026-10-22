@@ -908,7 +908,7 @@ Over v18's 109 rows the final ladder ran on 62, with a median share of
 gave the router 1500 s, the layout's last router about 1040. The tasks
 README's designer tier says how to route the designer's placement at that
 share (`--budget-scale 0.695`) and that the split stays an accounting of
-open connections, not a measured cause. MATCHED_RESULT
+open connections, not a measured cause. Matched designer tier (x1404, budget scale 0.695, 8 x 1, strict rule 3; build/designer-x1404-matched.log): 59 of 109 pass, 51 strict. Against the v18 layout (x1315) over the 99 target boards with both results: layout open 1973, designer-route open 1016; placement gap 957 (worse on 37 boards, same 54, better 8), routing gap 1016 on 39 boards; share of the layout's open connections placement 49 %, routing 51 % (the unmatched run at the full 1500 s gave 71/29). Binaries differ (x1315 layout, x1404 designer route), so the matched split is an upper bound on the placement share.
 
 **Judged.** `python3 -m pytest benchmarks/agent-tasks benchmarks/expansion`
 (119 tests, together and apart), `bash scripts/check.sh`, rustfmt and the

@@ -1458,6 +1458,8 @@ Compare with
 
 ## Layout sweep v18 (2026-10-21)
 
+**Matched-budget designer tier (2026-10-22):** with the designer's placement routed at the layout's median final-ladder share (budget scale 0.695, x1404, strict rule 3), 59 of 109 pass (51 strict) and the gap over the 99 target boards is placement 49 %, routing 51 % (layout open 1973, designer-route open 1016), against 71/29 at the full 1500 s. The placement share above is therefore an upper bound; routing at the layout's budget is as large a lever as placement. Log: `build/designer-x1404-matched.log`.
+
 `build/github-layout-v18.log`, binary x1315 (main 35456a1: project rules
 at scale, runtime calibration, the ladder's work bound and fault
 isolation; 6f10989 differs only in doc comments), tasks v7 (the committed
