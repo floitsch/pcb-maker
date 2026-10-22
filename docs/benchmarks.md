@@ -1071,6 +1071,18 @@ constraints and pin swapping all work there now; the 31 mm boards still do
 not route on 2 layers (8 mm taller they do, with the GND pour in pieces),
 silkscreen stays unplaced.
 
+**v5 (2026-10-21):** `benchmarks/fence/v5-4layer/fence` (the shipped board:
+41 LEDs in a 2.54 mm row, a stack header, three `keepout` constraints;
+complete with `router-seeds.json`, 134/134, 196 vias) and
+`v5-2layer/fence` (the same board on 2 layers at 34 mm with 0.127 mm rules:
+7 open at best, the B.Cu GND pour in 43 pieces; 12 mm taller it completes
+with the pour in 37 pieces). Corpus entries `fence-v5-4l` and `fence-v5-2l`.
+The pass criterion for the 2-layer board includes the pour
+(`benchmarks/fence/pour-pieces.py`). New issues 13–17 in that README:
+vias inside LED pads, moved silkscreen text, keepouts judging fixed parts,
+`repair-kicad-silkscreen` on a `gr_rect` outline, and no way to keep a
+2-layer pour whole.
+
 ## Layout sweep v15 (2026-10-14): the spoke model, solid bodies, moving rule areas
 
 `pcb-maker-x723` (b63a604: the KiCad-exact thermal spoke model with manual

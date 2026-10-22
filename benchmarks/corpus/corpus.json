@@ -127,6 +127,20 @@
       "board_id": "fence-esp32",
       "layout": {"placer": {"fixed_patterns": ["J*", "RN*"], "fixed": ["U1", "C1", "C2", "J4", "U2", "C3", "C4", "U3", "C5", "C6", "U4", "C8", "C9", "U5", "C10", "C11"]}},
       "note": "v1 fence, ESP32 variant, 2 layers, without the board-level copy of the antenna keepout: pass means no copper in the footprint keepout (issue 1 in benchmarks/fence/README.md)"
+    },
+    {
+      "name": "fence-v5-4l",
+      "directory": "benchmarks/fence/v5-4layer/fence",
+      "board_id": "fence",
+      "layout": {"placer": {"fixed_patterns": ["J*"], "fixed": ["U1", "C1", "C2", "TP1", "TP2", "TP3", "TP4", "C21", "C22", "C23", "C24", "C25", "C26", "C27", "J4", "U2", "C3", "C4", "J3", "J6", "JP1", "J2", "J5", "LED39", "LED40", "LED41", "LED1", "LED2", "LED3", "LED4", "LED5", "LED6", "LED7", "LED8", "LED9", "LED10", "LED11", "LED12", "LED13", "LED14", "LED15", "LED16", "LED17", "LED18", "LED19", "LED20", "LED21", "LED22", "LED23", "LED24", "LED25", "LED26", "LED27", "LED28", "LED29", "LED30", "LED31", "LED32", "LED33", "LED34", "LED35", "LED36", "LED37", "LED38", "U4", "C8", "C9", "U5", "C10", "C11", "D3", "C12", "C14", "RN1", "RN2", "RN3", "RN4", "RN5", "RN6", "RN7", "RN8"], "constraints": {"version": 1, "keepout": [{"x": [48.0, 68.0], "y": [4.1, 6.0], "side": "front"}, {"x": [5.0, 23.8], "y": [7.9, 9.4], "side": "front"}, {"x": [30.0, 41.0], "y": [8.75, 9.25], "side": "front"}]}}},
+      "note": "breadboard fence v5, 4 layers, 34 mm: v4 plus 41 WS2812B-2020 LEDs in a 2.54 mm row next to the 30-pin header and a mirror-symmetric 2x8 stack header; complete (benchmarks/fence/README.md); the keepout constraints hold the silkscreen labels' room; pass also means no via inside an LED pad (issue 13)"
+    },
+    {
+      "name": "fence-v5-2l",
+      "directory": "benchmarks/fence/v5-2layer/fence",
+      "board_id": "fence",
+      "layout": {"placer": {"fixed_patterns": ["J*"], "fixed": ["U1", "C1", "C2", "TP1", "TP2", "TP3", "TP4", "C21", "C22", "C23", "C24", "C25", "C26", "C27", "J4", "U2", "C3", "C4", "J3", "J6", "JP1", "J2", "J5", "LED39", "LED40", "LED41", "LED1", "LED2", "LED3", "LED4", "LED5", "LED6", "LED7", "LED8", "LED9", "LED10", "LED11", "LED12", "LED13", "LED14", "LED15", "LED16", "LED17", "LED18", "LED19", "LED20", "LED21", "LED22", "LED23", "LED24", "LED25", "LED26", "LED27", "LED28", "LED29", "LED30", "LED31", "LED32", "LED33", "LED34", "LED35", "LED36", "LED37", "LED38", "U4", "C8", "C9", "U5", "C10", "C11", "D3", "C12", "C14", "RN1", "RN2", "RN3", "RN4", "RN5", "RN6", "RN7", "RN8"], "constraints": {"version": 1, "keepout": [{"x": [48.0, 68.0], "y": [4.1, 6.0], "side": "front"}, {"x": [5.0, 23.8], "y": [7.9, 9.4], "side": "front"}, {"x": [30.0, 41.0], "y": [8.75, 9.25], "side": "front"}]}}},
+      "note": "fence v5 on 2 layers at 34 mm with JLCPCB's 0.127 mm track and clearance: pass means complete with the B.Cu GND pour mostly in one piece (benchmarks/fence/pour-pieces.py); 7 open at best so far (benchmarks/fence/README.md)"
     }
   ]
 }
