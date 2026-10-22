@@ -11,6 +11,49 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-10-21 (KiCadRoutingTools head-to-head)
+
+What was measured: KiCadRoutingTools, at commit cddf4cd (MIT; Python
+around a Rust A* core), routed the 109 v7 placements of the Freerouting
+refresh. Our side is x1367's route-mode rows of the same placements
+(`build/fr2-route-final.log`). Both sides are judged by KiCad's DRC with
+the pass rule and the strict rule. A measurement and tooling change on
+branch kicadroutingtools-benchmark; no Rust.
+
+New tooling:
+- `benchmarks/github/kicadroutingtools.py` runs its CLI router headless.
+  It passes `--no-fix-drc-settings` and `--escalation board`, so the board's
+  own rules stay the judge. Each run has a cap in multiples of our row's
+  wall; a cut run that already wrote its board is still judged.
+  `--lock` holds the tier lock around KiCad's checks only, and
+  `--krt-jobs` limits how many routers run at once.
+- `benchmarks/github/kicadroutingtools_compare.py` writes the per-board
+  table and the summary: within our wall, boards it wins, speed ratios.
+  For a cut run it reads how far the log got.
+- The setup (its own clone and venv in build/krt, the Rust module built
+  from source) is in benchmarks/github/README.md.
+
+Results ([docs/benchmarks.md](benchmarks.md#kicadroutingtools-against-x1367-2026-10-21)):
+- KiCadRoutingTools passes no board.
+- On the 59 boards judged so far, ours passes 19 (17 strict).
+  KiCadRoutingTools finished 6, was cut after writing its board on 10, and
+  was cut before writing one on 43. It is better than ours on 3 boards
+  (Neotron-Pico 0 unconnected items against our 24, but with 5 hole and
+  annular errors; glasgow; the 0xCB panel) and worse on 53.
+- Where both have a result: KiCad unconnected items 899 ours against 1505;
+  copper errors 25 against 890; vias 4005 against 8435.
+- On the ten timing boards it takes a median 3.5 times our CPU seconds;
+  it has no thread setting, its search is one thread.
+- Not done: 50 boards it routed are still waiting for the tier lock to be
+  judged, and our 1- and 16-thread timing runs did not get the lock
+  overnight. Both stay queued.
+
+Its features we lack are summarised there for the roadmap, with how each
+works and how much code it is: diff pairs with polarity, length and time
+matching, impedance widths, BGA and QFN fanout, placement optimisation,
+its own checkers with KiCad as the oracle, and the AI tab and skills.
+
+## Committed on 2026-10-22 (strict rule: pre-bridged mask openings)
 ## Committed on 2026-10-21 (robustness against hostile boards)
 
 The findings of the review of the readers against hostile or odd input

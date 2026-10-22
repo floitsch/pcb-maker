@@ -165,3 +165,46 @@ benchmarks/github/freerouting.py build/freerouting --ours
 Results go to [docs/benchmarks.md](../../docs/benchmarks.md); the
 current ones are summarised in
 [docs/handover.md](../../docs/handover.md#benchmarks-that-count).
+
+## KiCadRoutingTools (`kicadroutingtools.py`)
+
+[KiCadRoutingTools](https://github.com/drandyhaas/KiCadRoutingTools) (MIT;
+Python with a Rust A* core: a 0.1 mm octilinear grid, rip-up and reroute,
+plane pours, fanout, diff pairs, length matching) routed against our route
+mode on the same placements. It is third-party code: clone it into an empty
+directory of its own, build its Rust module there, and run it only from a
+work directory of ours (never from inside the checkout, whose CLAUDE.md and
+skills are its author's, not ours):
+
+```sh
+mkdir -p build/krt && git clone https://github.com/drandyhaas/KiCadRoutingTools build/krt/src
+printf '\n[workspace]\n' >> build/krt/src/rust_router/Cargo.toml   # build/ lies inside our workspace
+python3 -m venv build/krt/venv && build/krt/venv/bin/pip install 'numpy>=1.22' scipy 'shapely>=2.0' Pillow
+(cd build/krt && PYO3_PYTHON=$PWD/venv/bin/python PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 \
+  CARGO_TARGET_DIR=$PWD/target cargo build --release --manifest-path src/rust_router/Cargo.toml)
+cp build/krt/target/release/libgrid_router.so build/krt/src/rust_router/grid_router.so
+benchmarks/github/kicadroutingtools.py build/krt-route-x1367 --ours build/fr2-route-final.log \
+  --route-from build/github-layout-v17 --binary build/bin/pcb-maker-x1367 --jobs 8
+benchmarks/github/kicadroutingtools_compare.py build/krt-route-x1367 --ours build/fr2-route-final.log
+```
+
+(`build_router.py` would download a prebuilt module; building it from
+source keeps the binary ours.) The script runs its CLI router,
+`py_router/route.py <board> <result> --nets '*' --no-fix-drc-settings
+--escalation board`, on each board's placement as it is (the designer's
+pours kept: route.py takes them as planes). The two flags keep the judging
+ours: by default route.py loosens the written project's Board Setup floors
+to what it routed, and lets a failing net descend below the board's
+minimums to its fab tier's. The result is judged with the placement's
+project files (copied over whatever route.py wrote) by KiCad's DRC through
+`drc-kicad-board` (zones refilled) and run.py's pass and strict rules.
+route.py has no time limit and no thread setting (one search thread; the
+BLAS pools are pinned to one), and a killed run writes no board: each board
+runs to completion or to a cap (`--cap-factor` times our row's wall, within
+`--cap-min` and `--cap-max`), and the row says whether it finished within
+our wall (`within_wall`, `pass_in_wall`). For a cut row the comparison
+reads how far the log got. On a shared machine, `--lock
+build/quick-tier.lock` holds the tier lock around KiCad's checks of each
+board, not the router, and `--krt-jobs 2 --jobs 8` keeps two routers
+running while the other boards in flight wait to be judged. Results:
+[docs/benchmarks.md](../../docs/benchmarks.md#kicadroutingtools-against-x1367-2026-10-21).
