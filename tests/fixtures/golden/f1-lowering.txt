@@ -76,6 +76,7 @@ U1.17 into U1.17 of GND
 U1.17 into U1.17 of GND
 U1.17 into U1.17 of GND
 JP1.2 into JP1.1 of 14
+TP1.1 padstack into TP1.1 of +5V
 
 pads closed to vias
 C1.1 C1.2 D1.1 D1.2 D1.3 D1.4 J2.1 J2.1 JP1.1 JP1.2 NT1.1 NT1.2 R1.1 R1.2 TP2.1 U1.1 U1.2 U1.3 U1.4 U1.5 U1.6 U1.7 U1.8 U1.9 U1.10 U1.11 U1.12 U1.13 U1.14 U1.15 U1.16 U2.1 U2.2 U2.2 U2.3
