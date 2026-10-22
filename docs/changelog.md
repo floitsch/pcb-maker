@@ -165,6 +165,38 @@ parts were (above), and a task re-places those parts. With
 OpenFC changed by an anneal slip in x1416 that x1417 fixes; x1417 off on
 those two, `build/short-fence-x1417-off.log`, gives x1381's rows).
 
+**After the refinement** (x14190, rebased on main 20956b3, which routes
+with no vias in SMD pads; marks on movable parts attached, the
+courtyard write order, the edge-pad rule). The fence: no text moves,
+nothing movable on a label, no mark attached (four of its five movable
+parts are stacked under the back title), HPWL 2837 / 2913 mm as x1417,
+complete, 182 / 194 vias, 3659 / 3812 mm (main's router). The short
+tier against x1381 (`build/short-fence-x14190.log`): passes 8 -> 6
+(strict 7 -> 6), KiCad unconnected 18 -> 28, new errors 2 -> 3, vias
+1068 -> 1190, length 20596 -> 21494 mm; designer-relative medians vias
+x0.84 -> x0.87, length x0.98 -> x0.99, open 0.000 -> 0.000 (mean 0.018
+-> 0.027). Only MIDAS-MK1.1 attaches marks (14 `+` and `-` texts to its
+two 36 mm headers J101 and J102, which its task does not stack): HPWL 2543.5 -> 2317.4 mm (x1417 2971.4), 149/156, 9
+unconnected (x1417 151/156, 6). Every other task stacks its movable
+parts at one point before the binary sees the board, so the input says
+nothing about which part a text labels and the rule cannot fire there;
+the HPWL of the other 11 boards is x1417's. The residue: OpenFC 82/82
+pass -> 78/82, 9 unconnected (its 17 connectors and headers seated on
+their stale pin names, 104 marks, the front 111 % full) and
+eternal-keypad's one shorting_items; framework_mobo passes again (71/71,
+the same placement as x1417, main's router). Against the same binary with
+`--placer '{"keep_board_marks": false}'` (`build/short-fence-x14190-off.log`:
+its placements, HPWL to the decimal, are x1381's; its routes main's),
+which separates the marks from main's router: passes 6 -> 6 (strict 5 ->
+6), KiCad unconnected 20 -> 28 (OpenFC 2 -> 9, MIDAS-MK1.1 7 -> 9,
+WLED_Matrix 5 -> 4), new errors 2 -> 3, vias 1088 -> 1190, length 20673
+-> 21494 mm, medians vias x0.85 -> x0.87, length x0.93 -> x0.99. So of
+x1381's 8 passes main's router (no vias in SMD pads) takes two
+(OpenFC 80/82, eternal-keypad's shorting_items, both also with the marks
+off), and the marks take none; framework_mobo's strict pass comes back.
+The marks' cost is OpenFC's 7 more unconnected items, MIDAS's 2 and the
+designer-relative length (+6 %).
+
 Steps on the way (all on this tier): x1411, the marks hard at every
 level, left MIDAS-MK1.1, USB_Keypad and OpenFC with parts without a
 place (connectors at the edge under their pin names, beside artwork);

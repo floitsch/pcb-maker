@@ -549,7 +549,10 @@ the pool's seeds, the race's ranking and probes) iterates one order; no
 change inside `pcb-placer` was needed. The boards written (placed,
 routed) are in that order too, so the result file is byte-identical
 from any input order; KiCad does not care about the order (its own save
-sorts footprints by uuid).
+sorts footprints by uuid), but for a footprint's courtyard graphics,
+which it chains in file order: those are written in KiCad's own save
+order (`canonical_order::source_order`, since 2026-10-21; before, the
+writer restored the input file's order and broke this promise).
 
 A second difference between two saves was the angle's spelling: KiCad
 stores pad angles absolute and wrapped, so one pad's angle relative to
@@ -702,7 +705,9 @@ off with a keepout constraint, a region or fixed positions, or move the
 text in the input). Fixed parts are not listed (the placement warned).
 
 **Measured** (changelog, "Committed on 2026-10-21 (fence report: placer
-side)"). The fence without its workaround keepouts: no board text moves
+side)"; the numbers here are before marks on movable parts were
+attached, which in the tiers' tasks fires on MIDAS-MK1.1 alone, since
+the tasks stack their movable parts). The fence without its workaround keepouts: no board text moves
 (seven did, up to 7.5 mm), no movable part lies on a label's spot (SW1
 did), the verdict complete as before (187 vias against 186). The short
 tier, whose tasks keep the designer's texts while re-placing the
