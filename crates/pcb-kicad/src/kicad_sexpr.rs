@@ -538,7 +538,7 @@ mod tests {
             16 + 2 * (MAX_NESTING as u64 - 2)
         );
         let mut nets = BTreeSet::new();
-        collect_named_nets(&board, &mut nets);
+        collect_named_nets(&board, &NetNames::default(), &mut nets);
         assert_eq!(nets.into_iter().collect::<Vec<_>>(), ["GND"]);
         if let Expr::List(items) = &mut board {
             crate::flip::flip_footprint(&mut items[1]).unwrap();
