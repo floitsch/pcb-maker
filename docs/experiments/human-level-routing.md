@@ -136,3 +136,47 @@ gap boards without changing the task. Not chosen.
   2 (one-spoke pads on fine-pitch rows) wants the escape directions
   decided before negotiation too. The repair below is the after-the-fact
   form of "buses first".
+
+## The prototype: the trouble-makers' repair
+
+`crates/pcb-router/src/router/trouble.rs`, called from `finish` right
+after the hard repair (`resolve_remaining`), so in every attempt of the
+ladder, the layout's first route and its final ladder alike. Off unless
+`PCB_ROUTER_TROUBLE` is set; with it off no code path changes
+(fingerprints below).
+
+For each net still open (pour nets left out), most open terminals
+first, in rounds until a round closes nothing or the work is spent:
+
+1. Route the net again from what it has, at a price for sharing
+   (`PCB_ROUTER_TROUBLE_PRESENT`, 20: a node of another net costs 21
+   times its length), through other nets' copper where that is cheaper
+   than the way around.
+2. The nets it now overlaps are its victims (and, where the overlap is
+   one-sided, a net of another class whose clearance zone reaches
+   further, the nets whose stamps cover its conflicts). Refused when they
+   are more than `PCB_ROUTER_TROUBLE_VICTIMS` (12), when one is a pour
+   net, or when fixed copper is in the way.
+3. The victims lose the branches the net crosses (a one-sided blocker
+   all of its own) and are routed again hard, with all other copper as
+   walls, the trouble-maker's new path included.
+4. Kept when the open terminals of the net and its victims together drop
+   and none of them is in conflict; otherwise every one of them is
+   restored exactly (their branches, connections and stamps).
+
+A net refused is tried again only after an exchange was kept since its
+refusal. The work is the attempt's: at most half its negotiation's
+(`PCB_ROUTER_TROUBLE_SHARE`, 0.5, at least 30 s), charged in the
+resolve phase, inside every work bound and deadline the router has.
+`PCB_ROUTER_TROUBLE_DEPTH=2` lets a victim that came out worse push
+others aside in turn (not the trouble-maker); `PCB_ROUTER_TROUBLE_WHY`
+prints every exchange's outcome.
+
+What it is, against what was there: `force_connect` (the hard repair's
+last step) also routes an open net through others and lets them move,
+but keeps the result only if every net involved ends complete, and lets
+the displaced nets renegotiate softly among themselves; on a saturated
+board almost nothing passes that test. The trouble-makers' repair trades:
+a bus net of ten pads may cost a short net one pad. That is the human
+move the data asked for: the bus goes in first, the short nets find
+another way.
