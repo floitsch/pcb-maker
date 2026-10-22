@@ -30,7 +30,7 @@ mod finish;
 mod fixed;
 mod global;
 mod guards;
-mod hash;
+pub(crate) mod hash;
 mod heap;
 mod manual_spokes;
 mod negotiate;

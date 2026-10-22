@@ -262,9 +262,8 @@ impl Router {
             } else {
                 statics
             };
-            let edge_block = here_statics.edge_block[layer][cell];
-            let blocked_edges = if edge_block != 0 && here_statics.edge_owner[layer][cell] == own16
-            {
+            let (edge_block, edge_owner) = here_statics.edges_at(layer, cell);
+            let blocked_edges = if edge_block != 0 && edge_owner == own16 {
                 0
             } else {
                 edge_block

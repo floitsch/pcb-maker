@@ -528,11 +528,12 @@ pub struct StaticMaps {
     /// class less.
     pub trace: Vec<Vec<u16>>,
     /// Per layer and node: directions whose unit step passes too close to an
-    /// obstacle although both end nodes are legal.
-    pub edge_block: Vec<Vec<u8>>,
-    /// The only net exempt from `edge_block` (its own pad, `owner16`), or
-    /// `BLOCKED16`.
-    pub edge_owner: Vec<Vec<u16>>,
+    /// obstacle although both end nodes are legal, and the only net exempt
+    /// from them (its own pad, `owner16`) or `BLOCKED16` (`EdgeMap::at`).
+    /// Sparse since 2026-10-22: about one node in a hundred has such a
+    /// step (katia), and the two dense maps were 3 bytes a node, layer
+    /// and class.
+    edges: Vec<EdgeMap>,
     /// Per node: a via of this class is forbidden (a bit a node; a byte
     /// until 2026-10-22).
     pub via_blocked: NodeBits,
@@ -555,6 +556,46 @@ pub struct StaticMaps {
     pub vertex_tests: u64,
     /// The step-against-shape tests of nodes near an obstacle's edge.
     pub tight_tests: u64,
+}
+
+/// One layer's blocked unit steps (`StaticMaps::edges`): a bit per node
+/// says whether it has any, and those nodes' directions and exempt net
+/// are kept apart.
+#[derive(Clone, Debug)]
+struct EdgeMap {
+    marked: Vec<u64>,
+    entries: crate::router::hash::FastMap<u32, (u8, u16)>,
+}
+
+impl EdgeMap {
+    fn new(cells: usize) -> Self {
+        Self {
+            marked: vec![0; cells.div_ceil(64)],
+            entries: Default::default(),
+        }
+    }
+
+    /// Blocks the step from `index` in `direction`, exempting `net`
+    /// (`claim16`: the first net claims it, a second blocks it for all).
+    fn block(&mut self, index: usize, direction: usize, net: Option<NetId>) {
+        self.marked[index / 64] |= 1 << (index % 64);
+        let entry = self.entries.entry(index as u32).or_insert((0, 0));
+        entry.0 |= 1 << direction;
+        claim16(&mut entry.1, net);
+    }
+
+    #[inline(always)]
+    fn at(&self, index: usize) -> (u8, u16) {
+        if self.marked[index / 64] & (1 << (index % 64)) == 0 {
+            (0, 0)
+        } else {
+            self.entries[&(index as u32)]
+        }
+    }
+
+    fn bytes(&self) -> usize {
+        self.marked.capacity() * 8 + self.entries.capacity() * 8
+    }
 }
 
 /// A bit per node (`StaticMaps::via_blocked`).
@@ -803,8 +844,7 @@ impl StaticMaps {
         // clearance: pad cells inside the edge zone stay blocked.
         let edge_zone: Vec<bool> = base_trace.iter().map(|value| *value == BLOCKED16).collect();
         let mut trace = vec![base_trace; board.layer_count];
-        let mut edge_block = vec![vec![0u8; cells]; board.layer_count];
-        let mut edge_owner = vec![vec![0u16; cells]; board.layer_count];
+        let mut edges = vec![EdgeMap::new(cells); board.layer_count];
 
         // Solder mask openings keep tracks out but not a pour's fill: they
         // come last, and the trace map before them is the pours' (MokyaLora:
@@ -1098,8 +1138,7 @@ impl StaticMaps {
                                 obstacle.net,
                                 trace_reach,
                                 index,
-                                &mut edge_block[layer],
-                                &mut edge_owner[layer],
+                                &mut edges[layer],
                             );
                         }
                     }
@@ -1138,8 +1177,7 @@ impl StaticMaps {
         }
         Self {
             trace,
-            edge_block,
-            edge_owner,
+            edges,
             via_blocked,
             via_owner,
             free_layers: LayerBits::new(&free_layers, board.layer_count),
@@ -1180,8 +1218,16 @@ impl StaticMaps {
 
     /// Whether `net` may take the unit step leaving `index` in `direction`.
     pub fn edge_allowed(&self, layer: usize, index: usize, direction: usize, net: NetId) -> bool {
-        self.edge_block[layer][index] & (1 << direction) == 0
-            || self.edge_owner[layer][index] == owner16(net)
+        let (block, edge_owner) = self.edges[layer].at(index);
+        block & (1 << direction) == 0 || edge_owner == owner16(net)
+    }
+
+    /// The blocked directions of the unit steps leaving `index` on
+    /// `layer` and the net exempt from them (`edges`): (0, 0) for most
+    /// nodes.
+    #[inline(always)]
+    pub fn edges_at(&self, layer: usize, index: usize) -> (u8, u16) {
+        self.edges[layer].at(index)
     }
 
     /// Bytes held by the per-node maps.
@@ -1192,8 +1238,7 @@ impl StaticMaps {
                 .sum()
         }
         of(&self.trace)
-            + of(&self.edge_block)
-            + of(&self.edge_owner)
+            + self.edges.iter().map(EdgeMap::bytes).sum::<usize>()
             + self.via_blocked.bytes()
             + self.via_owner.capacity() * 2
             + self.free_layers.bytes()
@@ -1304,8 +1349,7 @@ fn mark_tight_edges(
     net: Option<NetId>,
     reach: f64,
     index: usize,
-    edge_block: &mut [u8],
-    edge_owner: &mut [u16],
+    edges: &mut EdgeMap,
 ) {
     let center = grid.center_of(index);
     for direction in 0..8 {
@@ -1313,10 +1357,8 @@ fn mark_tight_edges(
             continue;
         };
         if shape.distance_to_segment(center, grid.center_of(neighbor)) < reach {
-            edge_block[index] |= 1 << direction;
-            claim16(&mut edge_owner[index], net);
-            edge_block[neighbor] |= 1 << ((direction + 4) % 8);
-            claim16(&mut edge_owner[neighbor], net);
+            edges.block(index, direction, net);
+            edges.block(neighbor, (direction + 4) % 8, net);
         }
     }
 }
