@@ -24,15 +24,23 @@ use super::*;
 /// intake boards and Castor, jetson, k30: peak over maps 1.05-1.68 where
 /// the maps are 240-760 MB, 2.5-3.2 on the three v16 boards (about 300 MB
 /// of maps and up to 570 MB beside them); the line covers every board
-/// (docs/changelog.md, "ladder memory and work bound").
-pub(crate) const PEAK_RESIDENT_PER_MAPS: f64 = 1.7;
-pub(crate) const RESIDENT_OVERHEAD_MB: f64 = 460.0;
+/// (docs/changelog.md, "ladder memory and work bound"). Measured again
+/// 2026-10-22 after the maps shrank and freed blocks went back to the
+/// system (`configure_malloc`), one router at a time, one thread, a
+/// ladder of 60 s of work: katia 2189 MB of maps, 2534 peak; jiran-ble-lite
+/// at 0.05 mm 1589, 1608; the laptop motherboard 636, 897; Sisu 491, 721;
+/// k30 247, 406; jetson 223, 796; Castor 193, 392 (docs/changelog.md,
+/// "router memory"). Was 1.7 and 460 MB: the slope then carried the
+/// allocator's retention (katia's 1.75 GB with no router left).
+pub(crate) const PEAK_RESIDENT_PER_MAPS: f64 = 1.2;
+pub(crate) const RESIDENT_OVERHEAD_MB: f64 = 540.0;
 
 /// The same for the address space (VmPeak): reserved but untouched pages,
-/// thread stacks and malloc's arenas count too (peak over maps 1.41-3.8 on
-/// the same boards).
-pub(crate) const PEAK_ADDRESS_SPACE_PER_MAPS: f64 = 2.0;
-pub(crate) const ADDRESS_SPACE_OVERHEAD_MB: f64 = 550.0;
+/// thread stacks and malloc's arenas count too (2026-10-22, the same
+/// boards: VmPeak 2809, 1954, 1112, 912, 629, 1052, 571 MB; was 2.0 and
+/// 550 MB).
+pub(crate) const PEAK_ADDRESS_SPACE_PER_MAPS: f64 = 1.3;
+pub(crate) const ADDRESS_SPACE_OVERHEAD_MB: f64 = 780.0;
 
 /// The margin on a router's estimated peak: another board's lies off the
 /// measured line, a finer lattice's off its regular one's.

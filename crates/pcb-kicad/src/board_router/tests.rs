@@ -2144,20 +2144,20 @@ mod memory_limit_tests {
         assert_eq!(limit.kind, MemoryKind::AddressSpace);
         assert_eq!(limit.free_mb, 3072.0 - 400.0);
         assert_eq!(limits.hard_free(), Some(2672.0));
-        // A router of 300 MB of maps: (2 x 300 + 550) x 1.25 = 1437.5 MB of
-        // address space, one fits beside the 400 held, not two.
-        assert_eq!(limit.router_mb(300.0), 1437.5);
+        // A router of 300 MB of maps: (1.3 x 300 + 780) x 1.25 = 1462.5 MB
+        // of address space, one fits beside the 400 held, not two.
+        assert_eq!(limit.router_mb(300.0), 1462.5);
         let (count, by) = limits.routers_that_fit(300.0, 4);
         assert_eq!(count, 1);
         assert_eq!(by.unwrap().source, limit.source);
         // Never fewer than one, never more than wanted.
         assert_eq!(limits.routers_that_fit(5000.0, 4).0, 1);
         assert_eq!(limits.routers_that_fit(1.0, 2).0, 2);
-        assert_eq!(limits.routers_that_fit(1.0, 8).0, 3);
+        assert_eq!(limits.routers_that_fit(1.0, 8).0, 2);
         // Fixed decisions go by the limit, not by what is free.
         assert!(limits.too_small_for(300.0, 2).is_none());
         assert!(limits.too_small_for(300.0, 3).is_some());
-        assert!(limits.too_small_for(1000.0, 1).is_some());
+        assert!(limits.too_small_for(1500.0, 1).is_some());
     }
 
     #[test]
@@ -2188,7 +2188,7 @@ mod memory_limit_tests {
         // environment, against the resident size.
         assert_eq!(limits.limits[3].free_mb, 4400.0);
         assert_eq!(limits.hard_free(), Some(2596.0));
-        // A router of 100 MB of maps: (1.7 x 100 + 460) x 1.25 = 787.5 MB
+        // A router of 100 MB of maps: (1.2 x 100 + 540) x 1.25 = 825 MB
         // resident; three fit the cgroup's 2596 MB.
         let (count, by) = limits.routers_that_fit(100.0, 8);
         assert_eq!(count, 3);

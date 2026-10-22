@@ -1102,16 +1102,16 @@ fn a_finer_pitch_that_does_not_fit_the_machine_is_skipped_by_its_maps() {
     let config = route_mode(1000.0);
     let out = output("machine");
     let fake = Fake::new(|_| Some(Outcome { open: 2, work: 5.0 }));
-    // 100 MB of maps at 0.1 mm: about 1.2 GB a router at 0.075 mm, 1.6
-    // GB at 0.05 mm (`router_peak_mb`); a machine of 3.5 GB takes routers
-    // to 1.4 GB.
+    // 100 MB of maps at 0.1 mm: about 0.94 GB a router at 0.075 mm, 1.28
+    // GB at 0.05 mm (`router_peak_mb`); a machine of 3 GB takes routers
+    // to 1.2 GB.
     let mut ladder = Ladder::new(
         &config,
         &out,
         vec!["GND".into()],
         2,
         machine(),
-        Some(3500.0),
+        Some(3000.0),
     );
     ladder.run(&fake).unwrap();
     let pitches: Vec<Option<f64>> = fake
