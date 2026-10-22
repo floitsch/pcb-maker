@@ -1066,6 +1066,13 @@ fn f2s_free_dimension_stops_at_the_first_clean_size() {
         .collect();
     let retry = 60.0 - (work[1] + work[2]);
     let confirm = retry - work[3];
+    // Budgets are compared to the microsecond: the binary sums the work
+    // in another order than this test, and the last bits differ.
+    let runs: Vec<(f64, String, f64, bool)> = runs
+        .into_iter()
+        .map(|(mm, kind, budget, chosen)| (mm, kind, (budget * 1e6).round() / 1e6, chosen))
+        .collect();
+    let (retry, confirm) = ((retry * 1e6).round() / 1e6, (confirm * 1e6).round() / 1e6);
     assert_eq!(
         runs,
         vec![
