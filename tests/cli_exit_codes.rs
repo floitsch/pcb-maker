@@ -97,6 +97,33 @@ fn help_lists_the_agent_commands_and_the_exit_codes() {
 }
 
 #[test]
+fn version_prints_the_commit_and_the_build_date() {
+    let output = binary().arg("--version").output().unwrap();
+    assert_eq!(code(&output), 0);
+    let text = String::from_utf8(output.stdout).unwrap();
+    let words: Vec<&str> = text.split_whitespace().collect();
+    assert_eq!(words.len(), 3, "{text:?}");
+    assert_eq!(words[0], "pcb-maker");
+    // The date is YYYY-MM-DD, the commit HEAD's (or "unknown" without git).
+    assert!(
+        words[2].len() == 10 && words[2].chars().filter(|c| *c == '-').count() == 2,
+        "{text:?}"
+    );
+    let head = Command::new("git")
+        .args(["rev-parse", "--short=12", "HEAD"])
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string());
+    match head {
+        Some(head) => assert_eq!(words[1], head),
+        None => assert_eq!(words[1], "unknown"),
+    }
+    assert_eq!(code(&binary().arg("-V").output().unwrap()), 0);
+}
+
+#[test]
 fn usage_and_input_errors_exit_2_with_one_line() {
     let root = scratch("usage");
     let project = project(&root);
@@ -225,6 +252,14 @@ fn a_route_kicad_did_not_check_is_never_complete() {
     // The switches that were set, and what the run repaired.
     assert_eq!(verdict["environment"]["PCB_SKIP_NATIVE"], "1");
     assert_eq!(verdict["environment"]["PCB_ROUTER_SEED"], "0");
+    // The build that judged it, as `--version` prints it.
+    let version = String::from_utf8(binary().arg("--version").output().unwrap().stdout).unwrap();
+    assert_eq!(
+        verdict["environment"]["pcb_maker_version"]
+            .as_str()
+            .map(|v| format!("pcb-maker {v}\n")),
+        Some(version)
+    );
     assert_eq!(verdict["repairs"]["neck_tracks"], 0);
     assert!(verdict["repairs"]["pour_mode"].is_string());
     let report: serde_json::Value =

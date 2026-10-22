@@ -67,7 +67,8 @@ pub use verdict::{
     DrcTally, EXIT_COMPLETE, EXIT_CUT, EXIT_INCOMPLETE, EXIT_INTERNAL, EXIT_USAGE, KiCadReference,
     KiCadRunFacts, KiCadRunStatus, KiCadVerdict, decide, error_verdict, input_error, is_cosmetic,
     is_input_error, judge, kicad_drc_report, load_drc_tally, noted_input_actions, read_drc_tally,
-    reference_findings, room_action, route_facts, split_findings, tally_drc, wall_cuts,
+    reference_findings, room_action, route_facts, set_build_version, split_findings, tally_drc,
+    wall_cuts,
 };
 mod work_rate;
 pub use work_rate::{

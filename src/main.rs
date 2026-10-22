@@ -14,6 +14,10 @@ use std::{env, fs, path::Path, process::ExitCode};
 /// with the attempt's message).
 static PANIC: std::sync::Mutex<Option<(String, String)>> = std::sync::Mutex::new(None);
 
+/// The commit the binary was built from and the build date (UTC), from
+/// build.rs; "unknown" without git.
+const VERSION: &str = concat!(env!("BUILD_COMMIT"), " ", env!("BUILD_DATE"));
+
 fn main() -> ExitCode {
     // A panic is reported as one line (and in the run's report) by `main`;
     // RUST_BACKTRACE keeps the default report with its backtrace too.
@@ -36,6 +40,7 @@ fn main() -> ExitCode {
             default_hook(info);
         }
     }));
+    pcb_kicad::set_build_version(VERSION);
     let arguments: Vec<String> = env::args().skip(1).collect();
     let outcome = std::panic::catch_unwind(|| dispatch(arguments));
     let code = match outcome {
@@ -88,6 +93,10 @@ fn uncaught(payload: &str, last: Option<(String, String)>) -> String {
 /// Runs a command and returns its exit code (`agent_cli::EXIT_CODES`).
 fn dispatch(arguments: Vec<String>) -> u8 {
     let command = arguments.first().cloned().unwrap_or_else(|| "help".into());
+    if command == "--version" || command == "-V" || command == "version" {
+        println!("pcb-maker {VERSION}");
+        return pcb_kicad::EXIT_COMPLETE;
+    }
     let rest: Vec<String> = arguments.iter().skip(1).cloned().collect();
     // pcb-maker <command> --help, pcb-maker help <command>.
     let asked = if command == "help" || command == "--help" || command == "-h" {
@@ -164,6 +173,7 @@ fn print_help() {
     println!(
         "pcb-maker: automatic placement and routing for KiCad boards, judged by KiCad's own ERC and DRC.\n"
     );
+    println!("Version {VERSION} (pcb-maker --version: the commit and the build date).\n");
     println!("Commands for agents (pcb-maker <command> --help for its arguments and defaults):");
     for (name, line, _) in agent_cli::AGENT_COMMANDS {
         println!("  {name:<24} {line}");

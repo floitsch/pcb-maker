@@ -11,6 +11,21 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-22 (the snapshot release)
+
+The `snapshot` release had been stale since 2026-10-21 (`21194a9`): the
+macOS build failed (pcb-kicad's `libc` was a Linux-only dependency, the
+memory limits' `getrlimit` needs it on every Unix) and the release job
+needed every platform. `.github/workflows/snapshot.yml` became
+`release.yml`: linux-x86_64 runs `scripts/check.sh --fast` and must
+build, macos-aarch64 may fail without holding the release; the release
+and its tag are deleted and made again with the archives (binary, README,
+LICENSE, VERSION, docs/agents.md, skills/pcb-maker/SKILL.md), `VERSION`
+and `SHA256SUMS`. `scripts/release.sh` does the same by hand.
+`pcb-maker --version` prints the commit and the build date (build.rs,
+"unknown" without git); the verdict's `environment` records them as
+`pcb_maker_version`. Branch release-snapshot.
+
 ## Committed on 2026-10-21 (free dimension and layout budget fixes)
 
 The review of 2026-10-21 (docs/reviews/2026-10-21-review-placer.md),

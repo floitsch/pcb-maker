@@ -1,0 +1,91 @@
+# Copyright (C) 2026 Toit contributors.
+name: release
+
+# Every push to main rebuilds the rolling `snapshot` pre-release
+# (https://github.com/floitsch/pcb-maker/releases/tag/snapshot): one
+# archive per platform, VERSION and SHA256SUMS, always the latest commit
+# that passed scripts/check.sh --fast. The release and its tag are deleted
+# and made again (scripts/release.sh publish), so no archive of an older
+# commit survives. scripts/release.sh does the same by hand.
+#
+# linux-x86_64 runs the gate and must build; macos-aarch64 only builds and
+# may fail without holding the release (it then lacks the macOS archive).
+# It failed from 2026-10-21 on, when pcb-kicad's libc was Linux-only and
+# held every release; no Intel Mac build: GitHub's macos-13 runners are
+# gone and the job queued for hours (2026-10-07).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.name }})
+    concurrency:
+      group: release-build-${{ matrix.name }}
+      cancel-in-progress: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            gate: true
+          - name: macos-aarch64
+            os: macos-latest
+            gate: false
+    runs-on: ${{ matrix.os }}
+    continue-on-error: ${{ !matrix.gate }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.name }}
+      - uses: actions/setup-python@v5
+        if: matrix.gate
+        with:
+          python-version: "3.12"
+      - name: scripts/check.sh --fast
+        if: matrix.gate
+        run: |
+          python -m pip install pytest
+          bash scripts/check.sh --fast
+      - name: Build
+        run: cargo build --release --locked --bin pcb-maker
+      - name: Package
+        run: bash scripts/release.sh package ${{ matrix.name }} target/release/pcb-maker dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pcb-maker-${{ matrix.name }}
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: update the snapshot release
+    needs: build
+    runs-on: ubuntu-latest
+    # Never cancelled half way (between the delete and the create); a newer
+    # run's publish waits for it.
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/release.sh publish dist

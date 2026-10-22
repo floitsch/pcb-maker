@@ -81,9 +81,31 @@ number here; they are re-run and rewritten as the code changes.
 You need KiCad 10 on the `PATH` (`kicad-cli` runs the final
 verification; pcb-maker writes KiCad 10 boards and is tested with 10.0.7,
 and warns when `kicad-cli version` is older) and either a [snapshot build](https://github.com/floitsch/pcb-maker/releases/tag/snapshot)
-(rebuilt on every push to `main`) or a Rust toolchain:
+or a Rust toolchain.
+
+The snapshot release holds `pcb-maker-linux-x86_64.tar.gz` and
+`pcb-maker-macos-aarch64.tar.gz` (the binary, this README, `LICENSE`,
+[docs/agents.md](docs/agents.md) and the
+[agent skill](skills/pcb-maker/SKILL.md)), a `VERSION` file and
+`SHA256SUMS`. It is rebuilt on every push to `main` that passes
+`scripts/check.sh --fast` and replaces the previous one, so to pin a
+version keep the archive you downloaded and record the commit in its
+`VERSION` (`pcb-maker --version` prints the same commit and the build
+date; a verdict's `environment` names it as `pcb_maker_version`):
 
 ```sh
+curl -LO https://github.com/floitsch/pcb-maker/releases/download/snapshot/pcb-maker-linux-x86_64.tar.gz
+curl -LO https://github.com/floitsch/pcb-maker/releases/download/snapshot/SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
+tar xzf pcb-maker-linux-x86_64.tar.gz
+cat pcb-maker-linux-x86_64/VERSION          # commit <sha>, committed <date>, built <date>
+pcb-maker-linux-x86_64/pcb-maker --version  # pcb-maker <sha> <build date>
+```
+
+or build any commit from source, which is how to reproduce a pinned one:
+
+```sh
+git checkout <commit>          # the commit from VERSION, or any other
 cargo build --release          # target/release/pcb-maker
 ```
 
@@ -286,7 +308,7 @@ benchmarks/github/freerouting.py build/freerouting --ours      # both routers, h
 | `crates/pcb-congestion` | congestion features (RUDY) the placement race ranks its candidates by |
 | `docs/` | design notes and results; [the hand-over](docs/handover.md) (current state, open problems, how to work on it) and [the changelog](docs/changelog.md) |
 | `skills/pcb-maker` | the agent skill (`SKILL.md`): the short form of docs/agents.md for agent CLIs; tests/cli_exit_codes.rs checks it against the command table and the exit codes |
-| `scripts/` | `worktree.sh`, `check.sh` (the test set), `snapshot.sh`, `check_links.py` |
+| `scripts/` | `worktree.sh`, `check.sh` (the test set), `snapshot.sh`, `release.sh` (the `snapshot` release by hand), `check_links.py` |
 | `tools/config-reference` | generates [the configuration reference](docs/config-reference.md) (every settings key with its type, default and doc comment) and the hand-over's environment index from the code |
 
 `crates/pcb-topo` is a TopoR-style topological router, an experiment the

@@ -558,14 +558,33 @@ pub const RESULT_ENVIRONMENT: [&str; 15] = [
     "PCB_MAKER_TEST_PANIC_ATTEMPT",
 ];
 
-/// The variables of `RESULT_ENVIRONMENT` that are set, with their values.
+/// The binary's build, `<commit> <date>` (`set_build_version`); the
+/// verdict's `environment` names it under `BUILD_VERSION_KEY`.
+static BUILD_VERSION: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+/// The key of the build in the verdict's `environment` (lower case: it is
+/// not an environment variable).
+pub const BUILD_VERSION_KEY: &str = "pcb_maker_version";
+
+/// Records the binary's build for the verdicts (the executable's `main`
+/// calls it once; library callers that do not leave it out).
+pub fn set_build_version(version: &str) {
+    let _ = BUILD_VERSION.set(version.to_string());
+}
+
+/// The variables of `RESULT_ENVIRONMENT` that are set, with their values,
+/// and the binary's build (`set_build_version`) when it was recorded.
 pub fn result_environment() -> BTreeMap<String, String> {
-    RESULT_ENVIRONMENT
+    let mut environment: BTreeMap<String, String> = RESULT_ENVIRONMENT
         .iter()
         .filter_map(|name| {
             std::env::var_os(name).map(|value| (name.to_string(), value.to_string_lossy().into()))
         })
-        .collect()
+        .collect();
+    if let Some(version) = BUILD_VERSION.get() {
+        environment.insert(BUILD_VERSION_KEY.into(), version.clone());
+    }
+    environment
 }
 
 /// What a finished run produced, as the verdict needs it.
@@ -780,7 +799,8 @@ pub struct KiCadVerdict {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repairs: Option<KiCadRepairs>,
     /// The result-changing environment variables that were set
-    /// (`RESULT_ENVIRONMENT`), with their values.
+    /// (`RESULT_ENVIRONMENT`), with their values, and the binary's build
+    /// (`pcb_maker_version`: commit and build date).
     pub environment: BTreeMap<String, String>,
     /// How whole the pours stayed, per zone and layer, by the pour model on
     /// the board written: pieces, the largest piece's share of the pour's
