@@ -287,9 +287,10 @@ edge (or beyond it) moves with it; everything else keeps its place in
 board coordinates:
 - footprints by their origin (a fixed connector row at the bottom edge,
   its decoupling capacitors, the LEDs a generator put along it); a part
-  the layout holds (below) also when its body reaches into the band (a
-  centre-origin connector or a module over the edge: anchored by the
-  body's side nearest the edge, not its origin). Parts the placer places
+  the layout holds (below) also when its body lies at the edge (its side
+  nearest the edge within 0.5 mm of it or beyond: a centre-origin
+  connector, a module over the edge), whatever its origin; a tall held
+  part that only reaches into the band stays. Parts the placer places
   again go by their origin;
 - board texts, images, dimensions, circles and vias whole, by the side of
   their box nearest the edge (a text's box estimated from its font,

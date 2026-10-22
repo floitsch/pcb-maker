@@ -11,8 +11,8 @@
 //!
 //! - the board and the constraints at one size (`KiCadFreeDimensionPlan`):
 //!   the outline's edge moves, and so does everything within `band_mm` of
-//!   it (footprints by their origin, the parts the layout holds also by
-//!   their body, board texts and other rigid items by their box, drawn
+//!   it (footprints by their origin, the parts the layout holds also when
+//!   their body lies at the edge, board texts and other rigid items by their box, drawn
 //!   shapes and zones point by point, a zone that would fold cut at the
 //!   new edge, arcs by their ends, constraint boxes side by side); the
 //!   rest stays where it is in board coordinates. A size where a held part,
@@ -69,7 +69,7 @@ pub struct KiCadFreeDimension {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accept: Option<String>,
     /// What moves with the edge: everything within this distance of it
-    /// (footprints by their origin, held parts also by their body, board
+    /// (footprints by their origin, held parts also by a body at the edge, board
     /// texts and other rigid items by their box, drawn shapes and zones
     /// point by point, arcs by their ends, constraint boxes side by side).
     /// Default 0.5 mm: what lies on the edge.
@@ -361,6 +361,12 @@ impl KiCadFreeDimensionPlan {
         self.sign * (self.edge_coordinate() - coordinate) <= self.band + 1.0e-6
     }
 
+    /// Whether a coordinate along the free axis lies at the edge (within
+    /// `DEFAULT_BAND_MM` of it) or beyond it.
+    fn at_edge(&self, coordinate: f64) -> bool {
+        self.sign * (self.edge_coordinate() - coordinate) <= DEFAULT_BAND_MM + 1.0e-6
+    }
+
     /// A box's side nearest the moving edge, along the free axis.
     fn near(&self, bounds: &Box4) -> f64 {
         if self.sign > 0.0 {
@@ -457,12 +463,13 @@ impl KiCadFreeDimensionPlan {
                     };
                     let before = footprint_box(item);
                     let fixed = self.fixed.contains(&index);
-                    // A fixed part moves when its origin or its body lies in
-                    // the band (a centre-origin connector at the edge, a
-                    // module over it); the others, which the placer places
-                    // again, by their origin.
+                    // A held part moves when its origin lies in the band or
+                    // its body at the edge (a centre-origin connector, a
+                    // module over the edge); a tall one that only reaches
+                    // into the band stays. The others, which the placer
+                    // places again, go by their origin.
                     let anchored = self.in_band(at[axis])
-                        || (fixed && before.is_some_and(|body| self.in_band(self.near(&body))));
+                        || (fixed && before.is_some_and(|body| self.at_edge(self.near(&body))));
                     let moves = shift != 0.0 && anchored;
                     if moves {
                         let mut position = [at[0], at[1]];
@@ -2555,6 +2562,12 @@ mod tests {
         // Shrinking carries it too, instead of stranding it.
         let shrunk = plan.variant(28.0).unwrap();
         assert_eq!(footprint_at(&shrunk.board, "J9"), [125.0, 125.0, 0.0]);
+        // A held part that only reaches into the band (a tall header, its
+        // body 1 mm short of the edge) stays: R9 held now.
+        let plan =
+            KiCadFreeDimensionPlan::new(&dimension, &text, None, &placer(&["J9", "R9"])).unwrap();
+        let grown = plan.variant(34.0).unwrap();
+        assert_eq!(footprint_at(&grown.board, "R9"), [115.0, 127.0, 0.0]);
     }
 
     fn outcome(

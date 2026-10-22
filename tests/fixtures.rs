@@ -1007,8 +1007,8 @@ fn f2s_free_dimension_stops_at_the_first_clean_size() {
     // through the binary (the CLI test in cli_exit_codes.rs has no size
     // clean). F2 is F1 with its bottom edge free from 18 to 24 mm, two
     // sizes side by side, and a fake kicad-cli clean from 22 mm: the
-    // probes stop after the batch of 22, the confirmation lays out 22 mm
-    // at a third of the budget, the result's outline is 22 mm with the
+    // probes stop after the batch of 22, 20 is retried and 22 confirmed
+    // with what is left, the result's outline is 22 mm with the
     // band's items moved, and the children run at the parent's rates.
     let root = scratch("free-dimension");
     let source = project("f1", &root);
@@ -1055,15 +1055,25 @@ fn f2s_free_dimension_stops_at_the_first_clean_size() {
         .collect();
     // 18 mm would put the fixed J1 outside the outline: infeasible, no
     // run. 20 and 22 side by side: 22 is clean, the probes stop (24 is
-    // never tried); 22 again at the confirmation's budget, a third of the
-    // search's 60 s.
+    // never tried). 20 came close (one unconnected item): it is laid out
+    // again with all that is left of the search's 60 s (results are not
+    // monotone), and still open; then 22 again with the rest.
+    let work: Vec<f64> = table["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|run| run["work_seconds"].as_f64().unwrap_or(0.0))
+        .collect();
+    let retry = 60.0 - (work[1] + work[2]);
+    let confirm = retry - work[3];
     assert_eq!(
         runs,
         vec![
             (18.0, "infeasible".to_string(), 0.0, false),
             (20.0, "probe".to_string(), 6.0, false),
             (22.0, "probe".to_string(), 6.0, false),
-            (22.0, "confirm".to_string(), 20.0, true),
+            (20.0, "retry".to_string(), retry, false),
+            (22.0, "confirm".to_string(), confirm, true),
         ],
         "{table}"
     );
