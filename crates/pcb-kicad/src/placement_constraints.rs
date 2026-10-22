@@ -1207,7 +1207,8 @@ impl HeldParts {
 ///   area that forbids footprints);
 /// - but not the default ones a constraint names (an edge, a region, a
 ///   side, a place without coordinates) nor, under `move_all`, any part
-///   but locked ones, artwork and parts nobody can name.
+///   but locked ones, artwork and parts nobody can name; a row's members
+///   are held when its leader is.
 ///
 /// The keepout constraints (which rule areas allow footprints), the free
 /// dimension (which parts must stay inside the outline) and the placer
@@ -1231,12 +1232,18 @@ pub(crate) fn held_parts(pcb: &Expr, config: &KiCadBoardPlacerConfig) -> Result<
         .filter(|item| item.head() == Some("footprint"))
         .count();
     let lowered = crate::board_placer::lower_placement(&board, &config)?;
-    Ok(HeldParts(
-        lowered.problem.components[..footprints]
-            .iter()
-            .map(|component| component.fixed)
-            .collect(),
-    ))
+    let mut held: Vec<bool> = lowered.problem.components[..footprints]
+        .iter()
+        .map(|component| component.fixed)
+        .collect();
+    // A row's members are fixed in the problem only because their leader
+    // carries them: they are held when it is.
+    for follower in &lowered.problem.constraints.followers {
+        if follower.part < footprints {
+            held[follower.part] = held.get(follower.leader).copied().unwrap_or(false);
+        }
+    }
+    Ok(HeldParts(held))
 }
 
 /// `held_parts` for a board as given, with the outline its constraints
@@ -3917,6 +3924,20 @@ mod tests {
         assert_eq!(
             held_names(&held_parts(&pcb, &config).unwrap()),
             ["F1", "P1", "C1", "X1", "L1", "N1", "E1", "J1"]
+        );
+        // A row's members go with its leader: N1 (no net) behind the
+        // movable R1 moves with it.
+        let mut in_row = constraints.clone();
+        in_row.row =
+            serde_json::from_value(serde_json::json!([{"parts": ["R1", "N1"], "pitch_mm": 3}]))
+                .unwrap();
+        let row_config = KiCadBoardPlacerConfig {
+            constraints: Some(KiCadConstraintsSource::Inline(in_row)),
+            ..config.clone()
+        };
+        assert_eq!(
+            held_names(&held_parts(&pcb, &row_config).unwrap()),
+            ["F1", "P1", "C1", "X1", "L1", "E1", "J1"]
         );
         // move_all: every part is placed but locked ones and those
         // constraints.json fixes or places (docs/constraints.md); the

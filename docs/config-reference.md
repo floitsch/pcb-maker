@@ -34,7 +34,7 @@ The environment variables are indexed in the hand-over
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 5 | - | 0 | 5 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 59 | - | 0 | 59 | - |
-| [Placer settings](#placer-settings) | 45 | 42 | 3 | 45 | 14 |
+| [Placer settings](#placer-settings) | 45 | 42 | 3 | 45 | 16 |
 | [Layout settings](#layout-settings) | 16 | 16 | 0 | 16 | 6 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 2 |
@@ -306,10 +306,10 @@ The placer config file of `place-kicad-board`, and the `placer` object of the la
 | `spacing_mm` | `f64` | `0.5` | - | Minimum gap between two courtyards on colliding sides. |
 | `grid_mm` | `f64` | `0.635` | - | Footprint origins are snapped to multiples of this. |
 | `keep_rotation` | `bool` | `false` | - | Movable parts keep the angle the board gives them; otherwise each may take any quarter turn of it (and square angles too when it stands at an odd one). |
-| `fixed` | `Vec<String>` | `[]` | router.md | References that must keep their pose, in addition to locked footprints, footprints without nets, and footprints on the board edge. |
-| `fixed_patterns` | `Vec<String>` | `[]` | - | Glob patterns (`*` and `?`) of references that stay fixed. |
+| `fixed` | `Vec<String>` | `[]` | router.md, placer.md | References that must keep their pose, in addition to locked footprints, footprints without nets, and footprints on the board edge. |
+| `fixed_patterns` | `Vec<String>` | `[]` | placer.md | Glob patterns (`*` and `?`) of references that stay fixed. |
 | `edge_keep_mm` | `f64` | `3.0` | - | Through-hole parts with at least four pins (connectors, headers) whose body comes within this distance of the outline stay where the designer put them: at the edge, where they are reachable. |
-| `free` | `Vec<String>` | `[]` | - | References that may move even though a default rule would fix them. |
+| `free` | `Vec<String>` | `[]` | placer.md | References that may move even though a default rule would fix them. |
 | `whitespace_fill` | `f64` | `0.0` | - | Share of the whitespace taken by filler charge: 1 packs the parts as tightly as halos allow, 0 spreads them over the whole board. 0 by default: the spare room then lies between the parts, where routing needs it (routed in route mode, Sisu's placement left 11 open in KiCad at 0 and 20 at 0.6; OpenESC mini 62-70 against 80-86 over two seeds; wirelength within 3 %). |
 | `track_pitch_mm` | `f64` | `0.65` | - | Every footprint keeps a halo of `pins / pins_per_halo_track` tracks (at `track_pitch_mm`, capped at `maximum_halo_mm`) free around its courtyard so its pins can escape. |
 | `pins_per_halo_track` | `f64` | `8.0` | - | Pins per track of halo (see `track_pitch_mm`); 0 gives no part a pin-count halo. |
