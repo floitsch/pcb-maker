@@ -283,10 +283,56 @@ impl Router {
             saved.push(self.save_net(*victim));
             self.rip_up_conflicted(*victim);
         }
-        // What is left in its way is fixed copper (a skeleton, a stub).
+        // What is still in its way is copper its own conflicts do not
+        // show (a net of another class, whose clearance zone reaches
+        // further than the net's own: the conflict is on one side only)
+        // or fixed copper (a skeleton, a stub). The first goes whole.
+        let mut victims = victims;
         if !self.conflicts(net).is_empty() {
-            self.restore_nets(saved);
-            return Err("fixed copper in its way".to_string());
+            let others = self.blockers(net);
+            let fresh: Vec<NetId> = others
+                .iter()
+                .copied()
+                .filter(|other| !victims.contains(other))
+                .collect();
+            let refusal = if others.iter().any(|other| protected.contains(other)) {
+                Some("it would displace the net the exchange is for".to_string())
+            } else if victims.len() + fresh.len() > settings.victims {
+                Some(format!(
+                    "{} victims with the one-sided conflicts, more than allowed",
+                    victims.len() + fresh.len()
+                ))
+            } else {
+                others
+                    .iter()
+                    .find(|other| !self.nets[**other as usize].plane.is_empty())
+                    .map(|pour| {
+                        format!(
+                            "a pour net in its way ({})",
+                            self.board.nets[*pour as usize].name
+                        )
+                    })
+            };
+            if let Some(reason) = refusal {
+                self.restore_nets(saved);
+                return Err(reason);
+            }
+            for other in &others {
+                if !saved.iter().any(|entry| entry.0 == *other) {
+                    saved.push(self.save_net(*other));
+                }
+                self.rip_up(*other);
+            }
+            victims.extend(fresh);
+            if !self.conflicts(net).is_empty() {
+                let names: Vec<String> = self
+                    .blockers(net)
+                    .iter()
+                    .map(|other| self.board.nets[*other as usize].name.clone())
+                    .collect();
+                self.restore_nets(saved);
+                return Err(format!("fixed copper in its way ({})", names.join(", ")));
+            }
         }
         for victim in &victims {
             self.nets[*victim as usize].hopeless_searches = 0;
@@ -294,6 +340,36 @@ impl Router {
             self.stamp(*victim);
         }
         Ok((saved, victims))
+    }
+}
+
+impl Router {
+    /// The nets whose stamps cover a node of `net` in conflict (`net`'s
+    /// maps: its class, or its neck class there, and its via map).
+    fn blockers(&self, net: NetId) -> Vec<NetId> {
+        let class = self.board.nets[net as usize].class;
+        let layers = self.board.layer_count;
+        let cells: HashSet<(u32, u32)> = self
+            .conflicts(net)
+            .into_iter()
+            .map(|(layer, cell)| {
+                let map = if layer < layers {
+                    self.map_index(self.node_class(net, cell), layer)
+                } else {
+                    self.map_index(class, layers)
+                };
+                (map as u32, cell)
+            })
+            .collect();
+        (0..self.nets.len() as NetId)
+            .filter(|other| *other != net)
+            .filter(|other| {
+                self.nets[*other as usize]
+                    .stamped
+                    .iter()
+                    .any(|stamp| cells.contains(stamp))
+            })
+            .collect()
     }
 }
 
