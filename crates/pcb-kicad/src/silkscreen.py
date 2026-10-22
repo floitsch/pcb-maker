@@ -5,8 +5,8 @@ Straight strokes are clipped to the rectangular board and separated from
 other footprints' strokes. Shorter strokes have priority, retaining small
 marks ahead of long outlines. Isolated small centered crosses are protected
 as rigid groups and moved locally before clipping other lines. Recognition is
-geometric, not an inference of electrical polarity. Visible reference fields are moved locally
-without changing their text, size or pen width. Curves remain unchanged.
+geometric, not an inference of electrical polarity. Fields stay: pcb-maker
+places the Reference and Value fields afterwards. Curves remain unchanged.
 Only selected F.SilkS records are patched into the original board text.
 Native verification is required after this provisional operation.
 """
@@ -267,7 +267,7 @@ def repair(source,output,evidence_path):
     output.parent.mkdir(parents=True,exist_ok=True)
     report={'scope':__doc__,'source_sha256':hashlib.sha256(original.encode()).hexdigest(),
             'margin_mm':MARGIN,'edge_margin_mm':EDGE_MARGIN,'sampling_mm':SAMPLE,
-            'strokes':[],'references':[],'unresolved_references':[],
+            'strokes':[],
             'protected_marks':[],'unresolved_marks':[]}
     replacements={}
     with tempfile.TemporaryDirectory(prefix='pcb-maker-silk-',dir=output.parent) as scratch:
@@ -278,7 +278,7 @@ def repair(source,output,evidence_path):
         bounds,outline_note=rectangular_outline_bounds(board)
         report['outline']='rectangle' if outline_note is None else 'bounding box'
         if outline_note:report['notes']=[outline_note];print(outline_note,file=sys.stderr)
-        shapes=[];fields=[];pads=[];fixed_text=[];bodies=[]
+        shapes=[];pads=[];fixed_text=[];bodies=[]
         for fp in board.GetFootprints():
             ref=str(fp.GetReference())
             courtyard=[s for s in fp.GraphicalItems() if isinstance(s,pcbnew.PCB_SHAPE) and s.GetLayer()==pcbnew.F_CrtYd]
@@ -292,10 +292,10 @@ def repair(source,output,evidence_path):
                 if item.GetLayer()==pcbnew.F_SilkS:
                     if isinstance(item,pcbnew.PCB_SHAPE):shapes.append((fp,item))
                     elif hasattr(item,'IsVisible') and item.IsVisible():fixed_text.append(box(item))
+            # Every visible field is fixed here: pcb-maker places the
+            # Reference and Value fields afterwards (silk_fields.rs).
             for field in fp.GetFields():
-                if field.GetLayer()==pcbnew.F_SilkS and field.IsVisible():
-                    if key(field)==key(fp.Reference()):fields.append((fp,field))
-                    else:fixed_text.append(box(field))
+                if field.GetLayer()==pcbnew.F_SilkS and field.IsVisible():fixed_text.append(box(field))
             for pad in fp.Pads():
                 if pad.IsOnLayer(pcbnew.F_Mask):pads.append(expanded(box(pad),max(0,pad.GetSolderMaskExpansion(pcbnew.F_Mask)/1e6)+MARGIN))
         for track in board.GetTracks():
@@ -335,38 +335,6 @@ def repair(source,output,evidence_path):
             fp.Remove(item);replacements[identity]=new_ids
             report['strokes'].append({'uuid':identity,'reference':ref,'original_length_mm':length,
                 'retained_length_mm':sum((v-u)*length for u,v in chunks),'pieces':new_ids})
-        all_strokes=occupied
-        field_boxes={key(f):box(f) for _,f in fields}
-        for fp,field in sorted(fields,key=lambda pair:str(pair[0].GetReference())):
-            identity=key(field);old=xy(field.GetTextPos());angle=field.GetTextAngleDegrees();old_box=field_boxes.pop(identity)
-            def legal():
-                b=box(field)
-                if any(body['owner']!=str(fp.GetReference()) and (
-                    point_rect(body['center'],b)<body['radius']+MARGIN if body['kind']=='circle'
-                    else rect_overlap(expanded(b,MARGIN),body['box'])) for body in bodies):return False
-                return all(inside(p,expanded(bounds,-EDGE_MARGIN)) for p in corners(b)) and not any(
-                    rect_overlap(b,obstacle) for obstacle in pads+fixed_text+[expanded(v,MARGIN) for v in field_boxes.values()]) and not any(hits_stroke(b,s) for s in all_strokes)
-            if legal():field_boxes[identity]=old_box;continue
-            center=xy(fp.GetPosition())
-            candidates=[]
-            for dx in range(-16,17):
-                for dy in range(-16,17):
-                    p=(old[0]+dx*.5,old[1]+dy*.5)
-                    for turn in [angle,(angle+90)%180]:
-                        cost=math.dist(p,old)+.1*math.dist(p,center)+(0 if turn==angle else .3)
-                        candidates.append((cost,p,turn))
-            selected=None
-            for _,p,turn in sorted(candidates):
-                field.SetTextPos(vector(p));field.SetTextAngleDegrees(turn)
-                if legal():selected=(p,turn);break
-            if selected is None:
-                field.SetTextPos(vector(old));field.SetTextAngleDegrees(angle)
-                report['unresolved_references'].append(str(fp.GetReference()))
-            else:
-                replacements[identity]=[identity]
-                report['references'].append({'uuid':identity,'reference':str(fp.GetReference()),'from_mm':old,'to_mm':selected[0],
-                                            'from_angle':angle,'to_angle':selected[1],'text_size':xy(field.GetTextSize()),'thickness_mm':field.GetTextThickness()/1e6})
-            field_boxes[identity]=box(field)
         pcbnew.SaveBoard(str(temporary),board)
         generated=silk_nodes(temporary.read_text());patches=[]
         for identity,new_ids in replacements.items():
@@ -382,7 +350,6 @@ def repair(source,output,evidence_path):
         protected.append(original[cursor:])
         report['protected_chunks_sha256']=hashlib.sha256('\0'.join(protected).encode()).hexdigest()
         report['patched_records']=len(patches)
-        report['reference_other_courtyard_exclusion']=True
         report['courtyard_obstacles']=len(bodies)
         report['output_sha256']=hashlib.sha256(result.encode()).hexdigest()
         output.write_text(result)

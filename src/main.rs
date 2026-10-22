@@ -443,7 +443,7 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
                     std::path::absolute(Path::new(&output).join("silkscreen-repair.json"))
                         .unwrap_or_else(|_| Path::new(&output).join("silkscreen-repair.json"));
                 Err(format!(
-                    "{}: {} silkscreen findings left; see {} (proposal.unresolved_references and unresolved_marks; KiCad's findings in drc.json and the rendering beside it): move those labels or marks by hand in KiCad, or give their parts room, and run repair-kicad-silkscreen {output} {board_id} <new-dir> again",
+                    "{}: {} silkscreen findings left; see {} (fields.blocked and proposal.unresolved_marks; KiCad's findings in drc.json and the rendering beside it): move those labels or marks by hand in KiCad, or give their parts room, and run repair-kicad-silkscreen {output} {board_id} <new-dir> again",
                     agent_cli::SILKSCREEN_INCOMPLETE,
                     report["remaining_annotation_findings"],
                     report_path.display()

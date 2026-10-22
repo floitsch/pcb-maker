@@ -635,6 +635,8 @@ pub struct KiCadRunFacts {
     /// after a layout (`KiCadLabelReport::overlaps`): they stay where the
     /// input put them.
     pub board_mark_overlaps: Vec<String>,
+    /// The footprints' fields placed after a layout (`silk_fields`).
+    pub silkscreen: Option<crate::silk_fields::KiCadSilkscreenReport>,
     /// How whole the pours stayed (`KiCadBoardRouterResult::pour_quality`).
     pub pours: Vec<crate::board_router::KiCadPourQuality>,
 }
@@ -670,6 +672,7 @@ impl KiCadRunFacts {
             unmodelled_rules: Vec::new(),
             input_warnings: Vec::new(),
             board_mark_overlaps: Vec::new(),
+            silkscreen: None,
             pours: Vec::new(),
         }
     }
@@ -727,6 +730,15 @@ pub struct KiCadVerdict {
     pub preexisting_from: Option<String>,
     /// Silkscreen, text and library findings, which do not count.
     pub cosmetic_findings: usize,
+    /// A layout's footprint fields (the visible Reference and Value) on the
+    /// silkscreen, placed after routing where KiCad's silkscreen checks
+    /// find nothing: how many, how many moved, those without a clean spot
+    /// (`blocked`, with the findings predicted there) or hidden for want of
+    /// one (`silkscreen.hide_when_blocked`), and KiCad's findings they will
+    /// have by type (`predicted`). The rest of `cosmetic_findings` is the
+    /// footprints' and the board's own graphics.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub silkscreen: Option<crate::silk_fields::KiCadSilkscreenReport>,
     /// Other warning-severity findings, which do not count.
     pub warnings: usize,
     pub schematic_parity_issues: usize,
@@ -1018,6 +1030,20 @@ fn next_actions(
             listed.join("; ")
         ));
     }
+    if let Some(silkscreen) = &facts.silkscreen
+        && !silkscreen.blocked.is_empty()
+    {
+        let shown = 4;
+        let mut listed: Vec<String> = silkscreen.blocked.iter().take(shown).cloned().collect();
+        if silkscreen.blocked.len() > shown {
+            listed.push(format!("{} more", silkscreen.blocked.len() - shown));
+        }
+        actions.push(format!(
+            "{} silkscreen fields have no spot KiCad finds clean (cosmetic; silkscreen.blocked): give their parts room, hide them (layout.json \"silkscreen\": {{\"hide_when_blocked\": true}}) or move them in KiCad: {}",
+            silkscreen.blocked.len(),
+            listed.join("; ")
+        ));
+    }
     if !facts.constraints_missed.is_empty() {
         actions.push("constraints missed (constraints[] has violation_mm for each): relax them or give the parts room".into());
     }
@@ -1285,6 +1311,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         preexisting_unknown: strict.unknown,
         preexisting_from,
         cosmetic_findings: facts.native.as_ref().map_or(0, |native| native.cosmetic),
+        silkscreen: facts.silkscreen.clone(),
         warnings: facts.native.as_ref().map_or(0, |native| native.warnings),
         schematic_parity_issues: facts
             .native

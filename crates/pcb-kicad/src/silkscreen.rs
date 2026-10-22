@@ -2,11 +2,16 @@
 
 use super::*;
 
+/// What the repair may change: front silkscreen graphics and texts (the
+/// worker's strokes and marks), and the fields on either silkscreen
+/// (`silk_fields`, which moves the Reference and Value fields).
 fn editable(node: &Expr) -> bool {
-    matches!(
+    let layer = form_atom(node, "layer", 1);
+    (matches!(
         node.head(),
         Some("fp_line" | "fp_circle" | "fp_arc" | "fp_poly" | "fp_rect" | "fp_text" | "property")
-    ) && form_atom(node, "layer", 1) == Some("F.SilkS")
+    ) && layer == Some("F.SilkS"))
+        || (matches!(node.head(), Some("fp_text" | "property")) && layer == Some("B.SilkS"))
 }
 
 fn protected_board(mut board: Expr) -> Expr {
@@ -175,6 +180,27 @@ pub fn repair_kicad_silkscreen(
         .map_err(|e| e.to_string())?;
     fs::write(output.join("silkscreen.stdout.log"), &process.stdout).map_err(|e| e.to_string())?;
     fs::write(output.join("silkscreen.stderr.log"), &process.stderr).map_err(|e| e.to_string())?;
+    // The fields, by the layout's own scorer (silk_fields.rs): moved, never
+    // shrunk or hidden (the repair keeps their text, size and visibility).
+    // Also where the worker failed (a KiCad 6 board, whose records have no
+    // uuid): the result is then the source's copy.
+    let fields = if result_board.exists() {
+        let mut board = parse(&fs::read_to_string(&result_board).map_err(|e| e.to_string())?)?;
+        let outcome = crate::silk_fields::place_fields(
+            &mut board,
+            crate::silk_fields::FieldOptions {
+                rules: crate::silk_fields::SilkRules::from_project(&project),
+                shrink: false,
+                hide_when_blocked: false,
+            },
+        )?;
+        if outcome.report.moved > 0 {
+            fs::write(&result_board, format!("{}\n", encode(&board))).map_err(|e| e.to_string())?;
+        }
+        Some(outcome.report)
+    } else {
+        None
+    };
     // Always verify and render the retained result, including worker failures.
     let verification = verify_materialized_rung(&output, board_id)?;
     let after = parse(&fs::read_to_string(&result_board).map_err(|e| e.to_string())?)?;
@@ -203,10 +229,9 @@ pub fn repair_kicad_silkscreen(
     } else {
         None
     };
-    let reference_policy_complete = proposal_report
+    let reference_policy_complete = fields
         .as_ref()
-        .and_then(|report| report["unresolved_references"].as_array())
-        .is_some_and(|items| items.is_empty());
+        .is_some_and(|fields| fields.blocked.is_empty());
     let marks_unchanged = proposal_report
         .as_ref()
         .is_some_and(|report| marks_preserved(&before, &after, report));
@@ -230,6 +255,7 @@ pub fn repair_kicad_silkscreen(
         "project_unchanged": project_unchanged, "source_unchanged": source_unchanged,
         "remaining_annotation_findings": remaining, "silkscreen_complete": complete,
         "native": verification, "reference_policy_complete": reference_policy_complete, "proposal": proposal_report,
+        "fields": fields,
         "scope": "Front annotation repair only. Full native completion is reported separately; open cold boards are allowed."
     });
     write_typed_json(&output.join("silkscreen-repair.json"), &report)?;

@@ -35,9 +35,10 @@ The environment variables are indexed in the hand-over
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 59 | - | 0 | 59 | - |
 | [Placer settings](#placer-settings) | 45 | 42 | 3 | 45 | 16 |
-| [Layout settings](#layout-settings) | 16 | 16 | 0 | 16 | 6 |
+| [Layout settings](#layout-settings) | 17 | 17 | 0 | 17 | 7 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 2 |
+| [Layout settings: silkscreen](#layout-settings-silkscreen) | 1 | 1 | 0 | 1 | 1 |
 | [Placer core](#placer-core) | 8 | - | 0 | 8 | - |
 | [Placer core: global](#placer-core-global) | 12 | - | 0 | 12 | - |
 | [Placer core: anneal](#placer-core-anneal) | 7 | - | 0 | 7 | - |
@@ -371,6 +372,7 @@ The layout config file of `layout-kicad-board`. Unknown keys are rejected; a mis
 | `congestion_probes` | `usize` | `3` | - | With a pre-ranking score, how many of the best-ranked placements the race routes (at least one). |
 | `congestion_score` | `String` | `"rudy"` | placer.md | How the race ranks the placements before probing them (the values above, at `congestion_model`). |
 | `free_dimension` | `Option<crate::free_dimension::KiCadFreeDimension>` | unset | - | One edge of a rectangular outline the layout may move, to find the smallest board that comes out clean (docs/constraints.md, "A free dimension"): `layout-kicad-board` then lays the board out at several sizes, `total_seconds` being the whole search's budget. |
+| `silkscreen` | `KiCadSilkscreenConfig` | its own table | placer.md | The footprints' Reference and Value fields on the silkscreen, placed after routing where KiCad's silkscreen checks find nothing. |
 
 ## Layout settings: swappable entries
 
@@ -399,6 +401,14 @@ The `free_dimension` object of the layout settings: one edge of a rectangular ou
 | `free_dimension.probe_seconds` | `Option<f64>` | optional | router.md | The work budget of one probe (default a third of `confirm_seconds`). |
 | `free_dimension.confirm_seconds` | `Option<f64>` | optional | - | The work kept for the full runs after the probes (default a third of the layout's `total_seconds`, which is the whole search's budget): probes start only while it stays. The full runs (a smaller size retried, the confirmation, the closest size) get everything left. |
 | `free_dimension.parallel` | `Option<usize>` | optional | - | Probes run side by side (default: a quarter of the threads, at most 4, at most one per 3 GB of available memory). Each gets this share of the threads and of the memory (`PCB_MAKER_MEMORY_MB`). |
+
+## Layout settings: silkscreen
+
+The `silkscreen` object of the layout settings: the footprints' Reference and Value fields, placed after routing where KiCad's silkscreen checks find nothing (docs/placer.md, "The fields on the silkscreen"). Source: `KiCadSilkscreenConfig` in [crates/pcb-kicad/src/board_layout.rs](../crates/pcb-kicad/src/board_layout.rs).
+
+| Key | Type | Default | Docs | Description |
+|---|---|---|---|---|
+| `silkscreen.hide_when_blocked` | `bool` | `false` | placer.md | Hide a field no spot around (or inside) its part is clean for (default false: it stays at the spot with the fewest findings, and the verdict's `silkscreen` fact lists it). |
 
 ## Placer core
 

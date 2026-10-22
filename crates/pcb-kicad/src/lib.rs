@@ -48,7 +48,7 @@ mod congestion_samples;
 mod global_route;
 pub use board_layout::{
     KiCadBoardLayoutConfig, KiCadBoardLayoutMove, KiCadBoardLayoutResult, KiCadOutlineTrial,
-    KiCadSwappable, layout_kicad_board,
+    KiCadSilkscreenConfig, KiCadSwappable, layout_kicad_board,
 };
 pub use congestion_rank::{KiCadCongestionScore, score_congestion_sample, score_kicad_congestion};
 pub use congestion_samples::{
@@ -84,7 +84,9 @@ pub use quality::{KiCadQualityReport, score_kicad_board};
 mod cost;
 pub use cost::{KiCadCost, KiCadFabQuote};
 mod labels;
+mod silk_fields;
 pub use labels::KiCadLabelReport;
+pub use silk_fields::KiCadSilkscreenReport;
 mod fab_export;
 pub use fab_export::{KiCadFabExport, export_kicad_fab};
 mod fab_release;

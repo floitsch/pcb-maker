@@ -1001,6 +1001,16 @@ fn tables(root: &Path) -> Result<Vec<Table>, String> {
             role: Role::File,
         },
         Table {
+            title: "Layout settings: silkscreen",
+            prefix: "silkscreen.",
+            intro: "The `silkscreen` object of the layout settings: the footprints' Reference and Value fields, placed after routing where KiCad's silkscreen checks find nothing (docs/placer.md, \"The fields on the silkscreen\").",
+            file: layout_file,
+            name: "KiCadSilkscreenConfig",
+            fields: parse(layout_file, "KiCadSilkscreenConfig")?,
+            defaults: json_defaults::<pcb_kicad::KiCadSilkscreenConfig>()?,
+            role: Role::File,
+        },
+        Table {
             title: "Placer core",
             prefix: "",
             intro: "`pcb_placer::Config` (its defaults are `Config::new()`'s): not a file. The KiCad placer builds it from the placer settings in `place_kicad_board`.",
@@ -1138,6 +1148,7 @@ fn is_nested(ty: &str) -> bool {
         ty,
         "KiCadTopologicalConfig"
             | "KiCadPinSwapConfig"
+            | "KiCadSilkscreenConfig"
             | "KiCadBoardPlacerConfig"
             | "GlobalConfig"
             | "anneal::AnnealConfig"

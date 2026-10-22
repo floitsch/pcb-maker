@@ -14,37 +14,6 @@ fn overlaps(a: Box2, b: Box2, gap: f64) -> bool {
     a[0] < b[2] + gap && b[0] < a[2] + gap && a[1] < b[3] + gap && b[1] < a[3] + gap
 }
 
-/// Half extents of a stroke-font text (see `copper_graphic_shapes` for the
-/// measurements) at angle 0: [along the text, across it].
-fn text_half(text: &str, size: [f64; 2], thickness: f64) -> [f64; 2] {
-    let advance = |character: char| match character {
-        'i' | 'j' | 'I' | '!' | '.' | ',' | ':' | ';' | '\'' | '`' => 0.48,
-        'l' => 0.52,
-        't' | 'f' => 0.57,
-        'r' => 0.62,
-        '(' | ')' | '[' | ']' | '{' | '}' => 0.67,
-        'J' | '_' | ' ' | '"' => 0.76,
-        'A' => 0.86,
-        'N' | 'w' => 1.05,
-        'M' | 'W' | '%' => 1.14,
-        '-' => 1.24,
-        '@' => 1.29,
-        'm' => 1.33,
-        _ => 1.0,
-    };
-    let width = 1.08 * text.chars().map(advance).sum::<f64>() * size[1];
-    // Centred on the anchor, capitals and digits are one font height tall
-    // (KiCad's DRC keeps two lines of "HH" apart below 1.15 mm at size 1
-    // and thickness 0.15, and scales exactly); descenders reach 0.3 below.
-    let descends = text
-        .chars()
-        .any(|c| matches!(c, 'g' | 'j' | 'p' | 'q' | 'y' | ',' | ';'));
-    [
-        (width + thickness) / 2.0,
-        (if descends { 1.6 } else { 1.0 } * size[0] + thickness) / 2.0,
-    ]
-}
-
 /// Silkscreen layer of a label and the copper layer its pads are on.
 fn silk_side(layer: &str) -> Option<bool> {
     match layer {
@@ -52,20 +21,6 @@ fn silk_side(layer: &str) -> Option<bool> {
         "B.SilkS" => Some(true),
         _ => None,
     }
-}
-
-struct Label {
-    footprint: usize,
-    /// Index of the `property` child inside the footprint.
-    child: usize,
-    back: bool,
-    text: String,
-    size: [f64; 2],
-    thickness: f64,
-    /// Board position and absolute angle now.
-    at: [f64; 2],
-    angle: f64,
-    body: Box2,
 }
 
 /// Moves every coordinate form of a board graphic by `shift`.
@@ -100,7 +55,8 @@ fn translate(item: &mut Expr, shift: [f64; 2]) {
 pub struct KiCadLabelReport {
     pub labels: usize,
     pub moved: usize,
-    /// Labels no free spot was found for (left where they were).
+    /// Labels no clean spot was found for (kept at the spot with the
+    /// fewest findings, or hidden).
     pub stuck: Vec<String>,
     /// The board's own texts and silkscreen graphics (`board_marks`) that
     /// parts' silkscreen, pads or labels lie on after placement, each with
@@ -114,23 +70,9 @@ pub struct KiCadLabelReport {
     /// anchor, and the part.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub attached: Vec<String>,
-}
-
-fn visible(property: &Expr) -> bool {
-    let hidden = property
-        .child("hide")
-        .is_some_and(|hide| hide.children().get(1).and_then(Expr::atom) != Some("no"))
-        || property
-            .children()
-            .iter()
-            .any(|child| child.atom() == Some("hide"))
-        || property.child("effects").is_some_and(|effects| {
-            effects
-                .children()
-                .iter()
-                .any(|child| child.atom() == Some("hide"))
-        });
-    !hidden
+    /// The fields' placement: moved, blocked, hidden, KiCad's findings
+    /// predicted (`silk_fields`).
+    pub silkscreen: crate::silk_fields::KiCadSilkscreenReport,
 }
 
 /// One mark's overlaps as a line of the report: the mark, then each part
@@ -166,6 +108,7 @@ pub(crate) fn place_labels(
     keep_marks: bool,
     fixed: &BTreeSet<String>,
     attached: &[String],
+    options: crate::silk_fields::FieldOptions,
 ) -> Result<KiCadLabelReport, String> {
     let outline = outline::board_loops(pcb).ok().map(|loops| {
         loops.outline.iter().fold(
@@ -190,7 +133,6 @@ pub(crate) fn place_labels(
     let mut blocked: [Vec<Box2>; 2] = [Vec::new(), Vec::new()];
     // Whose each blocked box is: the footprint and what of it.
     let mut owners: [Vec<(usize, &'static str)>; 2] = [Vec::new(), Vec::new()];
-    let mut labels = Vec::new();
     let footprints: Vec<&Expr> = pcb
         .children()
         .iter()
@@ -276,15 +218,17 @@ pub(crate) fn place_labels(
             // The footprint's own texts (a diode's "K"): everything but the
             // labels (reference and value), which move.
             let own_text = match child.head() {
-                Some("fp_text") => !matches!(
-                    child.children().get(1).and_then(Expr::atom),
-                    Some("reference" | "value")
-                ),
+                Some("fp_text") => {
+                    !matches!(
+                        child.children().get(1).and_then(Expr::atom),
+                        Some("reference" | "value")
+                    ) && crate::silk_fields::shown(child)
+                }
                 Some("property") => {
                     !matches!(
                         child.children().get(1).and_then(Expr::atom),
                         Some("Reference" | "Value")
-                    ) && visible(child)
+                    ) && crate::silk_fields::shown(child)
                 }
                 _ => false,
             };
@@ -292,29 +236,14 @@ pub(crate) fn place_labels(
                 let text = child.children().get(2).and_then(Expr::atom).unwrap_or("");
                 if !text.is_empty()
                     && let Ok(text_at) = form_at(child)
+                    && let Some(bounds) = crate::silk_fields::text_box(
+                        text,
+                        &crate::silk_fields::TextStyle::of(child),
+                        place([text_at[0], text_at[1]]),
+                        text_at[2],
+                    )
                 {
-                    let font = child
-                        .child("effects")
-                        .and_then(|effects| effects.child("font"));
-                    let size = font
-                        .and_then(|font| form_xy(font, "size").ok())
-                        .unwrap_or([1.0, 1.0]);
-                    let thickness = font
-                        .and_then(|font| form_f64(font, "thickness", 1).ok())
-                        .unwrap_or(0.15);
-                    let [along, across] = text_half(text, size, thickness);
-                    let (sin, cos) = text_at[2].to_radians().sin_cos();
-                    let half = [
-                        cos.abs() * along + sin.abs() * across,
-                        sin.abs() * along + cos.abs() * across,
-                    ];
-                    let center = place([text_at[0], text_at[1]]);
-                    blocked[back as usize].push([
-                        center[0] - half[0],
-                        center[1] - half[1],
-                        center[0] + half[0],
-                        center[1] + half[1],
-                    ]);
+                    blocked[back as usize].push(bounds);
                 }
                 continue;
             }
@@ -408,64 +337,8 @@ pub(crate) fn place_labels(
                 ));
             }
         }
-        let (center, size, _) = crate::board_placer::local_body(footprint)?;
-        let middle = place(center);
-        let (sin, cos) = (-at[2]).to_radians().sin_cos();
-        let half = [
-            (cos.abs() * size[0] + sin.abs() * size[1]) / 2.0,
-            (sin.abs() * size[0] + cos.abs() * size[1]) / 2.0,
-        ];
-        let body = [
-            middle[0] - half[0],
-            middle[1] - half[1],
-            middle[0] + half[0],
-            middle[1] + half[1],
-        ];
-        for (child_index, child) in footprint.children().iter().enumerate() {
-            if child.head() != Some("property")
-                || !matches!(
-                    child.children().get(1).and_then(Expr::atom),
-                    Some("Reference" | "Value")
-                )
-                || !visible(child)
-            {
-                continue;
-            }
-            let Some(back) = form_atom(child, "layer", 1).and_then(silk_side) else {
-                continue;
-            };
-            let text = child
-                .children()
-                .get(2)
-                .and_then(Expr::atom)
-                .unwrap_or("")
-                .to_string();
-            if text.is_empty() {
-                continue;
-            }
-            let label_at = form_at(child)?;
-            let font = child
-                .child("effects")
-                .and_then(|effects| effects.child("font"));
-            labels.push(Label {
-                footprint: index,
-                child: child_index,
-                back,
-                text,
-                size: font
-                    .and_then(|font| form_xy(font, "size").ok())
-                    .unwrap_or([1.0, 1.0]),
-                thickness: font
-                    .and_then(|font| form_f64(font, "thickness", 1).ok())
-                    .unwrap_or(0.15),
-                at: place([label_at[0], label_at[1]]),
-                angle: label_at[2],
-                body,
-            });
-        }
     }
     let mut report = KiCadLabelReport {
-        labels: labels.len(),
         attached: attached.to_vec(),
         ..Default::default()
     };
@@ -676,114 +549,31 @@ pub(crate) fn place_labels(
             }
         }
     }
-    let mut moves = Vec::new();
-    let mut stuck_labels = Vec::new();
-    // Big parts first: small ones have more room around them.
-    let mut order: Vec<usize> = (0..labels.len()).collect();
-    order.sort_by(|a, b| {
-        let area =
-            |label: &Label| (label.body[2] - label.body[0]) * (label.body[3] - label.body[1]);
-        area(&labels[*b]).total_cmp(&area(&labels[*a]))
-    });
-    for index in order {
-        let label = &labels[index];
-        let side = label.back as usize;
-        let free = |bounds: Box2| {
-            let inside = outline.is_none_or(|board| {
-                bounds[0] >= board[0] + 0.3
-                    && bounds[1] >= board[1] + 0.3
-                    && bounds[2] <= board[2] - 0.3
-                    && bounds[3] <= board[3] - 0.3
-            });
-            inside
-                && !blocked[side].iter().any(|b| overlaps(bounds, *b, 0.1))
-                && !taken[side].iter().any(|b| overlaps(bounds, *b, 0.2))
-        };
-        let boxed = |center: [f64; 2], angle: f64, scale: f64| {
-            let half = text_half(
-                &label.text,
-                [label.size[0] * scale, label.size[1] * scale],
-                label.thickness * scale,
-            );
-            let half = if (angle.rem_euclid(180.0) - 90.0).abs() < 1.0 {
-                [half[1], half[0]]
-            } else {
-                half
-            };
-            [
-                center[0] - half[0],
-                center[1] - half[1],
-                center[0] + half[0],
-                center[1] + half[1],
-            ]
-        };
-        // Where it is, if that is fine.
-        let current = boxed(label.at, label.angle, 1.0);
-        if free(current) {
-            taken[side].push(current);
-            continue;
+    // Write the moves: label positions are in the footprint's frame, their
+    // angles absolute.
+    let Expr::List(items) = pcb else {
+        return Err("PCB root is not a list".into());
+    };
+    for (members, shift) in artwork_moves {
+        for item_index in members {
+            translate(&mut items[item_index], shift);
         }
-        // Around the body, nearest to where the label was, horizontal first;
-        // then smaller text (not below 0.8 mm, a common fab minimum).
-        let b = label.body;
-        let mut best: Option<(f64, [f64; 2], f64, f64, Box2)> = None;
-        for scale in [1.0, 0.8] {
-            if label.size[0] * scale < 0.8 - 1e-9 && scale < 1.0 {
-                continue;
-            }
-            for angle in [0.0, 90.0] {
-                let half = {
-                    let h = text_half(
-                        &label.text,
-                        [label.size[0] * scale, label.size[1] * scale],
-                        label.thickness * scale,
-                    );
-                    if angle == 90.0 { [h[1], h[0]] } else { h }
-                };
-                let middle = [(b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0];
-                for ring in 0..4 {
-                    let gap = 0.25 + ring as f64 * 0.6;
-                    let candidates = [
-                        [middle[0], b[1] - gap - half[1]],
-                        [middle[0], b[3] + gap + half[1]],
-                        [b[0] - gap - half[0], middle[1]],
-                        [b[2] + gap + half[0], middle[1]],
-                        [b[0] + half[0], b[1] - gap - half[1]],
-                        [b[2] - half[0], b[1] - gap - half[1]],
-                        [b[0] + half[0], b[3] + gap + half[1]],
-                        [b[2] - half[0], b[3] + gap + half[1]],
-                        middle,
-                    ];
-                    for center in candidates {
-                        let bounds = boxed(center, angle, scale);
-                        if !free(bounds) {
-                            continue;
-                        }
-                        let cost = distance_squared(center, label.at).sqrt()
-                            + if angle == 0.0 { 0.0 } else { 1.0 }
-                            + (1.0 - scale) * 10.0;
-                        if best.as_ref().is_none_or(|(best, ..)| cost < *best) {
-                            best = Some((cost, center, angle, scale, bounds));
-                        }
-                    }
-                }
-            }
-            if best.is_some() {
-                break;
-            }
-        }
-        match best {
-            Some((_, center, angle, scale, bounds)) => {
-                taken[side].push(bounds);
-                moves.push((index, center, angle, scale));
-            }
-            None => {
-                taken[side].push(current);
-                report.stuck.push(label.text.clone());
-                stuck_labels.push((index, current));
-            }
-        }
+        report.moved += 1;
     }
+    for (item_index, shift) in text_moves {
+        let at = form_at(&items[item_index])?;
+        set_form_at(
+            &mut items[item_index],
+            [at[0] + shift[0], at[1] + shift[1], at[2]],
+        )?;
+        report.moved += 1;
+    }
+    // The fields: where KiCad's silkscreen checks find nothing (the
+    // board's texts and graphics, moved or not, are obstacles).
+    let fields = crate::silk_fields::place_fields(pcb, options)?;
+    report.labels = fields.report.fields;
+    report.moved += fields.report.moved;
+    report.stuck = fields.blocked_texts.clone();
     // The parts on the board's marks: their pads, silkscreen and the
     // labels that found no free spot.
     for mark in &marks {
@@ -804,13 +594,9 @@ pub(crate) fn place_labels(
                     .insert(kind);
             }
         }
-        for (index, b) in &stuck_labels {
-            let label = &labels[*index];
-            if label.back == mark.back
-                && on_mark(*b)
-                && !fixed.contains(&references[label.footprint])
-            {
-                hits.entry(references[label.footprint].clone())
+        for (footprint, back, b) in &fields.blocked_boxes {
+            if *back == mark.back && on_mark(*b) && !fixed.contains(&references[*footprint]) {
+                hits.entry(references[*footprint].clone())
                     .or_default()
                     .insert("label");
             }
@@ -820,82 +606,7 @@ pub(crate) fn place_labels(
         }
     }
 
-    // Write the moves: label positions are in the footprint's frame, their
-    // angles absolute.
-    let Expr::List(items) = pcb else {
-        return Err("PCB root is not a list".into());
-    };
-    for (members, shift) in artwork_moves {
-        for item_index in members {
-            translate(&mut items[item_index], shift);
-        }
-        report.moved += 1;
-    }
-    for (item_index, shift) in text_moves {
-        let at = form_at(&items[item_index])?;
-        set_form_at(
-            &mut items[item_index],
-            [at[0] + shift[0], at[1] + shift[1], at[2]],
-        )?;
-        report.moved += 1;
-    }
-    let mut footprint_items: Vec<&mut Expr> = items
-        .iter_mut()
-        .filter(|item| item.head() == Some("footprint"))
-        .collect();
-    for (index, center, angle, scale) in moves {
-        let label = &labels[index];
-        let footprint = &mut footprint_items[label.footprint];
-        let at = form_at(footprint)?;
-        let local = rotate_vector([center[0] - at[0], center[1] - at[1]], at[2]);
-        let Expr::List(children) = footprint else {
-            continue;
-        };
-        let property = &mut children[label.child];
-        set_form_at(
-            property,
-            [
-                (local[0] * 1e4).round() / 1e4,
-                (local[1] * 1e4).round() / 1e4,
-                angle,
-            ],
-        )?;
-        if scale < 1.0
-            && let Expr::List(parts) = property
-            && let Some(Expr::List(effects)) =
-                parts.iter_mut().find(|part| part.head() == Some("effects"))
-            && let Some(Expr::List(font)) =
-                effects.iter_mut().find(|part| part.head() == Some("font"))
-        {
-            for part in font.iter_mut() {
-                if let Expr::List(values) = part {
-                    match values.first().and_then(Expr::atom) {
-                        Some("size") if values.len() >= 3 => {
-                            for value in values.iter_mut().skip(1).take(2) {
-                                if let Some(number) =
-                                    value.atom().and_then(|atom| atom.parse::<f64>().ok())
-                                {
-                                    *value = Expr::Atom(
-                                        ((number * scale * 1e3).round() / 1e3).to_string(),
-                                    );
-                                }
-                            }
-                        }
-                        Some("thickness") if values.len() >= 2 => {
-                            if let Some(number) =
-                                values[1].atom().and_then(|atom| atom.parse::<f64>().ok())
-                            {
-                                values[1] =
-                                    Expr::Atom(((number * scale * 1e3).round() / 1e3).to_string());
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-        report.moved += 1;
-    }
+    report.silkscreen = fields.report;
     Ok(report)
 }
 
@@ -955,13 +666,7 @@ pub(crate) fn place_copper_texts(
     keep_marks: bool,
     fixed: &BTreeSet<String>,
 ) -> Result<KiCadLabelReport, String> {
-    let mut report = KiCadLabelReport {
-        labels: 0,
-        moved: 0,
-        stuck: Vec::new(),
-        overlaps: Vec::new(),
-        attached: Vec::new(),
-    };
+    let mut report = KiCadLabelReport::default();
     let outline = outline::board_loops(pcb).ok().map(|loops| {
         loops.outline.iter().fold(
             [
@@ -1324,6 +1029,16 @@ fn turn_quarter(item: &mut Expr) {
 mod tests {
     use super::*;
 
+    const OPTIONS: crate::silk_fields::FieldOptions = crate::silk_fields::FieldOptions {
+        rules: crate::silk_fields::SilkRules {
+            clearance: 0.0,
+            min_text_height: 0.8,
+            min_text_thickness: 0.08,
+        },
+        shrink: true,
+        hide_when_blocked: false,
+    };
+
     /// A test pad's name and a resistor placed on it; a back text no part
     /// lies on.
     const BOARD: &str = r#"(kicad_pcb
@@ -1332,7 +1047,7 @@ mod tests {
         (gr_text "VDD" (at 20 10 0) (layer "F.SilkS") (effects (font (size 0.8 0.8) (thickness 0.13))))
         (gr_text "STACK" (at 10 5 0) (layer "B.SilkS") (effects (font (size 0.8 0.8) (thickness 0.13)) (justify mirror)))
         (footprint "R" (layer "F.Cu") (at 20 10.3)
-            (property "Reference" "R22" (at 0 -1.5 0) (layer "F.SilkS") (effects (font (size 1 1) (thickness 0.15))))
+            (property "Reference" "R22" (at 0 -0.6 0) (layer "F.SilkS") (effects (font (size 1 1) (thickness 0.15))))
             (fp_line (start -1.5 -0.8) (end 1.5 -0.8) (layer "F.SilkS") (stroke (width 0.12) (type solid)))
             (fp_rect (start -1.5 -0.8) (end 1.5 0.8) (layer "F.CrtYd"))
             (pad "1" smd rect (at -0.8 0) (size 0.8 0.9) (layers "F.Cu"))
@@ -1353,7 +1068,7 @@ mod tests {
     #[test]
     fn the_polish_keeps_board_texts_and_reports_the_parts_on_them() {
         let mut pcb = parse(BOARD).unwrap();
-        let report = place_labels(&mut pcb, true, &BTreeSet::new(), &[]).unwrap();
+        let report = place_labels(&mut pcb, true, &BTreeSet::new(), &[], OPTIONS).unwrap();
         assert_eq!(text_at(&pcb, "VDD"), [20.0, 10.0, 0.0]);
         assert_eq!(text_at(&pcb, "STACK"), [10.0, 5.0, 0.0]);
         assert_eq!(report.overlaps.len(), 1, "{:?}", report.overlaps);
@@ -1369,14 +1084,14 @@ mod tests {
         let mut pcb = parse(BOARD).unwrap();
         let fixed = BTreeSet::from(["R22".to_string()]);
         assert!(
-            place_labels(&mut pcb, true, &fixed, &[])
+            place_labels(&mut pcb, true, &fixed, &[], OPTIONS)
                 .unwrap()
                 .overlaps
                 .is_empty()
         );
         // Before 2026-10-21 the text moved off the part.
         let mut pcb = parse(BOARD).unwrap();
-        let report = place_labels(&mut pcb, false, &BTreeSet::new(), &[]).unwrap();
+        let report = place_labels(&mut pcb, false, &BTreeSet::new(), &[], OPTIONS).unwrap();
         assert_ne!(text_at(&pcb, "VDD"), [20.0, 10.0, 0.0]);
         assert!(report.overlaps.is_empty());
     }

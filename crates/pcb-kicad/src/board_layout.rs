@@ -96,6 +96,18 @@ pub struct KiCadBoardLayoutConfig {
     /// several sizes, `total_seconds` being the whole search's budget.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub free_dimension: Option<crate::free_dimension::KiCadFreeDimension>,
+    /// The footprints' Reference and Value fields on the silkscreen, placed
+    /// after routing where KiCad's silkscreen checks find nothing.
+    pub silkscreen: KiCadSilkscreenConfig,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct KiCadSilkscreenConfig {
+    /// Hide a field no spot around (or inside) its part is clean for
+    /// (default false: it stays at the spot with the fewest findings, and
+    /// the verdict's `silkscreen` fact lists it).
+    pub hide_when_blocked: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -187,6 +199,7 @@ impl Default for KiCadBoardLayoutConfig {
             congestion_probes: 3,
             congestion_score: "rudy".into(),
             free_dimension: None,
+            silkscreen: KiCadSilkscreenConfig::default(),
         }
     }
 }
@@ -1780,8 +1793,20 @@ pub fn layout_kicad_board(
         .filter(|(_, component)| component.fixed)
         .map(|(reference, _)| reference.clone())
         .collect();
-    let mut labels =
-        crate::labels::place_labels(&mut pcb, keep_marks, &fixed, &placement.attached_marks)?;
+    let field_options = crate::silk_fields::FieldOptions {
+        rules: crate::silk_fields::SilkRules::from_project(
+            &source_directory.join(format!("{board_id}.kicad_pro")),
+        ),
+        shrink: true,
+        hide_when_blocked: config.silkscreen.hide_when_blocked,
+    };
+    let mut labels = crate::labels::place_labels(
+        &mut pcb,
+        keep_marks,
+        &fixed,
+        &placement.attached_marks,
+        field_options,
+    )?;
     if !labels.stuck.is_empty() {
         eprintln!("labels without a free spot: {:?}", labels.stuck);
     }
