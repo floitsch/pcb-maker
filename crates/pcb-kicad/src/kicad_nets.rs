@@ -28,7 +28,7 @@ pub(crate) fn collect_named_nets(root: &Expr, names: &NetNames, named_nets: &mut
 /// Pads identify the exact spelling to use for emitted/retained copper. Reject
 /// aliases with two distinct pad nets rather than silently shorting them.
 pub(crate) fn unambiguous_pad_net_names(pcb: &Expr) -> Result<BTreeMap<String, Expr>, String> {
-    note_net_names(pcb);
+    let net_names = note_net_names(pcb);
     let mut names: BTreeMap<String, Expr> = BTreeMap::new();
     for footprint in pcb
         .children()
@@ -43,7 +43,7 @@ pub(crate) fn unambiguous_pad_net_names(pcb: &Expr) -> Result<BTreeMap<String, E
             let Some(name) = node_net(pad).filter(|name| !name.is_empty()) else {
                 continue;
             };
-            let connection = normalize_net(name).to_string();
+            let connection = net_names.normalize(name).to_string();
             // The field `node_net` read the name from (the third of
             // `(net 1 "GND")`, the second of `(net "GND")`), not the last:
             // `(net 1 "GND" x)` named its copper "x".
@@ -197,17 +197,19 @@ impl NetNames {
 }
 
 thread_local! {
-    /// The `NetNames` of the board this thread reads, noted by
-    /// `note_net_names`, for the free functions below: the lowering, the
-    /// project rules, the placer's lowering and the copper writer, which
-    /// note it at their entry. The score, the statistics, the description,
-    /// the pour plan, the neck repair, the pin swap and the pours read
-    /// `NetNames::of` the board they have instead.
+    /// The `NetNames` of the board this thread writes copper into, noted
+    /// by `note_net_names` (`unambiguous_pad_net_names` at the copper
+    /// writer's entry, `lower_board`, the placer's lowering and the project
+    /// rules), for the writer's free functions below
+    /// (`canonicalize_copper_net_names`, `written_net_name`). Every reader
+    /// of a board (the lowering, the score, the statistics, the
+    /// description, the pour plan, the pours, the neck repair, the pin swap,
+    /// the net classes, the placer) takes the `NetNames` of the board it has.
     static NET_NAMES: std::cell::RefCell<Option<NetNames>> = const { std::cell::RefCell::new(None) };
 }
 
-/// Notes `pcb`'s `NetNames` for `normalize_net`, `routable_net` and
-/// `written_net_name` on this thread, and returns them.
+/// Notes `pcb`'s `NetNames` for `normalize_net` and `written_net_name`
+/// on this thread, and returns them.
 pub(crate) fn note_net_names(pcb: &Expr) -> NetNames {
     let names = NetNames::of(pcb);
     NET_NAMES.with(|noted| *noted.borrow_mut() = Some(names.clone()));
@@ -236,11 +238,6 @@ pub(crate) fn written_net_name(connection: &str) -> String {
 /// `NetNames::normalize` of the noted board.
 pub(crate) fn normalize_net(net: &str) -> &str {
     with_noted(|names| names.normalize(net))
-}
-
-/// `NetNames::routable` of the noted board.
-pub(crate) fn routable_net(raw: &str) -> bool {
-    with_noted(|names| names.routable(raw))
 }
 
 pub(crate) fn node_net(node: &Expr) -> Option<&str> {

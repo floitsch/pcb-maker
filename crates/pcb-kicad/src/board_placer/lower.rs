@@ -21,9 +21,19 @@ pub(super) fn keep_short(name: &str) -> bool {
         })
 }
 
-/// Whether a net (by its raw name) connects parts; see `routable_net`.
+/// Whether a net (by its raw name) connects parts: a named net, not an
+/// `unconnected-(...)` one. Such a net's pads are one pin's (a mounting
+/// hole's pads of one number, a reversible footprint's copies), all on one
+/// part, even where the router joins them (`NetNames::routable`), so they
+/// pull no part towards another. (The placer read the router's jumper
+/// nets from whatever board its thread had lowered before, usually none.)
 pub(super) fn placer_net(raw: &str) -> bool {
-    routable_net(raw)
+    !raw.is_empty()
+        && !raw
+            .rsplit('/')
+            .next()
+            .unwrap_or(raw)
+            .starts_with("unconnected-(")
 }
 
 pub(crate) struct LoweredPlacement {
@@ -765,7 +775,7 @@ pub(crate) fn lower_placement(
                 }
             }
             let Some(net) = node_net(pad)
-                .filter(|raw| net_names.routable(raw))
+                .filter(|raw| placer_net(raw))
                 .map(|raw| net_names.normalize(raw))
             else {
                 continue;

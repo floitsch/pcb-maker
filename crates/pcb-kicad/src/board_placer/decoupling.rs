@@ -23,6 +23,7 @@ pub(super) fn decoupling_relations(
         offset: [f64; 2],
         net: String,
     }
+    let net_names = NetNames::of(pcb);
     let footprints: Vec<&Expr> = pcb
         .children()
         .iter()
@@ -99,7 +100,7 @@ pub(super) fn decoupling_relations(
                 (
                     node_net(pad)
                         .filter(|raw| placer_net(raw))
-                        .map(|raw| normalize_net(raw).to_string()),
+                        .map(|raw| net_names.normalize(raw).to_string()),
                     [at[0], at[1]],
                     form_atom(pad, "pintype", 1) == Some("power_in"),
                     switch,
