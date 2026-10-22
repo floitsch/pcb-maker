@@ -1070,6 +1070,11 @@ pub struct Router {
     profile: Profile,
     /// While the via reduction runs (its negotiations are its own phase).
     in_via_reduction: bool,
+    /// Whether the negotiation running is a probe's (`probe`).
+    in_probe: bool,
+    /// The rest of the iteration a probe's work limit cut (`probe`), for
+    /// `resume` to finish first.
+    cut_iteration: Option<negotiate::CutIteration>,
     /// Island stubs `add_manual_spokes` added (`Config::island_stubs`),
     /// over every finish of this router: `RoutingResult::island_stubs`.
     island_stubs: usize,

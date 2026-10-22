@@ -56,7 +56,9 @@ impl Router {
         );
         self.config.negotiation_seconds = seconds * guard();
         self.config.negotiation_expansions = negotiation_expansions(seconds);
+        self.in_probe = true;
         self.negotiate(&order, order.clone());
+        self.in_probe = false;
         (
             self.config.negotiation_seconds,
             self.config.negotiation_expansions,
@@ -92,6 +94,7 @@ impl Router {
         self.config.negotiation_expansions = negotiation_expansions(seconds);
         self.hopeless = false;
         let order = self.routing_order();
+        self.finish_cut_iteration(&order);
         let pending: Vec<NetId> = order
             .iter()
             .copied()

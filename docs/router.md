@@ -1778,13 +1778,44 @@ hidden, each part still charged:
   started with less than a tenth of that work lost, and facade60 won
   with a third.
 
-What is left: the probes' search overshoot (a probe stops after the
-iteration that crosses its share: MSign's four probes searched 5.1 to
-5.2 s on shares of 3.75), each router's own maps (MSign 0.19 s a probe),
+What is left: the probes' search overshoot (a probe stopped after the
+iteration that crossed its share: MSign's four probes searched 5.1 to
+5.2 s on shares of 3.75; since 2026-10-22 it stops between the batches,
+"The probes' overshoot" below), each router's own maps (MSign 0.19 s a probe),
 the connected probes' pour refresh at the analyses' remaining cost (the
 nodes inside the pour and the spoke queries: Vortac 1.9 to 4.5 s a
 probe), the key of the static maps (the obstacles' debug form, in the
 fitted constant).
+
+**The probes' overshoot** (2026-10-22). A negotiation checked its work
+limit (`negotiation_expansions`) and the work deadline only after a
+whole iteration, and an iteration of a big board is seconds of work: a
+rung probe went past its share by up to an iteration (MSign's four 5.06
+to 5.26 s of search on shares of 3.75, iorodeo's 3.84 to 4.99), work the
+ladder charged and the continuation lacked. Now a probe's limit binds
+between the batches of an iteration too (`negotiate_from`,
+`Router::in_probe`), from its second iteration on (its first is whole
+whatever its limit: `first_iteration_expansions`), so it stops within a
+batch of its share (MSign 3.75 to 3.97 s). The nets of the batches after
+the cut keep their routes of the iteration before and the history stays
+as it was; the probe's count of unfinished nets (the ranking) is taken
+there. The cut's rest is kept (`CutIteration`: its batches, the
+iteration's index, the windows' growth and the price of sharing), and
+`resume` routes it first and ends that iteration as it would have ended
+(`finish_cut_iteration`: `end_iteration`'s history and pour refresh, the
+replan, the price grown), so the leading probe and its continuation
+search what they searched before, the continuation with the other
+probes' overshoot as more work (a test checks that a cut probe resumed
+is the probe that finished its iteration, expansion for expansion).
+That rest is outside the continuation's negotiation limit, as the
+overshoot was. Only the probes are cut inside an iteration. Two
+variants lost on the expansion tier (docs/changelog.md, probe
+overshoot): cutting every negotiation (the continuation's and the via
+reduction's rounds too: ZSWatch 3 to 9 unconnected after a continuation
+cut with seven nets in conflict) and cutting the probes with the
+continuation starting afresh from the cut board; both lost ducktop2's
+pass (its leader cut at 84 unfinished nets, its continuation 2 open).
+`PCB_ROUTER_LIMITS_BETWEEN_ITERATIONS` restores the rule before.
 
 **The canonical charge** (2026-10-21, ladder review fixes). With the
 static maps shared, who found its maps and who built them depended on

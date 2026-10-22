@@ -31,6 +31,8 @@ impl Router {
         let mut present = present;
         let mut best_conflicted = usize::MAX;
         let mut stalled = 0;
+        // A cut iteration not finished by `resume` is given up.
+        self.cut_iteration = None;
         for state in &mut self.nets {
             state.hopeless_searches = 0;
             state.unreachable.clear();
@@ -66,8 +68,57 @@ impl Router {
                     sizes
                 );
             }
-            for batch in &batches {
+            // The work limits bind between the batches too, from a
+            // router's second iteration on (its first is done whatever its
+            // limits: `first_iteration_expansions`): an iteration of a big
+            // board is seconds of work, and a probe that stopped only after
+            // the iteration that crossed its share searched up to that
+            // much more (MSign's probes 5.1 to 5.2 s on shares of 3.75).
+            // A cut iteration leaves the nets after the cut on their
+            // routes of the iteration before and the history as it was;
+            // the probe's `resume` routes them first, so that the leading
+            // probe and its continuation search what they searched before
+            // (only a probe's limit binds inside an iteration: elsewhere
+            // the limits stay between iterations).
+            let checkpoints = self.in_probe && self.iterations > 1 && limits_inside_iterations();
+            let mut cut = None;
+            for (index, batch) in batches.iter().enumerate() {
+                if checkpoints
+                    && index > 0
+                    && (self.negotiation_worked_out(used_before, expansions_before)
+                        || self.past_work_deadline())
+                {
+                    cut = Some(index);
+                    break;
+                }
                 self.route_batch(batch, present, growth);
+            }
+            if let Some(index) = cut {
+                self.cut_iteration = Some(CutIteration {
+                    batches: batches[index..].to_vec(),
+                    iteration,
+                    growth,
+                    present,
+                    pending: pending.len(),
+                });
+                self.last_conflicted = order
+                    .iter()
+                    .copied()
+                    .filter(|net| {
+                        let state = &self.nets[*net as usize];
+                        !(state.complete || state.blocked) || !self.conflicts(*net).is_empty()
+                    })
+                    .collect();
+                if self.config.verbose {
+                    eprintln!(
+                        "iteration {iteration}: cut by its work limit after {index} of {} batches, conflicted {}, {:.2}s ({}M expansions)",
+                        batches.len(),
+                        self.last_conflicted.len(),
+                        started.elapsed().as_secs_f64(),
+                        self.scratch.expansions / 1_000_000
+                    );
+                }
+                break;
             }
             if self.iterations == 1 {
                 // A fresh router's work up to here is done whatever its
@@ -75,118 +126,8 @@ impl Router {
                 // attempts it starts).
                 self.first_iteration_expansions = self.scratch.expansions;
             }
-            let conflicts_started = std::time::Instant::now();
-            let mut conflicted = Vec::new();
-            for net in order {
-                let conflicts = self.conflicts(*net);
-                if std::env::var_os("PCB_ROUTER_DEBUG").is_some()
-                    && (order.len() <= 3 || iteration % 10 == 9)
-                    && !conflicts.is_empty()
-                {
-                    let spots: Vec<String> = conflicts
-                        .iter()
-                        .take(8)
-                        .map(|(layer, cell)| {
-                            let at = self.grid.center_of(*cell as usize);
-                            let map = self.map_index(self.node_class(*net, *cell), *layer) as u32;
-                            let others: Vec<&str> = (0..self.nets.len())
-                                .filter(|other| *other != *net as usize)
-                                .filter(|other| self.nets[*other].stamped.contains(&(map, *cell)))
-                                .map(|other| self.board.nets[other].name.as_str())
-                                .collect();
-                            format!(
-                                "L{layer}({:.2},{:.2})x{}[{}]",
-                                at[0],
-                                at[1],
-                                self.occupancy[map as usize][*cell as usize],
-                                others.join(",")
-                            )
-                        })
-                        .collect();
-                    eprintln!(
-                        "  {} conflicts at {}",
-                        self.board.nets[*net as usize].name,
-                        spots.join(" ")
-                    );
-                }
-                if conflicts.is_empty() {
-                    self.nets[*net as usize].stuck = 0;
-                } else {
-                    self.nets[*net as usize].stuck += 1;
-                }
-                if conflicts.is_empty()
-                    && (self.nets[*net as usize].complete || self.nets[*net as usize].blocked)
-                {
-                    continue;
-                }
-                let mut tiles_hit: HashSet<(usize, usize)> = HashSet::new();
-                let layers = self.board.layer_count;
-                for (layer, cell) in conflicts {
-                    self.history[layer][cell as usize] += self.config.history_increment as f32;
-                    if layer < layers {
-                        for class in 0..self.statics.len() {
-                            if let Some(hot) =
-                                self.hot[class * layers + layer].get_mut(cell as usize)
-                            {
-                                hot.history += self.config.history_increment as f32;
-                            }
-                        }
-                    }
-                    let cell = cell as usize;
-                    tiles_hit.insert((
-                        layer,
-                        (cell / self.grid.nx / TILE) * self.tiles_x + (cell % self.grid.nx) / TILE,
-                    ));
-                }
-                for (layer, tile) in tiles_hit {
-                    self.tile_history[layer][tile] += self.config.history_increment as f32;
-                }
-                conflicted.push(*net);
-            }
-            self.profile.conflicts += conflicts_started.elapsed().as_secs_f64();
-            if let Some(hook) = self.frame_hook.clone() {
-                hook(self.iterations, &self.snapshot());
-            }
-            if self.config.verbose {
-                eprintln!(
-                    "iteration {iteration}: rerouted {}, conflicted {}, present {present:.2}, {:.2}s (search {:.2}s, stamp {:.2}s, {} searches, {}M expansions; {} open searches with {}M, {} failed)",
-                    pending.len(),
-                    conflicted.len(),
-                    started.elapsed().as_secs_f64(),
-                    self.search_seconds,
-                    self.stamp_seconds,
-                    self.scratch.searches,
-                    self.scratch.expansions / 1_000_000,
-                    self.scratch.open_searches,
-                    self.scratch.open_expansions / 1_000_000,
-                    self.scratch.failed_searches
-                );
-            }
-            // Pads of a pour net that the signals cut off from the main
-            // piece this iteration are routed to it from the next one on.
-            // Progress is measured without them: the pads come and go with
-            // the signals, and a new low by their count kept ESC mini's
-            // connect rung negotiating 80 iterations instead of 53.
-            let really_conflicted = conflicted.len();
-            if self.config.pour_islands && iteration >= 2 {
-                let refresh_started = std::time::Instant::now();
-                let mut stranded = 0;
-                for net in order {
-                    let newly = self.refresh_pour(*net);
-                    stranded += newly;
-                    if newly > 0 && !conflicted.contains(net) {
-                        conflicted.push(*net);
-                    }
-                }
-                self.profile.refresh_pour += refresh_started.elapsed().as_secs_f64();
-                if self.config.verbose && stranded > 0 {
-                    eprintln!(
-                        "  {stranded} pour pads cut off from their main piece, routed from now on ({:.2}s)",
-                        refresh_started.elapsed().as_secs_f64()
-                    );
-                }
-            }
-            self.last_conflicted = conflicted.clone();
+            let (conflicted, really_conflicted) =
+                self.end_iteration(order, iteration, pending.len(), present, started);
             if conflicted.is_empty() {
                 break;
             }
@@ -280,13 +221,7 @@ impl Router {
             // Work, not seconds, when the caller gives it: the same board
             // then routes the same way however busy the machine is; the
             // seconds stay as the last guard.
-            let worked_out = self.config.negotiation_expansions > 0
-                && if self.config.limits_count_all {
-                    self.negotiation_used() - used_before
-                        > self.config.negotiation_expansions as f64 / expansions_per_second()
-                } else {
-                    self.scratch.expansions - expansions_before > self.config.negotiation_expansions
-                };
+            let worked_out = self.negotiation_worked_out(used_before, expansions_before);
             if stalled > patience || worked_out || self.past_work_deadline() {
                 break;
             }
@@ -340,4 +275,193 @@ impl Router {
             self.phase_charge(0, phase_mark);
         }
     }
+
+    /// Routes the rest of the iteration a probe's limit cut and ends it
+    /// as that iteration would have ended (`end_iteration`, the replan,
+    /// the price of sharing grown), so that a resumed probe goes on as one
+    /// that stopped after that iteration. Nothing without a cut.
+    pub(super) fn finish_cut_iteration(&mut self, order: &[NetId]) {
+        let Some(cut) = self.cut_iteration.take() else {
+            return;
+        };
+        let started = std::time::Instant::now();
+        let phase_mark = self.phase_mark();
+        for batch in &cut.batches {
+            self.route_batch(batch, cut.present, cut.growth);
+        }
+        let (conflicted, _) =
+            self.end_iteration(order, cut.iteration, cut.pending, cut.present, started);
+        if !conflicted.is_empty() {
+            if self.global.is_some() && cut.iteration % 2 == 1 {
+                let replan_started = std::time::Instant::now();
+                self.replan(&conflicted);
+                self.profile.replan += replan_started.elapsed().as_secs_f64();
+            }
+            self.present_reached = (cut.present * self.config.present_growth as f32)
+                .min(self.config.present_cap as f32);
+        }
+        if !self.in_via_reduction {
+            self.profile.negotiation += started.elapsed().as_secs_f64();
+            self.phase_charge(0, phase_mark);
+        }
+    }
+
+    /// An iteration's end: the conflicts raise the history where they
+    /// are, the pour pads the signals cut off are routed from the next
+    /// iteration on, and `last_conflicted` is what is left. Returns the
+    /// conflicted nets (with those pour nets) and their number without
+    /// them.
+    fn end_iteration(
+        &mut self,
+        order: &[NetId],
+        iteration: usize,
+        pending: usize,
+        present: f32,
+        started: std::time::Instant,
+    ) -> (Vec<NetId>, usize) {
+        let conflicts_started = std::time::Instant::now();
+        let mut conflicted = Vec::new();
+        for net in order {
+            let conflicts = self.conflicts(*net);
+            if std::env::var_os("PCB_ROUTER_DEBUG").is_some()
+                && (order.len() <= 3 || iteration % 10 == 9)
+                && !conflicts.is_empty()
+            {
+                let spots: Vec<String> = conflicts
+                    .iter()
+                    .take(8)
+                    .map(|(layer, cell)| {
+                        let at = self.grid.center_of(*cell as usize);
+                        let map = self.map_index(self.node_class(*net, *cell), *layer) as u32;
+                        let others: Vec<&str> = (0..self.nets.len())
+                            .filter(|other| *other != *net as usize)
+                            .filter(|other| self.nets[*other].stamped.contains(&(map, *cell)))
+                            .map(|other| self.board.nets[other].name.as_str())
+                            .collect();
+                        format!(
+                            "L{layer}({:.2},{:.2})x{}[{}]",
+                            at[0],
+                            at[1],
+                            self.occupancy[map as usize][*cell as usize],
+                            others.join(",")
+                        )
+                    })
+                    .collect();
+                eprintln!(
+                    "  {} conflicts at {}",
+                    self.board.nets[*net as usize].name,
+                    spots.join(" ")
+                );
+            }
+            if conflicts.is_empty() {
+                self.nets[*net as usize].stuck = 0;
+            } else {
+                self.nets[*net as usize].stuck += 1;
+            }
+            if conflicts.is_empty()
+                && (self.nets[*net as usize].complete || self.nets[*net as usize].blocked)
+            {
+                continue;
+            }
+            let mut tiles_hit: HashSet<(usize, usize)> = HashSet::new();
+            let layers = self.board.layer_count;
+            for (layer, cell) in conflicts {
+                self.history[layer][cell as usize] += self.config.history_increment as f32;
+                if layer < layers {
+                    for class in 0..self.statics.len() {
+                        if let Some(hot) = self.hot[class * layers + layer].get_mut(cell as usize) {
+                            hot.history += self.config.history_increment as f32;
+                        }
+                    }
+                }
+                let cell = cell as usize;
+                tiles_hit.insert((
+                    layer,
+                    (cell / self.grid.nx / TILE) * self.tiles_x + (cell % self.grid.nx) / TILE,
+                ));
+            }
+            for (layer, tile) in tiles_hit {
+                self.tile_history[layer][tile] += self.config.history_increment as f32;
+            }
+            conflicted.push(*net);
+        }
+        self.profile.conflicts += conflicts_started.elapsed().as_secs_f64();
+        if let Some(hook) = self.frame_hook.clone() {
+            hook(self.iterations, &self.snapshot());
+        }
+        if self.config.verbose {
+            eprintln!(
+                "iteration {iteration}: rerouted {}, conflicted {}, present {present:.2}, {:.2}s (search {:.2}s, stamp {:.2}s, {} searches, {}M expansions; {} open searches with {}M, {} failed)",
+                pending,
+                conflicted.len(),
+                started.elapsed().as_secs_f64(),
+                self.search_seconds,
+                self.stamp_seconds,
+                self.scratch.searches,
+                self.scratch.expansions / 1_000_000,
+                self.scratch.open_searches,
+                self.scratch.open_expansions / 1_000_000,
+                self.scratch.failed_searches
+            );
+        }
+        // Pads of a pour net that the signals cut off from the main
+        // piece this iteration are routed to it from the next one on.
+        // Progress is measured without them: the pads come and go with
+        // the signals, and a new low by their count kept ESC mini's
+        // connect rung negotiating 80 iterations instead of 53.
+        let really_conflicted = conflicted.len();
+        if self.config.pour_islands && iteration >= 2 {
+            let refresh_started = std::time::Instant::now();
+            let mut stranded = 0;
+            for net in order {
+                let newly = self.refresh_pour(*net);
+                stranded += newly;
+                if newly > 0 && !conflicted.contains(net) {
+                    conflicted.push(*net);
+                }
+            }
+            self.profile.refresh_pour += refresh_started.elapsed().as_secs_f64();
+            if self.config.verbose && stranded > 0 {
+                eprintln!(
+                    "  {stranded} pour pads cut off from their main piece, routed from now on ({:.2}s)",
+                    refresh_started.elapsed().as_secs_f64()
+                );
+            }
+        }
+        self.last_conflicted = conflicted.clone();
+        (conflicted, really_conflicted)
+    }
+
+    /// Whether this negotiation has spent its work limit
+    /// (`negotiation_expansions`; 0: none) since `used_before` (the work
+    /// `negotiation_used` counts) and `expansions_before`.
+    fn negotiation_worked_out(&self, used_before: f64, expansions_before: u64) -> bool {
+        self.config.negotiation_expansions > 0
+            && if self.config.limits_count_all {
+                self.negotiation_used() - used_before
+                    > self.config.negotiation_expansions as f64 / expansions_per_second()
+            } else {
+                self.scratch.expansions - expansions_before > self.config.negotiation_expansions
+            }
+    }
+}
+
+/// The rest of an iteration a probe's work limit cut: its batches still to
+/// route, its index in the probe's negotiation, the windows' growth and
+/// the price of sharing it routed at, and how many nets it reroutes.
+#[derive(Clone, Debug)]
+pub(super) struct CutIteration {
+    batches: Vec<Vec<NetId>>,
+    iteration: usize,
+    growth: f64,
+    present: f32,
+    pending: usize,
+}
+
+/// Whether a probe's work limit binds between a negotiation iteration's batches
+/// (not under `PCB_ROUTER_LIMITS_BETWEEN_ITERATIONS`: only after a whole
+/// iteration, as before 2026-10-22).
+fn limits_inside_iterations() -> bool {
+    static INSIDE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *INSIDE.get_or_init(|| std::env::var_os("PCB_ROUTER_LIMITS_BETWEEN_ITERATIONS").is_none())
 }

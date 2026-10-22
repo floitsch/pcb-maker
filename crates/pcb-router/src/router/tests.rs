@@ -4098,3 +4098,74 @@ fn a_negotiation_bound_of_nothing_is_one_expansion() {
         (2.0 * expansions_per_second()) as u64
     );
 }
+
+#[test]
+fn a_negotiation_limit_binds_between_the_batches_of_an_iteration() {
+    // The crossed net's three nets stay in conflict on one layer, each in
+    // a batch of its own. Two whole iterations, then a probe whose limit
+    // lies just past the first: it stops after the first batch of its
+    // second iteration, not after the iteration (its first iteration is
+    // whole whatever its limit). A caller's deadline far ahead keeps the
+    // wall-clock guard (`GUARD` times these microsecond limits) out of it.
+    let far = Some(std::time::Instant::now() + std::time::Duration::from_secs(3600));
+    let prepared = {
+        let mut router = crossed_net();
+        router.config.deadline = far;
+        router.config.max_iterations = 0;
+        router.probe(1.0);
+        router.expansions()
+    };
+    let mut whole = crossed_net();
+    whole.config.deadline = far;
+    whole.config.max_iterations = 2;
+    whole.probe(1.0);
+    assert_eq!(whole.iterations, 2);
+    let first = whole.first_iteration_expansions;
+    let order = whole.routing_order();
+    let second_batches = whole.batches(&whole.last_conflicted.clone(), 1.0 + 1.0 / 6.0);
+    assert!(first > prepared && whole.expansions() > first);
+    let mut cut = crossed_net();
+    cut.config.deadline = far;
+    cut.config.max_iterations = 2;
+    cut.probe((first - prepared + 1) as f64 / expansions_per_second());
+    assert_eq!(cut.iterations, 2);
+    assert_eq!(cut.first_iteration_expansions, first);
+    assert!(
+        cut.expansions() > first && cut.expansions() < whole.expansions(),
+        "{} after the first iteration's {first}, {} whole",
+        cut.expansions(),
+        whole.expansions()
+    );
+    let rerouted: usize = cut.nets.iter().map(|state| state.reroutes).sum();
+    let whole_rerouted: usize = whole.nets.iter().map(|state| state.reroutes).sum();
+    assert!(
+        rerouted < whole_rerouted,
+        "{rerouted} {whole_rerouted} {second_batches:?}"
+    );
+    // The nets the cut left are reported as conflicted all the same.
+    let expected: Vec<NetId> = order
+        .iter()
+        .copied()
+        .filter(|net| {
+            let state = &cut.nets[*net as usize];
+            !(state.complete || state.blocked) || !cut.conflicts(*net).is_empty()
+        })
+        .collect();
+    assert_eq!(cut.last_conflicted, expected);
+    assert!(!expected.is_empty());
+    // Resumed, the cut probe first routes the rest of its iteration: it
+    // goes on exactly as the probe that finished that iteration.
+    for router in [&mut cut, &mut whole] {
+        router.config.max_iterations = 4;
+        router.config.verbose = false;
+    }
+    let (cut_result, whole_result) = (cut.resume(1.0), whole.resume(1.0));
+    assert_eq!(cut.expansions(), whole.expansions());
+    assert_eq!(cut.fingerprint(), whole.fingerprint());
+    assert_eq!(cut.iterations, whole.iterations);
+    assert_eq!(
+        cut_result.diagnostics.conflicted,
+        whole_result.diagnostics.conflicted
+    );
+    assert_eq!(cut_result.status, whole_result.status);
+}

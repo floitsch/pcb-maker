@@ -11,6 +11,115 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-22 (probe overshoot)
+
+A negotiation checked its work limit and the work deadline only after a
+whole iteration, so a rung probe searched up to an iteration past its
+share (probe overhead, below: MSign's four probes 5.06 to 5.26 s on
+shares of 3.75; on the expansion tier 25.1 s of probe search past the
+shares over 61 probes, at most 1.51 s one). Now a probe's limit binds
+between the batches of its iterations from its second iteration on, the
+rest of the cut iteration is kept, and `resume` routes it first and ends
+that iteration as it would have ended, so the leading probe and its
+continuation search what they did before, with more of the bound left.
+Branch probe-overshoot; snapshots x1540 (every negotiation cut inside
+an iteration), x1541 (the probes alone, the continuation starting from
+the cut board), x1542 (the commit: the probes, the cut finished on
+resume). Details: docs/router.md, "The probes' overshoot".
+
+**What changed** (pcb-router, negotiate.rs): the batch loop checks
+`negotiation_worked_out` (the old end-of-iteration test, now a method)
+and `past_work_deadline` before each batch after the first while
+`Router::in_probe` (set by `probe`) and the router has an iteration
+behind it; a cut stores `CutIteration` (the batches left, the
+iteration's index, growth, price of sharing) and sets `last_conflicted`
+from the board as it is; `resume_polished` calls
+`finish_cut_iteration` before it collects the pending nets (the batches
+left, then `end_iteration`, the conflict, history and pour-refresh part
+of the loop moved into a method, the replan on odd iterations, the price
+grown when something is still in conflict); any other negotiation drops
+a stale cut. `PCB_ROUTER_LIMITS_BETWEEN_ITERATIONS` restores the rule
+before (config reference and env index updated). Tests: a probe whose
+limit lies just past its first iteration stops after the first of its
+second iteration's batches, reports the nets left in conflict, and,
+resumed, gives the same expansions, fingerprint, iterations, conflicts
+and statuses as a probe that finished that iteration
+(`a_negotiation_limit_binds_between_the_batches_of_an_iteration`).
+tests/fixtures.rs `f2s_free_dimension_stops_at_the_first_clean_size`
+compares the retry's and confirmation's budgets to the microsecond: it
+compared floats summed in another order than the product's
+(25.050905193714215 against ...208 in one run of `check.sh --fast`; the
+fixture's work follows the measured rate, so the values change run to
+run).
+
+**MSign and iorodeo** (30 s, in the expansion tier runs below, 8 x 1):
+
+| board | x1539: probes' search (share 3.75) | continuation's deadline / negotiation | KiCad unconnected, router open, vias | x1542: probes' search | continuation | result |
+|---|---|---|---|---|---|---|
+| MSign | 5.06, 5.06, 5.15, 5.26 | 14.04 / 4.39 s | 69, 341, 192 | 3.75, 3.75, 3.97, 3.75 | 18.23 / 7.24 s | 21, 201, 251 |
+| iorodeo | 3.84, 4.31, 4.99, 3.90 | 17.47 / 6.78 s | 133, 246, 265 | 3.77, 3.75, 4.79, 3.78 | 18.34 / 7.28 s | 93, 247, 283 |
+
+The leaders are the same (tracks); iorodeo's plane-stubs probe still
+goes 1.04 s past its share in its first iteration, which is whole
+whatever the limit. Over the tier's 61 probes the search past the
+shares is 3.1 s (25.1 before), 21.9 s less probe search in all.
+
+**Expansion tier** (46 boards, 8 x 1, `--no-lock`, no row cut; x1539
+run first as the reference, build/expansion-probe2-x1539, as no x1539
+log existed): KiCad unconnected 761 to 631, passes 18 to 18 (strict 18
+to 18), new errors 3 to 3, vias 4174 to 4204, length 109890 to 112361
+mm, work 1222 to 1221 s. 12 rows changed, 34 the same (routed,
+unconnected, vias, length):
+
+| board | x1539 (routed, unconnected, vias) | x1542 | why |
+|---|---|---|---|
+| MAS500 dronecarrier | 103/129, 45, 203 | 125/129, 3, 165 | the leader changed: the plane-stubs probe led with 95 unfinished after 4.23 s of search; stopped at 3.80 s it has 102, and tracks (97 both) leads: 130 to 5 open |
+| MSign | 166/188, 69, 192 | 178/188, 21, 251 | as above |
+| iorodeo | 158/178, 133, 265 | 159/178, 93, 283 | as above |
+| node_v6 | 53/77, 35, 95 | 55/77, 33, 99 | more work |
+| tuxkeychain | 36/42, 6, 66 | 37/42, 5, 63 | more work |
+| OpenRX-Mono | 34/43, 31, 26 | 31/43, 34, 28 | the same leader (tracks, 32 unfinished both), its negotiation limit 8.28 to 8.60 s ends elsewhere: 43 to 46 open |
+| ICE40HX1K | pass, 210 vias | pass, 202 vias | more work for the via reduction |
+| ducktop2 bms, ZSWatch, power-manifold, magnetorquer, anthracite | the same open, errors and passes | 0 to 2 vias fewer, the length within 0.7 % | more work for the finishing phases |
+
+The variants (same reference): x1540 (every negotiation cut inside an
+iteration: the continuations and the via reduction's rounds too) 666
+unconnected, 17 passes, new errors 5 (ducktop2 lost its pass, ZSWatch 3
+to 9 unconnected and an error after a continuation cut at seven nets in
+conflict, anthracite an error); x1541 (only the probes cut, the
+continuation from the cut board) 664, 16 passes (ducktop2 and
+ICE40HX1K lost theirs: ducktop2's leader cut at 84 unfinished where it
+had 80, its continuation 2 open). Neither reached 18 passes.
+
+**Fingerprints** (Castor, k30, jetson, Sisu; route mode from v16, 1 x
+4, budget scale 0.25, `PCB_ROUTER_FINGERPRINT=1
+PCB_ROUTER_NO_WALL_GUARD=1`, outside the lock; build/fp-probe2-x1539 and
+build/fp-probe2-x1542):
+- Castor: no probe reached its limit (the connect probe finishes at
+  15.99 s of 37.5): every fingerprint and the board identical.
+- k30: the leader (tracks) finishes everything at 30.26 s, under its
+  limit; the three other probes were cut (37.5 s of search where they
+  had 37.8 to 43.4): the leader's every fingerprint and the board
+  identical, the work 284.6 to 277.4 s.
+- jetson: every probe cut, the leader (tracks) at 37.57 s where it had
+  39.05; the continuation's negotiation limit is the same 60 s, its
+  deadline 188.0 to 199.5 s: the fingerprint before resolve identical,
+  after clean-up changed (the clean-up's budget follows the work left;
+  jetson's clean-up also differs between runs of one binary, fp-fence
+  above); 20 unconnected and 597 vias both, length 10784.0 to 10781.9.
+- Sisu: every probe cut (37.5 to 38.1 s where they had 37.6 to 42.3),
+  the leader's search 37.55 both; changed from the fingerprint before
+  resolve, which Sisu does between runs of one binary too (finding 5,
+  lowfix1 above); 25 unconnected and 375 vias both; its 0.1 mm attempt
+  72 to 60 open.
+
+**Not done.** The short tier (a layout tier: it waits for the lock, and
+the layouts do not use route mode's shares; a layout's probes get the
+same in-iteration limit, the layout ladder's `probe_seconds`). The
+probes' unfinished count is taken where the cut leaves the board, so a
+probe cut early in an iteration counts its rest as conflicted; on the
+tier's 16 probed boards one leader changed (MAS500, for the better).
+`bash scripts/check.sh --fast` and the clippy gate pass.
 ## Committed on 2026-10-22 (the snapshot release)
 
 The `snapshot` release had been stale since 2026-10-21 (`21194a9`): the

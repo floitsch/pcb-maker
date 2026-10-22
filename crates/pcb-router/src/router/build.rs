@@ -312,6 +312,8 @@ impl Router {
             scratch: Scratch::new(states, cells),
             profile: Profile::default(),
             in_via_reduction: false,
+            in_probe: false,
+            cut_iteration: None,
             island_stubs: 0,
             manual_spokes_work: 0.0,
             build_work: 0.0,

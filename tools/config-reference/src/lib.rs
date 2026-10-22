@@ -223,6 +223,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "every router builds its own static maps and pour masks instead of sharing those of routers of the same board, lattice and classes (for attributing rows; the routing is the same).",
     ),
     (
+        "PCB_ROUTER_LIMITS_BETWEEN_ITERATIONS",
+        Kind::Switch,
+        "a negotiation's work limits (its own and the work deadline) bind only after a whole iteration, not between its batches too (the rule before 2026-10-22, probe overshoot; for attributing rows).",
+    ),
+    (
         "PCB_PROBES_SIDE_BY_SIDE",
         Kind::Switch,
         "`N`: at most N probes of the probe ladder at once (1: one after the other).",

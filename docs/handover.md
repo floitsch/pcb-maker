@@ -390,6 +390,7 @@ Switches and experiment hooks (change the result):
 - `PCB_LADDER_PROBES_COUNT_ALL`: route mode's rung probes stop on all their work (search, pour analyses, lattice and their part of the static maps) instead of on their search (an experiment: leaders changed; docs/changelog.md, probe overhead).
 - `PCB_LADDER_CONTINUATION_LATTICE`: route mode's probed rung's continuation takes its share in search work by the routers' proportion of search with their lattices counted, as the fresh routers do (the rule before 2026-10-21, probe overhead; for attributing rows).
 - `PCB_ROUTER_NO_SHARED_STATICS`: every router builds its own static maps and pour masks instead of sharing those of routers of the same board, lattice and classes (for attributing rows; the routing is the same).
+- `PCB_ROUTER_LIMITS_BETWEEN_ITERATIONS`: a negotiation's work limits (its own and the work deadline) bind only after a whole iteration, not between its batches too (the rule before 2026-10-22, probe overshoot; for attributing rows).
 - `PCB_PROBES_SIDE_BY_SIDE`: `N`: at most N probes of the probe ladder at once (1: one after the other).
 
 Diagnostics (stderr unless said; the result does not change):
