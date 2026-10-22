@@ -275,6 +275,12 @@ pub fn route_kicad_board(
     // How whole the pours stayed, after every decision (it counts as no
     // work). A layout's own ladders (`kicad_kept` set) leave it to the
     // layout, which measures the board it keeps.
+    // The source board's parse goes first: the measure parses and lowers
+    // the board written (jetson: a 25 MB file, 240 MB parsed; the measure
+    // was the run's peak with both held).
+    drop(runner);
+    drop(parsed);
+    drop(source);
     if config.kicad_kept.is_none() {
         result.pour_quality = measured_pours(output_directory, board_id, config);
     }

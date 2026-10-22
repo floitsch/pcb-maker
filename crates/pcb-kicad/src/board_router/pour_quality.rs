@@ -107,10 +107,6 @@ pub fn measure_pours(
         return Ok(Vec::new());
     }
     let Lowered { board, .. } = lower(&pcb, config, true)?;
-    let mut router = core::router::Router::new(&board, &core_config(config));
-    router.adopt_existing_copper();
-    let report = router.pour_report();
-    drop(router);
     // Other nets' tracks per layer (arcs by their chord).
     let mut cut: BTreeMap<(String, String), f64> = BTreeMap::new();
     let mut tracks: Vec<(String, Option<String>, f64)> = Vec::new();
@@ -127,6 +123,14 @@ pub fn measure_pours(
             distance_squared(start, end).sqrt(),
         ));
     }
+    // The parse is done with before the router is built (a big board's
+    // parse is ten times its file).
+    drop(pcb);
+    drop(text);
+    let mut router = core::router::Router::new(&board, &core_config(config));
+    router.adopt_existing_copper();
+    let report = router.pour_report();
+    drop(router);
     let mut result = Vec::new();
     for entry in report {
         let net = board.nets[entry.net as usize].name.clone();
