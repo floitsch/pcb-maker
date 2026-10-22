@@ -317,11 +317,11 @@ fixture tests). F1 is a 30 x 25 mm two-layer board of 13 parts in KiCad
 the lowering getting wrong: a QFN with an exposed pad and thermal vias,
 a SOT-223, an LED with 0.7 mm pads, a GND test pad alone on F.Cu, a net
 tie, a stacked front and back pad of one number, a jumper group, a pad
-with zone_connect none, a Margin rectangle, an unplated slot, a plated
-hole listing only `*.Mask`, a text box and a dimension on copper, a
-padstack, a net named "14", GND and +5V zones of equal priority, a
-hatched zone, net classes (one by a regular expression) and a
-JLCPCB-style .kicad_dru with a pair rule. F2
+with zone_connect none, an arc track the route keeps, a Margin
+rectangle, an unplated slot, a plated hole listing only `*.Mask`, a text
+box and a dimension on copper, a padstack, a net named "14", GND and +5V
+zones of equal priority, a hatched zone, net classes (one by a regular
+expression) and a JLCPCB-style .kicad_dru with a pair rule. F2
 (`tests/fixtures/f2/layout.json`) lays F1 out with a free bottom edge.
 `tests/fixtures.rs` routes and lays them out through the binary (no via
 in an SMD pad and no hop within hole_to_hole, the rules end to end,

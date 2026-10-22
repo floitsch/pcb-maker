@@ -11,6 +11,120 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (fixture tests)
+
+The fixture tests the review of the tests proposed
+(docs/reviews/2026-10-21-review-tests.md, "Proposed fixture tests"), in
+its order, on two committed fixtures; check.sh's fast gate and full run;
+CI's nightly job with KiCad 10. Branch fixture-tests; no binary change
+that needs a snapshot (two clippy rewrites in src/, no behaviour).
+
+**F1** (`tests/fixtures/f1`): 30 x 25 mm, two layers, 13 parts, KiCad
+10's format written by hand: a QFN-16 with an exposed pad and four
+thermal vias, a SOT-223 (tab and pin 2 one number), a WS2812B-2020 with
+0.7 mm pads, a 1.2 mm GND test pad alone on F.Cu (TP2), a net tie
+(`net_tie_pad_groups`, a copper bridge), a stacked F.Cu and B.Cu pad of
+one number without a hole, a solder jumper (`jumper_pad_groups`), a pad
+with `zone_connect 0`, an arc track of +3V3 from C1.1 to U2.2 that route
+mode keeps (2094b6b), a Margin rectangle near the right edge, an
+unplated slot, a plated hole listing only `*.Mask`, a text box and a
+dimension on F.Cu, a KiCad 9 padstack (1.2 mm front, 1.8 mm back), a net
+named "14", GND and +5V zones of equal priority on B.Cu, a hatched GND
+zone on F.Cu, a .kicad_pro with a Power class by a wildcard (`+5V`) and
+a regular expression (`\+3V[0-9]`), and a JLCPCB-style .kicad_dru ("Pad
+to Track clearance" 0.2 mm, then "Min. Spacing" 0.127 mm, and a 0.4 mm
+pair rule between PA and PB). kicad-cli 10.0.7 loads it and its DRC
+runs. **F2** (`tests/fixtures/f2/layout.json`): F1's layout with its
+bottom edge free (18 to 24 mm, band 7 mm, two probes side by side, 60
+s).
+
+**The tests** (tests/fixtures.rs through the binary, every route at
+`PCB_WORK_RATE=3.15e6,150e6`, `PCB_MAKER_MEMORY_MB=4096`, no wall guard;
+crates/pcb-kicad/src/tests/fixtures.rs for what needs the crate's
+insides; golden files in `tests/fixtures/golden`, rewritten under
+`PCB_UPDATE_GOLDEN=1`, a difference failing with its lines and the
+command that accepts it):
+
+| # | Test | On main (2094b6b) |
+| --- | --- | --- |
+| 1 | no via in an SMD pad (the exposed pad excepted) and no two vias of one net closer than their drills plus hole_to_hole, on F1 routed in route mode; with `via_in_pad: true` TP2's via inside its pad | passes; fails with the lowering's no-via list emptied (TP2's GND via 0.62 mm into the pad) |
+| 2 | routers of F1 differing in via_in_pad, one no-via pad, the .kicad_dru's net rules, a keepout, the pitch, a class or hole_to_hole build their own static maps while F1's are held (build work equal to an unshared build), and a router of the held inputs shares them | passes: the key is complete for these; fails with `no_via_pads` out of `statics_key` (ded766d's rebase) |
+| 3 | board-router.json's rules list against the golden (the pair rule applied, "Pad to Track" no_effect as a later rule takes its pairs, "Min. Spacing" no_effect), PA's routed copper 0.4 mm from PB's, and the pair rule at 3 mm leaving PA or PB open (F1's pair keeps 0.4 mm without the rule too) | passes; fails with `core_config` dropping `net_rules` |
+| 3b | the kept arc track: written back as it was, `kept_copper` one arc on +3V3 making one connection | passes |
+| 4 | F1's fingerprints at 1 and 4 threads equal, and equal to the golden ones | passes |
+| 5 | with kicad-cli: the router's open connections and KiCad's unconnected items agree on the routed F1 (none and none, or some and some), every dead pad among KiCad's unconnected items, their counts by net against the golden | passes: the router 2 open, KiCad 2 unconnected, both the net tie's pads; which two items KiCad names for an unconnected pair changes from run to run where several are as near (J2's stacked pads; a via or a track beside NT1.1), so the golden counts them by net |
+| 6 | with kicad-cli: the unrouted and the routed F1's DRC findings against the golden, the verdict's starved thermals KiCad's | passes: the unrouted F1 has 23 unconnected items, as the lowering's terminals have them (the stacked pair two items, the jumper group one, U2's pin 2 and tab two), no error (an isolated_copper warning for the hatched zone, library warnings); the routed F1 the net tie's 2, no error, no starved thermal |
+| 7 | the lowering of F1 against a golden table: obstacles by kind, every obstacle that is not a pad, the terminals of every net, the merged pads, the pads closed to vias, the planes | caught the net tie (below) |
+| 8 | F2 through the binary with a fake kicad-cli clean from 22 mm: 18 mm infeasible (J1 would leave the outline), probes at 20 and 22, the confirmation at 22 mm with a third of the budget, 24 untried; the outline 22 mm, the band's footprints and the hatched zone moved by 3 mm, J1 not; the children at the parent's measured rates, pinned | passes |
+| 9 | F1 and F1 reversed placed one after the other, their boards compared as `parse_board` reads them back, with the wirelengths (ignored until fence-report-placer's fix of `SOURCE_ORDERS` lands) | passes when run; the placer's own order test alone fails 3 times in 3 (the review's prediction) |
+| 10 | a keepout over the fixed J1 written with footprints allowed and warned of first in next_actions; `add_pours` GND plane on B.Cu writes one rule area `plane GND B.Cu`, no track on B.Cu | passes with the placer config's `fixed`; with constraints.json's `fixed` not (below; an ignored test) |
+
+**Caught on main.**
+
+- **Net ties are not lowered as KiCad has them.** The net tie's copper
+  bridge is copper of no net to the lowering (as any footprint graphic),
+  so both its pads lie under another net's copper and are dead pads: F1
+  routes with 2 connections open whatever the budget (NT1.1 of GND,
+  NT1.2 of AGND, `diagnostics.dead_pads` near "NT1 copper fp_poly").
+  KiCad allows the bridge to touch the pads of its group's nets. The
+  golden lowering table and fingerprints hold this state: the fix will
+  show as their diff. KiCad 10.0.7 on the routed F1: the same two items
+  unconnected, and no finding about the bridge.
+- **A keepout over a part fixed by constraints.json.** The keepout check
+  (`HeldParts`) counts the placer config's `fixed` and `fixed_patterns`,
+  locked and netless parts, not the constraints' own `fixed`: with
+  `{"constraints": {"fixed": ["*"], "keepout": [...]}}` J1 stays where it
+  is but the rule area is written with footprints not allowed (KiCad
+  then reports J1) and nothing is warned of.
+  `a_keepout_over_a_part_fixed_by_the_constraints_file_is_warned_of`
+  (ignored) holds the expected behaviour.
+- **Workspace clippy.** `cargo clippy --workspace --all-targets` failed on
+  two collapsible ifs (src/agent_cli.rs, src/main.rs), a complex type and
+  a `Some(..).filter` in pcb-kicad's ladder_tests.rs: rewritten, and the
+  gate is now the whole workspace with every target.
+
+An unplated slot listing `*.Cu` is lowered as a hole and as a copper pad
+of no net of the same size (harmless: the hole's 0.3 mm edge clearance
+is the larger); the golden table shows it.
+
+**check.sh.** `bash scripts/check.sh` (and `--full`) runs what it ran
+before plus the 23 tests that never ran (pcb-congestion 5, pcb-topo 8,
+tools/config-reference 4, the root binary's unit tests 6), the fixture
+tests and workspace clippy (`--all-targets`, warnings as errors): what
+runs by default grows by these. `--fast` is the gate: the same without
+the agent walkthrough and the placer's placement.rs, 28 s of tests and 5
+s of pytest once built (cargo's link steps on top). `--no-walkthrough`
+stays. The script says first whether kicad-cli is there and which tests
+skip without it; empty arrays expand under `set -u` on bash before 4.4.
+`bash scripts/check.sh` passes with kicad-cli and without it (a PATH
+without it). Warm, `--fast` took 32 s and the default 41 s without
+kicad-cli, 97 s with it (the walkthrough's layouts). The placer's
+`a_placement_does_not_depend_on_the_order_of_the_file` failed one
+default run of four (alone it fails every time: its race).
+
+**CI.** Push and pull request: `check.sh --fast` (clippy now in it) and
+rustfmt. Nightly at 02:17 UTC and on demand: `check.sh --full` on
+ubuntu-24.04 with KiCad 10 from the kicad-10.0-releases PPA (not yet run
+on GitHub: the PPA's name is the KiCad project's pattern), which runs
+the walkthrough, the KiCad fixture tests and placement.rs. The
+walkthrough job of its own, which always skipped, is gone.
+
+**Also.** The free-dimension CLI test
+(`a_free_dimension_searches_the_sizes_and_keeps_one_layout`) pins the
+rates and turns the wall guard off (two 2 s probes side by side were cut
+by the wall clock under load). The ignored `census_of_custom_rules`
+(an environment-gated test that asserted nothing) is a tool now:
+`cargo run --release --manifest-path
+experiments/project-rules/rules-census/Cargo.toml --
+benchmarks/expansion/data/manifest.json`.
+
+**Left out.** `verify_with_rules` on the output (test 3 measures the
+pair's copper itself), the pour model's predicted pieces against KiCad's
+fill (the fingerprint lines carry the router's pieces; KiCad's count
+needs the refilled board), and order independence across two
+place-kicad-board processes.
+
+
 ## Committed on 2026-10-21 (fence report: placer side)
 
 The breadboard fence report (`~/tmp/fence-report.md`, finding 2): the

@@ -1,0 +1,42 @@
+unrouted F1
+unconnected: 1 of net AGND
+unconnected: 1 of net DIN
+unconnected: 1 of net DOUT
+unconnected: 1 of net PA
+unconnected: 1 of net PB
+unconnected: 2 of net +3V3
+unconnected: 2 of net 14
+unconnected: 2 of net SIG
+unconnected: 4 of net +5V
+unconnected: 8 of net GND
+warning isolated_copper: Zone [GND] on F.Cu, priority 0
+warning lib_footprint_issues: Footprint C1
+warning lib_footprint_issues: Footprint D1
+warning lib_footprint_issues: Footprint H1
+warning lib_footprint_issues: Footprint H2
+warning lib_footprint_issues: Footprint J1
+warning lib_footprint_issues: Footprint J2
+warning lib_footprint_issues: Footprint JP1
+warning lib_footprint_issues: Footprint NT1
+warning lib_footprint_issues: Footprint R1
+warning lib_footprint_issues: Footprint TP1
+warning lib_footprint_issues: Footprint TP2
+warning lib_footprint_issues: Footprint U1
+warning lib_footprint_issues: Footprint U2
+
+routed F1 (route mode, 2 s)
+unconnected: 1 of net AGND
+unconnected: 1 of net GND
+warning lib_footprint_issues: Footprint C1
+warning lib_footprint_issues: Footprint D1
+warning lib_footprint_issues: Footprint H1
+warning lib_footprint_issues: Footprint H2
+warning lib_footprint_issues: Footprint J1
+warning lib_footprint_issues: Footprint J2
+warning lib_footprint_issues: Footprint JP1
+warning lib_footprint_issues: Footprint NT1
+warning lib_footprint_issues: Footprint R1
+warning lib_footprint_issues: Footprint TP1
+warning lib_footprint_issues: Footprint TP2
+warning lib_footprint_issues: Footprint U1
+warning lib_footprint_issues: Footprint U2

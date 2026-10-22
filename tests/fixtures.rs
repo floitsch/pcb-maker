@@ -8,15 +8,16 @@
 //!   format written by hand: a QFN with an exposed pad and thermal vias, a
 //!   SOT-223, an LED with 0.7 mm pads, a GND test pad alone on F.Cu, a net
 //!   tie, a stacked front and back pad of one number, a jumper group, a
-//!   pad with zone_connect none, a Margin rectangle, an unplated slot, a
-//!   plated hole listing only `*.Mask`, a text box and a dimension on
-//!   copper, a padstack, a net named "14", two zones of equal priority, a
-//!   hatched zone, net classes (one by a regular expression) and a
-//!   JLCPCB-style .kicad_dru with a pair rule.
+//!   pad with zone_connect none, an arc track the route keeps, a Margin
+//!   rectangle, an unplated slot, a plated hole listing only `*.Mask`, a
+//!   text box and a dimension on copper, a padstack, a net named "14", two
+//!   zones of equal priority, a hatched zone, net classes (one by a
+//!   regular expression) and a JLCPCB-style .kicad_dru with a pair rule.
 //! - F2 (`tests/fixtures/f2`): F1 laid out with a free dimension.
 //!
 //! The tests, in the review's order: 1 no via in an SMD pad and no via hop
-//! closer than hole_to_hole, 3 the rules end to end, 4 golden
+//! closer than hole_to_hole, 3 the rules end to end (and the kept arc
+//! track), 4 golden
 //! fingerprints, 5 and 6 KiCad's connectivity and pours on the routed
 //! board (skipped, with a message, without kicad-cli), 8 the free
 //! dimension's clean path, 10 a plane pour and a keepout over a fixed
@@ -147,7 +148,7 @@ fn golden(name: &str, actual: &str) {
             diff.push_str(&format!("+ {line}\n"));
         }
         if diff.is_empty() {
-            diff.push_str("(the same lines in another order)\n");
+            diff.push_str("(the same lines, in another order or number)\n");
         }
         panic!(
             "{name} differs from its golden file ({}; - golden, + now):\n{diff}\
@@ -489,9 +490,12 @@ fn tracks(board: &Node) -> Vec<Track> {
         .collect()
 }
 
-/// A net's routed copper as strokes: its copper layers, the ends and the
-/// half width (a via: one point, every layer, its radius).
-fn strokes(board: &Node, net: &str) -> Vec<(Vec<String>, [f64; 2], [f64; 2], f64)> {
+/// Routed copper as a stroke: its copper layers, the ends and the half
+/// width (a via: one point, every layer, its radius).
+type Stroke = (Vec<String>, [f64; 2], [f64; 2], f64);
+
+/// A net's routed copper as strokes.
+fn strokes(board: &Node, net: &str) -> Vec<Stroke> {
     let mut found: Vec<_> = tracks(board)
         .into_iter()
         .filter(|track| track.4 == net)
@@ -718,6 +722,28 @@ fn the_project_rules_reach_the_route_through_the_cli() {
     );
 }
 
+#[test]
+fn a_kept_arc_track_stays_and_joins_its_pads() {
+    // Route mode keeps a board's own copper (2094b6b): F1's arc track of
+    // +3V3 from C1.1 to U2.2, lowered as chords, joins those pads into one
+    // terminal and is written back as it was.
+    let routed = route("kept-arc", ROUTER, 2, &[]);
+    let kept = &routed.report()["kept_copper"];
+    assert_eq!(kept["arcs"], 1, "{kept}");
+    assert_eq!(kept["nets"], json!(["+3V3"]), "{kept}");
+    assert_eq!(kept["connections_made"], 1, "{kept}");
+    let board = routed.board();
+    let arcs: Vec<&Node> = board.all("arc").collect();
+    assert_eq!(arcs.len(), 1);
+    let arc = arcs[0];
+    assert_eq!(
+        (arc.point("start"), arc.point("mid"), arc.point("end")),
+        ([9.05, 12.8], [9.3, 11.75], [10.0, 11.1])
+    );
+    assert_eq!(arc.value("net", 1), Some("+3V3"));
+    assert_eq!(arc.number("width", 1), Some(0.35));
+}
+
 /// The sorted fingerprint lines of one route of F1 at `threads` threads.
 fn fingerprints(threads: usize) -> Vec<String> {
     let routed = route(
@@ -748,18 +774,22 @@ fn f1s_fingerprints_are_the_golden_ones_at_1_and_4_threads() {
     golden("f1-fingerprints.txt", &(one.join("\n") + "\n"));
 }
 
-/// A DRC report's findings as lines: the type and severity of each
-/// violation, sorted, and every unconnected item's pair.
+/// A DRC report's findings as lines: each violation's severity, type and
+/// items, sorted, and the unconnected items counted by net. Which two
+/// items KiCad names for an unconnected pair is not stable from run to
+/// run where several are as near (J2's stacked pads, a via or a track
+/// beside NT1.1), so the pairs are not compared.
 fn drc_lines(report: &Value) -> Vec<String> {
-    let items = |finding: &Value| -> String {
-        let mut items: Vec<&str> = finding["items"]
+    let items = |finding: &Value| -> Vec<String> {
+        let mut items: Vec<String> = finding["items"]
             .as_array()
             .into_iter()
             .flatten()
             .filter_map(|item| item["description"].as_str())
+            .map(str::to_string)
             .collect();
         items.sort();
-        items.join(" / ")
+        items
     };
     let mut lines: Vec<String> = report["violations"]
         .as_array()
@@ -770,19 +800,44 @@ fn drc_lines(report: &Value) -> Vec<String> {
                 "{} {}: {}",
                 finding["severity"].as_str().unwrap_or(""),
                 finding["type"].as_str().unwrap_or(""),
-                items(finding)
+                items(finding).join(" / ")
             )
         })
         .collect();
+    let mut by_net: BTreeMap<String, usize> = BTreeMap::new();
+    for finding in report["unconnected_items"].as_array().into_iter().flatten() {
+        let net = items(finding)
+            .first()
+            .and_then(|item| Some(item[item.find('[')? + 1..item.find(']')?].to_string()))
+            .unwrap_or_default();
+        *by_net.entry(net).or_default() += 1;
+    }
     lines.extend(
-        report["unconnected_items"]
-            .as_array()
+        by_net
             .into_iter()
-            .flatten()
-            .map(|finding| format!("unconnected: {}", items(finding))),
+            .map(|(net, count)| format!("unconnected: {count} of net {net}")),
     );
     lines.sort();
     lines
+}
+
+/// The pads a DRC report's unconnected items name (`Pad 1 [GND] of NT1`).
+fn unconnected_pads(report: &Value) -> BTreeSet<String> {
+    report["unconnected_items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|finding| finding["items"].as_array().into_iter().flatten())
+        .filter_map(|item| item["description"].as_str())
+        .filter_map(|description| {
+            let (pad, rest) = description.split_once(" [")?;
+            let (kind, number) = pad.rsplit_once(' ')?;
+            let reference = rest.split(" of ").nth(1)?.split(' ').next()?;
+            kind.to_lowercase()
+                .ends_with("pad")
+                .then(|| format!("{reference}.{number}"))
+        })
+        .collect()
 }
 
 #[test]
@@ -790,8 +845,8 @@ fn kicad_agrees_with_the_routers_connectivity_on_f1() {
     // Review 2026-10-21, fixture test 5: complete by the router's count
     // is KiCad's 0 unconnected. F1 routed with KiCad's check: the
     // router's open connections and KiCad's unconnected items agree (both
-    // none, or both some), and KiCad's unconnected items on the routed
-    // board are the golden ones.
+    // none, or both some), every dead pad of the router's is among KiCad's
+    // unconnected items, and their counts by net are the golden ones.
     if !kicad_cli("kicad_agrees_with_the_routers_connectivity_on_f1") {
         return;
     }
@@ -815,18 +870,23 @@ fn kicad_agrees_with_the_routers_connectivity_on_f1() {
         .into_iter()
         .filter(|line| line.starts_with("unconnected"))
         .collect();
-    let dead: Vec<String> = routed.report()["diagnostics"]["dead_pads"]
+    // Every pad the router could not enter is one KiCad finds unconnected.
+    let named = unconnected_pads(&report);
+    let mut dead = Vec::new();
+    for pad in routed.report()["diagnostics"]["dead_pads"]
         .as_array()
         .unwrap()
-        .iter()
-        .map(|pad| {
-            format!(
-                "dead pad {} of {}",
-                pad["pad"].as_str().unwrap(),
-                pad["net"].as_str().unwrap()
-            )
-        })
-        .collect();
+    {
+        let label = pad["pad"].as_str().unwrap();
+        assert!(
+            named.contains(label),
+            "the router's dead pad {label} is not among KiCad's unconnected items: {named:?}"
+        );
+        dead.push(format!(
+            "dead pad {label} of {}",
+            pad["net"].as_str().unwrap()
+        ));
+    }
     golden(
         "f1-routed-connectivity.txt",
         &format!(

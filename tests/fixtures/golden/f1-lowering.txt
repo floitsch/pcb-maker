@@ -1,4 +1,4 @@
-layers 2 classes 4 nets 10 obstacles 81 planes 3
+layers 2 classes 4 nets 10 obstacles 89 planes 3
 edge_clearance 0.3050 hole_clearance 0.2500 hole_to_hole 0.2500 neck_width 0.1500
 class 0: width 0.3500 clearance 0.2000 via 0.7000/0.3500
 class 1: width 0.2000 clearance 0.2000 via 0.6000/0.3000
@@ -8,6 +8,7 @@ class 3: width 0.2500 clearance 0.3000 via 0.7000/0.3500
 obstacles by kind
 Copper     8  copper dimension
 Copper     5  copper text box
+Copper     8  existing track
 Copper     1  footprint copper fp_poly
 Copper    49  pad
 Copper     1  pad padstack
@@ -31,6 +32,14 @@ Hole U1.17 plated hole [11] net GND clearance 0.0000 tracks true vias true box (
 Hole U1.17 plated hole [11] net GND clearance 0.0000 tracks true vias true box (19.400 12.300)-(19.700 12.600)
 Hole U1.17 plated hole [11] net GND clearance 0.0000 tracks true vias true box (20.300 11.400)-(20.600 11.700)
 Hole U1.17 plated hole [11] net GND clearance 0.0000 tracks true vias true box (20.300 12.300)-(20.600 12.600)
+Copper existing track [1.] net +3V3 clearance 0.0000 tracks true vias true box (8.869 12.362)-(9.230 12.980)
+Copper existing track [1.] net +3V3 clearance 0.0000 tracks true vias true box (8.869 12.107)-(9.265 12.722)
+Copper existing track [1.] net +3V3 clearance 0.0000 tracks true vias true box (8.905 11.860)-(9.338 12.467)
+Copper existing track [1.] net +3V3 clearance 0.0000 tracks true vias true box (8.978 11.626)-(9.447 12.220)
+Copper existing track [1.] net +3V3 clearance 0.0000 tracks true vias true box (9.087 11.411)-(9.589 11.986)
+Copper existing track [1.] net +3V3 clearance 0.0000 tracks true vias true box (9.229 11.219)-(9.761 11.771)
+Copper existing track [1.] net +3V3 clearance 0.0000 tracks true vias true box (9.401 11.054)-(9.960 11.579)
+Copper existing track [1.] net +3V3 clearance 0.0000 tracks true vias true box (9.600 10.920)-(10.180 11.414)
 Keepout board margin (gr_rect) [11] net - clearance 0.3000 tracks true vias true box (28.550 1.950)-(29.650 2.050)
 Keepout board margin (gr_rect) [11] net - clearance 0.3000 tracks true vias true box (29.550 1.950)-(29.650 7.050)
 Keepout board margin (gr_rect) [11] net - clearance 0.3000 tracks true vias true box (28.550 6.950)-(29.650 7.050)

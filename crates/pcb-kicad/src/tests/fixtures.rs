@@ -64,7 +64,7 @@ fn golden(name: &str, actual: &str) {
             diff.push_str(&format!("+ {line}\n"));
         }
         if diff.is_empty() {
-            diff.push_str("(the same lines in another order)\n");
+            diff.push_str("(the same lines, in another order or number)\n");
         }
         panic!(
             "{} differs from its golden file ({}; - golden, + now):\n{diff}\
