@@ -47,6 +47,7 @@ mod resolve;
 mod result;
 mod route_net;
 mod search;
+mod sever;
 mod spokes;
 mod stamping;
 mod stitch;
@@ -1049,6 +1050,21 @@ pub struct Router {
     /// Per layer: cost factor for cutting a pour there. Relative to the
     /// least covered layer, so a board poured on every layer has no penalty.
     layer_cut: Vec<f32>,
+    /// Per layer and node: what a cut there severs of the pour covering
+    /// it, 0 to 255 (`refresh_sever`; empty for a layer without pours or
+    /// with `pour_integrity` 0).
+    sever: Vec<Vec<u8>>,
+    /// `SEVER_COST * pour_integrity / 255`: the factor a level adds.
+    sever_scale: f32,
+    /// `copper_changes` when `sever` was last computed.
+    sever_at: Option<u64>,
+    /// The search expansions when `sever` was last computed.
+    sever_expansions: u64,
+    /// Counts every stamp and unstamp of a net: copper changed.
+    copper_changes: u64,
+    /// What computing the pour masks of the pours not connected (pour
+    /// nets as tracks) for `covered` counted (`BuildCounts`).
+    cover_mask_counts: [u64; 2],
     /// Per layer: an exclusive plane there (other nets' tracks may not run
     /// on its covered nodes).
     exclusive: Vec<bool>,

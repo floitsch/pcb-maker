@@ -56,6 +56,9 @@ impl Router {
         for net in batch {
             self.rip_up_conflicted(*net);
         }
+        // What a cut severs, from the fill without the batch's copper (its
+        // old routes must not make their own corridors look cut already).
+        self.refresh_sever();
         if batch.len() == 1 || !self.config.parallel {
             let single_started = std::time::Instant::now();
             for net in batch {

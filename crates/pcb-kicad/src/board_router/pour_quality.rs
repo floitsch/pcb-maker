@@ -63,6 +63,32 @@ pub const MANY_PIECES: usize = 5;
 /// Pieces smaller than this (mm²) are left out of the count.
 pub const SLIVER_MM2: f64 = 0.25;
 
+/// What a piece beyond the first adds to `pour_loss` (a share of a pour).
+pub const PIECE_LOSS: f64 = 0.01;
+
+/// The step `pour_rank` rounds `pour_loss` to: attempts closer than this
+/// on their pours are ranked by their vias and copper.
+pub const POUR_RANK_STEP: f64 = 0.02;
+
+/// How much of their pours a board lost, summed over the pours: the share
+/// of each pour's area outside its largest piece, and `PIECE_LOSS` for
+/// every piece beyond the first. 0 for pours in one piece each that fill
+/// their zone.
+pub fn pour_loss(pours: &[KiCadPourQuality]) -> f64 {
+    pours
+        .iter()
+        .map(|pour| {
+            (1.0 - pour.largest_share).max(0.0) + PIECE_LOSS * pour.pieces.saturating_sub(1) as f64
+        })
+        .sum()
+}
+
+/// `pour_loss` in steps of `POUR_RANK_STEP`, for ranking attempts (0 when
+/// not measured).
+pub fn pour_rank(loss: Option<f64>) -> u32 {
+    loss.map_or(0, |loss| (loss / POUR_RANK_STEP).round() as u32)
+}
+
 /// The pours of the routed board `directory/<board_id>.kicad_pcb`,
 /// measured by the pour model: the board lowered with its pours connected
 /// and its tracks and vias as copper, a router built on it (no routing).

@@ -868,7 +868,7 @@ own fill.
 **A pour kept whole where it matters** (2026-10-21). On two layers a
 `plane` is no answer (every crossing needs the back), and
 `plane_cut_cost` did not stop the cutting on the fence (37 pieces at 46
-mm). `keep_whole` in an `add_pours` entry names regions, parts or boxes,
+mm; why, and `pour_integrity`, below). `keep_whole` in an `add_pours` entry names regions, parts or boxes,
 where the pour stays one piece: each is written as a rule area `keep
 whole <net> <layer>` with everything allowed (KiCad has no rule by net:
 the area only marks the region), and the lowering makes it a keepout of
@@ -888,13 +888,86 @@ out, and the pour's area inside the outline. The verdict's `pours` and
 board-router.json's `pour_quality` carry it with other nets' track
 length on the layer (`cut_mm`, as score-kicad-board's `cut_by_mm`), and a
 pour in more than 5 pieces, or whose largest piece holds less than half
-its copper, gets a next action. It counts as no work and decides
-nothing. Against KiCad's own fill (benchmarks/fence/pour-pieces.py) on
+its copper, gets a next action. It counts as no work; with
+`pour_integrity` set the ladder measures each two-layer attempt the same
+way to rank it (below). Against KiCad's own fill (benchmarks/fence/pour-pieces.py) on
 the fence's two-layer boards at 34, 40, 44, 46 and 48 mm: the copper
 within 2 % (403.5 against 411 mm², 1080 against 1071), the largest
 piece within 6 %, the pieces within about 10 % (16 and 16, 48 and 45,
 37 and 41, 31 and 29, 41 and 42); four layers, In1.Cu: 1 piece of 2045
 mm² against KiCad's 2016 mm² and two slivers of 2 mm².
+
+**Why `plane_cut_cost` did nothing on the fence, and `pour_integrity`**
+(2026-10-22). Three reasons. (1) The rung that wins on two layers is
+pours as tracks (46 mm, x1404: connected 19 open, skeleton 10, tracks
+0), and with its pours not connected a pour masked nothing: `covered`
+was built from the nets' connected pour masks only, so `layer_cut` was 1
+on every layer and the cut cost never entered its search, its vias or
+its corridor plan. (2) Where it did enter (the connected rungs) it is
+the same factor on every covered node, whatever the step cuts: a nick at
+a pour's rim costs what a cut through the one corridor joining two
+halves costs (and `layer_cut` is relative to the least covered layer, so
+a board poured on both layers pays nothing). (3) Nothing ranked attempts
+by their pours: the ladder kept the fewest open, then starved thermals,
+then vias and copper.
+
+`pour_integrity` (router and route config, default 0: off, main's code
+path before it; two-layer boards only) addresses each when set (1 is
+what was measured):
+- a pour not connected covers what KiCad would fill (its masks computed
+  for `covered` alone, counted in the build), so the tracks rung pays
+  `plane_cut_cost` like the connected ones;
+- what a cut severs (`Router::refresh_sever`, router/sever.rs): per
+  pour and layer, the fill as the routes leave it (the pour's nodes free
+  of other nets' copper) is split into wide cores (its opening by a disk
+  of 0.6 mm) and corridors, the corridors cut into chunks of 1.2 mm; on
+  the graph of cores and chunks a chunk that is an articulation point
+  severs the parts its removal leaves outside the largest, and a step or
+  via of another net on its nodes pays `layer_cut` times `1 + 20 *
+  pour_integrity * severed` (the share of the pour). A core, a dead end's
+  tip or one of two parallel corridors severs nothing. It is recomputed
+  after a batch's rip-up (negotiation and clean-up) when copper changed,
+  at most at a tenth of the search since the last refresh (`SEVER_SHARE`;
+  30 ns a node, `SEVER_NODE_NANOS`, as pour work);
+- the ladder ranks equally open attempts (open, then starved thermals)
+  by their pours before their vias and copper: each judged attempt's
+  board is measured as the verdict's `pours` line measures the final one
+  (`measure_pours`, charged as a lowering and a build), its loss
+  (`pour_loss`: per pour the share of the zone outside the largest
+  piece plus 0.01 a piece beyond the first) in steps of 0.02
+  (`pour_rank`); the attempt line shows `pours lost`. The check gate
+  lets an attempt as open as the best with better pours be checked
+  whatever its vias.
+
+On four layers and more it changes nothing: there the inner planes stay
+whole on the rungs that keep signals off them, and pricing them for the
+tracks rung cost the expansion tier 197 unconnected items (x1570: 761 to
+958; MSign 69 to 137, ZSWatch 3 to 63) and the fingerprints' jetson 20
+to 85, Sisu 25 to 52.
+
+Measured at 1 (x1571 against x1539, 2026-10-22), and so left off by
+default: it does not keep the
+fence's two-layer pour whole. Layouts of the fence (GND on B.Cu):
+
+| board | x1539 | x1571 |
+|---|---|---|
+| 46 mm (`router-cut10.json`) | complete, 265 vias, 4604 mm; 9 pieces, largest 170 mm² (5 %), copper 13 %, 182 islands, cut 2043 mm | 1 unconnected, 338 vias, 4910 mm; 12 pieces, largest 621 mm² (18 %), copper 38 %, 126 islands, cut 1778 mm |
+| 44 mm (free dimension's) | complete, 440 vias; 44 pieces, largest 6 %, copper 37 %, cut 1842 mm | complete, 423 vias; 50 pieces, largest 6 %, copper 42 %, cut 1737 mm |
+| 40 mm (free dimension's) | complete, 404 vias; 45 pieces, largest 13 %, copper 39 %, cut 1674 mm | complete, 500 vias; 48 pieces, largest 6.5 %, copper 28 %, cut 1863 mm |
+
+Four times the sever weight (`pour_integrity` 4) or `plane_cut_cost` 30
+at 46 mm: 1 and 3 unconnected, 35 and 30 pieces, largest 9 %, cut 2068
+and 1933 mm. The other nets' track on B.Cu does not shrink with its
+price: the board needs the back for its crossings (1700-2100 mm of it
+on every run), and those tracks mesh the fill into 130-180 islands
+without GND copper. Pricing what a cut severs moves where the tracks
+cross, not how much of the back they take. Route mode, the expansion
+tier's 27 two-layer boards (x1571 against x1542): unconnected 431 to
+422, vias 2128 to 2153, the pours mixed (better: pdlc 65 to 82 % for
+the largest piece, dreamV1_0 85 to 92; worse: MakerTiles' B.Cu 72 to
+37 %, HB-UNI-SEN-BATT 1 to 9 pieces). It does not apply to the tier's
+19 boards of four layers and more (spliced from x1542); the
+fingerprints (Castor, k30-SBC, jetson, Sisu, 1 x 4) are identical.
 
 ### Thermal spokes as KiCad counts them
 
@@ -1292,6 +1365,12 @@ layout's work left unless the router config gives `ladder_budget_seconds`).
 A lattice not tried is in the verdict's next_actions
 (`skipped`) with its projected seconds and the value of
 `refine_budget_seconds` that tries it.
+
+Attempts rank by their open count (KiCad's, or the router's where KiCad
+did not check), then starved thermals, then, with `pour_integrity` set
+on a two-layer board with pours, by how much of the pours they lost
+(`pour_rank`, 2026-10-22:
+"Why `plane_cut_cost` did nothing on the fence"), then vias and copper.
 
 After the rungs, the finer pitches and the best rung's seed rounds, a
 board still open gets one more attempt: the best attempt with signal nets

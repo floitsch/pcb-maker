@@ -11,6 +11,93 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-22 (pour integrity)
+
+Fence issue 17: keep a two-layer pour whole when the router can. The
+diagnosis and the mechanism are kept, the default is not:
+`pour_integrity` defaults to 0, main's exact code path (routing
+byte-identical: F1's golden fingerprints unchanged, the expansion tier's
+27 two-layer boards identical to x1542 with x1572). At 1 (measured
+below) the 46 mm fence lost its completeness, the tier's pours were
+mixed and F1's golden moved; the fence's back-layer crossings, not their
+price, keep its pour in pieces. Branch pour-integrity; snapshots x1570
+(at 1 on every layer count, before the rebase on ec60853), x1571 (at 1,
+two layers only), x1572 (the commit, default 0). Before: x1539 (fence
+layouts), x1542 (expansion tier, fingerprints).
+
+**Why `plane_cut_cost` had no effect.** The rung that wins on the
+fence's two layers is pours as tracks (46 mm, x1404: connected 19 open,
+skeleton 10, tracks 0), and a pour not connected masked nothing:
+`covered` came from the nets' connected pour masks, so `layer_cut` was 1
+and the cut cost never entered that rung's steps, vias or corridors.
+Where it did enter, it was one factor for every covered node, a nick at
+the rim as dear as a cut through the corridor that joins two halves,
+relative to the least covered layer (nothing on a board poured on both
+sides). And the ladder ranked attempts by open, starved, vias, copper:
+the pours never decided anything.
+
+**`pour_integrity`** (router and route config, default 0, measured at 1; two
+layers only), docs/router.md "Why `plane_cut_cost` did nothing on the
+fence":
+- pours not connected cover what KiCad would fill (masks computed for
+  `covered`, counted in the build): the tracks rung pays the cut cost;
+- what a cut severs (router/sever.rs, `refresh_sever`): the fill as the
+  routes leave it, split into wide cores (opening by 0.6 mm) and corridor
+  chunks of 1.2 mm; a chunk that is an articulation point of the graph of
+  cores and chunks severs the parts outside the largest after its
+  removal, and another net's step or via there pays `layer_cut` times
+  `1 + 20 * pour_integrity * severed share`; refreshed after a batch's
+  rip-up in the negotiation and the clean-up when copper changed, at most
+  a tenth of the search since the last refresh, 30 ns a node as pour
+  work; unit tests (a dumbbell's corridor severs half, a spur's root its
+  spur, two corridors in parallel nothing);
+- the ladder ranks equally open attempts (open, starved) by their pours
+  before vias and copper: each judged attempt measured as the verdict's
+  `pours` (`measure_pours`, charged as its lowering and build), its
+  `pour_loss` (share outside the largest piece plus 0.01 a further
+  piece, summed over the pours) in steps of 0.02 (`pour_rank`); the check
+  gate checks an attempt as open as the best with better pours; the
+  attempt line shows `pours lost`.
+
+On every layer count first (x1570) the expansion tier lost 197
+unconnected (761 to 958: MSign 69 to 137, ZSWatch 3 to 63, AMLing2 45 to
+70, anthracite 1 to 22, the tracks rung now paying for its inner planes)
+and the fingerprints jetson 20 to 85, Sisu 25 to 52, k30-SBC 344 to 912
+vias: hence two layers only (`sever::integrity`, `ranks_pours`).
+
+**Measured.** Fence layouts, GND on B.Cu (before x1539, after x1571;
+x1570 the same on all three):
+
+| board | complete | pieces | largest | copper | vias | length | cut by |
+|---|---|---|---|---|---|---|---|
+| 46 mm, before | yes | 9 | 170 mm², 5 % | 13 % (182 islands) | 265 | 4604 mm | 2043 mm |
+| 46 mm, after | 1 unconnected | 12 | 621 mm², 18 % | 38 % (126 islands) | 338 | 4910 mm | 1778 mm |
+| 44 mm, before | yes | 44 | 203 mm², 6 % | 37 % | 440 | 4764 mm | 1842 mm |
+| 44 mm, after | yes | 50 | 202 mm², 6 % | 42 % | 423 | 4723 mm | 1737 mm |
+| 40 mm, before | yes | 45 | 384 mm², 13 % | 39 % | 404 | 4415 mm | 1674 mm |
+| 40 mm, after | yes | 48 | 191 mm², 6.5 % | 28 % | 500 | 4725 mm | 1863 mm |
+
+46 mm with `pour_integrity` 4: 1 unconnected, 35 pieces, largest 9 %,
+cut 2068 mm; with `plane_cut_cost` 30: 3 unconnected, 30 pieces, 9 %,
+1933 mm. The goal (46 mm complete, well under 37 pieces, the largest
+over half the zone) is not reached: the other nets' track on B.Cu stays
+at 1700-2100 mm whatever its price (the board needs the back for its
+crossings) and meshes the fill into 130-180 islands; the sever cost moves
+where tracks cross, not how much of the back they take.
+
+Expansion tier, route mode 30 s, 8 x 1, its 27 two-layer boards rerun
+(x1571) and the rest spliced from x1542: unconnected 631 to 622 (two
+layers 431 to 422: facade60 25 to 10, miniboard 5 to 3, MusicBrain 1 to
+0, CompassTag 1 to 0; OpenDeck 10 to 12, Wonkle 364 to 370, snaphat 0
+to 1, flexypin 0 to 1), vias 2128 to 2153; pours mixed (the largest
+piece of the main pour: pdlc 65 to 82 %, dreamV1_0 85 to 92, mini48 F.Cu
+41 to 53; MakerTiles B.Cu 72 to 37, HB-UNI-SEN-BATT B.Cu 1 to 9 pieces,
+76 to 64 %, facade60 F.Cu 44 to 9); 4 boards changed pour mode (the
+ranking). Fingerprints 1 x 4 (Castor, k30-SBC, jetson, Sisu, all of four
+layers and more): identical to x1542. At 1, F1's golden fingerprints
+moved for its connected rung (after clean-up, before resolve; the kept
+board's unchanged); at the default 0 the golden is main's, unchanged.
+
 ## Committed on 2026-10-22 (silkscreen placement)
 
 The fence's open item C and issue 8: every result had silkscreen

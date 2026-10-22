@@ -506,6 +506,17 @@ impl LadderRunner for KiCadRunner<'_> {
     fn memory_limits(&self) -> MemoryLimits {
         MemoryLimits::read(self.memory_mb)
     }
+
+    fn pour_loss(&self, directory: &Path, attempt: &KiCadBoardRouterConfig) -> Option<f64> {
+        match measure_pours(directory, self.board_id, attempt) {
+            Ok(pours) if !pours.is_empty() => Some(pour_loss(&pours)),
+            Ok(_) => None,
+            Err(error) => {
+                eprintln!("pours not measured for the ranking: {error}");
+                None
+            }
+        }
+    }
 }
 
 /// Routes `board` with seeds `first..first + count` in parallel (seed 0 is
@@ -692,6 +703,9 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     if let Some(cost) = config.plane_cut_cost {
         router_config.plane_cut_cost = cost;
     }
+    if let Some(weight) = config.pour_integrity {
+        router_config.pour_integrity = weight;
+    }
     if let Some(cost) = config.cleanup_via_cost_mm {
         router_config.cleanup_via_cost = cost;
     }
@@ -823,6 +837,7 @@ pub(crate) fn finish_routed_board(
         kept_copper: None,
         warnings: input_warnings(pcb),
         pour_quality: Vec::new(),
+        pour_loss: None,
     };
     let report_path = output_directory.join("board-router.json");
     fs::write(

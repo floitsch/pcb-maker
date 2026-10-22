@@ -155,6 +155,11 @@ pub struct KiCadBoardRouterResult {
     /// layout's own ladder attempts). The verdict's `pours`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pour_quality: Vec<KiCadPourQuality>,
+    /// How much of its pours an attempt lost (`pour_loss`), as the
+    /// ladder measured it to rank attempts (`pour_integrity`); none when
+    /// it was not measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pour_loss: Option<f64>,
 }
 
 /// Where a route's wall clock went, beside its work: the routers' phases

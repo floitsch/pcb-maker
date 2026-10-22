@@ -387,7 +387,7 @@ impl Router {
                             if self.exclusive[layer] {
                                 break 'step;
                             }
-                            step *= self.layer_cut[layer];
+                            step *= self.layer_cut[layer] * self.sever_factor(layer, target_cell);
                         }
                         step *= layer_factor;
                         if (arrived as usize) < 8 {
@@ -449,16 +449,19 @@ impl Router {
                 if marks & 1 != 0 {
                     let cover = self.via_cover.get(cell).copied().unwrap_or(VIA_COVER_MIXED);
                     if cover == VIA_COVER_MIXED {
-                        for (covered, factor) in self.covered.iter().zip(&self.layer_cut) {
+                        for (layer, (covered, factor)) in
+                            self.covered.iter().zip(&self.layer_cut).enumerate()
+                        {
                             if !covered.is_empty() && covered[cell] != 0 && covered[cell] != own {
-                                cut *= factor;
+                                cut *= factor * self.sever_factor(layer, cell);
                             }
                         }
                     } else if cover & 0xffff != own {
                         // The same products in the same (layer) order.
                         let mut layers_covered = cover >> 16;
                         while layers_covered != 0 {
-                            cut *= self.layer_cut[layers_covered.trailing_zeros() as usize];
+                            let layer = layers_covered.trailing_zeros() as usize;
+                            cut *= self.layer_cut[layer] * self.sever_factor(layer, cell);
                             layers_covered &= layers_covered - 1;
                         }
                     }

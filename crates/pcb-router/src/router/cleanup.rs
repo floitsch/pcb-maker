@@ -101,6 +101,7 @@ impl Router {
                 for net in &batch {
                     self.rip_up(*net);
                 }
+                self.refresh_sever();
                 let mut inside = vec![true; batch.len()];
                 if batch.len() == 1 {
                     self.route_net_seq(batch[0], 0.0, true, 1.0);

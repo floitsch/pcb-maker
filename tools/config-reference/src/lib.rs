@@ -273,6 +273,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "per pour analysis its counts, modelled work and wall time (calibrating the pour work constants).",
     ),
     (
+        "PCB_ROUTER_SEVER_TRACE",
+        Kind::Diagnostic,
+        "per refresh of what a cut severs of the pours (`pour_integrity`) its nodes, wall time and marked nodes per layer (calibrating `SEVER_NODE_NANOS`).",
+    ),
+    (
         "PCB_ROUTER_BUILD_TRACE",
         Kind::Diagnostic,
         "per router build and per lowering their counts, modelled work and wall time (calibrating the build and lowering work constants).",

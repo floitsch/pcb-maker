@@ -3178,3 +3178,32 @@ mod robustness_tests {
         assert!(lower(&pcb, &config, true).is_ok());
     }
 }
+
+mod pour_rank_tests {
+    use super::*;
+
+    fn pour(pieces: usize, largest_share: f64) -> KiCadPourQuality {
+        KiCadPourQuality {
+            pieces,
+            largest_share,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn fewer_pieces_and_a_larger_main_piece_rank_first() {
+        // The fence at 46 mm: 37 pieces, the largest 8 % of the pour.
+        let shredded = pour_loss(&[pour(37, 0.08)]);
+        let whole = pour_loss(&[pour(4, 0.6)]);
+        assert!((shredded - (0.92 + 0.36)).abs() < 1e-9);
+        assert!(pour_rank(Some(whole)) < pour_rank(Some(shredded)));
+        // Within a step of each other the vias decide.
+        assert_eq!(
+            pour_rank(Some(pour_loss(&[pour(3, 0.70)]))),
+            pour_rank(Some(pour_loss(&[pour(3, 0.705)])))
+        );
+        // Not measured: no rank (as before the pours ranked).
+        assert_eq!(pour_rank(None), 0);
+        assert_eq!(pour_loss(&[]), 0.0);
+    }
+}

@@ -296,6 +296,12 @@ impl Router {
             hot: Vec::new(),
             tile_covered: vec![vec![0.0; tiles_x * tiles_y]; layers],
             layer_cut: vec![1.0; layers],
+            sever: vec![Vec::new(); layers],
+            sever_scale: sever::SEVER_COST * sever::integrity(config, board) as f32 / 255.0,
+            sever_at: None,
+            sever_expansions: 0,
+            copper_changes: 0,
+            cover_mask_counts: [0; 2],
             neck_of,
             class_rules,
             searched,
@@ -411,8 +417,8 @@ impl Router {
             |count: fn(&StaticMaps) -> u64| -> u64 { self.statics.iter().map(count).sum() };
         BuildCounts {
             map_nodes: self.grid.cells() as u64 * layers * self.statics.len() as u64,
-            tests: statics(|maps| maps.tests) + prepared(0),
-            edges: statics(|maps| maps.vertex_tests) + prepared(1),
+            tests: statics(|maps| maps.tests) + prepared(0) + self.cover_mask_counts[0],
+            edges: statics(|maps| maps.vertex_tests) + prepared(1) + self.cover_mask_counts[1],
             step_edges: statics(|maps| maps.tight_tests),
         }
     }
@@ -492,7 +498,8 @@ impl Router {
         let tiles = bytes(&self.tile_claimed)
             + bytes(&self.tile_routable)
             + bytes(&self.tile_history)
-            + bytes(&self.tile_covered);
+            + bytes(&self.tile_covered)
+            + bytes(&self.sever);
         let total = statics + occupancy + stamp_mark + hot + pour + planes + scratch + tiles;
         let mb = |value: usize| value as f64 / (1024.0 * 1024.0);
         format!(
@@ -643,14 +650,46 @@ impl Router {
     }
 
     /// Marks the nodes and tiles under pours, per layer.
+    /// With `pour_integrity`, a pour not connected (its net routed as
+    /// tracks) covers the nodes KiCad's fill would take as well: cutting
+    /// it costs what cutting a connected one costs.
     pub(super) fn mark_covered(&mut self) {
         let tiles = self.tiles_x * self.tiles_y;
+        self.sever_at = None;
+        self.cover_mask_counts = [0; 2];
+        // The masks of the pours not connected, per net (computed once).
+        let mut unconnected: Vec<(NetId, Vec<Vec<bool>>)> = Vec::new();
+        if sever::integrity(&self.config, &self.board) > 0.0 {
+            for plane in &self.board.planes {
+                let own = &self.nets[plane.net as usize].plane;
+                if (own.is_empty() || own[plane.layer].is_empty())
+                    && !unconnected.iter().any(|(net, _)| *net == plane.net)
+                {
+                    let (mask, _, counts) = super::prepare::compute_pour_masks(
+                        &self.board,
+                        &self.statics,
+                        &self.grid,
+                        plane.net,
+                        false,
+                    );
+                    self.cover_mask_counts[0] += counts[0];
+                    self.cover_mask_counts[1] += counts[1];
+                    unconnected.push((plane.net, mask));
+                }
+            }
+        }
         for plane in &self.board.planes {
             let layer = plane.layer;
             if self.covered[layer].is_empty() {
                 self.covered[layer] = vec![0; self.grid.cells()];
             }
-            let mask = &self.nets[plane.net as usize].plane;
+            let mut mask = &self.nets[plane.net as usize].plane;
+            if mask.is_empty() || mask[layer].is_empty() {
+                match unconnected.iter().find(|(net, _)| *net == plane.net) {
+                    Some((_, other)) => mask = other,
+                    None => continue,
+                }
+            }
             if mask.is_empty() || mask[layer].is_empty() {
                 continue;
             }

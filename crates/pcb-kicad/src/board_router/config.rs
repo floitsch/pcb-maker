@@ -117,6 +117,16 @@ pub struct KiCadBoardRouterConfig {
     /// Cost factor of a track (or via) cutting a plane (default 3).
     #[serde(default)]
     pub plane_cut_cost: Option<f64>,
+    /// How much a two-layer pour's integrity counts (default 0: off;
+    /// boards of other layer counts are not affected):
+    /// the router prices a cut by what it severs of a pour (a corridor
+    /// that joins the fill's pieces costs more than a nick in a wide
+    /// area; `pcb_router::Config::pour_integrity`), also for pour nets
+    /// routed as tracks, and the ladder ranks equally open attempts by
+    /// the pours' integrity (`pours`: the share outside the largest piece
+    /// and the piece count) before their vias and copper.
+    #[serde(default)]
+    pub pour_integrity: Option<f64>,
     /// Router `present_cap`: the highest price of sharing (default 1e4).
     #[serde(default)]
     pub present_cap: Option<f64>,

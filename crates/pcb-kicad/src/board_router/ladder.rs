@@ -134,6 +134,12 @@ pub(crate) trait LadderRunner: Sync {
     fn starved(&self, directory: &Path) -> usize;
     /// The memory limits now (how many routers run side by side).
     fn memory_limits(&self) -> MemoryLimits;
+    /// How much of its pours the attempt in `directory` lost
+    /// (`pour_loss`), none for a board without pours or when it could
+    /// not be measured.
+    fn pour_loss(&self, _directory: &Path, _attempt: &KiCadBoardRouterConfig) -> Option<f64> {
+        None
+    }
 }
 
 /// The message of a caught panic.
@@ -338,6 +344,9 @@ struct StepWork {
 /// The attempt ladder's state (see the module).
 pub(crate) struct Ladder<'a> {
     config: &'a KiCadBoardRouterConfig,
+    /// Whether equally open attempts rank by their pours first
+    /// (`pour_integrity` above 0 on a board with pours).
+    ranks_pours: bool,
     output_directory: &'a Path,
     /// The seed rounds' and the steps' directory.
     scratch: PathBuf,
@@ -479,6 +488,11 @@ impl<'a> Ladder<'a> {
             .then(|| ladder_work_bound(ladder_budget));
         let ladder = Self {
             config,
+            // On two layers (`pcb_router`'s `integrity`): inner planes stay
+            // whole on their own rungs.
+            ranks_pours: has_pours
+                && copper_layers == 2
+                && config.pour_integrity.unwrap_or(0.0) > 0.0,
             output_directory,
             scratch: output_directory.with_extension("attempt"),
             modes: ladder_rungs(config, has_pours, copper_layers == 2),
@@ -897,6 +911,17 @@ impl<'a> Ladder<'a> {
         attempt
     }
 
+    /// What attempts are ranked by: open (and starved), then the pours
+    /// (`pour_rank`, 0 unless `ranks_pours`), then vias and copper.
+    fn rank(opens: Opens, result: &KiCadBoardRouterResult) -> (Opens, u32, usize, f64) {
+        (
+            opens,
+            pour_rank(result.pour_loss),
+            result.vias,
+            result.length_mm,
+        )
+    }
+
     /// The best board's quality as the check gate compares attempts.
     fn quality(&self) -> Option<CheckedQuality> {
         self.best
@@ -936,6 +961,19 @@ impl<'a> Ladder<'a> {
         directory: &Path,
         best: Option<CheckedQuality>,
     ) -> Result<Option<Opens>, String> {
+        // The pours, for the ranking: measured on the board written (a
+        // lowering and a router's build, charged as such).
+        if self.ranks_pours && result.pour_loss.is_none() {
+            result.pour_loss = runner.pour_loss(directory, self.config);
+            if result.pour_loss.is_some() {
+                self.charge(
+                    0.0,
+                    result.lowering_work_seconds + result.build_work_seconds,
+                    0.0,
+                    0.0,
+                );
+            }
+        }
         if !self.checking {
             return Ok(Some(Self::open(runner, result, directory)));
         }
@@ -943,9 +981,17 @@ impl<'a> Ladder<'a> {
         // Past the deadline no further attempt starts: only whether this
         // one beats the kept boards matters.
         let finishing = self.past_deadline();
-        if !self
-            .gate
-            .wants(count, result.vias, result.length_mm, best, finishing)
+        // An attempt as open as the best by the router's count but with
+        // better pours can win whatever its vias (`rank`).
+        let pours_better = best.is_some_and(|((open, _), _, _)| count == open)
+            && self
+                .best
+                .as_ref()
+                .is_some_and(|(_, best)| pour_rank(result.pour_loss) < pour_rank(best.pour_loss));
+        if !pours_better
+            && !self
+                .gate
+                .wants(count, result.vias, result.length_mm, best, finishing)
         {
             self.gate.skipped += 1;
             CHECKS_SKIPPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1968,7 +2014,7 @@ impl<'a> Ladder<'a> {
                 )?;
             }
             eprintln!(
-                "attempt pours={}{} pitch={}: {} open{}, {} starved, {} vias, {:.1} s",
+                "attempt pours={}{} pitch={}: {} open{}, {} starved, {} vias{}, {:.1} s",
                 result.pours,
                 if exclusive {
                     " (exclusive planes)"
@@ -1984,6 +2030,9 @@ impl<'a> Ladder<'a> {
                 by_router(&judged),
                 opens.1,
                 result.vias,
+                result
+                    .pour_loss
+                    .map_or(String::new(), |loss| format!(", pours lost {loss:.2}")),
                 result.routing_seconds
             );
             self.last_attempt_work = attempt_seconds;
@@ -2002,8 +2051,8 @@ impl<'a> Ladder<'a> {
             // KiCad did not check cannot beat the best (`CheckGate`).
             let better = self.best.as_ref().is_none_or(|(best_opens, best_result)| {
                 judged.is_some()
-                    && (opens, result.vias, result.length_mm)
-                        .partial_cmp(&(*best_opens, best_result.vias, best_result.length_mm))
+                    && Self::rank(opens, &result)
+                        .partial_cmp(&Self::rank(*best_opens, best_result))
                         .is_some_and(|order| order.is_lt())
             });
             if better {
@@ -2244,8 +2293,8 @@ impl<'a> Ladder<'a> {
                 // unchecked ones stays does not matter: neither
                 // beats the best).
                 let other_better = match (judged.is_some(), other_judged.is_some()) {
-                    (true, true) => (other_opens, other.vias, other.length_mm)
-                        .partial_cmp(&(opens, result.vias, result.length_mm))
+                    (true, true) => Self::rank(other_opens, &other)
+                        .partial_cmp(&Self::rank(opens, &result))
                         .is_some_and(|order| order.is_lt()),
                     (false, true) => true,
                     (_, false) => false,
@@ -2407,13 +2456,13 @@ impl<'a> Ladder<'a> {
                 other.vias,
                 other.routing_seconds
             );
-            let (best_vias, best_length) = self
-                .best
-                .as_ref()
-                .map_or((0, 0.0), |(_, best)| (best.vias, best.length_mm));
+            let (best_pours, best_vias, best_length) =
+                self.best.as_ref().map_or((0, 0, 0.0), |(_, best)| {
+                    (pour_rank(best.pour_loss), best.vias, best.length_mm)
+                });
             let better = other_judged.is_some()
-                && (other_opens, other.vias, other.length_mm)
-                    .partial_cmp(&(opens, best_vias, best_length))
+                && Self::rank(other_opens, &other)
+                    .partial_cmp(&(opens, best_pours, best_vias, best_length))
                     .is_some_and(|order| order.is_lt());
             if better {
                 fs::remove_dir_all(output_directory).map_err(|error| error.to_string())?;
@@ -2718,8 +2767,8 @@ impl<'a> Ladder<'a> {
         eprintln!("{}", line(opens, by_router(&judged), &result));
         let better = judged.is_some()
             && self.best.as_ref().is_some_and(|(best_opens, best_result)| {
-                (opens, result.vias, result.length_mm)
-                    .partial_cmp(&(*best_opens, best_result.vias, best_result.length_mm))
+                Self::rank(opens, &result)
+                    .partial_cmp(&Self::rank(*best_opens, best_result))
                     .is_some_and(|order| order.is_lt())
             });
         if better {

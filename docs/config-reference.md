@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 84 | 72 | 12 | 84 | 30 |
+| [Router settings](#router-settings) | 85 | 73 | 12 | 85 | 31 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 0 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 0 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
@@ -33,7 +33,7 @@ The environment variables are indexed in the hand-over
 | [Router report: rules](#router-report-rules) | 5 | - | 0 | 5 | - |
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 5 | - | 0 | 5 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
-| [Router core](#router-core) | 59 | - | 0 | 59 | - |
+| [Router core](#router-core) | 60 | - | 0 | 60 | - |
 | [Placer settings](#placer-settings) | 45 | 42 | 3 | 45 | 16 |
 | [Layout settings](#layout-settings) | 17 | 17 | 0 | 17 | 7 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
@@ -77,6 +77,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `manual_spokes` | `Option<bool>` | unset | router.md | Straight tracks from pads short of KiCad's two spokes into their pour (default on; see `pcb_router::Config::manual_spokes`). |
 | `neck_reach_mm` | `Option<f64>` | unset | - | Reach of the neck width around narrow pads (default 1.5 mm; 0 off). |
 | `plane_cut_cost` | `Option<f64>` | unset | router.md | Cost factor of a track (or via) cutting a plane (default 3). |
+| `pour_integrity` | `Option<f64>` | unset | router.md | How much a two-layer pour's integrity counts (default 0: off; boards of other layer counts are not affected): the router prices a cut by what it severs of a pour (a corridor that joins the fill's pieces costs more than a nick in a wide area; `pcb_router::Config::pour_integrity`), also for pour nets routed as tracks, and the ladder ranks equally open attempts by the pours' integrity (`pours`: the share outside the largest piece and the piece count) before their vias and copper. |
 | `present_cap` | `Option<f64>` | unset | - | Router `present_cap`: the highest price of sharing (default 1e4). |
 | `neck_width_mm` | `Option<f64>` | unset | - | Narrowest track the board allows (neck-downs out of small pads). |
 | `min_connection_mm` | `Option<f64>` | unset | router.md | The board setup's minimum connection width (`rules.min_connection`) as a floor on every track width the router chooses: class widths, the narrow-signal width, neck-downs, stubs and spokes. Set from the project when KiCad's connection_width check reports at error severity, and at warning severity with `PCB_MIN_CONNECTION_FLOOR=warning` (`project_rules:: connection_width_floor`, `apply_width_floor`); `None`: no floor. |
@@ -273,6 +274,7 @@ One constraint of one rule of the project's `.kicad_dru`. Source: `KiCadCustomRu
 | `plane_via_cost` | `f64` | `2.0` | - | Via cost when connecting to a copper pour: a short stub and a via is the preferred connection, not a long track to another pad. |
 | `corridors` | `bool` | `true` | - | Plan every connection on a coarse tile graph first and search the lattice only inside that corridor (widening it on failure). |
 | `plane_cut_cost` | `f64` | `3.0` | `plane_cut_cost` | Cost factor for a trace step on a node covered by another net's pour, and for a via through one: cutting a plane is expensive. |
+| `pour_integrity` | `f64` | `0.0` | `pour_integrity` | Weight of what a cut severs (default 0: off; two-layer boards only; 1 on the fence lost the 46 mm board's completeness): a step or via on a node of another net's pour fill where the fill is a narrow corridor that joins its pieces pays `plane_cut_cost` times `1 + 20 * weight * severed`, `severed` being the share of the pour the corridor's cut would split off from its largest part (`Router::refresh_sever`, recomputed from the fill model before every batch). It also lets the pour of a net routed as tracks price the cut (its fill, as KiCad would pour it, is `covered`). |
 | `plane_skeleton` | `bool` | `false` | `plane_skeleton` | Route every pour net first as a tree on its best-covered layer and keep that tree fixed: the pour then only adds copper, and signal routing cannot strand a pad on an island. |
 | `skeleton_bias` | `f64` | `6.0` | `skeleton_bias` | Cost multiplier for skeleton steps off the plane layer. |
 | `via_reduction_rounds` | `usize` | `3` | `via_reduction_rounds` | After the board is complete, renegotiate the nets that have vias with the via cost multiplied by `via_reduction_factor`, this many times, keeping a round only if nothing opens and vias go down. |

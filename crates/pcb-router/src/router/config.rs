@@ -162,6 +162,17 @@ pub struct Config {
     /// Cost factor for a trace step on a node covered by another net's
     /// pour, and for a via through one: cutting a plane is expensive.
     pub plane_cut_cost: f64,
+    /// Weight of what a cut severs (default 0: off; two-layer boards
+    /// only; 1 on the fence lost the 46 mm board's completeness): a step
+    /// or via on a node of
+    /// another net's pour fill where the fill is a narrow corridor that
+    /// joins its pieces pays `plane_cut_cost` times `1 + 20 * weight *
+    /// severed`, `severed` being the share of the pour the corridor's
+    /// cut would split off from its largest part (`Router::refresh_sever`,
+    /// recomputed from the fill model before every batch). It also
+    /// lets the pour of a net routed as tracks price the cut (its
+    /// fill, as KiCad would pour it, is `covered`).
+    pub pour_integrity: f64,
     /// Route every pour net first as a tree on its best-covered layer and
     /// keep that tree fixed: the pour then only adds copper, and signal
     /// routing cannot strand a pad on an island.
@@ -325,6 +336,7 @@ impl Default for Config {
             negotiation_seconds: 900.0,
             negotiation_expansions: 0,
             plane_cut_cost: 3.0,
+            pour_integrity: 0.0,
             plane_skeleton: false,
             skeleton_bias: 6.0,
             heuristic_weight: 1.0,

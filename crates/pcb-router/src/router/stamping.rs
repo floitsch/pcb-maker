@@ -8,6 +8,7 @@ use super::*;
 
 impl Router {
     pub(super) fn unstamp(&mut self, net: NetId) {
+        self.copper_changes += 1;
         let state = &mut self.nets[net as usize];
         for (map, cell) in state.stamped.drain(..) {
             self.occupancy[map as usize][cell as usize] -= 1;
@@ -103,6 +104,7 @@ impl Router {
     }
 
     pub(super) fn stamp(&mut self, net: NetId) {
+        self.copper_changes += 1;
         // A full restamp: the new list is built first (marked, counts left
         // alone), then only the stamps that went or came change their
         // counts. The counts end as with the old list unstamped and the new

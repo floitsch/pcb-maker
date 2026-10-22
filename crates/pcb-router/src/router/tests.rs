@@ -4001,6 +4001,17 @@ fn a_build_counts_its_maps_tests_and_pour_masks() {
     for pour in &mut unpoured.planes {
         pour.connect = false;
     }
+    // Pours not connected are masked for their cut cost alone on two
+    // layers (as many tests: the same masks), and not at all without
+    // `pour_integrity` or on other layer counts.
+    if board.layer_count == 2 {
+        let integrity = Config {
+            pour_integrity: 1.0,
+            ..config.clone()
+        };
+        let covered = Router::new(&unpoured, &integrity).build_counts();
+        assert_eq!(covered, counts);
+    }
     let without = Router::new(&unpoured, &config).build_counts();
     assert_eq!(without.map_nodes, counts.map_nodes);
     assert!(without.tests < counts.tests && without.edges < counts.edges);
