@@ -45,31 +45,32 @@ insides; golden files in `tests/fixtures/golden`, rewritten under
 `PCB_UPDATE_GOLDEN=1`, a difference failing with its lines and the
 command that accepts it):
 
-| # | Test | On main (2094b6b) |
+| # | Test | On main (c127abb) |
 | --- | --- | --- |
 | 1 | no via in an SMD pad (the exposed pad excepted) and no two vias of one net closer than their drills plus hole_to_hole, on F1 routed in route mode; with `via_in_pad: true` TP2's via inside its pad | passes; fails with the lowering's no-via list emptied (TP2's GND via 0.62 mm into the pad) |
-| 2 | routers of F1 differing in via_in_pad, one no-via pad, the .kicad_dru's net rules, a keepout, the pitch, a class or hole_to_hole build their own static maps while F1's are held (build work equal to an unshared build), and a router of the held inputs shares them | passes: the key is complete for these; fails with `no_via_pads` out of `statics_key` (ded766d's rebase) |
+| 2 | the static maps' key (`static_maps_key`) of F1 differs for F1 with via_in_pad, one no-via pad fewer, without the .kicad_dru's net rules, with a keepout, another pitch, a class or hole_to_hole, and is the same for the same inputs (it compared build work until main's charging change made shared and unshared builds charge alike) | passes: the key is complete for these; fails with `no_via_pads` out of `statics_key` (ded766d's rebase) |
 | 3 | board-router.json's rules list against the golden (the pair rule applied, "Pad to Track" no_effect as a later rule takes its pairs, "Min. Spacing" no_effect), PA's routed copper 0.4 mm from PB's, and the pair rule at 3 mm leaving PA or PB open (F1's pair keeps 0.4 mm without the rule too) | passes; fails with `core_config` dropping `net_rules` |
 | 3b | the kept arc track: written back as it was, `kept_copper` one arc on +3V3 making one connection | passes |
 | 4 | F1's fingerprints at 1 and 4 threads equal, and equal to the golden ones | passes |
-| 5 | with kicad-cli: the router's open connections and KiCad's unconnected items agree on the routed F1 (none and none, or some and some), every dead pad among KiCad's unconnected items, their counts by net against the golden | passes: the router 2 open, KiCad 2 unconnected, both the net tie's pads; which two items KiCad names for an unconnected pair changes from run to run where several are as near (J2's stacked pads; a via or a track beside NT1.1), so the golden counts them by net |
-| 6 | with kicad-cli: the unrouted and the routed F1's DRC findings against the golden, the verdict's starved thermals KiCad's | passes: the unrouted F1 has 23 unconnected items, as the lowering's terminals have them (the stacked pair two items, the jumper group one, U2's pin 2 and tab two), no error (an isolated_copper warning for the hatched zone, library warnings); the routed F1 the net tie's 2, no error, no starved thermal |
-| 7 | the lowering of F1 against a golden table: obstacles by kind, every obstacle that is not a pad, the terminals of every net, the merged pads, the pads closed to vias, the planes | caught the net tie (below) |
+| 5 | with kicad-cli: the router's open connections and KiCad's unconnected items agree on the routed F1 (none and none, or some and some), every dead pad among KiCad's unconnected items, their counts by net against the golden | passes: the router 1 open, KiCad 1 unconnected (+3V3; before the net-tie fix 2 and 2, the net tie's pads); which two items KiCad names for an unconnected pair changes from run to run where several are as near (J2's stacked pads; a via or a track beside NT1.1), so the golden counts them by net |
+| 6 | with kicad-cli: the unrouted and the routed F1's DRC findings against the golden, the verdict's starved thermals KiCad's | passes: the unrouted F1 has 23 unconnected items, as the lowering's terminals have them (the stacked pair two items, the jumper group one, U2's pin 2 and tab two), no error (an isolated_copper warning for the hatched zone, library warnings); the routed F1 one +3V3 item, no error, no starved thermal |
+| 7 | the lowering of F1 against a golden table: obstacles by kind, every obstacle that is not a pad, the terminals of every net, the merged pads, the pads closed to vias, the planes | caught the net tie (below; fixed on main since) |
 | 8 | F2 through the binary with a fake kicad-cli clean from 22 mm: 18 mm infeasible (J1 would leave the outline), probes at 20 and 22, the confirmation at 22 mm with a third of the budget, 24 untried; the outline 22 mm, the band's footprints and the hatched zone moved by 3 mm, J1 not; the children at the parent's measured rates, pinned | passes |
 | 9 | F1 and F1 reversed placed one after the other, their boards compared as `parse_board` reads them back, with the wirelengths (ignored until fence-report-placer's fix of `SOURCE_ORDERS` lands) | passes when run; the placer's own order test alone fails 3 times in 3 (the review's prediction) |
 | 10 | a keepout over the fixed J1 written with footprints allowed and warned of first in next_actions; `add_pours` GND plane on B.Cu writes one rule area `plane GND B.Cu`, no track on B.Cu | passes with the placer config's `fixed`; with constraints.json's `fixed` not (below; an ignored test) |
 
 **Caught on main.**
 
-- **Net ties are not lowered as KiCad has them.** The net tie's copper
-  bridge is copper of no net to the lowering (as any footprint graphic),
-  so both its pads lie under another net's copper and are dead pads: F1
-  routes with 2 connections open whatever the budget (NT1.1 of GND,
-  NT1.2 of AGND, `diagnostics.dead_pads` near "NT1 copper fp_poly").
-  KiCad allows the bridge to touch the pads of its group's nets. The
-  golden lowering table and fingerprints hold this state: the fix will
-  show as their diff. KiCad 10.0.7 on the routed F1: the same two items
-  unconnected, and no finding about the bridge.
+- **Net ties were not lowered as KiCad has them** (at 20956b3): the net
+  tie's copper bridge was copper of no net, so both NT1 pads were dead
+  and F1 routed with 2 connections open whatever the budget (KiCad
+  10.0.7: the same two items unconnected, no finding about the bridge).
+  Fixed on main by the net-ties package; after the rebase on c127abb the
+  goldens changed as expected: the lowering's bridge is NT1's own (box
+  15.9..16.1 instead of 15.5..16.5), the dead pads are gone, the routed
+  F1 at 2 s leaves one +3V3 connection open (router 1, KiCad 1), and the
+  fingerprints changed (GND before stitching 5 pieces where it had 4
+  and 11).
 - **A keepout over a part fixed by constraints.json.** The keepout check
   (`HeldParts`) counts the placer config's `fixed` and `fixed_patterns`,
   locked and netless parts, not the constraints' own `fixed`: with

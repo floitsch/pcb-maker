@@ -1,5 +1,3 @@
-router open 2, KiCad unconnected 2
-dead pad NT1.1 of GND
-dead pad NT1.2 of AGND
-unconnected: 1 of net AGND
-unconnected: 1 of net GND
+router open 1, KiCad unconnected 1
+
+unconnected: 1 of net +3V3

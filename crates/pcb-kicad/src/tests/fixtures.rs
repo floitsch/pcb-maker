@@ -10,7 +10,7 @@
 
 use super::*;
 use crate::board_router::{core_config, lower};
-use pcb_router::router::{Router, hold_static_maps};
+use pcb_router::router::static_maps_key;
 
 /// The repository's `tests/fixtures`.
 fn fixtures() -> PathBuf {
@@ -77,28 +77,12 @@ fn golden(name: &str, actual: &str) {
     }
 }
 
-/// The work of building a router's maps, and of building them alone:
-/// equal when the router built its own static maps (none of the cache's
-/// fitted its inputs), smaller when it took another router's.
-fn build_work(board: &pcb_router::Board, config: &pcb_router::Config) -> (f64, f64) {
-    let shared = Router::new(board, config).build_work();
-    let alone = Router::new(
-        board,
-        &pcb_router::Config {
-            share_static_maps: false,
-            ..config.clone()
-        },
-    )
-    .build_work();
-    (shared, alone)
-}
-
 #[test]
 fn routers_of_other_inputs_do_not_share_static_maps() {
     // Review 2026-10-21, fixture test 2: the static maps are shared by a
     // key of what they are built from (`statics_key`); ded766d had to add
-    // `no_via_pads` to it. Routers of F1 that differ in one input hold
-    // their own maps, never those of the router held.
+    // `no_via_pads` to it. Routers of F1 that differ in one input have
+    // another key.
     let config = f1_config();
     assert!(
         config.net_rules.is_some(),
@@ -106,18 +90,19 @@ fn routers_of_other_inputs_do_not_share_static_maps() {
     );
     let base = f1_board(&config);
     let core = core_config(&config);
-    let (_held, built) = hold_static_maps(&base, &core);
-    // The cache works: a router of the same inputs takes the held maps.
-    let (shared, alone) = build_work(&base, &core);
-    assert!(
-        shared < alone - 1.0e-9,
-        "a router of the held inputs shares their maps ({shared} against {alone}, held {built})"
-    );
+    // The key of the static maps (`static_maps_key`, what the cache
+    // shares them by): the same for the same inputs, another for each
+    // input changed.
+    let key = |board: &pcb_router::Board, core: &pcb_router::Config| {
+        static_maps_key(board, core).expect("shared static maps")
+    };
+    let held = key(&base, &core);
+    assert_eq!(held, key(&f1_board(&config), &core_config(&config)));
     let differ = |what: &str, board: &pcb_router::Board, core: &pcb_router::Config| {
-        let (shared, alone) = build_work(board, core);
-        assert!(
-            (shared - alone).abs() < 1.0e-12,
-            "{what}: the router took the held maps of other inputs ({shared} against {alone} built alone)"
+        assert_ne!(
+            key(board, core),
+            held,
+            "{what}: the static maps' key is F1's, so the routers would share their maps"
         );
     };
     // Vias in pads allowed: no pad is closed to vias.

@@ -25,7 +25,7 @@ Hole J1.3 plated hole [11] net 14 clearance 0.0000 tracks true vias true box (2.
 Hole J1.4 plated hole [11] net DOUT clearance 0.0000 tracks true vias true box (2.000 12.120)-(3.000 13.120)
 Hole J1.5 plated hole [11] net PA clearance 0.0000 tracks true vias true box (2.000 14.660)-(3.000 15.660)
 Hole J1.6 plated hole [11] net PB clearance 0.0000 tracks true vias true box (2.000 17.200)-(3.000 18.200)
-Copper NT1 copper fp_poly [1.] net - clearance 0.2000 tracks true vias true box (15.500 18.875)-(16.500 19.125)
+Copper NT1 copper fp_poly [1.] net - clearance 0.2000 tracks true vias true box (15.900 18.875)-(16.100 19.135)
 Copper TP1.1 padstack [.1] net +5V clearance 0.0000 tracks true vias true box (13.100 21.600)-(14.900 23.400)
 Hole TP1.1 plated hole [11] net +5V clearance 0.0000 tracks true vias true box (13.600 22.100)-(14.400 22.900)
 Hole U1.17 plated hole [11] net GND clearance 0.0000 tracks true vias true box (19.400 11.400)-(19.700 11.700)
