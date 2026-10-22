@@ -142,7 +142,10 @@ impl Router {
         let own16 = crate::grid::owner16(net);
         let here = &self.statics[self.node_class(net, cell as u32)];
         let edge_block = here.edge_block[layer][cell];
-        if edge_block != 0 && here.edge_owner[layer][cell] != own16 && edge_block & (1 << direction) != 0 {
+        if edge_block != 0
+            && here.edge_owner[layer][cell] != own16
+            && edge_block & (1 << direction) != 0
+        {
             return None;
         }
         let class = self.node_class(net, target as u32);
@@ -322,7 +325,10 @@ impl Router {
         } else {
             Vec::new()
         };
-        let pour_bounds: Vec<_> = pour_nets.iter().map(|net| self.plane_bounds(*net)).collect();
+        let pour_bounds: Vec<_> = pour_nets
+            .iter()
+            .map(|net| self.plane_bounds(*net))
+            .collect();
         let pour_reach = {
             let widest = self
                 .board
@@ -336,7 +342,11 @@ impl Router {
         let mut checks = 0u64;
         for &net in order {
             let state = &self.nets[net as usize];
-            if !state.routable || !state.complete || !state.plane.is_empty() || state.branches.len() <= state.fixed {
+            if !state.routable
+                || !state.complete
+                || !state.plane.is_empty()
+                || state.branches.len() <= state.fixed
+            {
                 continue;
             }
             let fixed: HashSet<Node> = state
@@ -344,7 +354,11 @@ impl Router {
                 .iter()
                 .filter(|branch| !branch.nodes.is_empty())
                 .flat_map(|branch| [branch.nodes[0], *branch.nodes.last().unwrap()])
-                .chain(state.branches[..state.fixed].iter().flat_map(|branch| branch.nodes.iter().copied()))
+                .chain(
+                    state.branches[..state.fixed]
+                        .iter()
+                        .flat_map(|branch| branch.nodes.iter().copied()),
+                )
                 .collect();
             let taken: HashSet<Node> = state
                 .branches
@@ -361,7 +375,9 @@ impl Router {
                 let mut nodes = Vec::with_capacity(branch.nodes.len());
                 let mut start = 0;
                 for index in 1..=branch.nodes.len() {
-                    if index < branch.nodes.len() && branch.nodes[index].layer == branch.nodes[start].layer {
+                    if index < branch.nodes.len()
+                        && branch.nodes[index].layer == branch.nodes[start].layer
+                    {
                         continue;
                     }
                     let run = &branch.nodes[start..index];
@@ -383,8 +399,14 @@ impl Router {
                 self.stamp(net);
                 continue;
             }
-            let before = saved[first..].iter().map(|b| self.branch_bends(b)).fold((0, 0), |s, b| (s.0 + b.0, s.1 + b.1));
-            let after = branches[first..].iter().map(|b| self.branch_bends(b)).fold((0, 0), |s, b| (s.0 + b.0, s.1 + b.1));
+            let before = saved[first..]
+                .iter()
+                .map(|b| self.branch_bends(b))
+                .fold((0, 0), |s, b| (s.0 + b.0, s.1 + b.1));
+            let after = branches[first..]
+                .iter()
+                .map(|b| self.branch_bends(b))
+                .fold((0, 0), |s, b| (s.0 + b.0, s.1 + b.1));
             self.nets[net as usize].branches = branches;
             self.stamp(net);
             if let Some(stranded) = pour_stranded.as_mut() {

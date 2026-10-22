@@ -1213,10 +1213,8 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
             .iter()
             .enumerate()
             .flat_map(|(index, part)| {
-                part.pads
-                    .iter()
-                    .filter(|pad| pad.copper)
-                    .map(move |pad| crate::aesthetics::AestheticPad {
+                part.pads.iter().filter(|pad| pad.copper).map(move |pad| {
+                    crate::aesthetics::AestheticPad {
                         center: pad.center,
                         half: pad.half,
                         net: pad.net.clone(),
@@ -1224,7 +1222,8 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
                             .smd
                             .then(|| if part.back { "B.Cu" } else { "F.Cu" }.to_string()),
                         part: index,
-                    })
+                    }
+                })
             })
             .collect::<Vec<_>>(),
     );

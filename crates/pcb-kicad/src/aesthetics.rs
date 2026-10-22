@@ -240,13 +240,10 @@ pub(crate) fn aesthetics(
             let at = key(point);
             ends.get(&at).map_or(0, Vec::len) != 2
                 || via_keys.contains(&at)
-                || pad_buckets
-                    .query(point, point)
-                    .into_iter()
-                    .any(|index| {
-                        let pad = &pads[index];
-                        pad.net.as_deref() == Some(net) && on_layer(pad, layer) && inside(pad, point)
-                    })
+                || pad_buckets.query(point, point).into_iter().any(|index| {
+                    let pad = &pads[index];
+                    pad.net.as_deref() == Some(net) && on_layer(pad, layer) && inside(pad, point)
+                })
         };
         let mut used = vec![false; pieces.len()];
         let walk = |first: usize, reversed: bool, used: &mut Vec<bool>| -> Vec<[f64; 2]> {
