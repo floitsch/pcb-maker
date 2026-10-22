@@ -410,7 +410,6 @@ works and how much code it is: diff pairs with polarity, length and time
 matching, impedance widths, BGA and QFN fanout, placement optimisation,
 its own checkers with KiCad as the oracle, and the AI tab and skills.
 
-## Committed on 2026-10-22 (strict rule: pre-bridged mask openings)
 ## Committed on 2026-10-21 (robustness against hostile boards)
 
 The findings of the review of the readers against hostile or odd input
