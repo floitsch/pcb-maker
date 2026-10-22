@@ -256,7 +256,6 @@ impl Router {
                 costs
             })
             .collect();
-        let states = cells * layers;
         let tiles_x = grid.nx.div_ceil(TILE);
         let tiles_y = grid.ny.div_ceil(TILE);
         let mut tile_routable = vec![vec![0u32; tiles_x * tiles_y]; board.classes.len() * layers];
@@ -264,7 +263,7 @@ impl Router {
             for layer in 0..layers {
                 let counts = &mut tile_routable[class * layers + layer];
                 for (cell, value) in statics[class].trace[layer].iter().enumerate() {
-                    if *value != crate::grid::BLOCKED {
+                    if *value != crate::grid::BLOCKED16 {
                         counts[(cell / grid.nx / TILE) * tiles_x + (cell % grid.nx) / TILE] += 1;
                     }
                 }
@@ -294,6 +293,7 @@ impl Router {
             via_cover: Vec::new(),
             covered: vec![Vec::new(); layers],
             hot: Vec::new(),
+            hot_pours: Vec::new(),
             tile_covered: vec![vec![0.0; tiles_x * tiles_y]; layers],
             layer_cut: vec![1.0; layers],
             sever: vec![Vec::new(); layers],
@@ -315,7 +315,8 @@ impl Router {
                 })
                 .collect(),
             layer_bias: Vec::new(),
-            scratch: Scratch::new(states, cells),
+            scratch: Scratch::default(),
+            spare_scratches: SpareScratches::default(),
             profile: Profile::default(),
             in_via_reduction: false,
             in_probe: false,
@@ -494,7 +495,7 @@ impl Router {
             .iter()
             .map(|state| bytes(&state.plane) + bytes(&state.plane_target))
             .sum();
-        let scratch = self.scratch.bytes();
+        let scratch = Scratch::bytes_for(cells * self.board.layer_count, cells);
         let tiles = bytes(&self.tile_claimed)
             + bytes(&self.tile_routable)
             + bytes(&self.tile_history)
@@ -532,36 +533,114 @@ impl Router {
             mb(pour),
             mb(planes),
             mb(scratch),
-            mb(self.scratch.bytes()),
+            mb(scratch),
             mb(tiles),
         )
     }
 
     /// Packs the static map, the guard, the pour cover and the history
-    /// per class and layer (see `hot`); after any of them changed.
+    /// per class and layer (see `hot`); after any of them changed. In
+    /// place where the records exist: a second set beside the first was
+    /// the peak of big boards (katia: 1.1 GB more while the lost-spokes
+    /// step set and restored its guards).
     pub(super) fn build_hot(&mut self) {
         let layers = self.board.layer_count;
         let cells = self.grid.cells();
-        self.hot = (0..self.statics.len() * layers)
-            .map(|index| {
-                let (class, layer) = (index / layers, index % layers);
+        let mut hot = std::mem::take(&mut self.hot);
+        hot.resize_with(self.statics.len() * layers, Vec::new);
+        let mut pours: Vec<(u16, u16)> = vec![(0, 0)];
+        let mut pour_index: FastMap<(u16, u16), u16> = FastMap::default();
+        let mut pour_of = vec![0u16; cells];
+        for layer in 0..layers {
+            // The pair index per node, the same for every class (runs of
+            // one pair are the rule: one lookup a run).
+            let guard = &self.guard[layer];
+            let covered = &self.covered[layer];
+            let mut last = ((0u16, 0u16), 0u16);
+            for (cell, pour) in pour_of.iter_mut().enumerate() {
+                let pair = (
+                    guard.get(cell).map_or(0, |&value| value as u16),
+                    covered.get(cell).map_or(0, |&value| value as u16),
+                );
+                *pour = if pair == (0, 0) {
+                    0
+                } else if pair == last.0 {
+                    last.1
+                } else {
+                    let index = *pour_index.entry(pair).or_insert_with(|| {
+                        if pours.len() < HOT_POURS_MAPS as usize {
+                            pours.push(pair);
+                            (pours.len() - 1) as u16
+                        } else {
+                            HOT_POURS_MAPS
+                        }
+                    });
+                    last = (pair, index);
+                    index
+                };
+            }
+            let history = &self.history[layer];
+            for class in 0..self.statics.len() {
+                let records = &mut hot[class * layers + layer];
                 if !self.searched[class] {
-                    return Vec::new();
+                    *records = Vec::new();
+                    continue;
+                }
+                if records.len() != cells {
+                    *records = vec![Hot::default(); cells];
                 }
                 let trace = &self.statics[class].trace[layer];
-                let guard = &self.guard[layer];
-                let covered = &self.covered[layer];
-                let history = &self.history[layer];
-                (0..cells)
-                    .map(|cell| Hot {
-                        trace: trace[cell],
-                        guard: guard.get(cell).map_or(0, |&value| value as u16),
-                        covered: covered.get(cell).map_or(0, |&value| value as u16),
+                for (cell, record) in records.iter_mut().enumerate() {
+                    *record = Hot {
                         history: history[cell],
-                    })
-                    .collect()
-            })
-            .collect();
+                        trace: trace[cell],
+                        pour: pour_of[cell],
+                    };
+                }
+            }
+        }
+        self.hot = hot;
+        self.hot_pours = pours;
+    }
+
+    /// The (guard, cover) pair of a `Hot::pour` other than 0, at `cell` of
+    /// `layer`.
+    #[inline(always)]
+    pub(super) fn hot_pour(&self, pour: u16, layer: usize, cell: usize) -> (u16, u16) {
+        if pour == HOT_POURS_MAPS {
+            (
+                self.guard[layer].get(cell).map_or(0, |&value| value as u16),
+                self.covered[layer]
+                    .get(cell)
+                    .map_or(0, |&value| value as u16),
+            )
+        } else {
+            self.hot_pours[pour as usize]
+        }
+    }
+
+    /// The scratches for a parallel batch's jobs: this router's own
+    /// (first) and its spares (`ScratchPool`), given back by
+    /// `return_scratches`.
+    pub(super) fn lend_scratches(&mut self) -> ScratchPool {
+        let mut scratches = std::mem::take(&mut self.spare_scratches.0);
+        if !self.scratch.nodes.is_empty() {
+            scratches.push(self.scratch.take_arrays());
+        }
+        ScratchPool(std::sync::Mutex::new(scratches))
+    }
+
+    /// Takes back the scratches of `lend_scratches`: one as this router's
+    /// own, the rest as spares.
+    pub(super) fn return_scratches(&mut self, pool: ScratchPool) {
+        let mut scratches = pool
+            .0
+            .into_inner()
+            .unwrap_or_else(|poison| poison.into_inner());
+        if let Some(own) = scratches.pop() {
+            self.scratch.restore_arrays(own);
+        }
+        self.spare_scratches.0 = scratches;
     }
 
     /// The neck width of `class`: the board's, or the floor of the class's

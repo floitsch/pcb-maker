@@ -106,13 +106,12 @@ impl Router {
                 if batch.len() == 1 {
                     self.route_net_seq(batch[0], 0.0, true, 1.0);
                 } else {
-                    let states = self.grid.cells() * self.board.layer_count;
-                    let cells = self.grid.cells();
+                    let pool = self.lend_scratches();
                     let this: &Self = self;
                     let routed: Vec<(NetState, bool, u64)> = batch
                         .par_iter()
                         .map(|net| {
-                            with_thread_scratch(states, cells, |scratch| {
+                            pool.with(|scratch| {
                                 let mut net_state = this.nets[*net as usize].clone();
                                 if !net_state.stamped.is_empty() {
                                     this.mask_own(scratch, *net, &net_state);
@@ -140,6 +139,7 @@ impl Router {
                             })
                         })
                         .collect();
+                    self.return_scratches(pool);
                     for (index, (net_state, within, expansions)) in routed.into_iter().enumerate() {
                         self.nets[batch[index] as usize] = net_state;
                         inside[index] = within;

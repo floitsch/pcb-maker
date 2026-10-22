@@ -11,7 +11,6 @@
 //! conflicts remain. Pads, keepouts and the outline are never negotiable.
 
 use rayon::prelude::*;
-use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -743,17 +742,24 @@ fn diagonal_block(radius: f64, pitch: f64) -> [Vec<(i32, i32)>; 2] {
 }
 
 /// What a search step reads of a node on one layer for one rule class
-/// (see `Router::hot`). Twelve bytes: the guard and the cover name a net
-/// in 16 bits (`Router::new` checks the board has few enough nets).
+/// (see `Router::hot`). Eight bytes (twelve until 2026-10-22): the static
+/// map names a net in 16 bits (`StaticMaps::trace`), and the guard and
+/// the pour cover, which few nodes have and few combinations of nets
+/// make, are an index into `Router::hot_pours`.
 #[derive(Clone, Copy, Default)]
 struct Hot {
-    trace: u32,
     history: f32,
-    /// `guard` (an `owner`).
-    guard: u16,
-    /// `covered` (an `owner`).
-    covered: u16,
+    /// `StaticMaps::trace`: `FREE16`, `BLOCKED16` or an `owner16`.
+    trace: u16,
+    /// 0 where neither `guard` nor `covered` holds a net; else the index
+    /// of the pair (guard, cover) in `Router::hot_pours`, or `HOT_POURS_MAPS`
+    /// where the table is full and the per-layer maps are to be read.
+    pour: u16,
 }
+
+/// `Hot::pour` where the pair is read from `Router::guard` and
+/// `Router::covered` (a table of more pairs than 16 bits index).
+const HOT_POURS_MAPS: u16 = u16::MAX;
 
 /// `Router::via_cover` where the per-layer maps must be read.
 const VIA_COVER_MIXED: u32 = u32::MAX;
@@ -822,32 +828,6 @@ pub struct Scratch {
 }
 
 impl Scratch {
-    fn new(states: usize, cells: usize) -> Self {
-        Self {
-            nodes: vec![SearchNode::default(); states],
-            targets: StateMap::default(),
-            tree: StateMap::default(),
-            own_via_near: vec![0; cells],
-            heap: KeyHeap::default(),
-            own_mark: Vec::new(),
-            own_claimed: Vec::new(),
-            own_set: Vec::new(),
-            own_active: false,
-            generation: 0,
-            corridor: None,
-            expansions: 0,
-            searches: 0,
-            open_searches: 0,
-            open_expansions: 0,
-            failed_searches: 0,
-            pour_units: std::sync::atomic::AtomicU64::new(0),
-            pour_nanos: std::sync::atomic::AtomicU64::new(0),
-            probe_ops: std::sync::atomic::AtomicU64::new(0),
-            probe_queries: std::sync::atomic::AtomicU64::new(0),
-            probe_vertices: std::sync::atomic::AtomicU64::new(0),
-        }
-    }
-
     fn counters(&self) -> [u64; 5] {
         [
             self.searches,
@@ -858,20 +838,58 @@ impl Scratch {
         ]
     }
 
-    /// Bytes held by the per-node arrays.
-    fn bytes(&self) -> usize {
-        self.nodes.capacity() * std::mem::size_of::<SearchNode>()
-            + (self.targets.capacity() + self.tree.capacity()) * 7
-            + self.own_via_near.capacity() * 2
-            + self.own_mark.capacity() * 8
-            + self
-                .corridor
-                .as_ref()
-                .map_or(0, |corridor| corridor.capacity())
-    }
-
     fn fits(&self, states: usize, cells: usize) -> bool {
         self.nodes.len() == states && self.own_via_near.len() == cells
+    }
+
+    /// What the per-node arrays of a lattice of `states` take once a
+    /// search allocated them (`ensure`): a router allocates its scratch on
+    /// its first search, and one that never searches (the pour measure of
+    /// a finished board) none.
+    fn bytes_for(states: usize, cells: usize) -> usize {
+        states * std::mem::size_of::<SearchNode>() + cells * 2
+    }
+
+    /// Moves the search state (the arrays and the generation their marks
+    /// belong to) out, for a parallel batch to lend (`ScratchPool`); the
+    /// counters stay.
+    fn take_arrays(&mut self) -> Scratch {
+        let counters = self.clone();
+        std::mem::replace(self, counters)
+    }
+
+    /// Takes the search state of `arrays` (see `take_arrays`), keeping
+    /// this scratch's counters.
+    fn restore_arrays(&mut self, arrays: Scratch) {
+        let counters = std::mem::replace(self, arrays);
+        let Scratch {
+            nodes,
+            targets,
+            tree,
+            own_via_near,
+            heap,
+            own_mark,
+            own_set,
+            own_claimed,
+            own_active,
+            generation,
+            corridor,
+            ..
+        } = std::mem::take(self);
+        *self = Scratch {
+            nodes,
+            targets,
+            tree,
+            own_via_near,
+            heap,
+            own_mark,
+            own_set,
+            own_claimed,
+            own_active,
+            generation,
+            corridor,
+            ..counters.clone()
+        };
     }
 
     /// Allocates the arrays for a lattice of `states` (a copy has none).
@@ -935,22 +953,42 @@ fn searched_classes(board: &Board, neck_of: &[Option<usize>]) -> Vec<bool> {
     searched
 }
 
-thread_local! {
-    static THREAD_SCRATCH: RefCell<Option<Scratch>> = const { RefCell::new(None) };
+/// The search scratches the jobs of a parallel batch take and give back
+/// (`Router::lend_scratches`): the router's own and its spares, one a
+/// thread at most. Until 2026-10-22 every pool thread kept a scratch of
+/// its own in a thread local, beside the router's and after the router
+/// was gone (one thread: two scratches of the board's size, katia 143 MB
+/// each, jiran-ble-lite at 0.05 mm 343).
+struct ScratchPool(std::sync::Mutex<Vec<Scratch>>);
+
+impl ScratchPool {
+    /// Runs `body` with a scratch of the pool (a new one when every
+    /// scratch is in use; `route_net` allocates its arrays).
+    fn with<T>(&self, body: impl FnOnce(&mut Scratch) -> T) -> T {
+        let mut scratch = self
+            .0
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .pop()
+            .unwrap_or_default();
+        let value = body(&mut scratch);
+        self.0
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .push(scratch);
+        value
+    }
 }
 
-/// Runs `body` with this thread's scratch, allocated once per board size.
-fn with_thread_scratch<T>(states: usize, cells: usize, body: impl FnOnce(&mut Scratch) -> T) -> T {
-    THREAD_SCRATCH.with(|slot| {
-        let mut slot = slot.borrow_mut();
-        if !slot
-            .as_ref()
-            .is_some_and(|scratch| scratch.fits(states, cells))
-        {
-            *slot = Some(Scratch::new(states, cells));
-        }
-        body(slot.as_mut().unwrap())
-    })
+/// A router's spare search scratches, kept between its parallel batches
+/// (`ScratchPool`). A copy of the router has none.
+#[derive(Default)]
+struct SpareScratches(Vec<Scratch>);
+
+impl Clone for SpareScratches {
+    fn clone(&self) -> Self {
+        Self::default()
+    }
 }
 
 /// Called with the iteration and a snapshot after each negotiation
@@ -1045,6 +1083,9 @@ pub struct Router {
     /// 0.65M expansions a second against 3M on a small one); one cache
     /// line per neighbour instead of four. Kept in step with `history`.
     hot: Vec<Vec<Hot>>,
+    /// The (guard, cover) pairs `Hot::pour` indexes, as `owner`s in 16
+    /// bits; entry 0 is (0, 0).
+    hot_pours: Vec<(u16, u16)>,
     /// Per layer and tile: share of the tile under some pour.
     tile_covered: Vec<Vec<f32>>,
     /// Per layer: cost factor for cutting a pour there. Relative to the
@@ -1083,6 +1124,8 @@ pub struct Router {
     layer_bias: Vec<f32>,
 
     scratch: Scratch,
+    /// The scratches beyond `scratch` that parallel batches used.
+    spare_scratches: SpareScratches,
     profile: Profile,
     /// While the via reduction runs (its negotiations are its own phase).
     in_via_reduction: bool,

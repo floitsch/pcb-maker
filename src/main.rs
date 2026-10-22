@@ -19,6 +19,8 @@ static PANIC: std::sync::Mutex<Option<(String, String)>> = std::sync::Mutex::new
 const VERSION: &str = concat!(env!("BUILD_COMMIT"), " ", env!("BUILD_DATE"));
 
 fn main() -> ExitCode {
+    // Large blocks go back to the system when freed (a router's maps).
+    pcb_kicad::configure_allocator();
     // A panic is reported as one line (and in the run's report) by `main`;
     // RUST_BACKTRACE keeps the default report with its backtrace too.
     let default_hook = std::panic::take_hook();

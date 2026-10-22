@@ -23,6 +23,18 @@ pub fn owner(net: NetId) -> u32 {
 /// only name a net in rare places (the edge and via owners): half the
 /// bytes of a lattice-sized map. Boards have far fewer nets.
 pub const BLOCKED16: u16 = u16::MAX;
+pub const FREE16: u16 = 0;
+
+/// A 16-bit map value (`FREE16`, `BLOCKED16`, `owner16`) as the 32-bit
+/// one (`FREE`, `BLOCKED`, `owner`).
+#[inline(always)]
+pub fn widen16(value: u16) -> u32 {
+    if value == BLOCKED16 {
+        BLOCKED
+    } else {
+        value as u32
+    }
+}
 
 /// The most nets the router's maps name: the 16-bit maps (`owner16`, the
 /// search's `Hot` guard and cover, the via cover's low half) hold
@@ -509,8 +521,12 @@ impl Grid {
 /// model) has no `via_owner` and `free_layers`, which only a search reads.
 #[derive(Clone, Debug)]
 pub struct StaticMaps {
-    /// Per layer and node: `FREE`, `BLOCKED`, or the only net allowed there.
-    pub trace: Vec<Vec<u32>>,
+    /// Per layer and node: `FREE16`, `BLOCKED16`, or the only net allowed
+    /// there (`owner16`); `trace_at` reads it as `FREE`, `BLOCKED` or an
+    /// `owner`. 16 bits since 2026-10-22 (the boards' nets fit,
+    /// `MAX_NETS`): the largest static map, two bytes a node, layer and
+    /// class less.
+    pub trace: Vec<Vec<u16>>,
     /// Per layer and node: directions whose unit step passes too close to an
     /// obstacle although both end nodes are legal.
     pub edge_block: Vec<Vec<u8>>,
@@ -662,9 +678,9 @@ impl StaticMaps {
             }
         }
 
-        let mut base_trace: Vec<u32> = inside
+        let mut base_trace: Vec<u16> = inside
             .iter()
-            .map(|inside| if *inside { FREE } else { BLOCKED })
+            .map(|inside| if *inside { FREE16 } else { BLOCKED16 })
             .collect();
         let mut via_blocked: Vec<bool> = inside.iter().map(|inside| !inside).collect();
         let mut via_owner: Vec<u16> = if searched { vec![0; cells] } else { Vec::new() };
@@ -691,7 +707,7 @@ impl StaticMaps {
                     let distance = crate::geometry::point_segment_distance(grid.center(x, y), a, b);
                     let index = grid.index(x, y);
                     if distance < trace_edge + edge_margin {
-                        base_trace[index] = BLOCKED;
+                        base_trace[index] = BLOCKED16;
                     }
                     if distance < via_edge {
                         via_blocked[index] = true;
@@ -703,7 +719,7 @@ impl StaticMaps {
         // A pad may straddle the outline (card-edge fingers, connector
         // shells) but a track centreline on it still keeps the edge
         // clearance: pad cells inside the edge zone stay blocked.
-        let edge_zone: Vec<bool> = base_trace.iter().map(|value| *value == BLOCKED).collect();
+        let edge_zone: Vec<bool> = base_trace.iter().map(|value| *value == BLOCKED16).collect();
         let mut trace = vec![base_trace; board.layer_count];
         let mut edge_block = vec![vec![0u8; cells]; board.layer_count];
         let mut edge_owner = vec![vec![0u16; cells]; board.layer_count];
@@ -983,10 +999,14 @@ impl StaticMaps {
                                         Some(reach) if distance < reach => {
                                             fill.claim(layer, index, obstacle.net)
                                         }
-                                        _ => fill.remember(layer, index, trace[layer][index]),
+                                        _ => fill.remember(
+                                            layer,
+                                            index,
+                                            widen16(trace[layer][index]),
+                                        ),
                                     }
                                 }
-                                claim(&mut trace[layer][index], obstacle.net);
+                                claim16(&mut trace[layer][index], obstacle.net);
                             }
                         } else if distance < trace_reach + margin {
                             tight += 1;
@@ -1010,7 +1030,7 @@ impl StaticMaps {
         if let Some(fill) = &mut fill_trace {
             let values = std::mem::take(&mut fill.values);
             for ((layer, index), value) in values {
-                if trace[layer as usize][index as usize] == value {
+                if widen16(trace[layer as usize][index as usize]) == value {
                     fill.differs[layer as usize][index as usize / 64] &= !(1 << (index % 64));
                 } else {
                     fill.values.insert((layer, index), value);
@@ -1027,7 +1047,7 @@ impl StaticMaps {
         if searched {
             for (layer, map) in trace.iter().enumerate() {
                 for (cell, value) in map.iter().enumerate() {
-                    if *value == FREE {
+                    if *value == FREE16 {
                         free_layers[cell] |= 1 << layer;
                     }
                 }
@@ -1055,7 +1075,13 @@ impl StaticMaps {
     /// Whether `net` may have a trace centreline on this node.
     pub fn trace_allowed(&self, layer: usize, index: usize, net: NetId) -> bool {
         let value = self.trace[layer][index];
-        value == FREE || value == owner(net)
+        value == FREE16 || value == owner16(net)
+    }
+
+    /// `trace` at a node as `FREE`, `BLOCKED` or an `owner`.
+    #[inline(always)]
+    pub fn trace_at(&self, layer: usize, index: usize) -> u32 {
+        widen16(self.trace[layer][index])
     }
 
     /// Whether a pour of `net` fills this node (mask openings do not stop
@@ -1065,7 +1091,7 @@ impl StaticMaps {
             .fill_trace
             .as_ref()
             .and_then(|fill| fill.get(layer, index))
-            .unwrap_or(self.trace[layer][index]);
+            .unwrap_or_else(|| self.trace_at(layer, index));
         value == FREE || value == owner(net)
     }
 

@@ -70,13 +70,12 @@ impl Router {
             // The nets of a batch do not overlap: routing them against
             // the same occupancy is the same as routing them in turn.
             let parallel_started = std::time::Instant::now();
-            let states = self.grid.cells() * self.board.layer_count;
-            let cells = self.grid.cells();
+            let pool = self.lend_scratches();
             let this: &Self = self;
             let routed: Vec<(NetId, NetState, [u64; 5], f64)> = batch
                 .par_iter()
                 .map(|net| {
-                    with_thread_scratch(states, cells, |scratch| {
+                    pool.with(|scratch| {
                         let net_started = std::time::Instant::now();
                         let before = scratch.counters();
                         let mut net_state = this.nets[*net as usize].clone();
@@ -94,6 +93,7 @@ impl Router {
                     })
                 })
                 .collect();
+            self.return_scratches(pool);
             self.profile.parallel_batches += 1;
             self.profile.parallel_nets += batch.len() as u64;
             self.profile.parallel_seconds += parallel_started.elapsed().as_secs_f64();

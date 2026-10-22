@@ -52,7 +52,7 @@ impl Router {
                 for x in x0..=x1 {
                     let cell = self.grid.index(x, y);
                     let class = self.board.nets[nets[0] as usize].class;
-                    let allowed = self.statics[class].trace[layer][cell];
+                    let allowed = self.statics[class].trace_at(layer, cell);
                     let occupancy = self.occupancy[self.map_index(class, layer)][cell];
                     line.push(if own_nodes.contains(&(layer, cell as u32)) {
                         '*'

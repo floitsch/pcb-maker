@@ -257,6 +257,7 @@ impl Router {
         let statics = std::mem::take(&mut self.statics);
         let scratch = std::mem::take(&mut self.scratch);
         let stamp_mark = std::mem::take(&mut self.stamp_mark);
+        let spare_scratches = std::mem::take(&mut self.spare_scratches);
         // The time spent stays spent.
         let profile = std::mem::take(&mut self.profile);
         let (search_seconds, stamp_seconds) = (self.search_seconds, self.stamp_seconds);
@@ -266,6 +267,7 @@ impl Router {
         self.statics = statics;
         self.scratch = scratch;
         self.stamp_mark = stamp_mark;
+        self.spare_scratches = spare_scratches;
         self.build_hot();
     }
 }

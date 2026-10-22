@@ -130,6 +130,13 @@ pub use board_router::{
 };
 pub use project_rules::{resolve_project_rules, router_config_over_project};
 
+/// Sets the allocator up for the router's large maps (glibc: blocks of a
+/// MiB or more are unmapped when freed; `board_router::configure_malloc`).
+/// Call once, first thing in `main`.
+pub fn configure_allocator() {
+    board_router::configure_malloc();
+}
+
 // Split out of lib.rs on 2026-10-21.
 mod kicad_sexpr;
 use kicad_sexpr::*;

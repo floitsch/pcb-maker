@@ -26,7 +26,7 @@ impl Router {
             .map(|layer| {
                 self.statics[reference].trace[layer]
                     .iter()
-                    .map(|&value| value == crate::grid::FREE)
+                    .map(|&value| value == crate::grid::FREE16)
                     .collect()
             })
             .collect();

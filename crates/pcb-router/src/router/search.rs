@@ -350,7 +350,7 @@ impl Router {
                         } else {
                             layer_hot[target_cell]
                         };
-                        if hot.trace != crate::grid::FREE && hot.trace != own {
+                        if hot.trace != crate::grid::FREE16 && hot.trace as u32 != own {
                             break 'step;
                         }
                         let map = target_class * (layers + 1) + layer;
@@ -380,14 +380,17 @@ impl Router {
                         let history = if cleanup { 0.0 } else { hot.history };
                         let mut step =
                             layer_costs[direction] * (1.0 + history) * (1.0 + present * occupied);
-                        if hot.guard != 0 && hot.guard as u32 != own {
-                            step *= thermal_guard_cost;
-                        }
-                        if hot.covered != 0 && hot.covered as u32 != own {
-                            if self.exclusive[layer] {
-                                break 'step;
+                        if hot.pour != 0 {
+                            let (guard, covered) = self.hot_pour(hot.pour, layer, target_cell);
+                            if guard != 0 && guard as u32 != own {
+                                step *= thermal_guard_cost;
                             }
-                            step *= self.layer_cut[layer] * self.sever_factor(layer, target_cell);
+                            if covered != 0 && covered as u32 != own {
+                                if self.exclusive[layer] {
+                                    break 'step;
+                                }
+                                step *= self.layer_cut[layer] * self.sever_factor(layer, target_cell);
+                            }
                         }
                         step *= layer_factor;
                         if (arrived as usize) < 8 {
@@ -487,7 +490,7 @@ impl Router {
                     let target_layer = others.trailing_zeros() as usize;
                     others &= others - 1;
                     if free_layers & (1 << target_layer) == 0 {
-                        let allowed = cell_statics.trace[target_layer][cell];
+                        let allowed = cell_statics.trace_at(target_layer, cell);
                         if allowed != crate::grid::FREE && allowed != own {
                             continue;
                         }

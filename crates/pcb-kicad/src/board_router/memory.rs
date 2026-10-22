@@ -42,6 +42,26 @@ pub(crate) const MEMORY_SAFETY: f64 = 1.25;
 /// take: other work on the machine grows too.
 pub(crate) const AVAILABLE_SHARE: f64 = 0.5;
 
+/// The allocation size from which glibc's malloc maps memory of its own
+/// (`configure_allocator`).
+pub(crate) const MMAP_THRESHOLD_BYTES: usize = 1 << 20;
+
+/// Sets glibc's malloc to map every allocation of `MMAP_THRESHOLD_BYTES`
+/// or more on its own and to unmap it when freed (M_MMAP_THRESHOLD, which
+/// also ends the threshold's growth). By default the threshold grows to the
+/// size of the largest mapped block freed (up to 32 MB), and the lattice
+/// maps (a few MB a layer) then came from the heap and stayed resident
+/// after their router was gone: katia's process held 1.75 GB with no
+/// router after its first attempt (0.24 GB now), its peak 3.9 GB for 3.0
+/// GB in use (2.98 GB now), the search's time the same (2026-10-22). Once,
+/// before any allocation of that size; elsewhere nothing.
+pub(crate) fn configure_malloc() {
+    #[cfg(all(target_os = "linux", target_env = "gnu"))]
+    unsafe {
+        libc::mallopt(libc::M_MMAP_THRESHOLD, MMAP_THRESHOLD_BYTES as libc::c_int);
+    }
+}
+
 /// The process's resident size now, in megabytes (Linux; elsewhere 0).
 pub(crate) fn resident_mb() -> f64 {
     status_field("VmRSS:").unwrap_or(0.0)

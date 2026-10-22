@@ -69,7 +69,7 @@ impl Router {
         for class in 0..self.board.classes.len() {
             for layer in 0..layers {
                 for (cell, value) in self.statics[class].trace[layer].iter().enumerate() {
-                    if *value != crate::grid::BLOCKED {
+                    if *value != crate::grid::BLOCKED16 {
                         self.tile_routable[class * layers + layer][(cell / self.grid.nx / TILE)
                             * self.tiles_x
                             + (cell % self.grid.nx) / TILE] += 1;
