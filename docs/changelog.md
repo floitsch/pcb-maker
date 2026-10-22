@@ -1431,10 +1431,10 @@ net is the net's now in either pad order), the same counts. x1511
 and eternal-keypad's placements through the jumper nets (MIDAS 7 to 11
 unconnected), hence the fix above.
 
-**Checks.** Unit tests above; `cargo test` of the three crates, the CLI
-tests; the clippy gate. `a_placement_does_not_depend_on_the_order_of_the_file`
-fails at this branch's first commits as on main (load-dependent: it
-passed in one full run).
+**Checks.** `bash scripts/check.sh` passed at the commit; the clippy
+gate. `a_placement_does_not_depend_on_the_order_of_the_file` failed in
+some runs before the rebase, on the branch's first commits as on main
+(load-dependent), and passed in check.sh.
 
 **Not done.** Findings 6 (the redundant terminal scan in
 `copper_components`) and 9 (the per-opening obstacle scans,
