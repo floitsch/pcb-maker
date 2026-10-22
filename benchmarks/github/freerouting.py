@@ -227,9 +227,19 @@ def reference_findings(name, board_id, directory, work, binary=None):
     return findings, len(report.get("unconnected_items", []))
 
 
-def freeroute(cold, board_id, work, config, timeout, java_heap=None, slot=None, before=None, binary=None):
+def freeroute(cold, board_id, work, config, timeout, java_heap=None, slot=None, before=None, binary=None,
+              threads=1, job_timeout=None, refill=False):
     """Freerouting on the cold board: the result board in <work>/result, a
-    dictionary of what happened."""
+    dictionary of what happened. `threads` is Freerouting's -mt
+    (router.max_threads: above 1 its batch autorouter routes each pass on
+    that many threads; the optimizer stays off). `job_timeout` (seconds) is Freerouting's own
+    limit (--router.job_timeout): it then stops its passes and writes the
+    session of what it routed so far, a best effort within that wall
+    (`timeout` stays the kill limit and should leave room for the DSN read
+    and the session write). `refill`: KiCad's DRC refills the board's
+    zones (a placed board that keeps its pours: KiCad's DSN export makes
+    them planes, which Freerouting connects to with vias); a cold board has
+    none."""
     work.mkdir(parents=True, exist_ok=True)
     board = cold / f"{board_id}.kicad_pcb"
     dsn = work / "input.dsn"
@@ -261,7 +271,12 @@ def freeroute(cold, board_id, work, config, timeout, java_heap=None, slot=None, 
     heap = [f"-Xmx{java_heap}"] if java_heap else []
     argv = [config["java"], *heap, "-Djava.awt.headless=true", "--enable-final-field-mutation=ALL-UNNAMED",
             "-jar", str(ROOT / "benchmarks/corpus" / config["jar"]), "-de", str(dsn), "-do", str(session),
-            "-mp", str(config.get("maximum_passes", 100)), "-mt", "1"]
+            "-mp", str(config.get("maximum_passes", 100)), "-mt", str(threads)]
+    if job_timeout is not None:
+        seconds = max(1, int(job_timeout))
+        argv.append(f"--router.job_timeout={seconds // 3600:02d}:{seconds // 60 % 60:02d}:{seconds % 60:02d}")
+        row["job_timeout"] = seconds
+    row["threads"] = threads
     # Freerouting 2.2.4 loops forever on some DSNs it cannot read (keyboar_:
     # a part number with a backtick, "Component.read_place_scope: ) expected")
     # and never starts its job; such a run is a failure, not a timeout.
@@ -295,6 +310,10 @@ def freeroute(cold, board_id, work, config, timeout, java_heap=None, slot=None, 
     # Freerouting's own count of what stayed unrouted, from its log.
     found = re.findall(r"(\d+) (?:unrouted|incomplete)", log_text, re.I)
     row["log_unrouted"] = int(found[-1]) if found else None
+    # Its own job timeout reached: the session holds what it routed so far.
+    row["job_timed_out"] = "completed with timeout" in log_text
+    passes = re.findall(r"Auto-router pass #(\d+)", log_text)
+    row["passes"] = int(passes[-1]) if passes else 0
     if not session.exists():
         row["status"] = {"timeout": "timeout", "stalled": "DSN not read"}.get(row["router_exit"], "no session")
         if "OutOfMemoryError" in log_text:
@@ -328,11 +347,11 @@ def freeroute(cold, board_id, work, config, timeout, java_heap=None, slot=None, 
     try:
         if binary is not None and has_drc_command(binary):
             # The same check through the binary's DRC cache.
-            checked = measured([binary, "drc-kicad-board", result, board_id, result / "drc.json", "--no-refill"],
-                               None, 900)
+            checked = measured([binary, "drc-kicad-board", result, board_id, result / "drc.json",
+                                *([] if refill else ["--no-refill"])], None, 900)
         else:
             checked = measured(["kicad-cli", "pcb", "drc", "--format", "json", "--severity-all", "-o", "drc.json",
-                                f"{board_id}.kicad_pcb"], None, 900, cwd=result)
+                                *(["--refill-zones"] if refill else []), f"{board_id}.kicad_pcb"], None, 900, cwd=result)
         row["drc_cpu_seconds"] = checked["cpu"]
         pipeline_cpu += checked["cpu"]
     except OSError:

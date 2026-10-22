@@ -1153,6 +1153,173 @@ vd-rd__sbc_allwinner_a13__module                                     |          
 0xCB-dev__0xCB-1337__panel                                           |          145/188 129 +2e |              137/188 210 |   1720
 Huaqiu-Electronics__ecad-viewer__video                               |              253/371 315 |              252/371 499 |   1673
 
+## Freerouting against x1367 (2026-10-21)
+
+**Partial: 40 of the 109 boards so far**, the 40 with the longest walls of
+ours (the runner takes the longest first), so the hardest boards of the
+list; the other 69 and the ten-board speed study run on, a batch of three
+boards per hold of the tier lock (commands at the end). Read the numbers
+below as "the large boards", not as the corpus.
+
+Same placements on both sides: route mode on the v17 layout placements
+(`build/github-layout-v17/<task>/layout/placed`: the layout's parts, the
+designer's keepouts and pours, no tracks), tasks v7, the task budgets.
+Ours: `run.py --route-from build/github-layout-v17` with
+pcb-maker-x1367, 8 jobs x 2 threads (`build/fr2-route-x1367.log`). Rows
+the run lost were rerun alone and spliced (`build/fr2-route-final.log`):
+bumwings_v001_core and ghoul (killed by the kernel's OOM killer, exit -9:
+such a row still carries a result board from the ladder's last best attempt
+and is not the binary's answer) and the 0xCB pcb-panel on x1367; the rows
+cut by the wall clock or the harness timeout (katia, Batch_1, the 0xCB
+panel, poly_kb_molecule_4x4) on x1371, which stretches the wall guard under
+load and differs from x1367 only in work accounting (three expansion rows
+moved where spoke work changed the ladder's shares; short tier and
+fingerprints identical). katia hits the harness's 2700 s timeout again on
+x1371 alone (8.8 GB peak) and the pcb-panel's KiCad refill times out at
+900 s again: both stay rows without a result. No row with exit -9 or 137
+is left.
+
+Freerouting 2.2.4 headless (`benchmarks/github/freerouting_route_mode.py`,
+freerouting.py's pipeline: KiCad's DSN export, the class rules raised to the
+board minimums, its batch passes, KiCad's session import), `-mt 1`,
+`-Xmx4g`, with its own job timeout (`--router.job_timeout`) set to the wall
+our row of the board took: its passes until it stops (it stops by itself
+when a pass no longer improves) or that wall, and then it writes the session
+of what it has. The designer's pours stay on the board: KiCad's DSN export
+makes them planes, Freerouting reaches them with vias, and KiCad's DRC
+refills them, as on our side (where the router fills them itself). Both
+results are judged by run.py's own functions: KiCad's DRC (`drc-kicad-board`,
+zones refilled), the pass rule (no unconnected item, no copper error beyond
+the designer's count of its type) and the strict rule (only the findings the
+designer's stripped board has at the same place are subtracted). Wall and
+CPU are each side's whole pipeline: ours the route process with its KiCad
+checks, Freerouting's the JVM plus the DSN export, the session import and
+the DRC. Freerouting ran one board at a time beside other agents' runs
+(`build/fr2-freerouting-x1367.log`).
+
+Over the 40 boards (`benchmarks/github/freerouting_route_compare.py
+build/fr2-route-final.log build/fr2-freerouting-x1367`):
+
+| | pcb-maker x1367 | Freerouting 2.2.4 |
+| --- | ---: | ---: |
+| boards with a KiCad-checked result | 38 | 28 |
+| pass (designer-subtracted per type) | 2 | 0 |
+| strict pass | 1 (MokyaLora) | 0 |
+| better on KiCad's unconnected, then errors, then strict findings | 35 | 4 (1 tie) |
+| 27 boards both have: KiCad unconnected | 2 379 | 6 161 |
+| same: counting errors (pass rule) | 128 | 1 371 |
+| same: strict new findings | 634 | 1 971 |
+| same: vias | 11 436 | 3 662 |
+| same: track length | 263.4 m | 166.7 m |
+| same: CPU seconds | 55 129 | 67 328 |
+| per board, Freerouting over ours: CPU median / wall median | | x1.29 / x1.01 |
+| stopped by the wall (its job timeout) | | 25 |
+
+Freerouting's twelve boards without a result: six it did not stop within
+its job timeout plus 300 s (a pass on a large board does not look at the
+timeout: laptop motherboard, vaio_re, poly_corne_split42_left, koeg-board,
+video, OpenESC 4in1-panel), three whose session KiCad cannot import
+(SUMEC_MK_IV, poly_kb_molecule_5x2_shifted and 7x5_wave_left), two it cannot
+read (zpn_devboard and the Hub: a NullPointerException in
+`applyBoardSpecificOptimizations`, as on 2026-10-09) and the 0xCB pcb-panel,
+whose KiCad check times out on both sides. Its copper is short because it
+leaves so much open: on the 27 boards both finish it has 2.6 times our
+unconnected items and ten times our counting errors. Freerouting at `-mt 1`
+still uses a median 2.25 CPU seconds per wall second (1.9 to 2.8; the JVM's compiler and
+collector threads); ours ran at two search threads.
+
+**Where Freerouting is better** (fewer KiCad-unconnected items; none of the
+four passes on its side):
+
+- **Business-Cards Batch_1** (a panel): ours 106/204, KiCad 441 unconnected,
+  no counting error but 261 clearance findings the strict rule counts (the
+  designer's board has clearance findings at KiCad's cap); Freerouting 307
+  unconnected with 158 counting errors (34 shorting_items, 96 copper edge
+  clearance, 8 invalid_outline, 16 starved thermals, 4 hole_to_hole).
+- **katia**: ours has no result (the harness's 2700 s timeout on x1367 and
+  again on x1371 alone); Freerouting 90 unconnected and 126 hole_clearance.
+- **jiran-ble-lite**: ours 104/105, KiCad 20 unconnected, no error (20 GND
+  pads on the far half of a split keyboard joined by a frame no track
+  crosses); Freerouting 2 unconnected and 23 clearance errors. Main at
+  9b1e1ff (x1434, net ties and apart trees) routes it to KiCad's 1, the
+  designer's own.
+- **SNSP-CPU-01**: ours 301/363, KiCad 161 unconnected, one starved thermal
+  as the strict rule's only finding; Freerouting 151 unconnected with 194
+  solder mask bridges, 12 clearance and 2 shorting_items.
+
+Per board (FR open: Freerouting's own count of unrouted connections from
+its log, "(wall)" where its job timeout stopped it; "-": no result; routed
+CUT: the harness's timeout):
+
+| Board | ours routed | ours KiCad open | ours errors | ours strict | ours wall s | ours CPU s | FR open (its count) | FR KiCad open | FR errors | FR strict | FR wall s | FR CPU s |
+| --- | ---: | ---: | ---: | :---: | ---: | ---: | ---: | ---: | ---: | :---: | ---: | ---: |
+| 0xCB-1337__panel | 149/188 | 65 | 0 | no | 2355.1 | 2921.2 | 49 | 113 | 20 | no | 954.6 | 2105.1 |
+| 0xCB-1337__pcb-panel | 263/340 | - | - | - | 1306.9 | 673.9 | 125 (wall) | - | - | - | 2215.4 | 2862.6 |
+| jetson-nano-baseboard__jetson-nano-baseboard | 325/340 | 19 | 0 | no | 820.7 | 1546.2 | 677 (wall) | 499 | 21 | no | 836.5 | 1891.7 |
+| Sumec-MiniSumo__SUMEC_MK_IV | 66/69 | 5 | 0 | no | 974.1 | 1902.8 | 44 | - | - | - | 120.6 | 292.6 |
+| laptop__motherboard | 232/236 | 4 | 0 | no | 1279.4 | 2055.4 | 6 (wall) | - | - | - | 1580.9 | 3601.0 |
+| Business-Cards__Batch_1 | 106/204 | 441 | 0 | no | 810.4 | 1664.9 | 234 (wall) | 307 | 158 | no | 826.2 | 1889.9 |
+| MyKiCad__protoesp | 67/104 | 58 | 1 | no | 1180.3 | 1805.1 | 90 | 115 | 4 | no | 767.7 | 1684.2 |
+| MyKiCad__vaio_re | 262/267 | 4 | 6 | no | 999.7 | 1559.1 | 44 (wall) | - | - | - | 1301.5 | 2613.6 |
+| MyKiCad__zpn_devboard | 166/167 | 1 | 0 | no | 823.6 | 1479.4 | - | - | - | - | 4.3 | 4.5 |
+| atat-1800__ATAT1800 | 253/278 | 30 | 0 | no | 1880.8 | 2218.9 | 38 (wall) | 91 | 27 | no | 1912.4 | 4138.4 |
+| osprey__osprey_rev_a | 99/103 | 3 | 1 | no | 2164.8 | 2280.9 | 23 (wall) | 50 | 26 | no | 2179.1 | 4730.6 |
+| glasgow__glasgow__revC3 | 124/226 | 180 | 0 | no | 883.3 | 1247.7 | 385 (wall) | 390 | 2 | no | 890.0 | 2017.2 |
+| ULK__ULK | 68/70 | 2 | 0 | no | 1668.0 | 2022.1 | 3 | 13 | 41 | no | 43.9 | 99.8 |
+| ULK__ULK_sl_PG1316s | 68/70 | 3 | 0 | no | 1783.6 | 2382.3 | 5 | 7 | 9 | no | 90.5 | 186.4 |
+| OnBoard__koeg-board-pcb | 150/175 | 33 | 23 | no | 1630.5 | 2168.0 | 73 (wall) | - | - | - | 1931.7 | 4068.4 |
+| OnBoard__woagboard | 84/91 | 9 | 0 | no | 1410.6 | 2711.4 | 7 | 49 | 0 | no | 793.9 | 2011.4 |
+| slab-pcb__interchange-pcb-right | 83/83 | 0 | 0 | no | 983.1 | 795.9 | 16 | 112 | 99 | no | 882.3 | 1957.4 |
+| slab-pcb__slab-pcb-left | 75/76 | 1 | 0 | no | 1839.7 | 2228.6 | 9 | 107 | 0 | no | 1136.6 | 2126.3 |
+| ecad-viewer__video | 267/371 | 254 | 0 | no | 1368.9 | 1450.3 | 311 (wall) | - | - | - | 1670.8 | 3431.6 |
+| katia__katia | - CUT | - | - | - | 2701.0 | 2805.0 | 27 | 90 | 126 | no | 2643.2 | 5879.3 |
+| jiran-ble-lite__jiran-ble-lite | 104/105 | 20 | 0 | no | 1318.8 | 1357.0 | 2 | 2 | 23 | no | 74.9 | 196.2 |
+| PCB-Modular-Multi-Protocol-Hub__Hub | 144/159 | 22 | 0 | no | 971.2 | 1945.3 | - | - | - | - | 4.3 | 4.6 |
+| Neotron-Pico__neotron-pico | 176/190 | 24 | 0 | no | 2426.6 | 2872.0 | 97 | 103 | 2 | no | 800.8 | 1700.6 |
+| Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized | 156/172 | 18 | 1 | no | 1772.8 | 2006.5 | 59 | 76 | 12 | no | 1762.5 | 3409.9 |
+| DSP-ADAU1452__DSP-ADAU1452 | 156/190 | 61 | 4 | no | 917.2 | 1578.4 | 152 (wall) | 212 | 61 | no | 924.3 | 2164.1 |
+| OpenESC-30x30__4in1-panel | 47/184 | 485 | 220 | no | 975.2 | 2051.6 | 881 (wall) | - | - | - | 1276.6 | 2403.1 |
+| link__link | 245/251 | 6 | 0 | no | 1770.2 | 2081.4 | 294 (wall) | 420 | 191 | no | 1786.8 | 3460.4 |
+| MegaDrive__MegaDrive | 243/298 | 168 | 0 | no | 2102.8 | 1533.2 | 193 (wall) | 251 | 35 | no | 2123.5 | 4479.8 |
+| nonSNES__SNSP-CPU-01 | 301/363 | 161 | 0 | no | 1632.3 | 1786.1 | 125 (wall) | 151 | 209 | no | 1641.1 | 3695.1 |
+| MokyaLora__MokyaLora | 261/262 | 0 | 0 | pass | 840.6 | 1492.5 | 178 (wall) | 221 | 0 | no | 849.7 | 1998.3 |
+| PolyKybd__poly_corne_split42_left | 240/247 | 7 | 0 | no | 1387.5 | 2224.0 | 212 (wall) | - | - | - | 1689.6 | 3479.0 |
+| PolyKybd__poly_corne_split42_right | 404/420 | 22 | 0 | no | 1878.8 | 2295.6 | 725 (wall) | 499 | 2 | no | 1899.0 | 4016.8 |
+| PolyKybd__poly_kb_molecule_4x4 | 1/28 | 499 | 16 | no | 1300.0 | 2406.9 | 554 (wall) | 499 | 60 | no | 1308.7 | 2960.5 |
+| PolyKybd__poly_kb_molecule_4x5 | 0/28 | 499 | 101 | no | 984.1 | 2522.8 | 732 (wall) | 499 | 156 | no | 993.0 | 2248.6 |
+| PolyKybd__poly_kb_molecule_5x2_shifted | 1/28 | 409 | 32 | no | 1464.8 | 1857.8 | 301 (wall) | - | - | - | 1470.3 | 3316.4 |
+| PolyKybd__poly_kb_molecule_7x5_wave_left | 3/28 | 499 | 0 | no | 926.7 | 1299.8 | 784 (wall) | - | - | - | 932.5 | 2099.1 |
+| PolyKybd__poly_kybd_split72_left | 393/420 | 37 | 0 | no | 1677.1 | 2433.3 | 671 (wall) | 499 | 1 | no | 1691.4 | 3840.4 |
+| PolyKybd__poly_kybd_split72_right | 405/420 | 24 | 0 | no | 1927.8 | 2388.5 | 747 (wall) | 499 | 0 | no | 1960.2 | 4083.8 |
+| keyboards__ghoul | 142/148 | 6 | 1 | no | 2109.3 | 2740.9 | 7 | 121 | 100 | no | 850.0 | 1906.7 |
+| sbc_allwinner_a13__module | 208/223 | 23 | 3 | no | 1023.8 | 1808.4 | 195 (wall) | 256 | 112 | no | 1033.8 | 2328.8 |
+
+**Speed (not run yet).** The ten-board study (0xcb-static, ligra_back,
+1337-v4.0, USB_Cable_Tester, silkscreen_pcb, MIDAS-MK2, little_red_rover,
+Castor_and_Pollux mainboard, mackerel-08-v1, coco2; ours at 1 and 16
+threads, Freerouting at `-mt 1` and `-mt 16` with a 1500 s job timeout, no
+DRC cache, one board at a time) is queued behind the rest of the
+Freerouting rows. Until then the only speed figure is the one above: at the
+same wall Freerouting spent a median 1.29 times our CPU seconds per board,
+on the large boards, while finishing less.
+
+To continue (each step takes build/quick-tier.lock per batch and resumes
+where its results.json stops):
+
+```sh
+python3 benchmarks/github/freerouting_route_mode.py build/fr2-freerouting-x1367 --resume \
+  --lock build/quick-tier.lock --route-from build/github-layout-v17 --ours build/fr2-route-final.log \
+  --binary build/bin/pcb-maker-x1367 --freerouting <config with the jar's absolute path> --threads 1 --jobs 3 \
+  --min-free-gb 14 >> build/fr2-freerouting-x1367.log
+# per board of the ten, t in 1 16:
+PCB_MAKER_NO_CACHE=1 flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/fr2-speed/x1367-t$t-$board \
+  --route-from build/github-layout-v17 --only $board --jobs 1 --threads $t --min-free-gb 14 --binary build/bin/pcb-maker-x1367
+PCB_MAKER_NO_CACHE=1 benchmarks/github/freerouting_route_mode.py build/fr2-speed/freerouting-mt$t --resume \
+  --lock build/quick-tier.lock --wall 1500 --route-from build/github-layout-v17 --binary build/bin/pcb-maker-x1367 \
+  --threads $t --jobs 1 --only $board
+benchmarks/github/freerouting_route_compare.py build/fr2-route-final.log build/fr2-freerouting-x1367 --markdown
+```
+
 ## Freerouting against our cold route, x738 (2026-10-15)
 
 Same setup as the 2026-10-09 round: the designer's placement with every

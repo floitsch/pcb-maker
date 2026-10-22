@@ -11,6 +11,40 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-10-21 (Freerouting refresh)
+
+The README's comparison with Freerouting rested on x738 (2026-10-15, the
+designer's placement with all copper removed). Refreshed on the current
+binary in route mode: the v17 layout placements, pcb-maker-x1367 at the task
+budgets (`run.py --route-from build/github-layout-v17`), Freerouting 2.2.4
+on the same placed boards with its own job timeout at the wall our row took,
+both judged by run.py's pass and strict rules on KiCad's DRC. Partial: 40 of
+109 boards measured (the longest walls first), the rest and the ten-board
+speed study (1 and 16 threads on both sides) still running, a batch of three
+boards per hold of the tier lock. Details, the per-board table and the
+commands to continue: [benchmarks.md](benchmarks.md#freerouting-against-x1367-2026-10-21).
+
+On the 40: ours 38 with a result, 2 pass, 1 strict pass (MokyaLora);
+Freerouting 28 with a result, none passes; ours better on 35, Freerouting on
+4 (Business-Cards Batch_1, katia where ours times out, jiran-ble-lite, which
+main at x1434 now routes to the designer's 1 open, SNSP-CPU-01), one tie (the
+0xCB pcb-panel, whose KiCad check times out on both sides). On the 27 both
+finish: KiCad unconnected 2 379 against 6 161, counting errors 128 against
+1 371, at a median 1.29 times our CPU per board for Freerouting.
+
+Tooling: `benchmarks/github/freerouting.py`'s `freeroute` takes the thread
+count (`-mt`), Freerouting's job timeout (`--router.job_timeout`: it stops
+and writes the session of what it has) and a refill for boards that keep
+their pours, and records the passes and whether the timeout stopped it;
+`freerouting_route_mode.py` runs it on a route-mode run's placements and
+judges the results with run.py's functions (`--lock` takes the tier lock per
+batch of boards); `freerouting_route_compare.py` prints the table and the
+summary. Measurement notes: two of our rows were killed by the OOM killer
+(exit -9 with a result board from the ladder's last best attempt: not the
+binary's answer) and rerun alone; the rows cut by the wall clock or the
+harness timeout were rerun on x1371 (which stretches the wall guard under
+load and differs from x1367 only in work accounting).
+
 ## Measured on 2026-10-21 (KiCadRoutingTools head-to-head)
 
 What was measured: KiCadRoutingTools, at commit cddf4cd (MIT; Python

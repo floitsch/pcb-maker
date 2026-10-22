@@ -42,11 +42,17 @@ Not finished, but already useful.
   pass the designer-relative rule, 4 528 are complete at 300 s; the clean
   boards take a median 3.4 s
   ([details and caveats](docs/benchmarks.md#expansion-intake-5-834-boards-routed-on-the-designers-placement-2026-10-18)).
-- **Against Freerouting** on the same 109 boards with only the copper
-  removed (the designer's placement kept, 1500 s each): Freerouting finishes
-  67 and times out on 36; where it finishes, pcb-maker leaves fewer
-  connections open on 47 boards and Freerouting on 6, with 51 boards clean
-  against 8, at 0.65 times Freerouting's CPU
+- **Against Freerouting** (2026-10-21, partial: the 40 largest of the 109
+  boards so far): the same placements and the same wall per board, both
+  judged by KiCad's DRC with the same rules. pcb-maker leaves fewer
+  connections open on 35 boards and Freerouting on 4 (none of which it
+  passes); on the 27 boards both finish, Freerouting leaves 2.6 times the
+  unconnected items and ten times the DRC errors, at a median 1.29 times
+  our CPU seconds per board
+  ([table](docs/benchmarks.md#freerouting-against-x1367-2026-10-21)). The
+  last complete round (2026-10-15, x738, the designer's placement with all
+  copper removed, 1500 s each): fewer open connections on 47 boards against
+  6, 51 boards clean against 8, at 0.65 times Freerouting's CPU
   ([table](docs/benchmarks.md#freerouting-against-our-cold-route-x738-2026-10-15)).
 - **Open-source boards, PCBench / PCBWorld D3** (617 boards, prepared the
   way PCBWorld prepares them): pcb-maker routes 601 (97 %) clean,
