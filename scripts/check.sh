@@ -14,8 +14,9 @@
 #     tools/config-reference) and the root binary's own unit tests;
 #   - the root package's CLI tests: exit codes, native verification, the
 #     router's fingerprints at 1 and 4 threads, the generated config
-#     reference against the code, hostile input files, and the fixture tests on the committed
-#     boards of tests/fixtures (docs/handover.md, "Before a commit");
+#     reference against the code, hostile input files, and the fixture
+#     tests on the committed boards of tests/fixtures (docs/handover.md,
+#     "Before a commit");
 #   - the benchmark runner's, the harvest's and the expansion intake's
 #     Python tests (benchmarks/agent-tasks, benchmarks/github,
 #     benchmarks/expansion);

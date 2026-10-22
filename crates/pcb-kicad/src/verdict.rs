@@ -1573,7 +1573,6 @@ mod tests {
                     unlocated: false,
                 })
                 .collect(),
-            ..DrcFinding::default()
         };
         // A footprint's own hole-to-hole finding moves and turns with it.
         let designer = at(
