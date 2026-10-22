@@ -1349,7 +1349,11 @@ business cards; cut at 3296 s with 1280 s of work done, 0.39).
 with `--splice-from`): every board routed by the same binary on the
 designer's own placement, 1500 s of work, the layout's pass rules, the
 same pinned rates (106 rows; the three without a result carry none).
-**50 of 109 pass the strict rule** (58 the per-type rule); vias x0.47 of
+**50 of 109 pass the strict rule** (58 the per-type rule; 49 under strict
+rule 3 of 2026-10-22, re-judged without rerouting: USB_Keypad's one
+connection_width on its GND pour had been subtracted against the
+designer's 45 on that pour, all at (0, 0); the layout sweep stays at 42,
+its strict errors 1536 -> 1543); vias x0.47 of
 the designer's, length x0.99, the ground pours cut 38 mm less than the
 designer's (medians). katia and Batch_1 hit the harness's 3300 s in both
 runs: katia's ladder runs one router at a time for memory (7.3 GB each)
@@ -1376,7 +1380,8 @@ supply nets, 34 % of the designer route's.
 
 By the strict pass on both placements (100 target boards):
 
-- **Placement** (the designer's placement passes, ours does not), 13:
+- **Placement** (the designer's placement passes, ours does not), 13
+  (12 under strict rule 3: USB_Keypad fails on both placements):
   video (ours 199 open), OpenESC-30x30 4in1 (111), 0xCB panel (65,
   starved_thermal 1), OpenAirScope (5), laptop power (4), ULK_sl_PG1316s
   (3), ULK (2), USB_Keypad (2), Explorer (2), zpn_devboard (1),

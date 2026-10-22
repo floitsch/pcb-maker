@@ -11,6 +11,147 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (harness review fixes)
+
+The findings of the independent harness review
+(docs/reviews/2026-10-21-review-harness.md: H1-H3, M2-M5, L1-L3, L5 and
+its list of duplicated code), on branch harness-fixes; snapshot x1500
+(main 20956b3 with the route-mode publication, the one-item strict rule
+in verdict.rs and the layout's final-ladder budget).
+
+**A killed run is no result (H1).** Route mode moved each new best
+attempt into its output directory while it ran, so a route the OOM
+killer ended left `board-router.json` and `drc.json` of its best attempt
+so far, and run.py judged them: build/fr2-route-x1367.log
+(bumwings_v001_core, ghoul) and build/fr2-route-x1371-r2.log (katia, 93
+open) have rows with `exit: -9`, `routed`, `native` and no `error`.
+Now, in the binary, `route-kicad-board` routes into `<output>.partial`
+(the ladder publishes there) and renames it to the output when it is
+done, `board-router.json` written last; the verdict and the report's
+rewrite with it are written whole (`write_atomically`, a temporary file
+renamed into place). Checked on WLED_Matrix: killed with -9 after its
+first attempt, it leaves `out.partial` and no `out`; run to the end, `out`
+holds the report and the verdict and no `out.partial` is left. In
+run.py, any exit outside the verdict's 0 to 4 (a signal, a shell's
+128 + n, a panic past the verdict) gives a row with `error` ("killed by
+signal 9 (SIGKILL)"), `killed` and `cut: ["killed"]`; nothing it left is
+judged, and route-mode tasks run no drc-kicad-board on it (outcome
+`process_signal`, triage's class). compare.py's `killed()` also flags
+older rows by their exit code: the three rows above are KILLED (a
+failure, out of better / same / worse, a KILLED line naming them).
+
+**Process groups (M4).** run_measured starts each binary in a process
+group of its own; a timeout kills the group (kicad-cli with it), and when
+the binary ends whatever it left running is killed and waited for until
+the group is gone, before the memory gate releases the board. The
+harness's short calls (strip-kicad-tracks, the designer's and the
+baseline's DRC, `--help`, score-kicad-board, the schematic tier's steps)
+go through `harness_common.run_group`, which does the same on its
+timeout. The orphans' CPU is still not counted.
+
+**One-item findings (H2, strict rule 3).** `same_place` had nothing to
+compare for a finding of one item, so the same uuid matched: a
+`connection_width` of ours on a pour matched any of the designer's on
+that pour, all reported at (0, 0). Now a finding of one item is the
+designer's where its item lies within 0.05 mm of theirs, never where
+KiCad gives the item no place (a zone at (0, 0); the finding's own
+position stands in where a report has one, KiCad 10's has none), or
+where it is the same item, not a zone, with the same description word for
+word, KiCad's measured values included. That last clause keeps a moved
+part's own findings with the part: with position alone, v18's strict
+passes fell from 42 to 38 on the designer's own footprints moved by the
+layout (mackerel-10-v1 and -08-v1, annular_width 5 each; Quanta75
+RP2040Stamp, annular_width 6; CyberKeeb2040, malformed_courtyard 1).
+verdict.rs keeps rule 1 with the same one-item matching (DrcItem `zone`,
+`unlocated`, `located()`; DrcFinding keeps KiCad's description); tests in
+both for the USB_Keypad case (our one connection_width on zone 8951654c,
+the stripped designer board 45 there). Re-judged without rerouting
+(`rejudge.py`, the stored drc.json and baseline-drc.json, the designer's
+bridges from the DRC cache; rule 2 against rule 3, both with the
+openings):
+
+| run | pass_strict rule 2 -> 3 | strict new errors | boards changed |
+| --- | --- | --- | --- |
+| designer tier, build/designer-x1315b.log | 50 -> 49 | 1239 -> 1240 | USB_Keypad: connection_width 1 (it passed) |
+| layout sweep, build/github-layout-v18c.log | 42 -> 42 | 1536 -> 1543 | USB_Keypad +6 connection_width, WLED_Matrix +1 (both failed already) |
+
+So the designer tier is 49 of 109 under the strict rule, and the
+"placement" group of the v18 comparison (the designer's placement passes,
+ours does not) is 12 boards, not 13: USB_Keypad fails on both
+placements.
+
+**Provenance (M2, M3).** Every row records `binary`, `binary_sha256` and
+`strict_rule` (also rows without a result); a spliced row records
+`spliced_from` (the original log where the row was spliced there already
+and says so). A spliced run's summary.json lists its `parts` (per log:
+rows, jobs, threads, wall), takes the measured rates over every row
+(`this_run_rates` beside), and says `strict_rules` when the rows mix
+rules; its pass line then says A MIX OF RULES. compare.py names each
+run's rules ("strict: before rule 2; after rules 1 (105 rows), 3 (4
+rows)") and marks a strict count over several rules MIXED RULES.
+`rejudge.py <log>[:<dir>] ...` judges a stored run again under the
+current rules from its stored files (spliced rows from their source log,
+the chain given or `spliced_from`), so a rule's re-judging is a logged
+run rather than a scratch script.
+
+**Smaller ones.** M5: the timeout's stretch allowance is
+`PCB_WALL_STRETCH_MAX` as the binary reads it (a finite number of at
+least 1, else 4). L1: rows without a result fail the strict count
+(compare.py: v17 against v18 now says "strict - -> 42", 42 of 109 rows,
+not "42 of 103 rows"). L2: rows of `compare.py --splice` are SPL and
+counted. L3: the pass rules include the schematic tier's missing
+footprints (compare.passes, passes_strict), and the schematic tier uses
+them instead of deriving the condition again. L5: the README's x738 row
+says why its 62 is not comparable. `compare.py --gap --targets` leaves
+out the nine boards that are not targets (the v18 split's 97 boards) and
+the gap prints both sides' routing work and warns when the binaries
+differ.
+
+**Dedupe, behaviour identical.** benchmarks/harness_common.py holds the
+DRC counting filter, file_sha256, atomic_json, read_json, safe_name, the
+machine's MemAvailable and the process-group runner; run.py, compare.py,
+quality.py, schematic.py and benchmarks/expansion (harvest, triage,
+import_pending) use it. run.py has one copytree ignore list,
+strip-kicad-tracks through strip_command, board-router.json read once per
+route row, intake_outcome calling triage.classify, and sets `pass` and
+`pass_strict` with compare.passes and passes_strict. Proof: rejudge.py
+over designer-x1315b and github-layout-v18c and compare.py over v17/v18,
+--gap v18/designer-x1315b and short-fence x1403/x1416 gave byte-identical
+output with the harness of 20956b3 and the deduplicated one (rows,
+summary and text). The memory gates share the reading of MemAvailable;
+their policies stay two (run.py's reservation per board in one process,
+triage's file shared between processes). test_pipeline.py loads its
+run.py by path: a pytest run over benchmarks/agent-tasks and
+benchmarks/expansion together imported the other run.py (2 failures,
+also on 20956b3).
+
+**Matched budgets (H3).** Layout rows carry `ladder_budget_seconds` and
+`ladder_budget_share` (the final ladder's work, or the narrow-signal
+attempt's that stands in for it, and its share of `total_seconds`; null
+where none ran), from board-layout.json's new
+`final_ladder_budget_seconds` (x1500) or derived from layout.log for
+older binaries (the two agree within 0.3 s on the short tier's rows).
+Over v18's 109 rows the final ladder ran on 62, with a median share of
+0.695 (0.684 over the 46 of them left open): the plain designer tier
+gave the router 1500 s, the layout's last router about 1040. The tasks
+README's designer tier says how to route the designer's placement at that
+share (`--budget-scale 0.695`) and that the split stays an accounting of
+open connections, not a measured cause. MATCHED_RESULT
+
+**Judged.** `python3 -m pytest benchmarks/agent-tasks benchmarks/expansion`
+(119 tests, together and apart), `bash scripts/check.sh`, rustfmt and the
+clippy gate. The short tier (3 x 2) with x1500 against
+build/short-fence-x1403.log: all 12 result boards byte-identical, every
+row's routed, vias, length, KiCad findings, work, first-route open
+terminals and pass the same; 6/12 pass, strict 5/5; strict new errors
+208 -> 210 (rule 3: USB_Keypad's and WLED_Matrix's connection_width on a
+pour).
+
+Left out: M1 (rule 2's unbounded subtraction and the designer-routed
+openings), M6 (check.sh and CI, another package's), L4 (the greedy
+position fallback), L6 (kicad-cli timeouts inside the binary not marked
+cut), counting the CPU of a killed board's orphans, and one memory gate
+policy for run.py and triage.
 ## Committed on 2026-10-21 (global route, phase 1)
 
 A coarse global router as a routability measure (the v18 section's
