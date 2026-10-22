@@ -11,6 +11,150 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-21 (lowering review fixes)
+
+The findings of docs/reviews/2026-10-21-review-lowering.md in its order.
+Branch lowering-review-fixes; snapshots x1510 (finding 1 alone), x1511
+(1, 5, 2, 7, 3, 8: the measurement), x1512 (1 and 5 alone, for
+attribution), x1513 (the commit, rebased on the fab-release package, the
+placer's nets as before). Measured against x1404.
+
+**1. The exposed pad and its copy** (docs/router.md, "Vias in pads").
+`exposed_pad` took the largest SMD pad and asked it to be twice any
+other's area; an exposed pad drawn on both sides (an F.Cu and a B.Cu copy
+at one place, thermal vias between) is its own copy's equal, so neither
+copy was exempt from `no_via_pads`. SMD pads of one number within 0.5 mm
+of each other are now one candidate of their boxes' box (also a pad split
+into pieces), its members out of the "others"; score-kicad-board's count
+shares the function (`PadBox`). Footprints whose verdict changes (pcbnew
+emulation of both rules): Sisu U2.11, MSign U1.21, U5.32, U7.29, U9.81,
+LC_PAMV4b U3.25, node_v6 U1.57; none on ZSWatch, Castor, k30 or jetson.
+The review expected this to recover Sisu (6 to 23 unconnected in ded766d)
+and ZSWatch (0 to 4): it does neither. Sisu's U2 (WSON-10, a 1.2 x 2 mm
+pad with six 0.3 mm thermal vias in it) has no room for a router via
+between its own holes: x1510 routes Sisu (v18 placement, quarter budget,
+1 x 4) to the byte the board of x1404 (172/192, 357 vias, 37 KiCad
+unconnected). ZSWatch's loss is its module's LGA pads (22 vias in them
+before ded766d), which no exposed-pad rule exempts; its row is identical.
+MSign gains: 71 to 42 unconnected at 30 s (x1510 and x1511 alike).
+Unit tests: a_two_sided_or_split_exposed_pad_is_one_exposed_pad (Sisu's
+U2 pattern, a four-piece pad with paste-only apertures, a connector's
+two shield tabs that stay listed), the score's vias-in-pads test with a
+B.Cu copy of its QFN's pad.
+
+**5. The via-owner map and pad order** (grid.rs). The `own_vias` arm (a
+whole via inside single-layer copper of its net that may hold vias: the
+exposed pad, a net's copper graphic) now also takes a node an earlier
+obstacle left to the net (`via_owner == owner16(net)`, the `beside` arm
+of a listed pin). With the pins first, KiCad's order, such nodes went to
+no net. Unit test an_exposed_pads_own_vias_do_not_depend_on_the_order_of_the_pads
+(fails without the guard). This is what changes Sisu: x1512 (1 and 5)
+gives x1511's board, 175/192 routed, 373 vias, 37 unconnected (x1404
+357 vias, 37).
+
+**2. Padstack phantom copper** (docs/router.md, "Dimensions, text boxes,
+cached copper texts and padstacks"). A padstack pad's own (front) shape
+was copper on every layer of the pad, the stack's shapes added beside
+it: under a smaller back shape (dennisss's 4 mm over 3 mm) the model had
+copper KiCad has not. The own shape is now on F.Cu and the layers the
+stack does not name; each named layer's shape is merged into the pad's
+terminal (`MergedPad::padstack`, after the terminal merge, by the
+terminal that holds the pad): `copper_components` joins it to the
+terminal, `prepare_net` takes the terminal's nodes on that layer inside
+that shape, a kept or adopted track ending on it ends on the terminal,
+its zone connection (none, solid) and thermal relief are the pad's, its
+spokes' frame is its own size, and the terminal's own spoke record keeps
+to the layers its shape has. (kept.rs: a padstack shape whose pad another
+terminal takes is another pad of it.) No board of the tiers has a
+padstack on a layer its pad has copper on (OpenESC's and MokyaLora's
+stacks name layers their SMD pads lack), so nothing measured changes.
+Unit tests: a_padstacks_front_shape_is_copper_only_where_the_stack_names_no_other
+(the obstacle per layer, the merged shape, a B.Cu track 1.8 mm from the
+centre not connected, on F.Cu and at 1.4 mm connected),
+a_padstack_terminal_is_reached_inside_each_layers_own_shape.
+
+**7. Knockouts of unconnected pads** (docs/router.md, "KiCad's
+connectivity"). The review's fix (the larger of the zone's and the pad's
+clearance) holds for hatched zones only. KiCad 10.0.7's
+knockoutThermalReliefs knocks a same-net `zone_connect 0` pad out of a
+solid zone at the zone's local clearance or a `physical_clearance` rule,
+not the pad's; a hatched zone sends it to buildCopperItemClearances,
+which takes the clearance constraint between zone and pad (the pad's
+local override included). `isolated_knockouts` now does that. Thermal
+reliefs are the thermal gap alone in both (THERMAL_RELIEF_GAP_CONSTRAINT):
+unchanged. Unit test a_hatched_zone_keeps_an_unconnected_pads_own_larger_clearance.
+No tier board has a hatched zone with such a pad.
+
+**3. Net names without thread state.** The two thread-locals (bare
+names, jumper nets) are one `NetNames` value (`NetNames::of(pcb)`,
+`normalize`, `routable`, `written`). score-kicad-board, the statistics,
+describe, the pour plan, the pours, the neck repair, the pin swap, the
+net classes and the placer's decoupling read it from the board they
+have; `lower_board`, the placer's lowering and the project rules use
+theirs (`note_net_names` returns it and notes it on the thread). Only the
+copper writer (`canonicalize_copper_net_names`, `written_net_name`)
+still reads the noted value, which its entry `unambiguous_pad_net_names`
+notes; the free functions assert (debug builds) that one is noted. The
+placer counts no `unconnected-(...)` net as joining parts (`placer_net`):
+it read the router's jumper nets from whatever board its thread had
+lowered (none in a layout's placement), and noting them moved MIDAS's,
+USB_Cable_Tester's and eternal-keypad's placements in the short tier
+(x1511: MIDAS 7 to 11 unconnected); a jumper net's pads are one pin's on
+one part. Unit tests: the_score_reads_net_names_by_the_board_it_scores
+(pads on GND and /GND, a /GND track cuts the GND pour after an empty
+board was noted), a_hierarchical_and_a_bare_net_of_one_name_stay_two_nets
+(describe-kicad-board: /A15 and A15).
+
+**4. Rules as floors** (docs/router.md, "Project rules": the reason).
+Documented, not changed: every lowered value is a floor, a custom rule
+never lowers a class clearance, two rules on a pair give the larger.
+Giving copper graphics and the fill the pair clearance of their net is
+not contained (a fourth item kind in the 3 x 3 kind table, the dru
+lowering marking rules without a type condition): documented as a limit.
+
+**8. Parser consistency.** A blind, buried or micro via on the board is
+copper on the layers from its first to its last (`via_layers`), a
+through via on all (it was all for every via). A hidden text box draws
+nothing, and a footprint text box with no shape is skipped (its mask
+opening indexed an empty list). A text box of `start` and `end` with an
+`angle` was right already: KiCad's parser turns the text, not the box (a
+box off the axes is written as `pts`), documented. Unit test
+a_blind_via_is_copper_on_its_own_layers_and_a_hidden_text_box_is_none.
+
+**Route mode on the four boards** (vias in SMD pads by pcbnew's
+`HitTest` of the via's centre, exposed pads apart; the router's own rule
+keeps the same):
+
+| board | x1404 | x1511 |
+|---|---|---|
+| Sisu (v18, quarter budget, 1 x 4) | 172/192, 37 unconnected, 357 vias, 0 in pads (2 in exposed pads) | 175/192, 37, 373 vias, 0 (2) |
+| ZSWatch (expansion, 30 s) | 3 unconnected, 140 vias, 0 in pads | identical board |
+| MSign (expansion, 30 s) | 71 unconnected, 183 vias, 0 (3 in exposed pads) | 42, 254 vias, 0 (1) |
+| LC_PAMV4b (expansion, 30 s) | 1 unconnected, starved_thermal 1, 28 vias, 0 | identical board |
+
+**Fingerprints** (Castor, k30, jetson, Sisu; route mode from v16, 1 x
+4, budget scale 0.25, `PCB_ROUTER_FINGERPRINT=1
+PCB_ROUTER_NO_WALL_GUARD=1`, outside the lock by the relaxed rule;
+build/lowfix1-fp-x1511) against build/fp-fence-x1402: Castor and k30
+every fingerprint and the board identical; jetson identical to x1404's
+(build/fp-robust-base-x1404: every fingerprint and the board; x1402
+predates the probe-overhead package); Sisu changes from the first
+negotiation (finding 5: x1512 reproduces it): 23 to 25 unconnected, 387
+to 375 vias (x1404's 24 and 386).
+
+**Expansion tier** (8 x 1, `--no-lock`, `--min-free-gb 14`) x1511
+against build/expansion-fence-x1404.log: 46 rows valid (no OOM kill), 39
+result boards identical; passes 18 to 18 (strict 18 to 18), unconnected
+750 to 737, new errors 2 to 2, vias 4161 to 4231, work 1222 to 1223 s.
+Changed rows, all reproduced by x1512 (findings 1 and 5 alone): MSign 71
+to 42 (finding 1, its four exposed pads); node_v6 28 to 34 (finding 1,
+U1.57's two copies; the vias the pad now takes changed the negotiation,
+102 to 90 vias); OpenRX-Mono 21 to 31 (finding 5: vias along its QFN's
+pad, 1 to 5 in the exposed pad, 19 to 25 vias); pdlc, nrf24_remote,
+backplane (51 to 55 vias), CompassTag (33 to 34) other boards with the
+same counts. ZSWatch stays at 3 (the review's "0 to 4 should come back":
+it had come back to 3 with x1404 already, and its pads are an LGA
+module's).
 ## Committed on 2026-10-21 (fixture tests)
 
 The fixture tests the review of the tests proposed
@@ -1275,6 +1419,32 @@ against main's own snapshot x1404 (ded766d), run beside it
 identical (jetson 324/340, 20 unconnected; Sisu 184/192, 24; k30 and
 Castor complete). Snapshots
 x1450-x1451.
+
+**Short tier** (3 x 2, `--no-lock`, `--min-free-gb 14`) x1513 against
+build/short-fence-x1403.log: 12 rows valid, every count the same (passes
+6, strict 5, unconnected 20, vias 1088, length 20673 mm, work 2961 to
+2955 s); 10 result boards byte for byte, the placements all identical.
+MIDAS and OpenFC move one via each by one pitch (0.1 mm; finding 5: a
+node beside a pin of the via's net inside single-layer copper of that
+net is the net's now in either pad order), the same counts. x1511
+(before the placer's `placer_net`) had moved MIDAS's, USB_Cable_Tester's
+and eternal-keypad's placements through the jumper nets (MIDAS 7 to 11
+unconnected), hence the fix above.
+
+**Checks.** Unit tests above; `cargo test` of the three crates, the CLI
+tests; the clippy gate. `a_placement_does_not_depend_on_the_order_of_the_file`
+fails at this branch's first commits as on main (load-dependent: it
+passed in one full run).
+
+**Not done.** Findings 6 (the redundant terminal scan in
+`copper_components`) and 9 (the per-opening obstacle scans,
+`net_ids_lookup`'s linear search) are left. The terminal merge's overlap
+test still uses the pad's own shape's layers, so a padstack pad and a
+same-number SMD pad on a layer only its stack names stay two terminals
+(no tier board has one). The spokes of a padstack terminal on its own
+layers use its front frame, as before; a pad's local `thermal_gap` is
+not read. The free normalisation's debug assertion fires in debug
+builds only; the tests and the tiers run release builds.
 
 ## Committed on 2026-10-21 (fence report: router side)
 
