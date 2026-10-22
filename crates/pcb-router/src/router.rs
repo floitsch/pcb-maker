@@ -963,11 +963,21 @@ impl Scratch {
     }
 
     /// Allocates the arrays for a lattice of `states` (a copy has none).
+    /// The mask of the routed net's own stamps (`mask_own`, set before
+    /// the search allocates: a router's scratch and a pool's are allocated
+    /// on first use) stays.
     fn ensure(&mut self, states: usize, cells: usize) {
         if !self.fits(states, cells) {
+            let own_mark = std::mem::take(&mut self.own_mark);
+            let own_set = std::mem::take(&mut self.own_set);
+            let own_claimed = std::mem::take(&mut self.own_claimed);
             *self = Self {
                 nodes: vec![SearchNode::default(); states],
                 own_via_near: vec![0; cells],
+                own_mark,
+                own_set,
+                own_claimed,
+                own_active: self.own_active,
                 ..self.clone()
             };
         }
