@@ -150,6 +150,11 @@ pub struct Config {
     pub window_margin: f64,
     /// Passes of per-net shortening after the board is conflict free.
     pub cleanup_passes: usize,
+    /// After the via reduction, take stair-steps and jogs out of the
+    /// signal nets' paths where the clearance allows (`straighten`:
+    /// shortest octilinear paths between a run's corners with fewer
+    /// bends; never longer, no via moves).
+    pub straighten: bool,
     /// Via cost while cleaning up. The existing route is always a fallback
     /// there, so a high value removes vias without risking completion.
     pub cleanup_via_cost: f64,
@@ -318,6 +323,7 @@ impl Default for Config {
             max_iterations: 80,
             window_margin: 10.0,
             cleanup_passes: 4,
+            straighten: std::env::var_os("PCB_ROUTER_STRAIGHTEN").is_some(),
             cleanup_via_cost: 25.0,
             plane_via_cost: 2.0,
             corridors: true,

@@ -15,7 +15,9 @@ again. `--all` takes every row with a result, not only the passing ones.
 `--designer-numbers` writes designer-numbers.json next to this script: per task of
 the list, the designer's vias, track length and ground pour cut (the
 measures compare.py normalises by), with the board's SHA-256 so that a
-number is only used for the same board."""
+number is only used for the same board; also the aesthetics (bends per
+connection, stair-steps, other nets' tracks between adjacent pins:
+score-kicad-board's `aesthetics`, docs/quality.md)."""
 
 import argparse
 import json
@@ -92,6 +94,12 @@ MEASURES = [
      lambda r: len(get(r, ("manufacturing", "tombstone_risk")))
      if get(r, ("manufacturing", "tombstone_risk")) is not None else None, "lower"),
     ("ground_cut_mm", "ground pour cut by other tracks (mm)", ground_cut_mm, "lower"),
+    ("bends_per_connection", "aesthetics: bends per connection",
+     lambda r: get(r, ("aesthetics", "bends_per_connection")), "lower"),
+    ("stair_steps", "aesthetics: stair-steps (two bends within 2 mm back to the direction)",
+     lambda r: get(r, ("aesthetics", "stair_steps")), "lower"),
+    ("pin_row_crossings", "aesthetics: other nets' tracks between adjacent SMD pins",
+     lambda r: get(r, ("aesthetics", "pin_row_crossings")), "lower"),
     ("vias", "vias", lambda r: get(r, ("economy", "vias")), "lower"),
     ("track_length_mm", "track length (mm)", lambda r: get(r, ("economy", "track_length_mm")), "lower"),
     ("smallest_via_drill_mm", "smallest via drill (mm)",
@@ -132,7 +140,10 @@ def designer_numbers(binary, tasks_file):
         values = measures(report)
         numbers[task["name"]] = {"board_sha256": file_sha256(board), "vias": values["vias"],
                                  "track_length_mm": values["track_length_mm"],
-                                 "ground_cut_mm": values["ground_cut_mm"]}
+                                 "ground_cut_mm": values["ground_cut_mm"],
+                                 "bends_per_connection": values["bends_per_connection"],
+                                 "stair_steps": values["stair_steps"],
+                                 "pin_row_crossings": values["pin_row_crossings"]}
     return numbers
 
 
@@ -155,7 +166,8 @@ def main():
             label = str(arguments.tasks)
         DESIGNER_NUMBERS.write_text(json.dumps({
             "comment": "The designer's boards scored with score-kicad-board (quality.py --designer-numbers): "
-                       "vias, track length and the ground pours' cut by other tracks (null: no pour), with "
+                       "vias, track length, the ground pours' cut by other tracks (null: no pour) and the "
+                       "aesthetics (bends per connection, stair-steps, pin-row crossings), with "
                        "the board's SHA-256. compare.py normalises each row by these.",
             "tasks": label, "boards": numbers}, indent=1, sort_keys=True) + "\n")
         print(f"{len(numbers)} boards in {DESIGNER_NUMBERS}")

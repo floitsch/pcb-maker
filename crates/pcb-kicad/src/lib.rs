@@ -79,6 +79,7 @@ mod describe;
 mod flip;
 mod net_classes;
 pub use net_classes::KiCadNetClassRequest;
+mod aesthetics;
 mod quality;
 pub use quality::{KiCadQualityReport, score_kicad_board};
 mod cost;

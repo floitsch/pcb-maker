@@ -19,6 +19,9 @@ pub struct KiCadQualityReport {
     pub assembly: KiCadAssembly,
     pub connectors: KiCadConnectors,
     pub manufacturing: KiCadManufacturing,
+    /// How the tracks look: bends, stair-steps, tracks between adjacent
+    /// pins (crate::aesthetics).
+    pub aesthetics: crate::aesthetics::KiCadAesthetics,
     /// Ground pours and how much other copper cuts them (return paths).
     pub planes: Vec<KiCadPlane>,
     /// ESD protectors and their distance to the nearest connector pin they
@@ -435,6 +438,8 @@ fn parts_of(pcb: &Expr, names: &NetNames) -> Result<Vec<Part>, String> {
 struct Track {
     start: [f64; 2],
     end: [f64; 2],
+    /// An arc's middle point.
+    mid: Option<[f64; 2]>,
     width: f64,
     layer: String,
     net: Option<String>,
@@ -476,6 +481,11 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
                 tracks.push(Track {
                     start: form_xy(item, "start")?,
                     end: form_xy(item, "end")?,
+                    mid: if item.head() == Some("arc") {
+                        form_xy(item, "mid").ok()
+                    } else {
+                        None
+                    },
                     width: form_f64(item, "width", 1).unwrap_or(0.0),
                     layer: form_atom(item, "layer", 1).unwrap_or("").to_string(),
                     net: node_net(item).map(|raw| names.normalize(raw).to_string()),
@@ -1187,9 +1197,42 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         10,
     );
 
+    let aesthetics = crate::aesthetics::aesthetics(
+        &tracks
+            .iter()
+            .map(|track| crate::aesthetics::AestheticTrack {
+                start: track.start,
+                end: track.end,
+                mid: track.mid,
+                layer: track.layer.clone(),
+                net: track.net.clone(),
+            })
+            .collect::<Vec<_>>(),
+        &vias.iter().map(|(at, _)| *at).collect::<Vec<_>>(),
+        &parts
+            .iter()
+            .enumerate()
+            .flat_map(|(index, part)| {
+                part.pads
+                    .iter()
+                    .filter(|pad| pad.copper)
+                    .map(move |pad| crate::aesthetics::AestheticPad {
+                        center: pad.center,
+                        half: pad.half,
+                        net: pad.net.clone(),
+                        layer: pad
+                            .smd
+                            .then(|| if part.back { "B.Cu" } else { "F.Cu" }.to_string()),
+                        part: index,
+                    })
+            })
+            .collect::<Vec<_>>(),
+    );
+
     Ok(KiCadQualityReport {
         board_id: board_id.into(),
         economy,
+        aesthetics,
         decoupling,
         crystals,
         separation,

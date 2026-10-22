@@ -51,6 +51,7 @@ mod sever;
 mod spokes;
 mod stamping;
 mod stitch;
+mod straighten;
 mod trouble;
 mod update;
 mod vias;
