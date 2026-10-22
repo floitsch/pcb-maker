@@ -515,6 +515,27 @@ whole (a temporary file renamed into place), so a killed run's best
 attempt so far cannot pass for a result. Errors and incomplete results
 print one line on stderr.
 
+**Memory: the machine's ledger** (since 2026-10-22). `route-kicad-board`,
+`layout-kicad-board`, `place-kicad-board` and `drc-kicad-board` reserve
+their memory in one ledger file per machine (`PCB_MAKER_LEDGER`, default
+`$XDG_RUNTIME_DIR/pcb-maker-ledger.json`, else
+`/tmp/pcb-maker-ledger.json`; `off`: none) before they allocate: what the
+process holds and its routers' estimated peak (1.7 times their lattice
+maps and 460 MB, with a 1.25 margin), 2.2 GB more while kicad-cli runs. A
+run waits while the reservations of every run on the machine and its
+request exceed the machine's memory less 6 GB
+(`PCB_MAKER_LEDGER_MARGIN_MB`) and says so on stderr (`memory ledger:
+waiting to reserve ...`); routers that would run side by side run fewer
+at a time instead, which does not change the result. The reservation is
+also a limit of the process's own: a run that grows past it is given more
+while the ledger has room, and otherwise ends with exit 4 and a verdict
+whose error names the reservation (rerun when fewer runs share the
+machine), rather than being killed by the kernel. A run's reservation
+goes with the process, also when it panics or is killed (the ledger drops
+the reservations of dead pids). `pcb-maker ledger` (`--json`) lists the
+live reservations: pid, megabytes, what a waiting run waits for, age and
+the run's command, board and output directory.
+
 **Boards the reader refuses** (exit 2, `usage_error`, one line naming
 the place; since 2026-10-21). A board, footprint library, schematic or
 netlist that does not parse is the input's error, as are: lists nested

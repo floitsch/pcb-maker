@@ -11,6 +11,97 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-22 (memory ledger)
+
+Progress had slowed to the queue for build/quick-tier.lock, and without
+the lock two rounds of runs were OOM-killed: each run (and each harness)
+judged by the memory available when it started, runs admitted together
+could not see each other's reservations, and an admission floor does not
+protect against growth after admission. Now a machine-wide **memory
+ledger** lets runs go concurrently without the lock. Snapshots x1590
+(measured below) and x1591 (x1590 and a race fix: a process's own limit
+never lowers when the watchdog raised it while the main thread waited).
+Branch memory-ledger.
+
+**The ledger** (crates/pcb-kicad/src/ledger.rs; the same file and rules
+in benchmarks/harness_common.py): one JSON file
+(`$XDG_RUNTIME_DIR/pcb-maker-ledger.json`, else `/tmp/...`;
+`PCB_MAKER_LEDGER` names another, `off` none) of reservations: pid,
+started, the process's start ticks (a reused pid is another process),
+megabytes, label and, while a process waits, what it waits for. Every
+update takes an exclusive flock on `<ledger>.lock` and writes the file
+whole (renamed into place); reservations of dead pids are dropped on
+every read, so a run that panics or is killed releases its memory.
+`pcb-maker ledger` (`--json`) lists who holds what.
+
+**The binary** (route, layout, place and drc-kicad-board arm it):
+reserves before it allocates: at the lattice check (before any map) what
+it holds and a router at the finest pitch it starts at (the maps' floor,
+1.7 times plus 460 MB, the 1.25 margin); where the ladder or the layout's
+placement race decides how many routers run side by side, as many as the
+ledger has room for (at least one, waiting for its room), the maps
+estimate of each and the fixed 460 MB once; 2.2 GB more while kicad-cli
+runs (`run_bounded`). It waits while the ledger's total and its request
+exceed MemTotal less a margin (`PCB_MAKER_LEDGER_MARGIN_MB`, default
+6144; `PCB_MAKER_LEDGER_TOTAL_MB` replaces it, a test knob) and logs the
+wait every 60 s. A request larger than the capacity runs when nothing
+else holds memory; two runs that each hold memory and wait to grow would
+wait for ever, so the oldest of them goes on (into the margin);
+reservations of the process's ancestors (a harness, a free dimension's
+parent) do not stop it. The reservation is also a limit of its own: a
+watchdog thread reads the resident size every 200 ms, raises the
+reservation by a fifth while the ledger has room and otherwise writes the
+verdict (exit 4, internal_error, the error naming the reservation and the
+ledger) and exits, instead of the OOM killer. Not as
+`PCB_MAKER_MEMORY_MB`: that one is one of the ladder's own limits and
+decides which finer lattices it attempts (`too_small_for`), so a
+reservation fed into it would change results; the ledger changes only how
+many routers run at once, which never decides which are judged. The
+library's callers and the tests do nothing until the executable arms it;
+the CLI tests use a ledger of their own.
+
+**The harnesses**: run.py's MemoryGate admits against the ledger
+(`harness_common.admit`: the live reservations and the board's expected
+peak against the capacity, and `--min-free-gb` kept as a floor on
+MemAvailable less what the reserving runs are still expected to grow
+by), reserves the expected peak at once under the ledger's lock and hands
+it to the board's binary when it starts (a binary since x1590 replaces it
+with its own); the tier lock is opt-in (`--lock`; `--no-lock` accepted
+and does nothing). triage.py's shared gate is the machine ledger
+(`--memory-gate` names another; one entry per runner, its jobs times
+`--job-memory-gib`), import_pending.py reserves each conversion through
+it: the three memory gates the harness review found are one rule
+(`harness_common.memory_room`). The harness tests use a ledger of their
+own.
+
+**Judged.** Unit tests: stale and reused pids dropped on read, 8 threads
+x 25 updates under the flock losing none, totals, the wait and deadlock
+rules; a CLI test (`routes_side_by_side_serialise_through_the_memory_ledger`):
+two routes started together under `PCB_MAKER_LEDGER_TOTAL_MB=1000` both
+wait for a third process's 900 MB, then go one after the other, never
+both reserved at once, and both finish with their verdicts, the ledger
+empty after; run.py tests (waiting while the reservations fill the
+machine and going when one ends, a board larger than the machine alone,
+the hand-over to the binary, the floor's growth, the format triage and
+the binary share). Three short route-mode boards at once (ducktop2 bms,
+brickpico, musicbrain-busboard, `--jobs 3 --expected-gb 1.2`, a ledger
+of 3000 MB: two fit): the third waited 45 s in run.py's admission while
+the two ran (their binaries reserved 1126 and 1826 MB, then fewer probes
+side by side: "3 of 4 probes side by side ... 3 fit the memory ledger"),
+none was killed, all three rows have results identical to x1542's
+(routed, vias, length, open, work; peaks 811-1049 MB). The route-mode
+expansion tier (8 x 1, no lock, 30 s, `--min-free-gb 6`, the machine's
+ledger beside other agents' work) x1590 against
+build/expansion-probe2-x1542.log: all 46 rows identical (routed, vias,
+length, open, work seconds, pass and strict pass, KiCad's findings, exit,
+verdict; 631 unconnected, 18 passes, strict 18) and all 46 result boards
+byte-identical; no row killed or cut; wall 272 s (x1542: 616 s at
+`--min-free-gb 14` on a busier machine; not a like-for-like timing). 11
+admissions waited 15-30 s on the floor: the binaries' reservations are
+upper bounds (2 to 7 times the measured peaks on small boards), so the
+floor's "still to grow" is conservative. `bash scripts/check.sh --fast`
+and the clippy gate.
+
 ## Committed on 2026-10-22 (probe overshoot)
 
 A negotiation checked its work limit and the work deadline only after a

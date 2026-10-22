@@ -431,6 +431,9 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
     let Some(own) = guard.as_mut() else {
         return Try::Unarmed;
     };
+    // The process's own limit only grows: the watchdog may have raised it
+    // while the caller waited for less.
+    let base_mb = base_mb.max(own.base_mb);
     if own.broken {
         own.base_mb = base_mb;
         own.extra_mb = extra_mb;

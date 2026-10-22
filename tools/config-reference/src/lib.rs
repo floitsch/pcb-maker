@@ -148,6 +148,21 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "a resident memory limit in megabytes beside the router setting `memory_mb` and the limits the process reads itself (RLIMIT_AS, the cgroup's): the ladder runs as many routers side by side as fit the tightest.",
     ),
     (
+        "PCB_MAKER_LEDGER",
+        Kind::User,
+        "the machine's memory ledger, where routes, layouts and KiCad's checks reserve their memory before they allocate and wait for room (default `$XDG_RUNTIME_DIR/pcb-maker-ledger.json`, else `/tmp/pcb-maker-ledger.json`; `off`: none; `pcb-maker ledger` lists it). Reservations do not change results.",
+    ),
+    (
+        "PCB_MAKER_LEDGER_MARGIN_MB",
+        Kind::User,
+        "the memory the ledger keeps free of reservations (default 6144): all reservations together take at most MemTotal less it.",
+    ),
+    (
+        "PCB_MAKER_LEDGER_TOTAL_MB",
+        Kind::User,
+        "what the ledger's reservations may take together, in place of MemTotal less the margin (tests).",
+    ),
+    (
         "PCB_ROUTER_NO_SPOKELESS_TRACKS",
         Kind::Switch,
         "turns off the router's `spokeless_tracks` (a straight track into kept fill for a pad the spoke model sees without a spoke).",

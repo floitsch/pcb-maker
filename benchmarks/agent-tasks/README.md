@@ -223,7 +223,7 @@ measurement). The discipline:
 - **Every board's tree ends with it**: run.py starts each binary in a
   process group of its own; a timeout kills the group (kicad-cli with
   it), whatever a binary leaves running is killed when it ends, and the
-  memory gate admits the next board only once the tree is gone. The
+  board's reservation in the memory ledger goes with it (the pid rule). The
   harness's own short calls (strip, DRC, scores, the schematic tier's
   steps) do the same on their timeouts.
 - **Rows say what made them**: `binary` and `binary_sha256` on every row
@@ -292,16 +292,34 @@ measurement). The discipline:
   board directories (so that their SHA-256 stays the reference logs');
   run.py finds the same `benchmarks/real/external/...` path under its own
   checkout where that one is not there.
-- **One tier at a time on the machine**: since 2026-10-21 run.py takes
-  `build/quick-tier.lock` itself (an exclusive flock) for every tier run
-  and every run of a whole task list (not for a few boards given with
-  `--only` and no tier), waits for it as long as it takes and prints who
-  holds it (the holder's pid and command line, from /proc/locks); the
-  older `flock build/quick-tier.lock benchmarks/agent-tasks/run.py ...`
-  still works (a caller that holds the lock lets the run through).
-  `--no-lock` skips it (a run that must not wait, beside a tier you know
-  of). Start only with the load under 40 (`uptime`) and more than 20 GB
-  available (`free -g`). Results above a load of about 45 were unsound
+- **Runs side by side, kept apart by the memory ledger** (since
+  2026-10-22): every route, layout and KiCad check of a binary since
+  x1590 reserves its memory in the machine's ledger
+  (`$XDG_RUNTIME_DIR/pcb-maker-ledger.json`, `PCB_MAKER_LEDGER`) before it
+  allocates: the router's maps estimate (1.7 times the maps and 460 MB,
+  with the 1.25 safety margin) for the routers it runs at once, 2.2 GB
+  more while kicad-cli runs. It waits while the reservations of every run
+  on the machine and its request exceed MemTotal less 6 GB
+  (`PCB_MAKER_LEDGER_MARGIN_MB`), and its reservation is a limit of its
+  own: past it, with no room left to raise it, it ends with exit 4 and a
+  verdict naming the reservation instead of being killed. run.py admits a
+  board by the same ledger (`harness_common.admit`): the live
+  reservations and the board's expected peak against the machine, the
+  expected peak reserved at once and handed to the board's binary when it
+  starts. `pcb-maker ledger` lists who holds what. Why: the lock queued
+  every agent's tier behind every other's (progress slowed to the queue),
+  and without it two rounds of runs were OOM-killed because each judged
+  by the memory free when it started and none saw the others'
+  reservations; an admission floor does not protect against growth after
+  admission, a reservation does. Reservations do not change results (how
+  many routers run side by side never decides which are judged; the
+  route-mode expansion tier at 8 x 1 gave the same rows). The tier lock
+  (`build/quick-tier.lock`, an exclusive flock) is opt-in now: `--lock`
+  takes it and waits for it, saying who holds it (from /proc/locks), for
+  a measurement of wall or CPU seconds that must not share the machine;
+  `flock build/quick-tier.lock benchmarks/agent-tasks/run.py ...` still
+  works; `--no-lock` is accepted and does nothing. Start only with the
+  load under 40 (`uptime`). Results above a load of about 45 were unsound
   (the wall-clock guard fired and the rows were CUT); since 2026-10-21
   the guards stretch by the pinned rate over the measured one (at most
   four times, `wall_stretch` in the rows), so a loaded machine takes
@@ -414,15 +432,19 @@ How the runner shares the machine:
   pool (2026-10-14) a layout does not depend on its thread count ("How to
   measure"): rows of runs at other `--threads` compare, CPU and wall
   seconds do not.
-- `--min-free-gb` is kept free after the expected peaks of the boards
-  running: a board is admitted when the memory available, less what the
-  running boards are still expected to grow by (their `peak_rss_mb` in
-  `quick.json` minus their resident size now; `--expected-gb`, 3, for a
-  board without one), leaves that much after its own expected peak. Jobs
-  started together all see memory free that none has taken yet; the old
-  check at start overcommitted. Admission comes before the designer's DRC
-  (kicad-cli, 2.2 GB). Use 20 GB beside the Freerouting and cold-route
-  sweeps, 12 on a quiet machine.
+- `--min-free-gb` is a floor beside the memory ledger: a board is
+  admitted when the ledger has room for its expected peak (`peak_rss_mb`
+  in `quick.json`; `--expected-gb`, 3, for a board without one) and the
+  memory available, less what the runs in the ledger are still expected
+  to grow by (their reservation minus their resident size now), leaves
+  that much after it (0: the ledger alone). Reservations other harnesses
+  or agents hold count, so jobs started together, here or elsewhere, do
+  not overcommit; the floor covers what is not in the ledger (other
+  projects, older binaries' growth). Admission comes before the
+  designer's DRC (kicad-cli, 2.2 GB). Use 20 GB beside the Freerouting
+  and cold-route sweeps, 12 on a quiet machine. triage.py and
+  import_pending.py admit by the same rule (`harness_common.memory_room`;
+  triage fails closed when nothing is reserved).
 
 ### First run, 2026-10-09, x160
 

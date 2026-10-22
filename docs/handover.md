@@ -108,9 +108,11 @@ since gained SNSP-CPU-01 (178 to 5) and MegaDrive (137 to 70). Logs
 **PCBench / PCBWorld D3** (2026-09-29): 110 of the 114 D3 agent tasks
 laid out clean ([the tasks README](../benchmarks/agent-tasks/README.md#2026-09-29-the-114-d3-test-boards)).
 
-How to run them (one tier at a time on the machine, under the lock, which
-run.py takes itself since 2026-10-21 and waits for, naming its holder; load
-under 40 and 20 GB free; the tiers default to 2 search threads a board and
+How to run them (side by side since 2026-10-22: run.py admits each board
+against the machine's memory ledger, which every binary since x1590
+reserves in too, so tiers of several agents run at once without the old
+lock; `--lock` takes build/quick-tier.lock for one tier at a time; load
+under 40; the tiers default to 2 search threads a board and
 physical cores / 2 boards, 8 x 2 on the 5950X; quick and short tiers on
 tasks v6, the schematic tier and v17 on tasks v7):
 
@@ -124,7 +126,7 @@ benchmarks/agent-tasks/compare.py build/short-x1170.log build/short-x1180.log
 
 The full sweep: `benchmarks/agent-tasks/run.py build/github-layout-v17
 --tasks benchmarks/agent-tasks/tasks/v7/tasks.json --binary $B --jobs 8 --threads 2`
-under the same lock (run.py takes it for a whole task list too). Router questions go to route mode on fixed
+admitted by the same ledger. Router questions go to route mode on fixed
 placements (`--route-from <earlier output dir>`), CPU claims to pinned
 simultaneous pairs; the discipline is in the tasks README, "How to
 measure".
@@ -372,6 +374,9 @@ User-facing (`pcb-maker --help` lists them):
 - `PCB_MAKER_NO_CACHE`: anything but `0`: no DRC cache (both sides of a CPU pair).
 - `PCB_MAKER_KICAD_USER_LIBS`: anything but `0`: kicad-cli's DRC and ERC run with the user's KiCad configuration (global libraries) instead of empty library tables.
 - `PCB_MAKER_MEMORY_MB`: a resident memory limit in megabytes beside the router setting `memory_mb` and the limits the process reads itself (RLIMIT_AS, the cgroup's): the ladder runs as many routers side by side as fit the tightest.
+- `PCB_MAKER_LEDGER`: the machine's memory ledger, where routes, layouts and KiCad's checks reserve their memory before they allocate and wait for room (default `$XDG_RUNTIME_DIR/pcb-maker-ledger.json`, else `/tmp/pcb-maker-ledger.json`; `off`: none; `pcb-maker ledger` lists it). Reservations do not change results.
+- `PCB_MAKER_LEDGER_MARGIN_MB`: the memory the ledger keeps free of reservations (default 6144): all reservations together take at most MemTotal less it.
+- `PCB_MAKER_LEDGER_TOTAL_MB`: what the ledger's reservations may take together, in place of MemTotal less the margin (tests).
 
 Switches and experiment hooks (change the result):
 
@@ -459,14 +464,20 @@ pcb-router") and the layout's, ladder's and placer's
   log against another list compares inputs, not binaries. compare.py's
   first line names both lists and says TASK LISTS DIFFER; rows on other
   prepared constraints, task entries or designer boards are marked INPUT.
-- Benchmarks use a copied binary (`build/bin`); one tier at a time under
-  build/quick-tier.lock (run.py takes it; `--no-lock` to skip), load under 40, 20 GB free; above a load
+- Benchmarks use a copied binary (`build/bin`); runs go side by side and
+  the memory ledger keeps them apart (`pcb-maker ledger` lists who holds
+  what; the tier lock only with `--lock`), load under 40; above a load
   of about 45 the wall guard cuts rows (CUT is no evidence). Pin CPU
   experiments with `taskset` on symmetric halves (logical CPUs n and n+16
   share a core).
 - The machine (Ryzen 9 5950X, 16 cores, 32 threads, 62 GB, 32 GB swap):
-  the runners wait for free memory (`--min-free-gb`) and the ladder
-  projects its own.
+  routes, layouts and KiCad's checks reserve their memory in the ledger
+  ($XDG_RUNTIME_DIR/pcb-maker-ledger.json) before they allocate and wait
+  for room (MemTotal less 6 GB for all reservations together); run.py
+  admits a board when the ledger has room for its expected peak, with
+  `--min-free-gb` a floor on MemAvailable beside it; a run that grows
+  past its reservation with no room left ends with exit 4, not the OOM
+  killer.
 - KiCad 10: pinfunction is `NAME_NUMBER`; pad and text angles are absolute;
   copper items reference nets by name, and an unknown name becomes a new net
   unless a touching pad supplies one; DRC caps a violation type at 499 (199
