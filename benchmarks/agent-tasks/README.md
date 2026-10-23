@@ -28,6 +28,28 @@ benchmarks/agent-tasks/run.py build/agent-tasks
 | `esp32-dut-from-netlist` | An ESP32-C3 test board from a netlist: 65 × 56 mm, the controller module on the left edge, the device under test on the right, service headers on the top edge, the system header flush along the bottom, the power header on the left, decoupling within 4 mm of each module. |
 | `esp-usb-corner` | The breadboard fence's USB/ESP corner: an ESP32-C3 module flush in the corner, its antenna keepout beyond the top edge; a USB-C receptacle below it, opening outwards; the regulator between them; capacitors at their pins. Two distance limits there are impossible (a pad 8.4 mm inside the module's courtyard) and are expected to be missed. |
 
+A task that stacks its footprints (`unplace`) also takes off the board
+the texts and silkscreen graphics that label a stacked part: a board text
+or text box on F.SilkS, B.SilkS, F.Cu or B.Cu, or a cluster of silkscreen
+graphics (shapes within 0.5 mm of each other, not one spanning 0.8 of the
+outline), whose box overlaps a movable footprint's courtyard-and-pads box
+at the designer's position on its side, or its holes and through pads
+from the other side (the binary's attachment rule, docs/placer.md "The
+board's own texts and silkscreen graphics", with the text boxes estimated
+from the font size). Stacked parts claim no mark, so such a label would
+stay at the designer's spot as an obstacle for a part the task removed
+from there; moved with its part to the stack it would attach to nothing
+either. Texts over fixed parts and over free space stay. Each row records
+`labels` ("dropped") and `labels_dropped` (how many: a cluster counts
+once), summary.json their total; rows before 2026-10-23 have neither and
+kept every label. This happens at run time: the committed task lists
+(`tasks/v7`) did not change, so `task_sha256` and `board_sha256` are the
+same and compare.py does not mark the boards INPUT; a row with
+`labels_dropped` above 0 against an older row compares prepared boards
+that differ in those labels. Over the 109 tasks of v7, 77 drop labels
+(2824 in all); in the short tier OpenFC 84, MIDAS-MK1.1 10, framework_mobo
+and eternal-keypad 2 each, reCamera, 1337-v4.0 and spell_tome 1 each.
+
 ## Results
 
 2026-09-28, commit a05d028, all three pass:
@@ -54,6 +76,9 @@ benchmarks/agent-tasks/run.py build/agent-tasks
   which become `hollow`: other parts may sit inside them.
 - **Placed from scratch** (`move_all`): everything else, starting from one
   stack.
+- **Dropped** (since 2026-10-23): the board's texts and silkscreen
+  graphics that label a part placed from scratch (a connector's pin
+  names, a chip's function), "Tasks" above.
 
 ```sh
 benchmarks/agent-tasks/from_pcbench.py build/agent-pcbench --subset d3-test
@@ -312,7 +337,10 @@ measurement). The discipline:
   INPUT when either differs. The lists keep the main checkout's absolute
   board directories (so that their SHA-256 stays the reference logs');
   run.py finds the same `benchmarks/real/external/...` path under its own
-  checkout where that one is not there.
+  checkout where that one is not there. Since 2026-10-23 run.py drops
+  the labels of stacked parts while it prepares a board ("Tasks" above):
+  the lists and their hashes stayed, the prepared boards of 77 of v7's
+  109 tasks changed (`labels_dropped`).
 - **Runs side by side, kept apart by the memory ledger** (since
   2026-10-22): every route, layout and KiCad check of a binary since
   x1590 reserves its memory in the machine's ledger

@@ -11,6 +11,79 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-23 (task labels)
+
+The tasks stack their movable parts at one point, and parts sharing an
+origin claim no mark (docs/placer.md, "The board's own texts and
+silkscreen graphics"), so the designers' labels of those parts (a
+connector's pin names, a chip's function) stayed at the designers' spots
+as obstacles for parts the task had taken away from there ("fence report:
+placer side": OpenFC's 17 connectors and headers seated on their stale
+pin names). Branch task-labels; harness only, binary x1652.
+
+**What changed** (run.py's `unplace`, `labels_of_movable`): before
+stacking, the board texts and text boxes on F.SilkS, B.SilkS, F.Cu and
+B.Cu and the silkscreen graphic clusters (within 0.5 mm; not one spanning
+0.8 of the outline) whose box overlaps a movable footprint's
+courtyard-and-pads box at the designer's position on its side, or its
+holes and through pads from the other side, are dropped from the task
+board (the binary's attachment rule; text boxes estimated from the font
+size, pcbnew's widths 0.54 to 1.2 of the size per glyph, taken as 0.95).
+Moving them with the part instead (translating by the stack offset)
+attaches nothing: the stack's parts share an origin, so the labels would
+block the stack's spot. Texts over fixed parts (MIDAS-MK1.1's 14 terminal
+labels of the locked J101 and J102, which the binary still attaches) and
+over free space stay. Rows record `labels: "dropped"` and
+`labels_dropped`, summary.json their total. The committed task lists
+(`tasks/v7`) did not change and nor do `task_sha256` and `board_sha256`:
+the strip happens at run time. Over v7's 109 tasks 77 drop labels, 2824
+in all.
+
+**Placement alone** (`place-kicad-board` on the prepared boards, x1652,
+the reference work rate, two threads; parts on marks counts entries of
+`parts_on_marks`, a part once per mark):
+
+| board | labels dropped | placed | parts on marks | HPWL mm | level (halo, grid) | work s |
+| --- | --- | --- | --- | --- | --- | --- |
+| OpenFC | 84 | complete | 17 -> 1 | 829 -> 1053 | (0, 0.1) -> (0.5, 0.635) | 332 -> 25 |
+| MIDAS-MK1.1 | 10 | complete | 0 -> 0 | 2312 -> 2440 | (0, 0.1) both | 281 -> 219 |
+| SmartSpin2k panel | 153 | complete | 9 -> 16 | 16681 -> 15741 | (0.5, 0.635) both | 189 -> 144 |
+| OpenRX panel | 21 | complete | 0 -> 11 | 1076 -> 1727 | (0, 0.1) -> (0, 0.635) | 600 -> 509 |
+| molecule 5x4_wave | 306 | J4 refused -> J3 and J4 refused | 56 -> 11 | 395 -> 390 | (0, 0.1) both | 581 -> 514 |
+
+OpenFC now places at the halo level its marks-off placement takes (HPWL
+1000 there): the 17 parts are off the marks, the larger HPWL is the halos'
+room. OpenRX's panel finishes a level earlier (grid 0.635 instead of 0.1)
+with 11 parts seated on the remaining marks (`seat_on_marks`), which costs
+it 60 % HPWL: the placer's ladder, not the labels. SmartSpin2k's 16
+entries lie on marks that stay (420 of its 573: over its fixed parts, such
+as U1's pin names in every copy, or over free space). The 5x4_wave still
+refuses: the marks left at J3's spot lie on the back (J3 has no through
+pads) or beside its courtyard (the front pin graphics 0.4 mm off it), so
+by the rule they are not J3's and stay; J3 as well as J4 now goes without
+a place.
+
+**Short tier** (3 x 2, x1652; build/labels1-short-before-x1652 with
+main's run.py, build/labels1-short-after-x1652): passes 6 -> 6, strict 6
+-> 6, KiCad unconnected 20 -> 17, vias 1184 -> 1180, length 21199 ->
+21638 mm, first-route open terminals 58 -> 40. The five boards without
+dropped labels give identical rows (routed, vias, HPWL); every changed
+row has labels dropped:
+
+| board | labels dropped | routed | KiCad unconnected | vias | HPWL mm | parts on marks |
+| --- | --- | --- | --- | --- | --- | --- |
+| OpenFC | 84 | 80/82 -> 81/82 | 2 -> 1 | 192 -> 159 | 829 -> 866 | 17 -> 1 (halo 0 -> 0.5) |
+| MIDAS-MK1.1 | 10 | 149/156 -> 151/156 | 8 -> 6 | 225 -> 226 | 2317 -> 2439 | 0 |
+| framework_mobo | 2 | 71/71, passes | 0 | 106 -> 109 | 916 -> 910 | 1 -> 0 (halo 0.125 -> 0.25) |
+| eternal-keypad | 2 | 65/65 | 0 (its shorting_items stays) | 29 -> 34 | 522 -> 526 | 0 |
+| 1337-v4.0 | 1 | 47/47, passes | 0 | 58 -> 73 | 997 -> 999 | 0 |
+| reCamera | 1 | 55/56 | 4 | 71 -> 74 | 212 -> 210 | 0 |
+| spell_tome | 1 | 18/18, passes | 0 | 7 -> 9 | 166 -> 166 | 0 |
+
+compare.py: better 2 (OpenFC, MIDAS-MK1.1), same 10, worse 0. The single
+labels moved the placement a little (HPWL within 1 %) and the routes with
+it.
+
 ## Committed on 2026-10-23 (placer refusals)
 
 The v19 sweep (x1539) refused four boards v18 (x1315) placed:

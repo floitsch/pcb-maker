@@ -655,7 +655,8 @@ overlapping most claims it. Parts stacked at one origin claim nothing:
 their input position says nothing (four of the fence's five movable
 parts lie at one spot under its back title; a benchmark task stacks every movable
 part at one point, so in the tiers' tasks almost nothing attaches, see
-below). Marks over fixed parts, over free space and at the edge stay
+below; since 2026-10-23 the tasks drop the labels of the parts they
+stack, benchmarks/agent-tasks/README.md "Tasks"). Marks over fixed parts, over free space and at the edge stay
 obstacles. The attachments are taken from the input once; the layout's
 lowerings of the placed board keep them.
 
