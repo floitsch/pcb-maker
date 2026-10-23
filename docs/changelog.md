@@ -15,7 +15,8 @@ v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
 The v19 sweep (x1539) refused four boards v18 (x1315) placed:
 OM-FlexGrid-Flex, SmartSpin2k's panel, OpenRX's panel and the molecule
-5x4_wave. Branch placer-refusal; snapshots x1650 (the share gate alone) and x1651. Details: docs/placer.md,
+5x4_wave. Branch placer-refusal; snapshots x1650 (the share gate alone)
+and x1651. Details: docs/placer.md,
 "Placer refusals since v18".
 
 **Causes** (bisected with placement alone, `place-kicad-board` on the
@@ -47,18 +48,37 @@ the free-dimension fixes caused these refusals:
   placement's budget. Either condition alone moved MIDAS-MK1.1's or
   reCamera's placement. A debug line says how many each step seated.
 
-**Measured** (x1650 against main, placement alone at the reference work
-rate):
-- OM-FlexGrid-Flex: J1 without a place -> complete.
-- SmartSpin2k: 12 parts -> complete (U2 twice and U5 seven times on
-  marks).
-- OpenRX: 81 parts -> complete.
-- 5x4_wave: still refused (J4, or J3 and J4 by seed). Its connectors
-  fill 70 of 76 mm of each side edge under their own pin marks. Seating
-  them with every mark yielding, by eviction or by legalizing every part
-  again, found no slot either, so that code is not in.
-- The short tier's twelve boards place byte-identically to main at
-  200 s of placement work.
+**Measured** (x1651):
+- Placement alone at the reference work rate, against main:
+  - OM-FlexGrid-Flex: J1 without a place -> complete.
+  - SmartSpin2k: 12 parts -> complete (U2 twice and U5 seven times on
+    marks).
+  - OpenRX: 81 parts -> complete.
+  - 5x4_wave: still refused (J4, or J3 and J4 by seed). Its connectors
+    fill 70 of 76 mm of each side edge under their own pin marks.
+    Seating them with every mark yielding, by eviction or by legalizing
+    every part again, found no slot either, so that code is not in.
+- Layouts at the task budget (build/refuse1-recovered-x1651), against
+  v18:
+  - OM-FlexGrid-Flex: 19/19, passes strict, 93 vias (v18 100).
+  - OpenRX: 50/127 routed (v18 47/127), 217 unconnected (226).
+  - SmartSpin2k: 538/585 (v18 553/585), 54 unconnected (39), 1757 vias
+    (1139). It now has 630 parts around the panel's marks.
+- All 109 v7 tasks placed alone: 62 on a first build (the finer eviction
+  only) and 49 on x1651 (the rest, the panels and the molecules). The
+  only refusals left among boards v18 placed are 5x4_wave. OpenESC's 4in1
+  panel and the four other molecules were refused by v18 too (4in1 now
+  12 parts, v19 42, v18 216).
+- Short tier (3 x 2, build/refuse1-short-x1651) against
+  build/gplace1-short-off (x1630) and build/silk1-short-x1552: every
+  placed board is byte-identical to x1630's. The rows are the same
+  except 1337-v4.0's vias, 61 -> 58 on the identical placement, which is
+  main's routing since x1630 (the trouble repair). 6 of 12 pass, strict
+  6, unconnected 21 (x1630: 21).
+- x1650, which skipped the passes on the share of failures alone, moved
+  reCamera's placement in the tier (55/56 -> 54/56). The rule now also
+  needs costly passes.
+
 ## Committed on 2026-10-23 (trouble repair: victims and order)
 
 The trouble-makers' repair (router.md, item 7) refuses less where a
