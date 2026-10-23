@@ -148,8 +148,8 @@ model) and `tests`.
    43 pads.
 8. **Cleanup.** Each net is rerouted alone with pure geometric cost and a high
    via cost; the result is kept only if strictly cheaper.
-   After the via reduction, the straightening (`straighten`, below) takes
-   stair-steps and jogs out of the signal nets' paths.
+   After the via reduction, the straightening (`straighten`, "Straightening"
+   below) takes stair-steps and jogs out of the signal nets' paths.
 9. **Verification.** `pcb_router::verify` measures true distances between all
    emitted copper, obstacles and the outline, independent of the lattice.
 
@@ -1713,8 +1713,9 @@ strictly shorter (length plus vias), and a path with fewer bends is
 mostly as long. score-kicad-board's `aesthetics` counts what that looks
 like (docs/quality.md, "Aesthetics"; changelog 2026-10-23).
 
-`straighten` (router/straighten.rs, `Config::straighten`) runs after the
-via reduction, as part of the clean-up's phase. For every complete
+`straighten` (router/straighten.rs, `Config::straighten`, on by default;
+`PCB_ROUTER_NO_STRAIGHTEN` turns it off) runs after the via reduction
+(after the trouble repair too), as part of the clean-up's phase. For every complete
 signal net (pour nets and fixed branches stay as they are) it lifts the
 net's stamps and works on each branch one layer's run at a time: between
 two of the run's corners (up to eight corners and 15 mm apart) it tries
@@ -1727,11 +1728,17 @@ the first direction a stair-step). Every step must be free as the hard
 search judges one (the static map and its edge blocks, the other nets'
 clearance zones at the node and beside a diagonal, exclusive pours), the
 new nodes may touch none of the net's other nodes, branch ends and
-junctions stay, and the new path may lie on no more of another net's
-pour than the old one. A shortest path is never longer and no via moves,
+junctions stay, and the new path may lie in no more of other pads'
+spoke corridors (thermal guards: the spoke repair after it moved such
+paths out again, with vias; BAGEL-MK1 153 to 157 vias before the rule)
+and on no more of another net's pour than the old one. A shortest path is never longer and no via moves,
 so connections, vias and length cannot get worse. The net is stamped
-again; with `pour_aware_polish` its change is undone when a pour net
-then has more pads off its main piece. Eight step checks count as one
+again. With `pour_aware_polish` the pour nets' stranded pads are
+counted before the first change and once after the pass (the pour nets
+within a stamp's reach of what changed); where a count grew, the changed
+nets go back to their old branches, the last changed first, until none
+has grown (counted per net, the pour analyses' work moved the route
+ladder's shares: flexypin's tracks rung 20.77 to 19.49 s). Eight step checks count as one
 expansion of work. `PCB_ROUTER_FINGERPRINT` prints a fingerprint after
 it.
 
