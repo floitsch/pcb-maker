@@ -35,7 +35,7 @@ The environment variables are indexed in the hand-over
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 65 | - | 0 | 65 | - |
 | [Placer settings](#placer-settings) | 48 | 44 | 4 | 48 | 19 |
-| [Layout settings](#layout-settings) | 19 | 19 | 0 | 19 | 7 |
+| [Layout settings](#layout-settings) | 19 | 19 | 0 | 19 | 8 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 2 |
 | [Layout settings: silkscreen](#layout-settings-silkscreen) | 1 | 1 | 0 | 1 | 1 |
@@ -396,7 +396,7 @@ The layout config file of `layout-kicad-board`. Unknown keys are rejected; a mis
 | `free_dimension` | `Option<crate::free_dimension::KiCadFreeDimension>` | unset | - | One edge of a rectangular outline the layout may move, to find the smallest board that comes out clean (docs/constraints.md, "A free dimension"): `layout-kicad-board` then lays the board out at several sizes, `total_seconds` being the whole search's budget. |
 | `silkscreen` | `KiCadSilkscreenConfig` | its own table | placer.md | The footprints' Reference and Value fields on the silkscreen, placed after routing where KiCad's silkscreen checks find nothing. |
 | `move_descent` | `Option<crate::move_descent::KiCadMoveDescent>` | unset | - | The move descent after the first route (an experiment, off when absent; docs/experiments/move-descent.md): single parts nudged, turned or swapped where the incremental global route and then a local reroute say fewer terminals stay open, also on boards far from complete. `PCB_LAYOUT_MOVE_DESCENT` overrides (`0` off). |
-| `final_route_from_state` | `bool` | `false` | - | Routes survive moves: the final route (the ladder, or the narrow-signal attempt standing in for it) starts from the router's state after the first route and the moves, its complete and legal nets without a pour kept as the board's own copper, and routes the rest; from scratch only when its first attempt leaves more open than the first route did. False: from scratch, as before. `PCB_LAYOUT_FINAL_FROM_STATE` (0 or 1) overrides. |
+| `final_route_from_state` | `bool` | `false` | placer.md | Routes survive moves: the final route (the ladder, or the narrow-signal attempt standing in for it) starts from the router's state after the first route and the moves, its complete and legal nets without a pour kept as the board's own copper, and routes the rest; from scratch only when its first attempt leaves more open than the first route did. False: from scratch, as before. `PCB_LAYOUT_FINAL_FROM_STATE` (0 or 1) overrides. |
 
 ## Layout settings: swappable entries
 

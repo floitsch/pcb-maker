@@ -11,6 +11,177 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-23 (routes survive moves; the narrow step's bound)
+
+Two things, one measurement. Branch keep-routes-across-moves, on main
+38edddd (x1725, the cheaper exchanges) and rebased onto 85cafb7 (escape
+demand, off) before the merge; snapshots x1741 (the measurement), x1742
+and x1743 (the narrow step's continuation floor, below).
+
+**The narrow-signal step's overrun.** DSP-ADAU1452 on the move descent
+(x1691): 742 s of work left for the narrow-signal attempt run alone,
+its ladder charged 1470 s. Not the negotiation cap and not the
+first-iteration gate: the attempt's first route took 192 s, then its
+best rung's seed round ran three seeds with no work deadline at all. A
+layout's ladder gives its seeds a deadline only out of the narrow-step
+reserve (`deadline_before_reserve`) or route mode's bound; the attempt
+run alone keeps no reserve (its step does not apply to itself), so each
+seed negotiated to its own budget and the ladder charged three times
+the longest (425 s). Now in a layout's ladder each seed (the seed rounds
+and a rung's seed retry) stops at its share of the work left beyond the
+reserve, also when nothing is kept. And the attempt run alone keeps
+the attempt after it (the other pour mode) its floor: with at least
+twice `NARROW_CONTINUATION_FLOOR` left it is sized from what is left
+without it (`narrow_with_continuation`) and its ladder keeps 1.1 times
+the floor plus a check from the start (`keep_for_continuation`; the
+first route stops before it too: Glasgow's took 664 of 701 s; a tenth
+more because seeds stop only after the batch under way: DSP after the
+descent had 239 s left of 244 s). Ladder tests:
+`a_layouts_narrow_attempt_alone_ends_within_its_work` (the DSP case:
+two unbounded seeds would charge 192 + 2 x 425 s of 742 s);
+`the_narrow_attempt_alone_leaves_the_continuation_its_floor`.
+
+The continuation runs again (single layouts at the task budgets):
+
+| Board, binary | descent | narrow attempt's work left | continuation | KiCad unconnected |
+| --- | --- | ---: | --- | ---: |
+| DSP-ADAU1452, x1691 (before) | on | 742 s | did not run (-729 s left) | 35 |
+| DSP-ADAU1452, x1743 | off | 1060 s | 371 s, 69 to 30 open | 15 |
+| DSP-ADAU1452, x1743 | on | 759 s | 279 s, 83 to 55 open | 27 |
+| Glasgow revC3, x1741 | off | 701 s | did not run (33 s left) | 148 |
+| Glasgow revC3, x1743 | off | 701 s | 265 s, 317 to 347 open (not kept) | 153 |
+| Glasgow revC3, x1743 | on | 637 s | 298 s, 311 to 315 open (not kept) | 151 |
+
+Only DSP and Glasgow take the narrow path among the eleven dense boards
+at the task budgets. On Glasgow the continuation runs but never wins,
+and the attempt itself, sized without the floor (negotiation 311 s
+instead of 473 s), ends at 153 instead of 148.
+
+**Routes survive moves** (Florian's idea 2; docs/placer.md, "Routes
+survive moves"): `final_route_from_state` (layout.json, off;
+`PCB_LAYOUT_FINAL_FROM_STATE`) starts the final route (the ladder or
+the narrow-signal attempt) from the router's state: its legal copper
+kept as the board's own (route mode's kept copper), the nets within 1 mm
+of a terminal left open freed, the pours as the state connected them;
+the ladder on the rest with at most 0.3 of the work left; from scratch
+after it, at once when its first attempt leaves more open by the
+router's count than the first route did (`fresh_open`, the ladder stops:
+`KEPT_GAVE_UP`), else with the work left while connections stay open.
+Off is main's behaviour exactly (the kept route does not run; the
+narrow step's changes above are in both sides). Tests:
+`a_ladder_on_kept_routes_gives_up_after_a_worse_first_attempt`.
+
+Measured on x1741, single layouts at the task budgets (tasks v7, 1500 s
+of work, pinned rates), `--min-free-gb 10`, no lock, beside one other
+agent; dense boards 3 x 2 per side, the short tier 3 x 2. Output
+`build/keep1-dense-d{0,1}-{off,on}` (d1: `move_descent` on),
+`build/keep1-short-{off,on}`.
+
+The eleven dense boards, the descent off (`final_route_from_state`
+false / true):
+
+| Board | KiCad unconnected off / on | strict pass | vias off / on | work s off / on |
+| --- | ---: | --- | ---: | ---: |
+| panel | 53 / 53 | no / no | 244 / 244 | 1226 / 1229 |
+| protoesp | 76 / 76 | no / no | 388 / 388 | 1208 / 1208 |
+| revC3 | 148 / 151 | no / no | 279 / 279 | 1467 / 1504 |
+| video | 165 / 165 | no / no | 1482 / 1482 | 1388 / 1388 |
+| 4in1-mini | 37 / 38 | no / no | 134 / 138 | 1271 / 1315 |
+| 4in1 | 79 / 81 | no / no | 159 / 156 | 1376 / 1456 |
+| SmartSpin2k_Panelized | 80 / 80 | no / no | 1793 / 1793 | 1388 / 1388 |
+| DSP-ADAU1452 | 15 / 15 | no / no | 267 / 270 | 1391 / 1337 |
+| MegaDrive | 191 / 191 | no / no | 2120 / 2120 | 1574 / 1574 |
+| SNSP-CPU-01 | 91 / 91 | no / no | 1763 / 1763 | 1334 / 1334 |
+| poly_kybd_split72_left | 38 / 38 | no / no | 1114 / 1114 | 1263 / 1263 |
+| sum | 973 / 979 | 0 / 0 | 9743 / 9747 | 14886 / 14996 |
+
+The same with the descent on:
+
+| Board | KiCad unconnected off / on | strict pass | vias off / on | work s off / on |
+| --- | ---: | --- | ---: | ---: |
+| panel | 54 / 54 | no / no | 255 / 255 | 1105 / 1151 |
+| protoesp | 72 / 72 | no / no | 382 / 382 | 1413 / 1413 |
+| revC3 | 151 / 151 | no / no | 282 / 282 | 1500 / 1394 |
+| video | 165 / 165 | no / no | 1482 / 1482 | 1390 / 1390 |
+| 4in1-mini | 38 / 43 | no / no | 150 / 114 | 1295 / 1441 |
+| 4in1 | 72 / 94 | no / no | 174 / 176 | 1428 / 1430 |
+| SmartSpin2k_Panelized | 80 / 80 | no / no | 1793 / 1793 | 1395 / 1395 |
+| DSP-ADAU1452 | 44 / 27 | no / no | 292 / 241 | 1198 / 1402 |
+| MegaDrive | 176 / 176 | no / no | 1962 / 1962 | 1402 / 1402 |
+| SNSP-CPU-01 | 98 / 98 | no / no | 1762 / 1762 | 1438 / 1438 |
+| poly_kybd_split72_left | 38 / 38 | no / no | 1114 / 1114 | 1298 / 1298 |
+| sum | 988 / 998 | 0 / 0 | 9648 / 9563 | 14862 / 15154 |
+
+The descent itself (both from-state off: d0 against d1), for the
+question whether it pays now:
+
+| Board | KiCad unconnected off / on | strict pass | vias off / on | work s off / on |
+| --- | ---: | --- | ---: | ---: |
+| panel | 53 / 54 | no / no | 244 / 255 | 1226 / 1105 |
+| protoesp | 76 / 72 | no / no | 388 / 382 | 1208 / 1413 |
+| revC3 | 148 / 151 | no / no | 279 / 282 | 1467 / 1500 |
+| video | 165 / 165 | no / no | 1482 / 1482 | 1388 / 1390 |
+| 4in1-mini | 37 / 38 | no / no | 134 / 150 | 1271 / 1295 |
+| 4in1 | 79 / 72 | no / no | 159 / 174 | 1376 / 1428 |
+| SmartSpin2k_Panelized | 80 / 80 | no / no | 1793 / 1793 | 1388 / 1395 |
+| DSP-ADAU1452 | 15 / 44 | no / no | 267 / 292 | 1391 / 1198 |
+| MegaDrive | 191 / 176 | no / no | 2120 / 1962 | 1574 / 1402 |
+| SNSP-CPU-01 | 91 / 98 | no / no | 1763 / 1762 | 1334 / 1438 |
+| poly_kybd_split72_left | 38 / 38 | no / no | 1114 / 1114 | 1263 / 1298 |
+| sum | 973 / 988 | 0 / 0 | 9743 / 9648 | 14886 / 14862 |
+
+The short tier, off against on:
+
+| Board | KiCad unconnected off / on | strict pass | vias off / on | work s off / on |
+| --- | ---: | --- | ---: | ---: |
+| 1337-v4.0 | 0 / 0 | yes / yes | 73 / 73 | 101 / 101 |
+| PCB | 0 / 0 | yes / yes | 106 / 106 | 134 / 134 |
+| USB_Keypad | 2 / 2 | no / no | 181 / 181 | 472 / 464 |
+| WLED_Matrix | 8 / 8 | no / no | 194 / 194 | 405 / 475 |
+| framework_mobo_lefthalf | 0 / 0 | yes / yes | 101 / 101 | 498 / 498 |
+| MIDAS-MK1.1-revA | 7 / 7 | no / no | 234 / 234 | 265 / 265 |
+| OpenFC | 1 / 1 | no / no | 163 / 163 | 445 / 366 |
+| reCamera_S101_v1.1 | 4 / 4 | no / no | 83 / 83 | 313 / 325 |
+| spell_tome_bottom | 0 / 0 | yes / yes | 9 / 9 | 27 / 27 |
+| eternal-keypad | 0 / 0 | no / no | 34 / 34 | 102 / 102 |
+| main | 0 / 0 | yes / yes | 39 / 39 | 55 / 55 |
+| Blue_Line | 0 / 0 | yes / yes | 26 / 26 | 5 / 5 |
+| sum | 22 / 22 | 6 / 6 | 1243 / 1243 | 2822 / 2817 |
+
+Reading:
+
+- **Routes surviving moves do not pay as built.** Dense sum 973 to 979
+  with the descent off (better 0, worse 3: Glasgow +3, 4in1 +2,
+  4in1-mini +1), 988 to 998 with it on (DSP 44 to 27, 4in1 72 to 94,
+  4in1-mini 38 to 43); the short tier identical (22 / 22, passes 6 / 6),
+  work within noise. The kept route's board was kept once: 4in1-mini
+  after the descent (94 open against the route from scratch's 113, which
+  had 236 s less; KiCad 43 against 38 off). DSP's 44 to 27 is not the
+  kept route: its continuation ran on the on side (278 s left) and not
+  on the off side (239 s of 240: x1741 lacks x1743's margin).
+- **Why:** kept copper is fixed. With every complete net kept, the open
+  nets had no way out (4in1-mini: 20 of 28 open nets without any path,
+  DSP 30 of 41); freeing the nets around the open terminals frees most
+  of a dense board (1.5 mm: 4in1-mini kept 59 of 152 nets; 1 mm: 71-72),
+  and what is freed is then routed between walls the router may not
+  move. On the nearly complete short-tier boards the kept route left
+  more open than the state (OpenFC 4 against 2, reCamera 10 against 8):
+  the freed nets lose the room the state had found for them. The route
+  from scratch (another pour mode, narrow widths, all nets negotiable)
+  decides the board, and the kept route costs it 45-236 s.
+- **The descent still does not pay**: 973 to 988 on this base (DSP 15 to
+  44 on x1741, 27 on x1743 where its continuation runs: the descent's
+  300 s still cost it 12; protoesp 76 to 72, 4in1 79 to 72 and MegaDrive
+  191 to 176 gain; Glasgow, SNSP, 4in1-mini and the panel lose). With
+  x1743's DSP the sum would be 971 against 973: even, not a gain one
+  run per side can show. With the kept route on as well, 998: not below
+  978.
+
+Proposed: neither as a default; `final_route_from_state` stays as an
+override. What would make it pay is a warm start in which the router
+owns the state's routes (its negotiation may rip them up), on a new
+lattice and with the narrow widths, rather than kept copper.
+
 ## Experiment 2026-10-23 (escape demand in placement)
 
 Routing structure where the placement is made, one bounded experiment

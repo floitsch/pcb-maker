@@ -1132,7 +1132,22 @@ those nets. A warm start in which the router owns the state's routes
 (and may rip them up in its negotiation) on a new lattice or with the
 narrow widths is the step this leaves.
 
-MEASUREMENT_PLACEHOLDER
+The narrow-signal attempt run alone (boards far from complete) now ends
+within its share: its seeds stop at their share of the work left (they
+had no deadline: DSP-ADAU1452 after the descent charged 1470 s of 742
+s), and with twice the floor left it keeps the attempt after it (the
+other pour mode, 240 s) its floor from the start.
+
+**Measured (x1741, changelog "routes survive moves"): no default.**
+Over the eleven dense boards at the task budgets KiCad's unconnected
+items go from 973 to 979 with the descent off (better 0, worse 3) and
+from 988 to 998 with it on; the short tier is identical (22 / 22,
+passes 6 / 6). The kept route's board was kept once (4in1-mini after
+the descent, still 5 worse than off); on the nearly complete short-tier
+boards it left more open than the state (OpenFC 4 against 2): the nets
+freed around an open terminal lose the room the state had found for
+them and cannot take back any other. The move descent does not pay
+with it either (998 against main's 973 on this base).
 
 ## What went wrong on the way (kept as lessons)
 
