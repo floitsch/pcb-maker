@@ -244,8 +244,9 @@ pub struct Config {
     /// Cost in millimetres of trace of a step into a pin-row gap
     /// (`Board::pin_row_gaps`) by a net other than the gap's two pads':
     /// a track snaking between a part's adjacent SMD pins pays it once or
-    /// twice per gap it crosses. 0 turns it off (no gap maps built);
-    /// `PCB_ROUTER_PIN_ROW_COST` sets it.
+    /// twice per gap it crosses. 0 turns it off (no gap marks built);
+    /// `PCB_ROUTER_PIN_ROW_COST` sets it (default 2: from 3 mm on the
+    /// expansion tier loses to the thermal guards, docs/router.md).
     pub pin_row_cost: f64,
     /// A negotiation that has not converged after this many seconds is
     /// handed to the resolution step as it is.
@@ -359,7 +360,7 @@ impl Default for Config {
             pin_row_cost: std::env::var("PCB_ROUTER_PIN_ROW_COST")
                 .ok()
                 .and_then(|value| value.parse().ok())
-                .unwrap_or(0.0),
+                .unwrap_or(2.0),
             negotiation_seconds: 900.0,
             negotiation_expansions: 0,
             plane_cut_cost: 3.0,

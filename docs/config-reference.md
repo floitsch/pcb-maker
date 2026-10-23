@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 87 | 75 | 12 | 87 | 32 |
+| [Router settings](#router-settings) | 87 | 75 | 12 | 87 | 33 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 0 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 0 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
@@ -85,7 +85,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `cleanup_via_cost_mm` | `Option<f64>` | unset | - | Router `cleanup_via_cost`: the via cost while cleaning up (default 25). |
 | `cleanup_passes` | `Option<usize>` | unset | - | Router `cleanup_passes`: passes of per-net shortening once the board is conflict free (default 4). |
 | `bend_cost_mm` | `Option<f64>` | unset | - | Router `bend_cost`: the cost per 45 degrees of direction change, in millimetres (default 0.1). |
-| `pin_row_cost_mm` | `Option<f64>` | unset | - | Router `pin_row_cost`: the cost of another net's step between two adjacent SMD pads of a part's pin row, in millimetres (default `PCB_ROUTER_PIN_ROW_COST`, else 0: off). |
+| `pin_row_cost_mm` | `Option<f64>` | unset | router.md | Router `pin_row_cost`: the cost of another net's step between two adjacent SMD pads of a part's pin row, in millimetres (default `PCB_ROUTER_PIN_ROW_COST`, else 2; 0: off). |
 | `via_reduction_rounds` | `Option<usize>` | unset | - | Router `via_reduction_rounds`: via reduction rounds after the board is complete (default 3). |
 | `strict_via_budget` | `Option<bool>` | unset | - | Router `strict_via_budget` (default on): the via reduction keeps its budget within a round. |
 | `run_work` (internal) | `Option<(f64, f64)>` | unset (internal) | - | The run's work budget and what is left of it as the attempt starts (router `run_work`; set by the ladder, not read from a file). |
@@ -292,7 +292,7 @@ One constraint of one rule of the project's `.kicad_dru`. Source: `KiCadCustomRu
 | `via_reduction_keeps_spokes` | `bool` | `false` | - | A via-reduction round is kept only if it starves no more thermal pads (`starved_pads`) than before. Off: the router's count is not KiCad's (mackerel-08: 0 against 5); on the quick tier it took starved thermals from 13 to 10 but cost k30-SBC its 55-via round and 5 more starved pads in KiCad's count. |
 | `cleanup_seconds` | `f64` | `180.0` | `cleanup_seconds` | Seconds the clean-up may take at most: no batch starts later than this, nor later than the negotiation took (at least 60 s). A 130 x 90 mm six-layer board spent 470 s in clean-up. |
 | `thermal_guard_cost` | `f64` | `10.0` | `thermal_guard_cost` | Cost factor for another net's step on the ring around a pad that joins its pour by thermal spokes (copper there starves the spokes). |
-| `pin_row_cost` | `f64` | `0.0` | `pin_row_cost_mm` | Cost in millimetres of trace of a step into a pin-row gap (`Board::pin_row_gaps`) by a net other than the gap's two pads': a track snaking between a part's adjacent SMD pins pays it once or twice per gap it crosses. 0 turns it off (no gap maps built); `PCB_ROUTER_PIN_ROW_COST` sets it. |
+| `pin_row_cost` | `f64` | `2.0` | `pin_row_cost_mm` | Cost in millimetres of trace of a step into a pin-row gap (`Board::pin_row_gaps`) by a net other than the gap's two pads': a track snaking between a part's adjacent SMD pins pays it once or twice per gap it crosses. 0 turns it off (no gap marks built); `PCB_ROUTER_PIN_ROW_COST` sets it (default 2: from 3 mm on the expansion tier loses to the thermal guards, docs/router.md). |
 | `negotiation_seconds` | `f64` | `900.0` | `negotiation_seconds` | A negotiation that has not converged after this many seconds is handed to the resolution step as it is. |
 | `negotiation_expansions` | `u64` | `0` | `negotiation_seconds` | Search expansions one negotiation may spend (0: no limit but the seconds). Unlike seconds, independent of the machine's load. |
 | `parallel` | `bool` | `true` | - | Route spatially disjoint nets of one iteration in parallel. |

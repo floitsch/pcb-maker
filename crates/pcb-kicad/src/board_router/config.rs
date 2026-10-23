@@ -160,7 +160,7 @@ pub struct KiCadBoardRouterConfig {
     pub bend_cost_mm: Option<f64>,
     /// Router `pin_row_cost`: the cost of another net's step between two
     /// adjacent SMD pads of a part's pin row, in millimetres (default
-    /// `PCB_ROUTER_PIN_ROW_COST`, else 0: off).
+    /// `PCB_ROUTER_PIN_ROW_COST`, else 2; 0: off).
     #[serde(default)]
     pub pin_row_cost_mm: Option<f64>,
     /// Router `via_reduction_rounds`: via reduction rounds after the board
