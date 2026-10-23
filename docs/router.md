@@ -820,7 +820,7 @@ The second round, every route and fingerprint the same (docs/changelog.md,
 - the occupancy a byte a count (`Occupancy`; two until now): a count is
   how many nets' stamps cover a cell, a handful where nets overlap; a
   count of 255 or more keeps 255 in its byte and the rest in a side map,
-  so every count is exact (no board measured reaches it). Nothing keeps a
+  so every count is exact. Nothing keeps a
   second copy (the via reduction's snapshot leaves it out since
   2026-10-22; only the layout's trial copies of a whole router carry
   one). Not shared between classes: classes apart in their vias only have
@@ -839,12 +839,12 @@ The second round, every route and fingerprint the same (docs/changelog.md,
   four necks: 730 MB of records, 365 now; jiran-ble-lite 422 to 211;
 - the guard and the cover maps in 16 bits (`owner16`, as the records
   hold them; were 32), and the lost-spokes step's copy of the guard with
-  them.
+  them; the via cover (a word a node) none on a board without pours.
 
 The maps on the seven boards (MB, one router, one thread; the largest
 memory line): katia 2189 -> 1408 (occupancy 741 -> 371, records 730 ->
 365, history/guard/cover 162 -> 117), jiran-ble-lite at 0.05 mm 1589 ->
-1194, the laptop motherboard 636 -> 497, Sisu 491 -> 379, k30 247 -> 194,
+1141, the laptop motherboard 636 -> 497, Sisu 491 -> 379, k30 247 -> 194,
 jetson 223 -> 165, Castor 193 -> 134. Katia's largest now: occupancy 370,
 the records 365, the static maps 347, a scratch 147, the pour analysis's
 transient maps 137, the stamp lists 124.
@@ -874,20 +874,20 @@ margin of 1.25 (`router_peak_mb`; 1.2 times and 540 MB, 1.3 times and
 pour maps shrank; 1.7 and 460, 2.0 and 550 until 2026-10-22, when the
 maps shrank and freed blocks went back to the system). Measured with one
 router at a time and one thread, a ladder of 60 s of work without probes
-and seeds (the whole process's peak, x1620, 2026-10-23):
+and seeds (the whole process's peak, x1622, 2026-10-23):
 
 | board | maps MB | peak RSS | RSS / maps | VmPeak | VM / maps |
 |---|---|---|---|---|---|
-| katia (4 layers, 10 classes) | 1408 | 1768 | 1.26 | 2022 | 1.44 |
-| jiran-ble-lite at 0.05 mm (2) | 1194 | 1241 | 1.04 | 1558 | 1.30 |
-| byrantech laptop motherboard (6) | 497 | 781 | 1.57 | 979 | 1.97 |
-| Sisu_SSE-9 (v16 placement) | 379 | 555 | 1.46 | 736 | 1.94 |
-| k30-SBC (v16) | 194 | 358 | 1.85 | 598 | 3.08 |
-| jetson (v16) | 165 | 744 | 4.51 | 902 | 5.47 |
-| Castor (v16) | 134 | 327 | 2.44 | 565 | 4.22 |
+| katia (4 layers, 10 classes) | 1408 | 1763 | 1.25 | 2029 | 1.44 |
+| jiran-ble-lite at 0.05 mm (2) | 1141 | 1212 | 1.06 | 1506 | 1.32 |
+| byrantech laptop motherboard (6) | 497 | 774 | 1.56 | 979 | 1.97 |
+| Sisu_SSE-9 (v16 placement) | 379 | 554 | 1.46 | 736 | 1.94 |
+| k30-SBC (v16) | 194 | 357 | 1.84 | 598 | 3.08 |
+| jetson (v16) | 165 | 744 | 4.51 | 903 | 5.47 |
+| Castor (v16) | 134 | 328 | 2.45 | 565 | 4.22 |
 
-What lies beside the maps hardly follows them (katia 360 MB, jetson 579):
-a slope of 1, and the offsets pass jetson by 21 MB resident and 23 MB of
+What lies beside the maps hardly follows them (katia 355 MB, jetson 579):
+a slope of 1, and the offsets pass jetson by 21 MB resident and 22 MB of
 address space before the margin. The table of 2026-10-22 (x1600):
 
 | board | maps MB | peak RSS | RSS / maps | VmPeak | VM / maps |

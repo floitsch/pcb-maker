@@ -81,10 +81,10 @@ pub const MAX_LATTICE_NODES: usize = u32::MAX as usize;
 /// 4 layers and 2 classes, 50.7 bytes a node and layer: 1.33). 24 and 4
 /// a class since the occupancy counts in a byte and the search records
 /// are a set per class of some net (2026-10-23; 26 and 6 came within
-/// 1.25 of 28 of them, the least by 1.08): under the 67 lattices of the expansion tier, the
-/// fingerprint boards and the seven memory boards by 1.28 or more (the
-/// least, node_v6_0_0, 6 layers and 2 classes, 41.0 bytes a node and
-/// layer; ICE40HX1K-TQ144 1.32).
+/// 1.25 of 28 of them, the least by 1.08): under the 68 lattices of the
+/// expansion tier, the fingerprint boards and the seven memory boards by
+/// 1.28 or more (the least, node_v6_0_0, 6 layers and 2 classes, 41.0
+/// bytes a node and layer; ICE40HX1K-TQ144 1.32).
 pub const LATTICE_BYTES_A_NODE: f64 = 24.0;
 pub const LATTICE_BYTES_A_CLASS: f64 = 4.0;
 
