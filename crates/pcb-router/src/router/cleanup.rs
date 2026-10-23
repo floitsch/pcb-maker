@@ -17,6 +17,17 @@ impl Router {
         let nx = self.grid.nx as i64;
         let mut cost = 0.0;
         for branch in branches {
+            // The search's pin-row cost, a node in another net's gap.
+            if self.config.pin_row_cost > 0.0 {
+                cost += self.config.pin_row_cost
+                    * branch
+                        .nodes
+                        .iter()
+                        .filter(|node| {
+                            self.pin_row_foreign(net, node.layer as usize, node.cell as usize)
+                        })
+                        .count() as f64;
+            }
             for pair in branch.nodes.windows(2) {
                 if pair[0].cell == pair[1].cell {
                     cost += if self.nets[net as usize].plane.is_empty() {

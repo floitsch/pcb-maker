@@ -826,9 +826,10 @@ struct Hot {
     history: f32,
     /// `StaticMaps::trace`: `FREE16`, `BLOCKED16` or an `owner16`.
     trace: u16,
-    /// 0 where neither `guard` nor `covered` holds a net; else the index
-    /// of the pair (guard, cover) in `Router::hot_pours`, or `HOT_POURS_MAPS`
-    /// where the table is full and the per-layer maps are to be read.
+    /// 0 where neither `guard` nor `covered` holds a net and no pin-row
+    /// gap lies (`Router::pin_row`); else the index of the triple (guard,
+    /// cover, gap) in `Router::hot_pours`, or `HOT_POURS_MAPS` where the
+    /// table is full and the per-layer maps are to be read.
     pour: u16,
 }
 
@@ -1182,9 +1183,17 @@ pub struct Router {
     /// Per rule class: its set of `hot` records, `NO_HOT` for a class no
     /// net has.
     hot_of: Vec<usize>,
-    /// The (guard, cover) pairs `Hot::pour` indexes, as `owner`s in 16
-    /// bits; entry 0 is (0, 0).
-    hot_pours: Vec<(u16, u16)>,
+    /// The (guard, cover, pin-row gap) triples `Hot::pour` indexes:
+    /// guard and cover as `owner`s in 16 bits, the gap as an index into
+    /// `pin_row_nets`; entry 0 is (0, 0, 0).
+    hot_pours: Vec<(u16, u16, u16)>,
+    /// Per layer: the nodes in a pin-row gap (`Board::pin_row_gaps`) and
+    /// the gap's index into `pin_row_nets`, sorted by cell (empty with
+    /// `pin_row_cost` 0).
+    pin_row: Vec<Vec<(u32, u16)>>,
+    /// Per pin-row gap: its two pads' nets as `owner`s (0 for none);
+    /// entry 0 is no gap.
+    pin_row_nets: Vec<(u32, u32)>,
     /// Per layer and tile: share of the tile under some pour.
     tile_covered: Vec<Vec<f32>>,
     /// Per layer: cost factor for cutting a pour there. Relative to the

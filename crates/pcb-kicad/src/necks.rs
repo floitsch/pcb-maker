@@ -1270,6 +1270,7 @@ mod tests {
             merged_pads: Vec::new(),
             no_via_pads: Vec::new(),
             fill_passes: Vec::new(),
+            pin_row_gaps: Vec::new(),
         };
         board.obstacles.push(core::Obstacle {
             shape: core::Shape::Capsule {

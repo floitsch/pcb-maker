@@ -177,7 +177,7 @@ impl Router {
             }
         }
         if hot.pour != 0 && self.exclusive[layer] && {
-            let (_, covered) = self.hot_pour(hot.pour, layer, target);
+            let (_, covered, _) = self.hot_pour(hot.pour, layer, target);
             covered != 0 && covered as u32 != own
         } {
             return None;
@@ -186,8 +186,9 @@ impl Router {
     }
 
     /// Whether `node` lies in another net's thermal guard or in a spoke
-    /// corridor of another net's pad (`corridors`, by layer and cell), and
-    /// whether on another net's pour.
+    /// corridor of another net's pad (`corridors`, by layer and cell) or in
+    /// a pin-row gap of other nets (`pin_row_foreign`), and whether on
+    /// another net's pour.
     fn guarded_and_cut(
         &self,
         net: NetId,
@@ -197,14 +198,15 @@ impl Router {
         let own = crate::grid::owner(net);
         let in_corridor = corridors
             .get(&(node.layer, node.cell))
-            .is_some_and(|nets| nets.iter().any(|other| *other != net));
+            .is_some_and(|nets| nets.iter().any(|other| *other != net))
+            || self.pin_row_foreign(net, node.layer as usize, node.cell as usize);
         let class = self.board.nets[net as usize].class;
         let hot = self.hot[self.hot_of[class] * self.board.layer_count + node.layer as usize]
             [node.cell as usize];
         if hot.pour == 0 {
             return (in_corridor, false);
         }
-        let (guard, covered) = self.hot_pour(hot.pour, node.layer as usize, node.cell as usize);
+        let (guard, covered, _) = self.hot_pour(hot.pour, node.layer as usize, node.cell as usize);
         (
             in_corridor || (guard != 0 && guard as u32 != own),
             covered != 0 && covered as u32 != own,

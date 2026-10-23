@@ -338,6 +338,7 @@ fn diagonal_channel(notch: bool) -> (Router, [f64; 2]) {
         merged_pads: Vec::new(),
         no_via_pads: Vec::new(),
         fill_passes: Vec::new(),
+        pin_row_gaps: Vec::new(),
     };
     let config = Config {
         pitches: vec![0.1],
@@ -424,6 +425,7 @@ fn walled_in_pad() -> Router {
         merged_pads: Vec::new(),
         no_via_pads: Vec::new(),
         fill_passes: Vec::new(),
+        pin_row_gaps: Vec::new(),
     };
     let config = Config {
         pitches: vec![0.1],
@@ -502,6 +504,7 @@ fn halves(apart_trees: bool) -> Router {
         merged_pads: Vec::new(),
         no_via_pads: Vec::new(),
         fill_passes: Vec::new(),
+        pin_row_gaps: Vec::new(),
     };
     let config = Config {
         pitches: vec![0.1],
@@ -638,6 +641,7 @@ fn crossed_net() -> Router {
         merged_pads: Vec::new(),
         no_via_pads: Vec::new(),
         fill_passes: Vec::new(),
+        pin_row_gaps: Vec::new(),
     };
     let config = Config {
         pitches: vec![0.1],
@@ -866,6 +870,7 @@ fn board(
         merged_pads: Vec::new(),
         no_via_pads: Vec::new(),
         fill_passes: Vec::new(),
+        pin_row_gaps: Vec::new(),
     }
 }
 
@@ -4274,4 +4279,127 @@ fn straightening_takes_a_stair_step_out_and_keeps_the_ends() {
     );
     assert!(length(&router) < before);
     assert!(router.conflicts(0).is_empty());
+}
+
+/// A row of three SMD pads (P, Q, R at 1 mm pitch) across net S's
+/// straight line, which passes between P and Q: with the pin-row cost S
+/// goes round the row, without it between the pads.
+#[test]
+fn the_pin_row_cost_keeps_other_nets_out_from_between_a_parts_pads() {
+    let class = RuleClass {
+        trace_width: 0.15,
+        clearance: 0.1,
+        via_diameter: 0.6,
+        via_drill: 0.3,
+    };
+    let pad = |x: f64, net: NetId, label: &str| {
+        let half = 0.25;
+        copper(
+            Shape::Polygon {
+                points: vec![
+                    [x - half, 5.0 - 0.5],
+                    [x + half, 5.0 - 0.5],
+                    [x + half, 5.0 + 0.5],
+                    [x - half, 5.0 + 0.5],
+                ],
+            },
+            net,
+            label,
+        )
+    };
+    let terminal = |pad: usize, at: [f64; 2], label: &str| Terminal {
+        anchor: at,
+        layers: 1,
+        pad,
+        contact: None,
+        label: label.into(),
+    };
+    let s_pad = |y: f64, label: &str| {
+        copper(
+            Shape::Circle {
+                center: [4.5, y],
+                radius: 0.2,
+            },
+            3,
+            label,
+        )
+    };
+    let mut gaps = Vec::new();
+    for (a, b) in [(4.0, 5.0), (5.0, 6.0)] {
+        gaps.push(crate::board::PinRowGap {
+            layer: 0,
+            a: [a, 5.0],
+            b: [b, 5.0],
+            nets: [Some(a as NetId - 4), Some(b as NetId - 4)],
+        });
+    }
+    let board = Board {
+        layer_count: 1,
+        outline: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
+        edge_clearance: 0.1,
+        hole_clearance: 0.25,
+        hole_to_hole: 0.25,
+        classes: vec![class],
+        neck_width: 0.15,
+        obstacles: vec![
+            pad(4.0, 0, "U1.1"),
+            pad(5.0, 1, "U1.2"),
+            pad(6.0, 2, "U1.3"),
+            s_pad(2.0, "J1.1"),
+            s_pad(8.0, "J2.1"),
+        ],
+        nets: ["P", "Q", "R"]
+            .iter()
+            .enumerate()
+            .map(|(index, name)| Net {
+                name: (*name).into(),
+                class: 0,
+                terminals: vec![terminal(index, [4.0 + index as f64, 5.0], name)],
+            })
+            .chain([Net {
+                name: "S".into(),
+                class: 0,
+                terminals: vec![
+                    terminal(3, [4.5, 2.0], "J1.1"),
+                    terminal(4, [4.5, 8.0], "J2.1"),
+                ],
+            }])
+            .collect(),
+        planes: Vec::new(),
+        solid_pads: Vec::new(),
+        isolated_pads: Vec::new(),
+        solid_pad_obstacles: Vec::new(),
+        isolated_pad_obstacles: Vec::new(),
+        pad_spokes: Default::default(),
+        merged_pads: Vec::new(),
+        no_via_pads: Vec::new(),
+        fill_passes: Vec::new(),
+        pin_row_gaps: gaps,
+    };
+    let crosses = |cost: f64| {
+        let config = Config {
+            pitches: vec![0.05],
+            pin_row_cost: cost,
+            ..Config::default()
+        };
+        let result = crate::route(&board, &config);
+        assert_eq!(result.status[3], crate::NetStatus::Routed);
+        result.routes[3].segments.iter().any(|segment| {
+            let (low, high) = if segment.start[1] < segment.end[1] {
+                (segment.start, segment.end)
+            } else {
+                (segment.end, segment.start)
+            };
+            low[1] <= 5.0 && high[1] >= 5.0 && {
+                let x = if high[1] > low[1] {
+                    low[0] + (high[0] - low[0]) * (5.0 - low[1]) / (high[1] - low[1])
+                } else {
+                    low[0]
+                };
+                x > 4.0 && x < 6.0
+            }
+        })
+    };
+    assert!(crosses(0.0));
+    assert!(!crosses(5.0));
 }

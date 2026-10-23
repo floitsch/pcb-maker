@@ -726,6 +726,9 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     if let Some(cost) = config.bend_cost_mm {
         router_config.bend_cost = cost;
     }
+    if let Some(cost) = config.pin_row_cost_mm {
+        router_config.pin_row_cost = cost;
+    }
     if let Some(rounds) = config.via_reduction_rounds {
         router_config.via_reduction_rounds = rounds;
     }

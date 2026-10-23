@@ -37,6 +37,7 @@ impl Router {
             self.config.via_cost
         } as f32;
         let bend_cost = self.config.bend_cost as f32;
+        let pin_row_cost = self.config.pin_row_cost as f32;
         // Cleanup and hard reinsertion decide final geometry: search exactly.
         let weight = if self.cleanup || hard {
             0.999
@@ -383,8 +384,15 @@ impl Router {
                         let history = if cleanup { 0.0 } else { hot.history };
                         let mut step =
                             layer_costs[direction] * (1.0 + history) * (1.0 + present * occupied);
+                        let mut pin_row = 0.0;
                         if hot.pour != 0 {
-                            let (guard, covered) = self.hot_pour(hot.pour, layer, target_cell);
+                            let (guard, covered, gap) = self.hot_pour(hot.pour, layer, target_cell);
+                            if gap != 0 {
+                                let (a, b) = self.pin_row_nets[gap as usize];
+                                if a != own && b != own {
+                                    pin_row = pin_row_cost;
+                                }
+                            }
                             if guard != 0 && guard as u32 != own {
                                 step *= thermal_guard_cost;
                             }
@@ -397,6 +405,7 @@ impl Router {
                             }
                         }
                         step *= layer_factor;
+                        step += pin_row;
                         if (arrived as usize) < 8 {
                             let turn = (direction as i32 - arrived as i32).rem_euclid(8);
                             step += bend_cost * turn.min(8 - turn) as f32;

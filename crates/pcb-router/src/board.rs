@@ -189,6 +189,22 @@ pub struct Board {
     /// a plane layer's `no tracks` area, an `add_pours` plane). The static
     /// maps keep them out of the fill trace, as solder mask openings.
     pub fill_passes: Vec<usize>,
+    /// The gaps between adjacent SMD pads of one footprint's pin rows
+    /// (`PinRowGap`): another net's track there snakes between a part's
+    /// pins, which the search charges `Config::pin_row_cost` a step.
+    pub pin_row_gaps: Vec<PinRowGap>,
+}
+
+/// The gap between two adjacent SMD pads of one footprint on one layer
+/// (`Board::pin_row_gaps`): the line between their centres, which a track
+/// of another net than theirs crosses when it passes between them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PinRowGap {
+    pub layer: usize,
+    pub a: Point,
+    pub b: Point,
+    /// The two pads' nets: theirs pass freely.
+    pub nets: [Option<NetId>; 2],
 }
 
 /// A pad merged into its net's terminal `host` (`Board::merged_pads`).

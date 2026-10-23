@@ -241,6 +241,12 @@ pub struct Config {
     /// Cost factor for another net's step on the ring around a pad that
     /// joins its pour by thermal spokes (copper there starves the spokes).
     pub thermal_guard_cost: f64,
+    /// Cost in millimetres of trace of a step into a pin-row gap
+    /// (`Board::pin_row_gaps`) by a net other than the gap's two pads':
+    /// a track snaking between a part's adjacent SMD pins pays it once or
+    /// twice per gap it crosses. 0 turns it off (no gap maps built);
+    /// `PCB_ROUTER_PIN_ROW_COST` sets it.
+    pub pin_row_cost: f64,
     /// A negotiation that has not converged after this many seconds is
     /// handed to the resolution step as it is.
     pub negotiation_seconds: f64,
@@ -350,6 +356,10 @@ impl Default for Config {
             via_reduction_keeps_spokes: false,
             cleanup_seconds: 180.0,
             thermal_guard_cost: 10.0,
+            pin_row_cost: std::env::var("PCB_ROUTER_PIN_ROW_COST")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0.0),
             negotiation_seconds: 900.0,
             negotiation_expansions: 0,
             plane_cut_cost: 3.0,

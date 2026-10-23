@@ -3207,3 +3207,30 @@ mod pour_rank_tests {
         assert_eq!(pour_loss(&[]), 0.0);
     }
 }
+
+#[test]
+fn pin_row_gaps_pair_adjacent_smd_pads_of_a_row() {
+    // An SOIC-8's two rows at 1.27 mm (5.4 mm apart): three gaps a row,
+    // none across; a 2.54 mm row is no pin row; two pads are none.
+    let mut soic = Vec::new();
+    for row in 0..2 {
+        for pin in 0..4 {
+            soic.push((
+                [pin as f64 * 1.27, row as f64 * 5.4],
+                1,
+                Some((row * 4 + pin) as pcb_router::NetId),
+            ));
+        }
+    }
+    let gaps = super::lower::footprint_pin_row_gaps(&soic);
+    assert_eq!(gaps.len(), 6);
+    assert!(
+        gaps.iter()
+            .all(|gap| gap.a[1] == gap.b[1] && gap.layer == 0)
+    );
+    let header: Vec<_> = (0..4)
+        .map(|pin| ([pin as f64 * 2.54, 0.0], 1, None))
+        .collect();
+    assert!(super::lower::footprint_pin_row_gaps(&header).is_empty());
+    assert!(super::lower::footprint_pin_row_gaps(&soic[..2]).is_empty());
+}

@@ -608,6 +608,7 @@ pub(crate) mod tests {
             merged_pads: Vec::new(),
             no_via_pads: Default::default(),
             fill_passes: Vec::new(),
+            pin_row_gaps: Vec::new(),
         }
     }
 

@@ -295,6 +295,8 @@ impl Router {
             hot: Vec::new(),
             hot_of: Vec::new(),
             hot_pours: Vec::new(),
+            pin_row: vec![Vec::new(); layers],
+            pin_row_nets: Vec::new(),
             tile_covered: vec![vec![0.0; tiles_x * tiles_y]; layers],
             layer_cut: vec![1.0; layers],
             sever: vec![Vec::new(); layers],
@@ -359,6 +361,7 @@ impl Router {
         router.guard = router.thermal_guards();
         router.mark_covered();
         router.mark_via_cells();
+        router.mark_pin_rows();
         router.build_hot();
         let counts = router.build_counts();
         router.build_work = counts.work_seconds();
@@ -540,6 +543,92 @@ impl Router {
         )
     }
 
+    /// Marks the nodes of the pin-row gaps (`Board::pin_row_gaps`,
+    /// `pin_row`): per gap, the nodes between its two pad centres within
+    /// half a lattice step of the line through them (half of
+    /// `pitch * (|nx| + |ny|)` for the line's normal n: a lattice path
+    /// changes its distance from the line by at most that a step, so every
+    /// path across the line between the centres has a node in the band,
+    /// one where the line runs along a node row). A node in two gaps keeps
+    /// the first. Nothing with `pin_row_cost` 0.
+    pub(super) fn mark_pin_rows(&mut self) {
+        let layers = self.board.layer_count;
+        self.pin_row = vec![Vec::new(); layers];
+        self.pin_row_nets.clear();
+        if self.config.pin_row_cost <= 0.0 || self.board.pin_row_gaps.is_empty() {
+            return;
+        }
+        self.pin_row_nets.push((0, 0));
+        let pitch = self.grid.pitch;
+        let owner = |net: Option<NetId>| net.map_or(0, crate::grid::owner);
+        for gap in &self.board.pin_row_gaps {
+            if gap.layer >= layers || self.pin_row_nets.len() > u16::MAX as usize {
+                continue;
+            }
+            let (dx, dy) = (gap.b[0] - gap.a[0], gap.b[1] - gap.a[1]);
+            let length = dx.hypot(dy);
+            if length < 1.0e-9 {
+                continue;
+            }
+            let (ux, uy) = (dx / length, dy / length);
+            let band = pitch * (ux.abs() + uy.abs()) / 2.0 + 1.0e-9;
+            let bounds = crate::geometry::Aabb {
+                minimum: [gap.a[0].min(gap.b[0]) - band, gap.a[1].min(gap.b[1]) - band],
+                maximum: [gap.a[0].max(gap.b[0]) + band, gap.a[1].max(gap.b[1]) + band],
+            };
+            let Some((x0, y0, x1, y1)) = self.grid.node_range(bounds) else {
+                continue;
+            };
+            let index = self.pin_row_nets.len() as u16;
+            let mut marked = false;
+            for y in y0..=y1 {
+                for x in x0..=x1 {
+                    let point = self.grid.center(x, y);
+                    let (px, py) = (point[0] - gap.a[0], point[1] - gap.a[1]);
+                    let along = px * ux + py * uy;
+                    let across = py * ux - px * uy;
+                    if along >= -1.0e-9 && along <= length + 1.0e-9 && across.abs() <= band {
+                        self.pin_row[gap.layer].push((self.grid.index(x, y) as u32, index));
+                        marked = true;
+                    }
+                }
+            }
+            if marked {
+                self.pin_row_nets
+                    .push((owner(gap.nets[0]), owner(gap.nets[1])));
+            }
+        }
+        for nodes in &mut self.pin_row {
+            // Stable: of a node's gaps, the first stays.
+            nodes.sort_by_key(|(cell, _)| *cell);
+            nodes.dedup_by_key(|(cell, _)| *cell);
+        }
+    }
+
+    /// The pin-row gap (an index into `pin_row_nets`, 0 for none) at
+    /// `cell` of `layer`.
+    pub(super) fn pin_row_at(&self, layer: usize, cell: usize) -> u16 {
+        let nodes = &self.pin_row[layer];
+        match nodes.binary_search_by_key(&(cell as u32), |(node, _)| *node) {
+            Ok(position) => nodes[position].1,
+            Err(_) => 0,
+        }
+    }
+
+    /// Whether `cell` of `layer` lies in a pin-row gap of other nets than
+    /// `net` (where the search charges `pin_row_cost`).
+    pub(super) fn pin_row_foreign(&self, net: NetId, layer: usize, cell: usize) -> bool {
+        if self.pin_row.get(layer).is_none_or(Vec::is_empty) {
+            return false;
+        }
+        let gap = self.pin_row_at(layer, cell);
+        let own = crate::grid::owner(net);
+        gap != 0 && {
+            let (a, b) = self.pin_row_nets[gap as usize];
+            a != own && b != own
+        }
+    }
+
     /// Packs the static map, the guard, the pour cover and the history
     /// per class and layer (see `hot`); after any of them changed. In
     /// place where the records exist: a second set beside the first was
@@ -577,21 +666,31 @@ impl Router {
         let mut hot = std::mem::take(&mut self.hot);
         hot.resize_with(owners.len() * layers, Vec::new);
         hot.truncate(owners.len() * layers);
-        let mut pours: Vec<(u16, u16)> = vec![(0, 0)];
-        let mut pour_index: FastMap<(u16, u16), u16> = FastMap::default();
+        let mut pours: Vec<(u16, u16, u16)> = vec![(0, 0, 0)];
+        let mut pour_index: FastMap<(u16, u16, u16), u16> = FastMap::default();
         let mut pour_of = vec![0u16; cells];
         for layer in 0..layers {
             // The pair index per node, the same for every class (runs of
             // one pair are the rule: one lookup a run).
             let guard = &self.guard[layer];
             let covered = &self.covered[layer];
-            let mut last = ((0u16, 0u16), 0u16);
+            // The pin-row nodes in cell order, walked beside the cells.
+            let mut gaps = self.pin_row[layer].iter().peekable();
+            let mut last = ((0u16, 0u16, 0u16), 0u16);
             for (cell, pour) in pour_of.iter_mut().enumerate() {
+                let gap = match gaps.peek() {
+                    Some(&&(node, gap)) if node as usize == cell => {
+                        gaps.next();
+                        gap
+                    }
+                    _ => 0,
+                };
                 let pair = (
                     guard.get(cell).copied().unwrap_or(0),
                     covered.get(cell).copied().unwrap_or(0),
+                    gap,
                 );
-                *pour = if pair == (0, 0) {
+                *pour = if pair == (0, 0, 0) {
                     0
                 } else if pair == last.0 {
                     last.1
@@ -629,14 +728,15 @@ impl Router {
         self.hot_pours = pours;
     }
 
-    /// The (guard, cover) pair of a `Hot::pour` other than 0, at `cell` of
-    /// `layer`.
+    /// The (guard, cover, pin-row gap) triple of a `Hot::pour` other than
+    /// 0, at `cell` of `layer`.
     #[inline(always)]
-    pub(super) fn hot_pour(&self, pour: u16, layer: usize, cell: usize) -> (u16, u16) {
+    pub(super) fn hot_pour(&self, pour: u16, layer: usize, cell: usize) -> (u16, u16, u16) {
         if pour == HOT_POURS_MAPS {
             (
                 self.guard[layer].get(cell).copied().unwrap_or(0),
                 self.covered[layer].get(cell).copied().unwrap_or(0),
+                self.pin_row_at(layer, cell),
             )
         } else {
             self.hot_pours[pour as usize]
