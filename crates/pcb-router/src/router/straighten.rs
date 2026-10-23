@@ -111,6 +111,10 @@ fn shortest_shapes(dx: i64, dy: i64) -> Vec<Vec<u8>> {
     shapes
 }
 
+/// A net the pass changed: the net, its old branches, its (bends,
+/// stair-steps) before and after, and the runs changed.
+type Changed = (NetId, Vec<Branch>, (usize, usize), (usize, usize), usize);
+
 /// What the pass did.
 #[derive(Clone, Copy, Debug, Default)]
 pub(super) struct Straightened {
@@ -348,8 +352,7 @@ impl Router {
         let mut checks = 0u64;
         // The changed nets: (net, old branches, (bends, stairs) before and
         // after, runs).
-        let mut changed: Vec<(NetId, Vec<Branch>, (usize, usize), (usize, usize), usize)> =
-            Vec::new();
+        let mut changed: Vec<Changed> = Vec::new();
         for &net in order {
             let state = &self.nets[net as usize];
             if !state.routable
