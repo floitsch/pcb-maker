@@ -11,6 +11,100 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-23 (trouble repair: victims and order)
+
+The trouble-makers' repair (router.md, item 7) refuses less where a
+large net is in trouble. Branch trouble-victims; snapshots x1680
+(before: the repair's default merge, routing identical to main's x1660:
+pcb-router unchanged, the expansion tier identical row for row), x1681
+(the knobs below, all off; since gone from build/bin), x1682 (the new
+defaults).
+
+- **The victims' limit by the trouble-maker's size**
+  (`PCB_ROUTER_TROUBLE_PER_OPEN`, 2): an exchange may displace 12 nets
+  or twice the trouble-maker's open terminals, whichever is more; the
+  acceptance stays "the open terminals of all of them drop". What it
+  lets through are supply nets (on the v19 placements; the open
+  terminals of all the nets involved, before and after, and the nets
+  displaced): video's GND 283 to 46 (32) and +5V 36 to 24 (21),
+  OpenESC's GND 72 to 63 (17), MegaDrive's VCC 57 to 35 (26) and VDDF
+  9 to 4 (15), SNSP-CPU-01's /RESOUT1 9 to 5 (13).
+- **Ties** (`PCB_ROUTER_TROUBLE_TIES`, on): a trade that closes as
+  many terminals as it opens is kept when fewer of the nets involved
+  stay open afterwards (open terminals, then open nets, fall with every
+  kept exchange: no cycle). Rare: on A's nine gap-board runs 8 ties
+  kept, 269 refused (241 leave as many nets open, 28 more).
+- **Rounds**: already there (three rounds while a round keeps an
+  exchange; a refused net is tried again only after an exchange was
+  kept). A tie kept now counts as a change of the board. The work bound
+  (half the attempt's negotiation) is unchanged and binds on most gap
+  boards ("out of work" in round 0 or 1).
+- **The order** (`PCB_ROUTER_TROUBLE_ORDER`): most open terminals first
+  (`open`, kept) against `few`, a survey first (each trouble-maker's
+  priced search alone, undone; refused there, it is not tried in the
+  round) and the fewest victims per terminal closed first. `few` loses
+  on the v19 placements (710 against 702; better only on SNSP-CPU-01)
+  and ties on the designer's; it wins a little on the expansion tier
+  (625 to 623, Miniboard 6 to 4) and on jetson's fingerprint (17 to
+  15). Kept as an experiment, off: the gap boards are the measurement.
+
+**Route mode, the v19 placements** (`--route-from
+build/github-layout-v19`, the route-mode budget, 1 thread a board, 5
+jobs beside four other agents). Cells: KiCad unconnected / new strict
+errors / vias / work seconds. A = x1681 with `PER_OPEN=2 TIES=1` (the
+new default), B = A with `ORDER=few`. Logs
+`build/trouble3-v19route-{x1680,x1681-A,x1681-B}.log`.
+
+| Board | x1680 (before) | A (x1681; x1682 by default) | B (A, `ORDER=few`) |
+| --- | --- | --- | --- |
+| video | 157 / 0 / 1172 / 1261.0 | 130 / 0 / 1202 / 1262.6 | 139 / 0 / 1131 / 1260.9 |
+| SNSP-CPU-01 | 128 / 0 / 1314 / 957.7 | 127 / 0 / 1363 / 939.0 | 120 / 0 / 1381 / 976.8 |
+| OpenESC 4in1 | 108 / 0 / 156 / 1265.0 | 102 / 0 / 155 / 1264.1 | 106 / 0 / 151 / 1264.0 |
+| Glasgow | 168 / 0 / 294 / 1230.1 | 167 / 0 / 296 / 1230.4 | 168 / 0 / 291 / 1228.3 |
+| MegaDrive | 184 / 0 / 1367 / 958.2 | 176 / 0 / 1316 / 937.7 | 177 / 0 / 1249 / 973.6 |
+| sum | 745 | 702 | 710 |
+| vias, work in all | 4303, 5672 s | 4332, 5634 s | 4203, 5704 s |
+
+**Route mode, the designer's placement** (`--tier designer`, 1500 s of
+work). Logs `build/trouble3-designer-*.log`.
+
+| Board | x1680 (before) | A | B |
+| --- | --- | --- | --- |
+| video | 0 / 0 / 603 / 681.2 | VIDEOA | not run |
+| SNSP-CPU-01 | 4 / 0 / 1339 / 1108.2 | 4 / 0 / 1339 / 1109.5 | 4 / 0 / 1339 / 1113.2 |
+| OpenESC 4in1 | 0 / 0 / 111 / 281.2 | 0 / 0 / 111 / 281.2 | 0 / 0 / 111 / 281.2 |
+| Glasgow | 49 / 0 / 240 / 1575.1 | 49 / 0 / 240 / 1575.1 | 49 / 0 / 240 / 1575.6 |
+| MegaDrive | 59 / 0 / 1351 / 1432.8 | 58 / 0 / 1311 / 1432.3 | 58 / 0 / 1236 / 1388.2 |
+| sum | 112 | 111 | 111 |
+
+**Expansion tier** (46 boards, route mode, 8 x 1, 30 s): x1682 (and
+x1681 with A) identical to x1680 on all 46 rows (unconnected 625,
+passes 19, new errors 3, vias 4223, length 112254 mm); against the
+default-on reference build/t2-expansion-x1589 627 to 625 (the
+difference is main's straightening since, x1680 alike). B: 623
+(Miniboard 6 to 4, facade60 daughterboard +16 vias, MAS500 +1.5 mm),
+passes and errors the same.
+
+**Fingerprints** (Castor, k30-SBC, jetson, Sisu, route mode from v16, 1
+x 4): A byte-identical to x1680 on all four (the larger limit and the
+ties change no exchange there). B: jetson 17 to 15
+unconnected (607 to 604 vias), Sisu's second ladder attempt different
+(the survey spends the first attempt's repair work differently: 11 s
+against 19 s) and its kept board the same (23, 379 vias), Castor and
+k30 identical.
+
+x1682 (the defaults) reproduces x1681 with A exactly: the expansion
+tier row for row, OpenESC and SNSP-CPU-01 on v19 (counts, vias and
+work to the tenth of a second). The fixture goldens do not move
+(check.sh --fast). Vias: A +0.7 % on v19 (video +30, SNSP-CPU-01 +49,
+MegaDrive -51), designer MegaDrive -40.
+
+What is left: the work bound binds (most gap-board attempts run out of
+it in round 0 or 1), and Glasgow's kept v19 attempt connects through
+its pours (the other four route them as tracks): nearly every exchange
+there meets a pour net (437 of B's 456 survey refusals). Next: a cheaper exchange (the victims' hard
+routes are most of the work) rather than more refusals lifted.
+
 ## Committed on 2026-10-23 (trouble repair default)
 
 The trouble-makers' repair of the experiment of 2026-10-22

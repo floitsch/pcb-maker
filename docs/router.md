@@ -151,7 +151,19 @@ model) and `tests`.
    other copper at a price, the nets it overlaps lose the crossed
    branches and are routed again hard, and the exchange is kept when the
    open terminals of all of them drop (a ten-pad bus net may cost a
-   short net a pad; docs/experiments/human-level-routing.md).
+   short net a pad; docs/experiments/human-level-routing.md), or stay
+   the same and fewer of the nets are open (a tie that gathers the open
+   terminals into fewer nets; `PCB_ROUTER_TROUBLE_TIES=0` refuses ties).
+   Refused: more nets displaced than the trouble-maker's limit (12, or
+   twice its open terminals where that is more: video's GND with 283
+   open terminals may displace 32 nets, a two-pad net 12;
+   `PCB_ROUTER_TROUBLE_VICTIMS`, `_PER_OPEN`), a pour net in the way,
+   fixed copper. Up to three rounds while a round keeps an exchange; a
+   refused net is tried again only after an exchange was kept, all
+   within half the attempt's negotiation in work. Most open terminals
+   first; the surveyed order (`PCB_ROUTER_TROUBLE_ORDER=few`: each net's
+   priced search alone first, the fewest victims per terminal closed
+   first) was measured and not kept (docs/changelog.md, 2026-10-23).
 8. **Cleanup.** Each net is rerouted alone with pure geometric cost and a high
    via cost; the result is kept only if strictly cheaper.
    After the via reduction and the spoke repairs, the straightening
