@@ -20,8 +20,19 @@ pub(super) struct TroubleSettings {
     pub share: f64,
     /// Rounds over the open nets.
     pub rounds: usize,
-    /// The most nets one exchange may displace.
+    /// The most nets one exchange may displace (at least; see
+    /// `per_open`).
     pub victims: usize,
+    /// The victims a trouble-maker may displace per open terminal of its
+    /// own (`PCB_ROUTER_TROUBLE_PER_OPEN`): its limit is the larger of
+    /// `victims` and this times its open terminals; 0 the flat limit.
+    pub per_open: f64,
+    /// A trade that closes as many terminals as it opens is kept when it
+    /// leaves fewer of the nets involved open (`PCB_ROUTER_TROUBLE_TIES`).
+    pub ties: bool,
+    /// The order of the trouble-makers in a round
+    /// (`PCB_ROUTER_TROUBLE_ORDER`).
+    pub order: TroubleOrder,
     /// 2: a displaced net that comes out worse may displace others in
     /// turn; 1: not.
     pub depth: usize,
@@ -30,6 +41,17 @@ pub(super) struct TroubleSettings {
     /// counted as the pads off their pour's main piece (the pour
     /// analysed again after the exchange).
     pub pours: bool,
+}
+
+/// The order of the trouble-makers in a round.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TroubleOrder {
+    /// Most open terminals first, then the routing order (`open`).
+    MostOpen,
+    /// Surveyed first (each net's priced search alone, undone): the
+    /// fewest victims per terminal its search closes first (`few`); a
+    /// net the survey refuses is not tried in that round.
+    FewestVictims,
 }
 
 /// The repair's default (`Config::trouble_repair`).
@@ -44,7 +66,8 @@ pub fn trouble_override() -> Option<bool> {
 
 impl TroubleSettings {
     /// The knobs: `PCB_ROUTER_TROUBLE_PRESENT` (20), `_SHARE` (0.5),
-    /// `_ROUNDS` (3), `_VICTIMS` (12) and `_DEPTH` (1).
+    /// `_ROUNDS` (3), `_VICTIMS` (12), `_PER_OPEN` (0), `_TIES` (0),
+    /// `_ORDER` (`open`) and `_DEPTH` (1).
     pub(super) fn from_env() -> Self {
         fn read<T: std::str::FromStr>(name: &str, default: T) -> T {
             std::env::var(name)
@@ -57,10 +80,34 @@ impl TroubleSettings {
             share: read("PCB_ROUTER_TROUBLE_SHARE", 0.5),
             rounds: read("PCB_ROUTER_TROUBLE_ROUNDS", 3),
             victims: read("PCB_ROUTER_TROUBLE_VICTIMS", 12),
+            per_open: read("PCB_ROUTER_TROUBLE_PER_OPEN", 0.0),
+            ties: read("PCB_ROUTER_TROUBLE_TIES", 0) != 0,
+            order: match std::env::var("PCB_ROUTER_TROUBLE_ORDER").as_deref() {
+                Ok("few") => TroubleOrder::FewestVictims,
+                _ => TroubleOrder::MostOpen,
+            },
             depth: read("PCB_ROUTER_TROUBLE_DEPTH", 1),
             pours: read("PCB_ROUTER_TROUBLE_POURS", 0) != 0,
         }
     }
+
+    /// The most nets an exchange for a trouble-maker with `open` open
+    /// terminals may displace.
+    fn victim_limit(&self, open: usize) -> usize {
+        self.victims
+            .max((self.per_open * open as f64).ceil() as usize)
+    }
+}
+
+/// What an exchange did.
+#[derive(Clone, Copy, Debug, Default)]
+struct Exchange {
+    /// Kept (else restored).
+    kept: bool,
+    /// The open terminals it closed (0 for a tie kept).
+    closed: usize,
+    /// The nets it displaced.
+    displaced: usize,
 }
 
 /// A net's state as an exchange may have to restore it, and its open
@@ -120,8 +167,9 @@ impl Router {
         let budget = (self.negotiation_seconds * settings.share).max(30.0);
         let clock = self.clock();
         let debug = std::env::var_os("PCB_ROUTER_DEBUG").is_some();
+        let why = debug || std::env::var_os("PCB_ROUTER_TROUBLE_WHY").is_some();
         let mut closed = 0;
-        let (mut tried, mut kept, mut displaced) = (0usize, 0usize, 0usize);
+        let (mut tried, mut kept, mut ties, mut displaced) = (0usize, 0usize, 0usize, 0usize);
         let mut out_of_work = false;
         // A net refused is tried again only once an exchange was kept
         // after its refusal: nothing else changed that it could see.
@@ -144,7 +192,35 @@ impl Router {
             // Most open first (a bus net with nine of ten pads open), then
             // the routing order.
             trouble.sort_by_cached_key(|net| std::cmp::Reverse(self.open_measure(*net)));
-            let mut closed_round = 0;
+            if settings.order == TroubleOrder::FewestVictims {
+                let mut surveyed: Vec<(NetId, usize, usize)> = Vec::new();
+                for net in trouble {
+                    if refused.get(&net) == Some(&kept) {
+                        continue;
+                    }
+                    if self.spent(&clock, budget) {
+                        out_of_work = true;
+                        break;
+                    }
+                    match self.trouble_survey(net, order, settings) {
+                        Ok((victims, closes)) => surveyed.push((net, victims, closes)),
+                        Err(reason) => {
+                            refused.insert(net, kept);
+                            if why {
+                                eprintln!(
+                                    "trouble survey {}: {reason}",
+                                    self.board.nets[net as usize].name
+                                );
+                            }
+                        }
+                    }
+                }
+                // Fewest victims per terminal closed (a/b < c/d as a*d <
+                // c*b), then most closed, then most open.
+                surveyed.sort_by(|a, b| (a.1 * b.2).cmp(&(b.1 * a.2)).then(b.2.cmp(&a.2)));
+                trouble = surveyed.into_iter().map(|entry| entry.0).collect();
+            }
+            let (mut closed_round, mut kept_round) = (0, 0);
             for net in trouble {
                 if self.spent(&clock, budget) {
                     out_of_work = true;
@@ -155,11 +231,15 @@ impl Router {
                     continue;
                 }
                 tried += 1;
-                let gained = self.trouble_exchange(net, order, settings);
-                if gained.0 > 0 {
-                    closed_round += gained.0;
+                let exchange = self.trouble_exchange(net, order, settings);
+                if exchange.kept {
+                    closed_round += exchange.closed;
+                    kept_round += 1;
                     kept += 1;
-                    displaced += gained.1;
+                    if exchange.closed == 0 {
+                        ties += 1;
+                    }
+                    displaced += exchange.displaced;
                     refused.remove(&net);
                 } else {
                     refused.insert(net, kept);
@@ -167,23 +247,28 @@ impl Router {
                 if debug {
                     eprintln!(
                         "trouble {}: {} open before, closed {}, {} displaced",
-                        self.board.nets[net as usize].name, before_net, gained.0, gained.1
+                        self.board.nets[net as usize].name,
+                        before_net,
+                        exchange.closed,
+                        exchange.displaced
                     );
                 }
             }
             closed += closed_round;
             if self.config.verbose {
                 eprintln!(
-                    "trouble round {round}: {closed_round} open terminals closed ({tried} tried, {kept} kept, {displaced} nets displaced so far)"
+                    "trouble round {round}: {closed_round} open terminals closed ({tried} tried, {kept} kept, {ties} of them ties, {displaced} nets displaced so far)"
                 );
             }
-            if closed_round == 0 || out_of_work {
+            // Another round only where this one changed the board (a tie
+            // kept changes it too).
+            if kept_round == 0 || out_of_work {
                 break;
             }
         }
         if self.config.verbose {
             eprintln!(
-                "trouble: {closed} open terminals closed in {tried} exchanges tried, {kept} kept, {:.1} s of work{}",
+                "trouble: {closed} open terminals closed in {tried} exchanges tried, {kept} kept ({ties} ties), {:.1} s of work{}",
                 self.budget_work() - clock.0,
                 if out_of_work { " (out of work)" } else { "" }
             );
@@ -194,14 +279,15 @@ impl Router {
     /// One exchange for `net`: it is routed at `settings.present` through
     /// other copper; the nets it overlaps lose their crossed branches and
     /// are routed again hard. Kept when the open terminals of all of them
-    /// drop; returns (terminals closed, nets displaced), or (0, 0) restored.
+    /// drop, or, with `settings.ties`, stay and fewer of the nets are open;
+    /// else restored.
     fn trouble_exchange(
         &mut self,
         net: NetId,
         order: &[NetId],
         settings: TroubleSettings,
-    ) -> (usize, usize) {
-        let (gained, displaced, reason) = self.trouble_exchange_why(net, order, settings);
+    ) -> Exchange {
+        let (exchange, reason) = self.trouble_exchange_why(net, order, settings);
         if std::env::var_os("PCB_ROUTER_DEBUG").is_some()
             || std::env::var_os("PCB_ROUTER_TROUBLE_WHY").is_some()
         {
@@ -210,7 +296,56 @@ impl Router {
                 self.board.nets[net as usize].name
             );
         }
-        (gained, displaced)
+        exchange
+    }
+
+    /// The survey of `net` for `TroubleOrder::FewestVictims`: its priced
+    /// search alone, undone; the victims it would displace and the open
+    /// terminals of its own it closes, or why its exchange would be
+    /// refused.
+    fn trouble_survey(
+        &mut self,
+        net: NetId,
+        order: &[NetId],
+        settings: TroubleSettings,
+    ) -> Result<(usize, usize), String> {
+        let before_net = self.open_measure(net);
+        let saved = vec![self.save_net(net)];
+        self.nets[net as usize].hopeless_searches = 0;
+        self.route_net_seq(net, settings.present, false, 4.0);
+        self.stamp(net);
+        let after_net = self.open_measure(net);
+        let victims: Vec<NetId> = order
+            .iter()
+            .copied()
+            .filter(|other| *other != net && !self.conflicts(*other).is_empty())
+            .collect();
+        let limit = settings.victim_limit(before_net);
+        let refusal = if after_net >= before_net {
+            Some(format!(
+                "the priced search closes nothing ({before_net} open)"
+            ))
+        } else if victims.len() > limit {
+            Some(format!(
+                "{} victims, more than allowed ({limit} for {before_net} open)",
+                victims.len()
+            ))
+        } else {
+            victims
+                .iter()
+                .find(|victim| !settings.pours && !self.nets[**victim as usize].plane.is_empty())
+                .map(|pour| {
+                    format!(
+                        "a pour net among the victims ({})",
+                        self.board.nets[*pour as usize].name
+                    )
+                })
+        };
+        self.restore_nets(saved);
+        match refusal {
+            Some(reason) => Err(reason),
+            None => Ok((victims.len(), before_net - after_net)),
+        }
     }
 
     fn trouble_exchange_why(
@@ -218,10 +353,10 @@ impl Router {
         net: NetId,
         order: &[NetId],
         settings: TroubleSettings,
-    ) -> (usize, usize, String) {
+    ) -> (Exchange, String) {
         let (mut saved, victims) = match self.displace(net, &[], order, settings) {
             Ok(done) => done,
-            Err(reason) => return (0, 0, reason),
+            Err(reason) => return (Exchange::default(), reason),
         };
         // A victim that came out worse may push others aside in turn (not
         // the net the exchange is for).
@@ -253,21 +388,33 @@ impl Router {
         let after = open_now(self, &saved);
         let clean = clean(self, &saved);
         let involved = saved.len() - 1;
-        if after < before && clean {
+        // The nets open among those involved, before and after: a tie
+        // that gathers the open terminals into fewer nets leaves the next
+        // exchange fewer nets to close (open terminals, then open nets,
+        // fall in every kept exchange: no cycle).
+        let nets_before = saved.iter().filter(|entry| entry.4 > 0).count();
+        let nets_after = saved
+            .iter()
+            .filter(|entry| self.open_measure(entry.0) > 0)
+            .count();
+        let tie = settings.ties && after == before && nets_after < nets_before;
+        if (after < before || tie) && clean {
             (
-                before - after,
-                involved,
+                Exchange {
+                    kept: true,
+                    closed: before - after,
+                    displaced: involved,
+                },
                 format!(
-                    "kept: {before} open to {after} ({involved} displaced, {nested} pushed on)"
+                    "kept: {before} open to {after}, {nets_before} nets open to {nets_after} ({involved} displaced, {nested} pushed on)"
                 ),
             )
         } else {
             self.restore_nets(saved);
             (
-                0,
-                0,
+                Exchange::default(),
                 format!(
-                    "refused: {before} open to {after} ({involved} displaced, {nested} pushed on), clean {clean}"
+                    "refused: {before} open to {after}, {nets_before} nets open to {nets_after} ({involved} displaced, {nested} pushed on), clean {clean}"
                 ),
             )
         }
@@ -300,8 +447,12 @@ impl Router {
             .copied()
             .filter(|other| *other != net && !self.conflicts(*other).is_empty())
             .collect();
-        let refusal = if victims.len() > settings.victims {
-            Some(format!("{} victims, more than allowed", victims.len()))
+        let limit = settings.victim_limit(before_net);
+        let refusal = if victims.len() > limit {
+            Some(format!(
+                "{} victims, more than allowed ({limit} for {before_net} open)",
+                victims.len()
+            ))
         } else if victims.iter().any(|victim| protected.contains(victim)) {
             Some("it would displace the net the exchange is for".to_string())
         } else {
@@ -337,9 +488,9 @@ impl Router {
                 .collect();
             let refusal = if others.iter().any(|other| protected.contains(other)) {
                 Some("it would displace the net the exchange is for".to_string())
-            } else if victims.len() + fresh.len() > settings.victims {
+            } else if victims.len() + fresh.len() > limit {
                 Some(format!(
-                    "{} victims with the one-sided conflicts, more than allowed",
+                    "{} victims with the one-sided conflicts, more than allowed ({limit} for {before_net} open)",
                     victims.len() + fresh.len()
                 ))
             } else {
