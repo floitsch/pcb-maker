@@ -339,6 +339,7 @@ fn diagonal_channel(notch: bool) -> (Router, [f64; 2]) {
         no_via_pads: Vec::new(),
         fill_passes: Vec::new(),
         pin_row_gaps: Vec::new(),
+        terminal_copper: Vec::new(),
     };
     let config = Config {
         pitches: vec![0.1],
@@ -426,6 +427,7 @@ fn walled_in_pad() -> Router {
         no_via_pads: Vec::new(),
         fill_passes: Vec::new(),
         pin_row_gaps: Vec::new(),
+        terminal_copper: Vec::new(),
     };
     let config = Config {
         pitches: vec![0.1],
@@ -505,6 +507,7 @@ fn halves(apart_trees: bool) -> Router {
         no_via_pads: Vec::new(),
         fill_passes: Vec::new(),
         pin_row_gaps: Vec::new(),
+        terminal_copper: Vec::new(),
     };
     let config = Config {
         pitches: vec![0.1],
@@ -642,6 +645,7 @@ fn crossed_net() -> Router {
         no_via_pads: Vec::new(),
         fill_passes: Vec::new(),
         pin_row_gaps: Vec::new(),
+        terminal_copper: Vec::new(),
     };
     let config = Config {
         pitches: vec![0.1],
@@ -871,6 +875,7 @@ fn board(
         no_via_pads: Vec::new(),
         fill_passes: Vec::new(),
         pin_row_gaps: Vec::new(),
+        terminal_copper: Vec::new(),
     }
 }
 
@@ -4375,6 +4380,7 @@ fn the_pin_row_cost_keeps_other_nets_out_from_between_a_parts_pads() {
         no_via_pads: Vec::new(),
         fill_passes: Vec::new(),
         pin_row_gaps: gaps,
+        terminal_copper: Vec::new(),
     };
     let crosses = |cost: f64| {
         let config = Config {

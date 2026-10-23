@@ -355,6 +355,9 @@ struct ClassSpec {
     clearance: Option<f64>,
     via: Option<f64>,
     drill: Option<f64>,
+    /// The class's `diff_pair_width` and `diff_pair_gap`.
+    dp_width: Option<f64>,
+    dp_gap: Option<f64>,
 }
 
 /// The copper layer names of a board's `(layers ...)`, in the router's
@@ -489,6 +492,8 @@ pub fn resolve_project_rules(
             clearance: value("clearance"),
             via: value("via_diameter"),
             drill: value("via_drill"),
+            dp_width: value("diff_pair_width"),
+            dp_gap: value("diff_pair_gap"),
         });
     }
     let default = match specs.iter().find(|spec| spec.name == "Default") {
@@ -583,6 +588,10 @@ pub fn resolve_project_rules(
         }
     }
     let mut connection_rules = BTreeMap::new();
+    // Per net of `net_facts`: its classes' diff pair width and gap (the
+    // first by priority that has one, else Default's) and the class.
+    let mut pair_classes: Vec<PairClass> = Vec::new();
+    let default_spec = specs.iter().find(|spec| spec.name == "Default");
     let mut net_facts = Vec::new();
     for raw in nets {
         // The name as KiCad reads it: the board's atom keeps its escapes
@@ -632,6 +641,7 @@ pub fn resolve_project_rules(
             } else {
                 classes.iter().map(|spec| spec.name.clone()).collect()
             },
+            diff_pair: None,
         });
         report.net_classes.insert(
             net_names.normalize(&raw).to_string(),
@@ -640,6 +650,19 @@ pub fn resolve_project_rules(
                 .map(|net| net.classes.clone())
                 .unwrap_or_default(),
         );
+        let first = |field: fn(&ClassSpec) -> Option<f64>| {
+            classes
+                .iter()
+                .find_map(|spec| field(spec))
+                .or_else(|| default_spec.and_then(field))
+        };
+        pair_classes.push(PairClass {
+            width: first(|spec| spec.dp_width),
+            gap: first(|spec| spec.dp_gap),
+            class: classes
+                .first()
+                .map_or_else(|| "Default".to_string(), |spec| spec.name.clone()),
+        });
         connection_rules.insert(net_names.normalize(&raw).to_string(), rules);
     }
     let mut default_rules = default_rules;
@@ -686,6 +709,8 @@ pub fn resolve_project_rules(
 
     // The project's custom rules.
     let dru_path = project_path.with_extension("kicad_dru");
+    let pair_facts = net_facts.clone();
+    let mut pair_custom_rules: Vec<dru::Rule> = Vec::new();
     if let Ok(text) = fs::read_to_string(&dru_path) {
         report.custom_rules_file = dru_path
             .file_name()
@@ -698,6 +723,7 @@ pub fn resolve_project_rules(
                 report.custom_rules_error = Some(error);
             }
             Ok(rules) => {
+                pair_custom_rules = rules.clone();
                 let current = net_facts
                     .iter()
                     .map(|net| connection_rules[net_names.normalize(&net.name)].clone())
@@ -754,6 +780,15 @@ pub fn resolve_project_rules(
         }
     }
 
+    let diff_pair_rules = diff_pair_rules(
+        &pair_facts,
+        &pair_classes,
+        &pair_custom_rules,
+        &copper_layer_names(&pcb),
+        |name: &str| connection_rules.get(net_names.normalize(name)).cloned(),
+        |name: &str| net_names.normalize(name).to_string(),
+        minimum("min_track_width").max(floor.unwrap_or(0.0)),
+    );
     let mut config = KiCadBoardRouterConfig {
         narrow_signal_mm: narrow_signal,
         relaxed_clearance_mm:
@@ -784,6 +819,7 @@ pub fn resolve_project_rules(
             .then(|| severity.unwrap_or_else(|| "warning".into())),
         project_rules: Some(report),
         net_rules: (!net_rules.is_empty()).then(|| std::sync::Arc::new(net_rules)),
+        diff_pair_rules,
         ..KiCadBoardRouterConfig::default()
     };
     // The narrow-signal and neck widths, too (the classes are floored
@@ -873,6 +909,7 @@ pub fn router_config_over_project(
         report.overrides = overrides;
     }
     config.net_rules = project.net_rules;
+    config.diff_pair_rules = project.diff_pair_rules;
     // The width floor holds for a file's own classes too.
     config.apply_width_floor();
     Ok(config)
@@ -996,6 +1033,117 @@ pub(crate) fn connection_width_floor(
         (FloorMode::ErrorsAndWarnings, severity) => severity == "error" || severity == "warning",
     };
     applies.then_some(min_connection)
+}
+
+/// A net's classes' differential pair settings (`resolve_project_rules`).
+struct PairClass {
+    width: Option<f64>,
+    gap: Option<f64>,
+    class: String,
+}
+
+/// KiCad's differential pair of a net by its name (`DRC_ENGINE::
+/// MatchDpSuffix`): past trailing digits and underscores, a `+` or `P`
+/// (positive) or `-` or `N` (negative); returns the complementary net's
+/// name, the base name (up to the suffix) and whether the net is the
+/// positive one. `D+` pairs with `D-`, `USB_DP` with `USB_DN`, `TX_P_1`
+/// with `TX_N_1`; `USB_DM` is no pair's.
+pub(crate) fn diff_pair_of(name: &str) -> Option<(String, String, bool)> {
+    let characters: Vec<char> = name.chars().collect();
+    for (from_end, character) in characters.iter().rev().enumerate() {
+        let (complement, positive) = match character {
+            '0'..='9' | '_' => continue,
+            '+' => ('-', true),
+            '-' => ('+', false),
+            'P' => ('N', true),
+            'N' => ('P', false),
+            _ => return None,
+        };
+        let at = characters.len() - 1 - from_end;
+        let base: String = characters[..at].iter().collect();
+        let tail: String = characters[at + 1..].iter().collect();
+        return Some((format!("{base}{complement}{tail}"), base, positive));
+    }
+    None
+}
+
+/// What the project gives the nets of differential pairs (both nets
+/// present on the board): per copper layer the width (the custom rules'
+/// track_width for the pair's track there, else the class's
+/// diff_pair_width, else the net's width) and the gap (the rules'
+/// diff_pair_gap, else the class's diff_pair_gap, else its clearance), and
+/// the rules' diff_pair_uncoupled maximum. A rule's opt is taken, else the
+/// class value held inside its min and max. The gap is never below what
+/// KiCad's clearance check lets the two nets come (the class's diff pair
+/// gap where narrower than its clearance, else the clearance).
+fn diff_pair_rules(
+    facts: &[dru::NetFacts],
+    classes: &[PairClass],
+    rules: &[dru::Rule],
+    copper: &[String],
+    connection: impl Fn(&str) -> Option<KiCadConnectionRoutingRules>,
+    key: impl Fn(&str) -> String,
+    min_width: f64,
+) -> BTreeMap<String, crate::board_router::KiCadDiffPairRule> {
+    let names: BTreeSet<&str> = facts.iter().map(|net| net.name.as_str()).collect();
+    let pick = |picked: &Option<dru::Picked>, base: f64| match picked {
+        Some(picked) => picked.opt.unwrap_or_else(|| {
+            base.max(picked.min.unwrap_or(0.0))
+                .min(picked.max.unwrap_or(f64::INFINITY))
+        }),
+        None => base,
+    };
+    let mut out = BTreeMap::new();
+    for (index, fact) in facts.iter().enumerate() {
+        let Some((partner, base, _)) = diff_pair_of(&fact.name) else {
+            continue;
+        };
+        if !names.contains(partner.as_str()) {
+            continue;
+        }
+        let Some(current) = connection(&fact.name) else {
+            continue;
+        };
+        let class = &classes[index];
+        let mut paired = fact.clone();
+        paired.diff_pair = Some(Some(base));
+        let mut rule = crate::board_router::KiCadDiffPairRule {
+            partner: key(&partner),
+            ..Default::default()
+        };
+        // KiCad's P to N clearance: the class's diff pair gap where it is
+        // narrower than the clearance (its implicit rule), else the
+        // clearance.
+        let pair_clearance = match class.gap {
+            Some(gap) if gap < current.clearance_mm => gap,
+            _ => current.clearance_mm,
+        };
+        for layer in copper {
+            let width = dru::track_constraint(rules, &paired, layer, copper, "track_width");
+            let gap = dru::track_constraint(rules, &paired, layer, copper, "diff_pair_gap");
+            let uncoupled =
+                dru::track_constraint(rules, &paired, layer, copper, "diff_pair_uncoupled");
+            let w = pick(&width, class.width.unwrap_or(current.trace_width_mm)).max(min_width);
+            let g = pick(&gap, class.gap.unwrap_or(current.clearance_mm)).max(pair_clearance);
+            rule.layers.push((w, g));
+            rule.sources.push(match (&width, &gap) {
+                (_, Some(picked)) | (Some(picked), None) => format!("rule '{}'", picked.rule),
+                (None, None) if class.gap.is_some() => format!("net class '{}'", class.class),
+                _ => "net class clearance".into(),
+            });
+            for picked in [&width, &gap, &uncoupled].into_iter().flatten() {
+                if !rule.rules.contains(&picked.rule) {
+                    rule.rules.push(picked.rule.clone());
+                }
+            }
+            if let Some(max) = uncoupled.as_ref().and_then(|picked| picked.max) {
+                rule.max_uncoupled =
+                    Some(rule.max_uncoupled.map_or(max, |known: f64| known.min(max)));
+            }
+        }
+        out.insert(key(&fact.name), rule);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1156,6 +1304,98 @@ mod tests {
             fs::write(directory.join("board.kicad_dru"), dru).unwrap();
         }
         (directory, path)
+    }
+
+    #[test]
+    fn differential_pairs_are_named_as_kicad_names_them() {
+        let pair = diff_pair_of;
+        assert_eq!(pair("D+"), Some(("D-".into(), "D".into(), true)));
+        assert_eq!(
+            pair("/USB_D-"),
+            Some(("/USB_D+".into(), "/USB_D".into(), false))
+        );
+        assert_eq!(
+            pair("USB_DP"),
+            Some(("USB_DN".into(), "USB_D".into(), true))
+        );
+        assert_eq!(pair("TX_P_1"), Some(("TX_N_1".into(), "TX_".into(), true)));
+        assert_eq!(pair("CLKN"), Some(("CLKP".into(), "CLK".into(), false)));
+        // KiCad pairs no `DM`, and a supply is no pair's.
+        assert_eq!(pair("USB_DM"), None);
+        assert_eq!(pair("+3V3"), None);
+        assert_eq!(pair("GND"), None);
+    }
+
+    #[test]
+    fn a_pairs_width_and_gap_come_from_the_rules_else_its_class() {
+        let pcb = r#"(kicad_pcb (layers (0 "F.Cu" signal) (1 "In1.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (footprint "a" (at 0 0)
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "/TX_P"))
+                (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net "/TX_N"))
+                (pad "3" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net "D+"))
+                (pad "4" smd rect (at 3 0) (size 1 1) (layers "F.Cu") (net "D-"))
+                (pad "5" smd rect (at 4 0) (size 1 1) (layers "F.Cu") (net "RESET_N"))))"#;
+        let project = r#"{"board": {"design_settings": {"rules": {"min_track_width": 0.1}}},
+              "net_settings": {"classes": [
+              {"name": "Default", "clearance": 0.15, "track_width": 0.25, "via_diameter": 0.6, "via_drill": 0.3, "diff_pair_width": 0.2, "diff_pair_gap": 0.18},
+              {"name": "HS", "clearance": 0.15, "track_width": 0.2, "diff_pair_width": 0.16, "diff_pair_gap": 0.1}],
+              "netclass_patterns": [{"pattern": "/TX_*", "netclass": "HS"}]}}"#;
+        let dru = r#"(version 1)
+            (rule "pairs outer" (layer outer) (condition "A.inDiffPair('/TX')")
+              (constraint track_width (min 0.17mm) (max 0.17mm))
+              (constraint diff_pair_gap (min 0.12mm) (opt 0.13mm) (max 0.14mm))
+              (constraint diff_pair_uncoupled (max 5mm)))"#;
+        let (directory, path) = project_directory("pairs", project, Some(dru));
+        let board = directory.join("board.kicad_pcb");
+        fs::write(&board, pcb).unwrap();
+        let config = resolve_project_rules(&path, &board).unwrap();
+        let rules = &config.diff_pair_rules;
+        // Both nets of a pair, keyed as the lowering names them (the
+        // sheet's slash dropped where no other net takes the name);
+        // RESET_N has no RESET_P.
+        assert_eq!(
+            rules.keys().map(String::as_str).collect::<Vec<_>>(),
+            ["D+", "D-", "TX_N", "TX_P"]
+        );
+        let tx = &rules["TX_P"];
+        assert_eq!(tx.partner, "TX_N");
+        // The rule on the outer layers (its min and max hold the class's
+        // 0.16 at 0.17; its opt gap), the class on In1.Cu (its gap below
+        // the clearance: KiCad's implicit pair rule lets the nets come
+        // that close).
+        assert_eq!(tx.layers, vec![(0.17, 0.13), (0.16, 0.1), (0.17, 0.13)]);
+        assert_eq!(tx.max_uncoupled, Some(5.0));
+        assert_eq!(tx.rules, vec!["pairs outer".to_string()]);
+        assert_eq!(tx.sources[1], "net class 'HS'");
+        // Default's pair settings for D+ and D-; the rule's pattern does
+        // not take them.
+        assert_eq!(rules["D-"].layers, vec![(0.2, 0.18); 3]);
+        // Without the switch, the rule stays unmodelled in the report.
+        let report = config.project_rules.as_ref().unwrap();
+        assert!(
+            report
+                .custom_rules
+                .iter()
+                .any(|rule| rule.constraint == "diff_pair_gap" && rule.status == "unmodelled")
+        );
+        let paired = crate::board_router::with_pairs(&config);
+        let report = paired.project_rules.as_ref().unwrap();
+        assert!(
+            report
+                .custom_rules
+                .iter()
+                .filter(|rule| rule.rule == "pairs outer")
+                .all(|rule| rule.status == "applied")
+        );
+        assert!(
+            !report
+                .unmodelled
+                .iter()
+                .any(|line| line.contains("pairs outer"))
+        );
+        // The pair's nets route at the pair's width.
+        assert_eq!(paired.connection_rules["TX_P"].trace_width_mm, 0.17);
+        fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]

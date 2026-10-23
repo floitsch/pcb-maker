@@ -228,6 +228,21 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "the trouble-makers' repair prints every exchange's outcome (kept, or why refused).",
     ),
     (
+        "PCB_ROUTER_DIFF_PAIRS",
+        Kind::Switch,
+        "turns differential pairs on where the settings name none (`diff_pairs`, off; 0 off): route mode routes the pairs KiCad names (`_P`/`_N`, `+`/`-`, `P`/`N`) as coupled runs at the rules' width and gap before the other nets (docs/router.md, \"Differential pairs\").",
+    ),
+    (
+        "PCB_ROUTER_DIFF_PAIRS_WORK",
+        Kind::Switch,
+        "differential pairs: the pairs router's work deadline in seconds (default 0.15 of the ladder's budget, at least 2 s; for experiments).",
+    ),
+    (
+        "PCB_ROUTER_DIFF_PAIRS_DEBUG",
+        Kind::Diagnostic,
+        "differential pairs: prints each link's route, its path and copper, and every stub refused with the reason.",
+    ),
+    (
         "PCB_ROUTER_BUS_BUNDLES",
         Kind::Switch,
         "sets the router's `bus_bundles` (an experiment, off): buses of four or more nets joining the same footprints route first, in pad order, inside one corridor, side by side (docs/experiments/bus-bundles.md).",

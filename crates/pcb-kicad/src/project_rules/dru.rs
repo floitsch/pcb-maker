@@ -648,6 +648,12 @@ pub(crate) enum Kind {
 pub(crate) struct NetFacts {
     pub name: String,
     pub classes: Vec<String>,
+    /// The net's differential pair as `inDiffPair()` sees it: `None` when
+    /// unknown (the custom rules' lowering: a condition on it is not
+    /// lowered), `Some(None)` for a net in no pair, `Some(Some(base))` for
+    /// a pair's net (`base`: the name less its polarity suffix, KiCad's
+    /// `MatchDpSuffix`).
+    pub diff_pair: Option<Option<String>>,
 }
 
 impl NetFacts {
@@ -772,6 +778,20 @@ impl Context<'_> {
                 (Some(pattern), Some(net)) => Value::Bool(T3::of(net.effective() == pattern)),
                 (Some(_), None) => Value::Bool(T3::False),
                 _ => Value::Unknown,
+            },
+            // KiCad's `inDiffPair(pattern)`: the net's pair base name (or
+            // that less a trailing `_`) matches the pattern.
+            "indiffpair" => match (text_argument(), item.net.map(|net| net.diff_pair.as_ref())) {
+                (_, None) => Value::Bool(T3::False),
+                (_, Some(None)) => Value::Unknown,
+                (_, Some(Some(None))) => Value::Bool(T3::False),
+                (Some(pattern), Some(Some(Some(base)))) => Value::Bool(T3::of(
+                    super::wildcard_match(&pattern, base)
+                        || base
+                            .strip_suffix('_')
+                            .is_some_and(|stem| super::wildcard_match(&pattern, stem)),
+                )),
+                (None, _) => Value::Unknown,
             },
             "existsonlayer" => match text_argument() {
                 Some(pattern) => Value::Bool(T3::of(text_matches(&pattern, item.layer))),
@@ -1229,6 +1249,7 @@ pub(crate) fn lower(
     let no_net = NetFacts {
         name: String::new(),
         classes: vec!["Default".into()],
+        diff_pair: None,
     };
     let conditions: Vec<Option<Ex>> = rules
         .iter()
@@ -1437,7 +1458,9 @@ fn lower_constraint(
             "length" | "skew" | "max_uncoupled" | "via_count" => {
                 "no length tuning or via counts in the router".into()
             }
-            "diff_pair_gap" | "diff_pair_uncoupled" => "no differential pairs in the router".into(),
+            "diff_pair_gap" | "diff_pair_uncoupled" => {
+                "differential pairs route coupled only with `diff_pairs` (off)".into()
+            }
             "physical_clearance" | "physical_hole_clearance" => {
                 "physical clearances (also within a net) are not modelled".into()
             }
@@ -2158,6 +2181,68 @@ fn narrower_than_nets(condition: &Ex, rule: &Rule) -> bool {
     rule.layer.is_some() || item_atoms(condition)
 }
 
+// ---------------------------------------------------------------------------
+// Differential pairs.
+
+/// The values of the one rule KiCad applies to an item for a constraint
+/// (`track_constraint`).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Picked {
+    pub rule: String,
+    pub min: Option<f64>,
+    pub opt: Option<f64>,
+    pub max: Option<f64>,
+}
+
+/// The rule KiCad applies to a track of `net` on `layer` for a constraint
+/// `kind` checked on the item alone (track width, diff pair gap, uncoupled
+/// length): the last rule whose `(layer ...)` holds there and whose
+/// condition surely holds for it (`EvalRules`: the last match wins).
+/// Rules whose condition is unknown for the track, that do not parse or
+/// are rated `ignore` are passed over.
+pub(crate) fn track_constraint(
+    rules: &[Rule],
+    net: &NetFacts,
+    layer: &str,
+    copper: &[String],
+    kind: &str,
+) -> Option<Picked> {
+    let item = Item {
+        kind: Kind::Track,
+        net: Some(net),
+        layer,
+    };
+    rules.iter().rev().find_map(|rule| {
+        if rule.severity.as_deref() == Some("ignore") || !rule_layers(rule, copper).contains(&layer)
+        {
+            return None;
+        }
+        let constraint = rule
+            .constraints
+            .iter()
+            .rev()
+            .find(|constraint| constraint.kind == kind)?;
+        let holds = match rule.condition.as_deref() {
+            None => T3::True,
+            Some(text) => {
+                let condition = parse_condition(text).ok()?;
+                Context {
+                    a: item,
+                    b: None,
+                    same_net: false,
+                }
+                .truth(&condition)
+            }
+        };
+        (holds == T3::True).then(|| Picked {
+            rule: rule.name.clone(),
+            min: constraint.min,
+            opt: constraint.opt,
+            max: constraint.max,
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -2225,6 +2310,7 @@ mod tests {
             .map(|(name, classes)| NetFacts {
                 name: name.to_string(),
                 classes: classes.iter().map(|class| class.to_string()).collect(),
+                diff_pair: None,
             })
             .collect()
     }
@@ -2600,6 +2686,7 @@ mod tests {
         let net = NetFacts {
             name: "N".into(),
             classes: vec!["Default".into()],
+            diff_pair: None,
         };
         let track = Item {
             kind: Kind::Track,

@@ -1405,6 +1405,7 @@ mod tests {
             no_via_pads: Vec::new(),
             fill_passes: Vec::new(),
             pin_row_gaps: Vec::new(),
+            terminal_copper: Vec::new(),
         }
     }
 

@@ -163,6 +163,19 @@ pub struct KiCadBoardRouterConfig {
     /// `PCB_ROUTER_PIN_ROW_COST`, else 2; 0: off).
     #[serde(default)]
     pub pin_row_cost_mm: Option<f64>,
+    /// Differential pairs (docs/router.md, "Differential pairs"): nets
+    /// KiCad pairs by name (`_P`/`_N`, `+`/`-`, `P`/`N`) route as one
+    /// coupled run at the pair's width and gap before the other nets, the
+    /// pads' stubs and what the coupled search cannot route as ordinary
+    /// nets. Route mode only. Default off; `PCB_ROUTER_DIFF_PAIRS=1` turns
+    /// it on where the settings name none.
+    #[serde(default)]
+    pub diff_pairs: Option<bool>,
+    /// The project's rules for the nets of differential pairs, keyed by
+    /// normalized net name like `connection_rules` (set by the project's
+    /// rules, not read from a file).
+    #[serde(skip)]
+    pub diff_pair_rules: BTreeMap<String, KiCadDiffPairRule>,
     /// Router `via_reduction_rounds`: via reduction rounds after the board
     /// is complete (default 3).
     #[serde(default)]
@@ -526,7 +539,35 @@ fn default_hole_clearance() -> f64 {
     0.25
 }
 
+/// What the project's rules give one net of a differential pair
+/// (`project_rules`): per copper layer in the router's order, the pair's
+/// track width and gap there, and the most uncoupled length.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KiCadDiffPairRule {
+    /// The complementary net (normalized).
+    pub partner: String,
+    /// Per copper layer: (width, gap) in millimetres.
+    pub layers: Vec<(f64, f64)>,
+    /// The custom rules' `diff_pair_uncoupled` maximum, if any.
+    pub max_uncoupled: Option<f64>,
+    /// Where the width and gap came from, per layer ("rule 'name'", "net
+    /// class 'name'", "net class clearance").
+    pub sources: Vec<String>,
+    /// The custom rules (names) whose diff_pair_gap or diff_pair_uncoupled
+    /// set a value here.
+    pub rules: Vec<String>,
+}
+
 impl KiCadBoardRouterConfig {
+    /// Whether differential pairs route coupled (`diff_pairs`, else
+    /// `PCB_ROUTER_DIFF_PAIRS`).
+    pub fn diff_pairs_on(&self) -> bool {
+        self.diff_pairs.unwrap_or_else(|| {
+            std::env::var("PCB_ROUTER_DIFF_PAIRS")
+                .is_ok_and(|value| !value.is_empty() && value != "0")
+        })
+    }
+
     /// The narrowest track width allowed by `min_connection_mm` (0: none).
     pub fn width_floor(&self) -> f64 {
         self.min_connection_mm

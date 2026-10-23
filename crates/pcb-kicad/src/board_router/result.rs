@@ -58,6 +58,10 @@ pub struct KiCadBoardRouterResult {
     /// without them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kept_copper: Option<super::KiCadKeptCopper>,
+    /// Route mode with `diff_pairs`: the differential pairs found and what
+    /// became of them; absent with the switch off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub diff_pairs: Option<super::KiCadDiffPairs>,
     /// The pin assignment chosen before routing, if pins were swappable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pin_swaps: Option<KiCadPinSwapResult>,

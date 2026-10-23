@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 88 | 76 | 12 | 88 | 34 |
+| [Router settings](#router-settings) | 90 | 77 | 13 | 90 | 35 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 0 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 0 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
@@ -86,6 +86,8 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `cleanup_passes` | `Option<usize>` | unset | - | Router `cleanup_passes`: passes of per-net shortening once the board is conflict free (default 4). |
 | `bend_cost_mm` | `Option<f64>` | unset | - | Router `bend_cost`: the cost per 45 degrees of direction change, in millimetres (default 0.1). |
 | `pin_row_cost_mm` | `Option<f64>` | unset | router.md | Router `pin_row_cost`: the cost of another net's step between two adjacent SMD pads of a part's pin row, in millimetres (default `PCB_ROUTER_PIN_ROW_COST`, else 2; 0: off). |
+| `diff_pairs` | `Option<bool>` | unset | router.md | Differential pairs (docs/router.md, "Differential pairs"): nets KiCad pairs by name (`_P`/`_N`, `+`/`-`, `P`/`N`) route as one coupled run at the pair's width and gap before the other nets, the pads' stubs and what the coupled search cannot route as ordinary nets. Route mode only. Default off; `PCB_ROUTER_DIFF_PAIRS=1` turns it on where the settings name none. |
+| `diff_pair_rules` (internal) | `BTreeMap<String, KiCadDiffPairRule>` | `{}` (internal) | - | The project's rules for the nets of differential pairs, keyed by normalized net name like `connection_rules` (set by the project's rules, not read from a file). |
 | `via_reduction_rounds` | `Option<usize>` | unset | - | Router `via_reduction_rounds`: via reduction rounds after the board is complete (default 3). |
 | `strict_via_budget` | `Option<bool>` | unset | - | Router `strict_via_budget` (default on): the via reduction keeps its budget within a round. |
 | `run_work` (internal) | `Option<(f64, f64)>` | unset (internal) | - | The run's work budget and what is left of it as the attempt starts (router `run_work`; set by the ladder, not read from a file). |

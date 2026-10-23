@@ -20,7 +20,7 @@ pub mod verify;
 
 pub use board::{
     Board, ClassId, Hatch, LayerMask, MergedPad, Net, NetId, NetRoute, Obstacle, ObstacleKind,
-    PadSpokes, PinRowGap, Plane, RuleClass, Segment, Terminal, Via,
+    PadSpokes, PinRowGap, Plane, RuleClass, Segment, Terminal, TerminalCopper, Via,
 };
 pub use geometry::{Point, Shape};
 pub use router::{Config, DeadPad, Diagnostics, HotSpot, NetStatus, RoutingResult, route};

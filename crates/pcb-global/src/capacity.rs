@@ -609,6 +609,7 @@ pub(crate) mod tests {
             no_via_pads: Default::default(),
             fill_passes: Vec::new(),
             pin_row_gaps: Vec::new(),
+            terminal_copper: Vec::new(),
         }
     }
 

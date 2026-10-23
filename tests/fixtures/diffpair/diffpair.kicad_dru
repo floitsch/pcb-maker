@@ -1,0 +1,6 @@
+(version 1)
+# The pairs' gap and uncoupled length, as a high-speed design states them.
+(rule "pairs"
+	(condition "A.inDiffPair('*')")
+	(constraint diff_pair_gap (min 0.18mm) (opt 0.2mm) (max 0.22mm))
+	(constraint diff_pair_uncoupled (max 6mm)))

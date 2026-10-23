@@ -96,8 +96,11 @@ const TOUCH: f64 = 1.0e-5;
 /// terminal per piece of copper and makes pieces on no pad terminals of
 /// their own (see the module's comment). A board without tracks and vias
 /// is left as it is. The report's track counts are the caller's
-/// (`count_tracks`).
-pub(crate) fn keep_existing_copper(board: &mut core::Board) -> KiCadKeptCopper {
+/// (`count_tracks`). With `whole_pieces` (differential pairs on), a
+/// piece's terminal reaches every item of the piece
+/// (`Board::terminal_copper`), not only its first: a pair's coupled run is
+/// joined to the pads at both of its ends.
+pub(crate) fn keep_existing_copper(board: &mut core::Board, whole_pieces: bool) -> KiCadKeptCopper {
     let mut report = KiCadKeptCopper::default();
     let mut kept_by_net: BTreeMap<core::NetId, Vec<usize>> = BTreeMap::new();
     for (index, obstacle) in board.obstacles.iter().enumerate() {
@@ -225,6 +228,20 @@ pub(crate) fn keep_existing_copper(board: &mut core::Board) -> KiCadKeptCopper {
                 .nets_complete
                 .push(board.nets[net as usize].name.clone());
         }
+        // With `whole_pieces`, a terminal reaches the kept copper of its
+        // piece: a route to it may end anywhere on that copper.
+        if whole_pieces {
+            for (offset, &index) in kept.iter().enumerate() {
+                let piece = root(&mut parent, first_kept + offset);
+                if piece < terminals {
+                    board.terminal_copper.push(core::TerminalCopper {
+                        net,
+                        terminal: renumbered[piece],
+                        obstacle: index,
+                    });
+                }
+            }
+        }
         // Pieces on no terminal: a terminal each where no pour joins them.
         if board.planes.iter().any(|plane| plane.net == net) {
             continue;
@@ -250,6 +267,18 @@ pub(crate) fn keep_existing_copper(board: &mut core::Board) -> KiCadKeptCopper {
                 }
             };
             report.floating += 1;
+            if whole_pieces {
+                let terminal = board.nets[net as usize].terminals.len();
+                for (other_offset, &other) in kept.iter().enumerate() {
+                    if other != index && root(&mut parent, first_kept + other_offset) == piece {
+                        board.terminal_copper.push(core::TerminalCopper {
+                            net,
+                            terminal,
+                            obstacle: other,
+                        });
+                    }
+                }
+            }
             board.nets[net as usize].terminals.push(core::Terminal {
                 anchor,
                 layers: obstacle.layers,
@@ -320,7 +349,7 @@ mod tests {
     fn pads_a_kept_track_joins_are_one_terminal_and_a_loose_track_is_another() {
         let mut board = lowered(BOARD);
         assert_eq!(net(&board, "A").1.terminals.len(), 3);
-        let report = keep_existing_copper(&mut board);
+        let report = keep_existing_copper(&mut board, false);
         let (a, description) = net(&board, "A");
         let labels: Vec<&str> = description
             .terminals
@@ -359,7 +388,7 @@ mod tests {
         let pcb = parse(&text).unwrap();
         assert_eq!(count_tracks(&pcb), [2, 1, 1]);
         let mut board = lowered(&text);
-        let report = keep_existing_copper(&mut board);
+        let report = keep_existing_copper(&mut board, false);
         assert_eq!(net(&board, "A").1.terminals.len(), 1);
         assert_eq!(report.connections_made, 2);
         assert_eq!(report.nets_complete, vec!["A".to_string()]);
@@ -392,7 +421,10 @@ mod tests {
         let mut board = lowered(&text);
         let before: Vec<usize> = board.nets.iter().map(|net| net.terminals.len()).collect();
         let merged = board.merged_pads.clone();
-        assert_eq!(keep_existing_copper(&mut board), KiCadKeptCopper::default());
+        assert_eq!(
+            keep_existing_copper(&mut board, false),
+            KiCadKeptCopper::default()
+        );
         let after: Vec<usize> = board.nets.iter().map(|net| net.terminals.len()).collect();
         assert_eq!(before, after);
         assert_eq!(board.merged_pads, merged);

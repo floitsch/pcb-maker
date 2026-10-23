@@ -612,6 +612,14 @@ fn well_inside(shape: &crate::geometry::Shape, point: crate::geometry::Point) ->
             .all(|(dx, dy)| shape.contains([point[0] + dx, point[1] + dy]))
 }
 
+/// Whether a track of `width` ending at `point` joins the kept copper
+/// `shape` (`Board::terminal_copper`): its end overlaps the copper by at
+/// least the depth `well_inside` asks of a pad.
+fn joins_copper(shape: &crate::geometry::Shape, point: crate::geometry::Point, width: f64) -> bool {
+    const DEPTH: f64 = 0.02;
+    shape.distance_to_point(point) <= (width / 2.0 - DEPTH).max(0.0)
+}
+
 /// The nodes where a branch ends on another (a junction): `materialize`
 /// ends a segment there, so a straight run of the lattice is cut into
 /// segments at them.

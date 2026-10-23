@@ -127,7 +127,7 @@ pub(super) fn route_kicad_board_lowered(
                 mut board,
                 expressions,
             } = lower(&pcb, config, connect_pours)?;
-            let kept = keep_existing_copper(&mut board);
+            let kept = keep_existing_copper(&mut board, config.diff_pairs_on());
             (board, lowering_work_of(expressions), kept)
         }
     };

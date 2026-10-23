@@ -126,9 +126,9 @@ mod project_rules;
 mod run_diagnosis;
 pub use board_router::{
     KiCadBoardRouterConfig, KiCadBoardRouterNet, KiCadBoardRouterResult, KiCadBoardRouterViolation,
-    KiCadExistingTracks, KiCadKeepWhole, KiCadKeptCopper, KiCadPourMode, KiCadPourQuality,
-    bench_kicad_search, dump_kicad_pour_map, measure_pours, route_kicad_board,
-    write_kicad_board_without_tracks,
+    KiCadDiffPair, KiCadDiffPairRule, KiCadDiffPairs, KiCadExistingTracks, KiCadKeepWhole,
+    KiCadKeptCopper, KiCadPourMode, KiCadPourQuality, bench_kicad_search, dump_kicad_pour_map,
+    measure_pours, route_kicad_board, write_kicad_board_without_tracks,
 };
 pub use project_rules::{
     KiCadProjectMinimums, KiCadRuleOverride, preflight_overrides, resolve_project_rules,

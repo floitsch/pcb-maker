@@ -193,6 +193,22 @@ pub struct Board {
     /// (`PinRowGap`): another net's track there snakes between a part's
     /// pins, which the search charges `Config::pin_row_cost` a step.
     pub pin_row_gaps: Vec<PinRowGap>,
+    /// Copper a terminal reaches beside its pad (`TerminalCopper`): the
+    /// search ends on any of it. Empty but for route mode's differential
+    /// pairs (`diff_pairs`), whose coupled tracks are kept copper on no pad.
+    pub terminal_copper: Vec<TerminalCopper>,
+}
+
+/// A copper obstacle of `net` that its terminal `terminal` reaches
+/// (`Board::terminal_copper`): kept copper of one piece with the
+/// terminal's own, so that a search may end anywhere on the piece (a
+/// differential pair's coupled run, whose two ends the pads' stubs join),
+/// on the obstacle's layers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TerminalCopper {
+    pub net: NetId,
+    pub terminal: usize,
+    pub obstacle: usize,
 }
 
 /// The gap between two adjacent SMD pads of one footprint on one layer

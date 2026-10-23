@@ -378,6 +378,10 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     routed with).
   - `existing_tracks` (default `keep`): route mode's handling of the
     board's own tracks and vias; `strip` is `--strip`.
+  - `diff_pairs` (default off; `PCB_ROUTER_DIFF_PAIRS=1`): route mode
+    routes differential pairs (KiCad's names: `D+`/`D-`, `USB_DP`/`USB_DN`)
+    as coupled runs at the project's pair width and gap first; the
+    verdict's `diff_pairs` says what became of them.
 - **Router options in layout mode.** The same file goes in the router
   config position:
   `pcb-maker layout-kicad-board <dir> <id> <out> router.json layout.json`.
@@ -657,6 +661,7 @@ A finished run also carries it as `verdict` in its report:
 | `preexisting_findings`, `preexisting_from` | Errors per type the reference board has at the same place, and its project. |
 | `preexisting_unknown` | Types the reference has at KiCad's cap (199 or more): not subtracted. |
 | `clean_without_subtraction` | KiCad checked the result and finds no unconnected item and no error that counts, with nothing subtracted. |
+| `diff_pairs` | Route mode with `diff_pairs` on (absent otherwise; docs/router.md "Differential pairs"): `found` (pairs KiCad names by `_P`/`_N`, `+`/`-` or `P`/`N`, both nets with pads), `coupled` (every link between the pair's parts a coupled run), `partly_coupled`, `fallen_back` (routed as two ordinary nets), `links`, `links_coupled`, `crossed` (coupled links whose pads lie in the other order at one end: the stubs cross there, uncoupled), `coupled_mm`, `uncoupled_mm` (per coupled pair the longer net's tracks less its coupled run, KiCad's measure), `work_seconds` (the pairs router's, charged to the ladder). `board-router.json` also lists each pair: its nets, width, gap, where they came from, why links fell back. |
 | `repairs` | What the run added for KiCad's DRC that changes no connection: `neck_tracks` and `neck_track_mm` (the connection-width repair's tracks kept, docs/router.md "KiCad's connection width"), `island_stubs` (a pad's own track into its pour island; `null`: not counted yet), `pour_mode` (the kept board's `pours`: `connect`, `tracks`, `none`, ...) and `pours_as_tracks`. Routes and layouts; also at the top of `board-router.json` and `board-layout.json`. |
 | `pours` | How whole the pours stayed, per zone and layer, by the router's pour model on the board written (after the final route; not a decision): `pieces` (the fill's pieces holding copper of the net, slivers under 0.25 mm² left out; KiCad removes the others, `islands_removed`), `largest_share` (the largest piece over the pour's area inside the outline), `coverage` (the copper over that area), `largest_mm2`, `copper_mm2`, `area_mm2`, `cut_mm` (other nets' tracks on the layer). A pour in more than 5 pieces, or whose largest piece holds less than half its copper, adds a next action naming `keep_whole`. Against KiCad's own fill (`benchmarks/fence/pour-pieces.py`) on the fence: copper within 2 %, pieces within about 10 %. Also `pour_quality` in `board-router.json`; score-kicad-board's `pours`. |
 | `environment` | The result-changing environment variables that were set, with their values: `PCB_ROUTER_SEED`, `PCB_ROUTER_SEEDS`, `PCB_ROUTER_ISLAND_STUBS`, `PCB_ROUTER_NO_WALL_GUARD`, `PCB_SKIP_NATIVE`, `PCB_MIN_CONNECTION_FLOOR`, `PCB_KICAD_NO_NECK_REPAIR`, `PCB_KICAD_TIMEOUT`, `PCB_MAKER_KICAD_USER_LIBS`, `PCB_PLACER_WORK_SECONDS`, `PCB_NARROW_RESERVE`, `PCB_PROBES_SIDE_BY_SIDE`, `PCB_LADDER_STATS`, `PCB_WORK_RATE`, `PCB_MAKER_TEST_PANIC_ATTEMPT`; and `pcb_maker_version`, the build that ran (`pcb-maker --version` without the name: the commit and the build date). |

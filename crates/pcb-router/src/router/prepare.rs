@@ -60,6 +60,55 @@ impl Router {
                     }
                 }
             }
+            // Kept copper the terminal reaches (`Board::terminal_copper`):
+            // its legal nodes too.
+            let extras: Vec<&crate::board::TerminalCopper> = self
+                .board
+                .terminal_copper
+                .iter()
+                .filter(|extra| extra.net == net && extra.terminal == index)
+                .collect();
+            let mut seen: HashSet<Node> = if extras.is_empty() {
+                HashSet::new()
+            } else {
+                nodes.iter().copied().collect()
+            };
+            for extra in extras {
+                let copper = &self.board.obstacles[extra.obstacle];
+                let reach = self.board.classes[description.class].trace_width / 2.0;
+                let Some((x0, y0, x1, y1)) =
+                    self.grid.node_range(copper.shape.aabb().inflated(reach))
+                else {
+                    continue;
+                };
+                for layer in 0..self.board.layer_count {
+                    if copper.layers & (1 << layer) == 0 {
+                        continue;
+                    }
+                    let tested = ((x1 - x0 + 1) * (y1 - y0 + 1)) as u64;
+                    counts[0] += tested;
+                    counts[1] += tested * 5 * crate::grid::shape_corners(&copper.shape);
+                    for y in y0..=y1 {
+                        for x in x0..=x1 {
+                            let cell = self.grid.index(x, y);
+                            let node = Node {
+                                layer: layer as u8,
+                                cell: cell as u32,
+                            };
+                            if statics.trace_allowed(layer, cell, net)
+                                && joins_copper(
+                                    &copper.shape,
+                                    self.grid.center(x, y),
+                                    self.board.classes[description.class].trace_width,
+                                )
+                                && seen.insert(node)
+                            {
+                                nodes.push(node);
+                            }
+                        }
+                    }
+                }
+            }
             if nodes.is_empty() {
                 self.escape_nodes(net, terminal, &mut nodes, &mut escapes);
             }

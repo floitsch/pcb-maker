@@ -24,6 +24,27 @@ impl Router {
                 }
                 let anchor = description.terminals[terminal as usize].anchor;
                 let center = self.grid.center_of(node.cell as usize);
+                // A node on kept copper the terminal reaches
+                // (`Board::terminal_copper`) and not on its pad is joined
+                // there: no stub to the pad's centre.
+                if !self.board.terminal_copper.is_empty() {
+                    let own = &description.terminals[terminal as usize];
+                    let pad = own
+                        .contact
+                        .as_ref()
+                        .unwrap_or(&self.board.obstacles[own.pad].shape);
+                    if !pad.contains(center)
+                        && self.board.terminal_copper.iter().any(|extra| {
+                            let copper = &self.board.obstacles[extra.obstacle];
+                            extra.net == net
+                                && extra.terminal == terminal as usize
+                                && copper.layers & (1 << node.layer) != 0
+                                && joins_copper(&copper.shape, center, rules.trace_width)
+                        })
+                    {
+                        return;
+                    }
+                }
                 if let Some((_, width, polyline)) = state.escapes.get(&node) {
                     for pair in polyline.windows(2) {
                         route.segments.push(Segment {

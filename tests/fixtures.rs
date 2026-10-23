@@ -1312,3 +1312,72 @@ fn a_keepout_over_a_part_fixed_by_the_constraints_file_is_warned_of() {
     );
     fs::remove_dir_all(root).unwrap();
 }
+
+/// Differential pairs (`diff_pairs`, docs/router.md "Differential
+/// pairs"): the `diffpair` fixture's two pairs (USB_D_P/N between J1 and
+/// J2 around a mounting hole, LVDS_P/N between J3 and J4 whose pads lie in
+/// the opposite order) route as coupled runs at the rule's gap; KiCad
+/// finds no gap or uncoupled-length error on the pair whose pads' order is
+/// the run's (the crossing pair's stubs cross near J4, uncoupled: phase 1
+/// swaps no pads). With the switch off the report has no `diff_pairs`.
+#[test]
+fn differential_pairs_route_coupled_at_the_rules_gap() {
+    let test = "differential_pairs_route_coupled_at_the_rules_gap";
+    let has_kicad = kicad_cli(test);
+    let root = scratch("diffpair");
+    let route = |out: &Path, on: bool| {
+        let mut command = binary(1);
+        command.env("PCB_ROUTER_DIFF_PAIRS", if on { "1" } else { "0" });
+        if !has_kicad {
+            command.env("PCB_SKIP_NATIVE", "1");
+        }
+        let output = command
+            .args(["route-kicad-board"])
+            .arg(fixtures().join("diffpair"))
+            .arg("diffpair")
+            .arg(out)
+            .args(["--reference", "none"])
+            .output()
+            .unwrap();
+        assert!(
+            [0, 1].contains(&code(&output)),
+            "route-kicad-board failed: {}",
+            stderr(&output)
+        );
+        read_json(&out.join("board-router.json"))
+    };
+    let off = route(&root.join("off"), false);
+    assert!(off.get("diff_pairs").is_none());
+    let out = root.join("on");
+    let report = route(&out, true);
+    let pairs = &report["diff_pairs"];
+    assert_eq!(pairs["found"], 2, "{pairs}");
+    assert_eq!(pairs["coupled"], 2, "{pairs}");
+    assert_eq!(pairs["fallen_back"], 0, "{pairs}");
+    assert_eq!(pairs["crossed"], 1, "{pairs}");
+    for pair in pairs["pairs"].as_array().unwrap() {
+        assert_eq!(pair["gap_mm"], 0.2, "{pair}");
+        assert_eq!(pair["width_mm"], 0.2, "{pair}");
+    }
+    assert_eq!(
+        read_json(&out.join("verdict.json"))["diff_pairs"]["coupled"],
+        2
+    );
+    if has_kicad {
+        let drc = read_json(&out.join("drc.json"));
+        assert_eq!(drc["unconnected_items"].as_array().unwrap().len(), 0);
+        let usb: Vec<&Value> = drc["violations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|finding| {
+                matches!(
+                    finding["type"].as_str(),
+                    Some("diff_pair_gap_out_of_range" | "diff_pair_uncoupled_length_too_long")
+                ) && finding.to_string().contains("USB_D")
+            })
+            .collect();
+        assert!(usb.is_empty(), "KiCad's findings on the USB pair: {usb:?}");
+    }
+    fs::remove_dir_all(&root).unwrap();
+}

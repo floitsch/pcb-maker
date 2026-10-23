@@ -540,8 +540,9 @@ impl KiCadRepairs {
 /// Environment variables that change what a run does or reports (the
 /// router's seed and switches, KiCad's check and its repairs, the budgets'
 /// guards), echoed into the verdict when set.
-pub const RESULT_ENVIRONMENT: [&str; 16] = [
+pub const RESULT_ENVIRONMENT: [&str; 17] = [
     "PCB_ROUTER_SEED",
+    "PCB_ROUTER_DIFF_PAIRS",
     "PCB_ROUTER_PIN_ROW_COST",
     "PCB_ROUTER_SEEDS",
     "PCB_ROUTER_ISLAND_STUBS",
@@ -625,6 +626,9 @@ pub struct KiCadRunFacts {
     pub room: Option<crate::placement_room::KiCadRoom>,
     /// What the run repaired for KiCad's DRC (a route's or a layout's).
     pub repairs: Option<KiCadRepairs>,
+    /// Route mode with `diff_pairs`: the differential pairs found and what
+    /// became of them (`KiCadDiffPairs`, less the per-pair list).
+    pub diff_pairs: Option<crate::KiCadDiffPairs>,
     /// The project's routing rules the router does not keep
     /// (`KiCadProjectRulesReport::unmodelled`).
     pub unmodelled_rules: Vec<String>,
@@ -670,6 +674,7 @@ impl KiCadRunFacts {
             routes: true,
             room: None,
             repairs: None,
+            diff_pairs: None,
             unmodelled_rules: Vec::new(),
             input_warnings: Vec::new(),
             board_mark_overlaps: Vec::new(),
@@ -811,6 +816,11 @@ pub struct KiCadVerdict {
     /// placement and an error).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repairs: Option<KiCadRepairs>,
+    /// Route mode with `diff_pairs` on: pairs found, coupled, partly
+    /// coupled, fallen back, links, crossings, coupled and uncoupled
+    /// length (`KiCadDiffPairs`; the per-pair list is in board-router.json).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff_pairs: Option<crate::KiCadDiffPairs>,
     /// The result-changing environment variables that were set
     /// (`RESULT_ENVIRONMENT`), with their values, and the binary's build
     /// (`pcb_maker_version`: commit and build date).
@@ -1350,6 +1360,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         skipped: facts.skipped.clone(),
         room: facts.room.clone(),
         repairs: facts.repairs.clone(),
+        diff_pairs: facts.diff_pairs.clone(),
         environment: result_environment(),
         pours: facts.pours.clone(),
     }
@@ -1424,6 +1435,10 @@ pub fn route_facts(
         })?);
     }
     facts.repairs = Some(KiCadRepairs::of(result));
+    facts.diff_pairs = result.diff_pairs.clone().map(|mut pairs| {
+        pairs.pairs.clear();
+        pairs
+    });
     facts.routable_connections = result.routable_connections;
     facts.routed_connections = result.routed_connections;
     facts.unconnected_terminals = result.unconnected_terminals;
