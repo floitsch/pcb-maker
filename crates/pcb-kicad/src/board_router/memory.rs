@@ -31,16 +31,23 @@ use super::*;
 /// at 0.05 mm 1589, 1608; the laptop motherboard 636, 897; Sisu 491, 721;
 /// k30 247, 406; jetson 223, 796; Castor 193, 392 (docs/changelog.md,
 /// "router memory"). Was 1.7 and 460 MB: the slope then carried the
-/// allocator's retention (katia's 1.75 GB with no router left).
-pub(crate) const PEAK_RESIDENT_PER_MAPS: f64 = 1.2;
-pub(crate) const RESIDENT_OVERHEAD_MB: f64 = 540.0;
+/// allocator's retention (katia's 1.75 GB with no router left). Measured
+/// again 2026-10-23 after the occupancy, the search records and the pour
+/// maps shrank, the same way: katia 1408 MB of maps, 1768 peak;
+/// jiran-ble-lite 1194, 1241; the laptop motherboard 497, 781; Sisu 379,
+/// 555; k30 194, 358; jetson 165, 744; Castor 134, 327 (docs/changelog.md,
+/// "router memory, round 2"): what lies beside the maps hardly follows
+/// them (katia 360 MB, jetson 579), so the slope is 1 and the offset
+/// passes jetson by 21 MB. Was 1.2 and 540 MB (jetson 6 MB over).
+pub(crate) const PEAK_RESIDENT_PER_MAPS: f64 = 1.0;
+pub(crate) const RESIDENT_OVERHEAD_MB: f64 = 600.0;
 
 /// The same for the address space (VmPeak): reserved but untouched pages,
-/// thread stacks and malloc's arenas count too (2026-10-22, the same
-/// boards: VmPeak 2809, 1954, 1112, 912, 629, 1052, 571 MB; was 2.0 and
-/// 550 MB).
-pub(crate) const PEAK_ADDRESS_SPACE_PER_MAPS: f64 = 1.3;
-pub(crate) const ADDRESS_SPACE_OVERHEAD_MB: f64 = 780.0;
+/// thread stacks and malloc's arenas count too (2026-10-23, the same
+/// boards: VmPeak 2022, 1558, 979, 736, 598, 902, 565 MB, jetson's 902 the
+/// tightest at 23 MB; 1.3 and 780 MB on 2026-10-22, 2.0 and 550 before).
+pub(crate) const PEAK_ADDRESS_SPACE_PER_MAPS: f64 = 1.0;
+pub(crate) const ADDRESS_SPACE_OVERHEAD_MB: f64 = 760.0;
 
 /// The margin on a router's estimated peak: another board's lies off the
 /// measured line, a finer lattice's off its regular one's.

@@ -1117,8 +1117,8 @@ pub struct Router {
     /// pour masks held for them are this router's too.
     statics_key: Option<u128>,
     /// Dynamic occupancy, `[class * (layers + 1) + layer]`; index `layers`
-    /// is the via map. A value counts the nets forbidding that class there.
-    /// After the class maps follow the diagonal maps (see `diagonal_map`):
+    /// is the via map. A value counts the nets forbidding that class there
+    /// (a byte a count, `Occupancy`). After the class maps follow the diagonal maps (see `diagonal_map`):
     /// the cells from which a diagonal step of that class would pass a
     /// node too closely.
     occupancy: Occupancy,
@@ -1147,8 +1147,9 @@ pub struct Router {
     /// Per layer (last entry: vias): where conflicts kept happening, so the
     /// corridor planner learns to send some nets another way.
     tile_history: Vec<Vec<f32>>,
-    /// Per layer and node: the pour net (as `owner`) whose pad needs the
-    /// surrounding copper for its thermal spokes; other nets pay to pass.
+    /// Per layer and node: the pour net (as `owner16`) whose pad needs the
+    /// surrounding copper for its thermal spokes; other nets pay to pass
+    /// (16 bits since 2026-10-23, as the search records hold it).
     guard: Vec<Vec<u16>>,
     /// Per node: bit 0 when any layer's `covered`, bit 1 when any layer's
     /// `guard` holds a net there (most nodes: neither, and a via step
@@ -1160,7 +1161,8 @@ pub struct Router {
     /// more than 15 layers (a via step then reads `covered` per layer).
     /// A via step reads one word for what were up to a cache line a layer.
     via_cover: Vec<u32>,
-    /// Per layer and node: the pour (as `owner`) covering the node, if any.
+    /// Per layer and node: the pour (as `owner16`) covering the node, if
+    /// any.
     covered: Vec<Vec<u16>>,
     /// Per set of records (`hot_of`) and layer (index `set * layers +
     /// layer`), per node: what a search step reads of the static map, the

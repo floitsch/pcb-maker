@@ -742,7 +742,7 @@ impl Router {
                 if owner == 0 || *summary == VIA_COVER_MIXED {
                     continue;
                 }
-                if layer >= 15 || owner > 0xffff || (*summary != 0 && *summary & 0xffff != owner) {
+                if layer >= 15 || (*summary != 0 && *summary & 0xffff != owner) {
                     *summary = VIA_COVER_MIXED;
                 } else {
                     *summary = owner | (*summary & !0xffff) | 1 << (16 + layer);
