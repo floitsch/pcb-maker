@@ -2086,8 +2086,21 @@ impl<'a> Ladder<'a> {
             // connecting the pours often finishes the board (olimex-c3,
             // stickhub and interf-u spent 40-130 s on seeds of rungs a
             // later one beat); the best rung gets them at the end.
+            // A ladder on kept routes judges its first attempt before any
+            // seeds; one that keeps work for the layout's attempt after it
+            // keeps it before the seeds too (DSP-ADAU1452: the rung's four
+            // seeds took the 244 s its continuation needed).
+            self.judge_first(router_open(&result));
+            if self.config.keep_for_continuation {
+                self.keep_reserves(
+                    opens,
+                    attempt_seconds,
+                    attempt.negotiation_seconds.unwrap_or(900.0),
+                );
+            }
             let mut seeds_tried = false;
             if opens.0 > 0
+                && !self.gave_up
                 && retry > 0
                 && attempt.seeds.unwrap_or(1) <= 1
                 && attempt.first_seed.unwrap_or(0) == 0
@@ -2149,7 +2162,6 @@ impl<'a> Ladder<'a> {
                 attempt_seconds,
                 attempt.negotiation_seconds.unwrap_or(900.0),
             );
-            self.judge_first(router_open(&result));
             let seconds = attempt_seconds;
             let used = (attempt_seconds, result.grid_pitch_mm);
             if self.slowest.is_none_or(|(seconds, _)| used.0 > seconds) {

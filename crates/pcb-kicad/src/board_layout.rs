@@ -596,18 +596,58 @@ pub(crate) fn without_copper_texts(pcb: &Expr, keep: bool) -> Expr {
     )
 }
 
+/// How far around a terminal the router's state left open the final
+/// route from that state frees the room (`kept_state_nets`).
+pub(crate) const KEPT_FREE_RADIUS_MM: f64 = 1.5;
+
 /// The nets of the router's state whose copper the final route keeps
 /// (`final_route_from_state`): every net with copper in no violation of
 /// the router's own check, complete or not (the pieces of an open net
-/// stay: routed again from nothing between the kept copper, 20 of
-/// 4in1-mini's 28 open nets found no path at all). A pour net's copper is
-/// kept too (its stitching vias and spokes): the final route connects the
-/// pours as the state did.
-pub(crate) fn kept_state_nets(board: &core::Board, result: &core::RoutingResult) -> Vec<bool> {
+/// stay), except the nets with copper within `radius` of a terminal left
+/// open (`open`): kept as walls, the open nets found no way out (4in1-mini:
+/// 20 of 28 open nets without any path; DSP-ADAU1452 30 of 41). A pour
+/// net's copper is kept too (its stitching vias and spokes): the final
+/// route connects the pours as the state did.
+pub(crate) fn kept_state_nets(
+    board: &core::Board,
+    result: &core::RoutingResult,
+    open: &[core::Point],
+    radius: f64,
+) -> Vec<bool> {
+    let near = |point: core::Point, reach: f64| {
+        open.iter()
+            .any(|anchor| distance_squared(*anchor, point) <= reach * reach)
+    };
+    let near_segment = |segment: &core::Segment| {
+        let reach = radius + 0.5 * segment.width;
+        let (dx, dy) = (
+            segment.end[0] - segment.start[0],
+            segment.end[1] - segment.start[1],
+        );
+        let length = dx * dx + dy * dy;
+        open.iter().any(|anchor| {
+            let t = if length > 0.0 {
+                (((anchor[0] - segment.start[0]) * dx + (anchor[1] - segment.start[1]) * dy)
+                    / length)
+                    .clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
+            let closest = [segment.start[0] + t * dx, segment.start[1] + t * dy];
+            distance_squared(*anchor, closest) <= reach * reach
+        })
+    };
     let mut kept: Vec<bool> = result
         .routes
         .iter()
-        .map(|route| !(route.segments.is_empty() && route.vias.is_empty()))
+        .map(|route| {
+            !(route.segments.is_empty() && route.vias.is_empty())
+                && !route.segments.iter().any(near_segment)
+                && !route
+                    .vias
+                    .iter()
+                    .any(|via| near(via.at, radius + 0.5 * via.diameter))
+        })
         .collect();
     for violation in core::verify(board, &result.routes) {
         let others = violation.other_segment.map(|(other, _)| other);
@@ -2011,6 +2051,13 @@ pub fn layout_kicad_board(
     let layout_work = work;
     // The ladder below builds routers of its own (probes side by side,
     // seeds side by side): this one would only hold its memory meanwhile.
+    // The terminals the router's state leaves open: the final route from
+    // that state frees the room around them (`kept_state_nets`).
+    let open_anchors: Vec<core::Point> = router
+        .unconnected()
+        .into_iter()
+        .map(|(net, terminal)| board.nets[net as usize].terminals[terminal].anchor)
+        .collect();
     drop(router);
     eprintln!("layout: routed ({:.0} s, work {work:.0} s)", elapsed());
     // Past the wall-clock guard the ladder would only lower the board and
@@ -2121,7 +2168,7 @@ pub fn layout_kicad_board(
         // connections stay open.
         let mut gave_up = false;
         let kept_nets = if final_from_state {
-            kept_state_nets(&board, &result)
+            kept_state_nets(&board, &result, &open_anchors, KEPT_FREE_RADIUS_MM)
         } else {
             Vec::new()
         };
