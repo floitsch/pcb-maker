@@ -168,7 +168,9 @@ impl Router {
         settings: TroubleSettings,
     ) -> (usize, usize) {
         let (gained, displaced, reason) = self.trouble_exchange_why(net, order, settings);
-        if std::env::var_os("PCB_ROUTER_DEBUG").is_some() || std::env::var_os("PCB_ROUTER_TROUBLE_WHY").is_some() {
+        if std::env::var_os("PCB_ROUTER_DEBUG").is_some()
+            || std::env::var_os("PCB_ROUTER_TROUBLE_WHY").is_some()
+        {
             eprintln!(
                 "trouble exchange {}: {reason}",
                 self.board.nets[net as usize].name
@@ -221,7 +223,9 @@ impl Router {
             (
                 before - after,
                 involved,
-                format!("kept: {before} open to {after} ({involved} displaced, {nested} pushed on)"),
+                format!(
+                    "kept: {before} open to {after} ({involved} displaced, {nested} pushed on)"
+                ),
             )
         } else {
             self.restore_nets(saved);
@@ -253,7 +257,9 @@ impl Router {
         self.stamp(net);
         if self.open_terminals(net) >= before_net {
             self.restore_nets(saved);
-            return Err(format!("the priced search closes nothing ({before_net} open)"));
+            return Err(format!(
+                "the priced search closes nothing ({before_net} open)"
+            ));
         }
         let victims: Vec<NetId> = order
             .iter()

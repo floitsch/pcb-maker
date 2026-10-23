@@ -404,6 +404,12 @@ User-facing (`pcb-maker --help` lists them):
 
 Switches and experiment hooks (change the result):
 
+- `PCB_ROUTER_TROUBLE`: turns on the trouble-makers' repair after the hard repair (an experiment: an open net routed through others at a price, the nets it displaces routed again hard, kept when the open terminals drop; docs/experiments/human-level-routing.md).
+- `PCB_ROUTER_TROUBLE_PRESENT`: the trouble-makers' repair: the price of sharing a node in the trouble-maker's search (default 20).
+- `PCB_ROUTER_TROUBLE_SHARE`: the trouble-makers' repair: its work as a share of the attempt's negotiation (default 0.5, at least 30 s).
+- `PCB_ROUTER_TROUBLE_ROUNDS`: the trouble-makers' repair: rounds over the open nets (default 3).
+- `PCB_ROUTER_TROUBLE_VICTIMS`: the trouble-makers' repair: the most nets one exchange may displace (default 12).
+- `PCB_ROUTER_TROUBLE_DEPTH`: the trouble-makers' repair: 2 lets a displaced net that came out worse displace others in turn (default 1).
 - `PCB_ROUTER_NO_SPOKELESS_TRACKS`: turns off the router's `spokeless_tracks` (a straight track into kept fill for a pad the spoke model sees without a spoke).
 - `PCB_ROUTER_NO_APART_TREES`: turns off the router's `apart_trees` (terminals no path reaches from their net's tree joined among themselves).
 - `PCB_ROUTER_NO_LOST_SPOKES`: turns off the router's `lost_spoke_repair` (other nets rerouted around a starved pad's cut spokes after the clean-up).
@@ -424,6 +430,7 @@ Switches and experiment hooks (change the result):
 
 Diagnostics (stderr unless said; the result does not change):
 
+- `PCB_ROUTER_TROUBLE_WHY`: the trouble-makers' repair prints every exchange's outcome (kept, or why refused).
 - `PCB_ROUTER_DEBUG`: the router's verbose lines (failed searches, the resolution, what blocks a stub, lattice details).
 - `PCB_ROUTER_DUMP`: `x0,y0,x1,y1`: prints that region of the lattice per layer (static blocks, own pads, occupancy, where vias may not go).
 - `PCB_ROUTER_FINGERPRINT`: a hash of the routing state at each phase (determinism and byte-identity checks; compare as a multiset when attempts run side by side).

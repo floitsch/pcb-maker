@@ -163,6 +163,41 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "what the ledger's reservations may take together, in place of MemTotal less the margin (tests).",
     ),
     (
+        "PCB_ROUTER_TROUBLE",
+        Kind::Switch,
+        "turns on the trouble-makers' repair after the hard repair (an experiment: an open net routed through others at a price, the nets it displaces routed again hard, kept when the open terminals drop; docs/experiments/human-level-routing.md).",
+    ),
+    (
+        "PCB_ROUTER_TROUBLE_PRESENT",
+        Kind::Switch,
+        "the trouble-makers' repair: the price of sharing a node in the trouble-maker's search (default 20).",
+    ),
+    (
+        "PCB_ROUTER_TROUBLE_SHARE",
+        Kind::Switch,
+        "the trouble-makers' repair: its work as a share of the attempt's negotiation (default 0.5, at least 30 s).",
+    ),
+    (
+        "PCB_ROUTER_TROUBLE_ROUNDS",
+        Kind::Switch,
+        "the trouble-makers' repair: rounds over the open nets (default 3).",
+    ),
+    (
+        "PCB_ROUTER_TROUBLE_VICTIMS",
+        Kind::Switch,
+        "the trouble-makers' repair: the most nets one exchange may displace (default 12).",
+    ),
+    (
+        "PCB_ROUTER_TROUBLE_DEPTH",
+        Kind::Switch,
+        "the trouble-makers' repair: 2 lets a displaced net that came out worse displace others in turn (default 1).",
+    ),
+    (
+        "PCB_ROUTER_TROUBLE_WHY",
+        Kind::Diagnostic,
+        "the trouble-makers' repair prints every exchange's outcome (kept, or why refused).",
+    ),
+    (
         "PCB_ROUTER_NO_SPOKELESS_TRACKS",
         Kind::Switch,
         "turns off the router's `spokeless_tracks` (a straight track into kept fill for a pad the spoke model sees without a spoke).",
