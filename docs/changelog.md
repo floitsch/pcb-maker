@@ -11,6 +11,135 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-23 (trouble repair: cheaper exchanges)
+
+The trouble-makers' repair (router.md, item 7) ran out of its work
+bound in round 0 or 1 on most gap boards, and the victims' hard routes
+were most of that work (the base below: 710 of the repair's 804 s on
+the v19 placements' gap boards). They are cheaper now. Branch trouble-cheaper;
+snapshots x1720 (with `PCB_ROUTER_TROUBLE_LOCAL=0
+PCB_ROUTER_TROUBLE_EARLY=0` the base: its expansion tier is identical
+to main's x1647 on all 46 rows), x1721-x1723 (the variants below),
+x1724 (the defaults; x1723 with its variant 2 gives the same rows on
+the four boards both ran).
+
+- **The victims on their corridors first** (`PCB_ROUTER_TROUBLE_LOCAL`,
+  on): an exchange's victims are routed again hard on their corridors
+  only; a victim left with more open terminals than it had is then
+  routed again in its window (the terminals' box and its margin, not
+  grown fourfold as the hard search's window is) and never board-wide,
+  while the exchange can still pass. The full hard search tried the
+  corridors, then the window grown fourfold, then the board: a victim
+  that cannot be reconnected failed all three, and that was most of
+  the work.
+- **Undone early** (`PCB_ROUTER_TROUBLE_EARLY`, on): a victim routed
+  keeps its terminals (the later ones route around it), so the open
+  terminals of the trouble-maker and of the victims routed so far, the
+  victims still to route counted as closing all of theirs, bound the
+  exchange's result from below; once that bound is above the open
+  terminals before (with ties; one less without), the exchange is
+  undone. Exact: it undoes only exchanges the acceptance would refuse.
+- **The summary line** says where the work went: `trouble: ...; priced
+  searches s, victims s (n routed; again n, s, n of them closing
+  terminals, s), kept exchanges s, n undone early`.
+
+**The variants** (x1721, x1723; route mode, Glasgow and MegaDrive on
+the designer's placement, video and MegaDrive on v19; KiCad
+unconnected):
+
+| Victims routed again | Glasgow des. | MegaDrive des. | video v19 | MegaDrive v19 |
+| --- | --- | --- | --- | --- |
+| hard search (base) | 57 | 58 | 150 | 176 |
+| corridors, then the full fallbacks | 57 | not run | not run | not run |
+| corridors only (x1722) | 55 | 74 | 119 | 176 |
+| corridors, then the window (x1724) | 55 | 54 | 125 | 157 |
+
+The full fallbacks again (the window grown fourfold, then the board)
+closed terminals for 7 of 291 victims on Glasgow (1.3 s of their 86 s)
+and saved little. Corridors only was the cheapest (Glasgow's repair
+out of work in none of its six runs) but lost MegaDrive's designer
+route: its first attempt's repair kept 0 of 37 exchanges against the
+base's 12 of 37, the victims there need the detour. The window keeps
+those (on MegaDrive's designer route 142 of 275 victims routed again
+close terminals so; on Glasgow 0 of 376, at 29.5 s).
+
+**Route mode, the v19 placements** (`--route-from
+build/github-layout-v19`, the route-mode budget, 1 thread a board, 5
+jobs beside other agents). Cells: KiCad unconnected / new strict errors
+/ vias / work seconds. Logs `build/trouble4-v19-{x1720-base,x1724}.log`.
+
+| Board | base | x1724 |
+| --- | --- | --- |
+| video | 150 / 0 / 1291 / 1262.2 | 125 / 0 / 1198 / 1107.3 |
+| SNSP-CPU-01 | 122 / 0 / 1401 / 979.5 | 119 / 0 / 1365 / 881.8 |
+| OpenESC 4in1 | 108 / 0 / 150 / 1262.5 | 108 / 0 / 150 / 1247.7 |
+| Glasgow | 146 / 0 / 328 / 1261.5 | 144 / 0 / 329 / 1261.7 |
+| MegaDrive | 176 / 0 / 1316 / 937.7 | 157 / 0 / 1270 / 1029.6 |
+| sum | 702 | 653 |
+| vias, work in all | 4486, 5703 s | 4312, 5528 s |
+
+The repair's exchanges, summed over the ladder's attempts (each
+attempt's repair has its own bound): tried / kept / open terminals
+closed / the repair's work in seconds (of it the victims') / work per
+exchange / repairs out of work / undone early.
+
+| Board | base | x1724 |
+| --- | --- | --- |
+| video | 25 / 13 / 98 / 168.0 (163.0) / 6.72 / 2 / - | 129 / 33 / 160 / 166.8 (149.4) / 1.29 / 1 / 30 |
+| SNSP-CPU-01 | 443 / 50 / 155 / 205.8 (168.9) / 0.46 / 2 / - | 417 / 48 / 117 / 122.7 (87.8) / 0.29 / 1 / 38 |
+| OpenESC 4in1 | 223 / 12 / 31 / 102.8 (81.8) / 0.46 / 2 / - | 298 / 13 / 31 / 82.0 (57.2) / 0.28 / 2 / 41 |
+| Glasgow | 140 / 23 / 73 / 166.5 (149.6) / 1.19 / 2 / - | 251 / 27 / 74 / 166.4 (138.9) / 0.66 / 2 / 42 |
+| MegaDrive | 80 / 22 / 131 / 160.8 (146.8) / 2.01 / 2 / - | 256 / 52 / 183 / 162.1 (121.8) / 0.63 / 2 / 38 |
+| sum | 911 / 120 / 488 / 804 | 1351 / 173 / 565 / 700 |
+
+Victims routed again in their window and those closing terminals so
+(x1724, v19): video 335 (115.9 s), 97 of them (55.2 s); MegaDrive 481,
+233; SNSP-CPU-01 457, 114; Glasgow 500, 37; OpenESC 310, 5. The work
+per exchange falls 1.6 to 5.2 times; video's first attempt (one now, two
+before: the ladder kept its first) tries 129 exchanges instead of 25.
+The bound still binds on most boards; the corridors-only variant
+(x1722) tried 1987 exchanges in 441 s on the same boards (0.1-0.4 s
+each) but closed fewer where the victims need detours.
+
+**Route mode, the designer's placement** (`--tier designer`, 1500 s of
+work; logs `build/trouble4-des-{x1720-base,x1724}.log`; exchanges as
+above):
+
+| Board | base | x1724 | exchanges, base | exchanges, x1724 |
+| --- | --- | --- | --- | --- |
+| video | 1 / 0 / 634 / 1567.5 | 1 / 0 / 634 / 1570.5 | 97 / 32 / 149 / 138.5 / 1.43 | 207 / 52 / 156 / 134.9 / 0.65 |
+| SNSP-CPU-01 | 30 / 0 / 1438 / 908.0 | 11 / 0 / 1404 / 1081.9 | 206 / 14 / 180 / 127.7 / 0.62 | 218 / 16 / 105 / 67.3 / 0.31 |
+| OpenESC 4in1 | 0 / 0 / 118 / 260.0 | 0 / 0 / 118 / 260.0 | none | none |
+| Glasgow | 57 / 0 / 213 / 1261.6 | 55 / 0 / 207 / 1268.4 | 289 / 11 / 15 / 143.1 / 0.50 | 369 / 17 / 30 / 96.0 / 0.26 |
+| MegaDrive | 58 / 0 / 1311 / 1432.3 | 54 / 0 / 1225 / 905.3 | 291 / 44 / 83 / 204.9 / 0.70 | 184 / 36 / 73 / 103.4 / 0.56 |
+| sum | 146 | 121 | 883 / 101 / 427 / 614 | 978 / 121 / 364 / 402 |
+
+Cells of the exchanges: tried / kept / open terminals closed / work
+seconds / work per exchange. Video keeps its first attempt (2 open in
+the router's count, the same board both); the four attempts after it
+differ in their repairs only. MegaDrive's designer route ends after two attempts instead of three
+(905 s of work against 1432: the ladder's skeleton rung is not tried;
+the router's open counts 150 and 126 against 140, 240 and 149).
+
+**Expansion tier** (46 boards, route mode, 8 x 1, 30 s; logs
+`build/trouble4-exp-{x1720-base,x1724}.log`): unconnected 592 to 588,
+passes 20 and 20, new errors 3 and 3, vias 4308 and 4308, length
+112576 to 112520 mm; 42 rows identical, none worse in unconnected,
+passes or errors: facade60 daughterboard 13 to 9 (+2 vias), MAS500 -2
+vias, OpenRX-Mono and ausign a few mm. The repair on the tier: 320
+exchanges tried against 316, 21 kept against 22, its work 24.3 s
+against 17.9 s.
+
+**Fingerprints** (Castor, k30-SBC, jetson, Sisu; route mode from v16, 1
+x 4, budget scale 0.25; logs `build/trouble4-fp-{x1720-base,x1724}.log`):
+Castor and k30 byte-identical (no exchange tried on either); Sisu the
+same counts (23 unconnected, 379 vias; its first attempt
+byte-identical, its second differs: 18 exchanges in 7.0 s against
+19.3 s); jetson 20 unconnected both, 589 to 584 vias (61 exchanges in
+14.0 s against 49 in 30.7 s, 3 kept both).
+
+The fixture goldens do not move (check.sh --fast).
+
 ## Experiment 2026-10-23 (move descent)
 
 Florian's idea: move single parts a little where it helps, with trials

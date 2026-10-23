@@ -164,6 +164,19 @@ model) and `tests`.
    first; the surveyed order (`PCB_ROUTER_TROUBLE_ORDER=few`: each net's
    priced search alone first, the fewest victims per terminal closed
    first) was measured and not kept (docs/changelog.md, 2026-10-23).
+   The victims are routed again on their corridors only (the hard
+   search without its window and board-wide fallbacks;
+   `PCB_ROUTER_TROUBLE_LOCAL=0` the full search), and an exchange is
+   undone as soon as the victims routed so far leave it no way to pass
+   (`PCB_ROUTER_TROUBLE_EARLY=0` routes them all first): a victim
+   routed keeps its terminals, so the open terminals of the
+   trouble-maker and the victims routed so far bound the exchange's
+   result from below. The fallbacks were most of the victims' work and
+   almost never closed what the corridors had not (7 of 291 victims on
+   Glasgow's designer placement); an exchange costs 0.1-0.4 work
+   seconds instead of 0.5-7, and the gap boards try two to eight times
+   as many in the same bound (docs/changelog.md, "trouble repair:
+   cheaper exchanges").
 8. **Cleanup.** Each net is rerouted alone with pure geometric cost and a high
    via cost; the result is kept only if strictly cheaper.
    After the via reduction and the spoke repairs, the straightening
