@@ -33,10 +33,8 @@ The environment variables are indexed in the hand-over
 | [Router report: rules](#router-report-rules) | 5 | - | 0 | 5 | - |
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 5 | - | 0 | 5 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
-| [Router core](#router-core) | 60 | - | 0 | 60 | - |
-| [Placer settings](#placer-settings) | 47 | 43 | 4 | 47 | 16 |
 | [Router core](#router-core) | 61 | - | 0 | 61 | - |
-| [Placer settings](#placer-settings) | 45 | 42 | 3 | 45 | 16 |
+| [Placer settings](#placer-settings) | 47 | 43 | 4 | 47 | 16 |
 | [Layout settings](#layout-settings) | 17 | 17 | 0 | 17 | 7 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 2 |
