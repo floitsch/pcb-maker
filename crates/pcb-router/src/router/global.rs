@@ -139,7 +139,8 @@ impl Router {
 
     /// Nets in routing order: pour nets first (their connections are local
     /// stubs and vias that must claim the sites next to their pads), then
-    /// small nets by span, then the large ones.
+    /// small nets by span, then the large ones (with `bus_bundles` the
+    /// buses' members before them).
     pub(super) fn routing_order(&self) -> Vec<NetId> {
         let mut order: Vec<NetId> = (0..self.board.nets.len() as NetId)
             .filter(|net| self.nets[*net as usize].routable)
@@ -156,9 +157,16 @@ impl Router {
                 None => 1.0,
             })
             .collect();
+        // Bus bundles (off: every net is `(1, 0, 0)`): the members after
+        // the pour nets, bus by bus, in their order.
+        let bus_rank = |net: NetId| match self.bus_member(net) {
+            Some((bus, position)) => (0, bus, position),
+            None => (1, 0, 0),
+        };
         order.sort_by_key(|net| {
             (
                 self.nets[*net as usize].plane.is_empty(),
+                bus_rank(*net),
                 self.board.nets[*net as usize].terminals.len() > 8,
                 (span(self, *net) as f64 * jitter[*net as usize]) as u64,
                 *net,

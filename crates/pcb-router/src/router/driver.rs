@@ -21,6 +21,7 @@ impl Router {
     /// are skipped (for trials judged on what stays open, which the polish
     /// does not change; a later `reroute(true)` polishes).
     pub fn run_in_place_polished(&mut self, polish: bool) -> RoutingResult {
+        self.ensure_buses();
         let order = self.routing_order();
         let started = std::time::Instant::now();
         self.fix_escapes(&order);
@@ -40,6 +41,7 @@ impl Router {
     /// can go on from here. Returns how many nets are still conflicted or
     /// incomplete (the measure a caller ranks probes by).
     pub fn probe(&mut self, seconds: f64) -> usize {
+        self.ensure_buses();
         let order = self.routing_order();
         let started = std::time::Instant::now();
         self.fix_escapes(&order);

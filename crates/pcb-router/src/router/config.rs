@@ -164,6 +164,16 @@ pub struct Config {
     /// clearance allows (`straighten`: shortest octilinear paths between
     /// a run's corners with fewer bends; never longer, no via moves).
     pub straighten: bool,
+    /// Route buses as bundles (an experiment, off;
+    /// docs/experiments/bus-bundles.md): four or more nets joining the same
+    /// footprints route first, in pad order, inside one corridor planned
+    /// for the bus's width, side by side; a member that cannot follow
+    /// routes as any other net. `PCB_ROUTER_BUS_BUNDLES` turns it on.
+    pub bus_bundles: bool,
+    /// With `bus_bundles`: the factor on a bus member's trace step that
+    /// does not lie beside a neighbouring member's copper
+    /// (`PCB_ROUTER_BUS_LANE`, 1.5).
+    pub bus_lane_cost: f64,
     /// Via cost while cleaning up. The existing route is always a fallback
     /// there, so a high value removes vias without risking completion.
     pub cleanup_via_cost: f64,
@@ -342,6 +352,11 @@ impl Default for Config {
             window_margin: 10.0,
             cleanup_passes: 4,
             straighten: std::env::var_os("PCB_ROUTER_NO_STRAIGHTEN").is_none(),
+            bus_bundles: std::env::var_os("PCB_ROUTER_BUS_BUNDLES").is_some(),
+            bus_lane_cost: std::env::var("PCB_ROUTER_BUS_LANE")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(1.5),
             cleanup_via_cost: 25.0,
             plane_via_cost: 2.0,
             corridors: true,

@@ -19,6 +19,7 @@ use crate::grid::{DIRECTIONS, Grid, SAFETY, StaticMaps};
 use crate::rules::ClassRules;
 mod batching;
 mod build;
+mod bundles;
 mod cleanup;
 mod config;
 /// Read-only tile views of the negotiation, for the congestion model.
@@ -365,6 +366,9 @@ struct NetState {
     /// Whether its masks were found rather than computed here (the work
     /// this process did, `Router::physical_build_work`).
     masks_found: bool,
+    /// A bus member broken out of its bundle (`bundles`): it found no
+    /// path inside the bus's corridor and routes as any other net.
+    bus_broken: bool,
 }
 
 #[derive(Clone)]
@@ -884,6 +888,8 @@ pub struct Scratch {
     own_active: bool,
     generation: u16,
     corridor: Option<Vec<bool>>,
+    /// The routed bus member's lane (`bundles`; inactive otherwise).
+    lane: bundles::Lane,
     expansions: u64,
     searches: u64,
     /// Searches (and their expansions) that ran without a corridor.
@@ -953,6 +959,7 @@ impl Scratch {
             own_active,
             generation,
             corridor,
+            lane,
             ..
         } = std::mem::take(self);
         *self = Scratch {
@@ -967,6 +974,7 @@ impl Scratch {
             own_active,
             generation,
             corridor,
+            lane,
             ..counters.clone()
         };
     }
@@ -1240,6 +1248,12 @@ pub struct Router {
     /// While a layout's trial (`reroute` without the polish) finishes:
     /// the trouble-makers' repair waits for the board kept.
     in_trial: bool,
+    /// The buses routed as bundles (`bundles`; empty with the switch off),
+    /// per net its bus and position there (`u32::MAX`: none), and whether
+    /// they were detected.
+    buses: Vec<bundles::Bus>,
+    bus_of: Vec<(u32, u32)>,
+    buses_planned: bool,
     /// Whether the negotiation running is a probe's (`probe`).
     in_probe: bool,
     /// The rest of the iteration a probe's work limit cut (`probe`), for
