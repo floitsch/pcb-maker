@@ -8,9 +8,11 @@ behind it: buses hold 80 % of video's open terminals on our placement
 and 64 to 75 % of MegaDrive's; open bus nets are open whole, routed
 last and starved. This is a bounded phase 1 behind a switch
 (`bus_bundles`, `PCB_ROUTER_BUS_BUNDLES`, off), with a go or no-go.
-Branch `bus-bundles` on main 81356b8 (the trouble repair on by default);
-snapshots x1670 (the measured version), x1671 (with two ablations),
-x1672 (the patience as a variable).
+Branch `bus-bundles`, measured on main 81356b8 (the trouble repair on by
+default) and again after the rebase on the trouble repair's victims
+merge (x1683); snapshots x1670 (the first measured version), x1671 (with
+two ablations), x1672 (the patience as a variable), x1674 (the head on
+the victims merge, both sides of the tables below).
 
 ## Method
 
@@ -74,31 +76,35 @@ bundle for the first two iterations only).
 
 Route mode, one search thread a board, the pinned work rates, the
 ledger's admission beside four other agents' runs, `--quality` for the
-bends. Before: the switch off (x1660, main; x1673 off where x1660 had
-been pruned, the two byte-identical below); after: the switch on (x1670;
-x1673 for video's designer route, which reproduces x1670 row for row on
-the expansion tier). Each cell: KiCad's unconnected items (open
-terminals in the router's report) / new strict DRC errors / vias /
-length / bends per connection / work seconds. Logs
-`build/bus1-{designer2,designer3,v19t,expansion,fp,why}-*.log`.
+bends. Both sides are x1674 (main with the trouble repair's victims
+merge plus this branch): the switch off (byte-identical to main x1683,
+below) against on. Each cell: KiCad's unconnected items (open terminals
+in the router's report) / new strict DRC errors / vias / length / bends
+per connection / work seconds. Logs `build/bus1-r2-*.log` (the first
+base, x1660 against x1670: `build/bus1-{designer2,designer3,v19t}-*`).
 
 **The designer's placement** (`--tier designer`, 1500 s of work):
 
 | Board | off | on |
 | --- | --- | --- |
-| video | VIDEO_OFF | 0 (0) / 0 / 503 / 35.02 m / 2.00 / 757 |
-| SNSP-CPU-01 | 4 (4) / 0 / 1339 / 24.90 m / 3.71 / 1108 | 3 (3) / 0 / 1407 / 24.76 m / 3.71 / 1101 |
-| MegaDrive | 59 (25) / 0 / 1351 / 33.47 m / 4.62 / 1433 | 70 (41) / 0 / 1204 / 31.65 m / 4.15 / 1001 |
+| video | 0 (0) / 0 / 603 / 35.16 m / 2.20 / 681 | 0 (0) / 0 / 503 / 35.02 m / 2.00 / 757 |
+| SNSP-CPU-01 | 4 (4) / 0 / 1339 / 24.90 m / 3.71 / 1110 | 3 (3) / 0 / 1407 / 24.76 m / 3.71 / 1100 |
+| MegaDrive | 58 (22) / 0 / 1311 / 33.13 m / 4.42 / 1432 | 70 (41) / 0 / 1204 / 31.65 m / 4.15 / 1001 |
 
 **The v19 placements** (`--route-from build/github-layout-v19`, the
 route-mode budget):
 
 | Board | off | on |
 | --- | --- | --- |
-| video | 157 / 0 / 1172 / 38.92 m / 5.96 / 1261 | 150 / 0 / 1102 / 38.11 m / 5.31 / 1120 |
-| SNSP-CPU-01 | 128 / 0 / 1314 / 22.40 m / 4.04 / 958 | 135 / 0 / 1421 / 23.00 m / 4.32 / 920 |
-| MegaDrive | 184 / 0 / 1367 / 32.52 m / 5.64 / 958 | 199 / 0 / 1284 / 32.73 m / 5.34 / 1031 |
-| sum | 469 | 484 (+3 %) |
+| video | 130 / 0 / 1202 / 38.48 m / 6.01 / 1263 | 141 / 0 / 1040 / 37.29 m / 5.04 / 1139 |
+| SNSP-CPU-01 | 127 / 0 / 1363 / 22.67 m / 4.51 / 939 | 135 / 0 / 1421 / 23.00 m / 4.32 / 923 |
+| MegaDrive | 176 / 0 / 1316 / 32.00 m / 5.61 / 938 | 181 / 0 / 1177 / 30.90 m / 5.06 / 1037 |
+| sum | 433 | 457 (+6 %) |
+
+On the first base (x1660 against x1670, before the victims merge) the
+v19 sum was 469 against 484 (video 157 to 150, SNSP-CPU-01 128 to 135,
+MegaDrive 184 to 199) and MegaDrive's designer route 59 to 70: the
+victims merge closed more on the off side than the bundles do.
 
 **Where the open terminals are** (the router's report per net; bus
 nets by the same footprint-set rule, from the board file): open
@@ -106,28 +112,29 @@ terminals in all / on bus nets / bus nets with any open.
 
 | Board, placement | off | on |
 | --- | --- | --- |
-| video, v19 | 221 / 155 / 48 | 181 / 73 / 34 |
-| SNSP-CPU-01, v19 | 134 / 24 / 13 | 150 / 17 / 11 |
-| MegaDrive, v19 | 225 / 131 / 38 | 237 / 45 / 26 |
-| SNSP-CPU-01, designer | 7 / 0 / 0 | 8 / 0 / 0 |
-| MegaDrive, designer | 79 / 66 / 18 | 81 / 40 / 17 |
+| video, v19 | 189 / 153 / 55 | 181 / 93 / 37 |
+| SNSP-CPU-01, v19 | 133 / 24 / 13 | 150 / 17 / 11 |
+| MegaDrive, v19 | 207 / 145 / 43 | 205 / 76 / 30 |
+| MegaDrive, designer | 82 / 70 / 16 | 81 / 40 / 17 |
 
-The bundles do what they are for: the buses' open terminals fall by half
-to two thirds (video 155 to 73, MegaDrive 131 to 45 and 66 to 40) and
-the bends per connection drop (video 5.96 to 5.31, MegaDrive 5.64 to
-5.34 and 4.62 to 4.15), vias fall on video and MegaDrive (-6 to -11 %).
-But the rest of the board pays more than the buses gain: off the buses
-the open terminals rise from 66 to 108 (video), 94 to 192 (MegaDrive
-v19) and 13 to 41 (MegaDrive designer). Only video's v19 placement nets
-a gain (-7 KiCad items).
+The bundles do what they are for: the buses' open terminals fall by a
+third to a half (video 153 to 93, MegaDrive 145 to 76 and 70 to 40), bends per
+connection drop on every bus board (video 6.01 to 5.04, MegaDrive 5.61
+to 5.06 and 4.42 to 4.15), vias fall 8 to 13 % on video and MegaDrive,
+length 2 to 5 %. But the rest of the board pays as much or more: off
+the buses the open terminals rise from 36 to 88 (video), 62 to 129
+(MegaDrive v19), 12 to 41 (MegaDrive designer), 109 to 133
+(SNSP-CPU-01), and KiCad's count (which
+counts connections, not pads) is worse on every board.
 
 **Expansion tier** (46 boards, 8 x 1, 30 s, the designer's placement;
-before x1660, the switch off):
+x1674 reproduces x1660 off and x1670 on row for row, the victims merge
+changing nothing there):
 
 | Variant | strict passes | KiCad unconnected | new errors | vias | length | work s |
 | --- | --- | --- | --- | --- | --- | --- |
-| off (x1660; x1670 and x1673 off identical) | 19 | 625 | 3 | 4223 | 112.3 m | 1249 |
-| on (x1670 = x1673) | 21 | 721 | 3 | 4166 | 110.2 m | 1222 |
+| off (x1660, x1670 off, x1674 off: identical rows) | 19 | 625 | 3 | 4223 | 112.3 m | 1249 |
+| on (x1670, x1673, x1674: identical rows) | 21 | 721 | 3 | 4166 | 110.2 m | 1222 |
 | on, no lane (`BUS_LANE=1`) | 18 | 804 | 4 | 4019 | 108.8 m | 1238 |
 | on, own corridors (`BUS_NO_CORRIDOR`) | 18 | 660 | 2 | 4219 | 111.8 m | 1241 |
 | on, usual order (`BUS_NO_ORDER`) | 18 | 794 | 2 | 4093 | 107.5 m | 1260 |
@@ -147,7 +154,7 @@ against 128), so at 30 s the negotiation stops four iterations earlier.
 **Fingerprints, the switch off:** Castor, k30-SBC, jetson and Sisu
 (route mode on the v16 placements at a quarter of the budget,
 `PCB_ROUTER_FINGERPRINT=1`): every fingerprint line and the routed
-board byte-identical, x1660 against x1670. The expansion tier with the
+board byte-identical, x1660 against x1670 and main x1683 against x1674. The expansion tier with the
 switch off: all 46 rows identical (x1660 against x1670).
 
 **What broke the bundles.** Few members leave their corridor: with the
@@ -162,12 +169,13 @@ nets used (the same trade the trouble repair makes after the fact, but
 without its test that the trade closes more than it opens); our
 reading, not measured apart, is that the lane also makes the members'
 own detours dearer, so the negotiation's prices move the short nets
-rather than the bus. The work rises too: the lane factor makes the A*
-bound weaker inside the corridor (MegaDrive's designer route spent 1052
-s on its first attempt against 729 and ran two attempts instead of
-three). Whether a placement that lines the buses up changes the trade was not
+rather than the bus. The work per iteration rises too: the lane factor makes the A*
+bound weaker inside the corridor (OpenDeck, above: twice the expansions
+an iteration). MegaDrive's designer route ran two ladder attempts with
+the switch (1001 s of work) against three without (1432 s); its best
+attempt, pours as tracks, left 151 open against 149. Whether a placement that lines the buses up changes the trade was not
 measured: on the designer's placements, where they are lined up, the
-trade is no better (MegaDrive 59 to 70; video complete either way).
+trade is no better (MegaDrive 58 to 70).
 
 ## Verdict
 
@@ -175,20 +183,20 @@ trade is no better (MegaDrive 59 to 70; video complete either way).
 ablations, for the next attempt.
 
 - The bus boards do not improve: KiCad's unconnected items on the v19
-  placements 469 to 484 (video 157 to 150, SNSP-CPU-01 128 to 135,
-  MegaDrive 184 to 199), on the designer's MegaDrive 59 to 70,
-  SNSP-CPU-01 4 to 3, video complete on both sides. No new DRC errors.
+  placements 433 to 457 (video 130 to 141, SNSP-CPU-01 127 to 135,
+  MegaDrive 176 to 181), on the designer's MegaDrive 58 to 70,
+  SNSP-CPU-01 4 to 3; video's designer placement complete on both
+  sides, with 17 % fewer vias (603 to 503). No new DRC errors.
 - The expansion tier gets worse: 625 to 721 unconnected, although two
   strict passes are gained and none lost.
 - What works: the bundles themselves. Bus nets' open terminals fall
-  by half to two thirds, bends per connection and vias drop where buses
-  are, the corridors hold (few members break out), the switch off is
-  byte-identical.
+  by a third to a half, bends per connection and vias drop where buses
+  are (vias -8 to -17 % on video and MegaDrive), the corridors hold
+  (few members break out), the switch off is byte-identical.
 - What broke it: not the escapes and not vias. The buses take the room
   first, and the short nets lose more than the buses win; the bundled
   search costs up to twice the work per iteration, which at short
-  budgets ends the negotiation early (OpenDeck) and on MegaDrive's
-  designer route costs the ladder its third attempt. The placement
+  budgets ends the negotiation early (OpenDeck). The placement
   lining the bus up is not the limit here: the designer's placement of
   MegaDrive, which lines its buses up, loses too.
 

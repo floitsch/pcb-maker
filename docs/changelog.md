@@ -16,7 +16,8 @@ v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 Florian's idea 4 (route a bus as a bundle, break it up where it cannot
 follow), one bounded phase behind a switch. Write-up:
 docs/experiments/bus-bundles.md. Branch bus-bundles; snapshots x1670
-(measured), x1671 (ablations), x1672 (patience variable), x1673 (head).
+(first base), x1671 (ablations), x1672 (patience variable), x1674 (head,
+measured on both sides).
 **No-go**; the switch stays, off.
 
 - **`bus_bundles`** (router config, `PCB_ROUTER_BUS_BUNDLES`, off;
@@ -29,17 +30,20 @@ docs/experiments/bus-bundles.md. Branch bus-bundles; snapshots x1670
   copper costing 1.5 times (`bus_lane_cost`); a member with no path in
   the corridor, or rerouted 8 times, negotiates as before.
   `PCB_ROUTER_BUS_{LANE,MARGIN,PATIENCE,NO_CORRIDOR,NO_ORDER,WHY}`.
-- **Bus boards in route mode** at the task budgets: v19 placements 469
-  to 484 KiCad unconnected (video 157 to 150, SNSP-CPU-01 128 to 135,
-  MegaDrive 184 to 199); designer placements MegaDrive 59 to 70,
-  SNSP-CPU-01 4 to 3, video complete both. Bus nets' open terminals fall
-  by half to two thirds (video 155 to 73, MegaDrive 131 to 45), bends
-  per connection and vias drop, but the other nets lose more.
+- **Bus boards in route mode** at the task budgets, x1674 (on the
+  trouble repair's victims merge) off against on: v19 placements 433 to
+  457 KiCad unconnected (video 130 to 141, SNSP-CPU-01 127 to 135,
+  MegaDrive 176 to 181); designer placements MegaDrive 58 to 70,
+  SNSP-CPU-01 4 to 3, video complete both (vias 603 to 503). Bus nets'
+  open terminals fall by a third to a half (video 153 to 93, MegaDrive
+  145 to 76), bends per connection and vias drop, but the other nets
+  lose more. (First base, x1660 against x1670: v19 469 to 484.)
 - **Expansion tier** (46 boards, 30 s): strict passes 19 to 21, KiCad
   unconnected 625 to 721 (OpenDeck 9 to 68, MSign mainboard 19 to 62);
   ablations 641 to 804, none better than off.
 - **Switch off identical:** fingerprints of Castor, k30-SBC, jetson and
-  Sisu and every expansion-tier row, x1660 against x1670.
+  Sisu (x1660 against x1670, x1683 against x1674) and every
+  expansion-tier row (x1660 against x1670 and x1674).
 - **Reading:** the bundles hold and the buses go in; the room they take
   costs the short nets more than the buses gain, and the bundled search
   doubles an iteration's work. A phase 2 would want the trouble
