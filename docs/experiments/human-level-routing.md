@@ -109,6 +109,8 @@ mode (bundle width in the tile planner, a member order per bundle, the
 split), weeks, and its value depends on a placement that lines the bus
 up (video's eight SIMM sockets). Not chosen; the repair below is a
 cheap probe of the same failure (bus nets routed last and starved).
+*Measured 2026-10-23* (phase 1, `bus_bundles`, off): the buses go in
+but the short nets lose more; no-go, docs/experiments/bus-bundles.md.
 
 **(5) Pin swapping.**
 *Exists:* `swap-kicad-pins` and `pin_swaps`/`swappable` in the layout
