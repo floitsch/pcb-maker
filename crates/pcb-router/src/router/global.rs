@@ -159,7 +159,9 @@ impl Router {
             .collect();
         // Bus bundles (off: every net is `(1, 0, 0)`): the members after
         // the pour nets, bus by bus, in their order.
-        let bus_rank = |net: NetId| match self.bus_member(net) {
+        // `PCB_ROUTER_BUS_NO_ORDER` (an ablation): the usual order.
+        let keep_order = std::env::var_os("PCB_ROUTER_BUS_NO_ORDER").is_some();
+        let bus_rank = |net: NetId| match self.bus_member(net).filter(|_| !keep_order) {
             Some((bus, position)) => (0, bus, position),
             None => (1, 0, 0),
         };

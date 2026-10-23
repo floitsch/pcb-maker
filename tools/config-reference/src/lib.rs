@@ -243,6 +243,16 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "bus bundles: tiles a bus's corridor is grown by beyond half its width (default 4).",
     ),
     (
+        "PCB_ROUTER_BUS_NO_CORRIDOR",
+        Kind::Switch,
+        "bus bundles, an ablation: the members keep their own corridors (the lane and the order stay).",
+    ),
+    (
+        "PCB_ROUTER_BUS_NO_ORDER",
+        Kind::Switch,
+        "bus bundles, an ablation: the members keep their place in the usual routing order (the corridor and the lane stay).",
+    ),
+    (
         "PCB_ROUTER_BUS_WHY",
         Kind::Diagnostic,
         "bus bundles: prints every bus found and every member broken out of its bundle.",

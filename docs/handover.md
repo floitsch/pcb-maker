@@ -432,6 +432,8 @@ Switches and experiment hooks (change the result):
 - `PCB_ROUTER_BUS_BUNDLES`: sets the router's `bus_bundles` (an experiment, off): buses of four or more nets joining the same footprints route first, in pad order, inside one corridor, side by side (docs/experiments/bus-bundles.md).
 - `PCB_ROUTER_BUS_LANE`: the router's `bus_lane_cost`: the factor on a bus member's step off the lane beside its neighbours (default 1.5).
 - `PCB_ROUTER_BUS_MARGIN`: bus bundles: tiles a bus's corridor is grown by beyond half its width (default 4).
+- `PCB_ROUTER_BUS_NO_CORRIDOR`: bus bundles, an ablation: the members keep their own corridors (the lane and the order stay).
+- `PCB_ROUTER_BUS_NO_ORDER`: bus bundles, an ablation: the members keep their place in the usual routing order (the corridor and the lane stay).
 - `PCB_ROUTER_NO_SPOKELESS_TRACKS`: turns off the router's `spokeless_tracks` (a straight track into kept fill for a pad the spoke model sees without a spoke).
 - `PCB_ROUTER_NO_APART_TREES`: turns off the router's `apart_trees` (terminals no path reaches from their net's tree joined among themselves).
 - `PCB_ROUTER_NO_LOST_SPOKES`: turns off the router's `lost_spoke_repair` (other nets rerouted around a starved pad's cut spokes after the clean-up).

@@ -296,7 +296,10 @@ impl Router {
             let mut just_broken = false;
             // The bundle first: inside the bus's corridor, on the lane;
             // a member that finds no path there is broken out of it.
-            if let Some(bus) = bundle.filter(|_| !net_state.bus_broken) {
+            // `PCB_ROUTER_BUS_NO_CORRIDOR` (an ablation): the lane only, in
+            // the net's own corridors.
+            let lane_only = bundle.is_some() && bus_ablation("PCB_ROUTER_BUS_NO_CORRIDOR");
+            if let Some(bus) = bundle.filter(|_| !net_state.bus_broken && !lane_only) {
                 scratch.corridor = Some(self.buses[bus].corridor.clone());
                 scratch.lane.active = lane_active;
                 planned = self.search(
@@ -336,6 +339,7 @@ impl Router {
                 }
             }
             let reroutes = net_state.reroutes;
+            scratch.lane.active = lane_only && lane_active;
             let global = self.global.as_ref().filter(|_| !self.cleanup && !hard);
             if planned.is_none()
                 && let Some(plan) = global
@@ -410,6 +414,7 @@ impl Router {
             }
             // Board-wide fallbacks, unless they keep failing where a
             // corridor was searched first.
+            scratch.lane.active = false;
             let corridor_tried = global.is_some() || (self.config.corridors && !self.cleanup);
             let fallback = hard || !corridor_tried || net_state.hopeless_searches < 2;
             let path = planned.or_else(|| {
@@ -813,4 +818,9 @@ impl Router {
             net_state.blocked = true;
         }
     }
+}
+
+/// Whether a bus bundle ablation's variable is set.
+fn bus_ablation(name: &str) -> bool {
+    std::env::var_os(name).is_some()
 }
