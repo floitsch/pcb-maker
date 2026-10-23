@@ -11,6 +11,63 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Experiment 2026-10-23 (move descent)
+
+Florian's idea: move single parts a little where it helps, with trials
+cheap enough to run on the dense boards the coupled loop skips. Write-up:
+docs/experiments/move-descent.md. Branch move-descent; snapshots x1690
+(dev), x1691 (main a49136c, the dense and the first short-tier
+measurement), x1692 (main 5ef2fbc, the short tier again). **No-go as a
+default**; `move_descent` (layout.json, off) and `PCB_LAYOUT_MOVE_DESCENT`
+stay.
+
+- **Trial cost today** (`PCB_LAYOUT_DESCENT_CLASSIC`, a diagnostic): a
+  coupled-loop trial (clone, `Router::update`, `reroute` without the
+  polish) costs 56-61 s of search work on 4in1-mini (44-58 s wall) and
+  125-327 s on DSP-ADAU1452 (172-440 s wall); the update's map rebuild
+  0.18 s and 1.15 s of modelled work.
+- **Two tiers.** Tier one: `pcb_global::Incremental` (new): the global
+  route kept up to date per move, the capacities around the part
+  measured again (`Capacity::rebuild_region`, equal to a full build
+  there) and only its nets routed again against the rest's usage, history
+  and price; 1-8 ms a move (the 0xCB panel 0.9 s). Tier two: the best
+  four moves on a clone of the router: `Router::update_nets` (new; keeps
+  of a net whose pads moved the branches not ending on them, and the
+  state of copper-less nets whose pads stayed) and
+  `Router::local_reroute` (new: the ripped nets routed hard against the
+  rest, at most 2 s of search); 0.6-4.5 s of work a trial. Kept when the
+  board's open terminals fall; a trial of no move first calibrates (it
+  left the count unchanged on every board). `Router::finish_as_is`
+  (new) gives the layout the descent's routes.
+- **Candidates and moves**: parts with own open terminals, then open
+  nets, then the overflow attribution; nudges of 0.5-3 mm in eight
+  directions, quarter turns, swaps of same-size parts within 10 mm, legal
+  by the placer's checks; re-ranked after a kept move. Budget: half of
+  the moves' budget; it runs wherever the first route left terminals
+  open, also where the 5 % rule skips the coupled loop.
+- **Eleven dense boards** (x1691, off against on): KiCad unconnected 978
+  to 1026; better 4in1 79 to 75; worse DSP-ADAU1452 15 to 35 (its
+  continuation in the other pour mode no longer fits the work), SNSP-CPU-01
+  83 to 108 (no final route on either side; the descent's board is
+  worse in KiCad than its router count says), 4in1-mini 35 to 38, Glasgow
+  148 to 151, the 0xCB panel 53 to 54; video and MegaDrive have no moves
+  budget after their first route. The router's own open count after the
+  descent: DSP 93 to 66, 4in1 154 to 122, protoesp 126 to 103.
+  Placements (board-placer.json) identical off and on.
+- **Short tier** (x1692, off and on from one binary): unconnected 22 and
+  22, strict passes 6 and 6; six boards complete after the first route
+  are identical; on the other six only work, vias and HPWL move
+  (WLED_Matrix 194 to 271 vias: the connected-pour board kept, equal in
+  KiCad's count). Off equals x1652's placements on all twelve.
+- **Tier one is no ranking** for millimetre moves: kept 4 % of the moves
+  it predicted better, 6 % of those it predicted equal.
+- **Next, if taken up**: start the final route from the descent's router
+  state, take the descent's work from the first route rather than the
+  last, judge the descent's board by KiCad's connectivity, rebuild only
+  the changed tiles in `Router::update`.
+- `bash scripts/check.sh --fast` and the clippy gate pass; fixture
+  goldens unchanged; fingerprints are route mode and do not run the
+  descent.
 ## Committed on 2026-10-23 (nightly fingerprints as sets)
 
 Branch nightly-fingerprints, no snapshot (scripts only). The worry: the
