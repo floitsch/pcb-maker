@@ -5,7 +5,31 @@
 
 use super::*;
 
+/// The board's outline: one rectangle or one loop of lines read here,
+/// any other outline as the router's lowering reads it
+/// (`outline::board_loops`: lines, arcs, rectangles, polygons, circles
+/// and curves chained into loops, the largest the board, its pieces
+/// joined). `None` for a board without an outline or one the lowering
+/// refuses (`board_outline_checked` says why).
 pub(crate) fn board_outline(pcb: &Expr) -> Result<Option<BoardOutline>, String> {
+    Ok(board_outline_checked(pcb).ok())
+}
+
+/// `board_outline`, with the lowering's reason when there is none (the
+/// router refuses such a board with the same message).
+pub(crate) fn board_outline_checked(pcb: &Expr) -> Result<BoardOutline, String> {
+    if let Some(outline) = simple_board_outline(pcb)? {
+        return Ok(outline);
+    }
+    let loops = outline::board_loops(pcb).map_err(|error| {
+        format!("the board outline (Edge.Cuts) is not one the router reads either: {error}")
+    })?;
+    BoardOutline::new(loops.outline)
+}
+
+/// A board outline of one `gr_rect` or one loop of `gr_line`s, read
+/// exactly (`None` for any other).
+fn simple_board_outline(pcb: &Expr) -> Result<Option<BoardOutline>, String> {
     let edge_shapes = pcb
         .children()
         .iter()
@@ -671,6 +695,55 @@ mod tests {
             Some([10.0, 20.0, 30.0, 40.0])
         );
         assert_eq!(rectangular_board_outline_area(&pcb).unwrap(), Some(400.0));
+    }
+
+    /// The remapper trial's outline (docs/reviews/2026-10-18-remapper-
+    /// agent-diagnostic-trial.md): lines and arcs, which the router's
+    /// lowering reads and the board's statistics and the verification
+    /// preview now read the same way (they took one rectangle or one loop
+    /// of lines only).
+    #[test]
+    fn an_outline_of_lines_and_arcs_is_read_as_the_router_reads_it() {
+        // 20 x 10 mm with corners of 1 mm radius.
+        let pcb = parse(
+            r#"(kicad_pcb
+                (gr_line (start 1 0) (end 19 0) (layer "Edge.Cuts"))
+                (gr_arc (start 19 0) (mid 19.7071 0.2929) (end 20 1) (layer "Edge.Cuts"))
+                (gr_line (start 20 1) (end 20 9) (layer "Edge.Cuts"))
+                (gr_arc (start 20 9) (mid 19.7071 9.7071) (end 19 10) (layer "Edge.Cuts"))
+                (gr_line (start 19 10) (end 1 10) (layer "Edge.Cuts"))
+                (gr_arc (start 1 10) (mid 0.2929 9.7071) (end 0 9) (layer "Edge.Cuts"))
+                (gr_line (start 0 9) (end 0 1) (layer "Edge.Cuts"))
+                (gr_arc (start 0 1) (mid 0.2929 0.2929) (end 1 0) (layer "Edge.Cuts")))"#,
+        )
+        .unwrap();
+        let area = board_outline_area(&pcb).unwrap().unwrap();
+        let exact = 200.0 - (4.0 - std::f64::consts::PI);
+        // The arcs as chords (`outline::ARC_TOLERANCE`).
+        assert!((area - exact).abs() < 0.05, "{area} against {exact}");
+        let outline = board_outline_checked(&pcb).unwrap();
+        assert_eq!(
+            outline.bounds.map(|value| value.round()),
+            [0.0, 0.0, 20.0, 10.0]
+        );
+        // Not a rectangle.
+        assert_eq!(rectangular_board_bounds(&pcb).unwrap(), None);
+        // An outline the lowering refuses: the reason, as the router
+        // gives it.
+        let open = parse(
+            r#"(kicad_pcb
+                (gr_line (start 0 0) (end 10 0) (layer "F.SilkS")))"#,
+        )
+        .unwrap();
+        assert_eq!(
+            board_outline(&open).unwrap().map(|outline| outline.bounds),
+            None
+        );
+        let error = board_outline_checked(&open).unwrap_err();
+        assert_eq!(
+            error,
+            "the board outline (Edge.Cuts) is not one the router reads either: the board has no Edge.Cuts outline"
+        );
     }
 
     #[test]

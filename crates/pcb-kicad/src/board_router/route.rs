@@ -268,6 +268,7 @@ pub fn route_kicad_board(
     result.kicad_checks_charged = ladder.checks_charged.checks;
     result.kicad_check_work_seconds = ladder.checks_charged.work();
     result.attempts_failed = std::mem::take(&mut ladder.failed);
+    result.attempts = ladder.attempt_ledger();
     // What did not run matters only to a board left incomplete.
     if final_open.0 > 0 || final_open.1 > 0 {
         result.skipped = std::mem::take(&mut ladder.skipped);
@@ -852,6 +853,8 @@ pub(crate) fn finish_routed_board(
         warnings: input_warnings(pcb),
         pour_quality: Vec::new(),
         pour_loss: None,
+        negotiation_stop: result.negotiation_stop.to_string(),
+        attempts: Vec::new(),
     };
     let report_path = output_directory.join("board-router.json");
     fs::write(

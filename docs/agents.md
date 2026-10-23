@@ -358,6 +358,24 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     a net wins. The classes go into the result's `.kicad_pro` ahead of the
     project's own, so KiCad and its DRC use the same rules. Without them,
     net classes come from the project.
+  - **Below the project's minimum** (since 2026-10-23): a class's,
+    `default_rules`' or a net's (`connection_rules`) track width below the
+    board's `min_track_width`, a clearance below its `min_clearance` (and
+    `default_rules`' or `connection_rules`' below the project's class
+    clearance), `neck_width_mm` or `narrow_signal_mm` below
+    `min_track_width`, `relaxed_clearance_mm` below `min_clearance`: the
+    run is refused before any work (exit 2), one line naming each value,
+    the project's minimum and where it comes from (`net_classes[Narrow]
+    asks for track width 0.15 mm below the project's 0.2 mm
+    (board.design_settings.rules.min_track_width in the .kicad_pro) on
+    QSPI_SCLK`). KiCad's DRC holds the board to the project's rules, so
+    narrower classes give width findings. To route with them anyway (a
+    diagnostic control), add `"allow_below_project_minimum": true`: the
+    run goes on, board-router.json's `rules.overrides` lists them and the
+    verdict's first next actions warn. `describe-kicad-board` on the
+    result shows both: `track_width_mm` (the project's, raised to the
+    minimum) and `class_track_width_mm` (the class's own, which that run
+    routed with).
   - `existing_tracks` (default `keep`): route mode's handling of the
     board's own tracks and vias; `strip` is `--strip`.
 - **Router options in layout mode.** The same file goes in the router
@@ -769,11 +787,20 @@ input errors and 4 on internal errors.
 - **A `near` or `relative` constraint is not `satisfied`.** Geometry forbids
   it, or it conflicts with another constraint; `violation_mm` says by how
   much. Relax the distance, or fix the part yourself.
-- **Connections stay open.** Read `routed.diagnostics`. `hot_spots` say
-  where to make room (move parts apart, enlarge the outline, add layers);
-  `dead_pads` name pads whose class is too wide for them. Otherwise the
-  board is too dense for its layer count or size. Enlarge the outline or add layers. `benchmarks/corpus/run.py
-  --shrink` shows how much a design can shrink.
+- **Connections stay open.** First ask which pads, under which rules:
+  `pcb-maker inspect-routing-run <out-dir> --reference <designer's
+  project>` (section "Why nets stayed open") names each open net's groups
+  of pads, KiCad's pairs, the rules and their sources, and the designer's
+  route of the net. `routed.diagnostics` adds `hot_spots` (where nets
+  fought longest) and `dead_pads` (pads whose class is too wide for
+  them). That the board is too dense for its layer count or size is a
+  hypothesis, not a finding: when the designer's board routes the same
+  placement under the same rules (`reference.connected: true` for the
+  open nets), density is not the reason, and a larger outline, more layers
+  or narrower classes are not called for. The discriminating query is the
+  reference's route of the open nets beside the groups the run left;
+  `benchmarks/corpus/run.py --shrink` shows how much a design can shrink
+  when there is no reference.
 - **Pads or copper too close to the edge.** How parts at an edge keep the
   copper-to-edge clearance is described once, under `edge` in
   [constraints.md](constraints.md); a `copper_edge_clearance` error left in
@@ -864,6 +891,82 @@ Exit 0 when no error counts (warnings, excluded and cosmetic findings do
 not) and no item is unconnected, 1 otherwise, 2 for a missing project or
 board, 4 when KiCad fails. The benchmark runners (`run.py`'s designer
 check, `freerouting.py`) use it when the binary has it.
+
+## Why nets stayed open: `inspect-routing-run`
+
+```sh
+pcb-maker inspect-routing-run <run-dir> [--net <net>] [--terminal <REF:PAD>] [--reference <project-dir>] [--native-check] [--output <file.json>]
+```
+
+reads what a route or layout run saved (board-router.json, the board it
+wrote, drc.json; a layout's `result/`) and answers, per net the router
+left partial or unreachable (or the one `--net` or `--terminal` names),
+which pads are apart and under which rules. Nothing is routed: the result
+board is lowered as the router lowers a board (any outline the router
+reads) and its copper joined as KiCad joins it without zone fill (about a
+second; `--reference` lowers the reference too). `--native-check` runs
+KiCad's DRC first (cached, into `native-check-drc.json` beside the board)
+when the run has none. Exit 0 with the report written, 2 for a directory
+without board-router.json or an unknown net or pad.
+
+Per net:
+- `components`: the groups of pads its copper joins, each pad with `ref`,
+  `number`, `uuid` (the same on the source, result and reference board),
+  `at` (mm) and copper `layers`; the largest group marked. A net with a
+  zone (`pour_layers`) lists only the groups KiCad's pairs name
+  (`components_omitted` counts the others: its fill, which this command
+  does not model, joins them or not).
+- `counts`: the router's terminals and unconnected terminals (its
+  search's state, pads it merged before routing as one), the groups and
+  the links missing between them, KiCad's unconnected pairs, and an
+  `explanation` of how they relate. They are different quantities: never
+  add or compare them as one.
+- `native_pairs`: KiCad's pairs with their items and the groups the
+  items lie in (`null` for a track or via).
+- `rules`: track width, clearance and vias as the run's project resolves
+  them, each with its source (the class, the board's minimum with its own
+  source, a custom rule), the class's own value where it is below
+  (`class_track_width_mm`), the run's `overrides`, and the widths the
+  board has on the net (`emitted_track_widths_mm`).
+- `reference` (with `--reference`): the designer's route of the net:
+  `connected`, `components`, segments, vias, layers, widths, length.
+- `dead_pads` and `hot_spots_near` (hot spots within 3 mm of the net's
+  pads): observations from board-router.json.
+- `access` and `cause`: `unknown` (nothing here measures them; a hot spot
+  near a pad is no cause).
+
+At the top: `checks` (`router`; `native`: `not_run`, `passed` or
+`failed`, the pairs, `capped` when KiCad's report stopped at 499 items,
+the pairs on nets not inspected; `components`) and `attempts`: the
+ladder's ledger from board-router.json (since 2026-10-23; `null` before):
+each attempt's name, pitch, pours, open count, vias, iterations, work,
+routing seconds, `negotiation_stop` (`conflict_free`, `stalled`,
+`work_deadline`, `negotiation_work_limit`, `probe_work_limit`,
+`wall_guard`, `past_wall_deadline`, `hopeless`, `iteration_cap`) and the
+`selected` one, with the run's `skipped` steps and `cut`.
+
+An excerpt (MegaDrive on its v19 placement, 30 s of work):
+
+```json
+{"net": "VD1", "status": "partial",
+ "counts": {"router_terminals": 6, "router_unconnected_terminals": 6,
+            "components": 3, "missing_links": 2, "native_pairs": 2,
+            "explanation": "the result board's copper (pours not counted) leaves 3 groups of pads, 2 links missing; ..."},
+ "components": [
+   {"pads": [{"ref": "J2", "number": "a5", "uuid": "677b946b-...", "at": [272.125, 127.635], "layers": ["B.Cu"]}, "..."], "largest": true},
+   {"pads": [{"ref": "J3", "number": "a23", "uuid": "83818903-...", "at": [186.69, 76.2], "layers": ["F.Cu", "B.Cu"]}], "largest": false},
+   {"pads": [{"ref": "U4", "number": "139", "uuid": "b6f5cf55-...", "at": [156.55, 106.42], "layers": ["F.Cu"]}], "largest": false}],
+ "native_pairs": [{"items": [{"description": "PTH pad a23 [/VD1] of J3", "...": "..."},
+                             {"description": "Pad 139 [/VD1] of U4 on F.Cu", "...": "..."}],
+                   "components": [1, 2]}, "..."],
+ "rules": {"track_width_mm": 0.25, "clearance_mm": 0.2, "classes": ["Default"],
+           "track_width_source": "class Default (net_settings.classes in the .kicad_pro)",
+           "project_minimums": {"track_width_mm": 0.1, "track_width_source": "board.design_settings.rules.min_track_width in the .kicad_pro", "...": "..."},
+           "emitted_track_widths_mm": [0.1, 0.25]},
+ "reference": {"connected": true, "components": 1, "segments": 79, "vias": 6, "layers": ["B.Cu", "F.Cu"], "track_widths_mm": [0.25, 1.0]},
+ "access": {"status": "unknown", "reason": "not measured: this command runs no access probe"},
+ "cause": {"status": "unknown", "reason": "..."}}
+```
 
 ## Score a board
 

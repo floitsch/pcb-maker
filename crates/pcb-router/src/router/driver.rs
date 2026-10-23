@@ -371,6 +371,7 @@ impl Router {
             island_stubs: self.island_stubs,
             manual_spokes_work: self.manual_spokes_work,
             first_iteration_expansions: self.first_iteration_expansions,
+            negotiation_stop: self.negotiation_stop,
             pour_work: self.pour_work_seconds(),
             build_work: self.build_work,
             shared_build: self.shared_build(),

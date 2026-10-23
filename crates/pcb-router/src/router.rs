@@ -1278,6 +1278,9 @@ pub struct Router {
     /// all. The polish is skipped then; the ladder's next rung is what
     /// matters.
     hopeless: bool,
+    /// Why the last negotiation (not the via reduction's) ended
+    /// (`RoutingResult::negotiation_stop`); empty before one.
+    negotiation_stop: &'static str,
     stamp_seconds: f64,
     iterations: usize,
     /// Nets in conflict after the last negotiation iteration.

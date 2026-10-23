@@ -863,6 +863,7 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
         island_stubs: 0,
         manual_spokes_work: 0.0,
         first_iteration_expansions: 0,
+        negotiation_stop: "",
         pour_work: 0.0,
         build_work: 0.0,
         shared_build: Default::default(),

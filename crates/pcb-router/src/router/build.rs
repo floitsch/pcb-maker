@@ -337,6 +337,7 @@ impl Router {
             negotiation_seconds: 0.0,
             present_reached: 0.0,
             hopeless: false,
+            negotiation_stop: "",
             stamp_seconds: 0.0,
             iterations: 0,
             last_conflicted: Vec::new(),

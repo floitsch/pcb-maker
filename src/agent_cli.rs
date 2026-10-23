@@ -416,6 +416,22 @@ fn check_kicad(optional: bool) -> Result<Option<String>, Failure> {
     }
 }
 
+/// The verdict's warnings for the widths and clearances the router file
+/// asked for below the project's (`allow_below_project_minimum`).
+fn override_warnings(config: &pcb_kicad::KiCadBoardRouterConfig) -> Vec<String> {
+    config
+        .project_rules
+        .iter()
+        .flat_map(|report| &report.overrides)
+        .map(|item| {
+            format!(
+                "rules below the project's minimum (allow_below_project_minimum): {}; KiCad's DRC holds the board to the project's rules, so expect its findings there",
+                item.line()
+            )
+        })
+        .collect()
+}
+
 const ROUTE_USAGE: &str = "usage: pcb-maker route-kicad-board <project-dir> <board-id> <out-dir> [router-config.json|auto] [--reference <project-dir>|none] [--strip]";
 const LAYOUT_USAGE: &str = "usage: pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> [router-config.json|auto] [layout-config.json] [--reference <project-dir>|none]";
 /// place-kicad-board's default work budget: the layout's placement share
@@ -519,6 +535,7 @@ fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     }
     facts.outputs = existing(&outputs);
     facts.input_warnings.extend(kicad_warning);
+    facts.input_warnings.extend(override_warnings(&config));
     check_reference(
         &mut facts,
         reference.as_deref(),
@@ -777,6 +794,7 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         )]),
     );
     input_warnings.extend(check_kicad(router.skip_native_verification)?);
+    input_warnings.extend(override_warnings(&router));
     // A free dimension: the layout at several sizes (src/agent_cli/free_dimension.rs).
     if let Some(free) = &config.free_dimension {
         let layout_json = match positional.get(4) {
@@ -1048,6 +1066,74 @@ fn drc(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     } else {
         KiCadRunStatus::Incomplete
     })
+}
+
+const INSPECT_USAGE: &str = "usage: pcb-maker inspect-routing-run <run-dir> [--net <net>] [--terminal <REF:PAD>] [--reference <project-dir>] [--native-check] [--output <file.json>]";
+
+/// Why a run left nets open, from its saved outputs
+/// (`pcb_kicad::inspect_routing_run`): complete when the report was
+/// written. `--native-check` runs KiCad's DRC first when the run has no
+/// drc.json (into `native-check-drc.json` beside the board).
+fn inspect_run(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
+    let native_check = arguments
+        .iter()
+        .any(|argument| argument == "--native-check");
+    let arguments = arguments
+        .into_iter()
+        .filter(|argument| argument != "--native-check")
+        .collect();
+    let (positional, values) = split_flags(
+        arguments,
+        &["--net", "--terminal", "--reference", "--output"],
+        INSPECT_USAGE,
+    )?;
+    positional_count(&positional, 1..=1, INSPECT_USAGE)?;
+    let run = PathBuf::from(&positional[0]);
+    if !run.is_dir() {
+        return Err(Failure::Usage(format!(
+            "run directory {} does not exist",
+            run.display()
+        )));
+    }
+    if values.contains_key("--net") && values.contains_key("--terminal") {
+        return Err(Failure::Usage(format!(
+            "give --net or --terminal, not both; {INSPECT_USAGE}"
+        )));
+    }
+    let files = pcb_kicad::run_files(&run).map_err(classify)?;
+    let mut drc = None;
+    if native_check && !files.directory.join("drc.json").is_file() {
+        check_kicad(false)?;
+        let report = files.directory.join("native-check-drc.json");
+        pcb_kicad::kicad_drc_report(&files.directory, &files.board_id, &report, true)
+            .map_err(Failure::Internal)?;
+        drc = Some(report);
+    }
+    let inspection = pcb_kicad::KiCadRunInspection {
+        run,
+        net: values.get("--net").cloned(),
+        terminal: values.get("--terminal").cloned(),
+        reference: values.get("--reference").map(PathBuf::from),
+        drc,
+    };
+    let diagnosis = pcb_kicad::inspect_routing_run(&inspection).map_err(classify)?;
+    let text = serde_json::to_string_pretty(&diagnosis)
+        .map_err(|error| Failure::Internal(error.to_string()))?;
+    match values.get("--output") {
+        Some(path) => {
+            pcb_kicad::write_atomically(Path::new(path), format!("{text}\n").as_bytes())
+                .map_err(|error| Failure::Usage(format!("failed to write {path}: {error}")))?;
+            println!(
+                "inspected {} net{} of {}: {}",
+                diagnosis.nets.len(),
+                if diagnosis.nets.len() == 1 { "" } else { "s" },
+                files.board_id,
+                path_text(Path::new(path))
+            );
+        }
+        None => println!("{text}"),
+    }
+    Ok(KiCadRunStatus::Complete)
 }
 
 const FAB_USAGE: &str = "usage: pcb-maker fab-kicad-board <project-dir> <board-id> <out-dir> [--allow-findings] [--layers <L1,L2,...>] [--profile kicad|jlcpcb] [--no-step]";
@@ -1337,7 +1423,11 @@ pub fn run(command: &str, arguments: Vec<String>) -> Option<Result<KiCadRunStatu
     if matches!(
         command,
         "route-kicad-board" | "layout-kicad-board" | "place-kicad-board" | "drc-kicad-board"
-    ) {
+    ) || (command == "inspect-routing-run"
+        && arguments
+            .iter()
+            .any(|argument| argument == "--native-check"))
+    {
         pcb_kicad::ledger::arm(&ledger_label(command, &arguments));
     }
     Some(match command {
@@ -1345,6 +1435,7 @@ pub fn run(command: &str, arguments: Vec<String>) -> Option<Result<KiCadRunStatu
         "layout-kicad-board" => layout(arguments),
         "place-kicad-board" => place(arguments),
         "drc-kicad-board" => drc(arguments),
+        "inspect-routing-run" => inspect_run(arguments),
         "fab-kicad-board" => fab(arguments),
         "describe-kicad-board"
         | "score-kicad-board"
@@ -1444,6 +1535,35 @@ diagnostics (dead_pads, hot_spots, starved_thermals), cut, work_seconds, skipped
 new_findings_strict, preexisting_findings, clean_without_subtraction, repairs, environment, outputs,
 next_actions).";
 
+const INSPECT_HELP: &str = "\
+Reads a route or layout run's saved outputs and says, per net left open, what is unconnected and
+under which rules: no routing, no new search (one lowering of the result board, a second of the
+reference's; seconds).
+
+usage: pcb-maker inspect-routing-run <run-dir> [--net <net>] [--terminal <REF:PAD>] [--reference <project-dir>] [--native-check] [--output <file.json>]
+
+  <run-dir>            route-kicad-board's <out-dir> or layout-kicad-board's (its result/): the
+                       directory with board-router.json and the routed board.
+  --net <net>          only this net, whatever its status; default: every net the router left
+                       partial or unreachable.
+  --terminal <REF:PAD> only the net of this pad, with the group the pad is in.
+  --reference <dir>    the designer's project: its route of each net (layers, widths, vias,
+                       whether its copper joins every pad). Default: none.
+  --native-check       when the run has no drc.json (KiCad's check skipped), run KiCad's DRC first
+                       (cached; written to native-check-drc.json beside the board). Default: off.
+  --output <file>      write the JSON there; default: stdout.
+
+Per net: components (groups of pads the result board's copper joins, pours not counted: ref,
+number, uuid, at in mm, copper layers; the largest marked), counts (the router's terminals and
+unconnected terminals, the groups and links missing, KiCad's unconnected pairs, explained apart),
+native_pairs (each pair's items and the groups they lie in), rules (track width and clearance with
+their sources: class, board minimum, custom rule; the class's own value below the minimum; the
+run's overrides; the widths emitted), reference, dead_pads, hot_spots_near, and access and cause:
+unknown (not measured). Top level: checks (router, native: not_run|passed|failed, components) and
+attempts (the ladder's ledger: each attempt's pitch, pours, open, work, negotiation_stop, the
+selected one). Any outline the router reads is read. Exits 0 when the report was written, 2 on
+usage or input errors (no board-router.json, an unknown net or pad), 4 on internal errors.";
+
 const LAYOUT_HELP: &str = "\
 Places and routes a KiCad board: parts not locked, not netless and not fixed are placed anew, the
 board is routed, parts are moved where nets fight for room, and KiCad checks the result.
@@ -1540,7 +1660,7 @@ findings), 2 usage or input errors, 4 internal errors (kicad-cli failed).";
 
 /// The commands for agents: name, one line, and the detailed help (when
 /// there is more to say than the usage line).
-pub const AGENT_COMMANDS: [(&str, &str, &str); 13] = [
+pub const AGENT_COMMANDS: [(&str, &str, &str); 14] = [
     (
         "import-kicad-netlist",
         "makes a board from a schematic or netlist, with constraints.json and layout.json",
@@ -1597,6 +1717,11 @@ pub const AGENT_COMMANDS: [(&str, &str, &str); 13] = [
         "usage: pcb-maker drc-kicad-board <project-dir> <board-id> <report.json> [--no-refill]\n\n  <project-dir>  the KiCad project directory holding <board-id>.kicad_pcb.\n  <board-id>     the board's file stem.\n  <report.json>  where KiCad's DRC report (JSON, every severity) goes; its directory is created.\n  --no-refill    check the zones as stored; default: refilled first, as KiCad's fab outputs do.\n\nThe board and its rules (.kicad_pro, .kicad_dru) are checked without the schematic, as the\nreference board is. The DRC cache answers a board it has seen (docs/agents.md). Exits 0 when\nKiCad finds no error that counts (warnings, excluded and cosmetic findings do not) and no\nunconnected item, 1 when it does; one line on stdout counts them, and when it does and the
 project has rules the router does not keep (creepage, lengths, rules on areas), a line
 \"next: ...\" names them.",
+    ),
+    (
+        "inspect-routing-run",
+        "says why a run left nets open, from its saved outputs: pads, rules, KiCad's pairs, attempts",
+        INSPECT_HELP,
     ),
     (
         "strip-kicad-tracks",

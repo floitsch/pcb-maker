@@ -123,13 +123,20 @@ pub use pin_swap::{
 mod shrink;
 pub use shrink::{KiCadShrinkReport, shrink_kicad_board};
 mod project_rules;
+mod run_diagnosis;
 pub use board_router::{
     KiCadBoardRouterConfig, KiCadBoardRouterNet, KiCadBoardRouterResult, KiCadBoardRouterViolation,
     KiCadExistingTracks, KiCadKeepWhole, KiCadKeptCopper, KiCadPourMode, KiCadPourQuality,
     bench_kicad_search, dump_kicad_pour_map, measure_pours, route_kicad_board,
     write_kicad_board_without_tracks,
 };
-pub use project_rules::{resolve_project_rules, router_config_over_project};
+pub use project_rules::{
+    KiCadProjectMinimums, KiCadRuleOverride, preflight_overrides, resolve_project_rules,
+    router_config_over_project,
+};
+pub use run_diagnosis::{
+    KiCadRunDiagnosis, KiCadRunFiles, KiCadRunInspection, inspect_routing_run, run_files,
+};
 
 /// Sets the allocator up for the router's large maps (glibc: blocks of a
 /// MiB or more are unmapped when freed; `board_router::configure_malloc`).

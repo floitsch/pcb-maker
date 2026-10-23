@@ -53,6 +53,231 @@ pub struct KiCadProjectRulesReport {
     /// designer (the verdict's next_actions name them).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub unmodelled: Vec<String>,
+    /// The board's minimum track width and clearance, with where each
+    /// comes from (the project's board setup or KiCad's default).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub minimums: Option<KiCadProjectMinimums>,
+    /// Widths and clearances a router file asked for below the project's
+    /// (`allow_below_project_minimum`): the run used them; KiCad's DRC
+    /// holds the board to the project's.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub overrides: Vec<KiCadRuleOverride>,
+    /// Per net (as the router names it): its classes, the highest
+    /// priority first ("Default" for a net in none).
+    #[serde(skip)]
+    pub net_classes: BTreeMap<String, Vec<String>>,
+    /// Per class of the project: its track width and clearance as the
+    /// project states them (before the board's minimums).
+    #[serde(skip)]
+    pub class_values: BTreeMap<String, [Option<f64>; 2]>,
+}
+
+/// The board's minimum track width and clearance (`min_track_width`,
+/// `min_clearance` of the board setup), each with its source.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct KiCadProjectMinimums {
+    pub track_width_mm: f64,
+    pub track_width_source: String,
+    pub clearance_mm: f64,
+    pub clearance_source: String,
+}
+
+/// A width or clearance a router file asks for below what the project
+/// holds the board to (`preflight_overrides`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct KiCadRuleOverride {
+    /// The file's key: `net_classes[<name>]`, `default_rules`,
+    /// `connection_rules[<net>]`, `neck_width_mm`, `narrow_signal_mm`,
+    /// `relaxed_clearance_mm`.
+    pub source: String,
+    /// `track_width` or `clearance`.
+    pub quantity: String,
+    pub requested_mm: f64,
+    /// What the project holds it to, and where that comes from.
+    pub project_minimum_mm: f64,
+    pub project_source: String,
+    /// The nets (or the class's patterns) it applies to; empty for all.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub nets: Vec<String>,
+}
+
+impl KiCadRuleOverride {
+    /// One line for an error or a warning.
+    pub fn line(&self) -> String {
+        format!(
+            "{} asks for {} {} mm below the project's {} mm ({}){}",
+            self.source,
+            self.quantity.replace('_', " "),
+            self.requested_mm,
+            self.project_minimum_mm,
+            self.project_source,
+            if self.nets.is_empty() {
+                String::new()
+            } else {
+                format!(" on {}", self.nets.join(", "))
+            }
+        )
+    }
+}
+
+/// The widths and clearances a router file (`named`: its keys; `config`:
+/// the file over the project) asks for below the project's (`project`:
+/// its resolution): a net class's or `default_rules`' or a net's
+/// (`connection_rules`) track width below the board's `min_track_width`,
+/// its clearance below the board's `min_clearance` (and `default_rules`'
+/// and `connection_rules`' below the project's own class clearance,
+/// which KiCad's DRC holds the board to), the neck and narrow-signal
+/// widths below `min_track_width`, `relaxed_clearance_mm` below
+/// `min_clearance`.
+pub fn preflight_overrides(
+    named: &BTreeSet<String>,
+    config: &KiCadBoardRouterConfig,
+    project: &KiCadBoardRouterConfig,
+) -> Vec<KiCadRuleOverride> {
+    const EPSILON: f64 = 1.0e-9;
+    let Some(minimums) = project
+        .project_rules
+        .as_ref()
+        .and_then(|report| report.minimums.clone())
+    else {
+        return Vec::new();
+    };
+    let mut found = Vec::new();
+    let mut check = |source: String,
+                     quantity: &str,
+                     requested: Option<f64>,
+                     minimum: f64,
+                     minimum_source: &str,
+                     nets: Vec<String>| {
+        if let Some(requested) = requested
+            && requested < minimum - EPSILON
+        {
+            found.push(KiCadRuleOverride {
+                source,
+                quantity: quantity.into(),
+                requested_mm: requested,
+                project_minimum_mm: minimum,
+                project_source: minimum_source.into(),
+                nets,
+            });
+        }
+    };
+    let width = (
+        minimums.track_width_mm,
+        minimums.track_width_source.as_str(),
+    );
+    let clearance = (minimums.clearance_mm, minimums.clearance_source.as_str());
+    for class in &config.net_classes {
+        let source = format!("net_classes[{}]", class.name);
+        check(
+            source.clone(),
+            "track_width",
+            class.track_width_mm,
+            width.0,
+            width.1,
+            class.nets.clone(),
+        );
+        check(
+            source,
+            "clearance",
+            class.clearance_mm,
+            clearance.0,
+            clearance.1,
+            class.nets.clone(),
+        );
+    }
+    if named.contains("default_rules")
+        && let Some(rules) = &config.default_rules
+    {
+        check(
+            "default_rules".into(),
+            "track_width",
+            Some(rules.trace_width_mm),
+            width.0,
+            width.1,
+            Vec::new(),
+        );
+        let board = project
+            .default_rules
+            .as_ref()
+            .map_or(0.0, |rules| rules.clearance_mm);
+        let (minimum, source) = if board > clearance.0 {
+            (
+                board,
+                "the project's Default class clearance (net_settings.classes)",
+            )
+        } else {
+            clearance
+        };
+        check(
+            "default_rules".into(),
+            "clearance",
+            Some(rules.clearance_mm),
+            minimum,
+            source,
+            Vec::new(),
+        );
+    }
+    if named.contains("connection_rules") {
+        for (net, rules) in &config.connection_rules {
+            let source = format!("connection_rules[{net}]");
+            check(
+                source.clone(),
+                "track_width",
+                Some(rules.trace_width_mm),
+                width.0,
+                width.1,
+                vec![net.clone()],
+            );
+            let board = project
+                .connection_rules
+                .get(net)
+                .or(project.default_rules.as_ref())
+                .map_or(0.0, |rules| rules.clearance_mm);
+            let (minimum, source_of) = if board > clearance.0 {
+                (
+                    board,
+                    "the net's class clearance in the project (net_settings.classes)",
+                )
+            } else {
+                clearance
+            };
+            check(
+                source,
+                "clearance",
+                Some(rules.clearance_mm),
+                minimum,
+                source_of,
+                vec![net.clone()],
+            );
+        }
+    }
+    for (key, value) in [
+        ("neck_width_mm", config.neck_width_mm),
+        ("narrow_signal_mm", config.narrow_signal_mm),
+    ] {
+        if named.contains(key) {
+            check(
+                key.into(),
+                "track_width",
+                value,
+                width.0,
+                width.1,
+                Vec::new(),
+            );
+        }
+    }
+    if named.contains("relaxed_clearance_mm") {
+        check(
+            "relaxed_clearance_mm".into(),
+            "clearance",
+            config.relaxed_clearance_mm,
+            clearance.0,
+            clearance.1,
+            Vec::new(),
+        );
+    }
+    found
 }
 
 pub(crate) fn wildcard_match(pattern: &str, text: &str) -> bool {
@@ -207,6 +432,19 @@ pub fn resolve_project_rules(
             report.kicad_defaults.push(format!("{key} {value} mm"));
         }
     }
+    let source_of = |key: &str| {
+        if rules[key].as_f64().is_some() {
+            format!("board.design_settings.rules.{key} in the .kicad_pro")
+        } else {
+            format!("KiCad's default {key} (the project does not state it)")
+        }
+    };
+    report.minimums = Some(KiCadProjectMinimums {
+        track_width_mm: minimum("min_track_width"),
+        track_width_source: source_of("min_track_width"),
+        clearance_mm: minimum("min_clearance"),
+        clearance_source: source_of("min_clearance"),
+    });
     let severity = project["board"]["design_settings"]["rule_severities"]["connection_width"]
         .as_str()
         .map(str::to_owned);
@@ -238,6 +476,9 @@ pub fn resolve_project_rules(
             continue;
         };
         let value = |key: &str| class[key].as_f64().filter(|v| *v > 0.0);
+        report
+            .class_values
+            .insert(name.to_string(), [value("track_width"), value("clearance")]);
         specs.push(ClassSpec {
             name: name.to_string(),
             priority: class["priority"].as_i64().unwrap_or(index as i64),
@@ -389,6 +630,13 @@ pub fn resolve_project_rules(
                 classes.iter().map(|spec| spec.name.clone()).collect()
             },
         });
+        report.net_classes.insert(
+            net_names.normalize(&raw).to_string(),
+            net_facts
+                .last()
+                .map(|net| net.classes.clone())
+                .unwrap_or_default(),
+        );
         connection_rules.insert(net_names.normalize(&raw).to_string(), rules);
     }
     let mut default_rules = default_rules;
@@ -569,6 +817,19 @@ pub fn router_config_over_project(
             return Ok(config);
         }
     };
+    // Widths and clearances below the project's: refused before any
+    // work unless the file allows them, reported either way.
+    let overrides = preflight_overrides(&named, &config, &project);
+    if !overrides.is_empty() && !config.allow_below_project_minimum {
+        return Err(crate::verdict::input_error(format!(
+            "the router config asks for less than the project's rules: {}; KiCad's DRC holds the board to the project's (change the project's board setup or net classes), or set \"allow_below_project_minimum\": true to route with them anyway (the verdict then warns)",
+            overrides
+                .iter()
+                .map(KiCadRuleOverride::line)
+                .collect::<Vec<_>>()
+                .join("; ")
+        )));
+    }
     let take = |key: &str| !named.contains(key);
     if !names_classes {
         config.connection_rules = project.connection_rules;
@@ -605,6 +866,9 @@ pub fn router_config_over_project(
         config.connection_width_severity = project.connection_width_severity;
     }
     config.project_rules = project.project_rules;
+    if let Some(report) = config.project_rules.as_mut() {
+        report.overrides = overrides;
+    }
     config.net_rules = project.net_rules;
     // The width floor holds for a file's own classes too.
     config.apply_width_floor();
@@ -614,7 +878,7 @@ pub fn router_config_over_project(
 /// The keys a router config file names (`router_config_over_project`):
 /// its top-level keys, or for an adaptive-routing config the rules its
 /// first portfolio entry gives (`KiCadBoardRouterConfig::from_json`).
-fn named_rule_keys(file: &serde_json::Value) -> std::collections::BTreeSet<String> {
+fn named_rule_keys(file: &serde_json::Value) -> BTreeSet<String> {
     if let Some(entry) = file
         .get("sequential")
         .and_then(|sequential| sequential.get("routing_portfolio"))
@@ -1207,6 +1471,88 @@ mod tests {
         )
         .unwrap();
         (directory, project, pcb)
+    }
+
+    /// The remapper trial's narrow-four control (docs/reviews/
+    /// 2026-10-18-remapper-agent-diagnostic-trial.md): 0.15 mm classes
+    /// under the board's 0.2 mm minimum are refused before any work,
+    /// naming the value, the minimum and its source, unless the file
+    /// allows them; then they are kept and reported.
+    #[test]
+    fn classes_below_the_projects_minimum_are_refused_unless_allowed() {
+        let (directory, project) = project_directory(
+            "below-minimum",
+            r#"{"board": {"design_settings": {"rules": {"min_track_width": 0.2, "min_clearance": 0.2}}},
+               "net_settings": {"classes": [{"name": "Default", "clearance": 0.2, "track_width": 0.2, "via_diameter": 0.6, "via_drill": 0.3}]}}"#,
+            None,
+        );
+        let pcb = directory.join("board.kicad_pcb");
+        fs::write(
+            &pcb,
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (gr_rect (start -5 -5) (end 15 5) (layer "Edge.Cuts"))
+              (footprint "a" (at 0 0)
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu" "F.Mask") (net "QSPI_SCLK"))
+                (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu" "F.Mask") (net "CTS1RTS")))
+              (footprint "b" (at 0 3)
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu" "F.Mask") (net "QSPI_SCLK"))
+                (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu" "F.Mask") (net "CTS1RTS"))))"#,
+        )
+        .unwrap();
+        let narrow = serde_json::json!({"net_classes": [{"name": "Narrow", "nets": ["QSPI_SCLK", "CTS1RTS"],
+            "track_width_mm": 0.15, "clearance_mm": 0.15}]});
+        let error =
+            router_config_over_project(narrow.clone(), resolve_project_rules(&project, &pcb))
+                .unwrap_err();
+        assert!(crate::verdict::is_input_error(&error), "{error}");
+        for part in [
+            "net_classes[Narrow] asks for track width 0.15 mm below the project's 0.2 mm (board.design_settings.rules.min_track_width",
+            "net_classes[Narrow] asks for clearance 0.15 mm below the project's 0.2 mm (board.design_settings.rules.min_clearance",
+            "on QSPI_SCLK, CTS1RTS",
+            "allow_below_project_minimum",
+        ] {
+            assert!(error.contains(part), "{part}: {error}");
+        }
+        let mut allowed = narrow;
+        allowed["allow_below_project_minimum"] = true.into();
+        let config =
+            router_config_over_project(allowed, resolve_project_rules(&project, &pcb)).unwrap();
+        let overrides = &config.project_rules.as_ref().unwrap().overrides;
+        assert_eq!(overrides.len(), 2);
+        assert_eq!(overrides[0].quantity, "track_width");
+        assert_eq!(overrides[0].requested_mm, 0.15);
+        assert_eq!(overrides[0].project_minimum_mm, 0.2);
+        assert_eq!(overrides[0].nets, ["QSPI_SCLK", "CTS1RTS"]);
+        // The run's classes keep the requested width.
+        assert_eq!(config.net_classes[0].track_width_mm, Some(0.15));
+        // A file default_rules below the board's Default class clearance
+        // (KiCad's DRC holds the board to it) and a narrow neck too.
+        let error = router_config_over_project(
+            serde_json::json!({"default_rules": {"trace_width_mm": 0.2, "clearance_mm": 0.1, "via_size_mm": 0.6, "via_drill_mm": 0.3},
+                "neck_width_mm": 0.1}),
+            resolve_project_rules(&project, &pcb),
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("default_rules asks for clearance 0.1 mm"),
+            "{error}"
+        );
+        assert!(
+            error.contains("neck_width_mm asks for track width 0.1 mm"),
+            "{error}"
+        );
+        assert!(
+            !error.contains("default_rules asks for track width"),
+            "{error}"
+        );
+        // At the minimum: accepted, nothing reported.
+        let config = router_config_over_project(
+            serde_json::json!({"net_classes": [{"name": "Even", "nets": ["CTS1RTS"], "track_width_mm": 0.2}]}),
+            resolve_project_rules(&project, &pcb),
+        )
+        .unwrap();
+        assert!(config.project_rules.unwrap().overrides.is_empty());
+        fs::remove_dir_all(&directory).unwrap();
     }
 
     #[test]

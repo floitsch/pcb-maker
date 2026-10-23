@@ -20,6 +20,12 @@
     }
   ],
   "custom_rules_file": "f1.kicad_dru",
+  "minimums": {
+    "clearance_mm": 0.0,
+    "clearance_source": "board.design_settings.rules.min_clearance in the .kicad_pro",
+    "track_width_mm": 0.15,
+    "track_width_source": "board.design_settings.rules.min_track_width in the .kicad_pro"
+  },
   "narrowest_track_mm": 0.2,
   "neck_width_mm": 0.15
 }

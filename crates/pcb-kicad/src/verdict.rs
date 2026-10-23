@@ -977,7 +977,7 @@ fn next_actions(
             ));
         }
         actions.push(format!(
-            "connections are open: {}; make room there (move parts apart, enlarge the outline, add layers) or narrow the net classes",
+            "connections are open: {}; `pcb-maker inspect-routing-run` on this output names each open net's pads, rules and KiCad's pairs (--reference: the designer's route of the net): read it before changing the design; then make room there (move parts apart, enlarge the outline, add layers) or narrow the net classes, not below the board's minimum",
             if where_.is_empty() { "the router's count; drc.json lists KiCad's unconnected items".to_string() } else { where_.join(", ") }
         ));
     }

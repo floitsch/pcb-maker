@@ -4,8 +4,8 @@
 //! are diagnostic only and must never change the native admission decision.
 
 use super::{
-    VerificationReport, board_outline, file_sha256, footprint_reference, form_atom, form_xy, parse,
-    remove_if_present, write_typed_json,
+    VerificationReport, board_outline_checked, file_sha256, footprint_reference, form_atom,
+    form_xy, parse, remove_if_present, write_typed_json,
 };
 use serde_json::json;
 use std::{
@@ -130,7 +130,7 @@ pub(super) fn render(board: &Path, directory: &Path) -> Result<(), String> {
 
 fn annotations(board: &Path) -> Result<([f64; 4], serde_json::Value, String), String> {
     let pcb = parse(&fs::read_to_string(board).map_err(|e| e.to_string())?)?;
-    let bounds = board_outline(&pcb)?.ok_or("outline unavailable")?.bounds;
+    let bounds = board_outline_checked(&pcb)?.bounds;
     let escape = |s: &str| {
         s.replace('&', "&amp;")
             .replace('<', "&lt;")

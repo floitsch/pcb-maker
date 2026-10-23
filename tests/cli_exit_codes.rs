@@ -270,6 +270,270 @@ fn a_route_kicad_did_not_check_is_never_complete() {
     let report: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(out.join("board-router.json")).unwrap()).unwrap();
     assert_eq!(report["repairs"], verdict["repairs"]);
+    // The ladder's ledger: every attempt judged, the one written marked.
+    let attempts = report["attempts"].as_array().expect("attempts");
+    assert!(!attempts.is_empty());
+    assert_eq!(
+        attempts
+            .iter()
+            .filter(|attempt| attempt["selected"] == true)
+            .count(),
+        1,
+        "{attempts:?}"
+    );
+    assert!(attempts[0]["work_seconds"].as_f64().is_some());
+    assert!(attempts[0]["grid_pitch_mm"].as_f64().is_some());
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// `inspect-routing-run` on a route's output whose board lost a track:
+/// the pads' groups with their identities, KiCad's pair joined to them,
+/// the rules with their sources, the reference's route, the ledger, and
+/// access and cause unknown. Errors in the arguments exit 2.
+#[test]
+fn inspect_routing_run_names_the_groups_and_reconciles_the_counts() {
+    let root = scratch("inspect");
+    let project = project(&root);
+    let run = root.join("run");
+    let output = binary()
+        .env("PCB_SKIP_NATIVE", "1")
+        .env("PCB_ROUTER_SEED", "0")
+        .args([
+            "route-kicad-board",
+            &project.display().to_string(),
+            "t",
+            &run.display().to_string(),
+            "auto",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(code(&output), 1, "{}", stderr(&output));
+    // The run's board without the track from the via to J3, J3's pad
+    // with its uuid.
+    let board = fs::read_to_string(project.join("t.kicad_pcb")).unwrap();
+    let lines: Vec<&str> = board
+        .lines()
+        .filter(|line| !line.contains("(start 12 10) (end 18 10)"))
+        .collect();
+    assert_eq!(lines.len() + 1, board.lines().count(), "{board}");
+    let board = lines.join("\n").replace(
+        "(net \"/TARGET\")))\n  (segment",
+        "(net \"/TARGET\") (uuid \"j3-pad-1\")))\n  (segment",
+    ) + ")\n";
+    assert!(board.contains("j3-pad-1"), "{board}");
+    fs::write(run.join("t.kicad_pcb"), board).unwrap();
+    fs::write(
+        run.join("drc.json"),
+        serde_json::json!({
+            "violations": [],
+            "unconnected_items": [{
+                "description": "Missing connection between items",
+                "severity": "error",
+                "type": "unconnected_items",
+                "items": [
+                    {"description": "Via [/TARGET] on F.Cu - B.Cu", "pos": {"x": 12.0, "y": 10.0}, "uuid": "via-1"},
+                    {"description": "Pad 1 [/TARGET] of J3 on F.Cu", "pos": {"x": 18.0, "y": 10.0}, "uuid": "j3-pad-1"}
+                ]
+            }]
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let report = root.join("diagnosis.json");
+    let output = binary()
+        .args([
+            "inspect-routing-run",
+            &run.display().to_string(),
+            "--terminal",
+            "J3:1",
+            "--reference",
+            &project.display().to_string(),
+            "--output",
+            &report.display().to_string(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    let diagnosis: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&report).unwrap()).unwrap();
+    assert_eq!(diagnosis["schema_version"], 1);
+    assert_eq!(diagnosis["units"], "mm");
+    let nets = diagnosis["nets"].as_array().unwrap();
+    assert_eq!(nets.len(), 1);
+    let net = &nets[0];
+    let components = net["components"].as_array().unwrap();
+    assert_eq!(components.len(), 2, "{net}");
+    let alone = components
+        .iter()
+        .position(|component| component["pads"][0]["ref"] == "J3")
+        .unwrap();
+    assert_eq!(
+        components[alone]["pads"][0],
+        serde_json::json!({"ref": "J3", "number": "1", "uuid": "j3-pad-1", "at": [18.0, 10.0], "layers": ["F.Cu"]})
+    );
+    assert_eq!(components[alone]["largest"], false);
+    assert_eq!(components[1 - alone]["pads"].as_array().unwrap().len(), 2);
+    assert_eq!(net["terminal"]["component"], alone);
+    assert_eq!(net["terminal"]["in_largest"], false);
+    assert_eq!(net["counts"]["components"], 2);
+    assert_eq!(net["counts"]["missing_links"], 1);
+    assert_eq!(net["counts"]["native_pairs"], 1);
+    assert!(
+        net["counts"]["explanation"]
+            .as_str()
+            .unwrap()
+            .contains("KiCad reports 1 unconnected pair")
+    );
+    // The pair's pad is in J3's group; the via is no pad.
+    assert_eq!(
+        net["native_pairs"][0]["components"],
+        serde_json::json!([null, alone])
+    );
+    assert_eq!(net["rules"]["track_width_mm"], 0.25);
+    assert!(
+        net["rules"]["project_minimums"]["track_width_source"]
+            .as_str()
+            .unwrap()
+            .starts_with("KiCad's default min_track_width")
+    );
+    assert_eq!(
+        net["rules"]["emitted_track_widths_mm"],
+        serde_json::json!([0.25])
+    );
+    assert_eq!(net["reference"]["connected"], true);
+    assert_eq!(net["reference"]["vias"], 1);
+    assert_eq!(
+        net["reference"]["track_widths_mm"],
+        serde_json::json!([0.25])
+    );
+    assert_eq!(net["copper"]["segments"], 2);
+    assert_eq!(net["access"]["status"], "unknown");
+    assert_eq!(net["cause"]["status"], "unknown");
+    assert_eq!(diagnosis["checks"]["native"]["status"], "failed");
+    assert_eq!(diagnosis["checks"]["native"]["unconnected_pairs"], 1);
+    assert!(diagnosis["attempts"]["ledger"].is_array());
+    assert!(diagnosis["attempts"]["selected"].is_object());
+    // Without --output: the same JSON on stdout.
+    let output = binary()
+        .args([
+            "inspect-routing-run",
+            &run.display().to_string(),
+            "--net",
+            "/TARGET",
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(code(&output), 0, "{}", stderr(&output));
+    let printed: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(printed["nets"][0]["counts"]["components"], 2);
+    for arguments in [
+        vec![
+            "inspect-routing-run".to_string(),
+            root.join("missing").display().to_string(),
+        ],
+        vec![
+            "inspect-routing-run".to_string(),
+            project.display().to_string(),
+        ],
+        vec![
+            "inspect-routing-run".to_string(),
+            run.display().to_string(),
+            "--terminal".to_string(),
+            "J9:1".to_string(),
+        ],
+        vec![
+            "inspect-routing-run".to_string(),
+            run.display().to_string(),
+            "--net".to_string(),
+            "NOPE".to_string(),
+        ],
+    ] {
+        let output = binary().args(&arguments).output().unwrap();
+        assert_eq!(code(&output), 2, "{arguments:?}: {}", stderr(&output));
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+/// The remapper trial's narrow-four control: a net class below the
+/// board's minimum track width is refused before any work, unless the
+/// file allows it; then the verdict warns and describe-kicad-board shows
+/// the project's width and the class's.
+#[test]
+fn a_class_below_the_boards_minimum_is_refused_unless_allowed() {
+    let root = scratch("below-minimum");
+    let project = project(&root);
+    let narrow = root.join("narrow.json");
+    fs::write(
+        &narrow,
+        r#"{"net_classes": [{"name": "Narrow", "nets": ["/TARGET"], "track_width_mm": 0.15}]}"#,
+    )
+    .unwrap();
+    let out = root.join("refused");
+    let output = binary()
+        .env("PCB_SKIP_NATIVE", "1")
+        .args([
+            "route-kicad-board",
+            &project.display().to_string(),
+            "t",
+            &out.display().to_string(),
+            &narrow.display().to_string(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(code(&output), 2, "{}", stderr(&output));
+    let message = stderr(&output);
+    assert!(
+        message.contains("net_classes[Narrow] asks for track width 0.15 mm below the project's 0.2 mm (KiCad's default min_track_width"),
+        "{message}"
+    );
+    assert!(message.contains("allow_below_project_minimum"), "{message}");
+    assert!(!out.join("board-router.json").exists());
+    let allowed = root.join("allowed.json");
+    fs::write(
+        &allowed,
+        r#"{"allow_below_project_minimum": true, "net_classes": [{"name": "Narrow", "nets": ["/TARGET"], "track_width_mm": 0.15}]}"#,
+    )
+    .unwrap();
+    let out = root.join("allowed");
+    let output = binary()
+        .env("PCB_SKIP_NATIVE", "1")
+        .args([
+            "route-kicad-board",
+            &project.display().to_string(),
+            "t",
+            &out.display().to_string(),
+            &allowed.display().to_string(),
+        ])
+        .output()
+        .unwrap();
+    assert_eq!(code(&output), 1, "{}", stderr(&output));
+    let verdict = verdict(&out.join("board-router.json"));
+    assert!(
+        verdict["next_actions"][0]
+            .as_str()
+            .unwrap()
+            .starts_with("rules below the project's minimum (allow_below_project_minimum): net_classes[Narrow] asks for track width 0.15 mm"),
+        "{verdict}"
+    );
+    let report: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(out.join("board-router.json")).unwrap()).unwrap();
+    assert_eq!(report["rules"]["overrides"][0]["requested_mm"], 0.15);
+    assert_eq!(report["rules"]["overrides"][0]["project_minimum_mm"], 0.2);
+    let described = binary()
+        .args(["describe-kicad-board", &out.display().to_string(), "t"])
+        .output()
+        .unwrap();
+    assert_eq!(code(&described), 0, "{}", stderr(&described));
+    let described: serde_json::Value = serde_json::from_slice(&described.stdout).unwrap();
+    let net = described["nets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|net| net["name"] == "TARGET" || net["name"] == "/TARGET")
+        .unwrap()
+        .clone();
+    assert_eq!(net["track_width_mm"], 0.2, "{net}");
+    assert_eq!(net["class_track_width_mm"], 0.15, "{net}");
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -1321,7 +1585,7 @@ fn the_agent_skill_matches_the_command_table_and_the_exit_codes() {
     // Command names: words of the form <verb>-kicad-<noun>.
     let named: std::collections::BTreeSet<String> = skill
         .split(|c: char| !(c.is_ascii_lowercase() || c == '-'))
-        .filter(|word| word.contains("-kicad-"))
+        .filter(|word| word.contains("-kicad-") || word.starts_with("inspect-"))
         .map(str::to_string)
         .collect();
     for name in &named {

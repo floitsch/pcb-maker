@@ -45,6 +45,13 @@ impl Router {
         // 60-200 s each after the deadline, killed at 1800 s). A fresh
         // router still negotiates once: without it there is no board.
         let finishing = self.iterations > 0 && self.past_wall_deadline();
+        // Why the negotiation ended (`RoutingResult::negotiation_stop`):
+        // the iteration cap unless a reason below ends it sooner.
+        let mut stop = if finishing {
+            "past_wall_deadline"
+        } else {
+            "iteration_cap"
+        };
         if finishing && self.config.verbose {
             eprintln!("negotiation skipped: past the deadline, the routes stay as they are");
         }
@@ -89,6 +96,7 @@ impl Router {
                         || self.past_work_deadline())
                 {
                     cut = Some(index);
+                    stop = "probe_work_limit";
                     break;
                 }
                 self.route_batch(batch, present, growth);
@@ -129,6 +137,7 @@ impl Router {
             let (conflicted, really_conflicted) =
                 self.end_iteration(order, iteration, pending.len(), present, started);
             if conflicted.is_empty() {
+                stop = "conflict_free";
                 break;
             }
             // The plan did not survive the lattice where nets conflict:
@@ -223,6 +232,13 @@ impl Router {
             // seconds stay as the last guard.
             let worked_out = self.negotiation_worked_out(used_before, expansions_before);
             if stalled > patience || worked_out || self.past_work_deadline() {
+                stop = if stalled > patience {
+                    "stalled"
+                } else if worked_out {
+                    "negotiation_work_limit"
+                } else {
+                    "work_deadline"
+                };
                 break;
             }
             if self.wall_guard()
@@ -237,9 +253,11 @@ impl Router {
                             / expansions_per_second()
                     ),
                 );
+                stop = "wall_guard";
                 break;
             }
             if self.past_wall_deadline() {
+                stop = "past_wall_deadline";
                 break;
             }
             // Nets without any path are not congestion; when a quarter of
@@ -262,6 +280,7 @@ impl Router {
                         eprintln!("hopeless: {pathless} of {routable} nets have no path at all");
                     }
                     self.hopeless = true;
+                    stop = "hopeless";
                     break;
                 }
             }
@@ -271,6 +290,7 @@ impl Router {
         self.negotiation_seconds = self.work_seconds() - work_before;
         self.present_reached = present;
         if !nested {
+            self.negotiation_stop = stop;
             self.profile.negotiation += profile_started.elapsed().as_secs_f64();
             self.phase_charge(0, phase_mark);
         }

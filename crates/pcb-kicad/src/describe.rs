@@ -302,8 +302,17 @@ pub struct KiCadDescribedNet {
     pub name: String,
     /// `REF:PAD` for every pad on the net.
     pub pads: Vec<String>,
+    /// The net's rules as the project resolves them: its class's values
+    /// raised to the board's minimums (what KiCad's DRC holds it to).
     pub track_width_mm: Option<f64>,
     pub clearance_mm: Option<f64>,
+    /// Where the net's class asks for less than that (a class a router
+    /// file wrote under `allow_below_project_minimum`): the class's own
+    /// value, which that run routed with. Absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub class_track_width_mm: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub class_clearance_mm: Option<f64>,
 }
 
 fn property(footprint: &Expr, name: &str) -> String {
@@ -511,9 +520,24 @@ pub fn describe_kicad_board(
                     .get(&name)
                     .or(rules.default_rules.as_ref())
             });
+            // The class's own values, where below the resolved ones.
+            let report = rules
+                .as_ref()
+                .and_then(|rules| rules.project_rules.as_ref());
+            let class_value = |index: usize, resolved: Option<f64>| {
+                let report = report?;
+                let value = report
+                    .net_classes
+                    .get(&name)?
+                    .iter()
+                    .find_map(|class| report.class_values.get(class)?[index])?;
+                (value < resolved? - 1.0e-9).then_some(value)
+            };
             KiCadDescribedNet {
                 track_width_mm: rule.map(|rule| rule.trace_width_mm),
                 clearance_mm: rule.map(|rule| rule.clearance_mm),
+                class_track_width_mm: class_value(0, rule.map(|rule| rule.trace_width_mm)),
+                class_clearance_mm: class_value(1, rule.map(|rule| rule.clearance_mm)),
                 name,
                 pads,
             }

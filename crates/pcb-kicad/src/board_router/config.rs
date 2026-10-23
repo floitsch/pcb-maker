@@ -381,6 +381,15 @@ pub struct KiCadBoardRouterConfig {
     /// Skip the final native KiCad verification (for timing the router).
     #[serde(default)]
     pub skip_native_verification: bool,
+    /// Route with widths and clearances this file asks for below the
+    /// project's (a net class's, `default_rules`', `connection_rules`',
+    /// the neck and narrow-signal widths, `relaxed_clearance_mm`): without
+    /// it such a file is refused before any work (exit 2) with each value,
+    /// the project's minimum and its source; with it the run goes on and
+    /// the verdict warns (`rules.overrides` in board-router.json). KiCad's
+    /// DRC still holds the board to the project's rules.
+    #[serde(default)]
+    pub allow_below_project_minimum: bool,
     /// The routing engine: `lattice` (default, negotiated congestion on a
     /// lattice) or `topological` (TopoR-style: triangulation, crossings,
     /// layer assignment, any-angle tracks with arcs; pour nets as tracks).

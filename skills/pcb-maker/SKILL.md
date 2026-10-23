@@ -26,6 +26,11 @@ docs/agents.md in the pcb-maker repository.
    A board already placed: `pcb-maker route-kicad-board <project-dir> <id> <out> auto`.
 6. Release: `pcb-maker fab-kicad-board <out>/result <id> <release-dir> [--profile jlcpcb]`.
 
+Nets left open: `pcb-maker inspect-routing-run <out> --reference <project-dir>` names each
+open net's groups of pads (ref, number, uuid, position, layers), KiCad's pairs, the rules and
+their sources, the designer's route and the ladder's attempts; `access` and `cause` stay
+`unknown`. Read it before concluding the board is too dense.
+
 Other commands: `drc-kicad-board` (KiCad's DRC, cached), `score-kicad-board`
 (quality measures and price), `repair-kicad-silkscreen`, `swap-kicad-pins`,
 `export-kicad-fab` (fab files without the DRC gate), `strip-kicad-tracks`,

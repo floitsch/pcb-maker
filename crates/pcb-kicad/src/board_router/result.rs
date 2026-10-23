@@ -160,6 +160,48 @@ pub struct KiCadBoardRouterResult {
     /// it was not measured.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pour_loss: Option<f64>,
+    /// Why this board's router ended its last negotiation (pcb-router's
+    /// `RoutingResult::negotiation_stop`): `conflict_free`, `stalled`,
+    /// `work_deadline`, ... Empty for a router that did not negotiate.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub negotiation_stop: String,
+    /// Route mode's ladder: every attempt it judged, in order, the one
+    /// whose board was written `selected` (`KiCadAttemptRecord`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub attempts: Vec<KiCadAttemptRecord>,
+}
+
+/// One attempt of route mode's ladder, as it was judged: the record
+/// behind its `attempt ...` line on stderr (`attempts` in
+/// board-router.json). A record of what ran, not an input.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct KiCadAttemptRecord {
+    /// Its place in the ladder's order (0 first).
+    pub id: usize,
+    /// What the ladder tried: the rung, its pitch, its seeds or step
+    /// (`rung pours=connect (exclusive planes) pitch=regular`, `the
+    /// narrow-signal step`).
+    pub name: String,
+    pub grid_pitch_mm: f64,
+    pub pours: String,
+    /// The ladder's ranking count (`Ladder::open`): the router's
+    /// unconnected terminals and internal violations, plus KiCad's
+    /// unconnected items when KiCad checked the attempt (`counted_by`
+    /// `kicad`; `router` when the check was skipped because the attempt
+    /// could not win); and the starved thermals.
+    pub open: usize,
+    pub starved: usize,
+    pub counted_by: String,
+    pub vias: usize,
+    pub iterations: usize,
+    /// Its work as the ladder charged it and its routing's wall clock.
+    pub work_seconds: f64,
+    pub routing_seconds: f64,
+    /// Why its router ended its negotiation (`negotiation_stop`).
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub negotiation_stop: String,
+    /// Whether its board is the one written.
+    pub selected: bool,
 }
 
 /// Where a route's wall clock went, beside its work: the routers' phases

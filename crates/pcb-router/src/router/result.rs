@@ -45,6 +45,13 @@ pub struct RoutingResult {
     /// The search expansions of this router's first negotiation
     /// iteration: what a fresh router does whatever its work deadline.
     pub first_iteration_expansions: u64,
+    /// Why the router's last negotiation ended: `conflict_free`,
+    /// `stalled` (no progress within its patience), `work_deadline`,
+    /// `negotiation_work_limit`, `probe_work_limit`, `wall_guard`,
+    /// `past_wall_deadline`, `hopeless` (a quarter of the nets without any
+    /// path), `iteration_cap`; empty when it did not negotiate. A record,
+    /// not an input: nothing reads it to route.
+    pub negotiation_stop: &'static str,
     /// The work of every pour analysis and fill probe of this router (its
     /// negotiation's pour refresh, the finishing phases' pour checks, the
     /// manual spokes'), in seconds of an idle machine: `manual_spokes_work`

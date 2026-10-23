@@ -11,6 +11,105 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-23 (run diagnosis and override preflight)
+
+Three of the P0 items of the remapper diagnostic trial
+([reviews/2026-10-18-remapper-agent-diagnostic-trial.md](reviews/2026-10-18-remapper-agent-diagnostic-trial.md)):
+an agent that wanted to know why nets stayed open had to join
+board-router.json, a separate KiCad DRC and raw geometry by hand; a
+documented `net_classes` override routed 0.15 mm tracks under a 0.2 mm
+board minimum without a word; and the access and cut diagnostics refused
+an outline the router reads. Branch run-diagnosis, binary x1700.
+
+**inspect-routing-run** (src/agent_cli.rs, crates/pcb-kicad/src/run_diagnosis.rs;
+docs/agents.md, "Why nets stayed open"): `<run-dir> [--net N]
+[--terminal REF:PAD] [--reference <dir>] [--native-check] [--output f]`
+reads a route or layout run's saved outputs and writes, per open net (or
+the one named): the groups of pads the result board's copper joins (the
+board lowered as the router lowers it, joined by
+`pcb_router::verify::copper_components` without pours; each pad's ref,
+number, uuid, position in mm and copper layers), KiCad's unconnected
+pairs joined to the groups, the counts side by side with what each counts
+(the router's terminals, the groups and missing links, KiCad's pairs;
+KiCad's 499-item cap flagged), the net's rules with their sources (class,
+board minimum with its own source, custom rule; the class's own value
+below the minimum; the run's overrides; the widths emitted), the
+reference's route (connected, groups, segments, vias, layers, widths),
+dead pads and hot spots within 3 mm, and `access` and `cause`: unknown.
+At the top: the router's, KiCad's (not_run, passed, failed) and the
+groups' checks, KiCad's pairs on nets not inspected, and the ladder's
+attempts. No search: on MegaDrive's 30 s run below, all 191 open nets
+with the reference in 0.8 s. A net with a zone lists only the groups
+KiCad's pairs name (its fill joins the others or not; not modelled).
+
+**The attempt ledger** (board_router/ladder.rs, result.rs): route mode's
+ladder records every attempt it judges (`attempts` in board-router.json:
+name, pitch, pours, open count as the ladder ranks it, counted by kicad
+or router, vias, iterations, work as charged, routing seconds,
+`negotiation_stop`, `selected`). The router records why its last
+negotiation ended (pcb-router `RoutingResult::negotiation_stop`:
+conflict_free, stalled, work_deadline, negotiation_work_limit,
+probe_work_limit, wall_guard, past_wall_deadline, hopeless,
+iteration_cap); board-router.json has the selected board's. A record:
+nothing reads it to route.
+
+**Override preflight** (project_rules.rs `preflight_overrides`,
+board_router/config.rs `allow_below_project_minimum`): a router file's
+`net_classes` width or clearance, `default_rules`, `connection_rules`,
+`neck_width_mm`, `narrow_signal_mm` or `relaxed_clearance_mm` below the
+project's minimum (`min_track_width`, `min_clearance`; for
+`default_rules` and `connection_rules` clearances the project's class
+clearance) refuses the run before any work (exit 2), each value with the
+project's minimum and its source. With `"allow_below_project_minimum":
+true` the run goes on, `rules.overrides` in board-router.json lists them
+and the verdict's next actions lead with a warning. The project rules
+report carries the board's minimums with their sources (`rules.minimums`;
+F1's golden gains it). describe-kicad-board shows a class's own width or
+clearance (`class_track_width_mm`, `class_clearance_mm`) where it is below
+the project-resolved value it already printed. Tested with the trial's
+case (0.15 mm classes under a 0.2 mm minimum) as a unit test and through
+the CLI.
+
+**Outlines** (copper_geometry.rs): inspect-kicad-terminal-access and
+inspect-kicad-routing-cut, the two commands the trial ran, were removed
+with the research grid router on 2026-10-21 (47883ff). The outline
+reader they shared with the board statistics (one `gr_rect` or one loop
+of `gr_line`s) is still `board_outline`: inspect-kicad-board's
+`board_outline_area_mm2` and the verification preview read it. It now
+falls back to the lowering's (`outline::board_loops`: lines, arcs,
+rectangles, polygons, circles, curves); the preview names the lowering's
+reason when there is none. Tested with a rounded rectangle of lines and
+arcs (area within the arcs' chord tolerance).
+
+**Docs**: "Connections stay open" in agents.md no longer says the board
+is too dense: that is a hypothesis, and the discriminating query is the
+reference's route of the open nets beside the groups the run left
+(inspect-routing-run --reference). The verdict's open-connections next
+action names the command and says "not below the board's minimum" for
+narrower classes. SKILL.md has the command; the skill test admits
+`inspect-` commands beside `<verb>-kicad-<noun>`.
+
+**Measured.** MegaDrive on its v19 placement
+(build/bus1-r2-v19-x1674-off), route mode, `ladder_budget_seconds` 30,
+x1700 (build/diag1-megadrive-x1700): 107 of 298 connections, 856
+unconnected terminals, KiCad's report at its cap of 499. One attempt
+(0.127 mm, pours connect, negotiation_work_limit, 42.4 s of work against
+the bound's 31.5: a fresh router's first iteration). For /VD1 the
+command names three groups (J2:a5, U1:4, U2:12, U8:56; J3:a23; U4:139),
+KiCad's two pairs (J3:a23 to U4:139, J3:a23 to a track of the first
+group), the Default class's 0.25 mm and the board's 0.1 mm minimum with
+their sources, 0.1 mm necks emitted, and the designer's route: one group,
+79 segments, 6 vias on F.Cu and B.Cu. The router counts 6 of 6 terminals
+unconnected: its search's state, not the copper written, which the
+explanation says. Fingerprints on Castor and k30-SBC (route mode from
+v16, budget scale 0.25, 1 x 4) against x1652: FINGERPRINT_RESULT.
+
+**Left out**: an access probe and the cut (`access`, `cause` stay
+unknown); joining a pair's track or via to a group (`null`); zone fill in
+the groups; hot spots' object links; a post-run native check with input
+hashes and the reference's comparison beyond the pairs; the ledger's
+config hash, grid origin and seed.
+
 ## Experiment 2026-10-23 (bus bundles)
 
 Florian's idea 4 (route a bus as a bundle, break it up where it cannot

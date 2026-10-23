@@ -24,6 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
+| [Router settings](#router-settings) | 87 | 75 | 12 | 87 | 32 |
 | [Router settings](#router-settings) | 87 | 75 | 12 | 87 | 34 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 0 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 0 |
@@ -31,7 +32,7 @@ The environment variables are indexed in the hand-over
 | [Router settings: net_classes entries](#router-settings-net_classes-entries) | 6 | 6 | 0 | 6 | 1 |
 | [Router settings: connection rules](#router-settings-connection-rules) | 4 | 4 | 0 | 4 | 0 |
 | [Router report: rules](#router-report-rules) | 5 | - | 0 | 5 | - |
-| [Router report: rules from the project](#router-report-rules-from-the-project) | 5 | - | 0 | 5 | - |
+| [Router report: rules from the project](#router-report-rules-from-the-project) | 9 | - | 2 | 9 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 65 | - | 0 | 65 | - |
 | [Placer settings](#placer-settings) | 47 | 43 | 4 | 47 | 17 |
@@ -125,6 +126,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `via_in_pad` | `Option<bool>` | unset | router.md | Allow vias inside SMD pads (default false): a board whose vias are filled and capped (via-in-pad plating) may put them there. Off, every via keeps its annular ring out of every SMD pad but an exposed pad (a QFN's thermal pad, which holds thermal vias as designers place them): another net's vias keep their clearance beyond the pad's copper, the pad's own net's may touch it from outside. Open vias in a reflowed pad take its solder down the hole (score-kicad-board's "vias in pads" counts them). Through-hole pads hold no via either way. |
 | `existing_tracks` | `KiCadExistingTracks` | `"keep"` | router.md | What route-kicad-board does with the board's own tracks and vias (`keep`, the default, or `strip`). Kept, they stay exactly as they are and other nets keep clear of them; pads they join count as connected, so the router routes only what they leave open and never rips one up (a designer's or an agent's pre-routed nets). `strip` (the command's `--strip`) removes them first: the board is routed from nothing. Copper zones stay either way. A layout strips them always (its placement moves the parts). |
 | `skip_native_verification` | `bool` | `false` | - | Skip the final native KiCad verification (for timing the router). |
+| `allow_below_project_minimum` | `bool` | `false` | - | Route with widths and clearances this file asks for below the project's (a net class's, `default_rules`', `connection_rules`', the neck and narrow-signal widths, `relaxed_clearance_mm`): without it such a file is refused before any work (exit 2) with each value, the project's minimum and its source; with it the run goes on and the verdict warns (`rules.overrides` in board-router.json). KiCad's DRC still holds the board to the project's rules. |
 | `engine` | `Option<String>` | unset | - | The routing engine: `lattice` (default, negotiated congestion on a lattice) or `topological` (TopoR-style: triangulation, crossings, layer assignment, any-angle tracks with arcs; pour nets as tracks). |
 | `topological_rounds` | `Option<usize>` | unset | - | Rip-up rounds of the topological engine (default 30). |
 | `topological` | `KiCadTopologicalConfig` | its own table | - | Weights of the topological engine (defaults in `pcb_topo::Config`). |
@@ -223,6 +225,10 @@ The fields `project` flattens into `rules`; each is left out when empty. Source:
 | `rules.custom_rules_error` | `Option<String>` | Why the custom rules file could not be read, when it could not. |
 | `rules.custom_rules` | `Vec<KiCadCustomRuleReport>` | Every constraint of every custom rule and what the router made of it (`dru::KiCadCustomRuleReport::status`). |
 | `rules.unmodelled` | `Vec<String>` | The project's routing rules the router does not keep, one line each; KiCad still checks them, so their findings are left to the designer (the verdict's next_actions name them). |
+| `rules.minimums` | `Option<KiCadProjectMinimums>` | The board's minimum track width and clearance, with where each comes from (the project's board setup or KiCad's default). |
+| `rules.overrides` | `Vec<KiCadRuleOverride>` | Widths and clearances a router file asked for below the project's (`allow_below_project_minimum`): the run used them; KiCad's DRC holds the board to the project's. |
+| `rules.net_classes` | `BTreeMap<String, Vec<String>>` | Per net (as the router names it): its classes, the highest priority first ("Default" for a net in none). |
+| `rules.class_values` | `BTreeMap<String, [Option<f64>; 2]>` | Per class of the project: its track width and clearance as the project states them (before the board's minimums). |
 
 ## Router report: custom_rules entries
 

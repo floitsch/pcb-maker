@@ -286,6 +286,32 @@ fn by_router(judged: &Option<Opens>) -> &'static str {
     }
 }
 
+/// The ledger's record of an attempt judged (`KiCadAttemptRecord`); its
+/// work is `work` as the ladder charged it.
+fn attempt_record(
+    name: String,
+    opens: Opens,
+    judged: &Option<Opens>,
+    result: &KiCadBoardRouterResult,
+    work: f64,
+) -> KiCadAttemptRecord {
+    KiCadAttemptRecord {
+        id: 0,
+        name,
+        grid_pitch_mm: result.grid_pitch_mm,
+        pours: result.pours.clone(),
+        open: opens.0,
+        starved: opens.1,
+        counted_by: if judged.is_some() { "kicad" } else { "router" }.into(),
+        vias: result.vias,
+        iterations: result.iterations,
+        work_seconds: work,
+        routing_seconds: result.routing_seconds,
+        negotiation_stop: result.negotiation_stop.clone(),
+        selected: false,
+    }
+}
+
 /// An attempt's routing work, from its search expansions.
 fn work_of(expansions: u64) -> f64 {
     expansions as f64 / core::router::expansions_per_second()
@@ -447,6 +473,10 @@ pub(crate) struct Ladder<'a> {
     /// The test hook (`TestPanic`) and the attempts started by kind.
     pub(crate) panic_at: Option<TestPanic>,
     started_by_kind: std::collections::BTreeMap<&'static str, usize>,
+    /// Every attempt judged, in order (`attempts` in board-router.json),
+    /// and which of them holds the best board.
+    pub(crate) ledger: Vec<KiCadAttemptRecord>,
+    pub(crate) selected: Option<usize>,
 }
 
 impl<'a> Ladder<'a> {
@@ -594,6 +624,8 @@ impl<'a> Ladder<'a> {
             failed: Vec::new(),
             panic_at: None,
             started_by_kind: Default::default(),
+            ledger: Vec::new(),
+            selected: None,
         };
         if let Some(bound) = work_bound {
             eprintln!(
@@ -905,6 +937,23 @@ impl<'a> Ladder<'a> {
 
     /// An attempt's configuration as it routes: without KiCad's check,
     /// which `judge` runs when it matters.
+    /// Notes an attempt in the ledger; returns its id (`selected` takes
+    /// it when its board becomes the best).
+    fn note_attempt(&mut self, mut record: KiCadAttemptRecord) -> usize {
+        record.id = self.ledger.len();
+        self.ledger.push(record);
+        self.ledger.len() - 1
+    }
+
+    /// The ledger with the attempt whose board was written marked.
+    pub(crate) fn attempt_ledger(&self) -> Vec<KiCadAttemptRecord> {
+        let mut ledger = self.ledger.clone();
+        if let Some(record) = self.selected.and_then(|index| ledger.get_mut(index)) {
+            record.selected = true;
+        }
+        ledger
+    }
+
     fn unchecked(&self, attempt: &KiCadBoardRouterConfig) -> KiCadBoardRouterConfig {
         let mut attempt = attempt.clone();
         attempt.skip_native_verification = attempt.skip_native_verification || self.checking;
@@ -1618,6 +1667,14 @@ impl<'a> Ladder<'a> {
         // The whole router's work, its probe's included (its board's
         // lowering came with the probes).
         let attempt_work = self.result_work(&result);
+        let noted = self.note_attempt(attempt_record(
+            name.clone(),
+            opens,
+            &judged,
+            &result,
+            attempt_work,
+        ));
+        self.selected = Some(noted);
         self.slowest = Some((attempt_work, result.grid_pitch_mm));
         self.last_attempt_work = attempt_work;
         self.last_attempt_pitch = result.grid_pitch_mm;
@@ -2035,6 +2092,13 @@ impl<'a> Ladder<'a> {
                     .map_or(String::new(), |loss| format!(", pours lost {loss:.2}")),
                 result.routing_seconds
             );
+            let noted = self.note_attempt(attempt_record(
+                name.clone(),
+                opens,
+                &judged,
+                &result,
+                attempt_seconds,
+            ));
             self.last_attempt_work = attempt_seconds;
             self.last_attempt_pitch = result.grid_pitch_mm;
             self.keep_reserves(
@@ -2061,6 +2125,7 @@ impl<'a> Ladder<'a> {
                 }
                 fs::rename(&directory, output_directory).map_err(|error| error.to_string())?;
                 self.best = Some((opens, result));
+                self.selected = Some(noted);
                 self.best_attempt = Some((attempt.clone(), connect));
                 self.best_seeded = seeds_tried || attempt.seeds.unwrap_or(1) > 1;
             } else if directory.exists() {
@@ -2280,6 +2345,14 @@ impl<'a> Ladder<'a> {
             }
             Some((mut other, other_judged)) => {
                 let other_opens = other_judged.unwrap_or((router_open(&other), 0));
+                let work = self.result_work(&other) * retry as f64;
+                self.note_attempt(attempt_record(
+                    seeds_name.clone(),
+                    other_opens,
+                    &other_judged,
+                    &other,
+                    work,
+                ));
                 eprintln!(
                     "attempt again with {retry} seeds: {} open{}, {} vias, {:.1} s",
                     other_opens.0,
@@ -2448,6 +2521,14 @@ impl<'a> Ladder<'a> {
                 continue;
             };
             let other_opens = other_judged.unwrap_or((router_open(&other), 0));
+            let work = self.result_work(&other) * retry as f64;
+            let noted = self.note_attempt(attempt_record(
+                name.clone(),
+                other_opens,
+                &other_judged,
+                &other,
+                work,
+            ));
             eprintln!(
                 "best rung again with {retry} seeds: {} open{}, {} starved, {} vias, {:.1} s",
                 other_opens.0,
@@ -2468,6 +2549,7 @@ impl<'a> Ladder<'a> {
                 fs::remove_dir_all(output_directory).map_err(|error| error.to_string())?;
                 fs::rename(&scratch, output_directory).map_err(|error| error.to_string())?;
                 self.best = Some((other_opens, other));
+                self.selected = Some(noted);
             } else {
                 fs::remove_dir_all(&scratch).map_err(|error| error.to_string())?;
             }
@@ -2764,6 +2846,14 @@ impl<'a> Ladder<'a> {
             return Ok(());
         };
         let opens = judged.unwrap_or((router_open(&result), 0));
+        let work = self.result_work(&result);
+        let noted = self.note_attempt(attempt_record(
+            name.to_string(),
+            opens,
+            &judged,
+            &result,
+            work,
+        ));
         eprintln!("{}", line(opens, by_router(&judged), &result));
         let better = judged.is_some()
             && self.best.as_ref().is_some_and(|(best_opens, best_result)| {
@@ -2775,6 +2865,7 @@ impl<'a> Ladder<'a> {
             fs::remove_dir_all(output_directory).map_err(|error| error.to_string())?;
             fs::rename(&scratch, output_directory).map_err(|error| error.to_string())?;
             self.best = Some((opens, result));
+            self.selected = Some(noted);
             if keeps_attempt {
                 self.best_attempt = Some((attempt, connect));
             }
