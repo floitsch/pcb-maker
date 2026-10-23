@@ -4215,3 +4215,60 @@ fn a_negotiation_limit_binds_between_the_batches_of_an_iteration() {
     );
     assert_eq!(cut_result.status, whole_result.status);
 }
+
+#[test]
+fn straightening_takes_a_stair_step_out_and_keeps_the_ends() {
+    let mut router = crossed_net();
+    router.route_net_seq(0, 0.0, false, 1.0);
+    router.stamp(0);
+    assert!(router.nets[0].complete);
+    // A's branch from 3 to 15 with two jogs put in: east, one step
+    // north-east, east, one step south-east, east.
+    let nx = router.grid.nx as u32;
+    let index = router.nets[0]
+        .branches
+        .iter()
+        .position(|branch| {
+            let (a, b) = (branch.nodes[0], *branch.nodes.last().unwrap());
+            let (xa, xb) = (
+                router.grid.center_of(a.cell as usize)[0],
+                router.grid.center_of(b.cell as usize)[0],
+            );
+            xa.min(xb) < 4.0 && xa.max(xb) < 16.0
+        })
+        .unwrap();
+    let branch = &router.nets[0].branches[index];
+    let (first, last) = (branch.nodes[0], *branch.nodes.last().unwrap());
+    let (x0, y0) = router.grid.xy(first.cell as usize);
+    let (x1, y1) = router.grid.xy(last.cell as usize);
+    assert_eq!(y0, y1);
+    let step = if x1 > x0 { 1i64 } else { -1 };
+    let mut nodes = vec![first];
+    let (mut x, mut y) = (x0 as i64, y0 as i64);
+    let span = (x1 as i64 - x0 as i64).abs();
+    for k in 1..=span {
+        x += step;
+        if k == span / 3 {
+            y += 1;
+        } else if k == 2 * span / 3 {
+            y -= 1;
+        }
+        nodes.push(Node {
+            layer: 0,
+            cell: y as u32 * nx + x as u32,
+        });
+    }
+    assert_eq!(*nodes.last().unwrap(), last);
+    let length = |router: &Router| router.geometric_cost(0);
+    router.unstamp(0);
+    router.nets[0].branches[index].nodes = nodes;
+    router.stamp(0);
+    let before = length(&router);
+    let report = router.straighten(&[0]);
+    assert_eq!((report.bends_before, report.stairs_before), (4, 2));
+    assert_eq!((report.bends_after, report.stairs_after), (0, 0));
+    let branch = &router.nets[0].branches[index];
+    assert_eq!((branch.nodes[0], *branch.nodes.last().unwrap()), (first, last));
+    assert!(length(&router) < before);
+    assert!(router.conflicts(0).is_empty());
+}

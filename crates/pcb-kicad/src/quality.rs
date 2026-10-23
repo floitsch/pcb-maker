@@ -473,6 +473,7 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         )
     });
 
+    let codes = net_codes(&pcb);
     let mut tracks = Vec::new();
     let mut vias = Vec::new();
     for item in pcb.children() {
@@ -488,7 +489,10 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
                     },
                     width: form_f64(item, "width", 1).unwrap_or(0.0),
                     layer: form_atom(item, "layer", 1).unwrap_or("").to_string(),
-                    net: node_net(item).map(|raw| names.normalize(raw).to_string()),
+                    // By name, or by code on a board of KiCad 9 and before
+                    // (`(net 5)`: without the table every such track had
+                    // no net, so a designer's board had no cut pour).
+                    net: item_net(item, &codes).map(|raw| names.normalize(raw).to_string()),
                 });
             }
             Some("via") => {
