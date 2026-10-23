@@ -214,7 +214,24 @@ fn find_pairs(board: &core::Board, config: &KiCadBoardRouterConfig) -> Vec<Pair>
             continue;
         }
         let (class_p, class_n) = (board.classes[p.class], board.classes[n.class]);
-        let clearance = class_p.clearance.max(class_n.clearance);
+        // The classes' clearance, raised to every custom pair clearance
+        // that may hold for the pair's copper (ducktop2's 0.18 mm between
+        // vias and tracks over 0.15 classes): the pairs router and the
+        // vias' spacing keep it; the check of the copper holds the classes.
+        let names = [n.name.as_str(), net.name.as_str()];
+        let clearance = config
+            .net_rules
+            .iter()
+            .flat_map(|rules| rules.clearances.iter())
+            .filter(|rule| {
+                let holds = |side: &Option<Vec<String>>| {
+                    side.as_ref()
+                        .is_none_or(|nets| nets.iter().any(|known| names.contains(&known.as_str())))
+                };
+                holds(&rule.first) || holds(&rule.second)
+            })
+            .map(|rule| rule.clearance)
+            .fold(class_p.clearance.max(class_n.clearance), f64::max);
         let (mut width, mut gap, mut layers, mut source) = (
             class_p.trace_width,
             clearance,
