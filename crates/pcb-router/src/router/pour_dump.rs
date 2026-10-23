@@ -122,7 +122,7 @@ impl Router {
                     if statics.fill_allowed(layer, cell, net) {
                         flags[cell] |= 2;
                     }
-                    if self.occupancy[map][cell] as usize == own.contains(map, cell) as usize {
+                    if self.occupancy.get(map, cell) as usize == own.contains(map, cell) as usize {
                         flags[cell] |= 4;
                     }
                     if !ring[cell] {

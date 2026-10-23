@@ -381,7 +381,7 @@ impl Router {
                     cells,
                 );
                 let free = |map: usize, cell: usize| {
-                    self.occupancy[map][cell] as usize == own.contains(map, cell) as usize
+                    self.occupancy.get(map, cell) as usize == own.contains(map, cell) as usize
                 };
                 let statics = &self.statics[class];
                 let trace = self.map_index(class, layer);

@@ -270,7 +270,7 @@ impl Router {
             };
             // This layer's packed maps, looked up once per expansion
             // rather than once per step.
-            let layer_hot = &self.hot[class * layers + layer];
+            let layer_hot = &self.hot[self.hot_of[class] * layers + layer];
             let cleanup = self.cleanup;
             let layer_costs = &direction_cost[layer];
             let layer_factor = if self.layer_bias.is_empty() {
@@ -344,8 +344,12 @@ impl Router {
                         } else {
                             class
                         };
-                        let hot = if near_zones {
-                            self.hot[target_class * layers + layer][target_cell]
+                        let hot = if near_zones && target_class != class {
+                            // Only the static map's value is the class's.
+                            Hot {
+                                trace: self.statics[target_class].trace[layer][target_cell],
+                                ..layer_hot[target_cell]
+                            }
                         } else {
                             layer_hot[target_cell]
                         };
@@ -455,7 +459,10 @@ impl Router {
                         for (layer, (covered, factor)) in
                             self.covered.iter().zip(&self.layer_cut).enumerate()
                         {
-                            if !covered.is_empty() && covered[cell] != 0 && covered[cell] != own {
+                            if !covered.is_empty()
+                                && covered[cell] != 0
+                                && covered[cell] as u32 != own
+                            {
                                 cut *= factor * self.sever_factor(layer, cell);
                             }
                         }
@@ -472,8 +479,8 @@ impl Router {
                 // A via is copper on every layer: inside another net's
                 // thermal ring on any of them it starves the spokes there.
                 if marks & 2 != 0 {
-                    let foreign = |guard: &Vec<u32>| {
-                        !guard.is_empty() && guard[cell] != 0 && guard[cell] != own
+                    let foreign = |guard: &Vec<u16>| {
+                        !guard.is_empty() && guard[cell] != 0 && guard[cell] as u32 != own
                     };
                     if self.guard.iter().any(foreign) {
                         cut *= self.config.thermal_guard_cost as f32;

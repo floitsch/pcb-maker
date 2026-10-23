@@ -34,6 +34,7 @@ pub(crate) mod hash;
 mod heap;
 mod manual_spokes;
 mod negotiate;
+mod occupancy;
 mod output;
 mod planner;
 mod pour_analysis;
@@ -66,6 +67,7 @@ pub use wall::{WALL_CUTS, note_wall_cut, wall_cuts, wall_guard};
 
 use hash::*;
 use heap::*;
+use occupancy::Occupancy;
 use profile::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -832,6 +834,9 @@ struct Hot {
 /// `Router::covered` (a table of more pairs than 16 bits index).
 const HOT_POURS_MAPS: u16 = u16::MAX;
 
+/// `Router::hot_of` of a class without records.
+const NO_HOT: usize = usize::MAX;
+
 /// `Router::via_cover` where the per-layer maps must be read.
 const VIA_COVER_MIXED: u32 = u32::MAX;
 
@@ -1116,7 +1121,7 @@ pub struct Router {
     /// After the class maps follow the diagonal maps (see `diagonal_map`):
     /// the cells from which a diagonal step of that class would pass a
     /// node too closely.
-    occupancy: Vec<Vec<u16>>,
+    occupancy: Occupancy,
     /// Bits per (map, cell): set while one net is stamped, so that a cell
     /// two offsets reach counts once; cleared again from the stamped list.
     stamp_mark: Vec<u64>,
@@ -1144,7 +1149,7 @@ pub struct Router {
     tile_history: Vec<Vec<f32>>,
     /// Per layer and node: the pour net (as `owner`) whose pad needs the
     /// surrounding copper for its thermal spokes; other nets pay to pass.
-    guard: Vec<Vec<u32>>,
+    guard: Vec<Vec<u16>>,
     /// Per node: bit 0 when any layer's `covered`, bit 1 when any layer's
     /// `guard` holds a net there (most nodes: neither, and a via step
     /// skips the per-layer maps).
@@ -1156,14 +1161,22 @@ pub struct Router {
     /// A via step reads one word for what were up to a cache line a layer.
     via_cover: Vec<u32>,
     /// Per layer and node: the pour (as `owner`) covering the node, if any.
-    covered: Vec<Vec<u32>>,
-    /// Per rule class and layer (index `class * layers + layer`), per
-    /// node: what a search step reads of the static map, the thermal
-    /// guard, the pour cover and the history, in one record. A big board's
-    /// search is bound by memory (PolyKybd's 9.4M-state lattice ran at
-    /// 0.65M expansions a second against 3M on a small one); one cache
-    /// line per neighbour instead of four. Kept in step with `history`.
+    covered: Vec<Vec<u16>>,
+    /// Per set of records (`hot_of`) and layer (index `set * layers +
+    /// layer`), per node: what a search step reads of the static map, the
+    /// thermal guard, the pour cover and the history, in one record. A big
+    /// board's search is bound by memory (PolyKybd's 9.4M-state lattice
+    /// ran at 0.65M expansions a second against 3M on a small one); one
+    /// cache line per neighbour instead of four. Kept in step with
+    /// `history`. Only the static map's value depends on the class: the
+    /// classes of one static trace map share a set, and a neck class (no
+    /// net of its own) has none: a search step into a neck zone reads its
+    /// net class's record and the neck's static map (until 2026-10-23 a
+    /// set per searched class: katia 730 MB, 365 now).
     hot: Vec<Vec<Hot>>,
+    /// Per rule class: its set of `hot` records, `NO_HOT` for a class no
+    /// net has.
+    hot_of: Vec<usize>,
     /// The (guard, cover) pairs `Hot::pour` indexes, as `owner`s in 16
     /// bits; entry 0 is (0, 0).
     hot_pours: Vec<(u16, u16)>,

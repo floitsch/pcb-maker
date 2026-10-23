@@ -275,7 +275,7 @@ impl Router {
             statics,
             statics_shared,
             statics_key,
-            occupancy: vec![vec![0; cells]; maps],
+            occupancy: Occupancy::new(maps, cells),
             stamp_mark: vec![0; cells.div_ceil(64) * maps],
             history: vec![vec![0.0; cells]; layers + 1],
             stamps,
@@ -293,6 +293,7 @@ impl Router {
             via_cover: Vec::new(),
             covered: vec![Vec::new(); layers],
             hot: Vec::new(),
+            hot_of: Vec::new(),
             hot_pours: Vec::new(),
             tile_covered: vec![vec![0.0; tiles_x * tiles_y]; layers],
             layer_cut: vec![1.0; layers],
@@ -482,7 +483,7 @@ impl Router {
         }
         let cells = self.grid.cells().max(1);
         let statics: usize = self.statics.iter().map(StaticMaps::bytes).sum();
-        let occupancy = bytes(&self.occupancy);
+        let occupancy = self.occupancy.bytes();
         let stamp_mark = self.stamp_mark.capacity() * 8;
         let hot = bytes(&self.hot);
         let pour = bytes(&self.history)
@@ -546,8 +547,35 @@ impl Router {
     pub(super) fn build_hot(&mut self) {
         let layers = self.board.layer_count;
         let cells = self.grid.cells();
+        // A set of records per class of some net, shared by the classes
+        // whose static trace maps are the same (classes apart in their
+        // vias only); a neck class's records are its net class's with the
+        // neck's static map value (`Router::hot`).
+        let mut hot_of = vec![NO_HOT; self.statics.len()];
+        let mut owners: Vec<usize> = Vec::new();
+        let mut with_nets = vec![false; self.statics.len()];
+        for net in &self.board.nets {
+            with_nets[net.class] = true;
+        }
+        for class in 0..self.statics.len() {
+            if !with_nets[class] {
+                continue;
+            }
+            let trace = &self.statics[class].trace;
+            hot_of[class] = match owners
+                .iter()
+                .position(|&owner| self.statics[owner].trace == *trace)
+            {
+                Some(set) => set,
+                None => {
+                    owners.push(class);
+                    owners.len() - 1
+                }
+            };
+        }
         let mut hot = std::mem::take(&mut self.hot);
-        hot.resize_with(self.statics.len() * layers, Vec::new);
+        hot.resize_with(owners.len() * layers, Vec::new);
+        hot.truncate(owners.len() * layers);
         let mut pours: Vec<(u16, u16)> = vec![(0, 0)];
         let mut pour_index: FastMap<(u16, u16), u16> = FastMap::default();
         let mut pour_of = vec![0u16; cells];
@@ -559,8 +587,8 @@ impl Router {
             let mut last = ((0u16, 0u16), 0u16);
             for (cell, pour) in pour_of.iter_mut().enumerate() {
                 let pair = (
-                    guard.get(cell).map_or(0, |&value| value as u16),
-                    covered.get(cell).map_or(0, |&value| value as u16),
+                    guard.get(cell).copied().unwrap_or(0),
+                    covered.get(cell).copied().unwrap_or(0),
                 );
                 *pour = if pair == (0, 0) {
                     0
@@ -580,12 +608,8 @@ impl Router {
                 };
             }
             let history = &self.history[layer];
-            for class in 0..self.statics.len() {
-                let records = &mut hot[class * layers + layer];
-                if !self.searched[class] {
-                    *records = Vec::new();
-                    continue;
-                }
+            for (set, &class) in owners.iter().enumerate() {
+                let records = &mut hot[set * layers + layer];
                 if records.len() != cells {
                     *records = vec![Hot::default(); cells];
                 }
@@ -600,6 +624,7 @@ impl Router {
             }
         }
         self.hot = hot;
+        self.hot_of = hot_of;
         self.hot_pours = pours;
     }
 
@@ -609,10 +634,8 @@ impl Router {
     pub(super) fn hot_pour(&self, pour: u16, layer: usize, cell: usize) -> (u16, u16) {
         if pour == HOT_POURS_MAPS {
             (
-                self.guard[layer].get(cell).map_or(0, |&value| value as u16),
-                self.covered[layer]
-                    .get(cell)
-                    .map_or(0, |&value| value as u16),
+                self.guard[layer].get(cell).copied().unwrap_or(0),
+                self.covered[layer].get(cell).copied().unwrap_or(0),
             )
         } else {
             self.hot_pours[pour as usize]
@@ -715,6 +738,7 @@ impl Router {
                 continue;
             }
             for (summary, &owner) in cover.iter_mut().zip(map) {
+                let owner = owner as u32;
                 if owner == 0 || *summary == VIA_COVER_MIXED {
                     continue;
                 }
@@ -775,7 +799,7 @@ impl Router {
             let mut per_tile = vec![0u32; tiles];
             for (cell, inside) in mask[layer].iter().enumerate() {
                 if *inside {
-                    self.covered[layer][cell] = crate::grid::owner(plane.net);
+                    self.covered[layer][cell] = crate::grid::owner16(plane.net);
                     per_tile[(cell / self.grid.nx / TILE) * self.tiles_x
                         + (cell % self.grid.nx) / TILE] += 1;
                 }

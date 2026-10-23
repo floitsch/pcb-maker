@@ -121,18 +121,21 @@ impl Router {
                     continue;
                 };
                 let covered = &self.covered[layer];
-                let zone = covered.iter().filter(|value| **value == owner).count();
+                let zone = covered
+                    .iter()
+                    .filter(|value| **value as u32 == owner)
+                    .count();
                 if zone == 0 {
                     continue;
                 }
                 nodes += cells as u64;
                 let map = self.map_index(class, layer);
                 let own = OwnStamps::new(&self.nets[net as usize].stamped, &[map], cells);
-                let occupancy = &self.occupancy[map];
+                let occupancy = &self.occupancy;
                 let free: Vec<bool> = (0..cells)
                     .map(|cell| {
-                        covered[cell] == owner
-                            && occupancy[cell] as usize == own.contains(map, cell) as usize
+                        covered[cell] as u32 == owner
+                            && occupancy.get(map, cell) as usize == own.contains(map, cell) as usize
                     })
                     .collect();
                 for (cell, value) in sever_levels(nx, ny, &free, half, chunk, zone)

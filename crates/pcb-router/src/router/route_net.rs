@@ -53,7 +53,7 @@ impl Router {
                     let cell = self.grid.index(x, y);
                     let class = self.board.nets[nets[0] as usize].class;
                     let allowed = self.statics[class].trace_at(layer, cell);
-                    let occupancy = self.occupancy[self.map_index(class, layer)][cell];
+                    let occupancy = self.occupancy.get(self.map_index(class, layer), cell);
                     line.push(if own_nodes.contains(&(layer, cell as u32)) {
                         '*'
                     } else if allowed == crate::grid::BLOCKED {

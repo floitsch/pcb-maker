@@ -84,7 +84,7 @@ impl Router {
                     };
                     if crowded[cell]
                         || !self.statics[class_index].via_allowed(cell, net)
-                        || self.occupancy[via_map][cell] as usize
+                        || self.occupancy.get(via_map, cell) as usize
                             != own.contains(via_map, cell) as usize
                         || !pours.solid_around(&self.grid, layer, cell, via_reach)
                     {

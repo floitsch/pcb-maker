@@ -181,7 +181,7 @@ impl Router {
                 (0..mask.len())
                     .map(|cell| {
                         mask[cell]
-                            && self.occupancy[map][cell] as usize
+                            && self.occupancy.get(map, cell) as usize
                                 == own.contains(map, cell) as usize
                     })
                     .collect()
@@ -207,7 +207,7 @@ impl Router {
                 let cell = node.cell as usize;
                 let map = self.map_index(state.plane_class[layer], layer);
                 if state.plane[layer][cell]
-                    && self.occupancy[map][cell] as usize == own.contains(map, cell) as usize
+                    && self.occupancy.get(map, cell) as usize == own.contains(map, cell) as usize
                 {
                     free[layer][cell] = true;
                 }
@@ -229,7 +229,7 @@ impl Router {
                     return false;
                 }
                 let map = self.diagonal_map(class, layer, orientation);
-                if self.occupancy[map][start] as usize != own.contains(map, start) as usize {
+                if self.occupancy.get(map, start) as usize != own.contains(map, start) as usize {
                     return false;
                 }
                 let Some(end) = self.grid.neighbor(start, direction) else {
@@ -446,7 +446,7 @@ impl Router {
                     let plane_map = self.map_index(state.plane_class[layer], layer);
                     let clear = |cell: usize| {
                         state.plane[layer][cell]
-                            && self.occupancy[plane_map][cell] as usize
+                            && self.occupancy.get(plane_map, cell) as usize
                                 == own.contains(plane_map, cell) as usize
                     };
                     for (direction_index, direction) in directions.into_iter().enumerate() {

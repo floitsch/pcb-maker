@@ -342,7 +342,7 @@ impl Router {
                             "L{layer}({:.2},{:.2})x{}[{}]",
                             at[0],
                             at[1],
-                            self.occupancy[map as usize][*cell as usize],
+                            self.occupancy.get(map as usize, *cell as usize),
                             others.join(",")
                         )
                     })
@@ -368,8 +368,8 @@ impl Router {
             for (layer, cell) in conflicts {
                 self.history[layer][cell as usize] += self.config.history_increment as f32;
                 if layer < layers {
-                    for class in 0..self.statics.len() {
-                        if let Some(hot) = self.hot[class * layers + layer].get_mut(cell as usize) {
+                    for set in 0..self.hot.len() / layers {
+                        if let Some(hot) = self.hot[set * layers + layer].get_mut(cell as usize) {
                             hot.history += self.config.history_increment as f32;
                         }
                     }

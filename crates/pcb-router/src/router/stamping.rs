@@ -12,8 +12,7 @@ impl Router {
         let state = &mut self.nets[net as usize];
         let stamped = std::mem::take(&mut state.stamped);
         for (map, cell) in stamped.iter() {
-            self.occupancy[map as usize][cell as usize] -= 1;
-            if self.occupancy[map as usize][cell as usize] == 0 {
+            if self.occupancy.decrement(map as usize, cell as usize) {
                 let cell = cell as usize;
                 let tile =
                     (cell / self.grid.nx / TILE) * self.tiles_x + (cell % self.grid.nx) / TILE;
@@ -26,8 +25,7 @@ impl Router {
     pub(super) fn add_stamps(&mut self, stamped: &Stamped) {
         for (map, cell) in stamped.iter() {
             let (map, cell) = (map as usize, cell as usize);
-            self.occupancy[map][cell] += 1;
-            if self.occupancy[map][cell] == 1 {
+            if self.occupancy.increment(map, cell) {
                 let tile =
                     (cell / self.grid.nx / TILE) * self.tiles_x + (cell % self.grid.nx) / TILE;
                 self.tile_claimed[map][tile] += 1;
@@ -426,7 +424,7 @@ impl Router {
         const AHEAD: usize = 32;
         for (index, (map, cell)) in old.iter().enumerate() {
             if let Some((map, cell)) = old.get(index + AHEAD) {
-                prefetch(&self.occupancy[map as usize][cell as usize]);
+                self.occupancy.prefetch(map as usize, cell as usize);
             }
             let (map, cell) = (map as usize, cell as usize);
             let bit = 1u64 << (cell % 64);
@@ -434,8 +432,7 @@ impl Router {
                 self.stamp_mark[map * words + cell / 64] &= !bit;
                 continue;
             }
-            self.occupancy[map][cell] -= 1;
-            if self.occupancy[map][cell] == 0 {
+            if self.occupancy.decrement(map, cell) {
                 self.tile_claimed[map][(cell / nxu / TILE) * self.tiles_x + (cell % nxu) / TILE] -=
                     1;
             }
@@ -443,7 +440,7 @@ impl Router {
         // A new stamp still marked was not stamped before: it counts.
         for (index, (map, cell)) in stamped.iter().enumerate() {
             if let Some((map, cell)) = stamped.get(index + AHEAD) {
-                prefetch(&self.occupancy[map as usize][cell as usize]);
+                self.occupancy.prefetch(map as usize, cell as usize);
             }
             let (map, cell) = (map as usize, cell as usize);
             let bit = 1u64 << (cell % 64);
@@ -451,8 +448,7 @@ impl Router {
                 continue;
             }
             self.stamp_mark[map * words + cell / 64] &= !bit;
-            self.occupancy[map][cell] += 1;
-            if self.occupancy[map][cell] == 1 {
+            if self.occupancy.increment(map, cell) {
                 self.tile_claimed[map][(cell / nxu / TILE) * self.tiles_x + (cell % nxu) / TILE] +=
                     1;
             }
@@ -500,7 +496,7 @@ impl Router {
                 };
                 let map = self.map_index(stub_class, end.layer as usize);
                 for cell in cells {
-                    if self.occupancy[map][*cell as usize] > 1 {
+                    if self.occupancy.get(map, *cell as usize) > 1 {
                         result.push((end.layer as usize, *cell));
                     }
                 }
@@ -508,13 +504,18 @@ impl Router {
         }
         for (index, node) in branch.nodes.iter().enumerate() {
             let map = self.map_index(self.node_class(net, node.cell), node.layer as usize);
-            if self.occupancy[map][node.cell as usize] > 1 {
+            if self.occupancy.get(map, node.cell as usize) > 1 {
                 result.push((node.layer as usize, node.cell));
             }
             let is_via = index > 0
                 && branch.nodes[index - 1].cell == node.cell
                 && branch.nodes[index - 1].layer != node.layer;
-            if is_via && self.occupancy[self.map_index(class, layers)][node.cell as usize] > 1 {
+            if is_via
+                && self
+                    .occupancy
+                    .get(self.map_index(class, layers), node.cell as usize)
+                    > 1
+            {
                 result.push((layers, node.cell));
             }
         }
@@ -555,7 +556,7 @@ impl Router {
         map: usize,
         cell: usize,
     ) -> u16 {
-        let value = self.occupancy[map][cell];
+        let value = self.occupancy.get(map, cell);
         if !scratch.own_active || value == 0 {
             return value;
         }
@@ -595,7 +596,7 @@ impl Router {
             // The corridor planner's tile fill: cells only this net claims.
             if map >= class_base
                 && map < class_base + layers
-                && self.occupancy[map][cell as usize] == 1
+                && self.occupancy.get(map, cell as usize) == 1
             {
                 let tile = (cell as usize / self.grid.nx / TILE) * self.tiles_x
                     + (cell as usize % self.grid.nx) / TILE;

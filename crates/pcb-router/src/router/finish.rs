@@ -31,10 +31,8 @@ impl Router {
             }
         }
         if std::env::var_os("PCB_ROUTER_FINGERPRINT_ALL").is_some() {
-            for map in &self.occupancy {
-                for value in map {
-                    mix(*value as u64);
-                }
+            for value in self.occupancy.values() {
+                mix(value as u64);
             }
             for state in &self.nets {
                 for layer in &state.plane {

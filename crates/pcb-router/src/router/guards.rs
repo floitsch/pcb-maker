@@ -90,7 +90,7 @@ impl Router {
     /// Nodes around pads that connect to a pour of their net on that layer:
     /// their spokes' corridors (other nets may pass the pad's corners, not
     /// its spokes: Sisu's GND resistors starved at one spoke of two).
-    pub(super) fn thermal_guards(&self) -> Vec<Vec<u32>> {
+    pub(super) fn thermal_guards(&self) -> Vec<Vec<u16>> {
         let mut guard = vec![Vec::new(); self.board.layer_count];
         for (layer, net, cells, _) in self.spoke_corridors() {
             if guard[layer].is_empty() {
@@ -98,7 +98,7 @@ impl Router {
             }
             for corridor in &cells {
                 for cell in corridor {
-                    guard[layer][*cell] = crate::grid::owner(net);
+                    guard[layer][*cell] = crate::grid::owner16(net);
                 }
             }
         }
@@ -469,7 +469,7 @@ impl Router {
                 for x in x0..=x1 {
                     let center = self.grid.center(x, y);
                     if crate::geometry::point_segment_distance(center, *a, *b) < *reach {
-                        self.guard[*layer][self.grid.index(x, y)] = crate::grid::owner(*net);
+                        self.guard[*layer][self.grid.index(x, y)] = crate::grid::owner16(*net);
                     }
                 }
             }

@@ -38,9 +38,7 @@ impl Router {
         }
         let previous: Vec<NetState> = std::mem::take(&mut self.nets);
         // Occupancy is rebuilt from the retained branches below.
-        for map in &mut self.occupancy {
-            map.fill(0);
-        }
+        self.occupancy.clear();
         for map in &mut self.tile_claimed {
             map.fill(0);
         }

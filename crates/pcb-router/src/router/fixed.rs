@@ -184,7 +184,10 @@ impl Router {
                     let cell = y * nx + x;
                     let class = self.node_class(net, cell as u32);
                     if !self.statics[class].trace_allowed(*layer, cell as usize, net)
-                        || self.occupancy[self.map_index(class, *layer)][cell as usize] > 0
+                        || self
+                            .occupancy
+                            .get(self.map_index(class, *layer), cell as usize)
+                            > 0
                     {
                         break;
                     }
