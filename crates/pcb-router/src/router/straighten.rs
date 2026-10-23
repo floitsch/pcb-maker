@@ -184,12 +184,25 @@ impl Router {
         Some(target)
     }
 
-    /// How many of `nodes` lie in another net's thermal guard (a pad's
-    /// spoke corridors) and how many on another net's pour.
-    fn guarded_and_cut(&self, net: NetId, nodes: &[Node]) -> (usize, usize) {
+    /// How many of `nodes` lie in another net's thermal guard or in a
+    /// spoke corridor of another net's pad (`corridors`, by layer and cell),
+    /// and how many on another net's pour.
+    fn guarded_and_cut(
+        &self,
+        net: NetId,
+        nodes: &[Node],
+        corridors: &HashMap<(u8, u32), Vec<NetId>>,
+    ) -> (usize, usize) {
         let own = crate::grid::owner(net);
         let (mut guarded, mut cut) = (0, 0);
         for node in nodes {
+            if corridors
+                .get(&(node.layer, node.cell))
+                .is_some_and(|nets| nets.iter().any(|other| *other != net))
+            {
+                guarded += 1;
+                continue;
+            }
             let class = self.board.nets[net as usize].class;
             let hot = self.hot[self.hot_of[class] * self.board.layer_count + node.layer as usize]
                 [node.cell as usize];
@@ -213,6 +226,7 @@ impl Router {
         run: &[Node],
         taken: &HashSet<Node>,
         fixed: &HashSet<Node>,
+        corridors: &HashMap<(u8, u32), Vec<NetId>>,
         checks: &mut u64,
     ) -> Option<Vec<Node>> {
         let nx = self.grid.nx as i64;
@@ -308,8 +322,8 @@ impl Router {
                         // (the thermal spoke repair would move it out
                         // again, with vias) nor cut more of a pour.
                         let (now, was) = (
-                            self.guarded_and_cut(net, interior),
-                            self.guarded_and_cut(net, window),
+                            self.guarded_and_cut(net, interior, corridors),
+                            self.guarded_and_cut(net, window, corridors),
                         );
                         if now.0 > was.0 || now.1 > was.1 {
                             continue;
@@ -365,6 +379,18 @@ impl Router {
         };
         let mut pour_stranded: Option<Vec<usize>> = None;
         let mut checks = 0u64;
+        // The pour pads' spoke corridors: a path moved into one can starve
+        // the pad's thermal (KiCad's starved_thermal; k30-SBC, one more
+        // with the guards alone).
+        let mut corridors: HashMap<(u8, u32), Vec<NetId>> = HashMap::new();
+        for (layer, pour, lists, _) in self.spoke_corridors() {
+            for cell in lists.iter().flatten() {
+                let nets = corridors.entry((layer as u8, *cell as u32)).or_default();
+                if !nets.contains(&pour) {
+                    nets.push(pour);
+                }
+            }
+        }
         // The changed nets: (net, old branches, (bends, stairs) before and
         // after, runs).
         let mut changed: Vec<Changed> = Vec::new();
@@ -410,7 +436,9 @@ impl Router {
                     }
                     let run = &branch.nodes[start..index];
                     match (run.len() > 2)
-                        .then(|| self.straighten_run(net, run, &taken, &fixed, &mut checks))
+                        .then(|| {
+                            self.straighten_run(net, run, &taken, &fixed, &corridors, &mut checks)
+                        })
                         .flatten()
                     {
                         Some(straight) => {
