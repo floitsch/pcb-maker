@@ -432,6 +432,38 @@ fn a_via_keeps_its_ring_out_of_a_listed_smd_pad_even_of_its_own_net() {
 }
 
 #[test]
+fn a_mask_opening_of_a_nets_own_copper_keeps_its_vias_inside_the_pad_only() {
+    // A's 1.4 mm pad at (5, 3) under a mask opening of A over it and 1 mm
+    // beyond (d20_pcb's J2: the die's whole face is open). Inside the pad
+    // A's via stays (copper of one net in one opening bridges nothing);
+    // beside a listed pad, where the mask web would part the via from the
+    // pad's solder, the opening keeps it out as before.
+    let allowed = |listed: bool, x: f64| {
+        let mut board = two_nets(2);
+        let index = square_pad(&mut board);
+        if listed {
+            board.no_via_pads = vec![index];
+        }
+        board.obstacles.push(Obstacle {
+            shape: Shape::Polygon {
+                points: vec![[3.3, 1.3], [7.7, 1.3], [7.7, 4.7], [3.3, 4.7]],
+            },
+            kind: ObstacleKind::Keepout,
+            clearance: 0.05,
+            label: "solder mask opening (fp_poly)".into(),
+            ..pad([5.0, 3.0], 0.7, 1, Some(0), "")
+        });
+        let router = Router::new(&board, &config(None));
+        let node = router.grid.nearest_node([x, 3.0]).unwrap();
+        let statics = &router.statics[router.board.nets[0].class];
+        (statics.via_allowed(node, 0), statics.via_allowed(node, 1))
+    };
+    assert_eq!(allowed(false, 5.0), (true, false));
+    assert_eq!(allowed(true, 5.0), (false, false));
+    assert_eq!(allowed(true, 6.1), (false, false));
+}
+
+#[test]
 fn an_exposed_pads_own_vias_do_not_depend_on_the_order_of_the_pads() {
     // A listed pin of A 0.05 mm right of A's exposed pad (1.4 mm square,
     // not listed): a node inside the pad within the pin's via reach (5.3:

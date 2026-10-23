@@ -605,10 +605,15 @@ gives the item no place (a zone it reports at (0, 0), as for a
 `connection_width` on a pour, unless the finding has a position of its
 own): the same uuid alone no longer matches (since 2026-10-22; until then
 a narrow neck of ours on a pour matched any of the designer's on that
-pour). A type the
+pour). A finding between items of one footprint only (its pads and
+graphics, whose geometry and nets no placement or route changes: a
+mounting hole's ring of overlapping pads) is the reference's. A
+`copper_edge_clearance` is the reference's where its copper item is
+(KiCad names whichever piece of the outline is nearest beside it). A type the
 reference has 199 times or more (KiCad's report stops at a cap: 199 and
 499 are the counts seen, so such a count is a floor) is listed in
-`preexisting_unknown` and none of its findings is subtracted. Warnings, excluded findings and cosmetic
+`preexisting_unknown`: of it only the findings the reference has at the
+same place are subtracted. Warnings, excluded findings and cosmetic
 types (`silk_*`, `text_*`, library findings, `missing_courtyard`,
 `isolated_copper`) do not count. A layout or placement must also place
 every part and keep every constraint. Without KiCad's check
@@ -659,7 +664,7 @@ A finished run also carries it as `verdict` in its report:
 | `new_findings_strict` | KiCad errors per type that the reference does not have at the same place: the run's own. They decide. |
 | `new_findings` | The old rule: errors per type beyond the reference's count of that type anywhere on the board. For comparisons only. |
 | `preexisting_findings`, `preexisting_from` | Errors per type the reference board has at the same place, and its project. |
-| `preexisting_unknown` | Types the reference has at KiCad's cap (199 or more): not subtracted. |
+| `preexisting_unknown` | Types the reference has at KiCad's cap (199 or more): only the findings at the same place are subtracted. |
 | `clean_without_subtraction` | KiCad checked the result and finds no unconnected item and no error that counts, with nothing subtracted. |
 | `diff_pairs` | Route mode with `diff_pairs` on (absent otherwise; docs/router.md "Differential pairs"): `found` (pairs KiCad names by `_P`/`_N`, `+`/`-` or `P`/`N`, both nets with pads), `coupled` (every link between the pair's parts a coupled run), `partly_coupled`, `fallen_back` (routed as two ordinary nets), `links`, `links_coupled`, `crossed` (coupled links whose pads lie in the other order at one end: the stubs cross there, uncoupled), `coupled_mm`, `uncoupled_mm` (per coupled pair the longer net's tracks less its coupled run, KiCad's measure), `work_seconds` (the pairs router's, charged to the ladder). `board-router.json` also lists each pair: its nets, width, gap, where they came from, why links fell back. |
 | `repairs` | What the run added for KiCad's DRC that changes no connection: `neck_tracks` and `neck_track_mm` (the connection-width repair's tracks kept, docs/router.md "KiCad's connection width"), `island_stubs` (a pad's own track into its pour island; `null`: not counted yet), `pour_mode` (the kept board's `pours`: `connect`, `tracks`, `none`, ...) and `pours_as_tracks`. Routes and layouts; also at the top of `board-router.json` and `board-layout.json`. |

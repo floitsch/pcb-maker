@@ -1083,8 +1083,21 @@ fn lower_board(
                 ));
                 if config.via_in_pad != Some(true) {
                     let exposed = exposed_pad(&footprint_pads);
+                    // A footprint's only pad, of a custom shape, is copper
+                    // art no part is soldered to (a touch electrode):
+                    // d20_pcb's J2, a face of the die enclosed by the
+                    // footprint's own frame on F.Cu and by a keepout on
+                    // B.Cu, reached by the designer's via in its corner.
+                    let electrode = footprint_pads.len() == 1
+                        && item
+                            .children()
+                            .iter()
+                            .filter(|child| child.head() == Some("pad"))
+                            .any(|pad| {
+                                pad.children().get(3).and_then(Expr::atom) == Some("custom")
+                            });
                     for (index, pad) in footprint_pads.iter().enumerate() {
-                        if pad.smd && !exposed.contains(&index) {
+                        if pad.smd && !exposed.contains(&index) && !electrode {
                             no_via_pads.extend(&footprint_copper[index]);
                         }
                     }

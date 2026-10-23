@@ -817,6 +817,21 @@ impl StaticMaps {
             .collect();
         let mut via_blocked: Vec<bool> = inside.iter().map(|inside| !inside).collect();
         let mut via_owner: Vec<u16> = if searched { vec![0; cells] } else { Vec::new() };
+        // Where `via_owner` holds a via inside its net's own copper (an
+        // exposed pad's, a touch electrode's, at its own plated hole), not
+        // beside a pad: only there does a mask opening of that net leave
+        // the via to it (`own_opening`). Built only on a board with such
+        // an opening.
+        let mut via_inside: Vec<bool> = if searched
+            && board.obstacles.iter().any(|obstacle| {
+                obstacle.net.is_some()
+                    && obstacle.kind == ObstacleKind::Keepout
+                    && obstacle.label.starts_with("solder mask opening")
+            }) {
+            vec![false; cells]
+        } else {
+            Vec::new()
+        };
         let trace_edge = half_width + board.edge_clearance + SAFETY;
         let via_edge = via_radius + board.edge_clearance + SAFETY;
         // A unit step between two legal nodes can cut an outline corner by
@@ -1045,6 +1060,15 @@ impl StaticMaps {
                     obstacle.kind == ObstacleKind::Keepout
                         && obstacle.label.starts_with("keep whole ")
                 });
+                // A solder mask opening over one net's copper exposes that
+                // net only: a via of the net where its own pad holds one
+                // (an exposed pad, a touch electrode's face: d20_pcb's J2,
+                // whose opening is the whole die) stays there, as in
+                // KiCad, which bridges only copper of different nets.
+                let own_opening = obstacle.net.filter(|_| {
+                    obstacle.kind == ObstacleKind::Keepout
+                        && obstacle.label.starts_with("solder mask opening")
+                });
                 let nodes = ((x1 - x0 + 1) * (y1 - y0 + 1)) as u64;
                 tests += nodes;
                 vertex_tests += nodes * corners;
@@ -1055,7 +1079,7 @@ impl StaticMaps {
                         if distance < via_reach {
                             let index = grid.index(x, y);
                             if searched {
-                                via_owner[index] = match (own_vias, own_hole) {
+                                let (owner, inside) = match (own_vias, own_hole) {
                                     // A node an earlier obstacle left to the
                                     // net (its pin's `beside` arm) stays the
                                     // net's: the map does not depend on
@@ -1068,7 +1092,7 @@ impl StaticMaps {
                                                 .shape
                                                 .contains_disc(center, via_radius + SAFETY) =>
                                     {
-                                        owner16(net)
+                                        (owner16(net), true)
                                     }
                                     (_, Some(net))
                                         if (!via_blocked[index]
@@ -1076,7 +1100,7 @@ impl StaticMaps {
                                             && !(same_net_hole > 0.0
                                                 && distance < own_hole_reach) =>
                                     {
-                                        owner16(net)
+                                        (owner16(net), true)
                                     }
                                     _ => match (beside, keep_whole) {
                                         (Some(net), _)
@@ -1084,17 +1108,30 @@ impl StaticMaps {
                                                 || via_owner[index] == owner16(net))
                                                 && distance >= via_radius + SAFETY =>
                                         {
-                                            owner16(net)
+                                            (owner16(net), false)
                                         }
                                         (None, Some(net))
                                             if !via_blocked[index]
                                                 || via_owner[index] == owner16(net) =>
                                         {
-                                            owner16(net)
+                                            (owner16(net), false)
                                         }
-                                        _ => 0,
+                                        _ => match own_opening {
+                                            Some(net)
+                                                if via_blocked[index]
+                                                    && via_owner[index] == owner16(net)
+                                                    && via_inside[index] =>
+                                            {
+                                                (owner16(net), true)
+                                            }
+                                            _ => (0, false),
+                                        },
                                     },
                                 };
+                                via_owner[index] = owner;
+                                if let Some(flag) = via_inside.get_mut(index) {
+                                    *flag = inside;
+                                }
                             }
                             via_blocked[index] = true;
                         }

@@ -220,9 +220,9 @@ measurement). The discipline:
   small zones stripped (`baseline-drc.json`, through the DRC cache) has
   it at the same place: the same type and the same items (uuids) the
   same distances apart, or items at the same positions within 0.05 mm,
-  each designer finding answering for one; a type the designer has at
-  KiCad's cap (199 or more) is not subtracted at all
-  (`strict_unknown`). Since rule 2 (2026-10-21, `strict_rule` in every
+  each designer finding answering for one; of a type the designer has at
+  KiCad's cap (199 or more) only those at the same place are subtracted
+  (since rule 4; until then none: `strict_unknown`). Since rule 2 (2026-10-21, `strict_rule` in every
   judged row and in summary.json; rows without it are rule 1) a
   **solder mask bridge of a pre-bridged opening** is not counted
   either: one item is a mask opening (a graphic on F.Mask or B.Mask, or
@@ -248,8 +248,20 @@ measurement). The discipline:
   `connection_width` on a pour, unless the finding has a position of its
   own). Until then the uuid alone matched: one `connection_width` of ours
   on USB_Keypad's GND pour was subtracted against the designer's 45 on
-  that pour, all at (0, 0). The binary's own verdict (verdict.rs) keeps
-  rule 1 with rule 3's one-item matching (not rule 2's openings).
+  that pour, all at (0, 0). Since rule 4 (2026-10-23) a **finding
+  between items of one footprint** only (`footprint_own`: every item's
+  description ends in "of <ref>", the same ref) is the designer's: its
+  pads and graphics and their nets, which no placement or route
+  changes, whether KiCad's capped report names it or not (Batch_1's
+  mounting holes, each a ring of overlapping pads: 244 of our 261
+  clearance findings there); a finding at the same place is subtracted
+  also of a type at KiCad's cap (the other 17), the others of that type
+  stay new; and a `copper_edge_clearance` is at the same place by its
+  copper item alone, whichever piece of the outline KiCad names beside
+  it (Batch_1's GND ring along a card's edge: KiCad names the nearest of
+  several edge pieces within the clearance, a different one on the
+  stripped board). The binary's own verdict (verdict.rs) keeps rule 1
+  with rules 3 and 4 (not rule 2's openings).
   `rejudge.py <log>[:<dir>] [<log>[:<dir>] ...]` judges a stored run again
   under the current rules from what it left (the result's `drc.json`,
   `baseline-drc.json`, the designer's bridges; a spliced row from the log

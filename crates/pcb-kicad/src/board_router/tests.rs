@@ -1224,6 +1224,50 @@ mod pour_request_tests {
     }
 
     #[test]
+    fn a_footprints_only_custom_pad_may_hold_its_nets_vias() {
+        // d20_pcb's J2: a touch electrode, one custom pad (a face of the
+        // die), soldered to nothing. A custom pad beside another pad of
+        // its footprint is a land like any SMD pad.
+        let board = |second_pad: &str| {
+            let pcb = parse(&format!(
+                r#"(kicad_pcb
+          (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+          (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+          (footprint "touch" (at 10 5) (property "Reference" "J2")
+            (pad "1" smd custom (at 0 0) (size 1 1) (layers "F.Cu" "F.Mask") (net "/PAD")
+              (options (clearance outline) (anchor rect))
+              (primitives (gr_poly (pts (xy -3 -3) (xy 3 -3) (xy 3 3) (xy -3 3)) (width 0) (fill yes))))
+            {second_pad})
+          (footprint "R" (at 2 2) (property "Reference" "R1")
+            (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "/PAD"))))"#
+            ))
+            .unwrap();
+            let config = KiCadBoardRouterConfig {
+                default_rules: Some(KiCadConnectionRoutingRules {
+                    trace_width_mm: 0.2,
+                    clearance_mm: 0.2,
+                    via_size_mm: 0.6,
+                    via_drill_mm: 0.3,
+                }),
+                ..KiCadBoardRouterConfig::default()
+            };
+            let board = lower(&pcb, &config, false).unwrap().board;
+            let listed = |label: &str| {
+                board
+                    .no_via_pads
+                    .iter()
+                    .any(|&index| board.obstacles[index].label == label)
+            };
+            (listed("J2.1"), listed("R1.1"))
+        };
+        assert_eq!(board(""), (false, true));
+        assert_eq!(
+            board(r#"(pad "2" smd rect (at 5 0) (size 1 1) (layers "F.Cu") (net "/PAD"))"#),
+            (true, true)
+        );
+    }
+
+    #[test]
     fn an_unfilled_circle_in_a_custom_pad_is_a_ring() {
         let pcb = parse(
             r#"(kicad_pcb

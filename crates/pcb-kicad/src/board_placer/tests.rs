@@ -1590,3 +1590,34 @@ mod order_tests {
         assert!(placed[0].1 == placed[1].1, "the placed boards differ");
     }
 }
+
+#[test]
+fn a_printed_antennas_copper_is_its_body() {
+    // The Business-Cards' AE1 (TI CC2430DB inverted-F antenna): three small
+    // pads, no courtyard, 18 mm of copper beside them. Its body was the
+    // pads' box, so the layout hung the copper over the board edge
+    // (copper_edge_clearance on WLED_Matrix and Batch_1).
+    let pcb = parse(
+        r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+        (gr_rect (start 0 0) (end 60 30) (layer "Edge.Cuts"))
+        (footprint "Inverted_F_Antenna" (layer "F.Cu") (at 30 15) (property "Reference" "AE1")
+            (fp_poly (pts (xy 25.4 1.0) (xy 8.98 1.0) (xy 8.98 3.0) (xy 6.98 3.0) (xy 6.98 4.0) (xy 25.4 4.0))
+                (stroke (width 0) (type solid)) (fill yes) (layer "F.Cu"))
+            (fp_line (start 10.77 4.62) (end 9.71 3.56) (stroke (width 0.46) (type solid)) (layer "F.Cu"))
+            (pad "1" smd roundrect (at 10.77 6.9 270) (size 1 0.46) (layers "F.Cu" "F.Mask") (roundrect_rratio 0.25) (net 1 "RF"))
+            (pad "2" smd roundrect (at 7.41 7 270) (size 0.2 1.15) (layers "F.Cu" "F.Mask") (roundrect_rratio 0.25) (net 2 "GND"))
+            (pad "2" smd roundrect (at 9.48 7 270) (size 0.2 1) (layers "F.Cu" "F.Mask") (roundrect_rratio 0.25) (net 2 "GND"))))"#,
+    )
+    .unwrap();
+    let placement = lower_placement(&pcb, &KiCadBoardPlacerConfig::default()).unwrap();
+    let body = &placement.problem.components[0];
+    // The copper reaches from x 6.98 to 25.4 and y 1.0 to 4.0, the pads
+    // to y 7.6: the body holds all of it.
+    assert!(
+        body.body_size[0] >= 25.4 - 6.98 - 1.0e-6,
+        "{:?}",
+        body.body_size
+    );
+    assert!(body.body_center[0] - body.body_size[0] / 2.0 <= 6.98 + 1.0e-6);
+    assert!(body.body_center[1] - body.body_size[1] / 2.0 <= 1.0 + 1.0e-6);
+}

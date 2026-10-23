@@ -126,12 +126,34 @@ class StrictRule(unittest.TestCase):
         self.assertTrue(run.same_place(finding("hole_to_hole", ("x", (85.02, 13.8)), (None, (85.0, 13.23))), designer))
         self.assertFalse(run.same_place(finding("clearance", ("h1", (85.0, 13.8)), ("h2", (85.0, 13.2))), designer))
 
-    def test_a_type_at_kicads_cap_is_unknown(self):
+    def test_a_type_at_kicads_cap_is_subtracted_only_at_the_same_place(self):
         ours = finding("hole_clearance", ("a", (1.0, 1.0)))
+        elsewhere = finding("hole_clearance", ("b", (70.0, 70.0)))
         reference = [finding("hole_clearance", ("z", (float(i), 40.0))) for i in range(run.KICAD_FINDING_CAP)]
-        split = run.strict_findings([ours], reference + [ours])
-        self.assertEqual(split, {"new": {"hole_clearance": 1}, "preexisting": {}, "unknown": ["hole_clearance"],
-                                 "mask_openings": 0})
+        split = run.strict_findings([ours, elsewhere], reference + [ours])
+        self.assertEqual(split, {"new": {"hole_clearance": 1}, "preexisting": {"hole_clearance": 1},
+                                 "unknown": ["hole_clearance"], "mask_openings": 0})
+
+    def test_a_footprints_own_finding_is_the_references(self):
+        def between(first, second):
+            return ("clearance", [("u1", (1.0, 2.0), first, "c"), ("u2", (1.0, 4.0), second, "c")])
+        own = [between("PTH pad [<no net>] of M15", "PTH pad [GND] of M15"),
+               between("Pad 1 [Net-(AE1-A)] of AE1 on F.Cu", "Segment [<no net>] of AE1 on F.Cu")]
+        other = [between("PTH pad [<no net>] of M15", "PTH pad [GND] of M16"),
+                 between("Track [GND] on F.Cu, length 1.0000 mm", "Pad 2 [VCC] of R62 on F.Cu")]
+        self.assertTrue(all(run.footprint_own(f) for f in own))
+        self.assertFalse(any(run.footprint_own(f) for f in other))
+        reference = [finding("clearance", ("z", (float(i), 40.0))) for i in range(run.KICAD_FINDING_CAP)]
+        split = run.strict_findings(own + other, reference)
+        self.assertEqual((split["new"], split["preexisting"]), ({"clearance": 2}, {"clearance": 2}))
+
+    def test_a_copper_edge_finding_is_at_the_same_place_by_its_copper(self):
+        def edge(outline, uuid, x, ring=("ring", (17.55, 125.0))):
+            return ("copper_edge_clearance", [(uuid, (x, 125.0), outline, "edge"),
+                                              (ring[0], ring[1], "Segment [GND] on F.Cu", "edge")])
+        theirs = edge("Segment on Edge.Cuts", "e2", 17.0)
+        self.assertTrue(run.same_place(edge("Arc on Edge.Cuts", "e1", 99.0), theirs))
+        self.assertFalse(run.same_place(edge("Segment on Edge.Cuts", "e2", 17.0, ("t", (30.0, 125.0))), theirs))
 
     def test_without_a_baseline_every_finding_counts(self):
         split = run.strict_findings([finding("clearance", ("a", (1.0, 1.0)))], None)

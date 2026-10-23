@@ -112,9 +112,13 @@ pub(super) fn body_on_side(
     // A footprint's own mask graphics open the mask over its area: another
     // part's pads placed there bridge (SNSP-CPU-01's J2 polygon: 63 pads
     // of other parts under it). They are part of the body, tight or not.
+    // So is its copper: a printed antenna's 15 mm of copper beside its
+    // three small pads and without a courtyard (the Business-Cards' AE1,
+    // whose copper the body of its pads alone let hang over the board
+    // edge: copper_edge_clearance on WLED_Matrix and Batch_1).
     let counts = |child: &Expr| {
         form_atom(child, "layer", 1).is_some_and(|layer| {
-            (layer.ends_with(outline) || layer.ends_with(".Mask"))
+            (layer.ends_with(outline) || layer.ends_with(".Mask") || layer.ends_with(".Cu"))
                 && !skip.is_some_and(|side| layer.starts_with(side))
         })
     };

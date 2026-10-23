@@ -8,8 +8,9 @@
 //! reference board (the designer's, or the input of a route) already has
 //! at the same place: the same type and the same items (by uuid, moved
 //! together) or items at the same positions (`split_findings_strict`). A
-//! type the reference has at KiCad's cap (`KICAD_FINDING_CAP`) is not
-//! subtracted. Warnings, excluded findings and cosmetic types (silkscreen,
+//! type the reference has at KiCad's cap (`KICAD_FINDING_CAP`) is
+//! subtracted only at the same place; a finding between items of one
+//! footprint is the reference's (`footprint_own`). Warnings, excluded findings and cosmetic types (silkscreen,
 //! text, library metadata, missing courtyards, isolated copper) do not
 //! count. A layout or placement must also keep its placement constraints
 //! and place every part. Without KiCad's check (it was skipped) the
@@ -377,8 +378,42 @@ fn distance(a: [f64; 2], b: [f64; 2]) -> f64 {
 /// KiCad's measured values included (a pad's annular ring, a footprint's
 /// courtyard: a property of the item, which moved with its part).
 /// run.py's strict rule 3.
+/// A `copper_edge_clearance` is at the same place by its copper item
+/// alone: which piece of the outline KiCad names beside it varies (the
+/// nearest of several within the clearance; Batch_1's GND ring along a
+/// card's edge). run.py's strict rule 4.
 pub fn same_place(ours: &DrcFinding, theirs: &DrcFinding) -> bool {
-    if ours.kind != theirs.kind || ours.items.is_empty() || ours.items.len() != theirs.items.len() {
+    if ours.kind != theirs.kind || ours.items.is_empty() {
+        return false;
+    }
+    if ours.kind == "copper_edge_clearance" {
+        let copper = |finding: &DrcFinding| {
+            let mut copper = finding.clone();
+            let kept: Vec<bool> = (0..finding.items.len())
+                .map(|index| {
+                    !finding
+                        .item_descriptions
+                        .get(index)
+                        .is_some_and(|description| description.ends_with("on Edge.Cuts"))
+                })
+                .collect();
+            let mut keep = kept.iter();
+            copper.items.retain(|_| *keep.next().unwrap_or(&true));
+            let mut keep = kept.iter();
+            copper
+                .item_descriptions
+                .retain(|_| *keep.next().unwrap_or(&true));
+            copper
+        };
+        let (mine, reference) = (copper(ours), copper(theirs));
+        if !mine.items.is_empty()
+            && !reference.items.is_empty()
+            && (mine.items.len(), reference.items.len()) != (ours.items.len(), theirs.items.len())
+        {
+            return same_place(&mine, &reference);
+        }
+    }
+    if ours.items.len() != theirs.items.len() {
         return false;
     }
     if let ([mine], [reference]) = (ours.items.as_slice(), theirs.items.as_slice()) {
@@ -449,6 +484,46 @@ pub fn same_place(ours: &DrcFinding, theirs: &DrcFinding) -> bool {
     })
 }
 
+/// The footprint a finding's item belongs to, from KiCad's description:
+/// the reference it ends in ("PTH pad 1 [GND] of M15", "Segment [<no
+/// net>] of AE1 on F.Cu"); `None` for a track, a via, a zone or a board
+/// graphic.
+fn item_footprint(description: &str) -> Option<&str> {
+    let mut text = description;
+    if let Some(index) = text.rfind(" on ") {
+        let layer = &text[index + 4..];
+        if !layer.is_empty() && !layer.contains(char::is_whitespace) {
+            text = &text[..index];
+        }
+    }
+    let index = text.rfind("of ")?;
+    if index > 0 && !text[..index].ends_with(char::is_whitespace) {
+        return None;
+    }
+    let reference = &text[index + 3..];
+    (!reference.is_empty() && !reference.contains(char::is_whitespace)).then_some(reference)
+}
+
+/// Whether a finding is between items of one footprint only (its pads and
+/// graphics: a mounting hole's ring of overlapping pads, an antenna's
+/// copper at its feed pad): the footprint's geometry and its pads' nets,
+/// which neither a placement nor a route changes, so the reference has it
+/// too, whether KiCad's capped report names it or not. run.py's
+/// `footprint_own` (strict rule 4).
+pub fn footprint_own(finding: &DrcFinding) -> bool {
+    if finding.items.len() < 2 || finding.item_descriptions.len() != finding.items.len() {
+        return false;
+    }
+    let mut owners = finding
+        .item_descriptions
+        .iter()
+        .map(|description| item_footprint(description));
+    let Some(Some(first)) = owners.next() else {
+        return false;
+    };
+    owners.all(|owner| owner == Some(first))
+}
+
 /// A result's errors split by the strict rule.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StrictSplit {
@@ -458,8 +533,9 @@ pub struct StrictSplit {
     /// Per type, the findings the reference has at the same place.
     pub preexisting: BTreeMap<String, usize>,
     /// Types of the result that the reference has at KiCad's cap
-    /// (`KICAD_FINDING_CAP`): whether they were there before is unknown,
-    /// so none is subtracted.
+    /// (`KICAD_FINDING_CAP`): whether a finding not at the same place was
+    /// there before is unknown, so only the ones at the same place are
+    /// subtracted.
     pub unknown: Vec<String>,
     /// The run's own findings (`new`), as indices into the result's.
     pub new_indices: Vec<usize>,
@@ -481,12 +557,8 @@ pub fn split_findings_strict(ours: &[DrcFinding], reference: &[DrcFinding]) -> S
     let mut used = vec![false; reference.len()];
     for (number, finding) in ours.iter().enumerate() {
         let kind = finding.kind.as_str();
-        if capped(kind) {
-            if !split.unknown.iter().any(|known| known == kind) {
-                split.unknown.push(kind.to_string());
-            }
-            *split.new.entry(kind.to_string()).or_default() += 1;
-            split.new_indices.push(number);
+        if footprint_own(finding) {
+            *split.preexisting.entry(kind.to_string()).or_default() += 1;
             continue;
         }
         let matched = reference
@@ -497,6 +569,9 @@ pub fn split_findings_strict(ours: &[DrcFinding], reference: &[DrcFinding]) -> S
             used[index] = true;
             *split.preexisting.entry(kind.to_string()).or_default() += 1;
         } else {
+            if capped(kind) && !split.unknown.iter().any(|known| known == kind) {
+                split.unknown.push(kind.to_string());
+            }
             *split.new.entry(kind.to_string()).or_default() += 1;
             split.new_indices.push(number);
         }
@@ -726,7 +801,8 @@ pub struct KiCadVerdict {
     /// (the designer's own findings); they do not count.
     pub preexisting_findings: BTreeMap<String, usize>,
     /// Types the reference has at KiCad's cap (199 findings or more of the
-    /// type): not subtracted, since its true count is unknown.
+    /// type): only the findings at the same place are subtracted, since
+    /// its true count is unknown.
     pub preexisting_unknown: Vec<String>,
     /// KiCad checked the result and finds no unconnected item and no error
     /// that counts, with nothing subtracted.
@@ -1060,7 +1136,7 @@ fn next_actions(
     }
     if !unknown.is_empty() {
         actions.push(format!(
-            "the reference board has {} at KiCad's cap of {KICAD_FINDING_CAP} findings: none of them is subtracted (preexisting_unknown)",
+            "the reference board has {} at KiCad's cap of {KICAD_FINDING_CAP} findings: only the findings at the same place are subtracted (preexisting_unknown)",
             unknown.join(", ")
         ));
     }
@@ -1748,13 +1824,14 @@ mod tests {
     }
 
     #[test]
-    fn a_type_at_kicads_cap_is_unknown_and_not_subtracted() {
+    fn a_type_at_kicads_cap_is_subtracted_only_at_the_same_place() {
         let ours = finding("hole_clearance", &[("a", 1.0, 1.0)]);
+        let elsewhere = finding("hole_clearance", &[("b", 70.0, 70.0)]);
         let mut capped: Vec<serde_json::Value> = (0..KICAD_FINDING_CAP)
             .map(|index| finding("hole_clearance", &[("z", index as f64, 40.0)]))
             .collect();
         capped.push(ours.clone());
-        let mut facts = routed(tally_drc(&report(vec![ours])));
+        let mut facts = routed(tally_drc(&report(vec![ours, elsewhere])));
         facts.reference = reference(capped);
         let verdict = judge(&facts);
         assert_eq!(
@@ -1762,6 +1839,7 @@ mod tests {
             vec!["hole_clearance".to_string()]
         );
         assert_eq!(verdict.new_findings_strict, map(&[("hole_clearance", 1)]));
+        assert_eq!(verdict.preexisting_findings, map(&[("hole_clearance", 1)]));
         assert!(verdict.new_findings.is_empty());
         assert_eq!(verdict.exit_code, EXIT_INCOMPLETE);
         assert!(
@@ -1770,6 +1848,74 @@ mod tests {
                 .iter()
                 .any(|action| action.contains("KiCad's cap"))
         );
+    }
+
+    #[test]
+    fn a_footprints_own_finding_is_the_references() {
+        // Batch_1: a mounting hole's ring of overlapping pads, its antenna's
+        // copper at its feed pad; the reference's report is at KiCad's cap
+        // and names none of them.
+        let between = |kind: &str, first: &str, second: &str| {
+            json!({"type": kind, "severity": "error", "description": kind,
+                   "items": [{"description": first, "uuid": "u1", "pos": {"x": 1.0, "y": 2.0}},
+                             {"description": second, "uuid": "u2", "pos": {"x": 1.0, "y": 4.0}}]})
+        };
+        let ours = tally_drc(&report(vec![
+            between(
+                "clearance",
+                "PTH pad [<no net>] of M15",
+                "PTH pad [GND] of M15",
+            ),
+            between(
+                "clearance",
+                "Pad 1 [Net-(AE1-A)] of AE1 on F.Cu",
+                "Segment [<no net>] of AE1 on F.Cu",
+            ),
+            // Two footprints, or a track: not one footprint's own.
+            between(
+                "clearance",
+                "PTH pad [<no net>] of M15",
+                "PTH pad [GND] of M16",
+            ),
+            between(
+                "clearance",
+                "Track [GND] on F.Cu, length 1.0000 mm",
+                "Pad 2 [VCC] of R62 on F.Cu",
+            ),
+        ]))
+        .findings;
+        assert!(footprint_own(&ours[0]) && footprint_own(&ours[1]));
+        assert!(!footprint_own(&ours[2]) && !footprint_own(&ours[3]));
+        let capped: Vec<DrcFinding> = tally_drc(&report(
+            (0..KICAD_FINDING_CAP)
+                .map(|index| finding("clearance", &[("z", index as f64, 40.0)]))
+                .collect(),
+        ))
+        .findings;
+        let split = split_findings_strict(&ours, &capped);
+        assert_eq!(split.preexisting, map(&[("clearance", 2)]));
+        assert_eq!(split.new, map(&[("clearance", 2)]));
+        assert_eq!(split.new_indices, vec![2, 3]);
+    }
+
+    #[test]
+    fn a_copper_edge_finding_is_at_the_same_place_by_its_copper() {
+        // KiCad names the nearest of several outline pieces beside the
+        // designer's GND ring: another one on the stripped board.
+        let edge = |outline: &str, uuid: &str, x: f64| {
+            json!({"type": "copper_edge_clearance", "severity": "error",
+                   "description": "Board edge clearance violation",
+                   "items": [{"description": outline, "uuid": uuid, "pos": {"x": x, "y": 125.0}},
+                             {"description": "Segment [GND] on F.Cu", "uuid": "ring", "pos": {"x": 17.55, "y": 125.0}}]})
+        };
+        let ours = tally_drc(&report(vec![edge("Arc on Edge.Cuts", "e1", 99.0)])).findings;
+        let theirs = tally_drc(&report(vec![edge("Segment on Edge.Cuts", "e2", 17.0)])).findings;
+        assert!(same_place(&ours[0], &theirs[0]));
+        let mut moved = edge("Segment on Edge.Cuts", "e2", 17.0);
+        moved["items"][1]["pos"]["x"] = json!(30.0);
+        moved["items"][1]["uuid"] = json!("track");
+        let moved = tally_drc(&report(vec![moved])).findings;
+        assert!(!same_place(&moved[0], &theirs[0]));
     }
 
     #[test]

@@ -21,8 +21,9 @@ designer's board's count of its type (`pass`). The strict rule
 (`pass_strict`, `new_findings_strict`) subtracts only the findings the
 designer's board has at the same place: KiCad's DRC of the designer's board
 with its tracks, vias and small zones stripped (what the fixed geometry
-brings on its own; `strict_findings`), a type it has at KiCad's cap not at
-all; since rule 2 (`strict_rule`) neither a solder mask bridge between one
+brings on its own; `strict_findings`), of a type it has at KiCad's cap only
+those at the same place, and since rule 4 every finding between items of
+one footprint (`footprint_own`); since rule 2 (`strict_rule`) neither a solder mask bridge between one
 of our tracks and a designer's mask opening that bridges on the stripped
 or the designer's own board already (`strict_mask_openings`, README.md
 "How to measure"). `clean_without_subtraction` says the result has no error that counts
@@ -571,7 +572,7 @@ def unplace(board, point, remove_outline, keep=()):
 
 # KiCad's DRC reports at most this many findings of a type (verdict.rs,
 # KICAD_FINDING_CAP): a designer count at or above it is a floor, so the
-# strict rule subtracts none of that type.
+# strict rule subtracts only the findings it has at the same place.
 KICAD_FINDING_CAP = 199
 # How far (mm) an item may lie from the designer's for the finding to be at
 # the same place (verdict.rs, SAME_PLACE_MM).
@@ -587,8 +588,12 @@ SAME_PLACE_MM = 0.05
 # SAME_PLACE_MM, or where it is the same item (not a zone) with the same
 # finding word for word; the same uuid alone no longer does, and a zone
 # item KiCad places at (0, 0) has no place (2026-10-22, review 2026-10-21
-# H2).
-STRICT_RULE = 3
+# H2). 4: a finding between items of one footprint only is the reference's
+# (`footprint_own`); a finding at the same place is the reference's also
+# of a type the reference has at KiCad's cap; a copper_edge_clearance is at
+# the same place by its copper item, whichever piece of the outline KiCad
+# names beside it (2026-10-23, Batch_1's mounting holes and GND ring).
+STRICT_RULE = 4
 # The designer's own board's solder mask bridges, kept in a task's work
 # directory by designer_findings for the strict rule.
 DESIGNER_BRIDGES = "designer-mask-bridges.json"
@@ -686,6 +691,33 @@ def prebridged(finding, openings):
     return False
 
 
+# A finding's item that belongs to a footprint names it ("PTH pad 1 [GND]
+# of M15", "Segment [<no net>] of AE1 on F.Cu"); a track, a via, a zone
+# or a board graphic does not.
+FOOTPRINT_ITEM = re.compile(r"\bof (\S+)(?: on [^ ]+)?$")
+
+
+def footprint_own(finding):
+    """Whether a finding is between items of one footprint only (its pads
+    and its graphics: a mounting hole's ring of overlapping pads, an
+    antenna's copper at its feed pad): the footprint's geometry and its
+    pads' nets, which neither a placement nor a route changes (verdict.rs,
+    footprint_own)."""
+    owners = set()
+    for item in finding[1]:
+        match = FOOTPRINT_ITEM.search(item[2] if len(item) > 2 else "")
+        if match is None:
+            return False
+        owners.add(match.group(1))
+    return len(finding[1]) > 1 and len(owners) == 1
+
+
+def outline_item(item):
+    """Whether a finding's item is a piece of the board outline (KiCad's
+    description: "Segment on Edge.Cuts", "Arc of REF** on Edge.Cuts")."""
+    return (item[2] if len(item) > 2 else "").endswith("on Edge.Cuts")
+
+
 def same_place(ours, theirs):
     """Whether finding `ours` is `theirs` at the same place: the same type
     and either the same items (uuids) moved together (the distances between
@@ -699,7 +731,16 @@ def same_place(ours, theirs):
     word, KiCad's measured values included (a pad's annular ring, a
     footprint's courtyard: a property of the item, which moved with its
     part)."""
-    if ours[0] != theirs[0] or not ours[1] or len(ours[1]) != len(theirs[1]):
+    if ours[0] != theirs[0] or not ours[1]:
+        return False
+    if ours[0] == "copper_edge_clearance":
+        # The copper item decides: which piece of the outline KiCad names
+        # beside it varies (the nearest of several within the clearance).
+        mine = [item for item in ours[1] if not outline_item(item)]
+        reference = [item for item in theirs[1] if not outline_item(item)]
+        if mine and reference and (len(mine), len(reference)) != (len(ours[1]), len(theirs[1])):
+            return same_place((ours[0], mine), (theirs[0], reference))
+    if len(ours[1]) != len(theirs[1]):
         return False
     if len(ours[1]) == 1:
         mine, reference = ours[1][0], theirs[1][0]
@@ -747,7 +788,11 @@ def strict_findings(ours, reference, designer=None):
     """Splits our findings (counting_findings) into the reference's at the
     same place and our own: {"new": {type: n}, "preexisting": {type: n},
     "unknown": [types the reference has at KiCad's cap], "mask_openings":
-    n}; every finding of an unknown type is new. `reference` None: no
+    n}. A finding of one footprint's own items (`footprint_own`) is the
+    reference's: the footprint is there too, whether KiCad's capped report
+    names it or not. A finding the reference has at the same place is the
+    reference's even of a type at KiCad's cap; every other finding of such
+    a type is new (its type in "unknown"). `reference` None: no
     baseline, all are new. A solder mask bridge that is not the
     reference's is still not ours when a mask opening of it bridges on the
     reference (the stripped designer board) or on `designer` (the
@@ -764,10 +809,8 @@ def strict_findings(ours, reference, designer=None):
     used = [False] * len(reference)
     for finding in ours:
         kind = finding[0]
-        if counts.get(kind, 0) >= KICAD_FINDING_CAP:
-            if kind not in unknown:
-                unknown.append(kind)
-            new[kind] = new.get(kind, 0) + 1
+        if footprint_own(finding):
+            preexisting[kind] = preexisting.get(kind, 0) + 1
             continue
         for index, theirs in enumerate(reference):
             if not used[index] and same_place(finding, theirs):
@@ -775,7 +818,11 @@ def strict_findings(ours, reference, designer=None):
                 preexisting[kind] = preexisting.get(kind, 0) + 1
                 break
         else:
-            if prebridged(finding, openings):
+            if counts.get(kind, 0) >= KICAD_FINDING_CAP:
+                if kind not in unknown:
+                    unknown.append(kind)
+                new[kind] = new.get(kind, 0) + 1
+            elif prebridged(finding, openings):
                 mask_openings += 1
             else:
                 new[kind] = new.get(kind, 0) + 1
