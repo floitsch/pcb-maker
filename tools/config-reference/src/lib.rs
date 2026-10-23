@@ -228,6 +228,16 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "the trouble-makers' repair: `1` lets pour nets take part, as trouble-makers and as victims, weighed by their pads off the pour's main piece (an experiment, off).",
     ),
     (
+        "PCB_ROUTER_TROUBLE_LOCAL",
+        Kind::Switch,
+        "the trouble-makers' repair: `1` routes an exchange's victims again on their corridors first and gives the hard search's window and board-wide fallbacks only to those left with more open terminals, while that could still make the exchange pass (default 1; `0` the full hard search for every victim).",
+    ),
+    (
+        "PCB_ROUTER_TROUBLE_EARLY",
+        Kind::Switch,
+        "the trouble-makers' repair: `1` undoes an exchange as soon as the victims routed so far leave it no way to pass (default 1; `0` routes every victim first).",
+    ),
+    (
         "PCB_ROUTER_TROUBLE_WHY",
         Kind::Diagnostic,
         "the trouble-makers' repair prints every exchange's outcome (kept, or why refused).",

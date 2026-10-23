@@ -47,6 +47,15 @@ pub(super) struct TroubleSettings {
     /// counted as the pads off their pour's main piece (the pour
     /// analysed again after the exchange).
     pub pours: bool,
+    /// The victims are routed again on their corridors first
+    /// (`PCB_ROUTER_TROUBLE_LOCAL`, on): a victim left open by that gets
+    /// the hard search's window and board-wide fallbacks only where they
+    /// could still make the exchange pass.
+    pub local: bool,
+    /// An exchange is undone as soon as the victims routed so far leave
+    /// it no way to pass (`PCB_ROUTER_TROUBLE_EARLY`, on): the victims not
+    /// yet routed are counted as closing every terminal they have.
+    pub early: bool,
 }
 
 /// The order of the trouble-makers in a round.
@@ -73,7 +82,7 @@ pub fn trouble_override() -> Option<bool> {
 impl TroubleSettings {
     /// The knobs: `PCB_ROUTER_TROUBLE_PRESENT` (20), `_SHARE` (0.5),
     /// `_ROUNDS` (3), `_VICTIMS` (12), `_PER_OPEN` (2), `_TIES` (1),
-    /// `_ORDER` (`open`) and `_DEPTH` (1).
+    /// `_ORDER` (`open`), `_DEPTH` (1), `_LOCAL` (1) and `_EARLY` (1).
     pub(super) fn from_env() -> Self {
         fn read<T: std::str::FromStr>(name: &str, default: T) -> T {
             std::env::var(name)
@@ -94,6 +103,8 @@ impl TroubleSettings {
             },
             depth: read("PCB_ROUTER_TROUBLE_DEPTH", 1),
             pours: read("PCB_ROUTER_TROUBLE_POURS", 0) != 0,
+            local: read("PCB_ROUTER_TROUBLE_LOCAL", 1) != 0,
+            early: read("PCB_ROUTER_TROUBLE_EARLY", 1) != 0,
         }
     }
 
@@ -114,6 +125,24 @@ struct Exchange {
     closed: usize,
     /// The nets it displaced.
     displaced: usize,
+}
+
+/// Where the repair's work went (work seconds), for the summary line.
+#[derive(Clone, Copy, Debug, Default)]
+struct TroubleWork {
+    /// The trouble-makers' priced searches.
+    priced: f64,
+    /// The victims' hard routes (both passes).
+    victims: f64,
+    /// Of `victims`, the second pass's (`TroubleSettings::local`).
+    retried: f64,
+    /// The work of the exchanges kept (priced and victims).
+    kept: f64,
+    /// Victims routed, and of them routed again with the fallbacks.
+    routed: usize,
+    retries: usize,
+    /// Exchanges undone early (`TroubleSettings::early`).
+    early: usize,
 }
 
 /// A net's state as an exchange may have to restore it, and its open
@@ -180,6 +209,7 @@ impl Router {
         // A net refused is tried again only once an exchange was kept
         // after its refusal: nothing else changed that it could see.
         let mut refused: HashMap<NetId, usize> = HashMap::new();
+        let mut work = TroubleWork::default();
         for round in 0..settings.rounds {
             let mut trouble: Vec<NetId> = order
                 .iter()
@@ -237,8 +267,10 @@ impl Router {
                     continue;
                 }
                 tried += 1;
-                let exchange = self.trouble_exchange(net, order, settings);
+                let started = self.budget_work();
+                let exchange = self.trouble_exchange(net, order, settings, &mut work);
                 if exchange.kept {
+                    work.kept += self.budget_work() - started;
                     closed_round += exchange.closed;
                     kept_round += 1;
                     kept += 1;
@@ -274,9 +306,16 @@ impl Router {
         }
         if self.config.verbose {
             eprintln!(
-                "trouble: {closed} open terminals closed in {tried} exchanges tried, {kept} kept ({ties} ties), {:.1} s of work{}",
+                "trouble: {closed} open terminals closed in {tried} exchanges tried, {kept} kept ({ties} ties), {:.1} s of work{}; priced searches {:.1} s, victims {:.1} s ({} routed; again with the fallbacks {}, {:.1} s), kept exchanges {:.1} s, {} undone early",
                 self.budget_work() - clock.0,
-                if out_of_work { " (out of work)" } else { "" }
+                if out_of_work { " (out of work)" } else { "" },
+                work.priced,
+                work.victims,
+                work.routed,
+                work.retries,
+                work.retried,
+                work.kept,
+                work.early,
             );
         }
         closed
@@ -292,8 +331,9 @@ impl Router {
         net: NetId,
         order: &[NetId],
         settings: TroubleSettings,
+        work: &mut TroubleWork,
     ) -> Exchange {
-        let (exchange, reason) = self.trouble_exchange_why(net, order, settings);
+        let (exchange, reason) = self.trouble_exchange_why(net, order, settings, work);
         if std::env::var_os("PCB_ROUTER_DEBUG").is_some()
             || std::env::var_os("PCB_ROUTER_TROUBLE_WHY").is_some()
         {
@@ -359,8 +399,9 @@ impl Router {
         net: NetId,
         order: &[NetId],
         settings: TroubleSettings,
+        work: &mut TroubleWork,
     ) -> (Exchange, String) {
-        let (mut saved, victims) = match self.displace(net, &[], order, settings) {
+        let (mut saved, victims) = match self.displace(net, &[], order, settings, work) {
             Ok(done) => done,
             Err(reason) => return (Exchange::default(), reason),
         };
@@ -376,7 +417,7 @@ impl Router {
                 if self.open_measure(*victim) <= before {
                     continue;
                 }
-                if let Ok((inner, _)) = self.displace(*victim, &[net], order, settings) {
+                if let Ok((inner, _)) = self.displace(*victim, &[net], order, settings, work) {
                     if open_now(self, &inner) < open_saved(&inner) && clean(self, &inner) {
                         nested += 1;
                         for entry in inner {
@@ -436,12 +477,15 @@ impl Router {
         protected: &[NetId],
         order: &[NetId],
         settings: TroubleSettings,
+        work: &mut TroubleWork,
     ) -> Result<(Vec<Saved>, Vec<NetId>), String> {
         let before_net = self.open_measure(net);
         let mut saved = vec![self.save_net(net)];
         self.nets[net as usize].hopeless_searches = 0;
+        let started = self.budget_work();
         self.route_net_seq(net, settings.present, false, 4.0);
         self.stamp(net);
+        work.priced += self.budget_work() - started;
         if self.open_measure(net) >= before_net {
             self.restore_nets(saved);
             return Err(format!(
@@ -531,12 +575,106 @@ impl Router {
                 return Err(format!("fixed copper in its way ({})", names.join(", ")));
             }
         }
-        for victim in &victims {
+        let started = self.budget_work();
+        let routed = self.route_victims(net, &victims, &saved, settings, work);
+        work.victims += self.budget_work() - started;
+        if let Err(reason) = routed {
+            work.early += 1;
+            self.restore_nets(saved);
+            return Err(reason);
+        }
+        Ok((saved, victims))
+    }
+
+    /// Routes the victims of `net`'s exchange again, hard, in their order.
+    /// With `settings.local` their corridors first, all of them; then the
+    /// fallbacks for the victims left with more open terminals than they
+    /// had, while that could still make the exchange pass. With
+    /// `settings.early`, an error as soon as it cannot pass (the victims not
+    /// yet routed counted as closing all their terminals).
+    fn route_victims(
+        &mut self,
+        net: NetId,
+        victims: &[NetId],
+        saved: &[Saved],
+        settings: TroubleSettings,
+        work: &mut TroubleWork,
+    ) -> Result<(), String> {
+        let before = open_saved(saved);
+        // The most open terminals the exchange may end with.
+        let most = if settings.ties {
+            before
+        } else {
+            before.saturating_sub(1)
+        };
+        // The open measure of a pour net moves with other nets' copper.
+        let early = settings.early && !settings.pours;
+        let after_net = if early { self.open_measure(net) } else { 0 };
+        let before_of = |victim: NetId| {
+            saved
+                .iter()
+                .find(|entry| entry.0 == victim)
+                .map_or(0, |entry| entry.4)
+        };
+        let local = settings.local;
+        let mut floor = after_net;
+        for victim in victims {
+            self.nets[*victim as usize].hopeless_searches = 0;
+            self.hard_local = local;
+            self.route_net_seq(*victim, 0.0, true, 4.0);
+            self.hard_local = false;
+            self.stamp(*victim);
+            work.routed += 1;
+            if early {
+                // A victim the second pass may route again could still
+                // close all its terminals.
+                let open = self.open_measure(*victim);
+                if !local || open <= before_of(*victim) {
+                    floor += open;
+                }
+                if floor > most {
+                    return Err(format!(
+                        "undone early: at least {floor} open after, {before} before"
+                    ));
+                }
+            }
+        }
+        if !local {
+            return Ok(());
+        }
+        let retry: Vec<NetId> = victims
+            .iter()
+            .copied()
+            .filter(|victim| self.open_measure(*victim) > before_of(*victim))
+            .collect();
+        if retry.is_empty() {
+            return Ok(());
+        }
+        let started = self.budget_work();
+        let mut now = open_now(self, saved);
+        let mut left: usize = retry.iter().map(|victim| self.open_measure(*victim)).sum();
+        let mut result = Ok(());
+        for victim in &retry {
+            // Even closing every open terminal of the victims still to
+            // route leaves too many open: the exchange cannot pass.
+            if early && now - left > most {
+                result = Err(format!(
+                    "undone early: at least {} open after, {before} before",
+                    now - left
+                ));
+                break;
+            }
+            let open = self.open_measure(*victim);
             self.nets[*victim as usize].hopeless_searches = 0;
             self.route_net_seq(*victim, 0.0, true, 4.0);
             self.stamp(*victim);
+            work.retries += 1;
+            let after = self.open_measure(*victim);
+            now = now + after - open;
+            left -= open;
         }
-        Ok((saved, victims))
+        work.retried += self.budget_work() - started;
+        result
     }
 }
 
