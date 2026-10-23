@@ -129,7 +129,8 @@ pub struct Config {
     /// open first, is routed through other nets' copper at a price; the
     /// nets it then overlaps lose the branches it crosses and are routed
     /// again hard, and the exchange is kept when the open terminals of
-    /// all of them together drop (`repair_trouble`, router/trouble.rs;
+    /// all of them together drop; not in a trial without the polish
+    /// (`repair_trouble`, router/trouble.rs;
     /// docs/experiments/human-level-routing.md). `PCB_ROUTER_TROUBLE`
     /// overrides it (`0` off, `1` on).
     pub trouble_repair: bool,

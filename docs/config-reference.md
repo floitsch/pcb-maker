@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 85 | 73 | 12 | 85 | 31 |
+| [Router settings](#router-settings) | 86 | 74 | 12 | 86 | 31 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 0 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 0 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
@@ -33,6 +33,8 @@ The environment variables are indexed in the hand-over
 | [Router report: rules](#router-report-rules) | 5 | - | 0 | 5 | - |
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 5 | - | 0 | 5 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
+| [Router core](#router-core) | 62 | - | 0 | 62 | - |
+| [Placer settings](#placer-settings) | 45 | 42 | 3 | 45 | 16 |
 | [Router core](#router-core) | 61 | - | 0 | 61 | - |
 | [Placer settings](#placer-settings) | 47 | 43 | 4 | 47 | 16 |
 | [Layout settings](#layout-settings) | 17 | 17 | 0 | 17 | 7 |
@@ -113,6 +115,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `probe_seconds` | `Option<f64>` | unset | router.md | Seconds of negotiation per probe (default 75). |
 | `escape_stub_mm` | `Option<f64>` | unset | router.md | Fixed escape stubs for fine-pitch pad rows, this long in mm (router `escape_stub_mm`; off by default). |
 | `fixed_plane_stubs` | `Option<bool>` | unset | router.md | Connect every pour-net pad to its plane by a fixed stub and via before the signals route (router `fixed_plane_stubs`). |
+| `trouble_repair` | `Option<bool>` | unset | - | The trouble-makers' repair after the hard repair (router `trouble_repair`; docs/experiments/human-level-routing.md): unset, the router's default; `PCB_ROUTER_TROUBLE` overrides this. |
 | `thermal_guard_cost` | `Option<f64>` | unset | - | Router `thermal_guard_cost`. |
 | `narrow_signal_mm` | `Option<f64>` | unset | - | The project's smallest predefined track width (its width menu), which designers use for signals where the class width is a power width (ohdsp's DSP board: class 0.5 mm, 0.135 mm in the menu and on most tracks). |
 | `use_narrow_signals` | `Option<bool>` | unset | - | Route signal nets at `narrow_signal_mm` (the ladder tries it when connections stay open at the class widths). |
@@ -262,6 +265,7 @@ One constraint of one rule of the project's `.kicad_dru`. Source: `KiCadCustomRu
 | `spokeless_tracks` | `bool` | `true` (`false` with `PCB_ROUTER_NO_SPOKELESS_TRACKS`) | - | A pad the spoke model finds with no spoke at all into a pour it lies in, and no track of its own into the fill, gets one straight track into kept fill all the same (`add_manual_spokes`): the model is least sure where it sees none (the spoke ends lie in the narrowest places), KiCad's DRC counts the track only while the pad is short, and a pad KiCad also gives no spoke is no finding with or without it. The expansion intake: 22 of 85 new starved thermals on 40 boards were pads the model saw without a spoke and KiCad with one (`PCB_ROUTER_NO_SPOKELESS_TRACKS` turns it off). |
 | `apart_trees` | `bool` | `true` (`false` with `PCB_ROUTER_NO_APART_TREES`) | - | Terminals of a net that no path reaches from its tree (a board-wide search failed, `NetState::unreachable`) are joined among themselves where they reach each other: a tree of their own, which the net's count still calls unconnected (KiCad finds one unconnected item between the trees, not one per terminal). jiran-ble-lite's two halves share one GND and are joined only through a frame no track crosses: the right half's 20 GND pads stayed apart, also from each other (KiCad 20 unconnected items, the designer's own board 1). `PCB_ROUTER_NO_APART_TREES` turns it off. |
 | `lost_spoke_repair` | `bool` | `true` (`false` with `PCB_ROUTER_NO_LOST_SPOKES`) | - | After the clean-up, a pad the spoke model finds starved whose failed spokes other nets' copper cuts (in the spoke's strip, or where its end's fill would be) has those nets routed again around the strips, kept when every net involved stays complete and the pour nets' starved spokes go down (`free_lost_spokes`; `PCB_ROUTER_NO_LOST_SPOKES` turns it off). |
+| `trouble_repair` | `bool` | `false` | `trouble_repair` | After the hard repair, each net still open (pour nets aside), most open first, is routed through other nets' copper at a price; the nets it then overlaps lose the branches it crosses and are routed again hard, and the exchange is kept when the open terminals of all of them together drop; not in a trial without the polish (`repair_trouble`, router/trouble.rs; docs/experiments/human-level-routing.md). `PCB_ROUTER_TROUBLE` overrides it (`0` off, `1` on). |
 | `pour_aware_polish` | `bool` | `true` | - | The clean-up keeps a change only if no pour net has more pads off its main piece after it. |
 | `pour_aware_via_reduction` | `bool` | `true` | - | The same for a via reduction round. |
 | `pour_whole_rip_up` | `bool` | `true` | - | Whether a pour net stuck in conflict is ripped up whole now and then like the other nets (`rip_up_whole`). |

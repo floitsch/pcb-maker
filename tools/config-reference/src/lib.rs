@@ -170,7 +170,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_ROUTER_TROUBLE",
         Kind::Switch,
-        "turns on the trouble-makers' repair after the hard repair (an experiment: an open net routed through others at a price, the nets it displaces routed again hard, kept when the open terminals drop; docs/experiments/human-level-routing.md).",
+        "overrides the router's `trouble_repair` (`0` off, anything else on): the trouble-makers' repair after the hard repair (an open net routed through others at a price, the nets it displaces routed again hard, kept when the open terminals drop; docs/experiments/human-level-routing.md).",
     ),
     (
         "PCB_ROUTER_TROUBLE_PRESENT",
@@ -196,6 +196,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "PCB_ROUTER_TROUBLE_DEPTH",
         Kind::Switch,
         "the trouble-makers' repair: 2 lets a displaced net that came out worse displace others in turn (default 1).",
+    ),
+    (
+        "PCB_ROUTER_TROUBLE_POURS",
+        Kind::Switch,
+        "the trouble-makers' repair: `1` lets pour nets take part, as trouble-makers and as victims, weighed by their pads off the pour's main piece (an experiment, off).",
     ),
     (
         "PCB_ROUTER_TROUBLE_WHY",
