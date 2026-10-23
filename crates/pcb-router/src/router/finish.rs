@@ -59,7 +59,15 @@ impl Router {
         let resolve_started = std::time::Instant::now();
         let mark = self.phase_mark();
         self.resolve_remaining(order);
-        if !self.hopeless && self.config.trouble_repair {
+        // A repair for a board as it is kept, like the clean-up: a trial
+        // judged on what stays open (the clean-up and via reduction off)
+        // skips it. OpenFC's layout on the short tier: with the repair in
+        // every move trial, 5 trials instead of 11 fit the moves' work and
+        // the board ended at 12 unconnected instead of 2.
+        if !self.hopeless
+            && self.config.trouble_repair
+            && (self.config.cleanup_passes > 0 || self.config.via_reduction_rounds > 0)
+        {
             self.repair_trouble(order, super::trouble::TroubleSettings::from_env());
         }
         self.phase_charge(1, mark);
