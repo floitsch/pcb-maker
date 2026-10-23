@@ -123,6 +123,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "no connection-width neck repair after the final DRC.",
     ),
     (
+        "PCB_ROUTER_STRAIGHTEN",
+        Kind::Switch,
+        "turns the router's straightening on (`straighten`): after the via reduction, stair-steps and jogs taken out of the signal nets' paths where the clearance allows (docs/router.md, \"Straightening\").",
+    ),
+    (
         "PCB_ROUTER_ISLAND_STUBS",
         Kind::User,
         "turns the router's island stubs on (`island_stubs`, off since 2026-10-21): a pad's straight track into a fill island its spokes reach, which only silences KiCad's isolated-island finding.",
