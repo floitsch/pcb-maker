@@ -596,32 +596,19 @@ pub(crate) fn without_copper_texts(pcb: &Expr, keep: bool) -> Expr {
     )
 }
 
-/// The nets of the router's state the final route keeps
-/// (`final_route_from_state`): complete by the router's count, with
-/// copper, in no violation of the router's own check, and without a pour
-/// (`pour_nets`: whether planes or tracks connect them is the ladder's to
-/// choose).
-pub(crate) fn kept_state_nets(
-    board: &core::Board,
-    result: &core::RoutingResult,
-    pour_nets: &BTreeSet<String>,
-) -> Vec<bool> {
+/// The nets of the router's state whose copper the final route keeps
+/// (`final_route_from_state`): every net with copper in no violation of
+/// the router's own check, complete or not (the pieces of an open net
+/// stay: routed again from nothing between the kept copper, 20 of
+/// 4in1-mini's 28 open nets found no path at all). A pour net's copper is
+/// kept too (its stitching vias and spokes): the final route connects the
+/// pours as the state did.
+pub(crate) fn kept_state_nets(board: &core::Board, result: &core::RoutingResult) -> Vec<bool> {
     let mut kept: Vec<bool> = result
-        .status
+        .routes
         .iter()
-        .zip(&result.routes)
-        .zip(&board.nets)
-        .map(|((status, route), net)| {
-            matches!(status, core::NetStatus::Routed)
-                && !(route.segments.is_empty() && route.vias.is_empty())
-                && !pour_nets.contains(&net.name)
-        })
+        .map(|route| !(route.segments.is_empty() && route.vias.is_empty()))
         .collect();
-    for plane in &board.planes {
-        if let Some(kept) = kept.get_mut(plane.net as usize) {
-            *kept = false;
-        }
-    }
     for violation in core::verify(board, &result.routes) {
         let others = violation.other_segment.map(|(other, _)| other);
         for net in std::iter::once(violation.net).chain(others) {
@@ -2126,17 +2113,15 @@ pub fn layout_kicad_board(
         let mut fallback_pours = String::new();
         let mut attempt_source = placed_directory.clone();
         // Routes survive moves (`final_route_from_state`): the final
-        // route starts from the router's state, its complete and legal
-        // nets kept as the board's own copper; the ladder routes the rest.
-        // From scratch only when its first attempt left more open than
-        // the layout's first route (a fresh first attempt) did.
-        let mut from_scratch = true;
+        // route starts from the router's state, its legal copper kept as
+        // the board's own; the ladder connects what is open, with at most
+        // half of the work left. From scratch after it: at once when its
+        // first attempt left more open than the layout's first route (a
+        // fresh first attempt) did, else with the work it left while
+        // connections stay open.
+        let mut gave_up = false;
         let kept_nets = if final_from_state {
-            let pour_nets: BTreeSet<String> = pours(&placed_pcb, &layers)?
-                .into_iter()
-                .map(|pour| pour.net)
-                .collect();
-            kept_state_nets(&board, &result, &pour_nets)
+            kept_state_nets(&board, &result)
         } else {
             Vec::new()
         };
@@ -2168,6 +2153,30 @@ pub fn layout_kicad_board(
             );
             let mut kept_config = fallback_config.clone();
             kept_config.fresh_open = Some(first.0);
+            // At most half of the work left; the attempt after the
+            // narrow-signal attempt varies the one from scratch.
+            let share = 0.5 * (work_deadline - work - pool_excess).max(0.0);
+            kept_config.deadline_work = Some(share);
+            kept_config.ladder_budget_seconds = kept_config
+                .ladder_budget_seconds
+                .map(|budget| budget.min(share.max(120.0)));
+            kept_config.keep_for_continuation = false;
+            if direct_narrow {
+                let (negotiation, cleanup) = direct_narrow_budget(share);
+                kept_config.negotiation_seconds = Some(negotiation);
+                kept_config.cleanup_seconds = Some(cleanup);
+            }
+            // The pour nets' copper is kept with the rest: their pours
+            // connect as they did in the router's state (a rung routing
+            // them as tracks between the kept copper left 248 open on
+            // 4in1-mini where the state had 61).
+            if has_pours {
+                kept_config.pours = if connect {
+                    KiCadPourMode::Connect
+                } else {
+                    KiCadPourMode::Tracks
+                };
+            }
             kept_config.kicad_kept = Some((
                 (
                     crate::board_router::router_open(&routed),
@@ -2180,7 +2189,7 @@ pub fn layout_kicad_board(
             let kept = route_kicad_board(&kept_directory, board_id, &kept_output, &kept_config)?;
             checks_charged.add(kept.kicad_checks_charged);
             after_work += kept.work_seconds;
-            let gave_up = kept
+            gave_up = kept
                 .skipped
                 .iter()
                 .any(|why| why.starts_with(crate::board_router::KEPT_GAVE_UP));
@@ -2204,12 +2213,14 @@ pub fn layout_kicad_board(
             } else {
                 fs::remove_dir_all(&kept_output).map_err(|error| error.to_string())?;
             }
-            if !gave_up {
-                from_scratch = false;
-                attempt_source = kept_directory;
-            }
+            attempt_source = kept_directory;
         }
-        if from_scratch {
+        let scratch_left = work_deadline - work - pool_excess - after_work;
+        if after_work == 0.0
+            || gave_up
+            || (best_quality.0 > 0 && scratch_left >= NARROW_CONTINUATION_FLOOR)
+        {
+            attempt_source = placed_directory.clone();
             let mut fallback_config = fallback_config.clone();
             if after_work > 0.0 {
                 // What the attempts on the kept routes left.

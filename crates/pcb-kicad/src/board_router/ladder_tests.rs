@@ -1153,6 +1153,40 @@ fn a_layouts_narrow_attempt_alone_ends_within_its_work() {
     }
 }
 
+/// A ladder on a kept router state (`fresh_open`) stops after its first
+/// attempt when that leaves more open than a fresh first attempt did,
+/// and goes on as any ladder when it does not.
+#[test]
+fn a_ladder_on_kept_routes_gives_up_after_a_worse_first_attempt() {
+    for (fresh, gives_up) in [(2, true), (5, false)] {
+        let mut config = route_mode(1000.0);
+        config.deadline_work = Some(1000.0);
+        config.fresh_open = Some(fresh);
+        let out = output(&format!("kept-{fresh}"));
+        let fake = Fake::new(|_| {
+            Some(Outcome {
+                open: 3,
+                work: 50.0,
+            })
+        });
+        let mut ladder = ladder(&config, &out, 2);
+        ladder.run(&fake).unwrap();
+        let routes = fake.routes();
+        assert_eq!(ladder.gave_up, gives_up);
+        if gives_up {
+            assert_eq!(routes.len(), 1, "{routes:?}");
+            assert!(
+                ladder
+                    .skipped
+                    .iter()
+                    .any(|why| why.starts_with(KEPT_GAVE_UP))
+            );
+        } else {
+            assert!(routes.len() > 1, "{routes:?}");
+        }
+    }
+}
+
 /// A finer pitch whose router (from the first attempt's maps) does not
 /// fit the machine is not tried: decided by the maps and the machine's
 /// memory, a fixed number, never by the process's peak.
