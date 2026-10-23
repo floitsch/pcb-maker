@@ -320,6 +320,7 @@ impl Router {
             spare_scratches: SpareScratches::default(),
             profile: Profile::default(),
             in_via_reduction: false,
+            in_trial: false,
             in_probe: false,
             cut_iteration: None,
             island_stubs: 0,

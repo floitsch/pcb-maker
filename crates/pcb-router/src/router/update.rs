@@ -156,7 +156,9 @@ impl Router {
             }
         }
         let negotiated = started.elapsed().as_secs_f64();
+        self.in_trial = !polish;
         let result = self.finish_polished(&order, polish);
+        self.in_trial = false;
         if timing {
             eprintln!(
                 "reroute: {pending_count} pending, {} iterations, negotiation {negotiated:.1} s, finish {:.1} s",

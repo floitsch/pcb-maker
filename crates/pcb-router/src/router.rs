@@ -1228,6 +1228,9 @@ pub struct Router {
     profile: Profile,
     /// While the via reduction runs (its negotiations are its own phase).
     in_via_reduction: bool,
+    /// While a layout's trial (`reroute` without the polish) finishes:
+    /// the trouble-makers' repair waits for the board kept.
+    in_trial: bool,
     /// Whether the negotiation running is a probe's (`probe`).
     in_probe: bool,
     /// The rest of the iteration a probe's work limit cut (`probe`), for
