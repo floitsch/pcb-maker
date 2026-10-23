@@ -117,8 +117,10 @@ a set. In the order the log prints them 15 boards differ, on x1647 run
 twice as well: rungs side by side print their lines as they finish.
 (x1712: better 1, nervous-ecg 4 -> 2, same 45; x1711: OpenRX-Mono 12 ->
 23.) The fingerprint boards (Castor, k30, jetson, Sisu; route mode from
-v16, budget scale 0.25, 1 x 4): x1714 identical to x1647 on all four (x1712 moved Sisu, above). check.sh --fast, the clippy
-gate.
+v16, budget scale 0.25, 1 x 4): x1714's fingerprints identical to
+x1647's on all four (x1712 moved Sisu's, above). check.sh --fast, the
+clippy gate.
+
 ## Committed on 2026-10-23 (differential pairs, phase 1)
 
 Differential pairs, the first feature of the Allegro stretch goal, behind
