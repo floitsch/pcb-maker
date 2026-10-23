@@ -1728,10 +1728,13 @@ the first direction a stair-step). Every step must be free as the hard
 search judges one (the static map and its edge blocks, the other nets'
 clearance zones at the node and beside a diagonal, exclusive pours), the
 new nodes may touch none of the net's other nodes, branch ends and
-junctions stay, and the new path may lie in no more of other pads'
-spoke corridors (thermal guards: the spoke repair after it moved such
-paths out again, with vias; BAGEL-MK1 153 to 157 vias before the rule)
-and on no more of another net's pour than the old one. A shortest path is never longer and no via moves,
+junctions stay, and the new path may lie in no more of other nets'
+thermal guards and pour pads' spoke corridors (`spoke_corridors`) than
+the old one (without the guards the spoke repair after it moved such
+paths out again, with vias: BAGEL-MK1 153 to 157 vias; with the guards
+alone k30-SBC had a starved thermal more), and on no more of another
+net's pour. Incomplete nets are left as they are (jetson: 130 nets
+straightened); taking them too is open. A shortest path is never longer and no via moves,
 so connections, vias and length cannot get worse. The net is stamped
 again. With `pour_aware_polish` the pour nets' stranded pads are
 counted before the first change and once after the pass (the pour nets
