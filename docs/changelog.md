@@ -11,6 +11,62 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Experiment 2026-10-22 (routes and placements closer to humans)
+
+Florian's brief: what would get the routes and placements closer to a
+designer's, with five ideas to assess (trouble-makers first, moves that
+keep traces, zero-width capacity first, buses as bundles, pin swaps).
+Write-up: docs/experiments/human-level-routing.md. Branch
+human-level-routing; snapshots x1580-x1584.
+
+- **The failure data.** On the five gap boards the open nets are open
+  whole (a ten-pad bus net with nine pads open): the hard repair rips
+  the conflicted nets and routes them again in the routing order, which
+  puts the multi-pad buses after every short net. Bus nets (four or
+  more nets joining the same footprints) hold 80 % of video's open
+  terminals on our placement and 64-75 % of MegaDrive's on either; OpenESC
+  and Glasgow are open on supply and motor nets.
+- **The assessment.** Moves that keep traces exist (`Router::update`, the
+  coupled loop) and do not run on boards far from complete, where a
+  bounded round measured worse on 2026-10-21; zero-width capacity exists
+  twice (the tile planner, `pcb-global`) and is a placement lever, not a
+  routing one; pin swaps exist and do not apply to the gap boards'
+  netlists; bus bundles are the largest share and weeks of work. Chosen:
+  the trouble-makers, as a trade the router did not make.
+- **The trouble-makers' repair** (`crates/pcb-router/src/router/trouble.rs`,
+  `PCB_ROUTER_TROUBLE`, off; its knobs `_PRESENT`, `_SHARE`, `_ROUNDS`,
+  `_VICTIMS`, `_DEPTH`, `_WHY` in the environment index). After the hard
+  repair each open net, most open first, is routed through other copper
+  at a price; the nets it overlaps lose the crossed branches and are
+  routed again hard; the exchange is kept when the open terminals of all
+  of them drop, else restored exactly. Up to half of the attempt's
+  negotiation in work. `force_connect` kept an exchange only when every
+  net ended complete; this one trades.
+- **Measured** (route mode, run.py; x1543 against x1582 with the
+  switch): designer placements 136 to 112 KiCad unconnected (SNSP-CPU-01
+  6 to 4, Glasgow 55 to 49, MegaDrive 75 to 59; video and OpenESC
+  complete and unchanged), v18 placements 841 to 741 (video 235 to 214,
+  SNSP-CPU-01 158 to 140, OpenESC 112 to 104, Glasgow 159 to 148,
+  MegaDrive 177 to 135); x1560 against x1580 the same picture (134 to
+  112, 825 to 738). Layouts of the five (x1592 against x1582, identical
+  placements): 879 to 777 (video 199 to 185, SNSP-CPU-01 147 to 128,
+  OpenESC 127 to 120, Glasgow 191 to 190, MegaDrive 215 to 154). No new
+  errors, no row cut; vias +11 % on MegaDrive, +29 % on video's v18
+  route. Fingerprints with the switch off byte-identical on Castor,
+  k30-SBC, jetson and Sisu (x1543/x1581, x1543/x1582, x1573/x1583, x1603/x1584);
+  with it on jetson 20 to 17, Sisu 25 to 23.
+- **One long negotiation** (configuration only, `negotiation_seconds`
+  900 on the designer placements): MegaDrive's conflicts plateau at
+  118-150 at the price cap for 34 iterations, 85 unconnected against 75;
+  SNSP-CPU-01 7 against 6, Glasgow 53 against 55. No-go.
+- **Recommendation**: go as the next default candidate, after the short
+  and expansion tiers with the switch (complete boards unchanged so far;
+  the risk is starved thermals and vias on nearly complete ones), then
+  the sweep. Then: supply nets as trouble-makers (the refusals: more than
+  twelve victims, a pour in the way), the global route in the placer's
+  search for the placement half, bus bundles after a placement that
+  lines the bus up.
+
 ## Committed on 2026-10-22 (router memory)
 
 A router on a big board took 4 to 7 GB (katia 4.8 GB with one router),

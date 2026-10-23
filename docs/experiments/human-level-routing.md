@@ -180,3 +180,160 @@ board almost nothing passes that test. The trouble-makers' repair trades:
 a bus net of ten pads may cost a short net one pad. That is the human
 move the data asked for: the bus goes in first, the short nets find
 another way.
+
+## Measurements
+
+Route mode on the five gap boards (run.py, one search thread a board,
+the pinned work rates, the ledger's admission, beside other agents'
+runs): on the designer's placement (`--tier designer`, 1500 s of work)
+and on the v18 layouts' final placements (`--route-from`, the merged
+`build/exp1-v18-placements`: v18 for video and OpenESC, v18b for the
+other three; the route-mode budget, 1200 s). Two pairs, each the same
+binary's main against the branch: x1560 (bda6ffa) against x1580 (its
+first version), and x1543 (main ec60853, the routing of every main since
+up to x1603) against x1582 (the version described above; on ec60853).
+Each cell: KiCad's unconnected items (the router's open terminals) /
+new DRC errors (strict) / vias / work seconds. Logs
+`build/exp1-{designer,v18route}-<binary>.log`.
+
+**The designer's placement:**
+
+| Board | x1543 | x1582, `PCB_ROUTER_TROUBLE=1` |
+| --- | --- | --- |
+| video | 0 (0) / 0 / 603 / 681 | 0 (0) / 0 / 603 / 681 |
+| SNSP-CPU-01 | 6 (13) / 0 / 1367 / 1206 | 4 (7) / 0 / 1339 / 1108 |
+| OpenESC 4in1 | 0 (0) / 0 / 111 / 281 | 0 (0) / 0 / 111 / 281 |
+| Glasgow | 55 (58) / 0 / 234 / 1458 | 49 (50) / 0 / 240 / 1575 |
+| MegaDrive | 75 (100) / 0 / 1234 / 1122 | 59 (79) / 0 / 1366 / 1434 |
+| sum | 136 | 112 (-18 %) |
+
+**The v18 placements:**
+
+| Board | x1543 | x1582, `PCB_ROUTER_TROUBLE=1` |
+| --- | --- | --- |
+| video | 235 (334) / 0 / 938 / 1217 | 214 (290) / 0 / 1212 / 1269 |
+| SNSP-CPU-01 | 158 (177) / 0 / 1223 / 737 | 140 (146) / 0 / 1283 / 919 |
+| OpenESC 4in1 | 112 (160) / 0 / 141 / 1010 | 104 (117) / 0 / 140 / 1189 |
+| Glasgow | 159 (167) / 0 / 245 / 1231 | 148 (155) / 0 / 247 / 1260 |
+| MegaDrive | 177 (223) / 1 / 1361 / 1078 | 135 (165) / 1 / 1504 / 904 |
+| sum | 841 | 741 (-12 %) |
+
+The first pair (x1560 against x1580) says the same: designer placements
+134 to 112, v18 placements 825 to 738 (video 219 to 211, SNSP-CPU-01 158
+to 140, OpenESC 112 to 104, Glasgow 159 to 148, MegaDrive 177 to 135;
+designer: SNSP-CPU-01 6 to 4, Glasgow 53 to 49, MegaDrive 75 to 59).
+Every board that leaves anything open gains, on both placements, in
+both pairs; none loses; the boards complete without the repair (video
+and OpenESC on the designer's placement) are unchanged, the repair never
+running there. MegaDrive's one strict error (a copper edge clearance)
+is on both sides. No row was cut.
+
+**Layouts** (the whole flow at the task budget, two threads a board;
+x1592, main 313b920, routing as x1543, against x1582 with the switch;
+the placements are byte-identical on both sides, the repair touching
+only routes; logs `build/exp1-layout-*.log`):
+
+| Board | x1592 | x1582, `PCB_ROUTER_TROUBLE=1` |
+| --- | --- | --- |
+| video | 199 (328) / 0 / 1505 / 1474 | 185 (308) / 0 / 1558 / 1354 |
+| SNSP-CPU-01 | 147 (160) / 0 / 1692 / 1435 | 128 (146) / 0 / 1802 / 1453 |
+| OpenESC 4in1 | 127 (187) / 0 / 135 / 1398 | 120 (154) / 0 / 141 / 1500 |
+| Glasgow | 191 (214) / 0 / 319 / 1390 | 190 (213) / 0 / 319 / 1503 |
+| MegaDrive | 215 (268) / 0 / 1829 / 1563 | 154 (167) / 0 / 2024 / 1573 |
+| sum | 879 | 777 (-12 %) |
+
+**Fingerprints, the switch off:** the routed boards of Castor, k30-SBC,
+jetson and Sisu (route mode on the v16 placements at a quarter of the
+budget, as the fingerprint runs) byte-identical, x1543 against x1581 and
+x1582, x1573 against x1583 (after the rebase on 55f6d48) and x1603
+against x1584 (on the router-memory merge). With
+the switch on, at that budget: jetson 20 to 17 unconnected (597 to 607
+vias), Sisu 25 to 23 (375 to 379), Castor and k30 (complete) identical;
+x1584 with the switch reproduces x1582 there exactly.
+
+**What the exchanges are.** Per run, summed over the ladder's attempts
+(`trouble:` lines; x1582, v18 placements): MegaDrive 34 of 144 exchanges
+kept, 143 terminals closed in 154 s of work; SNSP-CPU-01 48 of 480, 138
+in 173 s; OpenESC 26 of 607, 88 in 183 s; video 9 of 21, 44 in 167 s
+(one attempt: video's exchanges are expensive); Glasgow 10 of 173, 21
+in 165 s. On MegaDrive's designer placement the kept exchanges are bus
+nets (VA9-12, VD5-14, VDDF: 7 to 17 terminals open closed to 0-3 by
+displacing 3-9 short nets), the refusals mostly more than 12 victims
+(the supplies VCC, VCCQ), a pour net in the way (GND), or a trade that
+closes as many as it opens.
+
+**Costs.** Vias rise where the repair works (MegaDrive +11 % on every
+placement, video +29 % on the v18 placement and +4 % in the layout,
+SNSP-CPU-01 +5-7 %): displaced nets are routed
+again hard and take vias around the bus that went in; the via reduction
+runs after the repair as before. The repair takes up to half of an
+attempt's negotiation in work, inside the ladder's bound; where the
+ladder used to leave part of its bound unused (Glasgow's designer route
+1458 s of 1575, MegaDrive 1122 s) the repair's work is extra; where the
+bound binds, it comes out of the later attempts (MegaDrive's v18 route
+904 s against 1078: its second attempt started with less). Wall time
+beyond the work: finding one-sided blockers scans every net's stamps
+(uncharged, milliseconds an exchange).
+
+## Also measured: one long negotiation (configuration only)
+
+The data's own suggestion, "keep negotiating the board that converges":
+the designer placements of MegaDrive, SNSP-CPU-01 and Glasgow routed by
+x1543 with `{"ladder_budget_seconds": 1500, "negotiation_seconds": 900}`
+(`build/exp1-longneg-x1543`). MegaDrive's first attempt negotiated 47
+iterations: conflicted nets 248, 168 at iteration 10 (where the default
+stops), then 141 at 12 and a plateau of 118-150 at the price cap for 34
+more iterations; KiCad 85 unconnected against 75 by default.
+SNSP-CPU-01 7 against 6, Glasgow 53 against 55. The negotiation does not
+converge further on these boards; it stalls at the price cap with a
+hundred nets in conflict. **No-go**: the time is better spent after it,
+on trades.
+
+## Recommendation: go, as the next default candidate (iterate first)
+
+The trouble-makers' repair is the first routing change in this round
+that closes connections on every gap board it can touch, on both
+placements, in route mode and in the full layout, with no new errors
+and identical results where it does not run: -12 % to -18 % of KiCad's
+unconnected items on the five gap boards, most on the bus boards
+(MegaDrive -21 to -28 %, SNSP-CPU-01 -11 to -33 %). It is small (one
+file, a hook in `finish`), deterministic, and inside every work bound.
+It is not a fix of the gap: video on our placement still leaves 185-214
+open, the designer's placement none; the placement half of the gap is
+untouched.
+
+Before it becomes a default:
+
+1. The short tier and the expansion tier at 30 s with
+   `PCB_ROUTER_TROUBLE=1`, against the same binary: the boards the five
+   do not cover (complete boards should be unchanged, as Castor and k30
+   are; starved thermals, mask bridges and vias on the nearly complete
+   ones are the risk: a displaced net may now cut a spoke that the
+   thermal repair after it has to win back).
+2. Then the layout sweep (the strict passes and the via ratio).
+3. Tuning only after that, on the short tier: the victims' limit (12;
+   VCC and VCCQ want more), the price (20), the share (0.5).
+
+Next steps the data asks for, in order of expected gain per week:
+
+- **Supply nets as trouble-makers.** The refusals on MegaDrive and
+  Glasgow are supply nets (VCC, VCCQ, +3V3, VIOB) with more than twelve
+  victims or a pour in the way; Glasgow gains least (21 terminals). A
+  supply trade wants its pour analysed again after the exchange (the
+  stitching and the pour refresh exist), and victims grouped by area.
+- **The placement half: the global route in the placer's search**
+  (idea 3), where it is strong (structure: video and OpenESC route
+  completely on the designer's placement and leave 185-214 and 104-127
+  open on ours).
+- **Bus bundles** (idea 4), after a placement that lines the bus up:
+  the repair shows bus nets go in when short nets make room; a bundle
+  router would lay them out together in the first place.
+- Not now: pin swapping on these boards (not applicable to the task),
+  more negotiation (measured: it stalls), moves on boards far from
+  complete (measured on 2026-10-21: they lose).
+
+Snapshots: x1580 (bda6ffa plus the first version), x1581 (ec60853 plus
+the first version), x1582 (the measured version on ec60853), x1583 (on
+55f6d48), x1584 (on main 9b403c8, the router-memory merge). The
+session's analysis scripts (open nets by net class, bus grouping, the
+tables) are not committed; the tables above are their output.
