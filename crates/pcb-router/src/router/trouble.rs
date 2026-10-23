@@ -47,10 +47,12 @@ pub(super) struct TroubleSettings {
     /// counted as the pads off their pour's main piece (the pour
     /// analysed again after the exchange).
     pub pours: bool,
-    /// The victims are routed again on their corridors first
-    /// (`PCB_ROUTER_TROUBLE_LOCAL`, on): a victim left open by that gets
-    /// the hard search's window and board-wide fallbacks only where they
-    /// could still make the exchange pass.
+    /// The victims are routed again on their corridors only
+    /// (`PCB_ROUTER_TROUBLE_LOCAL`, on): without the hard search's window
+    /// and board-wide fallbacks, which cost most of the victims' work and
+    /// almost never close a terminal the corridors did not (Glasgow's
+    /// designer placement: 7 of 291 such searches; docs/changelog.md,
+    /// 2026-10-23); `0` the full hard search.
     pub local: bool,
     /// An exchange is undone as soon as the victims routed so far leave
     /// it no way to pass (`PCB_ROUTER_TROUBLE_EARLY`, on): the victims not
@@ -132,15 +134,12 @@ struct Exchange {
 struct TroubleWork {
     /// The trouble-makers' priced searches.
     priced: f64,
-    /// The victims' hard routes (both passes).
+    /// The victims' hard routes.
     victims: f64,
-    /// Of `victims`, the second pass's (`TroubleSettings::local`).
-    retried: f64,
     /// The work of the exchanges kept (priced and victims).
     kept: f64,
-    /// Victims routed, and of them routed again with the fallbacks.
+    /// Victims routed.
     routed: usize,
-    retries: usize,
     /// Exchanges undone early (`TroubleSettings::early`).
     early: usize,
 }
@@ -306,14 +305,12 @@ impl Router {
         }
         if self.config.verbose {
             eprintln!(
-                "trouble: {closed} open terminals closed in {tried} exchanges tried, {kept} kept ({ties} ties), {:.1} s of work{}; priced searches {:.1} s, victims {:.1} s ({} routed; again with the fallbacks {}, {:.1} s), kept exchanges {:.1} s, {} undone early",
+                "trouble: {closed} open terminals closed in {tried} exchanges tried, {kept} kept ({ties} ties), {:.1} s of work{}; priced searches {:.1} s, victims {:.1} s ({} routed), kept exchanges {:.1} s, {} undone early",
                 self.budget_work() - clock.0,
                 if out_of_work { " (out of work)" } else { "" },
                 work.priced,
                 work.victims,
                 work.routed,
-                work.retries,
-                work.retried,
                 work.kept,
                 work.early,
             );
@@ -586,12 +583,10 @@ impl Router {
         Ok((saved, victims))
     }
 
-    /// Routes the victims of `net`'s exchange again, hard, in their order.
-    /// With `settings.local` their corridors first, all of them; then the
-    /// fallbacks for the victims left with more open terminals than they
-    /// had, while that could still make the exchange pass. With
-    /// `settings.early`, an error as soon as it cannot pass (the victims not
-    /// yet routed counted as closing all their terminals).
+    /// Routes the victims of `net`'s exchange again, hard, in their order;
+    /// with `settings.local` on their corridors only (`hard_local`). With
+    /// `settings.early`, an error as soon as the exchange cannot pass (the
+    /// victims not yet routed counted as closing all their terminals).
     fn route_victims(
         &mut self,
         net: NetId,
@@ -609,29 +604,18 @@ impl Router {
         };
         // The open measure of a pour net moves with other nets' copper.
         let early = settings.early && !settings.pours;
-        let after_net = if early { self.open_measure(net) } else { 0 };
-        let before_of = |victim: NetId| {
-            saved
-                .iter()
-                .find(|entry| entry.0 == victim)
-                .map_or(0, |entry| entry.4)
-        };
-        let local = settings.local;
-        let mut floor = after_net;
+        let mut floor = if early { self.open_measure(net) } else { 0 };
         for victim in victims {
             self.nets[*victim as usize].hopeless_searches = 0;
-            self.hard_local = local;
+            self.hard_local = settings.local;
             self.route_net_seq(*victim, 0.0, true, 4.0);
             self.hard_local = false;
             self.stamp(*victim);
             work.routed += 1;
             if early {
-                // A victim the second pass may route again could still
-                // close all its terminals.
-                let open = self.open_measure(*victim);
-                if !local || open <= before_of(*victim) {
-                    floor += open;
-                }
+                // A victim routed keeps its terminals: the later ones are
+                // routed around it.
+                floor += self.open_measure(*victim);
                 if floor > most {
                     return Err(format!(
                         "undone early: at least {floor} open after, {before} before"
@@ -639,42 +623,7 @@ impl Router {
                 }
             }
         }
-        if !local {
-            return Ok(());
-        }
-        let retry: Vec<NetId> = victims
-            .iter()
-            .copied()
-            .filter(|victim| self.open_measure(*victim) > before_of(*victim))
-            .collect();
-        if retry.is_empty() {
-            return Ok(());
-        }
-        let started = self.budget_work();
-        let mut now = open_now(self, saved);
-        let mut left: usize = retry.iter().map(|victim| self.open_measure(*victim)).sum();
-        let mut result = Ok(());
-        for victim in &retry {
-            // Even closing every open terminal of the victims still to
-            // route leaves too many open: the exchange cannot pass.
-            if early && now - left > most {
-                result = Err(format!(
-                    "undone early: at least {} open after, {before} before",
-                    now - left
-                ));
-                break;
-            }
-            let open = self.open_measure(*victim);
-            self.nets[*victim as usize].hopeless_searches = 0;
-            self.route_net_seq(*victim, 0.0, true, 4.0);
-            self.stamp(*victim);
-            work.retries += 1;
-            let after = self.open_measure(*victim);
-            now = now + after - open;
-            left -= open;
-        }
-        work.retried += self.budget_work() - started;
-        result
+        Ok(())
     }
 }
 

@@ -230,7 +230,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_ROUTER_TROUBLE_LOCAL",
         Kind::Switch,
-        "the trouble-makers' repair: `1` routes an exchange's victims again on their corridors first and gives the hard search's window and board-wide fallbacks only to those left with more open terminals, while that could still make the exchange pass (default 1; `0` the full hard search for every victim).",
+        "the trouble-makers' repair: `1` routes an exchange's victims again on their corridors only, without the hard search's window and board-wide fallbacks (default 1; `0` the full hard search for every victim).",
     ),
     (
         "PCB_ROUTER_TROUBLE_EARLY",

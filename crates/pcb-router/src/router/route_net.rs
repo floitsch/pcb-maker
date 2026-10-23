@@ -416,9 +416,7 @@ impl Router {
             // corridor was searched first.
             scratch.lane.active = false;
             let corridor_tried = global.is_some() || (self.config.corridors && !self.cleanup);
-            // The trouble repair's local pass (`hard_local`): corridors
-            // only; a victim they do not reconnect is searched again with
-            // the fallbacks only where that could still save the exchange.
+            // The trouble repair's victims (`hard_local`): corridors only.
             let fallback = if hard && self.hard_local && corridor_tried {
                 false
             } else {
