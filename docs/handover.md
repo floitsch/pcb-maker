@@ -429,6 +429,9 @@ Switches and experiment hooks (change the result):
 - `PCB_ROUTER_TROUBLE_ORDER`: the trouble-makers' repair: the order of a round's trouble-makers, `open` (most open terminals first) or `few` (each surveyed by its priced search alone, the fewest victims per terminal closed first; default `open`).
 - `PCB_ROUTER_TROUBLE_DEPTH`: the trouble-makers' repair: 2 lets a displaced net that came out worse displace others in turn (default 1).
 - `PCB_ROUTER_TROUBLE_POURS`: the trouble-makers' repair: `1` lets pour nets take part, as trouble-makers and as victims, weighed by their pads off the pour's main piece (an experiment, off).
+- `PCB_ROUTER_BUS_BUNDLES`: sets the router's `bus_bundles` (an experiment, off): buses of four or more nets joining the same footprints route first, in pad order, inside one corridor, side by side (docs/experiments/bus-bundles.md).
+- `PCB_ROUTER_BUS_LANE`: the router's `bus_lane_cost`: the factor on a bus member's step off the lane beside its neighbours (default 1.5).
+- `PCB_ROUTER_BUS_MARGIN`: bus bundles: tiles a bus's corridor is grown by beyond half its width (default 4).
 - `PCB_ROUTER_NO_SPOKELESS_TRACKS`: turns off the router's `spokeless_tracks` (a straight track into kept fill for a pad the spoke model sees without a spoke).
 - `PCB_ROUTER_NO_APART_TREES`: turns off the router's `apart_trees` (terminals no path reaches from their net's tree joined among themselves).
 - `PCB_ROUTER_NO_LOST_SPOKES`: turns off the router's `lost_spoke_repair` (other nets rerouted around a starved pad's cut spokes after the clean-up).
@@ -450,6 +453,7 @@ Switches and experiment hooks (change the result):
 Diagnostics (stderr unless said; the result does not change):
 
 - `PCB_ROUTER_TROUBLE_WHY`: the trouble-makers' repair prints every exchange's outcome (kept, or why refused).
+- `PCB_ROUTER_BUS_WHY`: bus bundles: prints every bus found and every member broken out of its bundle.
 - `PCB_ROUTER_DEBUG`: the router's verbose lines (failed searches, the resolution, what blocks a stub, lattice details).
 - `PCB_ROUTER_DUMP`: `x0,y0,x1,y1`: prints that region of the lattice per layer (static blocks, own pads, occupancy, where vias may not go).
 - `PCB_ROUTER_FINGERPRINT`: a hash of the routing state at each phase (determinism and byte-identity checks; compare as a multiset when attempts run side by side).

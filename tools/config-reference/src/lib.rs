@@ -228,6 +228,26 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "the trouble-makers' repair prints every exchange's outcome (kept, or why refused).",
     ),
     (
+        "PCB_ROUTER_BUS_BUNDLES",
+        Kind::Switch,
+        "sets the router's `bus_bundles` (an experiment, off): buses of four or more nets joining the same footprints route first, in pad order, inside one corridor, side by side (docs/experiments/bus-bundles.md).",
+    ),
+    (
+        "PCB_ROUTER_BUS_LANE",
+        Kind::Switch,
+        "the router's `bus_lane_cost`: the factor on a bus member's step off the lane beside its neighbours (default 1.5).",
+    ),
+    (
+        "PCB_ROUTER_BUS_MARGIN",
+        Kind::Switch,
+        "bus bundles: tiles a bus's corridor is grown by beyond half its width (default 4).",
+    ),
+    (
+        "PCB_ROUTER_BUS_WHY",
+        Kind::Diagnostic,
+        "bus bundles: prints every bus found and every member broken out of its bundle.",
+    ),
+    (
         "PCB_ROUTER_NO_SPOKELESS_TRACKS",
         Kind::Switch,
         "turns off the router's `spokeless_tracks` (a straight track into kept fill for a pad the spoke model sees without a spoke).",
