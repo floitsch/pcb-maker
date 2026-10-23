@@ -60,8 +60,10 @@ STUB = textwrap.dedent('''\
             board = output / r["name"]
             (board / "route").mkdir(parents=True, exist_ok=True)
             changed = "b" if night == 2 and r["name"] == "repo__Gamma" else "a"
-            (board / "route.log").write_text(f"fingerprint before resolve: 1111{changed}\\n"
-                                             "fingerprint after clean-up: 2222\\n")
+            lines = [f"fingerprint before resolve: 1111{changed}\\n", "fingerprint after clean-up: 2222\\n"]
+            if night == 2 and r["name"] == "repo__Alpha":  # rungs side by side: another order, the same lines
+                lines.reverse()
+            (board / "route.log").write_text("".join(lines))
             (board / "route" / "x.kicad_pcb").write_text(f"board {changed}")
     for r in rows:
         print(json.dumps(r))
@@ -235,6 +237,28 @@ def test_stage_summary_parses_run_py_summaries(tmp_path):
     assert report.stage_summary(tmp_path / "missing.json") is None
     (tmp_path / "broken.json").write_text("{")
     assert report.stage_summary(tmp_path / "broken.json") is None
+
+
+def test_fingerprints_compare_as_a_multiset(tmp_path):
+    # Rungs side by side print their lines as they finish: two logs that
+    # differ only in order are identical; one copy of a repeated line
+    # changed, or one more copy, is a change of that phase.
+    def logs(name, *texts):
+        for board, text in zip(("repo__One", "repo__Two", "repo__Three"), texts):
+            (tmp_path / name / board).mkdir(parents=True)
+            (tmp_path / name / board / "route.log").write_text(text)
+        return report.fingerprints_of(tmp_path / name)
+
+    a, b, c = ("fingerprint before resolve: 00aa\n", "fingerprint after clean-up: 00bb\n",
+               "fingerprint before stitching 2: 00cc, 3 pieces, main 1, spoke islands []\n")
+    before = logs("before", a + b + a + c, a + b, a + b)
+    after = logs("after", c + a + b + a, a + "fingerprint after clean-up: 00bd\n", a + b + b)
+    changes = report.fingerprint_changes(after, before)
+    assert changes == {"repo__One": "identical", "repo__Two": "fingerprints changed (after clean-up)",
+                       "repo__Three": "fingerprints changed (after clean-up)"}
+    record = {"stages": {"fingerprints": {"status": "ran"}},
+              "fingerprints": {"previous": "2026-10-22", "changes": {"repo__One": "identical"}}}
+    assert report.fingerprint_cell(record) == "identical"
 
 
 def test_the_table_keeps_fourteen_nights_newest_first():

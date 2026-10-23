@@ -11,6 +11,38 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-23 (nightly fingerprints as sets)
+
+Branch nightly-fingerprints, no snapshot (scripts only). The worry: the
+nightly compares a board's fingerprint lines in the order the log prints
+them, and rungs side by side print theirs as they finish (the 15
+expansion boards of the section below), so a pure reordering would flag
+a board. **It does not:** `scripts/nightly-report.py` already sorts each
+board's lines (`fingerprints_of`) and compares them as a multiset
+(`fingerprint_changes`, a `Counter` difference), naming the phases whose
+hashes differ; a reordering reads "identical" in the board table, the
+night's Fingerprints cell and the docs' table. Nothing else in scripts
+compares fingerprints: compare.py and the nightly's diff-<stage>.txt
+compare result rows, and the fixture golden (tests/fixtures.rs,
+`f1-fingerprints.txt`) and tests/router_fingerprint.rs sort the lines
+before comparing. A line names its phase only (`fingerprint after
+clean-up: <hash>`, crates/pcb-router/src/router/finish.rs), not its rung,
+so a change can name the phase, not the attempt.
+
+Changed: the tests pin it. `test_fingerprints_compare_as_a_multiset`
+(two logs in another order with a repeated line: identical; one copy of
+a repeated line changed, one copy more: "fingerprints changed (after
+clean-up)"; the stitching line with its trailing pieces), and the dry
+run's second night prints Alpha's lines reversed and still reads
+identical. `fingerprint_changes`' docstring says why.
+
+At the source: the hashes come from the router's state, not from the
+printing, so the binary could print in a deterministic order without
+changing a hash: buffer each router's lines and let the ladder print
+them after its `thread::scope` join in rung order, with the rung's name
+in each line (crates/pcb-kicad/src/board_router/ladder.rs). Then a change
+could name its attempt too. Not done here.
+
 ## Committed on 2026-10-23 (the boards other routers beat us on)
 
 Branch beaten-boards, snapshot x1714 against main's x1647 (the pin-row

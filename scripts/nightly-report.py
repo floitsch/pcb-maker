@@ -119,7 +119,10 @@ def fingerprints_of(directory):
 
 def fingerprint_changes(current, previous):
     """Per board of `current`: "identical", "new" (no previous), or what
-    changed: the first phase whose hashes differ, the board."""
+    changed: the phases whose hashes differ, the board. The lines compare
+    as a multiset: rungs side by side print theirs as they finish, so a
+    pure reordering is identical. A line names its phase, not its rung,
+    so the phase is all a change can name."""
     changes = {}
     for board, now in current.items():
         before = (previous or {}).get(board)
