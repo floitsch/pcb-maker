@@ -21,21 +21,22 @@ Not finished, but already useful.
   layers, 44 with four or more; [the harvest](benchmarks/github/README.md)).
   Reduced to what an agent starts from - parts stacked, the designer's
   placement gone, a `constraints.json` of fixed connectors and edges -
-  pcb-maker places and routes **42 of 109** to a clean KiCad verdict
+  pcb-maker places and routes **49 of 109** to a clean KiCad verdict
   under the strict rule (0 unconnected, no copper error beyond what the
-  designer's board has at the same place; 46 under the per-type rule)
+  designer's board has at the same place; 52 under the per-type rule)
   within 1500 s of work each, every board placed from stacked parts
-  (sweep v18, 2026-10-21). Per board against the designer's own board
-  (medians): 0.71 times the vias, 1.03 times the track length, 0.9 % of
-  the connections left open, the ground pours cut no more than the
-  designer's. Of the 67 that fail, 18 are within five connections and
-  five errors of clean, 24 leave more than 20 connections open, and six
-  have no result (panels, and one whose zone refill KiCad does not
-  finish). Routed by the same binary on the designer's own placement, 50
-  pass the strict rule; on the 97 target boards with both results our
-  placement accounts for 71 % of the open connections and our router for
-  29 %
-  ([results](docs/benchmarks.md#layout-sweep-v18-2026-10-21)).
+  (sweep v19, 2026-10-22). Per board against the designer's own board
+  (medians): 0.74 times the vias, 1.08 times the track length, nothing
+  left open on more than half the boards (9 % of the connections open on
+  average), no via in a small SMD pad. Of the 60 that fail, 19 are within
+  five connections and five errors of clean, 20 leave more than 20
+  connections open, and ten have no result (panels without a legal place
+  for every part, one that refuses a held connector, and one whose zone
+  refill KiCad does not finish). Routed by the same binary on the
+  designer's own placement at the layout's routing budget, 54 pass the
+  strict rule; on the 97 target boards with both results our placement
+  accounts for 59 % of the open connections and our router for 41 %
+  ([results](docs/benchmarks.md#layout-sweep-v19-2026-10-22)).
 - **At scale, on the designer's placement:** 5 834 boards harvested from
   1 146 public KiCad repositories, each routed from stripped copper with a
   30 s budget: 2 309 route clean under KiCad's own DRC within 30 s, 3 896
@@ -270,7 +271,9 @@ the main corpus ([docs/benchmarks.md](docs/benchmarks.md)):
 
 | Sweep | Boards | pcb-maker | Freerouting |
 | --- | --- | --- | --- |
+| Layout from stacked parts and constraints, 1500 s of work (v19, x1539, 2026-10-22) | 109 | 49 clean (strict rule; 52 per type), 1827 connections open in all, no row cut | - |
 | Layout from stacked parts and constraints, 1500 s of work (v18, 2026-10-21) | 109 | 42 clean (strict rule; 46 per type), 2712 connections open in all | - |
+| Routing the designer's placement at the layout's routing budget, 1042.5 s of work (matched designer tier x1539, 2026-10-22) | 109 | 54 clean (strict rule; 61 per type), 747 open on the 97 target boards with a result | - |
 | Routing the designer's placement, 1500 s of work (designer tier x1315, 2026-10-21) | 109 | 50 clean (strict rule; 58 per type), 430 open on the 97 target boards with a result | - |
 | Routing the designer's placement cold, 1500 s (x738, 2026-10-15) | 109 | 62 clean (not comparable with the row above: every copper zone removed, judged per type against the stripped source's own DRC, a wall-clock budget, a binary 577 snapshots older); where both finish (67 boards) 51 clean, 184 open | 67 finished, 36 timed out, 6 failed; where both finish 8 clean, 873 open |
 

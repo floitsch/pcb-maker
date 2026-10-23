@@ -1,4 +1,4 @@
-# Hand-over (state as of 2026-10-16, main 54eff39, snapshot x1170)
+# Hand-over (state as of 2026-10-22, main af9d32a, snapshot x1539; measured by layout sweep v19)
 
 What the tool does today, which benchmarks count, what is known to be
 wrong, where everything is and how to work on it. What each round of work
@@ -78,6 +78,19 @@ boards with both results, placement 71 % and routing 29 % of the open
 connections (`compare.py --gap`). `build/github-layout-v18.log`; table,
 gap split and the boards in
 [benchmarks.md](benchmarks.md#layout-sweep-v18-2026-10-21).
+
+**Layout sweep v19** (x1539 = main af9d32a, tasks v7, 10 jobs x 2
+threads, one part): **49 of 109 pass the strict rule** (52 the per-type
+rule; v18 re-judged under rule 3 stays at 42 / 46), 1827 unconnected, no
+row cut or killed, ten without a result (nine refusals, eight of them
+panels, and the 0xCB pcb-panel's DRC timeout); medians against the
+designer's board: vias x0.74, length x1.08, open 0.000 of the connections
+(mean 0.090); no via in a small SMD pad on any board. The matched designer
+tier on the same binary (`build/designer-x1539-matched.log`, budget scale
+0.695): 54 strict passes; on the 97 target boards with both results,
+placement 59 % and routing 41 % of the open connections.
+`build/github-layout-v19.log`; table, gap split and the boards in
+[benchmarks.md](benchmarks.md#layout-sweep-v19-2026-10-22).
 
 **Quick tier** (30 boards, full budget, the merge gate):
 `build/quick30-x1152.log` (x1152 = main 015676c, tasks v6): **24 of 30

@@ -11,6 +11,56 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-10-22 (layout sweep v19, matched designer tier)
+
+The first full measurement on one binary after the packages of 2026-10-21
+and 22, and the README's numbers moved to it. Binary x1539 (main
+af9d32a), tasks v7, `--quality`, pinned work rates, both runs through the
+tier lock with 14 GB kept free
+([benchmarks.md](benchmarks.md#layout-sweep-v19-2026-10-22)):
+
+- **Layout sweep v19** (`build/github-layout-v19.log`, 10 x 2, 18399 s
+  wall): **49 of 109 pass the strict rule** (52 the per-type rule), 1827
+  unconnected, strict errors 1326, no row cut (katia and Batch_1 finish:
+  38 and 234 open) and none killed, ten without a result. Against v18
+  (x1315, two binaries; v18 re-judged under strict rule 3 with
+  rejudge.py, no row changed: 42 / 46): better 28, same 53, worse 16; on
+  the 99 boards with a result in both, unconnected 1948 -> 1827. Medians
+  against the designer's: vias x0.71 -> x0.74, length x1.03 -> x1.08, open
+  0.009 -> 0.000 (mean 0.284 -> 0.090).
+- **Gained the strict pass**, 9: mackerel-30-proto, rosco's `kicad`, coco2
+  and k30-SBC (starved thermals gone), silkscreen_pcb (copper to the edge
+  gone), zpn_devboard, BAGEL-MK1.1-Avocado, Explorer and slab-pcb-left
+  (their last connections routed). neotron-pico routes every net-tie pad
+  now (24 open to 0; hole_clearance 2 keeps it failing). **Lost**, 2:
+  OM-FlexGrid-Flex refuses ("1 parts without a legal place (J1)", J1 held
+  by an edge, region or overhang constraint) and homebrew_486's GND zone
+  is in two islands (one open).
+- **No vias in SMD pads**: score-kicad-board counts 0 on all 99 boards
+  with a result (v18: 1299 on 74 boards).
+- **New refusals**: the OpenRX panel (81 parts without a legal place; 226
+  open in v18), SmartSpin2k_Panelized (12; 39 open), the molecule 5x4_wave
+  panel ("J3, J4, silkscreen mark"; 499 open) and OM-FlexGrid-Flex; 764 of
+  the 885 fewer unconnected in all rows are those boards.
+- **The ground pour cut is not comparable** with v18: x1539's
+  score-kicad-board gives the designer's own boards no cut on 79 of 94
+  (x1315: 19 of 96; hackrf-one's source 76.95 mm under x1315, 0 under
+  x1539), so the median "+2142 mm against the designer's" is a scorer
+  change; to look into.
+- **Matched designer tier** (`build/designer-x1539-matched.log`, budget
+  scale 0.695 = 1042.5 s of work, 8 x 1; 11 rows from a first part on the
+  same binary spliced in): 54 of 109 strict (61 per type), no row cut or
+  killed, the 0xCB pcb-panel without a result (kicad-cli). Against
+  x1404's matched run: better 17, same 90, worse 1, strict 51 -> 54.
+- **Gap on one binary** (`compare.py --gap build/github-layout-v19.log
+  build/designer-x1539-matched.log --targets`): over 97 target boards,
+  layout open 1823, designer route 747: **placement 59 %, routing 41 %**
+  (x1404 against v18: 49 / 51). v19's final ladder had a median share of
+  0.640 (58 rows), below v18's 0.695, so the designer route had some 8 %
+  more routing work than the layout's final ladder.
+- The largest placement gaps (ours / designer route open): video 199 / 0,
+  Glasgow 191 / 50, the OpenESC 4in1 127 / 0, MegaDrive 222 / 109,
+  protoesp 106 / 1.
 ## Experiment 2026-10-23 (global route inside placement)
 
 The placement half of the gap, one bounded experiment: the global route
