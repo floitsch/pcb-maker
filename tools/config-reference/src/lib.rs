@@ -123,9 +123,9 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "no connection-width neck repair after the final DRC.",
     ),
     (
-        "PCB_ROUTER_STRAIGHTEN",
+        "PCB_ROUTER_NO_STRAIGHTEN",
         Kind::Switch,
-        "turns the router's straightening on (`straighten`): after the via reduction, stair-steps and jogs taken out of the signal nets' paths where the clearance allows (docs/router.md, \"Straightening\").",
+        "turns the router's straightening off (`straighten`, on since 2026-10-23): after the via reduction, stair-steps and jogs taken out of the signal nets' paths where the clearance allows (docs/router.md, \"Straightening\"; for attributing rows).",
     ),
     (
         "PCB_ROUTER_ISLAND_STUBS",

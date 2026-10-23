@@ -270,7 +270,7 @@ One constraint of one rule of the project's `.kicad_dru`. Source: `KiCadCustomRu
 | `max_iterations` | `usize` | `80` | `maximum_iterations` | Negotiation iterations at most (each reroutes the conflicted nets). |
 | `window_margin` | `f64` | `10.0` | - | Minimum search window margin around a net's terminals. |
 | `cleanup_passes` | `usize` | `4` | `cleanup_passes` | Passes of per-net shortening after the board is conflict free. |
-| `straighten` | `bool` | `false` (`true` with `PCB_ROUTER_STRAIGHTEN`) | - | After the via reduction, take stair-steps and jogs out of the signal nets' paths where the clearance allows (`straighten`: shortest octilinear paths between a run's corners with fewer bends; never longer, no via moves). |
+| `straighten` | `bool` | `true` (`false` with `PCB_ROUTER_NO_STRAIGHTEN`) | - | After the via reduction, take stair-steps and jogs out of the signal nets' paths where the clearance allows (`straighten`: shortest octilinear paths between a run's corners with fewer bends; never longer, no via moves). |
 | `cleanup_via_cost` | `f64` | `25.0` | `cleanup_via_cost_mm` | Via cost while cleaning up. The existing route is always a fallback there, so a high value removes vias without risking completion. |
 | `plane_via_cost` | `f64` | `2.0` | - | Via cost when connecting to a copper pour: a short stub and a via is the preferred connection, not a long track to another pad. |
 | `corridors` | `bool` | `true` | - | Plan every connection on a coarse tile graph first and search the lattice only inside that corridor (widening it on failure). |

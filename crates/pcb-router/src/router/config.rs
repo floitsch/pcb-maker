@@ -323,7 +323,7 @@ impl Default for Config {
             max_iterations: 80,
             window_margin: 10.0,
             cleanup_passes: 4,
-            straighten: std::env::var_os("PCB_ROUTER_STRAIGHTEN").is_some(),
+            straighten: std::env::var_os("PCB_ROUTER_NO_STRAIGHTEN").is_none(),
             cleanup_via_cost: 25.0,
             plane_via_cost: 2.0,
             corridors: true,
