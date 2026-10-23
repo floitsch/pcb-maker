@@ -508,11 +508,16 @@ fn a_class_below_the_boards_minimum_is_refused_unless_allowed() {
         .unwrap();
     assert_eq!(code(&output), 1, "{}", stderr(&output));
     let verdict = verdict(&out.join("board-router.json"));
+    // Without kicad-cli (CI) a KiCad warning comes first; the override
+    // warning must be among the next actions, not necessarily the first.
     assert!(
-        verdict["next_actions"][0]
-            .as_str()
+        verdict["next_actions"]
+            .as_array()
             .unwrap()
-            .starts_with("rules below the project's minimum (allow_below_project_minimum): net_classes[Narrow] asks for track width 0.15 mm"),
+            .iter()
+            .any(|a| a.as_str().unwrap_or("").starts_with(
+                "rules below the project's minimum (allow_below_project_minimum): net_classes[Narrow] asks for track width 0.15 mm"
+            )),
         "{verdict}"
     );
     let report: serde_json::Value =
