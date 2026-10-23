@@ -474,6 +474,7 @@ fn lower_board(
                 }
                 let footprint_at = form_at(item)?;
                 let reference = footprint_reference(item).unwrap_or_default();
+                let electrode = touch_electrode(item);
                 // Rule areas inside the footprint (an antenna keepout) keep
                 // tracks and vias out like board-level ones.
                 for zone in item
@@ -520,11 +521,20 @@ fn lower_board(
                                 .ok()
                                 .unwrap_or(board_pad_to_mask)
                                 .max(0.0);
+                            // A touch electrode's own opening leaves its
+                            // net the vias inside its pad (`grid.rs`,
+                            // `own_opening`).
+                            let kind = graphic.head().unwrap_or("graphic");
+                            let kind = if electrode {
+                                format!("{kind} of the touch electrode {reference}")
+                            } else {
+                                kind.to_string()
+                            };
                             for side in sides {
                                 mask_openings.push((
                                     shapes.clone(),
                                     side,
-                                    graphic.head().unwrap_or("graphic").to_string(),
+                                    kind.clone(),
                                     0.0,
                                     expansion,
                                 ));
@@ -1083,19 +1093,6 @@ fn lower_board(
                 ));
                 if config.via_in_pad != Some(true) {
                     let exposed = exposed_pad(&footprint_pads);
-                    // A footprint's only pad, of a custom shape, is copper
-                    // art no part is soldered to (a touch electrode):
-                    // d20_pcb's J2, a face of the die enclosed by the
-                    // footprint's own frame on F.Cu and by a keepout on
-                    // B.Cu, reached by the designer's via in its corner.
-                    let electrode = footprint_pads.len() == 1
-                        && item
-                            .children()
-                            .iter()
-                            .filter(|child| child.head() == Some("pad"))
-                            .any(|pad| {
-                                pad.children().get(3).and_then(Expr::atom) == Some("custom")
-                            });
                     for (index, pad) in footprint_pads.iter().enumerate() {
                         if pad.smd && !exposed.contains(&index) && !electrode {
                             no_via_pads.extend(&footprint_copper[index]);
@@ -1925,6 +1922,23 @@ pub(crate) fn footprint_pin_row_gaps(
         }
     }
     gaps
+}
+
+/// Whether a footprint is a touch electrode: its only pad, of a custom
+/// shape, is copper art no part is soldered to. d20_pcb's J2 is a face of
+/// the die, enclosed by the footprint's own frame on F.Cu and by a keepout
+/// on B.Cu, and under the footprint's mask opening; the designer reaches
+/// it with a via in its corner. Its pad holds its net's vias (not in
+/// `no_via_pads`) and its own mask opening leaves them there.
+fn touch_electrode(footprint: &Expr) -> bool {
+    let mut pads = footprint
+        .children()
+        .iter()
+        .filter(|child| child.head() == Some("pad"));
+    matches!(
+        (pads.next(), pads.next()),
+        (Some(pad), None) if pad.children().get(3).and_then(Expr::atom) == Some("custom")
+    )
 }
 
 /// A footprint's pad with copper, for `exposed_pad` (the lowering's and

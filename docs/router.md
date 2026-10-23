@@ -408,6 +408,23 @@ exposed pad holds a whole via (with the pins before the pad, KiCad's
 usual order, the pad's arm found the node blocked and gave it to no
 net, losing legal via sites along the pad's edge).
 
+A touch electrode is exempt too (2026-10-23, `touch_electrode` in
+board_router/lower.rs): a footprint whose only pad is of a custom shape,
+copper art no part is soldered to. d20_pcb's J2 is a face of the die,
+enclosed by the footprint's own copper frame on F.Cu and by a keepout on
+B.Cu, and the whole die is the footprint's solder mask opening; the
+designer reaches it with a via in the face's corner. A mask opening
+keeps every via out (`solder mask opening` keepouts); a touch
+electrode's own opening (labelled `... of the touch electrode J2`)
+leaves its net the vias that lie inside its pad (`own_opening` and
+`via_inside` in grid.rs: the via-owner arms of a via inside its net's
+own copper, not the `beside` arm of a listed pad, where only the mask
+web parts the via from the pad's solder). KiCad bridges only copper of
+different nets in one opening. Other footprints' openings keep their
+rule: letting an exposed pad's mask windows hold its vias moved Sisu's
+fingerprint run from 23 to 29 unconnected, and letting vias in beside
+pads under an opening routed OpenRX-Mono's U.FL from 12 to 23.
+
 `via_in_pad: true` in the router config restores the rule of before for
 boards whose vias are filled and capped. score-kicad-board's "vias in
 pads" (SMD pads under 2 mm but an exposed pad, the drill over the pad's

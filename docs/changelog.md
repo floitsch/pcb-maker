@@ -11,6 +11,114 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-23 (the boards other routers beat us on)
+
+Branch beaten-boards, snapshot x1714 against main's x1647 (the pin-row
+cost; x1710 to x1713 were steps on the way, x1712 the measured one for
+the placer and the strict rule, whose router change x1714 narrows). The
+boards of the two head-to-heads (docs/benchmarks.md, "Freerouting
+against x1367" and "KiCadRoutingTools against x1367") where the other
+router left fewer KiCad-unconnected items, each routed on the v17
+placement at the task budget (route mode, `--threads 2`, the memory
+ledger, no lock; `build/beat1-*`):
+
+| board | x1367 (the comparison) | main x1647 | x1712 / x1714 | the other router |
+| --- | --- | --- | --- | --- |
+| katia | CUT at 2700 s, 8.8 GB | 155/162, KiCad 9, no error; 1299 s for 1133 s of work, 6.1 GB | the same board (1099 s) | Freerouting 90 and 126 hole_clearance |
+| d20_pcb | 18/19, KiCad 1 | 18/19, KiCad 1 (93 s of work) | 19/19, KiCad 0, strict pass, 12.7 s of work | KiCadRoutingTools 0 with 199 mask bridges |
+| WLED_Matrix | 99/104, KiCad 11, 2 copper_edge_clearance | 99/104, KiCad 6, the same 2 | the same board | KiCadRoutingTools 10 with 93 errors |
+| Batch_1 | 106/204, KiCad 441; strict: clearance 261, copper_edge 11 | 76/204, KiCad 455, the same strict | the same board; strict (rule 4): copper_edge 2 | Freerouting 307 with 158 errors |
+
+**katia: the wall clock went to routers run one after the other.** x1371
+estimated a router at 7339 MB (3183 MB of maps): under half of
+MemAvailable one fitted at a time, so the 4 probes, the 3 rungs and the
+3 seeds ran one after the other (`ladder: 1 of 4 probes side by side`),
+each charged as work but taking its own wall clock: the first attempt
+alone took 711 s, and the harness's 2700 s came before the seeds ended.
+No phase was uncharged and KiCad's check was not reached. The memory
+rounds of 2026-10-22 and 2026-10-23 (the maps 3183 -> 1405 MB, the
+estimate 2506 MB) run all 4 probes and 3 rungs side by side: main ends in
+1299 s of wall clock for 1133 s of work (the guard at 6.3 times the
+budget), 9 unconnected and no error, where Freerouting leaves 90.
+Nothing to fix on main.
+
+**d20_pcb: a touch electrode no via could reach.** The open connection
+is net PAD's J2.1. J2 (d20_touchpad) is one custom pad, the die's face
+"20", enclosed on F.Cu by the footprint's own copper frame (no net) and
+on B.Cu by the designer's keepout (no tracks, no vias); the designer
+reaches it with a via in the face's corner, where the keepout has a
+notch. The router allowed no via there twice over: the face is an SMD
+pad, so no via inside it (`no_via_pads`, the via-in-pad rule of
+2026-10-21), and the whole die is the footprint's solder mask opening
+(its F.Mask polygon), a keepout for every via. Every rung left it open,
+so the ladder ran out of rungs at 93 s of work. Now a touch electrode
+(`touch_electrode` in board_router/lower.rs: a footprint whose only pad
+is of a custom shape, copper art no part is soldered to) is not listed in
+`no_via_pads`, and its own mask opening (labelled `... of the touch
+electrode J2`) leaves its net the vias inside its pad (`own_opening`,
+`via_inside` in grid.rs: only where a via lies inside its net's own
+copper, not beside a listed pad, where only the mask web parts the via
+from the pad's solder). KiCad bridges only copper of different nets in
+one opening. d20_pcb routes complete with no error in 12.7 s of work,
+also on the designer's own placement (1 open there before too). The
+first version let every mask opening of one net keep that net's vias
+(x1711, x1712): beside listed pads that routed OpenRX-Mono's U.FL from
+12 to 23 unconnected on the expansion tier (x1711), and inside exposed
+pads under their mask windows Sisu's fingerprint run from 23 to 29
+(x1712); x1714 keeps the rule to touch electrodes.
+
+**WLED_Matrix's two copper_edge_clearance: ours, the placer's.** Both
+are AE1 (a TI CC2430DB inverted-F antenna: three small pads, no
+courtyard, 18 mm of copper graphics beside them) against the board's
+outline. The placer's body was its pads' box, so the layout hung the
+antenna over the edge (Batch_1's two are the same footprint). Every
+router routes the placement it is given: KiCadRoutingTools has the same
+two. Now a footprint's copper graphics are part of its body, as its mask
+graphics are (`board_placer/bodies.rs`). Layout mode (tasks v7, 2 x 2,
+x1647 against x1712): WLED_Matrix 101/104, KiCad 4, copper_edge_clearance
+3 -> 101/104, KiCad 6, no counting error (strict: connection_width 2;
+the antenna inside the outline takes room); Batch_1 KiCad 267 ->
+268, strict copper_edge 2 and a starved thermal -> none.
+
+**Batch_1's 261 clearance findings: the panel's mounting holes.** 244 of
+them are between items of one footprint: 238 pairs of a mounting hole's
+own overlapping plated pads (the M parts, MountingHole_3.2mm_M3, at
+0 mm), 5 of the heater coil HC1's arcs against its own pads, 1 of AE1's
+copper against its feed pad. The other 17 are R62 and HC1, at the
+designer's places, against the heater's copper drawn on the board: the
+designer's board has them too. The stripped designer board has 284
+clearance findings, past KiCad's cap of 199 (its threads overshoot it;
+the designer's own board has 499, also with `--all-track-errors`), so
+the strict rule took the type as unknown and counted all of ours as
+new. Strict rule 4 (run.py and verdict.rs):
+- a finding between items of one footprint only (each item's
+  description ends in "of <ref>", the same ref) is the reference's: the
+  footprint's geometry and its pads' nets, which no placement or route
+  changes;
+- a finding at the same place is subtracted also of a type at KiCad's
+  cap; only the others of that type stay new;
+- a copper_edge_clearance is at the same place by its copper item:
+  KiCad names whichever outline piece is nearest beside the copper
+  (Batch_1's GND ring along a card's edge: 9 of the 11 "new" ones were
+  the designer's ring beside another outline piece).
+Batch_1's strict findings are now copper_edge_clearance 2 (AE1, the
+placement's). `rejudge.py` judges x1647's three rows as x1712's.
+
+**Batch_1's unconnected items: not fixed.** The designer's own board
+has 132 (nets across six cards joined by mouse-bite tabs); ours 455,
+Freerouting 307. The router counts 1360 open: it takes the cards for one
+board through the tabs and spends its budget on connections between
+them. Left open.
+
+**Measured.** The expansion tier (46 boards, route mode, 30 s, 8 x 1),
+x1647 against x1714: every row the same (unconnected 592, passes 20,
+vias 4308, length 112 576 mm) and every board's fingerprints the same as
+a set. In the order the log prints them 15 boards differ, on x1647 run
+twice as well: rungs side by side print their lines as they finish.
+(x1712: better 1, nervous-ecg 4 -> 2, same 45; x1711: OpenRX-Mono 12 ->
+23.) The fingerprint boards (Castor, k30, jetson, Sisu; route mode from
+v16, budget scale 0.25, 1 x 4): FP_RESULT. check.sh --fast, the clippy
+gate.
 ## Committed on 2026-10-23 (differential pairs, phase 1)
 
 Differential pairs, the first feature of the Allegro stretch goal, behind

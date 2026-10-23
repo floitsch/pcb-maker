@@ -737,6 +737,15 @@ impl FillTrace {
     }
 }
 
+/// Whether an obstacle is a touch electrode's own solder mask opening
+/// (the lowering's label: "solder mask opening (fp_poly of the touch
+/// electrode J2)").
+fn own_opening_label(obstacle: &crate::board::Obstacle) -> bool {
+    obstacle.kind == ObstacleKind::Keepout
+        && obstacle.label.starts_with("solder mask opening")
+        && obstacle.label.contains(" of the touch electrode ")
+}
+
 fn claim(cell: &mut u32, net: Option<NetId>) {
     let value = net.map_or(BLOCKED, owner);
     if *cell == FREE {
@@ -817,17 +826,17 @@ impl StaticMaps {
             .collect();
         let mut via_blocked: Vec<bool> = inside.iter().map(|inside| !inside).collect();
         let mut via_owner: Vec<u16> = if searched { vec![0; cells] } else { Vec::new() };
-        // Where `via_owner` holds a via inside its net's own copper (an
-        // exposed pad's, a touch electrode's, at its own plated hole), not
-        // beside a pad: only there does a mask opening of that net leave
-        // the via to it (`own_opening`). Built only on a board with such
-        // an opening.
+        // Where `via_owner` holds a via inside its net's own copper (a
+        // touch electrode's, an exposed pad's, at its own plated hole),
+        // not beside a pad: only there does a touch electrode's mask
+        // opening leave the via to its net (`own_opening`). Built only on
+        // a board with such an opening.
         let mut via_inside: Vec<bool> = if searched
-            && board.obstacles.iter().any(|obstacle| {
-                obstacle.net.is_some()
-                    && obstacle.kind == ObstacleKind::Keepout
-                    && obstacle.label.starts_with("solder mask opening")
-            }) {
+            && board
+                .obstacles
+                .iter()
+                .any(|obstacle| obstacle.net.is_some() && own_opening_label(obstacle))
+        {
             vec![false; cells]
         } else {
             Vec::new()
@@ -1060,15 +1069,14 @@ impl StaticMaps {
                     obstacle.kind == ObstacleKind::Keepout
                         && obstacle.label.starts_with("keep whole ")
                 });
-                // A solder mask opening over one net's copper exposes that
-                // net only: a via of the net where its own pad holds one
-                // (an exposed pad, a touch electrode's face: d20_pcb's J2,
-                // whose opening is the whole die) stays there, as in
-                // KiCad, which bridges only copper of different nets.
-                let own_opening = obstacle.net.filter(|_| {
-                    obstacle.kind == ObstacleKind::Keepout
-                        && obstacle.label.starts_with("solder mask opening")
-                });
+                // A touch electrode's solder mask opening over its own
+                // pad (d20_pcb's J2: the opening is the whole die) leaves
+                // the pad's net its vias inside the pad, as KiCad does,
+                // which bridges only copper of different nets. Other
+                // openings keep every via out (an exposed pad's mask
+                // windows too: Sisu's TPS63020 went from 23 to 29
+                // unconnected with its vias let in there).
+                let own_opening = obstacle.net.filter(|_| own_opening_label(obstacle));
                 let nodes = ((x1 - x0 + 1) * (y1 - y0 + 1)) as u64;
                 tests += nodes;
                 vertex_tests += nodes * corners;

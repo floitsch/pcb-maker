@@ -1301,6 +1301,29 @@ none of the four):
   as the strict rule's only finding; Freerouting 151 unconnected with 194
   solder mask bridges, 12 clearance and 3 starved thermals.
 
+**Why we lost there, and main** (2026-10-23, docs/changelog.md, "the
+boards other routers beat us on"; route mode on the same placements at
+the task budget, main x1647 and the branch's x1714, `build/beat1-*`):
+- katia: x1367 and x1371 estimated a router at 7.3 GB, so the ladder ran
+  its probes, rungs and seeds one at a time and the wall clock ran past
+  the harness's 2700 s (no phase uncharged, KiCad's check not reached).
+  Since the memory rounds of 2026-10-22/23 (2.5 GB a router, four side by
+  side) main routes it to 155/162, KiCad 9 unconnected and no error, in
+  1299 s for 1133 s of work: better than Freerouting's 90.
+- Batch_1: the 261 clearance findings are the panel's own (238 pairs of
+  a mounting hole's overlapping plated pads, 6 of HC1's and AE1's own
+  copper, 17 of R62 and HC1 at the designer's places against the
+  heater's copper on the board); the stripped designer board has 284,
+  past KiCad's cap of 199, so the strict rule counted all of ours as
+  new. Strict rule 4 counts a finding of one footprint's own items as
+  the designer's, subtracts findings at the same place also at the cap,
+  and matches a copper_edge_clearance by its copper item: ours now has
+  copper_edge_clearance 2 (AE1, the placement's). The unconnected items
+  (main 455 against Freerouting's 307, the designer's own board 132:
+  six cards joined by tabs) stay: the router spends its budget on the
+  connections between the cards.
+- SNSP-CPU-01: main is better since x1367 (not re-measured here).
+
 Per board (FR open: Freerouting's own count of unrouted connections from
 its log, "(wall)" where its job timeout stopped it; "-": no result; routed
 CUT: the harness's timeout):
@@ -2065,6 +2088,22 @@ then errors; it passes none of the six), with what KiCad reports on ours:
 - **glasgow revC3**: KiCadRoutingTools 163 unconnected, cut at 2650 s
   with its board written. Ours 124/226, 180 unconnected, no error, in
   883 s.
+
+**Why we lost there, and main** (2026-10-23, docs/changelog.md, "the
+boards other routers beat us on"; route mode, main x1647 and the
+branch's x1714):
+- d20_pcb: the open connection was the touch electrode J2 (one custom
+  pad, the die's face, enclosed by its footprint's copper frame on F.Cu
+  and a keepout on B.Cu, under the footprint's mask opening): no via was
+  allowed in it, neither as an SMD pad nor under the mask opening.
+  x1714 lets a touch electrode hold its net's vias, and its own opening
+  leave them there: 19/19, KiCad 0, strict pass, in 12.7 s of work.
+- WLED_Matrix: main x1647 has KiCad 6 unconnected (KiCadRoutingTools 10)
+  and the same 2 copper_edge_clearance, AE1's antenna copper over the
+  outline: the v17 placement's, which every router gets (theirs has the
+  same two). The placer now counts a footprint's copper graphics in its
+  body (x1712 in layout mode: no copper_edge_clearance, KiCad 6).
+- 0xCB panel, Neotron-Pico, glasgow: not re-measured here.
 
 Per board (`build/krt-compare.txt`; "nets" is KiCadRoutingTools' own
 count; a cut row says how far its log got):

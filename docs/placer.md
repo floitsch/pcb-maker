@@ -54,7 +54,10 @@ less copper); on PIC and the hierarchy board the automatic one is.
    KiCad skips it. A board cutout keeps only copper away: a connector body
    may reach over its peg holes. A footprint's own mask graphics (an RF
    modulator's exposed 22 x 32 mm area) are part of its body, also where
-   it blocks with its courtyard's shape (`mask_openings`, below).
+   it blocks with its courtyard's shape (`mask_openings`, below), and so
+   are its copper graphics (since 2026-10-23: a printed antenna's copper
+   beside its three small pads, which the pads' box let hang over the
+   board edge).
 2. **Routing halos.** A PCB routes in the same plane it places in. Every body
    gets a halo proportional to its pin count; halos count as body area and as
    spacing. If the board cannot afford them they shrink uniformly.
