@@ -1,10 +1,12 @@
 fingerprint after clean-up: 2e6dc8a0057b790e
 fingerprint after clean-up: e0f1e8464dbf9bfc
-fingerprint after thermal spokes: 2e6dc8a0057b790e
-fingerprint after thermal spokes: e0f1e8464dbf9bfc
+fingerprint after straightening: 07e72772c8f8e346
+fingerprint after straightening: d642218ab2aaf291
+fingerprint after thermal spokes: 07e72772c8f8e346
+fingerprint after thermal spokes: d642218ab2aaf291
 fingerprint after via reduction: 2e6dc8a0057b790e
 fingerprint after via reduction: e0f1e8464dbf9bfc
 fingerprint before resolve: 9d4aeb800c499e53
 fingerprint before resolve: d3857767efdd9e68
-fingerprint before stitching +5V: e0f1e8464dbf9bfc, 1 pieces, main 6, spoke islands []
-fingerprint before stitching GND: e0f1e8464dbf9bfc, 5 pieces, main 13, spoke islands []
+fingerprint before stitching +5V: d642218ab2aaf291, 1 pieces, main 6, spoke islands []
+fingerprint before stitching GND: d642218ab2aaf291, 5 pieces, main 13, spoke islands []
