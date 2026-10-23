@@ -596,6 +596,12 @@ pub(crate) fn without_copper_texts(pcb: &Expr, keep: bool) -> Expr {
     )
 }
 
+/// The share of the work left the final route from the router's state
+/// may take before the route from scratch (half took DSP-ADAU1452's
+/// continuation: 275 s of 759 s for 129 to 111 open, the attempt from
+/// scratch then had too little left for the other pour mode).
+pub(crate) const KEPT_SHARE: f64 = 0.3;
+
 /// How far around a terminal the router's state left open the final
 /// route from that state frees the room (`kept_state_nets`).
 pub(crate) const KEPT_FREE_RADIUS_MM: f64 = 1.0;
@@ -2163,7 +2169,7 @@ pub fn layout_kicad_board(
         // Routes survive moves (`final_route_from_state`): the final
         // route starts from the router's state, its legal copper kept as
         // the board's own; the ladder connects what is open, with at most
-        // half of the work left. From scratch after it: at once when its
+        // `KEPT_SHARE` of the work left. From scratch after it: at once when its
         // first attempt left more open than the layout's first route (a
         // fresh first attempt) did, else with the work it left while
         // connections stay open.
@@ -2201,9 +2207,9 @@ pub fn layout_kicad_board(
             );
             let mut kept_config = fallback_config.clone();
             kept_config.fresh_open = Some(first.0);
-            // At most half of the work left; the attempt after the
-            // narrow-signal attempt varies the one from scratch.
-            let share = 0.5 * (work_deadline - work - pool_excess).max(0.0);
+            // At most `KEPT_SHARE` of the work left; the attempt after
+            // the narrow-signal attempt varies the one from scratch.
+            let share = KEPT_SHARE * (work_deadline - work - pool_excess).max(0.0);
             kept_config.deadline_work = Some(share);
             kept_config.ladder_budget_seconds = kept_config
                 .ladder_budget_seconds

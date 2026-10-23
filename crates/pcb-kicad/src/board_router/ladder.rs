@@ -599,9 +599,18 @@ impl<'a> Ladder<'a> {
                 .and_then(|value| value.parse::<f64>().ok())
                 .or(config.narrow_reserve_share)
                 .unwrap_or(0.75),
-            reserve_cap: config
-                .deadline_work
-                .map_or(0.0, |left| (0.4 * left).min(600.0)),
+            // The layout's attempt after this one needs its floor
+            // (`NARROW_RESERVE_FLOOR`, the continuation's 240 s) whatever
+            // the cap (DSP-ADAU1452 kept 197 s and the continuation did
+            // not run).
+            reserve_cap: config.deadline_work.map_or(0.0, |left| {
+                let cap = (0.4 * left).min(600.0);
+                if config.keep_for_continuation {
+                    cap.max(NARROW_RESERVE_FLOOR)
+                } else {
+                    cap
+                }
+            }),
             reserve_set: false,
             gave_up: false,
             first_judged: false,
