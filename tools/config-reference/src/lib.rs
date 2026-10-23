@@ -193,6 +193,21 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "the trouble-makers' repair: the most nets one exchange may displace (default 12).",
     ),
     (
+        "PCB_ROUTER_TROUBLE_PER_OPEN",
+        Kind::Switch,
+        "the trouble-makers' repair: the nets an exchange may displace per open terminal of the trouble-maker; its limit is the larger of this times its open terminals and `PCB_ROUTER_TROUBLE_VICTIMS` (default 0, the flat limit).",
+    ),
+    (
+        "PCB_ROUTER_TROUBLE_TIES",
+        Kind::Switch,
+        "the trouble-makers' repair: `1` keeps an exchange that closes as many terminals as it opens when fewer of the nets involved stay open (default 0).",
+    ),
+    (
+        "PCB_ROUTER_TROUBLE_ORDER",
+        Kind::Switch,
+        "the trouble-makers' repair: the order of a round's trouble-makers, `open` (most open terminals first) or `few` (each surveyed by its priced search alone, the fewest victims per terminal closed first; default `open`).",
+    ),
+    (
         "PCB_ROUTER_TROUBLE_DEPTH",
         Kind::Switch,
         "the trouble-makers' repair: 2 lets a displaced net that came out worse displace others in turn (default 1).",
