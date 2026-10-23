@@ -1349,7 +1349,7 @@ mod tests {
               (constraint diff_pair_uncoupled (max 5mm)))
             (rule "ground layer" (layer "In1.Cu") (condition "A.NetName != 'GND'")
               (constraint disallow track))"#;
-        let (directory, path) = project_directory("pairs", project, Some(dru));
+        let (directory, path) = project_directory("diff-pairs", project, Some(dru));
         let board = directory.join("board.kicad_pcb");
         fs::write(&board, pcb).unwrap();
         let config = resolve_project_rules(&path, &board).unwrap();
