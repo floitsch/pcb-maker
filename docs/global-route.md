@@ -6,7 +6,10 @@ two sets of placements. It tells our placements from the designers'
 reliably where RUDY cannot, but it does not rank the placer's own seeds
 of one board better than RUDY, and well below the router's 75 s probe.
 Details under "Validation"; the prototype in the placement race under
-"Prototype".
+"Prototype". Phase 2 (2026-10-23, `global_guidance`, off): the measure
+as a term in the placer's anneal and a ranking of the coupled loop's
+moves; a no-go as a default (dense boards -4 % unconnected, five better
+and four worse, a short-tier pass lost), under "Phase 2".
 
 ## What it computes
 
@@ -300,12 +303,187 @@ and kept one at 173. As set 2 predicts: among seeds of one board the
 global route is no better a pre-ranker than RUDY. Not a default; the
 option stays as an experiment.
 
+## Phase 2: the global route inside the placer's search (2026-10-23)
+
+Phase 1's reading was that the measure tells structures apart but not
+seeds of one placer, so its place is inside the search. Hypothesis: the
+overflow is useless for ranking near-identical seeds but useful as a
+gradient: a move that relieves a full boundary should be preferred, and
+the parts whose nets cross the fullest boundaries should be moved
+first. Built behind `global_guidance` (placer config, off; branch
+global-route-placement, snapshot x1630). **Verdict: no-go as a default.**
+The eleven dense boards' summed KiCad unconnected drops 4 % (1179 to
+1132 over the ten with a result), but five boards gain and four lose by
+amounts of the size a different seed moves them, and the short tier
+loses a strict pass.
+
+### Method
+
+- **The evaluator** (`board_placer/guidance.rs`): the anneal's poses are
+  written into the board (tracks stripped, planned pours added, copper
+  texts as the layout keeps them: the board as the layout routes a
+  placement), lowered with the layout's router configuration, routed by
+  `pcb_global::route` with the phase-1 defaults. Per boundary the usage
+  above `threshold` of its capacity counts: 0.5 by default, the soft
+  overflow that told our placements from the designers' (0.79 of the
+  pairs). The plain overflow (threshold 1) is no gradient: on the
+  anneal's placements it is 0 to 5 tracks on 4in1-mini, video and the
+  other boards measured (the final placements' totals in the table
+  below), while the excess at 0.5 is 90 to 9000. Per tile the excess on
+  its boundaries over the layers (the field); per part the excess on the
+  boundaries its nets cross, summed over its nets (the attribution;
+  terminals map to parts by their `REF.PAD` labels).
+- **In the anneal** (`pcb_placer::guidance`, `AnnealConfig::guidance`):
+  between two evaluations the field is fixed, and a net's wirelength is
+  multiplied by `1 + weight * mean field over the tiles its pins' box
+  covers` (`weight` 1). A total overflow added as a constant would not
+  steer a single move; this is its local form: the net's demand where
+  demand already exceeds half the capacity. Half of the moves
+  (`bias` 0.5) draw their part with probability proportional to its
+  attribution instead of uniformly (swaps their first part). The first
+  evaluation is at the anneal's start; another is due after at least
+  `min_accepted` (200) accepted moves when the evaluations' work stays
+  within `work_share` (0.1) of the anneal's own work; one more at the
+  end for the trace (`guidance:` lines in layout.log). The legaliser,
+  refinement and the race are unchanged (wirelength, RUDY).
+- **Work.** An evaluation counts placement work from deterministic
+  counts: 3000 units per obstacle lowered, 5 per shape-weighted distance
+  test of the capacities (`Capacity::work`, new), 30 per state the
+  negotiation pops (`GlobalRoute::pops`, new); fitted on 4in1-mini,
+  DSP-ADAU1452 and video against the measured times (lowering 0.01 to
+  0.02 s, routing 0.02 s on 4in1-mini, 0.14 to 0.22 s on DSP, 0.74 to
+  0.92 s on video), about 1.3 times the wall time at the reference's
+  150e6 units a second: conservative. Evaluations per anneal on the
+  dense boards: 53 on 4in1, 58 on 4in1-mini, 36 on split72_left, 21 on
+  Glasgow, 28 on MegaDrive, 18 on DSP, 5 on SNSP-CPU-01, 4 on video, 2 on
+  protoesp, 1 on the 0xCB panel (whose anneal is smaller than one global
+  route of its 466 footprints: 69 % there, 10-12 % on the others).
+- **In the coupled loop** (`moves`, on with the guidance): the move
+  candidates are ranked by their attribution in the global route of the
+  kept board (recomputed when a move is kept), the router's congestion
+  under their bodies breaking ties. The loop still does not run where
+  many connections are open (as before, the final ladder gets the time),
+  so on the dense boards it ran only on the 0xCB panel, protoesp,
+  SNSP-CPU-01, MegaDrive and split72_left.
+
+### Judgement
+
+Single layouts at the task budgets (tasks v7, 1500 s of work, pinned
+rates), both sides x1630, `--placer '{"global_guidance": {}}'` on one
+side (`build/gplace1-dense-off`, `build/gplace1-dense-on`, 5 x 2 each,
+beside four other agents). No row cut. The off side reproduces main:
+the placer's output (board-placer.json, timing fields aside) of x1624
+(main 93d6f6e) and of the off side are identical on all eleven boards
+and all twelve of the short tier, and nothing downstream of the placer
+changes when the switch is off. HPWL is the half-perimeter over the
+nets of the final board (unweighted).
+
+| Board | KiCad unconnected off / on | first route open off / on | strict pass | HPWL mm off / on | vias off / on | work s off / on |
+| --- | ---: | ---: | --- | ---: | ---: | ---: |
+| OpenESC 4in1 | 127 / 127 | 208 / 194 | no / no | 1378 / 1359 | 135 / 128 | 1398 / 1364 |
+| OpenESC 4in1-mini | **81 / 106** | 147 / 140 | no / no | 740 / 796 | 121 / 96 | 1340 / 1392 |
+| split72_left | **30 / 37** | 49 / 41 | no / no | 13325 / 14307 | 911 / 1297 | 1295 / 1187 |
+| video | **199 / 224** | 328 / 299 | no / no | 32694 / 33246 | 1505 / 1341 | 1474 / 1464 |
+| DSP-ADAU1452 | **30 / 9** | 80 / 53 | no / no | 4071 / 4043 | 283 / 309 | 1822 / 1232 |
+| Glasgow | **191 / 154** | 214 / 162 | no / no | 3613 / 3463 | 319 / 312 | 1390 / 1284 |
+| SmartSpin2k | refused / refused | | | | | |
+| 0xCB panel | 53 / 49 | 81 / 78 | no / no | 5865 / 5796 | 318 / 327 | 1131 / 1115 |
+| SNSP-CPU-01 | 147 / 145 | 176 / 181 | no / no | 19335 / 18898 | 1692 / 1633 | 1435 / 1317 |
+| MegaDrive | **215 / 225** | 268 / 288 | no / no | 29546 / 31117 | 1829 / 1997 | 1563 / 1603 |
+| protoesp | **106 / 56** | 161 / 129 | no / no | 5359 / 5135 | 295 / 390 | 1300 / 1220 |
+| sum (10 boards) | **1179 / 1132** | **1712 / 1565** | 0 / 0 | 115926 / 118160 | 7408 / 7830 | 14148 / 13177 |
+
+SmartSpin2k is refused by the placer on both sides (12 and 22 parts
+without a legal place; main's placer output is the off side's, so this
+is main's state, not the guidance's). The global route's own soft
+overflow at 0.5 of the final placements (off / on): 4in1 194 / 158,
+4in1-mini 92 / 125, split72_left 1820 / 2006, video 5850 / 6763, DSP
+927 / 932, Glasgow 1342 / 892, 0xCB panel 138 / 184, SNSP-CPU-01
+3952 / 3956, MegaDrive 5388 / 5634, protoesp 1240 / 900; total
+overflow (threshold 1) 0 to 184.
+
+**Short tier** (`--tier short`, 3 x 2 each, a third of the budget,
+`build/gplace1-short-off`, `-on`):
+
+| Board | KiCad unconnected off / on | first route open off / on | strict pass | HPWL mm off / on | vias off / on | work s off / on |
+| --- | ---: | ---: | --- | ---: | ---: | ---: |
+| 0xCB 1337-v4.0 | 0 / 0 | 0 / 1 | yes / yes | 1219 / 1222 | 61 / 64 | 96 / 102 |
+| USB_Cable_Tester | 0 / 0 | 0 / 1 | yes / yes | 1711 / 1764 | 106 / 100 | 132 / 144 |
+| USB_Keypad | 2 / 2 | 2 / 2 | no / no | 1625 / 1613 | 177 / 142 | 469 / 541 |
+| WLED_Matrix | 4 / 4 | 8 / 9 | no / no | 1311 / 1478 | 148 / 154 | 412 / 438 |
+| framework_mobo_lefthalf | **0 / 1** | 4 / 4 | **yes / no** | 1059 / 1105 | 106 / 105 | 193 / 413 |
+| MIDAS-MK1.1 | 9 / 7 | 21 / 7 | no / no | 2980 / 4428 | 221 / 313 | 353 / 308 |
+| OpenFC | 2 / 3 | 17 / 7 | no / no | 1056 / 1121 | 192 / 179 | 332 / 247 |
+| reCamera | 4 / 4 | 6 / 5 | no / no | 343 / 361 | 71 / 62 | 299 / 306 |
+| spell_tome_bottom | 0 / 0 | 0 / 0 | yes / yes | 353 / 295 | 7 / 8 | 18 / 28 |
+| eternal-keypad | 0 / 0 | 0 / 0 | no / no | 2191 / 2222 | 29 / 32 | 104 / 111 |
+| urchin | 0 / 0 | 0 / 0 | yes / yes | 2571 / 2552 | 39 / 38 | 55 / 55 |
+| Blue_Line | 0 / 0 | 0 / 0 | yes / yes | 239 / 237 | 26 / 26 | 5 / 25 |
+| sum | **21 / 21** | 58 / 36 | **6 / 5** | 16658 / 18398 | 1183 / 1223 | 2469 / 2718 |
+
+Every row changed, as every guided anneal places differently: the
+guided term and the biased draws change the anneal's moves from the
+first one, so the kept seed and the race's choice move too (4in1-mini
+kept seed 5 off, 1 on; Glasgow 2 and 1; SNSP-CPU-01 13 and 1; protoesp
+5 and 1). The short-tier rows: framework_mobo loses its pass (one
+unconnected item; its kept moves 4 of 8 off, 1 of 7 on, the guided
+ranking trying R9 and R18 where congestion tried R8, RN1 and Q1, and 220
+s more work); MIDAS gains 9 to 7 at +49 % HPWL (its guided placement
+spreads the parts around U101); OpenFC 2 to 3 with fewer kept moves (3
+of 8 against 8 of 11: the guided ranking proposes U10, Q2 and R30 first,
+large parts with few legal steps); Blue_Line's 20 s more work is the
+guided ranking continuing on a complete board, where nothing is
+congested and the plain loop stopped at once (35 trials, 3 kept);
+WLED_Matrix +13 % HPWL; the others within a few percent.
+
+### Reading
+
+- **The first route moves, the final count does not follow.** The open
+  terminals after the first route fall on 8 of the 10 dense boards
+  (1712 to 1565, -9 %) and on the short tier (58 to 36), which is what
+  the global route predicts of a placement with less demand on full
+  boundaries. KiCad's count at the end falls on five dense boards and
+  rises on four, by 4 to 50; the sum's -47 is carried by protoesp (-50)
+  and Glasgow (-37), and lost again on video and 4in1-mini (+25 each).
+  Phase 1's x1385 against x1442 moved single boards by 17 to 19 by
+  probing other seeds of the same placer: shifts of this size are what
+  any perturbation of these boards gives, and five against four is no
+  direction.
+- **The guidance does not lower its own measure of the result.** The
+  final placements' soft overflow is lower on four boards and higher on
+  five. Inside the anneal the excess falls (video 9136 to 6444, DSP 1178
+  to 964, MegaDrive 7378 to 5261, SNSP-CPU-01 5294 to 3916) but the
+  anneal's placement overlaps: the legaliser and the refinement that
+  follow optimise wirelength alone and move a lot on these boards
+  (4in1-mini's tight level: 432-436 mm annealed, 622-681 mm legalised),
+  and the race picks by RUDY and the probe. A term the legal placement does not see is lost on the way.
+  On 4in1, 4in1-mini and split72_left the excess even rises during the
+  anneal (124 to 185, 90 to 110): the overlap penalty, which grows
+  400-fold over the stages, dominates the late anneal there.
+- **The coupled loop's guided ranking** proposes big parts (U101, U10,
+  J1, regulators) whose nets cross most of the board's full boundaries;
+  they have few legal steps, and fewer moves are kept (short tier 23 of
+  114 against 25 of 80).
+- **Cost** is as designed: 10-12 % of the anneal's work (the 0xCB panel
+  aside), and the layouts' total work within -7 % (the layouts do not
+  run to the budget for the same reasons on both sides).
+
+Not tried, in the order the data suggests: the term in the legaliser
+and the refinement too (where the placement is decided); halos from the
+field (cell inflation: parts in full tiles keep room, the routing-room
+mechanism with the global route's field instead of RUDY, which phase 1
+says tells structure better); the term at the global placement's
+density (Nesterov), where the structure is made. Each wants the same
+eleven-board judgement; none is promising enough on this data to
+build without another reason. `global_guidance` stays as an option
+(`{"weight", "work_share", "min_accepted", "bias", "threshold",
+"moves"}`, docs/config-reference.md).
+
 ## Next
 
-- Use the measure where it is strong: in the placer's search (an anneal
-  term re-evaluated every few thousand moves, or moves of the parts whose
-  nets cross the most used boundaries), where placements differ in
-  structure, not between seeds.
+- In the placer's search: tried in the anneal and the coupled loop
+  (phase 2, no-go); left: the legaliser and refinement, halos from the
+  field, the global placement's density.
 - Corridors for the detailed router: `GlobalRoute::corridor` is ready;
   the router's own tile planner (`router/planner.rs`) and its older
   in-router global plan (`pcb_router::global`, `global_routing`, off)

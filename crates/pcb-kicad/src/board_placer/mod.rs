@@ -13,6 +13,7 @@ mod config;
 mod courtyards;
 mod decoupling;
 mod edges;
+mod guidance;
 mod lower;
 mod marks;
 mod place;
@@ -23,6 +24,7 @@ mod seed_race;
 mod tests;
 mod trace;
 
+pub(crate) use self::guidance::{attribution, reference_index};
 pub(crate) use self::{bodies::*, lower::*, marks::*, rules::*, seed_race::*};
-pub use self::{config::*, place::*, result::*};
+pub use self::{config::*, guidance::KiCadGlobalGuidance, place::*, result::*};
 use self::{courtyards::*, decoupling::*, edges::*, trace::*};

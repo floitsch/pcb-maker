@@ -9,6 +9,7 @@ pub mod anneal;
 mod buckets;
 pub mod constraints;
 pub mod global;
+pub mod guidance;
 pub mod legal;
 pub mod orient;
 pub mod problem;

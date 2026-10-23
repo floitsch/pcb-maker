@@ -210,6 +210,17 @@ pub struct KiCadBoardPlacerConfig {
     /// where the parts no longer lie where the input had them.
     #[serde(skip)]
     pub attached_marks: Option<Vec<(usize, usize)>>,
+    /// The global route inside the placer's search (an experiment, off):
+    /// the anneal re-evaluates the global route of its placement and
+    /// prefers moves away from overflowing boundaries, proposing the parts
+    /// whose nets cross them more often; the coupled loop moves those
+    /// parts first (docs/global-route.md, "Phase 2").
+    #[serde(default)]
+    pub global_guidance: Option<KiCadGlobalGuidance>,
+    /// The router's configuration the guidance lowers with (set by the
+    /// layout; the default otherwise).
+    #[serde(skip)]
+    pub guidance_router: Option<KiCadBoardRouterConfig>,
 }
 
 impl Default for KiCadBoardPlacerConfig {
@@ -260,6 +271,8 @@ impl Default for KiCadBoardPlacerConfig {
             orientation_search: true,
             keep_board_marks: true,
             attached_marks: None,
+            global_guidance: None,
+            guidance_router: None,
         }
     }
 }

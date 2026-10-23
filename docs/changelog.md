@@ -11,6 +11,55 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Experiment 2026-10-23 (global route inside placement)
+
+The placement half of the gap, one bounded experiment: the global route
+(`pcb-global`) as a gradient inside the placer's search instead of a
+seed ranker. Write-up: docs/global-route.md, "Phase 2". Branch
+global-route-placement; snapshot x1630. **No-go as a default**; the
+option stays, off.
+
+- **`global_guidance`** (placer config, off): the anneal re-evaluates the
+  global route of its current placement (`board_placer/guidance.rs`: the
+  poses written into the board, lowered as the layout routes it) every
+  200 accepted moves or more, as long as the evaluations stay within 10 %
+  of the anneal's work; between evaluations each net's wirelength is
+  multiplied by one plus the mean excess (usage above half the
+  boundaries' capacity) over the tiles of its box, and half of the moves
+  draw their part by its attribution (the excess on the boundaries its
+  nets cross). The coupled loop's moves rank the parts by the same
+  attribution on the kept board. `pcb_placer::guidance` (the field, the
+  draws), `AnnealConfig::guidance`; `Capacity::work` and
+  `GlobalRoute::pops` count the global route's work deterministically.
+  The plain overflow is no gradient (0 to 5 tracks on the anneal's
+  placements), hence the threshold 0.5, the soft overflow phase 1
+  validated.
+- **Eleven dense boards** at the task budgets, x1630 off against on
+  (`build/gplace1-dense-*`): KiCad unconnected 1179 to 1132 over the ten
+  with a result (SmartSpin2k refused on both sides: main's placer
+  state); better protoesp 106 to 56, Glasgow 191 to 154, DSP-ADAU1452 30
+  to 9, the 0xCB panel 53 to 49, SNSP-CPU-01 147 to 145; worse video 199
+  to 224, 4in1-mini 81 to 106, MegaDrive 215 to 225, split72_left 30 to
+  37; 4in1 127 both. First-route open terminals 1712 to 1565 (8 of 10
+  better), HPWL +1.9 %, vias +5.7 %, work -7 %. Strict passes 0 both.
+- **Short tier** (3 x 2, `build/gplace1-short-*`): unconnected 21 both,
+  strict passes 6 to 5 (framework_mobo_lefthalf 0 to 1 unconnected),
+  first-route open 58 to 36, HPWL +10 % (MIDAS +49 %), work +10 %.
+- **Reading:** the guided anneal lowers the excess while it runs and the
+  first route opens fewer terminals, but the legaliser and refinement
+  (wirelength only) and the race decide the legal placement, whose soft
+  overflow is lower on four dense boards and higher on five; per-board
+  shifts are of the size any perturbation of these boards gives (phase
+  1: 17-19 from probing other seeds). Left untried: the term in the
+  legaliser and refinement, halos from the field, the global placement's
+  density.
+- **Off reproduces main:** x1624's placer output (board-placer.json,
+  timing fields aside) equals the off side's on all eleven dense boards
+  and all twelve short-tier boards. Unit tests: the field's box means
+  and weighted draws (`pcb_placer::guidance`), and an anneal whose
+  guidance has no field is pose for pose the plain anneal while a hot
+  field is evaluated within its work share (tests/placement.rs).
+
 ## Committed on 2026-10-23 (router memory, round 2)
 
 The second round of the router's memory, the candidates round one named:

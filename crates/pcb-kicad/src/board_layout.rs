@@ -865,6 +865,9 @@ pub fn layout_kicad_board(
     // layout depended on the load).
     placer_config.deadline = router_config.deadline;
     placer_config.work_seconds = Some(placement_budget);
+    if placer_config.global_guidance.is_some() {
+        placer_config.guidance_router = Some(router_config.clone());
+    }
     eprintln!("layout: sizing the outline");
     let outline_sizing = size_outline(
         source_directory,
@@ -1468,6 +1471,16 @@ pub fn layout_kicad_board(
         );
     }
     let many_open = many_open || far_open;
+    // `global_guidance` with `moves`: the parts by their attribution in
+    // the global route of the kept board, recomputed when a move is kept
+    // (docs/global-route.md, "Phase 2").
+    let guided_moves = placer_config
+        .global_guidance
+        .as_ref()
+        .filter(|guidance| guidance.moves)
+        .map(|guidance| guidance.threshold);
+    let guidance_index = crate::board_placer::reference_index(&problem.references);
+    let mut guided_attribution: Option<Vec<f64>> = None;
     for _ in 0..if many_open { 0 } else { config.moves } {
         if !stop.allows(LayoutStep::Move) {
             break;
@@ -1489,14 +1502,33 @@ pub fn layout_kicad_board(
         {
             break;
         }
-        // The most congested movable footprint that was not tried lately.
-        let mut ranked: Vec<(f64, usize)> = movable
+        if let Some(threshold) = guided_moves
+            && guided_attribution.is_none()
+        {
+            let route = pcb_global::route(&board, &pcb_global::GlobalConfig::default());
+            guided_attribution = Some(
+                crate::board_placer::attribution(
+                    &board,
+                    &route,
+                    &guidance_index,
+                    problem.problem.components.len(),
+                    threshold,
+                )
+                .0,
+            );
+        }
+        // The most congested movable footprint that was not tried lately
+        // (with the guidance: the most overflow-attributed one first).
+        let mut ranked: Vec<(f64, f64, usize)> = movable
             .iter()
             .filter(|index| !recently.contains(index))
             .map(|index| {
                 let component = &problem.problem.components[*index];
                 let pose = problem.problem.poses[*index];
                 (
+                    guided_attribution
+                        .as_ref()
+                        .map_or(0.0, |attribution| attribution[*index]),
                     body_congestion(
                         &result,
                         component.center(pose),
@@ -1507,10 +1539,15 @@ pub fn layout_kicad_board(
                 )
             })
             .collect();
-        ranked.sort_by(|a, b| b.0.total_cmp(&a.0).then(a.1.cmp(&b.1)));
-        let Some(&(congestion, index)) = ranked.first() else {
+        ranked.sort_by(|a, b| {
+            b.0.total_cmp(&a.0)
+                .then(b.1.total_cmp(&a.1))
+                .then(a.2.cmp(&b.2))
+        });
+        let Some(&(attributed, congestion, index)) = ranked.first() else {
             break;
         };
+        let congestion = congestion.max(attributed);
         if congestion <= 0.0 && best.0 == 0 {
             break;
         }
@@ -1657,6 +1694,7 @@ pub fn layout_kicad_board(
                 best = trial_score;
                 result = trial;
                 board = trial_board;
+                guided_attribution = None;
                 polished = polish;
                 improved = true;
                 break;

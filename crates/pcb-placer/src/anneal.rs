@@ -41,6 +41,9 @@ pub struct AnnealConfig {
     /// conflicted parts). Off: flat on the quick tier, worse on video
     /// and OpenESC 4in1 (2026-10-14).
     pub legal_far_side: bool,
+    /// The global route inside the anneal (`crate::guidance`, an
+    /// experiment): off (`None`) by default.
+    pub guidance: Option<crate::guidance::Guidance>,
 }
 
 impl Default for AnnealConfig {
@@ -53,6 +56,7 @@ impl Default for AnnealConfig {
             deadline: None,
             stop_at_work: None,
             legal_far_side: false,
+            guidance: None,
         }
     }
 }
@@ -102,6 +106,8 @@ struct State<'a> {
     check_overlap: bool,
     /// `AnnealConfig::legal_far_side`.
     legal_far_side: bool,
+    /// The last global route's overflow field (`AnnealConfig::guidance`).
+    field: Option<crate::guidance::Prepared>,
 }
 
 impl State<'_> {
@@ -522,7 +528,12 @@ impl State<'_> {
                     bounds[2] = bounds[2].max(at[0]);
                     bounds[3] = bounds[3].max(at[1]);
                 }
-                self.problem.net_weights[*net] * ((bounds[2] - bounds[0]) + (bounds[3] - bounds[1]))
+                let length = (bounds[2] - bounds[0]) + (bounds[3] - bounds[1]);
+                let guided = match &self.field {
+                    Some(field) => 1.0 + field.weight * field.mean(bounds),
+                    None => 1.0,
+                };
+                self.problem.net_weights[*net] * length * guided
             })
             .sum()
     }
@@ -588,6 +599,7 @@ fn build_state<'a>(problem: &'a Problem, poses: &[Pose], legal_far_side: bool) -
             as u64,
         check_overlap: std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
         legal_far_side,
+        field: None,
     };
     state.rects = (0..problem.components.len())
         .map(|index| state.rect(index, state.poses[index]))
@@ -705,6 +717,14 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
     let penalty_growth = (400.0f64 / penalty).powf(1.0 / config.stages as f64);
     let radius_decay = ((1.5 * grid) / radius).powf(1.0 / config.stages as f64);
 
+    // The global route's guidance: evaluated now and again whenever its
+    // work stays within its share of the anneal's.
+    let mut guide = config
+        .guidance
+        .as_ref()
+        .map(|guidance| Guide::new(guidance, &mut state, &movable));
+    let mut anneal_work = 0u64;
+
     for _ in 0..config.stages {
         if config
             .deadline
@@ -717,7 +737,17 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
         }
         let mut work = 0;
         for _ in 0..config.moves_per_part * movable.len() {
-            let index = movable[random.below(movable.len())];
+            if let Some(guide) = guide.as_mut()
+                && guide.due(anneal_work + work + state.work.get())
+            {
+                guide.evaluate(&mut state, &movable);
+            }
+            let index = match guide.as_ref().and_then(|guide| guide.cumulative.as_ref()) {
+                Some(cumulative) if random.next() < guide.as_ref().unwrap().bias => {
+                    movable[crate::guidance::pick(cumulative, random.next())]
+                }
+                _ => movable[random.below(movable.len())],
+            };
             work += move_work[index];
             let component = &problem.components[index];
             let kind = random.next();
@@ -775,6 +805,8 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                     state.poses[other] = second_pose;
                     state.set_rect(index, saved.0);
                     state.set_rect(other, saved.1);
+                } else if let Some(guide) = guide.as_mut() {
+                    guide.accepted += 1;
                 }
                 continue;
             }
@@ -820,12 +852,19 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
             if delta > 0.0 && random.next() >= (-delta / temperature).exp() {
                 state.poses[index] = old;
                 state.set_rect(index, saved);
+            } else if let Some(guide) = guide.as_mut() {
+                guide.accepted += 1;
             }
         }
-        crate::add_work(work + state.work.replace(0));
+        let stage_work = work + state.work.replace(0);
+        anneal_work += stage_work;
+        crate::add_work(stage_work);
         penalty *= penalty_growth;
         radius *= radius_decay;
         temperature *= 0.975;
+    }
+    if let Some(guide) = guide.as_mut() {
+        guide.finish(&mut state, anneal_work);
     }
     *poses = state.poses.clone();
     movable
@@ -833,4 +872,83 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
         .map(|index| state.overlap(*index, state.rects[*index]))
         .sum::<f64>()
         / 2.0
+}
+
+/// The anneal's side of `AnnealConfig::guidance`.
+struct Guide<'a> {
+    guidance: &'a crate::guidance::Guidance,
+    bias: f64,
+    /// Over the movable parts, for draws by attribution.
+    cumulative: Option<Vec<f64>>,
+    accepted: usize,
+    evaluations: usize,
+    work: u64,
+    last_work: u64,
+    first_overflow: f64,
+    last_overflow: f64,
+}
+
+impl<'a> Guide<'a> {
+    fn new(guidance: &'a crate::guidance::Guidance, state: &mut State, movable: &[usize]) -> Self {
+        let mut guide = Self {
+            guidance,
+            bias: guidance.bias,
+            cumulative: None,
+            accepted: 0,
+            evaluations: 0,
+            work: 0,
+            last_work: 0,
+            first_overflow: f64::NAN,
+            last_overflow: f64::NAN,
+        };
+        guide.evaluate(state, movable);
+        guide
+    }
+
+    /// Whether another evaluation is due, `anneal_work` done so far.
+    fn due(&self, anneal_work: u64) -> bool {
+        self.accepted >= self.guidance.min_accepted.max(1)
+            && (self.work + self.last_work) as f64 <= self.guidance.work_share * anneal_work as f64
+    }
+
+    fn evaluate(&mut self, state: &mut State, movable: &[usize]) {
+        self.accepted = 0;
+        let Some(field) = (self.guidance.evaluate)(&state.poses) else {
+            // Nothing to go by: the plain anneal from here.
+            state.field = None;
+            self.cumulative = None;
+            self.last_work = u64::MAX / 4;
+            return;
+        };
+        crate::add_work(field.work);
+        self.work += field.work;
+        self.last_work = field.work;
+        self.evaluations += 1;
+        if self.first_overflow.is_nan() {
+            self.first_overflow = field.total_overflow;
+        }
+        self.last_overflow = field.total_overflow;
+        state.field = crate::guidance::Prepared::new(&field, self.guidance.weight);
+        self.cumulative = crate::guidance::cumulative(&field, movable);
+    }
+
+    /// One evaluation of the result, for the trace.
+    fn finish(&mut self, state: &mut State, anneal_work: u64) {
+        let Some(field) = (self.guidance.evaluate)(&state.poses) else {
+            return;
+        };
+        crate::add_work(field.work);
+        self.work += field.work;
+        // The excess at the guidance's threshold, as the evaluator counts it.
+        eprintln!(
+            "guidance: {} evaluations, total overflow {:.0} first, {:.0} last, {:.0} annealed; work {:.1} s of the anneal's {:.1} s",
+            self.evaluations,
+            self.first_overflow,
+            self.last_overflow,
+            field.total_overflow,
+            self.work as f64 / crate::work_per_second(),
+            anneal_work as f64 / crate::work_per_second(),
+        );
+        state.field = None;
+    }
 }

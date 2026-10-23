@@ -108,6 +108,19 @@ pub struct Capacity {
     pub inside: Vec<bool>,
     /// The class capacities count in (the one most nets use).
     pub reference: RuleClass,
+    /// Distance tests made, each weighted by its shape's size: the
+    /// build's deterministic work.
+    pub work: u64,
+}
+
+/// What one distance test against `shape` costs, in units of a circle's.
+fn shape_cost(shape: &pcb_router::geometry::Shape) -> u64 {
+    use pcb_router::geometry::Shape;
+    match shape {
+        Shape::Circle { .. } | Shape::Capsule { .. } => 1,
+        Shape::Polygon { points } => 1 + points.len() as u64 / 4,
+        Shape::Union { parts } => parts.iter().map(shape_cost).sum::<u64>().max(1),
+    }
 }
 
 /// The class most nets with two or more terminals use.
@@ -209,7 +222,9 @@ impl Capacity {
             track: f64,
             via: f64,
             bounds: Aabb,
+            cost: u64,
         }
+        let mut work = 0u64;
         let mut entries = Vec::new();
         for (index, obstacle) in board.obstacles.iter().enumerate() {
             let (tracks, vias) = (blocks_tracks(obstacle), blocks_vias(obstacle));
@@ -232,6 +247,7 @@ impl Capacity {
                 track,
                 via,
                 bounds,
+                cost: shape_cost(&obstacle.shape),
             });
         }
         let mut buckets: Vec<Vec<u32>> = vec![Vec::new(); tiles];
@@ -391,6 +407,7 @@ impl Capacity {
                                     if *slot & layers_of == layers_of {
                                         continue;
                                     }
+                                    work += entry.cost;
                                     if obstacle.shape.distance_to_point(position(k)) < entry.track {
                                         *slot |= layers_of;
                                     }
@@ -467,8 +484,11 @@ impl Capacity {
                                 && point[0] <= entry.bounds.maximum[0]
                                 && point[1] >= entry.bounds.minimum[1]
                                 && point[1] <= entry.bounds.maximum[1]
-                                && board.obstacles[entry.index].shape.distance_to_point(point)
-                                    < entry.via
+                                && {
+                                    work += entry.cost;
+                                    board.obstacles[entry.index].shape.distance_to_point(point)
+                                        < entry.via
+                                }
                         });
                         if !hit {
                             free += 1;
@@ -533,6 +553,7 @@ impl Capacity {
             pour_share,
             inside,
             reference,
+            work,
         }
     }
 }

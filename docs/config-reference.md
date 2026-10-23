@@ -33,6 +33,8 @@ The environment variables are indexed in the hand-over
 | [Router report: rules](#router-report-rules) | 5 | - | 0 | 5 | - |
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 5 | - | 0 | 5 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
+| [Router core](#router-core) | 60 | - | 0 | 60 | - |
+| [Placer settings](#placer-settings) | 47 | 43 | 4 | 47 | 16 |
 | [Router core](#router-core) | 61 | - | 0 | 61 | - |
 | [Placer settings](#placer-settings) | 45 | 42 | 3 | 45 | 16 |
 | [Layout settings](#layout-settings) | 17 | 17 | 0 | 17 | 7 |
@@ -41,7 +43,7 @@ The environment variables are indexed in the hand-over
 | [Layout settings: silkscreen](#layout-settings-silkscreen) | 1 | 1 | 0 | 1 | 1 |
 | [Placer core](#placer-core) | 8 | - | 0 | 8 | - |
 | [Placer core: global](#placer-core-global) | 12 | - | 0 | 12 | - |
-| [Placer core: anneal](#placer-core-anneal) | 7 | - | 0 | 7 | - |
+| [Placer core: anneal](#placer-core-anneal) | 8 | - | 0 | 8 | - |
 
 ## Router settings
 
@@ -352,6 +354,8 @@ The placer config file of `place-kicad-board`, and the `placer` object of the la
 | `orientation_search` | `bool` | `true` | placer.md | The placement's orientation search starts from a canonical pose (`core::orient`): every movable part that may turn at the first of its angle options (in a fixed order), so that the placement is the same whether the board holds 0 degrees (an import from a schematic) or the designer's angles (a stack). On; off: the parts start at the angles the board holds. |
 | `keep_board_marks` | `bool` | `true` | placer.md | The board's own texts (header pin names, a title) and silkscreen graphics (a logo, a frame around a group) stay where the input put them: each is a placement obstacle on its side with a keepout's semantics (texts on F.SilkS, B.SilkS, F.Cu and B.Cu by their box from font size, thickness and justification; graphics on the silkscreen by their strokes, in clusters, leaving out a cluster that spans most of the board; a part meets a silkscreen mark without its routing halo; a mark on a movable part at its input position belongs to that part and is none: `attached_marks` in `board-placer.json`), and a part that finds no room off them at a level lies on them (`parts_on_marks` in `board-placer.json`); the layout routes around copper texts instead of moving them afterwards, and the polish moves only the parts' reference and value labels. Movable parts whose silkscreen or pads lie on a mark are reported (`labels.overlaps` in `board-layout.json`, the verdict's next_actions); fixed parts on a mark get a warning. On; off: the behaviour before 2026-10-21 (the marks are no obstacles, the polish moves them off the parts). |
 | `attached_marks` (internal) | `Option<Vec<(usize, usize)>>` | unset (internal) | - | The board's marks that belong to a movable part, taken from the input (`attach_marks`: the mark's place among the board's marks, the part); set by the layout for the lowerings of the placed board, where the parts no longer lie where the input had them. |
+| `global_guidance` | `Option<KiCadGlobalGuidance>` | unset | - | The global route inside the placer's search (an experiment, off): the anneal re-evaluates the global route of its placement and prefers moves away from overflowing boundaries, proposing the parts whose nets cross them more often; the coupled loop moves those parts first (docs/global-route.md, "Phase 2"). |
+| `guidance_router` (internal) | `Option<KiCadBoardRouterConfig>` | unset (internal) | - | The router's configuration the guidance lowers with (set by the layout; the default otherwise). |
 
 ## Layout settings
 
@@ -460,3 +464,4 @@ The `silkscreen` object of the layout settings: the footprints' Reference and Va
 | `anneal.deadline` | `Option<std::time::Instant>` | unset | `deadline` | No further stage starts after this wall-clock time. |
 | `anneal.stop_at_work` | `Option<u64>` | unset | - | No further stage starts once this thread's `crate::work()` reaches this count. |
 | `anneal.legal_far_side` | `bool` | `false` | `anneal_far_side_gaps` | Parts across the board meet at the legality test's gaps (`State::far_overlap`): holes the full spacing from bodies, far-side copper the copper clearance from pads. Without it holes meet bodies at half the spacing and far-side copper not at all, and the legalizer moves what the annealer could not see (Castor: 33 of 69 conflicted parts). Off: flat on the quick tier, worse on video and OpenESC 4in1 (2026-10-14). |
+| `anneal.guidance` | `Option<crate::guidance::Guidance>` | unset | - | The global route inside the anneal (`crate::guidance`, an experiment): off (`None`) by default. |

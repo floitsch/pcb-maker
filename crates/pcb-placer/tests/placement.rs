@@ -1510,3 +1510,80 @@ fn pads_of_a_part_held_by_its_copper_keep_the_copper_to_edge_clearance_on_every_
     assert!(!legal(2.25));
     assert!(legal(2.31));
 }
+
+#[test]
+fn the_anneal_evaluates_its_guidance_within_its_share_and_is_unchanged_without_a_field() {
+    use pcb_placer::anneal::{AnnealConfig, anneal};
+    use pcb_placer::guidance::{Guidance, GuidanceField};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let problem = chain(8);
+    let plain = {
+        let mut poses = problem.poses.clone();
+        anneal(&problem, &mut poses, &AnnealConfig::default());
+        poses
+    };
+    // A guidance that never has a field: the plain anneal, pose for pose.
+    let empty = Guidance {
+        evaluate: Arc::new(|_: &[Pose]| None),
+        weight: 1.0,
+        work_share: 0.1,
+        min_accepted: 10,
+        bias: 0.5,
+    };
+    let mut poses = problem.poses.clone();
+    anneal(
+        &problem,
+        &mut poses,
+        &AnnealConfig {
+            guidance: Some(empty),
+            ..AnnealConfig::default()
+        },
+    );
+    assert_eq!(poses, plain);
+    // A field hot on the left half: evaluated more than once, the
+    // evaluations' work within their share (the first and the trace's
+    // aside).
+    let calls = Arc::new(AtomicUsize::new(0));
+    let counted = calls.clone();
+    let parts = problem.components.len();
+    let hot = Guidance {
+        evaluate: Arc::new(move |_: &[Pose]| {
+            counted.fetch_add(1, Ordering::Relaxed);
+            Some(GuidanceField {
+                origin: [0.0, 0.0],
+                tile_mm: 10.0,
+                tiles_x: 8,
+                tiles_y: 5,
+                overflow: (0..40)
+                    .map(|tile| if tile % 8 < 4 { 2.0 } else { 0.0 })
+                    .collect(),
+                attribution: vec![1.0; parts],
+                total_overflow: 40.0,
+                work: 1000,
+            })
+        }),
+        weight: 1.0,
+        work_share: 0.1,
+        min_accepted: 10,
+        bias: 0.5,
+    };
+    let started = pcb_placer::work();
+    let mut poses = problem.poses.clone();
+    anneal(
+        &problem,
+        &mut poses,
+        &AnnealConfig {
+            guidance: Some(hot),
+            ..AnnealConfig::default()
+        },
+    );
+    let evaluations = calls.load(Ordering::Relaxed);
+    let total = pcb_placer::work() - started;
+    assert!(evaluations > 2, "{evaluations} evaluations");
+    let guided = 1000 * (evaluations as u64 - 2);
+    assert!(
+        guided as f64 <= 0.1 * (total - guided - 2000) as f64 + 1000.0,
+        "{guided} of {total}"
+    );
+}

@@ -117,6 +117,22 @@ pub fn place_kicad_board(
     placer_config.anneal.legal_far_side = config.anneal_far_side_gaps;
     placer_config.routing_room = routing_room(config, &lowered);
     placer_config.orientation_search = config.orientation_search;
+    if let Some(guidance) = &config.global_guidance {
+        let router_config = config.guidance_router.clone().unwrap_or_default();
+        placer_config.anneal.guidance = Some(core::guidance::Guidance {
+            evaluate: self::guidance::evaluator(
+                &pcb,
+                &lowered.references,
+                &router_config,
+                config.keep_board_marks,
+                guidance.threshold,
+            )?,
+            weight: guidance.weight,
+            work_share: guidance.work_share,
+            min_accepted: guidance.min_accepted,
+            bias: guidance.bias,
+        });
+    }
     // Several seeds, in parallel; the placement with the fewest illegal
     // parts, then the least missed constraints, then the least wirelength
     // wins. Placement takes seconds; the constraints are what the user asked

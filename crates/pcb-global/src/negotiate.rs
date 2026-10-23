@@ -102,6 +102,8 @@ pub struct GlobalRoute {
     pub score: Score,
     pub capacity_seconds: f64,
     pub seconds: f64,
+    /// States popped by all searches (the negotiation's work).
+    pub pops: u64,
 }
 
 impl GlobalRoute {
@@ -712,7 +714,7 @@ pub(crate) fn negotiate(
 ) -> GlobalRoute {
     let plans = plans(board, &frame, &capacity, config);
     let per = frame.layers * frame.tiles();
-    let (best, iterations) = {
+    let (best, iterations, pops) = {
         let mut graph = Graph::new(&frame, &capacity, config);
         let mut routes: Vec<NetRoute> = vec![NetRoute::default(); plans.len()];
         let mut pending: Vec<usize> = (0..plans.len()).collect();
@@ -793,7 +795,11 @@ pub(crate) fn negotiate(
             }
             present *= config.present_growth as f32;
         }
-        (best.expect("one iteration at least"), iterations)
+        (
+            best.expect("one iteration at least"),
+            iterations,
+            graph.pops,
+        )
     };
     // The score of the kept iteration.
     let mut score = Score {
@@ -890,6 +896,7 @@ pub(crate) fn negotiate(
         score,
         capacity_seconds: 0.0,
         seconds: 0.0,
+        pops,
     }
 }
 
