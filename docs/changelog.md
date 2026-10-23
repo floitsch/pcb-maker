@@ -70,12 +70,17 @@ work). Logs `build/trouble3-designer-*.log`.
 
 | Board | x1680 (before) | A | B |
 | --- | --- | --- | --- |
-| video | 0 / 0 / 603 / 681.2 | VIDEOA | not run |
+| video | 0 / 0 / 603 / 681.2 | 0 / 0 / 603 / 681.2 (*) | not run |
 | SNSP-CPU-01 | 4 / 0 / 1339 / 1108.2 | 4 / 0 / 1339 / 1109.5 | 4 / 0 / 1339 / 1113.2 |
 | OpenESC 4in1 | 0 / 0 / 111 / 281.2 | 0 / 0 / 111 / 281.2 | 0 / 0 / 111 / 281.2 |
 | Glasgow | 49 / 0 / 240 / 1575.1 | 49 / 0 / 240 / 1575.1 | 49 / 0 / 240 / 1575.6 |
 | MegaDrive | 59 / 0 / 1351 / 1432.8 | 58 / 0 / 1311 / 1432.3 | 58 / 0 / 1236 / 1388.2 |
 | sum | 112 | 111 | 111 |
+
+(*) By construction, not measured: video's designer route is complete
+before the repair (x1680 tried no exchange there), so the repair's
+rules change nothing; A's run lost its binary and x1682's waited hours
+for its 9.9 GB in the memory ledger.
 
 **Expansion tier** (46 boards, route mode, 8 x 1, 30 s): x1682 (and
 x1681 with A) identical to x1680 on all 46 rows (unconnected 625,
