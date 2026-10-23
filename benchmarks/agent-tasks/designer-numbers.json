@@ -1,660 +1,987 @@
 {
  "boards": {
   "0xCB-dev__0xCB-1337__1337-v4.0": {
+   "bends_per_connection": 1.594,
    "board_sha256": "88157743836df5edf5f7f8021dfcc58fdac208a583b8218a13734a373cddb3bb",
    "ground_cut_mm": 0.0,
+   "pin_row_crossings": 3,
+   "stair_steps": 11,
    "track_length_mm": 1229.94,
    "vias": 54
   },
   "0xCB-dev__0xCB-1337__panel": {
+   "bends_per_connection": 1.594,
    "board_sha256": "1057ee9a5a7ee04f9e38d9b43a4ebc52e55ea23d34426a9ae95176f54362feef",
    "ground_cut_mm": 0.0,
+   "pin_row_crossings": 12,
+   "stair_steps": 44,
    "track_length_mm": 4919.76,
    "vias": 216
   },
   "0xCB-dev__0xCB-1337__pcb": {
+   "bends_per_connection": 1.475,
    "board_sha256": "9dfe605294d1143ea330612e7085aba80c20219e1825241ab08d6fcbb8d84773",
    "ground_cut_mm": 0.0,
+   "pin_row_crossings": 1,
+   "stair_steps": 58,
    "track_length_mm": 1608.05,
    "vias": 169
   },
   "0xCB-dev__0xCB-1337__pcb-panel": {
+   "bends_per_connection": 1.475,
    "board_sha256": "ce9fa5e792b4ac238538b27a1a12adcb59468d2545e404300e89daee41f2a782",
    "ground_cut_mm": 0.0,
+   "pin_row_crossings": 4,
+   "stair_steps": 231,
    "track_length_mm": 6432.21,
    "vias": 676
   },
   "0xCB-dev__0xCB-Static__0xcb-static": {
+   "bends_per_connection": 1.697,
    "board_sha256": "a1930043986f41cc19e1b5cbbfe33da8dd46a3a7290ddd9f65c5cf3554be0dc4",
    "ground_cut_mm": 6854.64,
+   "pin_row_crossings": 0,
+   "stair_steps": 30,
    "track_length_mm": 6854.64,
    "vias": 34
   },
   "ASH-ART__Qfwfq__qfwfq": {
+   "bends_per_connection": 1.997,
    "board_sha256": "01d3336b04d5fb6a6ccbac205779d7fa93f150db2f732cb7d97b1bb6a7bd7e92",
-   "ground_cut_mm": 3413.97,
+   "ground_cut_mm": 3307.85,
+   "pin_row_crossings": 2,
+   "stair_steps": 25,
    "track_length_mm": 3413.97,
    "vias": 62
   },
   "CDFER__Business-Cards__Batch_1": {
+   "bends_per_connection": 3.228,
    "board_sha256": "5901d7c2a6a1f901375591aed98f2049b0b9c1256dd6d65b65658e6434ddb592",
-   "ground_cut_mm": 11267.94,
+   "ground_cut_mm": 10371.36,
+   "pin_row_crossings": 28,
+   "stair_steps": 205,
    "track_length_mm": 6824.76,
    "vias": 374
   },
   "CDFER__Business-Cards__USB_Cable_Tester__PCB": {
+   "bends_per_connection": 2.34,
    "board_sha256": "a4e3883e6fe64adfbc8618edc40a218ffe9864ba995ddbe1de38f0fa46ecc0e7",
-   "ground_cut_mm": 4032.96,
+   "ground_cut_mm": 3897.37,
+   "pin_row_crossings": 1,
+   "stair_steps": 14,
    "track_length_mm": 2016.49,
    "vias": 110
   },
   "CDFER__Business-Cards__USB_Keypad": {
+   "bends_per_connection": 3.02,
    "board_sha256": "fbf88869bae5853eeafb7b8406357ede01c1480a40f9e37c435e963171cb7ee7",
-   "ground_cut_mm": 854.13,
+   "ground_cut_mm": 664.97,
+   "pin_row_crossings": 19,
+   "stair_steps": 16,
    "track_length_mm": 1570.6,
    "vias": 78
   },
   "CDFER__Business-Cards__WLED_Matrix": {
+   "bends_per_connection": 3.82,
    "board_sha256": "3b43ac496d51d8578e795f7d57c9f88f478bf9be6dee75e4bc13ed0e8c15b398",
-   "ground_cut_mm": 1419.37,
+   "ground_cut_mm": 1095.6,
+   "pin_row_crossings": 8,
+   "stair_steps": 66,
    "track_length_mm": 1715.57,
    "vias": 111
   },
   "CRImier__MyKiCad__framework_mobo_lefthalf": {
+   "bends_per_connection": 4.643,
    "board_sha256": "92119041572103ce83d0642570cda489cf5d6c3f6d028419a665f64f20cebb2e",
-   "ground_cut_mm": 1391.17,
+   "ground_cut_mm": 1364.1,
+   "pin_row_crossings": 0,
+   "stair_steps": 154,
    "track_length_mm": 1391.16,
    "vias": 203
   },
   "CRImier__MyKiCad__protoesp": {
+   "bends_per_connection": 4.24,
    "board_sha256": "4ed02abe07962953616538dda2fcf94e871f36db76e87022ffa6444f53af92a9",
-   "ground_cut_mm": 4160.04,
+   "ground_cut_mm": 3915.42,
+   "pin_row_crossings": 7,
+   "stair_steps": 390,
    "track_length_mm": 4160.05,
    "vias": 261
   },
   "CRImier__MyKiCad__vaio_re": {
+   "bends_per_connection": 3.59,
    "board_sha256": "2ea8ede888eb4eb302d8f30634f69b06c452ab82267c7b23c43c9e422cc35d93",
-   "ground_cut_mm": 7267.93,
+   "ground_cut_mm": 6845.66,
+   "pin_row_crossings": 24,
+   "stair_steps": 968,
    "track_length_mm": 7267.94,
    "vias": 523
   },
   "CRImier__MyKiCad__zpn_devboard": {
+   "bends_per_connection": 3.831,
    "board_sha256": "8f41bdd83c4b5446b35e30036a3dc7d831fa966dab0b02d4099225d7cdc3001e",
-   "ground_cut_mm": 6084.77,
+   "ground_cut_mm": 6027.25,
+   "pin_row_crossings": 9,
+   "stair_steps": 449,
    "track_length_mm": 6084.78,
    "vias": 298
   },
   "GlasgowEmbedded__glasgow__glasgow__revC3": {
+   "bends_per_connection": 1.886,
    "board_sha256": "74ef350bc764a48f750a17e71df6bba7364e0d7fbb48d5555e94afa0b0d97c4d",
-   "ground_cut_mm": 4177.35,
+   "ground_cut_mm": 3921.55,
+   "pin_row_crossings": 33,
+   "stair_steps": 201,
    "track_length_mm": 4437.02,
    "vias": 416
   },
   "Goga64__ULK__ULK": {
+   "bends_per_connection": 1.044,
    "board_sha256": "861817932d33911c28b9160aa34ee9ada9730efb329e375d4ae8d96a3552001a",
-   "ground_cut_mm": 6686.08,
+   "ground_cut_mm": 6630.0,
+   "pin_row_crossings": 0,
+   "stair_steps": 10,
    "track_length_mm": 3343.04,
    "vias": 63
   },
   "Goga64__ULK__ULK_sl_PG1316s": {
+   "bends_per_connection": 1.213,
    "board_sha256": "a5523b0ee7526bf339c2149cc178044c11ae586d15a4e8ec7941ea13f8161aae",
-   "ground_cut_mm": 7179.74,
+   "ground_cut_mm": 6979.47,
+   "pin_row_crossings": 19,
+   "stair_steps": 30,
    "track_length_mm": 3589.87,
    "vias": 60
   },
   "Huaqiu-Electronics__ecad-viewer__video": {
+   "bends_per_connection": 3.383,
    "board_sha256": "f620675158ddd5c61e5ce9e15f4c92b230ae1df1cbcec6c502b8ce266e4007ea",
-   "ground_cut_mm": 638.98,
+   "ground_cut_mm": 607.83,
+   "pin_row_crossings": 4,
+   "stair_steps": 1238,
    "track_length_mm": 35416.83,
    "vias": 808
   },
   "ISSUIUC__ISS-PCB__BAGEL-MK1": {
+   "bends_per_connection": 0.829,
    "board_sha256": "b39c18d12de74a5ac04b8f9a5e922a4b01d1ad31d3291251e1c83cd5bc2be9f9",
-   "ground_cut_mm": 7635.18,
+   "ground_cut_mm": 7601.91,
+   "pin_row_crossings": 0,
+   "stair_steps": 45,
    "track_length_mm": 1491.98,
    "vias": 525
   },
   "ISSUIUC__ISS-PCB__BAGEL-MK1.1-Avocado": {
+   "bends_per_connection": 1.658,
    "board_sha256": "2434fdded6d78350cdc57be0d15d816bf582b6187cac75cd8d31998806a7a1e6",
-   "ground_cut_mm": 14333.41,
+   "ground_cut_mm": 14243.92,
+   "pin_row_crossings": 0,
+   "stair_steps": 87,
    "track_length_mm": 2078.6,
    "vias": 820
   },
   "ISSUIUC__ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA": {
+   "bends_per_connection": 0.791,
    "board_sha256": "2fec683cff827b88dad85e78ab30e73540bb7ee19c263e53165ae245e4ede95f",
-   "ground_cut_mm": 2747.25,
+   "ground_cut_mm": 2746.59,
+   "pin_row_crossings": 4,
+   "stair_steps": 31,
    "track_length_mm": 2793.3,
    "vias": 273
   },
   "ISSUIUC__ISS-PCB__MIDAS-MK1__MIDAS-MK1-revA": {
+   "bends_per_connection": 0.827,
    "board_sha256": "509b318ef22808d2fbecd81600783ca04ab81edf4935472985550a94205dcb30",
-   "ground_cut_mm": 2836.05,
+   "ground_cut_mm": 2835.39,
+   "pin_row_crossings": 1,
+   "stair_steps": 31,
    "track_length_mm": 2882.09,
    "vias": 275
   },
   "ISSUIUC__ISS-PCB__MIDAS-MK2": {
+   "bends_per_connection": 0.846,
    "board_sha256": "cd03d7d8ad4c765df5d3c1b8d8a6970749eef2118babc56d929f3b854cb1b279",
    "ground_cut_mm": 5930.17,
+   "pin_row_crossings": 5,
+   "stair_steps": 35,
    "track_length_mm": 2584.18,
    "vias": 401
   },
   "ISSUIUC__ISS-PCB__MIDAS-MK2.1__MIDAS-MK2.1-revA": {
+   "bends_per_connection": 0.847,
    "board_sha256": "a5623b999fa4b5d02e938f9a3489ad6ed88eff2d3321b535fafb28063670a89a",
    "ground_cut_mm": 5984.01,
+   "pin_row_crossings": 5,
+   "stair_steps": 37,
    "track_length_mm": 2604.14,
    "vias": 432
   },
   "Jana-Marie__ligra__ligra_back": {
+   "bends_per_connection": 0.97,
    "board_sha256": "26f94d86b6757d6cbffad5aaf17b925707362d7c86321d92e360975f73b430b2",
    "ground_cut_mm": 0.0,
+   "pin_row_crossings": 2,
+   "stair_steps": 14,
    "track_length_mm": 1062.86,
    "vias": 251
   },
   "Ladniy__jiran-ble-lite__jiran-ble-lite": {
+   "bends_per_connection": 1.55,
    "board_sha256": "2408628a657a0b51bf6091a0b993cc495291fac8fc37cb136d44449250757284",
    "ground_cut_mm": null,
+   "pin_row_crossings": 2,
+   "stair_steps": 28,
    "track_length_mm": 5195.94,
    "vias": 61
   },
   "MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub": {
+   "bends_per_connection": 2.034,
    "board_sha256": "23e289ad485e00a1142fec4643a915ed915dfffa098d036bfe6a8298018a86cb",
-   "ground_cut_mm": 3575.76,
+   "ground_cut_mm": 3496.86,
+   "pin_row_crossings": 1,
+   "stair_steps": 197,
    "track_length_mm": 3575.75,
    "vias": 331
   },
   "Neotron-Compute__Neotron-Pico__neotron-pico": {
+   "bends_per_connection": 1.328,
    "board_sha256": "e2a9069e63951d229c2c7dc60ee2ee2510a5dca66ece2e97bc8879d2698073fb",
    "ground_cut_mm": 0.0,
+   "pin_row_crossings": 9,
+   "stair_steps": 68,
    "track_length_mm": 9293.41,
    "vias": 355
   },
   "Open-Muscle__OpenMuscle-FlexGrid__OM-60-Flex": {
+   "bends_per_connection": 1.851,
    "board_sha256": "9cc61bfb4016c1e5688a7bf788ea6c3c35a283593ad5bdb6b30df71f8aa137f2",
    "ground_cut_mm": null,
+   "pin_row_crossings": 0,
+   "stair_steps": 33,
    "track_length_mm": 4069.99,
    "vias": 120
   },
   "Open-Muscle__OpenMuscle-FlexGrid__OM-FlexGrid-Flex__OM-FlexGrid-Flex": {
+   "bends_per_connection": 2.842,
    "board_sha256": "430beba8ef00d5b2e4a1511bb6daf83275cb17cb980ad0b7813ae6b13e57fb44",
    "ground_cut_mm": null,
+   "pin_row_crossings": 0,
+   "stair_steps": 43,
    "track_length_mm": 5177.12,
    "vias": 120
   },
   "OpenDrone-hw__OpenESC-20x20__4in1-mini": {
+   "bends_per_connection": 1.022,
    "board_sha256": "8d91220c684f77ee7680ff17b0cce884003cc789585d8eb4d73c8e0ff46a5552",
    "ground_cut_mm": 947.19,
+   "pin_row_crossings": 0,
+   "stair_steps": 69,
    "track_length_mm": 966.51,
    "vias": 1129
   },
   "OpenDrone-hw__OpenESC-30x30__4in1": {
+   "bends_per_connection": 0.79,
    "board_sha256": "02d502a1a5d3e41f21f755cdc80d69172581f84bc9525aa42c553bc491f28304",
    "ground_cut_mm": 1106.93,
+   "pin_row_crossings": 0,
+   "stair_steps": 70,
    "track_length_mm": 1170.89,
    "vias": 1702
   },
   "OpenDrone-hw__OpenESC-30x30__4in1-panel": {
+   "bends_per_connection": 0.837,
    "board_sha256": "e820efad7b33b72dea4d8de3a8824f2fc271f111b512dd8c86e83f719d37dbb3",
    "ground_cut_mm": 2088.86,
+   "pin_row_crossings": 0,
+   "stair_steps": 128,
    "track_length_mm": 2257.19,
    "vias": 2604
   },
   "OpenDrone-hw__OpenFC-Lite__OpenFC": {
+   "bends_per_connection": 1.273,
    "board_sha256": "4bdfd53e990ffbc440237bab92c2287de614bf30f52c8f1eae64589a3160f789",
    "ground_cut_mm": 1067.68,
+   "pin_row_crossings": 0,
+   "stair_steps": 52,
    "track_length_mm": 1231.0,
    "vias": 596
   },
   "OpenDrone-hw__OpenRX__OpenRX-panel-rev2": {
+   "bends_per_connection": 0.82,
    "board_sha256": "8eb29d7b1a4adb934b5dfda6b883ed96426579a61e224c0921b642f51feb57c4",
    "ground_cut_mm": 1034.83,
+   "pin_row_crossings": 1,
+   "stair_steps": 120,
    "track_length_mm": 1075.55,
    "vias": 538
   },
   "Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1": {
+   "bends_per_connection": 1.74,
    "board_sha256": "7c4be75e948e732a7b41ad1943da2ded2ffb75dcf1e6903a517130ecbde083d7",
-   "ground_cut_mm": 754.01,
+   "ground_cut_mm": 691.75,
+   "pin_row_crossings": 0,
+   "stair_steps": 46,
    "track_length_mm": 754.01,
    "vias": 334
   },
   "Spaceflight-Rocketry-Giessen-e-V__Telemetry__TelemetryOnboard": {
+   "bends_per_connection": 0.789,
    "board_sha256": "6ed1053485726ab3791536a656a841d2f009ff22c65dbfa1ad20aee3277957b4",
-   "ground_cut_mm": 2796.52,
+   "ground_cut_mm": 2779.37,
+   "pin_row_crossings": 0,
+   "stair_steps": 4,
    "track_length_mm": 2796.51,
    "vias": 269
   },
   "Twisted-Fields__rp2040-motor-controller__RP2040_base": {
+   "bends_per_connection": 3.517,
    "board_sha256": "1519c06cbc3cc8db5c31665fa763b5affd60bde538a868fcc6fa95166dd3f563",
-   "ground_cut_mm": 4346.56,
+   "ground_cut_mm": 4149.46,
+   "pin_row_crossings": 15,
+   "stair_steps": 463,
    "track_length_mm": 7618.16,
    "vias": 553
   },
   "antmicro__jetson-nano-baseboard__jetson-nano-baseboard": {
+   "bends_per_connection": 4.564,
    "board_sha256": "8fc7b361091f1ab5b2026f65fc0c0ea42e16caa705cd52e63c3c48e6ba887252",
-   "ground_cut_mm": 6792.4,
+   "ground_cut_mm": 6397.29,
+   "pin_row_crossings": 10,
+   "stair_steps": 705,
    "track_length_mm": 10111.19,
    "vias": 794
   },
   "anyshake__explorer__Explorer": {
+   "bends_per_connection": 1.704,
    "board_sha256": "aecc4b6f223f8fa1b4a2ed250143d44d2fd4fa50baac64b6525328ded9453721",
    "ground_cut_mm": 12702.54,
+   "pin_row_crossings": 1,
+   "stair_steps": 111,
    "track_length_mm": 4234.18,
    "vias": 1057
   },
   "apfaudio__eurorack-pmod__eurorack-pmod-pcb": {
+   "bends_per_connection": 2.167,
    "board_sha256": "05ea68bc27b8fc58aec40ef08cee1337cd35908cc34796aa1871faf79a5012bc",
-   "ground_cut_mm": 3622.58,
+   "ground_cut_mm": 3560.93,
+   "pin_row_crossings": 3,
+   "stair_steps": 141,
    "track_length_mm": 3658.47,
    "vias": 331
   },
   "baldengineer__bit-preserve__coco2": {
+   "bends_per_connection": 3.939,
    "board_sha256": "9065a89c2f94572e44ad443a4579fc2bcee7b492bf49efa8bfc99c71046477e3",
-   "ground_cut_mm": 21350.76,
+   "ground_cut_mm": 21330.91,
+   "pin_row_crossings": 0,
+   "stair_steps": 411,
    "track_length_mm": 21350.76,
    "vias": 215
   },
   "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV": {
+   "bends_per_connection": 0.867,
    "board_sha256": "69a65acd7fe3a0838ee291ad626e20f496a25f742d9061809efb5c55bc123e8d",
-   "ground_cut_mm": 1202.2,
+   "ground_cut_mm": 1184.86,
+   "pin_row_crossings": 2,
+   "stair_steps": 31,
    "track_length_mm": 1275.79,
    "vias": 541
   },
   "bitshiftcrazy__d20_pcb__d20_pcb": {
+   "bends_per_connection": 3.87,
    "board_sha256": "2e36467a796ef13f137f7f699c3073d0245b7c12a55cd0a57f0186c42afe1f82",
    "ground_cut_mm": 576.07,
+   "pin_row_crossings": 7,
+   "stair_steps": 44,
    "track_length_mm": 1032.76,
    "vias": 46
   },
   "bitshiftcrazy__spell_tome__spell_tome_bottom": {
+   "bends_per_connection": 1.2,
    "board_sha256": "4b08f78a26d14792879fe2e14fbc51dd9b00c53749de2494d7413c914eea9e58",
    "ground_cut_mm": 623.67,
+   "pin_row_crossings": 0,
+   "stair_steps": 3,
    "track_length_mm": 650.43,
    "vias": 6
   },
   "briskspirit__Sisu_SSE-9__Sisu_SSE-9": {
+   "bends_per_connection": 1.886,
    "board_sha256": "5da2bf0d3ac47c3e606c9b7ba8e729dc4a98e2b76b463214df05267a887d508c",
    "ground_cut_mm": 4880.31,
+   "pin_row_crossings": 50,
+   "stair_steps": 206,
    "track_length_mm": 5240.44,
    "vias": 1076
   },
   "byrantech__laptop__keyboard": {
+   "bends_per_connection": 2.217,
    "board_sha256": "1837734586202401cbc324715327bcf25ad65150fa43a7c02dbc3d448cda8b95",
    "ground_cut_mm": 0.0,
+   "pin_row_crossings": 14,
+   "stair_steps": 59,
    "track_length_mm": 8190.36,
    "vias": 571
   },
   "byrantech__laptop__motherboard": {
+   "bends_per_connection": 2.448,
    "board_sha256": "919f4bbdc66cdc5c71765a0e30ae10528f0a210ba89c4288af43dffa4ecdbf64",
-   "ground_cut_mm": 7805.71,
+   "ground_cut_mm": 7771.33,
+   "pin_row_crossings": 12,
+   "stair_steps": 354,
    "track_length_mm": 9341.0,
    "vias": 734
   },
   "byrantech__laptop__power": {
+   "bends_per_connection": 1.147,
    "board_sha256": "41a2ca4b38f9e0ebe72c1656d1cf8a021e18080c511be75bd2aeac04ffa409fb",
-   "ground_cut_mm": 3954.88,
+   "ground_cut_mm": 3912.49,
+   "pin_row_crossings": 6,
+   "stair_steps": 48,
    "track_length_mm": 1977.44,
    "vias": 167
   },
   "crmaykish__mackerel-68k__mackerel-08-v1": {
+   "bends_per_connection": 2.48,
    "board_sha256": "c7aea8a8ba82d3fd6cab224ab019af850ee2df1c0d5ab84fb1f96ceac5934b85",
-   "ground_cut_mm": 12.65,
+   "ground_cut_mm": 0.0,
+   "pin_row_crossings": 0,
+   "stair_steps": 393,
    "track_length_mm": 13598.79,
    "vias": 208
   },
   "crmaykish__mackerel-68k__mackerel-10-v1": {
+   "bends_per_connection": 2.123,
    "board_sha256": "5d229a2d09b11648951762674945a3c923841aa38975583846c072dc9851a8bc",
-   "ground_cut_mm": 9327.42,
+   "ground_cut_mm": 9313.64,
+   "pin_row_crossings": 0,
+   "stair_steps": 221,
    "track_length_mm": 23399.08,
    "vias": 200
   },
   "crmaykish__mackerel-68k__mackerel-30-proto": {
+   "bends_per_connection": 2.202,
    "board_sha256": "9e73b82a38fffd949d4e016197f3de3e64f0477d9cc55d49f4b60eef22d3226b",
-   "ground_cut_mm": 7.18,
+   "ground_cut_mm": 0.0,
+   "pin_row_crossings": 0,
+   "stair_steps": 240,
    "track_length_mm": 21733.83,
    "vias": 294
   },
   "doudar__SmartSpin2k__SmartSpin2k_Panelized": {
+   "bends_per_connection": 1.995,
    "board_sha256": "6c67f5cacf1ae0cb4995aa9eb7852e9f4fc94169d14c1e02cdaeffdcc5f4465a",
-   "ground_cut_mm": 34605.72,
+   "ground_cut_mm": 34579.08,
+   "pin_row_crossings": 0,
+   "stair_steps": 369,
    "track_length_mm": 13007.42,
    "vias": 1116
   },
   "duckyb__eternal-keypad__eternal-keypad": {
+   "bends_per_connection": 0.561,
    "board_sha256": "0ce37443ea09124c13807a6e81f13157ec5c8ee18e1b459a6df3c40c04876a8f",
    "ground_cut_mm": 0.0,
+   "pin_row_crossings": 36,
+   "stair_steps": 18,
    "track_length_mm": 3332.28,
    "vias": 55
   },
   "duckyb__urchin__main": {
+   "bends_per_connection": 0.95,
    "board_sha256": "f3a70a00a0be4e6c62149c47badb4c7820cd2cbad37609ac23dcc309da95c1df",
    "ground_cut_mm": null,
+   "pin_row_crossings": 16,
+   "stair_steps": 16,
    "track_length_mm": 2597.32,
    "vias": 53
   },
   "earth75__atat-1800__ATAT1800": {
+   "bends_per_connection": 1.819,
    "board_sha256": "2c0fa64b23aee6c63a32b409a38ef5915a78a9a142d0054a3c5d50223379d455",
-   "ground_cut_mm": 15352.82,
+   "ground_cut_mm": 15107.58,
+   "pin_row_crossings": 4,
+   "stair_steps": 93,
    "track_length_mm": 16218.5,
    "vias": 680
   },
   "ebastler__osprey__osprey_rev_a": {
+   "bends_per_connection": 1.773,
    "board_sha256": "6ac084728a22308e477dffb0940b68a305bbdd127b96c5bace2ba3747e3e5dd0",
    "ground_cut_mm": 0.0,
+   "pin_row_crossings": 0,
+   "stair_steps": 117,
    "track_length_mm": 4059.39,
    "vias": 665
   },
   "emertcakir__OpenAirScope__OpenAirScope": {
+   "bends_per_connection": 1.274,
    "board_sha256": "a84ff06d6c8ad77bfa3c8a148ac85010f6aa74a069b959a106053e7c2dd584e7",
    "ground_cut_mm": 4836.94,
+   "pin_row_crossings": 0,
+   "stair_steps": 115,
    "track_length_mm": 4836.94,
    "vias": 473
   },
   "greatscottgadgets__hackrf__hackrf-one": {
+   "bends_per_connection": 1.74,
    "board_sha256": "558d73553c7c2b2ae77dad541c87e671f3b2e982306f25e6fabed8d1e879e438",
-   "ground_cut_mm": 76.95,
+   "ground_cut_mm": 0.0,
+   "pin_row_crossings": 11,
+   "stair_steps": 346,
    "track_length_mm": 9046.95,
    "vias": 498
   },
   "hackclub__OnBoard__E-Fidget-Lite": {
+   "bends_per_connection": 1.485,
    "board_sha256": "2d1c49cf8ef43d20a36565a16353101c33d4619a9e29a5e55a0ff80cda7f361f",
    "ground_cut_mm": null,
+   "pin_row_crossings": 2,
+   "stair_steps": 7,
    "track_length_mm": 473.04,
    "vias": 20
   },
   "hackclub__OnBoard__MotionCubeViewAllForces": {
+   "bends_per_connection": 1.373,
    "board_sha256": "49c0e69f4a8f561010c5e5d522fbd2a885899ba873899fc2d7c786446f3748b6",
    "ground_cut_mm": 192.28,
+   "pin_row_crossings": 4,
+   "stair_steps": 6,
    "track_length_mm": 591.47,
    "vias": 29
   },
   "hackclub__OnBoard__PixelWave": {
+   "bends_per_connection": 1.187,
    "board_sha256": "d7c2e5278b7acfeba5c1f17b69851699b6048c4f44c0899709b5be357828b166",
-   "ground_cut_mm": 7989.23,
+   "ground_cut_mm": 6990.2,
+   "pin_row_crossings": 601,
+   "stair_steps": 598,
    "track_length_mm": 7989.23,
    "vias": 705
   },
   "hackclub__OnBoard__keyboar_": {
+   "bends_per_connection": 2.126,
    "board_sha256": "4b7689512e2ffa2c07f0bc43d8281cf79027813b885f36a38dc7f33dc179a00b",
    "ground_cut_mm": 0.0,
+   "pin_row_crossings": 0,
+   "stair_steps": 39,
    "track_length_mm": 7789.59,
    "vias": 45
   },
   "hackclub__OnBoard__koeg-board-pcb": {
+   "bends_per_connection": 2.323,
    "board_sha256": "81c5d8385df70359447a898f81e5a6f1879082a3d11a8ac14f044bd779ac2705",
    "ground_cut_mm": 0.0,
+   "pin_row_crossings": 0,
+   "stair_steps": 204,
    "track_length_mm": 4998.99,
    "vias": 417
   },
   "hackclub__OnBoard__krishveercard": {
+   "bends_per_connection": 2.084,
    "board_sha256": "da39cb3d7b30dfa028619fc6abed058cfac527ca4015885f421b65bd39c05639",
    "ground_cut_mm": null,
+   "pin_row_crossings": 2,
+   "stair_steps": 34,
    "track_length_mm": 1453.68,
    "vias": 87
   },
   "hackclub__OnBoard__woagboard": {
+   "bends_per_connection": 1.211,
    "board_sha256": "0a2015a89d71355230fc3be445a5ed793187de072ca6a0e0ba9eb032720d12d9",
-   "ground_cut_mm": 3235.87,
+   "ground_cut_mm": 3090.94,
+   "pin_row_crossings": 0,
+   "stair_steps": 26,
    "track_length_mm": 3235.87,
    "vias": 119
   },
   "headblockhead__slab-pcb__interchange-pcb-right": {
+   "bends_per_connection": 2.443,
    "board_sha256": "2483905bed0fa02695f6fc96eade482597cbf9e63665322bcb1b18ea4841031e",
    "ground_cut_mm": 2883.95,
+   "pin_row_crossings": 9,
+   "stair_steps": 98,
    "track_length_mm": 6732.3,
    "vias": 203
   },
   "headblockhead__slab-pcb__slab-pcb-left": {
+   "bends_per_connection": 2.248,
    "board_sha256": "b95a628a65a4227a484337ece3d217939db11440666b032736a22218e8b65661",
-   "ground_cut_mm": 2530.57,
+   "ground_cut_mm": 2384.09,
+   "pin_row_crossings": 4,
+   "stair_steps": 82,
    "track_length_mm": 5945.58,
    "vias": 239
   },
   "iandchasse__silkscreen-pcb__silkscreen_pcb": {
+   "bends_per_connection": 2.368,
    "board_sha256": "cbf58854569ec7ae77f4a1b59f4ecba803517c301f53f5e4e4e9538d1d79eaa9",
-   "ground_cut_mm": 3680.92,
+   "ground_cut_mm": 3631.21,
+   "pin_row_crossings": 4,
+   "stair_steps": 172,
    "track_length_mm": 3680.93,
    "vias": 192
   },
   "ikajdan__katia__katia": {
+   "bends_per_connection": 2.388,
    "board_sha256": "26422389e2cdf4401e87f25c540ef128aeafbb0cfc5f08c6d1adc8771b2b3b10",
    "ground_cut_mm": 6960.23,
+   "pin_row_crossings": 3,
+   "stair_steps": 117,
    "track_length_mm": 6992.04,
    "vias": 1301
   },
   "little-red-rover__little-red-rover__little_red_rover": {
+   "bends_per_connection": 3.175,
    "board_sha256": "3d147c9010c223dbd8718c91a5bea0189d2e872933126a7159a830c7567a5043",
    "ground_cut_mm": 0.0,
+   "pin_row_crossings": 1,
+   "stair_steps": 104,
    "track_length_mm": 4010.96,
    "vias": 170
   },
   "maniekx86__M8SBC-486__homebrew_486": {
+   "bends_per_connection": 7.514,
    "board_sha256": "302e4bd6ce02d252c96f1f4a24d9e07da486488afc202f3fa7347bd743974d75",
-   "ground_cut_mm": 28776.0,
+   "ground_cut_mm": 28587.35,
+   "pin_row_crossings": 140,
+   "stair_steps": 1546,
    "track_length_mm": 29709.97,
    "vias": 1150
   },
   "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized": {
+   "bends_per_connection": 2.358,
    "board_sha256": "5220c327bd191193174dbe67ba2b4f642cc90e2d778685d89a9bfc0605a587d1",
    "ground_cut_mm": 0.0,
+   "pin_row_crossings": 0,
+   "stair_steps": 204,
    "track_length_mm": 9480.62,
    "vias": 95
   },
   "obsilab__Quanta75__Quanta75_RP2040Stamp_JLCPCBAoptimized": {
+   "bends_per_connection": 2.473,
    "board_sha256": "9d3bad2a5c70337814792aa411ba34a013b2983cd90016cf30f54cc98aa47df3",
    "ground_cut_mm": 0.0,
+   "pin_row_crossings": 0,
+   "stair_steps": 169,
    "track_length_mm": 9491.24,
    "vias": 148
   },
   "ohdsp__DSP-ADAU1452__DSP-ADAU1452": {
+   "bends_per_connection": 0.965,
    "board_sha256": "06f8a54b4361fbab3fadad4a52fd5886765ec1711c505462f9cbd07c0f650973",
-   "ground_cut_mm": 4113.52,
+   "ground_cut_mm": 3183.73,
+   "pin_row_crossings": 0,
+   "stair_steps": 63,
    "track_length_mm": 4113.52,
    "vias": 355
   },
   "oro-os__link__link": {
+   "bends_per_connection": 1.916,
    "board_sha256": "28d95f7fe5d1f436ce66a65bea4c24a7dabd2669bcf398f7a4cbda5eb39ffc1c",
    "ground_cut_mm": 8794.86,
+   "pin_row_crossings": 2,
+   "stair_steps": 289,
    "track_length_mm": 9150.2,
    "vias": 806
   },
   "rosco-m68k__rosco_m68k__rosco_m68k__kicad": {
+   "bends_per_connection": 4.262,
    "board_sha256": "6cb4bfcf31fac1016d8b92bc62f493abafad36072c356cdad9f7ce7f98d376f9",
-   "ground_cut_mm": 36.96,
+   "ground_cut_mm": 0.0,
+   "pin_row_crossings": 0,
+   "stair_steps": 436,
    "track_length_mm": 17273.34,
    "vias": 402
   },
   "siderakb__ergo-snm-keyboard__ErgoSNM_keyboard": {
+   "bends_per_connection": 1.788,
    "board_sha256": "83c99160c5005b425481f0ef8fab3345cc8b250a57d46d2b6e9d2adc575185a8",
    "ground_cut_mm": 0.0,
+   "pin_row_crossings": 0,
+   "stair_steps": 11,
    "track_length_mm": 4664.84,
    "vias": 52
   },
   "sporkus__capybully_keyboard__capybully": {
+   "bends_per_connection": 0.912,
    "board_sha256": "2083185aa6931dce6618ab91fcc263eb6b5433924cdb3d2802cb3313184385cd",
-   "ground_cut_mm": 2739.59,
+   "ground_cut_mm": 2691.92,
+   "pin_row_crossings": 0,
+   "stair_steps": 18,
    "track_length_mm": 4298.96,
    "vias": 61
   },
   "sporkus__le_chiffre_keyboard_stm32__stm32_chiffre_36keys": {
+   "bends_per_connection": 1.251,
    "board_sha256": "55a212d4c6541847023001ab12bdac0a34d27eb89dd03c95840104e915500dac",
-   "ground_cut_mm": 4693.6,
+   "ground_cut_mm": 4647.89,
+   "pin_row_crossings": 6,
+   "stair_steps": 50,
    "track_length_mm": 4693.6,
    "vias": 193
   },
   "sporkus__le_chiffre_keyboard_stm32__stm32_hotswap_chiffre": {
+   "bends_per_connection": 1.29,
    "board_sha256": "984473f03db99eda31c3b5f12a3bb2e3d07199ed8e2577d0f6cd78b123639b82",
-   "ground_cut_mm": 4520.72,
+   "ground_cut_mm": 4472.71,
+   "pin_row_crossings": 6,
+   "stair_steps": 43,
    "track_length_mm": 4520.72,
    "vias": 199
   },
   "stonedDiscord__MegaDrive__MegaDrive": {
+   "bends_per_connection": 6.795,
    "board_sha256": "0e7e7fec6e6cd11dfda638c111fdd83267b57a3992c4aa65d12586246d8e4b9e",
-   "ground_cut_mm": 44687.56,
+   "ground_cut_mm": 39973.42,
+   "pin_row_crossings": 72,
+   "stair_steps": 746,
    "track_length_mm": 44687.57,
    "vias": 785
   },
   "stonedDiscord__nonSNES__SNSP-CPU-01": {
+   "bends_per_connection": 5.377,
    "board_sha256": "ff30579c9704c9134cc62430060a56a8bba7487f8e131ad24656384bb07f5e47",
    "ground_cut_mm": 24003.91,
+   "pin_row_crossings": 2,
+   "stair_steps": 903,
    "track_length_mm": 25918.55,
    "vias": 1197
   },
   "stonedDiscord__nonSNES__SNSP-CPU-1CHIP": {
+   "bends_per_connection": 3.961,
    "board_sha256": "4501da4a081e0eb949374d55ee348c3450fe076a20de3d34052af4ca29369780",
    "ground_cut_mm": 11306.61,
+   "pin_row_crossings": 32,
+   "stair_steps": 417,
    "track_length_mm": 12503.29,
    "vias": 686
   },
   "tengigabytes__MokyaLora__MokyaLora": {
+   "bends_per_connection": 1.046,
    "board_sha256": "45c7c90f21c8a905c93893c83a3cb2f0d36bd5c28bc78569e91242531804bcaa",
-   "ground_cut_mm": 4662.66,
+   "ground_cut_mm": 4624.16,
+   "pin_row_crossings": 24,
+   "stair_steps": 116,
    "track_length_mm": 4662.68,
    "vias": 836
   },
   "thpoll83__PolyKybd__poly_corne_split42_left": {
+   "bends_per_connection": 2.532,
    "board_sha256": "03fe5d641caf25f82eae39b16bcd1e49ceffaaa834c7e12d75809b6175fa757c",
-   "ground_cut_mm": 9290.05,
+   "ground_cut_mm": 9022.42,
+   "pin_row_crossings": 4,
+   "stair_steps": 366,
    "track_length_mm": 9290.05,
    "vias": 753
   },
   "thpoll83__PolyKybd__poly_corne_split42_right": {
+   "bends_per_connection": 2.382,
    "board_sha256": "90aaa517c2e124a1b33a1df99127461c9b9440b955f704bbd0a4128edd101a8d",
-   "ground_cut_mm": 18120.28,
+   "ground_cut_mm": 17301.66,
+   "pin_row_crossings": 106,
+   "stair_steps": 523,
    "track_length_mm": 18120.27,
    "vias": 1372
   },
   "thpoll83__PolyKybd__poly_kb_molecule_4x4": {
+   "bends_per_connection": 4.013,
    "board_sha256": "649df1c6c328e9ec2dbbc958e6a444ecf46589bc7d383fc2b18a58d7f8bf97b9",
-   "ground_cut_mm": 9263.45,
+   "ground_cut_mm": 8628.02,
+   "pin_row_crossings": 32,
+   "stair_steps": 1477,
    "track_length_mm": 9263.45,
    "vias": 812
   },
   "thpoll83__PolyKybd__poly_kb_molecule_4x5": {
+   "bends_per_connection": 4.006,
    "board_sha256": "5c4e8e7db60e10aa79a6e9e99c846ce19151fc09f1aa1d9a9fc87a00a04536ee",
-   "ground_cut_mm": 11566.02,
+   "ground_cut_mm": 10771.73,
+   "pin_row_crossings": 40,
+   "stair_steps": 1845,
    "track_length_mm": 11566.02,
    "vias": 1016
   },
   "thpoll83__PolyKybd__poly_kb_molecule_5x2_shifted": {
+   "bends_per_connection": 3.892,
    "board_sha256": "2102cb367144ec51ffe1abc30ed8933469185e764aa86407075e9348f8dca949",
-   "ground_cut_mm": 5905.08,
+   "ground_cut_mm": 5506.92,
+   "pin_row_crossings": 20,
+   "stair_steps": 922,
    "track_length_mm": 5905.08,
    "vias": 500
   },
   "thpoll83__PolyKybd__poly_kb_molecule_5x4_wave": {
+   "bends_per_connection": 5.845,
    "board_sha256": "eb5fcd21aaf866640c8ce8465fc236d2bf4c52fbae43711174d113386f8dc8b0",
-   "ground_cut_mm": 11899.86,
+   "ground_cut_mm": 10692.38,
+   "pin_row_crossings": 67,
+   "stair_steps": 1948,
    "track_length_mm": 11899.86,
    "vias": 1054
   },
   "thpoll83__PolyKybd__poly_kb_molecule_7x5_wave_left": {
+   "bends_per_connection": 5.44,
    "board_sha256": "900ae2eab9975c7694ffdec644091fa53a4d23caeca40d93efe18cad15afccf0",
-   "ground_cut_mm": 17328.03,
+   "ground_cut_mm": 15694.48,
+   "pin_row_crossings": 89,
+   "stair_steps": 2737,
    "track_length_mm": 17328.03,
    "vias": 1504
   },
   "thpoll83__PolyKybd__poly_kybd_split72_left": {
+   "bends_per_connection": 2.392,
    "board_sha256": "8ddaa7a00b5167b267fcdc2812cc6e72d39071dc3b472b90180866425ccacacf",
-   "ground_cut_mm": 18542.9,
+   "ground_cut_mm": 17958.31,
+   "pin_row_crossings": 44,
+   "stair_steps": 495,
    "track_length_mm": 18542.9,
    "vias": 1354
   },
   "thpoll83__PolyKybd__poly_kybd_split72_right": {
+   "bends_per_connection": 2.376,
    "board_sha256": "1dbec7f104d9240487778fbdc5faf97a8e25d7d255a7d78d5e2c1be62d963f26",
-   "ground_cut_mm": 18117.25,
+   "ground_cut_mm": 17298.05,
+   "pin_row_crossings": 42,
+   "stair_steps": 520,
    "track_length_mm": 18117.25,
    "vias": 1368
   },
   "tomunderwood99__CharlieBoard__Blue_Line": {
+   "bends_per_connection": 0.986,
    "board_sha256": "a3d7ca47aaeabbd3212b00e6ad5ad2b24fad92e13fbbc0042afc8131bd73d79d",
    "ground_cut_mm": 7.74,
+   "pin_row_crossings": 0,
+   "stair_steps": 5,
    "track_length_mm": 543.97,
    "vias": 28
   },
   "transistorfet__computie__k30-SBC": {
+   "bends_per_connection": 4.352,
    "board_sha256": "93e6cfeed7d23c2f8e45d81946fbfd61b23296c617a412fb480ad92acda60468",
-   "ground_cut_mm": 22605.19,
+   "ground_cut_mm": 21642.24,
+   "pin_row_crossings": 0,
+   "stair_steps": 219,
    "track_length_mm": 23338.03,
    "vias": 497
   },
   "tubbytwins__bumwings-kbd__bumwings_v001": {
+   "bends_per_connection": 2.007,
    "board_sha256": "9fffcd8f8b0422160327c5f6b1abef3f07306a7a666a6f4b8d16a601854c8c81",
    "ground_cut_mm": 5100.18,
+   "pin_row_crossings": 0,
+   "stair_steps": 16,
    "track_length_mm": 5100.17,
    "vias": 128
   },
   "tubbytwins__bumwings-kbd__bumwings_v001R55_rp2040zero_sd": {
+   "bends_per_connection": 2.939,
    "board_sha256": "34de4ade3ac3da42a10d527fe1575ce982bae4f7adc85c8fe82972b78c01c721",
    "ground_cut_mm": 5120.8,
+   "pin_row_crossings": 0,
+   "stair_steps": 4,
    "track_length_mm": 5120.8,
    "vias": 87
   },
   "tubbytwins__bumwings-kbd__bumwings_v001R55_xiao_sd": {
+   "bends_per_connection": 3.0,
    "board_sha256": "8a0b15c7b3e3af8662b284ac3158b08bdfc995224d180ec62f2ffd691e7f401d",
    "ground_cut_mm": 5327.34,
+   "pin_row_crossings": 0,
+   "stair_steps": 10,
    "track_length_mm": 5327.34,
    "vias": 90
   },
   "tubbytwins__bumwings-kbd__bumwings_v001R64_nano_sd": {
+   "bends_per_connection": 2.7,
    "board_sha256": "481b4533bee5d6f1a37b552c3428b903ad37327108cd21a60dcd4d913f03e087",
    "ground_cut_mm": 0.0,
+   "pin_row_crossings": 2,
+   "stair_steps": 21,
    "track_length_mm": 5468.37,
    "vias": 94
   },
   "tubbytwins__bumwings-kbd__bumwings_v001R64_rp2040zero_sd": {
+   "bends_per_connection": 2.995,
    "board_sha256": "15a5861c8472b38b0f77d8fc583da35f0126b4b31b56d48cbab3af28a846fa8c",
    "ground_cut_mm": 0.0,
+   "pin_row_crossings": 0,
+   "stair_steps": 25,
    "track_length_mm": 5522.74,
    "vias": 87
   },
   "tubbytwins__bumwings-kbd__bumwings_v001R64_xiao_sd": {
+   "bends_per_connection": 2.811,
    "board_sha256": "cf922a5464588565ae301d0cb4fef7695b9bea2b61244e5c6f2adbbea35cdc2a",
    "ground_cut_mm": 0.0,
+   "pin_row_crossings": 0,
+   "stair_steps": 21,
    "track_length_mm": 5614.35,
    "vias": 86
   },
   "tubbytwins__bumwings-kbd__bumwings_v001_core": {
+   "bends_per_connection": 1.685,
    "board_sha256": "fde6adabb18398b6eb8d83016789be2e22822baf183c84b5d37665abf3e06f5d",
-   "ground_cut_mm": 5842.74,
+   "ground_cut_mm": 5787.01,
+   "pin_row_crossings": 1,
+   "stair_steps": 22,
    "track_length_mm": 5842.74,
    "vias": 150
   },
   "tubbytwins__bumwings-kbd__bumwings_v001_xiao": {
+   "bends_per_connection": 2.048,
    "board_sha256": "c6c98954d6d4c5b91ae000a28e0e3173b6934cc77ce3a96f84797cadbb14afdc",
-   "ground_cut_mm": 5367.15,
+   "ground_cut_mm": 5336.59,
+   "pin_row_crossings": 0,
+   "stair_steps": 19,
    "track_length_mm": 5367.16,
    "vias": 142
   },
   "tubbytwins__bumwings-kbd__bumwings_v001_xiao_s": {
+   "bends_per_connection": 3.097,
    "board_sha256": "55ff76f50f476f88b87294524d771c8d61f8a48bf1a5349cfb43dd524eca40b0",
-   "ground_cut_mm": 5162.57,
+   "ground_cut_mm": 5152.54,
+   "pin_row_crossings": 0,
+   "stair_steps": 21,
    "track_length_mm": 5162.58,
    "vias": 126
   },
   "tzarc__keyboards__ghoul": {
+   "bends_per_connection": 1.378,
    "board_sha256": "114ddf3ea691d06f050f51254680a05e2fdd970f496f0a29b86f7711ff3e8e08",
    "ground_cut_mm": 0.0,
+   "pin_row_crossings": 5,
+   "stair_steps": 178,
    "track_length_mm": 7193.82,
    "vias": 497
   },
   "vd-rd__sbc_allwinner_a13__module": {
+   "bends_per_connection": 4.408,
    "board_sha256": "563b646fbd1f021c43a337798882e54ed024c39823280f8b93ddc59c9aa7cb33",
    "ground_cut_mm": 5257.31,
+   "pin_row_crossings": 19,
+   "stair_steps": 611,
    "track_length_mm": 5633.16,
    "vias": 501
   },
   "wntrblm__Castor_and_Pollux__mainboard": {
+   "bends_per_connection": 2.587,
    "board_sha256": "49e0eb1777957893d979ef459ae66b82a840c2bd8bf51231e20c14193c4ddb24",
-   "ground_cut_mm": 4030.14,
+   "ground_cut_mm": 3873.03,
+   "pin_row_crossings": 2,
+   "stair_steps": 128,
    "track_length_mm": 4030.14,
    "vias": 358
   },
   "zli117__CyberKeeb2040__MainBoard": {
+   "bends_per_connection": 2.154,
    "board_sha256": "e648c4d4cc4607c77f4ab87d21406985ece10f2d35926cee03283bc73ec20b65",
    "ground_cut_mm": 0.0,
+   "pin_row_crossings": 6,
+   "stair_steps": 118,
    "track_length_mm": 14312.74,
    "vias": 709
   }
  },
- "comment": "The designer's boards scored with score-kicad-board (quality.py --designer-numbers): vias, track length and the ground pours' cut by other tracks (null: no pour), with the board's SHA-256. compare.py normalises each row by these.",
+ "comment": "The designer's boards scored with score-kicad-board (quality.py --designer-numbers): vias, track length, the ground pours' cut by other tracks (null: no pour) and the aesthetics (bends per connection, stair-steps, pin-row crossings), with the board's SHA-256. compare.py normalises each row by these.",
  "tasks": "benchmarks/agent-tasks/tasks/v7/tasks.json"
 }

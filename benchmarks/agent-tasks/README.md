@@ -181,11 +181,14 @@ measurement). The discipline:
   designer-numbers.json has the designer's, and compare.py's normalised
   line adds our bends per connection over the designer's and our
   stair-steps and crossings less the designer's (medians; rows need
-  scores, `run.py --quality` or `compare.py --score`). Before 2026-10-23
+  scores, `run.py --quality` or `compare.py --score`). From 2026-10-21
+  (the code/name rule of `net_name_from_form`) to 2026-10-23
   score-kicad-board read no net on a track of a KiCad 9 board (`(net 5)`
-  is a code): the designer's ground pours were never cut and its tracks
-  had no paths; designer-numbers.json was written again (ground cut
-  included).
+  is a code, the net table now resolves it): such a board's pours were
+  never cut and its tracks had no paths; designer-numbers.json, written
+  before, had read the code as a name and counted the pour net's own
+  tracks as cuts too. Written again on 2026-10-23: 59 of 109 designer
+  ground cuts lower (jetson 6792 to 6397 mm), vias and lengths the same.
 - **The strict rule** (`pass_strict`, `new_findings_strict`; run.py's
   `strict_findings`, docs/agents.md "The pass rule"): a KiCad finding of
   ours counts unless the designer's board with its tracks, vias and
