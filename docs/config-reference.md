@@ -39,7 +39,7 @@ The environment variables are indexed in the hand-over
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 2 |
 | [Layout settings: silkscreen](#layout-settings-silkscreen) | 1 | 1 | 0 | 1 | 1 |
-| [Layout settings: move_descent](#layout-settings-move_descent) | 6 | 6 | 0 | 6 | 0 |
+| [Layout settings: move_descent](#layout-settings-move_descent) | 7 | 7 | 0 | 7 | 0 |
 | [Placer core](#placer-core) | 8 | - | 0 | 8 | - |
 | [Placer core: global](#placer-core-global) | 12 | - | 0 | 12 | - |
 | [Placer core: anneal](#placer-core-anneal) | 8 | - | 0 | 8 | - |
@@ -438,10 +438,11 @@ The `move_descent` object of the layout settings (an experiment, off when absent
 |---|---|---|---|---|
 | `move_descent.trial_share` | `f64` | `0.5` | - | Share of the moves' budget (`move_seconds`, within 65 % of `total_seconds`) the descent may spend, in work. |
 | `move_descent.steps_mm` | `Vec<f64>` | `[0.5, 1.0, 2.0, 3.0]` | - | Nudge distances in millimetres, each in eight directions. |
-| `move_descent.confirm` | `usize` | `3` | - | Moves per part the router tries (the best by the global route). |
+| `move_descent.confirm` | `usize` | `4` | - | Moves per part the router tries (the best by the global route). |
 | `move_descent.local_seconds` | `f64` | `2.0` | - | Search work of one router trial at most, in seconds. |
 | `move_descent.swap_mm` | `f64` | `10.0` | - | Swaps with a part of the same size whose centre is at most this far, in millimetres (0: no swaps). |
-| `move_descent.patience` | `usize` | `40` | - | The descent stops after this many parts in a row without a kept move. |
+| `move_descent.patience` | `usize` | `60` | - | The descent stops after this many parts in a row without a kept move. |
+| `move_descent.retry_mm` | `f64` | `5.0` | - | After a kept move, the parts within this many millimetres of the moved parts (and those sharing a net of up to eight pads with them) may be tried again. |
 
 ## Placer core
 

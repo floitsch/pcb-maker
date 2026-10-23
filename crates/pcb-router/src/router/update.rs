@@ -13,12 +13,20 @@ impl Router {
     /// objects. Returns the number of nets rerouted. Everything else keeps
     /// its copper, occupancy, and history.
     pub fn update(&mut self, board: &Board) -> Result<usize, String> {
-        self.update_nets(board).map(|nets| nets.len())
+        self.update_changed(board).map(|(all, _)| all)
     }
 
-    /// `update`, returning the nets it ripped up (routable nets whose pads
-    /// moved or whose copper is no longer legal), in net order.
+    /// `update`, returning the nets the change touched: routable nets whose
+    /// pads moved or whose copper is no longer legal, in net order (not
+    /// the nets that had no copper before and whose pads stayed: they are
+    /// routed again by a `reroute` too, but the change did not open them).
     pub fn update_nets(&mut self, board: &Board) -> Result<Vec<NetId>, String> {
+        self.update_changed(board).map(|(_, changed)| changed)
+    }
+
+    /// `update`'s work: the nets to route again in all, and those the
+    /// change touched.
+    fn update_changed(&mut self, board: &Board) -> Result<(usize, Vec<NetId>), String> {
         let (board, neck_of, class_rules) = Self::with_neck_classes(board, &self.config);
         let board = &board;
         let same_rules = match (&class_rules, &self.class_rules) {
@@ -91,7 +99,8 @@ impl Router {
         self.mark_via_cells();
         self.build_hot();
 
-        let mut rerouted = Vec::new();
+        let mut rerouted = 0;
+        let mut changed = Vec::new();
         for (net, old) in previous.into_iter().enumerate() {
             let id = net as NetId;
             let same_terminals = old.terminal_nodes == self.nets[net].terminal_nodes;
@@ -109,10 +118,13 @@ impl Router {
                 state.fixed = old.fixed;
                 self.stamp(id);
             } else if self.nets[net].routable {
-                rerouted.push(id);
+                rerouted += 1;
+                if !same_terminals || !old.branches.is_empty() {
+                    changed.push(id);
+                }
             }
         }
-        Ok(rerouted)
+        Ok((rerouted, changed))
     }
 
     /// The work of rebuilding the maps in `update` (the static maps, the
@@ -148,8 +160,8 @@ impl Router {
     /// (`board_open_terminals`).
     pub fn local_reroute(&mut self, nets: &[NetId], work_seconds: f64) -> usize {
         let order = self.routing_order();
-        let limit = self.scratch.expansions
-            + (work_seconds.max(0.0) * expansions_per_second()) as u64;
+        let limit =
+            self.scratch.expansions + (work_seconds.max(0.0) * expansions_per_second()) as u64;
         let pending: Vec<NetId> = order
             .iter()
             .copied()

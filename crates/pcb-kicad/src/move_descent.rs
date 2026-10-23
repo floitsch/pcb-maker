@@ -28,8 +28,8 @@
 //! steps (the moves, the final ladder) route the placement it leaves.
 
 use super::*;
-use crate::board_placer::{LoweredPlacement, write_footprint_pose};
 use crate::board_layout::{footprint_items, without_copper_texts};
+use crate::board_placer::{LoweredPlacement, write_footprint_pose};
 use crate::board_router::lower;
 use pcb_placer as placer;
 use pcb_router as core;
@@ -57,6 +57,10 @@ pub struct KiCadMoveDescent {
     /// The descent stops after this many parts in a row without a kept
     /// move.
     pub patience: usize,
+    /// After a kept move, the parts within this many millimetres of the
+    /// moved parts (and those sharing a net of up to eight pads with
+    /// them) may be tried again.
+    pub retry_mm: f64,
 }
 
 impl Default for KiCadMoveDescent {
@@ -64,10 +68,11 @@ impl Default for KiCadMoveDescent {
         Self {
             trial_share: 0.5,
             steps_mm: vec![0.5, 1.0, 2.0, 3.0],
-            confirm: 3,
+            confirm: 4,
             local_seconds: 2.0,
             swap_mm: 10.0,
-            patience: 40,
+            patience: 60,
+            retry_mm: 5.0,
         }
     }
 }
@@ -186,7 +191,11 @@ fn owner(label: &str, index: &HashMap<String, usize>) -> Option<usize> {
         .find_map(|reference| index.get(reference).copied())
 }
 
-fn part_copper(board: &core::Board, index: &HashMap<String, usize>, parts: usize) -> Vec<PartCopper> {
+fn part_copper(
+    board: &core::Board,
+    index: &HashMap<String, usize>,
+    parts: usize,
+) -> Vec<PartCopper> {
     let mut copper = vec![PartCopper::default(); parts];
     for (obstacle, item) in board.obstacles.iter().enumerate() {
         if let Some(part) = owner(&item.label, index) {
@@ -242,8 +251,14 @@ fn union(a: Option<Aabb>, b: Aabb) -> Aabb {
     match a {
         None => b,
         Some(a) => Aabb {
-            minimum: [a.minimum[0].min(b.minimum[0]), a.minimum[1].min(b.minimum[1])],
-            maximum: [a.maximum[0].max(b.maximum[0]), a.maximum[1].max(b.maximum[1])],
+            minimum: [
+                a.minimum[0].min(b.minimum[0]),
+                a.minimum[1].min(b.minimum[1]),
+            ],
+            maximum: [
+                a.maximum[0].max(b.maximum[0]),
+                a.maximum[1].max(b.maximum[1]),
+            ],
         },
     }
 }
@@ -267,7 +282,12 @@ fn apply(
     old: &[placer::Pose],
     new: &[placer::Pose],
     moved: &[usize],
-) -> (Vec<(usize, Shape)>, Vec<(usize, usize, Point)>, Aabb, Vec<usize>) {
+) -> (
+    Vec<(usize, Shape)>,
+    Vec<(usize, usize, Point)>,
+    Aabb,
+    Vec<usize>,
+) {
     let mut shapes = Vec::new();
     let mut anchors = Vec::new();
     let mut area = None;
@@ -339,7 +359,9 @@ fn moves_of(problem: &placer::Problem, index: usize, descent: &KiCadMoveDescent)
     let component = &problem.components[index];
     let current = problem.poses[index];
     let center = component.center(current);
-    let mut wanted: Vec<(&'static str, Vec<(usize, placer::Pose)>, f64)> = Vec::new();
+    // (kind, the parts' new poses, the distance moved)
+    type Wanted = (&'static str, Vec<(usize, placer::Pose)>, f64);
+    let mut wanted: Vec<Wanted> = Vec::new();
     let snap = |part: usize, center: Point, angle: f64| {
         let component = &problem.components[part];
         let position = component.position_for_center(center, angle);
@@ -377,14 +399,18 @@ fn moves_of(problem: &placer::Problem, index: usize, descent: &KiCadMoveDescent)
     if descent.swap_mm > 0.0 {
         let extent = component.half_extent(current.angle);
         for (other, record) in problem.components.iter().enumerate() {
-            if other == index || record.fixed || record.pins.is_empty() || record.side != component.side
+            if other == index
+                || record.fixed
+                || record.pins.is_empty()
+                || record.side != component.side
             {
                 continue;
             }
             let other_pose = problem.poses[other];
             let other_center = record.center(other_pose);
-            let distance =
-                ((other_center[0] - center[0]).powi(2) + (other_center[1] - center[1]).powi(2)).sqrt();
+            let distance = ((other_center[0] - center[0]).powi(2)
+                + (other_center[1] - center[1]).powi(2))
+            .sqrt();
             if distance > descent.swap_mm || distance < 1.0e-6 {
                 continue;
             }
@@ -406,7 +432,10 @@ fn moves_of(problem: &placer::Problem, index: usize, descent: &KiCadMoveDescent)
     }
     let mut moves = Vec::new();
     for (kind, changes, distance) in wanted {
-        if changes.iter().all(|(part, pose)| problem.poses[*part] == *pose) {
+        if changes
+            .iter()
+            .all(|(part, pose)| problem.poses[*part] == *pose)
+        {
             continue;
         }
         let mut poses = problem.poses.clone();
@@ -478,6 +507,12 @@ pub(crate) fn descend(
     report.global_work_seconds = global_work_first;
     report.global_wall_seconds = global_started.elapsed().as_secs_f64();
     let mut copper = part_copper(board, &index, parts);
+    // Nets of many pads (supplies) do not make their parts neighbours.
+    let big: Vec<bool> = board
+        .nets
+        .iter()
+        .map(|net| net.terminals.len() > 8)
+        .collect();
     let mut open = router.board_open_terminals();
     report.open_before = open;
     let classic = classic_trials();
@@ -683,7 +718,7 @@ pub(crate) fn descend(
             *pcb = trial_pcb;
             *board = trial_board;
             working = board.clone();
-            problem.problem.poses = candidate.poses.clone();
+            let previous = std::mem::replace(&mut problem.problem.poses, candidate.poses.clone());
             copper = part_copper(board, &index, parts);
             report.moves.push(KiCadDescentMove {
                 kind: candidate.kind.into(),
@@ -705,8 +740,40 @@ pub(crate) fn descend(
             open = after;
             report.kept += 1;
             since_kept = 0;
-            // Ranked again: every part may be tried again.
-            tried.iter_mut().for_each(|value| *value = false);
+            // Ranked again: the parts the move may have helped (those
+            // sharing a net with the moved ones, or near their old or new
+            // place) may be tried again.
+            let moved_nets: Vec<usize> = candidate
+                .moved
+                .iter()
+                .flat_map(|part| copper[*part].terminals.iter().map(|(net, _)| *net))
+                .collect();
+            let places: Vec<Point> = candidate
+                .moved
+                .iter()
+                .flat_map(|part| {
+                    let component = &problem.problem.components[*part];
+                    [
+                        component.center(previous[*part]),
+                        component.center(problem.problem.poses[*part]),
+                    ]
+                })
+                .collect();
+            for (other, flag) in tried.iter_mut().enumerate() {
+                let center = problem.problem.components[other].center(problem.problem.poses[other]);
+                let near = places.iter().any(|place| {
+                    (place[0] - center[0]).abs() <= descent.retry_mm
+                        && (place[1] - center[1]).abs() <= descent.retry_mm
+                });
+                if near
+                    || copper[other]
+                        .terminals
+                        .iter()
+                        .any(|(net, _)| moved_nets.contains(net) && !big[*net])
+                {
+                    *flag = false;
+                }
+            }
             continue 'parts;
         }
     }
@@ -773,8 +840,9 @@ mod tests {
 
     #[test]
     fn labels_name_their_part() {
-        let index: HashMap<String, usize> =
-            [("R1".to_string(), 0), ("R10".to_string(), 1)].into_iter().collect();
+        let index: HashMap<String, usize> = [("R1".to_string(), 0), ("R10".to_string(), 1)]
+            .into_iter()
+            .collect();
         assert_eq!(owner("R1.2", &index), Some(0));
         assert_eq!(owner("R10.1 padstack", &index), Some(1));
         assert_eq!(owner("R1 copper line", &index), Some(0));

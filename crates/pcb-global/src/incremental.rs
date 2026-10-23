@@ -9,7 +9,7 @@
 //! the present price the rest's negotiation left.
 
 use crate::GlobalConfig;
-use crate::negotiate::{Graph, GlobalRoute, NetRoute, plan, pour_owned};
+use crate::negotiate::{GlobalRoute, Graph, NetRoute, plan, pour_owned};
 use pcb_router::Board;
 use pcb_router::geometry::Aabb;
 
@@ -66,6 +66,10 @@ impl Incremental {
     }
 
     /// The measure of the current state.
+    #[allow(
+        clippy::needless_range_loop,
+        reason = "usage, capacity and overflow marks are parallel arrays"
+    )]
     pub fn measure(&self) -> Measure {
         let route = &self.route;
         let capacity = &route.capacity;
@@ -113,7 +117,9 @@ impl Incremental {
     pub fn tiles_of(&self, area: Aabb, margin: usize) -> [usize; 4] {
         let frame = &self.route.frame;
         let tile = |value: f64, axis: usize, count: usize| -> usize {
-            (((value - frame.origin[axis]) / frame.tile_mm).floor().max(0.0) as usize)
+            (((value - frame.origin[axis]) / frame.tile_mm)
+                .floor()
+                .max(0.0) as usize)
                 .min(count.saturating_sub(1))
         };
         let (x0, y0) = (
