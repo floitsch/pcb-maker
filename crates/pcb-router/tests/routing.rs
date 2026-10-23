@@ -334,6 +334,42 @@ fn a_local_reroute_routes_only_the_ripped_nets_against_the_rest() {
 }
 
 #[test]
+fn a_moved_pad_leaves_the_rest_of_its_net_routed() {
+    // Three pads of net A in a row; the last one moves down. The branch
+    // between the first two stays, the moved pad is joined to it again.
+    let mut builder = Builder::new(40.0, 20.0, 2);
+    builder.net(
+        "A",
+        &[([3.0, 5.0], 0b01), ([20.0, 5.0], 0b01), ([37.0, 5.0], 0b01)],
+    );
+    let config = config();
+    let mut router = pcb_router::router::Router::new(&builder.board, &config);
+    let first = router.run_in_place();
+    assert_eq!(first.status, vec![NetStatus::Routed]);
+    let mut moved = builder.board.clone();
+    moved.obstacles[2].shape = Shape::Circle {
+        center: [37.0, 12.0],
+        radius: 0.5,
+    };
+    moved.nets[0].terminals[2].anchor = [37.0, 12.0];
+    assert_eq!(router.update_nets(&moved).unwrap(), vec![0]);
+    assert_eq!(router.local_reroute(&[0], 60.0), 0);
+    let second = router.finish_as_is();
+    assert_eq!(second.status, vec![NetStatus::Routed]);
+    assert!(verify(&moved, &second.routes).is_empty());
+    // The copper between the first two pads is where it was.
+    let between = |routes: &[pcb_router::NetRoute]| {
+        routes[0]
+            .segments
+            .iter()
+            .filter(|segment| segment.start[0].max(segment.end[0]) <= 20.5)
+            .count()
+    };
+    assert!(between(&first.routes) > 0);
+    assert_eq!(between(&second.routes), between(&first.routes));
+}
+
+#[test]
 fn a_pad_straddling_the_board_edge_is_reached_from_inside() {
     // A connector shell pad hangs over the outline (the designer's choice,
     // KiCad flags the pad itself). The track that reaches it must still keep

@@ -127,6 +127,10 @@ pub struct KiCadMoveDescentReport {
     pub tier_two_wall_seconds: f64,
     /// Why it stopped: `budget`, `patience`, `candidates`, `deadline`.
     pub stopped: String,
+    /// The calibration: the open terminals after a router trial of no
+    /// move at all (the update and the local reroute on the board as it
+    /// is), against `open_before`.
+    pub null_open: usize,
     pub moves: Vec<KiCadDescentMove>,
 }
 
@@ -515,6 +519,24 @@ pub(crate) fn descend(
         .collect();
     let mut open = router.board_open_terminals();
     report.open_before = open;
+    // The calibration: a trial of no move.
+    {
+        let mut trial = router.clone();
+        arm(&mut trial, *work);
+        let before = trial.expansions();
+        let ripped = trial.update_nets(board)?;
+        report.null_open = trial.local_reroute(&ripped, descent.local_seconds);
+        let cost = trial.update_work()
+            + trial.expansions().saturating_sub(before) as f64
+                / core::router::expansions_per_second();
+        *work += cost;
+        report.tier_two_work_seconds += cost;
+        eprintln!(
+            "move descent: a trial of no move leaves {} open ({} nets routed again, {cost:.2} s of work)",
+            report.null_open,
+            ripped.len()
+        );
+    }
     let classic = classic_trials();
     let mut classic_done = 0;
     let mut tried: Vec<bool> = vec![false; parts];

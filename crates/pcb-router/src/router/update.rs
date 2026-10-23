@@ -13,20 +13,28 @@ impl Router {
     /// objects. Returns the number of nets rerouted. Everything else keeps
     /// its copper, occupancy, and history.
     pub fn update(&mut self, board: &Board) -> Result<usize, String> {
-        self.update_changed(board).map(|(all, _)| all)
+        self.update_changed(board, false).map(|(all, _)| all)
     }
 
     /// `update`, returning the nets the change touched: routable nets whose
-    /// pads moved or whose copper is no longer legal, in net order (not
-    /// the nets that had no copper before and whose pads stayed: they are
-    /// routed again by a `reroute` too, but the change did not open them).
+    /// pads moved or whose copper is no longer legal, in net order. A net
+    /// without copper whose pads stayed keeps its state (a pour net joined
+    /// through its pour alone stays joined; one still open stays open).
+    /// A net whose pads moved keeps its legal branches that do not end on
+    /// a moved pad (a supply's other pads stay connected); `local_reroute`
+    /// joins the moved pads to them.
     pub fn update_nets(&mut self, board: &Board) -> Result<Vec<NetId>, String> {
-        self.update_changed(board).map(|(_, changed)| changed)
+        self.update_changed(board, true).map(|(_, changed)| changed)
     }
 
     /// `update`'s work: the nets to route again in all, and those the
-    /// change touched.
-    fn update_changed(&mut self, board: &Board) -> Result<(usize, Vec<NetId>), String> {
+    /// change touched; with `partial` a net whose pads moved keeps the
+    /// legal branches that do not end on one of them.
+    fn update_changed(
+        &mut self,
+        board: &Board,
+        partial: bool,
+    ) -> Result<(usize, Vec<NetId>), String> {
         let (board, neck_of, class_rules) = Self::with_neck_classes(board, &self.config);
         let board = &board;
         let same_rules = match (&class_rules, &self.class_rules) {
@@ -117,10 +125,51 @@ impl Router {
                 state.reroutes = old.reroutes;
                 state.fixed = old.fixed;
                 self.stamp(id);
+            } else if partial && same_terminals && old.branches.is_empty() {
+                // Nothing of it moved and it has no copper: as it was (a
+                // pour net joined through its pour alone stays joined;
+                // `local_reroute` routes the pads the new copper cuts off).
+                let state = &mut self.nets[net];
+                state.connected = old.connected;
+                state.complete = old.complete;
+                state.reroutes = old.reroutes;
+                if self.nets[net].routable && !self.nets[net].complete {
+                    rerouted += 1;
+                }
             } else if self.nets[net].routable {
                 rerouted += 1;
                 if !same_terminals || !old.branches.is_empty() {
                     changed.push(id);
+                }
+                if partial && !same_terminals && !old.branches.is_empty() {
+                    let new_nodes = &self.nets[net].terminal_nodes;
+                    let moved = |end: u16| {
+                        let end = end as usize;
+                        end < old.terminal_nodes.len()
+                            && (end >= new_nodes.len() || old.terminal_nodes[end] != new_nodes[end])
+                    };
+                    let fixed = old.fixed;
+                    let mut kept_fixed = 0;
+                    let mut kept = Vec::new();
+                    for (index, branch) in old.branches.into_iter().enumerate() {
+                        if moved(branch.start_terminal)
+                            || moved(branch.end_terminal)
+                            || !self.branch_is_legal(id, &branch)
+                        {
+                            continue;
+                        }
+                        if index < fixed {
+                            kept_fixed += 1;
+                        }
+                        kept.push(branch);
+                    }
+                    if !kept.is_empty() {
+                        let state = &mut self.nets[net];
+                        state.branches = kept;
+                        state.fixed = kept_fixed;
+                        state.reroutes = old.reroutes;
+                        self.stamp(id);
+                    }
                 }
             }
         }
