@@ -15,7 +15,7 @@ v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
 The v19 sweep (x1539) refused four boards v18 (x1315) placed:
 OM-FlexGrid-Flex, SmartSpin2k's panel, OpenRX's panel and the molecule
-5x4_wave. Branch placer-refusal; snapshot x1650. Details: docs/placer.md,
+5x4_wave. Branch placer-refusal; snapshots x1650 (the share gate alone) and x1651. Details: docs/placer.md,
 "Placer refusals since v18".
 
 **Causes** (bisected with placement alone, `place-kicad-board` on the
@@ -41,9 +41,11 @@ the free-dimension fixes caused these refusals:
   part's regions exclude (`region_window`). Exact: only the work counted
   changes, only where parts have regions (panels whose copies have their
   own nets).
-- `seat_on_marks` legalizes every part again only when fewer than an
-  eighth of the movable parts found no room (OpenRX: 55 of 216 at full
-  halos). A debug line says how many each step seated.
+- `seat_on_marks` skips legalizing every part again only where both an
+  eighth of the movable parts or more failed (OpenRX: 55 of 216 at full
+  halos) and the four passes would take more than an eighth of the
+  placement's budget. Either condition alone moved MIDAS-MK1.1's or
+  reCamera's placement. A debug line says how many each step seated.
 
 **Measured** (x1650 against main, placement alone at the reference work
 rate):

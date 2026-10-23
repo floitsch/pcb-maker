@@ -673,8 +673,8 @@ does). **A part without room lies on a mark**: where a level leaves
 parts without a place, they are seated again with the marks out of
 their way (`seat_on_marks`; `Constraints::yielding`, `on_marks`,
 `Relaxation::on_marks`; `parts_on_marks` in `board-placer.json`), every
-other part keeping its place, or, where that seats fewer and fewer than
-an eighth of the movable parts failed ("Placer refusals since v18"
+other part keeping its place, or, where that seats fewer (and not both
+many parts failed and a pass is costly: "Placer refusals since v18"
 below), every part legalized again with those first (MIDAS-MK1.1's two 36 mm headers at
 the bottom edge, whose spots the others had taken), before the next
 level takes halos or spacing from every part (OpenFC's and
@@ -875,14 +875,19 @@ free-dimension change.
     pass. Exact: those positions were illegal; only the work counted
     changes, and only on boards with regions (in the tiers, the panels
     whose copies have their own nets).
-  - `seat_on_marks` legalizes every part again (with the failed ones
-    first) only when fewer than an eighth of the movable parts found no
-    room. More is a level too tight, which the next level eases; OpenRX's
-    panel had 55 of 216 parts without room at full halos and spent 100 s
-    of its 600 s on those passes at each of the first two levels, so the
+  - `seat_on_marks` no longer legalizes every part again (with the
+    failed ones first) where both an eighth of the movable parts or more
+    found no room and a pass over every part (the level's legalization)
+    costs more than a 32nd of the placement's budget, so that its four
+    passes would take more than an eighth. Many failures mean a level
+    too tight, which the next level eases. OpenRX's panel had 55 of 216
+    parts without room at full halos, a pass of 35 s, and spent 100 s of
+    its 600 s on those passes at each of the first two levels, so the
     spacing level that places it (as x1315 did, at 105 % of the front's
     area) never came. MIDAS-MK1.1, whose headers the passes are for,
-    fails 1 to 10 of 160 parts at a time: unchanged.
+    fails 1 to 10 of 160 parts at a time, and reCamera fails more of fewer
+    parts with cheap passes: both unchanged. A gate on either condition
+    alone moved them.
   SmartSpin2k: 12 parts without a place -> none (U2 twice and U5 seven
   times on marks); OpenRX: 81 -> none.
 - **The molecule 5x4_wave** (the marks): not recovered. Its four
