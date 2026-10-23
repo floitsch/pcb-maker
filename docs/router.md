@@ -145,7 +145,13 @@ model) and `tests`.
    way often found nothing: MegaDrive's cold route left 19 signal nets
    with no copper at all after the repair (ten VD, five VA, ZA0, ZA8,
    ZD4, PA6; 4 now), and vaio_re's narrow-signal attempt +3V3E with 3 of
-   43 pads.
+   43 pads. Then the trouble-makers' repair (`trouble_repair`, on since
+   2026-10-23; `PCB_ROUTER_TROUBLE=0` turns it off; not in a layout's
+   move trials): each net still open, most open first, is routed through
+   other copper at a price, the nets it overlaps lose the crossed
+   branches and are routed again hard, and the exchange is kept when the
+   open terminals of all of them drop (a ten-pad bus net may cost a
+   short net a pad; docs/experiments/human-level-routing.md).
 8. **Cleanup.** Each net is rerouted alone with pure geometric cost and a high
    via cost; the result is kept only if strictly cheaper.
    After the via reduction and the spoke repairs, the straightening

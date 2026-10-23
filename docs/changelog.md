@@ -11,6 +11,74 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-23 (trouble repair default)
+
+The trouble-makers' repair of the experiment of 2026-10-22
+(docs/experiments/human-level-routing.md) is on by default: router
+`Config::trouble_repair` (true), `trouble_repair` in the router
+settings (router.json; unset, the router's default), and
+`PCB_ROUTER_TROUBLE` the override either way (`0` off, anything else
+on). Snapshots x1586-x1589 (x1589 the default, on main 93d6f6e, the
+memory round 2). Branch trouble-default.
+
+- **Where it runs.** After the hard repair of every finish, but not in a
+  layout's move trial (`Router::reroute` without the polish,
+  `in_trial`). With it in every trial (x1585, the experiment's rule)
+  OpenFC's layout on the short tier fit 5 move trials into the moves'
+  work instead of 11 and ended at 12 unconnected instead of 2; run only
+  where the board is polished (x1587) it lost video's layout gain (199
+  both: a board far from complete gets no polish and no moves, only its
+  unpolished first route). The first route and the race's routes keep
+  it.
+- **Expansion tier** (46 boards, route mode, 8 x 1, 30 s, x1585 with the
+  switch against build/expansion-mem1-x1601, the same routing; x1587
+  and x1589 by default give the same 46 rows): unconnected 631 to 627,
+  passes 18 to 19, new errors 3 to 3, vias 4204 to 4216, starved
+  thermals unchanged on every row; better 4, worse 1, the rest
+  identical in result (12 rows differ at all):
+
+  | Board | routed | KiCad unconnected | vias | pass |
+  | --- | --- | --- | --- | --- |
+  | bread-modular noise | 20/21 -> 21/21 | 1 -> 0 | 18 -> 12 | no -> **yes** |
+  | ddB0515 ED052TC4-Adapter | 34/37 -> 36/37 | 4 -> 2 | 57 -> 59 | no |
+  | OpenDeck r3.1.2 | 295/304 -> 296/304 | 10 -> 9 | 277 -> 282 | no |
+  | facade60 daughterboard | 27/47 | 25 -> 24 | 64 -> 63 | no |
+  | siderakb Miniboard | 35/39 -> 34/39 | 5 -> 6 | 79 -> 73 | no |
+  | seven more (ZSWatch, MusicBrain, tuxkeychain, flexypin, ausign, MAS500, rv003usb) | same | same | +1 to +6 | same |
+
+  CPU 1664 to 2277 s, but the identical rows rose alike (+37 %: load 9
+  against 19 when they ran); work 1221 to 1242 s.
+- **Short tier** (12 layouts, 3 x 2; on and off from one binary): x1589
+  by default against x1585 with `PCB_ROUTER_TROUBLE` unset (off then):
+  all 12 boards identical (routed, vias, length, KiCad's counts), passes
+  6 and 6, unconnected 21 and 21, new errors 3 and 3. (x1585 with the
+  repair in the move trials too: OpenFC 2 to 12, the rest identical;
+  the reason for the trial rule above.)
+- **The five gap boards' layouts** (x1592 off against x1589 on, the
+  placements byte-identical): video 199 to 185, SNSP-CPU-01 147 to 134,
+  OpenESC 4in1 127 to 120, Glasgow 191 to 190, MegaDrive 215 to 154;
+  879 to 783 in all, no new errors, vias +2 to +11 %. Route mode on them is as measured on 2026-10-22 (the
+  ladder's attempts are polished: x1589 by default reproduces x1582
+  with the switch on).
+- **Fingerprints**: with `PCB_ROUTER_TROUBLE=0` Castor, k30-SBC, jetson
+  and Sisu byte-identical to main (x1588 against x1603 and x1624); by
+  default jetson 20 to 17 unconnected (597 to 607 vias), Sisu 25 to 23
+  (375 to 379), Castor and k30 identical.
+- **Pour nets in the repair** (`PCB_ROUTER_TROUBLE_POURS=1`, off): pour
+  nets as trouble-makers and as victims, weighed by their pads off the
+  pour's main piece (`open_measure`, the pour analysed after the
+  exchange). OpenESC and Glasgow (route mode, both placements):
+  identical to the repair without it. The boards' kept attempts route
+  the pours as tracks, where the supplies are signal nets already; what
+  refuses their exchanges is the victims' limit (+3V3 with 13-25
+  victims, GND 21-23) and trades that close as many as they open.
+- **Twelve victims or 24** (`PCB_ROUTER_TROUBLE_VICTIMS=24`, route mode
+  on the v18 placements): OpenESC 104 to 94, Glasgow 148 to 139,
+  SNSP-CPU-01 140 to 127, but video 214 to 218 and MegaDrive 135 to 145
+  (on the designer's placement 59 to 62, SNSP-CPU-01 4 both); the
+  expansion tier identical. Mixed: 12 stays. A limit by the
+  trouble-maker's size (more for a supply net of many pads) is the next
+  thing to try.
 ## Measured on 2026-10-22 (layout sweep v19, matched designer tier)
 
 The first full measurement on one binary after the packages of 2026-10-21

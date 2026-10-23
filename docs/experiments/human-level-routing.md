@@ -291,6 +291,10 @@ on trades.
 
 ## Recommendation: go, as the next default candidate (iterate first)
 
+Update 2026-10-23: on by default (`trouble_repair`), skipped only in a
+layout's move trials; the tiers and the layouts in docs/changelog.md,
+"Committed on 2026-10-23 (trouble repair default)".
+
 The trouble-makers' repair is the first routing change in this round
 that closes connections on every gap board it can touch, on both
 placements, in route mode and in the full layout, with no new errors
