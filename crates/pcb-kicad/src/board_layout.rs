@@ -106,6 +106,14 @@ pub struct KiCadBoardLayoutConfig {
     /// from complete. `PCB_LAYOUT_MOVE_DESCENT` overrides (`0` off).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub move_descent: Option<crate::move_descent::KiCadMoveDescent>,
+    /// Routes survive moves: the final route (the ladder, or the
+    /// narrow-signal attempt standing in for it) starts from the router's
+    /// state after the first route and the moves, its complete and legal
+    /// nets without a pour kept as the board's own copper, and routes the
+    /// rest; from scratch only when its first attempt leaves more open
+    /// than the first route did. False: from scratch, as before.
+    /// `PCB_LAYOUT_FINAL_FROM_STATE` (0 or 1) overrides.
+    pub final_route_from_state: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -208,6 +216,7 @@ impl Default for KiCadBoardLayoutConfig {
             free_dimension: None,
             silkscreen: KiCadSilkscreenConfig::default(),
             move_descent: None,
+            final_route_from_state: false,
         }
     }
 }
@@ -585,6 +594,43 @@ pub(crate) fn without_copper_texts(pcb: &Expr, keep: bool) -> Expr {
             .cloned()
             .collect(),
     )
+}
+
+/// The nets of the router's state the final route keeps
+/// (`final_route_from_state`): complete by the router's count, with
+/// copper, in no violation of the router's own check, and without a pour
+/// (`pour_nets`: whether planes or tracks connect them is the ladder's to
+/// choose).
+pub(crate) fn kept_state_nets(
+    board: &core::Board,
+    result: &core::RoutingResult,
+    pour_nets: &BTreeSet<String>,
+) -> Vec<bool> {
+    let mut kept: Vec<bool> = result
+        .status
+        .iter()
+        .zip(&result.routes)
+        .zip(&board.nets)
+        .map(|((status, route), net)| {
+            matches!(status, core::NetStatus::Routed)
+                && !(route.segments.is_empty() && route.vias.is_empty())
+                && !pour_nets.contains(&net.name)
+        })
+        .collect();
+    for plane in &board.planes {
+        if let Some(kept) = kept.get_mut(plane.net as usize) {
+            *kept = false;
+        }
+    }
+    for violation in core::verify(board, &result.routes) {
+        let others = violation.other_segment.map(|(other, _)| other);
+        for net in std::iter::once(violation.net).chain(others) {
+            if let Some(kept) = kept.get_mut(net as usize) {
+                *kept = false;
+            }
+        }
+    }
+    kept
 }
 
 /// The open count past which a board the narrow-signal step applies to
@@ -2011,6 +2057,9 @@ pub fn layout_kicad_board(
         let (negotiation, cleanup) = direct_narrow_budget(ladder_left);
         narrow.negotiation_seconds = Some(negotiation);
         narrow.cleanup_seconds = Some(cleanup);
+        // Its seed rounds leave the attempt after it its share (the
+        // other pour mode: DSP-ADAU1452 73 to 30 open by it).
+        narrow.keep_for_continuation = true;
         eprintln!(
             "layout: {ladder_left:.0} s of work left: the narrow-signal attempt instead of the ladder (pours {}, negotiation {negotiation:.0} s, clean-up {cleanup:.0} s)",
             if connect { "connected" } else { "as tracks" },
@@ -2025,6 +2074,10 @@ pub fn layout_kicad_board(
     } else {
         None
     };
+    let final_from_state = match std::env::var("PCB_LAYOUT_FINAL_FROM_STATE") {
+        Ok(value) => value.trim() != "0",
+        Err(_) => config.final_route_from_state,
+    } && current.0 > 0;
     let final_ladder_budget_seconds = fallback_config
         .as_ref()
         .map(|_| (work_deadline - work - pool_excess).max(0.0));
@@ -2062,38 +2115,145 @@ pub fn layout_kicad_board(
         // The starved pads go solid once, on the board the layout keeps
         // (below): its attempts are compared as KiCad found them.
         fallback_config.solid_starved_thermals = Some(false);
-        fallback_config.kicad_kept = Some((
-            (
-                crate::board_router::router_open(&routed),
-                routed.vias,
-                routed.length_mm,
-            ),
-            current,
-        ));
-        let fallback = route_kicad_board(
-            &placed_directory,
-            board_id,
-            &fallback_directory,
-            &fallback_config,
-        )?;
-        // (Its checks are in its work already.)
-        checks_charged.add(fallback.kicad_checks_charged);
-        // The work of the narrow-signal attempt and what follows it counts
-        // whether the layout keeps them or not.
-        let mut after_work = fallback.work_seconds;
-        let fallback_pours = fallback.pours.clone();
+        // The work of the attempts after the layout's own board (the ladder
+        // on the kept routes, the ladder from scratch, the narrow-signal
+        // attempt and what follows it) counts whether the layout keeps
+        // them or not.
+        let mut after_work = 0.0;
         let mut best_quality = current;
-        let fallback_quality = quality(&fallback, &fallback_directory);
-        // A ladder board KiCad did not check (past the deadline, it could
-        // not beat the board kept) is never kept.
-        if checked(&fallback) && fallback_quality < current {
-            fs::remove_dir_all(&result_directory).map_err(|error| error.to_string())?;
-            fs::rename(&fallback_directory, &result_directory)
-                .map_err(|error| error.to_string())?;
-            routed = fallback;
-            best_quality = fallback_quality;
+        // The pour mode of the last attempt (the continuation varies it)
+        // and the project it routed.
+        let mut fallback_pours = String::new();
+        let mut attempt_source = placed_directory.clone();
+        // Routes survive moves (`final_route_from_state`): the final
+        // route starts from the router's state, its complete and legal
+        // nets kept as the board's own copper; the ladder routes the rest.
+        // From scratch only when its first attempt left more open than
+        // the layout's first route (a fresh first attempt) did.
+        let mut from_scratch = true;
+        let kept_nets = if final_from_state {
+            let pour_nets: BTreeSet<String> = pours(&placed_pcb, &layers)?
+                .into_iter()
+                .map(|pour| pour.net)
+                .collect();
+            kept_state_nets(&board, &result, &pour_nets)
         } else {
-            fs::remove_dir_all(&fallback_directory).map_err(|error| error.to_string())?;
+            Vec::new()
+        };
+        let kept_count = kept_nets.iter().filter(|kept| **kept).count();
+        if kept_count > 0 {
+            let kept_directory = output_directory.join("placed-kept");
+            if kept_directory.exists() {
+                fs::remove_dir_all(&kept_directory).map_err(|error| error.to_string())?;
+            }
+            crate::fs_util::copy_directory_tree(&placed_directory, &kept_directory)?;
+            let mut kept_pcb = placed_pcb.clone();
+            let mut kept_result = result.clone();
+            for (route, kept) in kept_result.routes.iter_mut().zip(&kept_nets) {
+                if !kept {
+                    route.segments.clear();
+                    route.vias.clear();
+                }
+            }
+            emit_routes(&mut kept_pcb, &board, &kept_result, &layer_names, false)?;
+            fs::write(
+                kept_directory.join(format!("{board_id}.kicad_pcb")),
+                format!("{}\n", encode(&kept_pcb)),
+            )
+            .map_err(|error| format!("failed to write the kept routes: {error}"))?;
+            eprintln!(
+                "layout: the final route starts from the router's state: {kept_count} of {} nets kept, the rest routed (a fresh first attempt left {})",
+                board.nets.len(),
+                first.0
+            );
+            let mut kept_config = fallback_config.clone();
+            kept_config.fresh_open = Some(first.0);
+            kept_config.kicad_kept = Some((
+                (
+                    crate::board_router::router_open(&routed),
+                    routed.vias,
+                    routed.length_mm,
+                ),
+                best_quality,
+            ));
+            let kept_output = output_directory.join("result-kept");
+            let kept = route_kicad_board(&kept_directory, board_id, &kept_output, &kept_config)?;
+            checks_charged.add(kept.kicad_checks_charged);
+            after_work += kept.work_seconds;
+            let gave_up = kept
+                .skipped
+                .iter()
+                .any(|why| why.starts_with(crate::board_router::KEPT_GAVE_UP));
+            fallback_pours = kept.pours.clone();
+            let kept_quality = quality(&kept, &kept_output);
+            eprintln!(
+                "layout: the final route on the kept routes: {} open, {} starved, {} vias, work {:.0} s ({} open, {} starved before){}",
+                kept_quality.0,
+                kept_quality.1,
+                kept.vias,
+                kept.work_seconds,
+                best_quality.0,
+                best_quality.1,
+                if gave_up { "; from scratch next" } else { "" }
+            );
+            if checked(&kept) && kept_quality < best_quality {
+                fs::remove_dir_all(&result_directory).map_err(|error| error.to_string())?;
+                fs::rename(&kept_output, &result_directory).map_err(|error| error.to_string())?;
+                routed = kept;
+                best_quality = kept_quality;
+            } else {
+                fs::remove_dir_all(&kept_output).map_err(|error| error.to_string())?;
+            }
+            if !gave_up {
+                from_scratch = false;
+                attempt_source = kept_directory;
+            }
+        }
+        if from_scratch {
+            let mut fallback_config = fallback_config.clone();
+            if after_work > 0.0 {
+                // What the attempts on the kept routes left.
+                let left = (work_deadline - work - pool_excess - after_work).max(0.0);
+                fallback_config.deadline_work = Some(left);
+                fallback_config.ladder_budget_seconds = fallback_config
+                    .ladder_budget_seconds
+                    .map(|budget| budget.min(left.max(120.0)));
+                if direct_narrow {
+                    let (negotiation, cleanup) = direct_narrow_budget(left);
+                    fallback_config.negotiation_seconds = Some(negotiation);
+                    fallback_config.cleanup_seconds = Some(cleanup);
+                }
+            }
+            fallback_config.kicad_kept = Some((
+                (
+                    crate::board_router::router_open(&routed),
+                    routed.vias,
+                    routed.length_mm,
+                ),
+                best_quality,
+            ));
+            let fallback = route_kicad_board(
+                &placed_directory,
+                board_id,
+                &fallback_directory,
+                &fallback_config,
+            )?;
+            // (Its checks are in its work already.)
+            checks_charged.add(fallback.kicad_checks_charged);
+            after_work += fallback.work_seconds;
+            fallback_pours = fallback.pours.clone();
+            let fallback_quality = quality(&fallback, &fallback_directory);
+            // A ladder board KiCad did not check (past the deadline, it could
+            // not beat the board kept) is never kept.
+            if checked(&fallback) && fallback_quality < best_quality {
+                fs::remove_dir_all(&result_directory).map_err(|error| error.to_string())?;
+                fs::rename(&fallback_directory, &result_directory)
+                    .map_err(|error| error.to_string())?;
+                routed = fallback;
+                best_quality = fallback_quality;
+            } else {
+                fs::remove_dir_all(&fallback_directory).map_err(|error| error.to_string())?;
+            }
         }
         // After the narrow-signal attempt run alone, the work it left (Hub
         // ended at 577 of 1500 s) goes to one more attempt when there is
@@ -2105,6 +2265,8 @@ pub fn layout_kicad_board(
             let wall = !stop.allows(LayoutStep::Continuation);
             let continuation_config = if narrow_continuation_runs(left, best_quality.0, wall) {
                 let mut other = fallback_config.clone();
+                // Nothing comes after it.
+                other.keep_for_continuation = false;
                 other.pours = if fallback_pours == "tracks" {
                     KiCadPourMode::Connect
                 } else {
@@ -2158,7 +2320,7 @@ pub fn layout_kicad_board(
                 ));
                 let continuation_directory = output_directory.join("result-continuation");
                 let continuation = route_kicad_board(
-                    &placed_directory,
+                    &attempt_source,
                     board_id,
                     &continuation_directory,
                     &continuation_config,

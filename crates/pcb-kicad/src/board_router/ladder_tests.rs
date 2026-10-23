@@ -1097,6 +1097,62 @@ fn a_layouts_ladder_keeps_its_reserve_for_the_step() {
     assert_eq!(kept(&ladder, &out), (0, "connect".into()));
 }
 
+/// The narrow-signal attempt a layout runs alone (its step applied, so
+/// it keeps no reserve of its own): its seeds stop at their share of the
+/// work left, and with `keep_for_continuation` they leave the attempt
+/// after it its reserve. Before 2026-10-23 the seeds had no deadline:
+/// DSP-ADAU1452 had 742 s left, its first attempt took 192 s, three
+/// seeds ran to about 425 s each and the ladder charged 1470 s.
+#[test]
+fn a_layouts_narrow_attempt_alone_ends_within_its_work() {
+    let mut config = with_narrow_step(route_mode(808.0));
+    config.use_narrow_signals = Some(true);
+    config.pours = KiCadPourMode::Connect;
+    config.refine_pitches_mm = Some(Vec::new());
+    config.negotiation_seconds = Some(501.0);
+    config.deadline_work = Some(742.0);
+    assert!(!narrow_step_applies(&config));
+    for keep in [false, true] {
+        config.keep_for_continuation = keep;
+        let out = output(&format!("narrow-alone-{keep}"));
+        let fake = Fake::new(|routed| {
+            Some(if routed.first_seed > 0 {
+                Outcome {
+                    open: 70,
+                    work: 425.0,
+                }
+            } else {
+                Outcome {
+                    open: 92,
+                    work: 192.0,
+                }
+            })
+        });
+        let mut ladder = ladder(&config, &out, 4);
+        ladder.run(&fake).unwrap();
+        let routes = fake.routes();
+        // Two seeds without the reserve (unbounded: 192 + 2 x 425 s), one
+        // with it.
+        let seeds = routes.last().unwrap().seeds;
+        assert_eq!(seeds, if keep { 1 } else { 2 }, "{routes:?}");
+        for routed in &routes {
+            assert!(routed.deadline_work.is_some(), "{routes:?}");
+        }
+        assert!(
+            ladder.work <= 742.0 + 1.0e-6,
+            "{} ({routes:?})",
+            ladder.work
+        );
+        if keep {
+            assert!(
+                742.0 - ladder.work >= NARROW_RESERVE_FLOOR,
+                "{} ({routes:?})",
+                ladder.work
+            );
+        }
+    }
+}
+
 /// A finer pitch whose router (from the first attempt's maps) does not
 /// fit the machine is not tried: decided by the maps and the machine's
 /// memory, a fixed number, never by the process's peak.

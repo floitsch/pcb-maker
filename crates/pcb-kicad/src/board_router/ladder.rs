@@ -367,6 +367,10 @@ struct StepWork {
     kept_routing: f64,
 }
 
+/// How a ladder on a kept router state that gave up after its first
+/// attempt (`fresh_open`) begins its note in `skipped`.
+pub(crate) const KEPT_GAVE_UP: &str = "the attempts on the kept routes stopped after the first";
+
 /// The attempt ladder's state (see the module).
 pub(crate) struct Ladder<'a> {
     config: &'a KiCadBoardRouterConfig,
@@ -414,6 +418,10 @@ pub(crate) struct Ladder<'a> {
     reserve_share: f64,
     reserve_cap: f64,
     reserve_set: bool,
+    /// The first attempt left more open by the router's count than a
+    /// fresh first attempt (`fresh_open`): nothing more runs.
+    pub(crate) gave_up: bool,
+    first_judged: bool,
     /// What the ladder's first attempt negotiated (its budget, in work).
     first_negotiation: f64,
     /// Route mode: whether an attempt's manual spokes count in the
@@ -582,7 +590,10 @@ impl<'a> Ladder<'a> {
             // without it. Zero when the step does not apply or there is no
             // work deadline.
             reserve: 0.0,
-            reserve_wanted: config.deadline_work.is_some() && narrow_step_applies(config),
+            // The narrow-signal attempt a layout runs alone keeps it for
+            // the attempt after it (`keep_for_continuation`).
+            reserve_wanted: config.deadline_work.is_some()
+                && (narrow_step_applies(config) || config.keep_for_continuation),
             reserve_share: std::env::var("PCB_NARROW_RESERVE")
                 .ok()
                 .and_then(|value| value.parse::<f64>().ok())
@@ -592,6 +603,8 @@ impl<'a> Ladder<'a> {
                 .deadline_work
                 .map_or(0.0, |left| (0.4 * left).min(600.0)),
             reserve_set: false,
+            gave_up: false,
+            first_judged: false,
             first_negotiation: 0.0,
             charges_spokes: work_bound.is_some()
                 && std::env::var_os("PCB_LADDER_SEARCH_ONLY").is_none(),
@@ -662,12 +675,38 @@ impl<'a> Ladder<'a> {
     /// board is then in `best` (None only when every attempt failed).
     pub(crate) fn run<R: LadderRunner>(&mut self, runner: &R) -> Result<(), String> {
         self.probes(runner)?;
-        self.rungs(runner)?;
+        if !self.gave_up {
+            self.rungs(runner)?;
+        }
         // Probes whose leader finished the board leave their maps unused.
         self.carried.clear();
         self.clear_rung_directories()?;
+        if self.gave_up {
+            return Ok(());
+        }
         self.seed_rounds(runner)?;
         self.steps(runner)
+    }
+
+    /// After the ladder's first attempt (`router_open` of its board): a
+    /// ladder on a kept router state (`fresh_open`) gives up when the
+    /// attempt left more open than a fresh first attempt did.
+    fn judge_first(&mut self, router_open: usize) {
+        if self.first_judged {
+            return;
+        }
+        self.first_judged = true;
+        if let Some(fresh) = self.config.fresh_open
+            && router_open > fresh
+        {
+            eprintln!(
+                "ladder: the first attempt on the kept routes left {router_open} open, a fresh first attempt {fresh}: no further attempts on them"
+            );
+            self.skipped.push(format!(
+                "{KEPT_GAVE_UP}: it left {router_open} open, a fresh first attempt {fresh}"
+            ));
+            self.gave_up = true;
+        }
     }
 
     /// The ladder's work as the budget counts it: the work, or the wall
@@ -1679,6 +1718,7 @@ impl<'a> Ladder<'a> {
         self.last_attempt_work = attempt_work;
         self.last_attempt_pitch = result.grid_pitch_mm;
         self.keep_reserves(opens, attempt_work, probe_seconds + resumed);
+        self.judge_first(router_open(&result));
         self.probe_complete = opens.0 == 0;
         self.best = Some((opens, result));
         self.best_attempt = Some((attempt.clone(), connect));
@@ -1910,6 +1950,9 @@ impl<'a> Ladder<'a> {
         let mut ran: Vec<Option<Result<Result<KiCadBoardRouterResult, String>, String>>> =
             (0..modes.len()).map(|_| None).collect();
         for (position, &mode) in candidates.iter().enumerate() {
+            if self.gave_up {
+                return Ok(Flow::Stop);
+            }
             let (connect, skeleton, exclusive, plane_stubs) = modes[mode];
             // With work kept for the narrow-signal step, the rung's work
             // as projected from the last attempt (on a finer lattice, by
@@ -2106,6 +2149,7 @@ impl<'a> Ladder<'a> {
                 attempt_seconds,
                 attempt.negotiation_seconds.unwrap_or(900.0),
             );
+            self.judge_first(router_open(&result));
             let seconds = attempt_seconds;
             let used = (attempt_seconds, result.grid_pitch_mm);
             if self.slowest.is_none_or(|(seconds, _)| used.0 > seconds) {
@@ -2301,8 +2345,9 @@ impl<'a> Ladder<'a> {
         seeded.seeds_side_by_side = Some(self.seeds_that_fit(runner, retry, result.grid_pitch_mm));
         seeded.first_seed = Some(1);
         // Their work counts `retry` times: each stops at its share
-        // of what is left beyond the reserve.
-        if self.reserve > 0.0 {
+        // of what is left beyond the reserve (in a layout's ladder also
+        // with no reserve: `seed_rounds`).
+        if self.config.deadline_work.is_some() {
             seeded.router_deadline_work = Some(deadline_before_reserve(
                 self.work_left() - self.check_charge,
                 self.reserve,
@@ -2474,7 +2519,14 @@ impl<'a> Ladder<'a> {
             seeded.seeds = Some(retry);
             seeded.seeds_side_by_side = Some(side_by_side);
             seeded.first_seed = Some(next_seed);
-            if self.reserve > 0.0 {
+            // In a layout's ladder each seed stops at its share of the
+            // work left beyond the reserve, also when nothing is kept:
+            // without a deadline a seed round of the narrow-signal attempt
+            // run alone (which keeps no reserve: its step does not apply
+            // to itself) negotiated to its own budget, three seeds charged
+            // three times the longest (DSP-ADAU1452 on the move descent:
+            // 742 s left, 1470 s of the ladder's work).
+            if self.config.deadline_work.is_some() {
                 seeded.router_deadline_work = Some(deadline_before_reserve(
                     self.work_left() - self.check_charge,
                     self.reserve,

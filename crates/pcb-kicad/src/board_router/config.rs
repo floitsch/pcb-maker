@@ -195,6 +195,21 @@ pub struct KiCadBoardRouterConfig {
     /// way; the wall-clock deadline stays as the last guard.
     #[serde(skip)]
     pub deadline_work: Option<f64>,
+    /// With `deadline_work`: the layout routes another attempt after this
+    /// ladder (the narrow-signal attempt's continuation in the other pour
+    /// mode), so the ladder keeps work for it as it keeps work for its own
+    /// narrow-signal step (`narrow_step_reserve`, from its first attempt's
+    /// work): its seed rounds see the work left without it (set by the
+    /// layout, not read from a file).
+    #[serde(skip)]
+    pub keep_for_continuation: bool,
+    /// The router's open count of a fresh first attempt (the layout's
+    /// first route): a ladder routing the remainder of a kept router state
+    /// stops after its first attempt when that leaves more open, and the
+    /// layout routes from scratch instead (set by the layout, not read
+    /// from a file).
+    #[serde(skip)]
+    pub fresh_open: Option<usize>,
     /// The work at which a router of this attempt stops as at the
     /// deadline (router `deadline_work`, its own work counted from zero;
     /// set by the ladder from `deadline_work`, not read from a file).
