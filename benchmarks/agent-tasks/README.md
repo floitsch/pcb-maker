@@ -172,6 +172,20 @@ measurement). The discipline:
   the connections (mean 0.164 -> 0.113). Over v17 against v18 (all 109
   boards, the same input): vias x0.70 -> x0.71, length x1.03 -> x1.03,
   open 0.011 -> 0.009 (mean 0.287 -> 0.284), ground pour cut +0 -> +0 mm.
+- **Aesthetics** (since 2026-10-23): score-kicad-board's `aesthetics`
+  (docs/quality.md, "Aesthetics") counts bends per connection (direction
+  changes along a track's path, a corner cut at 45 degrees one bend),
+  stair-steps (two bends within 2 mm back to the first direction) and
+  pin-row crossings (another net's track between two adjacent SMD pads of
+  one part); quality.py lists them with the other measures,
+  designer-numbers.json has the designer's, and compare.py's normalised
+  line adds our bends per connection over the designer's and our
+  stair-steps and crossings less the designer's (medians; rows need
+  scores, `run.py --quality` or `compare.py --score`). Before 2026-10-23
+  score-kicad-board read no net on a track of a KiCad 9 board (`(net 5)`
+  is a code): the designer's ground pours were never cut and its tracks
+  had no paths; designer-numbers.json was written again (ground cut
+  included).
 - **The strict rule** (`pass_strict`, `new_findings_strict`; run.py's
   `strict_findings`, docs/agents.md "The pass rule"): a KiCad finding of
   ours counts unless the designer's board with its tracks, vias and
