@@ -34,7 +34,7 @@ The environment variables are indexed in the hand-over
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 5 | - | 0 | 5 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 62 | - | 0 | 62 | - |
-| [Placer settings](#placer-settings) | 47 | 43 | 4 | 47 | 16 |
+| [Placer settings](#placer-settings) | 47 | 43 | 4 | 47 | 17 |
 | [Layout settings](#layout-settings) | 17 | 17 | 0 | 17 | 7 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 2 |
@@ -328,7 +328,7 @@ The placer config file of `place-kicad-board`, and the `placer` object of the la
 | `deadline` (internal) | `Option<std::time::Instant>` | unset (internal) | - | Wall-clock time by which placement returns its best result (set by the layout from its budget; placement of a 404-part panel ran past 25 minutes). |
 | `work_seconds` (internal) | `Option<f64>` | unset (internal) | - | Placement work each seed may do, in seconds of an idle machine (see `core::work_per_second`): set by the layout from its budget, so that a busy or a slower machine places the same way. |
 | `overlap_far_side_pads` | `bool` | `false` | - | Where the project lets courtyards overlap, a part may reach over other parts' pads on its side at the last placement levels, keeping only copper apart (as katia's designer put connectors partly over hot-swap socket pads). Off by default: such pads may carry a body. |
-| `constraints` | `Option<KiCadConstraintsSource>` | unset | - | Placement constraints: a `constraints.json` path (relative to the source directory) or the constraints inline. |
+| `constraints` | `Option<KiCadConstraintsSource>` | unset | placer.md | Placement constraints: a `constraints.json` path (relative to the source directory) or the constraints inline. |
 | `constraint_weight` | `f64` | `50.0` | - | Millimetres of wirelength one millimetre of a missed near or relative constraint costs. |
 | `copper_clearance_mm` | `Option<f64>` | unset | - | The largest copper clearance of the board's rules: bodies are never placed closer than this (pads may sit on a body's edge). Read from the project when not given. |
 | `hole_clearance_mm` | `Option<f64>` | unset | router.md | The board's copper-to-hole clearance: a non-plated hole keeps it from other parts' copper. Read from the project when not given. |

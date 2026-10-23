@@ -11,6 +11,52 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-23 (placer refusals)
+
+The v19 sweep (x1539) refused four boards v18 (x1315) placed:
+OM-FlexGrid-Flex, SmartSpin2k's panel, OpenRX's panel and the molecule
+5x4_wave. Branch placer-refusal; snapshot x1650. Details: docs/placer.md,
+"Placer refusals since v18".
+
+**Causes** (bisected with placement alone, `place-kicad-board` on the
+tasks' prepared boards, snapshots x1315 to x1535 and builds of the
+commits between x1534 and x1535). Neither the held-part unification nor
+the free-dimension fixes caused these refusals:
+- OM-FlexGrid-Flex: 6ebd4e4 (a held part's pads keep the copper-to-edge
+  clearance on every side at the edge-copper levels). J1's window in its
+  tab shrank to 0.25 mm, between the eviction scan's 0.5 mm steps.
+- SmartSpin2k, OpenRX, 5x4_wave: 057b3a4 (the board's marks). The tasks
+  stack their parts, so the designers' labels attach to nothing. On the
+  panels the marks made the first levels too slow for the budget:
+  SmartSpin2k's first level took all 600 s of work, 200 to 280 s of it
+  in `seat_on_marks`' passes over every part. With `keep_board_marks:
+  false`, main places all three.
+
+**What changed** (pcb-placer):
+- `evict_for` scans a part held at one edge again on the level's grid
+  along that edge, flush against it, when the coarse scan found no spot
+  (`scan_steps`, `constraints::flush_center`). Unit test
+  `eviction_finds_a_held_part_s_narrow_window_in_a_tab`.
+- The legaliser's ring search and the eviction's scans skip positions a
+  part's regions exclude (`region_window`). Exact: only the work counted
+  changes, only where parts have regions (panels whose copies have their
+  own nets).
+- `seat_on_marks` legalizes every part again only when fewer than an
+  eighth of the movable parts found no room (OpenRX: 55 of 216 at full
+  halos). A debug line says how many each step seated.
+
+**Measured** (x1650 against main, placement alone at the reference work
+rate):
+- OM-FlexGrid-Flex: J1 without a place -> complete.
+- SmartSpin2k: 12 parts -> complete (U2 twice and U5 seven times on
+  marks).
+- OpenRX: 81 parts -> complete.
+- 5x4_wave: still refused (J4, or J3 and J4 by seed). Its connectors
+  fill 70 of 76 mm of each side edge under their own pin marks. Seating
+  them with every mark yielding, by eviction or by legalizing every part
+  again, found no slot either, so that code is not in.
+- The short tier's twelve boards place byte-identically to main at
+  200 s of placement work.
 ## Committed on 2026-10-23 (trouble repair: victims and order)
 
 The trouble-makers' repair (router.md, item 7) refuses less where a
