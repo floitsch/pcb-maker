@@ -765,6 +765,53 @@ mode (x155 -> x160, 2 threads): CyberKeeb2040 6916 -> 3395 MB, Qfwfq 3330
 2, 4 threads) and each holds a scratch: run boards side by side with few
 threads each (`RAYON_NUM_THREADS`, the runners' `--threads`).
 
+### Memory (2026-10-22)
+
+What a router holds now, per node and layer, for C rule classes of which
+S are searched (the 2026-10-09 sizes above, before):
+
+- static maps per class: the trace map 2 bytes (16-bit owners, as the
+  edge and via owners; was 4); the blocked unit steps a bit and, for the
+  one node in a hundred that has any, their directions and exempt net
+  apart (`EdgeMap`; were 3 bytes dense); per node the via block a bit
+  (was a byte), and for a searched class the via owner 2 and the free
+  layers 1 byte up to 8 layers, 2 up to 16, else 4 (`LayerBits`; was 4);
+- the search records (`hot`) 8 bytes per searched class (were 12): the
+  history, the static map's 16-bit value and an index into the table of
+  (guard, cover) pairs of the board (`hot_pours`; few pairs: a pour net
+  and the guard's), built in place when they change (a second set beside
+  the first, while the lost-spokes step set and restored its guards, was
+  katia's peak: 1.1 GB);
+- a net's stamp list 4 bytes a stamp (the map above the cell's bits in
+  one word where they fit, `Stamped`; were 8);
+- one search scratch per router, allocated on its first search (a router
+  that never searches, the pour measure's, has none), and the scratches
+  the jobs of a parallel batch use pooled with the router
+  (`ScratchPool`): until now every pool thread kept a scratch of its own
+  in a thread local, beside the router's and after it was gone, so one
+  thread held two;
+- the via reduction's snapshot leaves out the occupancy and the tiles'
+  claims (the sum of the nets' stamps): a revert takes the changed nets'
+  stamps off and the snapshot's back (`restore_lean`);
+- the allocator: glibc's malloc maps every block of a MiB or more and
+  unmaps it when freed (`configure_allocator`, M_MMAP_THRESHOLD, set
+  first thing in `main`). Its threshold otherwise grows to the largest
+  block freed (up to 32 MB), the lattice maps (a few MB a layer) came
+  from the heap after the first router and stayed resident: katia held
+  1.75 GB with no router left after its first attempt, 0.24 GB now.
+
+The pour measure of the board written (`measure_pours`) drops the
+source board's parse and its own before it builds its router (jetson's
+25 MB file parses to 240 MB; the measure was its peak).
+
+Unchanged: the occupancy (2 bytes per map and node: per class L + 1
+maps and 2L diagonal maps), the history (4 bytes per node and layer and
+the via layer), the guard and the cover (4 bytes per node and layer
+where there are pours), a scratch's 12 bytes per state. On katia
+(2775 x 1077 nodes, 4 layers, 10 classes, 8 searched) the occupancy and
+the search records are now 67 % of the maps (741 and 730 of 2185 MB). Every route and fingerprint
+is the same (docs/changelog.md, "router memory").
+
 ### Memory limits (2026-10-21)
 
 How many routers the ladder runs side by side (the rung probes, the rungs
@@ -783,10 +830,27 @@ unseen: 456 runs of the 5 834-board intake died at a 3 GiB cap, their peak
 
 A router's peak is estimated from its lattice maps (the router's
 `memory: N MB in maps`, read from `Router::memory_report` as each
-attempt builds it; `maps_mb` in board-router.json): 1.7 times the maps
-and 460 MB beside them resident, 2.0 times and 550 MB of address space,
-times a margin of 1.25 (`router_peak_mb`). Measured with one router at a
-time and one thread (the whole process's peak, x1225, 2026-10-21):
+attempt builds it; `maps_mb` in board-router.json): 1.2 times the maps
+and 540 MB beside them resident, 1.3 times and 780 MB of address space,
+times a margin of 1.25 (`router_peak_mb`; 1.7 and 460, 2.0 and 550 until
+2026-10-22, when the maps shrank and freed blocks went back to the
+system). Measured with one router at a time and one thread, a ladder of
+60 s of work without probes and seeds (the whole process's peak,
+x1600, 2026-10-22):
+
+| board | maps MB | peak RSS | RSS / maps | VmPeak | VM / maps |
+|---|---|---|---|---|---|
+| katia (4 layers, 10 classes) | 2189 | 2534 | 1.16 | 2809 | 1.28 |
+| jiran-ble-lite at 0.05 mm (2) | 1589 | 1608 | 1.01 | 1954 | 1.23 |
+| byrantech laptop motherboard (6) | 636 | 897 | 1.41 | 1112 | 1.75 |
+| Sisu_SSE-9 (v16 placement) | 491 | 721 | 1.47 | 912 | 1.86 |
+| k30-SBC (v16) | 247 | 406 | 1.64 | 629 | 2.55 |
+| jetson (v16) | 223 | 796 | 3.57 | 1052 | 4.72 |
+| Castor (v16) | 193 | 392 | 2.03 | 571 | 2.96 |
+
+jetson holds the most beside its maps (its 25 MB file parsed, 240 MB,
+and lowered); the line passes it by 12 MB before the margin. The table
+of 2026-10-21 (x1225):
 
 | board | maps MB | peak RSS | RSS / maps | VmPeak | VM / maps |
 |---|---|---|---|---|---|

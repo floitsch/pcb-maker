@@ -388,7 +388,8 @@ impl Router {
                                 if self.exclusive[layer] {
                                     break 'step;
                                 }
-                                step *= self.layer_cut[layer] * self.sever_factor(layer, target_cell);
+                                step *=
+                                    self.layer_cut[layer] * self.sever_factor(layer, target_cell);
                             }
                         }
                         step *= layer_factor;

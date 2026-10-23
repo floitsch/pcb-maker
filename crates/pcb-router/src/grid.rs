@@ -75,7 +75,11 @@ pub const MAX_LATTICE_NODES: usize = u32::MAX as usize;
 /// router's `memory: N MB in maps` line, its classes counted after the
 /// neck classes it adds) by a factor of 1.25 or more, so that what the
 /// floor refuses would not have fitted (`LatticeSize::maps_bytes_floor`).
-pub const LATTICE_BYTES_A_NODE: f64 = 32.0;
+/// 26 bytes a node since the maps shrank (2026-10-22; was 32): under the
+/// 197 lattices of the expansion tier, the four fingerprint boards and
+/// the eight memory boards by 1.25 or more (the least, ICE40HX1K-TQ144,
+/// 4 layers and 2 classes, 50.7 bytes a node and layer: 1.33).
+pub const LATTICE_BYTES_A_NODE: f64 = 26.0;
 pub const LATTICE_BYTES_A_CLASS: f64 = 6.0;
 
 /// The lattice a board needs at a pitch, from its outline's extent alone,
@@ -1404,7 +1408,7 @@ mod tests {
         let mut board = board_of(2, 2);
         let size = LatticeSize::of(&board, 0.1);
         assert_eq!(size.nodes, [101.0, 101.0]);
-        assert_eq!(size.maps_bytes_floor(2, 1), 101.0 * 101.0 * 2.0 * 38.0);
+        assert_eq!(size.maps_bytes_floor(2, 1), 101.0 * 101.0 * 2.0 * 32.0);
         assert!(size.check().is_ok());
         let grid = Grid::choose(&board, &[0.1]);
         assert!(grid.check_size().is_ok());
