@@ -372,6 +372,7 @@ fn launch(
     board: &core::Board,
     pads: &core::Board,
     pair: &Pair,
+    class: &core::RuleClass,
     point: (usize, usize),
     toward: Point,
 ) -> Option<(Point, core::LayerMask, Point)> {
@@ -392,8 +393,8 @@ fn launch(
         let free = clear_layers(
             board,
             at,
-            (pair.envelope() + pair.clearance) / 2.0 + LAUNCH_MARGIN,
-            pair.clearance,
+            (class.trace_width + class.clearance) / 2.0 + LAUNCH_MARGIN,
+            class.clearance,
             layers,
         );
         (free != 0).then_some((at, free, outward))
@@ -717,12 +718,48 @@ pub(crate) fn route_diff_pairs(
                 .push("no layer holds the pair's width and gap".into());
         }
     }
+    // One run where the pairs share layers (each run builds the board's
+    // static maps again): on the layers all of them may use.
+    let common = groups
+        .keys()
+        .fold(core::LayerMask::MAX, |mask, known| mask & known);
+    if groups.len() > 1 && common != 0 {
+        let members: Vec<usize> = groups.into_values().flatten().collect();
+        groups = BTreeMap::from([(common, members)]);
+    }
     let group_count = groups.len().max(1);
     let mut base = board.clone();
     for (mask, members) in groups {
+        // The board's nets route nothing here: one class, the largest
+        // clearance of all (each class builds static maps of the whole
+        // board; ducktop2-center's took 40 s of work), its pads at least
+        // as far from the pairs as any class asks.
         let mut pairs_board = base.clone();
+        pairs_board.classes = vec![core::RuleClass {
+            trace_width: board
+                .classes
+                .iter()
+                .map(|class| class.trace_width)
+                .fold(f64::INFINITY, f64::min),
+            clearance: board
+                .classes
+                .iter()
+                .map(|class| class.clearance)
+                .fold(0.0, f64::max),
+            via_diameter: board
+                .classes
+                .iter()
+                .map(|class| class.via_diameter)
+                .fold(0.0, f64::max),
+            via_drill: board
+                .classes
+                .iter()
+                .map(|class| class.via_drill)
+                .fold(0.0, f64::max),
+        }];
         for net in &mut pairs_board.nets {
             net.terminals.clear();
+            net.class = 0;
         }
         pairs_board.planes.clear();
         pairs_board.merged_pads.clear();
@@ -773,27 +810,25 @@ pub(crate) fn route_diff_pairs(
             (Point, Point),
             (Point, Point),
         )> = Vec::new();
+        // The group's pairs share one class, the widest envelope and via
+        // of them (each class builds static maps of the whole board:
+        // ducktop2-center's four pair classes took 17 s of work).
+        let widest = |measure: &dyn Fn(&Pair) -> f64| {
+            members
+                .iter()
+                .map(|&index| measure(&pairs[index]))
+                .fold(0.0, f64::max)
+        };
+        let group_class = core::RuleClass {
+            trace_width: widest(&|pair| pair.envelope()),
+            clearance: widest(&|pair| pair.clearance),
+            via_diameter: widest(&|pair| 2.0 * pair.via_offset() + pair.via_diameter),
+            via_drill: widest(&|pair| 2.0 * pair.via_offset() + pair.via_drill),
+        };
+        pairs_board.classes.push(group_class);
+        let class = 1;
         for &index in &members {
             let pair = &pairs[index];
-            // Pairs of one geometry share a class (each class builds its
-            // own static maps).
-            let dv = pair.via_offset();
-            let rules = core::RuleClass {
-                trace_width: pair.envelope(),
-                clearance: pair.clearance,
-                via_diameter: 2.0 * dv + pair.via_diameter,
-                via_drill: 2.0 * dv + pair.via_drill,
-            };
-            let class = match pairs_board.classes[board.classes.len()..]
-                .iter()
-                .position(|known| *known == rules)
-            {
-                Some(position) => board.classes.len() + position,
-                None => {
-                    pairs_board.classes.push(rules);
-                    pairs_board.classes.len() - 1
-                }
-            };
             let p = &board.nets[pair.positive as usize];
             let n = &board.nets[pair.negative as usize];
             let middle = |point: (usize, usize)| {
@@ -805,8 +840,22 @@ pub(crate) fn route_diff_pairs(
             for (link, &(a, b)) in pair.links.iter().enumerate() {
                 let (point_a, point_b) = (pair.points[a], pair.points[b]);
                 let (Some((at_a, layers_a, out_a)), Some((at_b, layers_b, out_b))) = (
-                    launch(&pairs_board, &board, pair, point_a, middle(point_b)),
-                    launch(&pairs_board, &board, pair, point_b, middle(point_a)),
+                    launch(
+                        &pairs_board,
+                        &board,
+                        pair,
+                        &group_class,
+                        point_a,
+                        middle(point_b),
+                    ),
+                    launch(
+                        &pairs_board,
+                        &board,
+                        pair,
+                        &group_class,
+                        point_b,
+                        middle(point_a),
+                    ),
                 ) else {
                     entries[index]
                         .why
@@ -837,7 +886,7 @@ pub(crate) fn route_diff_pairs(
                         shape: core::Shape::Capsule {
                             start: from,
                             end: at,
-                            radius: (pair.envelope() + pair.clearance) / 2.0,
+                            radius: (group_class.trace_width + group_class.clearance) / 2.0,
                         },
                         layers,
                         kind: core::ObstacleKind::Copper,
@@ -864,10 +913,22 @@ pub(crate) fn route_diff_pairs(
         router_config.verbose = false;
         router_config.deadline_work = Some(work_budget / group_count as f64);
         router_config.run_work = None;
+        // The rules beyond the classes name the board's nets, which route
+        // nothing here (the check of the copper holds the classes).
+        router_config.net_rules = None;
         let result = core::route(&pairs_board, &router_config);
         report.work_seconds += result.expansions as f64 / core::router::expansions_per_second()
             + result.build_work
             + result.pour_work;
+        if std::env::var_os("PCB_ROUTER_DIFF_PAIRS_DEBUG").is_some() {
+            eprintln!(
+                "diff pairs router: {} links, search {:.1} s, build {:.1} s, pour {:.1} s of work",
+                link_nets.len(),
+                result.expansions as f64 / core::router::expansions_per_second(),
+                result.build_work,
+                result.pour_work
+            );
+        }
         // The links' copper, checked against the board and each other.
         let mut candidates: Vec<(usize, usize, LinkCopper)> = Vec::new();
         for &(id, index, link, (at_a, out_a), (at_b, out_b)) in &link_nets {
