@@ -598,14 +598,15 @@ pub(crate) fn without_copper_texts(pcb: &Expr, keep: bool) -> Expr {
 
 /// How far around a terminal the router's state left open the final
 /// route from that state frees the room (`kept_state_nets`).
-pub(crate) const KEPT_FREE_RADIUS_MM: f64 = 1.5;
+pub(crate) const KEPT_FREE_RADIUS_MM: f64 = 1.0;
 
 /// The nets of the router's state whose copper the final route keeps
 /// (`final_route_from_state`): every net with copper in no violation of
 /// the router's own check, complete or not (the pieces of an open net
 /// stay), except the nets with copper within `radius` of a terminal left
 /// open (`open`): kept as walls, the open nets found no way out (4in1-mini:
-/// 20 of 28 open nets without any path; DSP-ADAU1452 30 of 41). A pour
+/// 20 of 28 open nets without any path; DSP-ADAU1452 30 of 41); 1.5 mm
+/// freed nearly the whole board (4in1-mini kept 59 of 152 nets). A pour
 /// net's copper is kept too (its stitching vias and spokes): the final
 /// route connects the pours as the state did.
 pub(crate) fn kept_state_nets(
