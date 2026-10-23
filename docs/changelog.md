@@ -11,6 +11,148 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-23 (differential pairs, phase 1)
+
+Differential pairs, the first feature of the Allegro stretch goal, behind
+a switch: `diff_pairs` in the router settings, `PCB_ROUTER_DIFF_PAIRS=1`
+(route mode; default off). docs/router.md, "Differential pairs
+(2026-10-23)", has the design; docs/agents.md the option and the
+verdict's `diff_pairs`.
+
+**What it does.** Pairs by KiCad's names (`D+`/`D-`, `USB_DP`/`USB_DN`,
+`TX_P_1`/`TX_N_1`: `diff_pair_of`, KiCad's `MatchDpSuffix`); per layer
+the width and gap from the custom rules (`inDiffPair()` is evaluated
+now, the last rule that surely holds, as KiCad's `EvalRules`), else the
+class's `diff_pair_width` and `diff_pair_gap`, else its track width and
+clearance; layers where a rule disallows the pair's tracks are none of
+the pair's. A minimum spanning tree links the parts where the pair's
+pads sit side by side; each link is routed first, in a router of its
+own, as one track the width of the pair's envelope (`2 w + g`) with a
+via the size of two vias side by side, from a launch just clear of one
+part's pads to one of the other's; the centreline is offset into the
+two nets' tracks and vias, straight stubs join the pads, everything is
+checked against the board (`verify`) and written into the project as
+the board's own copper, which the route keeps (`kept.rs`); what is
+refused or not found falls back to ordinary routing. With the switch a
+terminal reaches its whole kept piece (`Board::terminal_copper`) and a
+kept via's drill is a hole. The project-rules report says `applied` for
+the diff pair rules the pairs take.
+
+**Pairs in the census.** The intake (5 834 boards): 1 894 boards have
+nets KiCad pairs by name (mostly a USB `D+`/`D-`), 8 a custom
+`diff_pair_gap` rule (ducktop2's center, left_io and right_io, three
+oculink_m2_adapter boards, OpenAIO-Whoop, mikesmitty's backplane, whose
+nets pair by no name). In the expansion tier 24 of the 46 boards have
+pairs (60 pairs; listed below), the backplane the rule only.
+
+**The boards with diff_pair_gap rules** (route mode, 30 s of work, one
+thread; before x1703 (main), after x1733 with the switch on; KiCad's
+errors; "gap/uncoupled/length" are diff_pair_gap_out_of_range,
+diff_pair_uncoupled_length_too_long and length or skew findings;
+pairs: found/coupled/partly/fallen back, crossed links, uncoupled mm;
+the oculink boards are NOASSERTION-licensed and were routed from the
+intake's local copies, not fetched):
+
+| board | gap/uncoupled/length off -> on | errors | unconnected | vias | pairs found/coupled/partly/fallen, crossed, uncoupled mm |
+|---|---|---|---|---|---|
+| EwoudVV__ducktop2__ducktop2-center | (5, 0, 0) -> (5, 0, 0) | 27 -> 26 | 499 -> 499 | 615 -> 645 | 61/3/1/57 x1 u18 |
+| EwoudVV__ducktop2__left_io | (11, 0, 0) -> (18, 0, 0) | 18 -> 36 | 372 -> 358 | 206 -> 233 | 39/1/2/36 x1 u19 |
+| EwoudVV__ducktop2__right_io | (18, 0, 0) -> (19, 0, 0) | 18 -> 19 | 193 -> 194 | 114 -> 113 | 21/0/4/17 x0 u19 |
+| OpenDrone-hw__OpenAIO-Whoop__OpenAIO-Whoop | (0, 0, 0) -> (0, 0, 0) | 0 -> 0 | 187 -> 186 | 35 -> 36 | 3/0/0/3 x0 u0 |
+| williamyang98__oculink_m2_adapter__m2_card | (0, 0, 0) -> (0, 0, 0) | 67 -> 37 | 11 -> 10 | 23 -> 17 | 10/9/0/1 x0 u33 |
+| williamyang98__oculink_m2_adapter__oculink_m2 | (43, 0, 0) -> (17, 0, 0) | 245 -> 61 | 5 -> 9 | 71 -> 61 | 10/4/0/6 x1 u16 |
+| williamyang98__oculink_m2_adapter__oculink_port | (0, 0, 0) -> (7, 0, 0) | 79 -> 56 | 12 -> 9 | 16 -> 16 | 10/3/0/7 x0 u27 |
+
+Totals: errors 454 -> 235 (the oculink boards' track_width: the pairs
+route at the rules' 0.1549 or 0.1712 mm, not the class's 0.2),
+unconnected 1 279 -> 1 265, KiCad's gap findings 77 -> 66, no uncoupled
+or length findings either way (no board has a diff_pair_uncoupled rule).
+m2_card couples 9 of its 10 pairs (96 mm) and has no gap finding;
+oculink_m2's 43 gap findings go to 17 with 4 pairs coupled, and 4 more
+connections open: the fixed runs in front of J1 (0.4 mm pitch) leave
+its GND pins between the pairs no way out. The ducktop2 boards couple
+few pairs (most "fewer than two parts with the pair's pads side by
+side": their pairs pass through AC capacitors, and "no launch clear of
+the pads"); left_io gains 7 gap findings from the router's stubs at
+pairs coupled only in part.
+
+**The expansion tier** (46 boards, 8 x 1, 30 s): with the switch off,
+x1730 is identical to x1647 (main's routing) on every row (unconnected
+592, new errors 3, vias 4 308, length 112 576 mm, passes 20); the
+fingerprints (Castor, k30-SBC, jetson, Sisu; 1 x 4) are identical to
+x1647's. With the switch on (x1733, the 25 boards with pairs or a
+diff pair rule; the 21 others find no pair and route as before):
+better 4, same 15, worse 6; unconnected 560 -> 623, passes 9 -> 8
+(ducktop2 bms 99/99 -> 98/99: its current sense pair BMS_SRP/SRN
+coupled), errors 20 -> 20, vias 2 813 -> 2 750; 60 pairs found, 9
+coupled, 12 in part, 39 fell back (74 links, 21 coupled, 3 crossed); the
+fallbacks: "no launch clear of the pads" 30 (USB connectors: shield and
+neighbour pads in front of D+ and D-), refused copper 17, fewer than two
+pair points 17, no path 6. KiCad finds no diff pair error on the tier
+either way (no tier board has a gap maximum: KiCad's implicit pair rule
+has a minimum only). Worse: MSign mainboard (19 -> 50: eight pairs, its
+USB pairs' runs fixed through the dense part), wonkle (364 -> 391),
+AMLing2's drone carrier (3 -> 9, 4 of its 14 CSI pairs coupled),
+iorodeo (87 -> 93), node (32 -> 33), bms (0 -> 1); better: tuxkeychain
+(11 -> 9), facade60 (13 -> 10), Nervous-ECG (4 -> 2), miniboard (6 -> 4).
+
+| board | gap/uncoupled/length off -> on | errors | unconnected | vias | pairs found/coupled/partly/fallen, crossed, uncoupled mm |
+|---|---|---|---|---|---|
+| cnlohr__rv003usb__ch32v003_rbo12864h-wfi | (0, 0, 0) -> (0, 0, 0) | 0 -> 0 | 2 -> 2 | 6 -> 6 | 1/0/0/1 x0 u0 |
+| u1f992__atmega32u4-prototyping-board__atmega32u4-prototyping-board | (0, 0, 0) -> (0, 0, 0) | 0 -> 0 | 0 -> 0 | 11 -> 11 | 1/0/0/1 x0 u0 |
+| u1f992__wanbeiyu__proto | (0, 0, 0) -> (0, 0, 0) | 0 -> 0 | 0 -> 0 | 16 -> 16 | 1/0/0/1 x0 u0 |
+| ZSWatch__Watch-DevKit-HW__ZSWatch-Watch-DevKit | (0, 0, 0) -> (0, 0, 0) | 0 -> 0 | 2 -> 2 | 146 -> 139 | 2/1/1/0 x1 u26 |
+| wonkleio__wonkle__Wonkle | (0, 0, 0) -> (0, 0, 0) | 0 -> 0 | 364 -> 391 | 651 -> 607 | 1/0/1/0 x0 u5 |
+| DIYSynthMNL__Eurorack-Multi-Saturation-Module__Multi_saturation_module | (0, 0, 0) -> (0, 0, 0) | 0 -> 0 | 0 -> 0 | 10 -> 10 | 2/0/0/2 x0 u0 |
+| EwoudVV__ducktop2__bms | (0, 0, 0) -> (0, 0, 0) | 0 -> 0 | 0 -> 1 | 237 -> 231 | 3/1/0/2 x0 u18 |
+| siderakb__facade__facade60_daughterboard | (0, 0, 0) -> (0, 0, 0) | 0 -> 0 | 13 -> 10 | 76 -> 87 | 1/0/0/1 x0 u0 |
+| marchmare__snaphat-pcb__main_board | (0, 0, 0) -> (0, 0, 0) | 0 -> 0 | 0 -> 0 | 64 -> 65 | 1/0/1/0 x1 u14 |
+| mikesmitty__power-manifold__backplane | (0, 0, 0) -> (0, 0, 0) | 7 -> 7 | 1 -> 1 | 54 -> 54 | 0/0/0/0 x0 u0 |
+| r4hulrr__ausign__3117_AUSIGN | (0, 0, 0) -> (0, 0, 0) | 0 -> 0 | 1 -> 1 | 74 -> 79 | 1/0/1/0 x0 u17 |
+| VTC-WISDOM__node_hardware__node_v6_0_0 | (0, 0, 0) -> (0, 0, 0) | 5 -> 5 | 32 -> 33 | 93 -> 91 | 4/0/0/4 x0 u0 |
+| sensors-inl__Nervous-ECG__nervous-ecg | (0, 0, 0) -> (0, 0, 0) | 0 -> 0 | 4 -> 2 | 54 -> 59 | 2/1/0/1 x0 u1 |
+| iorodeo__panels_g4_single_pcb__driver_cplex_rp2040 | (0, 0, 0) -> (0, 0, 0) | 0 -> 0 | 87 -> 93 | 292 -> 283 | 1/0/0/1 x0 u0 |
+| siderakb__miniboard__Miniboard | (0, 0, 0) -> (0, 0, 0) | 1 -> 1 | 6 -> 4 | 79 -> 76 | 1/0/0/1 x0 u0 |
+| AMLing2__MAS500_Drone_Arena__rpi_cm5_dronecarrier | (0, 0, 0) -> (0, 0, 0) | 0 -> 0 | 3 -> 9 | 176 -> 182 | 14/4/0/10 x0 u39 |
+| MAHESH-THILAK-K__ADDITIONAL-PROJECT__TokayEdge_Lite_Platform | (0, 0, 0) -> (0, 0, 0) | 0 -> 0 | 0 -> 0 | 82 -> 81 | 1/0/0/1 x0 u0 |
+| WMXZ-EU__LC-MARE__LC_PAMV4b | (0, 0, 0) -> (0, 0, 0) | 1 -> 1 | 1 -> 1 | 28 -> 28 | 1/0/0/1 x0 u0 |
+| smkent__pcb__flexypin-esp32c3-wroom-jig | (0, 0, 0) -> (0, 0, 0) | 4 -> 4 | 0 -> 0 | 33 -> 33 | 1/0/0/1 x0 u0 |
+| zOnlyKroks__pcb-consortium__ICE40HX1K-TQ144 | (0, 0, 0) -> (0, 0, 0) | 0 -> 0 | 0 -> 0 | 193 -> 217 | 1/0/0/1 x0 u0 |
+| mincrmatt12__MSign__mainboard | (0, 0, 0) -> (0, 0, 0) | 0 -> 0 | 19 -> 50 | 252 -> 219 | 8/0/1/7 x1 u8 |
+| OpenDrone-hw__OpenRX-Mono__OpenRX-Mono | (0, 0, 0) -> (0, 0, 0) | 0 -> 0 | 12 -> 12 | 40 -> 40 | 1/0/0/1 x0 u0 |
+| dragonlock2__kicadboards__nrf24_remote | (0, 0, 0) -> (0, 0, 0) | 2 -> 2 | 2 -> 2 | 42 -> 42 | 1/1/0/0 x0 u5 |
+| tjko__brickpico__brickpico | (0, 0, 0) -> (0, 0, 0) | 0 -> 0 | 0 -> 0 | 31 -> 32 | 8/0/7/1 x0 u177 |
+| electron271__tuxkeychain__tuxkeychain | (0, 0, 0) -> (0, 0, 0) | 0 -> 0 | 11 -> 9 | 73 -> 62 | 2/1/0/1 x0 u4 |
+
+
+**Verdict and default.** The switch stays off: on the tier six rows lose connections
+and one its pass, KiCad's errors do not move, and on the boards whose
+rules bound the gap coupling helps KiCad's gap and width findings but
+not completion. Phase 1 is the mechanism (detection, rules, the coupled
+search, offsetting, the stubs, the kept copper, the report); turning it
+on by default needs the launches and the negotiation of phase 2.
+
+**Phase 2.** (1) Launches: the commonest refusal is "no launch clear of
+the pads" (a USB connector's shield pads and its neighbours in front of
+D+ and D-): try lateral and angled launches, or launch from the stubs'
+ends routed first. (2) Polarity: swap where the part allows, or cross in
+the run with staggered vias, instead of crossed uncoupled stubs.
+(3) Length and skew matching (KiCad's `length` and `skew` rules: a
+meander pass on the coupled run, within_diff_pairs skew first).
+(4) GND return vias beside each pair via. (5) Per-layer widths in one run
+(ducktop2's DIFF_85: 0.183 mm outside, 0.114 on In2.Cu). (6) Pairs in the
+negotiation rather than fixed first: fixed runs in front of a fine-pitch
+connector starve the GND pins between the pairs (oculink_m2's J1), and
+two-wire nets that are no signal pairs (ducktop2 bms's current sense
+`BMS_SRP`/`BMS_SRN`) lose a connection. (7) Coupled branches (a T at an
+ESD part) instead of one run per link.
+
+Binaries: x1703 (main) before; x1730 the first measured (the tier with
+the switch off, the fingerprints), x1731 to x1733 the steps after
+(one class and one run for the pairs: ducktop2-center's pairs router 41
+-> 11 s of work; disallowed layers; custom pair clearances), x1733 the
+commit measured with the switch on.
+
 ## Committed on 2026-10-23 (run diagnosis and override preflight)
 
 Three of the P0 items of the remapper diagnostic trial
