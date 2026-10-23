@@ -102,6 +102,26 @@ pub fn place_kicad_board(
     for warning in &lowered.constraint_warnings {
         eprintln!("warning: {warning}");
     }
+    if let Some(escape) = &config.escape_demand {
+        let measured = if escape.measured {
+            let router_config = config.guidance_router.clone().unwrap_or_default();
+            Some(self::guidance::measured_factory(
+                &pcb,
+                &lowered.references,
+                &router_config,
+                config.keep_board_marks,
+                escape.threshold,
+            )?)
+        } else {
+            None
+        };
+        lowered.problem.escape = Some(std::sync::Arc::new(escape_fact(
+            escape,
+            config.track_pitch_mm,
+            &lowered,
+            measured,
+        )));
+    }
     let mut placer_config = core::Config::new();
     placer_config.global.whitespace_fill = config.whitespace_fill;
     placer_config.global.routing_demand = config.routing_demand;

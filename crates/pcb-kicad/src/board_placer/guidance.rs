@@ -136,6 +136,132 @@ pub(crate) fn attribution(
     (parts, tile_overflow)
 }
 
+/// The board as the layout routes a placement (tracks stripped, planned
+/// pours added, copper texts as the layout keeps them), whether its pours
+/// connect, and the parts' references by index.
+fn routed_base(
+    pcb: &Expr,
+    router_config: &KiCadBoardRouterConfig,
+    keep_board_marks: bool,
+) -> Result<(Expr, bool), String> {
+    let Expr::List(items) = pcb else {
+        return Err("PCB root is not a list".into());
+    };
+    let mut routed = Expr::List(
+        items
+            .iter()
+            .filter(|item| !matches!(item.head(), Some("segment" | "arc" | "via")))
+            .cloned()
+            .collect(),
+    );
+    let planned = planned_pours(&routed, router_config)?;
+    add_pour_zones(&mut routed, &planned)?;
+    let layers = LayerTable::from_pcb(&routed)?;
+    let connect =
+        !pours(&routed, &layers)?.is_empty() && router_config.pours != KiCadPourMode::Tracks;
+    Ok((without_copper_texts(&routed, keep_board_marks), connect))
+}
+
+/// `base` with the footprints at `poses`, lowered as the layout routes it.
+fn lowered_at(
+    base: &Expr,
+    poses: &[core::Pose],
+    router_config: &KiCadBoardRouterConfig,
+    connect: bool,
+) -> Option<router::Board> {
+    let mut candidate = base.clone();
+    {
+        let mut footprints = crate::board_layout::footprint_items(&mut candidate).ok()?;
+        if footprints.len() > poses.len() {
+            eprintln!(
+                "escape demand: {} footprints for {} poses: not measured",
+                footprints.len(),
+                poses.len()
+            );
+            return None;
+        }
+        for (footprint, pose) in footprints.iter_mut().zip(poses) {
+            write_footprint_pose(footprint, *pose).ok()?;
+        }
+    }
+    match lower(&candidate, router_config, connect) {
+        Ok(lowered) => Some(lowered.board),
+        Err(error) => {
+            eprintln!("escape demand: the lowering failed ({error}): not measured");
+            None
+        }
+    }
+}
+
+/// The measured version of escape demand (`core::escape::Escape::measured`):
+/// each session lowers the placement it first sees and routes it globally
+/// (`pcb_global::Incremental`); later calls carry the parts that moved
+/// since (their copper and terminals, rigidly) into that board and route
+/// only their nets again. Each call returns the overflow attribution per
+/// part (`attribution` at `threshold`) and its work.
+pub(crate) fn measured_factory(
+    pcb: &Expr,
+    references: &[String],
+    router_config: &KiCadBoardRouterConfig,
+    keep_board_marks: bool,
+    threshold: f64,
+) -> Result<Arc<core::escape::MeasuredFactory>, String> {
+    let (base, connect) = routed_base(pcb, router_config, keep_board_marks)?;
+    let base = Arc::new(base);
+    let index = Arc::new(reference_index(references));
+    let components = references.len();
+    let router_config = router_config.clone();
+    Ok(Arc::new(move || -> core::escape::MeasuredSession {
+        let base = base.clone();
+        let index = index.clone();
+        let router_config = router_config.clone();
+        let mut state: Option<(
+            router::Board,
+            pcb_global::Incremental,
+            Vec<crate::move_descent::PartCopper>,
+            Vec<core::Pose>,
+        )> = None;
+        Box::new(move |poses: &[core::Pose]| {
+            let work;
+            match state.as_mut() {
+                None => {
+                    let board = lowered_at(&base, poses, &router_config, connect)?;
+                    let global =
+                        pcb_global::Incremental::new(&board, &pcb_global::GlobalConfig::default());
+                    work = WORK_PER_OBSTACLE * board.obstacles.len() as u64
+                        + WORK_PER_CAPACITY_TEST * global.capacity_tests
+                        + WORK_PER_POP * global.pops;
+                    let copper = crate::move_descent::part_copper(&board, &index, components);
+                    state = Some((board, global, copper, poses.to_vec()));
+                }
+                Some((board, global, copper, last)) => {
+                    if last.len() != poses.len() {
+                        return None;
+                    }
+                    let moved: Vec<usize> = (0..components.min(poses.len()))
+                        .filter(|part| last[*part] != poses[*part])
+                        .collect();
+                    if moved.is_empty() {
+                        work = 0;
+                    } else {
+                        let (_, _, area, nets) =
+                            crate::move_descent::apply(board, copper, last, poses, &moved);
+                        let next = global.moved(board, area, &nets);
+                        work = WORK_PER_CAPACITY_TEST
+                            * (next.capacity_tests - global.capacity_tests)
+                            + WORK_PER_POP * (next.pops - global.pops);
+                        *global = next;
+                        last.copy_from_slice(poses);
+                    }
+                }
+            }
+            let (board, global, _, _) = state.as_ref()?;
+            let (parts, _) = attribution(board, &global.route, &index, components, threshold);
+            Some((parts, work))
+        })
+    }))
+}
+
 /// The anneal's evaluator for the board `pcb` as placed (before the
 /// lowering of the placement): each call writes the poses into it,
 /// lowers it as the layout routes a placement and routes it globally.

@@ -113,11 +113,30 @@ struct Body {
     /// Scales the half extent for density: a hollow part charges only the
     /// area its blocking boxes take.
     density: f64,
+    /// Escape demand (`Problem::escape`): the charge grows on each side
+    /// (-x, +x, -y, +y) by this much, mm.
+    extra: [f64; 4],
 }
 
 impl Body {
     fn charge_half(&self) -> Point {
         [self.half[0] * self.density, self.half[1] * self.density]
+    }
+
+    /// The charge's centre and half extent with the escape demand's room.
+    fn charge_box(&self, center: Point) -> (Point, Point) {
+        let half = self.charge_half();
+        let extra = self.extra;
+        (
+            [
+                center[0] + (extra[1] - extra[0]) / 2.0,
+                center[1] + (extra[3] - extra[2]) / 2.0,
+            ],
+            [
+                half[0] + (extra[0] + extra[1]) / 2.0,
+                half[1] + (extra[2] + extra[3]) / 2.0,
+            ],
+        )
     }
 }
 
@@ -426,6 +445,7 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
                         .sqrt()
                         .min(1.0)
                 },
+                extra: [0.0; 4],
             }
         })
         .collect();
@@ -461,6 +481,7 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
                 pins: 0.0,
                 field: side,
                 density: 1.0,
+                extra: [0.0; 4],
             });
         }
     }
@@ -570,6 +591,9 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
     let mut frames = Vec::new();
     let mut iterations = 0;
     let mut density = vec![0.0; n * n];
+    // Escape demand: each net's pins, for the parts' exits.
+    let escape = problem.escape.as_deref();
+    let escape_members = escape.map(|_| crate::escape::members(problem));
 
     for iteration in 0..config.max_iterations {
         iterations = iteration + 1;
@@ -646,12 +670,23 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
                 .filter(|(body, _)| body.field == side)
             {
                 let (half, scale) = field.smoothed(body.charge_half());
-                field.overlap(*center, half, |bin, area| {
-                    density[bin] += area * scale;
+                if escape.is_none() {
+                    field.overlap(*center, half, |bin, area| {
+                        density[bin] += area * scale;
+                        if body.component.is_some() {
+                            real[bin] += area * scale;
+                        }
+                    });
+                } else {
+                    // The room in front of dense sides is charge, not
+                    // body: it pushes, the overflow counts the bodies.
+                    let (at, grown) = body.charge_box(*center);
+                    let (grown, grown_scale) = field.smoothed(grown);
+                    field.overlap(at, grown, |bin, area| density[bin] += area * grown_scale);
                     if body.component.is_some() {
-                        real[bin] += area * scale;
+                        field.overlap(*center, half, |bin, area| real[bin] += area * scale);
                     }
-                });
+                }
             }
             overflow_area += real
                 .iter()
@@ -663,9 +698,14 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
                 if body.field != side {
                     continue;
                 }
-                let (half, scale) = field.smoothed(body.charge_half());
+                let (at, half) = if escape.is_none() {
+                    (*center, body.charge_half())
+                } else {
+                    body.charge_box(*center)
+                };
+                let (half, scale) = field.smoothed(half);
                 let mut force = [0.0; 2];
-                field.overlap(*center, half, |bin, area| {
+                field.overlap(at, half, |bin, area| {
                     force[0] += area * scale * field.field_x[bin];
                     force[1] += area * scale * field.field_y[bin];
                 });
@@ -843,6 +883,7 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
                 &major,
                 &mut poses,
                 config.rotation_net_limit,
+                escape.zip(escape_members.as_deref()),
             )
         {
             offsets = pin_offsets(&poses);
@@ -860,6 +901,18 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
             reference = major.clone();
             momentum = 1.0;
             previous = None;
+        }
+        // Escape demand: each part's room per side, from where its pins'
+        // nets go now.
+        if let (Some(escape), Some(members)) = (escape, escape_members.as_deref())
+            && config.rotation_interval > 0
+            && iteration % config.rotation_interval == config.rotation_interval - 1
+        {
+            let mut exits = Vec::new();
+            for (body, index) in movable.iter().enumerate() {
+                crate::escape::exits(problem, escape, members, &poses, *index, &mut exits);
+                bodies[body].extra = crate::escape::inflation(escape, &exits);
+            }
         }
 
         if config.frame_interval > 0 && iteration % config.frame_interval == 0 {
@@ -896,8 +949,17 @@ pub fn choose_rotations(
     centers: &[Point],
     poses: &mut [Pose],
     net_limit: usize,
+    escape: Option<(&crate::escape::Escape, &[crate::escape::NetPins])>,
 ) -> bool {
     let nets = problem.net_weights.len();
+    // Escape demand: the other parts' bodies where they are now.
+    let bodies: Vec<(Point, Point)> = if escape.is_some() {
+        (0..problem.components.len())
+            .map(|index| crate::escape::body_box(problem, index, poses[index]))
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut members: Vec<Vec<(usize, usize)>> = vec![Vec::new(); nets];
     for (index, component) in problem.components.iter().enumerate() {
         for (pin, description) in component.pins.iter().enumerate() {
@@ -941,6 +1003,47 @@ pub fn choose_rotations(
         };
         let original = poses[*index];
         let mut best = (cost(poses), original);
+        if let Some((escape, members)) = escape {
+            // The quarter turn that points the dense sides at free space
+            // wins when its wirelength is close to the shortest.
+            let mut options = vec![(best.0, original)];
+            for angle in &component.angle_options {
+                if (angle - original.angle).abs() < 1.0e-9 {
+                    continue;
+                }
+                poses[*index] = Pose {
+                    position: component.position_for_center(centers[body], *angle),
+                    angle: *angle,
+                };
+                options.push((cost(poses), poses[*index]));
+            }
+            let shortest = options
+                .iter()
+                .map(|(cost, _)| *cost)
+                .fold(f64::INFINITY, f64::min);
+            let mut chosen: Option<(f64, f64, Pose)> = None;
+            for (wire, pose) in options {
+                if wire > shortest * (1.0 + escape.turn_tolerance) + 1.0e-9 {
+                    continue;
+                }
+                poses[*index] = pose;
+                let blocked = crate::orient::escape_blocking(
+                    problem, escape, members, poses, *index, &bodies,
+                );
+                if chosen.is_none_or(|(least, shortest_wire, _)| {
+                    blocked < least - 1.0e-9
+                        || (blocked < least + 1.0e-9 && wire < shortest_wire - 1.0e-9)
+                }) {
+                    chosen = Some((blocked, wire, pose));
+                }
+            }
+            if let Some((_, wire, pose)) = chosen {
+                best = (wire, pose);
+            }
+            poses[*index] = best.1;
+            changed |= best.1 != original;
+            continue;
+        }
         for angle in &component.angle_options {
             if (angle - original.angle).abs() < 1.0e-9 {
                 continue;

@@ -94,6 +94,7 @@ fn chain(parts: usize) -> Problem {
         min_spacing: 0.0,
         far_side_pads_only: false,
         shared_halos: false,
+        escape: None,
         pieces: Vec::new(),
         constraints: Default::default(),
     }
@@ -414,6 +415,7 @@ fn tight_bodies_are_the_last_resort() {
         min_spacing: 0.2,
         far_side_pads_only: false,
         shared_halos: false,
+        escape: None,
         pieces: Vec::new(),
         constraints: Default::default(),
     };
@@ -674,6 +676,7 @@ fn a_part_held_at_the_top_of_an_l_keeps_to_its_step() {
         min_spacing: 0.2,
         far_side_pads_only: false,
         shared_halos: false,
+        escape: None,
         pieces: Vec::new(),
         constraints: Default::default(),
     };
@@ -739,6 +742,7 @@ fn apart_keeps_connected_parts_away_from_each_other() {
         min_spacing: 0.2,
         far_side_pads_only: false,
         shared_halos: false,
+        escape: None,
         pieces: Vec::new(),
         constraints: Default::default(),
     };
@@ -817,6 +821,7 @@ fn parts_of_a_kind_are_turned_alike() {
         min_spacing: 0.2,
         far_side_pads_only: false,
         shared_halos: false,
+        escape: None,
         pieces: Vec::new(),
         constraints: Default::default(),
     };
@@ -896,6 +901,7 @@ fn a_part_held_at_an_edge_keeps_to_its_own_piece() {
         min_spacing: 0.2,
         far_side_pads_only: false,
         shared_halos: false,
+        escape: None,
         pieces: vec![[0.0, 0.0, 20.0, 20.0], [30.0, 0.0, 50.0, 20.0]],
         constraints: Default::default(),
     };
@@ -1418,6 +1424,7 @@ fn parts_without_room_go_first_until_none_takes_anothers_place() {
         min_spacing: 0.2,
         far_side_pads_only: false,
         shared_halos: false,
+        escape: None,
         pieces: Vec::new(),
         constraints: Default::default(),
     };
@@ -1493,6 +1500,7 @@ fn pads_of_a_part_held_by_its_copper_keep_the_copper_to_edge_clearance_on_every_
         min_spacing: 0.2,
         far_side_pads_only: false,
         shared_halos: false,
+        escape: None,
         pieces: Vec::new(),
         constraints: Default::default(),
     };
@@ -1646,6 +1654,7 @@ fn eviction_finds_a_held_part_s_narrow_window_in_a_tab() {
         min_spacing: 0.2,
         far_side_pads_only: false,
         shared_halos: false,
+        escape: None,
         pieces: Vec::new(),
         constraints: Default::default(),
     };

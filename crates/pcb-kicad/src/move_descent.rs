@@ -182,7 +182,7 @@ pub(crate) struct DescentState<'a> {
 /// What a part owns on the lowered board: its obstacles and its
 /// terminals (net, terminal).
 #[derive(Clone, Debug, Default)]
-struct PartCopper {
+pub(crate) struct PartCopper {
     obstacles: Vec<usize>,
     terminals: Vec<(usize, usize)>,
 }
@@ -195,7 +195,7 @@ fn owner(label: &str, index: &HashMap<String, usize>) -> Option<usize> {
         .find_map(|reference| index.get(reference).copied())
 }
 
-fn part_copper(
+pub(crate) fn part_copper(
     board: &core::Board,
     index: &HashMap<String, usize>,
     parts: usize,
@@ -280,7 +280,7 @@ struct Move {
 /// terminal anchors); returns what to restore, the area touched before
 /// and after, and the nets with a terminal on them.
 #[allow(clippy::type_complexity)]
-fn apply(
+pub(crate) fn apply(
     board: &mut core::Board,
     copper: &[PartCopper],
     old: &[placer::Pose],

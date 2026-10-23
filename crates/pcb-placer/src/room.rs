@@ -325,6 +325,7 @@ mod tests {
             constraints: Default::default(),
             far_side_pads_only: false,
             shared_halos: false,
+            escape: None,
             pieces: Vec::new(),
         };
         (problem, poses)

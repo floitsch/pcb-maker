@@ -877,7 +877,7 @@ pub fn layout_kicad_board(
     // layout depended on the load).
     placer_config.deadline = router_config.deadline;
     placer_config.work_seconds = Some(placement_budget);
-    if placer_config.global_guidance.is_some() {
+    if placer_config.global_guidance.is_some() || placer_config.escape_demand.is_some() {
         placer_config.guidance_router = Some(router_config.clone());
     }
     eprintln!("layout: sizing the outline");

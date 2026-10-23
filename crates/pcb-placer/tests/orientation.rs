@@ -127,6 +127,7 @@ fn board(angle: impl Fn(usize) -> f64) -> Problem {
         min_spacing: 0.0,
         far_side_pads_only: false,
         shared_halos: false,
+        escape: None,
         pieces: Vec::new(),
         constraints: Default::default(),
     }

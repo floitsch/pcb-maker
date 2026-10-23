@@ -8,6 +8,7 @@
 pub mod anneal;
 mod buckets;
 pub mod constraints;
+pub mod escape;
 pub mod global;
 pub mod guidance;
 pub mod legal;
@@ -644,7 +645,14 @@ fn mark() -> Mark {
 /// follows legalization.
 fn finish(problem: &Problem, poses: &mut [Pose], passes: usize, debug: bool) {
     let refine_mark = mark();
-    legal::refine(problem, poses, passes);
+    // Escape demand: one state through the refinements, its measured
+    // correction taken now and every so many kept moves.
+    let mut escape = problem.escape.as_deref().map(|escape| {
+        let mut state = escape::EscapeState::new(problem, escape, poses, |_| true);
+        state.measure_from_now(poses);
+        state
+    });
+    legal::refine_with(problem, poses, passes, escape.as_mut());
     phase_line(debug, "refine", refine_mark);
     let repair_mark = mark();
     legal::center_edge_copper(problem, poses);
@@ -654,11 +662,18 @@ fn finish(problem: &Problem, poses: &mut [Pose], passes: usize, debug: bool) {
         if legal::repair_relations(problem, poses) == 0 {
             break;
         }
-        legal::refine(problem, poses, passes);
+        legal::refine_with(problem, poses, passes, escape.as_mut());
     }
     // Parts of a kind turned alike where it costs next to nothing.
     legal::align_orientations(problem, poses, 0.5);
     phase_line(debug, "repair and align", repair_mark);
+    if let Some(state) = &escape {
+        eprintln!(
+            "placer: escape demand: {} measurements, {} kept moves",
+            state.measurements,
+            state.kept_moves()
+        );
+    }
 }
 
 /// Debugging aid: the area the movable parts' halos take.

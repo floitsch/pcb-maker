@@ -217,6 +217,14 @@ pub struct KiCadBoardPlacerConfig {
     /// parts first (docs/global-route.md, "Phase 2").
     #[serde(default)]
     pub global_guidance: Option<KiCadGlobalGuidance>,
+    /// Escape demand in placement (an experiment, off): where each part's
+    /// nets leave its body, and the channels between parts that must
+    /// carry them, shape the global placement's density, the rotation
+    /// choice, the legaliser and the refinement; the refinement corrects
+    /// the estimate by the global route's overflow attribution
+    /// (docs/placer.md, "Escape demand (2026-10-23)").
+    #[serde(default)]
+    pub escape_demand: Option<KiCadEscapeDemand>,
     /// The router's configuration the guidance lowers with (set by the
     /// layout; the default otherwise).
     #[serde(skip)]
@@ -272,6 +280,7 @@ impl Default for KiCadBoardPlacerConfig {
             keep_board_marks: true,
             attached_marks: None,
             global_guidance: None,
+            escape_demand: None,
             guidance_router: None,
         }
     }
@@ -315,4 +324,71 @@ pub(super) fn routing_room(
 
 fn default_edge_keep_mm() -> f64 {
     3.0
+}
+
+/// `KiCadBoardPlacerConfig::escape_demand`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct KiCadEscapeDemand {
+    /// Millimetres of wirelength one track of channel overflow costs in the
+    /// legaliser and the refinement.
+    pub weight: f64,
+    /// Factor on the global placement's inflation of a part's charge on a
+    /// side (its demand there times the track pitch over the layers).
+    pub inflate: f64,
+    /// The rotation choice ranks the angles within this share of the
+    /// shortest wirelength by how free their dense sides face.
+    pub turn_tolerance: f64,
+    /// The refinement corrects the estimate by the global route's overflow
+    /// attribution per part (`pcb_global::Incremental`).
+    pub measured: bool,
+    /// Kept refinement moves between two measurements.
+    pub measure_every: usize,
+    /// The share of a boundary's capacity above which its usage counts in
+    /// the measured attribution.
+    pub threshold: f64,
+}
+
+impl Default for KiCadEscapeDemand {
+    fn default() -> Self {
+        Self {
+            weight: 2.0,
+            inflate: 1.0,
+            turn_tolerance: 0.05,
+            measured: true,
+            measure_every: 20,
+            threshold: 0.5,
+        }
+    }
+}
+
+/// The lowering's escape fact (`core::escape::Escape`): the track pitch,
+/// the routable layers, and the nets whose escapes count (two pins or
+/// more, not carried by a pour).
+pub(super) fn escape_fact(
+    config: &KiCadEscapeDemand,
+    pitch: f64,
+    lowered: &LoweredPlacement,
+    measured: Option<std::sync::Arc<core::escape::MeasuredFactory>>,
+) -> core::escape::Escape {
+    let mut pins = vec![0usize; lowered.problem.net_weights.len()];
+    for component in &lowered.problem.components {
+        for pin in &component.pins {
+            pins[pin.net] += 1;
+        }
+    }
+    core::escape::Escape {
+        pitch,
+        layers: lowered.routing_layers.max(1.0),
+        counted: pins
+            .iter()
+            .zip(&lowered.poured)
+            .map(|(pins, poured)| *pins >= 2 && !poured)
+            .collect(),
+        weight: config.weight,
+        inflate: config.inflate,
+        turn_tolerance: config.turn_tolerance,
+        measured,
+        measure_every: config.measure_every,
+    }
 }

@@ -70,3 +70,61 @@ pub fn canonical_start(problem: &mut Problem) -> usize {
     problem.poses = poses;
     turned
 }
+
+/// Escape demand (`Problem::escape`): how much of the room in front of
+/// part `index`'s dense sides (at `poses[index]`) other bodies take. Per
+/// side, its demand times the share of a band as deep as the demand's
+/// tracks need that `bodies` (every part's box, the part's own skipped;
+/// only parts on a colliding side) cover; the board edge is free room.
+pub fn escape_blocking(
+    problem: &Problem,
+    escape: &crate::escape::Escape,
+    members: &[Vec<(usize, usize)>],
+    poses: &[Pose],
+    index: usize,
+    bodies: &[(crate::problem::Point, crate::problem::Point)],
+) -> f64 {
+    let mut exits = Vec::new();
+    crate::escape::exits(problem, escape, members, poses, index, &mut exits);
+    let demand = crate::escape::demand(&exits);
+    if demand.iter().all(|count| *count == 0) {
+        return 0.0;
+    }
+    let (center, half) = crate::escape::body_box(problem, index, poses[index]);
+    let low = [center[0] - half[0], center[1] - half[1]];
+    let high = [center[0] + half[0], center[1] + half[1]];
+    let side = problem.components[index].side;
+    let mut blocked = 0.0;
+    for (direction, count) in demand.iter().enumerate() {
+        if *count == 0 {
+            continue;
+        }
+        let depth = (*count as f64 * escape.track_room()).max(escape.pitch);
+        let band = match direction {
+            0 => [low[0] - depth, low[1], low[0], high[1]],
+            1 => [high[0], low[1], high[0] + depth, high[1]],
+            2 => [low[0], low[1] - depth, high[0], low[1]],
+            _ => [low[0], high[1], high[0], high[1] + depth],
+        };
+        let area = (band[2] - band[0]) * (band[3] - band[1]);
+        if area <= 0.0 {
+            continue;
+        }
+        let mut covered = 0.0;
+        for (other, (other_center, other_half)) in bodies.iter().enumerate() {
+            if other == index || !problem.components[other].side.collides(side) {
+                continue;
+            }
+            let width = (band[2].min(other_center[0] + other_half[0])
+                - band[0].max(other_center[0] - other_half[0]))
+            .max(0.0);
+            let height = (band[3].min(other_center[1] + other_half[1])
+                - band[1].max(other_center[1] - other_half[1]))
+            .max(0.0);
+            covered += width * height;
+        }
+        crate::add_work(bodies.len() as u64);
+        blocked += *count as f64 * (covered / area).min(1.0);
+    }
+    blocked
+}

@@ -1131,6 +1131,14 @@ pub fn legalize_keeping(
     for &index in &placed {
         buckets.insert(problem, index, poses[index]);
     }
+    // Escape demand: a spot whose channels overflow is that much farther.
+    let mut escape = problem.escape.as_deref().map(|escape| {
+        let mut present = vec![false; count];
+        for &index in &placed {
+            present[index] = true;
+        }
+        crate::escape::EscapeState::new(problem, escape, poses, |index| present[index])
+    });
     let mut near = Vec::new();
     let mut failed = Vec::new();
     for index in order {
@@ -1192,6 +1200,20 @@ pub fn legalize_keeping(
                         if best.is_some_and(|(best, _)| best <= distance) {
                             continue;
                         }
+                        let distance = match escape.as_mut() {
+                            None => distance,
+                            Some(state) => {
+                                let wanted = poses[index];
+                                poses[index] = pose;
+                                let overflow = state.cost(poses, index);
+                                poses[index] = wanted;
+                                let total = (distance.sqrt() + overflow).powi(2);
+                                if best.is_some_and(|(best, _)| best <= total) {
+                                    continue;
+                                }
+                                total
+                            }
+                        };
                         buckets.near(problem, index, pose, &mut near);
                         if is_legal(problem, poses, index, pose, near.iter().copied()) {
                             best = Some((distance, pose));
@@ -1206,6 +1228,10 @@ pub fn legalize_keeping(
         }
         placed.push(index);
         buckets.insert(problem, index, poses[index]);
+        if let Some(state) = escape.as_mut() {
+            state.insert(index, poses[index]);
+            state.refresh(poses, index);
+        }
     }
     failed
 }
@@ -1667,6 +1693,25 @@ pub fn align_orientations(problem: &Problem, poses: &mut [Pose], tolerance: f64)
 /// Local search on a legal placement: every move keeps it legal and strictly
 /// reduces the weighted half-perimeter wirelength.
 pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
+    let mut escape = problem
+        .escape
+        .as_deref()
+        .map(|escape| crate::escape::EscapeState::new(problem, escape, poses, |_| true));
+    refine_with(problem, poses, passes, escape.as_mut())
+}
+
+/// `refine`, with escape demand (`Problem::escape`) kept in `escape`
+/// across calls (its measured correction): a move pays the channel
+/// overflow it causes.
+pub fn refine_with(
+    problem: &Problem,
+    poses: &mut [Pose],
+    passes: usize,
+    mut escape: Option<&mut crate::escape::EscapeState>,
+) -> usize {
+    if let Some(state) = escape.as_mut() {
+        state.resync(poses);
+    }
     let count = problem.components.len();
     let nets = problem.net_weights.len();
     let mut members: Vec<Vec<(usize, usize)>> = vec![Vec::new(); nets];
@@ -1766,6 +1811,9 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
                 cost(poses, &incident[index]) + counted_penalty(problem, poses, index)
             };
             let mut best = (score(poses), original);
+            if let Some(state) = escape.as_mut() {
+                best.0 += state.cost(poses, index);
+            }
             let center = component.center(original);
             // Besides the pull of its nets, a part that misses a relation
             // is drawn towards what it relates to.
@@ -1797,7 +1845,12 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
                         continue;
                     }
                     poses[index] = pose;
-                    let candidate = score(poses);
+                    let mut candidate = score(poses);
+                    if candidate < best.0 - 1.0e-9
+                        && let Some(state) = escape.as_mut()
+                    {
+                        candidate += state.cost(poses, index);
+                    }
                     if candidate < best.0 - 1.0e-9 {
                         buckets.near(problem, index, pose, &mut near);
                         if is_legal(problem, poses, index, pose, near.iter().copied()) {
@@ -1825,7 +1878,12 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
                                 continue;
                             }
                             poses[index] = pose;
-                            let candidate = score(poses);
+                            let mut candidate = score(poses);
+                            if candidate < best.0 - 1.0e-9
+                                && let Some(state) = escape.as_mut()
+                            {
+                                candidate += state.cost(poses, index);
+                            }
                             if candidate < best.0 - 1.0e-9 {
                                 buckets.near(problem, index, pose, &mut near);
                                 if is_legal(problem, poses, index, pose, near.iter().copied()) {
@@ -1842,6 +1900,9 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
                 buckets.insert(problem, index, best.1);
                 improved = true;
                 improvements += 1;
+                if let Some(state) = escape.as_mut() {
+                    state.kept(poses, &[index]);
+                }
             }
         }
 
@@ -1871,9 +1932,18 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
                         + counted_penalty(problem, poses, a)
                         + counted_penalty(problem, poses, b)
                 };
-                let before = pair(poses);
+                let mut before = pair(poses);
+                if let Some(state) = escape.as_mut() {
+                    before += state.cost_without(poses, a, b) + state.cost_without(poses, b, a);
+                }
                 poses.swap(a, b);
-                if pair(poses) < before - 1.0e-9
+                let mut after = pair(poses);
+                if after < before - 1.0e-9
+                    && let Some(state) = escape.as_mut()
+                {
+                    after += state.cost_without(poses, a, b) + state.cost_without(poses, b, a);
+                }
+                if after < before - 1.0e-9
                     && is_legal(problem, poses, a, poses[a], 0..count)
                     && is_legal(problem, poses, b, poses[b], 0..count)
                 {
@@ -1883,6 +1953,9 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
                     buckets.insert(problem, b, poses[b]);
                     improved = true;
                     improvements += 1;
+                    if let Some(state) = escape.as_mut() {
+                        state.kept(poses, &[a, b]);
+                    }
                 } else {
                     poses.swap(a, b);
                 }

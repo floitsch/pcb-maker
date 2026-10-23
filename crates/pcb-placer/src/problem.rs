@@ -148,6 +148,10 @@ pub struct Problem {
     /// Bounding boxes of the board's pieces when it has several (two boards
     /// side by side): a part held at an edge is held at its piece's edge.
     pub pieces: Vec<[f64; 4]>,
+    /// Escape demand (`crate::escape`, an experiment): where parts' tracks
+    /// leave their bodies and whether the channels between parts carry
+    /// them. `None`: off.
+    pub escape: Option<std::sync::Arc<crate::escape::Escape>>,
 }
 
 impl Problem {
