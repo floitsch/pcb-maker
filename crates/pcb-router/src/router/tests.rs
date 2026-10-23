@@ -4268,7 +4268,10 @@ fn straightening_takes_a_stair_step_out_and_keeps_the_ends() {
     assert_eq!((report.bends_before, report.stairs_before), (4, 2));
     assert_eq!((report.bends_after, report.stairs_after), (0, 0));
     let branch = &router.nets[0].branches[index];
-    assert_eq!((branch.nodes[0], *branch.nodes.last().unwrap()), (first, last));
+    assert_eq!(
+        (branch.nodes[0], *branch.nodes.last().unwrap()),
+        (first, last)
+    );
     assert!(length(&router) < before);
     assert!(router.conflicts(0).is_empty());
 }

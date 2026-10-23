@@ -141,16 +141,13 @@ impl Router {
         let own = crate::grid::owner(net);
         let own16 = crate::grid::owner16(net);
         let here = &self.statics[self.node_class(net, cell as u32)];
-        let edge_block = here.edge_block[layer][cell];
-        if edge_block != 0
-            && here.edge_owner[layer][cell] != own16
-            && edge_block & (1 << direction) != 0
-        {
+        let (edge_block, edge_owner) = here.edges_at(layer, cell);
+        if edge_block != 0 && edge_owner != own16 && edge_block & (1 << direction) != 0 {
             return None;
         }
         let class = self.node_class(net, target as u32);
         let hot = self.hot[class * self.board.layer_count + layer][target];
-        if hot.trace != crate::grid::FREE && hot.trace != own {
+        if hot.trace != crate::grid::FREE16 && hot.trace as u32 != own {
             return None;
         }
         if self.occupancy[self.map_index(class, layer)][target] > 0 {
@@ -166,7 +163,10 @@ impl Router {
                 return None;
             }
         }
-        if hot.covered != 0 && hot.covered as u32 != own && self.exclusive[layer] {
+        if hot.pour != 0 && self.exclusive[layer] && {
+            let (_, covered) = self.hot_pour(hot.pour, layer, target);
+            covered != 0 && covered as u32 != own
+        } {
             return None;
         }
         Some(target)
@@ -179,10 +179,13 @@ impl Router {
             .iter()
             .filter(|node| {
                 let class = self.node_class(net, node.cell);
-                let covered = self.hot[class * self.board.layer_count + node.layer as usize]
-                    [node.cell as usize]
-                    .covered;
-                covered != 0 && covered as u32 != own
+                let hot = self.hot[class * self.board.layer_count + node.layer as usize]
+                    [node.cell as usize];
+                hot.pour != 0 && {
+                    let (_, covered) =
+                        self.hot_pour(hot.pour, node.layer as usize, node.cell as usize);
+                    covered != 0 && covered as u32 != own
+                }
             })
             .count()
     }
