@@ -59,10 +59,8 @@ impl Router {
         let resolve_started = std::time::Instant::now();
         let mark = self.phase_mark();
         self.resolve_remaining(order);
-        if !self.hopeless
-            && let Some(settings) = super::trouble::TroubleSettings::from_env()
-        {
-            self.repair_trouble(order, settings);
+        if !self.hopeless && self.config.trouble_repair {
+            self.repair_trouble(order, super::trouble::TroubleSettings::from_env());
         }
         self.phase_charge(1, mark);
         self.profile.resolve += resolve_started.elapsed().as_secs_f64();

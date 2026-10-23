@@ -64,6 +64,7 @@ pub use config::Config;
 pub use pour_report::PourLayerReport;
 pub use profile::{ProcessAccounting, build_totals, process_accounting};
 pub use result::{DeadPad, Diagnostics, HotSpot, NetStatus, RoutingResult};
+pub use trouble::{TROUBLE_REPAIR_DEFAULT, trouble_override};
 pub use wall::{WALL_CUTS, note_wall_cut, wall_cuts, wall_guard};
 
 use hash::*;

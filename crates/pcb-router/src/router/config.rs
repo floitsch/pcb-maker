@@ -125,6 +125,14 @@ pub struct Config {
     /// pour nets' starved spokes go down (`free_lost_spokes`;
     /// `PCB_ROUTER_NO_LOST_SPOKES` turns it off).
     pub lost_spoke_repair: bool,
+    /// After the hard repair, each net still open (pour nets aside), most
+    /// open first, is routed through other nets' copper at a price; the
+    /// nets it then overlaps lose the branches it crosses and are routed
+    /// again hard, and the exchange is kept when the open terminals of
+    /// all of them together drop (`repair_trouble`, router/trouble.rs;
+    /// docs/experiments/human-level-routing.md). `PCB_ROUTER_TROUBLE`
+    /// overrides it (`0` off, `1` on).
+    pub trouble_repair: bool,
     /// The clean-up keeps a change only if no pour net has more pads off
     /// its main piece after it.
     pub pour_aware_polish: bool,
@@ -311,6 +319,8 @@ impl Default for Config {
             spokeless_tracks: std::env::var_os("PCB_ROUTER_NO_SPOKELESS_TRACKS").is_none(),
             apart_trees: std::env::var_os("PCB_ROUTER_NO_APART_TREES").is_none(),
             lost_spoke_repair: std::env::var_os("PCB_ROUTER_NO_LOST_SPOKES").is_none(),
+            trouble_repair: super::trouble::trouble_override()
+                .unwrap_or(super::trouble::TROUBLE_REPAIR_DEFAULT),
             pour_aware_polish: true,
             pour_aware_via_reduction: true,
             pour_whole_rip_up: true,

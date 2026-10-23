@@ -682,6 +682,11 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     if let Some(fixed) = config.fixed_plane_stubs {
         router_config.fixed_plane_stubs = fixed;
     }
+    if let Some(repair) = config.trouble_repair
+        && core::router::trouble_override().is_none()
+    {
+        router_config.trouble_repair = repair;
+    }
     if let Some(cost) = config.thermal_guard_cost {
         router_config.thermal_guard_cost = cost;
     }

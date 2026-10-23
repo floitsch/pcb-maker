@@ -2,7 +2,8 @@
 // Use of this source code is governed by an MIT-style license that can be
 // found in the LICENSE file.
 
-//! The trouble-makers' repair (an experiment, `PCB_ROUTER_TROUBLE`, off):
+//! The trouble-makers' repair (`Config::trouble_repair`; `PCB_ROUTER_TROUBLE`
+//! overrides it):
 //! after the hard repair, each net still open is routed through whatever
 //! is in its way at a price, the nets it then overlaps lose the branches it
 //! crosses and are routed again around it, hard; the exchange is kept when
@@ -25,35 +26,47 @@ pub(super) struct TroubleSettings {
     /// 2: a displaced net that comes out worse may displace others in
     /// turn; 1: not.
     pub depth: usize,
+    /// Pour nets take part (`PCB_ROUTER_TROUBLE_POURS`, an experiment,
+    /// off): as trouble-makers and as victims, their open terminals
+    /// counted as the pads off their pour's main piece (the pour
+    /// analysed again after the exchange).
+    pub pours: bool,
+}
+
+/// The repair's default (`Config::trouble_repair`).
+pub const TROUBLE_REPAIR_DEFAULT: bool = false;
+
+/// `PCB_ROUTER_TROUBLE`: unset, the configuration decides; `0` or empty
+/// off; anything else on. It overrides the configuration either way.
+pub fn trouble_override() -> Option<bool> {
+    let value = std::env::var("PCB_ROUTER_TROUBLE").ok()?;
+    Some(!(value.is_empty() || value == "0"))
 }
 
 impl TroubleSettings {
-    /// `PCB_ROUTER_TROUBLE` set (and not `0`): on, with
-    /// `PCB_ROUTER_TROUBLE_PRESENT` (20), `_SHARE` (0.5), `_ROUNDS` (3)
-    /// `_VICTIMS` (12) and `_DEPTH` (1).
-    pub(super) fn from_env() -> Option<Self> {
-        let on = std::env::var("PCB_ROUTER_TROUBLE").ok()?;
-        if on == "0" || on.is_empty() {
-            return None;
-        }
+    /// The knobs: `PCB_ROUTER_TROUBLE_PRESENT` (20), `_SHARE` (0.5),
+    /// `_ROUNDS` (3), `_VICTIMS` (12) and `_DEPTH` (1).
+    pub(super) fn from_env() -> Self {
         fn read<T: std::str::FromStr>(name: &str, default: T) -> T {
             std::env::var(name)
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(default)
         }
-        Some(Self {
+        Self {
             present: read("PCB_ROUTER_TROUBLE_PRESENT", 20.0),
             share: read("PCB_ROUTER_TROUBLE_SHARE", 0.5),
             rounds: read("PCB_ROUTER_TROUBLE_ROUNDS", 3),
             victims: read("PCB_ROUTER_TROUBLE_VICTIMS", 12),
             depth: read("PCB_ROUTER_TROUBLE_DEPTH", 1),
-        })
+            pours: read("PCB_ROUTER_TROUBLE_POURS", 0) != 0,
+        }
     }
 }
 
-/// A net's state as an exchange may have to restore it.
-type Saved = (NetId, Vec<Branch>, Vec<bool>, bool);
+/// A net's state as an exchange may have to restore it, and its open
+/// terminals then (`open_measure`).
+type Saved = (NetId, Vec<Branch>, Vec<bool>, bool, usize);
 
 impl Router {
     fn open_terminals(&self, net: NetId) -> usize {
@@ -64,6 +77,21 @@ impl Router {
             .count()
     }
 
+    /// The open terminals the exchanges weigh: a signal net's
+    /// unconnected terminals; a pour net's pads off its pour's main piece
+    /// (as `unfinished` counts them).
+    fn open_measure(&self, net: NetId) -> usize {
+        let state = &self.nets[net as usize];
+        if state.plane.is_empty() {
+            return self.open_terminals(net);
+        }
+        let (pours, mut parent, main) = self.analyze_pours(net);
+        let terminal_base = pours.pieces + 1;
+        (0..state.terminal_nodes.len())
+            .filter(|terminal| find(&mut parent, terminal_base + terminal) != main)
+            .count()
+    }
+
     fn save_net(&self, net: NetId) -> Saved {
         let state = &self.nets[net as usize];
         (
@@ -71,6 +99,7 @@ impl Router {
             state.branches.clone(),
             state.connected.clone(),
             state.complete,
+            self.open_measure(net),
         )
     }
 
@@ -78,7 +107,7 @@ impl Router {
         for (net, ..) in &saved {
             self.unstamp(*net);
         }
-        for (net, branches, connected, complete) in saved {
+        for (net, branches, connected, complete, _) in saved {
             let state = &mut self.nets[net as usize];
             state.branches = branches;
             state.connected = connected;
@@ -104,19 +133,25 @@ impl Router {
                 .copied()
                 .filter(|net| {
                     let state = &self.nets[*net as usize];
-                    state.routable && !state.complete && state.plane.is_empty()
+                    state.routable
+                        && if state.plane.is_empty() {
+                            !state.complete
+                        } else {
+                            settings.pours
+                        }
                 })
+                .filter(|net| self.open_measure(*net) > 0)
                 .collect();
             // Most open first (a bus net with nine of ten pads open), then
             // the routing order.
-            trouble.sort_by_key(|net| std::cmp::Reverse(self.open_terminals(*net)));
+            trouble.sort_by_cached_key(|net| std::cmp::Reverse(self.open_measure(*net)));
             let mut closed_round = 0;
             for net in trouble {
                 if self.spent(&clock, budget) {
                     out_of_work = true;
                     break;
                 }
-                let before_net = self.open_terminals(net);
+                let before_net = self.open_measure(net);
                 if before_net == 0 || refused.get(&net) == Some(&kept) {
                     continue;
                 }
@@ -197,8 +232,8 @@ impl Router {
                 let before = saved
                     .iter()
                     .find(|entry| entry.0 == *victim)
-                    .map_or(0, |entry| entry.2.iter().filter(|c| !**c).count());
-                if self.open_terminals(*victim) <= before {
+                    .map_or(0, |entry| entry.4);
+                if self.open_measure(*victim) <= before {
                     continue;
                 }
                 if let Ok((inner, _)) = self.displace(*victim, &[net], order, settings) {
@@ -250,12 +285,12 @@ impl Router {
         order: &[NetId],
         settings: TroubleSettings,
     ) -> Result<(Vec<Saved>, Vec<NetId>), String> {
-        let before_net = self.open_terminals(net);
+        let before_net = self.open_measure(net);
         let mut saved = vec![self.save_net(net)];
         self.nets[net as usize].hopeless_searches = 0;
         self.route_net_seq(net, settings.present, false, 4.0);
         self.stamp(net);
-        if self.open_terminals(net) >= before_net {
+        if self.open_measure(net) >= before_net {
             self.restore_nets(saved);
             return Err(format!(
                 "the priced search closes nothing ({before_net} open)"
@@ -273,7 +308,7 @@ impl Router {
         } else {
             victims
                 .iter()
-                .find(|victim| !self.nets[**victim as usize].plane.is_empty())
+                .find(|victim| !settings.pours && !self.nets[**victim as usize].plane.is_empty())
                 .map(|pour| {
                     format!(
                         "a pour net among the victims ({})",
@@ -311,7 +346,7 @@ impl Router {
             } else {
                 others
                     .iter()
-                    .find(|other| !self.nets[**other as usize].plane.is_empty())
+                    .find(|other| !settings.pours && !self.nets[**other as usize].plane.is_empty())
                     .map(|pour| {
                         format!(
                             "a pour net in its way ({})",
@@ -381,18 +416,12 @@ impl Router {
 
 /// The open terminals of the saved nets as they were.
 fn open_saved(saved: &[Saved]) -> usize {
-    saved
-        .iter()
-        .map(|entry| entry.2.iter().filter(|connected| !**connected).count())
-        .sum()
+    saved.iter().map(|entry| entry.4).sum()
 }
 
 /// The open terminals of the saved nets as they are now.
 fn open_now(router: &Router, saved: &[Saved]) -> usize {
-    saved
-        .iter()
-        .map(|entry| router.open_terminals(entry.0))
-        .sum()
+    saved.iter().map(|entry| router.open_measure(entry.0)).sum()
 }
 
 /// Whether none of the saved nets is in conflict now.

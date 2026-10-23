@@ -302,6 +302,11 @@ pub struct KiCadBoardRouterConfig {
     /// before the signals route (router `fixed_plane_stubs`).
     #[serde(default)]
     pub fixed_plane_stubs: Option<bool>,
+    /// The trouble-makers' repair after the hard repair (router
+    /// `trouble_repair`; docs/experiments/human-level-routing.md):
+    /// unset, the router's default; `PCB_ROUTER_TROUBLE` overrides this.
+    #[serde(default)]
+    pub trouble_repair: Option<bool>,
     /// Router `thermal_guard_cost`.
     #[serde(default)]
     pub thermal_guard_cost: Option<f64>,
