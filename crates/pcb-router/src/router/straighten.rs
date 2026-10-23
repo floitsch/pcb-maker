@@ -150,11 +150,15 @@ impl Router {
             return None;
         }
         let class = self.node_class(net, target as u32);
-        let hot = self.hot[class * self.board.layer_count + layer][target];
-        if hot.trace != crate::grid::FREE16 && hot.trace as u32 != own {
+        // The net's own class's record; the static map of the class there
+        // (a neck zone's), as the search reads them.
+        let net_class = self.board.nets[net as usize].class;
+        let hot = self.hot[self.hot_of[net_class] * self.board.layer_count + layer][target];
+        let trace = self.statics[class].trace[layer][target];
+        if trace != crate::grid::FREE16 && trace as u32 != own {
             return None;
         }
-        if self.occupancy[self.map_index(class, layer)][target] > 0 {
+        if self.occupancy.get(self.map_index(class, layer), target) > 0 {
             return None;
         }
         if dx != 0 && dy != 0 {
@@ -163,7 +167,11 @@ impl Router {
             } else {
                 (target, (dy > 0) as usize)
             };
-            if self.occupancy[self.diagonal_map(class, layer, orientation)][start] > 0 {
+            if self
+                .occupancy
+                .get(self.diagonal_map(class, layer, orientation), start)
+                > 0
+            {
                 return None;
             }
         }
@@ -182,9 +190,9 @@ impl Router {
         let own = crate::grid::owner(net);
         let (mut guarded, mut cut) = (0, 0);
         for node in nodes {
-            let class = self.node_class(net, node.cell);
-            let hot =
-                self.hot[class * self.board.layer_count + node.layer as usize][node.cell as usize];
+            let class = self.board.nets[net as usize].class;
+            let hot = self.hot[self.hot_of[class] * self.board.layer_count + node.layer as usize]
+                [node.cell as usize];
             if hot.pour == 0 {
                 continue;
             }
