@@ -253,6 +253,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "bus bundles, an ablation: the members keep their place in the usual routing order (the corridor and the lane stay).",
     ),
     (
+        "PCB_ROUTER_BUS_PATIENCE",
+        Kind::Switch,
+        "bus bundles: the reroutes after which a member leaves its bundle and negotiates as any other net (default 8).",
+    ),
+    (
         "PCB_ROUTER_BUS_WHY",
         Kind::Diagnostic,
         "bus bundles: prints every bus found and every member broken out of its bundle.",

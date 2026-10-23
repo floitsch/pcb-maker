@@ -50,7 +50,8 @@ const LANE_NEIGHBOURS: usize = 2;
 /// lattice does not (video's designer placement: 188 of 195 members found
 /// no path in their corridor at 0 more tiles, 52 at 3, none at 4).
 const BUS_MARGIN: usize = 4;
-/// Reroutes after which a member is broken out of its bundle.
+/// Reroutes after which a member is broken out of its bundle
+/// (`PCB_ROUTER_BUS_PATIENCE`).
 const BUS_PATIENCE: usize = 8;
 
 impl Router {
@@ -350,7 +351,11 @@ impl Router {
             return None;
         }
         let (bus, _) = self.bus_member(net)?;
-        if net_state.reroutes >= BUS_PATIENCE {
+        let patience = std::env::var("PCB_ROUTER_BUS_PATIENCE")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(BUS_PATIENCE);
+        if net_state.reroutes >= patience {
             return None;
         }
         Some(bus)
