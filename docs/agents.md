@@ -520,8 +520,8 @@ print one line on stderr.
 their memory in one ledger file per machine (`PCB_MAKER_LEDGER`, default
 `$XDG_RUNTIME_DIR/pcb-maker-ledger.json`, else
 `/tmp/pcb-maker-ledger.json`; `off`: none) before they allocate: what the
-process holds and its routers' estimated peak (1.7 times their lattice
-maps and 460 MB, with a 1.25 margin), 2.2 GB more while kicad-cli runs. A
+process holds and its routers' estimated peak (1.2 times their lattice
+maps and 540 MB, with a 1.25 margin; 1.7 and 460 until 2026-10-22), 2.2 GB more while kicad-cli runs. A
 run waits while the reservations of every run on the machine and its
 request exceed the machine's memory less 6 GB
 (`PCB_MAKER_LEDGER_MARGIN_MB`) and says so on stderr (`memory ledger:

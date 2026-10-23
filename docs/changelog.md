@@ -11,6 +11,125 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-22 (router memory)
+
+A router on a big board took 4 to 7 GB (katia 4.8 GB with one router),
+which held how many boards, agents and rung probes run side by side.
+Now katia peaks at 2.5 GB, the laptop motherboard at 0.9 instead of 1.7,
+every route and fingerprint the same. Branch router-memory; snapshots
+x1600 (the shrink and the estimate), x1601 (the own-stamp mask kept when
+a pooled scratch first allocates), x1602 (rebased on the pour-integrity
+package; the lattice floor). Details: docs/router.md, "Memory
+(2026-10-22)" and "Memory limits".
+
+**Measured first** (route mode, one thread, one router at a time: a
+ladder of 60 s of work without probes and seeds, `PCB_WORK_RATE`
+pinned; a scratch heap profiler, not committed, grouped the live blocks
+of 64 KiB or more at the live peak by their source lines). Before (x1592,
+the same routing as x1543), MB at the live peak:
+
+| board (maps MB, peak RSS) | 1 | 2 | 3 | 4 | 5 |
+|---|---|---|---|---|---|
+| katia (3184, 4841) | search records 2018 (two sets: the lost-spokes step rebuilt them beside the first) | static maps 978 (trace 456, edge owner 228, edge block 114, free layers 91) | occupancy 741 | scratches 285 (the router's and the pool thread's) | stamp lists 233 |
+| jiran-ble-lite 0.05 mm (2156, 2634) | scratches 685 | search records 633 | static maps 560 | occupancy 369 | history 158 |
+| laptop motherboard (869, 1748) | allocator retention 546 (peak RSS 1748 for 1343 live: freed maps stayed resident; the pour measure on top) | static maps 270 | occupancy 222 | scratches 175 | search records 169 |
+| Castor (264, 690) | via reduction snapshot 166 | allocator retention 119 | static maps 87 | stamp lists 79 | occupancy 73 |
+
+After (x1600 to x1602):
+
+| board (maps MB, peak RSS) | 1 | 2 | 3 | 4 | 5 |
+|---|---|---|---|---|---|
+| katia (2189, 2534) | occupancy 741 | search records 730 | static maps 347 | scratch 147 | stamp lists 128 |
+| jiran-ble-lite 0.05 mm (1589, 1608) | search records 422 | occupancy 369 | scratch 343 | static maps 205 | history 158 |
+| laptop motherboard (636, 897) | occupancy 222 | search records 112 | blocks under 64 KiB 94 | static maps 90 | scratch 88 |
+| Castor (193, 392) | blocks under 64 KiB 86 | occupancy 73 | stamp lists 37 | via snapshot 31 | search records 30 |
+
+**What changed** (pcb-router unless named):
+- The search records (`Hot`) are 8 bytes, not 12: the static map's
+  value in 16 bits and an index into a table of the board's (guard,
+  cover) pairs (`hot_pours`; a pair beyond 65 534 reads the maps).
+  `build_hot` writes them in place: the lost-spokes step rebuilt a full
+  second set beside the first twice (katia's peak, 1.1 GB).
+- The static trace map in 16 bits (`trace_at` widens it); the blocked
+  unit steps sparse (`EdgeMap`: a bit a node, the 1 % of nodes with such
+  a step in a hash map; were 3 bytes a node); `via_blocked` a bit a
+  node; `free_layers` in the bytes the layers need (`LayerBits`).
+- A net's stamps 4 bytes each (`Stamped`: map and cell in one word where
+  the lattice's maps and cells fit, two words otherwise; same order).
+- The search scratch: allocated on a router's first search (a router
+  that never searches has none), and a parallel batch's jobs take the
+  router's own and its spares (`ScratchPool`) instead of a thread-local
+  scratch per pool thread, which stayed after the router; with one thread
+  one scratch, not two. `Scratch::ensure` keeps the own-stamp mask set
+  before the first allocation (x1600 lost it for a pooled scratch the pool
+  had just created: caught by a router test before any run counted).
+- The via reduction's snapshot leaves out the occupancy and the tiles'
+  claims; a revert takes the changed nets' stamps off and the
+  snapshot's back on (the counts are the sum of the nets' stamps).
+- pcb-kicad: glibc's mmap threshold fixed at 1 MiB (`configure_allocator`,
+  first in `main`): freed maps go back to the system (katia held 1.75
+  GB after its first attempt with no router, 0.24 GB now; its peak 3.9
+  to 3.0 GB from this alone, the search's time the same). The pour
+  measure drops the source board's parse (jetson: 240 MB) and its own
+  before it builds its router (jetson's peak was the measure: 1392 to
+  797 MB).
+- The estimate: 1.2 x maps + 540 MB resident (was 1.7 x + 460), 1.3 x
+  + 780 MB of address space (was 2.0 x + 550), the 1.25 margin kept; the
+  lattice floor 26 + 6 a class bytes a node and layer (was 32 + 6),
+  under all 197 lattices measured by 1.25 or more (the least
+  ICE40HX1K-TQ144 at 1.33). The ledger's reservations and the ladder's
+  side-by-side counts read these.
+
+Not done (the next candidates, by bytes): the occupancy (741 MB on
+katia, 16-bit counts, 3L + 1 maps a class) and the search records (730:
+one set per searched class, duplicated for classes of one geometry);
+the guard and cover maps in 16 bits (92 MB on katia).
+
+**The eight boards** (one router at a time, one thread, x1592 against
+x1600; every fingerprint and board identical; jiran at 0.125 mm ran
+four seeds side by side, identical as sets):
+
+| board | maps MB | peak RSS MB | VmPeak MB |
+|---|---|---|---|
+| katia | 3184 -> 2189 | 4841 -> 2534 | 5128 -> 2809 |
+| jiran-ble-lite 0.05 mm | 2156 -> 1589 | 2634 -> 1608 | 2994 -> 1954 |
+| laptop motherboard | 869 -> 636 | 1748 -> 897 | 1944 -> 1112 |
+| Sisu_SSE-9 | 694 -> 491 | 1424 -> 721 | 1605 -> 912 |
+| k30-SBC | 319 -> 247 | 770 -> 406 | 977 -> 629 |
+| jetson | 302 -> 223 | 1392 -> 796 | 1536 -> 1052 |
+| Castor | 264 -> 193 | 690 -> 392 | 851 -> 571 |
+| jiran-ble-lite 0.125 mm (4 seeds) | 473 -> 339 | 1295 -> 997 | 1904 -> 1409 |
+
+The old estimate missed jetson (973 MB for a peak of 1392, before the
+margin): the pour measure's second parse; the new line passes it by 12
+MB. After x1602's rebase, katia and the laptop motherboard against
+x1573: identical, 4804 -> 2544 and 1744 -> 897 MB.
+
+**Fingerprints** (Castor, k30, jetson, Sisu; route mode from v16, 1 x
+4, budget scale 0.25, `PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`,
+build/fp-mem1-x1601 against build/fp-probe2-x1542): every fingerprint
+and every board identical; peak RSS (KiCad's check included) Castor 1482
+-> 1219, jetson 1770 -> 1721, Sisu 2870 -> 2545, k30 1829 -> 1833 (its
+peak is KiCad's).
+
+**Expansion tier** (46 boards, route mode, 8 x 1, 30 s, `--min-free-gb
+10 --no-lock`, build/expansion-mem1-x1601 against
+build/expansion-probe2-x1542): every row's routed, vias, length, KiCad
+counts and verdict identical and all 46 result boards byte-identical;
+18 passes both, unconnected 631 both, work 1221 s both. Peak RSS per
+row (`peak_rss_mb`, `layout_rss_mb` the same here) median 368.5 -> 235
+MB, max 1724 -> 1297 (MSign), sum 23.9 -> 16.4 GB; per row 0.47 to 0.90
+of before (median 0.72): Multi_saturation_module 1356 -> 745, yuiop29re
+888 -> 421, Wonkle 1283 -> 850.
+
+**Speed** (Castor, `bench-search` 10 iterations, one thread, pinned to
+one core, x1573 and x1602 alternating, four pairs; the machine loaded):
+13.7 to 21.7 s against 13.3 to 17.8 s, x1602 the faster in every pair,
+36 963 190 expansions both. The tier's CPU seconds 2383 -> 1664 (under
+another load; work the same).
+
+`bash scripts/check.sh --fast` and the clippy gate pass.
+
 ## Committed on 2026-10-22 (pour integrity)
 
 Fence issue 17: keep a two-layer pour whole when the router can. The

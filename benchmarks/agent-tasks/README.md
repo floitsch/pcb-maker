@@ -300,8 +300,8 @@ measurement). The discipline:
   2026-10-22): every route, layout and KiCad check of a binary since
   x1590 reserves its memory in the machine's ledger
   (`$XDG_RUNTIME_DIR/pcb-maker-ledger.json`, `PCB_MAKER_LEDGER`) before it
-  allocates: the router's maps estimate (1.7 times the maps and 460 MB,
-  with the 1.25 safety margin) for the routers it runs at once, 2.2 GB
+  allocates: the router's maps estimate (1.2 times the maps and 540 MB,
+  with the 1.25 safety margin; 1.7 and 460 until 2026-10-22) for the routers it runs at once, 2.2 GB
   more while kicad-cli runs. It waits while the reservations of every run
   on the machine and its request exceed MemTotal less 6 GB
   (`PCB_MAKER_LEDGER_MARGIN_MB`), and its reservation is a limit of its
