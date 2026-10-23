@@ -373,7 +373,7 @@ impl Router {
                 self.nets[*other as usize]
                     .stamped
                     .iter()
-                    .any(|stamp| cells.contains(stamp))
+                    .any(|stamp| cells.contains(&stamp))
             })
             .collect()
     }
