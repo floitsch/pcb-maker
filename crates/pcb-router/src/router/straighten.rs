@@ -329,36 +329,24 @@ impl Router {
     }
 
     /// Takes stair-steps and jogs out of every complete signal net's
-    /// branches (see the module's comment), keeping a net's change only
-    /// when no pour net has more pads off its main piece after it
-    /// (`pour_aware_polish`).
+    /// branches (see the module's comment). With `pour_aware_polish` the
+    /// pour nets' stranded pads are counted before the first change and
+    /// once after the last (the pour nets within a stamp's reach of what
+    /// changed); if a count grew, the changed nets go back to their old
+    /// branches, the last changed first, until none has grown.
     pub(super) fn straighten(&mut self, order: &[NetId]) -> Straightened {
         let mut report = Straightened::default();
-        let mut pour_stranded = self
-            .config
-            .pour_aware_polish
-            .then(|| self.pour_stranded())
-            .filter(|counts| !counts.is_empty());
-        let pour_nets = if pour_stranded.is_some() {
+        let pour_nets = if self.config.pour_aware_polish {
             self.pour_net_ids()
         } else {
             Vec::new()
         };
-        let pour_bounds: Vec<_> = pour_nets
-            .iter()
-            .map(|net| self.plane_bounds(*net))
-            .collect();
-        let pour_reach = {
-            let widest = self
-                .board
-                .classes
-                .iter()
-                .map(|class| class.via_diameter + class.trace_width + class.clearance)
-                .fold(0.0f64, f64::max)
-                + self.board.hole_clearance.max(self.board.hole_to_hole);
-            (2.0 * widest / self.grid.pitch).ceil() as usize + 3
-        };
+        let mut pour_stranded: Option<Vec<usize>> = None;
         let mut checks = 0u64;
+        // The changed nets: (net, old branches, (bends, stairs) before and
+        // after, runs).
+        let mut changed: Vec<(NetId, Vec<Branch>, (usize, usize), (usize, usize), usize)> =
+            Vec::new();
         for &net in order {
             let state = &self.nets[net as usize];
             if !state.routable
@@ -414,57 +402,76 @@ impl Router {
                 }
                 branch.nodes = nodes;
             }
+            // The net's old copper back for now (its branches unchanged).
+            self.stamp(net);
             if runs == 0 {
-                self.stamp(net);
                 continue;
             }
-            let before = saved[first..]
-                .iter()
-                .map(|b| self.branch_bends(b))
-                .fold((0, 0), |s, b| (s.0 + b.0, s.1 + b.1));
-            let after = branches[first..]
-                .iter()
-                .map(|b| self.branch_bends(b))
-                .fold((0, 0), |s, b| (s.0 + b.0, s.1 + b.1));
+            if pour_stranded.is_none() && !pour_nets.is_empty() {
+                pour_stranded = Some(self.pour_stranded());
+            }
+            let score = |router: &Self, branches: &[Branch]| {
+                branches[first..]
+                    .iter()
+                    .map(|branch| router.branch_bends(branch))
+                    .fold((0, 0), |sum, b| (sum.0 + b.0, sum.1 + b.1))
+            };
+            let (before, after) = (score(self, &saved), score(self, &branches));
             self.nets[net as usize].branches = branches;
             self.stamp(net);
-            if let Some(stranded) = pour_stranded.as_mut() {
-                let mut changed: Option<(usize, usize, usize, usize)> = None;
+            changed.push((net, saved, before, after, runs));
+        }
+        if let Some(stranded) = pour_stranded {
+            let pour_reach = {
+                let widest = self
+                    .board
+                    .classes
+                    .iter()
+                    .map(|class| class.via_diameter + class.trace_width + class.clearance)
+                    .fold(0.0f64, f64::max)
+                    + self.board.hole_clearance.max(self.board.hole_to_hole);
+                (2.0 * widest / self.grid.pitch).ceil() as usize + 3
+            };
+            let mut area: Option<(usize, usize, usize, usize)> = None;
+            for (net, saved, ..) in &changed {
                 for node in saved
                     .iter()
-                    .chain(&self.nets[net as usize].branches)
+                    .chain(&self.nets[*net as usize].branches)
                     .flat_map(|branch| &branch.nodes)
                 {
                     let (x, y) = self.grid.xy(node.cell as usize);
-                    changed = Some(changed.map_or((x, y, x, y), |(x0, y0, x1, y1)| {
+                    area = Some(area.map_or((x, y, x, y), |(x0, y0, x1, y1)| {
                         (x0.min(x), y0.min(y), x1.max(x), y1.max(y))
                     }));
                 }
-                let now: Vec<usize> = pour_nets
-                    .iter()
-                    .zip(&pour_bounds)
-                    .zip(stranded.iter())
-                    .map(|((pour, bounds), was)| match (changed, bounds) {
-                        (Some((x0, y0, x1, y1)), &Some((px0, py0, px1, py1)))
-                            if x0 <= px1 + pour_reach
-                                && px0 <= x1 + pour_reach
-                                && y0 <= py1 + pour_reach
-                                && py0 <= y1 + pour_reach =>
-                        {
-                            self.pour_stranded_of(*pour)
-                        }
-                        _ => *was,
-                    })
-                    .collect();
-                if now.iter().zip(stranded.iter()).any(|(now, was)| now > was) {
-                    self.unstamp(net);
-                    self.nets[net as usize].branches = saved;
-                    self.stamp(net);
-                    report.pour_rejected += 1;
-                    continue;
-                }
-                *stranded = now;
             }
+            let near: Vec<bool> = pour_nets
+                .iter()
+                .map(|pour| match (area, self.plane_bounds(*pour)) {
+                    (Some((x0, y0, x1, y1)), Some((px0, py0, px1, py1))) => {
+                        x0 <= px1 + pour_reach
+                            && px0 <= x1 + pour_reach
+                            && y0 <= py1 + pour_reach
+                            && py0 <= y1 + pour_reach
+                    }
+                    _ => false,
+                })
+                .collect();
+            let grown = |router: &Self| {
+                pour_nets
+                    .iter()
+                    .zip(&near)
+                    .zip(&stranded)
+                    .any(|((pour, near), was)| *near && router.pour_stranded_of(*pour) > *was)
+            };
+            while !changed.is_empty() && grown(self) {
+                let (net, saved, ..) = changed.pop().unwrap();
+                self.nets[net as usize].branches = saved;
+                self.stamp(net);
+                report.pour_rejected += 1;
+            }
+        }
+        for (_, _, before, after, runs) in &changed {
             report.nets += 1;
             report.runs += runs;
             report.bends_before += before.0;
