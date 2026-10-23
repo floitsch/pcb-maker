@@ -2,9 +2,8 @@
 // Use of this source code is governed by an MIT-style license that can be
 // found in the LICENSE file.
 
-//! The trouble-makers' repair (`Config::trouble_repair`; `PCB_ROUTER_TROUBLE`
-//! overrides it):
-//! after the hard repair, each net still open is routed through whatever
+//! The trouble-makers' repair (`Config::trouble_repair`, on since
+//! 2026-10-23; `PCB_ROUTER_TROUBLE` overrides it): after the hard repair, each net still open is routed through whatever
 //! is in its way at a price, the nets it then overlaps lose the branches it
 //! crosses and are routed again around it, hard; the exchange is kept when
 //! the open terminals of all of them together drop
@@ -34,7 +33,7 @@ pub(super) struct TroubleSettings {
 }
 
 /// The repair's default (`Config::trouble_repair`).
-pub const TROUBLE_REPAIR_DEFAULT: bool = false;
+pub const TROUBLE_REPAIR_DEFAULT: bool = true;
 
 /// `PCB_ROUTER_TROUBLE`: unset, the configuration decides; `0` or empty
 /// off; anything else on. It overrides the configuration either way.
