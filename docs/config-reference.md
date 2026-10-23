@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 87 | 75 | 12 | 87 | 33 |
+| [Router settings](#router-settings) | 87 | 75 | 12 | 87 | 34 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 0 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 0 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
@@ -115,7 +115,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `escape_stub_mm` | `Option<f64>` | unset | router.md | Fixed escape stubs for fine-pitch pad rows, this long in mm (router `escape_stub_mm`; off by default). |
 | `fixed_plane_stubs` | `Option<bool>` | unset | router.md | Connect every pour-net pad to its plane by a fixed stub and via before the signals route (router `fixed_plane_stubs`). |
 | `trouble_repair` | `Option<bool>` | unset | router.md | The trouble-makers' repair after the hard repair (router `trouble_repair`; docs/experiments/human-level-routing.md): unset, the router's default; `PCB_ROUTER_TROUBLE` overrides this. |
-| `thermal_guard_cost` | `Option<f64>` | unset | - | Router `thermal_guard_cost`. |
+| `thermal_guard_cost` | `Option<f64>` | unset | router.md | Router `thermal_guard_cost`. |
 | `narrow_signal_mm` | `Option<f64>` | unset | - | The project's smallest predefined track width (its width menu), which designers use for signals where the class width is a power width (ohdsp's DSP board: class 0.5 mm, 0.135 mm in the menu and on most tracks). |
 | `use_narrow_signals` | `Option<bool>` | unset | - | Route signal nets at `narrow_signal_mm` (the ladder tries it when connections stay open at the class widths). |
 | `relaxed_clearance_mm` | `Option<f64>` | unset | - | The board's minimum clearance when the project rates clearance findings below errors (a designer who accepted the net classes' clearances as warnings: the A13 module's DDR fan-out keeps 0.149 against classes of 0.2). The ladder's last step routes at it when connections stay open. |

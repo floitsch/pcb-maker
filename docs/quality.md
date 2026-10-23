@@ -115,6 +115,10 @@ way on the designer's board and on ours:
   nearest-neighbour distance apart), once per pad pair and net. Whether
   another path existed is not asked; the designer's count is the yard
   stick.
+  Since 2026-10-23 the router charges another net's step between two
+  such pads at most 1.5 mm apart (`pin_row_cost`, docs/router.md,
+  "Pin-row cost"); wider pairs (an SOT-23's 1.9 and 2.1 mm, 2.54 mm
+  rows), most of the crossings left, are counted but not charged.
 
 quality.py reports them beside the other measures, designer-numbers.json
 holds the designer's, and compare.py's normalised line gives our bends

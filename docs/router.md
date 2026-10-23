@@ -1764,6 +1764,64 @@ ladder's shares: flexypin's tracks rung 20.77 to 19.49 s). Eight step checks cou
 expansion of work. `PCB_ROUTER_FINGERPRINT` prints a fingerprint after
 it.
 
+## Pin-row cost (2026-10-23)
+
+score-kicad-board's pin-row crossings (docs/quality.md, "Aesthetics")
+count another net's track between two adjacent SMD pads of a part: the
+"snaking through SMD pins" reviewers see first. The straightening cannot
+take them out (it keeps a run's corners and layer), so the search pays
+for them.
+
+**The gaps.** The lowering (`footprint_pin_row_gaps`,
+crates/pcb-kicad/src/board_router/lower.rs) lists per footprint and
+copper layer with three SMD pads or more the pairs of pads adjacent as
+the measure pairs them (centres at most 1.25 times the closer pad's
+nearest-neighbour distance apart) and at most 1.5 mm apart
+(`PIN_ROW_PITCH_MM`: fine-pitch rows, SOIC and tighter; an SOT-23's
+1.9 mm and a 2.54 mm row are ordinary routing), with the two pads'
+nets: `Board::pin_row_gaps`. The router (`mark_pin_rows`, router/
+build.rs) marks per layer the nodes between the two centres within
+half of `pitch * (|nx| + |ny|)` of the line through them (n its normal):
+a lattice path changes its distance from the line by at most that much
+a step, so every path across the line has a node in the band, one where
+the line runs along a node row (pads mostly lie on nodes). The marks are
+a sorted list per layer (`Router::pin_row`), and a marked node's
+`Hot::pour` index names the triple (guard, cover, gap) instead of the
+pair (guard, cover): the search finds the gap where it already looks for
+a guard, no map grows.
+
+**The cost.** A step into a marked node by a net other than the gap's
+two pads' costs `pin_row_cost` mm on top of its step cost (after the
+congestion and layer factors, like a bend); the pads' own nets escape
+through their gaps freely. The clean-up's comparison
+(`geometric_cost_of`) counts the same per node, so it keeps a reroute
+out of a gap when that is cheaper all told and none into one. The
+straightening takes a gap node as it takes another net's thermal guard:
+a new path may enter none where the old one was not. The ladder's
+charging is unchanged (a cost, not work). `pin_row_cost` 0 builds no
+marks and routes as before (fingerprints identical);
+`pin_row_cost_mm` in the router settings sets it, else
+`PCB_ROUTER_PIN_ROW_COST`.
+
+**The default, 2 mm** (changelog 2026-10-23, "pin-row crossings"): on
+the expansion tier (route mode, 30 s, 8 x 1, one binary at 0 and 2)
+unconnected 625 to 592, passes 19 to 20, new errors 3 both, vias 4223 to
+4308, length +0.3 %, crossings 211 to 197 (those within 1.5 mm 59 to
+48). From 3 mm on (3, 4, 6 and 20 measured) two boards gain a starved
+thermal (ZSWatch's X403 or X602, anthracite-bottom's J106: PTH pads of a
+pour net, a pour-as-tracks GND track wrapped round them): a step in
+another net's thermal guard costs `thermal_guard_cost` (10) times the
+step, about 1.25 mm at 0.125 mm, so above 2 or 3 such steps a gap costs
+more than a guard, and the spoke model passes what KiCad's refill
+starves. Most crossings left are wider pairs, not charged: at 20 mm the
+crossings within 1.5 mm fall 58 to 15 but those of 1.5 to 2.6 mm stay
+116 to 121. Charging those too (2.6 mm at 2 mm cost) took 211 to 154
+crossings but cost 46 unconnected (629 to 675) and a pass. At the task
+budget on the designer's placement (the eleven boards furthest over the
+designers' crossings) 2 mm took crossings 452 to 410 and 6 mm 437 to 365
+(of the ten run at 6), but SNSP-CPU-01 went 6 to 11 unconnected (22 at
+6 mm) and video 0 to 1.
+
 ## Determinism and the wall clock (2026-10-14)
 
 Every routing decision is taken in work (search expansions at

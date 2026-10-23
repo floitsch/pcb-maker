@@ -11,6 +11,108 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-23 (pin-row crossings)
+
+Reviewers' first complaint after the bends: traces "snaking through SMD
+pins". score-kicad-board counts them as pin-row crossings (another net's
+track across the line between two adjacent SMD pads of a part; ours
+median 0.013 per connection against the designers' 0.005); the
+straightening cannot fix them (it keeps corners and layers). Branch
+pin-row-crossings; snapshots x1640 (the cost, off by default; on the
+trace-aesthetics base), x1641 (with a temporary switch for the pitch
+cap), x1642 (rebased on 81356b8, off by default), x1643 (2 mm by
+default; x1640 to x1642 have since been removed from build/bin), x1644
+(the commit, rebased on the trouble-victims merge).
+
+**The cost** (docs/router.md, "Pin-row cost"): the lowering lists the
+gaps between adjacent SMD pads of a footprint's rows (as the measure
+pairs them, at most 1.5 mm apart: `Board::pin_row_gaps`); the router
+marks the lattice nodes in a band across the line between each pair's
+centres (one node per crossing where the line runs on a node row), the
+marked node's `Hot::pour` index names a (guard, cover, gap) triple, and
+a step there by a net other than the two pads' costs `pin_row_cost` mm
+(`pin_row_cost_mm`, `PCB_ROUTER_PIN_ROW_COST`; 0 off). The clean-up's
+comparison counts it too, the straightening enters no new gap node.
+Fingerprints at 0 identical to before on Castor, k30, jetson and Sisu
+(x1640 against x1618; jetson x1642 against x1660).
+
+**Expansion tier** (46 boards, route mode, 30 s, 8 x 1, one binary
+x1642 at 0 and at 2): unconnected 625 -> 592, passes 19 -> 20, new
+errors 3 -> 3, vias 4223 -> 4308, length 112254 -> 112576 mm, work 1249
+-> 1253 s, crossings 211 -> 197 (fewer on 10 boards, more on 3; those of
+pads within 1.5 mm 59 -> 48), stair-steps 2979 -> 2803, bends per
+connection median 1.433 -> 1.465. Other values (x1640/x1641 against
+x1618's log; x1640 at 0 routes as x1618, its fingerprints identical): 3, 4, 6 and 20 mm each add
+two starved thermals (ZSWatch's X403 or X602, anthracite-bottom's J106,
+PTH pads of a pour net with a pour-as-tracks GND track wrapped round
+them: a step in another net's thermal guard costs 10 steps, about 1.25
+mm, so the gap's price outbids a few guard steps and KiCad's refill
+starves what the spoke model passes); crossings 211 -> 205 (3 mm), 211
+-> 195 (4), 190 (6), 171 (20); within 1.5 mm 58 -> 37 (6), 15 (20).
+Charging pairs up to 2.6 mm too (the SOT-23's 1.9 and 2.1 mm, 2.54 mm
+rows: most crossings left, 116 of 193) at 2 mm: crossings 211 -> 154
+but unconnected 629 -> 675 and passes 18 -> 17; not taken.
+
+**Worst boards** (route mode on the designer's placement, 1500 s of
+work, 4 x 2, x1640 at 0 / 2 / 6 mm; the ten largest crossing excesses of
+build/github-layout-v19 over the designers' and MokyaLora, MIDAS-MK2.1;
+neotron-pico (27 GB), ULK (25 GB) and 0xCB's pcb-panel (KiCad timeouts)
+left out):
+
+| board | crossings 0 / 2 / 6 (designer) | unconnected | new errors | vias | length (mm) | bends per connection |
+|---|---|---|---|---|---|---|
+| glasgow revC3 | 66 / 57 / 50 (33) | 55 / 55 / 58 | 0 / 0 / 0 | 234 / 239 / 255 | 4314 / 3906 / 3838 | 1.259 / 1.256 / 1.226 |
+| sbc_allwinner_a13 module | 33 / 25 / 21 (19) | 1 / 1 / 3 | 1 / 2 / 2 | 307 / 303 / 287 | 5191 / 5480 / 5455 | 2.752 / 2.100 / 2.115 |
+| MokyaLora | 39 / 46 / 34 (24) | 0 / 0 / 0 | 0 / 0 / 0 | 225 / 239 / 234 | 5351 / 5794 / 5253 | 1.375 / 1.173 / 1.316 |
+| MIDAS-MK1.1-revA | 20 / 13 / 15 (4) | 5 / 5 / 5 | 0 / 0 / 0 | 131 / 134 / 135 | 3034 / 3069 / 3000 | 0.900 / 0.903 / 0.938 |
+| MIDAS-MK2.1-revA | 21 / 16 / 12 (5) | 0 / 0 / 0 | 0 / 0 / 0 | 132 / 177 / 189 | 4088 / 3075 / 3106 | 1.248 / 1.148 / 1.144 |
+| MIDAS-MK2 | 23 / 24 / 10 (5) | 0 / 0 / 0 | 0 / 0 / 0 | 140 / 170 / 146 | 4051 / 3420 / 3900 | 1.247 / 1.319 / 1.162 |
+| eternal-keypad | 100 / 100 / 100 (36) | 0 / 0 / 0 | 200 / 200 / 200 | 62 / 62 / 62 | 3784 / 3784 / 3784 | 0.939 / 0.939 / 0.939 |
+| framework_mobo_lefthalf | 9 / 9 / 9 (0) | 0 / 0 / 0 | 0 / 0 / 0 | 71 / 71 / 71 | 1278 / 1278 / 1278 | 1.302 / 1.302 / 1.302 |
+| laptop keyboard | 94 / 94 / 94 (14) | 3 / 3 / 3 | 0 / 0 / 0 | 161 / 161 / 161 | 7605 / 7605 / 7605 | 2.135 / 2.135 / 2.135 |
+| SNSP-CPU-01 | 32 / 19 / 20 (2) | 6 / 11 / 22 | 0 / 0 / 0 | 1367 / 1418 / 1214 | 24801 / 24720 / 23702 | 3.944 / 4.013 / 3.520 |
+
+Over the ten: crossings 437 -> 403 -> 365 (designer 142; median 32.5
+-> 24.5 -> 20.5), unconnected 70 -> 75 -> 91 (SNSP-CPU-01, which no
+budget completes: 6 -> 11 -> 22), new errors 201 -> 202 -> 202, passes
+4 at each, vias 2830 -> 2974 -> 2754, length 63495 -> 62130 -> 60920
+mm, bends per connection median 1.281 -> 1.279 -> 1.264.
+video (at 0 and 2 only, on x1643: the x1640 snapshot was removed from
+build/bin while its run waited for memory; x1643 at 0 routes video as
+x1618): crossings 15 -> 7 (designer 4), unconnected 0 -> 1 (a pass
+lost: the attempt at 2 used the whole budget, 681 -> 1569 s of work),
+vias 603 -> 634, length 35157 -> 35357 mm, bends per connection 2.198
+-> 2.243. So at the task budget the cost takes a tenth of the
+crossings and costs completeness on two of eleven boards (SNSP-CPU-01,
+video), where the 30 s tier gained.
+
+The ladder's rung differs on several (MIDAS-MK2 and MK2.1: pours as
+tracks at 0, connected at 2: the vias and length move with the rung,
+not the gaps). Unchanged at every cost: eternal-keypad, keyboard and
+framework_mobo_lefthalf, whose crossings are all of wider pairs
+(switch-diode and socket rows; eternal-keypad's 200 new errors are the
+same at 0). module's second items_not_allowed is a KiCad teardrop of a
+GND track in AE1's keepout (the first, at 0, the same kind).
+
+**Fingerprints** (Castor, k30, jetson, Sisu; route mode from v16, 1 x 4,
+budget scale 0.25, x1642 at 0 and 2): Castor (2 crossings), k30 (1) and
+Sisu (49) identical: their crossings are of wider pairs but k30's one,
+which the cost does not move; jetson changes from before resolve on:
+crossings 9 -> 4, vias 607 -> 589, length 10889 -> 10809 mm, bends per
+connection 2.215 -> 2.125, unconnected 17 -> 20 (an incomplete board at
+a quarter budget).
+
+**Default 2 mm**: the largest cost whose tier loss is nil (3 mm loses
+two thermals); the worst boards' completeness (SNSP-CPU-01, video) is
+the case against it, and `pin_row_cost_mm` 0 or `PCB_ROUTER_PIN_ROW_COST=0`
+routes as before. It takes a fifth of the charged crossings; most of the
+excess against the designers is in wider pairs and on boards the cost
+does not touch. Open: the wider pairs at a cost that leaves the
+thermal guards their priority (a guard cost per pin-row cost, or
+exempting pour nets' tracks), and pin swaps.
+`bash scripts/check.sh --fast` and the clippy gate; the fixture goldens
+did not move (no fixture route crosses a charged gap).
+
 ## Measured on 2026-10-23 (Freerouting and KiCadRoutingTools, complete)
 
 The two head-to-heads of 2026-10-21 finished: every one of the 109 v7
