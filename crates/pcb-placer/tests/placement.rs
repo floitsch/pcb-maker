@@ -1587,3 +1587,81 @@ fn the_anneal_evaluates_its_guidance_within_its_share_and_is_unchanged_without_a
         "{guided} of {total}"
     );
 }
+
+#[test]
+fn eviction_finds_a_held_part_s_narrow_window_in_a_tab() {
+    use pcb_placer::constraints::Edge;
+    // OM-FlexGrid-Flex's flex connector J1: pads 11.15 mm wide in a tab
+    // 12.4 mm wide, held at the tab's top edge; at the edge-copper level
+    // its pads keep the 0.5 mm copper-to-edge clearance from the tab's
+    // sides too, a window of 0.25 mm (x 16.075 to 16.325) that the
+    // eviction's 0.5 mm scan from the board's left end (16.0, 16.5)
+    // missed.
+    let connector = Component {
+        name: "J1".into(),
+        body_center: [0.0, 1.5],
+        body_size: [11.15, 4.0],
+        round: false,
+        halo: 0.0,
+        pins: vec![Pin {
+            offset: [0.0, 0.0],
+            net: 0,
+        }],
+        side: Side::Front,
+        fixed: false,
+        angle_options: vec![0.0],
+        far_side: Vec::new(),
+        far_copper: Vec::new(),
+        far_courtyard: Vec::new(),
+        hollow: Vec::new(),
+        tight: None,
+        edge_inset: 0.0,
+        courtyards: Vec::new(),
+        holes_inside: false,
+        pads: vec![[-5.575, -0.5, 5.575, 3.5]],
+        copper_only: false,
+        cutout_outline: Vec::new(),
+        tight_hollow: Vec::new(),
+    };
+    let mut problem = Problem {
+        outline: vec![
+            [10.0, 0.0],
+            [22.4, 0.0],
+            [22.4, 10.0],
+            [40.0, 10.0],
+            [40.0, 30.0],
+            [0.0, 30.0],
+            [0.0, 10.0],
+            [10.0, 10.0],
+        ],
+        components: vec![connector],
+        net_weights: vec![1.0],
+        poses: vec![Pose {
+            position: [30.0, 20.0],
+            angle: 0.0,
+        }],
+        spacing: 0.0,
+        grid: 0.1,
+        edge_margin: 0.5,
+        min_spacing: 0.2,
+        far_side_pads_only: false,
+        shared_halos: false,
+        pieces: Vec::new(),
+        constraints: Default::default(),
+    };
+    problem.constraints.edges.push((0, Edge::Top, 0.5));
+    problem.constraints.edge_copper = true;
+    problem.constraints.copper_edge = 0.5;
+    let mut poses = problem.poses.clone();
+    let left = pcb_placer::legal::evict_for(&problem, &mut poses, &[0]);
+    assert!(left.is_empty(), "no spot found");
+    let x = poses[0].position[0];
+    assert!((16.07..=16.33).contains(&x), "at {:?}", poses[0]);
+    assert!(pcb_placer::legal::is_legal(
+        &problem,
+        &poses,
+        0,
+        poses[0],
+        std::iter::empty()
+    ));
+}

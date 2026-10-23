@@ -673,8 +673,9 @@ does). **A part without room lies on a mark**: where a level leaves
 parts without a place, they are seated again with the marks out of
 their way (`seat_on_marks`; `Constraints::yielding`, `on_marks`,
 `Relaxation::on_marks`; `parts_on_marks` in `board-placer.json`), every
-other part keeping its place, or, where that seats fewer, every part
-legalized again with those first (MIDAS-MK1.1's two 36 mm headers at
+other part keeping its place, or, where that seats fewer and fewer than
+an eighth of the movable parts failed ("Placer refusals since v18"
+below), every part legalized again with those first (MIDAS-MK1.1's two 36 mm headers at
 the bottom edge, whose spots the others had taken), before the next
 level takes halos or spacing from every part (OpenFC's and
 MIDAS-MK1.1's connectors at the edge under their own pin names,
@@ -831,6 +832,68 @@ take it from there. Under `move_all` the placer's own `fixed` list goes
 too, as the lowering has always had it: every part is placed but locked
 ones and those constraints.json fixes or places. The unit test
 `one_notion_of_a_held_part_covers_every_case` enumerates the cases.
+
+## Placer refusals since v18 (2026-10-23)
+
+The v19 sweep (x1539) refused four boards v18 (x1315) placed:
+OM-FlexGrid-Flex (J1), SmartSpin2k's panel (12 parts), OpenRX's panel
+(81 parts) and the molecule 5x4_wave (J3, J4). Bisected by building the
+commits between x1534 and x1535 (placement only, `place-kicad-board` on
+the tasks' prepared boards): none of it is the held-part or the
+free-dimension change.
+
+- **OM-FlexGrid-Flex** (6ebd4e4, the edge pads' copper-to-edge rule):
+  at the edge-copper levels a held part's pads keep the project's
+  copper-to-edge clearance (0.5 mm here) on every side, not only the
+  0.2 mm copper clearance beside the edge. J1, a 19-pin flex connector
+  (pads 11.15 mm wide) in its 12.4 mm tab, then has a window of 0.25 mm
+  along the edge (x 63.525 to 63.775), and the eviction's whole-board
+  scan, the only search that reaches the tab from where the anneal left
+  J1 (the fine grid's ring search looks 15 mm around), steps 0.5 mm
+  from the board's left end: 63.5 and 64.0, both outside. Now a part
+  held at one edge (or two parallel ones) that the coarse scan finds no
+  spot for is scanned again on the level's grid along that edge, pulled
+  flush against it (`legal::scan_steps`, `constraints::flush_center`):
+  J1 at 63.6, its pads 0.575 and 0.675 mm from the tab's sides. Only
+  where the coarse scan found nothing, so every placement that had a
+  spot is unchanged.
+- **SmartSpin2k and OpenRX** (057b3a4, the board's marks): the tasks
+  stack their parts, so none of the designers' labels attaches (the
+  panels' pin labels lie where the designers' connectors were), and the
+  marks made the placement too slow for its budget rather than the board
+  too full. SmartSpin2k's first level took the whole 600 s of work (a
+  legalization 125 to 147 s against 82 to 104 without marks, the
+  eviction 33 to 55 s against 3 to 8, and `seat_on_marks`' passes over
+  every part 200 to 280 s), so the looser levels that place it never
+  ran. Two changes:
+  - The searches skip positions a part's regions exclude
+    (`legal::region_window`): the ring search of the legaliser runs only
+    the rings and steps whose body centre the regions admit, and the
+    eviction's scans skip such positions before testing them. A panel's
+    copies put a region on every movable part, and a part without room
+    searched the whole board, nine copies' worth on SmartSpin2k, at every
+    pass. Exact: those positions were illegal; only the work counted
+    changes, and only on boards with regions (in the tiers, the panels
+    whose copies have their own nets).
+  - `seat_on_marks` legalizes every part again (with the failed ones
+    first) only when fewer than an eighth of the movable parts found no
+    room. More is a level too tight, which the next level eases; OpenRX's
+    panel had 55 of 216 parts without room at full halos and spent 100 s
+    of its 600 s on those passes at each of the first two levels, so the
+    spacing level that places it (as x1315 did, at 105 % of the front's
+    area) never came. MIDAS-MK1.1, whose headers the passes are for,
+    fails 1 to 10 of 160 parts at a time: unchanged.
+  SmartSpin2k: 12 parts without a place -> none (U2 twice and U5 seven
+  times on marks); OpenRX: 81 -> none.
+- **The molecule 5x4_wave** (the marks): not recovered. Its four
+  DisplayPort connectors a side (J3 left, J4 right, 17.5 mm each, with
+  J5 and J6 on the same edges) fill 70 of the edge's 76 mm, and the
+  designer's pin marks lie at each connector's spot, 19.05 mm apart. The
+  connectors placed off the marks leave the last one no slot; seating it
+  on the marks (also with every part allowed on them, by eviction and by
+  legalizing every part again) found none either. Without marks
+  (`keep_board_marks: false`) it places. The other four molecules were
+  refused by v18 already.
 
 ## What went wrong on the way (kept as lessons)
 

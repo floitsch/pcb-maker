@@ -989,6 +989,83 @@ pub fn illegal_components(problem: &Problem, poses: &[Pose]) -> Vec<usize> {
         .collect()
 }
 
+/// Where the body centre of `index` turned to `angle` may lie by its
+/// regions ([min x, min y, max x, max y], as `constraints::hard_violation`
+/// tests them, a hair wider), or None for a part without one. A position
+/// whose centre lies outside is illegal: the searches skip it untested (a
+/// panel's copies put a region on each movable part; a part without room
+/// searched the whole board at every pass, SmartSpin2k's nine copies nine
+/// times its own).
+fn region_window(problem: &Problem, index: usize, angle: f64) -> Option<[f64; 4]> {
+    let mut window: Option<[f64; 4]> = None;
+    for (part, region) in &problem.constraints.regions {
+        if *part != index {
+            continue;
+        }
+        let half = problem.components[index].half_extent(angle);
+        let slack = 1.0e-5;
+        let this = [
+            region[0] + half[0] - slack,
+            region[1] + half[1] - slack,
+            region[2] - half[0] + slack,
+            region[3] - half[1] + slack,
+        ];
+        window = Some(match window {
+            None => this,
+            Some(window) => [
+                window[0].max(this[0]),
+                window[1].max(this[1]),
+                window[2].min(this[2]),
+                window[3].min(this[3]),
+            ],
+        });
+    }
+    window
+}
+
+/// Whether `center` lies in `window` (`region_window`; None: anywhere).
+fn in_window(window: Option<[f64; 4]>, center: Point) -> bool {
+    window.is_none_or(|window| {
+        center[0] >= window[0]
+            && center[1] >= window[1]
+            && center[0] <= window[2]
+            && center[1] <= window[3]
+    })
+}
+
+/// The lattice steps (dx, dy) from a search's origin (whose body centre is
+/// `center`) that `window` admits, one step wider on each side for the
+/// rounding: [min dx, min dy, max dx, max dy]. None: no window.
+fn window_steps(window: Option<[f64; 4]>, center: Point, step: f64) -> Option<[i64; 4]> {
+    let window = window?;
+    Some([
+        ((window[0] - center[0]) / step).floor() as i64 - 1,
+        ((window[1] - center[1]) / step).floor() as i64 - 1,
+        ((window[2] - center[0]) / step).ceil() as i64 + 1,
+        ((window[3] - center[1]) / step).ceil() as i64 + 1,
+    ])
+}
+
+/// The rings (Chebyshev distances from the origin) holding a step of
+/// `steps`: [nearest, farthest]; an empty window none (nearest > farthest).
+fn window_rings(steps: [i64; 4]) -> (i64, i64) {
+    if steps[0] > steps[2] || steps[1] > steps[3] {
+        return (1, 0);
+    }
+    let nearest = |low: i64, high: i64| {
+        if low <= 0 && 0 <= high {
+            0
+        } else {
+            low.abs().min(high.abs())
+        }
+    };
+    let farthest = |low: i64, high: i64| low.abs().max(high.abs());
+    (
+        nearest(steps[0], steps[2]).max(nearest(steps[1], steps[3])),
+        farthest(steps[0], steps[2]).max(farthest(steps[1], steps[3])),
+    )
+}
+
 /// Moves every movable component to the nearest legal, grid-snapped position,
 /// largest bodies first. Returns the components that found no position.
 pub fn legalize(problem: &Problem, poses: &mut [Pose]) -> Vec<usize> {
@@ -1071,7 +1148,19 @@ pub fn legalize_keeping(
             };
             let ideal = component.position_for_center(wanted_center, *angle);
             let origin = constraints::snap_position(problem, index, ideal, *angle);
-            'search: for ring in 0..=rings {
+            let window = window_steps(
+                region_window(problem, index, *angle),
+                component.center(Pose {
+                    position: origin,
+                    angle: *angle,
+                }),
+                step,
+            );
+            let (nearest, farthest) = window.map_or((0, rings), window_rings);
+            'search: for ring in 0..=rings.min(farthest) {
+                if ring < nearest {
+                    continue;
+                }
                 // Once a legal spot exists, only slightly farther rings can
                 // still hold a closer Euclidean match.
                 if let Some((distance, _)) = best
@@ -1086,8 +1175,10 @@ pub fn legalize_keeping(
                 if best.is_none() && ring > hurried_rings && crate::out_of_work(0) {
                     break 'search;
                 }
-                for dy in -ring..=ring {
-                    for dx in -ring..=ring {
+                // Only the steps the part's regions admit (the same order).
+                let [low_x, low_y, high_x, high_y] = window.unwrap_or([-ring, -ring, ring, ring]);
+                for dy in (-ring).max(low_y)..=ring.min(high_y) {
+                    for dx in (-ring).max(low_x)..=ring.min(high_x) {
                         if dx.abs().max(dy.abs()) != ring {
                             continue;
                         }
@@ -1160,6 +1251,120 @@ pub fn legalize_stuck_first(
     best.expect("one pass at least")
 }
 
+/// The scans of `evict_for` for a spot of `index`: the coarse `step` on
+/// both axes and, for a part held at one edge (or at two parallel ones)
+/// on a finer grid, then the grid's step along that edge with the part
+/// pulled flush against it (`clamp`). A held part has a window across the edge
+/// (between the edge margin and its reach) and, at the edge-copper levels
+/// where its copper keeps the copper-to-edge clearance on every side,
+/// one along it, both narrower than the coarse step can hit
+/// (OM-FlexGrid-Flex's 19-pin flex connector J1 in its 12.4 mm tab: 0.25
+/// mm wide, between the coarse scan's x positions; the molecules'
+/// DisplayPort connectors, 0.45 mm across the edge).
+fn scan_steps(problem: &Problem, index: usize, step: f64) -> Vec<(f64, f64, bool)> {
+    let mut steps = vec![(step, step, false)];
+    let fine = problem.grid;
+    if fine <= 0.0 || fine >= step {
+        return steps;
+    }
+    let mut along = [false; 2];
+    for (part, edge, _) in &problem.constraints.edges {
+        if *part == index {
+            match edge {
+                constraints::Edge::Top | constraints::Edge::Bottom => along[0] = true,
+                constraints::Edge::Left | constraints::Edge::Right => along[1] = true,
+            }
+        }
+    }
+    match along {
+        [true, false] => steps.push((fine, step, true)),
+        [false, true] => steps.push((step, fine, true)),
+        _ => {}
+    }
+    steps
+}
+
+/// One scan of `evict_for` over the board at `steps` for a spot of
+/// `index`: the spot whose displaced movable parts are smallest in area
+/// (`best`, kept when no spot displaces less).
+#[allow(clippy::too_many_arguments)]
+fn evict_scan(
+    problem: &Problem,
+    poses: &[Pose],
+    index: usize,
+    bounds: [f64; 4],
+    steps: [f64; 2],
+    clamp: bool,
+    buckets: &mut Buckets,
+    near: &mut Vec<usize>,
+    work: &mut u64,
+    best: &mut Option<(f64, Pose, Vec<usize>)>,
+) {
+    let component = &problem.components[index];
+    let mut y = bounds[1];
+    while y <= bounds[3] {
+        let mut x = bounds[0];
+        while x <= bounds[2] {
+            for angle in &component.angle_options {
+                let mut at = [x, y];
+                if clamp {
+                    let center = component.center(Pose {
+                        position: at,
+                        angle: *angle,
+                    });
+                    let flush = constraints::flush_center(problem, index, center, *angle);
+                    at = component.position_for_center(flush, *angle);
+                }
+                let pose = Pose {
+                    position: constraints::snap_position(problem, index, at, *angle),
+                    angle: *angle,
+                };
+                if !in_window(
+                    region_window(problem, index, *angle),
+                    component.center(pose),
+                ) {
+                    continue;
+                }
+                *work += SPOT_WORK as u64 + held_work(problem, index);
+                if !fits_board(problem, index, pose, work) {
+                    continue;
+                }
+                buckets.near(problem, index, pose, near);
+                let fixed = near
+                    .iter()
+                    .copied()
+                    .filter(|other| problem.components[*other].fixed);
+                if !clear_of(problem, poses, index, pose, fixed, work) {
+                    continue;
+                }
+                let mut movable: Vec<usize> = near
+                    .iter()
+                    .copied()
+                    .filter(|other| !problem.components[*other].fixed)
+                    .collect();
+                movable.sort_unstable();
+                let mut area = 0.0;
+                let mut displaced = Vec::new();
+                for other in movable {
+                    if !clear_of(problem, poses, index, pose, std::iter::once(other), work) {
+                        let size = problem.components[other].body_size;
+                        area += size[0] * size[1];
+                        displaced.push(other);
+                        if best.as_ref().is_some_and(|(best, _, _)| area >= *best) {
+                            break;
+                        }
+                    }
+                }
+                if best.as_ref().is_none_or(|(best, _, _)| area < *best) {
+                    *best = Some((area, pose, displaced));
+                }
+            }
+            x += steps[0];
+        }
+        y += steps[1];
+    }
+}
+
 /// Places each part of `failed` where it displaces the least area of
 /// movable parts (never a fixed one), then finds the displaced parts new
 /// spots; keeps that only if all of them find one. A part whose spot is
@@ -1191,62 +1396,26 @@ pub fn evict_for(problem: &Problem, poses: &mut [Pose], failed: &[usize]) -> Vec
             still.push(index);
             continue;
         }
-        let component = &problem.components[index];
         // The spot whose displaced movable parts are smallest in area.
         let mut best: Option<(f64, Pose, Vec<usize>)> = None;
-        let mut y = bounds[1];
-        while y <= bounds[3] {
-            let mut x = bounds[0];
-            while x <= bounds[2] {
-                for angle in &component.angle_options {
-                    work += SPOT_WORK as u64 + held_work(problem, index);
-                    let pose = Pose {
-                        position: constraints::snap_position(problem, index, [x, y], *angle),
-                        angle: *angle,
-                    };
-                    if !fits_board(problem, index, pose, &mut work) {
-                        continue;
-                    }
-                    buckets.near(problem, index, pose, &mut near);
-                    let fixed = near
-                        .iter()
-                        .copied()
-                        .filter(|other| problem.components[*other].fixed);
-                    if !clear_of(problem, poses, index, pose, fixed, &mut work) {
-                        continue;
-                    }
-                    let mut movable: Vec<usize> = near
-                        .iter()
-                        .copied()
-                        .filter(|other| !problem.components[*other].fixed)
-                        .collect();
-                    movable.sort_unstable();
-                    let mut area = 0.0;
-                    let mut displaced = Vec::new();
-                    for other in movable {
-                        if !clear_of(
-                            problem,
-                            poses,
-                            index,
-                            pose,
-                            std::iter::once(other),
-                            &mut work,
-                        ) {
-                            let size = problem.components[other].body_size;
-                            area += size[0] * size[1];
-                            displaced.push(other);
-                            if best.as_ref().is_some_and(|(best, _, _)| area >= *best) {
-                                break;
-                            }
-                        }
-                    }
-                    if best.as_ref().is_none_or(|(best, _, _)| area < *best) {
-                        best = Some((area, pose, displaced));
-                    }
-                }
-                x += step;
+        for (x_step, y_step, clamp) in scan_steps(problem, index, step) {
+            // The finer scan along a held edge only where the coarse one
+            // found no spot.
+            if best.is_some() {
+                break;
             }
-            y += step;
+            evict_scan(
+                problem,
+                poses,
+                index,
+                bounds,
+                [x_step, y_step],
+                clamp,
+                &mut buckets,
+                &mut near,
+                &mut work,
+                &mut best,
+            );
         }
         let Some((_, pose, displaced)) = best else {
             still.push(index);
@@ -1269,11 +1438,17 @@ pub fn evict_for(problem: &Problem, poses: &mut [Pose], failed: &[usize]) -> Vec
                 let mut x = bounds[0];
                 while x <= bounds[2] {
                     for angle in &component.angle_options {
-                        work += SPOT_WORK as u64 + held_work(problem, moved);
                         let candidate = Pose {
                             position: constraints::snap_position(problem, moved, [x, y], *angle),
                             angle: *angle,
                         };
+                        if !in_window(
+                            region_window(problem, moved, *angle),
+                            component.center(candidate),
+                        ) {
+                            continue;
+                        }
+                        work += SPOT_WORK as u64 + held_work(problem, moved);
                         let distance = (candidate.position[0] - wanted[0]).powi(2)
                             + (candidate.position[1] - wanted[1]).powi(2);
                         if spot.is_some_and(|(best, _)| best <= distance) {

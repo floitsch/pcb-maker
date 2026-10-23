@@ -160,10 +160,23 @@ fn seat_on_marks(
     let mut seated = poses.clone();
     let seat_mark = mark();
     let mut again = legal::legalize_keeping(&trial, &mut seated, failed, &keep);
+    let kept_left = again.len();
     // Still without room (the others took the spots by the marks, where
     // MIDAS-MK1.1's two 36 mm headers go at the bottom edge): every part
-    // again, those first, the others around them.
-    if !again.is_empty() {
+    // again, those first, the others around them. Only for a few: where
+    // an eighth of the movable parts or more found no room, the level is
+    // too tight for them, which the next level eases, and the passes over
+    // every part took the budget of the looser levels that place the board
+    // (OpenRX's panel: 55 of 216 parts without room at full halos, 100 s
+    // of its 600 s of work at each of the first two levels; MIDAS-MK1.1's
+    // failures are 1 to 10 of 160).
+    let movable = trial
+        .components
+        .iter()
+        .filter(|component| !component.fixed)
+        .count();
+    let few = failed.len() * 8 < movable;
+    if !again.is_empty() && few {
         let (retry, left) =
             legal::legalize_stuck_first(&trial, poses, failed, STUCK_FIRST_PASSES, debug);
         if left.len() < again.len() {
@@ -172,6 +185,13 @@ fn seat_on_marks(
         }
     }
     phase_line(debug, "legalize on marks", seat_mark);
+    if debug {
+        eprintln!(
+            "placer: on marks: {} failed, {kept_left} left with the others kept, {} in the end",
+            failed.len(),
+            again.len()
+        );
+    }
     if again.len() < failed.len() {
         if debug {
             eprintln!(

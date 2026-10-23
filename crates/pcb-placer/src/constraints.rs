@@ -1203,6 +1203,30 @@ pub fn snap_position(problem: &Problem, index: usize, position: Point, angle: f6
     [snap(position[0], phase[0]), snap(position[1], phase[1])]
 }
 
+/// `center` moved across each edge that holds `index` to where the part
+/// lies flush with it (its copper at the clearance the edge asks for):
+/// the coordinate `grid_phase` aligns the grid to.
+pub fn flush_center(problem: &Problem, index: usize, center: Point, angle: f64) -> Point {
+    let component = &problem.components[index];
+    let half = component.half_extent(angle);
+    let bounds = edge_frame(problem, center, half);
+    let offsets = copper_edge_offsets(problem, index, angle);
+    let mut flush = center;
+    for (part, edge, _) in &problem.constraints.edges {
+        if *part != index {
+            continue;
+        }
+        let offset = offsets[side_index(*edge)];
+        match edge {
+            Edge::Left => flush[0] = bounds[0] + half[0] + offset,
+            Edge::Right => flush[0] = bounds[2] - half[0] - offset,
+            Edge::Top => flush[1] = bounds[1] + half[1] + offset,
+            Edge::Bottom => flush[1] = bounds[3] - half[1] - offset,
+        }
+    }
+    flush
+}
+
 fn grid_phase(problem: &Problem, index: usize, at: Point, angle: f64) -> Point {
     let mut phase = [0.0, 0.0];
     let constraints = &problem.constraints;
