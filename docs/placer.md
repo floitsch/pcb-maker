@@ -904,6 +904,188 @@ free-dimension change.
   (`keep_board_marks: false`) it places. The other four molecules were
   refused by v18 already.
 
+## Escape demand (2026-10-23)
+
+`escape_demand` (placer option, an experiment, off; `{"weight",
+"inflate", "turn_tolerance", "measured", "measure_every",
+"threshold"}`, defaults 2 mm, 1, 0.05, on, 20, 0.5). The plan agreed
+with Florian: put the routing structure where the placement is made,
+from general signals, and keep it to the end (phase 2 of
+[global-route.md](global-route.md) put a routing term into the anneal
+only, and the legaliser and refinement that follow, optimising
+wirelength alone, undid it). Code `crates/pcb-placer/src/escape.rs`, the
+lowering in `board_placer/config.rs` (`escape_fact`) and
+`board_placer/guidance.rs` (`measured_factory`).
+
+**The fact** (`Problem::escape`, lowered per board: the track pitch
+`track_pitch_mm`, the routable layers, and the nets that count: two pins
+or more, not carried by a pour). Per footprint and side (-x, +x, -y, +y
+of its body box at its pose), the **escape demand**: each of its pads'
+nets leaves through the side on the cheapest way to the net's nearest pad
+on another part (out to the side, twice the way under the body, then
+straight to that pad), one exit per net and side, recomputed from the
+parts' current positions as they move. Between two parts on one board
+side whose bodies face each other across a gap (overlapping along the
+side, at most 5 mm apart) the **channel**: the exits of both facing
+stretches (less those going to the other part, which cross the gap)
+must run along it, and it holds the gap over the pitch times the
+routable layers. Demand over capacity is the channel's overflow,
+attributed to both parts. A dense side facing the board edge or a part
+without demand towards it costs nothing. Unit tests in `escape.rs`
+(sides chosen, poured nets, overflow at four gaps and its symmetry, the
+facing stretch, the zero cases, a move into a full channel).
+
+**Where it acts.**
+
+- Global placement (`global.rs`): every rotation interval (15
+  iterations) each part's charge grows on each side by its demand there
+  times the pitch over the layers (`inflate`): a dense side needs room in
+  front of it. The added area pushes (density and the field's force);
+  the overflow that stops the placement still counts the bodies.
+- Rotation choice (`orient::escape_blocking`, from `choose_rotations`):
+  among the angles within `turn_tolerance` (5 %) of the shortest HPWL,
+  the one whose dense sides face the least body area (a band in front of
+  each side as deep as its demand's tracks, weighted by the demand; the
+  board edge is free) wins; ties by HPWL, then the angle held.
+- Legaliser (`legal::legalize_keeping`): a spot's distance grows by the
+  overflow of the channels the part forms there with the parts already
+  placed, `weight` mm per track (the spots' search order and its early
+  stop are unchanged: the term only adds).
+- Refinement (`legal::refine_with`): a move or swap pays `weight` mm per
+  track of overflow of the channels the moved part forms (its exits
+  fresh, the neighbours' as last refreshed: the moved part and the parts
+  sharing a net of up to 24 pins with it are refreshed after a kept
+  move).
+- The measured version (refinement): the global route's overflow
+  attribution per part (`board_placer::attribution` at `threshold` 0.5 of
+  the capacity, phase 2's measure), from a `pcb_global::Incremental` of
+  the placement at the refinement's start, carried along (the moved
+  parts' copper and terminals rigidly, their nets routed again) and read
+  every `measure_every` kept moves. It scales each part's term by
+  `2 a / (a + mean a)` (0 where the real route has no excess on the part's
+  nets, 1 at the mean, towards 2 above): the estimate is corrected by a
+  route late in placement. The layout lowers it with its router
+  configuration (the one hook in `board_layout.rs`); `place-kicad-board`
+  has no router rules and runs without it. Its work counts as placement
+  work, as phase 2's evaluations do.
+
+With the switch off none of this runs: `Problem::escape` is `None`, the
+global placement, the rotation choice, the legaliser and the refinement
+take their old paths.
+
+### Judgement
+
+**Verdict: the rule's conditions hold; proposed as the default, with the
+spread below as the caveat.** The eleven dense boards' summed KiCad
+unconnected falls 973 to 903 (-7 %; better on 5, worse on 5, equal on
+1), and the short tier loses nothing (unconnected 22 to 18, strict passes
+6 to 6). The open terminals after the first route fall on both (dense
+1349 to 1273, short 47 to 23).
+
+Single layouts at the task budgets (tasks v7, 1500 s of work, pinned
+rates 3.15e6 and 150e6), both sides x1751 (branch
+placement-escape-demand 9d01bdb), 5 x 2 for the dense boards and 3 x 2
+for the short tier, `--min-free-gb 10`, no lock, beside a full sweep and
+another agent's runs; the on side `--placer '{"escape_demand": {}}'`.
+Output `build/escape1-dense-{off,on}` and `build/escape1-dense2-{off,on}`
+(the memory ledger starved one side's later boards; the rest ran again
+with `--expected-gb 2` and the first rows spliced in: 4 off, 1 on),
+`build/escape1-short-{off,on}`. HPWL is the half-perimeter over the
+nets of the final board (unweighted); the ceiling is the designer's
+placement routed by our router (`build/designer-x1539-matched.log`; the
+x1725 run had no dense rows yet).
+
+**Off reproduces main.** `place-kicad-board` with x1725 (main 38edddd)
+and x1751 off (60 s of placement work at the pinned rates) writes
+byte-identical boards on all eleven dense and all twelve short-tier
+boards; the off layouts' rows equal the move-descent experiment's off
+side (x1691) on the boards where nothing downstream changed since
+(4in1 79, Glasgow 148, SmartSpin2k 80, panel 53, split72_left 38, MIDAS
+7, USB_Keypad 2). The fixture goldens do not move (check.sh --fast).
+
+| Board | KiCad unconnected off / on | first route open off / on | strict pass | HPWL mm off / on | vias off / on | work s off / on | designer's placement routed (x1539): unconnected, strict |
+| --- | ---: | ---: | --- | ---: | ---: | ---: | --- |
+| OpenESC 4in1-mini | 37 / 57 | 61 / 87 | no / no | 740 / 775 | 134 / 139 | 1271 / 1427 | 2, no |
+| Glasgow | 148 / 150 | 164 / 194 | no / no | 3094 / 3104 | 279 / 266 | 1467 / 1370 | 50, no |
+| SmartSpin2k | 80 / 43 | 82 / 47 | no / no | 18861 / 17727 | 1793 / 1690 | 1388 / 1302 | 0, no |
+| 0xCB panel | 53 / 53 | 82 / 84 | no / no | 5601 / 5699 | 244 / 315 | 1226 / 969 | 0, yes |
+| OpenESC 4in1 | 79 / 73 | 154 / 142 | no / no | 1237 / 1225 | 159 / 169 | 1376 / 1393 | 0, yes |
+| split72_left | 38 / 20 | 38 / 46 | no / no | 12730 / 12923 | 1114 / 863 | 1263 / 1398 | 1, no |
+| protoesp | 76 / 77 | 124 / 103 | no / no | 5676 / 6050 | 388 / 431 | 1208 / 1207 | 1, no |
+| video | 165 / 188 | 228 / 238 | no / no | 32694 / 34300 | 1482 / 1533 | 1388 / 1509 | 0, yes |
+| MegaDrive | 191 / 126 | 214 / 162 | no / no | 28995 / 30214 | 2120 / 2273 | 1574 / 1523 | 109, no |
+| SNSP-CPU-01 | 91 / 107 | 109 / 119 | no / no | 19117 / 18559 | 1763 / 1835 | 1334 / 1431 | 46, no |
+| DSP-ADAU1452 | 15 / 9 | 93 / 51 | no / no | 4049 / 4278 | 270 / 319 | 1321 / 1291 | 4, no |
+| sum | 973 / 903 | 1349 / 1273 | 0 / 0 | 132794 / 134853 | 9746 / 9833 | 14816 / 14821 | |
+
+| Board | KiCad unconnected off / on | first route open off / on | strict pass | HPWL mm off / on | vias off / on | work s off / on |
+| --- | ---: | ---: | --- | ---: | ---: | ---: |
+| eternal-keypad | 0 / 0 | 0 / 0 | no / no | 2233 / 2368 | 34 / 34 | 102 / 113 | |
+| MIDAS-MK1.1 | 7 / 7 | 17 / 7 | no / no | 3069 / 3062 | 234 / 234 | 265 / 330 | |
+| USB_Keypad | 2 / 2 | 2 / 2 | no / no | 1625 / 1372 | 181 / 122 | 472 / 560 | |
+| WLED_Matrix | 8 / 4 | 12 / 7 | no / no | 1844 / 1755 | 194 / 176 | 405 / 519 | |
+| reCamera | 4 / 4 | 10 / 5 | no / no | 355 / 330 | 83 / 63 | 313 / 289 | |
+| OpenFC | 1 / 1 | 2 / 1 | no / no | 1267 / 1286 | 163 / 163 | 445 / 403 | |
+| 0xCB 1337-v4.0 | 0 / 0 | 0 / 0 | yes / yes | 1293 / 1272 | 73 / 64 | 101 / 725 | |
+| USB_Cable_Tester | 0 / 0 | 0 / 0 | yes / yes | 1711 / 1670 | 106 / 101 | 134 / 136 | |
+| framework_mobo_lefthalf | 0 / 0 | 4 / 1 | yes / yes | 1090 / 1105 | 101 / 76 | 605 / 566 | |
+| Blue_Line | 0 / 0 | 0 / 0 | yes / yes | 239 / 252 | 26 / 26 | 5 / 8 | |
+| spell_tome_bottom | 0 / 0 | 0 / 0 | yes / yes | 264 / 265 | 9 / 8 | 27 / 21 | |
+| urchin | 0 / 0 | 0 / 0 | yes / yes | 2571 / 2576 | 39 / 39 | 55 / 63 | |
+| sum | 22 / 18 | 47 / 23 | 6 / 6 | 17561 / 17311 | 1243 / 1106 | 2930 / 3732 |
+
+Every short-tier placement differs (the inflated charge changes the
+global placement from the first rotation interval on, so every seed and
+the race's choice move). The rows: WLED_Matrix 8 to 4 (first route 12
+to 7, vias 194 to 176, HPWL -5 %); USB_Keypad equal at 2 with HPWL -15 %
+and vias 181 to 122 (the placer's own wirelength 1460 to 939 mm);
+reCamera equal at 4, first route 10 to 5, vias 83 to 63; MIDAS equal at
+7, first route 17 to 7; OpenFC equal at 1 (first route 2 to 1, the
+placer's wirelength +23 %); framework_mobo passes both (first route 4
+to 1, vias 101 to 76); 0xCB 1337-v4.0 passes both, its 725 s of work
+against 101 s are a final ladder (596 s of search) the on board's first
+route triggered with an item KiCad counted where the router did not (5
+checks, none cached), ending at the same board quality; eternal-keypad,
+USB_Cable_Tester, Blue_Line, spell_tome and urchin within a few percent.
+The summed work (+802 s) is that ladder and the placement's own extra
+work.
+
+The dense rows: the gains are SmartSpin2k (80 to 43, first route 82 to
+47), MegaDrive (191 to 126, 214 to 162), split72_left (38 to 20, vias
+1114 to 863), DSP-ADAU1452 (15 to 9, first route 93 to 51) and 4in1 (79
+to 73); the losses 4in1-mini (37 to 57, first route 61 to 87), video
+(165 to 188: the placement took 609 s of work against 525 s, its
+routing the less), SNSP-CPU-01 (91 to 107) and Glasgow and protoesp by
+one or two. The measured version ran 11 measurements and 217 kept
+moves per refinement on average over the dense boards' 75 refinements;
+the placement's work grows (video +16 %, Glasgow +19 %) within its
+budget.
+
+### Reading
+
+- **The first route moves, and here the final count follows on the
+  sum.** Unlike phase 2 (the anneal only, lost again in the legaliser
+  and refinement), the term is kept to the end: the open terminals after
+  the first route fall on the sum of both tiers (dense 1349 to 1273,
+  though on only 5 of the 11 boards; short tier lower or equal on every
+  board with any), and the KiCad count falls on the sum of both tiers.
+- **The spread is the size any perturbation of these boards gives.**
+  Phase 2 and the move descent moved single dense boards by 17 to 25
+  from seed changes alone; 5 better against 5 worse is no direction per
+  board, and the dense drop rests on MegaDrive (-65) and SmartSpin2k
+  (-37). The short tier is the cleaner signal: no row lost, three rows'
+  first routes halved or better, vias -11 %.
+- **What it does not do yet**: the channel term ignores the neighbours'
+  exits changing when a part moves (refreshed after a kept move only);
+  the legaliser has the estimate only (a measurement per legalisation
+  would cost a full global route at every level of every seed); the race
+  still ranks by RUDY and the placer's key by wirelength.
+
+Proposed: `escape_demand` on by default, after a seed-repeated pair on
+the dense boards (the same rule) confirms the sum; the switch stays as
+the override (`{"escape_demand": null}` turns it off once the default
+is `Some`).
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a

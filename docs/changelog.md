@@ -11,6 +11,52 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Experiment 2026-10-23 (escape demand in placement)
+
+Routing structure where the placement is made, one bounded experiment
+from general signals (the plan agreed with Florian). Write-up:
+docs/placer.md, "Escape demand (2026-10-23)". Branch
+placement-escape-demand; snapshots x1750 (uncommitted), x1751 (9d01bdb,
+measured). **Go by the rule, proposed as the default after a
+seed-repeated confirmation**; the switch `escape_demand` stays, off.
+
+- **The fact** (`pcb_placer::escape`, `Problem::escape`, lowered in
+  `board_placer/config.rs::escape_fact`): per footprint and side, the
+  nets leaving its body there (the cheapest way to each net's nearest pad
+  on another part, twice under the body), recomputed as parts move; per
+  pair of facing parts the channel (gap over the track pitch times the
+  routable layers) and its overflow (both facing stretches' exits less
+  the nets between the two), attributed to both; the board edge and a
+  part without demand towards the side cost nothing. Unit tests in
+  `escape.rs`.
+- **Where it acts**: the global placement inflates each part's charge on
+  each side by its demand (every 15 iterations); the rotation choice
+  takes, within 5 % of the shortest HPWL, the angle whose dense sides
+  face the least body area (`orient::escape_blocking`); the legaliser
+  adds 2 mm per track of overflow to a spot's distance; the refinement
+  adds it to a move's or swap's cost; the refinement's term is scaled per
+  part by the global route's overflow attribution
+  (`board_placer::guidance::measured_factory`: a `pcb_global::Incremental`
+  carried along the kept moves, read every 20 of them).
+- `move_descent.rs`: `PartCopper`, `part_copper` and `apply` are
+  `pub(crate)` for the measured version; `board_layout.rs`: the one hook,
+  the router configuration handed to the placer when `escape_demand` is
+  set (as for `global_guidance`).
+- **Off reproduces main**: x1725 and x1751 off place byte-identical
+  boards on all 23 boards (11 dense, 12 short tier).
+- **Measured** (single layouts at the task budgets, x1751 off / on):
+  dense KiCad unconnected 973 / 903 (better 5, worse 5, equal 1: SmartSpin2k
+  80 / 43, MegaDrive 191 / 126, split72_left 38 / 20, DSP 15 / 9, 4in1
+  79 / 73; 4in1-mini 37 / 57, video 165 / 188, SNSP-CPU-01 91 / 107,
+  Glasgow and protoesp +1 to 2), first route open 1349 / 1273, HPWL
+  +1.6 %, vias +0.9 %, work equal; short tier unconnected 22 / 18,
+  strict passes 6 / 6, first route open 47 / 23, vias 1243 / 1106,
+  work 2930 / 3732 s (0xCB 1337's final ladder after a KiCad-counted
+  item, same result). The per-board spread is the size seed changes
+  give on these boards (phase 2, the move descent): the dense sum rests on
+  MegaDrive and SmartSpin2k; the short tier, no row lost, is the cleaner
+  signal.
+
 ## Committed on 2026-10-23 (trouble repair: cheaper exchanges)
 
 The trouble-makers' repair (router.md, item 7) ran out of its work

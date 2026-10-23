@@ -34,7 +34,7 @@ The environment variables are indexed in the hand-over
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 9 | - | 2 | 9 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 65 | - | 0 | 65 | - |
-| [Placer settings](#placer-settings) | 47 | 43 | 4 | 47 | 17 |
+| [Placer settings](#placer-settings) | 48 | 44 | 4 | 48 | 19 |
 | [Layout settings](#layout-settings) | 18 | 18 | 0 | 18 | 7 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 2 |
@@ -329,7 +329,7 @@ The placer config file of `place-kicad-board`, and the `placer` object of the la
 | `edge_keep_mm` | `f64` | `3.0` | - | Through-hole parts with at least four pins (connectors, headers) whose body comes within this distance of the outline stay where the designer put them: at the edge, where they are reachable. |
 | `free` | `Vec<String>` | `[]` | placer.md | References that may move even though a default rule would fix them. |
 | `whitespace_fill` | `f64` | `0.0` | - | Share of the whitespace taken by filler charge: 1 packs the parts as tightly as halos allow, 0 spreads them over the whole board. 0 by default: the spare room then lies between the parts, where routing needs it (routed in route mode, Sisu's placement left 11 open in KiCad at 0 and 20 at 0.6; OpenESC mini 62-70 against 80-86 over two seeds; wirelength within 3 %). |
-| `track_pitch_mm` | `f64` | `0.65` | - | Every footprint keeps a halo of `pins / pins_per_halo_track` tracks (at `track_pitch_mm`, capped at `maximum_halo_mm`) free around its courtyard so its pins can escape. |
+| `track_pitch_mm` | `f64` | `0.65` | placer.md | Every footprint keeps a halo of `pins / pins_per_halo_track` tracks (at `track_pitch_mm`, capped at `maximum_halo_mm`) free around its courtyard so its pins can escape. |
 | `pins_per_halo_track` | `f64` | `8.0` | - | Pins per track of halo (see `track_pitch_mm`); 0 gives no part a pin-count halo. |
 | `halo_scale` | `f64` | `1.0` | - | Factor on the routing halos the pin counts ask for (not on `halo_overrides_mm`): less room for escapes, shorter wires. |
 | `maximum_halo_mm` | `f64` | `4.0` | - | The largest pin-count halo, in mm, before `halo_scale`. |
@@ -367,6 +367,7 @@ The placer config file of `place-kicad-board`, and the `placer` object of the la
 | `keep_board_marks` | `bool` | `true` | placer.md | The board's own texts (header pin names, a title) and silkscreen graphics (a logo, a frame around a group) stay where the input put them: each is a placement obstacle on its side with a keepout's semantics (texts on F.SilkS, B.SilkS, F.Cu and B.Cu by their box from font size, thickness and justification; graphics on the silkscreen by their strokes, in clusters, leaving out a cluster that spans most of the board; a part meets a silkscreen mark without its routing halo; a mark on a movable part at its input position belongs to that part and is none: `attached_marks` in `board-placer.json`), and a part that finds no room off them at a level lies on them (`parts_on_marks` in `board-placer.json`); the layout routes around copper texts instead of moving them afterwards, and the polish moves only the parts' reference and value labels. Movable parts whose silkscreen or pads lie on a mark are reported (`labels.overlaps` in `board-layout.json`, the verdict's next_actions); fixed parts on a mark get a warning. On; off: the behaviour before 2026-10-21 (the marks are no obstacles, the polish moves them off the parts). |
 | `attached_marks` (internal) | `Option<Vec<(usize, usize)>>` | unset (internal) | - | The board's marks that belong to a movable part, taken from the input (`attach_marks`: the mark's place among the board's marks, the part); set by the layout for the lowerings of the placed board, where the parts no longer lie where the input had them. |
 | `global_guidance` | `Option<KiCadGlobalGuidance>` | unset | - | The global route inside the placer's search (an experiment, off): the anneal re-evaluates the global route of its placement and prefers moves away from overflowing boundaries, proposing the parts whose nets cross them more often; the coupled loop moves those parts first (docs/global-route.md, "Phase 2"). |
+| `escape_demand` | `Option<KiCadEscapeDemand>` | unset | placer.md | Escape demand in placement (an experiment, off): where each part's nets leave its body, and the channels between parts that must carry them, shape the global placement's density, the rotation choice, the legaliser and the refinement; the refinement corrects the estimate by the global route's overflow attribution (docs/placer.md, "Escape demand (2026-10-23)"). |
 | `guidance_router` (internal) | `Option<KiCadBoardRouterConfig>` | unset (internal) | - | The router's configuration the guidance lowers with (set by the layout; the default otherwise). |
 
 ## Layout settings
@@ -411,7 +412,7 @@ The `free_dimension` object of the layout settings: one edge of a rectangular ou
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
 | `free_dimension.edge` | `String` | required | - | The edge of the rectangular outline that moves: `bottom`, `top`, `left` or `right`. The opposite edge stays where it is. |
-| `free_dimension.min` | `Option<f64>` | optional | router.md | The smallest extent of the board along the free axis (its height for `top` and `bottom`, its width for `left` and `right`), in millimetres; with `max` and `step`. |
+| `free_dimension.min` | `Option<f64>` | optional | router.md, placer.md | The smallest extent of the board along the free axis (its height for `top` and `bottom`, its width for `left` and `right`), in millimetres; with `max` and `step`. |
 | `free_dimension.max` | `Option<f64>` | optional | - | The largest extent along the free axis, in millimetres. |
 | `free_dimension.step` | `Option<f64>` | optional | - | The sizes tried: `min`, `min + step`, ... up to `max` (and `max` itself). |
 | `free_dimension.sizes` | `Vec<f64>` | optional | - | The sizes tried, instead of a range and a step. |
