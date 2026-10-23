@@ -423,8 +423,8 @@ Switches and experiment hooks (change the result):
 - `PCB_ROUTER_TROUBLE_SHARE`: the trouble-makers' repair: its work as a share of the attempt's negotiation (default 0.5, at least 30 s).
 - `PCB_ROUTER_TROUBLE_ROUNDS`: the trouble-makers' repair: rounds over the open nets (default 3).
 - `PCB_ROUTER_TROUBLE_VICTIMS`: the trouble-makers' repair: the most nets one exchange may displace (default 12).
-- `PCB_ROUTER_TROUBLE_PER_OPEN`: the trouble-makers' repair: the nets an exchange may displace per open terminal of the trouble-maker; its limit is the larger of this times its open terminals and `PCB_ROUTER_TROUBLE_VICTIMS` (default 0, the flat limit).
-- `PCB_ROUTER_TROUBLE_TIES`: the trouble-makers' repair: `1` keeps an exchange that closes as many terminals as it opens when fewer of the nets involved stay open (default 0).
+- `PCB_ROUTER_TROUBLE_PER_OPEN`: the trouble-makers' repair: the nets an exchange may displace per open terminal of the trouble-maker; its limit is the larger of this times its open terminals and `PCB_ROUTER_TROUBLE_VICTIMS` (default 2; 0 the flat limit).
+- `PCB_ROUTER_TROUBLE_TIES`: the trouble-makers' repair: `1` keeps an exchange that closes as many terminals as it opens when fewer of the nets involved stay open (default 1; `0` refuses every tie).
 - `PCB_ROUTER_TROUBLE_ORDER`: the trouble-makers' repair: the order of a round's trouble-makers, `open` (most open terminals first) or `few` (each surveyed by its priced search alone, the fewest victims per terminal closed first; default `open`).
 - `PCB_ROUTER_TROUBLE_DEPTH`: the trouble-makers' repair: 2 lets a displaced net that came out worse displace others in turn (default 1).
 - `PCB_ROUTER_TROUBLE_POURS`: the trouble-makers' repair: `1` lets pour nets take part, as trouble-makers and as victims, weighed by their pads off the pour's main piece (an experiment, off).

@@ -195,12 +195,12 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_ROUTER_TROUBLE_PER_OPEN",
         Kind::Switch,
-        "the trouble-makers' repair: the nets an exchange may displace per open terminal of the trouble-maker; its limit is the larger of this times its open terminals and `PCB_ROUTER_TROUBLE_VICTIMS` (default 0, the flat limit).",
+        "the trouble-makers' repair: the nets an exchange may displace per open terminal of the trouble-maker; its limit is the larger of this times its open terminals and `PCB_ROUTER_TROUBLE_VICTIMS` (default 2; 0 the flat limit).",
     ),
     (
         "PCB_ROUTER_TROUBLE_TIES",
         Kind::Switch,
-        "the trouble-makers' repair: `1` keeps an exchange that closes as many terminals as it opens when fewer of the nets involved stay open (default 0).",
+        "the trouble-makers' repair: `1` keeps an exchange that closes as many terminals as it opens when fewer of the nets involved stay open (default 1; `0` refuses every tie).",
     ),
     (
         "PCB_ROUTER_TROUBLE_ORDER",

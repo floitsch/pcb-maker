@@ -6,8 +6,10 @@
 //! 2026-10-23; `PCB_ROUTER_TROUBLE` overrides it): after the hard repair, each net still open is routed through whatever
 //! is in its way at a price, the nets it then overlaps lose the branches it
 //! crosses and are routed again around it, hard; the exchange is kept when
-//! the open terminals of all of them together drop
-//! (docs/experiments/human-level-routing.md).
+//! the open terminals of all of them together drop, or stay and fewer of
+//! the nets are open. An exchange may displace 12 nets, or twice the
+//! trouble-maker's open terminals where that is more
+//! (docs/experiments/human-level-routing.md; docs/router.md, item 7).
 
 use super::*;
 
@@ -24,14 +26,18 @@ pub(super) struct TroubleSettings {
     /// `per_open`).
     pub victims: usize,
     /// The victims a trouble-maker may displace per open terminal of its
-    /// own (`PCB_ROUTER_TROUBLE_PER_OPEN`): its limit is the larger of
-    /// `victims` and this times its open terminals; 0 the flat limit.
+    /// own (`PCB_ROUTER_TROUBLE_PER_OPEN`, 2): its limit is the larger of
+    /// `victims` and this times its open terminals (a supply net with 20
+    /// open pads may displace 40 nets, a two-pad net 12); 0 the flat
+    /// limit.
     pub per_open: f64,
     /// A trade that closes as many terminals as it opens is kept when it
-    /// leaves fewer of the nets involved open (`PCB_ROUTER_TROUBLE_TIES`).
+    /// leaves fewer of the nets involved open (`PCB_ROUTER_TROUBLE_TIES`,
+    /// on; `0` refuses every tie).
     pub ties: bool,
     /// The order of the trouble-makers in a round
-    /// (`PCB_ROUTER_TROUBLE_ORDER`).
+    /// (`PCB_ROUTER_TROUBLE_ORDER`, `open`; `few` measured on 2026-10-23
+    /// and not kept, docs/changelog.md).
     pub order: TroubleOrder,
     /// 2: a displaced net that comes out worse may displace others in
     /// turn; 1: not.
@@ -66,7 +72,7 @@ pub fn trouble_override() -> Option<bool> {
 
 impl TroubleSettings {
     /// The knobs: `PCB_ROUTER_TROUBLE_PRESENT` (20), `_SHARE` (0.5),
-    /// `_ROUNDS` (3), `_VICTIMS` (12), `_PER_OPEN` (0), `_TIES` (0),
+    /// `_ROUNDS` (3), `_VICTIMS` (12), `_PER_OPEN` (2), `_TIES` (1),
     /// `_ORDER` (`open`) and `_DEPTH` (1).
     pub(super) fn from_env() -> Self {
         fn read<T: std::str::FromStr>(name: &str, default: T) -> T {
@@ -80,8 +86,8 @@ impl TroubleSettings {
             share: read("PCB_ROUTER_TROUBLE_SHARE", 0.5),
             rounds: read("PCB_ROUTER_TROUBLE_ROUNDS", 3),
             victims: read("PCB_ROUTER_TROUBLE_VICTIMS", 12),
-            per_open: read("PCB_ROUTER_TROUBLE_PER_OPEN", 0.0),
-            ties: read("PCB_ROUTER_TROUBLE_TIES", 0) != 0,
+            per_open: read("PCB_ROUTER_TROUBLE_PER_OPEN", 2.0),
+            ties: read("PCB_ROUTER_TROUBLE_TIES", 1) != 0,
             order: match std::env::var("PCB_ROUTER_TROUBLE_ORDER").as_deref() {
                 Ok("few") => TroubleOrder::FewestVictims,
                 _ => TroubleOrder::MostOpen,
