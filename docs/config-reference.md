@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 90 | 77 | 13 | 90 | 35 |
+| [Router settings](#router-settings) | 92 | 77 | 15 | 92 | 35 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 0 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 0 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
@@ -35,7 +35,7 @@ The environment variables are indexed in the hand-over
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 65 | - | 0 | 65 | - |
 | [Placer settings](#placer-settings) | 48 | 44 | 4 | 48 | 19 |
-| [Layout settings](#layout-settings) | 18 | 18 | 0 | 18 | 7 |
+| [Layout settings](#layout-settings) | 19 | 19 | 0 | 19 | 7 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 2 |
 | [Layout settings: silkscreen](#layout-settings-silkscreen) | 1 | 1 | 0 | 1 | 1 |
@@ -93,6 +93,8 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `strict_via_budget` | `Option<bool>` | unset | - | Router `strict_via_budget` (default on): the via reduction keeps its budget within a round. |
 | `run_work` (internal) | `Option<(f64, f64)>` | unset (internal) | - | The run's work budget and what is left of it as the attempt starts (router `run_work`; set by the ladder, not read from a file). |
 | `deadline_work` (internal) | `Option<f64>` | unset (internal) | - | The work (seconds of an idle machine) left before the run's nominal end, as the ladder starts (set by the layout; none in route mode). The ladder's decisions of whether another attempt fits are taken in it, not in the wall clock, so that a busy machine decides the same way; the wall-clock deadline stays as the last guard. |
+| `keep_for_continuation` (internal) | `bool` | `false` (internal) | - | With `deadline_work`: the layout routes another attempt after this ladder (the narrow-signal attempt's continuation in the other pour mode), so the ladder keeps work for it as it keeps work for its own narrow-signal step (`narrow_step_reserve`, from its first attempt's work): its seed rounds see the work left without it (set by the layout, not read from a file). |
+| `fresh_open` (internal) | `Option<usize>` | unset (internal) | - | The router's open count of a fresh first attempt (the layout's first route): a ladder routing the remainder of a kept router state stops after its first attempt when that leaves more open, and the layout routes from scratch instead (set by the layout, not read from a file). |
 | `router_deadline_work` (internal) | `Option<f64>` | unset (internal) | - | The work at which a router of this attempt stops as at the deadline (router `deadline_work`, its own work counted from zero; set by the ladder from `deadline_work`, not read from a file). |
 | `limits_count_all` (internal) | `bool` | `false` (internal) | - | The router's work deadline and negotiation limit count all its work (router `limits_count_all`: its search, pour analyses and build); set by route mode's ladder for its first attempt and the rung probes, not read from a file. |
 | `kicad_check_top` (internal) | `Option<usize>` | unset (internal) | - | KiCad checks only the attempts among this many best by the router's count (`CheckGate`; set by the layout for its final ladder, not read from a file). |
@@ -394,6 +396,7 @@ The layout config file of `layout-kicad-board`. Unknown keys are rejected; a mis
 | `free_dimension` | `Option<crate::free_dimension::KiCadFreeDimension>` | unset | - | One edge of a rectangular outline the layout may move, to find the smallest board that comes out clean (docs/constraints.md, "A free dimension"): `layout-kicad-board` then lays the board out at several sizes, `total_seconds` being the whole search's budget. |
 | `silkscreen` | `KiCadSilkscreenConfig` | its own table | placer.md | The footprints' Reference and Value fields on the silkscreen, placed after routing where KiCad's silkscreen checks find nothing. |
 | `move_descent` | `Option<crate::move_descent::KiCadMoveDescent>` | unset | - | The move descent after the first route (an experiment, off when absent; docs/experiments/move-descent.md): single parts nudged, turned or swapped where the incremental global route and then a local reroute say fewer terminals stay open, also on boards far from complete. `PCB_LAYOUT_MOVE_DESCENT` overrides (`0` off). |
+| `final_route_from_state` | `bool` | `false` | - | Routes survive moves: the final route (the ladder, or the narrow-signal attempt standing in for it) starts from the router's state after the first route and the moves, its complete and legal nets without a pour kept as the board's own copper, and routes the rest; from scratch only when its first attempt leaves more open than the first route did. False: from scratch, as before. `PCB_LAYOUT_FINAL_FROM_STATE` (0 or 1) overrides. |
 
 ## Layout settings: swappable entries
 

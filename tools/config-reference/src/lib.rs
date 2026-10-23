@@ -183,6 +183,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "overrides the layout's `move_descent` (`0` off, anything else on with layout.json's settings or the defaults): the move descent after the first route (docs/experiments/move-descent.md).",
     ),
     (
+        "PCB_LAYOUT_FINAL_FROM_STATE",
+        Kind::Switch,
+        "overrides the layout's `final_route_from_state` (`0` off, anything else on): the final route starts from the router's state, its complete and legal nets kept (docs/placer.md, \"Routes survive moves\").",
+    ),
+    (
         "PCB_ROUTER_TROUBLE_PRESENT",
         Kind::Switch,
         "the trouble-makers' repair: the price of sharing a node in the trouble-maker's search (default 20).",
