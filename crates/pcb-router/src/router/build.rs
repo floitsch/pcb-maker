@@ -322,7 +322,7 @@ impl Router {
             spare_scratches: SpareScratches::default(),
             profile: Profile::default(),
             in_via_reduction: false,
-            hard_local: false,
+            hard_scope: HardScope::Full,
             in_trial: false,
             buses: Vec::new(),
             bus_of: Vec::new(),

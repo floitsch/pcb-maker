@@ -1253,10 +1253,10 @@ pub struct Router {
     profile: Profile,
     /// While the via reduction runs (its negotiations are its own phase).
     in_via_reduction: bool,
-    /// While the trouble repair's victims are routed again locally
-    /// (`TroubleSettings::local`): a hard search keeps to its corridors,
-    /// without the window and board-wide fallbacks.
-    hard_local: bool,
+    /// Which of its searches a hard route makes while the trouble
+    /// repair routes its victims again (`TroubleSettings::local`);
+    /// `HardScope::Full` elsewhere.
+    hard_scope: HardScope,
     /// While a layout's trial (`reroute` without the polish) finishes:
     /// the trouble-makers' repair waits for the board kept.
     in_trial: bool,
@@ -1316,3 +1316,14 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
 mod rule_tests;
 #[cfg(test)]
 mod tests;
+
+/// The searches of a hard route (`Router::hard_scope`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HardScope {
+    /// The corridors, then the window and the board.
+    Full,
+    /// The corridors only.
+    Corridors,
+    /// The window only, not the corridors (searched already).
+    Window,
+}

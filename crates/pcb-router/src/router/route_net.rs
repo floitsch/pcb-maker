@@ -293,6 +293,9 @@ impl Router {
             // Two-level search: a corridor from the tile graph first, wider
             // on failure, and only then the plain window and the full board.
             let mut planned = None;
+            // The trouble repair's second pass over its victims searched
+            // their corridors already.
+            let skip_corridors = hard && self.hard_scope == HardScope::Window;
             let mut just_broken = false;
             // The bundle first: inside the bus's corridor, on the lane;
             // a member that finds no path there is broken out of it.
@@ -368,7 +371,8 @@ impl Router {
                         break;
                     }
                 }
-            } else if planned.is_none() && self.config.corridors && !self.cleanup {
+            } else if planned.is_none() && self.config.corridors && !self.cleanup && !skip_corridors
+            {
                 // One tile more every six reroutes. Widened every three,
                 // the corridors of the nets the negotiation kept rerouting
                 // gave their searches room the paths never used (Sisu and
@@ -415,9 +419,10 @@ impl Router {
             // Board-wide fallbacks, unless they keep failing where a
             // corridor was searched first.
             scratch.lane.active = false;
-            let corridor_tried = global.is_some() || (self.config.corridors && !self.cleanup);
-            // The trouble repair's victims (`hard_local`): corridors only.
-            let fallback = if hard && self.hard_local && corridor_tried {
+            let corridor_tried =
+                global.is_some() || (self.config.corridors && !self.cleanup && !skip_corridors);
+            // The trouble repair's victims (`hard_scope`): corridors only.
+            let fallback = if hard && self.hard_scope == HardScope::Corridors && corridor_tried {
                 false
             } else {
                 hard || !corridor_tried || net_state.hopeless_searches < 2
@@ -440,7 +445,7 @@ impl Router {
                 )
             });
             let path = path.or_else(|| {
-                (fallback && windowed != full)
+                (fallback && windowed != full && !(hard && self.hard_scope == HardScope::Window))
                     .then(|| {
                         self.search(
                             scratch,
