@@ -148,8 +148,8 @@ model) and `tests`.
    43 pads.
 8. **Cleanup.** Each net is rerouted alone with pure geometric cost and a high
    via cost; the result is kept only if strictly cheaper.
-   After the via reduction, the straightening (`straighten`, "Straightening"
-   below) takes stair-steps and jogs out of the signal nets' paths.
+   After the via reduction and the spoke repairs, the straightening
+   (`straighten`, "Straightening" below) takes stair-steps and jogs out of the signal nets' paths.
 9. **Verification.** `pcb_router::verify` measures true distances between all
    emitted copper, obstacles and the outline, independent of the lattice.
 
@@ -1715,7 +1715,8 @@ like (docs/quality.md, "Aesthetics"; changelog 2026-10-23).
 
 `straighten` (router/straighten.rs, `Config::straighten`, on by default;
 `PCB_ROUTER_NO_STRAIGHTEN` turns it off) runs after the via reduction
-(after the trouble repair too), as part of the clean-up's phase. For every complete
+and the thermal spoke repairs (which so see the routes as before), as
+part of the clean-up's phase. For every complete
 signal net (pour nets and fixed branches stay as they are) it lifts the
 net's stamps and works on each branch one layer's run at a time: between
 two of the run's corners (up to eight corners and 15 mm apart) it tries

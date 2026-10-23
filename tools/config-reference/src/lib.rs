@@ -125,7 +125,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_ROUTER_NO_STRAIGHTEN",
         Kind::Switch,
-        "turns the router's straightening off (`straighten`, on since 2026-10-23): after the via reduction, stair-steps and jogs taken out of the signal nets' paths where the clearance allows (docs/router.md, \"Straightening\"; for attributing rows).",
+        "turns the router's straightening off (`straighten`, on since 2026-10-23): after the via reduction and the thermal spoke repairs, stair-steps and jogs taken out of the signal nets' paths where the clearance allows (docs/router.md, \"Straightening\"; for attributing rows).",
     ),
     (
         "PCB_ROUTER_ISLAND_STUBS",

@@ -150,10 +150,10 @@ pub struct Config {
     pub window_margin: f64,
     /// Passes of per-net shortening after the board is conflict free.
     pub cleanup_passes: usize,
-    /// After the via reduction, take stair-steps and jogs out of the
-    /// signal nets' paths where the clearance allows (`straighten`:
-    /// shortest octilinear paths between a run's corners with fewer
-    /// bends; never longer, no via moves).
+    /// After the via reduction and the thermal spoke repairs, take
+    /// stair-steps and jogs out of the signal nets' paths where the
+    /// clearance allows (`straighten`: shortest octilinear paths between
+    /// a run's corners with fewer bends; never longer, no via moves).
     pub straighten: bool,
     /// Via cost while cleaning up. The existing route is always a fallback
     /// there, so a high value removes vias without risking completion.
