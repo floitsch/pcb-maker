@@ -92,18 +92,6 @@ impl Router {
                 self.fingerprint()
             );
         }
-        // Part of the clean-up: a trial without one does not straighten.
-        if self.config.straighten && self.config.cleanup_passes > 0 && !self.hopeless {
-            let mark = self.phase_mark();
-            self.straighten(order);
-            self.phase_charge(2, mark);
-            if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
-                eprintln!(
-                    "fingerprint after straightening: {:016x}",
-                    self.fingerprint()
-                );
-            }
-        }
         // A repair for the final board, like the via reduction: a trial
         // (clean-up and via reduction off) skips it (PolyKybd left: 313 s
         // in the first route, mostly hard searches flooding the lattice).
@@ -120,6 +108,20 @@ impl Router {
                 "fingerprint after thermal spokes: {:016x}",
                 self.fingerprint()
             );
+        }
+        // Part of the clean-up (a trial without one does not straighten),
+        // after the spoke repairs: they see the routes as before, and the
+        // straightening keeps out of the spoke corridors they freed.
+        if self.config.straighten && self.config.cleanup_passes > 0 && !self.hopeless {
+            let mark = self.phase_mark();
+            self.straighten(order);
+            self.phase_charge(2, mark);
+            if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
+                eprintln!(
+                    "fingerprint after straightening: {:016x}",
+                    self.fingerprint()
+                );
+            }
         }
         if self.config.verbose {
             eprintln!(

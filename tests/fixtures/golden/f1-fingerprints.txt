@@ -2,8 +2,8 @@ fingerprint after clean-up: 2e6dc8a0057b790e
 fingerprint after clean-up: e0f1e8464dbf9bfc
 fingerprint after straightening: 07e72772c8f8e346
 fingerprint after straightening: d642218ab2aaf291
-fingerprint after thermal spokes: 07e72772c8f8e346
-fingerprint after thermal spokes: d642218ab2aaf291
+fingerprint after thermal spokes: 2e6dc8a0057b790e
+fingerprint after thermal spokes: e0f1e8464dbf9bfc
 fingerprint after via reduction: 2e6dc8a0057b790e
 fingerprint after via reduction: e0f1e8464dbf9bfc
 fingerprint before resolve: 9d4aeb800c499e53
