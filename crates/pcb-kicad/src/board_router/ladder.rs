@@ -657,7 +657,10 @@ impl<'a> Ladder<'a> {
             && left >= 2.0 * NARROW_RESERVE_FLOOR
         {
             ladder.reserve_set = true;
-            ladder.reserve = reserve_with_check(NARROW_RESERVE_FLOOR, ladder.check_charge);
+            // A tenth more: seeds stop at their deadline only after the
+            // batch under way (DSP-ADAU1452 after the descent: 239 s left
+            // of the 244 s kept, and the attempt after it did not run).
+            ladder.reserve = reserve_with_check(1.1 * NARROW_RESERVE_FLOOR, ladder.check_charge);
             eprintln!(
                 "ladder: {:.0} s of work kept for the attempt after it ({left:.0} s left)",
                 ladder.reserve
