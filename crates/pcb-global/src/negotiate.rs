@@ -104,6 +104,11 @@ pub struct GlobalRoute {
     pub seconds: f64,
     /// States popped by all searches (the negotiation's work).
     pub pops: u64,
+    /// The history on the boundaries and via sites and the present price
+    /// where the negotiation ended (for `Incremental`).
+    pub history: [Vec<f32>; 2],
+    pub via_history: Vec<f32>,
+    pub present: f32,
 }
 
 impl GlobalRoute {
@@ -134,12 +139,12 @@ impl GlobalRoute {
     }
 }
 
-struct Plan {
-    net: usize,
+pub(crate) struct Plan {
+    pub(crate) net: usize,
     /// Per terminal its states.
     terminals: Vec<Vec<u32>>,
     pour: bool,
-    demand: f32,
+    pub(crate) demand: f32,
     lower_bound: u32,
     /// Terminals in Prim order of their spanning tree, each with its
     /// parent there (the first is its own).
@@ -151,16 +156,16 @@ struct Plan {
 
 const SOURCE: u32 = u32::MAX;
 
-struct Graph<'a> {
+pub(crate) struct Graph<'a> {
     frame: &'a Frame,
     capacity: &'a Capacity,
     config: &'a GlobalConfig,
     tiles: usize,
     layers: usize,
-    usage: [Vec<f32>; 2],
-    history: [Vec<f32>; 2],
-    via_usage: Vec<f32>,
-    via_history: Vec<f32>,
+    pub(crate) usage: [Vec<f32>; 2],
+    pub(crate) history: [Vec<f32>; 2],
+    pub(crate) via_usage: Vec<f32>,
+    pub(crate) via_history: Vec<f32>,
     /// Per layer: (along x, along y) cost factors.
     direction: Vec<[f32; 2]>,
     /// Per layer: the pour factor at full cover.
@@ -179,7 +184,7 @@ struct Graph<'a> {
     endpoint: Vec<u32>,
     heap: BinaryHeap<Reverse<(u32, u32)>>,
     /// States popped by all searches (the work).
-    pops: u64,
+    pub(crate) pops: u64,
     /// Terminals (net, index) a search over the whole board did not
     /// connect: closed boundaries never open, so they are not searched
     /// again.
@@ -187,7 +192,7 @@ struct Graph<'a> {
 }
 
 impl<'a> Graph<'a> {
-    fn new(frame: &'a Frame, capacity: &'a Capacity, config: &'a GlobalConfig) -> Self {
+    pub(crate) fn new(frame: &'a Frame, capacity: &'a Capacity, config: &'a GlobalConfig) -> Self {
         let tiles = frame.tiles();
         let layers = frame.layers;
         let states = tiles * layers;
@@ -257,7 +262,7 @@ impl<'a> Graph<'a> {
         (direction * self.layers * self.tiles + layer * self.tiles + tile) as u32
     }
 
-    fn take(&mut self, route: &NetRoute, demand: f32, sign: f32) {
+    pub(crate) fn take(&mut self, route: &NetRoute, demand: f32, sign: f32) {
         let per = self.layers * self.tiles;
         for &edge in &route.crossings {
             let edge = edge as usize;
@@ -439,7 +444,7 @@ impl<'a> Graph<'a> {
         added
     }
 
-    fn route(&mut self, plan: &Plan, present: f32) -> NetRoute {
+    pub(crate) fn route(&mut self, plan: &Plan, present: f32) -> NetRoute {
         let mut route = NetRoute {
             net: plan.net,
             lower_bound: plan.lower_bound,
@@ -602,20 +607,47 @@ fn spanning_steps(points: &[(i64, i64)]) -> u32 {
 /// connects it, its demand in reference tracks; in the router's order
 /// (pour nets first, then nets of up to eight terminals, each by span).
 fn plans(board: &Board, frame: &Frame, capacity: &Capacity, config: &GlobalConfig) -> Vec<Plan> {
-    let tiles = frame.tiles();
-    let layers = frame.layers;
-    let reference = capacity.reference.trace_width + capacity.reference.clearance;
+    let owned = pour_owned(board, capacity);
+    let mut keyed: Vec<(PlanKey, Plan)> = (0..board.nets.len())
+        .filter_map(|net| plan(board, frame, capacity, config, &owned, net))
+        .collect();
+    keyed.sort_by_key(|(key, _)| *key);
+    keyed.into_iter().map(|(_, plan)| plan).collect()
+}
+
+/// The routing order's key of a plan (pour nets first, then nets of up to
+/// eight terminals, each by span).
+pub(crate) type PlanKey = (bool, bool, u64, usize);
+
+/// Per net whether a connected pour owns tiles of it.
+pub(crate) fn pour_owned(board: &Board, capacity: &Capacity) -> Vec<bool> {
     let mut owned = vec![false; board.nets.len()];
     for owner in &capacity.pour_owner {
         if *owner > 0 {
             owned[*owner as usize - 1] = true;
         }
     }
-    let mut keyed = Vec::new();
-    for (net, record) in board.nets.iter().enumerate() {
+    owned
+}
+
+/// `net`'s plan with its key in the routing order; `None` for a net
+/// with nothing to route.
+pub(crate) fn plan(
+    board: &Board,
+    frame: &Frame,
+    capacity: &Capacity,
+    config: &GlobalConfig,
+    owned: &[bool],
+    net: usize,
+) -> Option<(PlanKey, Plan)> {
+    let tiles = frame.tiles();
+    let layers = frame.layers;
+    let reference = capacity.reference.trace_width + capacity.reference.clearance;
+    let record = &board.nets[net];
+    {
         let pour = owned[net];
         if record.terminals.len() < 2 && !pour {
-            continue;
+            return None;
         }
         let mut terminals: Vec<Vec<u32>> = Vec::new();
         let (mut low, mut high) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
@@ -637,7 +669,7 @@ fn plans(board: &Board, frame: &Frame, capacity: &Capacity, config: &GlobalConfi
         terminals.sort();
         terminals.dedup();
         if terminals.is_empty() || (terminals.len() < 2 && !pour) {
-            continue;
+            return None;
         }
         let point = |states: &Vec<u32>| {
             let tile = states[0] as usize % tiles;
@@ -672,7 +704,7 @@ fn plans(board: &Board, frame: &Frame, capacity: &Capacity, config: &GlobalConfi
         } else {
             spanning_steps(&unique)
         };
-        keyed.push((
+        Some((
             (
                 !pour,
                 record.terminals.len() > 8,
@@ -688,10 +720,8 @@ fn plans(board: &Board, frame: &Frame, capacity: &Capacity, config: &GlobalConfi
                 order,
                 window,
             },
-        ));
+        ))
     }
-    keyed.sort_by_key(|(key, _)| *key);
-    keyed.into_iter().map(|(_, plan)| plan).collect()
 }
 
 struct Snapshot {
@@ -714,7 +744,7 @@ pub(crate) fn negotiate(
 ) -> GlobalRoute {
     let plans = plans(board, &frame, &capacity, config);
     let per = frame.layers * frame.tiles();
-    let (best, iterations, pops) = {
+    let (best, iterations, pops, history, via_history, present) = {
         let mut graph = Graph::new(&frame, &capacity, config);
         let mut routes: Vec<NetRoute> = vec![NetRoute::default(); plans.len()];
         let mut pending: Vec<usize> = (0..plans.len()).collect();
@@ -799,6 +829,9 @@ pub(crate) fn negotiate(
             best.expect("one iteration at least"),
             iterations,
             graph.pops,
+            std::mem::take(&mut graph.history),
+            std::mem::take(&mut graph.via_history),
+            present,
         )
     };
     // The score of the kept iteration.
@@ -897,6 +930,9 @@ pub(crate) fn negotiate(
         capacity_seconds: 0.0,
         seconds: 0.0,
         pops,
+        history,
+        via_history,
+        present,
     }
 }
 

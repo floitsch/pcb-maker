@@ -99,6 +99,13 @@ pub struct KiCadBoardLayoutConfig {
     /// The footprints' Reference and Value fields on the silkscreen, placed
     /// after routing where KiCad's silkscreen checks find nothing.
     pub silkscreen: KiCadSilkscreenConfig,
+    /// The move descent after the first route (an experiment, off when
+    /// absent; docs/experiments/move-descent.md): single parts nudged,
+    /// turned or swapped where the incremental global route and then a
+    /// local reroute say fewer terminals stay open, also on boards far
+    /// from complete. `PCB_LAYOUT_MOVE_DESCENT` overrides (`0` off).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub move_descent: Option<crate::move_descent::KiCadMoveDescent>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -200,6 +207,7 @@ impl Default for KiCadBoardLayoutConfig {
             congestion_score: "rudy".into(),
             free_dimension: None,
             silkscreen: KiCadSilkscreenConfig::default(),
+            move_descent: None,
         }
     }
 }
@@ -243,6 +251,10 @@ pub struct KiCadBoardLayoutResult {
     /// layout's last router got (review 2026-10-21, H3).
     pub final_ladder_budget_seconds: Option<f64>,
     pub moves: Vec<KiCadBoardLayoutMove>,
+    /// What the move descent did (`move_descent`; absent when it did not
+    /// run).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub move_descent: Option<crate::move_descent::KiCadMoveDescentReport>,
     /// Reference labels moved off pads and other silkscreen, and the
     /// board's own texts and silkscreen graphics parts lie on
     /// (`overlaps`).
@@ -1471,6 +1483,45 @@ pub fn layout_kicad_board(
         );
     }
     let many_open = many_open || far_open;
+    // The move descent (an experiment, docs/experiments/move-descent.md):
+    // cheap trials, so it runs also where the moves below do not.
+    let mut move_descent = None;
+    if let Some(descent) = crate::move_descent::descent_config(config.move_descent.as_ref())
+        && best.0 > 0
+        && !router.past_deadline()
+        && stop.allows(LayoutStep::Move)
+    {
+        let moves_budget = config
+            .move_seconds
+            .min((0.65 * config.total_seconds - work).max(0.0));
+        let budget = descent.trial_share * moves_budget;
+        arm(&mut router, work + pool_excess);
+        let report = crate::move_descent::descend(
+            crate::move_descent::DescentState {
+                pcb: &mut pcb,
+                board: &mut board,
+                problem: &mut problem,
+                router: &mut router,
+                work: &mut work,
+            },
+            &descent,
+            budget,
+            router_config,
+            connect,
+            config.placer.keep_board_marks,
+            &|router, work| arm(router, work + pool_excess),
+            &|| stop.allows(LayoutStep::Move),
+        )?;
+        if report.kept > 0 {
+            result = router.finish_as_is();
+            best = score(&result, &board);
+            eprintln!(
+                "layout: the move descent kept {} moves: {} open (the router's count {})",
+                report.kept, best.0, report.open_after
+            );
+        }
+        move_descent = Some(report);
+    }
     // `global_guidance` with `moves`: the parts by their attribution in
     // the global route of the kept board, recomputed when a move is kept
     // (docs/global-route.md, "Phase 2").
@@ -2223,6 +2274,7 @@ pub fn layout_kicad_board(
         first_length_mm: first.2,
         final_ladder_budget_seconds,
         moves,
+        move_descent,
         outline_sizing,
         placement_race: race,
         congestion,

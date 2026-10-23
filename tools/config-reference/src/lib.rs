@@ -178,6 +178,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "overrides the router's `trouble_repair` (`0` off, anything else on): the trouble-makers' repair after the hard repair (an open net routed through others at a price, the nets it displaces routed again hard, kept when the open terminals drop; docs/experiments/human-level-routing.md).",
     ),
     (
+        "PCB_LAYOUT_MOVE_DESCENT",
+        Kind::Switch,
+        "overrides the layout's `move_descent` (`0` off, anything else on with layout.json's settings or the defaults): the move descent after the first route (docs/experiments/move-descent.md).",
+    ),
+    (
         "PCB_ROUTER_TROUBLE_PRESENT",
         Kind::Switch,
         "the trouble-makers' repair: the price of sharing a node in the trouble-maker's search (default 20).",
@@ -431,6 +436,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "PCB_GLOBAL_DEBUG",
         Kind::Diagnostic,
         "the global route's negotiation, a line per iteration (nets to reroute, overflow, search work; docs/global-route.md).",
+    ),
+    (
+        "PCB_LAYOUT_DESCENT_CLASSIC",
+        Kind::Diagnostic,
+        "`<n>`: the move descent's first `n` router trials are also tried and timed as the coupled loop tries a move (a clone, `Router::update`, a reroute without the polish) on a copy; the result does not change.",
     ),
     (
         "PCB_PLACER_TRACE",
@@ -1128,6 +1138,16 @@ fn tables(root: &Path) -> Result<Vec<Table>, String> {
             name: "KiCadSilkscreenConfig",
             fields: parse(layout_file, "KiCadSilkscreenConfig")?,
             defaults: json_defaults::<pcb_kicad::KiCadSilkscreenConfig>()?,
+            role: Role::File,
+        },
+        Table {
+            title: "Layout settings: move_descent",
+            prefix: "move_descent.",
+            intro: "The `move_descent` object of the layout settings (an experiment, off when absent): single parts nudged, turned or swapped after the first route where the incremental global route and a local reroute say fewer terminals stay open (docs/experiments/move-descent.md).",
+            file: "crates/pcb-kicad/src/move_descent.rs",
+            name: "KiCadMoveDescent",
+            fields: parse("crates/pcb-kicad/src/move_descent.rs", "KiCadMoveDescent")?,
+            defaults: json_defaults::<pcb_kicad::KiCadMoveDescent>()?,
             role: Role::File,
         },
         Table {

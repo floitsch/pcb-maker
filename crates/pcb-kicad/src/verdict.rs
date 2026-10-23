@@ -719,6 +719,8 @@ pub struct KiCadRunFacts {
     pub silkscreen: Option<crate::silk_fields::KiCadSilkscreenReport>,
     /// How whole the pours stayed (`KiCadBoardRouterResult::pour_quality`).
     pub pours: Vec<crate::board_router::KiCadPourQuality>,
+    /// A layout's move descent, when it ran.
+    pub moves: Option<crate::move_descent::KiCadMovesFact>,
 }
 
 impl KiCadRunFacts {
@@ -755,6 +757,7 @@ impl KiCadRunFacts {
             board_mark_overlaps: Vec::new(),
             silkscreen: None,
             pours: Vec::new(),
+            moves: None,
         }
     }
 
@@ -908,6 +911,11 @@ pub struct KiCadVerdict {
     /// status; a pour in many pieces adds a next action.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub pours: Vec<crate::board_router::KiCadPourQuality>,
+    /// A layout's move descent (`move_descent` in layout.json): moves
+    /// scored, moves the router tried, moves kept, the parts moved, the
+    /// open terminals before and after. Absent when it did not run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub moves: Option<crate::move_descent::KiCadMovesFact>,
 }
 
 fn counts(map: &BTreeMap<String, usize>) -> String {
@@ -1439,6 +1447,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         diff_pairs: facts.diff_pairs.clone(),
         environment: result_environment(),
         pours: facts.pours.clone(),
+        moves: facts.moves.clone(),
     }
 }
 

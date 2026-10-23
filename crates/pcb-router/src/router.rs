@@ -1262,6 +1262,8 @@ pub struct Router {
     buses: Vec<bundles::Bus>,
     bus_of: Vec<(u32, u32)>,
     buses_planned: bool,
+    /// `finish` without the hard repair (`finish_as_is`).
+    skip_resolve: bool,
     /// Whether the negotiation running is a probe's (`probe`).
     in_probe: bool,
     /// The rest of the iteration a probe's work limit cut (`probe`), for

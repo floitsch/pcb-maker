@@ -35,10 +35,11 @@ The environment variables are indexed in the hand-over
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 65 | - | 0 | 65 | - |
 | [Placer settings](#placer-settings) | 47 | 43 | 4 | 47 | 17 |
-| [Layout settings](#layout-settings) | 17 | 17 | 0 | 17 | 7 |
+| [Layout settings](#layout-settings) | 18 | 18 | 0 | 18 | 7 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 2 |
 | [Layout settings: silkscreen](#layout-settings-silkscreen) | 1 | 1 | 0 | 1 | 1 |
+| [Layout settings: move_descent](#layout-settings-move_descent) | 6 | 6 | 0 | 6 | 0 |
 | [Placer core](#placer-core) | 8 | - | 0 | 8 | - |
 | [Placer core: global](#placer-core-global) | 12 | - | 0 | 12 | - |
 | [Placer core: anneal](#placer-core-anneal) | 8 | - | 0 | 8 | - |
@@ -391,6 +392,7 @@ The layout config file of `layout-kicad-board`. Unknown keys are rejected; a mis
 | `congestion_score` | `String` | `"rudy"` | placer.md | How the race ranks the placements before probing them (the values above, at `congestion_model`). |
 | `free_dimension` | `Option<crate::free_dimension::KiCadFreeDimension>` | unset | - | One edge of a rectangular outline the layout may move, to find the smallest board that comes out clean (docs/constraints.md, "A free dimension"): `layout-kicad-board` then lays the board out at several sizes, `total_seconds` being the whole search's budget. |
 | `silkscreen` | `KiCadSilkscreenConfig` | its own table | placer.md | The footprints' Reference and Value fields on the silkscreen, placed after routing where KiCad's silkscreen checks find nothing. |
+| `move_descent` | `Option<crate::move_descent::KiCadMoveDescent>` | unset | - | The move descent after the first route (an experiment, off when absent; docs/experiments/move-descent.md): single parts nudged, turned or swapped where the incremental global route and then a local reroute say fewer terminals stay open, also on boards far from complete. `PCB_LAYOUT_MOVE_DESCENT` overrides (`0` off). |
 
 ## Layout settings: swappable entries
 
@@ -427,6 +429,19 @@ The `silkscreen` object of the layout settings: the footprints' Reference and Va
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
 | `silkscreen.hide_when_blocked` | `bool` | `false` | placer.md | Hide a field no spot around (or inside) its part is clean for (default false: it stays at the spot with the fewest findings, and the verdict's `silkscreen` fact lists it). |
+
+## Layout settings: move_descent
+
+The `move_descent` object of the layout settings (an experiment, off when absent): single parts nudged, turned or swapped after the first route where the incremental global route and a local reroute say fewer terminals stay open (docs/experiments/move-descent.md). Source: `KiCadMoveDescent` in [crates/pcb-kicad/src/move_descent.rs](../crates/pcb-kicad/src/move_descent.rs).
+
+| Key | Type | Default | Docs | Description |
+|---|---|---|---|---|
+| `move_descent.trial_share` | `f64` | `0.5` | - | Share of the moves' budget (`move_seconds`, within 65 % of `total_seconds`) the descent may spend, in work. |
+| `move_descent.steps_mm` | `Vec<f64>` | `[0.5, 1.0, 2.0, 3.0]` | - | Nudge distances in millimetres, each in eight directions. |
+| `move_descent.confirm` | `usize` | `3` | - | Moves per part the router tries (the best by the global route). |
+| `move_descent.local_seconds` | `f64` | `2.0` | - | Search work of one router trial at most, in seconds. |
+| `move_descent.swap_mm` | `f64` | `10.0` | - | Swaps with a part of the same size whose centre is at most this far, in millimetres (0: no swaps). |
+| `move_descent.patience` | `usize` | `40` | - | The descent stops after this many parts in a row without a kept move. |
 
 ## Placer core
 

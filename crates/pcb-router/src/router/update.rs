@@ -13,6 +13,12 @@ impl Router {
     /// objects. Returns the number of nets rerouted. Everything else keeps
     /// its copper, occupancy, and history.
     pub fn update(&mut self, board: &Board) -> Result<usize, String> {
+        self.update_nets(board).map(|nets| nets.len())
+    }
+
+    /// `update`, returning the nets it ripped up (routable nets whose pads
+    /// moved or whose copper is no longer legal), in net order.
+    pub fn update_nets(&mut self, board: &Board) -> Result<Vec<NetId>, String> {
         let (board, neck_of, class_rules) = Self::with_neck_classes(board, &self.config);
         let board = &board;
         let same_rules = match (&class_rules, &self.class_rules) {
@@ -85,7 +91,7 @@ impl Router {
         self.mark_via_cells();
         self.build_hot();
 
-        let mut rerouted = 0;
+        let mut rerouted = Vec::new();
         for (net, old) in previous.into_iter().enumerate() {
             let id = net as NetId;
             let same_terminals = old.terminal_nodes == self.nets[net].terminal_nodes;
@@ -103,10 +109,78 @@ impl Router {
                 state.fixed = old.fixed;
                 self.stamp(id);
             } else if self.nets[net].routable {
-                rerouted += 1;
+                rerouted.push(id);
             }
         }
         Ok(rerouted)
+    }
+
+    /// The work of rebuilding the maps in `update` (the static maps, the
+    /// nets' masks), modelled as `Router::new`'s build is
+    /// (`BuildCounts`), in seconds at this process's rate.
+    pub fn update_work(&self) -> f64 {
+        self.build_counts().work_seconds()
+    }
+
+    /// Terminals not connected to their net, over every routable net, and
+    /// one per unreachable net (as a layout's score counts them).
+    pub fn board_open_terminals(&self) -> usize {
+        self.statuses()
+            .iter()
+            .map(|status| match status {
+                NetStatus::Partial {
+                    unconnected_terminals,
+                } => *unconnected_terminals,
+                NetStatus::Unreachable => 1,
+                _ => 0,
+            })
+            .sum()
+    }
+
+    /// A move's local trial after `update_nets` (the move descent,
+    /// docs/experiments/move-descent.md): the ripped nets `nets` are
+    /// routed again one by one in the routing order with every other
+    /// net's copper as a wall (the hard repair's search), so that no other
+    /// net is touched and no conflict arises; the pour nets whose pads
+    /// the new copper cut off their pour are routed to it the same way.
+    /// Stops starting searches past `work_seconds` of search work (the
+    /// nets left stay open). Returns the open terminals of the board
+    /// (`board_open_terminals`).
+    pub fn local_reroute(&mut self, nets: &[NetId], work_seconds: f64) -> usize {
+        let order = self.routing_order();
+        let limit = self.scratch.expansions
+            + (work_seconds.max(0.0) * expansions_per_second()) as u64;
+        let pending: Vec<NetId> = order
+            .iter()
+            .copied()
+            .filter(|net| nets.contains(net))
+            .collect();
+        for net in pending {
+            if self.scratch.expansions > limit {
+                break;
+            }
+            let state = &self.nets[net as usize];
+            if state.complete && self.conflicts(net).is_empty() {
+                continue;
+            }
+            self.route_net_seq(net, 0.0, true, 1.0);
+            self.stamp(net);
+        }
+        if self.config.pour_islands {
+            let stranded: Vec<NetId> = order
+                .iter()
+                .copied()
+                .filter(|net| self.refresh_pour(*net) > 0)
+                .collect();
+            for net in stranded {
+                if self.scratch.expansions > limit {
+                    break;
+                }
+                self.route_net_seq(net, 0.0, true, 1.0);
+                self.stamp(net);
+            }
+        }
+        self.board_open_terminals()
     }
 
     /// Routes whatever is unrouted or in conflict after `update`, then
@@ -167,6 +241,50 @@ impl Router {
             );
         }
         result
+    }
+
+    /// The result of the routes as they are (after `local_reroute`s): the
+    /// pours stitched and the routes materialized as `finish` does, but
+    /// without the hard repair, the trouble repair, the clean-up and the
+    /// via reduction (a trial's finish; nothing is in conflict).
+    pub fn finish_as_is(&mut self) -> RoutingResult {
+        let order = self.routing_order();
+        self.in_trial = true;
+        self.skip_resolve = true;
+        let result = self.finish_polished(&order, false);
+        self.skip_resolve = false;
+        self.in_trial = false;
+        result
+    }
+
+    /// The terminals not connected to their net, as (net, terminal),
+    /// every terminal of an unreachable net included.
+    pub fn unconnected(&self) -> Vec<(NetId, usize)> {
+        let mut open = Vec::new();
+        for (net, state) in self.nets.iter().enumerate() {
+            let terminals = self.board.nets[net].terminals.len();
+            if terminals < 2 && state.plane.is_empty() {
+                continue;
+            }
+            if !state.routable {
+                open.extend((0..terminals).map(|terminal| (net as NetId, terminal)));
+            } else if !state.complete {
+                open.extend(
+                    state
+                        .connected
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, connected)| !**connected)
+                        .map(|(terminal, _)| (net as NetId, terminal)),
+                );
+            }
+        }
+        open
+    }
+
+    /// The status of every net as it stands.
+    pub fn net_statuses(&self) -> Vec<NetStatus> {
+        self.statuses()
     }
 
     /// Routes one net with the router's own scratch (sequential callers).

@@ -300,6 +300,40 @@ fn incremental_update_reroutes_only_what_a_change_touches() {
 }
 
 #[test]
+fn a_local_reroute_routes_only_the_ripped_nets_against_the_rest() {
+    let mut builder = Builder::new(40.0, 20.0, 2);
+    builder.net("A", &[([3.0, 5.0], 0b01), ([37.0, 5.0], 0b01)]);
+    builder.net("B", &[([3.0, 15.0], 0b01), ([37.0, 15.0], 0b01)]);
+    let config = config();
+    let mut router = pcb_router::router::Router::new(&builder.board, &config);
+    let first = router.run_in_place();
+    assert_eq!(first.status, vec![NetStatus::Routed, NetStatus::Routed]);
+    // A wall across net A's path: A is ripped up and routed again around
+    // it; B keeps its copper.
+    let mut changed = builder.board.clone();
+    changed.obstacles.push(Obstacle {
+        shape: Shape::rectangle([20.0, 5.0], [0.5, 3.0], 0.0),
+        layers: 0b11,
+        kind: ObstacleKind::Keepout,
+        net: None,
+        clearance: 0.0,
+        clearance_override: None,
+        blocks_tracks: true,
+        blocks_vias: true,
+        label: "wall".into(),
+    });
+    let ripped = router.update_nets(&changed).unwrap();
+    assert_eq!(ripped, vec![0]);
+    assert_eq!(router.board_open_terminals(), 2);
+    assert_eq!(router.unconnected(), vec![(0, 0), (0, 1)]);
+    assert_eq!(router.local_reroute(&ripped, 60.0), 0);
+    let second = router.finish_as_is();
+    assert_eq!(second.status, vec![NetStatus::Routed, NetStatus::Routed]);
+    assert!(verify(&changed, &second.routes).is_empty());
+    assert_eq!(second.routes[1].segments, first.routes[1].segments);
+}
+
+#[test]
 fn a_pad_straddling_the_board_edge_is_reached_from_inside() {
     // A connector shell pad hangs over the outline (the designer's choice,
     // KiCad flags the pad itself). The track that reaches it must still keep

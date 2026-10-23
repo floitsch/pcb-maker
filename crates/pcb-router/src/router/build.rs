@@ -326,6 +326,7 @@ impl Router {
             buses: Vec::new(),
             bus_of: Vec::new(),
             buses_planned: false,
+            skip_resolve: false,
             in_probe: false,
             cut_iteration: None,
             island_stubs: 0,

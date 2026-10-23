@@ -58,7 +58,9 @@ impl Router {
         }
         let resolve_started = std::time::Instant::now();
         let mark = self.phase_mark();
-        self.resolve_remaining(order);
+        if !self.skip_resolve {
+            self.resolve_remaining(order);
+        }
         // Not in a layout's move trial (`reroute` without the polish):
         // OpenFC's layout on the short tier, with the repair in every
         // trial, fit 5 trials instead of 11 into the moves' work and ended

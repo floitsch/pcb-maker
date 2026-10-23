@@ -887,6 +887,10 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         .map_err(Failure::Internal)?;
     facts.constraints_missed = missed_constraints(&result.constraints);
     facts.board_mark_overlaps = result.labels.overlaps.clone();
+    facts.moves = result
+        .move_descent
+        .as_ref()
+        .map(pcb_kicad::KiCadMoveDescentReport::fact);
     facts.silkscreen = Some(result.labels.silkscreen.clone());
     // The placement's room (the parts and the outline the layout kept)
     // and what it warned of.

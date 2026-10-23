@@ -204,15 +204,74 @@ fn blocks_vias(obstacle: &Obstacle) -> bool {
 }
 
 impl Capacity {
-    #[allow(
-        clippy::needless_range_loop,
-        reason = "directions, layers and samples index parallel arrays alike"
-    )]
     pub fn build(board: &Board, frame: &Frame, config: &GlobalConfig) -> Self {
         let reference = reference_class(board);
         let layers = frame.layers;
         let tiles = frame.tiles();
+        let mut capacity = Self {
+            edges: [vec![0.0f32; layers * tiles], vec![0.0f32; layers * tiles]],
+            vias: vec![0.0f32; tiles],
+            pour_owner: vec![0u32; layers * tiles],
+            pour_share: vec![0.0f32; layers * tiles],
+            inside: vec![false; tiles],
+            reference,
+            work: 0,
+        };
+        capacity.measure(
+            board,
+            frame,
+            config,
+            [
+                0,
+                0,
+                frame.tiles_x.saturating_sub(1),
+                frame.tiles_y.saturating_sub(1),
+            ],
+        );
+        capacity.measure_pours(board, frame, config);
+        capacity
+    }
+
+    /// Measures the boundaries and via sites of the tiles in `region`
+    /// (tiles, inclusive: x0, y0, x1, y1) again on `board`, whose
+    /// obstacles changed there (a part moved; the pours did not): the
+    /// boundary to the right of and below each tile, its via sites and
+    /// whether it is inside. Returns the work counted
+    /// (`Capacity::work`'s units). Equal to a full `build` on those
+    /// tiles.
+    pub fn rebuild_region(
+        &mut self,
+        board: &Board,
+        frame: &Frame,
+        config: &GlobalConfig,
+        region: [usize; 4],
+    ) -> u64 {
+        let before = self.work;
+        self.measure(board, frame, config, region);
+        self.work - before
+    }
+
+    #[allow(
+        clippy::needless_range_loop,
+        reason = "directions, layers and samples index parallel arrays alike"
+    )]
+    fn measure(&mut self, board: &Board, frame: &Frame, config: &GlobalConfig, region: [usize; 4]) {
+        let reference = self.reference;
+        let layers = frame.layers;
+        let tiles = frame.tiles();
         let t = frame.tile_mm;
+        let [rx0, ry0, rx1, ry1] = region;
+        let region_box = Aabb {
+            minimum: [
+                frame.origin[0] + rx0 as f64 * t,
+                frame.origin[1] + ry0 as f64 * t,
+            ],
+            maximum: [
+                frame.origin[0] + (rx1 + 2) as f64 * t,
+                frame.origin[1] + (ry1 + 2) as f64 * t,
+            ],
+        };
+        let share = config.capacity_share as f32;
         let pitch = reference.trace_width + reference.clearance;
         let edge_margin = board.edge_clearance + reference.trace_width / 2.0;
         // Obstacles that matter, with their reaches, bucketed by the tiles
@@ -242,6 +301,9 @@ impl Capacity {
                 f64::NEG_INFINITY
             };
             let bounds = obstacle.shape.aabb().inflated(track.max(via));
+            if !bounds.intersects(region_box) {
+                continue;
+            }
             entries.push(Entry {
                 index,
                 track,
@@ -286,7 +348,6 @@ impl Capacity {
         // once; per segment the samples.
         let samples = ((t / config.sample_mm).round() as usize).max(1);
         let step = t / samples as f64;
-        let mut edges = [vec![0.0f32; layers * tiles], vec![0.0f32; layers * tiles]];
         let mut stamp = vec![u32::MAX; entries.len()];
         let mut blocked = vec![0u32; samples];
         let all = board.all_layers();
@@ -314,7 +375,12 @@ impl Capacity {
             } else {
                 frame.tiles_x
             };
-            for line in 0..lines.saturating_sub(1) {
+            let (line_range, segment_range) = if direction == 0 {
+                (rx0..=rx1, ry0..=ry1)
+            } else {
+                (ry0..=ry1, rx0..=rx1)
+            };
+            for line in line_range.filter(|line| line + 1 < lines) {
                 let coords: Vec<f64> = offsets
                     .iter()
                     .map(|offset| frame.origin[fixed] + (line as f64 + 1.0 + offset) * t)
@@ -323,7 +389,7 @@ impl Capacity {
                     .iter()
                     .map(|coord| crossings(&board.outline, fixed, *coord))
                     .collect();
-                for segment in 0..segments {
+                for segment in segment_range.clone().filter(|segment| *segment < segments) {
                     let (tile, next) = if direction == 0 {
                         let tile = segment * frame.tiles_x + line;
                         (tile, tile + 1)
@@ -441,8 +507,9 @@ impl Capacity {
                         }
                     }
                     for (layer, sum) in sums.iter().enumerate() {
-                        edges[direction][layer * tiles + tile] =
-                            (sum / offsets.len() as f64) as f32;
+                        let value = (sum / offsets.len() as f64) as f32;
+                        self.edges[direction][layer * tiles + tile] =
+                            if share != 1.0 { value * share } else { value };
                     }
                 }
             }
@@ -453,16 +520,14 @@ impl Capacity {
         let via_step = t / via_samples as f64;
         let via_pitch = reference.via_diameter + reference.clearance;
         let site_area = via_pitch * via_pitch;
-        let mut vias = vec![0.0f32; tiles];
-        let mut inside = vec![false; tiles];
-        for ty in 0..frame.tiles_y {
+        for ty in ry0..=ry1.min(frame.tiles_y.saturating_sub(1)) {
             let rows: Vec<Vec<f64>> = (0..via_samples)
                 .map(|row| {
                     let y = frame.origin[1] + ty as f64 * t + (row as f64 + 0.5) * via_step;
                     crossings(&board.outline, 1, y)
                 })
                 .collect();
-            for tx in 0..frame.tiles_x {
+            for tx in rx0..=rx1.min(frame.tiles_x.saturating_sub(1)) {
                 let tile = ty * frame.tiles_x + tx;
                 let corner = frame.corner(tile);
                 let mut free = 0usize;
@@ -495,14 +560,22 @@ impl Capacity {
                         }
                     }
                 }
-                inside[tile] = any_inside;
-                let share = free as f64 / (via_samples * via_samples) as f64;
-                vias[tile] = (share * t * t / site_area) as f32;
+                self.inside[tile] = any_inside;
+                let free_share = free as f64 / (via_samples * via_samples) as f64;
+                let value = (free_share * t * t / site_area) as f32;
+                self.vias[tile] = if share != 1.0 { value * share } else { value };
             }
         }
-        // Pours: 4 x 4 samples a tile, the higher-priority zones cut out.
-        let mut pour_owner = vec![0u32; layers * tiles];
-        let mut pour_share = vec![0.0f32; layers * tiles];
+        self.work += work;
+    }
+
+    /// Per layer and tile, the pour covering it and its share.
+    fn measure_pours(&mut self, board: &Board, frame: &Frame, config: &GlobalConfig) {
+        let layers = frame.layers;
+        let tiles = frame.tiles();
+        let t = frame.tile_mm;
+        let pour_owner = &mut self.pour_owner;
+        let pour_share = &mut self.pour_share;
         const SUB: usize = 4;
         for plane in &board.planes {
             if plane.layer >= layers {
@@ -539,21 +612,6 @@ impl Capacity {
                     }
                 }
             }
-        }
-        let share = config.capacity_share as f32;
-        if share != 1.0 {
-            for value in edges.iter_mut().flatten().chain(vias.iter_mut()) {
-                *value *= share;
-            }
-        }
-        Self {
-            edges,
-            vias,
-            pour_owner,
-            pour_share,
-            inside,
-            reference,
-            work,
         }
     }
 }
