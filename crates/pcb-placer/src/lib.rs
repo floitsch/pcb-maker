@@ -143,6 +143,8 @@ fn seat_on_marks(
     relaxed: &mut Problem,
     poses: &mut Vec<Pose>,
     failed: &mut Vec<usize>,
+    pass_work: u64,
+    budget: Option<u64>,
     debug: bool,
 ) {
     if failed.is_empty() || relaxed.constraints.yielding.is_empty() {
@@ -163,20 +165,24 @@ fn seat_on_marks(
     let kept_left = again.len();
     // Still without room (the others took the spots by the marks, where
     // MIDAS-MK1.1's two 36 mm headers go at the bottom edge): every part
-    // again, those first, the others around them. Only for a few: where
-    // an eighth of the movable parts or more found no room, the level is
-    // too tight for them, which the next level eases, and the passes over
-    // every part took the budget of the looser levels that place the board
-    // (OpenRX's panel: 55 of 216 parts without room at full halos, 100 s
-    // of its 600 s of work at each of the first two levels; MIDAS-MK1.1's
-    // failures are 1 to 10 of 160).
+    // again, those first, the others around them. Not where both an
+    // eighth of the movable parts or more found no room (the level is too
+    // tight for them, which the next level eases) and the passes over
+    // every part (`pass_work` each, the level's full legalization) would
+    // take more than an eighth of the placement's `budget`: on a crowded
+    // panel they took the work of the looser levels that place it
+    // (OpenRX's panel: 55 of 216 parts without room at full halos, a pass
+    // 35 s, 100 s of its 600 s of work at each of the first two levels).
+    // Elsewhere the passes stay (MIDAS-MK1.1: 1 to 10 of 160 parts failed,
+    // a pass 10 s of 200; reCamera: more of fewer parts, cheap passes).
     let movable = trial
         .components
         .iter()
         .filter(|component| !component.fixed)
         .count();
-    let few = failed.len() * 8 < movable;
-    if !again.is_empty() && few {
+    let many = failed.len() * 8 >= movable;
+    let costly = budget.is_some_and(|budget| STUCK_FIRST_PASSES as u64 * pass_work > budget / 8);
+    if !again.is_empty() && !(many && costly) {
         let (retry, left) =
             legal::legalize_stuck_first(&trial, poses, failed, STUCK_FIRST_PASSES, debug);
         if left.len() < again.len() {
@@ -785,6 +791,9 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         levels.push(last);
     }
     let mut relaxation = None;
+    // The work of the last level's full legalization: what a pass over
+    // every part costs (`seat_on_marks`).
+    let mut pass_work = 0;
     // The annealed poses the best placement was legalized from.
     let mut best_annealed: Option<Vec<Pose>> = None;
     // The grid and bodies the last anneal ran with.
@@ -969,7 +978,14 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                     failed = again;
                 }
             }
-            seat_on_marks(&mut relaxed, &mut kept, &mut failed, debug);
+            seat_on_marks(
+                &mut relaxed,
+                &mut kept,
+                &mut failed,
+                pass_work,
+                config.work_limit,
+                debug,
+            );
             if debug {
                 eprintln!(
                     "placer: level halo {halo_scale} (small {small_factor}) spacing {spacing_scale} grid {grid} inset {inset} tight {tight}: kept placement, {:.1}s, {} failed",
@@ -1030,6 +1046,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         let anneal_seconds = level_started.elapsed().as_secs_f64();
         let legalize_mark = mark();
         let mut failed = legal::legalize(&relaxed, &mut poses);
+        pass_work = work() - legalize_mark.1;
         phase_line(debug, "legalize", legalize_mark);
         if debug {
             eprintln!(
@@ -1074,7 +1091,14 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 failed = again;
             }
         }
-        seat_on_marks(&mut relaxed, &mut poses, &mut failed, debug);
+        seat_on_marks(
+            &mut relaxed,
+            &mut poses,
+            &mut failed,
+            pass_work,
+            config.work_limit,
+            debug,
+        );
         let better = best.as_ref().is_none_or(|(unplaced, kept, _)| {
             failed.len() < unplaced.len()
                 || (failed.len() == unplaced.len()
@@ -1109,7 +1133,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         && !failed.is_empty()
     {
         let before = failed.len();
-        seat_on_marks(relaxed, poses, failed, debug);
+        seat_on_marks(relaxed, poses, failed, pass_work, config.work_limit, debug);
         if failed.len() < before
             && let Some(relaxation) = relaxation.as_mut()
         {
