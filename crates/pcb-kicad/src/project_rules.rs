@@ -1126,6 +1126,8 @@ fn diff_pair_rules(
             let w = pick(&width, class.width.unwrap_or(current.trace_width_mm)).max(min_width);
             let g = pick(&gap, class.gap.unwrap_or(current.clearance_mm)).max(pair_clearance);
             rule.layers.push((w, g));
+            rule.disallowed
+                .push(dru::track_disallowed(rules, &paired, layer, copper));
             rule.sources.push(match (&width, &gap) {
                 (_, Some(picked)) | (Some(picked), None) => format!("rule '{}'", picked.rule),
                 (None, None) if class.gap.is_some() => format!("net class '{}'", class.class),
@@ -1344,7 +1346,9 @@ mod tests {
             (rule "pairs outer" (layer outer) (condition "A.inDiffPair('/TX')")
               (constraint track_width (min 0.17mm) (max 0.17mm))
               (constraint diff_pair_gap (min 0.12mm) (opt 0.13mm) (max 0.14mm))
-              (constraint diff_pair_uncoupled (max 5mm)))"#;
+              (constraint diff_pair_uncoupled (max 5mm)))
+            (rule "ground layer" (layer "In1.Cu") (condition "A.NetName != 'GND'")
+              (constraint disallow track))"#;
         let (directory, path) = project_directory("pairs", project, Some(dru));
         let board = directory.join("board.kicad_pcb");
         fs::write(&board, pcb).unwrap();
@@ -1365,6 +1369,8 @@ mod tests {
         // that close).
         assert_eq!(tx.layers, vec![(0.17, 0.13), (0.16, 0.1), (0.17, 0.13)]);
         assert_eq!(tx.max_uncoupled, Some(5.0));
+        // No track but GND's on In1.Cu: the pairs keep off it.
+        assert_eq!(tx.disallowed, vec![false, true, false]);
         assert_eq!(tx.rules, vec!["pairs outer".to_string()]);
         assert_eq!(tx.sources[1], "net class 'HS'");
         // Default's pair settings for D+ and D-; the rule's pattern does

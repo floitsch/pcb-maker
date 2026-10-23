@@ -2194,6 +2194,41 @@ pub(crate) struct Picked {
     pub max: Option<f64>,
 }
 
+/// Whether a custom rule surely disallows a track of `net` on `layer`
+/// (`(constraint disallow track)` with a condition that surely holds;
+/// ducktop2's "solid ground layers": no track but GND's on In1.Cu).
+pub(crate) fn track_disallowed(
+    rules: &[Rule],
+    net: &NetFacts,
+    layer: &str,
+    copper: &[String],
+) -> bool {
+    let item = Item {
+        kind: Kind::Track,
+        net: Some(net),
+        layer,
+    };
+    rules.iter().any(|rule| {
+        rule.severity.as_deref() != Some("ignore")
+            && rule_layers(rule, copper).contains(&layer)
+            && rule.constraints.iter().any(|constraint| {
+                constraint.kind == "disallow" && constraint.words.iter().any(|word| word == "track")
+            })
+            && match rule.condition.as_deref() {
+                None => true,
+                Some(text) => parse_condition(text).is_ok_and(|condition| {
+                    Context {
+                        a: item,
+                        b: None,
+                        same_net: false,
+                    }
+                    .truth(&condition)
+                        == T3::True
+                }),
+            }
+    })
+}
+
 /// The rule KiCad applies to a track of `net` on `layer` for a constraint
 /// `kind` checked on the item alone (track width, diff pair gap, uncoupled
 /// length): the last rule whose `(layer ...)` holds there and whose

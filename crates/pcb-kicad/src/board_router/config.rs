@@ -548,6 +548,9 @@ pub struct KiCadDiffPairRule {
     pub partner: String,
     /// Per copper layer: (width, gap) in millimetres.
     pub layers: Vec<(f64, f64)>,
+    /// Per copper layer: whether a custom rule disallows the pair's tracks
+    /// there (`disallow track`).
+    pub disallowed: Vec<bool>,
     /// The custom rules' `diff_pair_uncoupled` maximum, if any.
     pub max_uncoupled: Option<f64>,
     /// Where the width and gap came from, per layer ("rule 'name'", "net

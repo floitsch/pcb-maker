@@ -224,15 +224,21 @@ fn find_pairs(board: &core::Board, config: &KiCadBoardRouterConfig) -> Vec<Pair>
         if let Some(rule) = config.diff_pair_rules.get(&net.name) {
             // The first layer the rules name a pair on sets the values; the
             // layers with the same ones are the pair's.
-            if let Some(&(w, g)) = rule.layers.first() {
+            let first = (0..rule.layers.len())
+                .find(|layer| !rule.disallowed.get(*layer).copied().unwrap_or(false));
+            if let Some(&(w, g)) = first.and_then(|layer| rule.layers.get(layer)) {
                 width = w;
                 gap = g;
-                source = rule.sources.first().cloned().unwrap_or_default();
+                source = rule.sources[first.unwrap_or(0)].clone();
                 layers = rule
                     .layers
                     .iter()
                     .enumerate()
-                    .filter(|(_, (w2, g2))| (w2 - w).abs() < 1.0e-6 && (g2 - g).abs() < 1.0e-6)
+                    .filter(|(layer, (w2, g2))| {
+                        (w2 - w).abs() < 1.0e-6
+                            && (g2 - g).abs() < 1.0e-6
+                            && !rule.disallowed.get(*layer).copied().unwrap_or(false)
+                    })
                     .fold(0, |mask, (layer, _)| mask | (1 << layer))
                     & board.all_layers();
             }
@@ -1314,9 +1320,12 @@ pub(crate) fn with_pairs(config: &KiCadBoardRouterConfig) -> KiCadBoardRouterCon
     let mut copy = config.clone();
     let mut used: BTreeSet<String> = BTreeSet::new();
     for (net, rule) in &config.diff_pair_rules {
-        if let (Some(rules), Some((width, _))) =
-            (copy.connection_rules.get_mut(net), rule.layers.first())
-        {
+        let first = (0..rule.layers.len())
+            .find(|layer| !rule.disallowed.get(*layer).copied().unwrap_or(false));
+        if let (Some(rules), Some((width, _))) = (
+            copy.connection_rules.get_mut(net),
+            first.and_then(|layer| rule.layers.get(layer)),
+        ) {
             rules.trace_width_mm = *width;
         }
         used.extend(rule.rules.iter().cloned());
