@@ -11,6 +11,83 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-23 (router memory, round 2)
+
+The second round of the router's memory, the candidates round one named:
+katia's maps 2189 -> 1408 MB, its peak 2536 -> 1768 MB, every route and
+fingerprint the same. Branch router-memory-2; snapshots x1620 (the maps)
+and x1621 (the estimate and the lattice floor re-fitted). Details:
+docs/router.md, "Memory (2026-10-23)" and "Memory limits".
+
+**What changed** (pcb-router unless named):
+- The occupancy a byte a count (`Occupancy`, was 16 bits): a count is
+  how many nets' stamps cover a cell; 255 or more keep 255 in the byte
+  and the rest in a side map (exact; no board measured reaches it).
+  Nothing keeps a second copy. Not shared between classes of one trace
+  geometry (katia's three neck classes apart in their vias only): their
+  maps are the same, but sharing them changes the stamp lists, which the
+  fingerprint hashes. Not sparse: a search step reads a count per
+  neighbour.
+- The search records (`hot`) a set per class of some net, shared by the
+  classes of one static trace map; a neck class has none, and a step into
+  a neck zone reads its net class's record with the neck's static map
+  value (all the neck's record differed in). Katia's eight searched
+  classes are four net classes and four necks: 730 -> 365 MB.
+- The guard and cover maps in 16 bits (`owner16`, as the records hold
+  them), with the lost-spokes step's copy of the guard.
+- The estimate (pcb-kicad): the maps and 600 MB resident (was 1.2 x +
+  540: jetson came 6 MB over before the margin), the maps and 760 MB of
+  address space (was 1.3 x + 780), the 1.25 margin kept: what lies beside
+  the maps hardly follows them (katia 360 MB, jetson 579). The lattice
+  floor 24 + 4 a class bytes a node and layer (was 26 + 6, which came
+  within 1.25 of 28 of the 67 lattices measured, the least 1.08): under
+  all 67 by 1.28 or more (the least node_v6_0_0, 6 layers and 2 classes,
+  41.0 bytes a node and layer; ICE40HX1K-TQ144 1.32).
+
+**The consumers** (the scratch heap profiler of round one, not
+committed: the live blocks of 64 KiB or more at the live peak, MB; before
+is round one's after, x1600 to x1602, the same code as x1603):
+
+| board | before | after |
+|---|---|---|
+| katia | occupancy 741, search records 730, static maps 347, scratch 147, stamp lists 128, guard/cover 106 | occupancy 370, search records 365, static maps 347, scratch 147, pour analysis (transient) 137, stamp lists 124, guard/cover 60 |
+| jiran-ble-lite 0.05 mm | search records 422, occupancy 369, scratch 343, static maps 205, history 158, guard/cover 66 | scratch 343, search records 211, static maps 205, occupancy 184, history 158, guard/cover 66 |
+| laptop motherboard | occupancy 222, search records 112, blocks under 64 KiB 94, static maps 90, scratch 88, guard/cover 62 | search records 112, occupancy 111, blocks under 64 KiB 105, static maps 90, scratch 88, guard/cover 34 |
+| Castor | blocks under 64 KiB 86, occupancy 73, stamp lists 37, via snapshot 31, search records 30 | blocks under 64 KiB 90, stamp lists 37, occupancy 36, static maps 27, scratch 23, search records 15 |
+
+**The seven boards** (one router at a time, one thread, a ladder of 60 s
+of work without probes and seeds, x1603 against x1620; MB):
+
+| board | maps | peak RSS | VmPeak |
+|---|---|---|---|
+| katia | 2189 -> 1408 | 2536 -> 1768 | 2810 -> 2022 |
+| jiran-ble-lite 0.05 mm | 1589 -> 1194 | 1594 -> 1241 | 1954 -> 1558 |
+| laptop motherboard | 636 -> 497 | 894 -> 781 | 1114 -> 979 |
+| Sisu_SSE-9 | 491 -> 379 | 725 -> 555 | 912 -> 736 |
+| k30-SBC | 247 -> 194 | 411 -> 358 | 694 -> 598 |
+| jetson | 223 -> 165 | 796 -> 744 | 1052 -> 902 |
+| Castor | 193 -> 134 | 388 -> 327 | 579 -> 565 |
+
+**Fingerprints** (Castor, k30, jetson, Sisu; route mode from v16, 1 x
+4, budget scale 0.25, `PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`,
+build/fp-mem2-x1620 against build/fp-mem1-x1601): every fingerprint and
+every board identical; peak RSS (KiCad's check included) Castor 1219 ->
+1069, k30 1833 -> 1624, jetson 1721 -> 1431, Sisu 2545 -> 2144.
+FP_X1621
+
+**Expansion tier** (46 boards, route mode, 8 x 1, 30 s, `--min-free-gb
+10 --no-lock`, build/expansion-mem2-x1620 against
+build/expansion-mem1-x1601): every row's routed, vias, length, KiCad
+counts, verdict and work identical and all 46 result boards
+byte-identical; unconnected 631 both, work 1221 s both. Peak RSS per row
+median 235 -> 186 MB, max 1297 -> 816 (MSign), sum 16.5 -> 13.0 GB; per
+row 0.63 to 1.02 of before (median 0.81; the small boards' peak is
+KiCad's check): Wonkle 850 -> 689, brickpico 835 -> 619.
+EXP_X1621
+
+SPEED
+
+`bash scripts/check.sh --fast` and the clippy gate pass.
 ## Experiment 2026-10-22 (routes and placements closer to humans)
 
 Florian's brief: what would get the routes and placements closer to a

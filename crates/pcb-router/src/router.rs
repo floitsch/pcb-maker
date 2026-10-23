@@ -1160,6 +1160,7 @@ pub struct Router {
     /// or `VIA_COVER_MIXED` where several nets cover it or the board has
     /// more than 15 layers (a via step then reads `covered` per layer).
     /// A via step reads one word for what were up to a cache line a layer.
+    /// Empty when no layer has a `covered` map.
     via_cover: Vec<u32>,
     /// Per layer and node: the pour (as `owner16`) covering the node, if
     /// any.

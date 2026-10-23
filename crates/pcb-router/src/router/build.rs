@@ -732,6 +732,12 @@ impl Router {
             }
         }
         self.via_marks = marks;
+        // Read only where bit 0 of `via_marks` is set: none without pours
+        // (jiran-ble-lite at 0.05 mm: 55 MB).
+        if self.covered.iter().all(Vec::is_empty) {
+            self.via_cover = Vec::new();
+            return;
+        }
         let mut cover = vec![0u32; self.grid.cells()];
         for (layer, map) in self.covered.iter().enumerate() {
             if map.is_empty() {
