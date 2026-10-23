@@ -125,6 +125,7 @@ pub(super) struct Straightened {
     pub stairs_before: usize,
     pub stairs_after: usize,
     pub pour_rejected: usize,
+    pub spoke_rejected: usize,
 }
 
 impl Router {
@@ -184,36 +185,30 @@ impl Router {
         Some(target)
     }
 
-    /// How many of `nodes` lie in another net's thermal guard or in a
-    /// spoke corridor of another net's pad (`corridors`, by layer and cell),
-    /// and how many on another net's pour.
+    /// Whether `node` lies in another net's thermal guard or in a spoke
+    /// corridor of another net's pad (`corridors`, by layer and cell), and
+    /// whether on another net's pour.
     fn guarded_and_cut(
         &self,
         net: NetId,
-        nodes: &[Node],
+        node: Node,
         corridors: &HashMap<(u8, u32), Vec<NetId>>,
-    ) -> (usize, usize) {
+    ) -> (bool, bool) {
         let own = crate::grid::owner(net);
-        let (mut guarded, mut cut) = (0, 0);
-        for node in nodes {
-            if corridors
-                .get(&(node.layer, node.cell))
-                .is_some_and(|nets| nets.iter().any(|other| *other != net))
-            {
-                guarded += 1;
-                continue;
-            }
-            let class = self.board.nets[net as usize].class;
-            let hot = self.hot[self.hot_of[class] * self.board.layer_count + node.layer as usize]
-                [node.cell as usize];
-            if hot.pour == 0 {
-                continue;
-            }
-            let (guard, covered) = self.hot_pour(hot.pour, node.layer as usize, node.cell as usize);
-            guarded += (guard != 0 && guard as u32 != own) as usize;
-            cut += (covered != 0 && covered as u32 != own) as usize;
+        let in_corridor = corridors
+            .get(&(node.layer, node.cell))
+            .is_some_and(|nets| nets.iter().any(|other| *other != net));
+        let class = self.board.nets[net as usize].class;
+        let hot = self.hot[self.hot_of[class] * self.board.layer_count + node.layer as usize]
+            [node.cell as usize];
+        if hot.pour == 0 {
+            return (in_corridor, false);
         }
-        (guarded, cut)
+        let (guard, covered) = self.hot_pour(hot.pour, node.layer as usize, node.cell as usize);
+        (
+            in_corridor || (guard != 0 && guard as u32 != own),
+            covered != 0 && covered as u32 != own,
+        )
     }
 
     /// One layer's run of lattice nodes straightened (`straighten`), or
@@ -321,11 +316,20 @@ impl Router {
                         // Nor enter more of other pads' spoke corridors
                         // (the thermal spoke repair would move it out
                         // again, with vias) nor cut more of a pour.
-                        let (now, was) = (
-                            self.guarded_and_cut(net, interior, corridors),
-                            self.guarded_and_cut(net, window, corridors),
-                        );
-                        if now.0 > was.0 || now.1 > was.1 {
+                        // A new node in another pad's guard or spoke
+                        // corridor only where the old path was, and no
+                        // more nodes on other nets' pours.
+                        let mut cut = 0isize;
+                        let mut enters = false;
+                        for node in interior {
+                            let (guarded, on_pour) = self.guarded_and_cut(net, *node, corridors);
+                            enters |= guarded && !window.contains(node);
+                            cut += on_pour as isize;
+                        }
+                        for node in window {
+                            cut -= self.guarded_and_cut(net, *node, corridors).1 as isize;
+                        }
+                        if enters || cut > 0 {
                             continue;
                         }
                         let mut next = nodes[..=i].to_vec();
@@ -378,6 +382,7 @@ impl Router {
             Vec::new()
         };
         let mut pour_stranded: Option<Vec<usize>> = None;
+        let mut starved_before: Option<usize> = None;
         let mut checks = 0u64;
         // The pour pads' spoke corridors: a path moved into one can starve
         // the pad's thermal (KiCad's starved_thermal; k30-SBC, one more
@@ -456,6 +461,9 @@ impl Router {
             if runs == 0 {
                 continue;
             }
+            if starved_before.is_none() && !corridors.is_empty() {
+                starved_before = Some(self.starved_pads());
+            }
             if pour_stranded.is_none() && !pour_nets.is_empty() {
                 pour_stranded = Some(self.pour_stranded());
             }
@@ -520,6 +528,16 @@ impl Router {
                 report.pour_rejected += 1;
             }
         }
+        // Nor more pads the spoke model finds starved (what KiCad reports
+        // as starved thermals).
+        if let Some(starved) = starved_before {
+            while !changed.is_empty() && self.starved_pads() > starved {
+                let (net, saved, ..) = changed.pop().unwrap();
+                self.nets[net as usize].branches = saved;
+                self.stamp(net);
+                report.spoke_rejected += 1;
+            }
+        }
         for (_, _, before, after, runs) in &changed {
             report.nets += 1;
             report.runs += runs;
@@ -532,14 +550,15 @@ impl Router {
         self.scratch.expansions += checks.div_ceil(8);
         if self.config.verbose {
             eprintln!(
-                "straightening: {} nets, {} runs, bends {} -> {}, stair-steps {} -> {}, {} nets kept out for stranding pour pads, {checks} steps checked",
+                "straightening: {} nets, {} runs, bends {} -> {}, stair-steps {} -> {}, {} nets kept out for stranding pour pads, {} for starving thermals, {checks} steps checked",
                 report.nets,
                 report.runs,
                 report.bends_before,
                 report.bends_after,
                 report.stairs_before,
                 report.stairs_after,
-                report.pour_rejected
+                report.pour_rejected,
+                report.spoke_rejected
             );
         }
         report
