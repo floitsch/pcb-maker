@@ -176,22 +176,23 @@ impl Router {
         Some(target)
     }
 
-    /// How many of `nodes` lie on another net's pour.
-    fn cut_nodes(&self, net: NetId, nodes: &[Node]) -> usize {
+    /// How many of `nodes` lie in another net's thermal guard (a pad's
+    /// spoke corridors) and how many on another net's pour.
+    fn guarded_and_cut(&self, net: NetId, nodes: &[Node]) -> (usize, usize) {
         let own = crate::grid::owner(net);
-        nodes
-            .iter()
-            .filter(|node| {
-                let class = self.node_class(net, node.cell);
-                let hot = self.hot[class * self.board.layer_count + node.layer as usize]
-                    [node.cell as usize];
-                hot.pour != 0 && {
-                    let (_, covered) =
-                        self.hot_pour(hot.pour, node.layer as usize, node.cell as usize);
-                    covered != 0 && covered as u32 != own
-                }
-            })
-            .count()
+        let (mut guarded, mut cut) = (0, 0);
+        for node in nodes {
+            let class = self.node_class(net, node.cell);
+            let hot =
+                self.hot[class * self.board.layer_count + node.layer as usize][node.cell as usize];
+            if hot.pour == 0 {
+                continue;
+            }
+            let (guard, covered) = self.hot_pour(hot.pour, node.layer as usize, node.cell as usize);
+            guarded += (guard != 0 && guard as u32 != own) as usize;
+            cut += (covered != 0 && covered as u32 != own) as usize;
+        }
+        (guarded, cut)
     }
 
     /// One layer's run of lattice nodes straightened (`straighten`), or
@@ -295,8 +296,14 @@ impl Router {
                         }) {
                             continue;
                         }
-                        // Nor cut more of another net's pour than before.
-                        if self.cut_nodes(net, interior) > self.cut_nodes(net, window) {
+                        // Nor enter more of other pads' spoke corridors
+                        // (the thermal spoke repair would move it out
+                        // again, with vias) nor cut more of a pour.
+                        let (now, was) = (
+                            self.guarded_and_cut(net, interior),
+                            self.guarded_and_cut(net, window),
+                        );
+                        if now.0 > was.0 || now.1 > was.1 {
                             continue;
                         }
                         let mut next = nodes[..=i].to_vec();
