@@ -123,6 +123,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "no connection-width neck repair after the final DRC.",
     ),
     (
+        "PCB_ROUTER_PIN_ROW_COST",
+        Kind::Switch,
+        "the router's `pin_row_cost` in millimetres where the settings name none (`pin_row_cost_mm`): the cost of another net's step between two adjacent SMD pads of a part's pin row (docs/router.md, \"Pin-row cost\"; for measuring other values).",
+    ),
+    (
         "PCB_ROUTER_NO_STRAIGHTEN",
         Kind::Switch,
         "turns the router's straightening off (`straighten`, on since 2026-10-23): after the via reduction and the thermal spoke repairs, stair-steps and jogs taken out of the signal nets' paths where the clearance allows (docs/router.md, \"Straightening\"; for attributing rows).",

@@ -417,6 +417,7 @@ User-facing (`pcb-maker --help` lists them):
 
 Switches and experiment hooks (change the result):
 
+- `PCB_ROUTER_PIN_ROW_COST`: the router's `pin_row_cost` in millimetres where the settings name none (`pin_row_cost_mm`): the cost of another net's step between two adjacent SMD pads of a part's pin row (docs/router.md, "Pin-row cost"; for measuring other values).
 - `PCB_ROUTER_NO_STRAIGHTEN`: turns the router's straightening off (`straighten`, on since 2026-10-23): after the via reduction and the thermal spoke repairs, stair-steps and jogs taken out of the signal nets' paths where the clearance allows (docs/router.md, "Straightening"; for attributing rows).
 - `PCB_ROUTER_TROUBLE`: overrides the router's `trouble_repair` (`0` off, anything else on): the trouble-makers' repair after the hard repair (an open net routed through others at a price, the nets it displaces routed again hard, kept when the open terminals drop; docs/experiments/human-level-routing.md).
 - `PCB_ROUTER_TROUBLE_PRESENT`: the trouble-makers' repair: the price of sharing a node in the trouble-maker's search (default 20).
