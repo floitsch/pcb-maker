@@ -703,6 +703,22 @@ pub(crate) fn direct_narrow_budget(work_left: f64) -> (f64, f64) {
     (negotiation, cleanup)
 }
 
+/// The narrow-signal attempt run alone with `work_left`: its negotiation
+/// and clean-up, and whether it keeps the attempt after it (the other
+/// pour mode) its floor (`NARROW_CONTINUATION_FLOOR`): with at least
+/// twice the floor left the attempt is sized from what is left without
+/// it, and its ladder keeps it from the start (Glasgow: the attempt's
+/// first route took 664 s of 701 s and the continuation never ran).
+pub(crate) fn narrow_with_continuation(work_left: f64) -> (f64, f64, bool) {
+    if work_left >= 2.0 * NARROW_CONTINUATION_FLOOR {
+        let (negotiation, cleanup) = direct_narrow_budget(work_left - NARROW_CONTINUATION_FLOOR);
+        (negotiation, cleanup, true)
+    } else {
+        let (negotiation, cleanup) = direct_narrow_budget(work_left);
+        (negotiation, cleanup, false)
+    }
+}
+
 /// The KiCad checks the neck repair may make with `work_left` of a
 /// layout's work, a check counting `check_seconds` (`None`: checks cost
 /// nothing, the repair's own limit holds).
@@ -2095,12 +2111,12 @@ pub fn layout_kicad_board(
             KiCadPourMode::Tracks
         };
         narrow.refine_pitches_mm = Some(Vec::new());
-        let (negotiation, cleanup) = direct_narrow_budget(ladder_left);
+        let (negotiation, cleanup, keeps) = narrow_with_continuation(ladder_left);
         narrow.negotiation_seconds = Some(negotiation);
         narrow.cleanup_seconds = Some(cleanup);
-        // Its seed rounds leave the attempt after it its share (the
-        // other pour mode: DSP-ADAU1452 73 to 30 open by it).
-        narrow.keep_for_continuation = true;
+        // It leaves the attempt after it its share (the other pour mode:
+        // DSP-ADAU1452 73 to 30 open by it).
+        narrow.keep_for_continuation = keeps;
         eprintln!(
             "layout: {ladder_left:.0} s of work left: the narrow-signal attempt instead of the ladder (pours {}, negotiation {negotiation:.0} s, clean-up {cleanup:.0} s)",
             if connect { "connected" } else { "as tracks" },
@@ -2284,9 +2300,10 @@ pub fn layout_kicad_board(
                     .ladder_budget_seconds
                     .map(|budget| budget.min(left.max(120.0)));
                 if direct_narrow {
-                    let (negotiation, cleanup) = direct_narrow_budget(left);
+                    let (negotiation, cleanup, keeps) = narrow_with_continuation(left);
                     fallback_config.negotiation_seconds = Some(negotiation);
                     fallback_config.cleanup_seconds = Some(cleanup);
+                    fallback_config.keep_for_continuation = keeps;
                 }
             }
             fallback_config.kicad_kept = Some((
@@ -2662,6 +2679,17 @@ mod budget_tests {
         assert_eq!(neck_check_bound(59.0, 20.0), Some(2));
         assert_eq!(neck_check_bound(-10.0, 20.0), Some(0));
         assert_eq!(neck_check_bound(100.0, 0.0), None);
+    }
+
+    #[test]
+    fn the_narrow_attempt_alone_leaves_the_continuation_its_floor() {
+        let (negotiation, cleanup, keeps) = narrow_with_continuation(701.0);
+        assert!(keeps);
+        assert_eq!((negotiation, cleanup), direct_narrow_budget(701.0 - 240.0));
+        assert!(negotiation + cleanup < 701.0 - 240.0);
+        let (negotiation, cleanup, keeps) = narrow_with_continuation(400.0);
+        assert!(!keeps);
+        assert_eq!((negotiation, cleanup), direct_narrow_budget(400.0));
     }
 
     #[test]

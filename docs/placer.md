@@ -1086,6 +1086,54 @@ the dense boards (the same rule) confirms the sum; the switch stays as
 the override (`{"escape_demand": null}` turns it off once the default
 is `Some`).
 
+## Routes survive moves (2026-10-23)
+
+Florian's idea 2: "make it easier to move components without losing all
+existing traces: moving something to make space shouldn't require a
+full reroute". Inside the coupled loop that already holds (a move trial
+is `Router::update` and a reroute of what the move touched, and the move
+descent's `update_nets` keeps even the untouched branches of a moved
+part's nets), but the layout's last step did not: the final ladder, and
+the narrow-signal attempt standing in for it on boards far from
+complete, routed the final placement from scratch, and the board the
+moves and the descent had left only competed with it.
+
+`final_route_from_state` in layout.json (`PCB_LAYOUT_FINAL_FROM_STATE`
+overrides; false, as before, by default: see the measurement below)
+starts the final route from the router's state instead:
+
+- **What is kept.** Every net's legal copper of the state (complete
+  nets and the connected pieces of open ones, pour nets' stubs and
+  stitching vias with them), written into the placed board as its own
+  copper, which route mode keeps as it keeps a designer's pre-routed
+  nets (`kept.rs`: the pads it joins are one terminal, the router routes
+  what is open). Not kept: a net in a violation of the router's own
+  check, and every net with copper within 1 mm of a terminal the state
+  left open (`KEPT_FREE_RADIUS_MM`). Kept as walls, the open nets found
+  no way out (4in1-mini: 20 of 28 open nets without any path, DSP 30 of
+  41); 1.5 mm freed nearly the whole board (4in1-mini kept 59 of 152
+  nets). The pours connect as the state connected them (connected, or as
+  tracks; no rung of the other mode).
+- **The ladder on the rest**, with at most 0.3 of the work left
+  (`KEPT_SHARE`; half took DSP's continuation): the finer pitches, seeds
+  and the narrow-signal step work on the nets not kept.
+- **From scratch as the fallback**: at once when the ladder's first
+  attempt on the kept routes leaves more open by the router's count than
+  the layout's first route (a fresh first attempt) did (`fresh_open`; the
+  ladder stops there, `KEPT_GAVE_UP`), and otherwise with the work the
+  kept route left while connections stay open. KiCad's check decides
+  between the boards as before; the attempt after the narrow-signal
+  attempt (the other pour mode) varies the one from scratch.
+
+What it cannot do: the kept copper is fixed. The router never rips up
+a kept net, so an open terminal whose way out runs through kept copper
+more than 1 mm away stays open; only the route from scratch can move
+those nets. A warm start in which the router owns the state's routes
+(and may rip them up in its negotiation) on a new lattice or with the
+narrow widths is the step this leaves.
+
+MEASUREMENT_PLACEHOLDER
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a

@@ -524,7 +524,7 @@ impl<'a> Ladder<'a> {
             .deadline_work
             .is_none()
             .then(|| ladder_work_bound(ladder_budget));
-        let ladder = Self {
+        let mut ladder = Self {
             config,
             // On two layers (`pcb_router`'s `integrity`): inner planes stay
             // whole on their own rungs.
@@ -649,6 +649,20 @@ impl<'a> Ladder<'a> {
             ledger: Vec::new(),
             selected: None,
         };
+        // The layout's attempt after this one: its floor is kept from the
+        // start, so that the first attempt stops before it too.
+        if ladder.reserve_wanted
+            && config.keep_for_continuation
+            && let Some(left) = config.deadline_work
+            && left >= 2.0 * NARROW_RESERVE_FLOOR
+        {
+            ladder.reserve_set = true;
+            ladder.reserve = reserve_with_check(NARROW_RESERVE_FLOOR, ladder.check_charge);
+            eprintln!(
+                "ladder: {:.0} s of work kept for the attempt after it ({left:.0} s left)",
+                ladder.reserve
+            );
+        }
         if let Some(bound) = work_bound {
             eprintln!(
                 "ladder: a budget of {ladder_budget:.0} s of work, at most {bound:.0} s with its tolerance ({:.0} %); wall guard {}",
