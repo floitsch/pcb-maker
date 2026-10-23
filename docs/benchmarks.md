@@ -1191,26 +1191,27 @@ Huaqiu-Electronics__ecad-viewer__video                               |          
 
 ## Freerouting against x1367 (2026-10-21)
 
-**Partial: 40 of the 109 boards so far**, the 40 with the longest walls of
-ours (the runner takes the longest first), so the hardest boards of the
-list; the other 69 and the ten-board speed study run on, a batch of three
-boards per hold of the tier lock (commands at the end). Read the numbers
-below as "the large boards", not as the corpus.
+**Complete: all 109 boards** (measured 2026-10-21 to 2026-10-23), and the
+ten-board speed study. Our side is pcb-maker-x1367 throughout, for
+comparability with the rows Freerouting was given its wall from; main has
+moved on since (x1573 and later: the memory ledger, pour integrity off by
+default, the silkscreen placement, router memory, trace aesthetics and the
+trouble repair default; see [changelog.md](changelog.md)), so these are not
+main's numbers.
 
 Same placements on both sides: route mode on the v17 layout placements
 (`build/github-layout-v17/<task>/layout/placed`: the layout's parts, the
 designer's keepouts and pours, no tracks), tasks v7, the task budgets.
 Ours: `run.py --route-from build/github-layout-v17` with
-pcb-maker-x1367, 8 jobs x 2 threads (`build/fr2-route-x1367.log`). Rows
-the run lost were rerun alone and spliced (`build/fr2-route-final.log`):
-bumwings_v001_core and ghoul (killed by the kernel's OOM killer, exit -9:
-such a row still carries a result board from the ladder's last best attempt
-and is not the binary's answer) and the 0xCB pcb-panel on x1367; the rows
-cut by the wall clock or the harness timeout (katia, Batch_1, the 0xCB
-panel, poly_kb_molecule_4x4) on x1371, which stretches the wall guard under
-load and differs from x1367 only in work accounting (three expansion rows
-moved where spoke work changed the ladder's shares; short tier and
-fingerprints identical). katia hits the harness's 2700 s timeout again on
+pcb-maker-x1367, 8 jobs x 2 threads at a load of 12 to 50
+(`build/fr2-route-x1367.log`). Rows the run lost were rerun alone and
+spliced (`build/fr2-route-final.log`): bumwings_v001_core and ghoul
+(killed by the kernel's OOM killer, exit -9: such a row still carries a
+result board from the ladder's last best attempt and is not the binary's
+answer) and the 0xCB pcb-panel on x1367; the rows cut by the wall clock or
+the harness timeout (katia, Batch_1, the 0xCB panel, poly_kb_molecule_4x4)
+on x1371, which stretches the wall guard under load and differs from x1367
+only in work accounting. katia hits the harness's 2700 s timeout again on
 x1371 alone (8.8 GB peak) and the pcb-panel's KiCad refill times out at
 900 s again: both stay rows without a result. No row with exit -9 or 137
 is left.
@@ -1221,51 +1222,67 @@ board minimums, its batch passes, KiCad's session import), `-mt 1`,
 `-Xmx4g`, with its own job timeout (`--router.job_timeout`) set to the wall
 our row of the board took: its passes until it stops (it stops by itself
 when a pass no longer improves) or that wall, and then it writes the session
-of what it has. The designer's pours stay on the board: KiCad's DSN export
-makes them planes, Freerouting reaches them with vias, and KiCad's DRC
-refills them, as on our side (where the router fills them itself). Both
-results are judged by run.py's own functions: KiCad's DRC (`drc-kicad-board`,
-zones refilled), the pass rule (no unconnected item, no copper error beyond
-the designer's count of its type) and the strict rule (only the findings the
-designer's stripped board has at the same place are subtracted). Wall and
-CPU are each side's whole pipeline: ours the route process with its KiCad
-checks, Freerouting's the JVM plus the DSN export, the session import and
-the DRC. Freerouting ran one board at a time beside other agents' runs
-(`build/fr2-freerouting-x1367.log`).
+of what it has; the process is killed at that wall plus 300 s. The
+designer's pours stay on the board: KiCad's DSN export makes them planes,
+Freerouting reaches them with vias, and KiCad's DRC refills them, as on our
+side (where the router fills them itself). Both results are judged by
+run.py's own functions: KiCad's DRC (`drc-kicad-board`, zones refilled),
+the pass rule (no unconnected item, no copper error beyond the designer's
+count of its type) and the strict rule (only the findings the designer's
+stripped board has at the same place are subtracted). Wall and CPU are each
+side's whole pipeline: ours the route process with its KiCad checks,
+Freerouting's the JVM plus the DSN export, the session import and the DRC.
+Freerouting ran three boards at a time beside other agents' runs, at a
+load of 1 to 49 (`build/fr2-freerouting-x1367.log`).
 
-Over the 40 boards (`benchmarks/github/freerouting_route_compare.py
+**Summary** (`benchmarks/github/freerouting_route_compare.py
 build/fr2-route-final.log build/fr2-freerouting-x1367`):
 
 | | pcb-maker x1367 | Freerouting 2.2.4 |
 | --- | ---: | ---: |
-| boards with a KiCad-checked result | 38 | 28 |
-| pass (designer-subtracted per type) | 2 | 0 |
-| strict pass | 1 (MokyaLora) | 0 |
-| better on KiCad's unconnected, then errors, then strict findings | 35 | 4 (1 tie) |
-| 27 boards both have: KiCad unconnected | 2 379 | 6 161 |
-| same: counting errors (pass rule) | 128 | 1 371 |
-| same: strict new findings | 634 | 1 971 |
-| same: vias | 11 436 | 3 662 |
-| same: track length | 263.4 m | 166.7 m |
-| same: CPU seconds | 55 129 | 67 328 |
-| per board, Freerouting over ours: CPU median / wall median | | x1.29 / x1.01 |
-| stopped by the wall (its job timeout) | | 25 |
+| boards with a KiCad-checked result (of 109) | 107 | 75 |
+| pass (designer-subtracted per type) | 51 | 3 |
+| strict pass | 44 | 3 |
+| better on KiCad's unconnected, then errors, then strict findings | 101 | 4 (4 ties) |
+| 74 boards both have: KiCad unconnected | 2 700 | 9 619 |
+| same: counting errors (pass rule) | 141 | 3 016 |
+| same: strict new findings | 1 254 | 4 603 |
+| same: vias | 18 799 | 7 822 |
+| same: track length | 538.0 m | 366.4 m |
+| same: CPU seconds | 82 286 | 96 899 |
+| per board, Freerouting over ours: CPU median / wall median | | x1.31 / x1.01 |
+| stopped by the wall (its job timeout) | | 70 |
 
-Freerouting's twelve boards without a result: six it did not stop within
-its job timeout plus 300 s (a pass on a large board does not look at the
-timeout: laptop motherboard, vaio_re, poly_corne_split42_left, koeg-board,
-video, OpenESC 4in1-panel), three whose session KiCad cannot import
-(SUMEC_MK_IV, poly_kb_molecule_5x2_shifted and 7x5_wave_left), two it cannot
-read (zpn_devboard and the Hub: a NullPointerException in
-`applyBoardSpecificOptimizations`, as on 2026-10-09) and the 0xCB pcb-panel,
-whose KiCad check times out on both sides. Its copper is short because it
-leaves so much open: on the 27 boards both finish it has 2.6 times our
-unconnected items and ten times our counting errors. Freerouting at `-mt 1`
-still uses a median 2.25 CPU seconds per wall second (1.9 to 2.8; the JVM's compiler and
+On the 74 boards both finish Freerouting leaves 3.6 times our unconnected
+items and 21 times our counting errors; its copper is shorter and has
+fewer vias because so much stays open. The three boards it passes
+(0xcb-static, OM-60-Flex, CharlieBoard Blue_Line) are three of the four
+ties: ours strict-passes them too, on 0xcb-static and Blue_Line in less
+wall and a quarter or less of its CPU, on OM-60-Flex in 121 s against its 55 s
+(148 against 129 CPU seconds). Freerouting at `-mt 1` still uses a median
+2.2 CPU seconds per wall second (0.8 to 4.4: the JVM's compiler and
 collector threads); ours ran at two search threads.
 
-**Where Freerouting is better** (fewer KiCad-unconnected items; none of the
-four passes on its side):
+Freerouting's 34 boards without a result:
+- 25 it did not stop within its job timeout plus 300 s (a pass does not
+  look at the timeout; on a loaded machine that includes small boards):
+  laptop motherboard, OpenESC 4in1-panel, 4in1 and 4in1-mini, Sisu_SSE-9,
+  eurorack-pmod, vaio_re, poly_corne_split42_left, BAGEL-MK1 and
+  MK1.1-Avocado, MIDAS-MK2 and MK1.1, koeg-board, video, rosco_m68k,
+  hackrf-one, PixelWave, SmartSpin2k_Panelized, CyberKeeb2040, four
+  bumwings variants and stm32_chiffre_36keys, ErgoSNM.
+- 5 whose session KiCad cannot import: SUMEC_MK_IV, poly_kb_molecule
+  7x5_wave_left, 5x4_wave and 5x2_shifted, bumwings_v001R64_nano_sd.
+- 3 it cannot read: zpn_devboard and the Hub (a NullPointerException in
+  `applyBoardSpecificOptimizations`, as on 2026-10-09: no session) and
+  OnBoard keyboar_ (the DSN is not read).
+- The 0xCB pcb-panel, whose KiCad check times out on both sides.
+
+Ours has no result on two: katia (the harness's 2700 s timeout) and the
+pcb-panel.
+
+**Where Freerouting is better** (fewer KiCad-unconnected items; it passes
+none of the four):
 
 - **Business-Cards Batch_1** (a panel): ours 106/204, KiCad 441 unconnected,
   no counting error but 261 clearance findings the strict rule counts (the
@@ -1273,15 +1290,16 @@ four passes on its side):
   unconnected with 158 counting errors (34 shorting_items, 96 copper edge
   clearance, 8 invalid_outline, 16 starved thermals, 4 hole_to_hole).
 - **katia**: ours has no result (the harness's 2700 s timeout on x1367 and
-  again on x1371 alone); Freerouting 90 unconnected and 126 hole_clearance.
+  again on x1371 alone); Freerouting 90 unconnected and 126 hole_clearance,
+  in 2643 s.
 - **jiran-ble-lite**: ours 104/105, KiCad 20 unconnected, no error (20 GND
   pads on the far half of a split keyboard joined by a frame no track
-  crosses); Freerouting 2 unconnected and 23 clearance errors. Main at
-  9b1e1ff (x1434, net ties and apart trees) routes it to KiCad's 1, the
+  crosses); Freerouting 2 unconnected and 23 clearance errors in 75 s.
+  Main since x1434 (net ties and apart trees) routes it to KiCad's 1, the
   designer's own.
 - **SNSP-CPU-01**: ours 301/363, KiCad 161 unconnected, one starved thermal
   as the strict rule's only finding; Freerouting 151 unconnected with 194
-  solder mask bridges, 12 clearance and 2 shorting_items.
+  solder mask bridges, 12 clearance and 3 starved thermals.
 
 Per board (FR open: Freerouting's own count of unrouted connections from
 its log, "(wall)" where its job timeout stopped it; "-": no result; routed
@@ -1289,72 +1307,158 @@ CUT: the harness's timeout):
 
 | Board | ours routed | ours KiCad open | ours errors | ours strict | ours wall s | ours CPU s | FR open (its count) | FR KiCad open | FR errors | FR strict | FR wall s | FR CPU s |
 | --- | ---: | ---: | ---: | :---: | ---: | ---: | ---: | ---: | ---: | :---: | ---: | ---: |
+| 0xCB-1337__1337-v4.0 | 47/47 | 0 | 0 | pass | 100.1 | 100.3 | 1 | 16 | 13 | no | 86.7 | 156.8 |
 | 0xCB-1337__panel | 149/188 | 65 | 0 | no | 2355.1 | 2921.2 | 49 | 113 | 20 | no | 954.6 | 2105.1 |
+| 0xCB-1337__pcb | 85/85 | 0 | 0 | pass | 405.0 | 729.0 | 1 | 26 | 139 | no | 163.5 | 372.4 |
 | 0xCB-1337__pcb-panel | 263/340 | - | - | - | 1306.9 | 673.9 | 125 (wall) | - | - | - | 2215.4 | 2862.6 |
+| 0xCB-Static__0xcb-static | 74/74 | 0 | 0 | pass | 31.0 | 31.3 | 197 | 0 | 0 | pass | 40.4 | 123.1 |
 | jetson-nano-baseboard__jetson-nano-baseboard | 325/340 | 19 | 0 | no | 820.7 | 1546.2 | 677 (wall) | 499 | 21 | no | 836.5 | 1891.7 |
+| explorer__Explorer | 148/150 | 2 | 0 | no | 380.8 | 637.4 | 237 (wall) | 238 | 1 | no | 412.1 | 749.8 |
+| eurorack-pmod__eurorack-pmod-pcb | 128/133 | 4 | 0 | no | 465.2 | 1163.3 | 33 (wall) | - | - | - | 768.6 | 1190.6 |
+| Qfwfq__qfwfq | 64/64 | 0 | 0 | no | 290.3 | 296.8 | 1 | 15 | 0 | no | 261.1 | 537.8 |
+| bit-preserve__coco2 | 173/173 | 0 | 0 | pass | 657.1 | 495.9 | 43 (wall) | 83 | 10 | no | 666.0 | 1520.0 |
 | Sumec-MiniSumo__SUMEC_MK_IV | 66/69 | 5 | 0 | no | 974.1 | 1902.8 | 44 | - | - | - | 120.6 | 292.6 |
+| d20_pcb__d20_pcb | 18/19 | 1 | 0 | no | 294.2 | 502.2 | 62 | 2 | 152 | no | 58.4 | 98.1 |
+| spell_tome__spell_tome_bottom | 18/18 | 0 | 0 | pass | 8.5 | 8.4 | 43 | 1 | 4 | no | 21.6 | 42.0 |
+| Sisu_SSE-9__Sisu_SSE-9 | 179/192 | 15 | 0 | no | 792.7 | 1608.2 | 79 (wall) | - | - | - | 1094.7 | 2149.8 |
+| laptop__keyboard | 132/136 | 4 | 0 | no | 674.7 | 1197.5 | 27 (wall) | 42 | 12 | no | 684.2 | 1684.0 |
 | laptop__motherboard | 232/236 | 4 | 0 | no | 1279.4 | 2055.4 | 6 (wall) | - | - | - | 1580.9 | 3601.0 |
+| laptop__power | 110/115 | 5 | 0 | no | 328.2 | 885.3 | 6 (wall) | 50 | 155 | no | 347.5 | 694.8 |
 | Business-Cards__Batch_1 | 106/204 | 441 | 0 | no | 810.4 | 1664.9 | 234 (wall) | 307 | 158 | no | 826.2 | 1889.9 |
+| Business-Cards__USB_Cable_Tester__PCB | 54/54 | 0 | 0 | pass | 121.6 | 122.1 | 4 (wall) | 23 | 132 | no | 150.0 | 282.0 |
+| Business-Cards__USB_Keypad | 37/39 | 2 | 0 | no | 381.4 | 670.3 | 2 | 27 | 23 | no | 81.2 | 181.3 |
+| Business-Cards__WLED_Matrix | 99/104 | 11 | 2 | no | 583.0 | 1046.4 | 9 | 75 | 34 | no | 318.3 | 711.5 |
+| MyKiCad__framework_mobo_lefthalf | 71/71 | 0 | 0 | pass | 266.2 | 704.4 | 55 (wall) | 63 | 4 | no | 283.7 | 534.6 |
 | MyKiCad__protoesp | 67/104 | 58 | 1 | no | 1180.3 | 1805.1 | 90 | 115 | 4 | no | 767.7 | 1684.2 |
 | MyKiCad__vaio_re | 262/267 | 4 | 6 | no | 999.7 | 1559.1 | 44 (wall) | - | - | - | 1301.5 | 2613.6 |
 | MyKiCad__zpn_devboard | 166/167 | 1 | 0 | no | 823.6 | 1479.4 | - | - | - | - | 4.3 | 4.5 |
+| mackerel-68k__mackerel-08-v1 | 96/96 | 0 | 0 | pass | 467.0 | 587.3 | 6 (wall) | 56 | 15 | no | 483.1 | 872.7 |
+| mackerel-68k__mackerel-10-v1 | 155/155 | 0 | 0 | pass | 662.2 | 921.2 | 2 (wall) | 121 | 4 | no | 670.8 | 1569.9 |
+| mackerel-68k__mackerel-30-proto | 217/217 | 0 | 2 | no | 616.1 | 870.4 | 68 (wall) | 198 | 586 | no | 624.4 | 1501.7 |
+| SmartSpin2k__SmartSpin2k_Panelized | 550/585 | 45 | 0 | no | 730.3 | 723.6 | 948 (wall) | - | - | - | 1031.9 | 1924.3 |
+| eternal-keypad__eternal-keypad | 65/65 | 0 | 0 | no | 95.6 | 82.9 | 14 (wall) | 19 | 0 | no | 114.2 | 220.2 |
+| urchin__main | 68/68 | 0 | 0 | pass | 21.0 | 24.2 | 243 (wall) | 107 | 3 | no | 36.6 | 83.3 |
 | atat-1800__ATAT1800 | 253/278 | 30 | 0 | no | 1880.8 | 2218.9 | 38 (wall) | 91 | 27 | no | 1912.4 | 4138.4 |
 | osprey__osprey_rev_a | 99/103 | 3 | 1 | no | 2164.8 | 2280.9 | 23 (wall) | 50 | 26 | no | 2179.1 | 4730.6 |
+| OpenAirScope__OpenAirScope | 179/184 | 5 | 0 | no | 550.9 | 1221.8 | 6 | 54 | 0 | no | 482.1 | 1032.3 |
 | glasgow__glasgow__revC3 | 124/226 | 180 | 0 | no | 883.3 | 1247.7 | 385 (wall) | 390 | 2 | no | 890.0 | 2017.2 |
 | ULK__ULK | 68/70 | 2 | 0 | no | 1668.0 | 2022.1 | 3 | 13 | 41 | no | 43.9 | 99.8 |
 | ULK__ULK_sl_PG1316s | 68/70 | 3 | 0 | no | 1783.6 | 2382.3 | 5 | 7 | 9 | no | 90.5 | 186.4 |
+| hackrf__hackrf-one | 319/319 | 0 | 0 | pass | 284.2 | 423.7 | 726 (wall) | - | - | - | 586.8 | 823.6 |
+| OnBoard__E-Fidget-Lite | 20/20 | 0 | 0 | pass | 27.0 | 26.5 | 63 | 2 | 0 | no | 35.9 | 92.1 |
+| OnBoard__keyboar_ | 102/102 | 0 | 0 | no | 540.0 | 359.2 | - | - | - | - | 301.7 | 294.0 |
 | OnBoard__koeg-board-pcb | 150/175 | 33 | 23 | no | 1630.5 | 2168.0 | 73 (wall) | - | - | - | 1931.7 | 4068.4 |
+| OnBoard__krishveercard | 43/43 | 0 | 0 | no | 617.0 | 1658.9 | 86 | 86 | 0 | no | 78.7 | 200.0 |
+| OnBoard__MotionCubeViewAllForces | 20/20 | 0 | 0 | pass | 83.1 | 130.8 | 9 | 12 | 8 | no | 86.9 | 184.1 |
+| OnBoard__PixelWave | 343/343 | 0 | 0 | pass | 359.3 | 350.7 | 688 (wall) | - | - | - | 663.7 | 962.9 |
 | OnBoard__woagboard | 84/91 | 9 | 0 | no | 1410.6 | 2711.4 | 7 | 49 | 0 | no | 793.9 | 2011.4 |
 | slab-pcb__interchange-pcb-right | 83/83 | 0 | 0 | no | 983.1 | 795.9 | 16 | 112 | 99 | no | 882.3 | 1957.4 |
 | slab-pcb__slab-pcb-left | 75/76 | 1 | 0 | no | 1839.7 | 2228.6 | 9 | 107 | 0 | no | 1136.6 | 2126.3 |
 | ecad-viewer__video | 267/371 | 254 | 0 | no | 1368.9 | 1450.3 | 311 (wall) | - | - | - | 1670.8 | 3431.6 |
+| silkscreen-pcb__silkscreen_pcb | 113/113 | 0 | 0 | pass | 149.1 | 149.9 | 39 (wall) | 64 | 40 | no | 168.0 | 385.3 |
 | katia__katia | - CUT | - | - | - | 2701.0 | 2805.0 | 27 | 90 | 126 | no | 2643.2 | 5879.3 |
+| ISS-PCB__BAGEL-MK1 | 138/138 | 0 | 0 | pass | 174.6 | 231.7 | 334 (wall) | - | - | - | 477.5 | 686.7 |
+| ISS-PCB__BAGEL-MK1.1-Avocado | 142/144 | 2 | 0 | no | 558.9 | 1295.8 | 242 (wall) | - | - | - | 861.6 | 1592.2 |
+| ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA | 151/156 | 5 | 0 | no | 598.7 | 1429.7 | 15 (wall) | - | - | - | 900.6 | 1727.1 |
+| ISS-PCB__MIDAS-MK1__MIDAS-MK1-revA | 151/159 | 8 | 9 | no | 670.0 | 1281.3 | 36 (wall) | 63 | 12 | no | 679.2 | 1611.8 |
+| ISS-PCB__MIDAS-MK2 | 156/156 | 0 | 0 | pass | 242.6 | 299.6 | 65 (wall) | - | - | - | 547.8 | 769.5 |
+| ISS-PCB__MIDAS-MK2.1__MIDAS-MK2.1-revA | 154/154 | 0 | 0 | pass | 602.4 | 1194.8 | 8 | 46 | 1 | no | 541.6 | 1235.8 |
+| ligra__ligra_back | 33/33 | 0 | 0 | pass | 39.1 | 29.5 | 77 | 5 | 0 | no | 26.3 | 68.0 |
 | jiran-ble-lite__jiran-ble-lite | 104/105 | 20 | 0 | no | 1318.8 | 1357.0 | 2 | 2 | 23 | no | 74.9 | 196.2 |
+| little-red-rover__little_red_rover | 64/64 | 0 | 0 | pass | 317.8 | 553.9 | 11 | 30 | 6 | no | 191.0 | 400.3 |
+| M8SBC-486__homebrew_486 | 190/190 | 0 | 0 | pass | 536.4 | 975.4 | 460 (wall) | 488 | 0 | no | 586.1 | 606.0 |
 | PCB-Modular-Multi-Protocol-Hub__Hub | 144/159 | 22 | 0 | no | 971.2 | 1945.3 | - | - | - | - | 4.3 | 4.6 |
 | Neotron-Pico__neotron-pico | 176/190 | 24 | 0 | no | 2426.6 | 2872.0 | 97 | 103 | 2 | no | 800.8 | 1700.6 |
 | Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized | 156/172 | 18 | 1 | no | 1772.8 | 2006.5 | 59 | 76 | 12 | no | 1762.5 | 3409.9 |
+| Quanta75__Quanta75_RP2040Stamp_JLCPCBAoptimized | 162/162 | 0 | 0 | pass | 694.6 | 529.8 | 1 | 30 | 9 | no | 172.7 | 402.0 |
 | DSP-ADAU1452__DSP-ADAU1452 | 156/190 | 61 | 4 | no | 917.2 | 1578.4 | 152 (wall) | 212 | 61 | no | 924.3 | 2164.1 |
+| OpenMuscle-FlexGrid__OM-60-Flex | 21/21 | 0 | 0 | pass | 120.6 | 147.8 | 141 | 0 | 0 | pass | 54.9 | 129.1 |
+| OpenMuscle-FlexGrid__OM-FlexGrid-Flex__OM-FlexGrid-Flex | 19/19 | 0 | 0 | pass | 281.3 | 726.1 | 3 | 6 | 0 | no | 171.3 | 373.5 |
+| OpenESC-20x20__4in1-mini | 126/152 | 43 | 0 | no | 508.5 | 1197.4 | 347 (wall) | - | - | - | 811.3 | 676.3 |
+| OpenESC-30x30__4in1 | 91/152 | 111 | 0 | no | 407.7 | 701.6 | 412 (wall) | - | - | - | 710.1 | 1001.7 |
 | OpenESC-30x30__4in1-panel | 47/184 | 485 | 220 | no | 975.2 | 2051.6 | 881 (wall) | - | - | - | 1276.6 | 2403.1 |
+| OpenFC-Lite__OpenFC | 82/82 | 0 | 0 | pass | 279.7 | 840.6 | 7 (wall) | 13 | 84 | no | 295.6 | 578.5 |
+| OpenRX__OpenRX-panel-rev2 | 42/127 | 229 | 0 | no | 519.5 | 905.6 | 526 (wall) | 499 | 125 | no | 555.7 | 552.9 |
 | link__link | 245/251 | 6 | 0 | no | 1770.2 | 2081.4 | 294 (wall) | 420 | 191 | no | 1786.8 | 3460.4 |
+| rosco_m68k__rosco_m68k__kicad | 148/148 | 0 | 0 | pass | 597.0 | 728.2 | 21 (wall) | - | - | - | 898.6 | 1698.4 |
+| OSHW-reCamera-Series__reCamera_S101_v1.1 | 55/56 | 4 | 0 | no | 116.1 | 310.0 | 56 (wall) | 88 | 0 | no | 136.5 | 216.8 |
+| ergo-snm-keyboard__ErgoSNM_keyboard | 58/58 | 0 | 0 | pass | 270.4 | 245.1 | 48 (wall) | - | - | - | 573.2 | 800.0 |
+| Telemetry__TelemetryOnboard | 108/108 | 0 | 0 | no | 364.8 | 960.3 | 14 (wall) | 28 | 10 | no | 385.4 | 740.5 |
+| capybully_keyboard__capybully | 32/32 | 0 | 0 | pass | 730.2 | 811.1 | 125 (wall) | 57 | 0 | no | 755.4 | 1776.4 |
+| le_chiffre_keyboard_stm32__stm32_chiffre_36keys | 76/76 | 0 | 0 | pass | 417.0 | 458.6 | 9 (wall) | - | - | - | 719.5 | 1061.6 |
+| le_chiffre_keyboard_stm32__stm32_hotswap_chiffre | 75/75 | 0 | 0 | pass | 454.0 | 486.4 | 6 | 25 | 0 | no | 335.4 | 624.3 |
 | MegaDrive__MegaDrive | 243/298 | 168 | 0 | no | 2102.8 | 1533.2 | 193 (wall) | 251 | 35 | no | 2123.5 | 4479.8 |
 | nonSNES__SNSP-CPU-01 | 301/363 | 161 | 0 | no | 1632.3 | 1786.1 | 125 (wall) | 151 | 209 | no | 1641.1 | 3695.1 |
+| nonSNES__SNSP-CPU-1CHIP | 212/212 | 0 | 0 | pass | 599.9 | 460.7 | 2 | 70 | 22 | no | 497.9 | 1155.5 |
 | MokyaLora__MokyaLora | 261/262 | 0 | 0 | pass | 840.6 | 1492.5 | 178 (wall) | 221 | 0 | no | 849.7 | 1998.3 |
 | PolyKybd__poly_corne_split42_left | 240/247 | 7 | 0 | no | 1387.5 | 2224.0 | 212 (wall) | - | - | - | 1689.6 | 3479.0 |
 | PolyKybd__poly_corne_split42_right | 404/420 | 22 | 0 | no | 1878.8 | 2295.6 | 725 (wall) | 499 | 2 | no | 1899.0 | 4016.8 |
 | PolyKybd__poly_kb_molecule_4x4 | 1/28 | 499 | 16 | no | 1300.0 | 2406.9 | 554 (wall) | 499 | 60 | no | 1308.7 | 2960.5 |
 | PolyKybd__poly_kb_molecule_4x5 | 0/28 | 499 | 101 | no | 984.1 | 2522.8 | 732 (wall) | 499 | 156 | no | 993.0 | 2248.6 |
 | PolyKybd__poly_kb_molecule_5x2_shifted | 1/28 | 409 | 32 | no | 1464.8 | 1857.8 | 301 (wall) | - | - | - | 1470.3 | 3316.4 |
+| PolyKybd__poly_kb_molecule_5x4_wave | 2/28 | 499 | 0 | no | 643.4 | 933.6 | 486 (wall) | - | - | - | 648.4 | 1452.8 |
 | PolyKybd__poly_kb_molecule_7x5_wave_left | 3/28 | 499 | 0 | no | 926.7 | 1299.8 | 784 (wall) | - | - | - | 932.5 | 2099.1 |
 | PolyKybd__poly_kybd_split72_left | 393/420 | 37 | 0 | no | 1677.1 | 2433.3 | 671 (wall) | 499 | 1 | no | 1691.4 | 3840.4 |
 | PolyKybd__poly_kybd_split72_right | 405/420 | 24 | 0 | no | 1927.8 | 2388.5 | 747 (wall) | 499 | 0 | no | 1960.2 | 4083.8 |
+| CharlieBoard__Blue_Line | 26/26 | 0 | 0 | pass | 11.0 | 11.1 | 72 | 0 | 0 | pass | 20.3 | 52.9 |
+| computie__k30-SBC | 173/173 | 0 | 0 | no | 645.6 | 814.2 | 1 | 79 | 8 | no | 532.7 | 1238.2 |
+| bumwings-kbd__bumwings_v001 | 72/72 | 0 | 0 | pass | 155.6 | 155.6 | 61 (wall) | - | - | - | 458.5 | 650.3 |
+| bumwings-kbd__bumwings_v001_core | 98/98 | 0 | 0 | pass | 592.2 | 706.7 | 36 (wall) | 31 | 0 | no | 602.3 | 1428.3 |
+| bumwings-kbd__bumwings_v001_xiao | 81/81 | 0 | 0 | pass | 556.3 | 437.3 | 62 (wall) | - | - | - | 858.3 | 1466.1 |
+| bumwings-kbd__bumwings_v001_xiao_s | 78/78 | 0 | 0 | pass | 130.6 | 138.5 | 103 (wall) | 106 | 1 | no | 155.8 | 349.4 |
+| bumwings-kbd__bumwings_v001R55_rp2040zero_sd | 70/70 | 0 | 0 | pass | 84.6 | 85.4 | 52 (wall) | - | - | - | 387.7 | 489.1 |
+| bumwings-kbd__bumwings_v001R55_xiao_sd | 75/75 | 0 | 0 | pass | 163.6 | 163.8 | 74 (wall) | - | - | - | 468.5 | 668.8 |
+| bumwings-kbd__bumwings_v001R64_nano_sd | 85/85 | 0 | 0 | pass | 72.5 | 74.7 | 100 (wall) | - | - | - | 82.1 | 176.2 |
+| bumwings-kbd__bumwings_v001R64_rp2040zero_sd | 81/81 | 0 | 0 | pass | 100.1 | 89.9 | 79 (wall) | 79 | 1 | no | 118.0 | 221.1 |
+| bumwings-kbd__bumwings_v001R64_xiao_sd | 89/89 | 0 | 0 | pass | 127.1 | 127.8 | 130 (wall) | 132 | 2 | no | 147.5 | 312.9 |
+| rp2040-motor-controller__RP2040_base | 147/186 | 50 | 0 | no | 617.4 | 1150.0 | 149 (wall) | 162 | 0 | no | 624.7 | 1407.6 |
 | keyboards__ghoul | 142/148 | 6 | 1 | no | 2109.3 | 2740.9 | 7 | 121 | 100 | no | 850.0 | 1906.7 |
 | sbc_allwinner_a13__module | 208/223 | 23 | 3 | no | 1023.8 | 1808.4 | 195 (wall) | 256 | 112 | no | 1033.8 | 2328.8 |
+| Castor_and_Pollux__mainboard | 126/126 | 0 | 0 | pass | 567.9 | 804.3 | 1 | 41 | 29 | no | 98.7 | 258.8 |
+| CyberKeeb2040__MainBoard | 118/118 | 0 | 0 | pass | 350.7 | 378.5 | 99 (wall) | - | - | - | 655.5 | 1013.5 |
 
-**Speed (not run yet).** The ten-board study (0xcb-static, ligra_back,
+**Speed: ten boards, 1 and 16 threads.** 0xcb-static, ligra_back,
 1337-v4.0, USB_Cable_Tester, silkscreen_pcb, MIDAS-MK2, little_red_rover,
-Castor_and_Pollux mainboard, mackerel-08-v1, coco2; ours at 1 and 16
-threads, Freerouting at `-mt 1` and `-mt 16` with a 1500 s job timeout, no
-DRC cache, one board at a time) is queued behind the rest of the
-Freerouting rows. Until then the only speed figure is the one above: at the
-same wall Freerouting spent a median 1.29 times our CPU seconds per board,
-on the large boards, while finishing less.
+Castor_and_Pollux mainboard, mackerel-08-v1 and coco2; ours at 1 and 16
+threads (`PCB_MAKER_NO_CACHE=1`, one board at a time under the tier
+lock, `build/fr2-speed/x1367-t<n>-<board>`), Freerouting at `-mt 1` and
+`-mt 16` with a 1500 s job timeout, one board at a time without the lock
+(`build/fr2-speed/cmp1-freerouting-mt<n>`), admitted by the memory ledger
+(`--min-free-gb 10`; its JVM reserved 4.5 GB there through a wrapper
+around `freeroute`). The machine was shared with other agents' runs
+throughout; Freerouting's walls below leave out the time it waited for
+the ledger. Each cell: wall / CPU seconds, then
+KiCad's unconnected items / counting errors ("pass": the strict rule).
 
-To continue (each step takes build/quick-tier.lock per batch and resumes
-where its results.json stops):
+| board | ours t1: wall / CPU s | open/errors | ours t16: wall / CPU s | open/errors | FR -mt 1: wall / CPU s | open/errors | FR -mt 16: wall / CPU s | open/errors |
+|---|---:|---|---:|---|---:|---|---:|---|
+| 0xcb-static | 37 / 34 | 0/0 pass | 40 / 36 | 0/0 pass | 23 / 78 | 0/0 pass | 17 / 60 | 0/0 pass |
+| ligra_back | 42 / 36 | 0/0 pass | 34 / 35 | 0/0 pass | 12 / 40 | 5/0 | 14 / 42 | 5/0 |
+| 1337-v4.0 | 112 / 114 | 0/0 pass | 123 / 126 | 0/0 pass | 25 / 85 | 16/13 | 27 / 91 | 16/13 |
+| PCB | 113 / 116 | 0/0 pass | 136 / 139 | 0/0 pass | 86 / 228 | 23/132 | 118 / 297 | 23/132 |
+| silkscreen_pcb | 174 / 173 | 0/0 pass | 188 / 180 | 0/0 pass | 280 / 650 | 59/17 | 374 / 760 | 59/17 |
+| MIDAS-MK2 | 409 / 487 | 0/0 pass | 392 / 485 | 0/0 pass | 138 / 328 | 32/1 | 207 / 436 | 32/1 |
+| little_red_rover | 226 / 533 | 0/0 pass | 229 / 581 | 0/0 pass | 98 / 250 | 30/6 | 91 / 226 | 30/6 |
+| mainboard | 776 / 1131 | 0/0 pass | 664 / 1023 | 0/0 pass | 116 / 282 | 41/29 | 95 / 220 | 41/29 |
+| mackerel-08-v1 | 374 / 473 | 0/0 pass | 455 / 563 | 0/0 pass | 257 / 604 | 53/16 | 177 / 426 | 53/16 |
+| coco2 | 360 / 352 | 0/0 pass | 278 / 284 | 0/0 pass | 1802 / 3616 | timeout | 1802 / 3772 | timeout |
 
-```sh
-python3 benchmarks/github/freerouting_route_mode.py build/fr2-freerouting-x1367 --resume \
-  --lock build/quick-tier.lock --route-from build/github-layout-v17 --ours build/fr2-route-final.log \
-  --binary build/bin/pcb-maker-x1367 --freerouting <config with the jar's absolute path> --threads 1 --jobs 3 \
-  --min-free-gb 14 >> build/fr2-freerouting-x1367.log
-# per board of the ten, t in 1 16:
-PCB_MAKER_NO_CACHE=1 flock build/quick-tier.lock benchmarks/agent-tasks/run.py build/fr2-speed/x1367-t$t-$board \
-  --route-from build/github-layout-v17 --only $board --jobs 1 --threads $t --min-free-gb 14 --binary build/bin/pcb-maker-x1367
-PCB_MAKER_NO_CACHE=1 benchmarks/github/freerouting_route_mode.py build/fr2-speed/freerouting-mt$t --resume \
-  --lock build/quick-tier.lock --wall 1500 --route-from build/github-layout-v17 --binary build/bin/pcb-maker-x1367 \
-  --threads $t --jobs 1 --only $board
-benchmarks/github/freerouting_route_compare.py build/fr2-route-final.log build/fr2-freerouting-x1367 --markdown
-```
+Ours strict-passes all ten at both thread counts; Freerouting passes
+0xcb-static only, leaves 5 to 59 KiCad-unconnected items on eight, and
+on coco2 does not stop within the 1500 s job timeout plus 300 s at either
+thread count (no result). It stops by itself early: its wall is a median
+0.53 times ours at 1 thread and 0.43 times at 16, while its CPU is a
+median 1.20 and 1.05 times ours (the JVM's own threads: 2.0 to 3.4 CPU
+seconds per wall second at `-mt 1`). Neither router gets faster with 16
+threads here: Freerouting's `-mt 16` over `-mt 1` is a median x1.05 CPU
+and x1.03 wall with identical results on every board, ours at 16 threads
+over 1 is x1.05 CPU and x1.05 wall with the same verdicts (the route
+mode's budget is work, not wall). Our runs saw a load of 15 to 39, Freerouting's 9 to 36.
+
+Logs: `build/fr2-route-final.log` (ours), `build/fr2-freerouting-x1367.log`
+and `.err`, the table and summary in `build/fr2-compare.txt`
+(`freerouting_route_compare.py --markdown`), the speed runs in
+`build/fr2-speed/`.
 
 ## Freerouting against our cold route, x738 (2026-10-15)
 
@@ -1856,6 +1960,12 @@ wall guard at that load.
 
 ## KiCadRoutingTools against x1367 (2026-10-21)
 
+**Complete: all 109 boards judged** (measured 2026-10-21 to 2026-10-23),
+and the ten-board timing with ours at 1 and 16 threads. Our side is
+pcb-maker-x1367 throughout (`build/fr2-route-final.log`, the rows of the
+Freerouting refresh above); main has moved on since (x1573 and later, see
+[changelog.md](changelog.md)), so these are not main's numbers.
+
 [KiCadRoutingTools](https://github.com/drandyhaas/KiCadRoutingTools) (MIT,
 commit cddf4cd of 2026-10-21, version 0.23.1) is the autorouter a Hacker
 News commenter found "routed more sensibly" than Freerouting: Python around
@@ -1867,16 +1977,13 @@ through its CLI router (`py_router/route.py <board> <result> --nets '*'
 [benchmarks/github/README.md](../benchmarks/github/README.md#kicadroutingtools-kicadroutingtoolspy)).
 It routed the placements of the Freerouting refresh
 (`build/github-layout-v17/<task>/layout/placed`, the 109 tasks of v7) with
-the designer's pours kept; route.py treats them as planes. Our side is
-that refresh's route-mode run of x1367 (`build/fr2-route-final.log`:
-8 x 2, PCB_WORK_RATE pinned, the OOM-killed rows rerun).
+the designer's pours kept; route.py treats them as planes.
 
 Both results are judged alike:
 - KiCad's DRC through `drc-kicad-board`, with the zones refilled.
 - The pass: unconnected items and copper errors beyond the designer's, per
   type.
-- The strict rule. Its two versions give the same verdicts here, since every
-  row with a solder mask bridge also has unconnected items.
+- The strict rule.
 
 Two flags keep the judging ours. By default route.py loosens the written
 project's Board Setup floors to whatever it routed, and lets a failing net
@@ -1888,99 +1995,156 @@ thread: the Rust core has no threads, and the BLAS pools were pinned to
 one. A killed run leaves no board unless it had already written one: it
 writes the board after its rescue pass, before its plane finalize and
 reconciliation. So each board ran to completion or to a cap, and each row
-records its wall time next to ours. The cap changed over the run:
-- The 32 largest boards ran first, while the machine still allowed eight
-  at a time. They got three, later two, times our wall, at most 3600 s.
-- After the memory and lock rules of the night (two routers at a time
-  outside the tier lock, KiCad's checks inside it), the other 67 boards
-  were capped at our wall, at least 120 s.
-- The ten timing boards ran to completion, at most 3600 s.
+records its wall time next to ours. The cap:
+- The 32 largest boards ran first, eight at a time, with three, later two,
+  times our wall, at most 3600 s (`build/krt-route-x1367`, `-b`).
+- The other 67 boards: our wall, at least 120 s, two routers at a time
+  (`build/krt-route-x1367-c`; their KiCad checks waited for the tier lock
+  and finished on 2026-10-22).
+- The ten timing boards ran to completion, at most 3600 s
+  (`build/krt-timing`); their rows replace the capped ones in the table.
 
-Our walls were measured at a load of 12 to 50 (8 x 2 beside other agents).
-The second half of the KiCadRoutingTools runs saw a load of 2 to 15, which
+Our walls were measured at a load of 12 to 50 (8 x 2 beside other agents);
+its runs saw a load of 2 to 46 (at the start of a board), most of the capped ones 2 to 15, which
 favours it on "within our wall".
 
-**Result.** On no board does KiCadRoutingTools pass. 59 of the 109 boards
-are judged; the other 50 have a KiCadRoutingTools board that is not judged
-yet (see below).
+**Summary** (`benchmarks/github/kicadroutingtools_compare.py
+build/krt-route-x1367 build/krt-route-x1367-b build/krt-route-x1367-c
+build/krt-timing --ours build/fr2-route-final.log`):
 
-On the 59 judged boards:
-- Ours passes 19 and strict-passes 17; KiCadRoutingTools passes none.
-- KiCadRoutingTools finished 6 runs, wrote its board and was then cut on 10,
-  and was cut before writing a board on 43. On small boards most of our
-  wall goes on its set-up: board parse, plane-fragility refill through
-  kicad-cli, the MPS ordering. Its main loop then takes seconds to a few
-  minutes (26.8 s of 971 s on Neotron-Pico, 40 s of 1600 s on BAGEL-MK1).
-  The rest of the time goes to the rescue and reconciliation passes, which
-  rebuild Python obstacle maps at 5 to 10 s per attempt.
-- Board by board, by KiCad's unconnected items and then errors,
-  KiCadRoutingTools is better on 3, ours on 53, and 3 tie.
-- On the 16 boards where both have a result: KiCad unconnected items ours
-  899 and KiCadRoutingTools 1505; copper errors 25 and 890; vias 4005 and
-  8435 (2.1 times); length 96.8 and 98.6 m.
-- Its errors are mostly solder_mask_bridge (323), hole_clearance (181),
-  starved_thermal (156), drill_out_of_range (67, on the A13 module),
-  via_dangling (49), annular_width (48) and copper_edge_clearance (25). The
-  vias are often in a pad; it counts them itself, for example 119 sites on
-  Neotron-Pico.
-- Peak memory was 2.1 to 4.9 GB a board.
+| | pcb-maker x1367 | KiCadRoutingTools cddf4cd |
+| --- | ---: | ---: |
+| boards with a KiCad-checked result (of 109) | 107 | 66 (36 finished, 30 cut after writing its board) |
+| cut before writing a board | | 43 |
+| pass (designer-subtracted per type) | 51 | 7 (3 within our wall) |
+| strict pass | 44 | 5 (1 within our wall) |
+| better on KiCad's unconnected, then errors | 93 | 6 (10 ties) |
+| 66 boards both have: KiCad unconnected | 1 778 | 3 296 |
+| same: copper errors (pass rule) | 69 | 3 661 |
+| same: vias | 10 985 | 25 200 |
+| same: track length | 320.2 m | 319.1 m |
+| finished within our wall | | 24 |
+| wall over ours, all 109, a cut run at its cap (a lower bound) | | median x1.00, at least ours on 85 |
+| CPU / wall over ours where it finished (36) | | median x0.60 / x0.75 |
 
-The three boards where it beats us:
+Every board it passes ours passes too, under the strict rule as well:
+spell_tome_bottom, Blue_Line, urchin, ligra_back, bumwings_v001_core,
+bumwings_v001_xiao and CyberKeeb2040 (its strict passes: not ligra_back
+and bumwings_v001_core). It is faster on three of them (bumwings_v001_core
+164 s against our 592, bumwings_v001_xiao 268 against 556, ligra_back 30 against 39) and
+slower on four (CyberKeeb2040 1870 s against 351). The 36 boards it
+finishes are the ones it finds easy: there its median CPU is 0.60 times
+ours, because ours spends its budget on the boards it cannot close and
+KiCadRoutingTools stops when its passes are done, complete or not (29 of
+the 36 do not pass). Its copper errors are mostly hole_clearance (1 037),
+solder_mask_bridge (919), annular_width (392), via_diameter (367),
+starved_thermal (240), copper_edge_clearance (232) and drill_out_of_range
+(225): vias at or below the board's floors, often in a pad. Peak memory
+was 0.2 to 5.3 GB a board.
+
+**Where KiCadRoutingTools is better** (fewer KiCad-unconnected items,
+then errors; it passes none of the six), with what KiCad reports on ours:
+- **d20_pcb**: KiCadRoutingTools 18/18 nets, KiCad 0 unconnected but 199
+  solder_mask_bridge, in 193 s. Ours 18/19, 1 unconnected, no error, in
+  294 s.
+- **Business-Cards WLED_Matrix**: KiCadRoutingTools 10 unconnected with 14
+  connection_width, 73 hole_clearance, 2 copper_edge_clearance and 4
+  dangling items, in 268 s. Ours 11 unconnected and 2
+  copper_edge_clearance, in 583 s.
+- **jiran-ble-lite**: KiCadRoutingTools 1 unconnected (the designer's own
+  count), no error, in 141 s. Ours 20 unconnected (the far half's GND
+  pads), no error, in 1319 s; main since x1434 routes it to the
+  designer's 1.
+- **0xCB-1337 panel**: KiCadRoutingTools 50 unconnected, 84
+  solder_mask_bridge and 17 starved_thermal, cut at 3600 s. Ours 149/188,
+  65 unconnected, no error, in 2355 s.
 - **Neotron-Pico**: KiCadRoutingTools 190/190 nets, KiCad 0 unconnected,
   2 annular_width, 2 hole_clearance and 1 hole_to_hole (its vias at 0.25
-  mm, the board floor), 727 vias, in 971 s. Ours: 176/190, KiCad 24
-  unconnected, no error, 212 vias, in 2427 s (1177 s of work at a load
-  of 25 to 49).
-- **glasgow revC3**: KiCadRoutingTools 163 unconnected, cut at 2650 s with
-  its board written. Ours: 124/226, 180 unconnected.
-- **0xCB-1337 panel**: KiCadRoutingTools 50 unconnected, 84
-  solder_mask_bridge and 17 starved_thermal, cut at 3600 s. Ours: 149/188,
-  65 unconnected.
+  mm, the board floor), 727 vias, in 971 s. Ours 176/190, 24 unconnected,
+  no error, 212 vias, in 2427 s (1177 s of work at a load of 25 to 49).
+- **glasgow revC3**: KiCadRoutingTools 163 unconnected, cut at 2650 s
+  with its board written. Ours 124/226, 180 unconnected, no error, in
+  883 s.
 
-Speed:
-- With a cut run counted at its cap, KiCadRoutingTools' wall over ours has
-  a median of 1.33 times or more over the 59 judged boards, and it is at
-  least ours on 55.
-- On the 6 it finished it was faster (median 0.71 times the wall), but
-  those are the boards it finds easy and our rows' load was higher.
-- Of the 50 boards not judged yet, it finished 30, 20 of them within our
-  wall. By its own count 12 of those 30 have no failed net. Ours passes
-  11 of the 12; on the twelfth, d20_pcb, ours leaves 1 KiCad unconnected
-  item in 294 s, while KiCadRoutingTools reports 18/18 nets in 193 s. That
-  board is a candidate fourth win once KiCad has checked it.
-
-Judged rows (`build/krt-compare.txt`; "nets" is KiCadRoutingTools' own
+Per board (`build/krt-compare.txt`; "nets" is KiCadRoutingTools' own
 count; a cut row says how far its log got):
 
 | board | conn. | ours: unconn. / errors / strict | KRT: nets / unconn. / errors / strict | wall s ours / KRT | CPU s ours / KRT |
 |---|---:|---|---|---:|---:|
 | katia/katia | ? | timed out | cut at 3600 s (main loop 162/162 nets, 82 failed) | 2701 / 3600 | 2805 / 2518 |
+| spell_tome/spell_tome_bottom | 18 | 0 / 0 / pass | 18/18 / 0 / 0 / pass | 8 / 28 | 8 / 45 |
 | OpenMuscle-FlexGrid/OM-FlexGrid-Flex | 19 | 0 / 0 / pass | cut at 281 s (before the main loop) | 281 / 281 | 726 / 280 |
+| d20_pcb/d20_pcb | 19 | 1 / 0 / fail | 18/18 / 0 / 199 / fail | 294 / 193 | 502 / 213 |
+| OnBoard/E-Fidget-Lite | 20 | 0 / 0 / pass | 17/19 / 2 / 0 / fail | 27 / 32 | 26 / 52 |
+| OnBoard/MotionCubeViewAllForces | 20 | 0 / 0 / pass | 18/20 / 2 / 0 / fail | 83 / 44 | 131 / 62 |
 | OpenMuscle-FlexGrid/OM-60-Flex | 21 | 0 / 0 / pass | cut at 121 s (before the main loop) | 121 / 121 | 148 / 120 |
+| CharlieBoard/Blue_Line | 26 | 0 / 0 / pass | 26/26 / 0 / 0 / pass | 11 / 60 | 11 / 76 |
 | PolyKybd/poly_kb_molecule_4x4 | 28 | 499 / 16 / fail | ? / 499 / 98 / fail (cut at 3552 s, board written) | 1300 / 3552 | 2407 / 3383 |
 | PolyKybd/poly_kb_molecule_4x5 | 28 | 499 / 101 / fail | cut at 984 s (before the main loop) | 984 / 985 | 2523 / 979 |
+| PolyKybd/poly_kb_molecule_5x2_shifted | 28 | 409 / 32 / fail | ? / 447 / 81 / fail (cut at 1465 s, board written) | 1465 / 1465 | 1858 / 1516 |
 | PolyKybd/poly_kb_molecule_5x4_wave | 28 | 499 / 0 / fail | cut at 643 s (main loop 27/27 nets, 2 failed) | 643 / 644 | 934 / 639 |
 | PolyKybd/poly_kb_molecule_7x5_wave_left | 28 | 499 / 0 / fail | cut at 927 s (main loop 27/27 nets, 1 failed) | 927 / 927 | 1300 / 921 |
+| capybully_keyboard/capybully | 32 | 0 / 0 / pass | ? / 18 / 0 / fail (cut at 730 s, board written) | 730 / 730 | 811 / 751 |
+| ligra/ligra_back | 33 | 0 / 0 / pass | 32/32 / 0 / 0 / fail | 39 / 30 | 30 / 48 |
+| Business-Cards/USB_Keypad | 39 | 2 / 0 / fail | ? / 6 / 77 / fail (cut at 3600 s, board written) | 381 / 3600 | 670 / 3607 |
+| OnBoard/krishveercard | 43 | 0 / 0 / fail | 32/43 / 36 / 0 / fail | 617 / 389 | 1659 / 405 |
+| 0xCB-1337/1337-v4.0 | 47 | 0 / 0 / pass | 43/46 / 4 / 22 / fail | 100 / 77 | 100 / 131 |
+| Business-Cards/PCB | 54 | 0 / 0 / pass | ? / 2 / 307 / fail (cut at 122 s, board written) | 122 / 122 | 122 / 126 |
+| OSHW-reCamera-Series/reCamera_S101_v1.1 | 56 | 4 / 0 / fail | 51/56 / 6 / 39 / fail (cut at 120 s, board written) | 116 / 120 | 310 / 153 |
+| ergo-snm-keyboard/ErgoSNM_keyboard | 58 | 0 / 0 / pass | ? / 11 / 7 / fail (cut at 3600 s, board written) | 270 / 3600 | 245 / 3568 |
 | Qfwfq/qfwfq | 64 | 0 / 0 / fail | cut at 290 s (main loop 63/63 nets, 4 failed; rescue pass done, 4 recovered) | 290 / 290 | 297 / 298 |
+| little-red-rover/little_red_rover | 64 | 0 / 0 / pass | ? / 6 / 0 / fail (cut at 318 s, board written) | 318 / 318 | 554 / 353 |
+| eternal-keypad/eternal-keypad | 65 | 0 / 0 / fail | 63/63 / 2 / 1 / fail | 96 / 1037 | 83 / 1082 |
+| urchin/main | 68 | 0 / 0 / pass | 68/68 / 0 / 0 / pass | 21 / 90 | 24 / 92 |
 | Sumec-MiniSumo/SUMEC_MK_IV | 69 | 5 / 0 / fail | 62/69 / 15 / 77 / fail | 974 / 1830 | 1903 / 1496 |
 | ULK/ULK | 70 | 2 / 0 / fail | 67/69 / 2 / 3 / fail | 1668 / 634 | 2022 / 679 |
 | ULK/ULK_sl_PG1316s | 70 | 3 / 0 / fail | 66/69 / 3 / 0 / fail | 1784 / 1255 | 2382 / 1198 |
+| bumwings-kbd/bumwings_v001R55_rp2040zero_sd | 70 | 0 / 0 / pass | 70/70 / 0 / 1 / fail | 85 / 111 | 85 / 132 |
 | MyKiCad/framework_mobo_lefthalf | 71 | 0 / 0 / pass | cut at 266 s (main loop 71/71 nets, 7 failed) | 266 / 266 | 704 / 264 |
+| bumwings-kbd/bumwings_v001 | 72 | 0 / 0 / pass | 72/72 / 1 / 0 / fail | 156 / 90 | 156 / 111 |
 | 0xCB-Static/0xcb-static | 74 | 0 / 0 / pass | cut at 120 s (before the main loop) | 31 / 120 | 31 / 120 |
+| le_chiffre_keyboard_stm32/stm32_hotswap_chi… | 75 | 0 / 0 / pass | ? / 4 / 0 / fail (cut at 454 s, board written) | 454 / 454 | 486 / 520 |
 | bumwings-kbd/bumwings_v001R55_xiao_sd | 75 | 0 / 0 / pass | cut at 164 s (before the main loop) | 164 / 164 | 164 / 163 |
 | slab-pcb/slab-pcb-left | 76 | 1 / 0 / fail | 68/78 / 18 / 8 / fail | 1840 / 2476 | 2229 / 2381 |
+| le_chiffre_keyboard_stm32/stm32_chiffre_36k… | 76 | 0 / 0 / pass | ? / 9 / 0 / fail (cut at 417 s, board written) | 417 / 417 | 459 / 462 |
 | bumwings-kbd/bumwings_v001_xiao_s | 78 | 0 / 0 / pass | cut at 131 s (main loop 78/78 nets, 2 failed) | 131 / 131 | 138 / 130 |
 | bumwings-kbd/bumwings_v001R64_rp2040zero_sd | 81 | 0 / 0 / pass | cut at 120 s (before the main loop) | 100 / 120 | 90 / 120 |
+| bumwings-kbd/bumwings_v001_xiao | 81 | 0 / 0 / pass | 81/81 / 0 / 0 / pass | 556 / 268 | 437 / 290 |
+| OpenFC-Lite/OpenFC | 82 | 0 / 0 / pass | 76/82 / 7 / 40 / fail | 280 / 147 | 841 / 170 |
+| slab-pcb/interchange-pcb-right | 83 | 0 / 0 / fail | ? / 91 / 0 / fail (cut at 983 s, board written) | 983 / 983 | 796 / 1010 |
+| 0xCB-1337/pcb | 85 | 0 / 0 / pass | ? / 2 / 8 / fail (cut at 405 s, board written) | 405 / 405 | 729 / 449 |
 | bumwings-kbd/bumwings_v001R64_nano_sd | 85 | 0 / 0 / pass | cut at 120 s (before the main loop) | 72 / 120 | 75 / 120 |
 | bumwings-kbd/bumwings_v001R64_xiao_sd | 89 | 0 / 0 / pass | cut at 127 s (before the main loop) | 127 / 127 | 128 / 127 |
+| OnBoard/woagboard | 91 | 9 / 0 / fail | 80/91 / 15 / 4 / fail | 1411 / 476 | 2711 / 520 |
+| mackerel-68k/mackerel-08-v1 | 96 | 0 / 0 / pass | 96/96 / 0 / 92 / fail | 467 / 339 | 587 / 359 |
+| bumwings-kbd/bumwings_v001_core | 98 | 0 / 0 / pass | 98/98 / 0 / 0 / fail | 592 / 164 | 707 / 190 |
+| OnBoard/keyboar_ | 102 | 0 / 0 / fail | 102/103 / 2 / 2 / fail | 540 / 162 | 359 / 208 |
 | osprey/osprey_rev_a | 103 | 3 / 1 / fail | 90/103 / 18 / 3 / fail | 2165 / 1547 | 2281 / 1464 |
+| Business-Cards/WLED_Matrix | 104 | 11 / 2 / fail | 98/104 / 10 / 93 / fail | 583 / 268 | 1046 / 378 |
+| MyKiCad/protoesp | 104 | 58 / 1 / fail | ? / 79 / 4 / fail (cut at 1180 s, board written) | 1180 / 1180 | 1805 / 1184 |
+| jiran-ble-lite/jiran-ble-lite | 105 | 20 / 0 / fail | 104/105 / 1 / 0 / fail | 1319 / 141 | 1357 / 148 |
+| Telemetry/TelemetryOnboard | 108 | 0 / 0 / fail | ? / 16 / 6 / fail (cut at 365 s, board written) | 365 / 365 | 960 / 428 |
 | silkscreen-pcb/silkscreen_pcb | 113 | 0 / 0 / pass | cut at 149 s (main loop 112/112 nets, 13 failed) | 149 / 149 | 150 / 148 |
+| laptop/power | 115 | 5 / 0 / fail | 107/114 / 15 / 260 / fail | 328 / 326 | 885 / 377 |
+| CyberKeeb2040/MainBoard | 118 | 0 / 0 / pass | 118/118 / 0 / 0 / pass | 351 / 1870 | 378 / 1795 |
+| Castor_and_Pollux/mainboard | 126 | 0 / 0 / pass | 120/126 / 6 / 60 / fail | 568 / 417 | 804 / 479 |
+| OpenRX/OpenRX-panel-rev2 | 127 | 229 / 0 / fail | ? / 388 / 537 / fail (cut at 520 s, board written) | 520 / 520 | 906 / 520 |
+| eurorack-pmod/eurorack-pmod-pcb | 133 | 4 / 0 / fail | ? / 15 / 251 / fail (cut at 465 s, board written) | 465 / 465 | 1163 / 528 |
+| laptop/keyboard | 136 | 4 / 0 / fail | 123/136 / 14 / 2 / fail | 675 / 643 | 1198 / 661 |
+| ISS-PCB/BAGEL-MK1 | 138 | 0 / 0 / pass | 124/138 / 22 / 197 / fail | 175 / 1021 | 232 / 1163 |
+| ISS-PCB/BAGEL-MK1.1-Avocado | 144 | 2 / 0 / fail | ? / 55 / 55 / fail (cut at 559 s, board written) | 559 / 559 | 1296 / 576 |
 | rosco_m68k/kicad | 148 | 0 / 0 / pass | cut at 597 s (main loop 148/148 nets, 10 failed) | 597 / 597 | 728 / 594 |
 | keyboards/ghoul | 148 | 6 / 1 / fail | ? / 83 / 23 / fail (cut at 3600 s, board written) | 2109 / 3601 | 2741 / 3588 |
 | explorer/Explorer | 150 | 2 / 0 / fail | cut at 381 s (main loop 150/150 nets, 18 failed) | 381 / 381 | 637 / 378 |
+| OpenESC-20x20/4in1-mini | 152 | 43 / 0 / fail | 118/152 / 57 / 105 / fail | 508 / 335 | 1197 / 371 |
 | OpenESC-30x30/4in1 | 152 | 111 / 0 / fail | cut at 408 s (main loop 152/152 nets, 14 failed; rescue pass done, 3 recovered) | 408 / 408 | 702 / 404 |
 | ISS-PCB/MIDAS-MK2.1-revA | 154 | 0 / 0 / pass | cut at 602 s (main loop 153/153 nets, 10 failed) | 602 / 603 | 1195 / 598 |
+| mackerel-68k/mackerel-10-v1 | 155 | 0 / 0 / pass | ? / 2 / 0 / fail (cut at 662 s, board written) | 662 / 662 | 921 / 692 |
+| ISS-PCB/MIDAS-MK1.1-revA | 156 | 5 / 0 / fail | 149/156 / 8 / 0 / fail | 599 / 598 | 1430 / 675 |
+| ISS-PCB/MIDAS-MK2 | 156 | 0 / 0 / pass | 125/156 / 53 / 23 / fail | 243 / 1044 | 300 / 1122 |
+| ISS-PCB/MIDAS-MK1-revA | 159 | 8 / 9 / fail | 143/159 / 22 / 9 / fail | 670 / 592 | 1281 / 642 |
 | PCB-Modular-Multi-Protocol-Hub/Hub | 159 | 22 / 0 / fail | ? / 30 / 21 / fail (cut at 2914 s, board written) | 971 / 2914 | 1945 / 2409 |
+| Quanta75/Quanta75_RP2040Stamp_JLCPCBAoptimi… | 162 | 0 / 0 / pass | ? / 22 / 26 / fail (cut at 695 s, board written) | 695 / 695 | 530 / 698 |
 | MyKiCad/zpn_devboard | 167 | 1 / 0 / fail | ? / 22 / 205 / fail (cut at 2471 s, board written) | 824 / 2471 | 1479 / 2374 |
 | Quanta75/Quanta75_BareRP2040_JLCPCBAoptimiz… | 172 | 18 / 1 / fail | cut at 3600 s (main loop 172/172 nets, 31 failed) | 1773 / 3600 | 2006 / 2512 |
 | bit-preserve/coco2 | 173 | 0 / 0 / pass | cut at 657 s (main loop 172/172 nets, 2 failed) | 657 / 657 | 496 / 653 |
@@ -1988,10 +2152,12 @@ count; a cut row says how far its log got):
 | OnBoard/koeg-board-pcb | 175 | 33 / 23 / fail | cut at 3600 s (main loop 175/175 nets, 9 failed) | 1630 / 3600 | 2168 / 2531 |
 | OpenESC-30x30/4in1-panel | 184 | 485 / 220 / fail | cut at 2926 s (main loop 177/177 nets, 37 failed) | 975 / 2926 | 2052 / 2423 |
 | OpenAirScope/OpenAirScope | 184 | 5 / 0 / fail | cut at 551 s (main loop 184/184 nets, 27 failed; rescue pass done, 18 recovered) | 551 / 551 | 1222 / 548 |
+| rp2040-motor-controller/RP2040_base | 186 | 50 / 0 / fail | ? / 216 / 56 / fail (cut at 617 s, board written) | 617 / 618 | 1150 / 616 |
 | 0xCB-1337/panel | 188 | 65 / 0 / fail | ? / 50 / 101 / fail (cut at 3600 s, board written) | 2355 / 3601 | 2921 / 4802 |
 | Neotron-Pico/neotron-pico | 190 | 24 / 0 / fail | 190/190 / 0 / 5 / fail | 2427 / 971 | 2872 / 821 |
 | M8SBC-486/homebrew_486 | 190 | 0 / 0 / pass | cut at 536 s (main loop 190/190 nets, 16 failed) | 536 / 536 | 975 / 535 |
 | DSP-ADAU1452/DSP-ADAU1452 | 190 | 61 / 4 / fail | ? / 210 / 74 / fail (cut at 2752 s, board written) | 917 / 2752 | 1578 / 2398 |
+| Sisu_SSE-9/Sisu_SSE-9 | 192 | 15 / 0 / fail | ? / 114 / 187 / fail (cut at 3600 s, board written) | 793 / 3600 | 1608 / 3660 |
 | Business-Cards/Batch_1 | 204 | 441 / 0 / fail | cut at 3600 s (main loop 183/183 nets, 28 failed; rescue pass done, 7 recovered) | 810 / 3601 | 1665 / 3536 |
 | nonSNES/SNSP-CPU-1CHIP | 212 | 0 / 0 / pass | cut at 600 s (before the main loop) | 600 / 600 | 461 / 596 |
 | mackerel-68k/mackerel-30-proto | 217 | 0 / 2 / fail | cut at 616 s (main loop 217/217 nets, 12 failed; rescue pass done, 57 recovered) | 616 / 616 | 870 / 613 |
@@ -2007,6 +2173,7 @@ count; a cut row says how far its log got):
 | hackrf/hackrf-one | 319 | 0 / 0 / pass | cut at 284 s (main loop 319/319 nets, 1 failed) | 284 / 284 | 424 / 283 |
 | 0xCB-1337/pcb-panel | 340 | no result | cut at 3548 s (main loop 340/340 nets, 51 failed; rescue pass done, 7 recovered) | 1307 / 3548 | 674 / 2872 |
 | jetson-nano-baseboard/jetson-nano-baseboard | 340 | 19 / 0 / fail | cut at 2462 s (main loop 340/340 nets, 23 failed) | 821 / 2462 | 1546 / 2337 |
+| OnBoard/PixelWave | 343 | 0 / 0 / pass | 340/343 / 3 / 20 / fail | 359 / 964 | 351 / 1019 |
 | nonSNES/SNSP-CPU-01 | 363 | 161 / 0 / fail | cut at 1632 s (main loop 363/363 nets, 5 failed) | 1632 / 1633 | 1786 / 1623 |
 | ecad-viewer/video | 371 | 254 / 0 / fail | cut at 3600 s (main loop 371/371 nets, 24 failed) | 1369 / 3601 | 1450 / 2395 |
 | PolyKybd/poly_corne_split42_right | 420 | 22 / 0 / fail | cut at 3600 s (main loop 420/420 nets, 145 failed) | 1879 / 3600 | 2296 / 2484 |
@@ -2014,91 +2181,41 @@ count; a cut row says how far its log got):
 | PolyKybd/poly_kybd_split72_right | 420 | 24 / 0 / fail | cut at 3600 s (main loop 420/420 nets, 148 failed) | 1928 / 3600 | 2388 / 2483 |
 | SmartSpin2k/SmartSpin2k_Panelized | 585 | 45 / 0 / fail | cut at 730 s (main loop 585/585 nets, 137 failed) | 730 / 730 | 724 / 726 |
 
-Routed but not yet judged (their KiCad check waits for the tier lock;
-`build/krt-unjudged.txt`; KiCadRoutingTools' own count and its wall from
-its log's timestamps):
-
-| board | conn. | ours: unconn. / errors / strict | KRT's own count | wall s ours / KRT |
-|---|---:|---|---|---:|
-| spell_tome/spell_tome_bottom | 18 | 0 / 0 / pass | 18/18 nets, 0 failed | 8 / 28 |
-| d20_pcb/d20_pcb | 19 | 1 / 0 / fail | 18/18 nets, 0 failed | 294 / 193 |
-| OnBoard/E-Fidget-Lite | 20 | 0 / 0 / pass | 17/19 nets, 2 failed | 27 / 32 |
-| OnBoard/MotionCubeViewAllForces | 20 | 0 / 0 / pass | 18/20 nets, 2 failed | 83 / 44 |
-| CharlieBoard/Blue_Line | 26 | 0 / 0 / pass | 26/26 nets, 0 failed | 11 / 59 |
-| PolyKybd/poly_kb_molecule_5x2_shifted | 28 | 409 / 32 / fail | cut, board written | 1465 / 1465 |
-| capybully_keyboard/capybully | 32 | 0 / 0 / pass | cut, board written | 730 / 730 |
-| ligra/ligra_back | 33 | 0 / 0 / pass | 32/32 nets, 0 failed | 39 / 30 |
-| Business-Cards/USB_Keypad | 39 | 2 / 0 / fail | cut, board written | 381 / 3598 |
-| OnBoard/krishveercard | 43 | 0 / 0 / fail | 32/43 nets, 11 failed | 617 / 388 |
-| 0xCB-1337/1337-v4.0 | 47 | 0 / 0 / pass | 43/46 nets, 3 failed | 100 / 77 |
-| Business-Cards/PCB | 54 | 0 / 0 / pass | cut, board written | 122 / 121 |
-| OSHW-reCamera-Series/reCamera_S101_v1.1 | 56 | 4 / 0 / fail | cut, board written | 116 / 110 |
-| ergo-snm-keyboard/ErgoSNM_keyboard | 58 | 0 / 0 / pass | cut, board written | 270 / 3599 |
-| little-red-rover/little_red_rover | 64 | 0 / 0 / pass | cut, board written | 318 / 316 |
-| eternal-keypad/eternal-keypad | 65 | 0 / 0 / fail | 63/63 nets, 0 failed | 96 / 1037 |
-| urchin/main | 68 | 0 / 0 / pass | 68/68 nets, 0 failed | 21 / 90 |
-| bumwings-kbd/bumwings_v001R55_rp2040zero_sd | 70 | 0 / 0 / pass | 70/70 nets, 0 failed | 85 / 110 |
-| bumwings-kbd/bumwings_v001 | 72 | 0 / 0 / pass | 72/72 nets, 0 failed | 156 / 90 |
-| le_chiffre_keyboard_stm32/stm32_hotswap_chi… | 75 | 0 / 0 / pass | cut, board written | 454 / 454 |
-| le_chiffre_keyboard_stm32/stm32_chiffre_36k… | 76 | 0 / 0 / pass | cut, board written | 417 / 416 |
-| bumwings-kbd/bumwings_v001_xiao | 81 | 0 / 0 / pass | 81/81 nets, 0 failed | 556 / 267 |
-| OpenFC-Lite/OpenFC | 82 | 0 / 0 / pass | 76/82 nets, 6 failed | 280 / 147 |
-| slab-pcb/interchange-pcb-right | 83 | 0 / 0 / fail | cut, board written | 983 / 956 |
-| 0xCB-1337/pcb | 85 | 0 / 0 / pass | cut, board written | 405 / 403 |
-| OnBoard/woagboard | 91 | 9 / 0 / fail | 80/91 nets, 11 failed | 1411 / 475 |
-| mackerel-68k/mackerel-08-v1 | 96 | 0 / 0 / pass | 96/96 nets, 0 failed | 467 / 339 |
-| bumwings-kbd/bumwings_v001_core | 98 | 0 / 0 / pass | 98/98 nets, 0 failed | 592 / 164 |
-| OnBoard/keyboar_ | 102 | 0 / 0 / fail | 102/103 nets, 1 failed | 540 / 162 |
-| Business-Cards/WLED_Matrix | 104 | 11 / 2 / fail | 98/104 nets, 6 failed | 583 / 267 |
-| MyKiCad/protoesp | 104 | 58 / 1 / fail | cut, board written | 1180 / 1068 |
-| jiran-ble-lite/jiran-ble-lite | 105 | 20 / 0 / fail | 104/105 nets, 1 failed | 1319 / 140 |
-| Telemetry/TelemetryOnboard | 108 | 0 / 0 / fail | cut, board written | 365 / 365 |
-| laptop/power | 115 | 5 / 0 / fail | 107/114 nets, 7 failed | 328 / 326 |
-| CyberKeeb2040/MainBoard | 118 | 0 / 0 / pass | 118/118 nets, 0 failed | 351 / 1869 |
-| Castor_and_Pollux/mainboard | 126 | 0 / 0 / pass | 120/126 nets, 6 failed | 568 / 417 |
-| OpenRX/OpenRX-panel-rev2 | 127 | 229 / 0 / fail | cut, board written | 520 / 519 |
-| eurorack-pmod/eurorack-pmod-pcb | 133 | 4 / 0 / fail | cut, board written | 465 / 465 |
-| laptop/keyboard | 136 | 4 / 0 / fail | 123/136 nets, 13 failed | 675 / 642 |
-| ISS-PCB/BAGEL-MK1 | 138 | 0 / 0 / pass | 124/138 nets, 14 failed | 175 / 1021 |
-| ISS-PCB/BAGEL-MK1.1-Avocado | 144 | 2 / 0 / fail | cut, board written | 559 / 557 |
-| OpenESC-20x20/4in1-mini | 152 | 43 / 0 / fail | 118/152 nets, 34 failed | 508 / 334 |
-| mackerel-68k/mackerel-10-v1 | 155 | 0 / 0 / pass | cut, board written | 662 / 661 |
-| ISS-PCB/MIDAS-MK1.1-revA | 156 | 5 / 0 / fail | 149/156 nets, 7 failed | 599 / 597 |
-| ISS-PCB/MIDAS-MK2 | 156 | 0 / 0 / pass | 125/156 nets, 31 failed | 243 / 1043 |
-| ISS-PCB/MIDAS-MK1-revA | 159 | 8 / 9 / fail | 143/159 nets, 16 failed | 670 / 591 |
-| Quanta75/Quanta75_RP2040Stamp_JLCPCBAoptimi… | 162 | 0 / 0 / pass | cut, board written | 695 / 695 |
-| rp2040-motor-controller/RP2040_base | 186 | 50 / 0 / fail | cut, board written | 617 / 617 |
-| Sisu_SSE-9/Sisu_SSE-9 | 192 | 15 / 0 / fail | cut, board written | 793 / 3599 |
-| OnBoard/PixelWave | 343 | 0 / 0 / pass | 340/343 nets, 3 failed | 359 / 963 |
-
 **Timing on ten boards.** These span the sizes: spell_tome_bottom,
 USB_Keypad, ErgoSNM, eternal-keypad, mackerel-08, CyberKeeb2040, BAGEL-MK1,
-MIDAS-MK2, Sisu and PixelWave. The Freerouting agent's write-up named none.
-- KiCadRoutingTools has no thread setting, so 1 and 16 threads are the same
-  run for it. It ran two boards at a time at a load of 2 to 15; at that load
-  its CPU seconds equal its wall to within 1 % (rosco 594 of 597 s, hackrf
-  283 of 284 s).
-- Our rows here are the refresh's at 2 threads. Our timing runs at 1 and 16
-  threads (`PCB_MAKER_NO_CACHE=1`, one board at a time under the lock)
-  were queued behind the tier lock all night and have not run.
+MIDAS-MK2, Sisu and PixelWave. KiCadRoutingTools ran each to completion
+(at most 3600 s); it has no thread setting, so 1 and 16 threads are the
+same run for it, and its CPU seconds equal its wall to within a few
+percent. Ours ran at 1 and 16 threads with `PCB_MAKER_NO_CACHE=1`, one
+board at a time beside other agents' runs: at 1 thread under the tier
+lock (`build/krt-ours-t1`), at 16 without it, admitted by the memory
+ledger (`--min-free-gb 10`, `build/krt-ours-t16`; MIDAS-MK2's and
+mackerel-08's 16-thread rows are the Freerouting study's). Each cell: wall /
+CPU seconds, then KiCad's unconnected items / copper errors ("pass": the
+strict rule).
 
-| board | conn. | ours 2 threads: wall / CPU s | KRT wall s (= CPU) | KRT over ours, CPU |
-|---|---:|---:|---:|---:|
-| spell_tome_bottom | 18 | 8 / 8 | 28 | x3.3 |
-| USB_Keypad | 39 | 381 / 670 | cut at 3598 | > x5.4 |
-| ErgoSNM_keyboard | 58 | 270 / 245 | cut at 3599 | > x14.7 |
-| eternal-keypad | 65 | 96 / 83 | 1037 | x12.5 |
-| mackerel-08-v1 | 96 | 467 / 587 | 339 | x0.58 |
-| CyberKeeb2040 | 118 | 351 / 379 | 1869 | x4.9 |
-| BAGEL-MK1 | 138 | 175 / 232 | 1021 | x4.4 |
-| MIDAS-MK2 | 156 | 243 / 300 | 1043 | x3.5 |
-| Sisu_SSE-9 | 192 | 793 / 1608 | cut at 3599 | > x2.2 |
-| PixelWave | 343 | 359 / 351 | 963 | x2.7 |
+| board | ours t1: wall / CPU s | open/errors | ours t16: wall / CPU s | open/errors | KRT: wall / CPU s | open/errors | KRT CPU over ours t1 / t16 |
+|---|---:|---|---:|---|---:|---|---:|
+| spell_tome_bottom | 8 / 8 | 0/0 pass | 8 / 9 | 0/0 pass | 28 / 45 | 0/0 pass | x6.0 / x5.1 |
+| USB_Keypad | 195 / 349 | 2/0 | 397 / 734 | 2/0 | 3600 / 3607 | 6/77 (cut at 3600 s) | > x10.3 / > x4.9 |
+| ErgoSNM_keyboard | 88 / 89 | 0/0 pass | 153 / 156 | 0/0 pass | 3600 / 3568 | 11/7 (cut at 3600 s) | > x40.0 / > x22.9 |
+| eternal-keypad | 31 / 31 | 0/0 | 46 / 48 | 0/0 | 1037 / 1082 | 2/1 | x34.7 / x22.8 |
+| mackerel-08-v1 | 207 / 268 | 0/0 pass | 455 / 563 | 0/0 pass | 339 / 359 | 0/92 | x1.3 / x0.6 |
+| MainBoard | 226 / 226 | 0/0 pass | 344 / 372 | 0/0 pass | 1870 / 1795 | 0/0 pass | x7.9 / x4.8 |
+| BAGEL-MK1 | 193 / 253 | 0/0 pass | 239 / 322 | 0/0 pass | 1021 / 1163 | 22/197 | x4.6 / x3.6 |
+| MIDAS-MK2 | 313 / 372 | 0/0 pass | 392 / 485 | 0/0 pass | 1044 / 1122 | 53/23 | x3.0 / x2.3 |
+| Sisu_SSE-9 | 696 / 1309 | 15/0 | 623 / 1293 | 15/0 | 3600 / 3660 | 114/187 (cut at 3600 s) | > x2.8 / > x2.8 |
+| PixelWave | 551 / 439 | 0/0 pass | 289 / 302 | 0/0 pass | 964 / 1019 | 3/20 | x2.3 / x3.4 |
 
-Over the seven it finished, KiCadRoutingTools' CPU over ours has a median
-of 3.5 times (wall: 4.3 times). All three cut runs are slower than that or
-near it. Ours ran beside other agents at a load of 12 to 49; it ran at 2
-to 15.
+Over the seven boards it finished, KiCadRoutingTools' CPU is a median 4.6
+times ours at 1 thread and 3.6 times ours at 16 threads (wall: 3.5 and 3.3
+times); its three cut runs (USB_Keypad, ErgoSNM, Sisu) are at least 2.8
+times. The one board it finished on less CPU is mackerel-08 against our
+16-thread run (359 against 563 s), with 92 copper errors to our none; ours
+is the better result on five of the seven, and both strict-pass the
+other two (spell_tome_bottom, CyberKeeb2040). 16 threads did not make ours faster here: half of the
+1-thread runs (the small boards) ran at a load of 1 to 3, the 16-thread
+runs at 13 to 34, and the route mode's budget is work, not wall.
 
 ### What it has that we lack (for the roadmap)
 
@@ -2221,22 +2338,9 @@ post-route review, an end-to-end place-and-route agent, and a corpus
 stress test. About 14 300 lines (plugin AI code and plan tools 5 300,
 SKILL.md files 6 700, their scripts 1 800).
 
-**Not done.** Two things are left, and the runs keep going after this
-write-up:
-- **The 50 unjudged boards.** Each `kicadroutingtools.py` thread waits for
-  the tier lock to judge its board and then writes its row
-  (`build/krt-timing`, `build/krt-route-x1367-c`). Once they are written,
-  `benchmarks/github/kicadroutingtools_compare.py build/krt-route-x1367
-  build/krt-route-x1367-b build/krt-route-x1367-c build/krt-timing --ours
-  build/fr2-route-final.log` gives the whole table. If the runs were
-  stopped, the same `kicadroutingtools.py` commands with `--resume` route
-  those boards again.
-- **Our 1- and 16-thread timing runs on the ten boards.**
-  `build/krt-ours-t1.log` and `-t16.log` come from a loop of
-  `PCB_MAKER_NO_CACHE=1 flock build/quick-tier.lock run.py
-  build/krt-ours-t<threads>/<task> --route-from build/github-layout-v17
-  --only <task> --jobs 1 --threads <threads> --binary
-  build/bin/pcb-maker-x1367`.
-
 Logs: `build/krt-route-x1367{,-b,-c}.log`, `build/krt-timing.log`,
-`build/krt-chain.log`, `build/krt-compare.txt`, `build/krt-unjudged.txt`.
+`build/krt-ours-t1.log`, `build/krt-ours-t16.log`, `build/krt-chain.log`;
+the whole table and summary in `build/krt-compare.txt`. Our timing runs
+are a loop of `PCB_MAKER_NO_CACHE=1 run.py build/krt-ours-t<threads>/<task>
+--route-from build/github-layout-v17 --only <task> --jobs 1 --threads
+<threads> --min-free-gb 10 --binary build/bin/pcb-maker-x1367`.

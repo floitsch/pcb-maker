@@ -43,17 +43,25 @@ Not finished, but already useful.
   pass the designer-relative rule, 4 528 are complete at 300 s; the clean
   boards take a median 3.4 s
   ([details and caveats](docs/benchmarks.md#expansion-intake-5-834-boards-routed-on-the-designers-placement-2026-10-18)).
-- **Against Freerouting** (2026-10-21, partial: the 40 largest of the 109
-  boards so far): the same placements and the same wall per board, both
-  judged by KiCad's DRC with the same rules. pcb-maker leaves fewer
-  connections open on 35 boards and Freerouting on 4 (none of which it
-  passes); on the 27 boards both finish, Freerouting leaves 2.6 times the
-  unconnected items and ten times the DRC errors, at a median 1.29 times
-  our CPU seconds per board
-  ([table](docs/benchmarks.md#freerouting-against-x1367-2026-10-21)). The
-  last complete round (2026-10-15, x738, the designer's placement with all
-  copper removed, 1500 s each): fewer open connections on 47 boards against
-  6, 51 boards clean against 8, at 0.65 times Freerouting's CPU
+- **Against Freerouting and KiCadRoutingTools** (measured 2026-10-21 to
+  23; our side is x1367, main has moved on since): the same 109
+  placements, all results judged by KiCad's DRC with the same rules.
+  Freerouting 2.2.4, given our wall per board: pcb-maker passes 51 boards
+  (44 strict) against its 3, which ours passes too; fewer connections
+  open on 101 boards against 4; on the 74 boards both finish Freerouting
+  leaves 3.6 times the unconnected items and 21 times the DRC errors, at
+  a median 1.31 times our CPU seconds per board
+  ([table](docs/benchmarks.md#freerouting-against-x1367-2026-10-21)).
+  KiCadRoutingTools (cddf4cd), capped at one to three times our wall: 51
+  passes against 7, all seven passed by ours too; fewer open connections
+  on 93 boards against 6; it wrote no board on 43, and on ten boards run
+  to completion it took a median 4.6 times our single-thread CPU seconds
+  on the seven it finished
+  ([table](docs/benchmarks.md#kicadroutingtools-against-x1367-2026-10-21)).
+  The last cold-route round (2026-10-15, x738, the designer's placement
+  with all copper removed, 1500 s each): fewer open connections on 47
+  boards against 6, 51 boards clean against 8, at 0.65 times
+  Freerouting's CPU
   ([table](docs/benchmarks.md#freerouting-against-our-cold-route-x738-2026-10-15)).
 - **Open-source boards, PCBench / PCBWorld D3** (617 boards, prepared the
   way PCBWorld prepares them): pcb-maker routes 601 (97 %) clean,
@@ -275,6 +283,7 @@ the main corpus ([docs/benchmarks.md](docs/benchmarks.md)):
 | Layout from stacked parts and constraints, 1500 s of work (v18, 2026-10-21) | 109 | 42 clean (strict rule; 46 per type), 2712 connections open in all | - |
 | Routing the designer's placement at the layout's routing budget, 1042.5 s of work (matched designer tier x1539, 2026-10-22) | 109 | 54 clean (strict rule; 61 per type), 747 open on the 97 target boards with a result | - |
 | Routing the designer's placement, 1500 s of work (designer tier x1315, 2026-10-21) | 109 | 50 clean (strict rule; 58 per type), 430 open on the 97 target boards with a result | - |
+| Routing the v17 layout's placements at the task budgets, Freerouting given our wall per board (x1367, 2026-10-21 to 23) | 109 | 44 clean (strict rule; 51 per type), 107 with a result; where both have one (74 boards) 2700 open, 141 errors | 75 with a result, 3 clean; where both have one 9619 open, 3016 errors |
 | Routing the designer's placement cold, 1500 s (x738, 2026-10-15) | 109 | 62 clean (not comparable with the row above: every copper zone removed, judged per type against the stripped source's own DRC, a wall-clock budget, a binary 577 snapshots older); where both finish (67 boards) 51 clean, 184 open | 67 finished, 36 timed out, 6 failed; where both finish 8 clean, 873 open |
 
 Smaller tiers of the same boards judge a change in minutes

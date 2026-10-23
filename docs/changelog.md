@@ -11,6 +11,52 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-10-23 (Freerouting and KiCadRoutingTools, complete)
+
+The two head-to-heads of 2026-10-21 finished: every one of the 109 v7
+placements routed and judged on both sides, and the speed studies at 1
+and 16 threads. Our side stays x1367's route-mode rows
+(`build/fr2-route-final.log`) for comparability with the walls the other
+routers were given; main has moved on since (x1573 and later: the memory
+ledger, pour integrity, silkscreen placement, router memory, trace
+aesthetics, the trouble repair default; the sections above). Details and
+per-board tables: [benchmarks.md](benchmarks.md#freerouting-against-x1367-2026-10-21)
+and [benchmarks.md](benchmarks.md#kicadroutingtools-against-x1367-2026-10-21).
+Measurement and docs only, branch autorouter-comparisons; no code changed.
+
+- **Freerouting 2.2.4**, given our wall per board: ours 107 results, 51
+  pass, 44 strict; Freerouting 75 results, 3 pass and 3 strict
+  (0xcb-static, OM-60-Flex, Blue_Line, all three strict passes of ours
+  too). Better: ours 101, Freerouting 4 (Business-Cards Batch_1, katia
+  where ours times out, jiran-ble-lite, SNSP-CPU-01), 4 ties. On the 74
+  boards both finish: KiCad unconnected 2 700 against 9 619, counting
+  errors 141 against 3 016, at a median 1.31 times our CPU per board.
+  Freerouting has no result on 34: 25 it did not stop within its job
+  timeout plus 300 s, 5 sessions KiCad cannot import, 3 boards it cannot
+  read, the pcb-panel whose KiCad check times out.
+- **KiCadRoutingTools cddf4cd**, capped at one to three times our wall: 66 results (36
+  finished, 30 cut after writing its board), 43 cut before writing one;
+  7 pass, 5 strict, all seven passed by ours too. Better: ours 93, it 6
+  (d20_pcb with 199 solder mask bridges, WLED_Matrix, jiran-ble-lite, the
+  0xCB panel, Neotron-Pico, glasgow revC3), 10 ties. On the 66 boards
+  both have: unconnected 1 778 against 3 296, copper errors 69 against
+  3 661, vias 10 985 against 25 200.
+- **Speed.** Freerouting on ten boards with a 1500 s job timeout stops
+  early (its wall a median 0.53 times ours at 1 thread) but leaves
+  connections open on eight of them and has no result on coco2, at 1.20
+  times our CPU; `-mt 16` changes neither its results nor its time
+  (x1.05 CPU), and 16 threads did not speed ours up either (x1.05).
+  KiCadRoutingTools on its ten, run to completion: over the seven it
+  finished a median 4.6 times our CPU at 1 thread and 3.6 times at 16;
+  the other three were cut at 3600 s.
+- **Running it.** Freerouting's last 69 boards ran three at a time under
+  the tier lock overnight; KiCadRoutingTools' 50 waiting boards had been
+  judged under it by the evening of 2026-10-22. The Freerouting speed runs and our 16-thread runs on
+  KiCadRoutingTools' ten ran without the lock, admitted by the memory
+  ledger (`--min-free-gb 10`); Freerouting's JVM was reserved in the
+  ledger by a wrapper around `freerouting.freeroute` (4.5 GB while it
+  runs), and the time a run waited for the ledger is left out of its
+  wall.
 ## Committed on 2026-10-23 (task labels)
 
 The tasks stack their movable parts at one point, and parts sharing an
