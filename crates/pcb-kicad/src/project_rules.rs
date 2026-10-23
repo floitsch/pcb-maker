@@ -439,10 +439,13 @@ pub fn resolve_project_rules(
             format!("KiCad's default {key} (the project does not state it)")
         }
     };
+    // In nanometres, as KiCad holds them (a project's 0.19999999999999998
+    // is 0.2).
+    let nanometres = |value: f64| (value * 1.0e6).round() / 1.0e6;
     report.minimums = Some(KiCadProjectMinimums {
-        track_width_mm: minimum("min_track_width"),
+        track_width_mm: nanometres(minimum("min_track_width")),
         track_width_source: source_of("min_track_width"),
-        clearance_mm: minimum("min_clearance"),
+        clearance_mm: nanometres(minimum("min_clearance")),
         clearance_source: source_of("min_clearance"),
     });
     let severity = project["board"]["design_settings"]["rule_severities"]["connection_width"]

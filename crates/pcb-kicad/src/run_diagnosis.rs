@@ -545,10 +545,12 @@ fn inspected_rules(
         .connection_rules
         .get(net)
         .or(config.default_rules.as_ref());
-    rules.track_width_mm = resolved.map(|rules| rules.trace_width_mm);
-    rules.clearance_mm = resolved.map(|rules| rules.clearance_mm);
-    rules.via_diameter_mm = resolved.map(|rules| rules.via_size_mm);
-    rules.via_drill_mm = resolved.map(|rules| rules.via_drill_mm);
+    // In nanometres, as KiCad holds them (0.19999999999999998 is 0.2).
+    let nanometres = |value: f64| (value * 1.0e6).round() / 1.0e6;
+    rules.track_width_mm = resolved.map(|rules| nanometres(rules.trace_width_mm));
+    rules.clearance_mm = resolved.map(|rules| nanometres(rules.clearance_mm));
+    rules.via_diameter_mm = resolved.map(|rules| nanometres(rules.via_size_mm));
+    rules.via_drill_mm = resolved.map(|rules| nanometres(rules.via_drill_mm));
     let default_report = KiCadProjectRulesReport::default();
     let report = config.project_rules.as_ref().unwrap_or(&default_report);
     rules.classes = report
