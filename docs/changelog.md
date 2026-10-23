@@ -110,6 +110,19 @@ excess against the designers is in wider pairs and on boards the cost
 does not touch. Open: the wider pairs at a cost that leaves the
 thermal guards their priority (a guard cost per pin-row cost, or
 exempting pour nets' tracks), and pin swaps.
+**Tried and not taken: the cost only while the attempts are complete**
+(branch pin-row-conditional, x1645): once the probe leader or an
+attempt leaves connections open, the ladder's later attempts and the
+continuation route at 0. Expansion tier (x1645 at 0 against it):
+unconnected 625 -> 609 (plain 2: 592), passes 19 -> 20, new errors 3
+-> 6 (ZSWatch: 3 starved thermals), crossings 211 -> 206 (plain 2:
+197). SNSP-CPU-01 (no probes; its first rung at 2, the rest at 0): 4
+unconnected (6 at 0, 11 at plain 2), crossings 33 (32 at 0). video: 1
+unconnected and 7 crossings, as at plain 2: its probes run at 2 and
+the continuation goes on from the probe's routing, so turning the cost
+off there does not give back the connection. Fingerprints at 0
+identical. It keeps half the tier's gain and adds errors, so plain 2
+stays, SNSP-CPU-01 and video noted.
 `bash scripts/check.sh --fast` and the clippy gate; the fixture goldens
 did not move (no fixture route crosses a charged gap).
 
