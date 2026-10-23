@@ -22,7 +22,7 @@ board minimum without a word; and the access and cut diagnostics refused
 an outline the router reads. Branch run-diagnosis, binary x1700.
 
 **inspect-routing-run** (src/agent_cli.rs, crates/pcb-kicad/src/run_diagnosis.rs;
-docs/agents.md, "Why nets stayed open"): `<run-dir> [--net N]
+docs/agents.md, "Which nets stayed open"): `<run-dir> [--net N]
 [--terminal REF:PAD] [--reference <dir>] [--native-check] [--output f]`
 reads a route or layout run's saved outputs and writes, per open net (or
 the one named): the groups of pads the result board's copper joins (the

@@ -1720,7 +1720,7 @@ project has rules the router does not keep (creepage, lengths, rules on areas), 
     ),
     (
         "inspect-routing-run",
-        "says why a run left nets open, from its saved outputs: pads, rules, KiCad's pairs, attempts",
+        "names the pads, rules and KiCad's pairs of the nets a run left open, from its saved outputs",
         INSPECT_HELP,
     ),
     (

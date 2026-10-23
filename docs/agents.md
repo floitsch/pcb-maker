@@ -789,7 +789,7 @@ input errors and 4 on internal errors.
   much. Relax the distance, or fix the part yourself.
 - **Connections stay open.** First ask which pads, under which rules:
   `pcb-maker inspect-routing-run <out-dir> --reference <designer's
-  project>` (section "Why nets stayed open") names each open net's groups
+  project>` (section "Which nets stayed open") names each open net's groups
   of pads, KiCad's pairs, the rules and their sources, and the designer's
   route of the net. `routed.diagnostics` adds `hot_spots` (where nets
   fought longest) and `dead_pads` (pads whose class is too wide for
@@ -892,7 +892,7 @@ not) and no item is unconnected, 1 otherwise, 2 for a missing project or
 board, 4 when KiCad fails. The benchmark runners (`run.py`'s designer
 check, `freerouting.py`) use it when the binary has it.
 
-## Why nets stayed open: `inspect-routing-run`
+## Which nets stayed open: `inspect-routing-run`
 
 ```sh
 pcb-maker inspect-routing-run <run-dir> [--net <net>] [--terminal <REF:PAD>] [--reference <project-dir>] [--native-check] [--output <file.json>]
