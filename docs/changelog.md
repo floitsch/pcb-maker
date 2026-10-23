@@ -96,6 +96,122 @@ least 14.51 against 14.44: no difference beyond the noise; 36 963 190
 expansions both.
 
 `bash scripts/check.sh --fast` and the clippy gate pass.
+## Committed on 2026-10-23 (trace aesthetics)
+
+The first complaint about autorouters (Hacker News, ours included by
+implication) is traces that "snake through SMD pins" and bend "in many
+small steps". pcb-maker had bend costs and a clean-up but no measurement
+of either. Branch trace-aesthetics; snapshots x1610-x1618 (x1618 the
+commit's routing).
+
+**The measure** (score-kicad-board's `aesthetics`, crates/pcb-kicad/src/
+aesthetics.rs; docs/quality.md, "Aesthetics"): per board the track paths
+(chains of a net's segments on one layer between pads, vias, junctions
+and ends), bends (direction changes of 5 degrees or more; turns of one
+sense within 1 mm and at most 90 degrees one bend, so a corner cut at 45
+degrees is one), bends per connection (over the netlist's connections,
+the same for any routing), stair-steps (two bends within 2 mm back to the
+first direction) and pin-row crossings (another net's track crossing the
+line between two adjacent SMD pads of one part). quality.py lists them,
+designer-numbers.json has the designer's, compare.py's normalised line
+gives ours over (bends) or less (stair-steps, crossings) the designer's.
+On the way: score-kicad-board read no net on a track of a KiCad 9 board
+since 2026-10-21 (`(net 5)` is a code; now resolved by the board's net
+table), so such boards had no paths and their pours no cut;
+designer-numbers.json, written before that rule, had counted the pour
+net's own tracks as cuts (59 of 109 designer ground cuts lower now, jetson
+6792 to 6397 mm; vias and lengths the same).
+
+**Baseline** (build/github-layout-v19, x1539, against the designers'
+boards; 97 of the 109 boards, the rest unscored: 0xCB's panels and a few
+others take minutes in score-kicad-board's existing measures, cut at 240
+s): bends per connection ours median 2.32 (deciles 1.31 / 4.88), the
+designers' 2.05 (0.91 / 3.94); ours over the designer's median x1.21, no
+worse on 27 of 97; stair-steps per connection 0.47 against 0.18, no worse
+on 10 of 97 (sum 44389 against 18642); pin-row crossings per connection
+0.013 against 0.005, no worse on 44 of 97 (sum 1434 against 1517). The ten
+worst by bends per connection over the designer's: DSP-ADAU1452 (x3.91),
+MIDAS-MK2 (x3.62), mackerel-30-proto (x3.46), ecad-viewer video (x3.14),
+MIDAS-MK2.1-revA (x3.12), BAGEL-MK1 (x2.97), mackerel-10-v1 (x2.93),
+TelemetryOnboard (x2.72), MokyaLora (x2.70), neotron-pico (x2.56).
+
+**Why the router makes them:** the search costs `bend_cost` per 45
+degrees against the arrival direction (a direction change, not a per-step
+cost) but closes a node at its first arrival whatever the direction, so
+among the octilinear lattice's many shortest paths it keeps stepped ones;
+the negotiation's detours leave jogs; the clean-up keeps a reroute only
+when strictly shorter, and fewer bends are mostly as long.
+
+**The straightening** (router/straighten.rs, `Config::straighten`, on;
+`PCB_ROUTER_NO_STRAIGHTEN` turns it off; docs/router.md,
+"Straightening"): after the via reduction and the thermal spoke repairs,
+per complete signal net and layer run, the shortest octilinear path
+between two corners (axis part first or diagonal first) where the run has
+fewer bends, else fewer stair-steps, else less turning, every step free as
+the hard search judges it; never longer, no via moves, branch ends and
+junctions stay, no new node in another pad's thermal guard or spoke
+corridor, no more pour cut; the pour nets' stranded pads and the spoke
+model's starved pads counted before and after the pass, changed nets
+undone last first while either grew. Eight step checks count as one
+expansion. Tried on the way and dropped: the pour check per net (its pour
+analyses moved the route ladder's shares: flexypin 30 to 33 vias),
+straightening before the spoke repairs and without the guard rule
+(BAGEL-MK1 153 to 157 vias: the repair moved 37 nets out of spoke
+corridors where it had moved 16).
+
+**Ten worst, route mode on the designer's placement at the task budget**
+(1500 s of work, 4 x 2; before x1613 with the straightening off, which
+routes as main; after x1618; neotron-pico not run, its 27 GB estimate was
+never admitted beside the other agents' work):
+
+| board | unconnected | new errors | vias | length (mm) | bends per connection (designer) | stair-steps (designer) | pin-row crossings (designer) |
+|---|---|---|---|---|---|---|---|
+| DSP-ADAU1452 | 4 -> 4 | 0 -> 0 | 79 -> 79 | 4735 -> 4732 | 1.017 -> 0.878 (0.965) | 138 -> 89 (63) | 2 -> 2 (0) |
+| mackerel-10-v1 | 0 -> 0 | 0 -> 0 | 201 -> 201 | 22670 -> 22669 | 3.019 -> 2.730 (2.123) | 415 -> 269 (221) | 0 -> 0 (0) |
+| MokyaLora | 0 -> 0 | 0 -> 0 | 225 -> 225 | 5363 -> 5351 | 1.541 -> 1.375 (1.046) | 265 -> 199 (116) | 39 -> 39 (24) |
+| mackerel-30-proto | 0 -> 0 | 0 -> 0 | 301 -> 301 | 22137 -> 22125 | 4.829 -> 4.120 (2.202) | 938 -> 638 (240) | 0 -> 0 (0) |
+| MIDAS-MK2.1-revA | 0 -> 0 | 0 -> 0 | 132 -> 132 | 4092 -> 4088 | 1.569 -> 1.248 (0.847) | 184 -> 63 (37) | 21 -> 21 (5) |
+| BAGEL-MK1 | 0 -> 0 | 0 -> 0 | 153 -> 153 | 2680 -> 2673 | 1.609 -> 1.333 (0.829) | 151 -> 75 (45) | 0 -> 0 (0) |
+| MIDAS-MK2 | 0 -> 0 | 0 -> 0 | 140 -> 140 | 4056 -> 4051 | 1.546 -> 1.247 (0.846) | 171 -> 63 (35) | 23 -> 23 (5) |
+| TelemetryOnboard | 0 -> 0 | 0 -> 0 | 76 -> 76 | 3793 -> 3791 | 1.549 -> 1.277 (0.789) | 92 -> 39 (4) | 0 -> 0 (0) |
+| video | 0 -> 0 | 0 -> 0 | 603 -> 603 | 35187 -> 35156 | 2.705 -> 2.198 (3.383) | 820 -> 409 (1238) | 15 -> 15 (4) |
+
+Medians: bends per connection 1.569 -> 1.333 (designer 0.965),
+stair-steps 184 -> 89 (63); unconnected, errors, vias and passes the same,
+length 104713 -> 104637 mm. Pin-row crossings do not move: the
+straightening keeps a path's layer runs between their corners.
+
+**Expansion tier** (46 boards, route mode, 8 x 1, 30 s, x1618 against
+build/expansion-probe2-x1542.log): unconnected 631 -> 629, new errors 3
+-> 3 (strict 3), passes 18 -> 18 (strict 18), vias 4204 -> 4208, length
+112361 -> 112146 mm, work 1221 -> 1228 s. Rows changed: MSign 21 -> 19
+unconnected, 251 -> 252 vias; Miniboard 79 -> 82 vias, unconnected 5
+both (the straightening's work in the first attempt moved the
+narrow-signal step's deadline 10.51 -> 10.35 s: 14 -> 16 router-open
+there). Over the 45 scored boards: bends per connection median 1.592 ->
+1.419 (designer 1.628), ours over the designer's x1.026 -> x0.881;
+stair-steps median 47 -> 30 (designer 27), sum 4257 -> 2695 (2496); bends
+per board 0.74 to 0.98 of before (median 0.86); pin-row crossings 183 ->
+183.
+
+**Fingerprints** (Castor, k30, jetson, Sisu; route mode from v16, 1 x 4,
+budget scale 0.25, against build/fp-probe2-x1542): every router's
+fingerprints before resolve, after the clean-up, after the via reduction
+and after the thermal spokes identical; the straightening changes them
+after. Castor 241 -> 240 vias, length 5297 -> 5287; k30 344 -> 343 vias,
+length 14379 -> 14369, KiCad's starved thermal on J1 moved from pad 14
+(the designer's, subtracted) to pad 39 beside it (counted new; the spoke
+model finds no more starved pads, the change comes from KiCad's refill in
+tracks mode); jetson 597 vias both, length 10782 -> 10773; Sisu 375 vias,
+25 unconnected both, length 5493 -> 5491. Straightened per board: 50,
+116, 130 and 89 + 79 nets; bends 921 -> 705, 2046 -> 1685, 1746 -> 1386.
+
+**Open:** incomplete nets are not straightened (jetson: 130 nets);
+pin-row crossings need the search (a cost for passing between a part's
+adjacent pads); any-angle or arc output is still out of scope.
+`bash scripts/check.sh --fast` and the clippy gate; f1's golden
+fingerprints gain the straightening's line, the others unchanged.
+
 ## Experiment 2026-10-22 (routes and placements closer to humans)
 
 Florian's brief: what would get the routes and placements closer to a
