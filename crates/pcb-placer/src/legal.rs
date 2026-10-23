@@ -1254,10 +1254,10 @@ pub fn legalize_stuck_first(
 /// The scans of `evict_for` for a spot of `index`: the coarse `step` on
 /// both axes and, for a part held at one edge (or at two parallel ones)
 /// on a finer grid, then the grid's step along that edge with the part
-/// pulled flush against it (`clamp`). A held part has a window across the edge
-/// (between the edge margin and its reach) and, at the edge-copper levels
-/// where its copper keeps the copper-to-edge clearance on every side,
-/// one along it, both narrower than the coarse step can hit
+/// pulled flush against it (`clamp`). A held part has a window across
+/// the edge (between the edge margin and its reach) and, at the
+/// edge-copper levels where its copper keeps the copper-to-edge clearance
+/// on every side, one along it, both narrower than the coarse step can hit
 /// (OM-FlexGrid-Flex's 19-pin flex connector J1 in its 12.4 mm tab: 0.25
 /// mm wide, between the coarse scan's x positions; the molecules'
 /// DisplayPort connectors, 0.45 mm across the edge).
