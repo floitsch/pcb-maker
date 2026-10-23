@@ -90,6 +90,37 @@ counts by category.
 - Test access, fiducials, mounting-hole keepouts, reachable buttons and
   LEDs.
 
+## Aesthetics
+
+What a reviewer sees first on an autorouted board: traces that "snake
+through SMD pins" and bend "in many small steps". score-kicad-board's
+`aesthetics` (crates/pcb-kicad/src/aesthetics.rs) counts both, the same
+way on the designer's board and on ours:
+
+- **Paths**: chains of a net's segments on one layer between terminals
+  (a pad of the net, a via, a junction of three or more segments, a free
+  end); an arc is its two chords.
+- **Bends**: along a path, a direction change of 5 degrees or more is a
+  turn; turns of one sense less than 1 mm apart whose sum is at most 90
+  degrees are one bend (a corner cut at 45 degrees, an arc).
+  `bends_per_connection` divides by the board's connections (per net of
+  two pads or more, its pads less one: the same for any routing of one
+  netlist, so ours over the designer's is the bends over the designer's).
+- **Stair-steps**: two bends within 2 mm (the straight run between them)
+  that return to the direction before the first, counted without
+  overlap.
+- **Pin-row crossings**: a track of another net crossing the line
+  between the centres of two adjacent SMD pads of one part (a part of
+  three pads or more; adjacent: at most 1.25 times the closer pad's
+  nearest-neighbour distance apart), once per pad pair and net. Whether
+  another path existed is not asked; the designer's count is the yard
+  stick.
+
+quality.py reports them beside the other measures, designer-numbers.json
+holds the designer's, and compare.py's normalised line gives our bends
+per connection over the designer's and our stair-steps and crossings
+less the designer's (medians over the boards).
+
 ## Validation
 
 Compute every measure on the designers' boards and on ours for the same

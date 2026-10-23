@@ -148,6 +148,8 @@ model) and `tests`.
    43 pads.
 8. **Cleanup.** Each net is rerouted alone with pure geometric cost and a high
    via cost; the result is kept only if strictly cheaper.
+   After the via reduction, the straightening (`straighten`, below) takes
+   stair-steps and jogs out of the signal nets' paths.
 9. **Verification.** `pcb_router::verify` measures true distances between all
    emitted copper, obstacles and the outline, independent of the lattice.
 
@@ -1698,6 +1700,41 @@ state is restored. This is where most of the via savings come from: the
 cleanup pass alone cannot remove a via, because a single net rerouted against
 all other copper is boxed in, while renegotiation lets the neighbours move.
 
+## Straightening (2026-10-23)
+
+The search costs `bend_cost` (0.1 mm) per 45 degrees of direction change
+against the direction a node was reached from: a direction change, not a
+per-step zigzag. But its state is the (layer, node), not the arrival
+direction too, and a node is closed at its first arrival, so among the
+many shortest paths of an octilinear lattice it often keeps one that
+steps sideways and back. The negotiation's detours leave jogs on top, and
+the clean-up does not take them out: it keeps a reroute only when it is
+strictly shorter (length plus vias), and a path with fewer bends is
+mostly as long. score-kicad-board's `aesthetics` counts what that looks
+like (docs/quality.md, "Aesthetics"; changelog 2026-10-23).
+
+`straighten` (router/straighten.rs, `Config::straighten`) runs after the
+via reduction, as part of the clean-up's phase. For every complete
+signal net (pour nets and fixed branches stay as they are) it lifts the
+net's stamps and works on each branch one layer's run at a time: between
+two of the run's corners (up to eight corners and 15 mm apart) it tries
+the two shortest octilinear paths, the axis part first or the diagonal
+part first, and takes one where the run has fewer bends, else fewer
+stair-steps, else less turning in all (counted on the window and three
+corners either side, by the measure's rule: turns of one sense within
+1 mm and at most 90 degrees are one bend, two bends within 2 mm back to
+the first direction a stair-step). Every step must be free as the hard
+search judges one (the static map and its edge blocks, the other nets'
+clearance zones at the node and beside a diagonal, exclusive pours), the
+new nodes may touch none of the net's other nodes, branch ends and
+junctions stay, and the new path may lie on no more of another net's
+pour than the old one. A shortest path is never longer and no via moves,
+so connections, vias and length cannot get worse. The net is stamped
+again; with `pour_aware_polish` its change is undone when a pour net
+then has more pads off its main piece. Eight step checks count as one
+expansion of work. `PCB_ROUTER_FINGERPRINT` prints a fingerprint after
+it.
+
 ## Determinism and the wall clock (2026-10-14)
 
 Every routing decision is taken in work (search expansions at
@@ -2271,7 +2308,8 @@ followed them).
 - Only pours covering at least 10 % of the board are connected through;
   smaller zones are treated as routing. Existing arc tracks are lowered as
   their chords, grown by the flattening tolerance (refused before 2026-10-21).
-- 45° lattice output, no any-angle/arc post-processing yet.
+- 45° lattice output, no any-angle/arc post-processing yet; the
+  straightening only takes bends out on the lattice.
 - Rules come from the `.kicad_pro` (net classes, patterns, minimums) and
   the `.kicad_dru` ("Project rules" above); clearances are per net and,
   where a rule names two sets of nets, some item kinds or some layers,
