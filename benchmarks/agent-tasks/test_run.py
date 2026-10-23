@@ -638,5 +638,86 @@ class MemoryLedger(unittest.TestCase):
         self.assertIn("memory ledger", result.stdout)
 
 
+def footprint(reference, x, y, layer="F.Cu", net=True, locked=False, pad="smd", angle=None):
+    at = f"{x} {y}" + (f" {angle}" if angle is not None else "")
+    layers = '"*.Cu" "*.Mask"' if pad == "thru_hole" else '"F.Cu" "F.Mask"'
+    drill = " (drill 1)" if pad == "thru_hole" else ""
+    return (f'  (footprint "R"{" (locked yes)" if locked else ""} (layer "{layer}") (at {at})\n'
+            f'    (property "Reference" "{reference}" (at 0 0 0) (layer "F.SilkS"))\n'
+            f'    (fp_rect (start -2 -1) (end 2 1) (layer "F.CrtYd"))\n'
+            f'    (pad "1" {pad} rect (at -1 0) (size 1 1){drill} (layers {layers})'
+            f'{chr(10) + "      (net 1 " + chr(34) + "N" + chr(34) + ")" if net else ""})\n  )\n')
+
+
+def text(content, x, y, layer="F.SilkS", extra=""):
+    return f'  (gr_text "{content}" (at {x} {y}) (layer "{layer}") (effects (font (size 1 1) (thickness 0.15)){extra}))\n'
+
+
+def line(x0, y0, x1, y1, layer="F.SilkS"):
+    return f'  (gr_line (start {x0} {y0}) (end {x1} {y1}) (stroke (width 0.12) (type solid)) (layer "{layer}"))\n'
+
+
+class Labels(unittest.TestCase):
+    """unplace drops the board's texts and silkscreen graphics that label a
+    movable part at the designer's position (docs/placer.md, "The board's
+    own texts and silkscreen graphics"): stacked, the part claims nothing
+    and the label would mark the designer's spot."""
+
+    def unplaced(self, items, remove_outline=False):
+        with tempfile.TemporaryDirectory() as directory:
+            board = Path(directory) / "b.kicad_pcb"
+            board.write_text('(kicad_pcb (version 20240108)\n' + "".join(items) + ')\n')
+            netless, dropped = run.unplace(board, (50, 50), remove_outline)
+            return board.read_text(), dropped
+
+    def test_a_text_over_a_movable_part_goes_one_over_free_space_or_a_fixed_part_stays(self):
+        result, dropped = self.unplaced([
+            footprint("J1", 10, 10), footprint("J2", 30, 10, locked=True),
+            text("GND", 10.5, 10), text("VCC", 30, 10), text("logo", 20, 30)])
+        self.assertEqual(dropped, 1)
+        self.assertNotIn('"GND"', result)
+        self.assertIn('"VCC"', result)
+        self.assertIn('"logo"', result)
+        self.assertIn("(at 50 50)", result)
+
+    def test_parts_sharing_an_origin_claim_nothing(self):
+        result, dropped = self.unplaced([footprint("J1", 10, 10), footprint("J2", 10, 10), text("GND", 10, 10)])
+        self.assertEqual(dropped, 0)
+        self.assertIn('"GND"', result)
+
+    def test_a_cluster_of_graphics_goes_whole_and_counts_once(self):
+        result, dropped = self.unplaced([
+            footprint("U1", 10, 10), line(9, 9, 11, 9), line(11.3, 9, 16, 9), line(30, 30, 31, 30)])
+        self.assertEqual(dropped, 1)
+        self.assertNotIn("(start 11.3 9)", result)
+        self.assertIn("(start 30 30)", result)
+
+    def test_the_other_side_counts_holes_and_through_pads_only(self):
+        result, dropped = self.unplaced([
+            footprint("U1", 10, 10), footprint("J1", 30, 10, pad="thru_hole"),
+            text("A", 10, 10, "B.SilkS"), text("B", 29, 10, "B.SilkS")])
+        self.assertEqual(dropped, 1)
+        self.assertIn('"A"', result)
+        self.assertNotIn('"B"', result)
+
+    def test_hidden_texts_and_texts_inside_dimensions_stay(self):
+        dimension = '  (dimension (type aligned) (layer "F.SilkS")\n' + text("5 mm", 10, 10) + "  )\n"
+        result, dropped = self.unplaced([
+            footprint("U1", 10, 10), text("H", 10, 10, extra=" (hide yes)"), dimension])
+        self.assertEqual(dropped, 0)
+        self.assertIn('"H"', result)
+        self.assertIn('"5 mm"', result)
+
+    def test_a_turned_part_s_box_turns_and_the_outline_still_goes(self):
+        # J1 turned by 90 degrees: its 4 x 2 mm courtyard is 2 x 4 mm.
+        result, dropped = self.unplaced([
+            footprint("J1", 10, 10, angle=90), text("X", 10, 12.5), text("Y", 11.8, 10),
+            line(0, 0, 100, 0, "Edge.Cuts")], remove_outline=True)
+        self.assertEqual(dropped, 1)
+        self.assertNotIn('"X"', result)
+        self.assertIn('"Y"', result)
+        self.assertNotIn("Edge.Cuts", result)
+
+
 if __name__ == "__main__":
     unittest.main()

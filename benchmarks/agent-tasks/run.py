@@ -61,6 +61,7 @@ import argparse
 import fcntl
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -159,14 +160,349 @@ def move_zones(block, dx, dy):
     return "".join(pieces)
 
 
+# The board's texts and silkscreen graphics that label a movable part
+# (docs/placer.md, "The board's own texts and silkscreen graphics"): the
+# binary attaches a mark to the movable part it overlaps at the input, but
+# a task stacks its movable parts at one point and parts sharing an origin
+# claim nothing. A label left at the designer's spot was then an obstacle
+# where the designer's part had been (OpenFC's 17 connectors and headers
+# seated on their stale pin names). Moving the label with its part to the
+# stack attaches it to nothing either (and blocks the stack's spot), so
+# unplace drops such labels (`labels_dropped`); texts over fixed parts and
+# over free space stay.
+# What unplace does with them, in the rows and summary.json (`labels`):
+# "dropped" since 2026-10-23; a row without it kept every label.
+LABELS = "dropped"
+MARK_LAYERS = ("F.SilkS", "B.SilkS", "F.Cu", "B.Cu")
+SILK_LAYERS = ("F.SilkS", "B.SilkS")
+MARK_TEXTS = ("gr_text", "gr_text_box")
+MARK_GRAPHICS = ("gr_line", "gr_rect", "gr_arc", "gr_circle", "gr_poly", "gr_curve")
+# The outline's graphics unplace drops with `remove_outline`.
+OUTLINE_HEADS = ("gr_line", "gr_rect", "gr_arc", "gr_circle", "gr_poly")
+# board_placer::marks: graphics within CLUSTER_GAP of each other are one
+# mark; a cluster spanning more than FRAME_SHARE of the outline's width or
+# height (a frame, an image behind every part) is none.
+CLUSTER_GAP = 0.5
+FRAME_SHARE = 0.8
+# A stroke-font glyph's advance per text width (pcbnew's boxes: 0.54 for
+# "iiii", 1.2 for "WWWW", 0.82 to 1.1 for labels like "GND" or "3V3").
+GLYPH_ADVANCE = 0.95
+LINE_PITCH = 1.62
+SEXP_TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|[()]|[^\s()"]+')
+TOP_TOKEN = re.compile(r'"(?:[^"\\]|\\.)*"|[()]')
+
+
+def sexp(text):
+    """One s-expression as nested lists; a quoted string keeps its quotes."""
+    stack = [[]]
+    for token in SEXP_TOKEN.findall(text):
+        if token == "(":
+            stack.append([])
+        elif token == ")":
+            done = stack.pop()
+            stack[-1].append(done)
+        else:
+            stack[-1].append(token)
+    return stack[0][0]
+
+
+def top_level(text):
+    """(start, end) of every child of the file's root expression."""
+    spans, depth, start = [], 0, None
+    for match in TOP_TOKEN.finditer(text):
+        token = match.group()
+        if token == "(":
+            depth += 1
+            if depth == 2:
+                start = match.start()
+        elif token == ")":
+            if depth == 2:
+                spans.append((start, match.end()))
+            depth -= 1
+    return spans
+
+
+def child(node, head):
+    return next((item for item in node[1:] if isinstance(item, list) and item and item[0] == head), None)
+
+
+NUMBER = re.compile(r"-?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$")
+
+
+def numbers(node, head):
+    """The numbers of `node`'s child `head` (`(drill oval 1 2)`: 1, 2)."""
+    found = child(node, head)
+    return [float(value) for value in found[1:] if isinstance(value, str) and NUMBER.match(value)] if found else []
+
+
+def unquote(atom):
+    return atom[1:-1] if isinstance(atom, str) and atom.startswith('"') else atom
+
+
+def placed(point, origin, angle):
+    """A footprint-frame (or text-frame) point on the board: KiCad's y
+    points down and angles turn counterclockwise on the screen."""
+    radians = math.radians(angle)
+    x, y = point
+    return (origin[0] + x * math.cos(radians) + y * math.sin(radians),
+            origin[1] - x * math.sin(radians) + y * math.cos(radians))
+
+
+def box_of(points):
+    xs, ys = [p[0] for p in points], [p[1] for p in points]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def grown(box, margin):
+    return (box[0] - margin, box[1] - margin, box[2] + margin, box[3] + margin)
+
+
+def overlap_area(a, b):
+    width = min(a[2], b[2]) - max(a[0], b[0])
+    height = min(a[3], b[3]) - max(a[1], b[1])
+    return width * height if width > 0 and height > 0 else 0.0
+
+
+def stroke_width(node):
+    stroke = child(node, "stroke")
+    return (numbers(stroke, "width") or [0.0])[0] if stroke else (numbers(node, "width") or [0.0])[0]
+
+
+def corners(box):
+    return [(box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3])]
+
+
+def footprint_geometry(node):
+    """(back, origin, body, far): the footprint's side, its origin, the box
+    of its courtyard and pads on the board, and the boxes of its holes and
+    of its pads with copper on the other side (board_placer's `far_boxes`
+    and `far_copper`)."""
+    at = numbers(node, "at")
+    origin, angle = (at[0], at[1]), at[2] if len(at) > 2 else 0.0
+    layer = child(node, "layer")
+    back = bool(layer) and unquote(layer[1]).startswith("B.")
+    other = "F.Cu" if back else "B.Cu"
+    local, far = [], []
+    for item in node[1:]:
+        if not isinstance(item, list) or not item:
+            continue
+        if item[0] in ("fp_line", "fp_rect", "fp_arc", "fp_circle", "fp_poly"):
+            item_layer = child(item, "layer")
+            if not item_layer or not unquote(item_layer[1]).endswith("CrtYd"):
+                continue
+            if item[0] == "fp_circle":
+                center, end = numbers(item, "center"), numbers(item, "end")
+                if center and end:
+                    radius = math.hypot(end[0] - center[0], end[1] - center[1])
+                    local += corners((center[0] - radius, center[1] - radius, center[0] + radius, center[1] + radius))
+            elif item[0] == "fp_poly":
+                pts = child(item, "pts")
+                local += [(float(xy[1]), float(xy[2])) for xy in (pts or [])[1:] if isinstance(xy, list) and xy[0] == "xy"]
+            else:
+                local += [tuple(numbers(item, key)[:2]) for key in ("start", "mid", "end") if len(numbers(item, key)) >= 2]
+        elif item[0] == "pad":
+            pad_at, size = numbers(item, "at"), numbers(item, "size")
+            if len(pad_at) < 2 or len(size) < 2:
+                continue
+            drill = numbers(item, "drill")
+            width, height = max(size[0], drill[0] if drill else 0.0), max(size[1], drill[-1] if drill else 0.0)
+            turn = (pad_at[2] if len(pad_at) > 2 else 0.0) - angle
+            pad = [placed(corner, (pad_at[0], pad_at[1]), turn)
+                   for corner in corners((-width / 2, -height / 2, width / 2, height / 2))]
+            local += pad
+            layers = [unquote(value) for value in (child(item, "layers") or [])[1:]]
+            if len(item) > 2 and item[2] in ("thru_hole", "np_thru_hole") or "*.Cu" in layers or other in layers:
+                far.append(box_of([placed(corner, origin, angle) for corner in pad]))
+    if not local:
+        return None
+    body = box_of([placed(corner, origin, angle) for corner in corners(box_of(local))])
+    return back, origin, body, far
+
+
+def hidden(node):
+    for holder in (node, child(node, "effects") or []):
+        if "hide" in holder[1:]:
+            return True
+        flag = child(holder, "hide") if holder else None
+        if flag and (len(flag) < 2 or flag[1] != "no"):
+            return True
+    return False
+
+
+def text_boxes(node):
+    """The box of a board text or text box (its layer, its box) or None."""
+    layer = child(node, "layer")
+    if not layer or unquote(layer[1]) not in MARK_LAYERS or hidden(node):
+        return None
+    name = unquote(layer[1])
+    if node[0] == "gr_text_box":
+        pts = child(node, "pts")
+        points = [(float(xy[1]), float(xy[2])) for xy in (pts or [])[1:] if isinstance(xy, list) and xy[0] == "xy"]
+        points += [tuple(numbers(node, key)[:2]) for key in ("start", "end") if len(numbers(node, key)) >= 2]
+        return (name, box_of(points)) if points else None
+    content = next((unquote(atom) for atom in node[1:] if isinstance(atom, str) and atom.startswith('"')), "")
+    at = numbers(node, "at")
+    if len(at) < 2:
+        return None
+    effects = child(node, "effects") or []
+    font = child(effects, "font") if effects else None
+    size = numbers(font, "size") if font else []
+    height, width = (size + [1.0, 1.0])[:2] if len(size) < 2 else size[:2]
+    thickness = (numbers(font, "thickness") or [0.15])[0] if font else 0.15
+    lines = content.split("\\n")
+    w = max(len(line) for line in lines) * GLYPH_ADVANCE * width + thickness
+    h = height * (1 + LINE_PITCH * (len(lines) - 1)) + thickness
+    justify = (child(effects, "justify") or [])[1:] if effects else []
+    left = {"left": 0.0, "right": -w}.get(next((j for j in justify if j in ("left", "right")), ""), -w / 2)
+    if "mirror" in justify:
+        left = -w - left
+    top = {"top": 0.0, "bottom": -h}.get(next((j for j in justify if j in ("top", "bottom")), ""), -h / 2)
+    angle = at[2] if len(at) > 2 else 0.0
+    return name, box_of([placed(corner, (at[0], at[1]), angle) for corner in corners((left, top, left + w, top + h))])
+
+
+def graphic_boxes(node, layers=SILK_LAYERS):
+    """A graphic's layer (one of `layers`) and the boxes it blocks with (a
+    rectangle's four sides unless filled), or None."""
+    layer = child(node, "layer")
+    if not layer or unquote(layer[1]) not in layers:
+        return None
+    half = stroke_width(node) / 2
+    head = node[0]
+    if head in ("gr_poly", "gr_curve"):
+        pts = child(node, "pts")
+        points = [(float(xy[1]), float(xy[2])) for xy in (pts or [])[1:] if isinstance(xy, list) and xy[0] == "xy"]
+        return (unquote(layer[1]), [grown(box_of(points), half)]) if points else None
+    if head == "gr_circle":
+        center, end = numbers(node, "center"), numbers(node, "end")
+        if len(center) < 2 or len(end) < 2:
+            return None
+        radius = math.hypot(end[0] - center[0], end[1] - center[1]) + half
+        return unquote(layer[1]), [(center[0] - radius, center[1] - radius, center[0] + radius, center[1] + radius)]
+    start, end = numbers(node, "start"), numbers(node, "end")
+    if len(start) < 2 or len(end) < 2:
+        return None
+    if head == "gr_rect":
+        x0, y0, x1, y1 = box_of([start[:2], end[:2]])
+        fill = child(node, "fill")
+        if fill and len(fill) > 1 and fill[1] in ("solid", "yes"):
+            return unquote(layer[1]), [grown((x0, y0, x1, y1), half)]
+        return unquote(layer[1]), [grown(side, half) for side in
+                                   ((x0, y0, x1, y0), (x0, y1, x1, y1), (x0, y0, x0, y1), (x1, y0, x1, y1))]
+    points = [tuple(start[:2]), tuple(end[:2])]
+    mid = numbers(node, "mid")
+    if head == "gr_arc" and len(mid) >= 2:
+        points.append(tuple(mid[:2]))
+        (ax, ay), (bx, by), (cx, cy) = points[0], points[2], points[1]
+        d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by))
+        if abs(d) > 1e-9:
+            ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / d
+            uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / d
+            radius = math.hypot(ax - ux, ay - uy)
+            a0, am, a1 = (math.atan2(p[1] - uy, p[0] - ux) for p in ((ax, ay), (bx, by), (cx, cy)))
+            sweep = (a1 - a0) % (2 * math.pi)
+            if (am - a0) % (2 * math.pi) > sweep:
+                sweep -= 2 * math.pi
+            points += [(ux + radius * math.cos(a0 + sweep * k / 32), uy + radius * math.sin(a0 + sweep * k / 32))
+                       for k in range(33)]
+    return unquote(layer[1]), [grown(box_of(points), half)]
+
+
+def clusters(graphics):
+    """Groups (index, layer, boxes) whose boxes lie within CLUSTER_GAP of
+    each other on one layer (union-find over a grid)."""
+    parent = list(range(len(graphics)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+    cell = 5.0
+    buckets = {}
+    for index, (_, layer, boxes) in enumerate(graphics):
+        for box in boxes:
+            g = grown(box, CLUSTER_GAP / 2)
+            for gx in range(math.floor(g[0] / cell), math.floor(g[2] / cell) + 1):
+                for gy in range(math.floor(g[1] / cell), math.floor(g[3] / cell) + 1):
+                    for other, other_box in buckets.get((layer, gx, gy), []):
+                        if find(other) != find(index) and within(box, other_box, CLUSTER_GAP):
+                            parent[find(other)] = find(index)
+                    buckets.setdefault((layer, gx, gy), []).append((index, box))
+    groups = {}
+    for index in range(len(graphics)):
+        groups.setdefault(find(index), []).append(index)
+    return list(groups.values())
+
+
+def within(a, b, gap):
+    """board_placer::marks' `overlaps`: the boxes lie within `gap`."""
+    return a[0] < b[2] + gap and b[0] < a[2] + gap and a[1] < b[3] + gap and b[1] < a[3] + gap
+
+
+def labels_of_movable(text, movable_spans):
+    """The spans (start, end) of the board's marks that label a movable
+    footprint at its designer position, as board_placer's attach_marks
+    would at the input, and how many marks they make (a cluster of
+    graphics is one). `movable_spans` are the movable footprints' spans."""
+    parts = []
+    for start, end in movable_spans:
+        geometry = footprint_geometry(sexp(text[start:end]))
+        if geometry:
+            parts.append(geometry)
+    # Parts sharing an origin claim nothing (attach_marks).
+    parts = [part for part in parts if not any(
+        other is not part and abs(other[1][0] - part[1][0]) < 0.01 and abs(other[1][1] - part[1][1]) < 0.01
+        for other in parts)]
+    if not parts:
+        return [], 0
+    marks, graphics, outline = [], [], []
+    for start, end in top_level(text):
+        head = re.match(r"\(([a-z_]+)", text[start:end])
+        head = head.group(1) if head else ""
+        if head in MARK_TEXTS:
+            found = text_boxes(sexp(text[start:end]))
+            if found:
+                marks.append(([(start, end)], found[0], [found[1]]))
+        elif head in MARK_GRAPHICS:
+            node = sexp(text[start:end])
+            edge = graphic_boxes(node, ("Edge.Cuts",))
+            if edge:
+                outline += edge[1]
+                continue
+            found = graphic_boxes(node)
+            if found:
+                graphics.append(((start, end), found[0], found[1]))
+    frame = box_of([(b[0], b[1]) for b in outline] + [(b[2], b[3]) for b in outline]) if outline else None
+    for group in clusters(graphics):
+        boxes = [box for index in group for box in graphics[index][2]]
+        bounds = box_of([(b[0], b[1]) for b in boxes] + [(b[2], b[3]) for b in boxes])
+        if frame and (bounds[2] - bounds[0] > FRAME_SHARE * (frame[2] - frame[0])
+                      or bounds[3] - bounds[1] > FRAME_SHARE * (frame[3] - frame[1])):
+            continue
+        marks.append(([graphics[index][0] for index in group], graphics[group[0]][1], boxes))
+    dropped, count = [], 0
+    for spans, layer, boxes in marks:
+        back = layer.startswith("B.")
+        for part_back, _, body, far in parts:
+            mine = [body] if part_back == back else far
+            if any(overlap_area(a, b) > 0 for a in mine for b in boxes):
+                dropped += spans
+                count += 1
+                break
+    return dropped, count
+
+
 def unplace(board, point, remove_outline, keep=()):
     """Stacks every footprint with a net that is not locked (or in `keep`) at
-    `point`; drops the Edge.Cuts graphics if asked. Returns the references
-    of the footprints without nets, which stay where the designer put
-    them."""
+    `point`; drops the Edge.Cuts graphics if asked, and the board's texts
+    and silkscreen graphics that label a movable footprint at the
+    designer's position (labels_of_movable). Returns the references of the
+    footprints without nets, which stay where the designer put them, and
+    how many labels were dropped (a cluster of graphics counts once)."""
     text = board.read_text()
     pieces, last, netless = [], 0, []
-    pattern = re.compile(r"\((footprint|gr_line|gr_rect|gr_arc|gr_circle|gr_poly)[\s\"]")
+    pattern = re.compile(r"\((footprint|gr_line|gr_rect|gr_arc|gr_circle|gr_poly|gr_curve|gr_text_box|gr_text)[\s\"]")
     connected = r'\(pad [^\n]*[\s\S]*?\(net (?:\d+ )?"(?!unconnected-)[^"]+"\)'
     reference_pattern = r'\((?:property "Reference"|fp_text reference) "([^"]*)"'
     # The netless footprints stay, fixed by reference: a footprint with a
@@ -180,6 +516,20 @@ def unplace(board, point, remove_outline, keep=()):
             reference = re.search(reference_pattern, block)
             if reference and reference.group(1) and not re.search(connected, block):
                 staying.add(reference.group(1))
+
+    def movable(block):
+        reference = re.search(reference_pattern, block)
+        # A pad's net is `(net "X")` in KiCad 10 files and `(net 5 "X")`
+        # before; only the first form was read, so every footprint of an
+        # older file counted as netless and stayed fixed (89 of the 109
+        # harvested tasks never placed anything until 2026-10-09).
+        return re.search(connected, block) and not re.search(
+            r"^\(footprint \"[^\"]*\"\s+(?:\(locked (?:yes)?\)|locked)", block) and not (
+            reference and (reference.group(1) in keep or reference.group(1) in staying))
+    spans = [(match.start(), block_end(text, match.start())) for match in pattern.finditer(text)
+             if match.group(1) == "footprint"]
+    dropped, labels = labels_of_movable(text, [(s, e) for s, e in spans if movable(text[s:e])])
+    dropped = {start for start, _ in dropped}
     for match in pattern.finditer(text):
         start = match.start()
         if start < last:
@@ -187,18 +537,13 @@ def unplace(board, point, remove_outline, keep=()):
         end = block_end(text, start)
         block = text[start:end]
         pieces.append(text[last:start])
-        if match.group(1) == "footprint":
+        if start in dropped:
+            pass
+        elif match.group(1) == "footprint":
             reference = re.search(reference_pattern, block)
-            # A pad's net is `(net "X")` in KiCad 10 files and `(net 5 "X")`
-            # before; only the first form was read, so every footprint of an
-            # older file counted as netless and stayed fixed (89 of the 109
-            # harvested tasks never placed anything until 2026-10-09).
-            movable = re.search(connected, block) and not re.search(
-                r"^\(footprint \"[^\"]*\"\s+(?:\(locked (?:yes)?\)|locked)", block) and not (
-                reference and (reference.group(1) in keep or reference.group(1) in staying))
             if reference and reference.group(1) and not re.search(connected, block):
                 netless.append(reference.group(1))
-            if movable:
+            if movable(block):
                 # The footprint's own (at ...) is its first direct child.
                 depth = 0
                 for index, character in enumerate(block):
@@ -214,14 +559,14 @@ def unplace(board, point, remove_outline, keep=()):
                     elif character == ")":
                         depth -= 1
             pieces.append(block)
-        elif remove_outline and '"Edge.Cuts"' in block:
+        elif remove_outline and match.group(1) in OUTLINE_HEADS and '"Edge.Cuts"' in block:
             pass
         else:
             pieces.append(block)
         last = end
     pieces.append(text[last:])
     board.write_text("".join(pieces))
-    return netless
+    return netless, labels
 
 
 # KiCad's DRC reports at most this many findings of a type (verdict.rs,
@@ -1005,11 +1350,13 @@ def run_admitted(task, arguments, token):
     # Constraints are optional: without them the layout gets an empty set.
     constraints = json.loads((arguments.tasks.parent / task["constraints"]).read_text()) \
         if task.get("constraints") else {}
+    labels_dropped = None
     if task.get("unplace"):
         outline = constraints.get("outline", {})
         point = task.get("stack_at") or [outline.get("x", 0) + outline.get("width", 40) / 2,
                                           outline.get("y", 0) + outline.get("height", 40) / 2]
-        netless = unplace(board, point, task.get("remove_outline", False), set(constraints.get("fixed", [])))
+        netless, labels_dropped = unplace(board, point, task.get("remove_outline", False),
+                                          set(constraints.get("fixed", [])))
         # move_all would move them too.
         # Fixed parts are glob patterns: references like KiCad's REF** are
         # escaped to match only themselves.
@@ -1054,6 +1401,9 @@ def run_admitted(task, arguments, token):
            "load": [round(load_before, 1), round(os.getloadavg()[0], 1)],
            "peak_rss_mb": peak_mb, "layout_rss_mb": own_mb, "mode": "layout",
            "constraints_sha256": constraints_sha256}
+    if labels_dropped is not None:
+        # The labels of movable parts unplace took off the board (LABELS).
+        row.update(labels=LABELS, labels_dropped=labels_dropped)
     if arguments.budget_scale != 1:
         row["budget_scale"] = arguments.budget_scale
     if code == "timeout":
@@ -2128,6 +2478,8 @@ def main():
         # `wall_seconds`, `jobs` and `threads` above are this run's own.
         summary["parts"] = run_parts(ordered, ran, arguments, wall)
         summary["this_run_rates"] = measured_rates(ran)
+    if any("labels_dropped" in row for row in ordered):
+        summary.update(labels=LABELS, labels_dropped=sum(row.get("labels_dropped", 0) for row in ordered))
     if arguments.designer:
         summary["placement"] = "designer"
     outcomes = {}
