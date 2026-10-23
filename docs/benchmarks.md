@@ -20,6 +20,27 @@ cargo build --release
 python3 benchmarks/corpus/run.py build/corpus   # add --only NAME... or --skip-layout
 ```
 
+## Nightly
+
+Main measured every night by `scripts/nightly.sh`
+([benchmarks/agent-tasks/README.md](../benchmarks/agent-tasks/README.md#nightly),
+"Nightly"): the fingerprints (Castor, k30-SBC, jetson, Sisu in route mode
+from v16), the route-mode expansion tier, the short tier and, on the
+configured days, the full layout sweep (tasks v7, `--quality`) with the
+matched designer tier. One row a night, newest first, the last 14 nights,
+written by `scripts/nightly-report.py` from `build/nightly/<night>/`
+(`summary.md` there has the per-board detail). Cells: passes / rows
+(strict passes), KiCad's unconnected items, rows cut by the wall clock
+and killed; the designer tier's budget scale; the gap split over the
+target boards (`compare.py --gap --targets`); against the previous
+nightly that ran each stage, better / same / worse (compare.py) and the
+boards that gained or lost the pass.
+
+<!-- nightly:begin -->
+| Night | main | Fingerprints | Expansion | Short | Sweep | Designer | Gap (placement / routing) | Against the previous night (better/same/worse) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+<!-- nightly:end -->
+
 ## Fence (2026-10-21)
 
 Every breadboard-fence benchmark run once with x1404 (main at the fence

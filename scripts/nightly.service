@@ -1,0 +1,17 @@
+# Copyright (C) 2026 Toit contributors.
+#
+# The nightly measurement of main (scripts/nightly.sh). A template:
+# `bash scripts/nightly.sh --install` writes it to
+# ~/.config/systemd/user/pcb-maker-nightly.service with @ROOT@ the main
+# checkout and @PATH@ the installer's PATH (cargo, kicad-cli, python3).
+
+[Unit]
+Description=pcb-maker nightly measurement of main (scripts/nightly.sh)
+
+[Service]
+Type=oneshot
+WorkingDirectory=@ROOT@
+Environment=PATH=@PATH@
+ExecStart=/usr/bin/env bash @ROOT@/scripts/nightly.sh
+# A night with the sweep and the designer tier takes about eleven hours.
+TimeoutStartSec=infinity

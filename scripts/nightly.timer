@@ -1,0 +1,17 @@
+# Copyright (C) 2026 Toit contributors.
+#
+# Starts pcb-maker-nightly.service at 02:00 local time. A template:
+# `bash scripts/nightly.sh --install` writes it to
+# ~/.config/systemd/user/pcb-maker-nightly.timer and enables it. A night
+# missed while the machine was off is not made up (Persistent=false):
+# it would run beside the day's work.
+
+[Unit]
+Description=pcb-maker nightly measurement of main at 02:00
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=false
+
+[Install]
+WantedBy=timers.target

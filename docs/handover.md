@@ -47,6 +47,13 @@ board; starter constraints for key matrices). See
 Only the current references; older sweeps and tiers are in
 [changelog.md](changelog.md) and [benchmarks.md](benchmarks.md).
 
+The newest nightly measurement of main (scripts/nightly.sh; the table of
+the last 14 nights is in [benchmarks.md](benchmarks.md#nightly)):
+
+<!-- nightly-state:begin -->
+**Nightly**: none yet (`bash scripts/nightly.sh --install` installs the timer; `scripts/nightly-report.py` writes this line).
+<!-- nightly-state:end -->
+
 **Layout sweep v16** (x862, tasks v6, 109 boards harvested from GitHub,
 each reduced to stacked parts plus a `constraints.json` derived from the
 designer's board, 1800 s each, five jobs beside other agents):
@@ -342,6 +349,23 @@ them, to commit with the change. The KiCad goldens (`f1-drc.txt`,
 
 Then `bash scripts/snapshot.sh <n>` for a binary to benchmark, the short
 tier for iterating, the quick tier once as the merge gate.
+
+**What a package measures, and what the nightly does** (since
+2026-10-23: validating every package with every tier slowed the project).
+A router package runs the fingerprints (Castor, k30-SBC, jetson, Sisu in
+route mode from v16, 1 x 4, budget scale 0.25, `PCB_ROUTER_FINGERPRINT=1
+PCB_ROUTER_NO_WALL_GUARD=1`) and the route-mode expansion tier (8 x 1),
+each against main's; a placer package adds the short tier (3 x 2). No
+package runs a full sweep or the designer tier: `scripts/nightly.sh`
+runs them on main every night at 02:00 (a systemd user timer), after the
+fingerprints, the expansion tier and the short tier of main's head,
+through the memory ledger beside the day's work, and writes
+`build/nightly/<date>/summary.md` (pass and strict counts, the medians
+against the designer, the gap split, the cut and killed rows, the diff
+against the previous night). A package's claim about the sweep is
+checked by the first nightly after its merge; the line under "Benchmarks
+that count" and benchmarks.md's "Nightly" table say what main does now
+(benchmarks/agent-tasks/README.md, "Nightly").
 `python3 scripts/check_links.py` checks the Markdown links (`--into
 handover.md changelog.md` for the links into these two files).
 

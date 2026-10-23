@@ -17,9 +17,9 @@
 #     reference against the code, hostile input files, and the fixture
 #     tests on the committed boards of tests/fixtures (docs/handover.md,
 #     "Before a commit");
-#   - the benchmark runner's, the harvest's and the expansion intake's
-#     Python tests (benchmarks/agent-tasks, benchmarks/github,
-#     benchmarks/expansion);
+#   - the benchmark runner's, the harvest's, the expansion intake's and
+#     the nightly's Python tests (benchmarks/agent-tasks, benchmarks/github,
+#     benchmarks/expansion, scripts);
 #   - clippy over the whole workspace and every target, warnings as errors
 #     (CI's lint gate);
 #   - a release build last, and prints each step's wall time and where the
@@ -79,6 +79,7 @@ step cargo test --release -p pcb-maker --bins --test cli_exit_codes ${walkthroug
 step python3 -m pytest -q benchmarks/agent-tasks
 step python3 -m pytest -q benchmarks/github
 step python3 -m pytest -q benchmarks/expansion
+step python3 -m pytest -q scripts
 step cargo clippy --release --workspace --all-targets -- -D warnings
 # A cargo test of the library crates does not refresh
 # target/release/pcb-maker: build it last so the binary matches the tree

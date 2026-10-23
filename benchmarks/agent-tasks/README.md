@@ -132,6 +132,10 @@ measurement). The discipline:
   the budget, about seven minutes at the tier default of 8 x 2; section below). It holds the
   boards whose results flip; a change that moves nothing there will
   rarely move the quick tier.
+- **What a package runs** (since 2026-10-23): a router package the
+  fingerprints and the route-mode expansion tier, a placer package the
+  short tier too; full sweeps and the designer tier run nightly on main
+  ("Nightly" below), never per package.
 - **Merge gate: the 30-board quick tier at the full budget** (`--tier
   quick`), once, diffed with `compare.py` against the last reference log.
 - **Judge by continuous objectives from one run**, not by pass counts:
@@ -1117,3 +1121,91 @@ The demo above (build/bench-short/splice-demo.log): 23/30 pass, 28 rows
 spliced, compare.py: "30 boards in both: better 0, same 29, worse 0;
 unconnected 26 -> 26; passes 23 -> 23" and "after: 28 of the 30 rows
 spliced from an earlier run (SPL)".
+
+## Nightly
+
+**What runs where** (since 2026-10-23). A package does not validate
+with every tier: a router package runs the fingerprints and the
+route-mode expansion tier, a placer package adds the short tier, each
+against main's numbers. The full layout sweep and the designer tier run
+on main every night, never per package:
+
+```sh
+bash scripts/nightly.sh                 # tonight's measurement, by hand
+bash scripts/nightly.sh --quick         # without the sweep and the designer tier
+bash scripts/nightly.sh --install       # once: the systemd user timer, 02:00 local
+bash scripts/nightly.sh --print-units   # the units --install writes
+scripts/nightly-report.py --print       # the newest night as a table row and a state line
+```
+
+`scripts/nightly.sh` refuses when the main checkout has uncommitted
+changes to tracked files, builds main's head in a checkout of its own
+(`../pcb-maker-nightly`, a detached worktree with the main checkout's
+`build`, `artifacts`, harvested boards and expansion data linked in;
+main's `target/` is not touched), snapshots the binary as
+`build/bin/pcb-maker-nightly-<date>-<sha12>` (the newest 7 stay) and
+runs, one after the other, each through the memory ledger without the
+lock at `--min-free-gb 10`:
+
+| Stage | Command (run.py) | Wall, roughly |
+| --- | --- | --- |
+| fingerprints | Castor, k30-SBC, jetson, Sisu; `--route-from build/github-layout-v16 --tasks tasks/v7`, 1 x 4, `--budget-scale 0.25`, `PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1` | 20 min |
+| expansion | `--tier expansion`, 8 x 1 | 5-10 min |
+| short | `--tier short`, 3 x 2 | 15-20 min |
+| sweep | `--tasks tasks/v7`, 10 x 2, `--quality` | 4 h |
+| designer | `--tier designer --quality`, 8 x 1, `--budget-scale` the sweep's median `ladder_budget_share` (0.695 without one) | 6 h |
+
+The sweep and the matched designer tier run on the days of
+`--sweep-days` (`PCB_NIGHTLY_SWEEP_DAYS` in the service: `all`, the
+default, or ISO weekdays `1`-`7` / `mon`-`sun`, comma separated);
+`--no-sweep`, `--no-designer` and `--quick` leave them out for a night.
+When the newest nightly measured the same commit with every stage
+planned, the night does nothing (`--force` runs anyway: the rows of a
+deterministic binary would repeat). One night at a time
+(`build/nightly/.lock`).
+
+**What a night leaves**, in `build/nightly/<date>/`: each stage's
+output directory, `<stage>.log` (the rows, for compare.py) and
+`<stage>.err`, `build.log`, `nightly.log`, `gap.txt` (`compare.py --gap
+sweep.log designer.log --targets`), `diff-<stage>.txt` (compare.py
+against the previous nightly that ran the stage), `nightly.json` and
+`summary.md`: per stage the pass and strict counts, KiCad's unconnected
+items and new errors, the medians against the designer (vias, length,
+open share), cut and killed rows, budget scale and wall; the
+fingerprints per board against the previous night (identical, or the
+phases that changed and whether the routed board did); the gap split;
+the cut, killed and resultless rows by name; and, per stage, compare.py's
+better / same / worse line with the boards that gained or lost the pass
+and the strict pass. Nights beyond the newest 14 keep their logs and
+summaries, not their board directories (a full night is about 2 GB).
+
+**Into the docs.** `scripts/nightly-report.py` writes the newest night
+as a row of docs/benchmarks.md's "Nightly" table (newest first, the
+last 14 nights; a night's row replaces its earlier one) and as the
+state line of docs/handover.md ("Benchmarks that count"), between their
+markers, into the checkout it lies in (`--docs` another; run it in a
+worktree: an uncommitted change in the main checkout stops the next
+night). `--commit`
+writes the main checkout's two files instead, commits them alone on main
+("Docs: nightly <date> (main <sha12>)"), pushes main and touches nothing
+else; it refuses when the main checkout is not on main or either file
+has uncommitted changes. The nightly runs it with `--commit-report`
+(`PCB_NIGHTLY_COMMIT_REPORT=1` in the service); off by default, so that
+an agent reads the summary first.
+
+**The timer.** `--install` writes `scripts/nightly.service` and
+`scripts/nightly.timer` (templates: the main checkout and the
+installer's PATH, for cargo, kicad-cli and python3) to
+`~/.config/systemd/user/pcb-maker-nightly.*`, reloads systemd and
+enables the timer; without `systemctl --user` it prints a cron line
+instead. Without lingering (`loginctl enable-linger`) a user timer runs
+only while the user is logged in. A night missed while the machine was
+off is not made up. `journalctl --user -u pcb-maker-nightly` has the
+script's output (also `nightly.log`).
+
+**Tests.** `scripts/test_nightly.py` (check.sh runs it): two nights with
+run.py replaced by a stub (`PCB_NIGHTLY_RUN_PY`) and no build
+(`PCB_NIGHTLY_FAKE_BINARY`, `PCB_NIGHTLY_SHA`, `PCB_NIGHTLY_ROOT`,
+`PCB_NIGHTLY_DATE`), asserting each stage's command line, the snapshots
+kept, the summary and the docs' row and line; the report's parsing of
+run.py's summary.json files, older ones included.
