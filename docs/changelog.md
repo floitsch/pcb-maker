@@ -19,7 +19,8 @@ an agent that wanted to know why nets stayed open had to join
 board-router.json, a separate KiCad DRC and raw geometry by hand; a
 documented `net_classes` override routed 0.15 mm tracks under a 0.2 mm
 board minimum without a word; and the access and cut diagnostics refused
-an outline the router reads. Branch run-diagnosis, binary x1700.
+an outline the router reads. Branch run-diagnosis, binaries x1700 (the
+router as committed) and x1702 (the branch's head).
 
 **inspect-routing-run** (src/agent_cli.rs, crates/pcb-kicad/src/run_diagnosis.rs;
 docs/agents.md, "Which nets stayed open"): `<run-dir> [--net N]
@@ -102,7 +103,10 @@ their sources, 0.1 mm necks emitted, and the designer's route: one group,
 79 segments, 6 vias on F.Cu and B.Cu. The router counts 6 of 6 terminals
 unconnected: its search's state, not the copper written, which the
 explanation says. Fingerprints on Castor and k30-SBC (route mode from
-v16, budget scale 0.25, 1 x 4) against x1652: FINGERPRINT_RESULT.
+v16, budget scale 0.25, 1 x 4) against x1652: identical, the
+fingerprint lines and the boards byte for byte (work 174.4 and 277.0 s
+both; build/diag1-fp-x1652, build/diag1-fp-x1700); each ledger holds the
+one attempt, the probed rung's continuation, conflict_free.
 
 **Left out**: an access probe and the cut (`access`, `cause` stay
 unknown); joining a pair's track or via to a group (`null`); zone fill in
