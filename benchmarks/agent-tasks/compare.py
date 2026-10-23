@@ -450,11 +450,15 @@ def normalised(rows, numbers=None):
     our track length over the designer's, KiCad's unconnected items over
     the board's connections, and, for rows with scores (run.py --quality),
     the ground pours' cut by other tracks, ours less the designer's (mm),
-    and the boards whose designer has a ground pour that ours lost. Rows
+    and the boards whose designer has a ground pour that ours lost, and
+    the aesthetics (score-kicad-board's `aesthetics`): our bends per
+    connection over the designer's, our stair-steps and pin-row crossings
+    less the designer's. Rows
     without a result are left out; a ratio needs the designer's number
     above zero."""
     numbers = designer_numbers() if numbers is None else numbers
     vias, length, open_share, ground, lost = [], [], [], [], 0
+    bends, stairs, crossings = [], [], []
     results = [row for row in rows if unconnected(row) is not None]
     for row in results:
         total = connections(row)
@@ -473,6 +477,12 @@ def normalised(rows, numbers=None):
                 lost += 1
             else:
                 ground.append(ours["ground_cut_mm"] - designer["ground_cut_mm"])
+        if ours is not None:
+            if designer.get("bends_per_connection") and ours.get("bends_per_connection") is not None:
+                bends.append(ours["bends_per_connection"] / designer["bends_per_connection"])
+            for key, values in (("stair_steps", stairs), ("pin_row_crossings", crossings)):
+                if designer.get(key) is not None and ours.get(key) is not None:
+                    values.append(ours[key] - designer[key])
 
     def rounded(value, digits):
         return None if value is None else round(value, digits)
@@ -484,7 +494,10 @@ def normalised(rows, numbers=None):
             "open_share_mean": rounded(sum(open_share) / len(open_share), 4) if open_share else None,
             "open_boards": len(open_share),
             "ground_cut_delta_mm": rounded(median(ground), 1), "ground_boards": len(ground),
-            "ground_pour_lost": lost}
+            "ground_pour_lost": lost,
+            "bends_ratio": rounded(median(bends), 3), "bends_boards": len(bends),
+            "stair_steps_delta": rounded(median(stairs), 1),
+            "pin_row_crossings_delta": rounded(median(crossings), 1)}
 
 
 def result_directory(row, directory):
@@ -524,6 +537,10 @@ def normalised_line(n, label="normalised"):
                  f" against the designer's ({n['ground_boards']} boards; {n['ground_pour_lost']} lost the pour)")
     else:
         text += ", ground pour cut - (no scores: run.py --quality or compare.py --score)"
+    if n.get("bends_boards"):
+        text += (f", bends per connection {ratio(n['bends_ratio'])} ({n['bends_boards']} boards), stair-steps "
+                 f"{n['stair_steps_delta']:+g}, pin-row crossings {n['pin_row_crossings_delta']:+g} against the "
+                 "designer's")
     return text
 
 

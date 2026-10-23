@@ -172,6 +172,21 @@ impl Router {
         Some(target)
     }
 
+    /// How many of `nodes` lie on another net's pour.
+    fn cut_nodes(&self, net: NetId, nodes: &[Node]) -> usize {
+        let own = crate::grid::owner(net);
+        nodes
+            .iter()
+            .filter(|node| {
+                let class = self.node_class(net, node.cell);
+                let covered = self.hot[class * self.board.layer_count + node.layer as usize]
+                    [node.cell as usize]
+                    .covered;
+                covered != 0 && covered as u32 != own
+            })
+            .count()
+    }
+
     /// One layer's run of lattice nodes straightened (`straighten`), or
     /// None if nothing changed. `taken`: the net's other nodes, which a new
     /// path may not touch; `fixed`: nodes that must stay (branch ends,
@@ -271,6 +286,10 @@ impl Router {
                                 || nodes[..=i].contains(node)
                                 || nodes[j..].contains(node)
                         }) {
+                            continue;
+                        }
+                        // Nor cut more of another net's pour than before.
+                        if self.cut_nodes(net, interior) > self.cut_nodes(net, window) {
                             continue;
                         }
                         let mut next = nodes[..=i].to_vec();
