@@ -269,6 +269,62 @@ escape-demand-default.
   first (one check) would avoid the ladder; left to the final-route flow's
   owner.
 
+## Measured on 2026-10-23 (layout sweep v20, matched designer tier)
+
+The second full measurement on one binary, and the README's numbers
+moved to it. Binary x1725 (main 38edddd), tasks v7, `--quality`, pinned
+work rates, both runs through the memory ledger without the lock with 10
+GB kept free ([benchmarks.md](benchmarks.md#layout-sweep-v20-2026-10-23)).
+Since x1539: trouble repair on by default with its two follow-ups
+(victims by the trouble-maker's open terminals; cheaper exchanges), the
+pin-row cost at 2 mm, straightening after the spoke repairs, the placer
+refusals, touch electrodes, the silkscreen fields, router memory rounds 1
+and 2; in the harness the task labels (77 tasks drop labels at run time,
+so their placements differ from v19's for that reason too) and strict
+rule 4.
+
+- **Layout sweep v20** (`build/github-layout-v20.log`, 10 x 2, 26143 s
+  wall, much of it waiting for memory): **53 of 109 pass the strict
+  rule** (rule 4; 53 the per-type rule), 1848 unconnected, strict errors
+  26, no row cut or killed, seven without a result. v19 re-judged under
+  rule 4 (`rejudge.py`, `build/github-layout-v19-rule4.log`): 3 rows gain
+  the strict pass with nothing open (krishveercard, Qfwfq,
+  interchange-pcb-right), 49 -> 52. Against it: better 23, same 59, worse
+  17; on the 99 boards with a result in both, unconnected 1827 -> 1568,
+  first-route open terminals 3997 -> 3395. Medians against the
+  designer's on those 99 (v19 scored again by x1725's score-kicad-board):
+  vias x0.74 -> x0.76, length x1.08 -> x1.05, open mean 0.090 -> 0.077,
+  bends per connection x1.20 -> x1.11, stair-steps +88 -> +59, pin-row
+  crossings +1 -> +1.
+- **Gained the strict pass**, 4: OM-FlexGrid-Flex (places again: the
+  placer refusals' eviction), homebrew_486 (its GND zone in one piece),
+  capybully (SW20's GND pad joined across its sides), d20_pcb (J2's pad
+  routed). **Lost**, 3, by open connections: BAGEL-MK1.1-Avocado (1),
+  Explorer (3) and hackrf-one (1).
+- **No vias in SMD pads**: 0 on all 102 boards with a result.
+- **Fewer refusals**: the OpenRX panel and SmartSpin2k_Panelized have a
+  result (200 and 80 open, which is why the all-rows unconnected total
+  rises by 21); the six remaining refusals are panels with fewer parts
+  without a legal place than in v19.
+- **Matched designer tier, partial** (budget scale 0.721 = v20's median
+  final-ladder share over 49 rows, not v19's 0.640; a start at 0.64 was
+  stopped). Its slots first waited four hours on the largest boards (the
+  ledger's admission order, now in benchmarks.md's known issues), then
+  the machine stayed full, so it was cut to the sweep's 48 strict-failing
+  target boards and run in parts (`build/designer-x1725-matched-a`, `-b`,
+  `build/designer-x1725-matched`); 27 rows when written up, none cut or
+  killed. **Gap over the 25 target boards with both results**: layout
+  open 986, designer route 564, placement 43 %, routing 57 %; Batch_1
+  alone is 342 of the designer route's open (ours 268), and without it
+  the split is 69 / 31. Not comparable with v19's 97-board split.
+- The largest placement gaps measured (ours / designer route open):
+  MegaDrive 191 / 56, Glasgow 148 / 55, the OpenESC 4in1 79 / 0, protoesp
+  76 / 1, 4in1-mini 37 / 2; video (165 open) and SNSP-CPU-01 (91) are
+  among the boards not yet routed on x1725.
+- **Since v20**: x1753 (the narrow step's bound; it affects DSP-ADAU1452
+  and Glasgow in layout mode) and x1754 (escape demand on by default), so
+  v21 is expected to move.
+
 ## Committed on 2026-10-23 (routes survive moves; the narrow step's bound)
 
 Two things, one measurement. Branch keep-routes-across-moves, on main

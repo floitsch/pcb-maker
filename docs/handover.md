@@ -1,4 +1,4 @@
-# Hand-over (state as of 2026-10-22, main af9d32a, snapshot x1539; measured by layout sweep v19)
+# Hand-over (state as of 2026-10-23, main 38edddd, snapshot x1725; measured by layout sweep v20; x1753 and x1754 since)
 
 What the tool does today, which benchmarks count, what is known to be
 wrong, where everything is and how to work on it. What each round of work
@@ -93,6 +93,24 @@ tier on the same binary (`build/designer-x1539-matched.log`, budget scale
 placement 59 % and routing 41 % of the open connections.
 `build/github-layout-v19.log`; table, gap split and the boards in
 [benchmarks.md](benchmarks.md#layout-sweep-v19-2026-10-22).
+
+**Layout sweep v20** (x1725 = main 38edddd, tasks v7, 10 jobs x 2
+threads, one part): **53 of 109 pass the strict rule** (rule 4; 53 the
+per-type rule; v19 re-judged under rule 4: 52 / 52), 1848 unconnected
+(1568 on the 99 boards with a result in v19 too, v19 1827), no row cut
+or killed, seven without a result (six panels refused, the 0xCB
+pcb-panel's DRC timeout); medians against the designer's board: vias
+x0.76, length x1.05, open 0.000 (mean 0.091), bends per connection x1.11,
+stair-steps +60.5, pin-row crossings +1; no via in a small SMD pad. 77
+tasks drop labels at run time since 14831a6, so their placements differ
+from v19's for that reason too. The matched designer tier on the same
+binary (budget scale 0.721, v20's median final-ladder share) is partial
+(the machine stayed full): over the 25 failing target boards with both
+results placement 43 % and routing 57 % (69 / 31 without Batch_1).
+x1753 (the narrow step's bound) and x1754 (escape demand on) post-date
+it. `build/github-layout-v20.log`, `build/designer-x1725-matched.log`;
+table, gap split and the boards in
+[benchmarks.md](benchmarks.md#layout-sweep-v20-2026-10-23).
 
 **Quick tier** (30 boards, full budget, the merge gate):
 `build/quick30-x1152.log` (x1152 = main 015676c, tasks v6): **24 of 30

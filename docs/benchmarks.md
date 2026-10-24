@@ -41,6 +41,21 @@ boards that gained or lost the pass.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 <!-- nightly:end -->
 
+## Known issues of the harness
+
+- **A waiting large job starves behind a stream of small ones** (seen
+  2026-10-23/24, to fix). The memory ledger admits whichever request
+  fits when memory frees, so a job that waits for a large reservation
+  waits while smaller requests, its own run's or other agents', take
+  each freed gigabyte. run.py's tiers start the longest boards first,
+  and those are the largest: the matched designer tier of x1725 had all
+  eight job slots waiting on neotron-pico (27.2 GB expected), the ULK
+  boards, katia and the 0xCB panel (17 to 24 GB) for four hours beside
+  the v20 sweep and other agents' runs, with one row written and no
+  route running. It was restarted in parts, the boards of up to 6 GB
+  expected first (layout sweep v20 below). run.py should admit smaller
+  boards past a waiting large one (or hold memory for it in turn); a
+  harness item, not done yet.
 ## Memory ledger: who runs next (2026-10-24)
 
 Benchmarks share the machine through the memory ledger
@@ -1975,6 +1990,180 @@ designer route 1 open and the same capped mask bridges). For passes, the
 nearest are the placement boards above with one to four open (ULK,
 ULK_sl_PG1316s, laptop power, homebrew_486, capybully) and OM-FlexGrid-Flex's
 refusal.
+
+## Layout sweep v20 (2026-10-23)
+
+The second full measurement on one binary, after the packages of
+2026-10-23: trouble repair on by default (in the first route too; its
+victims by the trouble-maker's open terminals; cheaper exchanges, the
+victims on their corridors), the pin-row cost on at 2 mm, straightening
+after the thermal spoke repairs, the placer refusals (a held part's
+narrow window found by the eviction), touch electrodes (vias into an
+electrode under its own mask opening, antenna copper in the placer's
+body), the silkscreen fields placed where KiCad finds nothing, router
+memory rounds 1 and 2 and the memory ledger; differential pairs, bus
+bundles, global guidance and the move descent are in the binary but off.
+`build/github-layout-v20.log`, binary x1725 (main 38edddd, sha256
+bc12878b8f20), tasks v7 (sha256 c8f95caf5089, the same list as v18 and
+v19), `--quality`, at the pinned work rates (the measured router rate had
+a median of 2.1e6, work over wall 0.85), 10 jobs x 2 threads through the
+memory ledger (no lock) with 10 GB kept free, in one part: 26143 s wall
+(v19: 18399 s; most of the difference is admission: the last boards
+waited up to 2.7 hours for memory beside other agents' runs), largest
+peak 7.0 GB (v19: 10.4), load median 11.5.
+
+**Two harness changes make the comparison with v19 inexact.** (1) The
+task labels (14831a6, benchmarks/agent-tasks/README.md "Tasks"): run.py's
+`unplace` now takes off the board the texts and silkscreen graphics that
+label a stacked part. 77 of the 109 tasks drop labels (2824 in all), so
+those boards start from a prepared board that differs from v19's, and
+their placements differ for that reason as well as the binary's; the
+task and board digests are the same, so compare.py does not mark them
+INPUT. Of the 99 boards with a result in both, 18 of the 23 better and
+13 of the 17 worse drop labels (38 of the 59 the same). (2) Strict rule 4
+(a finding between items of one footprint is the designer's; a finding
+at the same place is subtracted also of a type at KiCad's cap; a
+copper-to-edge finding is placed by its copper item). v20 is judged under
+rule 4; v19's rows were rule 3 and `rejudge.py` judged them again
+(`build/github-layout-v19-rule4.log`): 3 rows changed, all gaining the
+strict pass with nothing open: krishveercard (clearance 199 to none),
+Qfwfq (hole_clearance 199 to none) and interchange-pcb-right
+(copper_edge_clearance 24 to none); v19 strict 49 -> 52, strict errors
+1326 -> 34. The table compares v19 under rule 4. The aesthetics and the
+ground pour cut of v19 are scored again by x1725's score-kicad-board
+(`compare.py --score`, the rows' own scores of x1539 removed: x1539 read
+no net on a KiCad 9 board's tracks), so both columns are scored alike.
+
+| | v19 (x1539, rule 4) | v20 (x1725) |
+|---|---|---|
+| pass, per-type rule | 52 of 109 | **53 of 109** |
+| pass, strict rule (rule 4) | 52 of 109 | **53 of 109** |
+| unconnected (all rows) | 1827 | 1848 |
+| unconnected, the 99 boards with a result in both | 1827 | **1568** |
+| new DRC errors (per-type rule) | 43 | 34 |
+| new DRC errors (strict rule) | 34 | 26 |
+| vias | 31642 (99 rows) | 33748 (102 rows); 31688 on the 99 |
+| length | 789 m (99 rows) | 809 m (102 rows); 778 m on the 99 |
+| work s | 85552 (99 rows) | 83334 (102 rows); 80261 on the 99 |
+| CPU s (unpaired) | 134523 | 134234 |
+| first-route open terminals (the 99) | 3997 | 3395 |
+| rows cut by the wall clock | 0 | **0** |
+| rows killed (exit -9 or 137) | 0 | **0** |
+| rows without a result | 10 | **7** |
+| our vias in small SMD pads (score-kicad-board) | 0 on all 99 | **0 on all 102** |
+| vias against the designer's (median, the 99) | x0.74 | x0.76 |
+| length against the designer's (median, the 99) | x1.08 | x1.05 |
+| open over connections (median, mean; the 99) | 0.000, 0.090 | 0.000, 0.077 |
+| bends per connection against the designer's (median, the 99) | x1.20 | **x1.11** |
+| stair-steps, ours less the designer's (median, the 99) | +88 | **+59** |
+| pin-row crossings, ours less the designer's (median, the 99) | +1 | +1 |
+| ground pour cut, ours less the designer's (median) | +0 mm (94 boards) | +0 mm (94 boards) |
+| final ladder's share of the budget (median) | 0.640 (58 rows) | **0.721** (49 rows) |
+
+Over all 102 boards with a result v20's medians are vias x0.76, length
+x1.05, open 0.000 (mean 0.091), bends x1.11, stair-steps +60.5, crossings
++1, the ground pour cut +0 mm (95 boards; on one, a board without a
+result in v19, ours lost the designer's ground pour). compare.py: better 23, same 59, worse 17; on the 99 boards with a
+result in both, unconnected 1827 -> 1568 (-259). The all-rows total rises
+by 21 because two panels that refused in v19 have a result now (the
+OpenRX panel 200 open, SmartSpin2k_Panelized 80).
+
+Better, the largest: vaio_re 89 to 10, the OpenESC 4in1 127 to 79,
+4in1-mini 81 to 37, Glasgow 191 to 148, video 199 to 165, MegaDrive 222 to
+191, protoesp 106 to 76, SNSP-CPU-01 114 to 91, DSP-ADAU1452 30 to 15,
+ATAT1800 34 to 28. Worse, the largest: Batch_1 234 to 268, the A13 module
+0 to 18, split72_left 24 to 38, eurorack-pmod 11 to 21, jetson 5 to 15,
+SUMEC 4 to 12, RP2040_base 47 to 52, Quanta75 BareRP2040 30 to 34, the
+Hub 24 to 28, Explorer 0 to 3.
+
+Pass status that changed (strict and per-type alike):
+
+- **Gained, 4.** OM-FlexGrid-Flex places again (v19: "1 parts without a
+  legal place (J1)"; the placer refusals' eviction finds the held
+  connector's narrow window): 19/19, clean. homebrew_486: v19's one open
+  item was its GND zone in two islands (F.Cu, B.Cu, In2.Cu at (170.9,
+  23.4)), joined now. capybully: v19's one open item was SW20's GND pad 3
+  between F.Cu and B.Cu (a through pad's two sides unjoined), routed now.
+  d20_pcb: v19 left J2's pad 1 (net PAD) apart from its B.Cu track,
+  routed now.
+- **Lost, 3**, each by open connections, no new error: BAGEL-MK1.1-Avocado
+  (1 open: U401 pad 14 to U402 pad 6, Net-(U401-OUTA), both on B.Cu;
+  labels dropped 50), Explorer (3 open: two of them a track stub of
+  D+3V3 and MCU_SDA by U16 on F.Cu that does not reach its pad, one
+  RS232F_TXD from a B.Cu stub to U12; no labels dropped), hackrf-one (1
+  open: U21 pad 2 to R51 pad 1, Net-(R51-Pad1), on C1F; labels dropped 9).
+
+No vias in SMD pads on any board, so no board changed by that rule.
+
+Rows without a result, 7 (v19: 10): the 0xCB pcb-panel (kicad-cli's DRC
+times out after 900 s, as in v18 and v19) and six panels refused with
+parts without a legal place, all fewer than in v19: the OpenESC 4in1
+panel (26 parts; 42), the molecule 4x4 (18; 27), 4x5 (35; 42),
+5x2_shifted (10; 25), 7x5_wave_left (3; 4) and 5x4_wave (J3, J4; 3). None
+is a target. The OpenRX panel and SmartSpin2k_Panelized have a result
+now (200 and 80 open).
+
+Boards that fail the strict rule with nothing open, 3: neotron-pico
+(hole_clearance 3), ghoul (clearance 1; 2 open in v19) and eternal-keypad
+(shorting_items 1). Of the 56 that fail, 18 are within five connections
+and five errors of clean, 20 leave more than 20 open, 7 have no result.
+
+**Since v20.** x1753 (the narrow step's bound, which affects
+DSP-ADAU1452 and Glasgow in layout mode) and x1754 (escape demand on by
+default; dense tier sum of medians 968 -> 933 over three seed pairs)
+post-date this sweep, so v21 is expected to move.
+
+### Placement or routing on one binary (matched designer tier, x1725; partial)
+
+v20's final ladder had a median share of 0.721 of the budget (49 rows;
+0.721 over the 47 of them left open; compare.py --gap says 0.714 over 46
+target rows), not v19's 0.640, so the matched tier ran at
+`--budget-scale 0.721` (1081.5 s of work). A first start at 0.64 (before
+the sweep's share was known; 2 rows, `build/designer-x1725-s064-a`, and 4
+of a second part, `-s064-b`) was stopped and is not used.
+
+**The tier is not complete.** Started beside the sweep, its eight job
+slots waited four hours on the largest boards (known issues above); then
+the machine stayed full (other agents' runs and the nightly of
+2026-10-24 on 4d9965e, about 20 GB available with 10 kept free), and it
+was cut to the boards that matter for the matched comparison, the
+sweep's 48 strict-failing target boards, in parts on the same binary:
+`build/designer-x1725-matched-a.log` (4 rows), `-b` (23 more, spliced
+from -a), `build/designer-x1725-matched.log` (the rest, spliced from -b).
+At the time of writing the last part had routed none of its 23 boards
+(the five of 5.8 to 6 GB expected: split72_right, DSP-ADAU1452, the
+laptop keyboard, SmartSpin2k_Panelized, SNSP-CPU-01; and the 18 of 6 to
+27 GB: the laptop motherboard, link, split72_left, ATAT1800, the Hub,
+split42_right, koeg, katia, neotron-pico, video, Quanta75 BareRP2040, the
+0xCB panel, woagboard, ghoul, jiran, ULK_sl_PG1316s, ULK, osprey). So the
+gap below is over the 25 target boards with both results, about half of
+the failing ones, and is not comparable with v19's 97-board split.
+Rows: 27, none cut or killed; 5 pass the strict rule:
+interchange-pcb-right and four that ours fails, the OpenESC 4in1 (ours
+79 open), laptop power (1), hackrf-one (1) and Explorer (3); USB_Keypad
+passes the per-type rule only (connection_width 1). eternal-keypad fails
+on both placements by the same shorting_items 1. Over the same
+26 boards x1539's matched route left 1094 open, x1725's 998.
+
+`compare.py --gap build/github-layout-v20.log build/designer-x1725-matched.log --targets`
+over the 25 target boards with both results: **layout open 986,
+designer-route open 564: placement gap +422 (43 %), routing gap 564
+(57 %)**; ours is worse on 18, the same on 4, better on 3. One board
+dominates the routing side: Batch_1, where the designer route leaves 342
+open and ours 268 (its business cards' GND rings; placement gap -74).
+Without it, 718 against 222: placement 69 %, routing 31 %.
+
+**Where a fix gains most**, by the open connections our placement adds
+on the boards measured (ours / designer route): MegaDrive 191 / 56
+(+135), Glasgow 148 / 55 (+93), the OpenESC 4in1 79 / 0 (+79), protoesp
+76 / 1 (+75), 4in1-mini 37 / 2 (+35). Not measured on x1725 but larger
+on v19's matched run: video (ours 165 open in v20; the designer route
+left 0 under x1539) and SNSP-CPU-01 (91; 46 under x1539). Routing alone
+(the designer route leaves as many): RP2040_base 52 / 46, Sisu 28 / 22,
+OpenAirScope 4 / 4, reCamera 4 / 4. For passes, the nearest are laptop
+power, hackrf-one and BAGEL-MK1.1-Avocado (one open each; the designer
+route passes the first two and leaves BAGEL two), Explorer (3 open, the
+designer route passes) and the boards with nothing open above.
 
 ## Expansion intake: 5 834 boards routed on the designer's placement (2026-10-18)
 
