@@ -435,9 +435,9 @@ fn find_pairs(board: &core::Board, config: &KiCadBoardRouterConfig) -> Vec<Pair>
 }
 
 /// Whether parts `a` and `b` (references) are two-pad parts side by side:
-/// their pads at `at_a` and `at_b`, their other pads close too
-/// (`PAIR_POINT_SPAN`) and the parts parallel (a pair's series
-/// capacitors).
+/// their pads at `at_a` and `at_b`, and their other pads as close
+/// (`PAIR_POINT_SPAN`: a pair's series capacitors, not two parts that
+/// merely touch at one end).
 fn series_parts(
     parts: &BTreeMap<String, Vec<Point>>,
     a: &str,
@@ -463,10 +463,7 @@ fn series_parts(
             .then_some(far)
     };
     match (other(parts.get(a), at_a), other(parts.get(b), at_b)) {
-        (Some(far_a), Some(far_b)) => {
-            core::geometry::distance(far_a, far_b) <= PAIR_POINT_SPAN
-                && dot(unit(sub(far_a, at_a)), unit(sub(far_b, at_b))) > 0.9
-        }
+        (Some(far_a), Some(far_b)) => core::geometry::distance(far_a, far_b) <= PAIR_POINT_SPAN,
         _ => false,
     }
 }
@@ -3050,8 +3047,8 @@ mod tests {
     }
 
     /// Two two-pad parts side by side on the pair (its AC-coupling
-    /// capacitors) are a pair point; a capacitor turned across the other is
-    /// not.
+    /// capacitors) are a pair point; two whose other pads are far apart
+    /// are not.
     #[test]
     fn series_parts_side_by_side_are_a_pair_point() {
         let caps = BOARD.replace(
@@ -3071,7 +3068,7 @@ mod tests {
   (footprint "test" (layer "F.Cu") (at 9.5 6)
     (property "Reference" "C4" (at 0 -2) (layer "F.SilkS"))
     (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net "/D-"))
-    (pad "2" smd rect (at 0 1) (size 0.5 0.5) (layers "F.Cu") (net "/Z")))
+    (pad "2" smd rect (at 0 3.5) (size 0.5 0.5) (layers "F.Cu") (net "/Z")))
   (footprint "test" (layer "F.Cu") (at 18 4)"#,
         );
         let pcb = parse(&caps).unwrap();
@@ -3095,7 +3092,7 @@ mod tests {
             labels.contains(&("C1.1".to_string(), "C2.1".to_string())),
             "{labels:?}"
         );
-        // C3 and C4 lie at right angles: their other pads are apart.
+        // C3's and C4's other pads are 4 mm apart.
         assert!(
             !labels.iter().any(|(a, _)| a == "C3.1"),
             "{labels:?}"
