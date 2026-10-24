@@ -759,7 +759,7 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
         .map(|guidance| Guide::new(guidance, &mut state, &movable));
     let mut anneal_work = 0u64;
 
-    for _ in 0..config.stages {
+    for stage in 0..config.stages {
         if config
             .deadline
             .is_some_and(|deadline| std::time::Instant::now() >= deadline)
@@ -926,6 +926,17 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
         penalty *= penalty_growth;
         radius *= radius_decay;
         temperature *= 0.975;
+        // The term ends once its work reaches its share of the anneal's
+        // own (`TERM_SHARE`).
+        if let Some(state) = crossings.as_ref() {
+            let done = stage + 1;
+            let projected = anneal_work as f64 / done as f64 * config.stages as f64;
+            if done < config.stages && tally.work as f64 >= TERM_SHARE * projected {
+                tally.term_stages = Some(done);
+                tally.crossings_after = Some(state.total());
+                crossings = None;
+            }
+        }
     }
     if let Some(guide) = guide.as_mut() {
         guide.finish(&mut state, anneal_work);
@@ -934,7 +945,7 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
         let work = crate::work() - work_before;
         let per_move = |amount: u64| amount as f64 / tally.moves.max(1) as f64;
         eprintln!(
-            "anneal: {} moves, work {:.2} s ({:.0} a move), crossings' share {:.0} a move; judged with crossings {}, cut by the bound {}, taken {}; crossings {:?} -> {:?}",
+            "anneal: {} moves, work {:.2} s ({:.0} a move), crossings' share {:.0} a move; judged with crossings {}, cut by the bound {}, taken {}; the term ended after {:?} stages; crossings {:?} -> {:?}",
             tally.moves,
             work as f64 / crate::work_per_second(),
             per_move(work),
@@ -942,8 +953,12 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
             tally.judged,
             tally.cut,
             tally.taken,
+            tally.term_stages,
             tally.crossings_before,
-            crossings.as_ref().map(|state| state.total()),
+            crossings
+                .as_ref()
+                .map(|state| state.total())
+                .or(tally.crossings_after),
         );
     }
     *poses = state.poses.clone();
@@ -979,7 +994,21 @@ struct Tally {
     taken: u64,
     work: u64,
     crossings_before: Option<u64>,
+    /// Where the term ended early: after this many stages, at this count.
+    term_stages: Option<usize>,
+    crossings_after: Option<u64>,
 }
+
+/// The most work the anneal's crossings term may take, as a share of
+/// the anneal's own work over all its stages (projected after each
+/// stage); once it has, the anneal goes on without it. Where lines are
+/// dense the term costs several times the anneal (video: 12700 units a
+/// move against 2800), and an anneal that pays for crossings to its end
+/// leaves its overlaps to the legaliser, which undid the gain there
+/// (19728 crossings off, 21361 with the term to the end, 14280 with it
+/// for the first 13 of 160 stages at this share; MegaDrive keeps it for
+/// 119 to 132 stages, Glasgow for all).
+const TERM_SHARE: f64 = 0.5;
 
 /// Per part, the movable parts the anneal's swaps (with the crossings
 /// term) trade it with half the time: on the same side, and either of the
