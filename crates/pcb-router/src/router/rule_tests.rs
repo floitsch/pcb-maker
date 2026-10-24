@@ -248,12 +248,12 @@ fn a_net_width_floor_holds_for_its_neck_too() {
     assert_eq!(router.board.classes[a].trace_width, 0.3);
     // No neck narrower than its floor.
     assert_eq!(router.neck_of[a], None);
-    assert_eq!(router.neck_width_of(a), 0.3);
+    assert_eq!(router.neck_width_on(a, 0), 0.3);
     // B keeps the class width and the board's neck.
     assert_eq!(router.board.classes[b].trace_width, 0.25);
     let neck = router.neck_of[b].unwrap();
     assert_eq!(router.board.classes[neck].trace_width, 0.15);
-    assert_eq!(router.neck_width_of(b), 0.15);
+    assert_eq!(router.neck_width_on(b, 0), 0.15);
     let result = route(
         &board,
         &config(Some(NetRules {
@@ -645,4 +645,90 @@ fn a_path_hopping_over_a_wall_keeps_its_two_vias_the_hole_spacing_apart() {
             assert!(apart >= 0.55 - 1.0e-6, "vias {apart:.3} mm apart: {vias:?}");
         }
     }
+}
+
+#[test]
+fn a_net_routes_each_layer_at_its_own_width() {
+    // A and B on the front (layer 0), a wall across the front that keeps
+    // tracks out, not vias: both hop over through the back. The rules
+    // give both nets 0.3 mm (a minimum) on the front and 0.15 (an opt)
+    // on the back, over a class of 0.25: each layer's tracks have their
+    // own width, and the stamps and the check measure them as laid.
+    let mut board = two_nets(2);
+    board.obstacles.truncate(4);
+    board.obstacles.push(Obstacle {
+        shape: Shape::Polygon {
+            points: vec![[4.95, -1.0], [5.05, -1.0], [5.05, 11.0], [4.95, 11.0]],
+        },
+        layers: 0b01,
+        kind: ObstacleKind::Keepout,
+        net: None,
+        clearance: 0.0,
+        clearance_override: None,
+        blocks_tracks: true,
+        blocks_vias: false,
+        label: "wall".into(),
+    });
+    let front = crate::rules::LayerWidth {
+        min: 0.3,
+        ..crate::rules::LayerWidth::ANY
+    };
+    let back = crate::rules::LayerWidth {
+        opt: Some(0.15),
+        ..crate::rules::LayerWidth::ANY
+    };
+    let rules = NetRules {
+        layer_widths: [
+            ("A".to_string(), vec![front, back]),
+            ("B".to_string(), vec![front, back]),
+        ]
+        .into(),
+        ..NetRules::default()
+    };
+    let (split, class_rules) = crate::rules::ClassRules::split(&board, &rules);
+    let class = split.nets[0].class;
+    assert_eq!(class_rules.class_widths[class], [0.3, 0.15]);
+    assert_eq!(class_rules.class_floors[class], [0.3, 0.0]);
+    assert_eq!(split.classes[class].trace_width, 0.3);
+    // The layers differ in their widths: two stamp variants.
+    assert_eq!(class_rules.resolved.layer_variant, [0, 1]);
+
+    let result = route(&board, &config(Some(rules)));
+    assert!(
+        result
+            .status
+            .iter()
+            .all(|status| *status == NetStatus::Routed),
+        "{:?}",
+        result.status
+    );
+    for (net, route) in result.routes.iter().enumerate() {
+        assert!(
+            route.segments.iter().any(|segment| segment.layer == 1),
+            "net {net} stays on the front: {:?}",
+            route.segments
+        );
+        for segment in &route.segments {
+            let expected = [0.3, 0.15][segment.layer];
+            assert!(
+                (segment.width - expected).abs() < 1.0e-9,
+                "net {net}: {segment:?}"
+            );
+        }
+    }
+    assert!(
+        crate::verify::verify_with_rules(&split, &result.routes, Some(&class_rules)).is_empty()
+    );
+    // A front track at the class's 0.25 is under the front's minimum.
+    let mut narrow = result.routes.clone();
+    let index = narrow[0]
+        .segments
+        .iter()
+        .position(|segment| segment.layer == 0)
+        .unwrap();
+    narrow[0].segments[index].width = 0.25;
+    let found = crate::verify::verify_with_rules(&split, &narrow, Some(&class_rules));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].other, "track width");
+    assert_eq!(found[0].required, 0.3);
 }

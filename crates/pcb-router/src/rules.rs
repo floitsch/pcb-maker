@@ -3,8 +3,9 @@
 // found in the LICENSE file.
 
 //! Rules beyond the net classes (`Config::net_rules`): a width floor per
-//! net, clearances between two sets of nets, per item type and per layer,
-//! and the hole-to-hole spacing of a via from a pad hole of its own net.
+//! net, track widths per layer, clearances between two sets of nets, per
+//! item type and per layer, and the hole-to-hole spacing of a via from a
+//! pad hole of its own net.
 //!
 //! The net classes give each net one clearance, and a pair of nets keeps
 //! the larger of the two. A clearance rule here raises that for the pairs
@@ -45,6 +46,14 @@ pub struct NetRules {
     /// (KiCad's hole_to_hole holds within a net too); 0: none, a via of a
     /// pad's net keeps only the pad copper's rule.
     pub same_net_hole_to_hole: f64,
+    /// Per net (by name): its tracks' width bounds per router layer, where
+    /// the custom rules bound them differently on different layers (KiCad's
+    /// `track_width` with a `(layer ...)` clause or a layer condition:
+    /// OpenESC's 0.16 mm on F.Cu and B.Cu over the board's 0.09). The net
+    /// routes on each layer at its class's width held inside that layer's
+    /// bounds, and necks down no further than the layer's minimum. A net
+    /// without an entry has one width on every layer.
+    pub layer_widths: BTreeMap<String, Vec<LayerWidth>>,
 }
 
 impl NetRules {
@@ -53,6 +62,33 @@ impl NetRules {
         self.width_floor.is_empty()
             && self.clearances.is_empty()
             && self.same_net_hole_to_hole <= 0.0
+            && self.layer_widths.is_empty()
+    }
+}
+
+/// A net's track width bounds on one layer (`NetRules::layer_widths`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LayerWidth {
+    /// The narrowest track on the layer (its neck-downs too); 0: none.
+    pub min: f64,
+    /// The widest; infinity: none.
+    pub max: f64,
+    /// The width to route at on the layer (KiCad's opt); `None`: the
+    /// class's.
+    pub opt: Option<f64>,
+}
+
+impl LayerWidth {
+    /// No bound.
+    pub const ANY: Self = Self {
+        min: 0.0,
+        max: f64::INFINITY,
+        opt: None,
+    };
+
+    /// The width a track of a class of `width` has on the layer.
+    pub fn width(&self, width: f64) -> f64 {
+        self.opt.unwrap_or(width).min(self.max).max(self.min)
     }
 }
 
@@ -87,9 +123,15 @@ pub struct Resolved {
     pub net_group: Vec<usize>,
     /// The group of items of no net.
     pub no_net_group: usize,
-    /// Per layer: its variant (layers the same rules hold on share one).
+    /// Per layer: its variant (layers the same rules hold on, with the same
+    /// track widths, share one).
     pub layer_variant: Vec<usize>,
     pub variants: usize,
+    /// Per variant: its first layer (where its widths are read).
+    pub variant_layer: Vec<usize>,
+    /// Per `NetId`: its width bounds per layer (`NetRules::layer_widths`),
+    /// empty for a net with one width on every layer.
+    pub layer_widths: Vec<Vec<LayerWidth>>,
     /// Per `NetId`: its width floor (0: none).
     pub width_floor: Vec<f64>,
     pub same_net_hole_to_hole: f64,
@@ -131,7 +173,25 @@ impl Resolved {
         let no_net_group = group_of(signature(None));
         let groups = signatures.len();
 
-        let mut layer_signatures: Vec<Vec<bool>> = Vec::new();
+        let layer_widths: Vec<Vec<LayerWidth>> = board
+            .nets
+            .iter()
+            .map(|net| {
+                rules
+                    .layer_widths
+                    .get(&net.name)
+                    .map(|widths| {
+                        (0..layers)
+                            .map(|layer| widths.get(layer).copied().unwrap_or(LayerWidth::ANY))
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+            .collect();
+        // Layers share a variant where the same clearance rules hold and
+        // every net has the same width bounds.
+        let mut layer_signatures: Vec<(Vec<bool>, Vec<u64>)> = Vec::new();
+        let mut variant_layer = Vec::new();
         let layer_variant: Vec<usize> = (0..layers)
             .map(|layer| {
                 let signature: Vec<bool> = rules
@@ -139,15 +199,32 @@ impl Resolved {
                     .iter()
                     .map(|rule| rule.on_layer(layer))
                     .collect();
+                let widths: Vec<u64> = layer_widths
+                    .iter()
+                    .filter(|widths| !widths.is_empty())
+                    .flat_map(|widths| {
+                        let bounds = widths[layer];
+                        [
+                            bounds.min.to_bits(),
+                            bounds.max.to_bits(),
+                            bounds.opt.map_or(u64::MAX, f64::to_bits),
+                        ]
+                    })
+                    .collect();
+                let signature = (signature, widths);
                 layer_signatures
                     .iter()
                     .position(|known| *known == signature)
                     .unwrap_or_else(|| {
                         layer_signatures.push(signature);
+                        variant_layer.push(layer);
                         layer_signatures.len() - 1
                     })
             })
             .collect();
+        if variant_layer.is_empty() {
+            variant_layer.push(0);
+        }
         let variants = layer_signatures.len().max(1);
         let mut table = vec![0.0f64; groups * groups * 9 * variants];
         for (index, rule) in rules.clearances.iter().enumerate() {
@@ -160,7 +237,7 @@ impl Resolved {
             for variant in 0..variants {
                 if !layer_signatures
                     .get(variant)
-                    .is_some_and(|signature| signature[index])
+                    .is_some_and(|signature| signature.0[index])
                 {
                     continue;
                 }
@@ -194,6 +271,8 @@ impl Resolved {
             no_net_group,
             layer_variant,
             variants,
+            variant_layer,
+            layer_widths,
             width_floor,
             same_net_hole_to_hole: rules.same_net_hole_to_hole.max(0.0),
             table,
@@ -263,41 +342,66 @@ pub struct ClassRules {
     /// Per rule class (after the split, neck classes too).
     pub class_group: Vec<usize>,
     pub class_floor: Vec<f64>,
+    /// Per rule class: its track width per layer, where it differs by
+    /// layer (`NetRules::layer_widths`; the class's `trace_width` is then
+    /// the widest), else empty: the class's width on every layer.
+    pub class_widths: Vec<Vec<f64>>,
+    /// Per rule class: its width floor per layer (the neck-downs), where it
+    /// differs by layer, else empty: `class_floor` on every layer.
+    pub class_floors: Vec<Vec<f64>>,
     /// Whether any clearance rule holds (`Resolved::has_clearances`).
     pub clearances: bool,
 }
 
+/// What tells two split classes apart beyond their `RuleClass`: the
+/// group, the width floor, and the widths and floors per layer.
+type ClassKey = (usize, u64, Vec<u64>, Vec<u64>);
+
+fn class_key(group: usize, floor: f64, widths: &[f64], floors: &[f64]) -> ClassKey {
+    (
+        group,
+        floor.to_bits(),
+        widths.iter().map(|width| width.to_bits()).collect(),
+        floors.iter().map(|floor| floor.to_bits()).collect(),
+    )
+}
+
 impl ClassRules {
     /// `board` with every net's class split by its group and width floor
-    /// (a floor above the class's width raises it), and the pours' brush
-    /// classes by their net's group. A class keeps its index for the
-    /// first nets that need no other (so that rules which split nothing,
-    /// as the same-net hole spacing alone, leave the classes as they are).
+    /// (a floor above the class's width raises it) and its widths per
+    /// layer, and the pours' brush classes by their net's group. A class
+    /// keeps its index for the first nets that need no other (so that
+    /// rules which split nothing, as the same-net hole spacing alone,
+    /// leave the classes as they are).
     pub fn split(board: &Board, rules: &NetRules) -> (Board, Self) {
         let resolved = Resolved::new(rules, board);
         let mut split = board.clone();
-        let mut class_group: Vec<Option<usize>> = vec![None; board.classes.len()];
+        let mut keys: Vec<Option<ClassKey>> = vec![None; board.classes.len()];
         let mut class_floor = vec![0.0; board.classes.len()];
+        let mut class_widths: Vec<Vec<f64>> = vec![Vec::new(); board.classes.len()];
+        let mut class_floors: Vec<Vec<f64>> = vec![Vec::new(); board.classes.len()];
         let mut class_of = |original: usize,
                             rules: RuleClass,
                             group: usize,
                             floor: f64,
+                            per_layer: (Vec<f64>, Vec<f64>),
                             classes: &mut Vec<RuleClass>| {
-            if class_group[original].is_none() && classes[original] == rules {
-                class_group[original] = Some(group);
+            let key = class_key(group, floor, &per_layer.0, &per_layer.1);
+            if keys[original].is_none() && classes[original] == rules {
+                keys[original] = Some(key);
                 class_floor[original] = floor;
+                class_widths[original] = per_layer.0;
+                class_floors[original] = per_layer.1;
                 return original;
             }
             (0..classes.len())
-                .find(|&known| {
-                    classes[known] == rules
-                        && class_group[known] == Some(group)
-                        && class_floor[known] == floor
-                })
+                .find(|&known| classes[known] == rules && keys[known].as_ref() == Some(&key))
                 .unwrap_or_else(|| {
                     classes.push(rules);
-                    class_group.push(Some(group));
+                    keys.push(Some(key));
                     class_floor.push(floor);
+                    class_widths.push(per_layer.0);
+                    class_floors.push(per_layer.1);
                     classes.len() - 1
                 })
         };
@@ -305,11 +409,39 @@ impl ClassRules {
             let floor = resolved.width_floor[index];
             let mut rules = board.classes[net.class];
             rules.trace_width = rules.trace_width.max(floor);
+            let mut per_layer = (Vec::new(), Vec::new());
+            let bounds = &resolved.layer_widths[index];
+            if !bounds.is_empty() {
+                let widths: Vec<f64> = bounds
+                    .iter()
+                    .map(|bounds| bounds.width(rules.trace_width).max(floor))
+                    .collect();
+                let floors: Vec<f64> = bounds.iter().map(|bounds| bounds.min.max(floor)).collect();
+                let uniform = |values: &[f64]| values.windows(2).all(|pair| pair[0] == pair[1]);
+                if uniform(&widths) && uniform(&floors) {
+                    // The same on every layer: one width, one floor.
+                    rules.trace_width = widths[0];
+                    let floor = floors[0];
+                    let class = class_of(
+                        net.class,
+                        rules,
+                        resolved.net_group[index],
+                        floor,
+                        per_layer,
+                        &mut split.classes,
+                    );
+                    split.nets[index].class = class;
+                    continue;
+                }
+                rules.trace_width = widths.iter().copied().fold(0.0, f64::max);
+                per_layer = (widths, floors);
+            }
             let class = class_of(
                 net.class,
                 rules,
                 resolved.net_group[index],
                 floor,
+                per_layer,
                 &mut split.classes,
             );
             split.nets[index].class = class;
@@ -321,6 +453,7 @@ impl ClassRules {
                 board.classes[plane.class],
                 group,
                 0.0,
+                (Vec::new(), Vec::new()),
                 &mut split.classes,
             );
             split.planes[index].class = class;
@@ -329,11 +462,13 @@ impl ClassRules {
         (
             split,
             Self {
-                class_group: class_group
+                class_group: keys
                     .into_iter()
-                    .map(|group| group.unwrap_or(no_net))
+                    .map(|key| key.map_or(no_net, |key| key.0))
                     .collect(),
                 class_floor,
+                class_widths,
+                class_floors,
                 clearances: resolved.has_clearances(),
                 resolved,
             },
@@ -341,9 +476,49 @@ impl ClassRules {
     }
 
     /// The neck width of `class` on `board`: the board's, or the class's
-    /// floor where that is wider.
+    /// floor where that is wider (on every layer: the largest floor of a
+    /// class with floors per layer).
     pub fn neck_width(&self, board: &Board, class: usize) -> f64 {
-        board.neck_width.max(self.class_floor[class])
+        board.neck_width.max(
+            self.class_floors[class]
+                .iter()
+                .copied()
+                .fold(self.class_floor[class], f64::max),
+        )
+    }
+
+    /// The track width of `class` on `layer`.
+    #[inline]
+    pub fn width_on(&self, board: &Board, class: usize, layer: usize) -> f64 {
+        self.class_widths[class]
+            .get(layer)
+            .copied()
+            .unwrap_or(board.classes[class].trace_width)
+    }
+
+    /// The width floor of `class` on `layer`.
+    pub fn floor_on(&self, class: usize, layer: usize) -> f64 {
+        self.class_floors[class]
+            .get(layer)
+            .copied()
+            .unwrap_or(self.class_floor[class])
+    }
+
+    /// The neck width of `class` on `layer`: the board's, or the class's
+    /// floor there where that is wider, and never wider than the class's
+    /// track there.
+    pub fn neck_width_on(&self, board: &Board, class: usize, layer: usize) -> f64 {
+        let neck = board.neck_width.max(self.floor_on(class, layer));
+        if self.class_widths[class].is_empty() {
+            neck
+        } else {
+            neck.min(self.width_on(board, class, layer))
+        }
+    }
+
+    /// Whether some class has widths per layer.
+    pub fn has_layer_widths(&self) -> bool {
+        self.class_widths.iter().any(|widths| !widths.is_empty())
     }
 
     /// The clearance the rules ask between an item of kind `kind` of

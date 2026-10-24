@@ -43,7 +43,8 @@ impl Router {
                     bounds.maximum[1] - bounds.minimum[1],
                 ];
                 let short = size[0].min(size[1]);
-                if short >= rules.trace_width + rules.clearance
+                let layer = terminal.layers.trailing_zeros() as usize;
+                if short >= self.width_on(description.class, layer) + rules.clearance
                     || size[0].max(size[1]) < 1.5 * short
                 {
                     continue;

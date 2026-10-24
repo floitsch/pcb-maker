@@ -765,6 +765,36 @@ pub fn resolve_project_rules(
                             .insert(net_names.normalize(&net.name).to_string(), floor);
                     }
                 }
+                // Track widths per layer (rules on some layers only): per
+                // net with one, its bounds on each layer, every-layer
+                // bounds and the board's minimum widths folded in.
+                if !lowered.layer_width_min.is_empty() {
+                    let board_minimum = minimum("min_track_width").max(floor.unwrap_or(0.0));
+                    for (index, net) in board.nets.iter().enumerate() {
+                        let ruled = (0..board.copper_layers.len()).any(|layer| {
+                            lowered.layer_width_min[layer][index] > 0.0
+                                || lowered.layer_width_max[layer][index].is_finite()
+                                || lowered.layer_width_opt[layer][index].is_some()
+                        });
+                        if !ruled {
+                            continue;
+                        }
+                        let widths = (0..board.copper_layers.len())
+                            .map(|layer| pcb_router::LayerWidth {
+                                min: lowered.layer_width_min[layer][index]
+                                    .max(lowered.width_min[index])
+                                    .max(lowered.width_min_all)
+                                    .max(board_minimum),
+                                max: lowered.layer_width_max[layer][index]
+                                    .min(lowered.width_max[index]),
+                                opt: lowered.layer_width_opt[layer][index],
+                            })
+                            .collect();
+                        net_rules
+                            .layer_widths
+                            .insert(net_names.normalize(&net.name).to_string(), widths);
+                    }
+                }
                 let names = |nets: &Option<Vec<usize>>| {
                     nets.as_ref().map(|nets| {
                         nets.iter()
@@ -1762,7 +1792,8 @@ mod tests {
             Some(
                 r#"(version 1)
 (rule "silkscreen over pad" (constraint silk_clearance (min 0.15mm)) (condition "A.Type == 'Pad'"))
-(rule "2 oz outer copper, clearance" (constraint clearance (min 0.16mm)) (layer outer))"#,
+(rule "2 oz outer copper, clearance" (constraint clearance (min 0.16mm)) (layer outer))
+(rule "2 oz outer copper, track width" (constraint track_width (min 0.16mm)) (layer outer))"#,
             ),
         );
         // Four layers: the rule leaves the inner ones at the board's.
@@ -1788,7 +1819,21 @@ mod tests {
             .find(|rule| rule.clearance == 0.16)
             .unwrap();
         assert_eq!((&outer.first, &outer.second), (&None, &None));
+        // The width per layer: the class keeps 0.09, the outer layers'
+        // tracks 0.16 (until 2026-10-24 0.16 on every layer).
+        assert_eq!(config.connection_rules["SDA"].trace_width_mm, 0.09);
+        let widths = &config.net_rules.as_ref().unwrap().layer_widths["SDA"];
+        assert_eq!(
+            widths.iter().map(|width| width.min).collect::<Vec<_>>(),
+            [0.16, 0.09, 0.09, 0.16]
+        );
         let report = config.project_rules.as_ref().unwrap();
+        let width_rule = report
+            .custom_rules
+            .iter()
+            .find(|rule| rule.constraint == "track_width")
+            .unwrap();
+        assert_eq!(width_rule.status, "applied");
         assert_eq!(report.pad_clearance_mm, Some(0.16));
         assert_eq!(crate::board_placer::largest_clearance(&config), 0.16);
         fs::remove_dir_all(&directory).unwrap();

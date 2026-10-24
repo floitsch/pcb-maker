@@ -39,7 +39,11 @@ impl Router {
                             extra.net == net
                                 && extra.terminal == terminal as usize
                                 && copper.layers & (1 << node.layer) != 0
-                                && joins_copper(&copper.shape, center, rules.trace_width)
+                                && joins_copper(
+                                    &copper.shape,
+                                    center,
+                                    self.width_on(description.class, node.layer as usize),
+                                )
                         })
                     {
                         return;
@@ -57,8 +61,9 @@ impl Router {
                 } else if crate::geometry::distance(anchor, center) > 1.0e-7 {
                     // The pad stub at the node's width, or the neck if the
                     // full width does not fit.
-                    let mut widths = vec![self.width_at(net, node.cell)];
-                    let neck_width = self.neck_width_of(self.board.nets[net as usize].class);
+                    let layer = node.layer as usize;
+                    let mut widths = vec![self.width_at(net, node.cell, layer)];
+                    let neck_width = self.neck_width_on(self.board.nets[net as usize].class, layer);
                     if neck_width < widths[0] {
                         widths.push(neck_width);
                     }
@@ -88,13 +93,7 @@ impl Router {
                 if index < branch.nodes.len() && !layer_change {
                     continue;
                 }
-                self.emit_run(
-                    net,
-                    &branch.nodes[run_start..index],
-                    &junctions,
-                    &rules,
-                    &mut route,
-                );
+                self.emit_run(net, &branch.nodes[run_start..index], &junctions, &mut route);
                 if layer_change {
                     // Through vias at one spot are one hole.
                     let at = self.grid.center_of(branch.nodes[index].cell as usize);
@@ -125,7 +124,6 @@ impl Router {
         net: NetId,
         nodes: &[Node],
         junctions: &HashSet<Node>,
-        rules: &crate::board::RuleClass,
         route: &mut NetRoute,
     ) {
         if nodes.len() < 2 {
@@ -138,18 +136,20 @@ impl Router {
                 b.cell as i64 / nx - a.cell as i64 / nx,
             )
         };
+        // (A run keeps to one layer.)
+        let layer = nodes[0].layer as usize;
+        let wide = self.width_on(self.board.nets[net as usize].class, layer);
         let widths: Vec<f64> = if self.nets[net as usize].neck_zones.is_empty() {
-            vec![rules.trace_width; nodes.len()]
+            vec![wide; nodes.len()]
         } else {
             nodes
                 .iter()
-                .map(|node| self.width_at(net, node.cell))
+                .map(|node| self.width_at(net, node.cell, layer))
                 .collect()
         };
         // A segment is as wide as its narrowest node: a run is cut at a
         // wide node next to a narrow one, so the wide segment ends at a
         // node checked at the full width and the narrow one reaches it.
-        let wide = rules.trace_width;
         let mut start = 0;
         for index in 1..nodes.len() {
             let turning = index + 1 < nodes.len()

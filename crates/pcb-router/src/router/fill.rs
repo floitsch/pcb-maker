@@ -779,8 +779,12 @@ impl<'a> FillProbe<'a> {
                         );
                         if pair[0].layer == pair[1].layer {
                             let half_width = router
-                                .width_at(other as NetId, pair[0].cell)
-                                .min(router.width_at(other as NetId, pair[1].cell))
+                                .width_at(other as NetId, pair[0].cell, pair[0].layer as usize)
+                                .min(router.width_at(
+                                    other as NetId,
+                                    pair[1].cell,
+                                    pair[1].layer as usize,
+                                ))
                                 / 2.0;
                             extent = extent.max(half_width);
                             insert(
@@ -839,7 +843,9 @@ impl<'a> FillProbe<'a> {
                             }
                         } else if let Some(described) = description.terminals.get(terminal as usize)
                         {
-                            let half_width = router.width_at(other as NetId, node.cell) / 2.0;
+                            let half_width =
+                                router.width_at(other as NetId, node.cell, node.layer as usize)
+                                    / 2.0;
                             extent = extent.max(half_width);
                             insert(
                                 node.layer as usize,

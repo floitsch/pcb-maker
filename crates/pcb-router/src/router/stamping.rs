@@ -164,7 +164,13 @@ impl Router {
                         // A stub at the neck width stamps the neck's footprint.
                         let stub_class = match self.neck_of[class] {
                             Some(neck)
-                                if *width < self.board.classes[class].trace_width - 1.0e-9 =>
+                                if *width
+                                    < class_rules.as_ref().map_or(
+                                        self.board.classes[class].trace_width,
+                                        |split| {
+                                            split.width_on(&self.board, class, end.layer as usize)
+                                        },
+                                    ) - 1.0e-9 =>
                             {
                                 neck
                             }
@@ -491,7 +497,9 @@ impl Router {
         for end in [branch.nodes[0], *branch.nodes.last().unwrap()] {
             if let Some((cells, width, _)) = state.escapes.get(&end) {
                 let stub_class = match self.neck_of[class] {
-                    Some(neck) if *width < self.board.classes[class].trace_width - 1.0e-9 => neck,
+                    Some(neck) if *width < self.width_on(class, end.layer as usize) - 1.0e-9 => {
+                        neck
+                    }
                     _ => class,
                 };
                 let map = self.map_index(stub_class, end.layer as usize);

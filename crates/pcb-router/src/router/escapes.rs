@@ -21,12 +21,6 @@ impl Router {
         const WANTED: usize = 12;
         let class = self.board.classes[self.board.nets[net as usize].class];
         let statics = &self.statics[self.board.nets[net as usize].class];
-        let neck_width = self.neck_width_of(self.board.nets[net as usize].class);
-        let widths = if neck_width < class.trace_width {
-            vec![class.trace_width, neck_width]
-        } else {
-            vec![class.trace_width]
-        };
         let bounds = crate::geometry::Aabb {
             minimum: terminal.anchor,
             maximum: terminal.anchor,
@@ -39,6 +33,15 @@ impl Router {
             if terminal.layers & (1 << layer) == 0 {
                 continue;
             }
+            // The class's track on this layer, else its neck.
+            let net_class = self.board.nets[net as usize].class;
+            let track_width = self.width_on(net_class, layer);
+            let neck_width = self.neck_width_on(net_class, layer);
+            let widths = if neck_width < track_width {
+                vec![track_width, neck_width]
+            } else {
+                vec![track_width]
+            };
             let mut candidates: Vec<(f64, usize)> = Vec::new();
             for y in y0..=y1 {
                 for x in x0..=x1 {

@@ -31,12 +31,34 @@ impl Router {
         if config.neck_reach > 0.0 {
             for (class, neck_class) in neck_of.iter_mut().enumerate() {
                 let rules = board.classes[class];
+                // A class with widths per layer necks down per layer: to
+                // the board's neck or its floor there, never wider than
+                // its track there.
+                let necks: Vec<f64> = match &class_rules {
+                    Some(split) if !split.class_widths[class].is_empty() => (0..board.layer_count)
+                        .map(|layer| split.neck_width_on(&board, class, layer))
+                        .collect(),
+                    _ => Vec::new(),
+                };
                 let neck_width = class_rules
                     .as_ref()
                     .map_or(board.neck_width, |split| split.neck_width(&board, class));
-                if rules.trace_width > neck_width + 1.0e-9 {
+                let narrower = if necks.is_empty() {
+                    rules.trace_width > neck_width + 1.0e-9
+                } else {
+                    let split = class_rules.as_ref().expect("widths per layer");
+                    necks
+                        .iter()
+                        .enumerate()
+                        .any(|(layer, neck)| split.width_on(&board, class, layer) > neck + 1.0e-9)
+                };
+                if narrower {
                     let neck = RuleClass {
-                        trace_width: neck_width,
+                        trace_width: if necks.is_empty() {
+                            neck_width
+                        } else {
+                            necks.iter().copied().fold(0.0, f64::max)
+                        },
                         ..rules
                     };
                     let index = match &mut class_rules {
@@ -51,16 +73,21 @@ impl Router {
                         Some(split) => {
                             let (group, floor) =
                                 (split.class_group[class], split.class_floor[class]);
+                            let floors = split.class_floors[class].clone();
                             (0..board.classes.len())
                                 .find(|&existing| {
                                     board.classes[existing] == neck
                                         && split.class_group[existing] == group
                                         && split.class_floor[existing] == floor
+                                        && split.class_widths[existing] == necks
+                                        && split.class_floors[existing] == floors
                                 })
                                 .unwrap_or_else(|| {
                                     board.classes.push(neck);
                                     split.class_group.push(group);
                                     split.class_floor.push(floor);
+                                    split.class_widths.push(necks.clone());
+                                    split.class_floors.push(floors);
                                     board.classes.len() - 1
                                 })
                         }
@@ -147,7 +174,27 @@ impl Router {
                         (0..board.classes.len()).map(move |other_class| (variant, other_class))
                     })
                     .map(|(variant, other_class)| {
-                        let other = &board.classes[other_class];
+                        // The classes' tracks on the variant's layers (one
+                        // width on every layer without widths per layer).
+                        let width_on = |class: usize| {
+                            class_rules
+                                .as_ref()
+                                .map_or(board.classes[class].trace_width, |split| {
+                                    split.width_on(
+                                        board,
+                                        class,
+                                        split.resolved.variant_layer[variant],
+                                    )
+                                })
+                        };
+                        let own = &RuleClass {
+                            trace_width: width_on(own_class),
+                            ..*own
+                        };
+                        let other = &RuleClass {
+                            trace_width: width_on(other_class),
+                            ..board.classes[other_class]
+                        };
                         let clearance = own.clearance.max(other.clearance);
                         // The rules beyond the classes, per pair of item
                         // kinds (a via meets the other item on every layer).
@@ -774,14 +821,27 @@ impl Router {
         self.spare_scratches.0 = scratches;
     }
 
-    /// The neck width of `class`: the board's, or the floor of the class's
-    /// nets where that is wider (`crate::rules::NetRules::width_floor`).
-    pub(super) fn neck_width_of(&self, class: usize) -> f64 {
+    /// The neck width of `class` on `layer`: the board's, or the floor of
+    /// the class's nets where that is wider
+    /// (`crate::rules::NetRules::width_floor`, per layer where the class
+    /// has widths per layer: `ClassRules::neck_width_on`).
+    pub(super) fn neck_width_on(&self, class: usize, layer: usize) -> f64 {
         self.class_rules
             .as_ref()
             .map_or(self.board.neck_width, |split| {
-                split.neck_width(&self.board, class)
+                split.neck_width_on(&self.board, class, layer)
             })
+    }
+
+    /// The track width of `class` on `layer`: the class's, or its width
+    /// there where the custom rules give it one per layer
+    /// (`crate::rules::NetRules::layer_widths`).
+    #[inline]
+    pub(super) fn width_on(&self, class: usize, layer: usize) -> f64 {
+        match &self.class_rules {
+            Some(split) => split.width_on(&self.board, class, layer),
+            None => self.board.classes[class].trace_width,
+        }
     }
 
     /// The clearance copper of `class` (an item of `kind`, `crate::rules`)

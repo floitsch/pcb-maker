@@ -688,7 +688,8 @@ KiCad 10.0.7's DRC reads it:
   against every net raises that set; against every pair, every net),
   `track_width` min, max and opt per net (a rule's minimum also floors
   the neck-downs and the narrow-signal width of the nets it matches: the
-  router's `width_floor`), `via_diameter`, `hole_size` (vias) and
+  router's `width_floor`), and per layer where the rule holds on some
+  layers only (since 2026-10-24, below), `via_diameter`, `hole_size` (vias) and
   `annular_width` per net, and `edge_clearance`, `hole_clearance` and
   `hole_to_hole` for the board (the router has one value each). A
   clearance that no per-net value keeps exactly is a pair rule of the
@@ -707,8 +708,8 @@ KiCad 10.0.7's DRC reads it:
   lowered (hole_to_hole is a warning by KiCad's default, also under its
   KiCad 8 name `hole_near_hole`). Every constraint of every rule is in
   `board-router.json`'s `rules.custom_rules` with a status: `applied`,
-  `approximated` (kept more widely: every layer, SMD and plated pads
-  alike), `no_effect` (the classes and board setup keep at least as much,
+  `approximated` (kept more widely: SMD and plated pads alike, one
+  value for the board, a via rule on every layer), `no_effect` (the classes and board setup keep at least as much,
   or nothing routed matches), `not_routing` (silk, text, courtyards, pad
   holes, zone connections, assertions), `skipped` (severity, or a layer
   the board lacks) or `unmodelled` (creepage, length, skew, diff pairs
@@ -731,6 +732,38 @@ KiCad 10.0.7's DRC reads it:
   rule between two sets of nets or from pads to tracks only is no such
   floor (the placer would keep every part 2.5 mm from every other for
   ChengminLi's isolation).
+
+  **Track widths per layer** (2026-10-24). A `track_width` rule that
+  holds on some layers only (a `(layer ...)` clause, or a condition on
+  `A.Layer`) is kept per layer: the lowering evaluates the condition for
+  a track of each net group on each copper layer (`Lowered::layer_width_min`,
+  `_max`, `_opt`, per layer and net), and the project gives the router,
+  per net it holds for, the bounds on each layer
+  (`NetRules::layer_widths`, the every-layer bounds and the board's
+  minimum track width and connection floor folded in). The router splits
+  those nets' classes by their widths per layer
+  (`ClassRules::class_widths`, `class_floors`; the class's `trace_width`
+  is the widest, for what reads one value) and routes each layer at its
+  own width: the class's width held inside the layer's bounds (its opt
+  where it has one). Layers whose widths differ are stamp variants of
+  their own (`Resolved::layer_variant`, as layers of different pair
+  clearances were): the stamps of a variant measure both classes' tracks
+  at that variant's widths, the static maps keep pads and the outline at
+  each layer's half width, a node stamps its layer's footprints, and the
+  emitted tracks, the escape and pad-centre stubs and the neck-downs
+  (per layer: the board's neck or the layer's minimum, never wider than
+  the layer's track) take the width of their layer. Vias keep one size.
+  The router's check of the result (`verify_with_rules`, in
+  board-router.json's internal violations where a net has widths per
+  layer) holds each track to its layer's minimum and the pair clearances
+  per layer. OpenESC's "2 oz outer copper, track width" (0.16 mm on
+  F.Cu and B.Cu over classes of 0.09) routes 0.16 outside and 0.09 inside
+  and is reported `applied`; until then every track of every layer was
+  0.16 (`approximated`). The layer clearance of the same file was exact
+  before (a pair rule per layer). Boards without such a rule build the
+  same classes, variants and stamps as before. What remains approximated:
+  via rules on some layers (a through via is on every layer), SMD against
+  plated pads, one value for the board's edge and hole clearances.
 
   What the lowering cannot do yet (the edge clearance from NPTH slots
   and Margin graphics it does since 2026-10-21, "Board edges and copper

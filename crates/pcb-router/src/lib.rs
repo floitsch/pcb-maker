@@ -25,5 +25,5 @@ pub use board::{
 };
 pub use geometry::{Point, Shape};
 pub use router::{Config, DeadPad, Diagnostics, HotSpot, NetStatus, RoutingResult, route};
-pub use rules::{ClearanceRule, NetRules};
+pub use rules::{ClearanceRule, LayerWidth, NetRules};
 pub use verify::{Violation, verify};

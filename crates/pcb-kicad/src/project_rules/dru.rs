@@ -1099,6 +1099,13 @@ pub(crate) struct Lowered {
     pub width_min_all: f64,
     pub width_max: Vec<f64>,
     pub width_opt: Vec<Option<f64>>,
+    /// Track width bounds of rules that hold on some layers only (a
+    /// `(layer ...)` clause or a layer condition), per index of
+    /// `BoardFacts::copper_layers` and per net; empty when no rule is
+    /// one: the per-net values above hold on every layer.
+    pub layer_width_min: Vec<Vec<f64>>,
+    pub layer_width_max: Vec<Vec<f64>>,
+    pub layer_width_opt: Vec<Vec<Option<f64>>>,
     pub via_diameter_min: Vec<f64>,
     pub via_diameter_min_all: f64,
     pub via_diameter_max: Vec<f64>,
@@ -2015,7 +2022,36 @@ fn lower_constraint(
             lowered.note(rule, constraint, status, detail);
         }
         _ => {
-            // Unary: tracks or vias of a net.
+            // Unary: tracks or vias of a net. A track width rule may hold
+            // on some layers only (`(layer outer)`, `A.Layer == 'In1.Cu'`):
+            // per layer of the board, the nets it holds for.
+            let per_layer: Vec<Vec<usize>> = if kind == "track_width" {
+                board
+                    .copper_layers
+                    .iter()
+                    .map(|name| {
+                        let mut nets = Vec::new();
+                        if layers.contains(&name.as_str()) {
+                            for group in &groups {
+                                let a = Item {
+                                    kind: Kind::Track,
+                                    net: Some(representative(group)),
+                                    layer: name.as_str(),
+                                };
+                                if shadowed(pair_truth(&condition, a, None, false), a, None, false)
+                                    == T3::True
+                                {
+                                    nets.extend(group.iter().copied());
+                                }
+                            }
+                        }
+                        nets
+                    })
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let by_layer = per_layer.windows(2).any(|pair| pair[0] != pair[1]);
             let mut applies = Vec::new();
             for group in &groups {
                 match truth_for(Some(representative(group)), None, false) {
@@ -2064,6 +2100,41 @@ fn lower_constraint(
                 }
             };
             match kind {
+                "track_width" if by_layer => {
+                    // Per layer (`Lowered::layer_width_min`, ...): the router
+                    // routes each layer at its own width.
+                    let layer_count = board.copper_layers.len();
+                    if lowered.layer_width_min.is_empty() {
+                        lowered.layer_width_min = vec![vec![0.0; board.nets.len()]; layer_count];
+                        lowered.layer_width_max =
+                            vec![vec![f64::INFINITY; board.nets.len()]; layer_count];
+                        lowered.layer_width_opt = vec![vec![None; board.nets.len()]; layer_count];
+                    }
+                    for (layer, nets) in per_layer.iter().enumerate() {
+                        for &net in nets {
+                            if let Some(min) = constraint.min {
+                                let slot = &mut lowered.layer_width_min[layer][net];
+                                *slot = slot.max(min);
+                            }
+                            if let Some(max) = constraint.max {
+                                let slot = &mut lowered.layer_width_max[layer][net];
+                                *slot = slot.min(max);
+                            }
+                            if let Some(opt) = constraint.opt {
+                                lowered.layer_width_opt[layer][net] = Some(opt);
+                            }
+                        }
+                    }
+                    if let Some(min) = constraint.min {
+                        parts.push(format!("width at least {}", mm(min)));
+                    }
+                    if let Some(max) = constraint.max {
+                        parts.push(format!("at most {}", mm(max)));
+                    }
+                    if let Some(opt) = constraint.opt {
+                        parts.push(format!("routed at {}", mm(opt)));
+                    }
+                }
                 "track_width" => {
                     if let Some(min) = constraint.min {
                         set(
@@ -2162,14 +2233,26 @@ fn lower_constraint(
                     format!("{} of {} nets", applies.len(), board.nets.len())
                 }
             );
-            let approximated = rule.layer.is_some() && layers.len() < board.copper_layers.len();
+            // (A track width rule on some layers is kept per layer.)
+            let approximated =
+                !by_layer && rule.layer.is_some() && layers.len() < board.copper_layers.len();
             if approximated {
                 detail.push_str(" (on every layer: the router has one width a net)");
+            }
+            if by_layer {
+                let names: Vec<&str> = board
+                    .copper_layers
+                    .iter()
+                    .zip(&per_layer)
+                    .filter(|(_, nets)| !nets.is_empty())
+                    .map(|(name, _)| name.as_str())
+                    .collect();
+                detail.push_str(&format!(" on {} (per layer)", names.join(", ")));
             }
             // A minimum on some nets floors their neck-downs and their
             // narrow-signal width as well (router `width_floor`).
             let floors_net_necks = kind == "track_width"
-                && !every
+                && (!every || by_layer)
                 && constraint
                     .min
                     .is_some_and(|min| min > board.neck_width + 1.0e-9);
@@ -2182,6 +2265,7 @@ fn lower_constraint(
             // A board-wide minimum also floors the neck-downs.
             let floors_necks = kind == "track_width"
                 && every
+                && !by_layer
                 && constraint
                     .min
                     .is_some_and(|min| min > board.neck_width + 1.0e-9);
@@ -2778,6 +2862,60 @@ mod tests {
             &severities,
         );
         assert_eq!(strict.hole_to_hole, 0.5);
+    }
+
+    #[test]
+    fn track_widths_on_some_layers_lower_per_layer() {
+        // OpenESC's "2 oz outer copper": 0.16 mm on F.Cu and B.Cu over
+        // classes of 0.1, kept per layer (until 2026-10-24 on every layer,
+        // `approximated`).
+        let mut board = board(&[("A", &["Default"]), ("D+", &["USB"])]);
+        board.copper_layers = ["F.Cu", "In1.Cu", "In2.Cu", "B.Cu"]
+            .map(String::from)
+            .to_vec();
+        let rules = lowered(
+            "(rule \"2 oz outer copper, track width\" (constraint track_width (min 0.16mm)) (layer outer))",
+            &board,
+        );
+        assert_eq!(rules.width_min, [0.0, 0.0]);
+        assert_eq!(rules.width_min_all, 0.0);
+        assert_eq!(
+            rules.layer_width_min,
+            [[0.16, 0.16], [0.0, 0.0], [0.0, 0.0], [0.16, 0.16]]
+        );
+        assert_eq!(rules.report[0].status, "applied");
+        assert!(
+            rules.report[0].detail.contains("on F.Cu, B.Cu (per layer)"),
+            "{}",
+            rules.report[0].detail
+        );
+        // A layer condition (Sisu's USB geometry on two inner layers),
+        // with an opt and a max.
+        let rules = lowered(
+            "(rule usb (condition \"A.hasNetclass('USB') && (A.Layer == 'In1.Cu' || A.Layer == 'In2.Cu')\") (constraint track_width (min 0.1mm) (opt 0.1mm) (max 0.1mm)))",
+            &board,
+        );
+        assert_eq!(rules.width_opt, [None, None]);
+        assert_eq!(
+            rules.layer_width_opt,
+            [
+                [None, None],
+                [None, Some(0.1)],
+                [None, Some(0.1)],
+                [None, None]
+            ]
+        );
+        assert_eq!(rules.layer_width_max[1], [f64::INFINITY, 0.1]);
+        assert_eq!(rules.report[0].status, "applied");
+        // A layer clause that names every layer of the board is a rule on
+        // every layer: per net, as before.
+        let two = self::board(&[("A", &["Default"])]);
+        let rules = lowered(
+            "(rule outer (constraint track_width (min 0.16mm)) (layer outer))",
+            &two,
+        );
+        assert!(rules.layer_width_min.is_empty());
+        assert_eq!(rules.width_min_all, 0.16);
     }
 
     #[test]

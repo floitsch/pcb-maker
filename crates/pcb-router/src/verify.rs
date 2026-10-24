@@ -59,13 +59,16 @@ pub fn verify(board: &Board, routes: &[NetRoute]) -> Vec<Violation> {
 
 /// `verify` that also holds the rules beyond the classes (`ClassRules` of
 /// the router's split `board`): pair clearances per item kind and layer
-/// between routed copper and against copper obstacles. Without rules, the
-/// classes' clearances only, as `verify`.
+/// between routed copper and against copper obstacles, and the width floor
+/// per layer of a class with widths per layer (a track narrower than its
+/// layer's minimum: `other` "track width"). Without rules, the classes'
+/// clearances only, as `verify`.
 pub fn verify_with_rules(
     board: &Board,
     routes: &[NetRoute],
     rules: Option<&crate::rules::ClassRules>,
 ) -> Vec<Violation> {
+    let widths = rules.filter(|rules| rules.has_layer_widths());
     let rules = rules.filter(|rules| rules.clearances);
     // The clearance the rules ask beyond the classes between an item of
     // kind `kind_a` of `net_a` and one of kind `kind_b` of `net_b`, on
@@ -183,6 +186,26 @@ pub fn verify_with_rules(
                 None,
             )
         }));
+
+        // A class with widths per layer: each track at least its layer's
+        // floor (KiCad's track_width minimum there).
+        if let Some(widths) = widths.filter(|widths| !widths.class_floors[class_index].is_empty()) {
+            for (index, segment) in route.segments.iter().enumerate() {
+                report(
+                    net,
+                    Some(index),
+                    None,
+                    "track width".into(),
+                    segment.layer,
+                    [
+                        (segment.start[0] + segment.end[0]) / 2.0,
+                        (segment.start[1] + segment.end[1]) / 2.0,
+                    ],
+                    widths.floor_on(class_index, segment.layer),
+                    segment.width,
+                );
+            }
+        }
 
         for (start, end, radius, layer, drill, own_segment) in items {
             let own_kind = if layer.is_some() {

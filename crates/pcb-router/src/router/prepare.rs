@@ -99,7 +99,7 @@ impl Router {
                                 && joins_copper(
                                     &copper.shape,
                                     self.grid.center(x, y),
-                                    self.board.classes[description.class].trace_width,
+                                    self.width_on(description.class, layer),
                                 )
                                 && seen.insert(node)
                             {
@@ -313,9 +313,9 @@ impl Router {
         self.class_at(net, &self.nets[net as usize], cell)
     }
 
-    /// Track width of `net` at `node`.
-    pub(super) fn width_at(&self, net: NetId, cell: u32) -> f64 {
-        self.board.classes[self.node_class(net, cell)].trace_width
+    /// Track width of `net` at `cell` on `layer`.
+    pub(super) fn width_at(&self, net: NetId, cell: u32, layer: usize) -> f64 {
+        self.width_on(self.node_class(net, cell), layer)
     }
 }
 

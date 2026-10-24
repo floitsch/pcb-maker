@@ -153,7 +153,7 @@ impl Router {
                 Self::spokes_short(record),
             );
             let host = &self.board.obstacles[host];
-            let width = self.board.classes[description.class].trace_width;
+            let width = self.width_on(description.class, layer);
             let gap = self
                 .board
                 .planes

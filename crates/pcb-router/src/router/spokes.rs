@@ -1256,7 +1256,7 @@ impl Router {
                 // vias, which the exposed pad's tracks cross), not all its
                 // terminal's.
                 let merged_pad = record.pad != terminal.pad;
-                let half_width = self.board.classes[description.class].trace_width / 2.0;
+                let half_width = self.width_on(description.class, record.layer) / 2.0;
                 let connected =
                     |a: crate::geometry::Point, b: crate::geometry::Point, radius: f64| {
                         !merged_pad || pad.shape.distance_to_segment(a, b) <= radius + 1.0e-6
@@ -1522,7 +1522,7 @@ impl Router {
                     } else if let Some((_, _, radius)) = state.adopted.get(&index) {
                         *radius
                     } else {
-                        self.width_at(net, node.cell) / 2.0
+                        self.width_at(net, node.cell, node.layer as usize) / 2.0
                     };
                     let reach =
                         copper + self.board.classes[state.plane_class[layer]].trace_width / 2.0;
@@ -1664,7 +1664,7 @@ impl Router {
                 branch.nodes.iter().rev().copied().collect()
             };
             let first = self.grid.center_of(nodes[0].cell as usize);
-            let half = self.width_at(net, nodes[0].cell) / 2.0;
+            let half = self.width_at(net, nodes[0].cell, nodes[0].layer as usize) / 2.0;
             match state.escapes.get(&nodes[0]) {
                 Some((_, width, polyline)) => segments.extend(
                     polyline

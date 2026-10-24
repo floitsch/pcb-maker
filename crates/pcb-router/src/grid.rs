@@ -791,6 +791,16 @@ impl StaticMaps {
         let rules = board.classes[class];
         let cells = grid.cells();
         let half_width = rules.trace_width / 2.0;
+        // A class with widths per layer (`ClassRules::class_widths`): its
+        // half width per layer (`half_width` is then the widest).
+        let half_widths: Vec<f64> = match net_rules {
+            Some(split) if !split.class_widths[class].is_empty() => split.class_widths[class]
+                .iter()
+                .map(|width| width / 2.0)
+                .collect(),
+            _ => Vec::new(),
+        };
+        let half_on = |layer: usize| half_widths.get(layer).copied().unwrap_or(half_width);
         let via_radius = rules.via_diameter / 2.0;
         let step = grid.pitch * std::f64::consts::SQRT_2;
 
@@ -846,6 +856,9 @@ impl StaticMaps {
         // A unit step between two legal nodes can cut an outline corner by
         // at most the sagitta of that chord.
         let edge_margin = step * step / (8.0 * trace_edge.max(grid.pitch));
+        // Per layer, where the widths differ: the edge distance of every
+        // node near the outline, for the layers' own zones below.
+        let mut edge_distance: Vec<(usize, f64)> = Vec::new();
         for (a, b) in polygon_edges(&board.outline) {
             let reach = trace_edge.max(via_edge) + edge_margin;
             let bounds = Aabb {
@@ -863,7 +876,9 @@ impl StaticMaps {
                 for x in x0..=x1 {
                     let distance = crate::geometry::point_segment_distance(grid.center(x, y), a, b);
                     let index = grid.index(x, y);
-                    if distance < trace_edge + edge_margin {
+                    if !half_widths.is_empty() {
+                        edge_distance.push((index, distance));
+                    } else if distance < trace_edge + edge_margin {
                         base_trace[index] = BLOCKED16;
                     }
                     if distance < via_edge {
@@ -876,8 +891,30 @@ impl StaticMaps {
         // A pad may straddle the outline (card-edge fingers, connector
         // shells) but a track centreline on it still keeps the edge
         // clearance: pad cells inside the edge zone stay blocked.
-        let edge_zone: Vec<bool> = base_trace.iter().map(|value| *value == BLOCKED16).collect();
         let mut trace = vec![base_trace; board.layer_count];
+        // Each layer's edge zone at its own width.
+        for (layer, map) in trace.iter_mut().enumerate() {
+            if half_widths.is_empty() {
+                break;
+            }
+            let trace_edge = half_on(layer) + board.edge_clearance + SAFETY;
+            let edge_margin = step * step / (8.0 * trace_edge.max(grid.pitch));
+            for &(index, distance) in &edge_distance {
+                if distance < trace_edge + edge_margin {
+                    map[index] = BLOCKED16;
+                }
+            }
+        }
+        drop(edge_distance);
+        let edge_zone: Vec<Vec<bool>> = trace
+            .iter()
+            .take(if half_widths.is_empty() {
+                1
+            } else {
+                board.layer_count
+            })
+            .map(|map| map.iter().map(|value| *value == BLOCKED16).collect())
+            .collect();
         let mut edges = vec![EdgeMap::new(cells); board.layer_count];
 
         // Solder mask openings keep tracks out but not a pour's fill: they
@@ -936,47 +973,54 @@ impl StaticMaps {
             // (within the fill's reach of an overridden pad; any other
             // copper), a remembered value is claimed as well.
             let opening = mask_opening(&obstacle);
-            let fill_reach = (obstacle.kind == ObstacleKind::Copper && !opening)
-                .then(|| half_width + board.fill_clearance(&rules, obstacle) + SAFETY);
-            let (trace_reach, via_reach) = match obstacle.kind {
+            let fill_clearance = (obstacle.kind == ObstacleKind::Copper && !opening)
+                .then(|| board.fill_clearance(&rules, obstacle));
+            let fill_reach = fill_clearance.map(|clearance| half_width + clearance + SAFETY);
+            let (trace_clearance, via_reach) = match obstacle.kind {
                 ObstacleKind::Copper => {
                     let clearance = board.copper_clearance(&rules, obstacle);
                     // Copper keeps the hole clearance from a via's drill too.
                     (
-                        half_width + clearance,
+                        clearance,
                         (via_radius + clearance).max(rules.via_drill / 2.0 + board.hole_clearance),
                     )
                 }
-                ObstacleKind::Keepout => (
-                    half_width + obstacle.clearance,
-                    via_radius + obstacle.clearance,
-                ),
+                ObstacleKind::Keepout => (obstacle.clearance, via_radius + obstacle.clearance),
                 ObstacleKind::Hole => {
                     let clearance = board.hole_clearance.max(obstacle.clearance);
                     (
-                        half_width + clearance,
+                        clearance,
                         (via_radius + clearance).max(rules.via_drill / 2.0 + board.hole_to_hole),
                     )
                 }
             };
-            let trace_reach = trace_reach + SAFETY;
+            let trace_reach = half_width + trace_clearance + SAFETY;
             let via_reach = via_reach + SAFETY;
             // The rules beyond the classes: per layer for tracks, for vias
-            // the largest over the obstacle's layers.
+            // the largest over the obstacle's layers; and a class's widths
+            // per layer.
             let mut ruled_trace: Option<Vec<f64>> = None;
             let mut via_reach = via_reach;
+            if !half_widths.is_empty() {
+                ruled_trace = Some(
+                    (0..board.layer_count)
+                        .map(|layer| half_on(layer) + trace_clearance + SAFETY)
+                        .collect(),
+                );
+            }
             if let Some(split) = net_rules
                 && obstacle.kind == ObstacleKind::Copper
             {
                 let per_layer: Vec<f64> = (0..board.layer_count)
                     .map(|layer| {
-                        (half_width
+                        let own = ruled_trace.as_ref().map_or(trace_reach, |per| per[layer]);
+                        (half_on(layer)
                             + split.obstacle_extra(class, crate::rules::TRACK, obstacle, layer)
                             + SAFETY)
-                            .max(trace_reach)
+                            .max(own)
                     })
                     .collect();
-                if per_layer.iter().any(|reach| *reach > trace_reach) {
+                if !half_widths.is_empty() || per_layer.iter().any(|reach| *reach > trace_reach) {
                     ruled_trace = Some(per_layer);
                 }
                 via_reach = via_reach.max(
@@ -1161,6 +1205,13 @@ impl StaticMaps {
                     None => (trace_reach, margin),
                     Some(per_layer) => (per_layer[layer], step * step / (8.0 * per_layer[layer])),
                 };
+                let fill_reach = match fill_clearance {
+                    Some(clearance) if !half_widths.is_empty() => {
+                        Some(half_on(layer) + clearance + SAFETY)
+                    }
+                    _ => fill_reach,
+                };
+                let edge_zone = &edge_zone[layer.min(edge_zone.len() - 1)];
                 let nodes = ((x1 - x0 + 1) * (y1 - y0 + 1)) as u64;
                 tests += nodes;
                 vertex_tests += nodes * corners;

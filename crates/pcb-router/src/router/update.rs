@@ -42,6 +42,8 @@ impl Router {
             (Some(new), Some(old)) => {
                 new.class_group == old.class_group
                     && new.class_floor == old.class_floor
+                    && new.class_widths == old.class_widths
+                    && new.class_floors == old.class_floors
                     && new.resolved.net_group == old.resolved.net_group
             }
             _ => false,

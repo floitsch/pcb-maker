@@ -799,6 +799,29 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     router_config
 }
 
+/// The router's check of the emitted copper (`core::verify`: the classes'
+/// clearances), and where the custom rules give some net widths per layer
+/// the rules beyond the classes too: each track at least its layer's
+/// minimum and the pair clearances per layer (`verify_with_rules` on the
+/// router's split classes).
+pub(crate) fn check_copper(
+    board: &core::Board,
+    routes: &[core::NetRoute],
+    config: &KiCadBoardRouterConfig,
+) -> Vec<core::Violation> {
+    match config
+        .net_rules
+        .as_deref()
+        .filter(|rules| !rules.layer_widths.is_empty())
+    {
+        Some(rules) => {
+            let (split, class_rules) = core::rules::ClassRules::split(board, rules);
+            core::verify::verify_with_rules(&split, routes, Some(&class_rules))
+        }
+        None => core::verify(board, routes),
+    }
+}
+
 /// Writes `pcb` (with its copper) as the project in `output_directory`,
 /// verifies it natively unless told not to, and builds the report.
 #[allow(clippy::too_many_arguments)]
@@ -815,7 +838,7 @@ pub(crate) fn finish_routed_board(
     timings: [f64; 2],
 ) -> Result<KiCadBoardRouterResult, String> {
     let verify_started = std::time::Instant::now();
-    let violations = core::verify(board, &result.routes);
+    let violations = check_copper(board, &result.routes, config);
     let verify_seconds = verify_started.elapsed().as_secs_f64();
     if output_directory.exists() {
         return Err(format!(
