@@ -107,8 +107,8 @@ pub use key_matrix::{KiCadStarterHalf, KiCadStarterReport};
 mod netlist_import;
 pub use describe::{KiCadBoardDescription, KiCadSwapCandidate, describe_kicad_board};
 pub use netlist_import::{KiCadNetlistImport, import_kicad_netlist, import_kicad_netlist_from};
-mod placement_constraints;
 mod placement_ablation;
+mod placement_constraints;
 pub use placement_ablation::{
     KiCadAblationConfig, KiCadAblationGroup, KiCadAblationReport, KiCadAblationVariant,
     ablate_kicad_placement,

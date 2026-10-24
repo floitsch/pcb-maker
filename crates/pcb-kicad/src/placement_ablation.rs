@@ -379,11 +379,11 @@ fn facing(
     let mut best: [Option<(usize, f64)>; escape::SIDES] = [None; escape::SIDES];
     let (center, half) = escape::body_box(problem, index, poses[index]);
     let side_of = problem.components[index].side;
-    for other in 0..count {
+    for (other, pose) in poses.iter().enumerate().take(count) {
         if other == index || !side_of.collides(problem.components[other].side) {
             continue;
         }
-        let (oc, oh) = escape::body_box(problem, other, poses[other]);
+        let (oc, oh) = escape::body_box(problem, other, *pose);
         if oh[0] <= 0.0 && oh[1] <= 0.0 {
             continue;
         }
@@ -406,6 +406,15 @@ fn facing(
     best
 }
 
+/// A placement's signals, its parts' exits, their channel overflow and
+/// their global route attribution (when routed).
+type Measured = (
+    KiCadPlacementSignals,
+    Vec<Vec<escape::Exit>>,
+    Vec<f64>,
+    Option<Vec<f64>>,
+);
+
 /// The signals of one placement.
 #[allow(clippy::too_many_arguments)]
 fn signals(
@@ -418,19 +427,27 @@ fn signals(
     router_config: &KiCadBoardRouterConfig,
     references: &[String],
     threshold: f64,
-) -> Result<(KiCadPlacementSignals, Vec<Vec<escape::Exit>>, Vec<f64>, Option<Vec<f64>>), String> {
+) -> Result<Measured, String> {
     let exits = all_exits(problem, fact, members, poses, count);
     let (per, channels_over, channel_total) = channel_overflow(problem, fact, poses, &exits);
     let mut blocked = 0;
-    for index in 0..count {
+    for (index, part_exits) in exits.iter().enumerate().take(count) {
         let faces = facing(problem, poses, count, index);
-        for exit in &exits[index] {
+        for exit in part_exits {
             if faces[exit.side].is_some() {
                 blocked += 1;
             }
         }
     }
-    let mut boxes = vec![[f64::INFINITY, f64::INFINITY, f64::NEG_INFINITY, f64::NEG_INFINITY]; problem.net_weights.len()];
+    let mut boxes = vec![
+        [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY
+        ];
+        problem.net_weights.len()
+    ];
     for (component, pose) in problem.components.iter().zip(poses).take(count) {
         for pin in &component.pins {
             let at = component.pin_position(pin, *pose);
@@ -574,7 +591,11 @@ fn part_escape(
             nets += 1;
         }
     }
-    let side = if parts[index].ours_back { "back" } else { "front" };
+    let side = if parts[index].ours_back {
+        "back"
+    } else {
+        "front"
+    };
     KiCadPartEscape {
         reference: references[index].clone(),
         pads: parts[index].pads,
@@ -621,8 +642,7 @@ fn conflict(
     }
     if ox > 0.0 && oy > 0.0 {
         let smaller = (4.0 * ha[0] * ha[1]).min(4.0 * hb[0] * hb[1]);
-        if ox.min(2.0 * ha[0].min(hb[0])) * oy.min(2.0 * ha[1].min(hb[1])) > BODY_SHARE * smaller
-        {
+        if ox.min(2.0 * ha[0].min(hb[0])) * oy.min(2.0 * ha[1].min(hb[1])) > BODY_SHARE * smaller {
             return true;
         }
     }
@@ -803,8 +823,7 @@ pub fn ablate_kicad_placement(
             });
         *seen += 1;
         let ours_at = form_at(footprint)?;
-        let (designer, designer_back) =
-            found.unwrap_or((ours_at, footprint_back(footprint)));
+        let (designer, designer_back) = found.unwrap_or((ours_at, footprint_back(footprint)));
         let pads = footprint
             .children()
             .iter()
@@ -851,7 +870,10 @@ pub fn ablate_kicad_placement(
     // The groups.
     let mut groups: Vec<(KiCadAblationGroup, BTreeSet<usize>)> = Vec::new();
     let named = |indices: &BTreeSet<usize>| -> Vec<String> {
-        indices.iter().map(|index| parts[*index].reference.clone()).collect()
+        indices
+            .iter()
+            .map(|index| parts[*index].reference.clone())
+            .collect()
     };
     let mut large: Vec<usize> = movable
         .iter()
@@ -964,7 +986,9 @@ pub fn ablate_kicad_placement(
                 .filter(|index| &parts[*index].reference == wanted)
                 .collect();
             if found.is_empty() {
-                return Err(format!("extra group {name}: {wanted} is not a part that moves"));
+                return Err(format!(
+                    "extra group {name}: {wanted} is not a part that moves"
+                ));
             }
             members.extend(found);
         }
@@ -1029,7 +1053,10 @@ pub fn ablate_kicad_placement(
             "ablation: {name}: wirelength {:.0} mm, channel overflow {:.1}, soft overflow {:.1}",
             signals.wirelength_mm,
             signals.channel_overflow,
-            signals.global.as_ref().map_or(0.0, |global| global.soft_overflow_05)
+            signals
+                .global
+                .as_ref()
+                .map_or(0.0, |global| global.soft_overflow_05)
         );
         // Every part that moves between the two placements.
         let interesting: BTreeSet<usize> = movable
@@ -1135,7 +1162,14 @@ pub fn ablate_kicad_placement(
     }
     for (group, indices) in &groups {
         for (base, from, from_backs, to, to_backs, prefix) in [
-            ("designer", &designer, &designer_backs, &ours, &ours_backs, "d"),
+            (
+                "designer",
+                &designer,
+                &designer_backs,
+                &ours,
+                &ours_backs,
+                "d",
+            ),
             ("ours", &ours, &ours_backs, &designer, &designer_backs, "o"),
         ] {
             let mut poses = from.clone();
@@ -1159,7 +1193,10 @@ pub fn ablate_kicad_placement(
                 displaced.len(),
                 signals.wirelength_mm,
                 signals.channel_overflow,
-                signals.global.as_ref().map_or(0.0, |global| global.soft_overflow_05)
+                signals
+                    .global
+                    .as_ref()
+                    .map_or(0.0, |global| global.soft_overflow_05)
             );
             variants.push(KiCadAblationVariant {
                 name,
@@ -1205,11 +1242,17 @@ mod tests {
 
     #[test]
     fn connectors_by_reference_or_library() {
-        assert!(is_connector("J3", "Connector_PinHeader_2.54mm:PinHeader_1x04"));
+        assert!(is_connector(
+            "J3",
+            "Connector_PinHeader_2.54mm:PinHeader_1x04"
+        ));
         assert!(is_connector("P1", "Local:Something"));
         assert!(is_connector("CN2", "Local:Something"));
         assert!(is_connector("U9", "Connector_USB:USB_C_Receptacle"));
-        assert!(!is_connector("X1", "Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm"));
+        assert!(!is_connector(
+            "X1",
+            "Crystal:Crystal_SMD_3225-4Pin_3.2x2.5mm"
+        ));
         assert!(!is_connector("U1", "Package_QFP:LQFP-64"));
         assert!(!is_connector("R4", "Resistor_SMD:R_0603"));
     }

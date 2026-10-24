@@ -1034,6 +1034,34 @@ Score the designer's board and yours side by side.
   removes tracks, vias, copper zones and copper graphics: the bare
   placement.
 
+- `pcb-maker ablate-kicad-placement <designer.kicad_pcb> <placed-dir> <board-id> <out-dir> [ablation.json] [router-config.json|auto]`
+  (a diagnostic, [placer.md](placer.md) "Placement ablation (2026-10-24)"):
+  from the designer's board and a placement of the same project (a
+  layout's `placed` directory) it writes hybrids into `<out-dir>/<variant>/`,
+  each a copy of the placed project with the footprints' poses changed:
+  `designer` and `ours` (the two placements), `d-<group>` (the designer's
+  placement with one group where ours has it), `o-<group>` (ours with the
+  group where the designer has it) and `d-null-N`/`o-null-N` (one passive
+  nudged 0.1 mm: the routes' noise). Groups: every footprint with more than
+  20 pads alone (`large-U4`), the same with the passives of at most four
+  pads that share a net with it and lie within 3 mm of its body in either
+  placement (`cluster-U4`), the connectors, the board's quadrants (by the
+  designer's positions), and groups of your own (`"extra": {"name":
+  ["U4", "U8"]}`). Parts a moved group lands on (pads within 0.1 mm, or a
+  body mostly on another) move to the nearest free spot; the report lists
+  them. `<out-dir>/ablation.json` has the groups, per variant the
+  displaced parts and the signals a placer can read before routing
+  (wirelength, escape demand's channel overflow, exits facing a body,
+  overlapping parts, the global route's overflow and soft overflow at
+  0.5), and per moved part of both placements its escape (demand per
+  side, the body it faces, the gap and the channel's capacity, the board
+  edge, its connections' distance). Settings: `large_pads` (20),
+  `passive_pads` (4), `passive_mm` (3), `repair` (true), `groups` (only
+  these), `extra`, `threshold` (0.5), `global_route` (true), `nulls` (2),
+  `null_nudge_mm` (0.1). `benchmarks/agent-tasks/ablation.py` routes the
+  variants in route mode (run.py, the memory ledger) and attributes the
+  open connections per group (`prepare`, `route`, `report --markdown`).
+
 `pcb-maker <command> --help` gives every command's arguments and
 defaults.
 
