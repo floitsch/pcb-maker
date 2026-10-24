@@ -164,11 +164,13 @@ pub struct KiCadBoardRouterConfig {
     #[serde(default)]
     pub pin_row_cost_mm: Option<f64>,
     /// Differential pairs (docs/router.md, "Differential pairs"): nets
-    /// KiCad pairs by name (`_P`/`_N`, `+`/`-`, `P`/`N`) route as one
-    /// coupled run at the pair's width and gap before the other nets, the
-    /// pads' stubs and what the coupled search cannot route as ordinary
-    /// nets. Route mode only. Default off; `PCB_ROUTER_DIFF_PAIRS=1` turns
-    /// it on where the settings name none.
+    /// KiCad pairs by name (`_P`/`_N`, `+`/`-`, `P`/`N`) route coupled at
+    /// the pair's width and gap: each link between the pair's parts is a
+    /// net of the route at the pair's envelope, negotiated with the other
+    /// nets and offset into the two nets' tracks when written; the pads'
+    /// stubs and what the coupled runs leave open are ordinary routing.
+    /// Route mode only. Default off; `PCB_ROUTER_DIFF_PAIRS=1` turns it on
+    /// where the settings name none.
     #[serde(default)]
     pub diff_pairs: Option<bool>,
     /// The project's rules for the nets of differential pairs, keyed by

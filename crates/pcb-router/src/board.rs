@@ -200,7 +200,9 @@ pub struct Board {
     pub pin_row_gaps: Vec<PinRowGap>,
     /// Copper a terminal reaches beside its pad (`TerminalCopper`): the
     /// search ends on any of it. Empty but for route mode's differential
-    /// pairs (`diff_pairs`), whose coupled tracks are kept copper on no pad.
+    /// pairs (`diff_pairs`): the pads a pair's links join (merged into one
+    /// terminal), and in the fallback the coupled tracks, kept copper on
+    /// no pad.
     pub terminal_copper: Vec<TerminalCopper>,
     /// What the adapter that lowered the board keeps with it to read back
     /// with the routes (route mode's differential pairs: how the coupled
@@ -226,8 +228,8 @@ impl std::fmt::Debug for Attachment {
 /// A copper obstacle of `net` that its terminal `terminal` reaches
 /// (`Board::terminal_copper`): kept copper of one piece with the
 /// terminal's own, so that a search may end anywhere on the piece (a
-/// differential pair's coupled run, whose two ends the pads' stubs join),
-/// on the obstacle's layers.
+/// differential pair's coupled run, whose two ends the pads' stubs join;
+/// a pad merged into the terminal), on the obstacle's layers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TerminalCopper {
     pub net: NetId,

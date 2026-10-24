@@ -96,10 +96,10 @@ const TOUCH: f64 = 1.0e-5;
 /// terminal per piece of copper and makes pieces on no pad terminals of
 /// their own (see the module's comment). A board without tracks and vias
 /// is left as it is. The report's track counts are the caller's
-/// (`count_tracks`). With `whole_pieces` (differential pairs on), a
-/// piece's terminal reaches every item of the piece
-/// (`Board::terminal_copper`), not only its first: a pair's coupled run is
-/// joined to the pads at both of its ends.
+/// (`count_tracks`). With `whole_pieces` (the differential pairs'
+/// fallback, `diff_pairs`), a piece's terminal reaches every item of the
+/// piece (`Board::terminal_copper`), not only its first: a pair's coupled
+/// run is joined to the pads at both of its ends.
 pub(crate) fn keep_existing_copper(board: &mut core::Board, whole_pieces: bool) -> KiCadKeptCopper {
     let mut report = KiCadKeptCopper::default();
     let mut kept_by_net: BTreeMap<core::NetId, Vec<usize>> = BTreeMap::new();

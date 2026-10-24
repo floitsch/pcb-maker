@@ -565,7 +565,7 @@ fn launch(
     if layers == 0 {
         return None;
     }
-    let layers = layers & layers.wrapping_neg();
+    let layers = layers.isolate_lowest_one();
     let half = class.trace_width / 2.0;
     let d = pair.offset();
     // The stubs' ends' copper reaches a track width along the lead; the
@@ -2062,5 +2062,131 @@ pub(crate) fn measure_uncoupled(report: &mut KiCadDiffPairs, pcb: &Expr) {
         let uncoupled = (longer - pair.coupled_mm).max(0.0);
         pair.uncoupled_mm = Some(uncoupled);
         report.uncoupled_mm += uncoupled;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A USB pair from J1 (two rows: two pair points of one part) to U2,
+    /// past U1, whose D+ and D- pads have a GND pin between them.
+    const BOARD: &str = r#"(kicad_pcb (version 20241229) (generator "pcbnew")
+  (general (thickness 1.6)) (paper "A4")
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+  (gr_rect (start 0 0) (end 40 20) (stroke (width 0.05) (type default)) (layer "Edge.Cuts"))
+  (footprint "test" (layer "F.Cu") (at 3 10)
+    (property "Reference" "J1" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0 0) (size 1 0.3) (layers "F.Cu") (net "/D+"))
+    (pad "2" smd rect (at 0 0.5) (size 1 0.3) (layers "F.Cu") (net "/D-"))
+    (pad "3" smd rect (at 0 2) (size 1 0.3) (layers "F.Cu") (net "/D+"))
+    (pad "4" smd rect (at 0 2.5) (size 1 0.3) (layers "F.Cu") (net "/D-")))
+  (footprint "test" (layer "F.Cu") (at 18 10)
+    (property "Reference" "U1" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0 0) (size 1 0.3) (layers "F.Cu") (net "/D+"))
+    (pad "2" smd rect (at 0 0.5) (size 1 0.3) (layers "F.Cu") (net "/GND"))
+    (pad "3" smd rect (at 0 1) (size 1 0.3) (layers "F.Cu") (net "/D-")))
+  (footprint "test" (layer "F.Cu") (at 34 10)
+    (property "Reference" "U2" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0 0) (size 1 0.3) (layers "F.Cu") (net "/D+"))
+    (pad "2" smd rect (at 0 0.5) (size 1 0.3) (layers "F.Cu") (net "/D-")))
+  (footprint "test" (layer "F.Cu") (at 18 4)
+    (property "Reference" "J5" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "/GND"))))
+"#;
+
+    fn lowered() -> (core::Board, KiCadBoardRouterConfig) {
+        let pcb = parse(BOARD).unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, true).unwrap().board;
+        (board, config)
+    }
+
+    fn terminals(board: &core::Board, name: &str) -> Vec<String> {
+        let net = board
+            .nets
+            .iter()
+            .find(|net| net.name.trim_start_matches('/') == name)
+            .unwrap();
+        net.terminals
+            .iter()
+            .map(|terminal| terminal.label.clone())
+            .collect()
+    }
+
+    #[test]
+    fn pair_points_are_pads_side_by_side_and_links_join_parts() {
+        let (board, config) = lowered();
+        let pairs = find_pairs(&board, &config);
+        assert_eq!(pairs.len(), 1);
+        let pair = &pairs[0];
+        let p = &board.nets[pair.positive as usize];
+        let labels: Vec<String> = pair
+            .points
+            .iter()
+            .map(|&(a, _)| p.terminals[a].label.clone())
+            .collect();
+        // U1's pads have its GND pin between them: no pair point there.
+        assert_eq!(labels, ["J1.1", "J1.3", "U2.1"]);
+        // J1's two rows are joined by ordinary routing: one link, J1 to U2.
+        assert_eq!(pair.links.len(), 1);
+        let (a, b) = pair.links[0];
+        let ends = [labels[a].as_str(), labels[b].as_str()];
+        assert!(ends.contains(&"U2.1"), "{ends:?}");
+    }
+
+    #[test]
+    fn a_link_is_a_net_with_launches_and_the_pairs_nets_end_beside_its_run() {
+        let (mut board, config) = lowered();
+        let (nets, obstacles) = (board.nets.len(), board.obstacles.len());
+        plan_pairs(&mut board, &config);
+        // One link: a net of its own at the envelope, kept to no layer.
+        assert_eq!(board.nets.len(), nets + 1);
+        let link = &board.nets[nets];
+        let class = board.classes[link.class];
+        assert!((class.trace_width - 0.6).abs() < 1.0e-9, "{class:?}");
+        assert_eq!(class.layers, 0);
+        assert_eq!(link.terminals.len(), 2);
+        // The pair's nets: their four pads, and the run's two ends as one
+        // terminal (the second a merged pad the route may end on).
+        for name in ["D+", "D-"] {
+            let labels = terminals(&board, name);
+            assert_eq!(
+                labels
+                    .iter()
+                    .filter(|label| label.starts_with("pair run"))
+                    .count(),
+                1,
+                "{labels:?}"
+            );
+            assert_eq!(labels.len(), 5, "{labels:?}");
+        }
+        assert!(board.obstacles.len() > obstacles);
+        // The launches lie outside the pads, the run's ends beside them.
+        let plan = board
+            .attachment
+            .0
+            .clone()
+            .unwrap()
+            .downcast::<PairPlan>()
+            .unwrap();
+        let link_plan = &plan.links[0];
+        for end in 0..2 {
+            let [p, n] = link_plan.ends[end];
+            let apart = core::geometry::distance(p, n);
+            assert!(apart >= 0.2 + 0.2 - 1.0e-9, "the ends {apart} apart");
+            let pads = link_plan.pads[end];
+            for (end_point, pad) in [(p, pads[0]), (n, pads[1])] {
+                assert!(core::geometry::distance(end_point, pad) > 0.5);
+            }
+        }
     }
 }
