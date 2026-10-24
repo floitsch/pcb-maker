@@ -448,8 +448,7 @@ fn series_parts(
     let other = |pads: Option<&Vec<Point>>, at: Point| -> Option<Point> {
         let pads = pads?;
         (pads.len() == 2).then_some(())?;
-        let far = if core::geometry::distance(pads[0], at) > core::geometry::distance(pads[1], at)
-        {
+        let far = if core::geometry::distance(pads[0], at) > core::geometry::distance(pads[1], at) {
             pads[0]
         } else {
             pads[1]
@@ -617,7 +616,10 @@ fn part_middle(board: &core::Board, label: &str) -> Option<Point> {
 /// edge's mask opening; the stub leaves its inner end).
 fn stub_start(board: &core::Board, terminal: &core::Terminal, end: Point, width: f64) -> Point {
     let shape = &board.obstacles[terminal.pad].shape;
-    let (anchor, length) = (terminal.anchor, core::geometry::distance(terminal.anchor, end));
+    let (anchor, length) = (
+        terminal.anchor,
+        core::geometry::distance(terminal.anchor, end),
+    );
     if length < EPSILON || !shape.contains(anchor) {
         return anchor;
     }
@@ -662,8 +664,7 @@ fn stubs_clear(
         let (pad, end) = (pads[polarity], ends[polarity]);
         let (own, other) = (nets[polarity], nets[1 - polarity]);
         core::geometry::polygon_edges(&board.outline).all(|(a, b)| {
-            core::geometry::segment_segment_distance(pad, end, a, b)
-                >= half + board.edge_clearance
+            core::geometry::segment_segment_distance(pad, end, a, b) >= half + board.edge_clearance
         }) && near.iter().all(|&index| {
             let obstacle = &board.obstacles[index];
             if obstacle.layers & layer == 0 || obstacle.net == Some(own) {
@@ -3093,10 +3094,7 @@ mod tests {
             "{labels:?}"
         );
         // C3's and C4's other pads are 4 mm apart.
-        assert!(
-            !labels.iter().any(|(a, _)| a == "C3.1"),
-            "{labels:?}"
-        );
+        assert!(!labels.iter().any(|(a, _)| a == "C3.1"), "{labels:?}");
         // J1's rows and U2 as before, and the capacitors: three links.
         assert_eq!(labels.len(), 4, "{labels:?}");
         assert_eq!(pair.links.len(), 2);
