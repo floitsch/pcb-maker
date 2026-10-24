@@ -424,7 +424,7 @@ User-facing (`pcb-maker --help` lists them):
 - `PCB_ROUTER_NO_WALL_GUARD`: no wall-clock guard in the router, and the layout sets no wall-clock deadline: work alone ends runs (determinism checks, the walkthrough test).
 - `PCB_PLACER_WORK_SECONDS`: place-kicad-board's placement work budget in seconds of work (default 600, the layout's share).
 - `PCB_KICAD_TIMEOUT`: seconds one kicad-cli report may take before it is killed (default 900).
-- `PCB_MIN_CONNECTION_FLOOR`: `warning`: floor the router's track widths at the board's minimum connection width also when KiCad rates connection_width a warning; `off`: never (default: only at error severity).
+- `PCB_MIN_CONNECTION_FLOOR`: `errors`: floor the router's track widths at the board's minimum connection width (and a custom `connection_width` rule's) only when KiCad rates connection_width an error; `off`: never (default since 2026-10-24: at error and warning severity).
 - `PCB_KICAD_NO_NECK_REPAIR`: no connection-width neck repair after the final DRC.
 - `PCB_ROUTER_ISLAND_STUBS`: turns the router's island stubs on (`island_stubs`, off since 2026-10-21): a pad's straight track into a fill island its spokes reach, which only silences KiCad's isolated-island finding.
 - `PCB_MAKER_CACHE_DIR`: root of the DRC cache and of the library-free kicad-cli configuration (default `$XDG_CACHE_HOME/pcb-maker`, else `~/.cache/pcb-maker`).

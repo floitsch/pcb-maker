@@ -1040,6 +1040,11 @@ pub(crate) struct BoardFacts {
     pub board_clearances: [f64; 3],
     /// The neck-down width before the custom rules.
     pub neck_width: f64,
+    /// Whether connection_width findings at warning severity floor the
+    /// track widths too (`project_rules::FloorMode`): a custom
+    /// `connection_width` rule is lowered where its findings are errors,
+    /// and where they are warnings only with this.
+    pub connection_floor_warnings: bool,
 }
 
 /// What a rule did, for `board-router.json`'s `rules`.
@@ -1134,6 +1139,7 @@ pub(crate) fn finding_severity(kind: &str, severities: &BTreeMap<String, String>
     let (key, default) = match kind {
         "clearance" => ("clearance", "error"),
         "track_width" => ("track_width", "error"),
+        "connection_width" => ("connection_width", "warning"),
         "edge_clearance" => ("copper_edge_clearance", "error"),
         "hole_clearance" => ("hole_clearance", "error"),
         "hole_to_hole" => ("hole_to_hole", "warning"),
@@ -1336,7 +1342,10 @@ fn kinds_of(kind: &str, pads: &BTreeSet<Kind>) -> (Vec<Kind>, Option<Vec<Kind>>)
             others.extend(pads.iter().copied().filter(|kind| *kind != Kind::NpthPad));
             (vec![Kind::Track, Kind::Via], Some(others))
         }
-        "track_width" => (vec![Kind::Track], None),
+        // KiCad checks a connection width per net and layer on the union
+        // of its copper; the router lays tracks, so a minimum is a floor
+        // on its tracks' width.
+        "track_width" | "connection_width" => (vec![Kind::Track], None),
         "via_diameter" | "hole_size" | "annular_width" => (vec![Kind::Via], None),
         "edge_clearance" => (vec![Kind::Track, Kind::Via], Some(vec![Kind::Edge])),
         "hole_clearance" => (vec![Kind::Track, Kind::Via], Some(holes)),
@@ -1379,7 +1388,14 @@ fn lower_constraint(
         );
         return;
     }
-    if let Some(severity) = rule.severity.as_deref().filter(|s| *s != "error") {
+    if let Some(severity) = rule
+        .severity
+        .as_deref()
+        .filter(|s| *s != "error")
+        .filter(|s| {
+            !(kind == "connection_width" && *s == "warning" && board.connection_floor_warnings)
+        })
+    {
         lowered.note(
             rule,
             constraint,
@@ -1392,6 +1408,7 @@ fn lower_constraint(
         kind,
         "clearance"
             | "track_width"
+            | "connection_width"
             | "via_diameter"
             | "hole_size"
             | "annular_width"
@@ -1476,7 +1493,6 @@ fn lower_constraint(
             "physical_clearance" | "physical_hole_clearance" => {
                 "physical clearances (also within a net) are not modelled".into()
             }
-            "connection_width" => "a custom connection width is not modelled".into(),
             "thermal_relief_gap"
             | "thermal_spoke_width"
             | "zone_connection"
@@ -1501,8 +1517,17 @@ fn lower_constraint(
         lowered.note(rule, constraint, status, detail);
         return;
     }
-    let severity = finding_severity(kind, severities);
-    if severity != "error" {
+    // (A connection width rule's own severity is KiCad's for its
+    // findings; above, only a warning passes, where warnings floor.)
+    let severity = match (kind, rule.severity.as_deref()) {
+        ("connection_width", Some(own)) => own.to_string(),
+        _ => finding_severity(kind, severities),
+    };
+    // A connection width at warning severity is a floor where the mode
+    // floors warnings (`project_rules::FloorMode`).
+    let floors_warning =
+        kind == "connection_width" && severity == "warning" && board.connection_floor_warnings;
+    if severity != "error" && !floors_warning {
         lowered.note(
             rule,
             constraint,
@@ -2024,8 +2049,11 @@ fn lower_constraint(
         _ => {
             // Unary: tracks or vias of a net. A track width rule may hold
             // on some layers only (`(layer outer)`, `A.Layer == 'In1.Cu'`):
-            // per layer of the board, the nets it holds for.
-            let per_layer: Vec<Vec<usize>> = if kind == "track_width" {
+            // per layer of the board, the nets it holds for. A connection
+            // width's minimum is a floor on the tracks' width, per layer
+            // alike (its maximum and opt mean nothing to KiCad).
+            let widths = matches!(kind, "track_width" | "connection_width");
+            let per_layer: Vec<Vec<usize>> = if widths {
                 board
                     .copper_layers
                     .iter()
@@ -2076,11 +2104,7 @@ fn lower_constraint(
                     "no_effect",
                     format!(
                         "matches no routed {} on this board",
-                        if kind == "track_width" {
-                            "track"
-                        } else {
-                            "via"
-                        }
+                        if widths { "track" } else { "via" }
                     ),
                 );
                 return;
@@ -2100,6 +2124,23 @@ fn lower_constraint(
                 }
             };
             match kind {
+                "connection_width" => {
+                    // Per layer below where `by_layer`, else per net.
+                    if let Some(min) = constraint.min {
+                        if !by_layer {
+                            set(
+                                &mut lowered.width_min,
+                                Some(&mut lowered.width_min_all),
+                                min,
+                                false,
+                            );
+                        }
+                        parts.push(format!(
+                            "connection width at least {}: a floor on the track width",
+                            mm(min)
+                        ));
+                    }
+                }
                 "track_width" if by_layer => {
                     // Per layer (`Lowered::layer_width_min`, ...; written
                     // below unless the rule has no effect): the router
@@ -2184,7 +2225,7 @@ fn lower_constraint(
             let changes = applies.iter().any(|&net| {
                 let now = &board.current[net];
                 let (value, drill) = match kind {
-                    "track_width" => (now.trace_width_mm, 0.0),
+                    "track_width" | "connection_width" => (now.trace_width_mm, 0.0),
                     "via_diameter" => (now.via_size_mm, 0.0),
                     "hole_size" => (now.via_drill_mm, 0.0),
                     _ => (now.via_size_mm, now.via_drill_mm),
@@ -2197,7 +2238,8 @@ fn lower_constraint(
                     }
                 });
                 value < min - 1.0e-9
-                    || constraint.max.is_some_and(|max| value > max + 1.0e-9)
+                    || (kind != "connection_width"
+                        && constraint.max.is_some_and(|max| value > max + 1.0e-9))
                     || (kind == "track_width"
                         && constraint
                             .opt
@@ -2230,7 +2272,7 @@ fn lower_constraint(
             }
             // A minimum on some nets floors their neck-downs and their
             // narrow-signal width as well (router `width_floor`).
-            let floors_net_necks = kind == "track_width"
+            let floors_net_necks = widths
                 && (!every || by_layer)
                 && constraint
                     .min
@@ -2242,7 +2284,7 @@ fn lower_constraint(
                 ));
             }
             // A board-wide minimum also floors the neck-downs.
-            let floors_necks = kind == "track_width"
+            let floors_necks = widths
                 && every
                 && !by_layer
                 && constraint
@@ -2272,6 +2314,9 @@ fn lower_constraint(
                         if let Some(min) = constraint.min {
                             let slot = &mut lowered.layer_width_min[layer][net];
                             *slot = slot.max(min);
+                        }
+                        if kind == "connection_width" {
+                            continue;
                         }
                         if let Some(max) = constraint.max {
                             let slot = &mut lowered.layer_width_max[layer][net];
@@ -2502,6 +2547,7 @@ mod tests {
             ],
             board_clearances: [0.0; 3],
             neck_width: 0.0,
+            connection_floor_warnings: false,
         }
     }
 
@@ -2932,6 +2978,70 @@ mod tests {
         );
         assert!(rules.layer_width_min.is_empty());
         assert_eq!(rules.width_min_all, 0.16);
+    }
+
+    #[test]
+    fn a_connection_width_rule_floors_the_track_width() {
+        // A custom connection width (KiCad checks the union of a net's
+        // copper on a layer; the router's part is its tracks' width).
+        let mut board = board(&[("A", &["Default"]), ("PWR", &["Power"])]);
+        board.copper_layers = ["F.Cu", "In1.Cu", "In2.Cu", "B.Cu"]
+            .map(String::from)
+            .to_vec();
+        let errors: BTreeMap<String, String> =
+            [("connection_width".to_string(), "error".to_string())].into();
+        let lower_with = |text: &str, board: &BoardFacts, severities: &BTreeMap<String, String>| {
+            lower(&parse_rules(text).unwrap(), board, severities)
+        };
+        // On the inner layers only: per layer, the necks with it.
+        let inner =
+            "(rule \"inner connections\" (layer inner) (constraint connection_width (min 0.15mm)))";
+        let rules = lower_with(inner, &board, &errors);
+        assert_eq!(
+            rules.layer_width_min,
+            [[0.0, 0.0], [0.15, 0.15], [0.15, 0.15], [0.0, 0.0]]
+        );
+        assert_eq!(rules.width_min_all, 0.0);
+        assert_eq!(rules.report[0].status, "applied");
+        assert!(
+            rules.report[0]
+                .detail
+                .contains("connection width at least 0.15 mm"),
+            "{}",
+            rules.report[0].detail
+        );
+        assert!(rules.unmodelled.is_empty());
+        // On every layer, for one class: per net.
+        let power = "(rule power (condition \"A.NetClass == 'Power'\") (constraint connection_width (min 0.3mm)))";
+        let rules = lower_with(power, &board, &errors);
+        assert!(rules.layer_width_min.is_empty());
+        assert_eq!(rules.width_min, [0.0, 0.3]);
+        assert_eq!(rules.report[0].status, "applied");
+        // KiCad's default severity is a warning: a floor only where the
+        // mode floors warnings.
+        let rules = lower_with(inner, &board, &BTreeMap::new());
+        assert_eq!(rules.report[0].status, "skipped");
+        assert!(rules.layer_width_min.is_empty());
+        let mut floors = board.clone();
+        floors.connection_floor_warnings = true;
+        let rules = lower_with(inner, &floors, &BTreeMap::new());
+        assert_eq!(rules.report[0].status, "applied");
+        assert_eq!(rules.layer_width_min[1], [0.15, 0.15]);
+        // A rule's own warning alike.
+        let own = "(rule own (severity warning) (constraint connection_width (min 0.15mm)))";
+        assert_eq!(lower_with(own, &board, &errors).report[0].status, "skipped");
+        let rules = lower_with(own, &floors, &errors);
+        assert_eq!(rules.report[0].status, "applied");
+        assert_eq!(rules.width_min_all, 0.15);
+        // The classes and the necks keep it: no effect.
+        let mut kept = board.clone();
+        kept.neck_width = 0.1;
+        let rules = lower_with(
+            "(rule narrow (constraint connection_width (min 0.05mm)))",
+            &kept,
+            &errors,
+        );
+        assert_eq!(rules.report[0].status, "no_effect");
     }
 
     #[test]

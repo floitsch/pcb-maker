@@ -742,6 +742,7 @@ pub fn resolve_project_rules(
                     current,
                     board_clearances: [edge_clearance, hole_clearance, hole_to_hole],
                     neck_width: neck,
+                    connection_floor_warnings: floor_mode() == FloorMode::ErrorsAndWarnings,
                 };
                 let lowered = dru::lower(&rules, &board, &severities);
                 for (index, net) in board.nets.iter().enumerate() {
@@ -1030,9 +1031,10 @@ fn apply_custom(
         .max(diameter_min);
 }
 
-/// Which connection_width severities make `min_connection` a floor on the
-/// router's widths (`PCB_MIN_CONNECTION_FLOOR`: `off`, `warning` for error
-/// and warning severity; anything else or unset: error severity only).
+/// Which connection_width severities make `min_connection` (and a custom
+/// `connection_width` rule) a floor on the router's widths
+/// (`PCB_MIN_CONNECTION_FLOOR`: `off`, `errors` for error severity only;
+/// anything else or unset: error and warning severity, since 2026-10-24).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FloorMode {
     Off,
@@ -1043,21 +1045,24 @@ pub(crate) enum FloorMode {
 fn floor_mode() -> FloorMode {
     match std::env::var("PCB_MIN_CONNECTION_FLOOR").as_deref() {
         Ok("off") => FloorMode::Off,
-        Ok("warning") => FloorMode::ErrorsAndWarnings,
-        _ => FloorMode::Errors,
+        Ok("errors") => FloorMode::Errors,
+        _ => FloorMode::ErrorsAndWarnings,
     }
 }
 
 /// The track width floor from the board setup's minimum connection width
 /// and the project's severity of KiCad's connection_width findings. KiCad
 /// checks only with a minimum above 0; a project without the severity
-/// gets KiCad's default, a warning. By default only the error severity
-/// floors the widths (`FloorMode::Errors`): a warning does not fail the
-/// pass rule, and on OpenESC (0.16 over classes of 0.09, warning) the floor
-/// cost routing in route mode (4in1-mini 52 to 89 unconnected, 4in1 104
-/// to 121), so there the designer's choice of a warning is taken at its
-/// word; `PCB_MIN_CONNECTION_FLOOR=warning` floors warnings too. `ignore`
-/// never does.
+/// gets KiCad's default, a warning. By default error and warning severity
+/// floor the widths (`FloorMode::ErrorsAndWarnings`, since 2026-10-24):
+/// once the widths were per layer, OpenESC (0.16 over classes and inner
+/// layers of 0.09, warning; the designer's tracks are never narrower than
+/// 0.16) routed its inner layers at 0.09 and KiCad reported 225 warnings;
+/// with the floor none, no error more, and the unconnected items moved
+/// both ways (4in1-mini 39 to 53, 4in1 30 to 25 at 30 s of work; until
+/// 2026-10-15's measurement the floor cost more, 52 to 89 and 104 to 121,
+/// and only errors floored). `PCB_MIN_CONNECTION_FLOOR=errors` floors
+/// errors only, `off` never; `ignore` never floors.
 pub(crate) fn connection_width_floor(
     min_connection: f64,
     severity: Option<&str>,
@@ -1314,13 +1319,14 @@ mod tests {
             );
             fs::write(&project, text).unwrap();
         };
-        // At warning severity the default sets no floor.
+        // At warning severity the default floors too (since 2026-10-24).
         if std::env::var_os("PCB_MIN_CONNECTION_FLOOR").is_none() {
             write("warning");
             let config = resolve_project_rules(&project, &pcb).unwrap();
-            assert_eq!(config.min_connection_mm, None);
+            assert_eq!(config.min_connection_mm, Some(0.16));
             assert_eq!(config.connection_width_severity.as_deref(), Some("warning"));
-            assert_eq!(config.connection_rules["A"].trace_width_mm, 0.09);
+            assert_eq!(config.connection_rules["A"].trace_width_mm, 0.16);
+            assert_eq!(config.neck_width_mm, Some(0.16));
         }
         write("error");
         let config = resolve_project_rules(&project, &pcb).unwrap();
@@ -1847,6 +1853,71 @@ mod tests {
         );
         assert_eq!(crate::board_placer::largest_clearance(&config), 0.09);
         fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn a_connection_width_floors_the_widths_per_layer() {
+        // OpenESC's layer rules with a custom connection width on the inner
+        // layers (an error), and then the board setup's minimum connection
+        // at warning severity, which floors every layer by default.
+        let with = |min_connection: &str| {
+            format!(
+                r#"{{"board": {{"design_settings": {{"rules": {{"min_clearance": 0.09, "min_track_width": 0.09{min_connection}}},
+                    "rule_severities": {{"connection_width": "error"}}}}}},
+                "net_settings": {{"classes": [{{"name": "Default", "clearance": 0.09, "track_width": 0.09, "via_diameter": 0.35, "via_drill": 0.2}}]}}}}"#
+            )
+        };
+        let dru = r#"(version 1)
+(rule "2 oz outer copper, track width" (constraint track_width (min 0.16mm)) (layer outer))
+(rule "inner connections" (constraint connection_width (min 0.12mm)) (layer inner))"#;
+        let four_layers = |directory: &Path| {
+            let pcb = directory.join("board.kicad_pcb");
+            let text = fs::read_to_string(&pcb).unwrap().replacen(
+                r#"(0 "F.Cu" signal) (2 "B.Cu" signal)"#,
+                r#"(0 "F.Cu" signal) (4 "In1.Cu" signal) (6 "In2.Cu" signal) (2 "B.Cu" signal)"#,
+                1,
+            );
+            fs::write(&pcb, text).unwrap();
+        };
+        let (directory, path) = project_directory("connection-layers", &with(""), Some(dru));
+        four_layers(&directory);
+        let config = resolve_project_rules(&path, &directory.join("board.kicad_pcb")).unwrap();
+        let mins = |config: &KiCadBoardRouterConfig| {
+            config.net_rules.as_ref().unwrap().layer_widths["SDA"]
+                .iter()
+                .map(|width| width.min)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(mins(&config), [0.16, 0.12, 0.12, 0.16]);
+        assert_eq!(config.connection_rules["SDA"].trace_width_mm, 0.09);
+        let report = config.project_rules.as_ref().unwrap();
+        let rule = report
+            .custom_rules
+            .iter()
+            .find(|rule| rule.constraint == "connection_width")
+            .unwrap();
+        assert_eq!(rule.status, "applied", "{}", rule.detail);
+        assert!(report.unmodelled.is_empty(), "{:?}", report.unmodelled);
+        fs::remove_dir_all(&directory).unwrap();
+        // The board setup's 0.16 at warning severity: every layer (the
+        // default mode floors warnings).
+        if std::env::var_os("PCB_MIN_CONNECTION_FLOOR").is_none() {
+            let project = with(", \"min_connection\": 0.16").replace("\"error\"", "\"warning\"");
+            let (directory, path) = project_directory("connection-board", &project, Some(dru));
+            four_layers(&directory);
+            let config = resolve_project_rules(&path, &directory.join("board.kicad_pcb")).unwrap();
+            assert_eq!(config.min_connection_mm, Some(0.16));
+            assert_eq!(config.connection_rules["SDA"].trace_width_mm, 0.16);
+            assert_eq!(config.neck_width_mm, Some(0.16));
+            if let Some(widths) = config
+                .net_rules
+                .as_ref()
+                .and_then(|rules| rules.layer_widths.get("SDA"))
+            {
+                assert!(widths.iter().all(|width| width.min >= 0.16), "{widths:?}");
+            }
+            fs::remove_dir_all(&directory).unwrap();
+        }
     }
 
     /// A project with mask, edge and hole rules, a minimum connection at
