@@ -1,10 +1,10 @@
 /target/
 /build/
 /dist/
-/artifacts/
+/artifacts
 /run/*
 !/run/.gitkeep
-/benchmarks/real/external/
+/benchmarks/real/external
 /target-exp*/
 /benchmarks/corpus/freerouting-2.2.4.jar
 __pycache__/
