@@ -1371,6 +1371,178 @@ pub fn ablate_kicad_placement(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use placer::{Component, Pin, Pose, Problem, Side};
+
+    /// A front part `size` wide and high with pads given as local boxes,
+    /// one net per pad.
+    fn part(name: &str, size: [f64; 2], pads: Vec<[f64; 4]>, net: usize) -> Component {
+        Component {
+            name: name.into(),
+            body_center: [0.0, 0.0],
+            body_size: size,
+            round: false,
+            halo: 0.0,
+            pins: pads
+                .iter()
+                .map(|pad| Pin {
+                    offset: [(pad[0] + pad[2]) / 2.0, (pad[1] + pad[3]) / 2.0],
+                    net,
+                })
+                .collect(),
+            side: Side::Front,
+            fixed: false,
+            angle_options: vec![0.0, 90.0, 180.0, 270.0],
+            far_side: Vec::new(),
+            far_copper: Vec::new(),
+            far_courtyard: Vec::new(),
+            hollow: Vec::new(),
+            tight: None,
+            edge_inset: 0.0,
+            courtyards: Vec::new(),
+            holes_inside: false,
+            pads,
+            copper_only: false,
+            cutout_outline: Vec::new(),
+            tight_hollow: Vec::new(),
+        }
+    }
+
+    /// A passive of two 0.6 x 1 mm pads, 2 mm over both, its courtyard
+    /// 2.4 x 1.4 mm.
+    fn passive(name: &str) -> Component {
+        part(
+            name,
+            [2.4, 1.4],
+            vec![[-1.0, -0.5, -0.4, 0.5], [0.4, -0.5, 1.0, 0.5]],
+            0,
+        )
+    }
+
+    fn pose(x: f64, y: f64) -> Pose {
+        Pose {
+            position: [x, y],
+            angle: 0.0,
+        }
+    }
+
+    fn problem(components: Vec<Component>, poses: Vec<Pose>) -> Problem {
+        Problem {
+            outline: vec![[-50.0, -50.0], [50.0, -50.0], [50.0, 50.0], [-50.0, 50.0]],
+            components,
+            net_weights: vec![1.0; 2],
+            poses,
+            spacing: 0.2,
+            grid: 0.1,
+            edge_margin: 0.5,
+            min_spacing: 0.2,
+            constraints: Default::default(),
+            far_side_pads_only: false,
+            shared_halos: false,
+            pieces: Vec::new(),
+            escape: None,
+        }
+    }
+
+    fn info(reference: &str, pads: usize) -> Part {
+        Part {
+            reference: reference.into(),
+            pads,
+            connector: false,
+            designer: [0.0; 3],
+            designer_back: false,
+            ours_back: false,
+        }
+    }
+
+    #[test]
+    fn pads_closer_than_the_gap_conflict_touching_courtyards_do_not() {
+        let problem = problem(vec![passive("R1"), passive("R2")], vec![pose(0.0, 0.0); 2]);
+        // Pads 0.2 mm apart end to end: no conflict; 0.05 mm: conflict.
+        assert!(!conflict(&problem, 0, pose(0.0, 0.0), 1, pose(2.2, 0.0)));
+        assert!(conflict(&problem, 0, pose(0.0, 0.0), 1, pose(2.05, 0.0)));
+        // Courtyards (2.4 x 1.4 mm) overlapping by 0.1 mm side by side,
+        // the pads 0.3 mm apart: designers do that.
+        assert!(!conflict(&problem, 0, pose(0.0, 0.0), 1, pose(0.0, 1.3)));
+        // Other sides never meet.
+        let mut back = passive("R3");
+        back.side = Side::Back;
+        let problem = Problem {
+            components: vec![passive("R1"), back],
+            ..problem
+        };
+        assert!(!conflict(&problem, 0, pose(0.0, 0.0), 1, pose(0.0, 0.0)));
+    }
+
+    #[test]
+    fn a_body_mostly_on_another_conflicts_without_pads_meeting() {
+        // A 10 x 10 mm part with pads only at its rim, a passive in its
+        // middle: no pad meets, the body does.
+        let big = part(
+            "U1",
+            [10.0, 10.0],
+            vec![[-5.0, -5.0, -4.0, -4.0], [4.0, 4.0, 5.0, 5.0]],
+            1,
+        );
+        let problem = problem(vec![big, passive("C1")], vec![pose(0.0, 0.0); 2]);
+        assert!(conflict(&problem, 0, pose(0.0, 0.0), 1, pose(0.0, 0.0)));
+    }
+
+    #[test]
+    fn repair_moves_only_what_the_group_lands_on_to_the_nearest_free_spot() {
+        // U1 (the group) lands on C1; C2 stays where it was, far away.
+        let big = part(
+            "U1",
+            [6.0, 6.0],
+            vec![[-3.0, -3.0, -2.0, 3.0], [2.0, -3.0, 3.0, 3.0]],
+            1,
+        );
+        let mut poses = vec![pose(0.0, 0.0), pose(0.5, 0.0), pose(20.0, 20.0)];
+        let problem = problem(vec![big, passive("C1"), passive("C2")], poses.clone());
+        let group: BTreeSet<usize> = [0].into();
+        let (moved, unplaced) = repair(&problem, &mut poses, &group, 3);
+        assert!(unplaced.is_empty());
+        assert_eq!(moved.len(), 1);
+        assert_eq!(moved[0].0, 1);
+        assert_eq!(poses[2], pose(20.0, 20.0));
+        assert_eq!(poses[0], pose(0.0, 0.0));
+        assert!(!conflict(&problem, 0, poses[0], 1, poses[1]));
+        // The nearest free spot is at most a grid step beyond where C1's
+        // body clears U1's (3 mm half width plus 1.2 mm, from 0.5 mm off
+        // centre), and it has to move at least until the pads clear.
+        assert!(moved[0].1 < 3.7 + 0.25, "moved {}", moved[0].1);
+        assert!(moved[0].1 > 1.0, "moved {}", moved[0].1);
+    }
+
+    #[test]
+    fn a_nudge_moves_one_passive_outside_the_avoided_parts_without_new_conflicts() {
+        let mut poses = vec![pose(0.0, 0.0), pose(10.0, 0.0), pose(1.25, 0.0)];
+        let problem = problem(
+            vec![passive("R1"), passive("R2"), passive("R3")],
+            poses.clone(),
+        );
+        let parts = vec![info("R1", 2), info("R2", 2), info("R3", 2)];
+        let avoid: BTreeSet<usize> = [1].into();
+        let before = poses.clone();
+        let nudged = nudge_passive(
+            &problem,
+            &mut poses,
+            &[0, 1, 2],
+            &parts,
+            4,
+            &avoid,
+            0,
+            1,
+            0.1,
+        )
+        .expect("a passive moves");
+        assert_ne!(nudged, 1);
+        let changed: Vec<usize> = (0..3)
+            .filter(|index| poses[*index] != before[*index])
+            .collect();
+        assert_eq!(changed, vec![nudged]);
+        let moved_by = distance(poses[nudged].position, before[nudged].position);
+        assert!((moved_by - 0.1).abs() < 1.0e-9);
+    }
 
     #[test]
     fn connectors_by_reference_or_library() {
