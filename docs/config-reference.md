@@ -135,7 +135,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `topological_rounds` | `Option<usize>` | unset | - | Rip-up rounds of the topological engine (default 30). |
 | `topological` | `KiCadTopologicalConfig` | its own table | - | Weights of the topological engine (defaults in `pcb_topo::Config`). |
 | `tighten` | `bool` | `false` | - | Pull the lattice router's tracks tight afterwards (any-angle tracks with arcs, as the topological engine draws them), wherever the result stays legal. |
-| `pours` | `KiCadPourMode` | `"auto"` | router.md | How nets with copper pours are connected. |
+| `pours` | `KiCadPourMode` | `"auto"` | router.md, placer.md | How nets with copper pours are connected. |
 | `add_pours` | `Vec<KiCadPourRequest>` | `[]` | router.md | Copper pours to add before routing, such as a ground plane on the bottom: each covers the board outline on its layers. |
 | `net_classes` | `Vec<crate::net_classes::KiCadNetClassRequest>` | `[]` | - | Net classes to add: track width, clearance and vias for named nets, ahead of the project's own classes and written into its `.kicad_pro`. |
 | `pin_swaps` | `Option<PathBuf>` | unset | placer.md | Interchangeable pins (`pin-swaps.json`; relative to the source directory). The nets on them are permuted before routing, in the board and the schematic. |
