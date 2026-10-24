@@ -60,7 +60,8 @@ work constants) and the small helpers; `router/` has one file per part of
 `free_thermal_spokes`, `free_lost_spokes`), `prepare` (a net's search state),
 `stamping` (occupancy, rip-up, conflicts), `route_net`, `planner` (tile
 corridors), `capacitated` (the capacitated corridors, an experiment),
-`search` (the lattice A*), `update`, `batching`, `global`, `driver` (the phases, budgets and clocks), `fixed`, `negotiate`,
+`search` (the lattice A*), `update`, `batching`, `global`, `driver`
+(the phases, budgets and clocks), `fixed`, `negotiate`,
 `pour_refresh`, `vias` (via reduction), `finish`, `pour_analysis`, `fill`
 (the fill probe), `spokes` (KiCad's spoke model), `manual_spokes`,
 `pour_dump`, `stitch`, `cleanup`, `resolve` (the hard repair), `output`;
