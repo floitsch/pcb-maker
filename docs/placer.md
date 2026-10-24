@@ -1115,6 +1115,41 @@ since 2026-10-24: `escape_demand` absent means the defaults above;
 same board byte for byte as main on 4in1-mini). `place-kicad-board`
 runs on the estimate alone (no router rules, so no measured version).
 
+## Only thermals starved: the pads solid first (2026-10-24)
+
+The layout's final route used to start route mode's ladder with the pour
+nets as tracks whenever KiCad found a starved thermal, also when KiCad and
+the router both found every connection (`current.1 > 0` in
+`board_layout.rs`). On the short tier's 0xCB 1337-v4.0 that ran 3 to 6
+attempts and 389 to 616 s of work, and then `solidify_starved_thermals`
+fixed the pad in one KiCad check anyway. Now, when only thermals are
+starved (0 unconnected by KiCad and by the router, no internal
+violation, pours connected, `pours` auto), the starved pads go solid
+first (one KiCad check, charged as work; kept only when KiCad finds the
+board better, `solid_kept`), and the ladder runs only when that leaves a
+starved thermal or anything open (`layout: only thermals starved: the
+starved pads solid first: ...` on stderr). The try after the ladder runs
+only on a board the ladder kept. Every other path is unchanged.
+
+Measured with x1754 (main 3036703) against x1780 (the change), 3 jobs x
+2 threads, `--min-free-gb 10`, beside other agents' runs, tasks v7 at the
+task budgets (the eleven dense boards) and the short tier at its third:
+
+| Board | KiCad unconnected | work s | vias | path (x1754 / x1780) |
+| --- | ---: | ---: | ---: | --- |
+| 0xCB 1337-v4.0 (short tier) | 0 / 0 | 498 / 109 | 64 / 72 | ladder, its last attempt kept / solid first |
+| framework_mobo_lefthalf | 0 / 0 | 392 / 122 | 76 / 96 | ladder, its first attempt kept then solid / solid first |
+| eternal-keypad | 0 / 0 | 113 / 73 | 34 / 34 | ladder, none kept, then solid / solid first (the same board) |
+
+Three of 23 boards took the new path (all on the short tier: every dense
+board has connections open after its first route), and on all three the
+solid pads left nothing starved or open, so no ladder ran after them.
+Passes and DRC errors are equal on every board (eternal-keypad's one
+`shorting_items` on both). The ladder's boards it replaces had fewer vias
+on two boards (8 and 20 more without it); the work falls 699 s over the
+three. On the other 20 boards (11 dense, 9 short) the result boards are
+byte-identical. Logs `build/fix3-{dense,dense2,short,cb}-x{1754,1780}`.
+
 ## Routes survive moves (2026-10-23)
 
 Florian's idea 2: "make it easier to move components without losing all

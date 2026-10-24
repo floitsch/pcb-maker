@@ -11,6 +11,91 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-24 (thermals solidify first; the ledger test; ordered admission)
+
+Three fixes, branch three-fixes on main 3036703; snapshot x1780 (the
+first fix; the ledger changes do not change results).
+
+**Thermals solidify first** (board_layout.rs; docs/placer.md, "Only
+thermals starved: the pads solid first"). Where KiCad and the router find
+every connection and only thermals are starved, the starved pads go solid
+before the pours-as-tracks ladder, which runs only if that leaves anything
+starved or open. x1754 against x1780 (3 x 2, `--min-free-gb 10`, tasks
+v7 at the task budgets; the short tier at its third):
+
+| Set | KiCad unconnected | new DRC errors | work s | took the new path | byte-identical boards |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| eleven dense boards | 916 / 916 | 4 / 4 | 14952 / 14952 | 0 of 11 | 11 of 11 |
+| short tier | 18 / 18 | 5 / 5 | 3329 / 2630 | 3 of 12 | 9 of 12 |
+| 0xCB 1337-v4.0 alone (the case) | 0 / 0 | 0 / 0 | 498 / 109 | 1 | - |
+
+The three boards on the new path (0xCB 1337-v4.0, framework_mobo_lefthalf,
+eternal-keypad) end with nothing starved or open as before, passes equal,
+at 389, 270 and 40 s less work; the ladder's kept boards had 8 and 20
+fewer vias on the first two (64 against 72, 76 against 96); eternal-keypad's
+board is the same. No board needed the ladder after the solid pads.
+
+**The ledger test** (`cli_exit_codes::routes_side_by_side_serialise_through_the_memory_ledger`,
+seen failing once in check.sh under load by two agents). It already had a
+private ledger (`<scratch>/ledger.json`, `PCB_MAKER_LEDGER`), so the
+machine's ledger was not the cause. Two timing assumptions were:
+
+- **A 25 ms hold sampled every 5 ms.** A debug route of the test board
+  spends about 11 s (its work-rate calibration) before it reserves and
+  then holds its 790 MB for about 25 ms (probe: ledger states every 2 ms).
+  The test sampled the ledger every 5 ms through the ledger's lock and
+  wanted to see one route holding; a test thread descheduled for longer
+  than a hold misses it, and missing both gives `most` 0, failing with
+  "both routes held memory at once".
+- **A holder of 60 s and 60 s to start.** The third process was
+  `sleep 60` and the routes had 60 s to be seen waiting. Under load the
+  routes took 15 to 30 s to reach the ledger (probe at load 46 to 56), and
+  in one of ten whole-suite runs beside a cargo build the test ran past
+  60 s; a route reaching the ledger after the holder ended never waits.
+
+Now the routes write their stderr into one pipe, which keeps the order of
+the writes, and the test asserts the order of the markers in it: a
+route's admission (`memory ledger: reserved`), then that route's last line
+(`...; see <out>/verdict.json`, written before it releases its reservation
+at exit), then the other's admission and last line. The literal parts of a
+line are written whole (one write each, atomic in a pipe), so the markers
+survive interleaving. The holder sleeps an hour (killed by the test) and
+the routes have 600 s to wait. Failures of the test, before / after:
+
+| Runs | before (main) | after |
+| --- | --- | --- |
+| the test alone, 20 times | 0 / 20 | 0 / 20 |
+| alone beside a looping `cargo build --release -j 32` (load 28-39), 10 times | 0 / 10 | 0 / 10 |
+| the whole cli_exit_codes binary beside the looping build (load 24-45), 10 times | 0 / 10 | 0 / 10 |
+
+The failure did not reproduce in 30 loaded runs before the change; the
+causes above are what the probes measured, not an observed failure.
+
+**Ordered admission** (crates/pcb-kicad/src/ledger.rs `order_allows`,
+benchmarks/harness_common.py the same rule; docs/benchmarks.md, "Memory
+ledger: who runs next"). A waiting request is in the ledger (megabytes 0,
+`waiting_mb`, `waiting_since`; run.py's waiting boards too now), and a new
+request may pass the one that has waited longest only while both fit (the
+oldest fits now) or, while the oldest cannot fit, only with room for it
+beside every reservation that began holding after it began waiting
+(`held_since`), so it fits at the latest when the runs it waits on end.
+Holders that grow and binaries admitted by a harness are not held back;
+a waiter held back only by its harness's floor (`waits_on_floor`) is
+passed as when it cannot fit. `--lock` is unchanged. Tests: the unit test
+`the_request_that_waited_longest_is_not_passed` (Rust) and test_run.py's
+`test_ordered_admission_does_not_pass_the_request_that_waited_longest`,
+`test_a_waiting_request_is_in_the_ledger_and_newer_ones_let_it_go_first`
+and `test_two_processes_are_admitted_in_the_order_they_began_waiting`
+(two harness processes; both fail on main's harness_common). Smoke with
+the binaries (4000 MB in all, a holder of 3000, a harness process waiting
+for 3500, then `route-kicad-board` of a 773 MB reservation that fits
+beside the holder but would leave the harness short): x1754's route went
+at once and ended at 1.3 s, 5 s before the harness got its memory; the
+branch's route waited ("behind an older request, harness: large (pid
+..., waiting 3 s for 3500 MB)") and reserved 8 s later, after the
+harness's run released. No known-issue note about the ledger was in
+docs/benchmarks.md to remove.
+
 ## Committed on 2026-10-24 (escape demand on by default)
 
 The seed confirmation the escape-demand experiment proposed (docs/placer.md,
