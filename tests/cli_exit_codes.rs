@@ -1780,16 +1780,31 @@ fn kicad_cli_is_checked_before_any_work() {
 /// process holds most of it, then they go one after the other, never both
 /// reserved at once, and both finish with their verdicts; the ledger is
 /// empty afterwards. `pcb-maker ledger` lists who holds what.
+///
+/// One after the other is read from the order of their logs, not from
+/// the ledger's state over time: both routes write their stderr into one
+/// pipe, which keeps the order of the writes, and a route's admission
+/// ("memory ledger: reserved") comes after the other route's last line
+/// ("...; see <its output>/verdict.json", written before it releases its
+/// reservation at exit). Until 2026-10-24 the test sampled the ledger
+/// every 5 ms and wanted to see one route holding memory: a route of this
+/// board holds its reservation for about 25 ms after 11 s of setup, and
+/// under load the sampler missed both holds (most 0: "both routes held
+/// memory at once"). The literal parts of a line are written whole (one
+/// write each, atomic in a pipe), so the markers stay intact even where two
+/// lines interleave.
 #[test]
 fn routes_side_by_side_serialise_through_the_memory_ledger() {
     use pcb_kicad::ledger::{Ledger, Reservation, start_ticks};
+    use std::io::Read;
     let root = scratch("ledger");
     let project = project(&root);
     let path = root.join("ledger.json");
     let ledger = Ledger::at(&path);
-    // A third process holding 900 of the 1000 MB.
+    // A third process holding 900 of the 1000 MB (killed below; it lives
+    // long enough for the slowest start under load).
     let mut holder = std::process::Command::new("sleep")
-        .arg("60")
+        .arg("3600")
         .spawn()
         .unwrap();
     ledger
@@ -1800,7 +1815,7 @@ fn routes_side_by_side_serialise_through_the_memory_ledger() {
                 start_ticks: start_ticks(holder.id()),
                 megabytes: 900.0,
                 label: "another run".into(),
-                waiting_mb: None,
+                ..Default::default()
             })
         })
         .unwrap();
@@ -1816,6 +1831,7 @@ fn routes_side_by_side_serialise_through_the_memory_ledger() {
         "{listed}"
     );
     assert!(listed.contains("another run"), "{listed}");
+    let (mut reader, writer) = std::io::pipe().unwrap();
     let routes: Vec<_> = ["a", "b"]
         .iter()
         .map(|name| {
@@ -1833,12 +1849,18 @@ fn routes_side_by_side_serialise_through_the_memory_ledger() {
                     "auto",
                 ])
                 .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::piped())
+                .stderr(writer.try_clone().unwrap())
                 .spawn()
                 .unwrap();
             (out, child)
         })
         .collect();
+    drop(writer);
+    let logs = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).unwrap();
+        String::from_utf8_lossy(&bytes).into_owned()
+    });
     let pids: Vec<u32> = routes.iter().map(|(_, child)| child.id()).collect();
     // Both wait for the holder: they are in the ledger, holding nothing.
     let started = std::time::Instant::now();
@@ -1852,40 +1874,46 @@ fn routes_side_by_side_serialise_through_the_memory_ledger() {
             break;
         }
         assert!(
-            started.elapsed().as_secs() < 60,
+            started.elapsed().as_secs() < 600,
             "the routes never waited: {live:?}"
         );
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     holder.kill().unwrap();
     holder.wait().unwrap();
-    // From now on at most one of them holds memory at a time.
-    let mut most = 0;
-    let mut ended = false;
-    while !ended {
-        let live = ledger.live().unwrap();
-        most = most.max(
-            live.iter()
-                .filter(|r| pids.contains(&r.pid) && r.megabytes > 0.0)
-                .count(),
-        );
-        ended = live.iter().all(|r| !pids.contains(&r.pid))
-            && pids.iter().all(|pid| !pcb_kicad::ledger::alive(*pid, None));
-        assert!(started.elapsed().as_secs() < 300, "{live:?}");
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    assert_eq!(most, 1, "both routes held memory at once");
     for (out, child) in routes {
         let output = child.wait_with_output().unwrap();
-        let log = stderr(&output);
-        assert_eq!(code(&output), 1, "{log}");
-        assert!(log.contains("memory ledger: waiting to reserve"), "{log}");
-        assert!(log.contains("after waiting"), "{log}");
+        assert_eq!(code(&output), 1);
         assert_eq!(
             verdict(&out.join("board-router.json"))["status"],
             "router_complete_unverified"
         );
     }
+    let log = logs.join().unwrap();
+    // The order of the admissions and the routes' last lines in the pipe.
+    let mut events: Vec<(usize, String)> = log
+        .match_indices("memory ledger: reserved ")
+        .map(|(at, _)| (at, "reserved".to_string()))
+        .collect();
+    for name in ["a", "b"] {
+        let last = format!("{}/verdict.json", root.join(name).display());
+        events.extend(
+            log.match_indices(&last)
+                .map(|(at, _)| (at, name.to_string())),
+        );
+    }
+    events.sort();
+    let order: Vec<&str> = events.iter().map(|(_, what)| what.as_str()).collect();
+    assert!(
+        order == ["reserved", "a", "reserved", "b"] || order == ["reserved", "b", "reserved", "a"],
+        "the routes did not go one after the other: {order:?}\n{log}"
+    );
+    // (Said again each minute a route waits.)
+    assert!(
+        log.matches("memory ledger: waiting to reserve ").count() >= 2,
+        "{log}"
+    );
+    assert_eq!(log.matches("after waiting").count(), 2, "{log}");
     assert_eq!(ledger.live().unwrap(), vec![]);
     fs::remove_dir_all(root).unwrap();
 }
