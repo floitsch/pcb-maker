@@ -11,6 +11,120 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-24 (connection width floor; via rules per layer)
+
+Branch connection-width-and-vias, snapshot x14300 (every table below:
+x1815, main before the branch, against x14300).
+
+- **The gap.** Once the widths were per layer (x14291), OpenESC's inner
+  layers routed at the classes' 0.09 mm, and KiCad reported 225
+  connection_width warnings (2 before): the board setup's minimum
+  connection is 0.16 mm at warning severity, and only error severity
+  floored the router's widths (`FloorMode::Errors`, 2026-10-15). A custom
+  `connection_width` rule was `unmodelled`.
+- **Custom rules** (`dru.rs`). A `connection_width` rule's minimum lowers
+  as a `track_width` minimum: per net, per layer where it holds on some
+  layers only (`Lowered::layer_width_min`, then `NetRules::layer_widths`
+  as the width rules), the neck-downs with it, reported `applied`
+  ("connection width at least 0.15 mm: a floor on the track width"); max
+  and opt are not read (KiCad's check has a minimum only). It floors
+  where the project's connection_width severity (or the rule's own
+  `(severity ...)`) is an error and, with the new default, a warning
+  (`BoardFacts::connection_floor_warnings`).
+- **The default.** The board setup's `min_connection` (and the custom
+  rules) floor at warning severity too: `FloorMode::ErrorsAndWarnings`;
+  `PCB_MIN_CONNECTION_FLOOR=errors` gives the old default, `off` none.
+  Of the 60 boards measured (the 14 with a .kicad_dru, the expansion
+  tier's 46), 17 state a minimum connection; it exceeds the board's
+  minimum track width (so the floor can move a width) on OpenESC's two
+  4in1 boards only. Their inner layers route at 0.16 mm again, as the
+  designer's do (no designer track narrower than 0.16 on any layer;
+  KiCad finds 1 and 0 connection_width warnings on the designer's
+  boards). With the floor the rows are x1814's exactly (every layer 0.16:
+  the per-layer widths collapse to one).
+- **Via rules per layer: the census.** KiCad 10.0.7 on a four-layer test
+  board with one through via (0.4/0.2 mm), one rule at a time: a
+  `hole_size` rule holds whatever its layer clause; `via_diameter` and
+  `annular_width` are evaluated on F.Cu only for a via of one size (a
+  rule on `inner` or `B.Cu` never fires, `outer` and `F.Cu` do); `disallow
+  via` with any layer clause catches the via, `A.Layer == 'In1.Cu'` does
+  not. The lowering takes a via rule where any of its layers holds: exact
+  for holes and for rules that include F.Cu, more than KiCad asks for
+  diameter and annulus rules off F.Cu (no error). What the 60 boards ask:
+  36 via, hole and annulus rules on 9 boards (the laptop motherboard and
+  power board, tuxkeychain: JLCPCB's template; ErgoSNM; AMLing2's drone
+  carrier; minuet light and FUEL4EP: one template; the power manifold),
+  every one on every layer but four with `(layer outer)`: minuet light's
+  and FUEL4EP's "Annular ring width (via and PTH)" (0.075 mm, outer
+  includes F.Cu: exact) and three hole rules on NPTH and castellated pads
+  (no via matches). All are `no_effect` (the classes and the board setup
+  keep them; or no via matches) but two of the power manifold's that
+  depend on the via's own size (`unmodelled`). No board has `via_count`,
+  `disallow via` or a via rule with a layer condition. Nothing was
+  implemented for vias: no board asks.
+- **Tests.** `a_connection_width_rule_floors_the_track_width` (dru: on
+  the inner layers per layer, a class per net, skipped at warning
+  severity unless warnings floor, a rule's own warning, a rule the
+  classes and necks keep); `a_connection_width_floors_the_widths_per_layer`
+  (project: OpenESC's outer width rule with an inner connection rule
+  gives the layers 0.16, 0.12, 0.12, 0.16 and `applied`; the board's 0.16
+  at warning severity floors every layer and the neck);
+  `the_minimum_connection_floors_the_project_widths` now expects the
+  floor at warning severity.
+
+**The 14 boards with a .kicad_dru**, route mode on the designer's
+placement (`--tier designer --budget-scale 0.02`: 30 s of work, one
+thread, 4 jobs, `--min-free-gb 10`), x1815 against x14300; KiCad's
+errors (every type, the same types and counts on both sides on every
+board), its connection_width warnings, unconnected items, vias and
+length:
+
+| Board | errors | connection_width warnings | unconnected | vias | length mm | routed |
+| --- | --- | --- | --- | --- | --- | --- |
+| power | 11 -> 11 | 0 -> 0 | 9 -> 9 | 118 -> 118 | 2189 -> 2189 | 106/115 -> 106/115 |
+| Sisu_SSE-9 | 11 -> 11 | 1 -> 1 | 108 -> 108 | 168 -> 168 | 3477 -> 3477 | 144/192 -> 144/192 |
+| MokyaLora | 6 -> 6 | 1 -> 1 | 61 -> 61 | 165 -> 165 | 4502 -> 4502 | 238/262 -> 238/262 |
+| module | 22 -> 22 | 0 -> 0 | 226 -> 226 | 68 -> 68 | 1027 -> 1027 | 56/223 -> 56/223 |
+| 4in1 | 0 -> 0 | 138 -> 0 | 30 -> 25 | 154 -> 146 | 2149 -> 2106 | 130/152 -> 133/152 |
+| 4in1-mini | 0 -> 0 | 85 -> 0 | 39 -> 53 | 119 -> 113 | 1452 -> 1483 | 127/152 -> 122/152 |
+| WLED_Matrix | 93 -> 93 | 0 -> 0 | 2 -> 2 | 82 -> 82 | 1838 -> 1838 | 100/104 -> 100/104 |
+| OpenFC | 4 -> 4 | 0 -> 0 | 4 -> 4 | 132 -> 132 | 1590 -> 1590 | 78/82 -> 78/82 |
+| ErgoSNM_keyboard | 3 -> 3 | 0 -> 0 | 0 -> 0 | 29 -> 29 | 4321 -> 4321 | 58/58 -> 58/58 |
+| PCB | 3 -> 3 | 0 -> 0 | 0 -> 0 | 120 -> 120 | 1956 -> 1956 | 54/54 -> 54/54 |
+| USB_Keypad | 80 -> 80 | 0 -> 0 | 0 -> 0 | 60 -> 60 | 1619 -> 1619 | 39/39 -> 39/39 |
+| link | 30 -> 30 | 0 -> 0 | 191 -> 191 | 145 -> 145 | 5544 -> 5544 | 164/251 -> 164/251 |
+| motherboard | 270 -> 270 | 0 -> 0 | 161 -> 161 | 126 -> 126 | 4552 -> 4552 | 138/236 -> 138/236 |
+| SUMEC_MK_IV | 12 -> 12 | 0 -> 0 | 6 -> 6 | 90 -> 90 | 1631 -> 1631 | 66/69 -> 66/69 |
+| total | 545 -> 545 | 225 -> 2 | 837 -> 846 | 1576 -> 1562 | 37846 -> 37834 | |
+
+No new error; 223 warnings gone; the unconnected items move on the two
+OpenESC boards alone, both ways (+14, -5), to x1814's rows exactly (the
+same widths: 0.16 on every layer). The three CDFER boards (connection
+width an error) floored before and route the same; the other boards
+with a minimum connection at warning severity (Sisu, MokyaLora, OpenFC,
+Sumec) have it at or below the board's minimum track width.
+
+**Expansion tier** (46 boards, 8 x 1, x1815 against x14300): 46 rows
+identical (routed, vias, length, work seconds, open connections, KiCad's
+findings, pass and outcome class); 20/46 pass in both. Eight of its boards
+state a minimum connection at warning severity (DIYSynth, nixie_board,
+OpenRX-Mono, node_v6, LC-MARE, minuet light, facade60, anthracite), all at
+or below their minimum track width: the floor is set (board-router.json's
+`rules.width_floor_mm`) and changes no width.
+
+**Layout mode** (4in1-mini, task budget, placer seed 1, 1 job x 2
+threads, tasks v7, x1815 against x14300, one run each): 0 -> 0 errors,
+connection_width warnings 92 -> 1, unconnected 91 -> 95, vias 122 ->
+118, length 1341 -> 1478 mm, routed 89/152 -> 88/152 (x1815's row is
+x14291's, x14300's x1814's: both deterministic at the seed). One run
+each is no evidence of a routing gain or loss.
+
+The call: a warning does not fail the pass rule, and the floor costs
+routing on 4in1-mini (+14 unconnected in route mode, +4 in the layout)
+and gains on 4in1 (-5); `PCB_MIN_CONNECTION_FLOOR=errors` restores
+x1815's behaviour if the routing matters more than the designer's 0.16 mm
+minimum.
+
 ## Committed on 2026-10-24 (per-layer track width and clearance)
 
 Branch per-layer-rules, snapshots x14290 (the router, measured on the
