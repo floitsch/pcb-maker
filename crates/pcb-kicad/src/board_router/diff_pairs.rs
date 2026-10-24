@@ -2136,11 +2136,78 @@ fn prune_stub(
     }
 }
 
-/// Removes `net`'s tracks with an end that lies in nothing else of the
-/// net (no other track's copper there but those meeting its other end, no
-/// via, no pad or kept copper: KiCad's test, which finds a track end
-/// dangling that only overlaps the next track's copper), and its vias that
-/// join copper on fewer than two layers, until none is left.
+/// The pieces of copper `route` and `own` (a net's pads and kept copper)
+/// make, as the router joins copper (overlap), without the segment
+/// `without`.
+fn pieces(route: &core::NetRoute, own: &[&core::Obstacle], without: Option<usize>) -> usize {
+    let (o, n) = (own.len(), route.segments.len());
+    let total = o + n + route.vias.len();
+    let mut parent: Vec<usize> = (0..total).collect();
+    let joined = |a: usize, b: usize| -> bool {
+        let segment = |index: usize| &route.segments[index - o];
+        let via = |index: usize| &route.vias[index - o - n];
+        match (a < o, a >= o && a < o + n, b < o, b >= o && b < o + n) {
+            (true, _, true, _) => false,
+            (true, _, _, true) | (_, true, true, _) => {
+                let (obstacle, track) = if a < o {
+                    (own[a], segment(b))
+                } else {
+                    (own[b], segment(a))
+                };
+                obstacle.layers & (1 << track.layer) != 0
+                    && obstacle.shape.distance_to_segment(track.start, track.end)
+                        <= track.width / 2.0 + 1.0e-6
+            }
+            (true, _, _, false) | (_, false, true, _) => {
+                let (obstacle, hole) = if a < o {
+                    (own[a], via(b))
+                } else {
+                    (own[b], via(a))
+                };
+                obstacle.shape.distance_to_point(hole.at) <= hole.diameter / 2.0 + 1.0e-6
+            }
+            (_, true, _, true) => {
+                let (x, y) = (segment(a), segment(b));
+                x.layer == y.layer
+                    && core::geometry::segment_segment_distance(x.start, x.end, y.start, y.end)
+                        <= (x.width + y.width) / 2.0 + 1.0e-6
+            }
+            (_, true, _, false) | (_, false, _, true) => {
+                let (track, hole) = if a < o + n {
+                    (segment(a), via(b))
+                } else {
+                    (segment(b), via(a))
+                };
+                core::geometry::point_segment_distance(hole.at, track.start, track.end)
+                    <= (track.width + hole.diameter) / 2.0 + 1.0e-6
+            }
+            (_, false, _, false) => false,
+        }
+    };
+    let skip = without.map(|index| o + index);
+    for a in 0..total {
+        for b in a + 1..total {
+            if Some(a) != skip && Some(b) != skip && joined(a, b) {
+                let (x, y) = (root(&mut parent, a), root(&mut parent, b));
+                if x != y {
+                    parent[x.max(y)] = x.min(y);
+                }
+            }
+        }
+    }
+    (0..total)
+        .filter(|&item| Some(item) != skip && root(&mut parent, item) == item)
+        .count()
+}
+
+/// Removes `net`'s tracks with an end that joins nothing else of the net
+/// (no track, via, pad or kept copper its copper overlaps there, but the
+/// tracks meeting its other end), and its vias that join no copper (a via
+/// with copper on one layer stays: a zone, a designer's teardrop, may hold
+/// it), until none is left; also a track no longer than its
+/// width whose end lies in no other copper (KiCad finds such an end
+/// dangling though it overlaps the next track) where removing it splits no
+/// piece of the net's copper.
 fn prune_dangling(board: &core::Board, route: &mut core::NetRoute, net: core::NetId) {
     let own: Vec<&core::Obstacle> = board
         .obstacles
@@ -2148,37 +2215,45 @@ fn prune_dangling(board: &core::Board, route: &mut core::NetRoute, net: core::Ne
         .filter(|obstacle| obstacle.net == Some(net) && obstacle.kind == core::ObstacleKind::Copper)
         .collect();
     let near = |a: Point, b: Point| core::geometry::distance(a, b) < 1.0e-6;
+    // Whether the end `point` of segment `index` (its other end `far`) is
+    // held: by overlap, or (`inside`) by lying in the other track's copper.
+    let held = |route: &core::NetRoute, index: usize, point: Point, far: Point, inside: bool| {
+        let segment = &route.segments[index];
+        let half = segment.width / 2.0;
+        route.segments.iter().enumerate().any(|(other, candidate)| {
+            other != index
+                && candidate.layer == segment.layer
+                && !(near(candidate.start, far) || near(candidate.end, far))
+                && core::geometry::point_segment_distance(point, candidate.start, candidate.end)
+                    <= candidate.width / 2.0 + if inside { 0.0 } else { half } + 1.0e-6
+        }) || route.vias.iter().any(|via| {
+            core::geometry::distance(via.at, point) <= via.diameter / 2.0 + half + 1.0e-6
+        }) || own.iter().any(|obstacle| {
+            obstacle.layers & (1 << segment.layer) != 0
+                && obstacle.shape.distance_to_point(point) <= half + 1.0e-6
+        })
+    };
+    let ends =
+        |segment: &core::Segment| [(segment.start, segment.end), (segment.end, segment.start)];
     loop {
-        let dangling = route
-            .segments
-            .iter()
-            .enumerate()
-            .position(|(index, segment)| {
-                [(segment.start, segment.end), (segment.end, segment.start)]
-                    .into_iter()
-                    .any(|(point, far)| {
-                        let other_track =
-                            route.segments.iter().enumerate().any(|(other, candidate)| {
-                                other != index
-                                    && candidate.layer == segment.layer
-                                    && !(near(candidate.start, far) || near(candidate.end, far))
-                                    && core::geometry::point_segment_distance(
-                                        point,
-                                        candidate.start,
-                                        candidate.end,
-                                    ) <= candidate.width / 2.0 + 1.0e-6
-                            });
-                        let via = route.vias.iter().any(|via| {
-                            core::geometry::distance(via.at, point) <= via.diameter / 2.0 + 1.0e-6
-                        });
-                        let copper = own.iter().any(|obstacle| {
-                            obstacle.layers & (1 << segment.layer) != 0
-                                && obstacle.shape.distance_to_point(point) <= 1.0e-6
-                        });
-                        !(other_track || via || copper)
-                    })
-            });
+        let dangling = (0..route.segments.len()).find(|&index| {
+            ends(&route.segments[index])
+                .into_iter()
+                .any(|(point, far)| !held(route, index, point, far, false))
+        });
         if let Some(index) = dangling {
+            route.segments.remove(index);
+            continue;
+        }
+        let nub = (0..route.segments.len()).find(|&index| {
+            let segment = &route.segments[index];
+            core::geometry::distance(segment.start, segment.end) <= segment.width
+                && ends(segment)
+                    .into_iter()
+                    .any(|(point, far)| !held(route, index, point, far, true))
+                && pieces(route, &own, Some(index)) <= pieces(route, &own, None)
+        });
+        if let Some(index) = nub {
             route.segments.remove(index);
             continue;
         }
@@ -2196,7 +2271,7 @@ fn prune_dangling(board: &core::Board, route: &mut core::NetRoute, net: core::Ne
                     layers |= obstacle.layers;
                 }
             }
-            layers.count_ones() < 2
+            layers == 0
         });
         match lonely {
             Some(index) => {
@@ -2808,8 +2883,8 @@ mod tests {
     }
 
     /// A fallen-back pair's leftovers: what joins nothing at one end goes
-    /// (a spur, a via with copper on one layer, the track behind it), what
-    /// joins the two pads stays.
+    /// (a track to nowhere, a via on no copper), what joins the two pads
+    /// stays.
     #[test]
     fn what_joins_nothing_is_pruned() {
         let pad = |x: f64| core::Obstacle {
@@ -2844,15 +2919,42 @@ mod tests {
                 // A short piece at the pad's edge, its far end loose.
                 segment(0, [10.0, 0.0], [10.0, 0.6]),
             ],
-            vias: vec![core::Via {
-                at: [5.0, 2.0],
-                diameter: 0.6,
-                drill: 0.3,
-            }],
+            vias: vec![
+                core::Via {
+                    at: [5.0, 2.0],
+                    diameter: 0.6,
+                    drill: 0.3,
+                },
+                // A via that joins nothing.
+                core::Via {
+                    at: [8.0, 5.0],
+                    diameter: 0.6,
+                    drill: 0.3,
+                },
+            ],
         };
         prune_dangling(&board, &mut route, 0);
-        assert_eq!(route.segments.len(), 2, "{:?}", route.segments);
-        assert!(route.vias.is_empty());
+        // The B.Cu track, the lone via and the piece at the pad go; a via
+        // with copper on one layer stays (a zone or a teardrop may hold it),
+        // and so the spur to it.
+        assert_eq!(route.segments.len(), 3, "{:?}", route.segments);
+        assert_eq!(route.vias.len(), 1);
+        assert!(route.segments.iter().all(|segment| segment.layer == 0));
+        // A short piece whose end only overlaps the next track (KiCad: that
+        // end dangles) stays where it joins two tracks, goes where it is a
+        // nub off a track.
+        let mut route = core::NetRoute {
+            segments: vec![
+                segment(0, [0.0, 0.0], [5.0, 0.0]),
+                segment(0, [5.0, 0.0], [5.15, 0.0]),
+                segment(0, [5.3, 0.0], [10.0, 0.0]),
+                segment(0, [2.0, 0.0], [2.0, 0.15]),
+            ],
+            vias: Vec::new(),
+        };
+        prune_dangling(&board, &mut route, 0);
+        assert_eq!(route.segments.len(), 3, "{:?}", route.segments);
+        assert!(route.segments.iter().all(|segment| segment.end[1] == 0.0));
         assert!(
             route
                 .segments
