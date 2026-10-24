@@ -1027,8 +1027,8 @@ fn judge_with_crossings(
         let after = state.after(poses);
         let change = after as i64 - before as i64;
         let total = delta + weight * change as f64;
-        let taken = total <= 0.0
-            || drawn.unwrap_or_else(|| random.next()) < (-total / temperature).exp();
+        let taken =
+            total <= 0.0 || drawn.unwrap_or_else(|| random.next()) < (-total / temperature).exp();
         state.settle(poses, moved, taken, change);
         taken
     };

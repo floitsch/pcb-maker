@@ -689,12 +689,17 @@ pub struct Reordered {
 /// (`REORDER_PINS`) trade places (each to the other's body centre, angles
 /// kept) and turn (about their body centre) where that lowers the
 /// weighted half-perimeter wirelength of their nets plus `weight` times
-/// their nets' crossings, best first, until nothing improves. The order
+/// their nets' crossings: each candidate in turn, taken when it improves,
+/// in passes until one improves nothing (at most `REORDER_PASSES`; trades
+/// only between parts on one side, the one with fewer pins having at
+/// least `REORDER_PIN_SHARE` of the other's). The order
 /// of large parts along a bus (MegaDrive's QFPs) is a decision the anneal
 /// starts from cold and the legaliser and the refinement can only repair
 /// locally; here it is a handful of parts against each other. Overlaps
 /// the trade makes are the anneal's to resolve; a trade or turn that
 /// breaks a placement constraint or relation of the part is not taken.
+/// Measured on MegaDrive and Glasgow it changed little (docs/placer.md,
+/// "Ratsnest crossings where the order is decided"); off by default.
 pub fn reorder(problem: &Problem, crossings: &Crossings, poses: &mut [Pose]) -> Reordered {
     let large: Vec<usize> = (0..problem.components.len())
         .filter(|index| {
