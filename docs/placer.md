@@ -1120,8 +1120,9 @@ runs on the estimate alone (no router rules, so no measured version).
 The layout's final route used to start route mode's ladder with the pour
 nets as tracks whenever KiCad found a starved thermal, also when KiCad and
 the router both found every connection (`current.1 > 0` in
-`board_layout.rs`). On the short tier's 0xCB 1337-v4.0 that ran 3 to 6
-attempts and 389 to 616 s of work, and then `solidify_starved_thermals`
+`board_layout.rs`). On the short tier's 0xCB 1337-v4.0 that ran 6
+attempts and 596 s of search with x1751 and 3 attempts with x1754 (498 s
+of work against 109 without them), and then `solidify_starved_thermals`
 fixed the pad in one KiCad check anyway. Now, when only thermals are
 starved (0 unconnected by KiCad and by the router, no internal
 violation, pours connected, `pours` auto), the starved pads go solid

@@ -26,7 +26,7 @@ v7 at the task budgets; the short tier at its third):
 | Set | KiCad unconnected | new DRC errors | work s | took the new path | byte-identical boards |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | eleven dense boards | 916 / 916 | 4 / 4 | 14952 / 14952 | 0 of 11 | 11 of 11 |
-| short tier | 18 / 18 | 5 / 5 | 3329 / 2630 | 3 of 12 | 9 of 12 |
+| short tier | 18 / 18 | 5 / 5 | 3329 / 2630 | 3 of 12 | 10 of 12 (the 9 off the new path, and eternal-keypad) |
 | 0xCB 1337-v4.0 alone (the case) | 0 / 0 | 0 / 0 | 498 / 109 | 1 | - |
 
 The three boards on the new path (0xCB 1337-v4.0, framework_mobo_lefthalf,
