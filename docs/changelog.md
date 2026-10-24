@@ -11,6 +11,108 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-24 (differential pairs: on where the rules ask; the disallowed layers)
+
+Phase 3 of differential pairs. Branch differential-pairs-3 on main
+1600943, rebased onto dbfd1b5 (capacitated corridors, off: routes
+identical to x1791); snapshots x1793 to x1797 (x1797 the commit
+measured); off is main's x1791. docs/router.md, "Differential pairs",
+has the design. **The default flips by rule**: route mode turns
+`diff_pairs` on where the project's custom rules ask for pairs, and only
+there.
+
+**The disallowed layers.** Phase 2 kept only the links' class to the
+pair's layers. The pairs' nets kept the class they were lowered with, so
+their stubs and the fallback routed them on any layer, and the fallback,
+which drops every other net's plane, dropped the exclusive ones too:
+ducktop2's pair nets crossed its solid ground layers (In1, In3, In6; its
+rule disallows tracks there for every net but GND) and its impedance
+rule's In4 and In5 (items_not_allowed +89 with x1766). Now a pair's nets
+route in a class kept to the layers where no custom rule disallows their
+tracks and where the rules' track width bounds hold their width (without
+the bounds the nets moved onto In2.Cu at the outer width: left_io 37
+track_width errors with x1793), and the fallback keeps other nets'
+exclusive planes as track keepouts. Unit test
+`a_pairs_nets_keep_off_the_layers_a_rule_disallows` (In1.Cu disallowed,
+In2.Cu's width below the nets': class, link and routed tracks on F.Cu
+and B.Cu only).
+
+**The default by need.** On (`"default": "rules"`) where a custom
+`diff_pair_gap` or `diff_pair_uncoupled` constraint surely holds for a
+net KiCad pairs on some layer; else off (`"off"`); the settings'
+`diff_pairs` or `PCB_ROUTER_DIFF_PAIRS` decides when set
+(`"explicit"`). The verdict's `diff_pairs` (now in every route-mode
+verdict) has `on`, `default` and `reason` (the rule and the net). A
+net class's diff pair width or gap does not turn it on, unlike the
+brief's wording: KiCad checks the class's gap only as a minimum (no
+finding for an uncoupled pair), most projects carry KiCad's defaults, and
+12 of the expansion tier's 25 boards with pairs set other class values,
+among them the boards where the switch cost connections in phase 2
+(AMLing2's drone carrier 3 -> 9, ausign, snaphat, ducktop2's bms); with
+the class rule the tier would not have stayed identical.
+
+**A clean fallback, no second route.** A ladder that keeps the better of
+a pairs-on and a pairs-off board needs a second full route (the fallback
+routes only the fallen-back pairs' nets): not added. Instead a link is
+kept only when each pad's stub reaches its end of the run (phase 2 wrote
+such a link as an island, its pads open: left_io's J22_TX1 counted
+"coupled" with neither pad joined, x1793; with x1797 30 of the rule
+boards' 97 links fall back for it); a kept link's stub is
+joined to its end where the router ended it elsewhere on the end's
+copper; a failed link's stub is pruned past a via; and every fallen-back
+pair's nets lose what joins nothing (tracks to nowhere, vias on no
+copper, KiCad-dangling nubs where removing them splits nothing). Phase
+2's dangling pieces on the pairs' nets (left_io 11, oculink_m2 6, center
+4 with x1793) are gone but for three vias with copper on one layer, kept
+on purpose (KiCad's teardrop joined m2_card's CLOCK+ through one).
+
+**The boards with diff_pair_gap rules** (route mode, 30 s of work, one
+thread, the board's own tracks kept, KiCad's DRC with `--refill-zones`,
+as phases 1 and 2; off x1791 with no setting, on x1797 with no setting:
+the default fires on all 7). Errors and items_not_allowed are KiCad's
+errors; dangling are track_dangling and via_dangling warnings (any net;
+oculink_port's 34 are GND on In1.Cu both ways); the last column the
+work.
+
+| board | gap/uncoupled/length off -> on | errors | unconnected | vias | items_not_allowed | dangling | pairs found/coupled/partly/fallen, crossed, uncoupled mm | work s |
+|---|---|---|---|---|---|---|---|---|
+| EwoudVV__ducktop2__ducktop2-center | (5, 0, 0) -> (20, 0, 0) | 27 -> 20 | 499 -> 499 | 615 -> 479 | 13 -> 0 | 0 -> 0 | 61/2/0/59 x2 u5 | 164.8 -> 136.4 |
+| EwoudVV__ducktop2__left_io | (11, 0, 0) -> (16, 0, 0) | 18 -> 16 | 372 -> 351 | 206 -> 235 | 7 -> 0 | 0 -> 1 | 39/0/0/39 x0 u0 | 50.3 -> 96.9 |
+| EwoudVV__ducktop2__right_io | (18, 0, 0) -> (25, 0, 0) | 18 -> 27 | 193 -> 185 | 114 -> 124 | 0 -> 0 | 0 -> 1 | 21/0/0/21 x0 u0 | 42.1 -> 70.5 |
+| OpenDrone-hw__OpenAIO-Whoop__OpenAIO-Whoop | (1, 0, 1) -> (1, 0, 1) | 0 -> 0 | 187 -> 187 | 35 -> 35 | 0 -> 0 | 0 -> 0 | 3/0/0/3 x0 u0 | 38.5 -> 39.1 |
+| williamyang98__oculink_m2_adapter__m2_card | (0, 0, 0) -> (0, 0, 0) | 57 -> 71 | 12 -> 10 | 23 -> 21 | 0 -> 0 | 0 -> 3 | 10/0/0/10 x0 u0 | 31.8 -> 24.2 |
+| williamyang98__oculink_m2_adapter__oculink_m2 | (30, 0, 0) -> (12, 0, 0) | 231 -> 23 | 10 -> 14 | 76 -> 58 | 0 -> 0 | 0 -> 1 | 10/1/0/9 x1 u2 | 35.4 -> 32.1 |
+| williamyang98__oculink_m2_adapter__oculink_port | (49, 0, 0) -> (0, 0, 0) | 250 -> 29 | 10 -> 16 | 27 -> 14 | 0 -> 0 | 34 -> 34 | 10/0/0/10 x0 u0 | 30.7 -> 34.4 |
+
+Totals: errors 601 -> 186, gap findings 114 -> 74, unconnected 1 283 ->
+1 262, items_not_allowed 20 -> 0 (no board worse; off puts ducktop2's
+pair nets on disallowed layers too), vias 1 096 -> 966, dangling 34 ->
+40 (GND 3, one-layer vias 3). 154 pairs, 3 of 97 links coupled (phase
+2's x1766: 10, islands among them); the fallbacks: fewer than two pair points
+65, run not routed 52, a pad's stub does not reach the run 30, no launch
+4, too short 4, copper refused 4. What helps is mostly the pairs' nets at
+the rules' width (the oculink boards' track_width 454 -> 105) and on their layers,
+not coupling. Worse: right_io's errors 18 -> 27 (gap 18 -> 25, two
+starved thermals), m2_card's 57 -> 71 (track_width 56 -> 70), the
+ducktop2 boards' gap findings (5 -> 20, 11 -> 16, 18 -> 25: their pair
+nets now run side by side on F.Cu and B.Cu, uncoupled), oculink_m2 and
+oculink_port's unconnected (10 -> 14, 10 -> 16).
+
+**The expansion tier** (46 boards, route mode, 8 x 1, 30 s; x1791
+against x1797, neither with a setting): every row identical (routed,
+vias, length, KiCad's findings, pass, open, strict findings) and every
+routed board identical byte for byte, the 25 boards with pairs among
+them; the default fires on none (`"default": "off"` in each verdict:
+no board's rules ask, ducktop2's bms has DIFF classes but no pair rule).
+Unconnected 588, new errors 3, vias 4 308 both ways. x1796 (before the
+prune's last change, which only a run with pairs on reaches) was
+identical too.
+
+**Decision.** The default flips by rule: on the rule boards KiCad's
+errors and gap findings fall, unconnected is not worse in total and
+items_not_allowed is worse on no board; where no rule asks nothing
+changes.
+
 ## Committed on 2026-10-24 (capacitated corridors, experiment)
 
 Florian's idea (route the board as a graph first with hard capacities;

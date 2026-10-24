@@ -2109,11 +2109,23 @@ designers' crossings) 2 mm took crossings 452 to 410 and 6 mm 437 to 365
 (of the ten run at 6), but SNSP-CPU-01 went 6 to 11 unconnected (22 at
 6 mm) and video 0 to 1.
 
-## Differential pairs (2026-10-23, phase 2 2026-10-24)
+## Differential pairs (2026-10-23, phases 2 and 3 2026-10-24)
 
-Behind a switch: `diff_pairs` in the router settings (route mode;
-default off), `PCB_ROUTER_DIFF_PAIRS=1` where the settings name none.
-The code: crates/pcb-kicad/src/board_router/diff_pairs.rs, the rules in
+`diff_pairs` in the router settings (route mode). **Default by need**
+(phase 3): on where the project's custom rules ask for pairs, that is
+where a `diff_pair_gap` or `diff_pair_uncoupled` constraint surely holds
+for a net KiCad pairs on some layer (`KiCadDiffPairRule::asked`,
+`KiCadBoardRouterConfig::diff_pairs_choice`), else off. The settings'
+`diff_pairs` (true or false) always wins, then `PCB_ROUTER_DIFF_PAIRS`
+(`1` or `0`); route-kicad-board alone applies the default
+(`diff_pairs_by_need`), a layout's routes keep it off. The net classes'
+diff pair width and gap do not ask: KiCad's DRC holds the class's gap
+only as the pair's minimum (no finding for an uncoupled pair), most
+projects carry KiCad's defaults (0.2 and 0.25 mm), and 12 of the
+expansion tier's 25 boards with pairs set other values in a class (a USB
+class),
+among them those where the switch cost connections in phase 2 (AMLing2's
+drone carrier, ausign, snaphat, ducktop2's bms). The code: crates/pcb-kicad/src/board_router/diff_pairs.rs, the rules in
 project_rules.rs (`diff_pair_of`, `diff_pair_rules`) and
 project_rules/dru.rs (`track_constraint`, `inDiffPair()`). Phase 1
 (2026-10-23) routed the coupled runs first, in a router of their own,
@@ -2213,15 +2225,58 @@ the *fallback* routes the pair's nets with every other route kept (the board's
 classes; 0.05 of the ladder's budget, at least 1 s,
 `PCB_ROUTER_DIFF_PAIRS_WORK`; its work charged to the ladder as search).
 
+**Layers (phase 3).** With the switch on, a pair's nets route in a
+class kept to their layers (`RuleClass::layers`, set when the board is
+lowered): those where no custom rule disallows their tracks (`disallow
+track`) and where the rules' track width bounds hold the width they
+route at (a class has one width: ducktop2's DIFF_90 is 0.1796 mm outside
+and at most 0.111 on In2.Cu, so its nets keep to F.Cu and B.Cu). Phase 2
+kept only the links' class to the pair's layers; the pairs' nets kept the
+class they were lowered with, so their stubs and the fallback routed
+them anywhere, and the fallback, which drops every other net's plane,
+also dropped the exclusive ones: on ducktop2 the pairs' nets crossed its
+solid ground layers (In1, In3, In6) and its impedance rule's In4 and In5,
+items_not_allowed +89. The fallback now keeps other nets' exclusive
+planes as keepouts for tracks (vias pass). Keeping the nets to the layers
+their rules allow first moved them onto In2.Cu at the outer width (left_io:
+37 track_width errors); hence the width bounds.
+
+**A clean fallback (phase 3).** A link is kept only when each of its
+pads' stubs reaches its end of the run (`stub_joined`: the router merges
+a link's two ends into one terminal, so it may route a pad to the other
+end, or leave it open at the budget, and phase 2 then wrote the run as an
+island: left_io's J22_TX1 pair was "coupled" with neither pad joined);
+otherwise it falls back as a refused link ("a pad's stub does not reach
+the run"; 30 of the rule boards' 97 links with x1797). A kept link's stub that ends
+elsewhere on its end's copper gets a track to that end, where the run's
+jog starts (`join_stub_ends`; else KiCad finds the jog dangling). After
+the fallback, a failed link's stub is pruned from its end past a via
+(`prune_stub`), then every fallen-back pair's nets lose what joins
+nothing (`prune_dangling`: a track with an end that overlaps no copper of
+the net, a via on no copper, a piece no longer than its width whose end
+lies in no other copper where removing it splits nothing). A via with
+copper on one layer stays: KiCad's teardrops may join it (m2_card's
+CLOCK+ lost a connection when such a via went).
+
+**No second route (phase 3).** Keeping the better of the pairs-on board
+and a pairs-off board would need a second full route of the board (the
+fallback routes only the fallen-back pairs' nets, with everything else
+kept); it costs as much as the route itself, so it is not done. A refused
+or failed link falls back as above instead.
+
 **The verdict.** `diff_pairs` in `board-router.json` and the verdict:
-`found`, `coupled` (every link), `partly_coupled`, `fallen_back`,
+`on`, `default` (`rules`: the project's rules ask; `off`: nothing asks;
+`explicit`: the setting or `PCB_ROUTER_DIFF_PAIRS`), `reason` (the rule
+and the net it holds for, or why nothing asks; route mode reports it on
+every board), and with the switch on `found`, `coupled` (every link), `partly_coupled`, `fallen_back`,
 `links`, `links_coupled`, `crossed`, `coupled_mm`, `uncoupled_mm`
 (after the route, per coupled pair the longer net's tracks less the
 coupled run: KiCad's measure), `work_seconds` (the fallback's), and in
 board-router.json per pair its nets, width, gap, source and why links
 fell back (`fewer than two parts with the pair's pads side by side`,
 `the launches are too close for a coupled run` (under 1 mm),
-`the coupled run was not routed`, `its copper is ... from ...`).
+`the coupled run was not routed`, `a pad's stub does not reach the run`,
+`its copper is ... from ...`).
 
 **Measured** (route mode, 30 s, 8 x 1; off x1753, main at 4d9965e; on
 x1766): docs/changelog.md, "Committed on 2026-10-24 (differential pairs,
@@ -2240,6 +2295,20 @@ refused; on ducktop2's bms (0 -> 5) the one current-sense link is
 refused and the board's other nets lose what the negotiation spent on
 it. A link that fails costs more than its pair: the board's negotiation
 converged around it.
+
+**Measured, phase 3** (route mode, 30 s of work, one thread, the
+board's own tracks kept, KiCad's DRC with `--refill-zones`, as phases 1
+and 2; off x1791, main; on x1797, the default by rules): on the 7 boards
+with diff_pair_gap rules KiCad's errors 601 -> 186, gap findings 114 ->
+74, unconnected 1 283 -> 1 262, items_not_allowed 20 -> 0 (no board
+worse; off routes ducktop2's pair nets onto its disallowed layers too),
+vias 1 096 -> 966; 154 pairs, 3 of 97 links coupled. Most of the gain is
+the pairs' nets at the rules' width (oculink: track_width 454 -> 105) and
+on the layers the rules allow, not coupling. The expansion tier's 46
+boards (no board's rules ask) are identical to x1791, rows and routed
+boards byte for byte: the default flips by rule. Tables: docs/changelog.md,
+"Committed on 2026-10-24 (differential pairs: on where the rules ask; the
+disallowed layers)".
 
 **Phase 2's remaining items, and what was learnt.**
 (1) A link must not cost the board: the gate failed on boards where the
@@ -2269,12 +2338,8 @@ offset per layer at the write, the class's layers then all the pair's.
 (7) Pairs through series parts (AC capacitors: ducktop2-center couples
 2 of its 61 pairs; "fewer than two pair points" is 65 fallbacks on the
 rule boards and 25 of 60 pairs on the tier) need links through two-pad
-parts (a capacitor pair as a pair point of two parts). (8) On the rule
-boards the gap findings fall (113 -> 83) but ducktop2's pairs gain
-items_not_allowed (+89): the pairs' nets, and the fallback, route on
-the inner layers their rules disallow (route mode does not lower rule
-areas from rules); the fallback and the stubs should keep the pair's
-layers too.
+parts (a capacitor pair as a pair point of two parts). (8) Done in phase 3: the pairs' nets keep to the layers their rules
+allow (above, "Layers").
 (9) Coupled branches (a T at an ESD part) instead of one run per link.
 
 ## Determinism and the wall clock (2026-10-14)
