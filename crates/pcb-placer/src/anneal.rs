@@ -702,6 +702,24 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                 .count(),
         );
     }
+    // Ratsnest crossings in the anneal (`Crossings::anneal`): a move pays
+    // for the crossings of its parts' nets, and half the swaps trade a
+    // part with one like it.
+    let mut crossings = problem
+        .crossings
+        .as_deref()
+        .filter(|crossings| crossings.anneal)
+        .map(|crossings| crate::crossings::CrossingState::new(problem, crossings, &state.poses));
+    let peers = if crossings.is_some() {
+        peers(problem, &movable)
+    } else {
+        Vec::new()
+    };
+    let mut tally = Tally {
+        crossings_before: crossings.as_ref().map(|state| state.total()),
+        ..Default::default()
+    };
+    let work_before = crate::work();
     let mut random = Random(config.seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1);
     let bounds = state.bounds;
     let board = (bounds[2] - bounds[0]).max(bounds[3] - bounds[1]);
@@ -737,6 +755,7 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
         }
         let mut work = 0;
         for _ in 0..config.moves_per_part * movable.len() {
+            tally.moves += 1;
             if let Some(guide) = guide.as_mut()
                 && guide.due(anneal_work + work + state.work.get())
             {
@@ -753,7 +772,12 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
             let kind = random.next();
             if kind < 0.12 && movable.len() > 1 {
                 // Swap two parts, keeping each at the other's body centre.
-                let other = movable[random.below(movable.len())];
+                let other = match peers.get(index) {
+                    Some(like) if !like.is_empty() && random.next() < PEER_SWAPS => {
+                        like[random.below(like.len())]
+                    }
+                    _ => movable[random.below(movable.len())],
+                };
                 if other == index {
                     continue;
                 }
@@ -800,7 +824,19 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                         * (state.overlap(index, state.rects[index])
                             + state.overlap(other, state.rects[other]));
                 let delta = after - before;
-                if delta > 0.0 && random.next() >= (-delta / temperature).exp() {
+                let rejected = match crossings.as_mut() {
+                    Some(crossings) => !judge_with_crossings(
+                        crossings,
+                        &state.poses,
+                        &[index, other],
+                        delta,
+                        temperature,
+                        &mut random,
+                        &mut tally,
+                    ),
+                    None => delta > 0.0 && random.next() >= (-delta / temperature).exp(),
+                };
+                if rejected {
                     state.poses[index] = first_pose;
                     state.poses[other] = second_pose;
                     state.set_rect(index, saved.0);
@@ -849,7 +885,19 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                 + state.constraint_cost(index)
                 + penalty * state.overlap(index, state.rects[index]);
             let delta = after - before;
-            if delta > 0.0 && random.next() >= (-delta / temperature).exp() {
+            let rejected = match crossings.as_mut() {
+                Some(crossings) => !judge_with_crossings(
+                    crossings,
+                    &state.poses,
+                    &[index],
+                    delta,
+                    temperature,
+                    &mut random,
+                    &mut tally,
+                ),
+                None => delta > 0.0 && random.next() >= (-delta / temperature).exp(),
+            };
+            if rejected {
                 state.poses[index] = old;
                 state.set_rect(index, saved);
             } else if let Some(guide) = guide.as_mut() {
@@ -866,12 +914,122 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
     if let Some(guide) = guide.as_mut() {
         guide.finish(&mut state, anneal_work);
     }
+    if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
+        let work = crate::work() - work_before;
+        let per_move = |amount: u64| amount as f64 / tally.moves.max(1) as f64;
+        eprintln!(
+            "anneal: {} moves, work {:.2} s ({:.0} a move), crossings' share {:.0} a move; judged with crossings {}, cut by the bound {}; crossings {:?} -> {:?}",
+            tally.moves,
+            work as f64 / crate::work_per_second(),
+            per_move(work),
+            per_move(tally.work),
+            tally.judged,
+            tally.cut,
+            tally.crossings_before,
+            crossings.as_ref().map(|state| state.total()),
+        );
+    }
     *poses = state.poses.clone();
     movable
         .iter()
         .map(|index| state.overlap(*index, state.rects[*index]))
         .sum::<f64>()
         / 2.0
+}
+
+/// The share of the anneal's swaps (with the crossings term) whose
+/// partner is one of the part's `peers`.
+const PEER_SWAPS: f64 = 0.5;
+
+/// Counts of the anneal for its debug line.
+#[derive(Default)]
+struct Tally {
+    moves: u64,
+    /// Moves judged with the crossings term, those the bound rejected
+    /// without the new trees, and the term's work.
+    judged: u64,
+    cut: u64,
+    work: u64,
+    crossings_before: Option<u64>,
+}
+
+/// Per part, the movable parts the anneal's swaps (with the crossings
+/// term) trade it with half the time: on the same side, and either of the
+/// same footprint (pin count and body), or both with many pins
+/// (`crossings::REORDER_PINS`) and the one with fewer at least
+/// `crossings::REORDER_PIN_SHARE` of the other's (MegaDrive's QFP-160 and
+/// QFP-128, whose order along the bus to the connectors the crossings
+/// see). A random partner of a QFP is nearly always a passive, a trade
+/// the overlap rejects at once.
+fn peers(problem: &Problem, movable: &[usize]) -> Vec<Vec<usize>> {
+    let mut peers = vec![Vec::new(); problem.components.len()];
+    for (position, &a) in movable.iter().enumerate() {
+        let first = &problem.components[a];
+        for &b in &movable[position + 1..] {
+            let second = &problem.components[b];
+            if first.side != second.side || first.pins.is_empty() || second.pins.is_empty() {
+                continue;
+            }
+            let same = first.pins.len() == second.pins.len()
+                && first.round == second.round
+                && (first.body_size[0] - second.body_size[0]).abs() <= 1.0e-6
+                && (first.body_size[1] - second.body_size[1]).abs() <= 1.0e-6;
+            let (fewer, more) = (
+                first.pins.len().min(second.pins.len()),
+                first.pins.len().max(second.pins.len()),
+            );
+            let large = fewer >= crate::crossings::REORDER_PINS
+                && fewer as f64 >= crate::crossings::REORDER_PIN_SHARE * more as f64;
+            if same || large {
+                peers[a].push(b);
+                peers[b].push(a);
+            }
+        }
+    }
+    peers
+}
+
+/// Whether the anneal takes a move whose other terms change the cost by
+/// `delta`, with the crossings of the moved parts' nets (`state`, the
+/// parts at their new poses in `poses`) at their weight: the rule of the
+/// plain anneal (taken when the cost falls, else with probability
+/// exp(-change / temperature), one random number drawn exactly when the
+/// change is positive). The crossings as kept bound what the move can
+/// save; when even saving all of them leaves the move rejected by the
+/// number drawn, the new trees are not built.
+fn judge_with_crossings(
+    state: &mut crate::crossings::CrossingState,
+    poses: &[Pose],
+    moved: &[usize],
+    delta: f64,
+    temperature: f64,
+    random: &mut Random,
+    tally: &mut Tally,
+) -> bool {
+    let work = crate::work();
+    tally.judged += 1;
+    let weight = state.weight();
+    let before = state.before(moved);
+    let lowest = delta - weight * before as f64;
+    let mut drawn = None;
+    if lowest > 0.0 {
+        let draw = random.next();
+        if draw >= (-lowest / temperature).exp() {
+            state.settle(poses, moved, false, 0);
+            tally.cut += 1;
+            tally.work += crate::work() - work;
+            return false;
+        }
+        drawn = Some(draw);
+    }
+    let after = state.after(poses);
+    let change = after as i64 - before as i64;
+    let total = delta + weight * change as f64;
+    let taken = total <= 0.0
+        || drawn.unwrap_or_else(|| random.next()) < (-total / temperature).exp();
+    state.settle(poses, moved, taken, change);
+    tally.work += crate::work() - work;
+    taken
 }
 
 /// The anneal's side of `AnnealConfig::guidance`.

@@ -33,6 +33,12 @@ pub struct Crossings {
     pub legalise: bool,
     /// The refinement pays for the crossings of a move.
     pub refine: bool,
+    /// The anneal pays for the crossings of a move, and a swap's partner
+    /// is often a part like it (`anneal::peers`).
+    pub anneal: bool,
+    /// After the global placement, the parts with many pins trade places
+    /// and turn where that saves wirelength plus crossings (`reorder`).
+    pub global: bool,
 }
 
 /// The minimum spanning tree of `points` by straight distance (Prim's
@@ -114,6 +120,8 @@ struct LineGrid {
     columns: usize,
     rows: usize,
     cells: Vec<Vec<u32>>,
+    /// The cells of the line being inserted or removed.
+    scratch: Vec<usize>,
 }
 
 /// Slack around a line's passage through a column: a meeting point on a
@@ -139,6 +147,7 @@ impl LineGrid {
             columns,
             rows,
             cells: vec![Vec::new(); columns * rows],
+            scratch: Vec::new(),
         }
     }
 
@@ -201,22 +210,26 @@ impl LineGrid {
     }
 
     fn insert(&mut self, id: u32, line: &Line) {
-        let mut cells = Vec::new();
+        let mut cells = std::mem::take(&mut self.scratch);
+        cells.clear();
         self.walk(line.a, line.b, |cell| cells.push(cell));
-        for cell in cells {
+        for &cell in &cells {
             self.cells[cell].push(id);
         }
+        self.scratch = cells;
     }
 
     fn remove(&mut self, id: u32, line: &Line) {
-        let mut cells = Vec::new();
+        let mut cells = std::mem::take(&mut self.scratch);
+        cells.clear();
         self.walk(line.a, line.b, |cell| cells.push(cell));
-        for cell in cells {
+        for &cell in &cells {
             let list = &mut self.cells[cell];
             if let Some(position) = list.iter().position(|other| *other == id) {
                 list.swap_remove(position);
             }
         }
+        self.scratch = cells;
     }
 }
 
@@ -247,7 +260,25 @@ pub struct CrossingState<'a> {
     points: Vec<Point>,
     /// The poses the lines were kept at.
     poses: Vec<Pose>,
+    /// A proposed move (`before`, `after`, `settle`): the moved parts'
+    /// nets, their new lines per net, and whether those were built.
+    pending_nets: Vec<usize>,
+    pending_lines: Vec<(usize, Vec<u32>)>,
+    pending_built: bool,
+    /// Whether the pending lines are in the grid (more than
+    /// `DIRECT_LINES` of them) or were counted against each other
+    /// directly.
+    pending_inserted: bool,
+    /// Buffers of `count` and `before`.
+    near: Vec<u32>,
+    ids: Vec<u32>,
 }
+
+/// A pending move's new lines up to this many are counted against each
+/// other directly and enter the grid only when the move is kept: the
+/// anneal rejects most moves, and a rejected one then never touches the
+/// grid's lists.
+const DIRECT_LINES: usize = 48;
 
 impl<'a> CrossingState<'a> {
     pub fn new(problem: &'a Problem, crossings: &'a Crossings, poses: &[Pose]) -> Self {
@@ -311,6 +342,12 @@ impl<'a> CrossingState<'a> {
             total: 0,
             points: Vec::new(),
             poses: poses.to_vec(),
+            pending_nets: Vec::new(),
+            pending_lines: Vec::new(),
+            pending_built: false,
+            pending_inserted: false,
+            near: Vec::new(),
+            ids: Vec::new(),
         };
         let all: Vec<usize> = (0..nets).filter(|net| counted(*net)).collect();
         for &net in &all {
@@ -345,6 +382,12 @@ impl<'a> CrossingState<'a> {
     /// The tree of `net` at `poses`, its lines added to the grid; their
     /// ids.
     fn add_tree(&mut self, poses: &[Pose], net: usize) -> Vec<u32> {
+        self.tree(poses, net, true)
+    }
+
+    /// The tree of `net` at `poses`, its lines in the grid where `insert`;
+    /// their ids.
+    fn tree(&mut self, poses: &[Pose], net: usize, insert: bool) -> Vec<u32> {
         let mut points = std::mem::take(&mut self.points);
         points.clear();
         for (part, pin) in &self.members[net] {
@@ -373,7 +416,9 @@ impl<'a> CrossingState<'a> {
                     (self.lines.len() - 1) as u32
                 }
             };
-            self.grid.insert(id, &line);
+            if insert {
+                self.grid.insert(id, &line);
+            }
             ids.push(id);
         }
         self.points = points;
@@ -414,7 +459,7 @@ impl<'a> CrossingState<'a> {
         }
         let mut found = 0u64;
         let mut work = 0u64;
-        let mut near: Vec<u32> = Vec::new();
+        let mut near = std::mem::take(&mut self.near);
         for &id in ids {
             let line = self.lines[id as usize];
             let stamp = Self::next_stamp(&mut self.stamp, &mut self.seen);
@@ -447,6 +492,7 @@ impl<'a> CrossingState<'a> {
                 }
             }
         }
+        self.near = near;
         crate::add_work(work);
         found
     }
@@ -510,6 +556,310 @@ impl<'a> CrossingState<'a> {
     pub fn weight(&self) -> f64 {
         self.crossings.weight
     }
+
+    /// A move of `moved` in three steps, for the anneal, which judges
+    /// moves by the hundred thousand: the crossings of the moved parts'
+    /// nets as kept (their lines are in the grid already: no tree is
+    /// built, and a bound on how much the move can save), then `after`
+    /// at the new poses, then `settle` keeps or drops them. `before` minus
+    /// `after` is what `involving` gives at the old and the new poses.
+    pub fn before(&mut self, moved: &[usize]) -> u64 {
+        debug_assert!(self.pending_nets.is_empty() && !self.pending_built);
+        self.pending_nets = self.nets_of(moved);
+        if self.pending_nets.is_empty() {
+            return 0;
+        }
+        let mut old = std::mem::take(&mut self.ids);
+        old.clear();
+        for &net in &self.pending_nets {
+            old.extend(self.net_lines[net].iter().copied());
+        }
+        let found = self.count(&old, &[]);
+        self.ids = old;
+        found
+    }
+
+    /// The crossings of the moved parts' nets (since `before`) at
+    /// `poses`, their new lines held until `settle`.
+    pub fn after(&mut self, poses: &[Pose]) -> u64 {
+        debug_assert!(!self.pending_built);
+        self.pending_built = true;
+        if self.pending_nets.is_empty() {
+            return 0;
+        }
+        let nets = std::mem::take(&mut self.pending_nets);
+        let mut fresh = std::mem::take(&mut self.ids);
+        fresh.clear();
+        let mut lines = Vec::with_capacity(nets.len());
+        for &net in &nets {
+            let ids = self.tree(poses, net, false);
+            fresh.extend(ids.iter().copied());
+            lines.push((net, ids));
+        }
+        let inserted = fresh.len() > DIRECT_LINES;
+        let mut found;
+        if inserted {
+            for &id in &fresh {
+                let line = self.lines[id as usize];
+                self.grid.insert(id, &line);
+            }
+            found = self.count(&fresh, &nets);
+        } else {
+            // Against the kept lines through the grid, among themselves
+            // directly.
+            found = self.count(&fresh, &nets);
+            let mut work = 0u64;
+            for (index, &first) in fresh.iter().enumerate() {
+                let one = self.lines[first as usize];
+                for &second in &fresh[index + 1..] {
+                    let other = self.lines[second as usize];
+                    work += 1;
+                    if one.net != other.net && lines_cross(one.a, one.b, other.a, other.b) {
+                        found += 1;
+                    }
+                }
+            }
+            crate::add_work(work);
+        }
+        self.ids = fresh;
+        self.pending_nets = nets;
+        self.pending_lines = lines;
+        self.pending_inserted = inserted;
+        found
+    }
+
+    /// Ends the move `before` began: with `keep` (after `after`, the
+    /// counts it and `before` gave as `change`) the new lines replace the
+    /// kept ones and the parts' poses are `poses`'; otherwise the new
+    /// lines go.
+    pub fn settle(&mut self, poses: &[Pose], moved: &[usize], keep: bool, change: i64) {
+        let lines = std::mem::take(&mut self.pending_lines);
+        if keep {
+            assert!(self.pending_built, "a kept move was counted at its poses");
+            for &part in moved {
+                self.poses[part] = poses[part];
+            }
+            for (net, ids) in lines {
+                if !self.pending_inserted {
+                    for &id in &ids {
+                        let line = self.lines[id as usize];
+                        self.grid.insert(id, &line);
+                    }
+                }
+                let old = std::mem::replace(&mut self.net_lines[net], ids);
+                self.drop_lines(&old);
+            }
+            self.total = (self.total as i64 + change) as u64;
+        } else {
+            for (_, ids) in lines {
+                if self.pending_inserted {
+                    self.drop_lines(&ids);
+                } else {
+                    self.free.extend(ids);
+                }
+            }
+        }
+        self.pending_inserted = false;
+        self.pending_nets.clear();
+        self.pending_built = false;
+    }
+}
+
+/// The least share of a part's pins its trading partner in `reorder`
+/// has (QFP-128 and QFP-160: 0.8).
+pub const REORDER_PIN_SHARE: f64 = 0.5;
+
+/// Parts with at least this many pins take part in `reorder`.
+pub const REORDER_PINS: usize = 16;
+
+/// Passes of `reorder` at most.
+const REORDER_PASSES: usize = 4;
+
+/// What `reorder` did.
+#[derive(Clone, Debug, Default)]
+pub struct Reordered {
+    pub parts: usize,
+    pub swaps: usize,
+    pub turns: usize,
+    pub crossings_before: u64,
+    pub crossings_after: u64,
+}
+
+/// After the global placement: the movable parts with many pins
+/// (`REORDER_PINS`) trade places (each to the other's body centre, angles
+/// kept) and turn (about their body centre) where that lowers the
+/// weighted half-perimeter wirelength of their nets plus `weight` times
+/// their nets' crossings, best first, until nothing improves. The order
+/// of large parts along a bus (MegaDrive's QFPs) is a decision the anneal
+/// starts from cold and the legaliser and the refinement can only repair
+/// locally; here it is a handful of parts against each other. Overlaps
+/// the trade makes are the anneal's to resolve; a trade or turn that
+/// breaks a placement constraint or relation of the part is not taken.
+pub fn reorder(problem: &Problem, crossings: &Crossings, poses: &mut [Pose]) -> Reordered {
+    let large: Vec<usize> = (0..problem.components.len())
+        .filter(|index| {
+            let component = &problem.components[*index];
+            !component.fixed && component.pins.len() >= REORDER_PINS
+        })
+        .collect();
+    let mut result = Reordered {
+        parts: large.len(),
+        ..Default::default()
+    };
+    if large.is_empty() {
+        return result;
+    }
+    let nets = problem.net_weights.len();
+    let mut members: Vec<Vec<(usize, usize)>> = vec![Vec::new(); nets];
+    for (index, component) in problem.components.iter().enumerate() {
+        for (pin, description) in component.pins.iter().enumerate() {
+            members[description.net].push((index, pin));
+        }
+    }
+    let incident: Vec<Vec<usize>> = problem
+        .components
+        .iter()
+        .map(|component| {
+            let mut nets: Vec<usize> = component.pins.iter().map(|pin| pin.net).collect();
+            nets.sort_unstable();
+            nets.dedup();
+            nets
+        })
+        .collect();
+    let wirelength = |poses: &[Pose], nets: &[usize]| -> f64 {
+        crate::add_work(
+            crate::PIN_WORK * nets.iter().map(|net| members[*net].len()).sum::<usize>() as u64,
+        );
+        nets.iter()
+            .filter(|net| members[**net].len() >= 2)
+            .map(|net| {
+                let mut bounds = [
+                    f64::INFINITY,
+                    f64::INFINITY,
+                    f64::NEG_INFINITY,
+                    f64::NEG_INFINITY,
+                ];
+                for (part, pin) in &members[*net] {
+                    let component = &problem.components[*part];
+                    let at = component.pin_position(&component.pins[*pin], poses[*part]);
+                    bounds[0] = bounds[0].min(at[0]);
+                    bounds[1] = bounds[1].min(at[1]);
+                    bounds[2] = bounds[2].max(at[0]);
+                    bounds[3] = bounds[3].max(at[1]);
+                }
+                problem.net_weights[*net] * ((bounds[2] - bounds[0]) + (bounds[3] - bounds[1]))
+            })
+            .sum()
+    };
+    // A part's constraints, kept or not: a trade or turn may not make them
+    // worse.
+    let held = |poses: &[Pose], part: usize| -> f64 {
+        if problem.constraints.is_empty() {
+            0.0
+        } else {
+            crate::constraints::relation_penalty(problem, poses, Some(part))
+                + 1000.0 * crate::constraints::hard_violation(problem, part, poses[part])
+        }
+    };
+    let mut state = CrossingState::new(problem, crossings, poses);
+    result.crossings_before = state.total();
+    let weight = crossings.weight;
+    // Whether `changes` lower the cost; taken if so.
+    let mut try_change = |poses: &mut [Pose], changes: &[(usize, Pose)]| -> bool {
+        let parts: Vec<usize> = changes.iter().map(|(part, _)| *part).collect();
+        let mut nets: Vec<usize> = parts
+            .iter()
+            .flat_map(|part| incident[*part].iter().copied())
+            .collect();
+        nets.sort_unstable();
+        nets.dedup();
+        let old: Vec<(usize, Pose)> = parts.iter().map(|part| (*part, poses[*part])).collect();
+        let held_before: f64 = parts.iter().map(|part| held(poses, *part)).sum();
+        let length_before = wirelength(poses, &nets);
+        let crossings_before = state.before(&parts);
+        for (part, pose) in changes {
+            poses[*part] = *pose;
+        }
+        let held_after: f64 = parts.iter().map(|part| held(poses, *part)).sum();
+        let mut better = false;
+        let mut change = 0;
+        if held_after <= held_before + 1.0e-9 {
+            let crossings_after = state.after(poses);
+            change = crossings_after as i64 - crossings_before as i64;
+            let delta = wirelength(poses, &nets) - length_before + weight * change as f64;
+            better = delta < -1.0e-9;
+        }
+        state.settle(poses, &parts, better, change);
+        if !better {
+            for (part, pose) in old {
+                poses[part] = pose;
+            }
+        }
+        better
+    };
+    for _ in 0..REORDER_PASSES {
+        let mut improved = false;
+        for (position, &a) in large.iter().enumerate() {
+            if crate::out_of_work(0) {
+                break;
+            }
+            let first = &problem.components[a];
+            // Turns about the body centre.
+            for &angle in &first.angle_options {
+                if (angle - poses[a].angle).abs() < 1.0e-9 {
+                    continue;
+                }
+                let center = first.center(poses[a]);
+                let pose = Pose {
+                    position: first.position_for_center(center, angle),
+                    angle,
+                };
+                if try_change(poses, &[(a, pose)]) {
+                    result.turns += 1;
+                    improved = true;
+                }
+            }
+            for &b in &large[position + 1..] {
+                let second = &problem.components[b];
+                let first = &problem.components[a];
+                let (fewer, more) = (
+                    first.pins.len().min(second.pins.len()),
+                    first.pins.len().max(second.pins.len()),
+                );
+                if first.side != second.side || (fewer as f64) < REORDER_PIN_SHARE * more as f64 {
+                    continue;
+                }
+                let (pose_a, pose_b) = (poses[a], poses[b]);
+                let traded = [
+                    (
+                        a,
+                        Pose {
+                            position: first
+                                .position_for_center(second.center(pose_b), pose_a.angle),
+                            angle: pose_a.angle,
+                        },
+                    ),
+                    (
+                        b,
+                        Pose {
+                            position: second
+                                .position_for_center(first.center(pose_a), pose_b.angle),
+                            angle: pose_b.angle,
+                        },
+                    ),
+                ];
+                if try_change(poses, &traded) {
+                    result.swaps += 1;
+                    improved = true;
+                }
+            }
+        }
+        if !improved {
+            break;
+        }
+    }
+    result.crossings_after = state.total();
+    result
 }
 
 #[cfg(test)]
@@ -655,6 +1005,8 @@ mod tests {
             weight: 1.0,
             legalise: true,
             refine: true,
+            anneal: false,
+            global: false,
         };
         let mut state = CrossingState::new(&problem, &crossings, &poses);
         assert_eq!(state.total(), 0);
@@ -712,10 +1064,71 @@ mod tests {
             weight: 3.0,
             legalise: true,
             refine: true,
+            anneal: false,
+            global: false,
         };
         assert_eq!(total(&problem, &crossings, &poses), 1);
         problem.crossings = Some(std::sync::Arc::new(crossings.clone()));
         crate::legal::refine(&problem, &mut poses, 3);
+        assert_eq!(total(&problem, &crossings, &poses), 0);
+    }
+
+    /// The anneal with the term on: two equal parts whose lines to a
+    /// fixed part cross trade places (peers), and the anneal's own count
+    /// stays exact through its moves (checked by the debug assertions of
+    /// the three steps and the final total below).
+    #[test]
+    fn the_anneal_uncrosses_a_bus() {
+        let mut components = vec![
+            part(
+                "A",
+                vec![Pin {
+                    offset: [0.0, 0.0],
+                    net: 0,
+                }],
+            ),
+            part(
+                "B",
+                vec![Pin {
+                    offset: [0.0, 0.0],
+                    net: 1,
+                }],
+            ),
+            part(
+                "U",
+                vec![
+                    Pin {
+                        offset: [0.0, 0.0],
+                        net: 0,
+                    },
+                    Pin {
+                        offset: [5.0, 0.0],
+                        net: 1,
+                    },
+                ],
+            ),
+        ];
+        components[2].fixed = true;
+        components[2].body_size = [8.0, 2.0];
+        components[2].body_center = [2.5, 0.0];
+        let mut poses = vec![pose(55.0, 40.0), pose(50.0, 40.0), pose(50.0, 60.0)];
+        let mut problem = problem(components, 2, poses.clone());
+        let crossings = Crossings {
+            counted: vec![true; 2],
+            weight: 3.0,
+            legalise: false,
+            refine: false,
+            anneal: true,
+            global: false,
+        };
+        assert_eq!(total(&problem, &crossings, &poses), 1);
+        problem.crossings = Some(std::sync::Arc::new(crossings.clone()));
+        let config = crate::anneal::AnnealConfig {
+            stages: 20,
+            moves_per_part: 20,
+            ..Default::default()
+        };
+        crate::anneal::anneal(&problem, &mut poses, &config);
         assert_eq!(total(&problem, &crossings, &poses), 0);
     }
 
@@ -724,17 +1137,22 @@ mod tests {
     /// gives the change a move makes.
     #[test]
     fn the_incremental_count_is_exact() {
-        let mut seed = 12345u64;
+        // Few lines a move (counted directly) and many (through the grid).
+        exactness(24, 14, 12345);
+        exactness(60, 8, 777);
+    }
+
+    fn exactness(parts: usize, nets: usize, seed: u64) {
+        let mut seed = seed;
         let mut random = move || {
             seed ^= seed << 13;
             seed ^= seed >> 7;
             seed ^= seed << 17;
             (seed >> 11) as f64 / (1u64 << 53) as f64
         };
-        let nets = 14;
         let mut components = Vec::new();
         let mut poses = Vec::new();
-        for index in 0..24 {
+        for index in 0..parts {
             let pins = 1 + (random() * 5.0) as usize;
             let pins = (0..pins)
                 .map(|_| Pin {
@@ -754,12 +1172,14 @@ mod tests {
             weight: 1.0,
             legalise: true,
             refine: true,
+            anneal: false,
+            global: false,
         };
         let mut state = CrossingState::new(&problem, &crossings, &poses);
         assert_eq!(state.total(), brute(&problem, &crossings, &poses));
         for step in 0..300 {
-            let a = (random() * 24.0) as usize;
-            let b = (random() * 24.0) as usize;
+            let a = (random() * parts as f64) as usize;
+            let b = (random() * parts as f64) as usize;
             let mut moved = vec![a];
             let mut next = poses.clone();
             if step % 3 == 0 && a != b {
@@ -778,11 +1198,80 @@ mod tests {
                 state.total() as i64 + after as i64 - before as i64,
                 expected as i64
             );
-            if random() < 0.7 {
-                state.kept(&next, &moved);
+            // The anneal's three steps give the same change.
+            let early = state.before(&moved);
+            assert_eq!(early, before);
+            if random() < 0.2 {
+                // Rejected by the bound: no new trees.
+                state.settle(&next, &moved, false, 0);
+                continue;
+            }
+            let late = state.after(&next);
+            assert_eq!(late, after);
+            let keep = random() < 0.7;
+            state.settle(&next, &moved, keep, late as i64 - early as i64);
+            if keep {
                 poses = next;
                 assert_eq!(state.total(), expected);
+            } else {
+                assert_eq!(state.total(), brute(&problem, &crossings, &poses));
+            }
+            if random() < 0.3 {
+                // The other way of keeping a move, between the steps.
+                let mut again = poses.clone();
+                again[a] = Pose {
+                    position: [random() * 110.0 - 5.0, random() * 110.0 - 5.0],
+                    angle: poses[a].angle,
+                };
+                state.kept(&again, &[a]);
+                poses = again;
+                assert_eq!(state.total(), brute(&problem, &crossings, &poses));
             }
         }
+    }
+
+    /// Two parts of 16 pins whose buses to a fixed connector cross trade
+    /// places after the global placement.
+    #[test]
+    fn reorder_trades_two_large_parts_along_a_bus() {
+        let pins = |first_net: usize| -> Vec<Pin> {
+            (0..16)
+                .map(|index| Pin {
+                    offset: [index as f64 * 0.5 - 3.75, 0.0],
+                    net: first_net + index,
+                })
+                .collect()
+        };
+        let mut connector = part(
+            "J",
+            (0..32)
+                .map(|index| Pin {
+                    offset: [index as f64 * 1.0, 0.0],
+                    net: index,
+                })
+                .collect(),
+        );
+        connector.fixed = true;
+        let components = vec![part("A", pins(0)), part("B", pins(16)), connector];
+        // A (nets 0-15) above the connector's right half, B (16-31) above
+        // its left: every line of A crosses B's.
+        let mut poses = vec![pose(24.0, 40.0), pose(8.0, 40.0), pose(0.0, 20.0)];
+        let problem = problem(components, 32, poses.clone());
+        let crossings = Crossings {
+            counted: vec![true; 32],
+            weight: 3.0,
+            legalise: false,
+            refine: false,
+            anneal: false,
+            global: true,
+        };
+        let before = total(&problem, &crossings, &poses);
+        assert!(before > 0);
+        let result = reorder(&problem, &crossings, &mut poses);
+        assert_eq!(result.swaps, 1);
+        assert_eq!(result.crossings_before, before);
+        assert_eq!(result.crossings_after, total(&problem, &crossings, &poses));
+        assert!(result.crossings_after < before);
+        assert!(poses[0].position[0] < poses[1].position[0]);
     }
 }

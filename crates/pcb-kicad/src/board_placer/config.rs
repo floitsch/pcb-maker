@@ -234,8 +234,8 @@ pub struct KiCadBoardPlacerConfig {
     /// wirelength per crossing the moved part's nets make, and the
     /// layout's race ranks the seeds' placements by their crossings beside
     /// the congestion score. Keys `weight`, `legalise`, `refine`,
-    /// `rank_seeds` (defaults 3 mm, on, on, on; docs/placer.md, "Ratsnest
-    /// crossings (2026-10-24)").
+    /// `rank_seeds`, `anneal`, `global` (defaults 3 mm, on, on, on, off,
+    /// off; docs/placer.md, "Ratsnest crossings (2026-10-24)").
     #[serde(default = "default_ratsnest_crossings")]
     pub ratsnest_crossings: Option<KiCadRatsnestCrossings>,
     /// The router's configuration the guidance lowers with (set by the
@@ -399,6 +399,14 @@ pub struct KiCadRatsnestCrossings {
     /// The layout's race ranks the seeds' placements by the sum of their
     /// ranks by the congestion score and by the crossings.
     pub rank_seeds: bool,
+    /// The anneal pays for them too, and half its swaps trade a part with
+    /// one like it (the same footprint, or both with many pins): where
+    /// the order of parts along a bus is decided. Off by default.
+    pub anneal: bool,
+    /// After the global placement, the parts with 16 pins or more trade
+    /// places and turn where that saves wirelength plus crossings. Off by
+    /// default.
+    pub global: bool,
 }
 
 impl Default for KiCadRatsnestCrossings {
@@ -408,6 +416,8 @@ impl Default for KiCadRatsnestCrossings {
             legalise: true,
             refine: true,
             rank_seeds: true,
+            anneal: false,
+            global: false,
         }
     }
 }

@@ -124,13 +124,15 @@ pub fn place_kicad_board(
         )));
     }
     if let Some(crossings) = &config.ratsnest_crossings
-        && (crossings.legalise || crossings.refine)
+        && (crossings.legalise || crossings.refine || crossings.anneal || crossings.global)
     {
         lowered.problem.crossings = Some(std::sync::Arc::new(core::crossings::Crossings {
             counted: crossing_nets(&lowered),
             weight: crossings.weight,
             legalise: crossings.legalise,
             refine: crossings.refine,
+            anneal: crossings.anneal,
+            global: crossings.global,
         }));
     }
     let mut placer_config = core::Config::new();
