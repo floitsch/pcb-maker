@@ -11,6 +11,91 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-24 (the OpenESC clearance regression)
+
+Branch openesc-regression, snapshots x14280 (uncommitted, unused) and
+x14281 (the fix). The report: in layout mode at the task budget, placer
+seed 1, the OpenESC boards went from x1780's 57 unconnected and no
+copper error (4in1-mini, this morning) to 102 unconnected and 170
+clearance errors (4in1: 125 and 222) on x1813 and x14270.
+
+- **No snapshot regressed: the input changed.** Every snapshot of the
+  day gives the same bad rows on today's input (4in1-mini, layout mode,
+  task budget, seed 1, 2 threads, one run each through the ledger):
+
+  | Snapshot | Commit | Routed | Unconnected | Clearance errors | Vias | Length |
+  | --- | --- | --- | --- | --- | --- | --- |
+  | x1752 | (before 3bfc315) | 90/152 | 106 | 178 | 113 | 1296 mm |
+  | x1780 | 3bfc315 | 89/152 | 102 | 170 | 127 | 1395 mm |
+  | x1790 | ee778f5 | 89/152 | 102 | 170 | 127 | 1395 mm |
+  | x1791 | 7f2b3ea | 89/152 | 102 | 170 | 127 | 1395 mm |
+  | x1792 | dbfd1b5 | 89/152 | 102 | 170 | 127 | 1395 mm |
+  | x1798 | c038a34 | 89/152 | 102 | 170 | 127 | 1395 mm |
+  | x1799 | 76c0485 | 89/152 | 102 | 170 | 127 | 1395 mm |
+  | x1813 | 2e41ea3 | 89/152 | 102 | 170 | 127 | 1395 mm |
+  | x1813, the board without its .kicad_dru | 2e41ea3 | 122/152 | 57 | 0 | 139 | 1680 mm |
+
+  4in1, x1780: 68/152, 125 unconnected, 222 clearance errors, the same
+  row as x1813's. x1813 on the board without its `.kicad_dru` repeats
+  this morning's x1780 row (fix3-dense2-x1780) to the millimetre.
+- **What changed.** After the 10:42 incident (the worktree links that
+  replaced `benchmarks/real/external`) the harvested boards were fetched
+  again at 12:38, this time with their `.kicad_dru` where the repository
+  has one: 14 boards, none before (harvest.py takes the `.kicad_pcb`
+  and `.kicad_pro`). `board_sha256` and `task_sha256` stayed, so
+  compare.py saw one input. The OpenESC boards' file holds "2 oz outer
+  copper": clearance 0.16 mm and track width 0.16 mm on F.Cu and B.Cu,
+  over the board's 0.09. Of the others, the short tier's (USB_Keypad,
+  USB_Cable_Tester, WLED_Matrix, OpenFC) hold no copper rule; the laptop
+  boards, ErgoSNM and MokyaLora do.
+- **Why it broke the layout.** The 0.16 mm holds on two of four layers,
+  so the custom rules' lowering makes it a pair rule of the router
+  (`ClearanceRule`, layers F.Cu and B.Cu), not a net's clearance. The
+  placer's copper clearance (`copper_clearance_mm`,
+  `largest_clearance`) read only the classes: 0.09 mm. Crowded, the
+  placer relaxed its spacing down to 0.09 (`spacing_mm` 0.09 in
+  board-placer.json), and KiCad's DRC, now with the file, found the
+  pads 0.09 to 0.15 mm apart: 167 pad-to-pad and 3 pad-to-hole findings
+  between parts on 4in1-mini, every one by the outer layers' rule. The
+  router kept the rule (and its 0.16 mm width): 102 open against 57
+  without the file.
+- **Fix** (pcb-kicad, placement only). The lowering also evaluates each
+  clearance rule for a pad against a pad (SMD or plated, after the later
+  rules) and keeps the largest that holds between the pads of every two
+  nets on some layer (`Lowered::pad_clearance_all`), reported as
+  `rules.pad_clearance_mm`; `largest_clearance` takes it with the
+  classes'. A rule between two sets of nets (an isolation) or from pads
+  to tracks only is no such floor. Tests: the dru lowering
+  (`a_pad_clearance_on_some_layers_floors_the_placer`: layer rule,
+  every-layer rule, pad-to-track, one net, a later pad rule) and the
+  project (`a_clearance_on_the_outer_layers_spaces_the_parts`: four
+  layers, the OpenESC file, `largest_clearance` 0.16, 0.09 without it).
+- **Measured** (x14281 against x1813, the same input, seed 1):
+
+  | Board | x1813 | x14281 |
+  | --- | --- | --- |
+  | 4in1-mini | 89/152, 102 unconnected, 170 clearance | 88/152, 95 unconnected, no error |
+  | 4in1 | 68/152, 125 unconnected, 222 clearance | 73/152, 107 unconnected, no error |
+
+  The placer's spacing is 0.16 (board-placer.json). Not x1780's 57: that
+  was the board without its rules. Routing the same board under them
+  (0.16 mm from tracks on the outer layers, and every track 0.16 wide on
+  every layer, `approximated`: the router has one width a net, where the
+  rule leaves the inner layers at 0.09) is harder; per-layer widths are
+  the next lever there. Short tier (3 x 2) against x1813's
+  cross1-short-off: all 12 rows the same (unconnected 18, new errors 5,
+  strict 15, vias 1134, 6 passes). The route mode never calls
+  `largest_clearance`; the expansion tier was not run.
+- **Harness.** Rows record `project_sha256` (the `.kicad_pro` and
+  `.kicad_dru`), and compare.py marks a board INPUT when it differs,
+  from the prepared `source` for older rows: fix3-dense2-x1780 against
+  cross1-dense-s1-off now marks 4in1-mini INPUT. The tiers' README
+  ("How to measure") says so.
+- **Rows before 12:38 and after** on the 14 boards are other inputs:
+  the dense boards' and the short tier's comparisons across that time
+  compare the OpenESC boards (and the four short-tier boards, whose rule
+  files hold no copper rule) on other projects.
+
 ## Committed on 2026-10-24 (placement ablation: which decisions cost on MegaDrive and Glasgow)
 
 A diagnostic, no placer or router change. Branch placement-ablation,
