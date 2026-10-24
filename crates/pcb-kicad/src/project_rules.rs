@@ -1128,6 +1128,7 @@ fn diff_pair_rules(
             rule.layers.push((w, g));
             rule.disallowed
                 .push(dru::track_disallowed(rules, &paired, layer, copper));
+            rule.width_ruled.push(width.is_some());
             rule.sources.push(match (&width, &gap) {
                 (_, Some(picked)) | (Some(picked), None) => format!("rule '{}'", picked.rule),
                 (None, None) if class.gap.is_some() => format!("net class '{}'", class.class),
