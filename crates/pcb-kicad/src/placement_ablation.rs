@@ -62,6 +62,12 @@ pub struct KiCadAblationConfig {
     /// that should cost nothing: the noise floor of an attribution.
     pub nulls: usize,
     pub null_nudge_mm: f64,
+    /// Replicates of every variant written (`<variant>-r1`, ...), the
+    /// baselines' among them: each with one more passive nudged by
+    /// `null_nudge_mm` (another one per replicate, away from the moved
+    /// and displaced parts), so that a group's cost is a mean over routes
+    /// that differ by noise alone.
+    pub replicates: usize,
 }
 
 impl Default for KiCadAblationConfig {
@@ -77,6 +83,7 @@ impl Default for KiCadAblationConfig {
             global_route: true,
             nulls: 2,
             null_nudge_mm: 0.1,
+            replicates: 0,
         }
     }
 }
@@ -747,6 +754,67 @@ fn repair(
     (moved, unplaced)
 }
 
+/// Nudges one passive of `poses` by `nudge` mm (the first direction where
+/// it meets no part it did not meet before), the `slot`-th of `slots`
+/// spread over the candidates (movable passives outside `avoid`), and
+/// returns it; None when no candidate can move.
+#[allow(clippy::too_many_arguments)]
+fn nudge_passive(
+    problem: &placer::Problem,
+    poses: &mut [placer::Pose],
+    movable: &[usize],
+    parts: &[Part],
+    passive_pads: usize,
+    avoid: &BTreeSet<usize>,
+    slot: usize,
+    slots: usize,
+    nudge: f64,
+) -> Option<usize> {
+    let candidates: Vec<usize> = movable
+        .iter()
+        .copied()
+        .filter(|index| {
+            (2..=passive_pads).contains(&parts[*index].pads)
+                && !parts[*index].connector
+                && !avoid.contains(index)
+        })
+        .collect();
+    if candidates.is_empty() {
+        return None;
+    }
+    let total = problem.components.len();
+    let start = (slot * candidates.len() / (slots + 1) + candidates.len() / (2 * (slots + 1)))
+        % candidates.len();
+    for offset in 0..candidates.len() {
+        let index = candidates[(start + offset) % candidates.len()];
+        let before: Vec<bool> = (0..total)
+            .map(|other| {
+                other != index && conflict(problem, index, poses[index], other, poses[other])
+            })
+            .collect();
+        for (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+            let pose = placer::Pose {
+                position: [
+                    poses[index].position[0] + dx * nudge,
+                    poses[index].position[1] + dy * nudge,
+                ],
+                angle: poses[index].angle,
+            };
+            let clean = placer::legal::body_inside_outline(problem, index, pose)
+                && (0..total).all(|other| {
+                    other == index
+                        || before[other]
+                        || !conflict(problem, index, pose, other, poses[other])
+                });
+            if clean {
+                poses[index] = pose;
+                return Some(index);
+            }
+        }
+    }
+    None
+}
+
 /// `pcb` (our placed board) with its footprints at `poses` (those whose
 /// pose differs from ours), flipped where the side differs.
 fn board_at(
@@ -1094,6 +1162,36 @@ pub fn ablate_kicad_placement(
             signals,
             directory,
         });
+        for replicate in 1..=config.replicates {
+            let mut nudged = poses.clone();
+            let Some(index) = nudge_passive(
+                problem,
+                &mut nudged,
+                &movable,
+                &parts,
+                config.passive_pads,
+                &BTreeSet::new(),
+                replicate - 1,
+                config.replicates,
+                config.null_nudge_mm,
+            ) else {
+                continue;
+            };
+            let replicate_name = format!("{name}-r{replicate}");
+            let board = board_at(&pcb, &nudged, &ours, backs, &parts)?;
+            let directory = write_variant(&replicate_name, &board)?;
+            let (signals, _, _, _) = measure(&nudged, &board)?;
+            variants.push(KiCadAblationVariant {
+                name: replicate_name,
+                base: name.into(),
+                group: Some(format!("null:{}", parts[index].reference)),
+                moved: 1,
+                displaced: Vec::new(),
+                unplaced: Vec::new(),
+                signals,
+                directory,
+            });
+        }
     }
     // The null variants: a passive nudged, legal where it lands, spread
     // over the board (every `step`-th candidate).
@@ -1199,7 +1297,7 @@ pub fn ablate_kicad_placement(
                     .map_or(0.0, |global| global.soft_overflow_05)
             );
             variants.push(KiCadAblationVariant {
-                name,
+                name: name.clone(),
                 base: base.into(),
                 group: Some(group.name.clone()),
                 moved: indices.len(),
@@ -1217,6 +1315,40 @@ pub fn ablate_kicad_placement(
                 signals,
                 directory,
             });
+            let mut avoid: BTreeSet<usize> = indices.clone();
+            avoid.extend(displaced.iter().map(|(index, _)| *index));
+            for replicate in 1..=config.replicates {
+                let mut nudged = poses.clone();
+                if nudge_passive(
+                    problem,
+                    &mut nudged,
+                    &movable,
+                    &parts,
+                    config.passive_pads,
+                    &avoid,
+                    replicate - 1,
+                    config.replicates,
+                    config.null_nudge_mm,
+                )
+                .is_none()
+                {
+                    continue;
+                }
+                let replicate_name = format!("{name}-r{replicate}");
+                let board = board_at(&pcb, &nudged, &ours, &backs, &parts)?;
+                let directory = write_variant(&replicate_name, &board)?;
+                let (signals, _, _, _) = measure(&nudged, &board)?;
+                variants.push(KiCadAblationVariant {
+                    name: replicate_name,
+                    base: base.into(),
+                    group: Some(group.name.clone()),
+                    moved: indices.len(),
+                    displaced: Vec::new(),
+                    unplaced: Vec::new(),
+                    signals,
+                    directory,
+                });
+            }
         }
     }
     let parts_ours = described.pop().unwrap_or_default();

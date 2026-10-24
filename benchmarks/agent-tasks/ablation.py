@@ -193,65 +193,82 @@ def spearman(xs, ys):
 
 
 def analyse(out):
+    """Per group the open connections our placement of it explains, from
+    the routes' means: the baselines with their nulls and replicates
+    (`designer`, `d-null-N`, `designer-rN`), a variant with its replicates
+    (`d-<group>`, `d-<group>-rN`)."""
+    meta = json.loads((out / "task.json").read_text())
     report = json.loads((out / "hybrids" / "ablation.json").read_text())
     rows = rows_of(out)
-    if json.loads((out / "task.json").read_text()).get("base_from"):
+    if meta.get("base_from"):
         # The baselines are the earlier run's: the nulls with them.
-        base_report = json.loads((Path(json.loads((out / "task.json").read_text())["base_from"]) / "hybrids"
-                                  / "ablation.json").read_text())
+        base_report = json.loads((Path(meta["base_from"]) / "hybrids" / "ablation.json").read_text())
         names = {variant["name"] for variant in report["variants"]}
         report["variants"] += [variant for variant in base_report["variants"]
-                               if "-null-" in variant["name"] and variant["name"] not in names]
+                               if ("-null-" in variant["name"] or variant["name"] in ("designer", "ours"))
+                               and variant["name"] not in names]
     variants = {variant["name"]: variant for variant in report["variants"]}
-    opened = {name: open_count(rows.get(name)) for name in variants}
-    base = {"designer": opened.get("designer"), "ours": opened.get("ours")}
-    nulls = {side: [opened[name] - base[side] for name in variants
-                    if name.startswith(side[0] + "-null-") and opened.get(name) is not None and base[side] is not None]
-             for side in base}
-    noise = [abs(value) for values in nulls.values() for value in values]
+    opened = {name: open_count(row) for name, row in rows.items()}
+
+    def runs(name):
+        """The open counts of a variant and its replicates."""
+        found = [opened[name]] if opened.get(name) is not None else []
+        found += [count for other, count in opened.items()
+                  if count is not None and other.startswith(name + "-r") and other[len(name) + 2:].isdigit()]
+        return found
+
+    base_runs = {}
+    for side in ("designer", "ours"):
+        base_runs[side] = runs(side) + [count for other, count in opened.items()
+                                        if count is not None and other.startswith(side[0] + "-null-")]
+    base = {side: (sum(values) / len(values) if values else None) for side, values in base_runs.items()}
+    deviations = [count - base[side] for side, values in base_runs.items() for count in values]
+    degrees = sum(len(values) - 1 for values in base_runs.values() if values)
+    sd = math.sqrt(sum(d * d for d in deviations) / degrees) if degrees > 0 else None
     groups = []
     for group in report["groups"]:
-        d, o = opened.get("d-" + group["name"]), opened.get("o-" + group["name"])
-        cost_d = None if d is None or base["designer"] is None else d - base["designer"]
-        cost_o = None if o is None or base["ours"] is None else base["ours"] - o
-        known = [cost for cost in (cost_d, cost_o) if cost is not None]
-        mean = sum(known) / len(known) if known else None
-        groups.append(dict(group, open_d=d, open_o=o, cost_d=cost_d, cost_o=cost_o, cost=mean,
-                           displaced_d=len(variants.get("d-" + group["name"], {}).get("displaced", [])),
-                           displaced_o=len(variants.get("o-" + group["name"], {}).get("displaced", []))))
+        entry = dict(group)
+        for side, prefix, sign in (("designer", "d", 1), ("ours", "o", -1)):
+            values = runs(f"{prefix}-{group['name']}")
+            mean = sum(values) / len(values) if values else None
+            cost = None if mean is None or base[side] is None else sign * (mean - base[side])
+            se = None if sd is None or not values or not base_runs[side] else \
+                sd * math.sqrt(1 / len(values) + 1 / len(base_runs[side]))
+            entry.update({f"open_{prefix}": mean, f"runs_{prefix}": values, f"cost_{prefix}": cost,
+                          f"se_{prefix}": se,
+                          f"displaced_{prefix}": len(variants.get(f"{prefix}-{group['name']}", {})
+                                                     .get("displaced", []))})
+        known = [entry[key] for key in ("cost_d", "cost_o") if entry[key] is not None]
+        entry["cost"] = sum(known) / len(known) if known else None
+        groups.append(entry)
     groups.sort(key=lambda group: (group["cost"] is None, -(group["cost"] or 0)))
     # The signal check: per signal, its change on the same pairs as the
-    # attributed cost.
+    # attributed cost (the primary variant's signals: a replicate's nudge
+    # hardly moves them).
     checks = []
     for key, label, read in SIGNALS:
-        sd, so = (read(variants[name]["signals"]) if name in variants else None for name in ("designer", "ours"))
+        sd_, so = (read(variants[name]["signals"]) if name in variants else None for name in ("designer", "ours"))
         whole = None
-        if None not in (sd, so, base["designer"], base["ours"]):
-            whole = (so - sd) * (base["ours"] - base["designer"]) > 0
+        if None not in (sd_, so, base["designer"], base["ours"]):
+            whole = (so - sd_) * (base["ours"] - base["designer"]) > 0
         pairs = []
-        for group in report["groups"]:
-            for side, name, cost in (("d", "d-" + group["name"], None), ("o", "o-" + group["name"], None)):
-                if name not in variants or opened.get(name) is None:
+        for group in groups:
+            for prefix, reference, sign in (("d", sd_, 1), ("o", so, -1)):
+                name = f"{prefix}-{group['name']}"
+                cost = group[f"cost_{prefix}"]
+                if name not in variants or cost is None or reference is None:
                     continue
                 signal = read(variants[name]["signals"])
                 if signal is None:
                     continue
-                if side == "d":
-                    if base["designer"] is None or sd is None:
-                        continue
-                    pairs.append((signal - sd, opened[name] - base["designer"]))
-                else:
-                    if base["ours"] is None or so is None:
-                        continue
-                    pairs.append((so - signal, base["ours"] - opened[name]))
-        floor = max(noise) if noise else 0
-        moved = [(s, c) for s, c in pairs if abs(c) > floor]
-        agree = sum(1 for s, c in moved if s * c > 0)
-        checks.append(dict(signal=key, label=label, designer=sd, ours=so, whole_right=whole,
-                           spearman=spearman([s for s, _ in pairs], [c for _, c in pairs]),
-                           pairs=len(pairs), moved=len(moved), agree=agree, noise_floor=floor))
-    return dict(task=json.loads((out / "task.json").read_text())["task"], report=report, rows=rows,
-                base=base, nulls=nulls, groups=groups, checks=checks)
+                pairs.append((sign * (signal - reference), cost, group[f"se_{prefix}"] or 0))
+        moved = [(signal, cost) for signal, cost, se in pairs if abs(cost) > 2 * se]
+        agree = sum(1 for signal, cost in moved if signal * cost > 0)
+        checks.append(dict(signal=key, label=label, designer=sd_, ours=so, whole_right=whole,
+                           spearman=spearman([p[0] for p in pairs], [p[1] for p in pairs]),
+                           pairs=len(pairs), moved=len(moved), agree=agree))
+    return dict(task=meta["task"], report=report, rows=rows, base=base, base_runs=base_runs, sd=sd,
+                groups=groups, checks=checks)
 
 
 def part_summary(parts, members):
@@ -304,17 +321,18 @@ def fmt(value, digits=0):
 
 def markdown(result):
     lines = [f"### {result['task']}", ""]
-    base = result["base"]
-    lines.append(f"Routed open (KiCad unconnected): designer's placement {fmt(base['designer'])}, "
-                 f"ours {fmt(base['ours'])}; nulls (one passive nudged 0.1 mm): designer "
-                 f"{result['nulls']['designer']}, ours {result['nulls']['ours']}.")
-    lines += ["", "| group | parts | open d+ours / o+designer's | cost d / o | cost (mean) | displaced d / o |",
+    base, runs = result["base"], result["base_runs"]
+    lines.append(f"Routed open (KiCad unconnected), the baselines with their nulls: designer's placement "
+                 f"{runs['designer']} (mean {fmt(base['designer'], 1)}), ours {runs['ours']} "
+                 f"(mean {fmt(base['ours'], 1)}); a route's noise (pooled standard deviation) {fmt(result['sd'], 1)}.")
+    lines += ["", "| group | parts | open d+ours / o+designer's (routes) | cost d / o (± se) | cost (mean) | displaced d / o |",
               "| --- | ---: | ---: | ---: | ---: | ---: |"]
     for group in result["groups"]:
-        lines.append(f"| {group['name']} | {len(group['members'])} | {fmt(group['open_d'])} / {fmt(group['open_o'])} "
-                     f"| {fmt(group['cost_d'])} / {fmt(group['cost_o'])} | {fmt(group['cost'], 1)} "
-                     f"| {group['displaced_d']} / {group['displaced_o']} |")
-    lines += ["", "| signal | designer's | ours | orders the placements right | Spearman with cost | agrees, moved pairs |",
+        lines.append(f"| {group['name']} | {len(group['members'])} "
+                     f"| {fmt(group['open_d'], 1)} ({len(group['runs_d'])}) / {fmt(group['open_o'], 1)} ({len(group['runs_o'])}) "
+                     f"| {fmt(group['cost_d'], 1)} ± {fmt(group['se_d'], 0)} / {fmt(group['cost_o'], 1)} ± {fmt(group['se_o'], 0)} "
+                     f"| {fmt(group['cost'], 1)} | {group['displaced_d']} / {group['displaced_o']} |")
+    lines += ["", "| signal | designer's | ours | orders the placements right | Spearman with cost | agrees, pairs beyond 2 se |",
               "| --- | ---: | ---: | --- | ---: | ---: |"]
     for check in result["checks"]:
         lines.append(f"| {check['label']} | {fmt(check['designer'], 1)} | {fmt(check['ours'], 1)} "
@@ -333,7 +351,8 @@ def report_command(arguments):
                 print(describe(result, describe_path))
             print()
         else:
-            print(json.dumps({key: result[key] for key in ("task", "base", "nulls", "groups", "checks")}, indent=1))
+            print(json.dumps({key: result[key] for key in ("task", "base", "base_runs", "sd", "groups", "checks")},
+                             indent=1))
 
 
 def main():
