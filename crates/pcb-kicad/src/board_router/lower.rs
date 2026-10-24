@@ -379,16 +379,24 @@ fn lower_board(
 
     // Differential pairs (`diff_pairs`): a pair's nets keep off the layers
     // the custom rules disallow their tracks on (`disallow track`: ducktop2's
-    // ground and impedance layers), as the pair's coupled runs do; the
-    // stubs and the fallback route them in their class.
+    // ground and impedance layers), and off those where a custom rule's
+    // track width bounds do not hold the width they route at (ducktop2's
+    // DIFF_90: 0.1796 mm outside, at most 0.111 on In2.Cu; a class has one
+    // width), as the pair's coupled runs do; the stubs and the fallback
+    // route them in their class.
     let pairs_on = config.diff_pairs_on() && config.engine.as_deref() != Some("topological");
-    let pair_layers = |name: &str| -> core::LayerMask {
+    let pair_layers = |name: &str, width: f64| -> core::LayerMask {
         let Some(rule) = config.diff_pair_rules.get(name).filter(|_| pairs_on) else {
             return 0;
         };
         let count = rule.disallowed.len().min(32);
+        let other_width = |layer: usize| {
+            rule.width_bounds
+                .get(layer)
+                .is_some_and(|(min, max)| width < min - 1.0e-6 || width > max + 1.0e-6)
+        };
         let allowed = (0..count)
-            .filter(|layer| !rule.disallowed[*layer])
+            .filter(|layer| !rule.disallowed[*layer] && !other_width(*layer))
             .fold(0, |mask: core::LayerMask, layer| mask | (1 << layer));
         if allowed.count_ones() as usize == count {
             0
@@ -426,7 +434,7 @@ fn lower_board(
             clearance: rules.clearance_mm,
             via_diameter: rules.via_size_mm,
             via_drill: rules.via_drill_mm,
-            layers: pair_layers(name),
+            layers: pair_layers(name, rules.trace_width_mm),
         };
         let class_index = classes
             .iter()

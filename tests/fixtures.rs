@@ -1319,15 +1319,21 @@ fn a_keepout_over_a_part_fixed_by_the_constraints_file_is_warned_of() {
 /// the opposite order) route as coupled runs at the rule's gap; KiCad
 /// finds no gap or uncoupled-length error on the pair whose pads' order is
 /// the run's (the crossing pair's stubs cross near J4, uncoupled: phase 1
-/// swaps no pads). With the switch off the report has no `diff_pairs`.
+/// swaps no pads). The fixture's custom rule constrains diff_pair_gap, so
+/// route mode turns the pairs on by default ("rules"); switched off
+/// (`PCB_ROUTER_DIFF_PAIRS=0`, "explicit") the report says so and couples
+/// nothing.
 #[test]
 fn differential_pairs_route_coupled_at_the_rules_gap() {
     let test = "differential_pairs_route_coupled_at_the_rules_gap";
     let has_kicad = kicad_cli(test);
     let root = scratch("diffpair");
-    let route = |out: &Path, on: bool| {
+    let route = |out: &Path, on: Option<bool>| {
         let mut command = binary(1);
-        command.env("PCB_ROUTER_DIFF_PAIRS", if on { "1" } else { "0" });
+        match on {
+            Some(on) => command.env("PCB_ROUTER_DIFF_PAIRS", if on { "1" } else { "0" }),
+            None => command.env_remove("PCB_ROUTER_DIFF_PAIRS"),
+        };
         if !has_kicad {
             command.env("PCB_SKIP_NATIVE", "1");
         }
@@ -1346,11 +1352,21 @@ fn differential_pairs_route_coupled_at_the_rules_gap() {
         );
         read_json(&out.join("board-router.json"))
     };
-    let off = route(&root.join("off"), false);
-    assert!(off.get("diff_pairs").is_none());
+    let off = route(&root.join("off"), Some(false));
+    assert_eq!(off["diff_pairs"]["on"], false, "{}", off["diff_pairs"]);
+    assert_eq!(off["diff_pairs"]["default"], "explicit");
+    assert_eq!(off["diff_pairs"]["links"], 0);
     let out = root.join("on");
-    let report = route(&out, true);
+    let report = route(&out, None);
     let pairs = &report["diff_pairs"];
+    assert_eq!(pairs["on"], true, "{pairs}");
+    assert_eq!(pairs["default"], "rules", "{pairs}");
+    assert!(
+        pairs["reason"]
+            .as_str()
+            .is_some_and(|reason| reason.contains("rule 'pairs' constrains diff_pair_gap")),
+        "{pairs}"
+    );
     assert_eq!(pairs["found"], 2, "{pairs}");
     assert_eq!(pairs["coupled"], 2, "{pairs}");
     assert_eq!(pairs["fallen_back"], 0, "{pairs}");
@@ -1359,10 +1375,9 @@ fn differential_pairs_route_coupled_at_the_rules_gap() {
         assert_eq!(pair["gap_mm"], 0.2, "{pair}");
         assert_eq!(pair["width_mm"], 0.2, "{pair}");
     }
-    assert_eq!(
-        read_json(&out.join("verdict.json"))["diff_pairs"]["coupled"],
-        2
-    );
+    let verdict = read_json(&out.join("verdict.json"));
+    assert_eq!(verdict["diff_pairs"]["coupled"], 2);
+    assert_eq!(verdict["diff_pairs"]["default"], "rules");
     if has_kicad {
         let drc = read_json(&out.join("drc.json"));
         assert_eq!(drc["unconnected_items"].as_array().unwrap().len(), 0);

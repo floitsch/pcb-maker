@@ -1129,6 +1129,13 @@ fn diff_pair_rules(
             rule.disallowed
                 .push(dru::track_disallowed(rules, &paired, layer, copper));
             rule.width_ruled.push(width.is_some());
+            rule.width_bounds
+                .push(width.as_ref().map_or((0.0, f64::INFINITY), |picked| {
+                    (
+                        picked.min.unwrap_or(0.0),
+                        picked.max.unwrap_or(f64::INFINITY),
+                    )
+                }));
             rule.sources.push(match (&width, &gap) {
                 (_, Some(picked)) | (Some(picked), None) => format!("rule '{}'", picked.rule),
                 (None, None) if class.gap.is_some() => format!("net class '{}'", class.class),
@@ -1381,6 +1388,9 @@ mod tests {
         assert_eq!(tx.max_uncoupled, Some(5.0));
         // No track but GND's on In1.Cu: the pairs keep off it.
         assert_eq!(tx.disallowed, vec![false, true, false]);
+        // The rule's width bounds outside, none on In1.Cu.
+        assert_eq!(tx.width_bounds[0], (0.17, 0.17));
+        assert_eq!(tx.width_bounds[1], (0.0, f64::INFINITY));
         assert_eq!(tx.rules, vec!["pairs outer".to_string()]);
         assert_eq!(tx.sources[1], "net class 'HS'");
         // Default's pair settings for D+ and D-; the rule's pattern does

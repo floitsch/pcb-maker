@@ -1460,6 +1460,39 @@ pub(crate) fn finish_pairs(
                 copper
             })
         });
+        // Each pad's stub must reach its end of the run (else the run is an
+        // island and the pad open): the link falls back.
+        let reach = |net: core::NetId| {
+            (pair.width
+                + result.routes[net as usize]
+                    .segments
+                    .iter()
+                    .map(|segment| segment.width)
+                    .fold(0.0, f64::max))
+                / 2.0
+        };
+        let stubs_joined = (0..2).all(|end| {
+            [(0, pair.positive), (1, pair.negative)]
+                .into_iter()
+                .all(|(polarity, net)| {
+                    stub_joined(
+                        &restored,
+                        &result.routes[net as usize],
+                        net,
+                        plan_link.pads[end][polarity],
+                        plan_link.stub_end(end, polarity, pair.width),
+                        reach(net),
+                    )
+                })
+        });
+        if copper.is_some() && !stubs_joined {
+            entries[index].why.push(format!(
+                "link {}: a pad's stub does not reach the run",
+                link + 1
+            ));
+            open_pairs.insert(index);
+            continue;
+        }
         match copper {
             Some(copper) => {
                 candidates.push((index, link, copper));
@@ -1709,6 +1742,113 @@ fn stub_path(
     (stub.len() + 1 == path.len()).then_some((first.1, stub))
 }
 
+/// Whether `net`'s route joins the pad at `pad` (its copper on the board)
+/// to a stub's end (its copper `lead`, `reach` around it): the copper the
+/// route's tracks and vias overlap, followed from the pad (as the router
+/// joins copper). A link whose stubs do not reach both its ends would
+/// leave its run an island (the router may end a pad's route on the other
+/// end of the link, merged into one terminal, or leave it open).
+fn stub_joined(
+    board: &core::Board,
+    route: &core::NetRoute,
+    net: core::NetId,
+    pad: Point,
+    lead: (Point, Point),
+    reach: f64,
+) -> bool {
+    let pads: Vec<&core::Obstacle> = board
+        .obstacles
+        .iter()
+        .filter(|obstacle| {
+            obstacle.net == Some(net)
+                && obstacle.kind == core::ObstacleKind::Copper
+                && obstacle.shape.distance_to_point(pad) <= 1.0e-6
+        })
+        .collect();
+    let segments = &route.segments;
+    let count = segments.len();
+    // Items: the segments, then the vias.
+    let touches_pad = |item: usize| {
+        if item < count {
+            let segment = &segments[item];
+            pads.iter().any(|obstacle| {
+                obstacle.layers & (1 << segment.layer) != 0
+                    && [segment.start, segment.end].into_iter().any(|end| {
+                        obstacle.shape.distance_to_point(end) <= segment.width / 2.0 + 1.0e-6
+                    })
+            })
+        } else {
+            let via = &route.vias[item - count];
+            pads.iter().any(|obstacle| {
+                obstacle.shape.distance_to_point(via.at) <= via.diameter / 2.0 + 1.0e-6
+            })
+        }
+    };
+    let joined = |a: usize, b: usize| match (a < count, b < count) {
+        (true, true) => {
+            let (x, y) = (&segments[a], &segments[b]);
+            let keep = (x.width + y.width) / 2.0 + 1.0e-6;
+            x.layer == y.layer
+                && ([x.start, x.end]
+                    .into_iter()
+                    .any(|end| core::geometry::point_segment_distance(end, y.start, y.end) <= keep)
+                    || [y.start, y.end].into_iter().any(|end| {
+                        core::geometry::point_segment_distance(end, x.start, x.end) <= keep
+                    }))
+        }
+        (true, false) | (false, true) => {
+            let (segment, via) = if a < count {
+                (&segments[a], &route.vias[b - count])
+            } else {
+                (&segments[b], &route.vias[a - count])
+            };
+            core::geometry::point_segment_distance(via.at, segment.start, segment.end)
+                <= (segment.width + via.diameter) / 2.0 + 1.0e-6
+        }
+        (false, false) => false,
+    };
+    let at_end = |item: usize| {
+        item < count
+            && [segments[item].start, segments[item].end]
+                .into_iter()
+                .any(|end| {
+                    core::geometry::point_segment_distance(end, lead.0, lead.1) <= reach + 1.0e-6
+                })
+    };
+    let total = count + route.vias.len();
+    let mut seen = vec![false; total];
+    let mut queue: Vec<usize> = (0..total).filter(|&item| touches_pad(item)).collect();
+    for &item in &queue {
+        seen[item] = true;
+    }
+    while let Some(item) = queue.pop() {
+        if at_end(item) {
+            return true;
+        }
+        for other in 0..total {
+            if !seen[other] && joined(item, other) {
+                seen[other] = true;
+                queue.push(other);
+            }
+        }
+    }
+    if debug() {
+        let nearest = segments
+            .iter()
+            .flat_map(|segment| [segment.start, segment.end])
+            .map(|end| core::geometry::point_segment_distance(end, lead.0, lead.1))
+            .fold(f64::INFINITY, f64::min);
+        eprintln!(
+            "diff pair stub of {} from {pad:?} does not reach {lead:?} (pads {}, from the pad {} of {} items, nearest track end {nearest:.3} mm, reach {reach:.3})",
+            board.nets[net as usize].name,
+            pads.len(),
+            seen.iter().filter(|seen| **seen).count(),
+            total
+        );
+    }
+    false
+}
+
 /// Replaces each stub of a kept link (the pair's net's route from a pad to
 /// its stub's end, one layer, no branch) by a straight track where that
 /// keeps every clearance (`refused_groups`).
@@ -1875,6 +2015,50 @@ fn prune_stub(
                     <= (candidate.width + segment.width) / 2.0 + 1.0e-6
         });
         if alone {
+            // A via there that joins nothing else of the net but one track
+            // on another layer goes too, and the chain goes on along that
+            // track (a stub that changed layers: KiCad's via_dangling).
+            let Some(via) = route
+                .vias
+                .iter()
+                .position(|via| core::geometry::distance(via.at, other) < 1.0e-6)
+            else {
+                continue;
+            };
+            let (at_via, diameter) = (route.vias[via].at, route.vias[via].diameter);
+            if own
+                .iter()
+                .any(|obstacle| obstacle.shape.distance_to_point(at_via) <= diameter / 2.0 + 1.0e-6)
+                || route.vias.iter().enumerate().any(|(index, other_via)| {
+                    index != via
+                        && core::geometry::distance(other_via.at, at_via)
+                            <= (other_via.diameter + diameter) / 2.0 + 1.0e-6
+                })
+            {
+                continue;
+            }
+            let meeting: Vec<&core::Segment> = route
+                .segments
+                .iter()
+                .filter(|candidate| {
+                    core::geometry::point_segment_distance(at_via, candidate.start, candidate.end)
+                        <= (candidate.width + diameter) / 2.0 + 1.0e-6
+                })
+                .collect();
+            match meeting[..] {
+                [] => {
+                    route.vias.remove(via);
+                }
+                [next]
+                    if core::geometry::distance(next.start, at_via) < 1.0e-6
+                        || core::geometry::distance(next.end, at_via) < 1.0e-6 =>
+                {
+                    let next_layer = next.layer;
+                    route.vias.remove(via);
+                    at = Some((at_via, next_layer));
+                }
+                _ => {}
+            }
             continue;
         }
         // The next track of the chain, if `other` is its end and touches
@@ -2400,8 +2584,9 @@ mod tests {
     }
 
     /// A rule disallowing tracks on In1.Cu for the pair's nets (ducktop2's
-    /// ground layers): the pair's nets (their stubs, the fallback) and the
-    /// link keep off it, as the coupled run does; other nets do not.
+    /// ground layers), and one bounding their width on In2.Cu below the
+    /// width they route at: the pair's nets (their stubs, the fallback) and
+    /// the link keep off both, as the coupled run does; other nets do not.
     #[test]
     fn a_pairs_nets_keep_off_the_layers_a_rule_disallows() {
         let four = BOARD.replace(
@@ -2431,9 +2616,16 @@ mod tests {
             config.diff_pair_rules.insert(
                 name.clone(),
                 crate::board_router::KiCadDiffPairRule {
-                    layers: vec![(0.2, 0.2); 4],
+                    layers: vec![(0.2, 0.2), (0.2, 0.2), (0.1, 0.2), (0.2, 0.2)],
                     disallowed: vec![false, true, false, false],
-                    width_ruled: vec![false; 4],
+                    width_ruled: vec![false, false, true, false],
+                    // In2.Cu: at most 0.1 mm (the nets route at 0.2).
+                    width_bounds: vec![
+                        (0.0, f64::INFINITY),
+                        (0.0, f64::INFINITY),
+                        (0.0, 0.1),
+                        (0.0, f64::INFINITY),
+                    ],
                     sources: vec!["rule 'pairs'".into(); 4],
                     ..Default::default()
                 },
@@ -2447,21 +2639,26 @@ mod tests {
         config.diff_pairs = Some(false);
         let board = lower(&pcb, &config, true).unwrap().board;
         assert_eq!(class_layers(&board, &names[0]), 0);
-        // On: F.Cu, In2.Cu and B.Cu (In1.Cu is bit 1); GND anywhere.
+        // On: F.Cu and B.Cu (In1.Cu is bit 1, In2.Cu bit 2); GND anywhere.
         config.diff_pairs = Some(true);
         let mut board = lower(&pcb, &config, true).unwrap().board;
         assert_eq!(board.layer_count, 4);
         for name in &names {
-            assert_eq!(class_layers(&board, name), 0b1101, "{name}");
+            assert_eq!(class_layers(&board, name), 0b1001, "{name}");
         }
-        let gnd = board.nets.iter().position(|net| net.name.ends_with("GND")).unwrap();
+        let gnd = board
+            .nets
+            .iter()
+            .position(|net| net.name.ends_with("GND"))
+            .unwrap();
         assert_eq!(board.classes[board.nets[gnd].class].layers, 0);
         let nets = board.nets.len();
         plan_pairs(&mut board, &config);
         assert_eq!(board.nets.len(), nets + 1);
         let link = board.classes[board.nets[nets].class].layers;
-        assert!(link != 0 && link & 0b10 == 0, "{link:b}");
-        // Routed: no track of the pair's nets or the link on In1.Cu.
+        assert!(link != 0 && link & 0b110 == 0, "{link:b}");
+        // Routed: no track of the pair's nets or the link on In1.Cu or
+        // In2.Cu.
         let routed = core::route(&board, &core_config(&config));
         let pair_nets: Vec<usize> = board
             .nets
@@ -2472,8 +2669,11 @@ mod tests {
             .collect();
         for net in pair_nets {
             assert!(
-                routed.routes[net].segments.iter().all(|segment| segment.layer != 1),
-                "{} has a track on In1.Cu",
+                routed.routes[net]
+                    .segments
+                    .iter()
+                    .all(|segment| segment.layer == 0 || segment.layer == 3),
+                "{} has a track on an inner layer",
                 board.nets[net].name
             );
         }

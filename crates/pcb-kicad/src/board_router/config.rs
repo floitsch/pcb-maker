@@ -587,6 +587,9 @@ pub struct KiCadDiffPairRule {
     /// it: `track_width` on `inDiffPair()`), not the net class's diff pair
     /// width (which only KiCad's interactive router takes).
     pub width_ruled: Vec<bool>,
+    /// Per copper layer: the custom rule's track width bounds (min, max;
+    /// 0 and infinity where it names none or no rule sets the width).
+    pub width_bounds: Vec<(f64, f64)>,
     /// The custom rules' `diff_pair_uncoupled` maximum, if any.
     pub max_uncoupled: Option<f64>,
     /// Where the width and gap came from, per layer ("rule 'name'", "net
