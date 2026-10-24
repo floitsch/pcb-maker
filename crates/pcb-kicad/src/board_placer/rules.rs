@@ -33,13 +33,24 @@ pub(crate) fn courtyards_may_overlap(project: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// The largest copper clearance of a router configuration's rules.
+/// The largest copper clearance of a router configuration's rules: its
+/// classes', and a custom rule's between the pads of every two nets on
+/// some layer (`KiCadProjectRulesReport::pad_clearance_mm`: OpenESC's 0.16
+/// mm on the outer layers, a pair rule of the router that no class shows;
+/// without it the placer packed pads 0.09 mm apart and KiCad found 170
+/// clearance errors between them).
 pub(crate) fn largest_clearance(config: &KiCadBoardRouterConfig) -> f64 {
     config
         .connection_rules
         .values()
         .chain(config.default_rules.iter())
         .map(|rules| rules.clearance_mm)
+        .chain(
+            config
+                .project_rules
+                .as_ref()
+                .and_then(|report| report.pad_clearance_mm),
+        )
         .fold(0.0, f64::max)
 }
 

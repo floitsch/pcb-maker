@@ -62,6 +62,13 @@ pub struct KiCadProjectRulesReport {
     /// holds the board to the project's.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub overrides: Vec<KiCadRuleOverride>,
+    /// The clearance a custom rule asks between the pads of every two
+    /// nets on some layer, where it is more than the classes' (the
+    /// placer keeps parts that far apart: `largest_clearance`); a rule on
+    /// some layers only reaches the router as a pair rule
+    /// (`net_rules.clearances`), which no class shows.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pad_clearance_mm: Option<f64>,
     /// Per net (as the router names it): its classes, the highest
     /// priority first ("Default" for a net in none).
     #[serde(skip)]
@@ -774,6 +781,8 @@ pub fn resolve_project_rules(
                         clearance: pair.clearance,
                     });
                 }
+                report.pad_clearance_mm =
+                    (lowered.pad_clearance_all > 0.0).then_some(lowered.pad_clearance_all);
                 report.custom_rules = lowered.report;
                 report.unmodelled.extend(lowered.unmodelled);
             }
@@ -1688,6 +1697,10 @@ mod tests {
             .collect();
         assert_eq!(status, ["applied", "applied", "applied"]);
         assert!(report.unmodelled.is_empty());
+        // None of them holds between the pads of every two nets: the
+        // placer keeps the classes' largest.
+        assert_eq!(report.pad_clearance_mm, None);
+        assert_eq!(crate::board_placer::largest_clearance(&config), 0.2);
         let net_rules = config.net_rules.unwrap();
         // KiCad 8's hole_near_hole as an error: within a net too.
         assert_eq!(net_rules.same_net_hole_to_hole, 0.5);
@@ -1731,6 +1744,63 @@ mod tests {
             vias.kinds,
             pcb_router::rules::kind_bit(pcb_router::rules::VIA, pcb_router::rules::VIA)
         );
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn a_clearance_on_the_outer_layers_spaces_the_parts() {
+        // OpenESC's 4in1 boards (harvested with their .kicad_dru since
+        // 2026-10-24): the board's 0.09 mm, and 0.16 mm on the outer
+        // layers by a custom rule. The router keeps it as a pair rule; the
+        // placer read only the classes and packed pads 0.09 mm apart
+        // (4in1-mini: 170 clearance errors between pads of two parts).
+        let project = r#"{"board": {"design_settings": {"rules": {"min_clearance": 0.09, "min_track_width": 0.09}}},
+                "net_settings": {"classes": [{"name": "Default", "clearance": 0.09, "track_width": 0.09, "via_diameter": 0.35, "via_drill": 0.2}]}}"#;
+        let (directory, path) = project_directory(
+            "outer",
+            project,
+            Some(
+                r#"(version 1)
+(rule "silkscreen over pad" (constraint silk_clearance (min 0.15mm)) (condition "A.Type == 'Pad'"))
+(rule "2 oz outer copper, clearance" (constraint clearance (min 0.16mm)) (layer outer))"#,
+            ),
+        );
+        // Four layers: the rule leaves the inner ones at the board's.
+        let four_layers = |directory: &Path| {
+            let pcb = directory.join("board.kicad_pcb");
+            let text = fs::read_to_string(&pcb).unwrap().replacen(
+                r#"(0 "F.Cu" signal) (2 "B.Cu" signal)"#,
+                r#"(0 "F.Cu" signal) (4 "In1.Cu" signal) (6 "In2.Cu" signal) (2 "B.Cu" signal)"#,
+                1,
+            );
+            assert!(text.contains("In1.Cu"));
+            fs::write(&pcb, text).unwrap();
+        };
+        four_layers(&directory);
+        let config = resolve_project_rules(&path, &directory.join("board.kicad_pcb")).unwrap();
+        assert_eq!(config.connection_rules["SDA"].clearance_mm, 0.09);
+        let outer = config
+            .net_rules
+            .as_ref()
+            .unwrap()
+            .clearances
+            .iter()
+            .find(|rule| rule.clearance == 0.16)
+            .unwrap();
+        assert_eq!((&outer.first, &outer.second), (&None, &None));
+        let report = config.project_rules.as_ref().unwrap();
+        assert_eq!(report.pad_clearance_mm, Some(0.16));
+        assert_eq!(crate::board_placer::largest_clearance(&config), 0.16);
+        fs::remove_dir_all(&directory).unwrap();
+        // Without the file: the classes' 0.09, no floor.
+        let (directory, path) = project_directory("outer-none", project, None);
+        four_layers(&directory);
+        let config = resolve_project_rules(&path, &directory.join("board.kicad_pcb")).unwrap();
+        assert_eq!(
+            config.project_rules.as_ref().unwrap().pad_clearance_mm,
+            None
+        );
+        assert_eq!(crate::board_placer::largest_clearance(&config), 0.09);
         fs::remove_dir_all(&directory).unwrap();
     }
 

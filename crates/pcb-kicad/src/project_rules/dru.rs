@@ -1090,6 +1090,11 @@ pub(crate) struct Lowered {
     pub clearance: Vec<f64>,
     /// A clearance floor for every net (and nets without pads).
     pub clearance_all: f64,
+    /// The largest clearance a rule asks between the pads of every two
+    /// nets on some layer (the placer's copper clearance floor: the
+    /// router lays no pads, and a rule on some layers only is a pair rule
+    /// of the router that no per-net clearance shows).
+    pub pad_clearance_all: f64,
     pub width_min: Vec<f64>,
     pub width_min_all: f64,
     pub width_max: Vec<f64>,
@@ -1691,6 +1696,50 @@ fn lower_constraint(
                     }
                 }
             }
+            // Pads against pads, which the router never lays but the
+            // placer puts side by side: a rule that holds between the pads
+            // of every two nets on some layer floors the placer's copper
+            // clearance (`pad_clearance_all`; OpenESC's "2 oz outer
+            // copper": 0.16 mm on F.Cu and B.Cu over the board's 0.09,
+            // whose parts the placer packed 0.09 mm apart). Whether a
+            // later rule takes the pads leaves the report alone.
+            let pad_kinds_here: Vec<Kind> = [Kind::SmdPad, Kind::PlatedPad]
+                .into_iter()
+                .filter(|kind| board.pad_kinds.contains(kind))
+                .collect();
+            let shadowed_before = shadowed_any.get();
+            let pads_match = |a_net: &NetFacts, b_net: &NetFacts| {
+                layers.iter().any(|&layer| {
+                    pad_kinds_here.iter().any(|&a_kind| {
+                        pad_kinds_here.iter().any(|&b_kind| {
+                            let a = Item {
+                                kind: a_kind,
+                                net: Some(a_net),
+                                layer,
+                            };
+                            let b = Item {
+                                kind: b_kind,
+                                net: Some(b_net),
+                                layer,
+                            };
+                            shadowed(pair_truth(&condition, a, Some(b), false), a, Some(b), false)
+                                == T3::True
+                        })
+                    })
+                })
+            };
+            let pad_pairs: Vec<(usize, usize)> = (0..groups.len())
+                .flat_map(|i| (i..groups.len()).map(move |j| (i, j)))
+                .filter(|&(i, j)| eligible(i, j))
+                .collect();
+            if !pad_pairs.is_empty()
+                && pad_pairs.iter().all(|&(i, j)| {
+                    pads_match(representative(&groups[i]), representative(&groups[j]))
+                })
+            {
+                lowered.pad_clearance_all = lowered.pad_clearance_all.max(value);
+            }
+            shadowed_any.set(shadowed_before);
             if unknown {
                 lowered.note(
                     rule,
@@ -2401,6 +2450,54 @@ mod tests {
         assert_eq!(rules[1].severity.as_deref(), Some("warning"));
         assert_eq!(rules[1].constraints[0].min, Some(2.0));
         assert_eq!(rules[1].constraints[1].words, ["via", "track"]);
+    }
+
+    #[test]
+    fn a_pad_clearance_on_some_layers_floors_the_placer() {
+        // OpenESC's 2 oz outer copper: 0.16 mm on the outer layers only, a
+        // pair rule of the router that no net's clearance shows; the
+        // placer packed pads 0.09 mm apart without it (170 clearance
+        // errors on 4in1-mini).
+        let mut board = board(&[
+            ("A", &["Default"]),
+            ("B", &["Default"]),
+            ("GND", &["Default"]),
+        ]);
+        board.copper_layers = ["F.Cu", "In1.Cu", "In2.Cu", "B.Cu"]
+            .map(String::from)
+            .to_vec();
+        let rules = lowered(
+            r#"(version 1)
+(rule "silkscreen over pad" (constraint silk_clearance (min 0.15mm)) (condition "A.Type == 'Pad'"))
+(rule "2 oz outer copper, clearance" (constraint clearance (min 0.16mm)) (layer outer))"#,
+            &board,
+        );
+        assert_eq!(rules.clearance_all, 0.0);
+        assert_eq!(rules.clearance, [0.0, 0.0, 0.0]);
+        assert_eq!(rules.pad_clearance_all, 0.16);
+        assert_eq!(rules.pair_clearances.len(), 1);
+        assert_eq!(rules.pair_clearances[0].layers, 0b1001);
+        // On every layer: a floor for every net.
+        let rules = lowered("(rule all (constraint clearance (min 0.2mm)))", &board);
+        assert_eq!(rules.pad_clearance_all, 0.2);
+        // A rule from pads to tracks only, or on one class's nets, is no
+        // floor between every two parts' pads.
+        let rules = lowered(
+            "(rule pad_track (condition \"A.Type == 'Pad' && B.Type == 'Track'\") (constraint clearance (min 0.2mm)))",
+            &board,
+        );
+        assert_eq!(rules.pad_clearance_all, 0.0);
+        let rules = lowered(
+            "(rule hv (condition \"A.NetName == 'GND'\") (constraint clearance (min 1.5mm)))",
+            &board,
+        );
+        assert_eq!(rules.pad_clearance_all, 0.0);
+        // A later rule that takes the pads back (KiCad applies the last).
+        let rules = lowered(
+            "(rule outer (layer outer) (constraint clearance (min 0.3mm)))\n(rule pads (condition \"A.Type == 'Pad' && B.Type == 'Pad'\") (constraint clearance (min 0.1mm)))",
+            &board,
+        );
+        assert_eq!(rules.pad_clearance_all, 0.1);
     }
 
     #[test]
