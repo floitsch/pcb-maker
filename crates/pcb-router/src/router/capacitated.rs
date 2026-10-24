@@ -200,9 +200,7 @@ impl Router {
             (0..count)
                 .map(|index| {
                     let mm = self.grid.origin[axis] + index as f64 * self.grid.pitch;
-                    (((mm - frame.origin[axis]) / frame.tile_mm)
-                        .floor()
-                        .max(0.0) as usize)
+                    (((mm - frame.origin[axis]) / frame.tile_mm).floor().max(0.0) as usize)
                         .min(tiles - 1) as u32
                 })
                 .collect()
@@ -315,7 +313,8 @@ impl Router {
                     let (a, b) = (pair[0], pair[1]);
                     let (ax, ay) = (a.cell as usize % nx, a.cell as usize / nx);
                     if a.cell == b.cell {
-                        let tile = (rows[ay] as usize * frame.tiles_x + columns[ax] as usize) as u32;
+                        let tile =
+                            (rows[ay] as usize * frame.tiles_x + columns[ax] as usize) as u32;
                         if let Some(count) = vias.get_mut(&tile) {
                             *count += 1.0;
                         }

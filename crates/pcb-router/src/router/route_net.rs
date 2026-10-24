@@ -430,7 +430,8 @@ impl Router {
                         full,
                     );
                     if planned.is_none() {
-                        net_state.capacitated_miss = Some(self.capacitated_miss(scratch, net, band));
+                        net_state.capacitated_miss =
+                            Some(self.capacitated_miss(scratch, net, band));
                         capacitated_note(Learn::Misses, 1);
                     }
                     scratch.corridor = None;

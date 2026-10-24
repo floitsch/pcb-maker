@@ -78,7 +78,10 @@ pub struct KiCadCorridors {
 impl KiCadCorridors {
     /// The process's counters so far.
     pub fn now() -> Self {
-        Self::of(&corridor_totals(), pcb_router::router::expansions_per_second())
+        Self::of(
+            &corridor_totals(),
+            pcb_router::router::expansions_per_second(),
+        )
     }
 
     /// `totals` with expansions at `rate` a second.

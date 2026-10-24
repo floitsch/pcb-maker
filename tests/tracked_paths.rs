@@ -32,7 +32,9 @@ fn the_repository_tracks_no_symbolic_link() {
     assert!(links.is_empty(), "tracked symbolic links: {links:?}");
     for linked in ["artifacts", "benchmarks/real/external", "build"] {
         assert!(
-            !listing.lines().any(|line| line.ends_with(&format!("\t{linked}"))),
+            !listing
+                .lines()
+                .any(|line| line.ends_with(&format!("\t{linked}"))),
             "{linked} is a worktree link and must not be tracked"
         );
     }
