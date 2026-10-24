@@ -1855,13 +1855,17 @@ designers' crossings) 2 mm took crossings 452 to 410 and 6 mm 437 to 365
 (of the ten run at 6), but SNSP-CPU-01 went 6 to 11 unconnected (22 at
 6 mm) and video 0 to 1.
 
-## Differential pairs (2026-10-23)
+## Differential pairs (2026-10-23, phase 2 2026-10-24)
 
-Phase 1, behind a switch: `diff_pairs` in the router settings (route
-mode; default off), `PCB_ROUTER_DIFF_PAIRS=1` where the settings name
-none. The code: crates/pcb-kicad/src/board_router/diff_pairs.rs, the
-rules in project_rules.rs (`diff_pair_of`, `diff_pair_rules`) and
-project_rules/dru.rs (`track_constraint`, `inDiffPair()`).
+Behind a switch: `diff_pairs` in the router settings (route mode;
+default off), `PCB_ROUTER_DIFF_PAIRS=1` where the settings name none.
+The code: crates/pcb-kicad/src/board_router/diff_pairs.rs, the rules in
+project_rules.rs (`diff_pair_of`, `diff_pair_rules`) and
+project_rules/dru.rs (`track_constraint`, `inDiffPair()`). Phase 1
+(2026-10-23) routed the coupled runs first, in a router of their own,
+and kept them as fixed copper; phase 2 (2026-10-24) makes each link a
+net of the route itself, negotiated with every other net, and offsets
+it into the pair's two tracks when the attempt is written.
 
 **Pairs.** KiCad's convention (`DRC_ENGINE::MatchDpSuffix`): past
 trailing digits and underscores a net name ends in `+`/`-` or `P`/`N`,
@@ -1878,85 +1882,141 @@ clearance, its implicit `isCoupledDiffPair` rule, else the clearance);
 `diff_pair_uncoupled`'s max is read. The custom rules come first, as in
 KiCad (a custom rule replaces the class's implicit diff pair rule). A
 pair uses the layers with its first layer's width and gap (ducktop2's
-DIFF_85: 0.183 mm on the outer layers, 0.114 on In2.Cu, so not In2);
-the pair's nets route at that width elsewhere too (the stubs, a pair
-that falls back). With the switch on, the custom rules a pair takes
+DIFF_85: 0.183 mm on the outer layers, 0.114 on In2.Cu, so not In2).
+The coupled runs take the pair's width; the pair's nets elsewhere (the
+stubs, a pair that falls back) take it only where a custom rule sets it
+(KiCad checks that one on every track of the pair; the class's
+`diff_pair_width` only KiCad's interactive router takes; phase 1 widened
+every pair's nets to it, which alone moved iorodeo from 87 to 93
+unconnected). With the switch on, the custom rules a pair takes
 (diff_pair_gap, diff_pair_uncoupled, track_width on `inDiffPair()`) are
 reported `applied`.
 
 **Pair points and links.** A positive and a negative pad of one part
-(the labels' reference), at most 3 mm apart, nearest first, are a pair
-point; a minimum spanning tree links the pair points (USB through an ESD
-part: connector to ESD, ESD to MCU). A pair with fewer than two pair
-points falls back.
+(the labels' reference), at most 3 mm apart, nearest first, with no
+other net's copper on the line between their centres (a GND pin between
+D+ and D-, or an ESD part's pins across its body, are no pair point),
+are a pair point. A minimum spanning tree links the pair points; pair
+points of one part (a USB-C receptacle's two rows) are joined first, at
+no cost, and by ordinary routing: only links between parts are coupled
+(phase 1 coupled the two rows of one receptacle, whose launches face
+each other). A pair with no link falls back.
 
-**The coupled search.** Every link is a net of its own in a separate
-router run before the route (the *pairs router*: the board with only
-these nets to route, every pad an obstacle, no pours), one class per
-pair geometry: the track is the pair's envelope (`2 w + g`, both tracks
-and the gap), the clearance the larger of the two nets', the via a disc
-holding two vias side by side (`2 dv + V`, `dv` the larger of half the
-offset, via to via, a via to the other net's track, the holes' hole
-clearance and hole to hole). A link starts and ends at a *launch*: the
-first point outward from between the pair point's two pads (on the side
-of the other end, in 0.05 mm steps up to 4 mm) where the envelope, its
-clearance and 0.15 mm are clear of every obstacle and the edge; the
-launch and the corridor back to the pads are copper of the link (other
-links keep out of it), and the search starts within 0.15 mm of the
-launch. Layers the pair may not use are a keepout for tracks. Pairs of
-other layer sets route in a run after, with the kept copper of the runs
-before as obstacles. The pairs router has 0.15 of the ladder's budget
-(at least 2 s; `PCB_ROUTER_DIFF_PAIRS_WORK`), charged to the ladder.
+**Launches.** Per link end the search goes out from between the two pads
+along the pads' normal, turned away from the part's middle (the middle
+of its pads' copper; toward the link's other end where the part does
+not say), and turned from it by up to a right angle in 15° steps, in
+0.05 mm steps up to 4 mm; per direction the first *run start* where the
+stubs' ends beside it (an offset to either side, each clear of every
+other net's copper and of both pads by the pair's gap: at a crossed end
+the nets swap sides), the run's straight lead (at least 2.5 offsets,
+long enough that the link's copper keeps its clearance from the stubs'
+ends) and the envelope at the lead's end (with 0.15 mm for lattice
+nodes) are clear of every obstacle and the edge. Of the directions the
+one closest to the pads wins, a right angle costing 1 mm. The lead and
+the launch are on one layer. On the expansion tier no link fails for
+want of a launch any more (phase 1: 30 of 60 pairs).
 
-**The two tracks.** The centreline (less the router's off-lattice stub
-to the launch, with a point `(w + g) / 2` behind each end toward the
-pads so that the run leaves them square) is offset by `(w + g) / 2` to
-each side, per layer run: mitred inside a bend where both segments are
-long enough, bevelled outside (inside the envelope). The positive net
-takes the side its pad is on (beside the negative one) at the start; a
-link whose pads lie in the other order at its end is *crossed* (no pad
-swapping in phase 1: the stubs cross there). At a layer change each net
-gets a via, `dv` from the centreline along the bisector of the two runs'
-normals (further out by up to 1/cos 45° where the run turns, so that
-the vias keep their distance across both runs), joined to both runs.
+**The links in the negotiation** (`plan_pairs`, after each lowering of
+a rung's board). Each link is a net of the route: its track the pair's
+envelope (`2 w + g`), its via a disc holding two vias side by side as
+far apart as at a right-angle turn (`2 dv / 0.7 + V`), a class per set
+of pair layers (the widest envelope, clearance and via of its pairs;
+`RuleClass::layers` keeps its tracks on the pair's layers: the static
+maps block the others), its terminals the two launches (a contact of
+0.15 mm), its copper the lead past the stubs' ends (other nets keep
+clear of it). Each of the pair's nets gets a terminal at each stub end
+(its copper the first track width of the run), the two ends of a link
+merged into one terminal (`Board::terminal_copper`: a route may end on
+either), so the router routes the stubs from the pads to the run's ends
+as ordinary connections, with its pad exits, necks and vias (a crossed
+end's stubs cross with a via). The plan rides along in
+`Board::attachment`; the router does not read it.
 
-**Stubs.** From each pad straight to its run's end (at both ends; at
-the start only where the link is crossed), else cut to 0.6, 0.35 or
-0.15 of its length from the run's end: what holds is kept. The pads'
-stubs that are left are ordinary routing.
-
-**What is kept.** Every link's copper is checked with `verify` against
-the board (obstacles, edge, other links): a finding between the two
-nets of one pair counts only below their gap; a link with another
-finding is refused (it falls back), then the stubs the same way
-against the kept runs. What holds is written into a copy of the project
-as tracks and vias of the two nets, and the route keeps it as it keeps a
-designer's copper (`kept.rs`, "Pre-routed nets"). With the switch on, a
-terminal reaches every item of its kept piece (`Board::terminal_copper`:
-the search may end anywhere on the run, where a node's track overlaps
-it by 0.02 mm, and no pad-centre stub is drawn from there), and a kept
-via's drill is a hole (hole clearance from other nets, as KiCad checks
-it). The pairs' copper counts in `kept_copper`.
+**Writing an attempt** (`finish_pairs`, in `write_attempt`, after
+tightening). Each routed link's path (its route from launch to launch,
+the route's own stubs to the launches dropped) gets the run start in
+front of each end and half the lead straight along the launch's
+direction, so that the tracks begin beside the stubs' ends; the
+centreline is offset by `(w + g) / 2` to each side per layer run (mitred
+inside a bend, bevelled outside), the positive net on its pad's side of
+the first end; at a layer change each net gets a via `dv` (up to
+`dv / 0.7`) out along the bisector; short jogs join the tracks to the
+stubs' ends where those lie further out (the ends keep the router's
+clearance, wider than a gap below it). The links' copper is checked
+with `verify` against the board and every route near it (a finding
+between a pair's own two nets counts only below their gap); a link with
+another finding is refused. What holds is written as tracks and vias of
+the pair's nets and is kept copper of the board the report is made on;
+then each kept link's routed stubs are replaced by straight tracks from
+the pads where those hold (the router's stubs leave the pads parallel at
+the pads' pitch, which KiCad takes for a coupled piece out of the gap's
+range). The links' nets and the stubs' end terminals go; the router's
+diagnostics name the pair's nets for them. A link not routed, refused
+or crossed leaves connections open: its stubs go and the *fallback*
+routes the pair's nets with every other route kept (the board's
+classes; 0.05 of the ladder's budget, at least 1 s,
+`PCB_ROUTER_DIFF_PAIRS_WORK`; its work charged to the ladder as search).
 
 **The verdict.** `diff_pairs` in `board-router.json` and the verdict:
 `found`, `coupled` (every link), `partly_coupled`, `fallen_back`,
 `links`, `links_coupled`, `crossed`, `coupled_mm`, `uncoupled_mm`
 (after the route, per coupled pair the longer net's tracks less the
-coupled run: KiCad's measure), `work_seconds`, and in board-router.json
-per pair its nets, width, gap, source and why links fell back.
+coupled run: KiCad's measure), `work_seconds` (the fallback's), and in
+board-router.json per pair its nets, width, gap, source and why links
+fell back (`fewer than two parts with the pair's pads side by side`,
+`the launches are too close for a coupled run` (under 1 mm),
+`the coupled run was not routed`, `its copper is ... from ...`).
 
-**Measured** (route mode, 30 s, before x1703 and after x1730 with the
-switch on; KiCad's findings): see docs/changelog.md, "Committed on
-2026-10-23 (differential pairs, phase 1)".
+**Measured** (route mode, 30 s, 8 x 1; off x1753, main at 4d9965e; on
+x1763): docs/changelog.md, "Committed on 2026-10-24 (differential pairs,
+phase 2)", and phase 1's in "Committed on 2026-10-23 (differential pairs,
+phase 1)". The expansion tier's 21 boards without pairs route as with the
+switch off (x1762, identical rows); on the 25 with pairs unconnected 556
+-> 576, passes 9 -> 6, new errors 1 -> 1: the switch stays off. The
+launches work (no "no launch" fallback; 55 links, 16 coupled); what
+costs is the negotiation itself: on MSign's mainboard (19 -> 76) six
+link nets of the envelope's width in the dense USB corner leave its
+power nets (VDD, +5V, VBUS) tens of terminals short at 30 s although
+only two links couple; on AMLing2's drone carrier (3 -> 9) the CSI
+bundle at the CM5 connector: six of twelve link runs not routed, three
+refused; on ducktop2's bms (0 -> 5) the one current-sense link is
+refused and the board's other nets lose what the negotiation spent on
+it. A link that fails costs more than its pair: the board's negotiation
+converged around it.
 
-**Phase 2.** Polarity by swapping the pads' order where the part allows
-(or a crossing in the run with staggered vias instead of crossed
-stubs); length and skew matching (KiCad's `length`, `skew` rules: a
-meander pass on the coupled run); GND return vias beside the pair's
-vias; per-layer widths in one run (a class per layer variant, as the
-pair clearances do); pairs into the negotiation instead of fixed first
-(the GND pins between pairs on fine-pitch connectors starve:
-oculink_m2's J1); coupled branches (a T at an ESD part).
+**Phase 2's remaining items, and what was learnt.**
+(1) A link must not cost the board: the gate failed on boards where the
+link nets lose or are refused. Candidates: a link net that stays in
+conflict after a few iterations dropped from the negotiation (and its
+pair's connections handed back to the pair's nets in the same router,
+which needs the core to drop and add connections mid-run); or the ladder
+running a rung without the pairs and keeping the better board (it costs
+budget on every board with a link). (2) Refusals: of 55 links 20 are
+refused, mostly a pair's own or a neighbour's ordinary copper inside the
+run's offset tracks where the negotiation ended with conflicts. (3)
+Polarity: a crossed end (14 of the coupled or partly coupled links on the
+tier) now crosses in the stubs with a via, which the router places; KiCad
+then counts the crossed stubs as uncoupled and, where they run parallel,
+out of the gap's range (the fixture's LVDS pair). Swapping the pads'
+order where the part allows, or a crossing inside the run with staggered
+vias, would keep it coupled. (4) Length and skew (KiCad's `length`,
+`skew`): the coupled run's offset makes the outer track of each bend
+longer by `2 d tan(θ/2)`; a skew pass would add the difference to the
+inner one at the run's ends, where the lead is straight. (5) GND return
+vias beside each pair via: the link's via disc already holds room for
+two vias; a return via each side needs the disc wider by a via and a
+clearance (`2 dv / 0.7 + 2 V + 2 c`) or a separate obstacle placed with
+the pair's vias. (6) Per-layer widths in one run (ducktop2's DIFF_85,
+0.183 mm outside, 0.114 on In2): a link class per layer width, with the
+offset per layer at the write, the class's layers then all the pair's.
+(7) Pairs through series parts (AC capacitors: ducktop2-center couples
+2 of its 61 pairs; "fewer than two pair points" is 65 fallbacks on the
+rule boards and 25 of 60 pairs on the tier) need links through two-pad
+parts (a capacitor pair as a pair point of two parts). (8) The rule
+boards' gap findings did not improve (113 -> 115): KiCad counts the
+fallen-back pairs' parallel stretches and the crossed stubs.
+(9) Coupled branches (a T at an ESD part) instead of one run per link.
 
 ## Determinism and the wall clock (2026-10-14)
 
