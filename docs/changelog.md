@@ -11,6 +11,42 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-24 (ratsnest crossings as a placement cost)
+
+The placement ablation's lever, on by default. Branch ratsnest-crossings,
+snapshot x14270 (the switch off by default then), off side x1813;
+docs/placer.md "Ratsnest crossings (2026-10-24)" has the tables.
+
+- **`ratsnest_crossings`** (placer option, on; `null` turns it off;
+  `weight` 3 mm per crossing, `legalise`, `refine`, `rank_seeds`): per
+  counted net the minimum spanning tree of its pins, the pairs of tree
+  lines of different nets that cross. `crates/pcb-placer/src/crossings.rs`
+  keeps the count incrementally (the moved parts' nets' trees again,
+  their lines walked through a bucket grid against the others; exact,
+  tested against the all-pairs count over 300 random moves); the
+  ablation tool now shares its tree and crossing test.
+- **Where it acts**: the legaliser (a spot pays for the crossings it
+  adds, within 2 mm of the closest legal spot: unbounded, the term
+  widened the search and cost 7 times the legaliser's work), the
+  refinement (moves, turns, swaps pay for their change), and the
+  layout race's seed ranking (rank by RUDY plus rank by crossings).
+  Not in the global placement or the anneal yet.
+- **The weight** from the ablation data
+  (`experiments/crossings/calibrate.py`): wirelength plus w crossings
+  orders the variants and our layouts best from w = 2 mm; 3 mm is the
+  smallest that makes the designer's placement the cheapest on
+  MegaDrive, Glasgow and the 4in1.
+- **Measured** (the eleven dense boards in layout mode, seeds 1, 101,
+  201, off / on): KiCad unconnected, summed medians 1027 to 966; each
+  pair falls (1013 to 946, 995 to 904, 1099 to 1069); 8 boards better
+  by the median, 3 worse; MegaDrive 126 to 110, Glasgow 164 to 163. The
+  placed boards' crossings fall on 32 of 33 pairs (sums -11 %, -19 %,
+  -22 %; Glasgow at the designer's count). Short tier: unconnected 18
+  to 26, strict passes 6 to 7, none lost. Placement work +17 to +23 %.
+- **Default on** by the agreed rule; `{"ratsnest_crossings": null}`
+  gives the placement before it (byte-identical boards on MegaDrive and
+  Glasgow against main x1816).
+
 ## Committed on 2026-10-24 (connection width floor; via rules per layer)
 
 Branch connection-width-and-vias, snapshot x14300 (every table below:

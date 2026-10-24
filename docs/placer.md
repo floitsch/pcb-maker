@@ -1490,6 +1490,216 @@ to about 65 of 78 (42 and 26, not additive). The cross-placement table sets the 
 six MegaDrive layouts the three with the fewest crossings left 99, 116
 and 126 open, the three with the most 157, 174 and 191.
 
+## Ratsnest crossings (2026-10-24)
+
+`ratsnest_crossings` (placer option, on since 2026-10-24, `null` turns
+it off; `{"weight", "legalise", "refine", "rank_seeds"}`, defaults 3 mm,
+on, on, on). The
+placement ablation's lever (above): on MegaDrive and Glasgow the costly
+decisions are part orders along buses, which wirelength cannot see and
+ratsnest crossings can. Code `crates/pcb-placer/src/crossings.rs`, the
+lowering in `board_placer/config.rs` (`crossing_nets`) and `place.rs`,
+the race in `board_layout.rs`.
+
+**The measure** is the ablation's, one implementation: for every net
+escape demand counts (two pins or more, not carried by a pour), the
+minimum spanning tree of its pins (Prim's from the net's first pin,
+straight distance, a tie to the earlier pin: `crossings::spanning_tree`),
+and the pairs of tree lines of different nets that properly cross
+(bounding boxes, then the orientation test; touching and collinear lines
+do not: `crossings::lines_cross`). `ablate-kicad-placement` now calls
+both, so the placer and the tool count the same thing.
+
+**The incremental count** (`CrossingState`). Every counted net's tree
+lines lie in a uniform grid (about two lines a cell, cells 1 to 20 mm,
+at most 2^16), each line in every cell it passes through (walked column
+by column with 1e-6 mm of slack; points beyond the grid fall into its
+border cells, so two lines that cross share the cell of their crossing).
+A move or turn of parts changes only the trees of the nets on their
+pins: `involving(poses, moved)` builds those trees at the new poses,
+walks each new line through the grid and tests the lines it meets,
+skipping its own net, the old lines of the moved nets, and pairs of two
+new lines from the second side (each pair once). The result is the
+crossings of the moved nets with everything at the new poses; the same
+call at the old poses gives the old ones, so their difference is the
+move's change exactly. `kept` replaces the moved nets' lines and keeps
+the board's total. The work counted is the pins' positions, Prim's k²
+per tree, the cells walked and the lines met. A unit test moves, turns
+and swaps random parts 300 times (some beyond the board) and checks the
+total against the direct all-pairs count after every kept move and the
+`involving` difference before it; nothing depends on the order lines
+were added in, so the count is deterministic.
+
+**Where it acts.**
+
+- Legaliser (`legal::legalize_keeping`): a legal spot is farther by
+  `weight` mm per crossing it adds to those of the part's nets where the
+  part wants to be (the parts not placed yet where they want to be;
+  fewer crossings earn nothing, so the term only adds and the search's
+  early stop holds), and the search looks at most 2 mm beyond the
+  closest legal spot (`CROSSING_REACH`): without that bound a spot's
+  crossings widened the ring search by their weight, and the legaliser
+  took 7 times its work on MegaDrive (3.2 s to 24 s a legalisation).
+- Refinement (`legal::refine_with`): a move, turn or swap pays `weight`
+  mm per crossing of the moved parts' nets at the new poses against
+  those at the old; the term is computed only for legal candidates that
+  still beat the best (it is never negative), and one state is carried
+  through the refinements and relation repairs of `finish`.
+- The race's seed ranking (`board_layout.rs`): each placement of the
+  pool gets its crossings (`crossings::total`, milliseconds), and the
+  placements are ordered by the sum of their ranks by the congestion
+  score (RUDY) and by the crossings, a tie to the better score; the
+  courtyard-touching last resort sorts after as before. The counts are
+  in board-layout.json's `congestion.crossings`.
+- Not in the global placement or the anneal (measured first without).
+
+With the switch off none of this runs (`Problem::crossings` is `None`):
+`place-kicad-board` with x14270 off and x1813 (main 2e41ea3) writes
+byte-identical boards on MegaDrive and Glasgow, and since the default
+flipped, `{"ratsnest_crossings": null}` against x1816 (main c2d82c4)
+the same.
+
+**The weight** (`experiments/crossings/calibrate.py` on build/abl1):
+wirelength (unweighted HPWL, mm) plus w times the crossings, against the
+routed open connections, for w from 0 to infinity:
+
+| w (mm per crossing) | 0 | 0.5 | 1 | 2 | 3 | 5 | crossings alone |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| MegaDrive variants: Spearman (44), sign agrees (19 beyond the noise) | -0.08, 16 | 0.75, 16 | 0.84, 17 | 0.86, 16 | 0.87, 14 | 0.86, 14 | 0.86, 13 |
+| Glasgow variants (24, 14) | -0.12, 10 | 0.18, 11 | 0.29, 11 | 0.74, 12 | 0.78, 12 | 0.79, 12 | 0.85, 13 |
+| our six MegaDrive layouts: Spearman | -0.09 | -0.09 | 0.09 | 0.60 | 0.60 | 0.60 | 0.60 |
+| our six Glasgow layouts | -0.03 | 0.09 | 0.60 | 0.60 | 0.60 | 0.71 | 0.71 |
+| our six 4in1 layouts | 0.60 | 0.60 | 0.37 | 0.37 | 0.37 | 0.37 | 0.37 |
+| the designer's placement the cheapest of 7 (MegaDrive, Glasgow, 4in1) | no, no, no | yes, no, yes | yes, no, yes | yes, no, yes | yes, yes, yes | yes, yes, yes | yes, yes, yes |
+
+Wirelength alone orders nothing; the orderings saturate from 2 mm, and
+3 mm is the smallest weight in the scan at which the designer's
+placement is the cheapest on all three boards (on Glasgow the designer's is 547
+mm longer with 338 fewer crossings than v20's, and 551 mm longer with
+193 fewer than the escape-demand pair's seed-101 off layout, which takes
+a weight above 2.85). Default 3 mm. The placer's
+own wirelength weights large nets down, so in its units 3 mm is a little
+more than in the scan's.
+
+**Cost.** On MegaDrive and Glasgow (`place-kicad-board`, 3 seeds, the
+default budget) the placement's work rises 26 % and 31 %, nearly all of
+it the refinement (Glasgow 572 to 947 s of work over the three seeds,
+the relation repairs' refinements 4 to 100 s); the capped legaliser is
+within 10 % of off. In the dense layouts below the placement's work
+(board-placer.json, summed over the eleven boards) rose 3078 to 3604,
+3177 to 3684 and 2914 to 3590 s (+17 to +23 %), out of the same layout
+budget.
+
+### Measurement
+
+The escape-demand confirmation's protocol: the eleven dense boards in
+layout mode at the task budgets (tasks v7, pinned rates), three seed
+pairs (`--placer '{"seed": N}'`, N = 1, 101, 201, and on the on side
+`"ratsnest_crossings": {}`), off x1813 (main 2e41ea3), on x14270
+(branch ratsnest-crossings 1e58ff3: main 2e41ea3 and the crossings,
+the switch off by default then), 3 x 2 with at most six layouts in
+flight, through the memory ledger with 10 GB kept free, beside other
+agents' runs; no row cut by the wall clock. Output
+`build/cross1-dense-s{1,101,201}-{off,on}`, `build/cross1-short-{off,on}`.
+Both sides carry the OpenESC boards' clearance errors of that day
+(the re-fetched `.kicad_dru`, fixed on main as x1814: placement only;
+like with like here, about 400 clearance errors a side, 4in1-mini and
+4in1 above their usual open counts).
+
+KiCad unconnected per board, off / on:
+
+| Board | seed 1 | seed 101 | seed 201 | median |
+| --- | ---: | ---: | ---: | ---: |
+| OpenESC 4in1-mini | 102 / 91 | 74 / 79 | 101 / 105 | 101 / 91 |
+| OpenESC 4in1 | 125 / 128 | 101 / 101 | 132 / 124 | 125 / 124 |
+| DSP-ADAU1452 | 8 / 17 | 10 / 7 | 35 / 25 | 10 / 17 |
+| split72_left | 20 / 23 | 25 / 21 | 29 / 33 | 25 / 23 |
+| video | 188 / 190 | 190 / 145 | 197 / 159 | 190 / 159 |
+| Glasgow | 164 / 145 | 163 / 163 | 170 / 175 | 164 / 163 |
+| SmartSpin2k | 43 / 34 | 61 / 59 | 46 / 52 | 46 / 52 |
+| 0xCB panel | 53 / 50 | 57 / 50 | 56 / 51 | 56 / 50 |
+| protoesp | 77 / 105 | 83 / 76 | 74 / 90 | 77 / 90 |
+| MegaDrive | 126 / 110 | 99 / 108 | 174 / 168 | 126 / 110 |
+| SNSP-CPU-01 | 107 / 53 | 132 / 95 | 85 / 87 | 107 / 87 |
+| sum | 1013 / 946 | 995 / 904 | 1099 / 1069 | 1027 / 966 |
+
+The summed medians fall 1027 to 966 (-5.9 %) and each pair falls on its
+own sum (seed 1: 1013 to 946, 101: 995 to 904, 201: 1099 to 1069); by
+the median 8 boards are better and 3 worse (DSP-ADAU1452 10 to 17,
+SmartSpin2k 46 to 52, protoesp 77 to 90). MegaDrive's median 126 to
+110, Glasgow's 164 to 163 (its seed 1 164 to 145, the others within
+5). The largest gains are video (190 to 159, better on two seeds by 45
+and 38), SNSP-CPU-01 (107 to 87; seed 1 107 to 53) and MegaDrive. The
+router's open terminals after the first route fall on every pair (1417
+to 1271, 1582 to 1305, 1571 to 1480); vias 9671 to 10174, 10316 to
+9414, 9805 to 9484.
+
+**The lever moved what it was meant to move.** Ratsnest crossings of
+the placed boards (`layout/placed`, counted by `ablate-kicad-placement`,
+x1813), the designer's placement beside them, off / on:
+
+| Board | designer's | seed 1 | seed 101 | seed 201 |
+| --- | ---: | ---: | ---: | ---: |
+| OpenESC 4in1-mini | 279 | 214 / 69 | 168 / 58 | 165 / 79 |
+| OpenESC 4in1 | 242 | 447 / 206 | 370 / 150 | 305 / 201 |
+| DSP-ADAU1452 | 170 | 931 / 744 | 1025 / 710 | 1142 / 720 |
+| split72_left | 3201 | 4559 / 3639 | 4983 / 3745 | 4527 / 3853 |
+| video | 8765 | 19233 / 19726 | 20345 / 16987 | 16180 / 14018 |
+| Glasgow | 815 | 1121 / 829 | 1215 / 843 | 1308 / 953 |
+| SmartSpin2k | 1410 | 3863 / 3149 | 4201 / 3348 | 4281 / 3301 |
+| 0xCB panel | 319 | 580 / 460 | 557 / 493 | 655 / 480 |
+| protoesp | 373 | 1228 / 1102 | 1262 / 875 | 1301 / 1046 |
+| MegaDrive | 7931 | 9453 / 8136 | 10382 / 9042 | 14325 / 9952 |
+| SNSP-CPU-01 | 5076 | 5919 / 4286 | 5956 / 4765 | 5774 / 4336 |
+| sum | 28581 | 47548 / 42346 | 50464 / 41016 | 49963 / 38939 |
+
+Fewer crossings on 32 of the 33 pairs (video's seed 1 the exception,
+19233 to 19726), the sums -11 %, -19 % and -22 %. Glasgow comes to the
+designer's count (829, 843, 953 against 815); MegaDrive closes about
+half its gap to the designer's (9453, 10382, 14325 to 8136, 9042,
+9952 against 7931); 4in1-mini and 4in1 go well below it. Where the
+count fell most the open connections did not always follow (4in1:
+crossings halved, open equal), so the crossings are one cost among
+several, as the ablation's Spearman of 0.32 on the 4in1 said.
+
+**Short tier** (one pair, seed 1, 3 x 2, the same binaries): KiCad
+unconnected 18 to 26, strict passes 6 to 7 (eternal-keypad gains its
+pass, none lost), first-route open terminals 23 to 48. The losses are
+WLED_Matrix 4 to 8, MIDAS-MK1.1 7 to 10 and OpenFC 1 to 2; the
+crossings fall on all 12 boards (sum 2823 to 2105).
+
+| Board | KiCad unconnected off / on | strict pass | first route open | crossings (designer's) off / on |
+| --- | ---: | --- | ---: | ---: |
+| eternal-keypad | 0 / 0 | no / yes | 0 / 0 | 129 / 79 (181) |
+| MIDAS-MK1.1-revA | 7 / 10 | no / no | 7 / 20 | 661 / 533 (376) |
+| WLED_Matrix | 4 / 8 | no / no | 7 / 15 | 334 / 236 (215) |
+| USB_Keypad | 2 / 2 | no / no | 2 / 2 | 238 / 176 (150) |
+| reCamera_S101_v1.1 | 4 / 4 | no / no | 5 / 6 | 90 / 56 (137) |
+| 1337-v4.0 | 0 / 0 | yes / yes | 0 / 0 | 156 / 120 (79) |
+| spell_tome_bottom | 0 / 0 | yes / yes | 0 / 0 | 5 / 3 (22) |
+| OpenFC | 1 / 2 | no / no | 1 / 2 | 534 / 350 (266) |
+| urchin | 0 / 0 | yes / yes | 0 / 0 | 114 / 106 (123) |
+| Blue_Line | 0 / 0 | yes / yes | 0 / 0 | 5 / 0 (3) |
+| USB_Cable_Tester | 0 / 0 | yes / yes | 0 / 0 | 243 / 184 (345) |
+| framework_mobo_lefthalf | 0 / 0 | yes / yes | 1 / 3 | 314 / 262 (308) |
+| sum | 18 / 26 | 6 / 7 | 23 / 48 | 2823 / 2105 (2205) |
+
+### Judgement
+
+By the rule agreed for this lever (the dense sum of medians falls, each
+pair's sum falls, the short tier loses no strict pass, and the medians
+are not worse on MegaDrive and Glasgow) the default is on since
+2026-10-24: `ratsnest_crossings` absent means the defaults above,
+`{"ratsnest_crossings": null}` the placement before it. Caveats: the
+short tier's unconnected sum rose (18 to 26, three boards by one to
+four), the dense spread per board is as large as any perturbation gives
+(three boards worse by the median), and the term costs about a fifth
+more placement work. Next: the global placement and the anneal do not
+see the crossings yet (they make the orders the legaliser and the
+refinement can only repair locally; MegaDrive's U4/U8 order is such a
+case), and a weight per board (by layers: a crossing costs less with
+more of them) is untried.
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a
