@@ -246,7 +246,9 @@ pub fn route_kicad_board(
     // Why the pairs were coupled or not (route mode reports it either way).
     let choice = config.diff_pairs_choice();
     if config.diff_pairs_by_need || choice.on {
-        let report = result.diff_pairs.get_or_insert_with(KiCadDiffPairs::default);
+        let report = result
+            .diff_pairs
+            .get_or_insert_with(KiCadDiffPairs::default);
         report.on = choice.on;
         report.default = choice.default.to_string();
         report.reason = choice.reason;
