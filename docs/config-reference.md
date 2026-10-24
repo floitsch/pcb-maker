@@ -34,7 +34,7 @@ The environment variables are indexed in the hand-over
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 10 | - | 2 | 10 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 69 | - | 0 | 69 | - |
-| [Placer settings](#placer-settings) | 48 | 44 | 4 | 48 | 20 |
+| [Placer settings](#placer-settings) | 48 | 44 | 4 | 48 | 21 |
 | [Layout settings](#layout-settings) | 19 | 19 | 0 | 19 | 8 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 2 |
@@ -351,7 +351,7 @@ The placer config file of `place-kicad-board`, and the `placer` object of the la
 | `overlap_far_side_pads` | `bool` | `false` | - | Where the project lets courtyards overlap, a part may reach over other parts' pads on its side at the last placement levels, keeping only copper apart (as katia's designer put connectors partly over hot-swap socket pads). Off by default: such pads may carry a body. |
 | `constraints` | `Option<KiCadConstraintsSource>` | unset | placer.md | Placement constraints: a `constraints.json` path (relative to the source directory) or the constraints inline. |
 | `constraint_weight` | `f64` | `50.0` | - | Millimetres of wirelength one millimetre of a missed near or relative constraint costs. |
-| `copper_clearance_mm` | `Option<f64>` | unset | - | The largest copper clearance of the board's rules: bodies are never placed closer than this (pads may sit on a body's edge). Read from the project when not given: its classes' largest, and a custom rule's between the pads of every two nets on some layer (the rules report's `pad_clearance_mm`: OpenESC's 0.16 mm on the outer layers). |
+| `copper_clearance_mm` | `Option<f64>` | unset | router.md | The largest copper clearance of the board's rules: bodies are never placed closer than this (pads may sit on a body's edge). Read from the project when not given: its classes' largest, and a custom rule's between the pads of every two nets on some layer (the rules report's `pad_clearance_mm`: OpenESC's 0.16 mm on the outer layers). |
 | `hole_clearance_mm` | `Option<f64>` | unset | router.md | The board's copper-to-hole clearance: a non-plated hole keeps it from other parts' copper. Read from the project when not given. |
 | `copper_edge_clearance_mm` | `Option<f64>` | unset | - | The board's copper-to-edge clearance: pads of parts held at an edge keep it. Read from the project when not given. |
 | `tight_bodies` | `Option<bool>` | unset | - | When nothing else fits, bodies may shrink to their fabrication outline and pads (courtyards overlap). Read from the project when not given: allowed unless KiCad's DRC treats a courtyard overlap as an error. |
