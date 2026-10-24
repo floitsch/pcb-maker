@@ -368,7 +368,11 @@ measurement). The discipline:
   board by the same ledger (`harness_common.admit`): the live
   reservations and the board's expected peak against the machine, the
   expected peak reserved at once and handed to the board's binary when it
-  starts. `pcb-maker ledger` lists who holds what. Why: the lock queued
+  starts. Admission is ordered (since 2026-10-24): a waiting board is in
+  the ledger, and newer requests pass the one that has waited longest
+  only with what still leaves it its room
+  ([docs/benchmarks.md](../../docs/benchmarks.md), "Memory ledger: who
+  runs next"). `pcb-maker ledger` lists who holds what. Why: the lock queued
   every agent's tier behind every other's (progress slowed to the queue),
   and without it two rounds of runs were OOM-killed because each judged
   by the memory free when it started and none saw the others'

@@ -403,7 +403,11 @@ pub fn order_allows(
         .iter()
         .copied()
         .filter(|r| r.waiting_mb.is_some())
-        .min_by(|a, b| key(a).partial_cmp(&key(b)).unwrap_or(std::cmp::Ordering::Equal))
+        .min_by(|a, b| {
+            key(a)
+                .partial_cmp(&key(b))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
     else {
         return true;
     };
@@ -563,16 +567,25 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
             .iter()
             .filter(|r| (r.pid == me || ancestors.contains(&r.pid)) && r.megabytes > 0.0)
             .map(Reservation::held_since)
-            .fold(None, |first: Option<f64>, at| Some(first.map_or(at, |first| first.min(at))));
-        let fits = may_hold(reservations, me, held, own.started, wanted, capacity, ancestors);
+            .fold(None, |first: Option<f64>, at| {
+                Some(first.map_or(at, |first| first.min(at)))
+            });
+        let fits = may_hold(
+            reservations,
+            me,
+            held,
+            own.started,
+            wanted,
+            capacity,
+            ancestors,
+        );
         let others: Vec<&Reservation> = reservations.iter().filter(|r| r.pid != me).collect();
         let reserved: f64 = others.iter().map(|r| r.megabytes).sum();
         let count = others.len();
         // Ordered admission for a new request only: a run that holds memory
         // grows as before (the oldest waiter may wait for it to end).
-        let ordered = held > 0.0
-            || harness.is_some()
-            || order_allows(&others, me, since, wanted, capacity);
+        let ordered =
+            held > 0.0 || harness.is_some() || order_allows(&others, me, since, wanted, capacity);
         let behind = (fits && !ordered)
             .then(|| {
                 others
@@ -1030,7 +1043,13 @@ mod tests {
         // large one its room once 11 ends (2000 + 8000): it goes.
         assert!(order_allows(&refs(&with_large), 99, 30.0, 2000.0, capacity));
         // 2001 would leave it short when 11 ends: it waits.
-        assert!(!order_allows(&refs(&with_large), 99, 30.0, 2001.0, capacity));
+        assert!(!order_allows(
+            &refs(&with_large),
+            99,
+            30.0,
+            2001.0,
+            capacity
+        ));
         // The newer runs admitted while it waits count: with 12's 1500
         // (holding since 20 s, after the wait began) only 500 more go.
         let crowded = [

@@ -41,6 +41,55 @@ boards that gained or lost the pass.
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 <!-- nightly:end -->
 
+## Memory ledger: who runs next (2026-10-24)
+
+Benchmarks share the machine through the memory ledger
+(`$XDG_RUNTIME_DIR/pcb-maker-ledger.json`; how a run reserves and waits:
+[benchmarks/agent-tasks/README.md](../benchmarks/agent-tasks/README.md),
+"Runs side by side, kept apart by the memory ledger", and
+[agents.md](agents.md), "Memory: the machine's ledger"). Pass
+`--min-free-gb 10` to run.py beside other agents; `--lock` still takes
+the tier lock for wall or CPU measurements and works as before.
+
+**Admission is ordered.** A request that waits is in the ledger (megabytes
+0, `waiting_mb`, `waiting_since`; `pcb-maker ledger` lists it): run.py's
+boards waiting in `harness_common.admit` as well as binaries waiting for
+their first reservation. A new request (a board run.py admits, a binary
+that holds nothing yet and was not admitted by a harness above it) may
+not pass the request that has waited longest:
+
+- while the oldest would fit now (it has not polled yet), the newer one
+  goes only if both fit;
+- while the oldest cannot fit, the newer one goes only if the oldest
+  would still fit beside it and every reservation that began holding after
+  the oldest began waiting (`held_since`): once the runs it waits on end,
+  it fits, so small runs keep going but never starve it;
+- a request larger than the capacity runs alone: nothing newer passes it;
+- a run that holds memory and grows (the router's ladder, KiCad's check)
+  is not held back, since the oldest may be waiting for it to end; nor is
+  a binary run.py admitted (its reservation handed to the binary);
+- held back only by its harness's floor of available memory
+  (`--min-free-gb`; the ledger has its room: `waits_on_floor`), the
+  oldest is passed as when it cannot fit, so a floor no other run can see
+  does not stop the machine.
+
+The rule is `order_allows` in crates/pcb-kicad/src/ledger.rs and in
+benchmarks/harness_common.py (the same rule; tests
+`the_request_that_waited_longest_is_not_passed` and test_run.py's
+`MemoryLedger`). Why: a large board waiting for memory was passed by every
+smaller one that arrived while memory freed; a designer-tier run got 3
+rows in 75 minutes beside another agent's stream of small layouts. In the
+two-process smoke (4000 MB in all, a holder of 3000, a harness waiting
+for 3500, then a route of 773 MB that fits beside the holder but would
+leave the harness short): x1754's route went at once and ended 5 s
+before the harness got in; the branch's route waited "behind an older
+request" and reserved after the harness's run released. Binaries
+before the branch and older harness copies neither leave waiting entries
+nor respect them, and an older binary that rewrites the ledger drops the
+new fields (`started` stands in for both times). The expansion intake's
+triage runner (`benchmarks/expansion/triage.py`) admits by its own rule,
+not ordered.
+
 ## Fence (2026-10-21)
 
 Every breadboard-fence benchmark run once with x1404 (main at the fence

@@ -2140,7 +2140,11 @@ pub fn layout_kicad_board(
             current.1,
             before.0,
             before.1,
-            if current == (0, 0) { "" } else { "; the ladder next" }
+            if current == (0, 0) {
+                ""
+            } else {
+                "; the ladder next"
+            }
         );
     }
     let fallback_config = if past_guard {

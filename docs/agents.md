@@ -549,7 +549,11 @@ run waits while the reservations of every run on the machine and its
 request exceed the machine's memory less 6 GB
 (`PCB_MAKER_LEDGER_MARGIN_MB`) and says so on stderr (`memory ledger:
 waiting to reserve ...`); routers that would run side by side run fewer
-at a time instead, which does not change the result. The reservation is
+at a time instead, which does not change the result. Waiting is in
+order (since 2026-10-24): a run that holds nothing yet does not pass the
+request that has waited longest, only takes what still leaves it its room
+(`behind an older request` on stderr; docs/benchmarks.md, "Memory ledger:
+who runs next"). The reservation is
 also a limit of the process's own: a run that grows past it is given more
 while the ledger has room, and otherwise ends with exit 4 and a verdict
 whose error names the reservation (rerun when fewer runs share the
