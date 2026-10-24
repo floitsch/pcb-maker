@@ -11,6 +11,64 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-24 (placement ablation: which decisions cost on MegaDrive and Glasgow)
+
+A diagnostic, no placer or router change. Branch placement-ablation,
+snapshots x1810 to x1812 (the tool; x1812 with the ratsnest crossings),
+every route x1754 (main 3036703), docs/placer.md "Placement ablation
+(2026-10-24)" has the tables.
+
+- **`pcb-maker ablate-kicad-placement`** (docs/agents.md) writes hybrids
+  of the designer's placement and a placed board: one group of parts
+  moved to the other placement's poses (each footprint of more than 20
+  pads, the same with its passives within 3 mm, the connectors, the
+  quadrants, groups of one's own), the parts it lands on moved to the
+  nearest free spot, null variants with one passive nudged 0.1 mm,
+  replicates; per variant the signals a placer can read before routing
+  (wirelength, escape demand's channel overflow, exits facing a body,
+  overlaps, the global route's overflow and soft overflow, and the new
+  ratsnest crossings), per moved part both placements' escape.
+  `benchmarks/agent-tasks/ablation.py` routes the variants with run.py in
+  route mode and attributes the open connections per group (unit tests
+  in Rust and `test_ablation.py`).
+- **Noise first.** One passive nudged 0.1 mm moves a MegaDrive route by
+  a standard deviation of 12.7 open connections (ours 143, 158, 177);
+  Glasgow's by 2.4. Single-route attributions on MegaDrive are good to
+  about ±15.
+- **MegaDrive** (designer 61.7, ours 159.3 open, means of three routes):
+  our north-west quadrant costs 94 in the designer's board (31 the other
+  way), U4's cluster 74 / 30, U8's 48 / 19; U4 (QFP-160) and U8
+  (QFP-128) traded places, U4 ending far from the parts it shares most
+  nets with (U1, J3, J2), and our passives sit 0.5 mm in front of all
+  four of U4's pin rows. The other large parts alone cost nothing
+  measurable.
+- **Glasgow** (designer 52.0, ours 129.7): the eastern quadrants (the
+  small parts around the 14-pin arrays and the TSSOP-16s) cost 62 / 22
+  and 33 / 19; the BGA alone 19 from the designer's side. Escape room
+  does not explain them (ours has less channel overflow there).
+- **Signals.** Wirelength is wrong between the placements on both boards
+  (ours shorter). Escape demand's channel overflow orders them right but
+  follows the groups' costs weakly (Spearman 0.36, -0.54), and escape
+  demand already drives it to zero on MegaDrive without closing the gap.
+  The global route's soft overflow follows the costs (0.59, 0.82) but
+  calls the designer's MegaDrive placement the worse one. **Ratsnest
+  crossings** (each net's minimum spanning tree, crossing pairs counted)
+  follow the costs best (0.60, 0.94) and give the designer's placement
+  fewer crossings than every one of 18 of our layouts on MegaDrive,
+  Glasgow and the OpenESC 4in1. Proposed next lever: the crossings as a
+  placement cost (legaliser, refinement, the race's ranking); predicted
+  from the attribution, an upper bound: about 60 of MegaDrive's 98 and up
+  to 65 of Glasgow's 78.
+- Not done (time): the 4in1's hybrids (prepared in `build/abl1/4in1`, not
+  routed: the 4in1 has its signals only), Glasgow's 12 to 20 pad parts,
+  MegaDrive's U4-U8 pair as one group, replicates of the top groups
+  (prepared in `build/abl1/{glasgow-extra,megadrive-extra,megadrive-rep}`).
+- Incident (10:42): main's `benchmarks/real/external` and `artifacts`
+  became links to themselves (a bad merge); the coordinator re-fetched
+  the boards. The ablation's routes read the designer projects from
+  `build/abl1/designer-src` (copies of the matched designer tier's
+  stripped projects) and were paused while the boards were missing.
+
 ## Committed on 2026-10-24 (differential pairs: the coupled share)
 
 Phase 4 of differential pairs. Branch differential-pairs-4 on main

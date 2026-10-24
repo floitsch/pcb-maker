@@ -1052,13 +1052,14 @@ Score the designer's board and yours side by side.
   them. `<out-dir>/ablation.json` has the groups, per variant the
   displaced parts and the signals a placer can read before routing
   (wirelength, escape demand's channel overflow, exits facing a body,
-  overlapping parts, the global route's overflow and soft overflow at
-  0.5), and per moved part of both placements its escape (demand per
+  overlapping parts, ratsnest crossings, the global route's overflow and
+  soft overflow at 0.5), and per moved part of both placements its escape (demand per
   side, the body it faces, the gap and the channel's capacity, the board
   edge, its connections' distance). Settings: `large_pads` (20),
   `passive_pads` (4), `passive_mm` (3), `repair` (true), `groups` (only
   these), `extra`, `threshold` (0.5), `global_route` (true), `nulls` (2),
-  `null_nudge_mm` (0.1). `benchmarks/agent-tasks/ablation.py` routes the
+  `null_nudge_mm` (0.1), `replicates` (0: every variant again with one
+  more passive nudged, for means over the routes' noise). `benchmarks/agent-tasks/ablation.py` routes the
   variants in route mode (run.py, the memory ledger) and attributes the
   open connections per group (`prepare`, `route`, `report --markdown`).
 

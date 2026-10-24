@@ -1214,6 +1214,280 @@ freed around an open terminal lose the room the state had found for
 them and cannot take back any other. The move descent does not pay
 with it either (998 against main's 973 on this base).
 
+## Placement ablation (2026-10-24)
+
+On the 25 strict-failing target boards with both results, v20's layouts
+leave 986 open against 564 for our router on the designer's placement
+(benchmarks.md, "Layout sweep v20"). Placement levers chosen by
+intuition (seed scoring, in-anneal global-route guidance, bus bundles,
+the move descent) did not pay; escape demand did. This experiment asks
+which placement decisions cost, as general signals, before the next
+lever is built. Nothing in the placer or the router changed.
+
+**The tool.** `pcb-maker ablate-kicad-placement <designer.kicad_pcb>
+<placed-dir> <board-id> <out-dir> [ablation.json]` (docs/agents.md, code
+`crates/pcb-kicad/src/placement_ablation.rs`) writes hybrids of the
+designer's placement and ours: `d-<group>` is the designer's placement
+with one group of parts where we put them, `o-<group>` ours with the
+group where the designer put it, beside `designer` and `ours`. Every
+variant is our placed board (the task's preparation: tracks stripped,
+pours and rule areas, labels) with only footprint poses changed, so the
+variants differ in poses alone (the `designer` variant's global route
+equals that of the designer's stripped board exactly). Groups: (a) every
+movable footprint with more than 20 pads alone, (b) the same with the
+passives (at most four pads, not connectors) that share a net with it
+and lie within 3 mm of its body in either placement, (c) the connectors,
+(d) the board's quadrants by the designer's positions. A moved group
+lands on parts of the other placement: those it collides with (pads
+within 0.1 mm, or a body more than a quarter on another; the placer's
+own legality, even at its tightest, calls 63 of MegaDrive's and 183 of
+Glasgow's designer parts illegal, so it cannot be the test) move to the
+nearest free spot, everything else stays; the report lists them
+(`displaced`). Null variants nudge one passive by 0.1 mm: a route's
+noise. `benchmarks/agent-tasks/ablation.py` lays the variants out as a
+`--route-from` tree with one task per variant and routes them with run.py
+in route mode at the task budget (1200 s of work), every variant with
+x1754 (main 3036703) and pinned rates, 3 at a time with 2 threads,
+through the memory ledger with 10 GB kept free; the tool's boards are
+x1811/x1812's (byte-identical between the two). The judge is KiCad's
+unconnected count, as run.py judges. Our placements are v20's (x1725,
+`build/github-layout-v20/<task>/layout/placed`), the ones the gap above
+was measured on. Output `build/abl1/{megadrive,glasgow}` (hybrids,
+routes, `routes.log`), signals measured again by x1812 in
+`build/abl1/*-sig`.
+
+**Attribution.** For a group, `cost d` = open(d-group) - open(designer)
+(what our placement of it costs the designer's board) and `cost o` =
+open(ours) - open(o-group) (what the designer's placement of it would
+save ours); the cost is their mean. The baselines are means over the
+placement and its two nulls. Two things limit the reading:
+
+- **Noise.** A 0.1 mm nudge of one passive moves MegaDrive's routes by a
+  standard deviation of 12.7 (ours 143, 158, 177; the designer's 56, 62,
+  67), so a single route's cost there carries about ±15; Glasgow's
+  routes are steady (2.4). On MegaDrive only costs above about 30 are
+  distinguishable from noise.
+- **Displacement.** A group lands on the other placement's parts, and
+  those move. In ours, packed tighter, the designer's group displaces
+  many (Glasgow's U30 23 parts, its south-west quadrant 44): every
+  `o` variant of Glasgow that displaces ten or more parts leaves more open
+  than ours, so its negative `cost o` is the disruption, not the
+  designer's choice. The `d` side displaces fewer and reads cleaner.
+  Groups are also not additive (MegaDrive's four quadrants sum to 125
+  against a gap of 98).
+
+Clusters of MegaDrive's DIPs and the cartridge connector (J3, U2, U3,
+U7, U10: two to four parts each, nearly their large part alone) were not
+routed; Glasgow's parts of 12 to 20 pads and MegaDrive's U4-U8 pair as
+one group were prepared (`build/abl1/{glasgow,megadrive}-extra`) and not
+routed, nor was the OpenESC 4in1 (time).
+
+**MegaDrive**: routed open, the designer's placement [56, 62, 67] (mean 61.7), ours [143, 158, 177] (mean 159.3); the nudges' standard deviation 12.7.
+
+| group | parts | open: designer's + our group / ours + the designer's group | cost d / o | cost | displaced d / o |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| quadrant-nw | 92 | 156 / 128 | 94 / 31 | 62.8 | 5 / 14 |
+| cluster-U4 | 26 | 136 / 129 | 74 / 30 | 52.3 | 3 / 10 |
+| cluster-U8 | 21 | 110 / 140 | 48 / 19 | 33.8 | 2 / 11 |
+| large-U8 | 1 | 94 / 127 | 32 / 32 | 32.3 | 2 / 7 |
+| quadrant-sw | 82 | 123 / 159 | 61 / 0 | 30.8 | 20 / 5 |
+| large-U4 | 1 | 119 / 159 | 57 / 0 | 28.8 | 1 / 7 |
+| quadrant-se | 46 | 96 / 143 | 34 / 16 | 25.3 | 6 / 5 |
+| large-U7 | 1 | 64 / 141 | 2 / 18 | 10.3 | 1 / 4 |
+| quadrant-ne | 28 | 111 / 196 | 49 / -37 | 6.3 | 3 / 8 |
+| large-U3 | 1 | 73 / 169 | 11 / -10 | 0.8 | 5 / 4 |
+| large-J3 | 1 | 64 / 163 | 2 / -4 | -0.7 | 0 / 0 |
+| large-U2 | 1 | 66 / 165 | 4 / -6 | -0.7 | 3 / 1 |
+| large-U9 | 1 | 58 / 157 | -4 / 2 | -0.7 | 0 / 2 |
+| large-J2 | 1 | 51 / 152 | -11 / 7 | -1.7 | 0 / 0 |
+| cluster-U9 | 7 | 53 / 154 | -9 / 5 | -1.7 | 2 / 3 |
+| large-U10 | 1 | 52 / 154 | -10 / 5 | -2.2 | 0 / 3 |
+| large-U6 | 1 | 51 / 166 | -11 / -7 | -8.7 | 3 / 3 |
+| connectors | 11 | 55 / 195 | -7 / -36 | -21.2 | 1 / 2 |
+| cluster-U6 | 8 | 52 / 193 | -10 / -34 | -21.7 | 3 / 3 |
+
+| signal | designer's | ours | orders the two right | Spearman with the variants' costs | sign agrees (costs beyond 2 se) |
+| --- | ---: | ---: | --- | ---: | ---: |
+| wirelength (mm) | 29390.3 | 28995.0 | no | 0.31 | 11 of 14 |
+| escape channel overflow (tracks) | 0.1 | 24.4 | yes | 0.36 | 8 of 14 |
+| exits facing a body within 5 mm | 362 | 669 | yes | 0.52 | 12 of 14 |
+| ratsnest crossings | 7931 | 11710 | yes | 0.60 | 12 of 14 |
+| ratsnest crossings between large parts | 4849 | 5200 | yes | 0.39 | 11 of 14 |
+| global route overflow | 8.0 | 1.0 | no | 0.29 | 2 of 14 |
+| global route soft overflow at 0.5 | 5426.5 | 5398.0 | no | 0.59 | 13 of 14 |
+| global route overflowed nets | 10 | 1 | no | 0.03 | 3 of 14 |
+
+**Glasgow**: routed open, the designer's placement [53, 52, 51] (mean 52.0), ours [126, 132, 131] (mean 129.7); the nudges' standard deviation 2.4.
+
+| group | parts | open: designer's + our group / ours + the designer's group | cost d / o | cost | displaced d / o |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| quadrant-ne | 72 | 114 / 108 | 62 / 22 | 41.8 | 40 / 19 |
+| quadrant-se | 75 | 85 / 111 | 33 / 19 | 25.8 | 24 / 15 |
+| quadrant-sw | 62 | 91 / 143 | 39 / -13 | 12.8 | 27 / 44 |
+| connectors | 7 | 84 / 142 | 32 / -12 | 9.8 | 21 / 10 |
+| cluster-U30 | 52 | 70 / 143 | 18 / -13 | 2.3 | 5 / 33 |
+| large-J5 | 1 | 50 / 130 | -2 / -0 | -1.2 | 0 / 2 |
+| cluster-J5 | 6 | 51 / 132 | -1 / -2 | -1.7 | 1 / 1 |
+| large-U30 | 1 | 71 / 173 | 19 / -43 | -12.2 | 4 / 23 |
+| quadrant-nw | 28 | 53 / 187 | 1 / -57 | -28.2 | 2 / 12 |
+
+| signal | designer's | ours | orders the two right | Spearman with the variants' costs | sign agrees (costs beyond 2 se) |
+| --- | ---: | ---: | --- | ---: | ---: |
+| wirelength (mm) | 3640.9 | 3093.5 | no | 0.81 | 9 of 13 |
+| escape channel overflow (tracks) | 31.0 | 50.3 | yes | -0.54 | 5 of 13 |
+| exits facing a body within 5 mm | 609 | 571 | no | -0.12 | 6 of 13 |
+| ratsnest crossings | 815 | 1153 | yes | 0.94 | 12 of 13 |
+| ratsnest crossings between large parts | 91 | 96 | yes | 0.73 | 6 of 13 |
+| global route overflow | 57.0 | 147.0 | yes | 0.11 | 7 of 13 |
+| global route soft overflow at 0.5 | 775.7 | 882.1 | yes | 0.82 | 11 of 13 |
+| global route overflowed nets | 82 | 141 | yes | 0.13 | 8 of 13 |
+
+
+**What differs in the top groups** (the tool's per-part escape of both
+placements, `build/abl1/*-describe/ablation.json`; "demand" is escape
+demand's exits per side, "within 1 mm" the demand on sides that face
+another body closer than 1 mm):
+
+| group | placement | demand | on sides facing a body within 5 mm | within 1 mm | channel overflow | nearest-pin distance mm | board edge mm | global route attribution |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| MegaDrive quadrant-nw | designer's | 282 | 120 | 35 | 0.2 | 16.1 | 35.8 | 13712 |
+| MegaDrive quadrant-nw | ours | 281 | 201 | 89 | 10.0 | 16.6 | 54.9 | 17280 |
+| MegaDrive cluster-U4 | designer's | 177 | 8 | 3 | 0.0 | 19.0 | 47.8 | 13420 |
+| MegaDrive cluster-U4 | ours | 177 | 162 | 152 | 22.0 | 29.7 | 77.6 | 11686 |
+| MegaDrive cluster-U8 | designer's | 129 | 34 | 29 | 0.0 | 12.9 | 67.0 | 9293 |
+| MegaDrive cluster-U8 | ours | 129 | 91 | 54 | 8.6 | 12.2 | 78.7 | 10366 |
+| Glasgow quadrant-ne | designer's | 203 | 185 | 120 | 31.4 | 2.8 | 12.4 | 19728 |
+| Glasgow quadrant-ne | ours | 202 | 178 | 99 | 17.1 | 2.5 | 14.7 | 28300 |
+| Glasgow quadrant-se | designer's | 198 | 183 | 110 | 30.2 | 2.8 | 12.3 | 20595 |
+| Glasgow quadrant-se | ours | 197 | 153 | 64 | 32.9 | 3.5 | 15.5 | 29758 |
+| Glasgow quadrant-sw | designer's | 173 | 140 | 119 | 0.0 | 2.8 | 12.1 | 15947 |
+| Glasgow quadrant-sw | ours | 173 | 133 | 101 | 44.1 | 2.4 | 15.4 | 21748 |
+
+- **MegaDrive: the two QFPs traded places.** U4 (QFP-160, 160 pads) and
+  U8 (QFP-128) share 63 nets with each other and 52 and 49 with the
+  cartridge connector J3, 53 and 49 with the fixed DIP-64 U1 and 43 and
+  36 with the expansion connector J2, which sit to the right (x 172 to
+  275). The designer puts U4, the part with the most nets to U1 and J2,
+  on their side (x 202) and U8 left of it (x 132); ours has them the other
+  way round (U4 at x 141, U8 at x 192). Orientation and board side are
+  the same (U4 at 0 degrees, U8 at 270, both on the front); the edge
+  distance is larger in ours. The wirelength does not see it: ours is
+  1.3 % shorter, U4's nearest-pin distance 44.6 mm against 54.4. The
+  ratsnest does: U4 alone moved to our spot adds 934 crossings to the
+  designer's board, U8 alone 1027, our north-west quadrant (U8 and 91
+  parts) 2025. The second difference is escape room: our U4 has four
+  small parts (EM4, EM11, EM13, EM33) 0.5 to 0.6 mm in front of all four
+  pin rows (all 143 exits face a body within 1 mm, channel overflow 14.4;
+  the designer's U4 has nothing within 5 mm), and U8 has C23 0.8 mm off
+  its +x row (overflow 8.6). The clusters (the QFPs with their passives)
+  cost more than the parts alone (52 and 34 against 29 and 32), but at
+  ±15 a route that is no measured difference.
+- **MegaDrive: the south-west and south-east quadrants** (the DIP-40
+  U6, the DIP-28s U7, U2, U3 and their passives) cost 61 and 34 from the
+  designer's side (means 31 and 25); the parts alone cost nothing measurable (U6 -9, U2
+  -1, U3 1, U7 10): what costs there is where the many small parts go
+  relative to them, again with more crossings (2387 and 1618 added).
+- **Glasgow: the small parts in the east.** The north-east quadrant (72
+  parts: the 14-pin arrays D22 and D23, the TSSOP-16 U19, the header J2
+  and many resistor networks and passives) costs 62 / 22, the south-east
+  (D20, D21, the TSSOP-16 U5 and theirs) 33 / 19: both sides positive,
+  the clearest result of the experiment. Ours pulls these parts towards
+  the FPGA (U19 from (113, 92) to (89, 105); the 12-pad U8 and U36 from
+  (66, 115) and (66, 110) to the middle): shorter (the wirelength 15 %
+  less) but crossing: the designer's board with our north-east quadrant
+  has 1680 more crossings. Escape room does
+  not explain it: our north-east quadrant has less demand within 1 mm
+  of a body (99 against 120) and less channel overflow (17 against 31)
+  than the designer's. The BGA U30 alone costs 19 from the designer's
+  side (its decoupling packed tighter, nearest-pin distance 8.4 mm
+  against 12.9, channel overflow 40.8 against 0) and its cluster 18; the
+  `o` side of both is displacement (23 and 33 parts moved).
+
+**The signal check.** For each signal its value on both placements and,
+over the variants, its change against the variant's cost (the same pairs;
+Spearman's rank correlation, and how often the sign agrees where the
+cost is beyond twice its standard error). Then, as an independent
+check, the same signals on six of our own placements per board (v20 and
+the escape-demand pairs' six layouts, x1725 to x1752, seeds 1, 101,
+201, off and on) against their layout results, and the designer's
+placement (its x1725 matched-tier route):
+
+| board | placement | open | wirelength mm | channel overflow | exits facing a body | ratsnest crossings | between large parts | global overflow | soft overflow 0.5 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| MegaDrive | designer's (x1725 matched route) | 56 | 29390 | 0.1 | 362 | 7931 | 4849 | 8 | 5426 |
+| MegaDrive | github-layout-v20 | 191 | 28995 | 24.4 | 669 | 11710 | 5200 | 1 | 5398 |
+| MegaDrive | escape1-dense2-on | 126 | 30214 | 0.4 | 628 | 9453 | 4122 | 1 | 5173 |
+| MegaDrive | escape2-dense-s101-off | 157 | 33183 | 23.4 | 722 | 13522 | 6497 | 1 | 6644 |
+| MegaDrive | escape2-dense-s101-on | 99 | 31260 | 0.0 | 639 | 10382 | 4941 | 0 | 5994 |
+| MegaDrive | escape2-dense-s201-off | 116 | 30826 | 17.3 | 702 | 10151 | 4721 | 0 | 5556 |
+| MegaDrive | escape2-dense-s201-on | 174 | 33296 | 0.0 | 608 | 14325 | 7205 | 0 | 6115 |
+| glasgow | designer's (x1725 matched route) | 55 | 3641 | 31.0 | 609 | 815 | 91 | 57 | 776 |
+| glasgow | github-layout-v20 | 148 | 3094 | 50.3 | 571 | 1153 | 96 | 147 | 882 |
+| glasgow | escape1-dense2-on | 150 | 3104 | 82.5 | 604 | 1121 | 115 | 117 | 907 |
+| glasgow | escape2-dense-s101-off | 162 | 3090 | 39.8 | 616 | 1008 | 81 | 166 | 1186 |
+| glasgow | escape2-dense-s101-on | 163 | 3207 | 46.2 | 610 | 1215 | 63 | 167 | 1048 |
+| glasgow | escape2-dense-s201-off | 192 | 3020 | 27.1 | 628 | 1266 | 92 | 220 | 1328 |
+| glasgow | escape2-dense-s201-on | 170 | 3362 | 64.6 | 602 | 1308 | 56 | 137 | 1138 |
+| 4in1 | designer's (x1725 matched route) | 0 | 1190 | 8.6 | 396 | 242 | 0 | 0 | 94 |
+| 4in1 | github-layout-v20 | 79 | 1237 | 32.6 | 427 | 467 | 0 | 0 | 173 |
+| 4in1 | escape1-dense2-on | 73 | 1225 | 17.3 | 421 | 417 | 0 | 3 | 155 |
+| 4in1 | escape2-dense-s101-off | 87 | 1235 | 21.0 | 423 | 417 | 0 | 2 | 158 |
+| 4in1 | escape2-dense-s101-on | 68 | 1153 | 17.2 | 425 | 370 | 0 | 0 | 150 |
+| 4in1 | escape2-dense-s201-off | 91 | 1379 | 30.6 | 427 | 505 | 0 | 0 | 177 |
+| 4in1 | escape2-dense-s201-on | 90 | 1208 | 20.7 | 428 | 308 | 0 | 0 | 128 |
+
+- **Escape demand's channel overflow** (the signal we have) orders the
+  two placements right on both boards, but follows the variants' costs
+  weakly (Spearman 0.36 on MegaDrive, -0.54 on Glasgow, where our
+  costly north-east quadrant has less of it). On MegaDrive the placer
+  already drives it to zero (escape demand on: 0.4, 0.0, 0.0) and those
+  placements still leave 99 to 174 open against the designer's 56: room
+  in front of the pin rows was one cost, and it is paid; the rest is
+  not that.
+- **The global route's soft overflow at 0.5** (we have) follows the
+  variants' costs nearly as well as the best (0.59, 0.82) and ranks our
+  own placements on Glasgow (0.83) but not on MegaDrive (0.03), and it
+  calls the designer's MegaDrive placement worse than ours (5426
+  against 5398) and than two of our six. Its total overflow and
+  overflowed nets (channel capacity in the global route) follow nothing
+  (0.29 and 0.03 on MegaDrive, 0.11 and 0.13 on Glasgow).
+- **Wirelength** is wrong between the placements on both boards (ours
+  shorter) and ranks our six placements at -0.09, -0.03 and 0.60.
+- **Ratsnest crossings** (a signal we lack) order the two placements
+  right on both boards, follow the variants' costs best (Spearman 0.60
+  and 0.94, sign agreement 12 of 14 and 12 of 13), give the designer's
+  placement the fewest on all three boards against every one of our 18
+  placements (MegaDrive 7931 against 9453 to 14325, Glasgow 815 against
+  1008 to 1308, the 4in1 242 against 308 to 505), rank our placements at
+  0.60, 0.71 and 0.32, and get 7 of the 9 off/on pairs right (soft
+  overflow 8, channel overflow 7). Restricted to lines between two large
+  parts they are weaker (0.39, 0.73): the crossings that count are not
+  only the buses between the big parts.
+
+**How the missing measure is computed** (`ratsnest_crossings` in the
+tool's signals): for every net the escape fact counts (two pins or
+more, not carried by a pour), the minimum spanning tree of its pins'
+positions (Prim's, straight distance); then the pairs of tree lines of
+different nets that properly intersect, counted (bounding boxes first,
+then the orientation test; under a second for MegaDrive's 1300 pins).
+It is what HPWL cannot see: two orders of the same parts along a bus, or
+a port's chain folded back on itself, have the same bounding boxes and
+different crossings, and on a two- or four-layer board every crossing is
+a via pair or a detour.
+
+**Recommendation: one lever, the ratsnest crossings as a placement
+cost.** Counted incrementally for the moved part's nets (as escape
+demand's channel term is), in the legaliser and the refinement where
+the term survives to the end, and in the race's ranking of the seeds.
+Predicted gain from the attribution, an upper bound and not measured:
+on MegaDrive the groups the crossings explain are the U4/U8 swap and the
+two southern quadrants, about 60 of the 98 open connections between the
+two placements (the north-west quadrant alone 63, the clusters of U4
+and U8 52 and 34, overlapping); on Glasgow the two eastern quadrants, up
+to about 65 of 78 (42 and 26, not additive). The cross-placement table sets the scale differently: among our own
+six MegaDrive layouts the three with the fewest crossings left 99, 116
+and 126 open, the three with the most 157, 174 and 191.
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a
