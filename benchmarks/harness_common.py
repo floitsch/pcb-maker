@@ -388,56 +388,150 @@ def memory_room(reservations, megabytes, min_free_mb=0.0, capacity_mb=None, avai
     `alone` False: the floor holds also when nothing is reserved (triage
     fails closed)."""
     own_pid = own_pid or os.getpid()
+    # Waiting requests (megabytes 0, waiting_mb set) hold nothing.
+    holders = [r for r in reservations if r.get("megabytes", 0.0) > 0]
+    waiting = len(reservations) - len(holders)
     reserved = sum(r.get("megabytes", 0.0) for r in reservations)
     growth = sum(max(0.0, r.get("megabytes", 0.0) - (0.0 if r.get("pid") == own_pid else resident(r["pid"])))
                  for r in reservations)
     ledger_ok = capacity_mb is None or reserved + megabytes <= capacity_mb
     floor_ok = available_mb is None or available_mb - growth - megabytes >= min_free_mb
-    fits = (ledger_ok and floor_ok) or (alone and not reservations) or (not alone and not reservations and floor_ok)
-    text = (f"{reserved / 1024:.1f} GB reserved by {len(reservations)} run(s)"
+    fits = (ledger_ok and floor_ok) or (alone and not holders) or (not alone and not holders and floor_ok)
+    text = (f"{reserved / 1024:.1f} GB reserved by {len(holders)} run(s)"
             + ("" if capacity_mb is None else f" of {capacity_mb / 1024:.1f} GB")
+            + ("" if not waiting else f", {waiting} waiting")
             + ("" if available_mb is None else
                f", {available_mb / 1024:.1f} GB available ({growth / 1024:.1f} GB still to grow)")
             + f", {megabytes / 1024:.1f} GB expected, {min_free_mb / 1024:.1f} GB to keep")
     return fits, text
 
 
-def try_admit(ledger, megabytes, label, min_free_mb=0.0):
+def _waiting_since(reservation):
+    return reservation.get("waiting_since", reservation.get("started", 0.0))
+
+
+def _held_since(reservation):
+    return reservation.get("held_since", reservation.get("started", 0.0))
+
+
+def oldest_waiter(reservations):
+    """The waiting request that has waited longest (ties: the lower pid),
+    None when nothing waits."""
+    waiters = [r for r in reservations if r.get("waiting_mb") is not None]
+    return min(waiters, key=lambda r: (_waiting_since(r), r.get("pid", 0))) if waiters else None
+
+
+def order_allows(others, megabytes, since, capacity_mb, own_pid=None):
+    """Ordered admission (crates/pcb-kicad/src/ledger.rs, `order_allows`:
+    the same rule): whether a new request of `megabytes`, waiting since
+    `since` (now when it has not waited), may be admitted beside `others`
+    (the live reservations but its own) without passing the request that
+    has waited longest. No older waiter, or no capacity known: yes. While
+    the oldest fits now, only with room for both; while it cannot fit (or
+    only its harness's floor holds it back, `waits_on_floor`), only with
+    room for it beside the reservations that began holding after it began
+    waiting and this request: once the runs it waits on end, it fits.
+    Until 2026-10-24 a large request waited while every smaller one that
+    came later took the memory as it freed (a designer-tier run: 3 rows in
+    75 minutes beside another agent's stream of small layouts)."""
+    if capacity_mb is None:
+        return True
+    own_pid = own_pid or os.getpid()
+    oldest = oldest_waiter(others)
+    if oldest is None or (_waiting_since(oldest), oldest.get("pid", 0)) >= (since, own_pid):
+        return True
+    wants = float(oldest["waiting_mb"])
+    rest = [r for r in others if r is not oldest]
+    reserved = sum(r.get("megabytes", 0.0) for r in rest)
+    fits_now = reserved + wants <= capacity_mb or not any(r.get("megabytes", 0.0) > 0 for r in rest)
+    if fits_now and not oldest.get("waits_on_floor"):
+        return reserved + megabytes + wants <= capacity_mb
+    newer = sum(r.get("megabytes", 0.0) for r in rest
+                if r.get("megabytes", 0.0) > 0 and _held_since(r) >= _waiting_since(oldest))
+    return newer + megabytes + wants <= capacity_mb
+
+
+def _is_waiting_entry(reservation, pid, label, since):
+    return (since is not None and reservation.get("pid") == pid and reservation.get("label") == label
+            and reservation.get("waiting_mb") is not None and _waiting_since(reservation) == since)
+
+
+def try_admit(ledger, megabytes, label, min_free_mb=0.0, since=None):
     """Reserves `megabytes` under `label` for this process when they fit
-    (memory_room against the ledger, its capacity and MemAvailable),
-    atomically with the check (under the ledger's lock). Returns the
-    reservation's key (None: no room) and the numbers for the log."""
+    (memory_room against the ledger, its capacity and MemAvailable) and no
+    older waiting request is passed (order_allows), atomically with the
+    check (under the ledger's lock). Returns the reservation's key (None:
+    no room) and the numbers for the log. `since`: when this request began
+    waiting; one that does not fit then stays in the ledger as a waiting
+    entry (megabytes 0, `waiting_mb`, `waiting_since`; `pcb-maker ledger`
+    lists it) that newer requests let go first. None: one try, now,
+    nothing left behind."""
+    pid = os.getpid()
+
     def change(reservations):
+        now = time.time()
+        reservations[:] = [r for r in reservations if not _is_waiting_entry(r, pid, label, since)]
         available = memory_available_bytes()
-        fits, text = memory_room(reservations, megabytes, min_free_mb, ledger_capacity_mb(),
-                                 None if available is None else available / (1024 * 1024))
-        if not fits:
-            return None, text
-        entry = {"pid": os.getpid(), "started": time.time(), "start_ticks": start_ticks(os.getpid()),
-                 "megabytes": float(megabytes), "label": label}
-        if entry["start_ticks"] is None:
-            del entry["start_ticks"]
-        reservations.append(entry)
-        return (entry["pid"], entry["started"], label), text
+        available_mb = None if available is None else available / (1024 * 1024)
+        capacity = ledger_capacity_mb()
+        fits, text = memory_room(reservations, megabytes, min_free_mb, capacity, available_mb)
+        ordered = order_allows(reservations, megabytes, now if since is None else since, capacity, pid)
+        ticks = start_ticks(pid)
+        if fits and ordered:
+            entry = {"pid": pid, "started": now, "start_ticks": ticks, "megabytes": float(megabytes),
+                     "label": label, "held_since": now}
+            if ticks is None:
+                del entry["start_ticks"]
+            reservations.append(entry)
+            return (entry["pid"], entry["started"], label), text
+        if fits:
+            oldest = oldest_waiter(reservations)
+            text += (f"; behind an older request: {oldest.get('label', '?')} (waiting "
+                     f"{max(0.0, now - _waiting_since(oldest)):.0f} s for {oldest['waiting_mb'] / 1024:.1f} GB)")
+        if since is not None:
+            entry = {"pid": pid, "started": since, "start_ticks": ticks, "megabytes": 0.0, "label": label,
+                     "waiting_mb": float(megabytes), "waiting_since": since}
+            if ticks is None:
+                del entry["start_ticks"]
+            # Only the floor holds it back (the ledger has its room): newer
+            # requests need not wait for a floor they cannot see.
+            if not fits and memory_room(reservations, megabytes, min_free_mb, capacity, None)[0]:
+                entry["waits_on_floor"] = True
+            reservations.append(entry)
+        return None, text
     return ledger.update(change)
 
 
+def withdraw(ledger, label, since):
+    """Removes this process's waiting entry for `label` since `since`."""
+    pid = os.getpid()
+    ledger.update(lambda reservations: reservations.__setitem__(
+        slice(None), [r for r in reservations if not _is_waiting_entry(r, pid, label, since)]))
+
+
 def admit(ledger, megabytes, label, min_free_mb=0.0, poll_seconds=15.0, log=None, stop=None):
-    """Waits until `megabytes` fit and reserves them (try_admit). Returns
-    the reservation's key, None when `stop()` said to give up. `log` gets
-    the waiting lines."""
+    """Waits until `megabytes` fit and reserves them (try_admit), in the
+    ledger as a waiting request meanwhile (newer requests do not pass it:
+    order_allows). Returns the reservation's key, None when `stop()` said
+    to give up. `log` gets the waiting lines."""
     started = time.monotonic()
+    since = time.time()
     said = None
-    while True:
-        key, text = try_admit(ledger, megabytes, label, min_free_mb)
-        waited = time.monotonic() - started
-        if key is not None:
-            if said is not None and log:
-                log(f"{label}: started after waiting {waited:.0f} s ({text})")
-            return key
-        if said is None and log:
-            log(f"{label}: waiting for memory ({text})")
-        said = text
-        if stop and stop():
-            return None
-        time.sleep(poll_seconds)
+    key = None
+    try:
+        while True:
+            key, text = try_admit(ledger, megabytes, label, min_free_mb, since=since)
+            waited = time.monotonic() - started
+            if key is not None:
+                if said is not None and log:
+                    log(f"{label}: started after waiting {waited:.0f} s ({text})")
+                return key
+            if said is None and log:
+                log(f"{label}: waiting for memory ({text})")
+            said = text
+            if stop and stop():
+                return None
+            time.sleep(poll_seconds)
+    finally:
+        if key is None:
+            withdraw(ledger, label, since)

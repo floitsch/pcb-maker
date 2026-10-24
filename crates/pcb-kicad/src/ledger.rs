@@ -23,6 +23,19 @@
 //! and otherwise ends the run with exit 4 and a verdict naming the
 //! reservation, rather than leaving it to the OOM killer.
 //!
+//! Admission is ordered (since 2026-10-24, `order_allows`): a request
+//! that waits is in the ledger with what it waits for and since when, and
+//! a new request (a process that holds nothing yet, nor its harness) may
+//! pass the request that has waited longest only with what still leaves
+//! that one its room: while the oldest would fit now, room for both; while
+//! it cannot fit, room for it beside every reservation that began holding
+//! after it began waiting, so that it fits at the latest when the runs it
+//! waits on end. Until then a large request waited while every smaller one
+//! that came later took the memory as it freed (a designer-tier run: 3
+//! rows in 75 minutes beside another agent's stream of small layouts). A
+//! run that holds memory and grows is not held back (the oldest may be
+//! waiting for it to end).
+//!
 //! `PCB_MAKER_LEDGER` names the file (default
 //! `$XDG_RUNTIME_DIR/pcb-maker-ledger.json`, else
 //! `/tmp/pcb-maker-ledger.json`; `off`: no ledger),
@@ -56,7 +69,7 @@ const WAIT_REPORT: Duration = Duration::from_secs(60);
 const WATCH_POLL: Duration = Duration::from_millis(200);
 
 /// A reservation in the ledger.
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct Reservation {
     pub pid: u32,
     /// When the process first reserved (seconds since the epoch).
@@ -70,6 +83,31 @@ pub struct Reservation {
     /// What the process waits to hold, while it waits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waiting_mb: Option<f64>,
+    /// When its wait began (seconds since the epoch), while it waits;
+    /// `started` where absent (an older binary's entry).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waiting_since: Option<f64>,
+    /// When it began holding memory (seconds since the epoch); `started`
+    /// where absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub held_since: Option<f64>,
+    /// While it waits: whether only the harness's floor of available
+    /// memory holds it back (the ledger has its room). Newer requests then
+    /// pass it as when it cannot fit (`order_allows`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub waits_on_floor: bool,
+}
+
+impl Reservation {
+    /// When its wait began (`waiting_since`, else `started`).
+    pub fn waiting_since(&self) -> f64 {
+        self.waiting_since.unwrap_or(self.started)
+    }
+
+    /// When it began holding memory (`held_since`, else `started`).
+    pub fn held_since(&self) -> f64 {
+        self.held_since.unwrap_or(self.started)
+    }
 }
 
 #[derive(Serialize)]
@@ -338,6 +376,54 @@ pub fn may_hold(
         && holders.iter().all(|r| (r.started, r.pid) > (started, me))
 }
 
+/// Ordered admission: whether a new request of `wanted_mb` (a process
+/// that holds nothing yet, nor any harness above it), waiting since
+/// `since` (now when it has not waited) as process `me`, may be admitted
+/// beside `others` (every reservation but its own) without passing the
+/// request that has waited longest. No older waiter, or no capacity
+/// known: yes. While the oldest waiter fits now (it has not polled yet),
+/// only with room for both; while it cannot fit (or only the floor of
+/// available memory holds it back, `waits_on_floor`), only with room for
+/// it beside the reservations that began holding after it began waiting
+/// (`held_since`) and this request: once the runs it waits on end, it
+/// fits. A waiter larger than the capacity runs alone: no newer request
+/// passes it.
+pub fn order_allows(
+    others: &[&Reservation],
+    me: u32,
+    since: f64,
+    wanted_mb: f64,
+    capacity: Option<f64>,
+) -> bool {
+    let Some(capacity) = capacity else {
+        return true;
+    };
+    let key = |r: &Reservation| (r.waiting_since(), r.pid);
+    let Some(oldest) = others
+        .iter()
+        .copied()
+        .filter(|r| r.waiting_mb.is_some())
+        .min_by(|a, b| key(a).partial_cmp(&key(b)).unwrap_or(std::cmp::Ordering::Equal))
+    else {
+        return true;
+    };
+    if key(oldest) >= (since, me) {
+        return true;
+    }
+    let wants = oldest.waiting_mb.unwrap_or(0.0);
+    let rest = || others.iter().filter(|r| !std::ptr::eq(**r, oldest));
+    let reserved: f64 = rest().map(|r| r.megabytes).sum();
+    let fits_now = reserved + wants <= capacity || !rest().any(|r| r.megabytes > 0.0);
+    if fits_now && !oldest.waits_on_floor {
+        return reserved + wanted_mb + wants <= capacity;
+    }
+    let newer: f64 = rest()
+        .filter(|r| r.megabytes > 0.0 && r.held_since() >= oldest.waiting_since())
+        .map(|r| r.megabytes)
+        .sum();
+    newer + wanted_mb + wants <= capacity
+}
+
 /// The sum of the reservations' megabytes.
 pub fn total_mb(reservations: &[Reservation]) -> f64 {
     // A fold from +0: an empty sum of f64 is -0.
@@ -353,6 +439,10 @@ struct Own {
     started: f64,
     start_ticks: Option<u64>,
     ancestors: Vec<u32>,
+    /// When its current wait began, while it waits (`order_allows`).
+    waiting_since: Option<f64>,
+    /// When it began holding memory.
+    held_since: Option<f64>,
     /// What the process itself may hold resident (its hard limit).
     base_mb: f64,
     /// What its children hold beside it (kicad-cli's checks).
@@ -398,6 +488,8 @@ pub fn arm(label: &str) {
         started: now_seconds(),
         start_ticks: start_ticks(pid),
         ancestors: ancestors(),
+        waiting_since: None,
+        held_since: None,
         base_mb: 0.0,
         extra_mb: 0.0,
         broken: false,
@@ -419,7 +511,13 @@ pub fn reserved_mb() -> Option<(f64, f64)> {
 /// What one try to hold `base_mb` and `extra_mb` found.
 enum Try {
     Held,
-    Waiting { reserved_mb: f64, others: usize },
+    Waiting {
+        reserved_mb: f64,
+        others: usize,
+        /// The older request it lets go first (`order_allows`), for the
+        /// log.
+        behind: Option<String>,
+    },
     Unarmed,
 }
 
@@ -443,47 +541,91 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
     let wanted = base_mb + extra_mb;
     let capacity = capacity_mb();
     let held = own.base_mb + own.extra_mb;
-    let entry = |megabytes: f64, waiting_mb: Option<f64>| Reservation {
+    let now = now_seconds();
+    let since = own.waiting_since.unwrap_or(now);
+    let entry = |megabytes: f64, waiting_mb: Option<f64>, held_since: Option<f64>| Reservation {
         pid: me,
         started: own.started,
         start_ticks: own.start_ticks,
         megabytes,
         label: own.label.clone(),
         waiting_mb,
+        waiting_since: waiting_mb.map(|_| since),
+        held_since: held_since.filter(|_| megabytes > 0.0),
+        waits_on_floor: false,
     };
+    let ancestors = &own.ancestors;
+    let held_since = own.held_since;
     let outcome = own.ledger.update(|reservations| {
-        let fits = may_hold(
-            reservations,
-            me,
-            held,
-            own.started,
-            wanted,
-            capacity,
-            &own.ancestors,
-        );
-        let others = reservations.iter().filter(|r| r.pid != me);
-        let reserved: f64 = others.clone().map(|r| r.megabytes).sum();
-        let count = others.count();
-        // A harness's reservation for this process (re-pointed to its pid)
-        // gives way to the process's own.
+        // A harness's reservation for this process (re-pointed to its
+        // pid), or one of a process above it: admitted already.
+        let harness = reservations
+            .iter()
+            .filter(|r| (r.pid == me || ancestors.contains(&r.pid)) && r.megabytes > 0.0)
+            .map(Reservation::held_since)
+            .fold(None, |first: Option<f64>, at| Some(first.map_or(at, |first| first.min(at))));
+        let fits = may_hold(reservations, me, held, own.started, wanted, capacity, ancestors);
+        let others: Vec<&Reservation> = reservations.iter().filter(|r| r.pid != me).collect();
+        let reserved: f64 = others.iter().map(|r| r.megabytes).sum();
+        let count = others.len();
+        // Ordered admission for a new request only: a run that holds memory
+        // grows as before (the oldest waiter may wait for it to end).
+        let ordered = held > 0.0
+            || harness.is_some()
+            || order_allows(&others, me, since, wanted, capacity);
+        let behind = (fits && !ordered)
+            .then(|| {
+                others
+                    .iter()
+                    .filter(|r| r.waiting_mb.is_some())
+                    .min_by(|a, b| {
+                        (a.waiting_since(), a.pid)
+                            .partial_cmp(&(b.waiting_since(), b.pid))
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                    })
+                    .map(|r| {
+                        format!(
+                            "{} (pid {}, waiting {:.0} s for {:.0} MB)",
+                            r.label,
+                            r.pid,
+                            (now - r.waiting_since()).max(0.0),
+                            r.waiting_mb.unwrap_or(0.0)
+                        )
+                    })
+            })
+            .flatten();
+        let fits = fits && ordered;
+        let held_since = held_since.or(harness).unwrap_or(now);
+        // A harness's reservation for this process gives way to the
+        // process's own.
         reservations.retain(|r| r.pid != me);
         if fits {
-            reservations.push(entry(wanted, None));
+            reservations.push(entry(wanted, None, Some(held_since)));
         } else if wait || held > 0.0 {
-            reservations.push(entry(held, wait.then_some(wanted)));
+            reservations.push(entry(held, wait.then_some(wanted), Some(held_since)));
         }
-        (fits, reserved, count)
+        (fits, reserved, count, behind, held_since)
     });
     match outcome {
-        Ok((true, _, _)) => {
+        Ok((true, _, _, _, held_since)) => {
             own.base_mb = base_mb;
             own.extra_mb = extra_mb;
+            own.waiting_since = None;
+            if wanted > 0.0 {
+                own.held_since.get_or_insert(held_since);
+            }
             Try::Held
         }
-        Ok((false, reserved_mb, others)) => Try::Waiting {
-            reserved_mb,
-            others,
-        },
+        Ok((false, reserved_mb, others, behind, _)) => {
+            if wait {
+                own.waiting_since = Some(since);
+            }
+            Try::Waiting {
+                reserved_mb,
+                others,
+                behind,
+            }
+        }
         Err(error) => {
             eprintln!(
                 "memory ledger: {} cannot be written ({error}); the run goes on without it",
@@ -508,13 +650,17 @@ fn hold(base_mb: f64, extra_mb: f64, why: &str) {
             Try::Waiting {
                 reserved_mb,
                 others,
+                behind,
             } => {
                 if reported.is_none_or(|at| at.elapsed() >= WAIT_REPORT) {
                     let capacity = capacity_mb().unwrap_or(f64::INFINITY);
                     eprintln!(
-                        "memory ledger: waiting to reserve {:.0} MB for {why}: {reserved_mb:.0} MB of {capacity:.0} MB reserved by {others} other run{} (pcb-maker ledger lists them; waited {:.0} s)",
+                        "memory ledger: waiting to reserve {:.0} MB for {why}: {reserved_mb:.0} MB of {capacity:.0} MB reserved by {others} other run{}{} (pcb-maker ledger lists them; waited {:.0} s)",
                         base_mb + extra_mb,
                         if others == 1 { "" } else { "s" },
+                        behind.map_or(String::new(), |behind| format!(
+                            "; behind an older request, {behind}"
+                        )),
                         started.elapsed().as_secs_f64()
                     );
                     reported = Some(Instant::now());
@@ -680,7 +826,7 @@ mod tests {
             start_ticks: start_ticks(pid),
             megabytes,
             label: label.into(),
-            waiting_mb: None,
+            ..Default::default()
         }
     }
 
@@ -769,6 +915,7 @@ mod tests {
             megabytes,
             label: String::new(),
             waiting_mb: waiting.then_some(megabytes * 2.0),
+            ..Default::default()
         };
         let me = 10;
         let reservations = vec![other(11, 3000.0, 5.0, false), other(12, 3000.0, 6.0, false)];
@@ -848,6 +995,118 @@ mod tests {
             Some(8000.0),
             &[]
         ));
+    }
+
+    fn refs(all: &[Reservation]) -> Vec<&Reservation> {
+        all.iter().collect()
+    }
+
+    #[test]
+    fn the_request_that_waited_longest_is_not_passed() {
+        // Holders: 11 since 1 s (before the waiter), 12 since 20 s (after).
+        let holder = |pid: u32, megabytes: f64, held_since: f64| Reservation {
+            pid,
+            started: held_since,
+            megabytes,
+            held_since: Some(held_since),
+            ..Default::default()
+        };
+        let waiter = |pid: u32, wants: f64, since: f64| Reservation {
+            pid,
+            started: since,
+            waiting_mb: Some(wants),
+            waiting_since: Some(since),
+            ..Default::default()
+        };
+        let capacity = Some(10_000.0);
+        // No waiter, or no capacity known: as before.
+        let holders = [holder(11, 6000.0, 1.0)];
+        assert!(order_allows(&refs(&holders), 99, 30.0, 4000.0, capacity));
+        let large = waiter(13, 8000.0, 10.0);
+        let with_large = [holder(11, 6000.0, 1.0), large.clone()];
+        assert!(order_allows(&refs(&with_large), 99, 30.0, 4000.0, None));
+        // The large request (8000 MB) waits for 11's 6000 to end. A newer
+        // request of 2000 fits the capacity (6000 + 2000) and leaves the
+        // large one its room once 11 ends (2000 + 8000): it goes.
+        assert!(order_allows(&refs(&with_large), 99, 30.0, 2000.0, capacity));
+        // 2001 would leave it short when 11 ends: it waits.
+        assert!(!order_allows(&refs(&with_large), 99, 30.0, 2001.0, capacity));
+        // The newer runs admitted while it waits count: with 12's 1500
+        // (holding since 20 s, after the wait began) only 500 more go.
+        let crowded = [
+            holder(11, 6000.0, 1.0),
+            holder(12, 1500.0, 20.0),
+            large.clone(),
+        ];
+        assert!(order_allows(&refs(&crowded), 99, 30.0, 500.0, capacity));
+        assert!(!order_allows(&refs(&crowded), 99, 30.0, 501.0, capacity));
+        // A request that waits longer than the large one goes by the
+        // capacity alone (`may_hold`).
+        assert!(order_allows(&refs(&crowded), 99, 5.0, 9000.0, capacity));
+        // Once 11 ends the large one fits now: the next slot is its own,
+        // and a newer request only goes with room for both.
+        let freed = [holder(12, 1500.0, 20.0), large.clone()];
+        assert!(order_allows(&refs(&freed), 99, 30.0, 500.0, capacity));
+        assert!(!order_allows(&refs(&freed), 99, 30.0, 501.0, capacity));
+        // Held back by its harness's floor of available memory only: newer
+        // requests pass as while it cannot fit (they need not wait for a
+        // floor the ledger cannot see).
+        // (11's 1000 since before the wait: room for both 500, after 11
+        // ends 1500.)
+        let fits = [
+            holder(11, 1000.0, 1.0),
+            holder(12, 500.0, 20.0),
+            large.clone(),
+        ];
+        assert!(!order_allows(&refs(&fits), 99, 30.0, 1000.0, capacity));
+        let mut floored = large.clone();
+        floored.waits_on_floor = true;
+        let floor = [holder(11, 1000.0, 1.0), holder(12, 500.0, 20.0), floored];
+        assert!(order_allows(&refs(&floor), 99, 30.0, 1500.0, capacity));
+        assert!(!order_allows(&refs(&floor), 99, 30.0, 1501.0, capacity));
+        // Of two waiters the older one is protected; equal times: the
+        // lower pid.
+        let two = [
+            holder(11, 6000.0, 1.0),
+            waiter(14, 3000.0, 12.0),
+            large.clone(),
+        ];
+        assert!(!order_allows(&refs(&two), 99, 30.0, 2500.0, capacity));
+        let tie = [holder(11, 7000.0, 1.0), waiter(13, 2000.0, 10.0)];
+        assert!(!order_allows(&refs(&tie), 14, 10.0, 1001.0, capacity));
+        assert!(order_allows(&refs(&tie), 12, 10.0, 1001.0, capacity));
+        // A waiter larger than the capacity runs alone: nothing newer
+        // passes it, also when nothing else holds memory.
+        let huge = [holder(11, 1000.0, 1.0), waiter(13, 12_000.0, 10.0)];
+        assert!(!order_allows(&refs(&huge), 99, 30.0, 1.0, capacity));
+        let huge_alone = [waiter(13, 12_000.0, 10.0)];
+        assert!(!order_allows(&refs(&huge_alone), 99, 30.0, 1.0, capacity));
+        // A holder waiting to grow (3000 held, 9000 wanted) is the oldest
+        // waiter: its own memory is part of what it waits for.
+        let mut growing = holder(15, 3000.0, 1.0);
+        growing.waiting_mb = Some(9000.0);
+        growing.waiting_since = Some(8.0);
+        let grow = [growing];
+        assert!(order_allows(&refs(&grow), 99, 30.0, 1000.0, capacity));
+        assert!(!order_allows(&refs(&grow), 99, 30.0, 1001.0, capacity));
+        // Entries of older binaries (no waiting_since, held_since): their
+        // `started` stands in.
+        let old = [
+            Reservation {
+                pid: 11,
+                started: 1.0,
+                megabytes: 6000.0,
+                ..Default::default()
+            },
+            Reservation {
+                pid: 13,
+                started: 10.0,
+                waiting_mb: Some(8000.0),
+                ..Default::default()
+            },
+        ];
+        assert!(order_allows(&refs(&old), 99, 30.0, 2000.0, capacity));
+        assert!(!order_allows(&refs(&old), 99, 30.0, 2001.0, capacity));
     }
 
     #[test]

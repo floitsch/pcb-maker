@@ -641,6 +641,121 @@ class MemoryLedger(unittest.TestCase):
         self.assertIn("4.9 GB reserved by 2 run(s) of 5.9 GB", room(reservations, 1, 0, 6000, None,
                                                                      resident=resident)[1])
 
+    def test_ordered_admission_does_not_pass_the_request_that_waited_longest(self):
+        allows = run.harness_common.order_allows
+
+        def holder(pid, megabytes, since):
+            return {"pid": pid, "started": since, "megabytes": megabytes, "held_since": since, "label": ""}
+
+        def waiter(pid, wants, since):
+            return {"pid": pid, "started": since, "megabytes": 0.0, "waiting_mb": wants, "waiting_since": since,
+                    "label": ""}
+
+        large = waiter(13, 8000.0, 10.0)
+        # No waiter or no capacity: as before.
+        self.assertTrue(allows([holder(11, 6000.0, 1.0)], 4000.0, 30.0, 10000.0, own_pid=99))
+        self.assertTrue(allows([holder(11, 6000.0, 1.0), large], 4000.0, 30.0, None, own_pid=99))
+        # The large one waits for 11's 6000: 2000 more leave it its room once 11 ends, 2001 do not.
+        self.assertTrue(allows([holder(11, 6000.0, 1.0), large], 2000.0, 30.0, 10000.0, own_pid=99))
+        self.assertFalse(allows([holder(11, 6000.0, 1.0), large], 2001.0, 30.0, 10000.0, own_pid=99))
+        # Runs admitted while it waits count.
+        crowded = [holder(11, 6000.0, 1.0), holder(12, 1500.0, 20.0), large]
+        self.assertTrue(allows(crowded, 500.0, 30.0, 10000.0, own_pid=99))
+        self.assertFalse(allows(crowded, 501.0, 30.0, 10000.0, own_pid=99))
+        # An older request goes by the capacity alone.
+        self.assertTrue(allows(crowded, 9000.0, 5.0, 10000.0, own_pid=99))
+        # The oldest fits now: the next slot is its own.
+        fits = [holder(11, 1000.0, 1.0), holder(12, 500.0, 20.0), large]
+        self.assertFalse(allows(fits, 1000.0, 30.0, 10000.0, own_pid=99))
+        floored = dict(large, waits_on_floor=True)
+        self.assertTrue(allows([holder(11, 1000.0, 1.0), holder(12, 500.0, 20.0), floored], 1500.0, 30.0, 10000.0,
+                               own_pid=99))
+        # Larger than the capacity: it runs alone, nothing newer passes it.
+        self.assertFalse(allows([waiter(13, 12000.0, 10.0)], 1.0, 30.0, 10000.0, own_pid=99))
+        # An older binary's entries: `started` stands in.
+        old = [{"pid": 11, "started": 1.0, "megabytes": 6000.0}, {"pid": 13, "started": 10.0, "megabytes": 0.0,
+                                                                   "waiting_mb": 8000.0}]
+        self.assertTrue(allows(old, 2000.0, 30.0, 10000.0, own_pid=99))
+        self.assertFalse(allows(old, 2001.0, 30.0, 10000.0, own_pid=99))
+
+    def test_a_waiting_request_is_in_the_ledger_and_newer_ones_let_it_go_first(self):
+        other = self.sleeper()
+        self.ledger.reserve(3000, "another run", pid=other.pid)
+        gate = run.MemoryGate(0, ledger=self.ledger, poll_seconds=0.05)
+        admitted = []
+        large = run.threading.Thread(target=lambda: admitted.append(("large", gate.admit("large", 3500))))
+        large.start()
+        deadline = time.time() + 10
+        while not any(r.get("waiting_mb") == 3500 for r in self.ledger.live()):
+            self.assertLess(time.time(), deadline)
+            time.sleep(0.01)
+        live = self.ledger.live()
+        self.assertIn(("run.py: large (expected peak)", 0.0, 3500.0),
+                      [(r["label"], r["megabytes"], r.get("waiting_mb")) for r in live])
+        # 600 fit the capacity beside the 3000 (3600 of 4000) but would
+        # leave the large request short once the 3000 end (600 + 3500): the
+        # small one waits, behind it; 500 leave it its room and go.
+        key, text = run.harness_common.try_admit(self.ledger, 600, "small")
+        self.assertIsNone(key)
+        self.assertIn("behind an older request: run.py: large (expected peak)", text)
+        key, _ = run.harness_common.try_admit(self.ledger, 500, "small")
+        self.assertIsNotNone(key)
+        self.ledger.release(key)
+        small = run.threading.Thread(target=lambda: admitted.append(("small", gate.admit("small", 600))))
+        small.start()
+        time.sleep(0.3)
+        other.kill()
+        other.wait()
+        large.join(10)
+        time.sleep(0.3)
+        # The large one went first; the small one waits for it (3500 + 600 > 4000).
+        self.assertEqual([name for name, _ in admitted], ["large"])
+        gate.done(admitted[0][1])
+        small.join(10)
+        self.assertEqual([name for name, _ in admitted], ["large", "small"])
+        gate.done(admitted[1][1])
+        self.assertEqual(self.ledger.live(), [])
+
+    def test_two_processes_are_admitted_in_the_order_they_began_waiting(self):
+        # Two harness processes: the older one's 3500 MB do not fit beside a
+        # holder's 3000 of 4000; the newer one's 900 do (3900) but would
+        # leave the older short once the holder ends (900 + 3500): the newer
+        # one waits for the older one to end (it went first before
+        # 2026-10-24).
+        other = self.sleeper()
+        self.ledger.reserve(3000, "another run", pid=other.pid)
+        code = ("import sys, time; sys.path.insert(0, {benchmarks!r}); import harness_common as h; "
+                "ledger = h.Ledger({path!r}); key = h.admit(ledger, {mb}, {label!r}, poll_seconds=0.05); "
+                "print(time.time(), flush=True); time.sleep(0.5); ledger.release(key)")
+        benchmarks = str(HERE.parent)
+        environment = dict(os.environ, PCB_MAKER_LEDGER_TOTAL_MB="4000")
+
+        def start(mb, label):
+            child = subprocess.Popen([sys.executable, "-c", code.format(benchmarks=benchmarks, path=str(
+                self.ledger.path), mb=mb, label=label)], stdout=subprocess.PIPE, text=True, env=environment)
+            self.children.append(child)
+            return child
+
+        def waiting(label):
+            return any(r["label"] == label and r.get("waiting_mb") for r in self.ledger.live())
+
+        older = start(3500, "older")
+        deadline = time.time() + 20
+        while not waiting("older"):
+            self.assertLess(time.time(), deadline)
+            time.sleep(0.01)
+        newer = start(900, "newer")
+        while not waiting("newer"):
+            self.assertLess(time.time(), deadline)
+            time.sleep(0.01)
+        other.kill()
+        other.wait()
+        older_at = float(older.communicate(timeout=20)[0])
+        newer_at = float(newer.communicate(timeout=20)[0])
+        # The newer one began only after the older one released (0.5 s on).
+        self.assertGreaterEqual(newer_at, older_at + 0.5)
+        self.assertEqual(self.ledger.live(), [])
+
     def test_dead_and_reused_pids_are_dropped_and_other_fields_kept(self):
         child = self.sleeper()
         self.ledger.reserve(100, "live", pid=child.pid)
