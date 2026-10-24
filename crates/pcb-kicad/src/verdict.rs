@@ -899,9 +899,11 @@ pub struct KiCadVerdict {
     /// placement and an error).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub repairs: Option<KiCadRepairs>,
-    /// Route mode with `diff_pairs` on: pairs found, coupled, partly
-    /// coupled, fallen back, links, crossings, coupled and uncoupled
-    /// length (`KiCadDiffPairs`; the per-pair list is in board-router.json).
+    /// Route mode: whether differential pairs routed coupled and why
+    /// (`on`, `default`: "rules", "off" or "explicit", `reason`); with them
+    /// on, pairs found, coupled, partly coupled, fallen back, links,
+    /// crossings, coupled and uncoupled length (`KiCadDiffPairs`; the
+    /// per-pair list is in board-router.json).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diff_pairs: Option<crate::KiCadDiffPairs>,
     /// The result-changing environment variables that were set

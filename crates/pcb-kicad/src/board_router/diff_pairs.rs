@@ -28,6 +28,19 @@ use pcb_router as core;
 /// `diff_pairs`, the verdict's).
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 pub struct KiCadDiffPairs {
+    /// Whether the pairs routed coupled (`diff_pairs`); off, the counts
+    /// below are 0 (no pair was planned).
+    #[serde(default = "coupled_by_default")]
+    pub on: bool,
+    /// Why: "explicit" (the settings' `diff_pairs` or
+    /// `PCB_ROUTER_DIFF_PAIRS`), "rules" (the project's custom rules ask
+    /// for pairs: route mode's default by need), "off" (nothing asks).
+    #[serde(default)]
+    pub default: String,
+    /// The setting, or the rule that asks and the net it holds for, or why
+    /// nothing asks.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub reason: String,
     /// Pairs found by name (both nets with pads on the board).
     pub found: usize,
     /// Pairs whose every link is coupled.
@@ -53,6 +66,12 @@ pub struct KiCadDiffPairs {
     pub work_seconds: f64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pairs: Vec<KiCadDiffPair>,
+}
+
+/// Reports from before the switch's default by need were made with the
+/// switch on.
+fn coupled_by_default() -> bool {
+    true
 }
 
 /// One differential pair (`KiCadDiffPairs::pairs`).
@@ -1949,8 +1968,32 @@ fn route_fallback(
             net.terminals.clear();
         }
     }
-    fallback.planes.retain(|plane| nets.contains(&plane.net));
     let mut router_config = core_config(config);
+    // The other nets' planes go (their nets do not route here), but an
+    // exclusive plane still keeps the pairs' tracks off its layer, as the
+    // attempt kept every other net's (vias pass through it).
+    if router_config.exclusive_planes {
+        for plane in fallback
+            .planes
+            .iter()
+            .filter(|plane| plane.exclusive && !nets.contains(&plane.net))
+        {
+            fallback.obstacles.push(core::Obstacle {
+                shape: core::Shape::Polygon {
+                    points: plane.polygon.clone(),
+                },
+                layers: 1 << plane.layer,
+                kind: core::ObstacleKind::Keepout,
+                net: None,
+                clearance: 0.0,
+                clearance_override: None,
+                blocks_tracks: true,
+                blocks_vias: false,
+                label: "exclusive plane".into(),
+            });
+        }
+    }
+    fallback.planes.retain(|plane| nets.contains(&plane.net));
     router_config.verbose = false;
     router_config.deadline_work = Some(work_budget(config.ladder_budget_seconds.unwrap_or(1200.0)));
     router_config.run_work = None;
@@ -2353,6 +2396,86 @@ mod tests {
             for (end_point, pad) in [(p, pads[0]), (n, pads[1])] {
                 assert!(core::geometry::distance(end_point, pad) > 0.5);
             }
+        }
+    }
+
+    /// A rule disallowing tracks on In1.Cu for the pair's nets (ducktop2's
+    /// ground layers): the pair's nets (their stubs, the fallback) and the
+    /// link keep off it, as the coupled run does; other nets do not.
+    #[test]
+    fn a_pairs_nets_keep_off_the_layers_a_rule_disallows() {
+        let four = BOARD.replace(
+            r#"(layers (0 "F.Cu" signal) (31 "B.Cu" signal)"#,
+            r#"(layers (0 "F.Cu" signal) (4 "In1.Cu" signal) (6 "In2.Cu" signal) (31 "B.Cu" signal)"#,
+        );
+        let pcb = parse(&four).unwrap();
+        let mut config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let names: Vec<String> = lower(&pcb, &config, true)
+            .unwrap()
+            .board
+            .nets
+            .iter()
+            .map(|net| net.name.clone())
+            .filter(|name| name.ends_with("D+") || name.ends_with("D-"))
+            .collect();
+        assert_eq!(names.len(), 2, "{names:?}");
+        for name in &names {
+            config.diff_pair_rules.insert(
+                name.clone(),
+                crate::board_router::KiCadDiffPairRule {
+                    layers: vec![(0.2, 0.2); 4],
+                    disallowed: vec![false, true, false, false],
+                    width_ruled: vec![false; 4],
+                    sources: vec!["rule 'pairs'".into(); 4],
+                    ..Default::default()
+                },
+            );
+        }
+        let class_layers = |board: &core::Board, name: &str| {
+            let net = board.nets.iter().find(|net| net.name == name).unwrap();
+            board.classes[net.class].layers
+        };
+        // Off: the pair's nets go anywhere, as before.
+        config.diff_pairs = Some(false);
+        let board = lower(&pcb, &config, true).unwrap().board;
+        assert_eq!(class_layers(&board, &names[0]), 0);
+        // On: F.Cu, In2.Cu and B.Cu (In1.Cu is bit 1); GND anywhere.
+        config.diff_pairs = Some(true);
+        let mut board = lower(&pcb, &config, true).unwrap().board;
+        assert_eq!(board.layer_count, 4);
+        for name in &names {
+            assert_eq!(class_layers(&board, name), 0b1101, "{name}");
+        }
+        let gnd = board.nets.iter().position(|net| net.name.ends_with("GND")).unwrap();
+        assert_eq!(board.classes[board.nets[gnd].class].layers, 0);
+        let nets = board.nets.len();
+        plan_pairs(&mut board, &config);
+        assert_eq!(board.nets.len(), nets + 1);
+        let link = board.classes[board.nets[nets].class].layers;
+        assert!(link != 0 && link & 0b10 == 0, "{link:b}");
+        // Routed: no track of the pair's nets or the link on In1.Cu.
+        let routed = core::route(&board, &core_config(&config));
+        let pair_nets: Vec<usize> = board
+            .nets
+            .iter()
+            .enumerate()
+            .filter(|(index, net)| *index >= nets || names.contains(&net.name))
+            .map(|(index, _)| index)
+            .collect();
+        for net in pair_nets {
+            assert!(
+                routed.routes[net].segments.iter().all(|segment| segment.layer != 1),
+                "{} has a track on In1.Cu",
+                board.nets[net].name
+            );
         }
     }
 }

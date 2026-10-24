@@ -243,7 +243,21 @@ pub fn route_kicad_board(
     if config.pin_swaps.is_some() {
         fs::remove_dir_all(&swapped_directory).map_err(|error| error.to_string())?;
     }
-    if let Some(report) = result.diff_pairs.as_mut() {
+    // Why the pairs were coupled or not (route mode reports it either way).
+    let choice = config.diff_pairs_choice();
+    if config.diff_pairs_by_need || choice.on {
+        let report = result.diff_pairs.get_or_insert_with(KiCadDiffPairs::default);
+        report.on = choice.on;
+        report.default = choice.default.to_string();
+        report.reason = choice.reason;
+        eprintln!(
+            "diff pairs: {} ({}: {})",
+            if report.on { "on" } else { "off" },
+            report.default,
+            report.reason
+        );
+    }
+    if let Some(report) = result.diff_pairs.as_mut().filter(|report| report.on) {
         let board = output_directory.join(format!("{board_id}.kicad_pcb"));
         if let Ok(text) = fs::read_to_string(&board)
             && let Ok(pcb) = parse(&text)

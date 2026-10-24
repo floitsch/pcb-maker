@@ -377,6 +377,25 @@ fn lower_board(
         Default::default()
     };
 
+    // Differential pairs (`diff_pairs`): a pair's nets keep off the layers
+    // the custom rules disallow their tracks on (`disallow track`: ducktop2's
+    // ground and impedance layers), as the pair's coupled runs do; the
+    // stubs and the fallback route them in their class.
+    let pairs_on = config.diff_pairs_on() && config.engine.as_deref() != Some("topological");
+    let pair_layers = |name: &str| -> core::LayerMask {
+        let Some(rule) = config.diff_pair_rules.get(name).filter(|_| pairs_on) else {
+            return 0;
+        };
+        let count = rule.disallowed.len().min(32);
+        let allowed = (0..count)
+            .filter(|layer| !rule.disallowed[*layer])
+            .fold(0, |mask: core::LayerMask, layer| mask | (1 << layer));
+        if allowed.count_ones() as usize == count {
+            0
+        } else {
+            allowed
+        }
+    };
     let mut net_id = |name: &str,
                       nets: &mut Vec<core::Net>,
                       classes: &mut Vec<core::RuleClass>|
@@ -407,7 +426,7 @@ fn lower_board(
             clearance: rules.clearance_mm,
             via_diameter: rules.via_size_mm,
             via_drill: rules.via_drill_mm,
-            layers: 0,
+            layers: pair_layers(name),
         };
         let class_index = classes
             .iter()

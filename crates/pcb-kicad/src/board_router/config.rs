@@ -169,10 +169,18 @@ pub struct KiCadBoardRouterConfig {
     /// net of the route at the pair's envelope, negotiated with the other
     /// nets and offset into the two nets' tracks when written; the pads'
     /// stubs and what the coupled runs leave open are ordinary routing.
-    /// Route mode only. Default off; `PCB_ROUTER_DIFF_PAIRS=1` turns it on
-    /// where the settings name none.
+    /// Route mode only. Default by need: on where the project's custom
+    /// rules ask for pairs (a `diff_pair_gap` or `diff_pair_uncoupled`
+    /// constraint that holds for a net KiCad pairs), else off;
+    /// `PCB_ROUTER_DIFF_PAIRS=1` (or `0`) decides where the settings name
+    /// none. An explicit value always wins.
     #[serde(default)]
     pub diff_pairs: Option<bool>,
+    /// Route mode: `diff_pairs` defaults by need (`diff_pairs_choice`);
+    /// set by route-kicad-board, not read from a file (a layout's routes
+    /// keep the default off).
+    #[serde(skip)]
+    pub diff_pairs_by_need: bool,
     /// The project's rules for the nets of differential pairs, keyed by
     /// normalized net name like `connection_rules` (set by the project's
     /// rules, not read from a file).
@@ -584,19 +592,80 @@ pub struct KiCadDiffPairRule {
     /// Where the width and gap came from, per layer ("rule 'name'", "net
     /// class 'name'", "net class clearance").
     pub sources: Vec<String>,
-    /// The custom rules (names) whose diff_pair_gap or diff_pair_uncoupled
-    /// set a value here.
+    /// The custom rules (names) whose track_width, diff_pair_gap or
+    /// diff_pair_uncoupled set a value here.
     pub rules: Vec<String>,
+    /// The first custom rule whose `diff_pair_gap` or
+    /// `diff_pair_uncoupled` holds for the net on a layer ("rule 'name'
+    /// constrains diff_pair_gap"): the project asks for the pair coupled
+    /// (route mode's default by need, `diff_pairs_choice`).
+    pub asked: Option<String>,
+}
+
+/// Why differential pairs route coupled or not (`diff_pairs_choice`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct KiCadDiffPairsChoice {
+    pub on: bool,
+    /// "explicit" (the settings' `diff_pairs`, else
+    /// `PCB_ROUTER_DIFF_PAIRS`), "rules" (route mode: the project's rules
+    /// ask for pairs), "off" (nothing asks).
+    pub default: &'static str,
+    pub reason: String,
 }
 
 impl KiCadBoardRouterConfig {
-    /// Whether differential pairs route coupled (`diff_pairs`, else
-    /// `PCB_ROUTER_DIFF_PAIRS`).
+    /// Whether differential pairs route coupled (`diff_pairs_choice`).
     pub fn diff_pairs_on(&self) -> bool {
-        self.diff_pairs.unwrap_or_else(|| {
-            std::env::var("PCB_ROUTER_DIFF_PAIRS")
-                .is_ok_and(|value| !value.is_empty() && value != "0")
-        })
+        self.diff_pairs_choice().on
+    }
+
+    /// Whether differential pairs route coupled, and why: the settings'
+    /// `diff_pairs`, else `PCB_ROUTER_DIFF_PAIRS`, else (route mode,
+    /// `diff_pairs_by_need`) on where a custom `diff_pair_gap` or
+    /// `diff_pair_uncoupled` rule holds for a net KiCad pairs (the net
+    /// classes' diff pair width and gap do not ask: KiCad's DRC holds them
+    /// as a minimum gap only, and most projects carry KiCad's defaults),
+    /// else off.
+    pub fn diff_pairs_choice(&self) -> KiCadDiffPairsChoice {
+        if let Some(on) = self.diff_pairs {
+            return KiCadDiffPairsChoice {
+                on,
+                default: "explicit",
+                reason: format!("the settings' diff_pairs: {on}"),
+            };
+        }
+        if let Ok(value) = std::env::var("PCB_ROUTER_DIFF_PAIRS")
+            && !value.is_empty()
+        {
+            let on = value != "0";
+            return KiCadDiffPairsChoice {
+                on,
+                default: "explicit",
+                reason: format!("PCB_ROUTER_DIFF_PAIRS={value}"),
+            };
+        }
+        if self.diff_pairs_by_need
+            && let Some((net, asked)) = self
+                .diff_pair_rules
+                .iter()
+                .find_map(|(net, rule)| rule.asked.as_ref().map(|asked| (net, asked)))
+        {
+            return KiCadDiffPairsChoice {
+                on: true,
+                default: "rules",
+                reason: format!("{asked} for {net}"),
+            };
+        }
+        KiCadDiffPairsChoice {
+            on: false,
+            default: "off",
+            reason: if self.diff_pairs_by_need {
+                "no custom diff_pair_gap or diff_pair_uncoupled rule holds for a net KiCad pairs"
+                    .into()
+            } else {
+                "route mode only".into()
+            },
+        }
     }
 
     /// The narrowest track width allowed by `min_connection_mm` (0: none).

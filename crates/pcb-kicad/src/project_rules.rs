@@ -1139,6 +1139,15 @@ fn diff_pair_rules(
                     rule.rules.push(picked.rule.clone());
                 }
             }
+            if rule.asked.is_none() {
+                rule.asked = [("diff_pair_gap", &gap), ("diff_pair_uncoupled", &uncoupled)]
+                    .into_iter()
+                    .find_map(|(kind, picked)| {
+                        picked
+                            .as_ref()
+                            .map(|picked| format!("rule '{}' constrains {kind}", picked.rule))
+                    });
+            }
             if let Some(max) = uncoupled.as_ref().and_then(|picked| picked.max) {
                 rule.max_uncoupled =
                     Some(rule.max_uncoupled.map_or(max, |known: f64| known.min(max)));
@@ -1402,6 +1411,33 @@ mod tests {
         );
         // The pair's nets route at the pair's width.
         assert_eq!(paired.connection_rules["TX_P"].trace_width_mm, 0.17);
+        // The rule's diff_pair_gap asks for the pair coupled; the class's
+        // pair settings do not (D+, D-).
+        assert_eq!(
+            tx.asked.as_deref(),
+            Some("rule 'pairs outer' constrains diff_pair_gap")
+        );
+        assert_eq!(rules["D-"].asked, None);
+        // Route mode's default by need (the environment unset), and the
+        // explicit setting over it.
+        if std::env::var_os("PCB_ROUTER_DIFF_PAIRS").is_none() {
+            assert!(!config.diff_pairs_on());
+            let mut route = config.clone();
+            route.diff_pairs_by_need = true;
+            let choice = route.diff_pairs_choice();
+            assert!(choice.on);
+            assert_eq!(choice.default, "rules");
+            assert!(choice.reason.contains("pairs outer"), "{}", choice.reason);
+            route.diff_pairs = Some(false);
+            assert_eq!(route.diff_pairs_choice().default, "explicit");
+            assert!(!route.diff_pairs_on());
+            // Class settings alone leave it off.
+            route.diff_pairs = None;
+            route.diff_pair_rules.retain(|net, _| net.starts_with('D'));
+            let choice = route.diff_pairs_choice();
+            assert!(!choice.on);
+            assert_eq!(choice.default, "off");
+        }
         fs::remove_dir_all(&directory).unwrap();
     }
 

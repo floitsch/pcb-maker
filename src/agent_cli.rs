@@ -461,6 +461,9 @@ fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     if strip {
         config.existing_tracks = pcb_kicad::KiCadExistingTracks::Strip;
     }
+    // Route mode: differential pairs couple where the project's rules ask
+    // for them, unless the settings say (`diff_pairs_choice`).
+    config.diff_pairs_by_need = true;
     let output = Path::new(output);
     let outputs = BTreeMap::from([
         ("project".to_string(), path_text(output)),
