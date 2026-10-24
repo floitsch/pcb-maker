@@ -127,7 +127,7 @@ pub(super) fn route_kicad_board_lowered(
                 mut board,
                 expressions,
             } = lower(&pcb, config, connect_pours)?;
-            let kept = keep_existing_copper(&mut board, config.diff_pairs_on());
+            let kept = keep_existing_copper(&mut board, false);
             if config.diff_pairs_on() && config.engine.as_deref() != Some("topological") {
                 plan_pairs(&mut board, config);
             }

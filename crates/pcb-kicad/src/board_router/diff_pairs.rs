@@ -665,8 +665,10 @@ struct LinkPlan {
     /// starts.
     launches: [Point; 2],
     starts: [Point; 2],
-    /// Per end and polarity: where the stubs end.
+    /// Per end and polarity: where the stubs end, and the pads they start
+    /// from.
     ends: [[Point; 2]; 2],
+    pads: [[Point; 2]; 2],
     /// The side of the run the positive net takes (1 left, -1 right),
     /// along the run from the first end.
     side: f64,
@@ -993,6 +995,10 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
                 launches: [launch_a.at, launch_b.at],
                 starts: [launch_a.start, launch_b.start],
                 ends: stub_ends,
+                pads: [
+                    [ends[0].0.anchor, ends[0].1.anchor],
+                    [ends[1].0.anchor, ends[1].1.anchor],
+                ],
                 side,
                 crossed,
             });
@@ -1360,6 +1366,7 @@ pub(crate) fn finish_pairs(
     result.diagnostics.conflicted.dedup();
     // The links' copper.
     let mut candidates: Vec<(usize, usize, LinkCopper)> = Vec::new();
+    let mut candidate_links: Vec<&LinkPlan> = Vec::new();
     let mut open_pairs: BTreeSet<usize> = BTreeSet::new();
     for plan_link in &plan.links {
         let (index, link) = (plan_link.pair, plan_link.link);
@@ -1403,20 +1410,6 @@ pub(crate) fn finish_pairs(
         });
         if debug() {
             eprintln!("diff pair link {} path {:?}", plan_link.net, path);
-            for net in [pair.positive, pair.negative] {
-                let route = &result.routes[net as usize];
-                eprintln!(
-                    "  net {} status {:?} segments {:?} vias {:?}",
-                    restored.nets[net as usize].name,
-                    result.status[net as usize],
-                    route
-                        .segments
-                        .iter()
-                        .map(|s| (s.layer, s.start, s.end))
-                        .collect::<Vec<_>>(),
-                    route.vias.iter().map(|v| v.at).collect::<Vec<_>>()
-                );
-            }
         }
         let copper = path.as_ref().and_then(|path| {
             link_copper(path, pair, plan_link.side).map(|mut copper| {
@@ -1439,7 +1432,10 @@ pub(crate) fn finish_pairs(
             })
         });
         match copper {
-            Some(copper) => candidates.push((index, link, copper)),
+            Some(copper) => {
+                candidates.push((index, link, copper));
+                candidate_links.push(plan_link);
+            }
             None => {
                 entries[index].why.push(format!(
                     "link {}: the coupled route has no clean path",
@@ -1459,12 +1455,14 @@ pub(crate) fn finish_pairs(
         .collect();
     let refused = refused_groups(&restored, &result.routes, &plan.pairs, &groups);
     let mut copper_out = PairCopper { items: Vec::new() };
+    let mut kept_links: Vec<&LinkPlan> = Vec::new();
     for (position, (index, link, copper)) in candidates.into_iter().enumerate() {
         if let Some(why) = &refused[position] {
             entries[index].why.push(format!("link {}: {why}", link + 1));
             open_pairs.insert(index);
             continue;
         }
+        kept_links.push(candidate_links[position]);
         let pair = &plan.pairs[index];
         for (polarity, net) in [(0, pair.positive), (1, pair.negative)] {
             for &(layer, start, end) in &copper.segments[polarity] {
@@ -1513,6 +1511,39 @@ pub(crate) fn finish_pairs(
         entries[index].coupled_mm += copper.coupled;
         report.crossed += copper.crossed as usize;
     }
+    // The stubs of the links not kept go (the fallback routes the pads
+    // anew).
+    let kept_nets: BTreeSet<core::NetId> = kept_links.iter().map(|link| link.net).collect();
+    for plan_link in plan
+        .links
+        .iter()
+        .filter(|link| !kept_nets.contains(&link.net))
+    {
+        let pair = &plan.pairs[plan_link.pair];
+        for end in 0..2 {
+            for (polarity, net) in [(0, pair.positive), (1, pair.negative)] {
+                let route = &mut result.routes[net as usize];
+                if let Some((_, stub)) = stub_path(
+                    route,
+                    plan_link.pads[end][polarity],
+                    plan_link.ends[end][polarity],
+                    pair.width,
+                ) {
+                    let mut index = 0;
+                    route.segments.retain(|_| {
+                        index += 1;
+                        !stub.contains(&(index - 1))
+                    });
+                }
+            }
+        }
+    }
+    // The kept links' stubs straight where that holds (the router's run
+    // parallel out of the pads, which KiCad takes for a coupled piece at
+    // the pads' pitch).
+    for plan_link in kept_links {
+        straighten_stubs(&restored, result, &plan.pairs, plan_link);
+    }
     // The fallback: the pairs' nets with a connection a link left open,
     // routed with everything else kept.
     if !open_pairs.is_empty() {
@@ -1548,6 +1579,137 @@ pub(crate) fn finish_pairs(
         );
     }
     Some((restored, copper_out, report))
+}
+
+/// The segments of a route's stub from `pad` to `stub_end` (its track
+/// touches the end's copper, within `reach`): one layer, no branch, no
+/// via; and the layer.
+fn stub_path(
+    route: &core::NetRoute,
+    pad: Point,
+    stub_end: Point,
+    reach: f64,
+) -> Option<(usize, Vec<usize>)> {
+    let key = |point: Point| {
+        (
+            (point[0] * 1.0e6).round() as i64,
+            (point[1] * 1.0e6).round() as i64,
+        )
+    };
+    let path = link_path(route, pad, stub_end)?;
+    let (first, last) = (path[0], path[path.len() - 1]);
+    if core::geometry::distance(first.0, pad) > 1.0e-6
+        || core::geometry::distance(last.0, stub_end) > reach + 1.0e-6
+        || path.iter().any(|(_, layer)| *layer != first.1)
+        || path.len() < 2
+    {
+        return None;
+    }
+    let mut degree: BTreeMap<(i64, i64), usize> = BTreeMap::new();
+    for segment in route
+        .segments
+        .iter()
+        .filter(|segment| segment.layer == first.1)
+    {
+        *degree.entry(key(segment.start)).or_default() += 1;
+        *degree.entry(key(segment.end)).or_default() += 1;
+    }
+    let vias: BTreeSet<(i64, i64)> = route.vias.iter().map(|via| key(via.at)).collect();
+    let ends_free = degree.get(&key(last.0)) == Some(&1) && !vias.contains(&key(last.0));
+    if !ends_free
+        || path[1..path.len() - 1]
+            .iter()
+            .any(|(point, _)| degree.get(&key(*point)) != Some(&2) || vias.contains(&key(*point)))
+    {
+        return None;
+    }
+    let on_path: BTreeSet<((i64, i64), (i64, i64))> = path
+        .windows(2)
+        .flat_map(|step| {
+            let (a, b) = (key(step[0].0), key(step[1].0));
+            [(a, b), (b, a)]
+        })
+        .collect();
+    let stub: Vec<usize> = route
+        .segments
+        .iter()
+        .enumerate()
+        .filter(|(_, segment)| {
+            segment.layer == first.1 && on_path.contains(&(key(segment.start), key(segment.end)))
+        })
+        .map(|(index, _)| index)
+        .collect();
+    (stub.len() + 1 == path.len()).then_some((first.1, stub))
+}
+
+/// Replaces each stub of a kept link (the pair's net's route from a pad to
+/// its stub's end, one layer, no branch) by a straight track where that
+/// keeps every clearance (`refused_groups`).
+fn straighten_stubs(
+    board: &core::Board,
+    result: &mut core::RoutingResult,
+    pairs: &[Pair],
+    plan_link: &LinkPlan,
+) {
+    let pair = &pairs[plan_link.pair];
+    for end in 0..2 {
+        for (polarity, net) in [(0, pair.positive), (1, pair.negative)] {
+            let (pad, stub_end) = (plan_link.pads[end][polarity], plan_link.ends[end][polarity]);
+            let Some((layer, stub)) =
+                stub_path(&result.routes[net as usize], pad, stub_end, pair.width)
+            else {
+                continue;
+            };
+            let route = &result.routes[net as usize];
+            let first = (pad, layer);
+            let width = stub
+                .iter()
+                .map(|&index| route.segments[index].width)
+                .fold(f64::INFINITY, f64::min);
+            // The stub out of the routes while the straight one is checked.
+            let segments = &mut result.routes[net as usize].segments;
+            let mut removed = Vec::new();
+            let mut index = 0;
+            segments.retain(|segment| {
+                index += 1;
+                let keep = !stub.contains(&(index - 1));
+                if !keep {
+                    removed.push(segment.clone());
+                }
+                keep
+            });
+            let mut straight: [Vec<(usize, Point, Point)>; 2] = Default::default();
+            straight[polarity].push((first.1, pad, stub_end));
+            let refused = refused_groups_at(
+                board,
+                &result.routes,
+                pairs,
+                &[Group {
+                    pair: plan_link.pair,
+                    segments: straight,
+                    vias: Default::default(),
+                }],
+                width,
+            );
+            if debug() {
+                eprintln!(
+                    "diff pair stub {pad:?} -> {stub_end:?} of {}: {:?}",
+                    board.nets[net as usize].name, refused[0]
+                );
+            }
+            let segments = &mut result.routes[net as usize].segments;
+            if refused[0].is_none() {
+                segments.push(core::Segment {
+                    layer: first.1,
+                    start: pad,
+                    end: stub_end,
+                    width,
+                });
+            } else {
+                segments.extend(removed);
+            }
+        }
+    }
 }
 
 /// Routes the connections of the pairs `open` (indices into `pairs`) that
@@ -1599,50 +1761,35 @@ fn route_fallback(
                 blocks_vias: true,
                 label: "existing via".into(),
             });
+            // Its drill keeps the hole clearance from other nets' copper.
+            fallback.obstacles.push(core::Obstacle {
+                shape: core::Shape::Circle {
+                    center: via.at,
+                    radius: via.drill / 2.0,
+                },
+                layers: fallback.all_layers(),
+                kind: core::ObstacleKind::Hole,
+                net: Some(net as core::NetId),
+                clearance: 0.0,
+                clearance_override: None,
+                blocks_tracks: true,
+                blocks_vias: true,
+                label: "existing via hole".into(),
+            });
         }
     }
     keep_existing_copper(&mut fallback, true);
-    // Only the pairs' nets route; one class (static maps of the whole
-    // board each), their widest track, the largest clearance and via of
-    // all, so that every other net's copper keeps its clearance.
-    let class = core::RuleClass {
-        trace_width: nets
-            .iter()
-            .map(|&net| board.classes[board.nets[net as usize].class].trace_width)
-            .fold(0.0, f64::max),
-        clearance: board
-            .classes
-            .iter()
-            .map(|class| class.clearance)
-            .fold(0.0, f64::max),
-        via_diameter: board
-            .classes
-            .iter()
-            .map(|class| class.via_diameter)
-            .fold(0.0, f64::max),
-        via_drill: board
-            .classes
-            .iter()
-            .map(|class| class.via_drill)
-            .fold(0.0, f64::max),
-        layers: 0,
-    };
-    fallback.classes = vec![class];
+    // Only the pairs' nets route (with their pours, if they have any).
     for (index, net) in fallback.nets.iter_mut().enumerate() {
-        net.class = 0;
         if !nets.contains(&(index as core::NetId)) {
             net.terminals.clear();
         }
     }
     fallback.planes.retain(|plane| nets.contains(&plane.net));
-    for plane in &mut fallback.planes {
-        plane.class = 0;
-    }
     let mut router_config = core_config(config);
     router_config.verbose = false;
     router_config.deadline_work = Some(work_budget(config.ladder_budget_seconds.unwrap_or(1200.0)));
     router_config.run_work = None;
-    router_config.net_rules = None;
     let routed = core::route(&fallback, &router_config);
     for &net in &nets {
         let (net, from) = (net as usize, &routed.routes[net as usize]);
@@ -1676,6 +1823,18 @@ fn refused_groups(
     routed: &[core::NetRoute],
     pairs: &[Pair],
     groups: &[Group],
+) -> Vec<Option<String>> {
+    refused_groups_at(board, routed, pairs, groups, 0.0)
+}
+
+/// `refused_groups` with the groups' tracks `width` wide (0: their pairs'
+/// width).
+fn refused_groups_at(
+    board: &core::Board,
+    routed: &[core::NetRoute],
+    pairs: &[Pair],
+    groups: &[Group],
+    width: f64,
 ) -> Vec<Option<String>> {
     if groups.is_empty() {
         return Vec::new();
@@ -1741,7 +1900,7 @@ fn refused_groups(
                     layer,
                     start,
                     end,
-                    width: pair.width,
+                    width: if width > 0.0 { width } else { pair.width },
                 });
             }
             for &at in &group.vias[polarity] {

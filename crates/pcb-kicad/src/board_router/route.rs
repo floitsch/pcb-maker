@@ -365,7 +365,7 @@ impl LadderRunner for KiCadRunner<'_> {
     ) -> Result<core::Board, String> {
         let mut board = lower(self.parsed, attempt, connect)?.board;
         // The board's own tracks and vias: what they join is connected.
-        let kept = keep_existing_copper(&mut board, attempt.diff_pairs_on());
+        let kept = keep_existing_copper(&mut board, false);
         let _ = self.kept.set(kept);
         if attempt.diff_pairs_on() {
             plan_pairs(&mut board, attempt);

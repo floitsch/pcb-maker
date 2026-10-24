@@ -1188,27 +1188,6 @@ fn lower_board(
                     blocks_vias: true,
                     label: "existing via".into(),
                 });
-                // With differential pairs (their vias are kept copper), a
-                // kept via's drill keeps the hole clearance from other
-                // nets' copper, as KiCad checks it.
-                if config.diff_pairs_on()
-                    && let Ok(drill) = form_f64(item, "drill", 1)
-                {
-                    obstacles.push(core::Obstacle {
-                        shape: core::Shape::Circle {
-                            center: form_xy(item, "at")?,
-                            radius: drill / 2.0,
-                        },
-                        layers: via_layers(item, &layers),
-                        kind: core::ObstacleKind::Hole,
-                        net,
-                        clearance: 0.0,
-                        clearance_override: None,
-                        blocks_tracks: true,
-                        blocks_vias: true,
-                        label: "existing via hole".into(),
-                    });
-                }
             }
             // An arc track: its chords, grown by the flattening's
             // tolerance so they hold the true arc (as copper graphics'
