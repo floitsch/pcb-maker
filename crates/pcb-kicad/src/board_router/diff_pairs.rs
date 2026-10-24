@@ -677,6 +677,16 @@ struct LinkPlan {
     crossed: bool,
 }
 
+impl LinkPlan {
+    /// The copper of the stub end of `polarity` at `end`: from where the
+    /// stub ends a track width along the lead (`plan_pairs`).
+    fn stub_end(&self, end: usize, polarity: usize, width: f64) -> (Point, Point) {
+        let at = self.ends[end][polarity];
+        let along = unit(sub(self.launches[end], self.starts[end]));
+        (at, add(at, scale(along, width)))
+    }
+}
+
 /// A board whose pairs' links are nets of the route (`plan_pairs`), as
 /// its `Board::attachment` keeps it for `finish_pairs`.
 struct PairPlan {
@@ -1526,7 +1536,7 @@ pub(crate) fn finish_pairs(
                 if let Some((_, stub)) = stub_path(
                     route,
                     plan_link.pads[end][polarity],
-                    plan_link.ends[end][polarity],
+                    plan_link.stub_end(end, polarity, pair.width),
                     pair.width,
                 ) {
                     let mut index = 0;
@@ -1582,13 +1592,14 @@ pub(crate) fn finish_pairs(
 }
 
 /// The segments of a route's stub from `pad` to `stub_end` (its track
-/// touches the end's copper, within `reach`): one layer, no branch, no
-/// via; and the layer.
+/// touches the end's copper, a track of `width` along the lead: the
+/// route may end anywhere on it, `Board::terminal_copper`): one layer, no
+/// branch, no via; and the layer.
 fn stub_path(
     route: &core::NetRoute,
     pad: Point,
-    stub_end: Point,
-    reach: f64,
+    (stub_end, lead_end): (Point, Point),
+    width: f64,
 ) -> Option<(usize, Vec<usize>)> {
     let key = |point: Point| {
         (
@@ -1597,9 +1608,19 @@ fn stub_path(
         )
     };
     let path = link_path(route, pad, stub_end)?;
+    if debug() {
+        eprintln!("diff pair stub path {path:?}");
+    }
     let (first, last) = (path[0], path[path.len() - 1]);
+    let reach = (width
+        + route
+            .segments
+            .iter()
+            .map(|segment| segment.width)
+            .fold(0.0, f64::max))
+        / 2.0;
     if core::geometry::distance(first.0, pad) > 1.0e-6
-        || core::geometry::distance(last.0, stub_end) > reach + 1.0e-6
+        || core::geometry::point_segment_distance(last.0, stub_end, lead_end) > reach + 1.0e-6
         || path.iter().any(|(_, layer)| *layer != first.1)
         || path.len() < 2
     {
@@ -1655,17 +1676,22 @@ fn straighten_stubs(
     for end in 0..2 {
         for (polarity, net) in [(0, pair.positive), (1, pair.negative)] {
             let (pad, stub_end) = (plan_link.pads[end][polarity], plan_link.ends[end][polarity]);
-            let Some((layer, stub)) =
-                stub_path(&result.routes[net as usize], pad, stub_end, pair.width)
-            else {
+            let Some((layer, stub)) = stub_path(
+                &result.routes[net as usize],
+                pad,
+                plan_link.stub_end(end, polarity, pair.width),
+                pair.width,
+            ) else {
                 continue;
             };
             let route = &result.routes[net as usize];
             let first = (pad, layer);
+            // The routed stub's narrowest width, at most the pair's (the
+            // stubs' ends are placed for it).
             let width = stub
                 .iter()
                 .map(|&index| route.segments[index].width)
-                .fold(f64::INFINITY, f64::min);
+                .fold(pair.width, f64::min);
             // The stub out of the routes while the straight one is checked.
             let segments = &mut result.routes[net as usize].segments;
             let mut removed = Vec::new();
