@@ -82,13 +82,34 @@ placement (`--tier designer --budget-scale 0.02`: 30 s of work, one
 thread, 4 jobs, `--min-free-gb 10`), x1814 against x14291; KiCad's
 errors of the two types, unconnected items, vias and length:
 
-ROWS14
+| Board | track_width errors | clearance errors | other errors | unconnected | vias | length mm | routed |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| PCB | 0 -> 0 | 0 -> 0 | 3 -> 3 | 0 -> 0 | 120 -> 120 | 1956 -> 1956 | 54/54 -> 54/54 |
+| USB_Keypad | 0 -> 0 | 58 -> 58 | 22 -> 22 | 0 -> 0 | 60 -> 60 | 1619 -> 1619 | 39/39 -> 39/39 |
+| WLED_Matrix | 0 -> 0 | 62 -> 62 | 31 -> 31 | 2 -> 2 | 82 -> 82 | 1838 -> 1838 | 100/104 -> 100/104 |
+| 4in1-mini | 0 -> 0 | 0 -> 0 | 0 -> 0 | 53 -> 39 | 113 -> 119 | 1483 -> 1452 | 122/152 -> 127/152 |
+| 4in1 | 0 -> 0 | 0 -> 0 | 0 -> 0 | 25 -> 30 | 146 -> 154 | 2106 -> 2149 | 133/152 -> 130/152 |
+| OpenFC | 0 -> 0 | 1 -> 1 | 3 -> 3 | 4 -> 4 | 132 -> 132 | 1590 -> 1590 | 78/82 -> 78/82 |
+| SUMEC_MK_IV | 0 -> 0 | 8 -> 8 | 4 -> 4 | 6 -> 6 | 90 -> 90 | 1631 -> 1631 | 66/69 -> 66/69 |
+| Sisu_SSE-9 | 0 -> 0 | 0 -> 0 | 11 -> 11 | 108 -> 108 | 168 -> 168 | 3477 -> 3477 | 144/192 -> 144/192 |
+| motherboard | 0 -> 0 | 24 -> 24 | 246 -> 246 | 162 -> 161 | 123 -> 126 | 4804 -> 4552 | 139/236 -> 138/236 |
+| power | 0 -> 0 | 0 -> 0 | 11 -> 11 | 9 -> 9 | 118 -> 118 | 2189 -> 2189 | 106/115 -> 106/115 |
+| link | 0 -> 0 | 0 -> 0 | 30 -> 30 | 191 -> 191 | 145 -> 145 | 5543 -> 5543 | 164/251 -> 164/251 |
+| ErgoSNM_keyboard | 0 -> 0 | 0 -> 0 | 3 -> 3 | 0 -> 0 | 29 -> 29 | 4321 -> 4321 | 58/58 -> 58/58 |
+| MokyaLora | 0 -> 0 | 0 -> 0 | 6 -> 6 | 61 -> 61 | 165 -> 165 | 4502 -> 4502 | 238/262 -> 238/262 |
+| module | 0 -> 0 | 0 -> 0 | 22 -> 22 | 226 -> 226 | 68 -> 68 | 1027 -> 1027 | 56/223 -> 56/223 |
+| total | 0 -> 0 | 153 -> 153 | 392 -> 392 | 847 -> 837 | 1559 -> 1576 | 38087 -> 37846 | |
 
-KiCad's other errors are the same on every board (USB_Keypad's 58 and
-WLED_Matrix's 62 clearance errors are PTH pads of one footprint, no rule
-of ours). Only the OpenESC boards route differently: the laptop power
-board's outer minimum is now per layer too (its inner neck-downs back to
-0.11 mm), but its route is the same. KiCad's connection_width warnings
+No track_width error on either side, and the clearance errors are the
+same on every board and none from a layer rule: USB_Keypad's 58 and
+WLED_Matrix's 62 are PTH pads of one footprint, the laptop
+motherboard's 24 the designer's pads under its "pad to pad clearance"
+rule, Sumec's 8 pads against pads and a polygon. Three boards route
+differently: the two OpenESC boards and the laptop motherboard (six
+layers: "Minimum Trace Width (outer layer)", 0.127 mm, is per layer now,
+its inner neck-downs back at the board's 0.11 mm: 162 -> 161
+unconnected). The laptop power board has the same rule on four layers
+and the same route. KiCad's connection_width warnings
 (OpenESC's 0.16 mm minimum connection, a warning the router does not
 floor: `FloorMode::Errors`) go from 2 to 225: the inner tracks are 0.09
 mm, as the project's classes say. The two OpenESC rows move by the
