@@ -2050,8 +2050,9 @@ pub fn layout_kicad_board(
     // If something is still open (in KiCad's eyes too), route the final
     // placement with route mode's whole ladder (pours as tracks, finer
     // pitches, more seeds) and keep the better board. If only thermals are
-    // starved (pads KiCad does not count as joined to their pour), route
-    // the pour nets as tracks.
+    // starved (pads KiCad does not count as joined to their pour), the
+    // starved pads go solid first and, when that leaves any starved or
+    // open, the pour nets are routed as tracks.
     let open = |result: &KiCadBoardRouterResult| {
         result.unconnected_terminals
             + result.internal_violations.len()
@@ -2100,6 +2101,48 @@ pub fn layout_kicad_board(
     // 121, vaio_re 138, jetson 25 without a ladder; the step alone 17, 82,
     // 35, 18).
     let direct_narrow = narrow_applies && many_open && current.0 > 0;
+    // Only thermals starved (KiCad and the router find every connection):
+    // the starved pads go solid first, one KiCad check, and the ladder
+    // (pours as tracks) runs only when that leaves something starved or
+    // open. The ladder first used to run whole on these boards and keep
+    // none of its attempts (the 0xCB 1337 panel: 6 attempts, 596 s, each
+    // left 1 or 2 open), and then the solid pads fixed the board anyway.
+    let thermals_only = !past_guard
+        && current.0 == 0
+        && current.1 > 0
+        && connect
+        && router_config.pours == KiCadPourMode::Auto;
+    let mut current = current;
+    // The checks of the solid pads tried before the ladder (counted with
+    // the board's work after it) and whether the board kept has had its
+    // try (the try after the ladder runs only on a board the ladder kept).
+    let mut solid_first_work = 0.0;
+    let mut solidified = false;
+    let mut solid_tried = false;
+    if thermals_only
+        && router_config.solid_starved_thermals != Some(false)
+        && routed.native.is_some()
+        && stop.allows(LayoutStep::NeckRepair)
+    {
+        let checks = crate::board_router::solidify_starved_thermals(
+            &mut routed,
+            &result_directory,
+            board_id,
+        )?;
+        solidified = checks > 0;
+        solid_tried = true;
+        solid_first_work = checks_charged.add(checks);
+        let before = current;
+        current = quality(&routed, &result_directory);
+        eprintln!(
+            "layout: only thermals starved: the starved pads solid first: {} open, {} starved ({} open, {} starved before){}",
+            current.0,
+            current.1,
+            before.0,
+            before.1,
+            if current == (0, 0) { "" } else { "; the ladder next" }
+        );
+    }
     let fallback_config = if past_guard {
         None
     } else if direct_narrow {
@@ -2280,6 +2323,7 @@ pub fn layout_kicad_board(
                 fs::rename(&kept_output, &result_directory).map_err(|error| error.to_string())?;
                 routed = kept;
                 best_quality = kept_quality;
+                solid_tried = false;
             } else {
                 fs::remove_dir_all(&kept_output).map_err(|error| error.to_string())?;
             }
@@ -2333,6 +2377,7 @@ pub fn layout_kicad_board(
                     .map_err(|error| error.to_string())?;
                 routed = fallback;
                 best_quality = fallback_quality;
+                solid_tried = false;
             } else {
                 fs::remove_dir_all(&fallback_directory).map_err(|error| error.to_string())?;
             }
@@ -2424,6 +2469,7 @@ pub fn layout_kicad_board(
                     fs::rename(&continuation_directory, &result_directory)
                         .map_err(|error| error.to_string())?;
                     routed = continuation;
+                    solid_tried = false;
                 } else {
                     fs::remove_dir_all(&continuation_directory)
                         .map_err(|error| error.to_string())?;
@@ -2436,13 +2482,15 @@ pub fn layout_kicad_board(
         // 1100 s more of wall clock).
         routed.work_seconds = after_work;
     }
+    routed.work_seconds += solid_first_work;
     // The starved pads of the board kept, solid (`solid_starved_thermals`,
     // on unless false; kept only when KiCad finds the board better). Once,
     // here: on an attempt it made the layout prefer eternal-keypad's
     // continuation (its starved thermals gone, a short the attempts'
-    // comparison does not weigh) to the board it kept before.
-    let mut solidified = false;
-    if router_config.solid_starved_thermals != Some(false)
+    // comparison does not weigh) to the board it kept before. Not again
+    // on a board that had its try before the ladder (thermals only).
+    if !solid_tried
+        && router_config.solid_starved_thermals != Some(false)
         && routed.native.is_some()
         && stop.allows(LayoutStep::NeckRepair)
     {
@@ -2451,7 +2499,7 @@ pub fn layout_kicad_board(
             &output_directory.join("result"),
             board_id,
         )?;
-        solidified = checks > 0;
+        solidified |= checks > 0;
         routed.work_seconds += checks_charged.add(checks);
     }
     // KiCad's connection_width necks on the board kept (a no-op when the
