@@ -11,6 +11,83 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-24 (differential pairs: the coupled share)
+
+Phase 4 of differential pairs. Branch differential-pairs-4 on main
+c038a34; snapshots x14240 to x14243 (x14243 the commit measured); main
+is x1798. docs/router.md, "Differential pairs", has the design and "The
+coupled share" the per-step table. The default stays by rules (on for
+the 7 boards whose custom rules ask for pairs, off elsewhere).
+
+**What changed, per fallback reason.** (1) *A pad's stub does not reach
+the run*: the link carries straight stubs from the pads where they keep
+every clearance, starting where the line to the stub's end leaves the
+pad (a mask opening over the pad is left by the stub), its copper
+reserved from the run's start, the pads of the run's terminal; a crossed
+end keeps the router's stubs. (2) *Copper refused*: the router necked a
+link down to 0.127 mm within 1.5 mm of its launches (the launch's pad,
+the lead, is as wide as the link's track, narrower than track and
+clearance), so the offset tracks met ground vias there; pcb-router's
+`prepare_net` no longer makes neck zones at "pair launch" pads. (3) *Run
+not routed*: links first in the routing order, and a via disc without
+the turn allowance, were measured and not kept. (4) *Fewer than two pair
+points*: a pad of each of two two-pad parts side by side (their other
+pads within 3 mm) is a pair point. Also: `crossed` counted the ends
+whose pads' order matches the run's (inverted since phase 2); unit tests
+`a_link_is_a_net_with_launches_and_the_pairs_nets_end_beside_its_run`
+(the link carries both ends' stubs, four pads in three terminals) and
+`series_parts_side_by_side_are_a_pair_point`.
+
+**The 7 rule boards** (route mode, 30 s of work, one thread, the board's
+own tracks kept, KiCad's DRC with `--refill-zones`, no setting: the
+default fires on all 7; x1798 against each step's snapshot):
+
+| step | snapshot | links coupled | errors | unconnected | gap findings | dangling | vias | fallbacks (not routed / stub / fewer than two points / refused / too close / no launch) |
+|---|---|---|---|---|---|---|---|---|
+| main | x1798 | 3/97 | 186 | 1 262 | 74 | 40 | 966 | 52 / 30 / 65 / 4 / 4 / 4 |
+| 1 the link's own stubs | x14240 | 11/97 | 151 | 1 258 | 84 | 39 | 970 | 47 / 19 / 65 / 14 / 2 / 4 |
+| 2 no neck at a launch | x14241 | 19/97 | 98 | 1 232 | 73 | 39 | 965 | 48 / 22 / 65 / 2 / 2 / 4 |
+| 3 links first (not kept) | dev on x14241 | 19/97 | 103 | 1 249 | 74 | 37 | 958 | 49 / 20 / 65 / 3 / 2 / 4 |
+| 4 series parts, parallel (not kept) | x14242 | 24/138 | 88 | 1 245 | 63 | 38 | 951 | 71 / 28 / 29 / 3 / 6 / 6 |
+| 4 series parts | x14243 | 22/150 | 96 | 1 227 | 69 | 40 | 981 | 80 / 26 / 22 / 4 / 11 / 7 |
+
+A smaller link via disc (`2 dv + V`) on step 4's code: 22 -> 21 links
+coupled, errors 96 -> 119, unconnected 1 227 -> 1 223, refused 4 -> 9:
+not kept.
+
+| board | gap/uncoupled/length x1798 -> x14243 | errors | unconnected | vias | items_not_allowed | dangling | links coupled/total | uncoupled mm | work s |
+|---|---|---|---|---|---|---|---|---|---|
+| EwoudVV__ducktop2__ducktop2-center | (20, 0, 0) -> (14, 0, 0) | 20 -> 14 | 499 -> 499 | 479 -> 465 | 0 -> 0 | 0 -> 1 | 2/28 -> 5/54 | 5 -> 12 | 136.4 -> 159.4 |
+| EwoudVV__ducktop2__left_io | (16, 0, 0) -> (15, 0, 0) | 16 -> 15 | 351 -> 356 | 235 -> 239 | 0 -> 0 | 1 -> 0 | 0/27 -> 0/41 | 0 -> 0 | 96.9 -> 84.3 |
+| EwoudVV__ducktop2__right_io | (25, 0, 0) -> (38, 0, 0) | 27 -> 40 | 185 -> 166 | 124 -> 154 | 0 -> 0 | 1 -> 3 | 0/12 -> 1/23 | 0 -> 1 | 70.5 -> 85.9 |
+| OpenDrone-hw__OpenAIO-Whoop__OpenAIO-Whoop | (1, 0, 1) -> (1, 0, 1) | 0 -> 0 | 187 -> 183 | 35 -> 36 | 0 -> 0 | 0 -> 0 | 0/2 -> 0/4 | 0 -> 0 | 39.1 -> 39.2 |
+| williamyang98__oculink_m2_adapter__m2_card | (0, 0, 0) -> (1, 0, 0) | 71 -> 2 | 10 -> 2 | 21 -> 22 | 0 -> 0 | 3 -> 0 | 0/9 -> 9/9 | 0 -> 10 | 24.2 -> 28.9 |
+| williamyang98__oculink_m2_adapter__oculink_m2 | (12, 0, 0) -> (0, 0, 0) | 23 -> 4 | 14 -> 9 | 58 -> 47 | 0 -> 0 | 1 -> 2 | 1/10 -> 4/10 | 2 -> 8 | 32.1 -> 36.5 |
+| williamyang98__oculink_m2_adapter__oculink_port | (0, 0, 0) -> (0, 0, 0) | 29 -> 21 | 16 -> 12 | 14 -> 18 | 0 -> 0 | 34 -> 34 | 0/9 -> 3/9 | 0 -> 8 | 34.4 -> 32.4 |
+
+Totals: links coupled 3/97 -> 22/150, errors 186 -> 96 (the oculink
+boards' track_width and gap findings: m2_card 71 -> 2, oculink_m2 23 ->
+4), unconnected 1 262 -> 1 227, gap findings 74 -> 69, dangling 40 -> 40
+(oculink_port's 34 GND on In1.Cu both ways), vias 966 -> 981. Worse:
+right_io's errors 27 -> 40 (gap 25 -> 38: its pairs' nets routed side by
+side uncoupled), left_io's unconnected 351 -> 356. The ducktop2 boards
+move by about ten connections either way with any change to the plan
+(far from complete at 30 s); their links mostly fail with the board.
+
+**The expansion tier** (46 boards, route mode, 8 x 1, 30 s; x1798
+against x14243, neither with a setting): every row identical (routed,
+vias, length, KiCad's findings, pass, open, strict findings) and every
+routed board identical byte for byte, the 25 boards with pairs among
+them, no row cut by the wall guard; the default fires on none (no
+board's rules ask). x1798's own run is identical to phase 3's x1797.
+
+**Decision.** Kept: on the rule boards links coupled 3 -> 22, errors
+186 -> 96 and unconnected 1 262 -> 1 227; where no rule asks nothing
+changes. Left for later: crossed ends on fine-pitch pads (a crossover
+inside the run, with staggered vias at a layer change), the links that
+fail even in the hard searches (oculink_m2's 96 mm links from F.Cu to
+B.Cu), and the ducktop2 boards, whose links fail with the board.
+
 ## Committed on 2026-10-24 (differential pairs: on where the rules ask; the disallowed layers)
 
 Phase 3 of differential pairs. Branch differential-pairs-3 on main

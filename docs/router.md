@@ -2109,7 +2109,7 @@ designers' crossings) 2 mm took crossings 452 to 410 and 6 mm 437 to 365
 (of the ten run at 6), but SNSP-CPU-01 went 6 to 11 unconnected (22 at
 6 mm) and video 0 to 1.
 
-## Differential pairs (2026-10-23, phases 2 and 3 2026-10-24)
+## Differential pairs (2026-10-23, phases 2 to 4 2026-10-24)
 
 `diff_pairs` in the router settings (route mode). **Default by need**
 (phase 3): on where the project's custom rules ask for pairs, that is
@@ -2162,11 +2162,16 @@ reported `applied`.
 (the labels' reference), at most 3 mm apart, nearest first, with no
 other net's copper on the line between their centres (a GND pin between
 D+ and D-, or an ESD part's pins across its body, are no pair point),
-are a pair point. A minimum spanning tree links the pair points; pair
-points of one part (a USB-C receptacle's two rows) are joined first, at
-no cost, and by ordinary routing: only links between parts are coupled
-(phase 1 coupled the two rows of one receptacle, whose launches face
-each other). A pair with no link falls back.
+are a pair point. So is (phase 4) a pad of each of two two-pad parts
+whose other pads lie as close (at most 3 mm: the pair's AC-coupling or
+series capacitors, resistors, ESD diodes side by side), taken after the
+pair points of one part: the pair couples from its connector up to the
+capacitors, and the nets past them (another pair by name) from the
+capacitors on (`series_parts`). A minimum spanning tree links the pair
+points; pair points of one part (a USB-C receptacle's two rows) are
+joined first, at no cost, and by ordinary routing: only links between
+parts are coupled (phase 1 coupled the two rows of one receptacle, whose
+launches face each other). A pair with no link falls back.
 
 **Launches.** Per link end the search goes out from between the two pads
 along the pads' normal, turned away from the part's middle (the middle
@@ -2181,7 +2186,22 @@ ends) and the envelope at the lead's end (with 0.15 mm for lattice
 nodes) are clear of every obstacle and the edge. Of the directions the
 one closest to the pads wins, a right angle costing 1 mm. The lead and
 the launch are on one layer. On the expansion tier no link fails for
-want of a launch any more (phase 1: 30 of 60 pairs).
+want of a launch any more (phase 1: 30 of 60 pairs). **The link's own
+stubs (phase 4).** A launch where straight stubs of the pair's width
+from the pads to the stubs' ends keep every clearance (another net's
+copper, keepouts, holes, the edge; the pair's other net its gap; the two
+stubs at least `w + min(g, c)` apart; `stubs_clear`) and where the
+envelope is clear along the whole lead wins over a closer one without:
+the link carries those stubs, the router does not route them. A stub
+starts where the line from the pad's anchor to its end leaves the pad,
+less half its width (a card edge's 2.4 mm finger reaches under the
+edge's mask opening; a mask opening over the pad is left by the stub, as
+the router's `stub_is_clear` leaves it). At a *crossed* end (the pads'
+order there against the run's: the positive pad on the side the run
+gives the negative net) the stubs must cross, which only the router
+can (with a via): that end's stubs stay the router's, its launch the
+closest; the second end, unless only the second end's stubs are
+straight.
 
 **The links in the negotiation** (`plan_pairs`, after each lowering of
 a rung's board). Each link is a net of the route: its track the pair's
@@ -2196,8 +2216,19 @@ clear of it). Each of the pair's nets gets a terminal at each stub end
 merged into one terminal (`Board::terminal_copper`: a route may end on
 either), so the router routes the stubs from the pads to the run's ends
 as ordinary connections, with its pad exits, necks and vias (a crossed
-end's stubs cross with a via). The plan rides along in
-`Board::attachment`; the router does not read it.
+end's stubs cross with a via). Where the link carries the stubs (phase
+4) they are copper of the pair's nets (other nets keep clear), the pads
+are of the run's terminal (no stub to route), and the link's copper is
+the lead from the run's start (no other net between the two tracks'
+beginnings: m2_card's ground vias sat in the lead's first half and
+refused its runs). The router does not neck a link down near its
+launches (`Router::prepare_net` skips "pair launch" pads): the lead, the
+launch terminal's pad, is exactly as wide as the link's track, narrower
+than track and clearance, so the link routed at the neck width (0.127
+mm) for 1.5 mm from each launch, and the pair's offset tracks there
+came within a ground via's clearance (m2_card: 0 of 9 links coupled,
+then 9 of 9). The plan rides along in `Board::attachment`; the router
+does not read it.
 
 **Writing an attempt** (`finish_pairs`, in `write_attempt`, after
 tightening). Each routed link's path (its route from launch to launch,
@@ -2209,7 +2240,8 @@ inside a bend, bevelled outside), the positive net on its pad's side of
 the first end; at a layer change each net gets a via `dv` (up to
 `dv / 0.7`) out along the bisector; short jogs join the tracks to the
 stubs' ends where those lie further out (the ends keep the router's
-clearance, wider than a gap below it). The links' copper is checked
+clearance, wider than a gap below it); where the link carries the stubs,
+they are part of its copper. The links' copper is checked
 with `verify` against the board and every route near it (a finding
 between a pair's own two nets counts only below their gap); a link with
 another finding is refused. What holds is written as tracks and vias of
@@ -2310,6 +2342,72 @@ boards byte for byte: the default flips by rule. Tables: docs/changelog.md,
 "Committed on 2026-10-24 (differential pairs: on where the rules ask; the
 disallowed layers)".
 
+**The coupled share (phase 4, 2026-10-24).** On the 7 rule boards
+phase 3 coupled 3 of 97 links. Per fallback reason, in the order of the
+brief (route mode, 30 s of work, one thread, the board's own tracks
+kept, KiCad's DRC with `--refill-zones`; no setting, so the default by
+rules fires on all 7; x1798 is main):
+
+| step | snapshot | links coupled | KiCad errors | unconnected | gap findings | dangling | vias |
+|---|---|---|---|---|---|---|---|
+| main | x1798 | 3/97 | 186 | 1 262 | 74 | 40 | 966 |
+| 1 the link's own stubs | x14240 | 11/97 | 151 | 1 258 | 84 | 39 | 970 |
+| 2 refusals: no neck at a launch | x14241 | 19/97 | 98 | 1 232 | 73 | 39 | 965 |
+| 3 runs not routed: links first (not kept) | dev | 19/97 | 103 | 1 249 | 74 | 37 | 958 |
+| 4 series parts as pair points | x14243 | 22/150 | 96 | 1 227 | 69 | 40 | 981 |
+
+(1) *A pad's stub does not reach the run* (30): the router merges a
+link's two run ends into one terminal, so a pad's route may end at the
+other end, or the pad is dead (m2_card's J1, 5 mm by 0.2 mm pads at 0.4
+mm pitch: at the pair's width no node in the pad, and the run's end
+0.3 mm before it). The link now carries straight stubs where they fit
+(above, "The link's own stubs"; the pads join the run's terminal) and
+reserves its lead from the run's start. Left: 19 (26 with step 4), at
+ends whose stubs stay the router's: in a debug run identical to x14243,
+97 of the 276 pad pairs at a link end had no launch with straight stubs
+(95 of them on the ducktop2 boards), and 35 were planned again as a
+crossed end (or for launches too close), whose stubs the router must
+cross, on fine-pitch pads too (oculink_port's RX pairs, J2 at 0.4 mm). The `crossed` count was inverted until now (it
+counted the ends whose order matches): phase 2's and 3's crossed links
+were the uncrossed ones. (2) *Copper refused* (14 after step 1): the
+offset tracks came within a ground via's clearance beside the launches;
+the link's route there was 0.127 mm wide, not the envelope's 0.54 (the
+router necked it down near its launch terminal, whose pad, the lead, is
+narrower than track and clearance). The router no longer necks at pair
+launches: refused 14 -> 2, m2_card 3 -> 9 of 9. (3) *Run not routed*
+(48): the link nets fail even in the hard searches (oculink_m2's ten 96
+mm links from F.Cu to B.Cu), not for want of priority: putting them
+first in the routing order (`routing_order`) left 19 coupled and cost 17
+connections; a smaller via disc (`2 dv + V`, no turn allowance) coupled
+one fewer and refused 5 more. Neither kept. (4) *Fewer than two pair
+points* (65, ducktop2's pairs through AC capacitors): two two-pad parts
+side by side are a pair point (above, "Pair points and links"): 65 ->
+22, 97 -> 150 links. Requiring the parts parallel as well (x14242: 138
+links, 24 coupled, errors 88) cost 18 connections on the ducktop2
+boards: not kept.
+
+| board | gap/uncoupled/length x1798 -> x14243 | errors | unconnected | vias | dangling | links coupled/total | uncoupled mm |
+|---|---|---|---|---|---|---|---|
+| ducktop2-center | (20, 0, 0) -> (14, 0, 0) | 20 -> 14 | 499 -> 499 | 479 -> 465 | 0 -> 1 | 2/28 -> 5/54 | 5 -> 12 |
+| ducktop2 left_io | (16, 0, 0) -> (15, 0, 0) | 16 -> 15 | 351 -> 356 | 235 -> 239 | 1 -> 0 | 0/27 -> 0/41 | 0 -> 0 |
+| ducktop2 right_io | (25, 0, 0) -> (38, 0, 0) | 27 -> 40 | 185 -> 166 | 124 -> 154 | 1 -> 3 | 0/12 -> 1/23 | 0 -> 1 |
+| OpenAIO-Whoop | (1, 0, 1) -> (1, 0, 1) | 0 -> 0 | 187 -> 183 | 35 -> 36 | 0 -> 0 | 0/2 -> 0/4 | 0 -> 0 |
+| oculink m2_card | (0, 0, 0) -> (1, 0, 0) | 71 -> 2 | 10 -> 2 | 21 -> 22 | 3 -> 0 | 0/9 -> 9/9 | 0 -> 10 |
+| oculink_m2 | (12, 0, 0) -> (0, 0, 0) | 23 -> 4 | 14 -> 9 | 58 -> 47 | 1 -> 2 | 1/10 -> 4/10 | 2 -> 8 |
+| oculink_port | (0, 0, 0) -> (0, 0, 0) | 29 -> 21 | 16 -> 12 | 14 -> 18 | 34 -> 34 | 0/9 -> 3/9 | 0 -> 8 |
+
+Totals: links coupled 3/97 -> 22/150, errors 186 -> 96, unconnected
+1 262 -> 1 227, gap findings 74 -> 69, dangling 40 -> 40, vias 966 ->
+981. The fallbacks left with x14243: run not routed 80, a pad's stub
+does not reach the run 26, fewer than two pair points 22, launches under
+1 mm apart 11, no launch 7, copper refused 4. The ducktop2 boards stay
+far from complete at 30 s (499, 356, 166 open) and move by ten
+connections either way with any change to the plan; their links mostly
+fail with the board (49 of 54, 41 of 41, 22 of 23 not coupled). The
+expansion tier's 46 boards (no board's rules ask) are identical to x1798,
+rows and routed boards byte for byte. Tables: docs/changelog.md,
+"Committed on 2026-10-24 (differential pairs: the coupled share)".
+
 **Phase 2's remaining items, and what was learnt.**
 (1) A link must not cost the board: the gate failed on boards where the
 link nets lose or are refused. Candidates: a link net that stays in
@@ -2335,10 +2433,9 @@ clearance (`2 dv / 0.7 + 2 V + 2 c`) or a separate obstacle placed with
 the pair's vias. (6) Per-layer widths in one run (ducktop2's DIFF_85,
 0.183 mm outside, 0.114 on In2): a link class per layer width, with the
 offset per layer at the write, the class's layers then all the pair's.
-(7) Pairs through series parts (AC capacitors: ducktop2-center couples
-2 of its 61 pairs; "fewer than two pair points" is 65 fallbacks on the
-rule boards and 25 of 60 pairs on the tier) need links through two-pad
-parts (a capacitor pair as a pair point of two parts). (8) Done in phase 3: the pairs' nets keep to the layers their rules
+(7) Done in phase 4: pairs through series parts (a capacitor pair as a
+pair point of two parts; "fewer than two pair points" 65 -> 22 on the
+rule boards). (8) Done in phase 3: the pairs' nets keep to the layers their rules
 allow (above, "Layers").
 (9) Coupled branches (a T at an ESD part) instead of one run per link.
 
