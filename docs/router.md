@@ -719,6 +719,19 @@ KiCad 10.0.7's DRC reads it:
   and `drc-kicad-board` prints them on a `next:` line when KiCad finds
   errors.
 
+  The placer has one copper clearance (`copper_clearance_mm`, the
+  bodies' floor): the classes' largest and, since 2026-10-24, the
+  largest a custom rule asks between the pads of every two nets on some
+  layer (`rules.pad_clearance_mm`, evaluated for an SMD or plated pad
+  against one, after the later rules). Until then a rule on some layers
+  only reached the router alone, as a pair rule: on the OpenESC 4in1
+  boards (0.16 mm on F.Cu and B.Cu, 0.09 inside) the placer packed pads
+  0.09 mm apart and KiCad found 170 and 222 clearance errors between
+  pads of two parts (changelog, "the OpenESC clearance regression"). A
+  rule between two sets of nets or from pads to tracks only is no such
+  floor (the placer would keep every part 2.5 mm from every other for
+  ChengminLi's isolation).
+
   What the lowering cannot do yet (the edge clearance from NPTH slots
   and Margin graphics it does since 2026-10-21, "Board edges and copper
   of no net" above): a

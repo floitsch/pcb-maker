@@ -352,7 +352,17 @@ measurement). The discipline:
   checkout where that one is not there. Since 2026-10-23 run.py drops
   the labels of stacked parts while it prepares a board ("Tasks" above):
   the lists and their hashes stayed, the prepared boards of 77 of v7's
-  109 tasks changed (`labels_dropped`).
+  109 tasks changed (`labels_dropped`). The boards' project files were
+  not in either hash: on 2026-10-24 (12:38) the harvested boards were
+  fetched again after an incident, this time with their `.kicad_dru`
+  where the repository has one (14 of the harvest; the first harvest
+  took the `.kicad_pcb` and `.kicad_pro` only). The OpenESC 4in1 boards'
+  custom rule (0.16 mm on the outer layers) then reached KiCad's DRC and
+  the router but not the placer, and their rows read as a regression of
+  the day's binaries (changelog, "the OpenESC clearance regression").
+  Since then each row records `project_sha256` (the `.kicad_pro` and
+  `.kicad_dru`), and compare.py marks a board INPUT when it differs,
+  computed from the prepared `source` for older rows.
 - **Runs side by side, kept apart by the memory ledger** (since
   2026-10-22): every route, layout and KiCad check of a binary since
   x1590 reserves its memory in the machine's ledger

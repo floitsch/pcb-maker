@@ -82,7 +82,9 @@ less copper); on PIC and the hierarchy board the automatic one is.
    part placed first can take another's only spot: MIDAS-MK1, changelog
    "MIDAS-MK1 refusal"). Crowded boards then walk down relaxation levels:
    - smaller halos, then none;
-   - spacing down to the copper clearance;
+   - spacing down to the copper clearance (the classes' largest, or a
+     custom rule's between the pads of every two nets on some layer:
+     docs/router.md, "Project rules");
    - a 0.1 mm grid;
    - bodies closer to the edge, as far as their copper allows;
    - where the project lets courtyards overlap, bodies shrunk to their
