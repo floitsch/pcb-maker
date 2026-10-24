@@ -11,6 +11,57 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-24 (capacitated corridors, experiment)
+
+Florian's idea (route the board as a graph first with hard capacities;
+when the lattice cannot get through a corridor, teach the graph instead
+of searching wider), built behind a router switch and measured. Branch
+capacitated-corridors, snapshots x14200 (as designed), x14201
+(`PCB_ROUTER_CAPACITATED_STUCK`), x14202 (`PCB_ROUTER_CAPACITATED_GROWTH`).
+docs/router.md, "Capacitated corridors (2026-10-24)" has the design,
+the tables and the reading.
+
+- **The switch** `capacitated_corridors` (router config and the KiCad
+  router settings, off; `PCB_ROUTER_CAPACITATED_CORRIDORS`): the
+  negotiation's corridors from pcb-global's global route
+  (`pcb_global::CorridorPlan` behind `pcb_router::capacitated`'s trait
+  and factory: pcb-global depends on the router), a net's route tiles and
+  one more, the tile planner choosing inside; a miss located on the
+  plan's boundaries (tiles reached against tiles not), each such
+  boundary one track lower (never below the tracks routed across it),
+  the nets through it and the net planned again and the net retried (two
+  rounds a batch); nets in conflict for four iterations lower their
+  route's most conflicted boundary every second iteration
+  (`capacitated_stuck`); only a net without a global path falls back to
+  the window and the board. The plan's work counts in the budgets.
+  `capacitated_retries`, `capacitated_stuck`, `capacitated_growth` are
+  the knobs.
+- **The instrumentation**, every run, either setting: the verdict's
+  `corridors` (`KiCadCorridors`): per mode (negotiation, hard) and kind
+  (corridor, band, window, board) the searches, those that found a path
+  and their work; the learning's misses, reductions, floors held,
+  re-plans, retries, fallbacks, deferred nets and their work. Summed over
+  every router of the run.
+- **Measured** (pinned rates, no wall guard, so every row is
+  deterministic): the switch off is identical to main's x1754 on all 46
+  rows of the expansion tier. On the tier: off 588 unconnected, 20
+  passes, 1250.5 s of work; as designed 667 / 20 / 1280.8; without the
+  conflicts' learning 689 / 18 / 1261.2; with the band growing with the
+  reroutes (`g6`) 616 / 21 / 1247.9 (Wonkle +78 in every variant).
+  Fingerprints (`g6`) 46 against 43, vias +9 %, work -7 %. The eleven
+  dense boards at the task budgets (`g6`) 1267 against 1010, work +3 %,
+  better only on 4in1-mini (72 to 56). **Not a default.**
+- **Where the time goes** (off): the negotiation's corridor searches
+  55 to 63 % of the work, the hard repair's window searches 17 to 27 %,
+  the negotiation's window and board searches 0.5 % of the tier's and
+  10.5 % of the dense boards' work, almost all on protoesp (57 % of its
+  work) and SmartSpin2k (52 %), where the tile planner's corridors miss
+  in 55 and 36 % of the searches and the window then finds a path. The
+  capacitated corridors miss in 0.16 % of the searches; where the
+  planner's do miss, their band search costs what the window did.
+- Logs: `build/corr1-exp-{x1754,x14200-off,x14200-on,x14201-on-s0,x14202-on-g6}`,
+  `build/corr1-fp-{x1754,x14202-g6}`, `build/corr1-dense-{x14202-off,x14202-g6}`
+  (and `corr1-dense-x1754`, three boards, the identity check).
 ## Committed on 2026-10-24 (differential pairs, phase 2)
 
 Phase 2 of differential pairs, scoped to what gates the default: the

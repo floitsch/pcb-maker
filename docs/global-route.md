@@ -484,10 +484,22 @@ build without another reason. `global_guidance` stays as an option
 - In the placer's search: tried in the anneal and the coupled loop
   (phase 2, no-go); left: the legaliser and refinement, halos from the
   field, the global placement's density.
-- Corridors for the detailed router: `GlobalRoute::corridor` is ready;
-  the router's own tile planner (`router/planner.rs`) and its older
-  in-router global plan (`pcb_router::global`, `global_routing`, off)
-  could take them.
+- Corridors for the detailed router: built and measured as capacitated
+  corridors (2026-10-24, `capacitated_corridors`, off; docs/router.md,
+  "Capacitated corridors (2026-10-24)"): the negotiation searches inside
+  the global route's corridor, a miss lowers the boundary it failed at
+  and the global route plans the nets through it again
+  (`CorridorPlan`, `corridors.rs`). Not a default: the negotiation's
+  searches seldom miss a corridor (0.16 % of them on the expansion
+  tier), so the learning has little to learn from, and a band fixed to
+  the plan's route routes worse than the tile planner's corridors (the
+  tier's best variant 616 unconnected against 588, the dense boards
+  1267 against 1010). Where the planner's corridors do miss (protoesp,
+  SmartSpin2k: half their work in window searches) the band search
+  costs what the window did. Left: capacities that see pin access inside
+  a tile (a miss inside a tile names no boundary), and the plan as an
+  oracle for the hard repair's board-wide searches (on the dense boards
+  1648, 337 of them found a path).
 - Capacity: pin access inside a tile (pads not on a boundary cost
   nothing now), vias taking track room, the fine-pitch classes (neck
   width) instead of the reference class everywhere; the capacities of

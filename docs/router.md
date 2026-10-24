@@ -59,8 +59,8 @@ work constants) and the small helpers; `router/` has one file per part of
 `escapes`, `guards` (thermal guards and the spoke repairs
 `free_thermal_spokes`, `free_lost_spokes`), `prepare` (a net's search state),
 `stamping` (occupancy, rip-up, conflicts), `route_net`, `planner` (tile
-corridors), `search` (the lattice A*), `update`, `batching`, `global`,
-`driver` (the phases, budgets and clocks), `fixed`, `negotiate`,
+corridors), `capacitated` (the capacitated corridors, an experiment),
+`search` (the lattice A*), `update`, `batching`, `global`, `driver` (the phases, budgets and clocks), `fixed`, `negotiate`,
 `pour_refresh`, `vias` (via reduction), `finish`, `pour_analysis`, `fill`
 (the fill probe), `spokes` (KiCad's spoke model), `manual_spokes`,
 `pour_dump`, `stitch`, `cleanup`, `resolve` (the hard repair), `output`;
@@ -1003,6 +1003,259 @@ planned corridor (one tile of margin); nets that keep losing negotiations get
 wider corridors, and a failed corridor falls back to the plain window and the
 whole board. This is the "graph layer tells the geometric layer where to go"
 idea; it halved the time on the large boards and reduced vias and copper.
+
+## Capacitated corridors (2026-10-24)
+
+An experiment behind `capacitated_corridors` (router config, off;
+`PCB_ROUTER_CAPACITATED_CORRIDORS` overrides it, `capacitated_corridors`
+in the KiCad router settings). Florian's idea: route the board as a graph
+first, with hard capacities, and when the geometric search cannot get
+through a corridor, teach the graph instead of searching wider.
+
+**Design** (`pcb_router::capacitated`, `router/capacitated.rs`,
+`pcb_global::corridors`):
+
+- **The plan.** When a negotiation starts, the router builds pcb-global's
+  global route of its own board (`CorridorPlan`: the capacities per
+  boundary and layer and the via sites of docs/global-route.md, the
+  PathFinder negotiation, 1.5 mm tiles). pcb-global depends on
+  pcb-router, so the plan reaches the router through a trait
+  (`CapacitatedPlan`) and a factory pcb-kicad registers
+  (`register_corridor_planner`, in `core_config`); without one the switch
+  does nothing. An `update` (a moved part) drops the plan; the next
+  negotiation builds it again.
+- **The corridor.** A net the plan routes searches, in the negotiation
+  (not the hard repair, not the clean-up), inside its plan's tiles and one
+  tile around, mapped onto the router's 16-node tiles by overlap (the
+  band). The tile planner (`plan_corridor`, its fill cost) picks the way
+  inside the band first (one router tile of margin, the band its wall);
+  if that search fails, the whole band is searched. No widening with the
+  reroutes, no window, no board.
+- **A miss** (no path in the band) is located on the plan: the plan tiles
+  the search reached (its closed nodes, per layer) against those it did
+  not; every boundary of the net's global route with one side reached and
+  the other not, and every via tile of the route reached on one of its
+  layers only, is where it failed. The net is not marked blocked: it
+  stays in the negotiation.
+- **The learning** (after the batch, `learn_from_misses`): each such
+  boundary (and via site) loses one track (via), never below the tracks
+  (vias) the routed copper puts across it now (its floor: every net's
+  branches walked, each crossing at the net's demand). The nets through
+  the lowered boundaries are planned again, then the nets that missed
+  (pcb-global's incremental path: their routes out, routed again in that
+  order against the others' usage at the negotiation's last prices), and
+  the missed nets are routed again in their new corridors, up to
+  `capacitated_retries` (2) rounds; nets still missing then wait for the
+  next iteration (`deferred`). A miss nothing could be learned from (no
+  boundary between reached and unreached tiles, or every floor held) sends
+  that net's next search to the window and the board (`fallbacks_nothing_learned`).
+- **No global path.** A net whose plan does not reach every terminal
+  under the learned capacities searches the window and the board, as
+  without the switch (`fallbacks_no_path`), within the same two-failure
+  rule (`hopeless_searches`). A net the plan does not have (all its pads
+  in one 1.5 mm tile) uses the tile planner as without the switch.
+- **Conflicts teach too** (`capacitated_stuck`, 4;
+  `PCB_ROUTER_CAPACITATED_STUCK`, 0 off): every second iteration, a net in
+  conflict for four iterations running lowers the boundary of its global
+  route with the most conflict cells in its two tiles, and is planned
+  again with the nets through it (the reading of "the negotiation ejects
+  the net from it repeatedly").
+- **Width** (`capacitated_growth`, 0; `PCB_ROUTER_CAPACITATED_GROWTH`):
+  with a value, the band grows a plan tile every that many reroutes of
+  the net (at most ten), as the tile planner's corridors grow (added
+  after the first tier: the variant `g6` below).
+- **Work.** The plan's build and re-plans count in the router's work at
+  pcb-global's model (5 units a capacity distance test, 30 a state popped,
+  150e6 units a second), converted to search expansions at the reference
+  rate (`UNIT_EXPANSIONS`) and added to the router's expansions, so every
+  budget counts them; the floors' walk at a sixteenth of an expansion a
+  step. A router with the switch off is unchanged: the expansion tier at
+  x14200 with the switch off is identical to main's x1754 row for row.
+
+**The instrumentation** (the verdict's `corridors`, every run, either
+setting; summed over every router of the process, the ladder's attempts
+and probes alike): per mode (`negotiation`, `hard`) and kind (`corridor`:
+the tile planner's corridor, or with the switch the planner inside the
+band; `band`; `window`; `board`) the searches, how many found a path and
+their work in seconds; `plans_built`, `plan_work_seconds`, `misses`,
+`reductions`, `conflict_reductions`, `floor_held`, `no_boundary`,
+`replans`, `replanned_nets`, `replan_work_seconds`, `retries`,
+`fallbacks_no_path`, `fallbacks_nothing_learned`, `deferred`,
+`floor_work_seconds`, `hopeless_skips`.
+
+**Measured** (2026-10-24, all at pinned work rates, `PCB_ROUTER_NO_WALL_GUARD=1`
+so that every row is deterministic; logs `build/corr1-*`). Off: main's
+x1754 (the expansion tier, the fingerprints) and x14202 with the switch
+off (the dense boards: identical to x1754 on the three dense boards x1754
+finished, and x14200 off identical to x1754 on all 46 tier rows). On:
+x14200 (`s4`: as designed, one plan tile around the route), x14201
+with `PCB_ROUTER_CAPACITATED_STUCK=0` (`s0`: the misses' learning alone)
+and x14202 with `PCB_ROUTER_CAPACITATED_GROWTH=6` (`g6`: the band grows a
+plan tile every six reroutes, as the tile planner's corridors grow; the
+fingerprints and the dense boards ran this one, the best on the tier).
+
+*Expansion tier* (46 boards, 8 x 1, 30 s of work; cells KiCad's
+unconnected items, `*` a pass; the 25 boards not listed are the same in
+all four):
+
+| Board | off | s4 | s0 | g6 |
+| --- | ---: | ---: | ---: | ---: |
+| rpi_cm5_dronecarrier | 3 | 8 | 7 | 8 |
+| ducktop2 bms | 0* | 0* | 2 | 0* |
+| musicbrain-busboard | 0* | 0* | 1 | 0* |
+| OpenRX-Mono | 12 | 16 | 11 | 12 |
+| node_v6_0_0 | 32 | 34 | 31 | 28 |
+| ZSWatch-Watch-DevKit | 2 | 3 | 2 | 3 |
+| epdInky ED052TC4-Adapter | 2 | 8 | 7 | 6 |
+| tuxkeychain | 11 | 6 | 7 | 9 |
+| driver_cplex_rp2040 | 87 | 64 | 70 | 39 |
+| snaphat main_board | 0* | 0* | 2 | 0* |
+| power-manifold backplane | 1 | 3 | 2 | 1 |
+| MSign mainboard | 19 | 13 | 35 | 14 |
+| nervous-ecg | 4 | 3 | 2 | 3 |
+| OpenDeck-r3.1.2 | 12 | 13 | 8 | 5 |
+| facade60_daughterboard | 9 | 17 | 15 | 12 |
+| Miniboard | 6 | 11 | 20 | 10 |
+| magnetorquer_control_board | 1 | 0* | 0* | 0* |
+| Zulassungskarte | 1 | 2 | 2 | 1 |
+| CompassTag | 1 | 3 | 2 | 2 |
+| anthracite-bottom | 0* | 0 | 0* | 0* |
+| Wonkle | 364 | 442 | 442 | 442 |
+| **sum** | **588** | **667** | **689** | **616** |
+| passes (strict) | 20 | 20 | 18 | 21 |
+| new errors | 3 | 2 | 2 | 2 |
+| vias | 4308 | 4463 | 4427 | 4658 |
+| length mm | 112520 | 110280 | 109603 | 109760 |
+| work s | 1250.5 | 1280.8 | 1261.2 | 1247.9 |
+
+Wonkle (271 nets, four negotiation iterations in its 30 s) is the same
+442 in every variant: its first six reroutes run the same corridors in
+all three. It ends its negotiation with fewer nets in conflict than off
+(254 against 260), and the hard repair then leaves 793 open terminals
+against 723: a board decided by the repair on an unconverged
+negotiation. Without it, `g6` is 174 against 224.
+
+*Fingerprints* (Castor, k30-SBC, jetson, Sisu; 1 x 4, a quarter of the
+budget; x1754 against x14202 `g6`; cells unconnected / strict new errors
+/ vias / length mm / work s):
+
+| Board | off (x1754) | `g6` (x14202) |
+| --- | --- | --- |
+| Castor | 0 / 0 / 240 / 5287 / 174 | 0 / 0 / 306 / 5660 / 135 |
+| k30-SBC | 0 / 1 / 343 / 14368 / 277 | 0 / 1 / 371 / 14733 / 275 |
+| jetson | 20 / 0 / 584 / 10759 / 315 | 22 / 0 / 602 / 10831 / 315 |
+| Sisu | 23 / 0 / 379 / 5553 / 315 | 24 / 0 / 407 / 5561 / 285 |
+| sum | 43 / 1 / 1546 / 35967 / 1082 | 46 / 1 / 1686 / 36784 / 1011 |
+
+Passes 2 / 2 (Castor and k30-SBC; strict 1 / 1). `g6` there: 669 misses, 522 reductions, 7372 conflict reductions, 606 re-plans, 450 retries, 211 deferred, 18 fallbacks after nothing learned, none for want of a global path; the plans' and re-plans' work 5.8 s.
+
+*The eleven dense boards* (route mode on the v19 placements at the task
+budgets, 3 x 2; x14202 off against `g6`; same cells):
+
+| Board | off (x14202) | `g6` (x14202) |
+| --- | --- | --- |
+| video | 125 / 0 / 1198 / 39165 / 1107 | 216 / 0 / 1324 / 35956 / 1090 |
+| OpenESC 4in1 | 108 / 0 / 150 / 2256 / 1248 | 109 / 0 / 143 / 2108 / 1120 |
+| 4in1-mini | 72 / 0 / 118 / 1545 / 905 | 56 / 0 / 135 / 1508 / 960 |
+| Glasgow | 144 / 0 / 329 / 4881 / 1262 | 162 / 0 / 347 / 4458 / 1258 |
+| SmartSpin2k | 117 / 113 / 1201 / 24688 / 688 | 132 / 113 / 1260 / 24656 / 719 |
+| MegaDrive | 157 / 0 / 1270 / 32617 / 1030 | 198 / 0 / 1685 / 32919 / 1199 |
+| SNSP-CPU-01 | 119 / 0 / 1365 / 22495 / 882 | 182 / 0 / 1196 / 19637 / 847 |
+| split72_left | 25 / 0 / 884 / 20941 / 1255 | 46 / 0 / 1049 / 19856 / 1260 |
+| protoesp | 65 / 2 / 275 / 5148 / 733 | 71 / 2 / 265 / 4808 / 1003 |
+| DSP-ADAU1452 | 25 / 0 / 206 / 7111 / 1056 | 42 / 0 / 204 / 6048 / 1033 |
+| 0xCB panel | 53 / 0 / 277 / 4847 / 1140 | 53 / 1 / 327 / 5190 / 1195 |
+| **sum** | **1010 / 115 / 7273 / 165694 / 11305** | **1267 / 116 / 7935 / 157145 / 11685** |
+
+Passes 0 / 0. Better only on 4in1-mini (72 to 56); the 0xCB panel ties
+at 53 (its plan reaches not every terminal of many nets: 16 905
+searches went to the window for want of a global path).
+
+The learning, summed (`g6`; tier / fingerprints / dense): misses 404 /
+669 / 2212; boundaries lowered after a miss 376 / 522 / 2383; after
+conflicts 15 646 / 7372 / 41 795; floors that held 9808 / 2401 /
+38 539; misses that named no boundary 8 / 0 / 175; re-plans 2341 / 606
+/ 2324 (21 989 / 10 010 / 62 784 nets); retries 307 / 450 / 1722;
+deferred 97 / 211 / 490; fallbacks after nothing learned 46 / 18 / 343,
+for want of a global path 0 / 0 / 16 908; plans built 242 / 16 / 69;
+the plans' and re-plans' work 5.3 / 5.2 / 43.5 s.
+
+**Where the time goes** (the instrumentation; the share of the verdicts'
+work summed over the boards):
+
+| | tier off | tier `g6` | dense off | dense `g6` |
+| --- | ---: | ---: | ---: | ---: |
+| negotiation corridor | 781 s (62.5 %), 207706 / 206206 | 669 s (53.6 %), 251942 / 248940 | 6255 s (55.3 %), 486905 / 452573 | 3887 s (33.3 %), 687811 / 633465 |
+| negotiation band | - | 31 s (2.5 %), 3003 / 2599 | - | 2482 s (21.2 %), 54346 / 52134 |
+| negotiation window | 4 s (0.3 %), 119 / 69 | 1 s (0.1 %), 50 / 5 | 1042 s (9.2 %), 11022 / 9949 | 355 s (3.0 %), 17251 / 16469 |
+| negotiation board | 3 s (0.2 %), 26 / 0 | 2 s (0.2 %), 20 / 0 | 151 s (1.3 %), 1057 / 197 | 113 s (1.0 %), 748 / 0 |
+| hard corridor | 33 s (2.6 %), 3241 / 1388 | 48 s (3.9 %), 4753 / 1811 | 472 s (4.2 %), 23289 / 7130 | 986 s (8.4 %), 37777 / 12207 |
+| hard window | 339 s (27.2 %), 44669 / 43755 | 360 s (28.9 %), 46550 / 45130 | 1913 s (16.9 %), 58939 / 52939 | 2128 s (18.2 %), 68834 / 58964 |
+| hard board | 27 s (2.2 %), 158 / 1 | 30 s (2.4 %), 205 / 14 | 362 s (3.2 %), 1648 / 337 | 528 s (4.5 %), 1922 / 428 |
+| plans, re-plans, floors | - | 5.7 s (0.5 %) | - | 46.3 s (0.4 %) |
+| the rest (pours, lattices, checks) | 63 s (5.0 %) | 100 s (8.0 %) | 1109 s (9.8 %) | 1159 s (9.9 %) |
+| work in all (boards) | 1250 s (46) | 1248 s (46) | 11305 s (11) | 11685 s (11) |
+
+(Cells: work, its share, searches / found.)
+
+**Reading.**
+
+- **The default stays off.** On the tier the best variant (`g6`) has
+  more unconnected items (616 against 588; Wonkle +78, the other 45
+  boards 174 against 224), one pass more (21), the same work (1247.9
+  against 1250.5 s): it fails the unconnected condition. As designed
+  (`s4`): 667, 20 passes, work +2.4 %; the misses' learning alone
+  (`s0`): 689, 18 passes. Fingerprints 46 against 43 (vias +9 %, work
+  -7 %); dense boards 1267 against 1010 (+25 %, work +3 %, vias +9 %).
+- **Where the time goes** (off). The negotiation's corridor searches are
+  55 to 63 % of the work, the hard repair's window searches 17 to 27 %.
+  The negotiation's window and board searches, the wider searches this
+  experiment was to replace, are 0.5 % of the tier's work and 10.5 % of
+  the dense boards', almost all on two boards: protoesp (57 % of its
+  work: its tile-planner corridors found a path in 10 209 of 22 774
+  searches, the window then in 5348 of 5362) and SmartSpin2k (52 %:
+  16 863 of 26 219, then 3288 of 3475); MegaDrive 14 %, the others 0 to
+  5 %. Board-wide searches: in the negotiation 26 on the tier (none
+  found), 1057 on the dense boards (197 found), 1.3 %; in the hard
+  repair 158 (1 found) and 1648 (337 found), 2 to 3 %. No search was
+  skipped for two board-wide failures (`hopeless_skips` 0 everywhere).
+- **The premise holds on two boards, and there the learned corridor
+  costs what the window did.** Elsewhere the negotiation's corridors
+  seldom miss (0.7 % of the tier's corridor searches off; the
+  capacitated corridors miss in 0.16 %), so the misses' learning has
+  little to learn from; it is cheap (plans and re-plans 0.4 to 0.5 % of
+  the work). On SmartSpin2k the band search takes the window's place at
+  the window's price (63 % of its work, 12 222 of 12 232 found; 10
+  misses) and ends worse (132 against 117); on protoesp too (63 %, 306
+  misses, 270 reductions; 71 against 65, and 1003 s of work against the
+  733 the off side needed).
+- **The corridors' shape decides.** Inside the band the tile planner
+  picks the way as before, but the band follows the plan, and nets that
+  keep losing cannot take the room around it: widening the band with the
+  reroutes recovers most of the tier's loss (`g6` 616 against `s4`'s
+  667), and the conflicts' learning beats none (`s4` 667 against `s0`
+  689). On the long negotiations of the dense boards the conflicts'
+  learning lowers boundaries by the ten thousand (41 795; floors held
+  38 539 times), the plans the corridors follow keep moving, and the
+  repair has more to do (its corridor searches 986 s against 472, its
+  window searches 2128 against 1913): video +91, SNSP-CPU-01 +63,
+  MegaDrive +41, split72_left +21.
+- **Wonkle** (271 nets, four iterations in its 30 s) gives 442 in every
+  variant (its first six reroutes run the same corridors in all three).
+  It ends the negotiation with fewer nets in conflict than off (254
+  against 260); the hard repair then leaves 793 open terminals against
+  723.
+
+**What would change the verdict.** Capacities that see what stops the
+lattice inside a tile (pin access: dense misses named no boundary 175
+times, and the floors held 38 539 times), so that one miss teaches the
+right boundary instead of a track at a time; a band search cheaper than
+the window on the boards whose planner corridors fail (protoesp,
+SmartSpin2k), which is where the idea applies; a conflict learning
+tied to the negotiation's progress (none leaves the corridors stuck,
+every second iteration moves them too much on long negotiations).
+Outside the negotiation, the plan could serve as an oracle for the hard
+repair's board-wide searches (1648 on the dense boards, 337 found).
 
 ## Copper pours
 
