@@ -705,11 +705,27 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
     // Ratsnest crossings in the anneal (`Crossings::anneal`): a move pays
     // for the crossings of its parts' nets, and half the swaps trade a
     // part with one like it.
-    let mut crossings = problem
+    // Only the nets of up to `ANNEAL_NET_PINS` pins count here.
+    let fact = problem
         .crossings
         .as_deref()
         .filter(|crossings| crossings.anneal)
-        .map(|crossings| crate::crossings::CrossingState::new(problem, crossings, &state.poses));
+        .map(|crossings| {
+            let mut fact = crossings.clone();
+            for (net, counted) in fact.counted.iter_mut().enumerate() {
+                if state
+                    .members
+                    .get(net)
+                    .is_some_and(|pins| pins.len() > ANNEAL_NET_PINS)
+                {
+                    *counted = false;
+                }
+            }
+            fact
+        });
+    let mut crossings = fact
+        .as_ref()
+        .map(|fact| crate::crossings::CrossingState::new(problem, fact, &state.poses));
     let peers = if crossings.is_some() {
         peers(problem, &movable)
     } else {
@@ -937,6 +953,16 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
         .sum::<f64>()
         / 2.0
 }
+
+/// The anneal's crossings term counts the nets of up to this many pins.
+/// A move of a part on a larger net builds that net's whole tree again,
+/// and its long lines meet many: on split72_left (VDD 165 pins, VSUP
+/// 110, the matrix rows 36 to 41) the term took 46000 units a move
+/// against the anneal's own 3600 and ate the placement's budget before
+/// two parts had a place. The orders the term is for are buses of few
+/// pins; power nets and matrix rows spread over the board whatever the
+/// order (the legaliser and the refinement count every net).
+pub const ANNEAL_NET_PINS: usize = 16;
 
 /// The share of the anneal's swaps (with the crossings term) whose
 /// partner is one of the part's `peers`.
