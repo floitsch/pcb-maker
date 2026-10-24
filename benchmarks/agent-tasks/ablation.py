@@ -144,16 +144,16 @@ def route(arguments):
 
 def rows_of(out):
     """The route rows by variant (the last row of a variant wins), from
-    every routes*.log in `out`; with `--base-from` the baselines' and the
-    nulls' rows of that run where this one has none (the same boards and
-    binary give the same rows)."""
+    every routes*.log in `out`; with `--base-from` that run's rows where
+    this one has none (the same boards and binary give the same rows)."""
     meta = json.loads((out / "task.json").read_text())
     task = meta["task"]
     rows = {}
     if meta.get("base_from"):
+        # The same variant names are the same boards (the tool is
+        # deterministic): every row of the earlier run this one lacks.
         for name, row in rows_of(Path(meta["base_from"])).items():
-            if name in ("designer", "ours") or "-null-" in name:
-                rows[name] = dict(row, base_from=meta["base_from"])
+            rows[name] = dict(row, base_from=meta["base_from"])
     for log in sorted(out.glob("routes*.log")):
         for line in log.read_text().splitlines():
             if not line.startswith("{"):
@@ -206,9 +206,7 @@ def analyse(out):
         # The baselines are the earlier run's: the nulls with them.
         base_report = json.loads((Path(meta["base_from"]) / "hybrids" / "ablation.json").read_text())
         names = {variant["name"] for variant in report["variants"]}
-        report["variants"] += [variant for variant in base_report["variants"]
-                               if ("-null-" in variant["name"] or variant["name"] in ("designer", "ours"))
-                               and variant["name"] not in names]
+        report["variants"] += [variant for variant in base_report["variants"] if variant["name"] not in names]
     variants = {variant["name"]: variant for variant in report["variants"]}
     # Signals measured again by a later tool on the same boards
     # (`<out>-sig`, written with the same configuration: the boards are
