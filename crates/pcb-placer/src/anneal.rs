@@ -918,13 +918,14 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
         let work = crate::work() - work_before;
         let per_move = |amount: u64| amount as f64 / tally.moves.max(1) as f64;
         eprintln!(
-            "anneal: {} moves, work {:.2} s ({:.0} a move), crossings' share {:.0} a move; judged with crossings {}, cut by the bound {}; crossings {:?} -> {:?}",
+            "anneal: {} moves, work {:.2} s ({:.0} a move), crossings' share {:.0} a move; judged with crossings {}, cut by the bound {}, taken {}; crossings {:?} -> {:?}",
             tally.moves,
             work as f64 / crate::work_per_second(),
             per_move(work),
             per_move(tally.work),
             tally.judged,
             tally.cut,
+            tally.taken,
             tally.crossings_before,
             crossings.as_ref().map(|state| state.total()),
         );
@@ -949,6 +950,7 @@ struct Tally {
     /// without the new trees, and the term's work.
     judged: u64,
     cut: u64,
+    taken: u64,
     work: u64,
     crossings_before: Option<u64>,
 }
@@ -1012,25 +1014,40 @@ fn judge_with_crossings(
     let before = state.before(moved);
     let lowest = delta - weight * before as f64;
     let mut drawn = None;
-    if lowest > 0.0 {
-        let draw = random.next();
-        if draw >= (-lowest / temperature).exp() {
-            state.settle(poses, moved, false, 0);
-            tally.cut += 1;
-            tally.work += crate::work() - work;
-            return false;
+    let taken = 'judged: {
+        if lowest > 0.0 {
+            let draw = random.next();
+            if draw >= (-lowest / temperature).exp() {
+                state.settle(poses, moved, false, 0);
+                tally.cut += 1;
+                break 'judged false;
+            }
+            drawn = Some(draw);
         }
-        drawn = Some(draw);
-    }
-    let after = state.after(poses);
-    let change = after as i64 - before as i64;
-    let total = delta + weight * change as f64;
-    let taken = total <= 0.0
-        || drawn.unwrap_or_else(|| random.next()) < (-total / temperature).exp();
-    state.settle(poses, moved, taken, change);
-    tally.work += crate::work() - work;
+        let after = state.after(poses);
+        let change = after as i64 - before as i64;
+        let total = delta + weight * change as f64;
+        let taken = total <= 0.0
+            || drawn.unwrap_or_else(|| random.next()) < (-total / temperature).exp();
+        state.settle(poses, moved, taken, change);
+        taken
+    };
+    // The count's work in the anneal's units (`CROSSING_WORK`).
+    let counted = crate::work() - work;
+    let extra = counted * (CROSSING_WORK.0 - CROSSING_WORK.1) / CROSSING_WORK.1;
+    crate::add_work(extra);
+    tally.work += counted + extra;
+    tally.taken += u64::from(taken);
     taken
 }
+
+/// The crossings' work in the anneal counts this many times (numerator,
+/// denominator) what the count itself books: against the anneal's own
+/// work its queries take 2.5 to 2.7 times the CPU time per unit booked
+/// (MegaDrive, Glasgow, 2026-10-25: the lines a long tree line meets are
+/// gathered and tested, each booked as one unit), and a budget in work
+/// should see what the term costs.
+const CROSSING_WORK: (u64, u64) = (13, 5);
 
 /// The anneal's side of `AnnealConfig::guidance`.
 struct Guide<'a> {
