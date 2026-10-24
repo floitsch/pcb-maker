@@ -74,11 +74,11 @@ def order(report):
     kinds = {"large": 0, "connectors": 1, "quadrant": 2, "cluster": 3}
     rank = {group["name"]: (kinds.get(group["kind"], 9), index) for index, group in enumerate(report["groups"])}
     def key(variant):
-        if variant["group"] is None:
+        if variant.get("group") is None:
             return (0, 0, variant["name"])
-        if variant["group"].startswith("null:"):
+        if variant.get("group").startswith("null:"):
             return (1, 0, variant["name"])
-        return (2,) + rank.get(variant["group"], (9, 0)) + (variant["name"],)
+        return (2,) + rank.get(variant.get("group"), (9, 0)) + (variant["name"],)
     return sorted(report["variants"], key=key)
 
 
@@ -119,7 +119,9 @@ def prepare(arguments):
     (out / "tasks.json").write_text(json.dumps({"tasks": tasks}, indent=1))
     (out / "task.json").write_text(json.dumps({"task": arguments.task, "board_id": board_id,
                                                "designer": str(arguments.designer.resolve()),
-                                               "placed": str(arguments.placed.resolve())}))
+                                               "placed": str(arguments.placed.resolve()),
+                                               "base_from": str(arguments.base_from.resolve())
+                                               if arguments.base_from else None}))
     print(f"{len(tasks)} variants in {out / 'tasks.json'}", file=sys.stderr)
 
 
@@ -140,9 +142,16 @@ def route(arguments):
 
 def rows_of(out):
     """The route rows by variant (the last row of a variant wins), from
-    every routes*.log in `out`."""
-    task = json.loads((out / "task.json").read_text())["task"]
+    every routes*.log in `out`; with `--base-from` the baselines' and the
+    nulls' rows of that run where this one has none (the same boards and
+    binary give the same rows)."""
+    meta = json.loads((out / "task.json").read_text())
+    task = meta["task"]
     rows = {}
+    if meta.get("base_from"):
+        for name, row in rows_of(Path(meta["base_from"])).items():
+            if name in ("designer", "ours") or "-null-" in name:
+                rows[name] = dict(row, base_from=meta["base_from"])
     for log in sorted(out.glob("routes*.log")):
         for line in log.read_text().splitlines():
             if not line.startswith("{"):
@@ -186,6 +195,13 @@ def spearman(xs, ys):
 def analyse(out):
     report = json.loads((out / "hybrids" / "ablation.json").read_text())
     rows = rows_of(out)
+    if json.loads((out / "task.json").read_text()).get("base_from"):
+        # The baselines are the earlier run's: the nulls with them.
+        base_report = json.loads((Path(json.loads((out / "task.json").read_text())["base_from"]) / "hybrids"
+                                  / "ablation.json").read_text())
+        names = {variant["name"] for variant in report["variants"]}
+        report["variants"] += [variant for variant in base_report["variants"]
+                               if "-null-" in variant["name"] and variant["name"] not in names]
     variants = {variant["name"]: variant for variant in report["variants"]}
     opened = {name: open_count(rows.get(name)) for name in variants}
     base = {"designer": opened.get("designer"), "ours": opened.get("ours")}
@@ -238,6 +254,46 @@ def analyse(out):
                 base=base, nulls=nulls, groups=groups, checks=checks)
 
 
+def part_summary(parts, members):
+    """A group's escape in one placement, from the tool's per-part
+    descriptions: channel overflow, the demand on sides that face a body
+    within 5 mm, the sides where two dense pin rows face each other, the
+    connections' mean distance, the nearest board edge, the global route's
+    attribution."""
+    chosen = [parts[name] for name in members if name in parts]
+    if not chosen:
+        return None
+    facing = sum(side["demand"] for part in chosen for side in part["sides"] if side.get("faces"))
+    dense = sum(1 for part in chosen for side in part["sides"]
+                if side["demand"] >= 4 and (side.get("faced_demand") or 0) >= 4)
+    tight = sum(side["demand"] for part in chosen for side in part["sides"]
+                if side.get("faces") and side["gap_mm"] < 1.0)
+    demand = sum(side["demand"] for part in chosen for side in part["sides"])
+    return dict(parts=len(chosen), demand=demand, facing=facing, tight=tight, dense=dense,
+                channel=sum(part["channel_overflow"] for part in chosen),
+                connection=sum(part["connection_mm"] for part in chosen) / len(chosen),
+                edge=sum(min(side["edge_mm"] for side in part["sides"]) for part in chosen) / len(chosen),
+                attribution=sum(part.get("global_attribution") or 0 for part in chosen))
+
+
+def describe(result, describe_path, top=3):
+    """The top groups' escape, the designer's against ours."""
+    parts = json.loads(Path(describe_path).read_text())
+    designer = {part["reference"]: part for part in parts["parts_designer"]}
+    ours = {part["reference"]: part for part in parts["parts_ours"]}
+    lines = ["", "| group | placement | demand | on sides facing a body within 5 mm | within 1 mm | dense rows facing | channel overflow | connection mm | edge mm | global attribution |",
+             "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
+    for group in [group for group in result["groups"] if group["cost"] is not None][:top]:
+        for label, table in (("designer's", designer), ("ours", ours)):
+            summary = part_summary(table, group["members"])
+            if summary is None:
+                continue
+            lines.append(f"| {group['name']} | {label} | {summary['demand']} | {summary['facing']} | {summary['tight']} "
+                         f"| {summary['dense']} | {summary['channel']:.1f} | {summary['connection']:.1f} "
+                         f"| {summary['edge']:.1f} | {summary['attribution']:.0f} |")
+    return "\n".join(lines)
+
+
 def fmt(value, digits=0):
     if value is None:
         return "-"
@@ -272,6 +328,9 @@ def report_command(arguments):
         result = analyse(out.resolve())
         if arguments.markdown:
             print(markdown(result))
+            describe_path = out.resolve().parent / (out.name + "-describe") / "ablation.json"
+            if describe_path.exists():
+                print(describe(result, describe_path))
             print()
         else:
             print(json.dumps({key: result[key] for key in ("task", "base", "nulls", "groups", "checks")}, indent=1))
@@ -287,6 +346,8 @@ def main():
     p.add_argument("--placed", type=Path, required=True, help="our placed project directory (layout/placed)")
     p.add_argument("--tool", type=Path, required=True, help="a pcb-maker with ablate-kicad-placement")
     p.add_argument("--groups", nargs="*")
+    p.add_argument("--base-from", type=Path, help="an earlier ablation of the same boards whose baseline and "
+                   "null rows this one reuses (route only the groups: route --only)")
     p.add_argument("--config", type=Path)
     r = commands.add_parser("route")
     r.add_argument("out", type=Path)

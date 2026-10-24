@@ -11,10 +11,9 @@
 //! Every hybrid starts from our placed board (the task's preparation: its
 //! tracks stripped, its pours and rule areas, its labels), so the variants
 //! differ in the footprints' poses alone. A moved group lands on parts of
-//! the other placement; with `repair` the parts it makes illegal (by the
-//! placer's model at its tightest: no halos, the smallest spacing) and
-//! that were legal before move to the nearest legal spot, everything else
-//! staying (`pcb_placer::legal::legalize_keeping`). The report lists them.
+//! the other placement; with `repair` the parts whose bodies it lands on
+//! move to the nearest spot where their body meets no other (`repair`),
+//! everything else staying. The report lists them.
 //!
 //! Beside the boards, the signals a placer could have read before routing,
 //! per variant: the wirelength, escape demand's channel overflow
@@ -49,6 +48,9 @@ pub struct KiCadAblationConfig {
     pub repair: bool,
     /// Only these groups (by name; empty: all).
     pub groups: Vec<String>,
+    /// Groups of one's own, by name (`extra-<name>`): the parts by
+    /// reference (two parts that trade places belong in one group).
+    pub extra: BTreeMap<String, Vec<String>>,
     /// The global route's excess threshold (share of a boundary's
     /// capacity) for the per-part attribution.
     pub threshold: f64,
@@ -70,6 +72,7 @@ impl Default for KiCadAblationConfig {
             passive_mm: 3.0,
             repair: true,
             groups: Vec::new(),
+            extra: BTreeMap::new(),
             threshold: 0.5,
             global_route: true,
             nulls: 2,
@@ -118,6 +121,10 @@ pub struct KiCadPlacementSignals {
     pub blocked_exits: usize,
     /// Parts illegal in the placer's tightest model.
     pub illegal: usize,
+    /// Pairs of parts that collide (`conflict`: pads within 0.1 mm, or one
+    /// body mostly on another): a hybrid's left-over collisions beside the
+    /// placement's own.
+    pub overlaps: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub global: Option<KiCadGlobalSignals>,
 }
@@ -189,8 +196,7 @@ pub struct KiCadAblationReport {
     pub routing_layers: f64,
     pub groups: Vec<KiCadAblationGroup>,
     pub variants: Vec<KiCadAblationVariant>,
-    /// The large parts, the connectors and the cluster passives in both
-    /// placements.
+    /// Every part that moves between the two placements, in both.
     pub parts_designer: Vec<KiCadPartEscape>,
     pub parts_ours: Vec<KiCadPartEscape>,
 }
@@ -444,6 +450,14 @@ fn signals(
         .into_iter()
         .filter(|index| *index < count && !problem.components[*index].fixed)
         .count();
+    let mut overlaps = 0;
+    for a in 0..count {
+        for b in a + 1..count {
+            if conflict(problem, a, poses[a], b, poses[b]) {
+                overlaps += 1;
+            }
+        }
+    }
     let mut global = None;
     let mut global_parts = None;
     if let Some(pcb) = pcb {
@@ -472,6 +486,7 @@ fn signals(
             channels_over,
             blocked_exits: blocked,
             illegal,
+            overlaps,
             global,
         },
         exits,
@@ -573,48 +588,142 @@ fn part_escape(
     }
 }
 
-/// Moves the parts `group` makes illegal at `poses` (and that were legal
-/// at `before`) to the nearest legal spot, the others staying. Returns the
-/// displaced parts with their distance and those left without a spot.
+/// Pads of two parts closer than this (mm) conflict: copper that would
+/// short or leave no clearance.
+const PAD_GAP_MM: f64 = 0.1;
+/// Bodies overlapping by more than this share of the smaller body's area
+/// conflict: one part on top of another. Less is the courtyard overlap
+/// designers allow (parts under a socket, courtyards that touch), which
+/// leaves the copper routable.
+const BODY_SHARE: f64 = 0.25;
+
+/// Whether parts `a` and `b` at their poses collide on a side both occupy:
+/// their pads come within `PAD_GAP_MM`, or their body boxes overlap by
+/// more than `BODY_SHARE` of the smaller one.
+fn conflict(
+    problem: &placer::Problem,
+    a: usize,
+    pose_a: placer::Pose,
+    b: usize,
+    pose_b: placer::Pose,
+) -> bool {
+    let (first, second) = (&problem.components[a], &problem.components[b]);
+    if !first.side.collides(second.side) {
+        return false;
+    }
+    let (ca, ha) = escape::body_box(problem, a, pose_a);
+    let (cb, hb) = escape::body_box(problem, b, pose_b);
+    let reach = 1.0;
+    let ox = ha[0] + hb[0] - (ca[0] - cb[0]).abs();
+    let oy = ha[1] + hb[1] - (ca[1] - cb[1]).abs();
+    if ox <= -reach || oy <= -reach {
+        return false;
+    }
+    if ox > 0.0 && oy > 0.0 {
+        let smaller = (4.0 * ha[0] * ha[1]).min(4.0 * hb[0] * hb[1]);
+        if ox.min(2.0 * ha[0].min(hb[0])) * oy.min(2.0 * ha[1].min(hb[1])) > BODY_SHARE * smaller
+        {
+            return true;
+        }
+    }
+    let pads_b = second.pad_boxes(pose_b);
+    first.pad_boxes(pose_a).iter().any(|(pa, sa)| {
+        pads_b.iter().any(|(pb, sb)| {
+            (pa[0] - pb[0]).abs() - sa[0] - sb[0] < PAD_GAP_MM
+                && (pa[1] - pb[1]).abs() - sa[1] - sb[1] < PAD_GAP_MM
+        })
+    })
+}
+
+/// Moves the parts whose bodies the moved `group` lands on (by `conflict`,
+/// at `poses`) to the nearest spot, at their own angle, where their body
+/// lies inside the outline and conflicts with no other part; everything
+/// else stays.
+/// Larger parts first. The placer's own legality is not the test: at its
+/// tightest it still finds most of a designer's parts illegal (courtyards
+/// that touch, parts under parts). Returns the displaced parts with their
+/// distance and those left without a spot (where they were).
 fn repair(
     problem: &placer::Problem,
-    before: &[placer::Pose],
     poses: &mut [placer::Pose],
     group: &BTreeSet<usize>,
     count: usize,
 ) -> (Vec<(usize, f64)>, Vec<usize>) {
-    let was: BTreeSet<usize> = placer::legal::illegal_components(problem, before)
-        .into_iter()
-        .collect();
-    let now = placer::legal::illegal_components(problem, poses);
-    let displaced: Vec<usize> = now
-        .into_iter()
+    let total = problem.components.len();
+    let mut displaced: Vec<usize> = (0..count)
         .filter(|index| {
-            *index < count
+            !group.contains(index)
                 && !problem.components[*index].fixed
-                && !group.contains(index)
-                && !was.contains(index)
+                && group
+                    .iter()
+                    .any(|member| conflict(problem, *index, poses[*index], *member, poses[*member]))
         })
         .collect();
-    if displaced.is_empty() {
-        return (Vec::new(), Vec::new());
+    displaced.sort_by(|a, b| {
+        let area = |index: usize| {
+            let size = problem.components[index].body_size;
+            size[0] * size[1]
+        };
+        area(*b).total_cmp(&area(*a)).then(a.cmp(b))
+    });
+    let pending: BTreeSet<usize> = displaced.iter().copied().collect();
+    let mut placed_again: BTreeSet<usize> = BTreeSet::new();
+    let mut moved = Vec::new();
+    let mut unplaced = Vec::new();
+    let bounds = problem.bounds();
+    let step = 0.25;
+    let rings = (((bounds[2] - bounds[0]).max(bounds[3] - bounds[1])) / step).ceil() as i64;
+    for &index in &displaced {
+        let start = poses[index];
+        let free = |pose: placer::Pose| {
+            placer::legal::body_inside_outline(problem, index, pose)
+                && (0..total).all(|other| {
+                    other == index
+                        || (pending.contains(&other) && !placed_again.contains(&other))
+                        || !conflict(problem, index, pose, other, poses[other])
+                })
+        };
+        let mut found = None;
+        'search: for ring in 1..=rings {
+            for dx in -ring..=ring {
+                for dy in -ring..=ring {
+                    if dx.abs() != ring && dy.abs() != ring {
+                        continue;
+                    }
+                    let pose = placer::Pose {
+                        position: [
+                            start.position[0] + dx as f64 * step,
+                            start.position[1] + dy as f64 * step,
+                        ],
+                        angle: start.angle,
+                    };
+                    if free(pose) {
+                        let better = found.is_none_or(|(_, known): (placer::Pose, f64)| {
+                            distance(pose.position, start.position) < known
+                        });
+                        if better {
+                            found = Some((pose, distance(pose.position, start.position)));
+                        }
+                    }
+                }
+            }
+            // A ring holds spots up to sqrt(2) times its radius: stop once
+            // no farther ring can hold a nearer one.
+            if let Some((_, known)) = found
+                && known <= ring as f64 * step
+            {
+                break 'search;
+            }
+        }
+        match found {
+            Some((pose, moved_by)) => {
+                poses[index] = pose;
+                moved.push((index, moved_by));
+            }
+            None => unplaced.push(index),
+        }
+        placed_again.insert(index);
     }
-    let keep: Vec<usize> = (0..problem.components.len())
-        .filter(|index| !displaced.contains(index))
-        .collect();
-    let mut relaxed = problem.clone();
-    relaxed.grid = relaxed.grid.min(0.1);
-    let start: Vec<placer::Pose> = poses.to_vec();
-    let unplaced = placer::legal::legalize_keeping(&relaxed, poses, &displaced, &keep);
-    let moved = displaced
-        .iter()
-        .map(|index| {
-            (
-                *index,
-                distance(start[*index].position, poses[*index].position),
-            )
-        })
-        .collect();
     (moved, unplaced)
 }
 
@@ -846,6 +955,29 @@ pub fn ablate_kicad_placement(
             ));
         }
     }
+    for (name, references_wanted) in &config.extra {
+        let mut members = BTreeSet::new();
+        for wanted in references_wanted {
+            let found: Vec<usize> = movable
+                .iter()
+                .copied()
+                .filter(|index| &parts[*index].reference == wanted)
+                .collect();
+            if found.is_empty() {
+                return Err(format!("extra group {name}: {wanted} is not a part that moves"));
+            }
+            members.extend(found);
+        }
+        groups.push((
+            KiCadAblationGroup {
+                name: format!("extra-{name}"),
+                kind: "extra".into(),
+                anchor: None,
+                members: named(&members),
+            },
+            members,
+        ));
+    }
     if !config.groups.is_empty() {
         groups.retain(|(group, _)| config.groups.contains(&group.name));
     }
@@ -899,12 +1031,11 @@ pub fn ablate_kicad_placement(
             signals.channel_overflow,
             signals.global.as_ref().map_or(0.0, |global| global.soft_overflow_05)
         );
-        // The parts the groups are made of: large parts, cluster passives,
-        // connectors.
-        let interesting: BTreeSet<usize> = groups
+        // Every part that moves between the two placements.
+        let interesting: BTreeSet<usize> = movable
             .iter()
-            .filter(|(group, _)| group.kind != "quadrant")
-            .flat_map(|(_, members)| members.iter().copied())
+            .copied()
+            .filter(|index| parts[*index].pads > 0)
             .collect();
         described.push(
             interesting
@@ -1014,7 +1145,7 @@ pub fn ablate_kicad_placement(
                 backs[*index] = to_backs[*index];
             }
             let (displaced, unplaced) = if config.repair {
-                repair(problem, from, &mut poses, indices, count)
+                repair(problem, &mut poses, indices, count)
             } else {
                 (Vec::new(), Vec::new())
             };
