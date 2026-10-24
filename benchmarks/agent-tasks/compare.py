@@ -115,6 +115,36 @@ def task_digest(task, constraints):
     return hashlib.sha256(json.dumps(entry, sort_keys=True).encode()).hexdigest()
 
 
+PROJECT_EXTENSIONS = (".kicad_pro", ".kicad_dru")
+
+
+def project_files_digest(paths):
+    """sha256 of a board's project files (its .kicad_pro and .kicad_dru,
+    in that order; run.py's `project_sha256`): the rules KiCad's DRC and
+    the router read, which `board_sha256` leaves out. A .kicad_dru that
+    appears changes it (the OpenESC boards on 2026-10-24: re-fetched with
+    their custom rules, rows before and after compared as one input)."""
+    digest = hashlib.sha256()
+    for path in sorted(paths, key=lambda path: (PROJECT_EXTENSIONS.index(path.suffix), path.name)):
+        digest.update(path.suffix.encode() + b"\0" + path.read_bytes() + b"\0")
+    return digest.hexdigest()
+
+
+def project_digest(row, directory):
+    """The project files' digest of a row: its own field, else computed
+    from the copies in the run's prepared source (layout rows); None when
+    neither is there."""
+    if row is None:
+        return None
+    if row.get("project_sha256"):
+        return row["project_sha256"]
+    source = Path(directory) / row["name"] / "source"
+    paths = [path for extension in PROJECT_EXTENSIONS for path in source.glob(f"*{extension}")]
+    if not any(path.suffix == ".kicad_pro" for path in paths):
+        return None
+    return project_files_digest(paths)
+
+
 def other_inputs(before, after):
     """The fields that show two rows of a board ran on other inputs: the
     task's entry (`task_sha256`) or the designer's board (`board_sha256`),
@@ -769,6 +799,11 @@ def main():
             other_input.add(name)
         elif other_inputs(before[name], after[name]):
             other_input.add(name)
+        else:
+            project_before = project_digest(before[name], output_directory(arguments.before))
+            project_after = project_digest(after[name], after_directory[name])
+            if project_before is not None and project_after is not None and project_before != project_after:
+                other_input.add(name)
     lists = f"before {before_list}; after {after_list}"
     warning = rules_warning([before[n] for n in common], [after[n] for n in common])
     if warning:
@@ -784,7 +819,8 @@ def main():
     if lists_differ(before_identity, after_identity):
         print(f"TASK LISTS DIFFER, {len(other_input)} BOARDS ON OTHER INPUTS (INPUT): {lists}")
     elif other_input:
-        print(f"INPUTS DIFFER ON {len(other_input)} BOARDS (INPUT: their prepared constraints differ): {lists}")
+        print(f"INPUTS DIFFER ON {len(other_input)} BOARDS (INPUT: their prepared constraints, task, board or "
+              f"project files differ): {lists}")
     else:
         print(f"tasks: {lists}")
 

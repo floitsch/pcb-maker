@@ -2412,8 +2412,9 @@ def main():
         # The longest first, so that the last job is not a slow one.
         tasks.sort(key=lambda task: -(task.get("expected_seconds") or 0))
     # Each row names its input beyond the constraints compare.py checks:
-    # the task's entry and the designer's board (compare.py marks a board
-    # whose task or board differ INPUT).
+    # the task's entry, the designer's board and its project files, the
+    # .kicad_pro and .kicad_dru (compare.py marks a board whose task,
+    # board or project differ INPUT).
     identities = {}
     for task in tasks:
         constraints = None
@@ -2426,6 +2427,9 @@ def main():
         board = task_directory(task) / f"{task['board_id']}.kicad_pcb"
         if board.is_file():
             identity["board_sha256"] = file_sha256(board)
+            identity["project_sha256"] = compare.project_files_digest(
+                [path for path in (board.with_suffix(extension) for extension in compare.PROJECT_EXTENSIONS)
+                 if path.is_file()])
         identities[task["name"]] = identity
     rows = {}
     if arguments.splice_from is not None:

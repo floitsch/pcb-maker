@@ -111,6 +111,34 @@ class SplicedRows(unittest.TestCase):
         self.assertIn("after: 1 of the 2 rows spliced", output)
 
 
+class Inputs(unittest.TestCase):
+    def test_a_custom_rules_file_that_appears_is_another_input(self):
+        # The OpenESC boards on 2026-10-24: re-fetched with their
+        # .kicad_dru, the same board and constraints.
+        import json
+        import subprocess
+        import tempfile
+        with tempfile.TemporaryDirectory() as scratch:
+            scratch = Path(scratch)
+            for run, files in (("before", {"b.kicad_pro": "{}"}),
+                               ("after", {"b.kicad_pro": "{}", "b.kicad_dru": "(version 1)"})):
+                source = scratch / run / "a" / "source"
+                source.mkdir(parents=True)
+                for name, text in files.items():
+                    (source / name).write_text(text)
+                (scratch / f"{run}.log").write_text(json.dumps(row("a", "1/1", 0, 0, 0)) + "\n")
+            digests = [compare.project_digest(row("a", "1/1", 0, 0, 0), scratch / run) for run in ("before", "after")]
+            self.assertNotEqual(digests[0], digests[1])
+            # A row's own field (run.py's project_sha256) is the same digest.
+            self.assertEqual(compare.project_digest(row("a", "1/1", 0, 0, 0, project_sha256=digests[1]),
+                                                    scratch / "before"), digests[1])
+            self.assertEqual(digests[1], compare.project_files_digest(
+                [scratch / "after/a/source/b.kicad_dru", scratch / "after/a/source/b.kicad_pro"]))
+            output = subprocess.run([sys.executable, str(Path(compare.__file__)), str(scratch / "before.log"),
+                                     str(scratch / "after.log")], capture_output=True, text=True, check=True).stdout
+        self.assertIn("INPUTS DIFFER ON 1 BOARDS", output)
+
+
 class GapTargets(unittest.TestCase):
     def test_the_budget_line_names_both_sides_work(self):
         layout = {"a": row("a", "1/1", 0, 0, 0, ladder_budget_share=0.6),
