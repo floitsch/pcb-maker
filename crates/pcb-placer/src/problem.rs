@@ -152,7 +152,7 @@ pub struct Problem {
     /// leave their bodies and whether the channels between parts carry
     /// them. `None`: off.
     pub escape: Option<std::sync::Arc<crate::escape::Escape>>,
-    /// Ratsnest crossings (`crate::crossings`, an experiment): the
+    /// Ratsnest crossings (`crate::crossings`, on by default): the
     /// legaliser and the refinement pay for the crossings of the moved
     /// parts' nets' spanning trees. `None`: off.
     pub crossings: Option<std::sync::Arc<crate::crossings::Crossings>>,

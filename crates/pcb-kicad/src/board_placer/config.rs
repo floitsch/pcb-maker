@@ -227,8 +227,8 @@ pub struct KiCadBoardPlacerConfig {
     /// attribution (docs/placer.md, "Escape demand (2026-10-23)").
     #[serde(default = "default_escape_demand")]
     pub escape_demand: Option<KiCadEscapeDemand>,
-    /// Ratsnest crossings as a placement cost (an experiment, off; `{}`
-    /// turns it on with the defaults): per net the minimum spanning tree
+    /// Ratsnest crossings as a placement cost (on since 2026-10-24; `null`
+    /// turns it off): per net the minimum spanning tree
     /// of its pins, and the pairs of tree lines of different nets that
     /// cross. The legaliser and the refinement pay `weight` mm of
     /// wirelength per crossing the moved part's nets make, and the
@@ -236,7 +236,7 @@ pub struct KiCadBoardPlacerConfig {
     /// the congestion score. Keys `weight`, `legalise`, `refine`,
     /// `rank_seeds` (defaults 3 mm, on, on, on; docs/placer.md, "Ratsnest
     /// crossings (2026-10-24)").
-    #[serde(default)]
+    #[serde(default = "default_ratsnest_crossings")]
     pub ratsnest_crossings: Option<KiCadRatsnestCrossings>,
     /// The router's configuration the guidance lowers with (set by the
     /// layout; the default otherwise).
@@ -294,7 +294,7 @@ impl Default for KiCadBoardPlacerConfig {
             attached_marks: None,
             global_guidance: None,
             escape_demand: default_escape_demand(),
-            ratsnest_crossings: None,
+            ratsnest_crossings: default_ratsnest_crossings(),
             guidance_router: None,
         }
     }
@@ -378,6 +378,10 @@ impl Default for KiCadEscapeDemand {
             threshold: 0.5,
         }
     }
+}
+
+fn default_ratsnest_crossings() -> Option<KiCadRatsnestCrossings> {
+    Some(KiCadRatsnestCrossings::default())
 }
 
 /// `KiCadBoardPlacerConfig::ratsnest_crossings`.
