@@ -31,7 +31,7 @@ The environment variables are indexed in the hand-over
 | [Router settings: net_classes entries](#router-settings-net_classes-entries) | 6 | 6 | 0 | 6 | 1 |
 | [Router settings: connection rules](#router-settings-connection-rules) | 4 | 4 | 0 | 4 | 0 |
 | [Router report: rules](#router-report-rules) | 5 | - | 0 | 5 | - |
-| [Router report: rules from the project](#router-report-rules-from-the-project) | 9 | - | 2 | 9 | - |
+| [Router report: rules from the project](#router-report-rules-from-the-project) | 10 | - | 2 | 10 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 69 | - | 0 | 69 | - |
 | [Placer settings](#placer-settings) | 48 | 44 | 4 | 48 | 20 |
@@ -233,6 +233,7 @@ The fields `project` flattens into `rules`; each is left out when empty. Source:
 | `rules.unmodelled` | `Vec<String>` | The project's routing rules the router does not keep, one line each; KiCad still checks them, so their findings are left to the designer (the verdict's next_actions name them). |
 | `rules.minimums` | `Option<KiCadProjectMinimums>` | The board's minimum track width and clearance, with where each comes from (the project's board setup or KiCad's default). |
 | `rules.overrides` | `Vec<KiCadRuleOverride>` | Widths and clearances a router file asked for below the project's (`allow_below_project_minimum`): the run used them; KiCad's DRC holds the board to the project's. |
+| `rules.pad_clearance_mm` | `Option<f64>` | The clearance a custom rule asks between the pads of every two nets on some layer, where it is more than the classes' (the placer keeps parts that far apart: `largest_clearance`); a rule on some layers only reaches the router as a pair rule (`net_rules.clearances`), which no class shows. |
 | `rules.net_classes` | `BTreeMap<String, Vec<String>>` | Per net (as the router names it): its classes, the highest priority first ("Default" for a net in none). |
 | `rules.class_values` | `BTreeMap<String, [Option<f64>; 2]>` | Per class of the project: its track width and clearance as the project states them (before the board's minimums). |
 
@@ -350,7 +351,7 @@ The placer config file of `place-kicad-board`, and the `placer` object of the la
 | `overlap_far_side_pads` | `bool` | `false` | - | Where the project lets courtyards overlap, a part may reach over other parts' pads on its side at the last placement levels, keeping only copper apart (as katia's designer put connectors partly over hot-swap socket pads). Off by default: such pads may carry a body. |
 | `constraints` | `Option<KiCadConstraintsSource>` | unset | placer.md | Placement constraints: a `constraints.json` path (relative to the source directory) or the constraints inline. |
 | `constraint_weight` | `f64` | `50.0` | - | Millimetres of wirelength one millimetre of a missed near or relative constraint costs. |
-| `copper_clearance_mm` | `Option<f64>` | unset | - | The largest copper clearance of the board's rules: bodies are never placed closer than this (pads may sit on a body's edge). Read from the project when not given. |
+| `copper_clearance_mm` | `Option<f64>` | unset | - | The largest copper clearance of the board's rules: bodies are never placed closer than this (pads may sit on a body's edge). Read from the project when not given: its classes' largest, and a custom rule's between the pads of every two nets on some layer (the rules report's `pad_clearance_mm`: OpenESC's 0.16 mm on the outer layers). |
 | `hole_clearance_mm` | `Option<f64>` | unset | router.md | The board's copper-to-hole clearance: a non-plated hole keeps it from other parts' copper. Read from the project when not given. |
 | `copper_edge_clearance_mm` | `Option<f64>` | unset | - | The board's copper-to-edge clearance: pads of parts held at an edge keep it. Read from the project when not given. |
 | `tight_bodies` | `Option<bool>` | unset | - | When nothing else fits, bodies may shrink to their fabrication outline and pads (courtyards overlap). Read from the project when not given: allowed unless KiCad's DRC treats a courtyard overlap as an error. |

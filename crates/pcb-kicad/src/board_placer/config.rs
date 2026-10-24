@@ -80,7 +80,9 @@ pub struct KiCadBoardPlacerConfig {
     pub constraint_weight: f64,
     /// The largest copper clearance of the board's rules: bodies are never
     /// placed closer than this (pads may sit on a body's edge). Read from
-    /// the project when not given.
+    /// the project when not given: its classes' largest, and a custom
+    /// rule's between the pads of every two nets on some layer (the rules
+    /// report's `pad_clearance_mm`: OpenESC's 0.16 mm on the outer layers).
     pub copper_clearance_mm: Option<f64>,
     /// The board's copper-to-hole clearance: a non-plated hole keeps it
     /// from other parts' copper. Read from the project when not given.
