@@ -11,6 +11,127 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-24 (per-layer track width and clearance)
+
+Branch per-layer-rules, snapshots x14290 (the router, measured on the
+rule boards and the expansion tier) and x14291 (also: a layer rule that
+changes nothing gives no widths; every table below is x14291's unless it
+says otherwise; x14291 repeats x14290's rows on all of them).
+
+- **The gap.** The router had one track width and one clearance per net
+  (its `RuleClass`). A custom `track_width` rule on some layers only was
+  kept on every layer (`approximated`): OpenESC's "2 oz outer copper,
+  track width" (0.16 mm on F.Cu and B.Cu over the board's 0.09) made
+  every track 0.16 wide, the inner ones too, and a rule with a layer
+  condition (Sisu's USB geometry, `A.Layer == 'In1.Cu' || ...`) was
+  applied on every layer and reported `applied`. The layer clearances
+  were already exact: a rule on some layers is a pair rule of the router
+  with a stamp variant per layer (`ClearanceRule::layers`, 2026-10-21).
+- **The design.** Widths per layer ride on the layer variants the pair
+  clearances already have, not on more classes: `NetRules::layer_widths`
+  (per net, per layer: min, max, opt) splits a net's class by its widths
+  and floors per layer (`ClassRules::class_widths`, `class_floors`; the
+  `RuleClass`'s `trace_width` is the widest, for what reads one value),
+  and `Resolved::layer_variant` tells layers apart where any net's bounds
+  differ. The stamps of a variant measure both classes' tracks at that
+  variant's widths (track to track, track to via, via to track, the
+  diagonal and stub stamps; via to via needs no width), the static maps
+  keep pads, holes, keepouts and the outline at each layer's half width,
+  and a node stamps its layer's footprints, so the occupancy maps (per
+  class and layer already) stay exact and the search reads them as
+  before: no new class per layer, no new map, one comparison more per
+  stub. The emitted runs, escape stubs, pad-centre stubs, pad copper
+  joins, manual spokes and neck-downs take their layer's width; a neck
+  is per layer the board's neck or the layer's minimum, never wider than
+  the layer's track (`neck_width_on`). Vias keep one size. A net whose
+  bounds give one width and one floor on every layer keeps one class:
+  boards without a layer rule build the same classes, variants, stamps
+  and lattice as before.
+- **Lowering** (`dru.rs`). A `track_width` rule is evaluated for a track
+  of each net group on each copper layer; where the nets it holds for
+  differ by layer, its bounds go per layer and net
+  (`Lowered::layer_width_min`, `_max`, `_opt`) instead of the net's
+  every-layer values, and the report says `applied` ("width at least 0.16
+  mm on every net on F.Cu, B.Cu (per layer)"). A rule the classes keep
+  stays `no_effect` and gives no widths (tuxkeychain's 0.127 mm outside,
+  Sisu's 0.1 mm USB geometry over a 0.1 mm class). `project_rules.rs`
+  folds the every-layer bounds and the board's minimum track width and
+  connection floor into each layer's bounds. The placer keeps the
+  largest pad clearance (x1814's `pad_clearance_mm`); route mode never
+  reads it.
+- **Check and write-back.** The tracks carry their layer's width into the
+  board. The router's check (`check_copper`: board-router.json's
+  `internal_violations`) uses `verify_with_rules` on the split classes
+  where some net has widths per layer: each track at least its layer's
+  minimum ("track width") and the pair clearances per layer; elsewhere
+  `verify` as before. On both OpenESC boards it finds 0, as KiCad does
+  (0 track_width, 0 clearance).
+- **Tests.** Router: `a_net_routes_each_layer_at_its_own_width` (two
+  layers, 0.3 mm front minimum, 0.15 back opt, a wall that forces a hop:
+  every front track 0.3, every back track 0.15, two stamp variants, the
+  check clean and a 0.25 front track found). Lowering:
+  `track_widths_on_some_layers_lower_per_layer` (the OpenESC rule, a
+  layer condition with opt and max, a rule the classes keep, a layer
+  clause naming every layer). Project:
+  `a_clearance_on_the_outer_layers_spaces_the_parts` with the width rule
+  (the class keeps 0.09, the layers' minimums 0.16, 0.09, 0.09, 0.16;
+  `applied`).
+
+**The 14 boards with a .kicad_dru**, route mode on the designer's
+placement (`--tier designer --budget-scale 0.02`: 30 s of work, one
+thread, 4 jobs, `--min-free-gb 10`), x1814 against x14291; KiCad's
+errors of the two types, unconnected items, vias and length:
+
+ROWS14
+
+KiCad's other errors are the same on every board (USB_Keypad's 58 and
+WLED_Matrix's 62 clearance errors are PTH pads of one footprint, no rule
+of ours). Only the OpenESC boards route differently: the laptop power
+board's outer minimum is now per layer too (its inner neck-downs back to
+0.11 mm), but its route is the same. KiCad's connection_width warnings
+(OpenESC's 0.16 mm minimum connection, a warning the router does not
+floor: `FloorMode::Errors`) go from 2 to 225: the inner tracks are 0.09
+mm, as the project's classes say. The two OpenESC rows move by the
+lattice as much as by the widths: the narrower inner tracks change the
+lattice's tight channels, and 4in1 takes 0.127 mm instead of 0.125. On
+the same placement at a fixed pitch (`grid_pitches_mm`, one run each,
+other phases):
+
+| 4in1, 30 s | pitch 0.125 | pitch 0.127 |
+| --- | --- | --- |
+| x1814 | 25 unconnected | 18 unconnected |
+| x14291 | 21 unconnected | 30 unconnected |
+
+so at 30 s of work the boards' rows say what the rules are (exact, no
+error), not whether the widths route better.
+
+**Expansion tier** (46 boards, 8 x 1, x1814 against x14291): 46 boards
+in both, better 0, same 46, worse 0; every row's routed count, vias,
+length, work seconds, open connections and KiCad findings the same.
+Three of its boards carry a track width rule with a layer clause:
+FUEL4EP's and minuet light's name inner layers the board lacks
+(`skipped`), tuxkeychain's (0.127 mm outside, 0.0889 inside) are kept by
+the classes (`no_effect`; with x14290 they gave widths per layer, the
+same as the classes', and the same route). One outcome class differs
+(nixie_board clean_medium against clean_slow: the same route, 45 s of
+wall at load 22 against 29 s at 13). x14290 gave the same 46 rows. No
+switch: nothing moves where no layer rule holds.
+
+**Layout mode** (task budget, placer seed 1, 2 jobs x 2 threads, tasks
+v7, x1814 against x14291, one run each):
+
+| Board | track_width | clearance | other errors | unconnected | vias | length mm | routed |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 4in1-mini | 0 -> 0 | 0 -> 0 | 0 -> 0 | 95 -> 91 | 118 -> 122 | 1478 -> 1341 | 88/152 -> 89/152 |
+| 4in1 | 0 -> 0 | 0 -> 0 | 0 -> 0 | 107 -> 112 | 133 -> 145 | 2095 -> 2125 | 73/152 -> 67/152 |
+| total | 0 -> 0 | 0 -> 0 | 0 -> 0 | 202 -> 203 | 251 -> 267 | 3573 -> 3465 | |
+
+KiCad connection_width warnings 1 -> 244.
+
+No copper error on either side. The placement differs from the first
+route on (the layout's first route feeds its moves). One run each at a
+seed is no evidence of a routing gain; the rules are kept exactly.
+
 ## Committed on 2026-10-24 (the OpenESC clearance regression)
 
 Branch openesc-regression, snapshots x14280 (uncommitted, unused) and
