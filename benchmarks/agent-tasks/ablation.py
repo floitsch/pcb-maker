@@ -55,6 +55,8 @@ SIGNALS = [
     ("wirelength_mm", "wirelength (mm)", lambda s: s["wirelength_mm"]),
     ("channel_overflow", "escape channel overflow (tracks)", lambda s: s["channel_overflow"]),
     ("blocked_exits", "exits facing a body within 5 mm", lambda s: s["blocked_exits"]),
+    ("ratsnest_crossings", "ratsnest crossings", lambda s: s.get("ratsnest_crossings")),
+    ("large_crossings", "ratsnest crossings between large parts", lambda s: s.get("large_crossings")),
     ("global_overflow", "global route overflow", lambda s: (s.get("global") or {}).get("total_overflow")),
     ("global_soft", "global route soft overflow at 0.5", lambda s: (s.get("global") or {}).get("soft_overflow_05")),
     ("global_nets", "global route overflowed nets", lambda s: (s.get("global") or {}).get("overflowed_nets")),
@@ -208,6 +210,17 @@ def analyse(out):
                                if ("-null-" in variant["name"] or variant["name"] in ("designer", "ours"))
                                and variant["name"] not in names]
     variants = {variant["name"]: variant for variant in report["variants"]}
+    # Signals measured again by a later tool on the same boards
+    # (`<out>-sig`, written with the same configuration: the boards are
+    # byte for byte the same) replace the first measurement's.
+    agains = [out.parent / (out.name + "-sig")]
+    if meta.get("base_from"):
+        agains.append(Path(meta["base_from"]).parent / (Path(meta["base_from"]).name + "-sig"))
+    for again in agains:
+        if (again / "ablation.json").exists():
+            for variant in json.loads((again / "ablation.json").read_text())["variants"]:
+                if variant["name"] in variants:
+                    variants[variant["name"]] = dict(variants[variant["name"]], signals=variant["signals"])
     opened = {name: open_count(row) for name, row in rows.items()}
 
     def runs(name):
