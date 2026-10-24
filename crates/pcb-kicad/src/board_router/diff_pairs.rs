@@ -1113,7 +1113,9 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
                 });
                 // Where the link carries the stubs its copper begins at the
                 // run's start, so that no other net comes between the run's
-                // two tracks' beginnings and their clearance.
+                // two tracks' beginnings and their clearance. It is the
+                // terminal's pad ("pair launch": the router does not neck the
+                // link down near it, `Router::prepare_net`).
                 board.obstacles.push(core::Obstacle {
                     shape: core::Shape::Capsule {
                         start: if found.fixed {

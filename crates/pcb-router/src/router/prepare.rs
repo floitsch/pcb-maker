@@ -126,15 +126,20 @@ impl Router {
         }
         // Neck zones around pads narrower than the net's track plus its
         // clearance (a fine-pitch part's), where the net routes at the neck
-        // width.
+        // width. A differential pair's launch (pcb-kicad's "pair launch",
+        // the start of a coupled run as wide as its track) is no pad: the
+        // run necked down there leaves no room for the pair's two tracks.
         let mut neck_zones = Vec::new();
         if self.neck_of[description.class].is_some() {
             let rules = self.board.classes[description.class];
             for terminal in &description.terminals {
-                let bounds = self.board.obstacles[terminal.pad].shape.aabb();
+                let pad = &self.board.obstacles[terminal.pad];
+                let bounds = pad.shape.aabb();
                 let narrow = (bounds.maximum[0] - bounds.minimum[0])
                     .min(bounds.maximum[1] - bounds.minimum[1]);
-                if narrow < rules.trace_width + rules.clearance {
+                if narrow < rules.trace_width + rules.clearance
+                    && !pad.label.starts_with("pair launch")
+                {
                     let reach = crate::geometry::Aabb {
                         minimum: terminal.anchor,
                         maximum: terminal.anchor,
