@@ -139,6 +139,7 @@ impl GlobalRoute {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct Plan {
     pub(crate) net: usize,
     /// Per terminal its states.

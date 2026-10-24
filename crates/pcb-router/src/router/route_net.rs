@@ -4,7 +4,9 @@
 
 //! Routing one net: its tree, one multi-target search at a time.
 
+use super::capacitated::CapacitatedStatus;
 use super::*;
+use crate::capacitated::{Learn, SearchKind, note as capacitated_note};
 
 /// `route_net`'s absorb: takes a group of terminals and retained branches
 /// (by its root) into a tree.
@@ -344,6 +346,19 @@ impl Router {
             let reroutes = net_state.reroutes;
             scratch.lane.active = lane_only && lane_active;
             let global = self.global.as_ref().filter(|_| !self.cleanup && !hard);
+            // Capacitated corridors (`capacitated_corridors`): the plan's
+            // corridor, the tile planner choosing inside it; a miss there
+            // teaches the plan (`learn_from_misses`), it does not search
+            // wider.
+            let capacitated = if planned.is_none() && global.is_none() {
+                self.capacitated_status(net, net_state, hard)
+            } else {
+                CapacitatedStatus::Off
+            };
+            if matches!(capacitated, CapacitatedStatus::Fallback) && !net_state.capacitated_fallback
+            {
+                capacitated_note(Learn::FallbackNoPath, 1);
+            }
             if planned.is_none()
                 && let Some(plan) = global
             {
@@ -354,14 +369,14 @@ impl Router {
                         break;
                     };
                     scratch.corridor = Some(corridor);
-                    planned = self.search(
+                    planned = self.counted_search(
+                        SearchKind::Corridor,
                         scratch,
                         net,
                         net_state,
                         &tree,
                         &targets,
                         points.as_deref(),
-                        false,
                         present,
                         hard,
                         full,
@@ -371,7 +386,60 @@ impl Router {
                         break;
                     }
                 }
-            } else if planned.is_none() && self.config.corridors && !self.cleanup && !skip_corridors
+            } else if let CapacitatedStatus::Band(band) = &capacitated {
+                // The tile planner's fill cost picks the way inside the
+                // capacitated corridor; then the whole corridor.
+                let inside = self.plan_corridor(
+                    net,
+                    net_state,
+                    &tree,
+                    &targets,
+                    false,
+                    1,
+                    scratch.own_active.then_some(scratch.own_claimed.as_slice()),
+                    Some(band),
+                );
+                if let Some(corridor) = inside {
+                    scratch.corridor = Some(corridor);
+                    planned = self.counted_search(
+                        SearchKind::Corridor,
+                        scratch,
+                        net,
+                        net_state,
+                        &tree,
+                        &targets,
+                        points.as_deref(),
+                        present,
+                        hard,
+                        full,
+                    );
+                    scratch.corridor = None;
+                }
+                if planned.is_none() {
+                    scratch.corridor = Some(band.clone());
+                    planned = self.counted_search(
+                        SearchKind::Band,
+                        scratch,
+                        net,
+                        net_state,
+                        &tree,
+                        &targets,
+                        points.as_deref(),
+                        present,
+                        hard,
+                        full,
+                    );
+                    if planned.is_none() {
+                        net_state.capacitated_miss = Some(self.capacitated_miss(scratch, net, band));
+                        capacitated_note(Learn::Misses, 1);
+                    }
+                    scratch.corridor = None;
+                }
+            } else if planned.is_none()
+                && self.config.corridors
+                && !self.cleanup
+                && !skip_corridors
+                && !matches!(capacitated, CapacitatedStatus::Fallback)
             {
                 // One tile more every six reroutes. Widened every three,
                 // the corridors of the nets the negotiation kept rerouting
@@ -393,19 +461,20 @@ impl Router {
                         hard,
                         margin,
                         scratch.own_active.then_some(scratch.own_claimed.as_slice()),
+                        None,
                     );
                     let Some(corridor) = corridor else {
                         break;
                     };
                     scratch.corridor = Some(corridor);
-                    planned = self.search(
+                    planned = self.counted_search(
+                        SearchKind::Corridor,
                         scratch,
                         net,
                         net_state,
                         &tree,
                         &targets,
                         points.as_deref(),
-                        false,
                         present,
                         hard,
                         full,
@@ -421,24 +490,35 @@ impl Router {
             scratch.lane.active = false;
             let corridor_tried =
                 global.is_some() || (self.config.corridors && !self.cleanup && !skip_corridors);
-            // The trouble repair's victims (`hard_scope`): corridors only.
-            let fallback = if hard && self.hard_scope == HardScope::Corridors && corridor_tried {
-                false
-            } else {
-                hard || !corridor_tried || net_state.hopeless_searches < 2
+            let fallback = match capacitated {
+                // A miss in the capacitated corridor teaches the plan.
+                CapacitatedStatus::Band(_) => false,
+                // No global path, or nothing learned from the miss: the
+                // window and the board, unless they keep failing.
+                CapacitatedStatus::Fallback => net_state.hopeless_searches < 2,
+                // The trouble repair's victims (`hard_scope`): corridors only.
+                _ if hard && self.hard_scope == HardScope::Corridors && corridor_tried => false,
+                _ => hard || !corridor_tried || net_state.hopeless_searches < 2,
             };
+            if planned.is_none()
+                && !fallback
+                && !hard
+                && !matches!(capacitated, CapacitatedStatus::Band(_))
+            {
+                capacitated_note(Learn::HopelessSkips, 1);
+            }
             let path = planned.or_else(|| {
                 if !fallback {
                     return None;
                 }
-                self.search(
+                self.counted_search(
+                    SearchKind::Window,
                     scratch,
                     net,
                     net_state,
                     &tree,
                     &targets,
                     points.as_deref(),
-                    false,
                     present,
                     hard,
                     windowed,
@@ -447,14 +527,14 @@ impl Router {
             let path = path.or_else(|| {
                 (fallback && windowed != full && !(hard && self.hard_scope == HardScope::Window))
                     .then(|| {
-                        self.search(
+                        self.counted_search(
+                            SearchKind::Board,
                             scratch,
                             net,
                             net_state,
                             &tree,
                             &targets,
                             points.as_deref(),
-                            false,
                             present,
                             hard,
                             full,
@@ -566,7 +646,10 @@ impl Router {
         );
         let complete = !apart && in_tree.iter().all(|inside| *inside);
         net_state.complete = complete;
-        if !hard && !complete {
+        // A miss in the capacitated corridor proves nothing about the
+        // board: the net stays in the negotiation to search its next
+        // corridor (`capacitated_corridors`).
+        if !hard && !complete && net_state.capacitated_miss.is_none() {
             net_state.blocked = true;
         }
     }

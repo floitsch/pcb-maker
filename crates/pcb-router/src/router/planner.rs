@@ -10,6 +10,7 @@ impl Router {
     /// Plans a connection on the tile graph: Dijkstra over (layer, tile)
     /// from the source tiles to any target tile, where a tile costs more the
     /// fuller it is. Returns the tiles on the path, grown by `margin` tiles.
+    /// With `within`, only those tiles (and the ends' own) are entered.
     #[allow(
         clippy::too_many_arguments,
         reason = "the search's state, its ends and the planner's settings, all read once"
@@ -23,6 +24,7 @@ impl Router {
         hard: bool,
         margin: usize,
         own_claimed: Option<&[u32]>,
+        within: Option<&[bool]>,
     ) -> Option<Vec<bool>> {
         let class = self.board.nets[net as usize].class;
         let layers = self.board.layer_count;
@@ -56,6 +58,9 @@ impl Router {
         let enter = |layer: usize, tile: usize| -> Option<f32> {
             let routable = self.tile_routable[class * layers + layer][tile];
             if routable == 0 && !endpoint[tile] {
+                return None;
+            }
+            if within.is_some_and(|within| !within[tile]) && !endpoint[tile] {
                 return None;
             }
             let mut claimed = self.tile_claimed[self.map_index(class, layer)][tile];

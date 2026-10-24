@@ -342,6 +342,13 @@ pub struct KiCadBoardRouterConfig {
     /// unset, the router's default; `PCB_ROUTER_TROUBLE` overrides this.
     #[serde(default)]
     pub trouble_repair: Option<bool>,
+    /// The negotiation's corridors from the global route with hard
+    /// capacities, learning from the searches that miss them (router
+    /// `capacitated_corridors`, an experiment; docs/router.md,
+    /// "Capacitated corridors (2026-10-24)"): unset, the router's default;
+    /// `PCB_ROUTER_CAPACITATED_CORRIDORS` overrides this.
+    #[serde(default)]
+    pub capacitated_corridors: Option<bool>,
     /// Router `thermal_guard_cost`.
     #[serde(default)]
     pub thermal_guard_cost: Option<f64>,

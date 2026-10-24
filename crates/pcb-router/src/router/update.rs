@@ -65,6 +65,8 @@ impl Router {
             map.fill(0);
         }
         self.board = board.clone();
+        // The plan's capacities are the old board's.
+        self.capacitated = None;
         self.probe_shapes = Arc::default();
         self.class_rules = class_rules;
         self.searched = searched_classes(&self.board, &self.neck_of);

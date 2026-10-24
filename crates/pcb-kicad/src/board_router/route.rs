@@ -646,6 +646,9 @@ pub(super) fn route_seeds(
 
 /// The core router configuration for a KiCad configuration.
 pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
+    // The global route the capacitated corridors come from (a router
+    // with the switch off never asks for it).
+    pcb_global::register_corridor_planner();
     let mut router_config = core::Config {
         verbose: true,
         deadline: config.deadline,
@@ -720,6 +723,11 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
         && core::router::trouble_override().is_none()
     {
         router_config.trouble_repair = repair;
+    }
+    if let Some(capacitated) = config.capacitated_corridors
+        && pcb_router::capacitated::switch_override().is_none()
+    {
+        router_config.capacitated_corridors = capacitated;
     }
     if let Some(cost) = config.thermal_guard_cost {
         router_config.thermal_guard_cost = cost;

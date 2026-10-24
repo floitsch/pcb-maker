@@ -24,6 +24,11 @@ impl Router {
         let profile_started = started;
         // The via reduction negotiates too: its time is its own phase.
         let nested = self.in_via_reduction;
+        // The capacitated plan (`capacitated_corridors`), built before
+        // this negotiation's work count starts: its build counts in the
+        // router's work (the deadline, the ladder's charge), not in the
+        // negotiation's limit.
+        self.ensure_capacitated();
         let expansions_before = self.scratch.expansions;
         let work_before = self.work_seconds();
         let used_before = self.negotiation_used();
@@ -146,6 +151,13 @@ impl Router {
             if self.global.is_some() && iteration % 2 == 1 {
                 let replan_started = std::time::Instant::now();
                 self.replan(&conflicted);
+                self.profile.replan += replan_started.elapsed().as_secs_f64();
+            }
+            // Under `capacitated_corridors` the nets kept in conflict
+            // teach the capacitated plan where they conflict.
+            if self.capacitated.is_some() && iteration % 2 == 1 {
+                let replan_started = std::time::Instant::now();
+                self.learn_from_conflicts(&conflicted);
                 self.profile.replan += replan_started.elapsed().as_secs_f64();
             }
             if std::env::var_os("PCB_ROUTER_DEBUG").is_some() && iteration % 10 == 9 {
@@ -315,6 +327,11 @@ impl Router {
             if self.global.is_some() && cut.iteration % 2 == 1 {
                 let replan_started = std::time::Instant::now();
                 self.replan(&conflicted);
+                self.profile.replan += replan_started.elapsed().as_secs_f64();
+            }
+            if self.capacitated.is_some() && cut.iteration % 2 == 1 {
+                let replan_started = std::time::Instant::now();
+                self.learn_from_conflicts(&conflicted);
                 self.profile.replan += replan_started.elapsed().as_secs_f64();
             }
             self.present_reached = (cut.present * self.config.present_growth as f32)

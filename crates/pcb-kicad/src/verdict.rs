@@ -721,6 +721,9 @@ pub struct KiCadRunFacts {
     pub pours: Vec<crate::board_router::KiCadPourQuality>,
     /// A layout's move descent, when it ran.
     pub moves: Option<crate::move_descent::KiCadMovesFact>,
+    /// Where the lattice searches went and what the capacitated
+    /// corridors learned (`KiCadCorridors`), when the run routed.
+    pub corridors: Option<crate::KiCadCorridors>,
 }
 
 impl KiCadRunFacts {
@@ -758,6 +761,7 @@ impl KiCadRunFacts {
             silkscreen: None,
             pours: Vec::new(),
             moves: None,
+            corridors: None,
         }
     }
 
@@ -916,6 +920,14 @@ pub struct KiCadVerdict {
     /// open terminals before and after. Absent when it did not run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub moves: Option<crate::move_descent::KiCadMovesFact>,
+    /// Where the run's lattice searches went (corridors, the capacitated
+    /// corridors' band, windows, the board; the negotiation's and the hard
+    /// searches' apart, with their work) and what the capacitated
+    /// corridors learned (`capacitated_corridors`: misses, capacities
+    /// lowered, re-plans, retries, fallbacks), summed over every router
+    /// of the run (docs/router.md, "Capacitated corridors (2026-10-24)").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub corridors: Option<crate::KiCadCorridors>,
 }
 
 fn counts(map: &BTreeMap<String, usize>) -> String {
@@ -1448,6 +1460,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         environment: result_environment(),
         pours: facts.pours.clone(),
         moves: facts.moves.clone(),
+        corridors: facts.corridors.clone(),
     }
 }
 
@@ -1520,6 +1533,7 @@ pub fn route_facts(
         })?);
     }
     facts.repairs = Some(KiCadRepairs::of(result));
+    facts.corridors = Some(crate::KiCadCorridors::now());
     facts.diff_pairs = result.diff_pairs.clone().map(|mut pairs| {
         pairs.pairs.clear();
         pairs

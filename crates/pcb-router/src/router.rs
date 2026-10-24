@@ -20,6 +20,7 @@ use crate::rules::ClassRules;
 mod batching;
 mod build;
 mod bundles;
+mod capacitated;
 mod cleanup;
 mod config;
 /// Read-only tile views of the negotiation, for the congestion model.
@@ -369,6 +370,12 @@ struct NetState {
     /// A bus member broken out of its bundle (`bundles`): it found no
     /// path inside the bus's corridor and routes as any other net.
     bus_broken: bool,
+    /// Under `capacitated_corridors`: where its last search inside its
+    /// capacitated corridor stopped, for the batch's learning
+    /// (`learn_from_misses`); and that nothing could be learned from it,
+    /// so that its next search takes the window and the board.
+    capacitated_miss: Option<capacitated::Miss>,
+    capacitated_fallback: bool,
 }
 
 #[derive(Clone)]
@@ -1163,6 +1170,10 @@ pub struct Router {
     /// The global plan (the upper layer): per net a route on the tile
     /// graph whose corridor confines the lattice search.
     global: Option<crate::global::GlobalPlan>,
+    /// The capacitated plan (`Config::capacitated_corridors`), built when
+    /// a negotiation starts; `None` with the switch off and after an
+    /// `update`.
+    capacitated: Option<capacitated::Capacitated>,
     /// Per layer (last entry: vias): where conflicts kept happening, so the
     /// corridor planner learns to send some nets another way.
     tile_history: Vec<Vec<f32>>,

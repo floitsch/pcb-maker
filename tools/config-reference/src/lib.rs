@@ -178,6 +178,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "overrides the router's `trouble_repair` (`0` off, anything else on): the trouble-makers' repair after the hard repair (an open net routed through others at a price, the nets it displaces routed again hard, kept when the open terminals drop; docs/experiments/human-level-routing.md).",
     ),
     (
+        "PCB_ROUTER_CAPACITATED_CORRIDORS",
+        Kind::Switch,
+        "overrides the router's `capacitated_corridors` (`0` off, anything else on; off by default): the negotiation's corridors from the global route with hard capacities, a search that misses its corridor lowering the capacity of the boundary it failed at and re-planning the nets through it (docs/router.md, \"Capacitated corridors (2026-10-24)\"; an experiment).",
+    ),
+    (
         "PCB_LAYOUT_MOVE_DESCENT",
         Kind::Switch,
         "overrides the layout's `move_descent` (`0` off, anything else on with layout.json's settings or the defaults): the move descent after the first route (docs/experiments/move-descent.md).",

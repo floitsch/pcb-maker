@@ -287,6 +287,7 @@ impl Router {
             tile_claimed: vec![vec![0; tiles_x * tiles_y]; maps],
             tile_routable,
             global: None,
+            capacitated: None,
             tile_history: vec![vec![0.0; tiles_x * tiles_y]; layers + 1],
             guard: vec![Vec::new(); layers],
             via_marks: Vec::new(),

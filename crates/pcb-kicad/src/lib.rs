@@ -21,6 +21,8 @@ use std::{
 };
 
 mod connection_rules;
+mod corridors_fact;
+pub use corridors_fact::{KiCadCorridors, KiCadSearchCount, KiCadSearchKinds};
 pub use connection_rules::KiCadConnectionRoutingRules;
 mod local_clearance;
 mod native_report;

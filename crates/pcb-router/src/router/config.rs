@@ -183,6 +183,26 @@ pub struct Config {
     /// Plan every connection on a coarse tile graph first and search the
     /// lattice only inside that corridor (widening it on failure).
     pub corridors: bool,
+    /// The negotiation's corridors come from a global route with hard
+    /// capacities (pcb-global's, `crate::capacitated`): a net's corridor
+    /// is its global route's tiles and one more around, the tile planner
+    /// choosing inside it; a search that fails there lowers the capacity
+    /// of the boundary it failed at, the global route plans the net and
+    /// the nets through that boundary again, and the net searches its new
+    /// corridor. Only a net without a global path falls back to the window
+    /// and the board. An experiment, off (docs/router.md, "Capacitated
+    /// corridors (2026-10-24)"); `PCB_ROUTER_CAPACITATED_CORRIDORS`
+    /// overrides it.
+    pub capacitated_corridors: bool,
+    /// With `capacitated_corridors`: how often a batch's nets that missed
+    /// their corridor are routed again after a re-plan before they wait
+    /// for the next iteration.
+    pub capacitated_retries: usize,
+    /// With `capacitated_corridors`: a net in conflict for this many
+    /// iterations running teaches the plan too (the boundary of its route
+    /// with the most conflicts loses a track, every second iteration); 0
+    /// turns that off.
+    pub capacitated_stuck: usize,
     /// Cost factor for a trace step on a node covered by another net's
     /// pour, and for a via through one: cutting a plane is expensive.
     pub plane_cut_cost: f64,
@@ -360,6 +380,9 @@ impl Default for Config {
             cleanup_via_cost: 25.0,
             plane_via_cost: 2.0,
             corridors: true,
+            capacitated_corridors: crate::capacitated::default_switch(),
+            capacitated_retries: 2,
+            capacitated_stuck: 4,
             parallel: true,
             via_reduction_rounds: 3,
             via_reduction_factor: 2.0,

@@ -55,6 +55,9 @@ impl Router {
         let search_started = std::time::Instant::now();
         for net in batch {
             self.rip_up_conflicted(*net);
+            // A fallback after a miss nothing was learned from lasts for
+            // the batch it happened in (`capacitated_corridors`).
+            self.nets[*net as usize].capacitated_fallback = false;
         }
         // What a cut severs, from the fill without the batch's copper (its
         // old routes must not make their own corridors look cut already).
@@ -116,5 +119,12 @@ impl Router {
             self.stamp(*net);
         }
         self.stamp_seconds += stamp_started.elapsed().as_secs_f64();
+        // Nets that missed their capacitated corridors teach the plan and
+        // search their new corridors (`capacitated_corridors`).
+        if self.capacitated.is_some() {
+            let replan_started = std::time::Instant::now();
+            self.learn_from_misses(batch, present, growth);
+            self.profile.replan += replan_started.elapsed().as_secs_f64();
+        }
     }
 }
