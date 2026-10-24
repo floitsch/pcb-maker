@@ -115,7 +115,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_MIN_CONNECTION_FLOOR",
         Kind::User,
-        "`warning`: floor the router's track widths at the board's minimum connection width also when KiCad rates connection_width a warning; `off`: never (default: only at error severity).",
+        "`errors`: floor the router's track widths at the board's minimum connection width (and a custom `connection_width` rule's) only when KiCad rates connection_width an error; `off`: never (default since 2026-10-24: at error and warning severity).",
     ),
     (
         "PCB_KICAD_NO_NECK_REPAIR",

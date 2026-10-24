@@ -256,7 +256,7 @@ const ENVIRONMENT_HELP: &[(&str, &str)] = &[
     ),
     (
         "PCB_MIN_CONNECTION_FLOOR",
-        "warning: floor track widths at the minimum connection width also when KiCad\nrates connection_width a warning; off: never; default: at error severity only.",
+        "errors: floor track widths at the minimum connection width only when KiCad\nrates connection_width an error; off: never; default: at error and warning severity.",
     ),
     (
         "PCB_KICAD_NO_NECK_REPAIR",
