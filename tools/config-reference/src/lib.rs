@@ -265,7 +265,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_ROUTER_DIFF_PAIRS",
         Kind::Switch,
-        "turns differential pairs on where the settings name none (`diff_pairs`, off; 0 off): route mode routes the pairs KiCad names (`_P`/`_N`, `+`/`-`, `P`/`N`) as coupled runs at the rules' width and gap, each link a net of the route negotiated with the others (docs/router.md, \"Differential pairs\").",
+        "turns differential pairs on (1) or off (0) where the settings name none (`diff_pairs`; unset, route mode turns them on where the project's custom rules ask for pairs, else off): route mode routes the pairs KiCad names (`_P`/`_N`, `+`/`-`, `P`/`N`) as coupled runs at the rules' width and gap, each link a net of the route negotiated with the others (docs/router.md, \"Differential pairs\").",
     ),
     (
         "PCB_ROUTER_DIFF_PAIRS_WORK",
