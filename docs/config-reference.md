@@ -25,7 +25,7 @@ The environment variables are indexed in the hand-over
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
 | [Router settings](#router-settings) | 94 | 78 | 16 | 94 | 36 |
-| [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 0 |
+| [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 1 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 1 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
 | [Router settings: net_classes entries](#router-settings-net_classes-entries) | 6 | 6 | 0 | 6 | 1 |
@@ -152,7 +152,7 @@ The `topological` object of the router settings (the `engine: "topological"` eng
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
 | `topological.crossing` | `Option<f64>` | unset | - | Millimetres one crossing costs while routing. |
-| `topological.via` | `Option<f64>` | unset | - | Millimetres a via costs while routing and assigning layers. |
+| `topological.via` | `Option<f64>` | unset | router.md | Millimetres a via costs while routing and assigning layers. |
 | `topological.improve_via` | `Option<f64>` | unset | - | Millimetres a via costs while improving a legal board. |
 | `topological.improve_passes` | `Option<usize>` | unset | - | Passes over all wires while improving a legal board. |
 | `topological.spacing` | `Option<f64>` | unset | - | Spacing of via sites in open areas. |

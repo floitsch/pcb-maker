@@ -800,10 +800,13 @@ KiCad 10.0.7's DRC reads it:
   exact for hole sizes and for rules that include F.Cu, more than KiCad
   asks (never an error) for diameter and annulus rules on inner or back
   layers only. On the 14 boards with a .kicad_dru and the expansion tier's
-  46 no via rule has a layer clause or a layer condition except minuet
-  light's and FUEL4EP's "Annular ring width (via and PTH)" (`(layer
+  46 (36 via, hole and annulus rules on 9 boards) no via rule has a layer
+  condition, and the only one with a layer clause that matches a via is
+  minuet light's and FUEL4EP's "Annular ring width (via and PTH)" (`(layer
   outer)`, 0.075 mm, `no_effect`: the classes keep more; exact, outer
-  includes F.Cu); none has `via_count` or `disallow via`. Their other via
+  includes F.Cu); their hole rules on `outer` and the power manifold's
+  (NPTH and castellated pads) match no via. None has `via_count` or
+  `disallow via`. Their other via
   rules (`via_diameter`, `hole_size`, `annular_width` on every layer:
   JLCPCB's and PCBWay's templates on the laptop boards, tuxkeychain,
   ErgoSNM, AMLing2's drone carrier, the power manifold) are `no_effect`
