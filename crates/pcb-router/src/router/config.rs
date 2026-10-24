@@ -201,7 +201,7 @@ pub struct Config {
     /// With `capacitated_corridors`: a net in conflict for this many
     /// iterations running teaches the plan too (the boundary of its route
     /// with the most conflicts loses a track, every second iteration); 0
-    /// turns that off.
+    /// turns that off (`PCB_ROUTER_CAPACITATED_STUCK`, 4).
     pub capacitated_stuck: usize,
     /// Cost factor for a trace step on a node covered by another net's
     /// pour, and for a via through one: cutting a plane is expensive.
@@ -382,7 +382,10 @@ impl Default for Config {
             corridors: true,
             capacitated_corridors: crate::capacitated::default_switch(),
             capacitated_retries: 2,
-            capacitated_stuck: 4,
+            capacitated_stuck: std::env::var("PCB_ROUTER_CAPACITATED_STUCK")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(4),
             parallel: true,
             via_reduction_rounds: 3,
             via_reduction_factor: 2.0,

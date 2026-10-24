@@ -183,6 +183,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "overrides the router's `capacitated_corridors` (`0` off, anything else on; off by default): the negotiation's corridors from the global route with hard capacities, a search that misses its corridor lowering the capacity of the boundary it failed at and re-planning the nets through it (docs/router.md, \"Capacitated corridors (2026-10-24)\"; an experiment).",
     ),
     (
+        "PCB_ROUTER_CAPACITATED_STUCK",
+        Kind::Switch,
+        "the router's `capacitated_stuck` (default 4; with `capacitated_corridors`): a net in conflict for this many iterations running lowers the capacity of its global route's boundary with the most conflicts, every second iteration; 0 turns that learning off (docs/router.md, \"Capacitated corridors (2026-10-24)\").",
+    ),
+    (
         "PCB_LAYOUT_MOVE_DESCENT",
         Kind::Switch,
         "overrides the layout's `move_descent` (`0` off, anything else on with layout.json's settings or the defaults): the move descent after the first route (docs/experiments/move-descent.md).",
