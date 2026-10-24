@@ -1066,6 +1066,10 @@ fn window_rings(steps: [i64; 4]) -> (i64, i64) {
     )
 }
 
+/// How much farther than the closest legal spot the legaliser looks for
+/// one with fewer ratsnest crossings, mm.
+const CROSSING_REACH: f64 = 2.0;
+
 /// Moves every movable component to the nearest legal, grid-snapped position,
 /// largest bodies first. Returns the components that found no position.
 pub fn legalize(problem: &Problem, poses: &mut [Pose]) -> Vec<usize> {
@@ -1139,6 +1143,14 @@ pub fn legalize_keeping(
         }
         crate::escape::EscapeState::new(problem, escape, poses, |index| present[index])
     });
+    // Ratsnest crossings: a spot is farther by the crossings it adds to
+    // those of the part's nets where it wants to be (the parts not placed
+    // yet where they want to be too).
+    let mut crossings = problem
+        .crossings
+        .as_deref()
+        .filter(|crossings| crossings.legalise)
+        .map(|crossings| crate::crossings::CrossingState::new(problem, crossings, poses));
     let mut near = Vec::new();
     let mut failed = Vec::new();
     for index in order {
@@ -1146,6 +1158,14 @@ pub fn legalize_keeping(
         let wanted = poses[index];
         let wanted_center = component.center(wanted);
         let mut best: Option<(f64, Pose)> = None;
+        // The closest legal spot's distance without the crossings: the
+        // crossings choose among the spots up to `CROSSING_REACH` farther,
+        // not the whole board (a spot's crossings would otherwise widen
+        // the search by their weight).
+        let mut plain: Option<f64> = None;
+        let wanted_crossings = crossings
+            .as_mut()
+            .map_or(0, |state| state.involving(poses, &[index]));
         for angle in &component.angle_options {
             // Rotating about the body centre keeps the part where global
             // placement wanted it; prefer the global angle on ties.
@@ -1173,6 +1193,11 @@ pub fn legalize_keeping(
                 // still hold a closer Euclidean match.
                 if let Some((distance, _)) = best
                     && ((ring - 2).max(0) as f64 * step).powi(2) > distance
+                {
+                    break 'search;
+                }
+                if let Some(plain) = plain
+                    && (ring - 2).max(0) as f64 * step > plain.sqrt() + CROSSING_REACH
                 {
                     break 'search;
                 }
@@ -1216,6 +1241,30 @@ pub fn legalize_keeping(
                         };
                         buckets.near(problem, index, pose, &mut near);
                         if is_legal(problem, poses, index, pose, near.iter().copied()) {
+                            let distance = match crossings.as_mut() {
+                                None => distance,
+                                Some(state) => {
+                                    if plain.is_none_or(|plain| distance < plain) {
+                                        plain = Some(distance);
+                                    }
+                                    poses[index] = pose;
+                                    let added = state
+                                        .involving(poses, &[index])
+                                        .saturating_sub(wanted_crossings);
+                                    poses[index] = wanted;
+                                    if added == 0 {
+                                        distance
+                                    } else {
+                                        let total = (distance.sqrt()
+                                            + state.weight() * added as f64)
+                                            .powi(2);
+                                        if best.is_some_and(|(best, _)| best <= total) {
+                                            continue;
+                                        }
+                                        total
+                                    }
+                                }
+                            };
                             best = Some((distance, pose));
                         }
                     }
@@ -1231,6 +1280,11 @@ pub fn legalize_keeping(
         if let Some(state) = escape.as_mut() {
             state.insert(index, poses[index]);
             state.refresh(poses, index);
+        }
+        if let Some(state) = crossings.as_mut()
+            && poses[index] != wanted
+        {
+            state.kept(poses, &[index]);
         }
     }
     failed
@@ -1697,7 +1751,12 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
         .escape
         .as_deref()
         .map(|escape| crate::escape::EscapeState::new(problem, escape, poses, |_| true));
-    refine_with(problem, poses, passes, escape.as_mut())
+    let mut crossings = problem
+        .crossings
+        .as_deref()
+        .filter(|crossings| crossings.refine)
+        .map(|crossings| crate::crossings::CrossingState::new(problem, crossings, poses));
+    refine_with(problem, poses, passes, escape.as_mut(), crossings.as_mut())
 }
 
 /// `refine`, with escape demand (`Problem::escape`) kept in `escape`
@@ -1708,10 +1767,20 @@ pub fn refine_with(
     poses: &mut [Pose],
     passes: usize,
     mut escape: Option<&mut crate::escape::EscapeState>,
+    mut crossings: Option<&mut crate::crossings::CrossingState>,
 ) -> usize {
     if let Some(state) = escape.as_mut() {
         state.resync(poses);
     }
+    if let Some(state) = crossings.as_mut() {
+        state.resync(poses);
+    }
+    // The crossings of the nets on `parts`' pins at `poses`, in
+    // millimetres of wirelength.
+    let crossing_cost =
+        |state: &mut crate::crossings::CrossingState, poses: &[Pose], parts: &[usize]| {
+            state.weight() * state.involving(poses, parts) as f64
+        };
     let count = problem.components.len();
     let nets = problem.net_weights.len();
     let mut members: Vec<Vec<(usize, usize)>> = vec![Vec::new(); nets];
@@ -1814,6 +1883,9 @@ pub fn refine_with(
             if let Some(state) = escape.as_mut() {
                 best.0 += state.cost(poses, index);
             }
+            if let Some(state) = crossings.as_mut() {
+                best.0 += crossing_cost(state, poses, &[index]);
+            }
             let center = component.center(original);
             // Besides the pull of its nets, a part that misses a relation
             // is drawn towards what it relates to.
@@ -1854,7 +1926,12 @@ pub fn refine_with(
                     if candidate < best.0 - 1.0e-9 {
                         buckets.near(problem, index, pose, &mut near);
                         if is_legal(problem, poses, index, pose, near.iter().copied()) {
-                            best = (candidate, pose);
+                            if let Some(state) = crossings.as_mut() {
+                                candidate += crossing_cost(state, poses, &[index]);
+                            }
+                            if candidate < best.0 - 1.0e-9 {
+                                best = (candidate, pose);
+                            }
                         }
                     }
                 }
@@ -1887,7 +1964,12 @@ pub fn refine_with(
                             if candidate < best.0 - 1.0e-9 {
                                 buckets.near(problem, index, pose, &mut near);
                                 if is_legal(problem, poses, index, pose, near.iter().copied()) {
-                                    best = (candidate, pose);
+                                    if let Some(state) = crossings.as_mut() {
+                                        candidate += crossing_cost(state, poses, &[index]);
+                                    }
+                                    if candidate < best.0 - 1.0e-9 {
+                                        best = (candidate, pose);
+                                    }
                                 }
                             }
                         }
@@ -1901,6 +1983,9 @@ pub fn refine_with(
                 improved = true;
                 improvements += 1;
                 if let Some(state) = escape.as_mut() {
+                    state.kept(poses, &[index]);
+                }
+                if let Some(state) = crossings.as_mut() {
                     state.kept(poses, &[index]);
                 }
             }
@@ -1936,12 +2021,20 @@ pub fn refine_with(
                 if let Some(state) = escape.as_mut() {
                     before += state.cost_without(poses, a, b) + state.cost_without(poses, b, a);
                 }
+                if let Some(state) = crossings.as_mut() {
+                    before += crossing_cost(state, poses, &[a, b]);
+                }
                 poses.swap(a, b);
                 let mut after = pair(poses);
                 if after < before - 1.0e-9
                     && let Some(state) = escape.as_mut()
                 {
                     after += state.cost_without(poses, a, b) + state.cost_without(poses, b, a);
+                }
+                if after < before - 1.0e-9
+                    && let Some(state) = crossings.as_mut()
+                {
+                    after += crossing_cost(state, poses, &[a, b]);
                 }
                 if after < before - 1.0e-9
                     && is_legal(problem, poses, a, poses[a], 0..count)
@@ -1954,6 +2047,9 @@ pub fn refine_with(
                     improved = true;
                     improvements += 1;
                     if let Some(state) = escape.as_mut() {
+                        state.kept(poses, &[a, b]);
+                    }
+                    if let Some(state) = crossings.as_mut() {
                         state.kept(poses, &[a, b]);
                     }
                 } else {

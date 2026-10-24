@@ -227,6 +227,16 @@ pub struct KiCadBoardPlacerConfig {
     /// attribution (docs/placer.md, "Escape demand (2026-10-23)").
     #[serde(default = "default_escape_demand")]
     pub escape_demand: Option<KiCadEscapeDemand>,
+    /// Ratsnest crossings as a placement cost (an experiment, off; `{}`
+    /// turns it on with the defaults): per net the minimum spanning tree
+    /// of its pins, and the pairs of tree lines of different nets that
+    /// cross. The legaliser and the refinement pay `weight` mm of
+    /// wirelength per crossing the moved part's nets make, and the
+    /// layout's race ranks the seeds' placements by their crossings beside
+    /// the congestion score (docs/placer.md, "Ratsnest crossings
+    /// (2026-10-24)").
+    #[serde(default)]
+    pub ratsnest_crossings: Option<KiCadRatsnestCrossings>,
     /// The router's configuration the guidance lowers with (set by the
     /// layout; the default otherwise).
     #[serde(skip)]
@@ -283,6 +293,7 @@ impl Default for KiCadBoardPlacerConfig {
             attached_marks: None,
             global_guidance: None,
             escape_demand: default_escape_demand(),
+            ratsnest_crossings: None,
             guidance_router: None,
         }
     }
@@ -366,6 +377,49 @@ impl Default for KiCadEscapeDemand {
             threshold: 0.5,
         }
     }
+}
+
+/// `KiCadBoardPlacerConfig::ratsnest_crossings`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct KiCadRatsnestCrossings {
+    /// Millimetres of wirelength one crossing costs in the legaliser and
+    /// the refinement (calibrated on the placement ablation's data: 2 to
+    /// 3 mm order the variants and our placements best).
+    pub weight: f64,
+    /// The legaliser pays for the crossings a spot adds.
+    pub legalise: bool,
+    /// The refinement pays for them.
+    pub refine: bool,
+    /// The layout's race ranks the seeds' placements by the sum of their
+    /// ranks by the congestion score and by the crossings.
+    pub rank_seeds: bool,
+}
+
+impl Default for KiCadRatsnestCrossings {
+    fn default() -> Self {
+        Self {
+            weight: 3.0,
+            legalise: true,
+            refine: true,
+            rank_seeds: true,
+        }
+    }
+}
+
+/// The nets whose spanning trees count for the crossings (escape demand's:
+/// two pins or more, not carried by a pour).
+pub(crate) fn crossing_nets(lowered: &LoweredPlacement) -> Vec<bool> {
+    let mut pins = vec![0usize; lowered.problem.net_weights.len()];
+    for component in &lowered.problem.components {
+        for pin in &component.pins {
+            pins[pin.net] += 1;
+        }
+    }
+    pins.iter()
+        .zip(&lowered.poured)
+        .map(|(pins, poured)| *pins >= 2 && !poured)
+        .collect()
 }
 
 /// The lowering's escape fact (`core::escape::Escape`): the track pitch,

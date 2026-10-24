@@ -458,66 +458,24 @@ fn ratsnest_crossings(
                 )
             })
             .collect();
-        if points.len() < 2 {
-            continue;
-        }
-        let mut in_tree = vec![false; points.len()];
-        let mut best = vec![(f64::INFINITY, 0usize); points.len()];
-        in_tree[0] = true;
-        for other in 1..points.len() {
-            best[other] = (distance(points[0].0, points[other].0), 0);
-        }
-        for _ in 1..points.len() {
-            let Some(next) = (0..points.len())
-                .filter(|index| !in_tree[*index])
-                .min_by(|a, b| best[*a].0.total_cmp(&best[*b].0))
-            else {
-                break;
-            };
-            in_tree[next] = true;
-            let from = best[next].1;
+        for (from, to) in
+            placer::crossings::spanning_tree(&points.iter().map(|(at, _)| *at).collect::<Vec<_>>())
+        {
             lines.push((
                 net,
                 points[from].0,
-                points[next].0,
-                points[from].1 && points[next].1,
+                points[to].0,
+                points[from].1 && points[to].1,
             ));
-            for other in 0..points.len() {
-                if !in_tree[other] {
-                    let d = distance(points[next].0, points[other].0);
-                    if d < best[other].0 {
-                        best[other] = (d, next);
-                    }
-                }
-            }
         }
     }
-    let orient = |a: [f64; 2], b: [f64; 2], c: [f64; 2]| {
-        (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
-    };
     let mut all = 0;
     let mut between_large = 0;
     for (index, first) in lines.iter().enumerate() {
-        let box_first = [
-            first.1[0].min(first.2[0]),
-            first.1[1].min(first.2[1]),
-            first.1[0].max(first.2[0]),
-            first.1[1].max(first.2[1]),
-        ];
         for second in &lines[index + 1..] {
-            if first.0 == second.0
-                || second.1[0].max(second.2[0]) < box_first[0]
-                || second.1[0].min(second.2[0]) > box_first[2]
-                || second.1[1].max(second.2[1]) < box_first[1]
-                || second.1[1].min(second.2[1]) > box_first[3]
+            if first.0 != second.0
+                && placer::crossings::lines_cross(first.1, first.2, second.1, second.2)
             {
-                continue;
-            }
-            let d1 = orient(first.1, first.2, second.1);
-            let d2 = orient(first.1, first.2, second.2);
-            let d3 = orient(second.1, second.2, first.1);
-            let d4 = orient(second.1, second.2, first.2);
-            if d1 * d2 < 0.0 && d3 * d4 < 0.0 {
                 all += 1;
                 if first.3 && second.3 {
                     between_large += 1;
@@ -1551,6 +1509,7 @@ mod tests {
             shared_halos: false,
             pieces: Vec::new(),
             escape: None,
+            crossings: None,
         }
     }
 

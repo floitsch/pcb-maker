@@ -300,6 +300,10 @@ pub struct KiCadBoardLayoutResult {
 pub struct KiCadCongestionRanking {
     pub scores: Vec<f64>,
     pub probed: Vec<usize>,
+    /// Each placement's ratsnest crossings, where they rank the seeds
+    /// beside the score (`ratsnest_crossings.rank_seeds`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub crossings: Option<Vec<u64>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1294,6 +1298,43 @@ pub fn layout_kicad_board(
         // (laptop power: RUDY picked a touching seed, 18 connections open
         // against 9 for the best of the five that needed no touching).
         let mut order = ranked.order.clone();
+        // Ratsnest crossings beside the score: the placements by the sum
+        // of their ranks by the score and by the crossings (a tie to the
+        // better score).
+        let crossings = placer_config
+            .ratsnest_crossings
+            .as_ref()
+            .filter(|crossings| crossings.rank_seeds)
+            .map(|_| {
+                let fact = placer::crossings::Crossings {
+                    counted: crate::board_placer::crossing_nets(&problem),
+                    weight: 0.0,
+                    legalise: false,
+                    refine: false,
+                };
+                pool.iter()
+                    .map(|(poses, _)| placer::crossings::total(&problem.problem, &fact, poses))
+                    .collect::<Vec<u64>>()
+            });
+        if let Some(counts) = &crossings {
+            let mut score_rank = vec![0usize; pool.len()];
+            for (rank, index) in ranked.order.iter().enumerate() {
+                score_rank[*index] = rank;
+            }
+            let mut by_crossings: Vec<usize> = (0..pool.len()).collect();
+            by_crossings.sort_by_key(|index| (counts[*index], score_rank[*index]));
+            let mut crossing_rank = vec![0usize; pool.len()];
+            for (rank, index) in by_crossings.iter().enumerate() {
+                crossing_rank[*index] = rank;
+            }
+            order.sort_by_key(|index| {
+                (
+                    score_rank[*index] + crossing_rank[*index],
+                    score_rank[*index],
+                )
+            });
+            eprintln!("placement pre-ranking: ratsnest crossings {counts:?}, order {order:?}");
+        }
         order.sort_by_key(|index| {
             (
                 pool[*index].1.courtyard_spacing,
@@ -1345,6 +1386,7 @@ pub fn layout_kicad_board(
         congestion = Some(KiCadCongestionRanking {
             scores: ranked.scores,
             probed: keep,
+            crossings,
         });
     }
     let mut race = Vec::new();

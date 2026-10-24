@@ -8,6 +8,7 @@
 pub mod anneal;
 mod buckets;
 pub mod constraints;
+pub mod crossings;
 pub mod escape;
 pub mod global;
 pub mod guidance;
@@ -652,7 +653,14 @@ fn finish(problem: &Problem, poses: &mut [Pose], passes: usize, debug: bool) {
         state.measure_from_now(poses);
         state
     });
-    legal::refine_with(problem, poses, passes, escape.as_mut());
+    // Ratsnest crossings: one state through the refinements.
+    let mut crossings = problem
+        .crossings
+        .as_deref()
+        .filter(|crossings| crossings.refine)
+        .map(|crossings| crossings::CrossingState::new(problem, crossings, poses));
+    let crossings_before = crossings.as_ref().map(|state| state.total());
+    legal::refine_with(problem, poses, passes, escape.as_mut(), crossings.as_mut());
     phase_line(debug, "refine", refine_mark);
     let repair_mark = mark();
     legal::center_edge_copper(problem, poses);
@@ -662,7 +670,7 @@ fn finish(problem: &Problem, poses: &mut [Pose], passes: usize, debug: bool) {
         if legal::repair_relations(problem, poses) == 0 {
             break;
         }
-        legal::refine_with(problem, poses, passes, escape.as_mut());
+        legal::refine_with(problem, poses, passes, escape.as_mut(), crossings.as_mut());
     }
     // Parts of a kind turned alike where it costs next to nothing.
     legal::align_orientations(problem, poses, 0.5);
@@ -672,6 +680,13 @@ fn finish(problem: &Problem, poses: &mut [Pose], passes: usize, debug: bool) {
             "placer: escape demand: {} measurements, {} kept moves",
             state.measurements,
             state.kept_moves()
+        );
+    }
+    if debug && let (Some(state), Some(before)) = (crossings.as_mut(), crossings_before) {
+        state.resync(poses);
+        eprintln!(
+            "placer: ratsnest crossings {before} -> {} in the refinement",
+            state.total()
         );
     }
 }

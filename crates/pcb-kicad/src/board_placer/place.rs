@@ -123,6 +123,16 @@ pub fn place_kicad_board(
             measured,
         )));
     }
+    if let Some(crossings) = &config.ratsnest_crossings
+        && (crossings.legalise || crossings.refine)
+    {
+        lowered.problem.crossings = Some(std::sync::Arc::new(core::crossings::Crossings {
+            counted: crossing_nets(&lowered),
+            weight: crossings.weight,
+            legalise: crossings.legalise,
+            refine: crossings.refine,
+        }));
+    }
     let mut placer_config = core::Config::new();
     placer_config.global.whitespace_fill = config.whitespace_fill;
     placer_config.global.routing_demand = config.routing_demand;

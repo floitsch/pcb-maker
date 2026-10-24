@@ -535,6 +535,7 @@ mod tests {
             shared_halos: false,
             pieces: Vec::new(),
             escape: None,
+            crossings: None,
         }
     }
 

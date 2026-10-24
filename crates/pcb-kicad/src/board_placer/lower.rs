@@ -1316,6 +1316,7 @@ pub(crate) fn lower_placement(
         far_side_pads_only: false,
         shared_halos: config.shared_halos,
         escape: None,
+        crossings: None,
         pieces: loops.pieces.clone(),
         constraints: Default::default(),
     };

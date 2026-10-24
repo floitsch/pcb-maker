@@ -2932,6 +2932,7 @@ mod tests {
             far_side_pads_only: false,
             shared_halos: false,
             escape: None,
+            crossings: None,
             pieces: Vec::new(),
             constraints: Default::default(),
         };
