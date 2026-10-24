@@ -13,7 +13,9 @@ used to be here; code comments and docs that cite `docs/handover.md,
 `layout-kicad-board` reads the board in a canonical order (footprints by
 reference, their pads and graphics sorted, so two saves of one design lay
 out alike), places the free footprints (ePlace-style global placement from
-a canonical orientation, annealing, legalisation and refinement; up to 16
+a canonical orientation, annealing, legalisation and refinement, with
+the escape demand of each part's sides in the density, the rotations,
+the legaliser and the refinement since 2026-10-24; up to 16
 placer seeds run in a pool of the search threads and are judged in seed
 order; the race ranks them by RUDY and probes the best three with a 75 s
 route), routes the board with the lattice router (PathFinder negotiation;

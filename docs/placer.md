@@ -906,7 +906,7 @@ free-dimension change.
 
 ## Escape demand (2026-10-23)
 
-`escape_demand` (placer option, an experiment, off; `{"weight",
+`escape_demand` (placer option, on since 2026-10-24, `null` turns it off; `{"weight",
 "inflate", "turn_tolerance", "measured", "measure_every",
 "threshold"}`, defaults 2 mm, 1, 0.05, on, 20, 0.5). The plan agreed
 with Florian: put the routing structure where the placement is made,
@@ -1085,6 +1085,35 @@ Proposed: `escape_demand` on by default, after a seed-repeated pair on
 the dense boards (the same rule) confirms the sum; the switch stays as
 the override (`{"escape_demand": null}` turns it off once the default
 is `Some`).
+
+### Seed confirmation and the default (2026-10-24)
+
+Two more pairs on the eleven dense boards, the placer's seed set moved
+whole (`--placer '{"seed": 101}'` and `201`: the race's 16 seeds start
+there; seed 1 is the default, the pair above, and seed 2 would share 15
+of its 16), x1752 (main 85cafb7, the switch off by default) both sides,
+5 x 2 capped at six layouts in flight, `build/escape2-dense-s{101,201}-{off,on}`.
+Seed 1's pair is x1751's above (the same placer and router code). KiCad
+unconnected per board:
+
+{table}
+
+The summed medians fall 968 to 933 (-3.6 %), and every one of the three
+pairs falls on its own sum (seed 1: 973 to 903, 101: 951 to 919, 201:
+1132 to 1019); by the median 6 boards are better and 5 worse. Better
+on all three pairs: 4in1 and DSP-ADAU1452 (on 9, 11, 35 against 15, 40,
+37); the 0xCB panel is worse on two and equal on one (53-57 against
+48-53); the other seven split 2 to 1 either way: SmartSpin2k, MegaDrive
+and split72_left better on two, video (on 188-197, off 128-347: off
+spreads widely, on does not), 4in1-mini, Glasgow, SNSP-CPU-01 and
+protoesp worse on two. The first route's open terminals rise in the summed medians
+(1300 to 1437), all of it the 0xCB panel (77 to 243); without it they
+fall 1223 to 1194. The short tier's single pair lost nothing (above).
+By the rule (dense sum down, short tier not worse) the default is on
+since 2026-10-24: `escape_demand` absent means the defaults above;
+`{"escape_demand": null}` gives the placement before it (checked: the
+same board byte for byte as main on 4in1-mini). `place-kicad-board`
+runs on the estimate alone (no router rules, so no measured version).
 
 ## Routes survive moves (2026-10-23)
 

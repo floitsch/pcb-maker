@@ -11,6 +11,59 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-24 (escape demand on by default)
+
+The seed confirmation the escape-demand experiment proposed (docs/placer.md,
+"Seed confirmation and the default (2026-10-24)"). Branch
+escape-demand-default.
+
+- **The default**: `escape_demand` is on (`KiCadBoardPlacerConfig`'s
+  default and the field's serde default); `{"escape_demand": null}` turns
+  it off and places as before (4in1-mini byte for byte). The measured
+  version runs only where the layout hands the placer its router
+  configuration; `place-kicad-board` (no rules) runs on the estimate
+  without trying the lowering (it printed a failed lowering per
+  refinement before).
+- **The confirmation**: two more seed sets (`seed` 101 and 201, the race's
+  16 seeds start there) off and on on the eleven dense boards (x1752),
+  with the first pair (x1751, seed 1) three pairs a board:
+
+| Board | off: seeds 1, 101, 201 | off median (range) | on: seeds 1, 101, 201 | on median (range) | first route open, median off / on |
+| --- | --- | ---: | --- | ---: | ---: |
+| OpenESC 4in1 | 79, 87, 91 | 87 (79-91) | 73, 68, 90 | 73 (68-90) | 159 / 142 |
+| OpenESC 4in1-mini | 37, 36, 39 | 37 (36-39) | 57, 28, 63 | 57 (28-63) | 63 / 87 |
+| split72_left | 38, 36, 19 | 36 (19-38) | 20, 27, 29 | 27 (20-29) | 39 / 46 |
+| video | 165, 128, 347 | 165 (128-347) | 188, 190, 197 | 190 (188-197) | 228 / 241 |
+| DSP-ADAU1452 | 15, 40, 37 | 37 (15-40) | 9, 11, 35 | 11 (9-35) | 88 / 63 |
+| Glasgow | 148, 162, 192 | 162 (148-192) | 150, 163, 170 | 163 (150-170) | 169 / 182 |
+| SmartSpin2k | 80, 53, 50 | 53 (50-80) | 43, 61, 46 | 46 (43-61) | 55 / 49 |
+| 0xCB panel | 53, 48, 49 | 49 (48-53) | 53, 57, 56 | 56 (53-57) | 77 / 243 |
+| SNSP-CPU-01 | 91, 109, 132 | 109 (91-132) | 107, 132, 85 | 107 (85-132) | 124 / 119 |
+| MegaDrive | 191, 157, 116 | 157 (116-191) | 126, 99, 174 | 126 (99-174) | 174 / 162 |
+| protoesp | 76, 95, 60 | 76 (60-95) | 77, 83, 74 | 77 (74-83) | 124 / 103 |
+| sum of medians | | 968 | | 933 | 1300 / 1437 |
+
+  Summed medians 968 to 933 (-3.6 %); each pair's sum falls (973 to 903,
+  951 to 919, 1132 to 1019); better 6, worse 5 by the median. Better on
+  all three pairs: 4in1 and DSP-ADAU1452; worse on none of the three
+  but the 0xCB panel on two (one equal); the other seven split 2 to 1
+  either way (video worse on two: 188 and 190 against 165 and 128, its
+  off side spreading 128-347). The short tier's pair (x1751) lost nothing: 22 to 18
+  unconnected, passes 6 to 6.
+- **0xCB 1337-v4.0's 725 s** (short tier, on): not a disagreement between
+  our connectivity and KiCad's. KiCad found nothing unconnected on the
+  first route's board (selected-net unconnected 0, router 0 open); it
+  found a starved thermal, and the layout's rule runs the pours-as-tracks
+  ladder for starved thermals alone (`current.1 > 0` in
+  `board_layout.rs`): 6 attempts, 596 s of search, none kept (each left 1
+  or 2 open). The board kept was the first route's, its starved pad made
+  solid afterwards by `solidify_starved_thermals` in one KiCad check; the
+  final DRC has no starved thermal and the same findings as the off side
+  (annular_width 13, footprint_type_mismatch 10, both the designer's).
+  The rule is the cost: where only thermals are starved, solidifying
+  first (one check) would avoid the ladder; left to the final-route flow's
+  owner.
+
 ## Committed on 2026-10-23 (routes survive moves; the narrow step's bound)
 
 Two things, one measurement. Branch keep-routes-across-moves, on main

@@ -217,13 +217,13 @@ pub struct KiCadBoardPlacerConfig {
     /// parts first (docs/global-route.md, "Phase 2").
     #[serde(default)]
     pub global_guidance: Option<KiCadGlobalGuidance>,
-    /// Escape demand in placement (an experiment, off): where each part's
-    /// nets leave its body, and the channels between parts that must
-    /// carry them, shape the global placement's density, the rotation
-    /// choice, the legaliser and the refinement; the refinement corrects
-    /// the estimate by the global route's overflow attribution
-    /// (docs/placer.md, "Escape demand (2026-10-23)").
-    #[serde(default)]
+    /// Escape demand in placement (on; `null` turns it off): where each
+    /// part's nets leave its body, and the channels between parts that
+    /// must carry them, shape the global placement's density, the rotation
+    /// choice, the legaliser and the refinement; in a layout the
+    /// refinement corrects the estimate by the global route's overflow
+    /// attribution (docs/placer.md, "Escape demand (2026-10-23)").
+    #[serde(default = "default_escape_demand")]
     pub escape_demand: Option<KiCadEscapeDemand>,
     /// The router's configuration the guidance lowers with (set by the
     /// layout; the default otherwise).
@@ -280,7 +280,7 @@ impl Default for KiCadBoardPlacerConfig {
             keep_board_marks: true,
             attached_marks: None,
             global_guidance: None,
-            escape_demand: None,
+            escape_demand: default_escape_demand(),
             guidance_router: None,
         }
     }
@@ -324,6 +324,10 @@ pub(super) fn routing_room(
 
 fn default_edge_keep_mm() -> f64 {
     3.0
+}
+
+fn default_escape_demand() -> Option<KiCadEscapeDemand> {
+    Some(KiCadEscapeDemand::default())
 }
 
 /// `KiCadBoardPlacerConfig::escape_demand`.

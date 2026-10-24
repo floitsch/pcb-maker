@@ -26,7 +26,7 @@ The environment variables are indexed in the hand-over
 |---|---|---|---|---|---|
 | [Router settings](#router-settings) | 92 | 77 | 15 | 92 | 35 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 0 |
-| [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 0 |
+| [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 1 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
 | [Router settings: net_classes entries](#router-settings-net_classes-entries) | 6 | 6 | 0 | 6 | 1 |
 | [Router settings: connection rules](#router-settings-connection-rules) | 4 | 4 | 0 | 4 | 0 |
@@ -34,7 +34,7 @@ The environment variables are indexed in the hand-over
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 9 | - | 2 | 9 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 65 | - | 0 | 65 | - |
-| [Placer settings](#placer-settings) | 48 | 44 | 4 | 48 | 19 |
+| [Placer settings](#placer-settings) | 48 | 44 | 4 | 48 | 20 |
 | [Layout settings](#layout-settings) | 19 | 19 | 0 | 19 | 8 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 2 |
@@ -168,7 +168,7 @@ The `pin_swap` object of the router and the layout settings (the pin-swap estima
 | `pin_swap.maximum_net_pads` | `usize` | `12` | - | Nets with more pads than this (power, ground) are left out of the estimate: they are poured or routed wide anyway. |
 | `pin_swap.body_crossing_cost_mm` | `f64` | `10.0` | - | Millimetres charged when a ratsnest line runs through the pad field of a surface-mount part with at least four pads (a detour around it). |
 | `pin_swap.moves_per_unit` | `usize` | `2000` | - | Annealing moves per unit. |
-| `pin_swap.seed` | `u64` | `0` | - | Seed of the annealing's moves. |
+| `pin_swap.seed` | `u64` | `0` | placer.md | Seed of the annealing's moves. |
 
 ## Router settings: add_pours entries
 
@@ -338,7 +338,7 @@ The placer config file of `place-kicad-board`, and the `placer` object of the la
 | `halo_overrides_mm` | `BTreeMap<String, f64>` | `{}` | - | Per-reference halos replacing the pin-count rule (routing feedback). |
 | `maximum_utilization` | `f64` | `0.6` | - | Share of the free board that bodies, halos and spacing may claim. |
 | `edge_margin_mm` | `f64` | `0.5` | - | Distance movable courtyards keep from the board edge (at least the copper-to-edge clearance, since pads may reach the courtyard). |
-| `seed` | `u64` | `1` | - | The global placement's seed for the first of the `placement_seeds`; seed k of the race uses this plus k. |
+| `seed` | `u64` | `1` | placer.md | The global placement's seed for the first of the `placement_seeds`; seed k of the race uses this plus k. |
 | `deadline` (internal) | `Option<std::time::Instant>` | unset (internal) | - | Wall-clock time by which placement returns its best result (set by the layout from its budget; placement of a 404-part panel ran past 25 minutes). |
 | `work_seconds` (internal) | `Option<f64>` | unset (internal) | - | Placement work each seed may do, in seconds of an idle machine (see `core::work_per_second`): set by the layout from its budget, so that a busy or a slower machine places the same way. |
 | `overlap_far_side_pads` | `bool` | `false` | - | Where the project lets courtyards overlap, a part may reach over other parts' pads on its side at the last placement levels, keeping only copper apart (as katia's designer put connectors partly over hot-swap socket pads). Off by default: such pads may carry a body. |
@@ -369,7 +369,7 @@ The placer config file of `place-kicad-board`, and the `placer` object of the la
 | `keep_board_marks` | `bool` | `true` | placer.md | The board's own texts (header pin names, a title) and silkscreen graphics (a logo, a frame around a group) stay where the input put them: each is a placement obstacle on its side with a keepout's semantics (texts on F.SilkS, B.SilkS, F.Cu and B.Cu by their box from font size, thickness and justification; graphics on the silkscreen by their strokes, in clusters, leaving out a cluster that spans most of the board; a part meets a silkscreen mark without its routing halo; a mark on a movable part at its input position belongs to that part and is none: `attached_marks` in `board-placer.json`), and a part that finds no room off them at a level lies on them (`parts_on_marks` in `board-placer.json`); the layout routes around copper texts instead of moving them afterwards, and the polish moves only the parts' reference and value labels. Movable parts whose silkscreen or pads lie on a mark are reported (`labels.overlaps` in `board-layout.json`, the verdict's next_actions); fixed parts on a mark get a warning. On; off: the behaviour before 2026-10-21 (the marks are no obstacles, the polish moves them off the parts). |
 | `attached_marks` (internal) | `Option<Vec<(usize, usize)>>` | unset (internal) | - | The board's marks that belong to a movable part, taken from the input (`attach_marks`: the mark's place among the board's marks, the part); set by the layout for the lowerings of the placed board, where the parts no longer lie where the input had them. |
 | `global_guidance` | `Option<KiCadGlobalGuidance>` | unset | - | The global route inside the placer's search (an experiment, off): the anneal re-evaluates the global route of its placement and prefers moves away from overflowing boundaries, proposing the parts whose nets cross them more often; the coupled loop moves those parts first (docs/global-route.md, "Phase 2"). |
-| `escape_demand` | `Option<KiCadEscapeDemand>` | unset | placer.md | Escape demand in placement (an experiment, off): where each part's nets leave its body, and the channels between parts that must carry them, shape the global placement's density, the rotation choice, the legaliser and the refinement; the refinement corrects the estimate by the global route's overflow attribution (docs/placer.md, "Escape demand (2026-10-23)"). |
+| `escape_demand` | `Option<KiCadEscapeDemand>` | `{"inflate":1.0,"measure_every":20,"measured":true,"threshold":0.5,"turn_tolerance":0.05,"weight":2.0}` | placer.md | Escape demand in placement (on; `null` turns it off): where each part's nets leave its body, and the channels between parts that must carry them, shape the global placement's density, the rotation choice, the legaliser and the refinement; in a layout the refinement corrects the estimate by the global route's overflow attribution (docs/placer.md, "Escape demand (2026-10-23)"). |
 | `guidance_router` (internal) | `Option<KiCadBoardRouterConfig>` | unset (internal) | - | The router's configuration the guidance lowers with (set by the layout; the default otherwise). |
 
 ## Layout settings

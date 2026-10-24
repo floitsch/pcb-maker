@@ -103,17 +103,18 @@ pub fn place_kicad_board(
         eprintln!("warning: {warning}");
     }
     if let Some(escape) = &config.escape_demand {
-        let measured = if escape.measured {
-            let router_config = config.guidance_router.clone().unwrap_or_default();
-            Some(self::guidance::measured_factory(
+        // The measured version lowers the board as the layout routes it,
+        // with the layout's router configuration (its rules): a placement
+        // alone has none and runs on the estimate.
+        let measured = match (&config.guidance_router, escape.measured) {
+            (Some(router_config), true) => Some(self::guidance::measured_factory(
                 &pcb,
                 &lowered.references,
-                &router_config,
+                router_config,
                 config.keep_board_marks,
                 escape.threshold,
-            )?)
-        } else {
-            None
+            )?),
+            _ => None,
         };
         lowered.problem.escape = Some(std::sync::Arc::new(escape_fact(
             escape,
