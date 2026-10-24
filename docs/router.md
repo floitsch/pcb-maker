@@ -689,7 +689,8 @@ KiCad 10.0.7's DRC reads it:
   `track_width` min, max and opt per net (a rule's minimum also floors
   the neck-downs and the narrow-signal width of the nets it matches: the
   router's `width_floor`), and per layer where the rule holds on some
-  layers only (since 2026-10-24, below), `via_diameter`, `hole_size` (vias) and
+  layers only (since 2026-10-24, below), `connection_width` min as a
+  track width minimum (since 2026-10-24, below), `via_diameter`, `hole_size` (vias) and
   `annular_width` per net, and `edge_clearance`, `hole_clearance` and
   `hole_to_hole` for the board (the router has one value each). A
   clearance that no per-net value keeps exactly is a pair rule of the
@@ -762,8 +763,53 @@ KiCad 10.0.7's DRC reads it:
   0.16 (`approximated`). The layer clearance of the same file was exact
   before (a pair rule per layer). Boards without such a rule build the
   same classes, variants and stamps as before. What remains approximated:
-  via rules on some layers (a through via is on every layer), SMD against
+  via rules on some layers (below: no benchmark board has one), SMD against
   plated pads, one value for the board's edge and hole clearances.
+
+  **Connection width** (2026-10-24). A custom `connection_width` rule's
+  minimum is a floor on the width of the tracks of the nets it holds for,
+  lowered as a `track_width` minimum: per net, or per layer where it
+  holds on some layers only (`Lowered::layer_width_min`, into
+  `NetRules::layer_widths`), the neck-downs with it (a neck is never
+  narrower than its layer's minimum), reported `applied` ("connection
+  width at least 0.15 mm: a floor on the track width"); its max and opt
+  mean nothing to KiCad and are not read. KiCad checks the union of a
+  net's copper on each layer ("KiCad's connection width (necks)"
+  below); the router's share of it is the width of what it lays. It
+  floors where the project (or the rule's own `(severity ...)`) rates
+  connection_width findings errors and, by default, warnings
+  (`PCB_MIN_CONNECTION_FLOOR=errors`: errors only; `BoardFacts::
+  connection_floor_warnings`); the board setup's `min_connection` alike,
+  on every layer (the floor folded into each layer's bounds). No board of
+  the corpus has a custom connection_width rule; the board setup's minimum
+  is above the board's minimum track width on OpenESC's two 4in1 boards
+  only (0.16 over 0.09, warning) of the 60 benchmark boards with a
+  .kicad_dru or in the expansion tier, so the new default moves those two
+  alone: their inner layers route at 0.16 again, as the designer's do
+  (no track of the designer's narrower than 0.16 on any layer).
+
+  **Via rules on some layers** (census 2026-10-24). KiCad 10.0.7, measured
+  with kicad-cli on a four-layer board with one through via (0.4/0.2 mm)
+  and one rule at a time: a `hole_size` rule holds whatever its
+  `(layer ...)` (the drill is one); `via_diameter` and `annular_width`
+  are evaluated on F.Cu alone for a via of one size (its padstack's every
+  layer is F.Cu), so a rule on `outer` or `F.Cu` holds and one on `inner`
+  or `B.Cu` only never fires; `disallow via` with any layer clause
+  catches a through via, a condition `A.Layer == 'In1.Cu'` does not. The
+  lowering takes a via rule where any of its layers holds (`approximated`):
+  exact for hole sizes and for rules that include F.Cu, more than KiCad
+  asks (never an error) for diameter and annulus rules on inner or back
+  layers only. On the 14 boards with a .kicad_dru and the expansion tier's
+  46 no via rule has a layer clause or a layer condition except minuet
+  light's and FUEL4EP's "Annular ring width (via and PTH)" (`(layer
+  outer)`, 0.075 mm, `no_effect`: the classes keep more; exact, outer
+  includes F.Cu); none has `via_count` or `disallow via`. Their other via
+  rules (`via_diameter`, `hole_size`, `annular_width` on every layer:
+  JLCPCB's and PCBWay's templates on the laptop boards, tuxkeychain,
+  ErgoSNM, AMLing2's drone carrier, the power manifold) are `no_effect`
+  (the classes and the board setup keep them) except the power manifold's
+  two that depend on the via's own size (`unmodelled`). Nothing was
+  changed for vias: no board asks.
 
   What the lowering cannot do yet (the edge clearance from NPTH slots
   and Margin graphics it does since 2026-10-21, "Board edges and copper
@@ -1798,13 +1844,17 @@ widths, the narrow-signal width and the neck width (`project_rules.rs`,
 lowering raises every class and the neck to it again, so a configuration
 file's or a requested net class's widths keep it as well; stubs, escapes,
 manual and inner spokes take their net's class or neck width, and the
-neck repair's tracks are the minimum rounded up to a micron. At warning
-severity (KiCad's default) there is no floor by default: a warning does
-not fail the pass rule, and on OpenESC (minimum 0.16, classes 0.09, the
-only corpus boards where it matters) the floor cost routing in route mode
-(4in1-mini 52 to 89 unconnected, 4in1 104 to 121) for 199+ warnings
-gone. `PCB_MIN_CONNECTION_FLOOR=warning` floors warnings too, `off`
-never; `ignore` never floors. `board-router.json`'s `rules` names the
+neck repair's tracks are the minimum rounded up to a micron. Since
+2026-10-24 warning severity (KiCad's default) floors as well, and so does
+a custom `connection_width` rule (per layer where it has a layer clause:
+"Project rules" above). Until then a warning set no floor (a warning
+does not fail the pass rule, and on OpenESC, minimum 0.16 over classes of
+0.09, the only benchmark boards where it matters, the floor cost routing
+in route mode on 2026-10-15: 4in1-mini 52 to 89 unconnected, 4in1 104 to
+121); once the widths were per layer the inner layers routed at 0.09 and
+KiCad reported 225 connection_width warnings where the designer's boards
+have 1 and 0 (changelog, "connection width floor"). `PCB_MIN_CONNECTION_FLOOR=errors`
+floors errors only, `off` never; `ignore` never floors. `board-router.json`'s `rules` names the
 floor, the severity, the narrowest class width and the neck width the
 board was routed with.
 
