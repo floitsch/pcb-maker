@@ -183,6 +183,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "overrides the router's `capacitated_corridors` (`0` off, anything else on; off by default): the negotiation's corridors from the global route with hard capacities, a search that misses its corridor lowering the capacity of the boundary it failed at and re-planning the nets through it (docs/router.md, \"Capacitated corridors (2026-10-24)\"; an experiment).",
     ),
     (
+        "PCB_ROUTER_CAPACITATED_GROWTH",
+        Kind::Switch,
+        "the router's `capacitated_growth` (default 0; with `capacitated_corridors`): the capacitated corridor grows by a plan tile every this many reroutes of the net, as the tile planner's corridors grow; 0 keeps one tile (docs/router.md, \"Capacitated corridors (2026-10-24)\").",
+    ),
+    (
         "PCB_ROUTER_CAPACITATED_STUCK",
         Kind::Switch,
         "the router's `capacitated_stuck` (default 4; with `capacitated_corridors`): a net in conflict for this many iterations running lowers the capacity of its global route's boundary with the most conflicts, every second iteration; 0 turns that learning off (docs/router.md, \"Capacitated corridors (2026-10-24)\").",

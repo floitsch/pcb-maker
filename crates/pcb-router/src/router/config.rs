@@ -203,6 +203,11 @@ pub struct Config {
     /// with the most conflicts loses a track, every second iteration); 0
     /// turns that off (`PCB_ROUTER_CAPACITATED_STUCK`, 4).
     pub capacitated_stuck: usize,
+    /// With `capacitated_corridors`: the capacitated corridor grows by a
+    /// plan tile every this many reroutes of the net (at most ten), as the
+    /// tile planner's corridors grow; 0, the default, keeps one tile
+    /// (`PCB_ROUTER_CAPACITATED_GROWTH`).
+    pub capacitated_growth: usize,
     /// Cost factor for a trace step on a node covered by another net's
     /// pour, and for a via through one: cutting a plane is expensive.
     pub plane_cut_cost: f64,
@@ -386,6 +391,10 @@ impl Default for Config {
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(4),
+            capacitated_growth: std::env::var("PCB_ROUTER_CAPACITATED_GROWTH")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0),
             parallel: true,
             via_reduction_rounds: 3,
             via_reduction_factor: 2.0,

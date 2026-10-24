@@ -163,12 +163,18 @@ impl Router {
         }
         let frame = state.frame;
         let tiles = frame.tiles();
+        // One plan tile around the route; with `capacitated_growth`, one
+        // more every that many reroutes (as the tile planner widens).
+        let margin = match self.config.capacitated_growth {
+            0 => 1,
+            every => (1 + net_state.reroutes / every).min(10),
+        };
         let mut marked = vec![false; tiles];
         for state_index in state.plan.states(net) {
             let tile = *state_index as usize % tiles;
             let (x, y) = (tile % frame.tiles_x, tile / frame.tiles_x);
-            for ty in y.saturating_sub(1)..=(y + 1).min(frame.tiles_y - 1) {
-                for tx in x.saturating_sub(1)..=(x + 1).min(frame.tiles_x - 1) {
+            for ty in y.saturating_sub(margin)..=(y + margin).min(frame.tiles_y - 1) {
+                for tx in x.saturating_sub(margin)..=(x + margin).min(frame.tiles_x - 1) {
                     marked[ty * frame.tiles_x + tx] = true;
                 }
             }

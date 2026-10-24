@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 93 | 78 | 15 | 93 | 35 |
+| [Router settings](#router-settings) | 93 | 78 | 15 | 93 | 36 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 0 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 1 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
@@ -33,7 +33,7 @@ The environment variables are indexed in the hand-over
 | [Router report: rules](#router-report-rules) | 5 | - | 0 | 5 | - |
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 9 | - | 2 | 9 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
-| [Router core](#router-core) | 68 | - | 0 | 68 | - |
+| [Router core](#router-core) | 69 | - | 0 | 69 | - |
 | [Placer settings](#placer-settings) | 48 | 44 | 4 | 48 | 20 |
 | [Layout settings](#layout-settings) | 19 | 19 | 0 | 19 | 8 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
@@ -120,7 +120,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `escape_stub_mm` | `Option<f64>` | unset | router.md | Fixed escape stubs for fine-pitch pad rows, this long in mm (router `escape_stub_mm`; off by default). |
 | `fixed_plane_stubs` | `Option<bool>` | unset | router.md | Connect every pour-net pad to its plane by a fixed stub and via before the signals route (router `fixed_plane_stubs`). |
 | `trouble_repair` | `Option<bool>` | unset | router.md | The trouble-makers' repair after the hard repair (router `trouble_repair`; docs/experiments/human-level-routing.md): unset, the router's default; `PCB_ROUTER_TROUBLE` overrides this. |
-| `capacitated_corridors` | `Option<bool>` | unset | - | The negotiation's corridors from the global route with hard capacities, learning from the searches that miss them (router `capacitated_corridors`, an experiment; docs/router.md, "Capacitated corridors (2026-10-24)"): unset, the router's default; `PCB_ROUTER_CAPACITATED_CORRIDORS` overrides this. |
+| `capacitated_corridors` | `Option<bool>` | unset | router.md | The negotiation's corridors from the global route with hard capacities, learning from the searches that miss them (router `capacitated_corridors`, an experiment; docs/router.md, "Capacitated corridors (2026-10-24)"): unset, the router's default; `PCB_ROUTER_CAPACITATED_CORRIDORS` overrides this. |
 | `thermal_guard_cost` | `Option<f64>` | unset | router.md | Router `thermal_guard_cost`. |
 | `narrow_signal_mm` | `Option<f64>` | unset | - | The project's smallest predefined track width (its width menu), which designers use for signals where the class width is a power width (ohdsp's DSP board: class 0.5 mm, 0.135 mm in the menu and on most tracks). |
 | `use_narrow_signals` | `Option<bool>` | unset | - | Route signal nets at `narrow_signal_mm` (the ladder tries it when connections stay open at the class widths). |
@@ -293,6 +293,7 @@ One constraint of one rule of the project's `.kicad_dru`. Source: `KiCadCustomRu
 | `capacitated_corridors` | `bool` | `false` | `capacitated_corridors` | The negotiation's corridors come from a global route with hard capacities (pcb-global's, `crate::capacitated`): a net's corridor is its global route's tiles and one more around, the tile planner choosing inside it; a search that fails there lowers the capacity of the boundary it failed at, the global route plans the net and the nets through that boundary again, and the net searches its new corridor. Only a net without a global path falls back to the window and the board. An experiment, off (docs/router.md, "Capacitated corridors (2026-10-24)"); `PCB_ROUTER_CAPACITATED_CORRIDORS` overrides it. |
 | `capacitated_retries` | `usize` | `2` | - | With `capacitated_corridors`: how often a batch's nets that missed their corridor are routed again after a re-plan before they wait for the next iteration. |
 | `capacitated_stuck` | `usize` | `4` | - | With `capacitated_corridors`: a net in conflict for this many iterations running teaches the plan too (the boundary of its route with the most conflicts loses a track, every second iteration); 0 turns that off (`PCB_ROUTER_CAPACITATED_STUCK`, 4). |
+| `capacitated_growth` | `usize` | `0` | - | With `capacitated_corridors`: the capacitated corridor grows by a plan tile every this many reroutes of the net (at most ten), as the tile planner's corridors grow; 0, the default, keeps one tile (`PCB_ROUTER_CAPACITATED_GROWTH`). |
 | `plane_cut_cost` | `f64` | `3.0` | `plane_cut_cost` | Cost factor for a trace step on a node covered by another net's pour, and for a via through one: cutting a plane is expensive. |
 | `pour_integrity` | `f64` | `0.0` | `pour_integrity` | Weight of what a cut severs (default 0: off; two-layer boards only; 1 on the fence lost the 46 mm board's completeness): a step or via on a node of another net's pour fill where the fill is a narrow corridor that joins its pieces pays `plane_cut_cost` times `1 + 20 * weight * severed`, `severed` being the share of the pour the corridor's cut would split off from its largest part (`Router::refresh_sever`, recomputed from the fill model before every batch). It also lets the pour of a net routed as tracks price the cut (its fill, as KiCad would pour it, is `covered`). |
 | `plane_skeleton` | `bool` | `false` | `plane_skeleton` | Route every pour net first as a tree on its best-covered layer and keep that tree fixed: the pour then only adds copper, and signal routing cannot strand a pad on an island. |
