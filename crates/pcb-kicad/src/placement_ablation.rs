@@ -126,6 +126,14 @@ pub struct KiCadPlacementSignals {
     /// Exits that face another part's body within a channel's reach
     /// (`escape::CHANNEL_REACH`), summed over the parts.
     pub blocked_exits: usize,
+    /// Crossings of the ratsnest: each counted net's pins joined by their
+    /// minimum spanning tree (straight lines), the pairs of lines of two
+    /// nets that cross. Wirelength cannot tell two orders of the same
+    /// parts along a bus apart; the crossings can.
+    pub ratsnest_crossings: usize,
+    /// The same, only between lines whose both ends lie on parts of more
+    /// than `large_pads` pins (the buses between the large parts).
+    pub large_crossings: usize,
     /// Parts illegal in the placer's tightest model.
     pub illegal: usize,
     /// Pairs of parts that collide (`conflict`: pads within 0.1 mm, or one
@@ -422,6 +430,104 @@ type Measured = (
     Option<Vec<f64>>,
 );
 
+/// Each counted net's minimum spanning tree over its pins (Prim's, by
+/// straight distance) as lines, with whether both ends lie on parts of
+/// more than `large` pins; then the pairs of lines of different nets that
+/// cross (all, and those between two such lines).
+fn ratsnest_crossings(
+    problem: &placer::Problem,
+    fact: &escape::Escape,
+    members: &[escape::NetPins],
+    poses: &[placer::Pose],
+    count: usize,
+    large: usize,
+) -> (usize, usize) {
+    let mut lines: Vec<(usize, [f64; 2], [f64; 2], bool)> = Vec::new();
+    for (net, pins) in members.iter().enumerate() {
+        if !fact.counted.get(net).copied().unwrap_or(false) {
+            continue;
+        }
+        let points: Vec<([f64; 2], bool)> = pins
+            .iter()
+            .filter(|(part, _)| *part < count)
+            .map(|(part, pin)| {
+                let component = &problem.components[*part];
+                (
+                    component.pin_position(&component.pins[*pin], poses[*part]),
+                    component.pins.len() > large,
+                )
+            })
+            .collect();
+        if points.len() < 2 {
+            continue;
+        }
+        let mut in_tree = vec![false; points.len()];
+        let mut best = vec![(f64::INFINITY, 0usize); points.len()];
+        in_tree[0] = true;
+        for other in 1..points.len() {
+            best[other] = (distance(points[0].0, points[other].0), 0);
+        }
+        for _ in 1..points.len() {
+            let Some(next) = (0..points.len())
+                .filter(|index| !in_tree[*index])
+                .min_by(|a, b| best[*a].0.total_cmp(&best[*b].0))
+            else {
+                break;
+            };
+            in_tree[next] = true;
+            let from = best[next].1;
+            lines.push((
+                net,
+                points[from].0,
+                points[next].0,
+                points[from].1 && points[next].1,
+            ));
+            for other in 0..points.len() {
+                if !in_tree[other] {
+                    let d = distance(points[next].0, points[other].0);
+                    if d < best[other].0 {
+                        best[other] = (d, next);
+                    }
+                }
+            }
+        }
+    }
+    let orient = |a: [f64; 2], b: [f64; 2], c: [f64; 2]| {
+        (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+    };
+    let mut all = 0;
+    let mut between_large = 0;
+    for (index, first) in lines.iter().enumerate() {
+        let box_first = [
+            first.1[0].min(first.2[0]),
+            first.1[1].min(first.2[1]),
+            first.1[0].max(first.2[0]),
+            first.1[1].max(first.2[1]),
+        ];
+        for second in &lines[index + 1..] {
+            if first.0 == second.0
+                || second.1[0].max(second.2[0]) < box_first[0]
+                || second.1[0].min(second.2[0]) > box_first[2]
+                || second.1[1].max(second.2[1]) < box_first[1]
+                || second.1[1].min(second.2[1]) > box_first[3]
+            {
+                continue;
+            }
+            let d1 = orient(first.1, first.2, second.1);
+            let d2 = orient(first.1, first.2, second.2);
+            let d3 = orient(second.1, second.2, first.1);
+            let d4 = orient(second.1, second.2, first.2);
+            if d1 * d2 < 0.0 && d3 * d4 < 0.0 {
+                all += 1;
+                if first.3 && second.3 {
+                    between_large += 1;
+                }
+            }
+        }
+    }
+    (all, between_large)
+}
+
 /// The signals of one placement.
 #[allow(clippy::too_many_arguments)]
 fn signals(
@@ -434,6 +540,7 @@ fn signals(
     router_config: &KiCadBoardRouterConfig,
     references: &[String],
     threshold: f64,
+    large: usize,
 ) -> Result<Measured, String> {
     let exits = all_exits(problem, fact, members, poses, count);
     let (per, channels_over, channel_total) = channel_overflow(problem, fact, poses, &exits);
@@ -474,6 +581,7 @@ fn signals(
         .into_iter()
         .filter(|index| *index < count && !problem.components[*index].fixed)
         .count();
+    let (ratsnest, large_lines) = ratsnest_crossings(problem, fact, members, poses, count, large);
     let mut overlaps = 0;
     for a in 0..count {
         for b in a + 1..count {
@@ -509,6 +617,8 @@ fn signals(
             channel_overflow: channel_total,
             channels_over,
             blocked_exits: blocked,
+            ratsnest_crossings: ratsnest,
+            large_crossings: large_lines,
             illegal,
             overlaps,
             global,
@@ -1106,6 +1216,7 @@ pub fn ablate_kicad_placement(
             router_config,
             references,
             config.threshold,
+            config.large_pads,
         )
     };
     let mut variants = Vec::new();
