@@ -139,6 +139,7 @@ pub fn reference_class(board: &Board) -> RuleClass {
         clearance: 0.2,
         via_diameter: 0.6,
         via_drill: 0.3,
+        layers: 0,
     })
 }
 
@@ -634,6 +635,7 @@ pub(crate) mod tests {
                 clearance: 0.2,
                 via_diameter: 0.6,
                 via_drill: 0.3,
+                layers: 0,
             }],
             neck_width: 0.2,
             obstacles: Vec::new(),
@@ -668,6 +670,7 @@ pub(crate) mod tests {
             fill_passes: Vec::new(),
             pin_row_gaps: Vec::new(),
             terminal_copper: Vec::new(),
+            attachment: Default::default(),
         }
     }
 

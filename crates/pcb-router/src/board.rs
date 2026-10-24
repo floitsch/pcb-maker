@@ -19,6 +19,11 @@ pub struct RuleClass {
     pub clearance: f64,
     pub via_diameter: f64,
     pub via_drill: f64,
+    /// The layers the class's tracks may use (bits); 0: every layer. Its
+    /// vias pass through all of them. A differential pair's coupled run
+    /// (route mode's `diff_pairs`) keeps to the layers the pair's rules
+    /// give its width and gap on.
+    pub layers: LayerMask,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -197,6 +202,25 @@ pub struct Board {
     /// search ends on any of it. Empty but for route mode's differential
     /// pairs (`diff_pairs`), whose coupled tracks are kept copper on no pad.
     pub terminal_copper: Vec<TerminalCopper>,
+    /// What the adapter that lowered the board keeps with it to read back
+    /// with the routes (route mode's differential pairs: how the coupled
+    /// runs' nets map back to the pairs); the router ignores it.
+    pub attachment: Attachment,
+}
+
+/// Data an adapter attaches to a board (`Board::attachment`): shared, and
+/// opaque to the router, which neither reads it nor keys its maps on it.
+#[derive(Clone, Default)]
+pub struct Attachment(pub Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>);
+
+impl std::fmt::Debug for Attachment {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(if self.0.is_some() {
+            "Attachment(..)"
+        } else {
+            "Attachment(None)"
+        })
+    }
 }
 
 /// A copper obstacle of `net` that its terminal `terminal` reaches

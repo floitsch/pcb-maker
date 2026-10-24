@@ -1,24 +1,25 @@
 // Copyright (C) 2026 Toit contributors.
 
-//! Differential pairs, phase 1 (`diff_pairs`, docs/router.md
-//! "Differential pairs").
+//! Differential pairs (`diff_pairs`, docs/router.md "Differential
+//! pairs").
 //!
 //! Nets KiCad pairs by name (`diff_pair_of`: `D+`/`D-`, `TX_P`/`TX_N`,
-//! `USB_DP`/`USB_DN`) route as one coupled run before the other nets. A
-//! pair's pads sit side by side on each part it joins (a *pair point*);
-//! the pair points are linked by a minimum spanning tree, and each link is
-//! one net of a router of its own (the *pairs router*) whose track is the
-//! pair's envelope (two tracks and their gap: `2 w + g`) and whose via is
-//! two vias side by side, from a launch point just clear of one pair
-//! point's pads to one of the other's. The centreline found is offset by
-//! `(w + g) / 2` to either side into the pair's two tracks and its vias
-//! into a via of each net; what holds KiCad's clearances (`verify`) is
-//! written into the board as tracks of the two nets, which the route then
-//! keeps as it keeps a designer's (`kept`): the pads' stubs to the coupled
-//! run's ends are ordinary routing (uncoupled; where the pads' order
-//! crosses the run's, the stubs cross, with a via), and a link the pairs
-//! router does not finish or whose copper is refused leaves its
-//! connection to ordinary routing too (the pair *falls back*).
+//! `USB_DP`/`USB_DN`) route coupled. A pair's pads sit side by side on each
+//! part it joins (a *pair point*); the pair points are linked by a minimum
+//! spanning tree (pair points of one part are joined by ordinary routing),
+//! and each link is a net of the route itself (`plan_pairs`), negotiated
+//! with every other net: its track is the pair's envelope (two tracks and
+//! their gap: `2 w + g`), its via two vias side by side, from a *launch*
+//! clear of one pair point's pads to one of the other's, which straight
+//! stubs join to the pads. The pair's own nets lose the connections the
+//! links make (their pads at a link's ends are one terminal). When the
+//! route is written (`finish_pairs`), each link's centreline is offset by
+//! `(w + g) / 2` to either side into the pair's two tracks, its vias into a
+//! via of each net, and the stubs are added: what holds KiCad's clearances
+//! (`verify`, against everything routed) is the pair's copper. What a link
+//! left open (not routed, refused, a stub refused, the stubs of a crossed
+//! end) is routed for the pair's nets with everything else kept (the
+//! *fallback*).
 
 use super::*;
 use pcb_router as core;
@@ -35,11 +36,11 @@ pub struct KiCadDiffPairs {
     pub partly_coupled: usize,
     /// Pairs with no link coupled: routed as two ordinary nets.
     pub fallen_back: usize,
-    /// Links between pair points, and those coupled.
+    /// Links between pair points (of different parts), and those coupled.
     pub links: usize,
     pub links_coupled: usize,
     /// Coupled links whose pads' order crosses the run's at one end (the
-    /// stubs cross there; no pad swapping in phase 1).
+    /// stubs cross there: the fallback routes them).
     pub crossed: usize,
     /// The coupled runs' length (millimetres, along the positive net).
     pub coupled_mm: f64,
@@ -47,8 +48,8 @@ pub struct KiCadDiffPairs {
     /// per pair the longer net's track length less its coupled length
     /// (KiCad's uncoupled length), summed.
     pub uncoupled_mm: f64,
-    /// The pairs router's work (seconds of an idle machine), charged to
-    /// the ladder.
+    /// The fallback router's work (seconds of an idle machine), charged
+    /// to the ladder.
     pub work_seconds: f64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pairs: Vec<KiCadDiffPair>,
@@ -77,20 +78,33 @@ pub struct KiCadDiffPair {
 /// The largest distance between the centres of a pair's two pads on one
 /// part that makes them a pair point.
 const PAIR_POINT_SPAN: f64 = 3.0;
-/// The launch point's search: steps outward from between the pads.
+/// The launch's search: steps outward from between the pads, along
+/// directions turned from the pads' normal by these angles (degrees).
 const LAUNCH_STEP: f64 = 0.05;
 const LAUNCH_REACH: f64 = 4.0;
+const LAUNCH_ANGLES: [f64; 13] = [
+    0.0, 15.0, -15.0, 30.0, -30.0, 45.0, -45.0, 60.0, -60.0, 75.0, -75.0, 90.0, -90.0,
+];
+/// What a launch turned a right angle from the pads' normal costs, in
+/// millimetres of stub.
+const ANGLE_COST: f64 = 1.0;
 /// Room beyond the clearance around a launch point, so that lattice nodes
 /// next to it are legal.
 const LAUNCH_MARGIN: f64 = 0.15;
-/// The stubs tried: whole, then this share of their length from the run.
-const STUB_FRACTIONS: [f64; 4] = [1.0, 0.6, 0.35, 0.15];
+/// Launches closer than this make no coupled run: the pads' stubs are the
+/// whole connection.
+const MINIMUM_RUN: f64 = 1.0;
 /// The nodes a coupled search starts from: within this of the launch.
 const LAUNCH_CONTACT: f64 = 0.15;
-/// The pairs router's share of the ladder's budget, at least
+/// The fallback router's share of the ladder's budget, at least
 /// `MINIMUM_WORK` seconds.
-const WORK_SHARE: f64 = 0.15;
-const MINIMUM_WORK: f64 = 2.0;
+const WORK_SHARE: f64 = 0.05;
+const MINIMUM_WORK: f64 = 1.0;
+/// Other nets' copper within this of the pairs' copper is checked with it.
+const CHECK_REACH: f64 = 2.0;
+/// At a layer change the pair's two vias move apart along the bisector of
+/// the runs' normals by up to 1 / this (a right-angle turn).
+const VIA_TURN: f64 = 0.7;
 const EPSILON: f64 = 1.0e-9;
 
 type Point = [f64; 2];
@@ -127,8 +141,18 @@ fn unit(a: Point) -> Point {
 fn left(a: Point) -> Point {
     [-a[1], a[0]]
 }
+/// A direction turned by `degrees`.
+fn turned(a: Point, degrees: f64) -> Point {
+    let (sin, cos) = degrees.to_radians().sin_cos();
+    [a[0] * cos - a[1] * sin, a[0] * sin + a[1] * cos]
+}
+
+fn debug() -> bool {
+    std::env::var_os("PCB_ROUTER_DIFF_PAIRS_DEBUG").is_some()
+}
 
 /// A pair found on the board: its nets and its geometry.
+#[derive(Clone)]
 struct Pair {
     positive: core::NetId,
     negative: core::NetId,
@@ -140,9 +164,6 @@ struct Pair {
     source: String,
     /// The clearance of the two nets to others (the larger class's).
     clearance: f64,
-    /// The smallest distance KiCad lets the pair's two nets come
-    /// (the gap, or the classes' clearance where larger: never less than
-    /// the project lets them).
     via_diameter: f64,
     via_drill: f64,
     /// The board's hole clearance and hole to hole.
@@ -150,7 +171,8 @@ struct Pair {
     hole_to_hole: f64,
     /// Pair points: (positive terminal, negative terminal).
     points: Vec<(usize, usize)>,
-    /// Links: indices into `points`.
+    /// Links between pair points of different parts: indices into
+    /// `points`.
     links: Vec<(usize, usize)>,
 }
 
@@ -178,16 +200,12 @@ impl Pair {
 }
 
 /// One link's copper, offset from its centreline.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct LinkCopper {
     /// Per polarity (0 positive, 1 negative): segments (layer, start, end)
     /// and vias.
     segments: [Vec<(usize, Point, Point)>; 2],
     vias: [Vec<Point>; 2],
-    /// Straight stubs from the pads to the run's ends, per polarity
-    /// (layer, pad, end): at both ends where the pads' order is the run's,
-    /// at the start only where it crosses (`crossed`).
-    stubs: [Vec<(usize, Point, Point)>; 2],
     coupled: f64,
     crossed: bool,
 }
@@ -216,8 +234,8 @@ fn find_pairs(board: &core::Board, config: &KiCadBoardRouterConfig) -> Vec<Pair>
         let (class_p, class_n) = (board.classes[p.class], board.classes[n.class]);
         // The classes' clearance, raised to every custom pair clearance
         // that may hold for the pair's copper (ducktop2's 0.18 mm between
-        // vias and tracks over 0.15 classes): the pairs router and the
-        // vias' spacing keep it; the check of the copper holds the classes.
+        // vias and tracks over 0.15 classes): the coupled run and the vias'
+        // spacing keep it; the check of the copper holds the classes.
         let names = [n.name.as_str(), net.name.as_str()];
         let clearance = config
             .net_rules
@@ -276,6 +294,7 @@ fn find_pairs(board: &core::Board, config: &KiCadBoardRouterConfig) -> Vec<Pair>
                     && span > EPSILON
                     && reference(&ta.label) == reference(&tb.label)
                     && ta.layers & tb.layers != 0
+                    && !straddles(board, ta, tb, [positive, negative])
                 {
                     candidates.push((span, a, b));
                 }
@@ -292,13 +311,17 @@ fn find_pairs(board: &core::Board, config: &KiCadBoardRouterConfig) -> Vec<Pair>
             }
         }
         points.sort();
-        // A minimum spanning tree over the pair points (Prim).
+        // A minimum spanning tree over the pair points (Prim), where pair
+        // points of one part are joined first (at no cost) and by ordinary
+        // routing (a USB-C receptacle's two rows): only links between
+        // parts are coupled.
         let middle = |point: &(usize, usize)| {
             scale(
                 add(p.terminals[point.0].anchor, n.terminals[point.1].anchor),
                 0.5,
             )
         };
+        let part = |point: &(usize, usize)| reference(&p.terminals[point.0].label);
         let mut links = Vec::new();
         if points.len() >= 2 {
             let mut inside = vec![false; points.len()];
@@ -307,7 +330,11 @@ fn find_pairs(board: &core::Board, config: &KiCadBoardRouterConfig) -> Vec<Pair>
                 let mut best: Option<(f64, usize, usize)> = None;
                 for (i, a) in points.iter().enumerate().filter(|(i, _)| inside[*i]) {
                     for (j, b) in points.iter().enumerate().filter(|(j, _)| !inside[*j]) {
-                        let length = core::geometry::distance(middle(a), middle(b));
+                        let length = if part(a) == part(b) {
+                            0.0
+                        } else {
+                            core::geometry::distance(middle(a), middle(b))
+                        };
                         if best.is_none_or(|(known, _, _)| length < known) {
                             best = Some((length, i, j));
                         }
@@ -315,7 +342,9 @@ fn find_pairs(board: &core::Board, config: &KiCadBoardRouterConfig) -> Vec<Pair>
                 }
                 let (_, i, j) = best.expect("a point outside");
                 inside[j] = true;
-                links.push((i, j));
+                if part(&points[i]) != part(&points[j]) {
+                    links.push((i, j));
+                }
             }
         }
         pairs.push(Pair {
@@ -337,10 +366,68 @@ fn find_pairs(board: &core::Board, config: &KiCadBoardRouterConfig) -> Vec<Pair>
     pairs
 }
 
+/// Whether another net's copper lies between two pads (a pin between
+/// them: they are not side by side).
+fn straddles(
+    board: &core::Board,
+    a: &core::Terminal,
+    b: &core::Terminal,
+    nets: [core::NetId; 2],
+) -> bool {
+    let bounds = core::geometry::Aabb {
+        minimum: [a.anchor[0].min(b.anchor[0]), a.anchor[1].min(b.anchor[1])],
+        maximum: [a.anchor[0].max(b.anchor[0]), a.anchor[1].max(b.anchor[1])],
+    };
+    board.obstacles.iter().any(|obstacle| {
+        obstacle.kind == core::ObstacleKind::Copper
+            && obstacle.layers & a.layers & b.layers != 0
+            && obstacle.net.is_none_or(|net| !nets.contains(&net))
+            && obstacle.shape.aabb().intersects(bounds)
+            && obstacle.shape.distance_to_segment(a.anchor, b.anchor) < EPSILON
+    })
+}
+
+/// How far copper of `clearance` keeps from `obstacle`.
+fn keep_from(board: &core::Board, obstacle: &core::Obstacle, clearance: f64) -> f64 {
+    match obstacle.kind {
+        core::ObstacleKind::Copper => board.copper_clearance(
+            &core::RuleClass {
+                trace_width: 0.0,
+                clearance,
+                via_diameter: 0.0,
+                via_drill: 0.0,
+                layers: 0,
+            },
+            obstacle,
+        ),
+        core::ObstacleKind::Keepout => obstacle.clearance,
+        core::ObstacleKind::Hole => board.hole_clearance.max(obstacle.clearance),
+    }
+}
+
+/// The obstacles that block tracks within `reach` of `at`.
+fn obstacles_near(board: &core::Board, at: Point, reach: f64) -> Vec<usize> {
+    board
+        .obstacles
+        .iter()
+        .enumerate()
+        .filter(|(_, obstacle)| {
+            let bounds = obstacle.shape.aabb();
+            obstacle.blocks_tracks
+                && at[0] >= bounds.minimum[0] - reach
+                && at[0] <= bounds.maximum[0] + reach
+                && at[1] >= bounds.minimum[1] - reach
+                && at[1] <= bounds.maximum[1] + reach
+        })
+        .map(|(index, _)| index)
+        .collect()
+}
+
 /// The layers where a disc of `radius` (plus each obstacle's clearance)
-/// at `at` is clear of every obstacle and of the board edge.
+/// at `at` is clear of the obstacles `near` and of the board edge.
 fn clear_layers(
     board: &core::Board,
+    near: &[usize],
     at: Point,
     radius: f64,
     clearance: f64,
@@ -354,78 +441,569 @@ fn clear_layers(
     {
         return 0;
     }
-    let reach = radius + clearance.max(board.hole_clearance) + 2.0;
     let mut free = mask;
-    for obstacle in &board.obstacles {
-        if obstacle.layers & free == 0 || !obstacle.blocks_tracks {
+    for &index in near {
+        let obstacle = &board.obstacles[index];
+        if obstacle.layers & free == 0 {
             continue;
         }
-        let bounds = obstacle.shape.aabb();
-        if at[0] < bounds.minimum[0] - reach
-            || at[0] > bounds.maximum[0] + reach
-            || at[1] < bounds.minimum[1] - reach
-            || at[1] > bounds.maximum[1] + reach
-        {
-            continue;
-        }
-        let keep = match obstacle.kind {
-            core::ObstacleKind::Copper => board.copper_clearance(
-                &core::RuleClass {
-                    trace_width: 0.0,
-                    clearance,
-                    via_diameter: 0.0,
-                    via_drill: 0.0,
-                },
-                obstacle,
-            ),
-            core::ObstacleKind::Keepout => obstacle.clearance,
-            core::ObstacleKind::Hole => board.hole_clearance.max(obstacle.clearance),
-        };
-        if obstacle.shape.distance_to_point(at) < radius + keep {
+        if obstacle.shape.distance_to_point(at) < radius + keep_from(board, obstacle, clearance) {
             free &= !obstacle.layers;
         }
     }
     free
 }
 
-/// A launch point for a link at pair point `point` toward `toward`: the
-/// first point outward from between the two pads where the pair's
-/// envelope is clear, and the layers it is clear on.
+/// A launch: where a link's coupled run starts at a pair point, and where
+/// its net starts in the route.
+#[derive(Clone, Copy, Debug)]
+struct Launch {
+    /// Where the link's net starts: the end of the run's straight lead.
+    at: Point,
+    /// Where the run starts: the pads' stubs (ordinary routing of the
+    /// pair's nets) end beside it, an offset to either side.
+    start: Point,
+    /// Where the link's net's copper begins on the lead: its track clear
+    /// of the stubs' ends' copper, which reaches `ends` past the start.
+    reserved: Point,
+    ends: Point,
+    /// The run's direction away from the pads.
+    outward: Point,
+    /// The layer (a bit) the run starts on.
+    layers: core::LayerMask,
+    /// The side of the run the positive pad is on (1 left, -1 right).
+    side: f64,
+}
+
+/// The straight lead of a run from its start to its launch, at least, in
+/// offsets (`Pair::offset`): a turn of the search at the launch leaves the
+/// offset tracks room up to the miter limit (`offset_line`), away from the
+/// pads' stubs.
+const LEAD: f64 = 2.5;
+
+/// Where the part of a terminal (`REF.pad`) sits: the middle of its pads'
+/// copper, when it has more than the two given.
+fn part_middle(board: &core::Board, label: &str) -> Option<Point> {
+    let reference = label.rsplit_once('.').map(|(part, _)| part)?;
+    let prefix = format!("{reference}.");
+    let (mut sum, mut count) = ([0.0, 0.0], 0usize);
+    for obstacle in &board.obstacles {
+        if obstacle.kind == core::ObstacleKind::Copper
+            && obstacle
+                .label
+                .strip_prefix(&prefix)
+                .is_some_and(|pad| !pad.contains(' '))
+        {
+            let bounds = obstacle.shape.aabb();
+            sum = add(sum, scale(add(bounds.minimum, bounds.maximum), 0.5));
+            count += 1;
+        }
+    }
+    (count > 2).then(|| scale(sum, 1.0 / count as f64))
+}
+
+/// Whether a track of the pair's width from `at` to `to` on `layer`, of
+/// `net`, keeps its clearance from the obstacles `near` (`mate`'s, the
+/// pair's other net's, only the pair's gap).
+fn end_clear(
+    board: &core::Board,
+    near: &[usize],
+    pair: &Pair,
+    (at, to): (Point, Point),
+    layer: core::LayerMask,
+    net: core::NetId,
+) -> bool {
+    let mate = if net == pair.positive {
+        pair.negative
+    } else {
+        pair.positive
+    };
+    near.iter().all(|&index| {
+        let obstacle = &board.obstacles[index];
+        if obstacle.layers & layer == 0 || obstacle.net == Some(net) {
+            return true;
+        }
+        let mut keep = keep_from(board, obstacle, pair.clearance);
+        if obstacle.net == Some(mate) {
+            keep = keep.min(pair.gap);
+        }
+        obstacle.shape.distance_to_segment(at, to) >= pair.width / 2.0 + keep
+    })
+}
+
+/// A launch for a link at the pair point of pads `p` and `n` toward
+/// `toward`: from between the pads along the pads' normal away from their
+/// part (toward the link's other end where the part does not say), or
+/// turned from it by up to a right angle, the first run start where the
+/// stubs' ends beside it, the run's straight lead and the envelope `class`
+/// at the lead's end are clear; of those the one closest to the pads (a
+/// turn costs `ANGLE_COST` a right angle). The stubs themselves are the
+/// route's: the pair's nets' ordinary routing from the pads to the ends.
 fn launch(
     board: &core::Board,
-    pads: &core::Board,
     pair: &Pair,
     class: &core::RuleClass,
-    point: (usize, usize),
+    p: &core::Terminal,
+    n: &core::Terminal,
     toward: Point,
-) -> Option<(Point, core::LayerMask, Point)> {
-    let p = &pads.nets[pair.positive as usize].terminals[point.0];
-    let n = &pads.nets[pair.negative as usize].terminals[point.1];
+) -> Option<Launch> {
     let middle = scale(add(p.anchor, n.anchor), 0.5);
-    let mut outward = left(unit(sub(n.anchor, p.anchor)));
-    if dot(outward, sub(toward, middle)) < 0.0 {
-        outward = scale(outward, -1.0);
+    let mut normal = left(unit(sub(n.anchor, p.anchor)));
+    let away = part_middle(board, &p.label)
+        .map(|part| dot(normal, sub(middle, part)))
+        .filter(|along| along.abs() > 0.1);
+    if away.unwrap_or_else(|| dot(normal, sub(toward, middle))) < 0.0 {
+        normal = scale(normal, -1.0);
     }
+    // One layer: the stubs' ends and the run start on it.
     let layers = p.layers & n.layers & pair.layers;
     if layers == 0 {
         return None;
     }
+    let layers = layers & layers.wrapping_neg();
+    let half = class.trace_width / 2.0;
+    let d = pair.offset();
+    // The stubs' ends' copper reaches a track width along the lead; the
+    // link's copper keeps its clearance from it; the lead is at least
+    // `LEAD` offsets long.
+    let ends_reach = pair.width;
+    let apart = pair.width / 2.0 + class.clearance + half;
+    let reserve = ends_reach + (apart * apart - d * d).max(0.0).sqrt() + LAUNCH_STEP;
+    let lead = (LEAD * d).max(reserve + 2.0 * LAUNCH_STEP);
+    let near = obstacles_near(
+        board,
+        middle,
+        LAUNCH_REACH
+            + lead
+            + half
+            + LAUNCH_MARGIN
+            + class.clearance.max(board.hole_clearance)
+            + 2.0,
+    );
     let steps = (LAUNCH_REACH / LAUNCH_STEP) as usize;
-    (0..=steps).find_map(|step| {
-        let at = add(middle, scale(outward, step as f64 * LAUNCH_STEP));
-        let free = clear_layers(
-            board,
-            at,
-            (class.trace_width + class.clearance) / 2.0 + LAUNCH_MARGIN,
-            class.clearance,
-            layers,
+    let mut best: Option<(f64, Launch)> = None;
+    for angle in LAUNCH_ANGLES {
+        let outward = turned(normal, angle);
+        let side = if dot(left(outward), sub(p.anchor, n.anchor)) >= 0.0 {
+            1.0
+        } else {
+            -1.0
+        };
+        let found = (0..=steps).find_map(|step| {
+            let start = add(middle, scale(outward, step as f64 * LAUNCH_STEP));
+            let at = add(start, scale(outward, lead));
+            let reserved = add(start, scale(outward, reserve));
+            // The envelope at the launch, with room for lattice nodes, and
+            // along the reserved lead.
+            if clear_layers(
+                board,
+                &near,
+                at,
+                half + LAUNCH_MARGIN,
+                class.clearance,
+                layers,
+            ) == 0
+            {
+                return None;
+            }
+            let samples = ((lead - reserve) / LAUNCH_STEP).ceil() as usize;
+            if (0..samples).any(|sample| {
+                let point = add(reserved, scale(outward, sample as f64 * LAUNCH_STEP));
+                clear_layers(board, &near, point, half, class.clearance, layers) == 0
+            }) {
+                return None;
+            }
+            let ends = [
+                add(start, scale(left(outward), side * d)),
+                add(start, scale(left(outward), -side * d)),
+            ];
+            let lead_of = |end: Point| (end, add(end, scale(outward, reserve)));
+            (end_clear(board, &near, pair, lead_of(ends[0]), layers, pair.positive)
+                && end_clear(board, &near, pair, lead_of(ends[1]), layers, pair.negative))
+            .then_some(Launch {
+                at,
+                start,
+                reserved,
+                ends: scale(outward, ends_reach),
+                outward,
+                layers,
+                side,
+            })
+        });
+        if let Some(found) = found {
+            let cost =
+                core::geometry::distance(middle, found.start) + ANGLE_COST * angle.abs() / 90.0;
+            if best.is_none_or(|(known, _)| cost < known - 1.0e-9) {
+                best = Some((cost, found));
+            }
+        }
+    }
+    if debug() {
+        eprintln!(
+            "diff pair launch {} / {}: {:?}",
+            p.label,
+            n.label,
+            best.map(|(_, launch)| launch)
         );
-        (free != 0).then_some((at, free, outward))
-    })
+    }
+    best.map(|(_, launch)| launch)
 }
 
-/// A link's path from the pairs router's route: (point, layer) from the
-/// launch at `start` to the one at `end`, through its segments and vias.
+/// A link routed as a net of its own (`PairPlan::links`).
+#[derive(Clone, Debug)]
+struct LinkPlan {
+    net: core::NetId,
+    pair: usize,
+    link: usize,
+    /// Per end: the launch (where the link's net starts) and where the run
+    /// starts.
+    launches: [Point; 2],
+    starts: [Point; 2],
+    /// The side of the run the positive net takes (1 left, -1 right),
+    /// along the run from the first end.
+    side: f64,
+    /// Whether the pads' order at the second end crosses the run's (the
+    /// stubs cross there).
+    crossed: bool,
+}
+
+/// A board whose pairs' links are nets of the route (`plan_pairs`), as
+/// its `Board::attachment` keeps it for `finish_pairs`.
+struct PairPlan {
+    /// The board's nets, obstacles and classes before the links' (which
+    /// follow).
+    nets: usize,
+    obstacles: usize,
+    classes: usize,
+    /// The pairs' nets and the board's merged pads and terminal copper as
+    /// lowered, before the links' ends were added and merged.
+    originals: Vec<(core::NetId, core::Net)>,
+    merged_pads: Vec<core::MergedPad>,
+    terminal_copper: Vec<core::TerminalCopper>,
+    pairs: Vec<Pair>,
+    entries: Vec<KiCadDiffPair>,
+    links: Vec<LinkPlan>,
+}
+
+/// Merges terminals of `net` into their hosts (`host_of[t]`, the smallest
+/// terminal of its group): they become merged pads of the host, which a
+/// route may end on (`Board::terminal_copper`), as the board's own copper
+/// merges the pads it joins (`keep_existing_copper`).
+fn merge_terminals(board: &mut core::Board, net: core::NetId, host_of: &[usize]) {
+    let terminals = board.nets[net as usize].terminals.len();
+    let mut renumbered = vec![usize::MAX; terminals];
+    let mut next = 0;
+    for terminal in 0..terminals {
+        if host_of[terminal] == terminal {
+            renumbered[terminal] = next;
+            next += 1;
+        }
+    }
+    if next == terminals {
+        return;
+    }
+    let mut merged = Vec::new();
+    for terminal in 0..terminals {
+        if host_of[terminal] != terminal {
+            let description = &board.nets[net as usize].terminals[terminal];
+            merged.push(core::MergedPad {
+                net,
+                host: renumbered[host_of[terminal]],
+                pad: description.pad,
+                anchor: description.anchor,
+                layers: board.obstacles[description.pad].layers,
+                padstack: false,
+            });
+        }
+    }
+    for existing in board
+        .merged_pads
+        .iter_mut()
+        .filter(|existing| existing.net == net && existing.host < terminals)
+    {
+        existing.padstack &= host_of[existing.host] == existing.host;
+        existing.host = renumbered[host_of[existing.host]];
+    }
+    for pad in &merged {
+        board.terminal_copper.push(core::TerminalCopper {
+            net,
+            terminal: pad.host,
+            obstacle: pad.pad,
+        });
+    }
+    let mut index = 0;
+    board.nets[net as usize].terminals.retain(|_| {
+        index += 1;
+        host_of[index - 1] == index - 1
+    });
+    board.merged_pads.extend(merged);
+}
+
+fn root(parent: &mut [usize], mut item: usize) -> usize {
+    while parent[item] != item {
+        parent[item] = parent[parent[item]];
+        item = parent[item];
+    }
+    item
+}
+
+/// Makes each link between a pair's pair points a net of the route:
+/// launches at both ends (`launch`), the run's lead as its copper (other
+/// nets keep clear of it), a class for the pairs of one layer set (the
+/// widest envelope and via of them, kept to the layers); the pair's nets
+/// get a terminal beside each end of the run (their stubs from the pads
+/// end there: ordinary routing), the two ends of a link one terminal. The
+/// plan goes into `board.attachment` for `finish_pairs`.
+pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfig) {
+    let pairs = find_pairs(board, config);
+    let mut entries: Vec<KiCadDiffPair> = pairs
+        .iter()
+        .map(|pair| KiCadDiffPair {
+            positive: board.nets[pair.positive as usize].name.clone(),
+            negative: board.nets[pair.negative as usize].name.clone(),
+            width_mm: pair.width,
+            gap_mm: pair.gap,
+            source: pair.source.clone(),
+            links: pair.links.len(),
+            why: if pair.links.is_empty() {
+                vec!["fewer than two parts with the pair's pads side by side".into()]
+            } else {
+                Vec::new()
+            },
+            ..KiCadDiffPair::default()
+        })
+        .collect();
+    let mut plan = PairPlan {
+        nets: board.nets.len(),
+        obstacles: board.obstacles.len(),
+        classes: board.classes.len(),
+        originals: Vec::new(),
+        merged_pads: board.merged_pads.clone(),
+        terminal_copper: board.terminal_copper.clone(),
+        pairs: Vec::new(),
+        entries: Vec::new(),
+        links: Vec::new(),
+    };
+    // A class per layer set: the widest envelope, clearance and via of its
+    // pairs (each class builds static maps of the whole board).
+    let mut class_of: BTreeMap<core::LayerMask, core::ClassId> = BTreeMap::new();
+    for (index, pair) in pairs.iter().enumerate() {
+        if pair.links.is_empty() {
+            continue;
+        }
+        if pair.layers == 0 {
+            entries[index]
+                .why
+                .push("no layer holds the pair's width and gap".into());
+            continue;
+        }
+        // Kept copper on the pair's nets (a board routed in part) keeps its
+        // terminals as they are.
+        if board
+            .terminal_copper
+            .iter()
+            .any(|extra| extra.net == pair.positive || extra.net == pair.negative)
+        {
+            entries[index]
+                .why
+                .push("the pair's nets have kept copper".into());
+            continue;
+        }
+        if class_of.contains_key(&pair.layers) {
+            continue;
+        }
+        let members: Vec<&Pair> = pairs
+            .iter()
+            .filter(|other| other.layers == pair.layers && !other.links.is_empty())
+            .collect();
+        let widest = |measure: &dyn Fn(&Pair) -> f64| {
+            members.iter().map(|pair| measure(pair)).fold(0.0, f64::max)
+        };
+        board.classes.push(core::RuleClass {
+            trace_width: widest(&|pair| pair.envelope()),
+            clearance: widest(&|pair| pair.clearance),
+            // Two vias side by side, as far apart as at a right-angle turn
+            // (`link_copper`).
+            via_diameter: widest(&|pair| 2.0 * pair.via_offset() / VIA_TURN + pair.via_diameter),
+            via_drill: widest(&|pair| 2.0 * pair.via_offset() / VIA_TURN + pair.via_drill),
+            layers: if pair.layers == board.all_layers() {
+                0
+            } else {
+                pair.layers
+            },
+        });
+        class_of.insert(pair.layers, board.classes.len() - 1);
+    }
+    // Per pair net: its terminals joined by the links (union-find), the
+    // stubs' ends added.
+    let mut parents: BTreeMap<core::NetId, Vec<usize>> = BTreeMap::new();
+    for (index, pair) in pairs.iter().enumerate() {
+        let Some(&class) = class_of.get(&pair.layers) else {
+            continue;
+        };
+        if !entries[index].why.is_empty() {
+            continue;
+        }
+        let envelope = board.classes[class];
+        for (link, &(a, b)) in pair.links.iter().enumerate() {
+            let (point_a, point_b) = (pair.points[a], pair.points[b]);
+            let terminal = |net: core::NetId, terminal: usize| {
+                board.nets[net as usize].terminals[terminal].clone()
+            };
+            let ends = [
+                (
+                    terminal(pair.positive, point_a.0),
+                    terminal(pair.negative, point_a.1),
+                ),
+                (
+                    terminal(pair.positive, point_b.0),
+                    terminal(pair.negative, point_b.1),
+                ),
+            ];
+            let middle = |end: usize| scale(add(ends[end].0.anchor, ends[end].1.anchor), 0.5);
+            let launches = [
+                launch(board, pair, &envelope, &ends[0].0, &ends[0].1, middle(1)),
+                launch(board, pair, &envelope, &ends[1].0, &ends[1].1, middle(0)),
+            ];
+            let [Some(launch_a), Some(launch_b)] = launches else {
+                entries[index]
+                    .why
+                    .push(format!("link {}: no launch clear of the pads", link + 1));
+                continue;
+            };
+            if core::geometry::distance(launch_a.at, launch_b.at) < MINIMUM_RUN {
+                entries[index].why.push(format!(
+                    "link {}: the launches are too close for a coupled run",
+                    link + 1
+                ));
+                continue;
+            }
+            let id = board.nets.len() as core::NetId;
+            // Along the run from the first end the positive net keeps the
+            // side its pad has there; at the second end the run arrives
+            // against that launch's outward direction.
+            let side = launch_a.side;
+            let crossed = launch_b.side != side;
+            let mut terminals = Vec::new();
+            for (end, found) in [launch_a, launch_b].into_iter().enumerate() {
+                let label = format!("pair launch {}{}", link + 1, ["a", "b"][end]);
+                // The lead past the stubs' ends: the terminal's copper; the
+                // search starts close to the launch.
+                terminals.push(core::Terminal {
+                    anchor: found.at,
+                    layers: found.layers,
+                    pad: board.obstacles.len(),
+                    contact: Some(core::Shape::Circle {
+                        center: found.at,
+                        radius: LAUNCH_CONTACT,
+                    }),
+                    label: label.clone(),
+                });
+                board.obstacles.push(core::Obstacle {
+                    shape: core::Shape::Capsule {
+                        start: found.reserved,
+                        end: found.at,
+                        radius: envelope.trace_width / 2.0,
+                    },
+                    layers: found.layers,
+                    kind: core::ObstacleKind::Copper,
+                    net: Some(id),
+                    clearance: 0.0,
+                    clearance_override: None,
+                    blocks_tracks: true,
+                    blocks_vias: true,
+                    label,
+                });
+                // The stubs' ends: a terminal of each of the pair's nets,
+                // its copper the run's track up to the link's (which the
+                // other nets keep clear of).
+                let across = if end == 0 {
+                    left(found.outward)
+                } else {
+                    scale(left(found.outward), -1.0)
+                };
+                let reach = found.ends;
+                for (net, sign) in [(pair.positive, side), (pair.negative, -side)] {
+                    let at = add(found.start, scale(across, sign * pair.offset()));
+                    let terminals = &mut board.nets[net as usize].terminals;
+                    terminals.push(core::Terminal {
+                        anchor: at,
+                        layers: found.layers,
+                        pad: board.obstacles.len(),
+                        contact: None,
+                        label: format!("pair run {}{}", link + 1, ["a", "b"][end]),
+                    });
+                    board.obstacles.push(core::Obstacle {
+                        shape: core::Shape::Capsule {
+                            start: at,
+                            end: add(at, reach),
+                            radius: pair.width / 2.0,
+                        },
+                        layers: found.layers,
+                        kind: core::ObstacleKind::Copper,
+                        net: Some(net),
+                        clearance: 0.0,
+                        clearance_override: None,
+                        blocks_tracks: true,
+                        blocks_vias: true,
+                        label: format!("pair run {}{}", link + 1, ["a", "b"][end]),
+                    });
+                }
+            }
+            board.nets.push(core::Net {
+                name: format!(
+                    "{} / {} link {}",
+                    board.nets[pair.positive as usize].name,
+                    board.nets[pair.negative as usize].name,
+                    link + 1
+                ),
+                class,
+                terminals,
+            });
+            for net in [pair.positive, pair.negative] {
+                let count = board.nets[net as usize].terminals.len();
+                let parent = parents.entry(net).or_default();
+                parent.extend(parent.len()..count);
+                // The run's two ends, the last two pairs of terminals.
+                let (x, y) = (root(parent, count - 2), root(parent, count - 1));
+                if x != y {
+                    parent[x.max(y)] = x.min(y);
+                }
+            }
+            plan.links.push(LinkPlan {
+                net: id,
+                pair: index,
+                link,
+                launches: [launch_a.at, launch_b.at],
+                starts: [launch_a.start, launch_b.start],
+                side,
+                crossed,
+            });
+        }
+    }
+    for (&net, parent) in &mut parents {
+        let mut original = board.nets[net as usize].clone();
+        original
+            .terminals
+            .retain(|terminal| !terminal.label.starts_with("pair run "));
+        plan.originals.push((net, original));
+        let host_of: Vec<usize> = (0..parent.len()).map(|t| root(parent, t)).collect();
+        merge_terminals(board, net, &host_of);
+    }
+    if debug() {
+        eprintln!(
+            "diff pairs: {} found, {} links as nets of the route",
+            pairs.len(),
+            plan.links.len()
+        );
+    }
+    plan.pairs = pairs;
+    plan.entries = entries;
+    board.attachment = core::Attachment(Some(std::sync::Arc::new(plan)));
+}
+
+/// A link's path from its net's route: (point, layer) from the launch at
+/// `start` to the one at `end`, through its segments and vias.
 fn link_path(route: &core::NetRoute, start: Point, end: Point) -> Option<Vec<(Point, usize)>> {
     let key = |point: Point| {
         (
@@ -568,15 +1146,9 @@ fn offset_line(points: &[Point], side: f64, offset: f64) -> Vec<Point> {
 }
 
 /// The copper of a link from its path: the two offset tracks per layer
-/// run and a via of each net side by side at each layer change. The
-/// positive net takes the side its pad is on at the start.
-fn link_copper(
-    path: &[(Point, usize)],
-    pair: &Pair,
-    start_pads: [Point; 2],
-    end_pads: [Point; 2],
-) -> Option<LinkCopper> {
-    let (start_pad, end_pad) = (start_pads[0], end_pads[0]);
+/// run and a via of each net side by side at each layer change; the
+/// positive net on `side` of the run (1 left, -1 right).
+fn link_copper(path: &[(Point, usize)], pair: &Pair, side: f64) -> Option<LinkCopper> {
     // Runs on one layer, split at the layer changes (the vias).
     let mut runs: Vec<(usize, Vec<Point>)> = Vec::new();
     for &(point, layer) in path {
@@ -600,30 +1172,8 @@ fn link_copper(
             })
         })
         .collect();
-    let first = directions.iter().flatten().next()?.0;
-    let last = directions.iter().rev().flatten().next()?.1;
-    let start = path.first()?.0;
-    let end = path.last()?.0;
-    // P's side of the run: where its pad is beside N's.
-    let side = if dot(left(first), sub(start_pad, start_pads[1])) >= 0.0 {
-        1.0
-    } else {
-        -1.0
-    };
-    let end_side = if dot(left(last), sub(end_pad, end_pads[1])) >= 0.0 {
-        1.0
-    } else {
-        -1.0
-    };
-    if std::env::var_os("PCB_ROUTER_DIFF_PAIRS_DEBUG").is_some() {
-        eprintln!(
-            "sides: start {start:?} first {first:?} pads {start_pads:?} side {side}; end {end:?} last {last:?} pads {end_pads:?} side {end_side}"
-        );
-    }
-    let mut copper = LinkCopper {
-        crossed: side != end_side,
-        ..LinkCopper::default()
-    };
+    directions.iter().flatten().next()?;
+    let mut copper = LinkCopper::default();
     let d = pair.offset();
     let dv = pair.via_offset();
     for (polarity, sign) in [(0, side), (1, -side)] {
@@ -648,7 +1198,7 @@ fn link_copper(
                 // Turned at the via, the vias move out along the bisector
                 // so that across either run they are as far apart as
                 // straight (up to a right angle).
-                let half_turn_cosine = dot(unit(bisector), left(into)).abs().max(0.7);
+                let half_turn_cosine = dot(unit(bisector), left(into)).abs().max(VIA_TURN);
                 let via = add(at, scale(unit(bisector), sign * dv / half_turn_cosine));
                 copper.vias[polarity].push(via);
                 if let Some((from, from_layer)) = previous_end
@@ -681,510 +1231,262 @@ fn link_copper(
                 incoming = Some(last_direction);
             }
         }
-        // The stubs: from the first and last points of the offset runs.
-        let first_run = runs.iter().position(|(_, points)| points.len() >= 2)?;
-        let last_run = runs.iter().rposition(|(_, points)| points.len() >= 2)?;
-        let begin = *offset_line(&runs[first_run].1, sign, d).first()?;
-        let finish = *offset_line(&runs[last_run].1, sign, d).last()?;
-        copper.stubs[polarity].push((runs[first_run].0, start_pads[polarity], begin));
-        if !copper.crossed {
-            copper.stubs[polarity].push((runs[last_run].0, end_pads[polarity], finish));
-        }
     }
     (!copper.segments[0].is_empty() && !copper.segments[1].is_empty()).then_some(copper)
 }
 
-/// Routes the board's differential pairs as coupled runs and writes what
-/// holds into `pcb` as tracks and vias of the pairs' nets (the route keeps
-/// them); `work_budget` is the pairs router's work deadline. Returns the
-/// report (`uncoupled_mm` is measured after the route: `measure_uncoupled`).
-pub(crate) fn route_diff_pairs(
+/// The pair copper of a written board (`finish_pairs`), to write as
+/// tracks and vias of the pairs' nets (`write_pair_copper`).
+pub(crate) struct PairCopper {
+    /// (net name, width, via diameter, via drill, segments, vias).
+    #[allow(clippy::type_complexity)]
+    items: Vec<(
+        String,
+        f64,
+        f64,
+        f64,
+        Vec<(usize, Point, Point)>,
+        Vec<Point>,
+    )>,
+}
+
+/// Writes the pairs' copper into `pcb` as tracks and vias of their nets.
+pub(crate) fn write_pair_copper(
     pcb: &mut Expr,
-    config: &KiCadBoardRouterConfig,
-    work_budget: f64,
-) -> Result<KiCadDiffPairs, String> {
-    let board = lower(pcb, config, true)?.board;
-    let layer_names = LayerTable::from_pcb(pcb)?.names;
-    let pairs = find_pairs(&board, config);
-    let mut report = KiCadDiffPairs {
-        found: pairs.len(),
-        ..KiCadDiffPairs::default()
-    };
-    let mut entries: Vec<KiCadDiffPair> = pairs
-        .iter()
-        .map(|pair| KiCadDiffPair {
-            positive: board.nets[pair.positive as usize].name.clone(),
-            negative: board.nets[pair.negative as usize].name.clone(),
-            width_mm: pair.width,
-            gap_mm: pair.gap,
-            source: pair.source.clone(),
-            links: pair.links.len(),
-            why: if pair.points.len() < 2 {
-                vec!["fewer than two parts with the pair's pads side by side".into()]
-            } else {
-                Vec::new()
-            },
-            ..KiCadDiffPair::default()
-        })
-        .collect();
-    // The kept copper so far, per pair and link.
-    let mut kept: Vec<(usize, LinkCopper)> = Vec::new();
-    // Pairs grouped by their layers: one pairs router each, each seeing
-    // the copper the groups before kept.
-    let mut groups: BTreeMap<core::LayerMask, Vec<usize>> = BTreeMap::new();
-    for (index, pair) in pairs.iter().enumerate() {
-        if !pair.links.is_empty() && pair.layers != 0 {
-            groups.entry(pair.layers).or_default().push(index);
-        } else if pair.layers == 0 {
-            entries[index]
-                .why
-                .push("no layer holds the pair's width and gap".into());
-        }
-    }
-    // One run where the pairs share layers (each run builds the board's
-    // static maps again): on the layers all of them may use.
-    let common = groups
-        .keys()
-        .fold(core::LayerMask::MAX, |mask, known| mask & known);
-    if groups.len() > 1 && common != 0 {
-        let members: Vec<usize> = groups.into_values().flatten().collect();
-        groups = BTreeMap::from([(common, members)]);
-    }
-    let group_count = groups.len().max(1);
-    let mut base = board.clone();
-    for (mask, members) in groups {
-        // The board's nets route nothing here: one class, the largest
-        // clearance of all (each class builds static maps of the whole
-        // board; ducktop2-center's took 40 s of work), its pads at least
-        // as far from the pairs as any class asks.
-        let mut pairs_board = base.clone();
-        pairs_board.classes = vec![core::RuleClass {
-            trace_width: board
-                .classes
-                .iter()
-                .map(|class| class.trace_width)
-                .fold(f64::INFINITY, f64::min),
-            clearance: board
-                .classes
-                .iter()
-                .map(|class| class.clearance)
-                .fold(0.0, f64::max),
-            via_diameter: board
-                .classes
-                .iter()
-                .map(|class| class.via_diameter)
-                .fold(0.0, f64::max),
-            via_drill: board
-                .classes
-                .iter()
-                .map(|class| class.via_drill)
-                .fold(0.0, f64::max),
-        }];
-        for net in &mut pairs_board.nets {
-            net.terminals.clear();
-            net.class = 0;
-        }
-        pairs_board.planes.clear();
-        pairs_board.merged_pads.clear();
-        pairs_board.terminal_copper.clear();
-        // Layers the pairs may not use.
-        let others = pairs_board.all_layers() & !mask;
-        if others != 0 {
-            let bounds = pairs_board
-                .outline
-                .iter()
-                .fold(
-                    core::geometry::Aabb {
-                        minimum: [f64::INFINITY; 2],
-                        maximum: [f64::NEG_INFINITY; 2],
-                    },
-                    |b, p| core::geometry::Aabb {
-                        minimum: [b.minimum[0].min(p[0]), b.minimum[1].min(p[1])],
-                        maximum: [b.maximum[0].max(p[0]), b.maximum[1].max(p[1])],
-                    },
-                )
-                .inflated(1.0);
-            pairs_board.obstacles.push(core::Obstacle {
-                shape: core::Shape::Polygon {
-                    points: vec![
-                        bounds.minimum,
-                        [bounds.maximum[0], bounds.minimum[1]],
-                        bounds.maximum,
-                        [bounds.minimum[0], bounds.maximum[1]],
-                    ],
-                },
-                layers: others,
-                kind: core::ObstacleKind::Keepout,
-                net: None,
-                clearance: 0.0,
-                clearance_override: None,
-                blocks_tracks: true,
-                blocks_vias: false,
-                label: "diff pair layer".into(),
-            });
-        }
-        // One net per link, from launch to launch.
-        // (link net, pair, link, launch at start, launch at end)
-        #[allow(clippy::type_complexity)]
-        let mut link_nets: Vec<(
-            core::NetId,
-            usize,
-            usize,
-            (Point, Point),
-            (Point, Point),
-        )> = Vec::new();
-        // The group's pairs share one class, the widest envelope and via
-        // of them (each class builds static maps of the whole board:
-        // ducktop2-center's four pair classes took 17 s of work).
-        let widest = |measure: &dyn Fn(&Pair) -> f64| {
-            members
-                .iter()
-                .map(|&index| measure(&pairs[index]))
-                .fold(0.0, f64::max)
-        };
-        let group_class = core::RuleClass {
-            trace_width: widest(&|pair| pair.envelope()),
-            clearance: widest(&|pair| pair.clearance),
-            via_diameter: widest(&|pair| 2.0 * pair.via_offset() + pair.via_diameter),
-            via_drill: widest(&|pair| 2.0 * pair.via_offset() + pair.via_drill),
-        };
-        pairs_board.classes.push(group_class);
-        let class = 1;
-        for &index in &members {
-            let pair = &pairs[index];
-            let p = &board.nets[pair.positive as usize];
-            let n = &board.nets[pair.negative as usize];
-            let middle = |point: (usize, usize)| {
-                scale(
-                    add(p.terminals[point.0].anchor, n.terminals[point.1].anchor),
-                    0.5,
-                )
-            };
-            for (link, &(a, b)) in pair.links.iter().enumerate() {
-                let (point_a, point_b) = (pair.points[a], pair.points[b]);
-                let (Some((at_a, layers_a, out_a)), Some((at_b, layers_b, out_b))) = (
-                    launch(
-                        &pairs_board,
-                        &board,
-                        pair,
-                        &group_class,
-                        point_a,
-                        middle(point_b),
-                    ),
-                    launch(
-                        &pairs_board,
-                        &board,
-                        pair,
-                        &group_class,
-                        point_b,
-                        middle(point_a),
-                    ),
-                ) else {
-                    entries[index]
-                        .why
-                        .push(format!("link {}: no launch clear of the pads", link + 1));
-                    continue;
-                };
-                let id = pairs_board.nets.len() as core::NetId;
-                let mut terminals = Vec::new();
-                for (at, layers, end, from) in [
-                    (at_a, layers_a, "a", middle(point_a)),
-                    (at_b, layers_b, "b", middle(point_b)),
-                ] {
-                    terminals.push(core::Terminal {
-                        anchor: at,
-                        layers,
-                        pad: pairs_board.obstacles.len(),
-                        // The run starts at a node close to the launch (the
-                        // obstacle is wider, so that no neck applies).
-                        contact: Some(core::Shape::Circle {
-                            center: at,
-                            radius: LAUNCH_CONTACT,
-                        }),
-                        label: format!("pair launch {}{end}", link + 1),
-                    });
-                    // The launch and the stubs' corridor from the pads:
-                    // other pairs keep out of it.
-                    pairs_board.obstacles.push(core::Obstacle {
-                        shape: core::Shape::Capsule {
-                            start: from,
-                            end: at,
-                            radius: (group_class.trace_width + group_class.clearance) / 2.0,
-                        },
-                        layers,
-                        kind: core::ObstacleKind::Copper,
-                        net: Some(id),
-                        clearance: 0.0,
-                        clearance_override: None,
-                        blocks_tracks: true,
-                        blocks_vias: true,
-                        label: format!("pair launch {}{end}", link + 1),
-                    });
-                }
-                pairs_board.nets.push(core::Net {
-                    name: format!("{} / {} link {}", p.name, n.name, link + 1),
-                    class,
-                    terminals,
-                });
-                link_nets.push((id, index, link, (at_a, out_a), (at_b, out_b)));
-            }
-        }
-        if link_nets.is_empty() {
-            continue;
-        }
-        let mut router_config = core_config(config);
-        router_config.verbose = false;
-        router_config.deadline_work = Some(work_budget / group_count as f64);
-        router_config.run_work = None;
-        // The rules beyond the classes name the board's nets, which route
-        // nothing here (the check of the copper holds the classes).
-        router_config.net_rules = None;
-        let result = core::route(&pairs_board, &router_config);
-        report.work_seconds += result.expansions as f64 / core::router::expansions_per_second()
-            + result.build_work
-            + result.pour_work;
-        if std::env::var_os("PCB_ROUTER_DIFF_PAIRS_DEBUG").is_some() {
-            eprintln!(
-                "diff pairs router: {} links, search {:.1} s, build {:.1} s, pour {:.1} s of work",
-                link_nets.len(),
-                result.expansions as f64 / core::router::expansions_per_second(),
-                result.build_work,
-                result.pour_work
-            );
-        }
-        // The links' copper, checked against the board and each other.
-        let mut candidates: Vec<(usize, usize, LinkCopper)> = Vec::new();
-        for &(id, index, link, (at_a, out_a), (at_b, out_b)) in &link_nets {
-            let pair = &pairs[index];
-            if result.status[id as usize] != core::NetStatus::Routed {
-                entries[index].why.push(format!(
-                    "link {}: the coupled search found no path ({})",
-                    link + 1,
-                    match result.status[id as usize] {
-                        core::NetStatus::Unreachable => "a launch has no legal node",
-                        _ => "no path between the launches",
-                    }
-                ));
-                continue;
-            }
-            let (a, b) = pair.links[link];
-            let pads = |point: (usize, usize)| {
-                [
-                    board.nets[pair.positive as usize].terminals[point.0].anchor,
-                    board.nets[pair.negative as usize].terminals[point.1].anchor,
-                ]
-            };
-            let (pad_a, pad_b) = (pads(pair.points[a]), pads(pair.points[b]));
-            // Behind each end a point toward the pads, so that the run
-            // leaves the pads straight out (the stubs then meet it square,
-            // whatever way the search turned at the launch).
-            // The run starts at the launch itself (centred on the pads),
-            // whatever lattice node the search left from.
-            let path = link_path(&result.routes[id as usize], at_a, at_b).map(|mut path| {
-                let back = pair.offset();
-                // The router's stub from the node to the launch (at any
-                // angle) goes; the back point, on the launch's axis, joins
-                // the node directly.
-                let off_lattice = |a: Point, b: Point| {
-                    let angle = (b[1] - a[1]).atan2(b[0] - a[0]);
-                    let step = std::f64::consts::FRAC_PI_4;
-                    ((angle / step).round() * step - angle).abs() > 1.0e-3
-                };
-                if path.len() >= 3 && path[0].1 == path[1].1 && off_lattice(path[0].0, path[1].0) {
-                    path.remove(0);
-                }
-                let count = path.len();
-                if count >= 3
-                    && path[count - 1].1 == path[count - 2].1
-                    && off_lattice(path[count - 2].0, path[count - 1].0)
-                {
-                    path.pop();
-                }
-                let (first, last) = (path[0], path[path.len() - 1]);
-                path.insert(0, (sub(first.0, scale(out_a, back)), first.1));
-                path.push((sub(last.0, scale(out_b, back)), last.1));
-                path
-            });
-            if std::env::var_os("PCB_ROUTER_DIFF_PAIRS_DEBUG").is_some() {
-                eprintln!(
-                    "diff pair link {}: route {:?}\npath {:?}",
-                    pairs_board.nets[id as usize].name, result.routes[id as usize], path
-                );
-            }
-            let copper = path.and_then(|path| link_copper(&path, pair, pad_a, pad_b));
-            if std::env::var_os("PCB_ROUTER_DIFF_PAIRS_DEBUG").is_some()
-                && let Some(copper) = &copper
-            {
-                eprintln!(
-                    "copper P {:?} {:?}\ncopper N {:?} {:?}",
-                    copper.segments[0], copper.vias[0], copper.segments[1], copper.vias[1]
-                );
-            }
-            match copper {
-                Some(copper) => candidates.push((index, link, copper)),
-                None => entries[index].why.push(format!(
-                    "link {}: the coupled route has no clean path",
-                    link + 1
-                )),
-            }
-        }
-        // First the coupled runs and their vias, then the stubs of the runs
-        // kept (a stub refused leaves that end to the ordinary routing).
-        let groups: Vec<Group> = candidates
-            .iter()
-            .map(|(index, _, copper)| Group {
-                pair: *index,
-                segments: copper.segments.clone(),
-                vias: copper.vias.clone(),
-                fixed: false,
-            })
-            .collect();
-        let refused = refused_groups(&base, &pairs, &groups);
-        // The stubs, in rounds: whole, then shorter from the run's end
-        // toward the pad (a stub cut short leaves the ordinary routing a
-        // start clear of the other net, where the run's own end may have
-        // no legal lattice node).
-        let mut kept_stubs: Vec<[Vec<(usize, Point, Point)>; 2]> =
-            vec![Default::default(); candidates.len()];
-        // (candidate, polarity, stub) still to place.
-        let mut open: Vec<(usize, usize, (usize, Point, Point))> = Vec::new();
-        for (position, (_, _, copper)) in candidates.iter().enumerate() {
-            if refused[position].is_none() {
-                for polarity in 0..2 {
-                    for &stub in &copper.stubs[polarity] {
-                        open.push((position, polarity, stub));
-                    }
-                }
-            }
-        }
-        for fraction in STUB_FRACTIONS {
-            if open.is_empty() {
-                break;
-            }
-            let mut stub_groups: Vec<Group> = Vec::new();
-            for (position, (index, _, copper)) in candidates.iter().enumerate() {
-                if refused[position].is_none() {
-                    let mut segments = copper.segments.clone();
-                    for polarity in 0..2 {
-                        segments[polarity].extend(kept_stubs[position][polarity].iter().copied());
-                    }
-                    stub_groups.push(Group {
-                        pair: *index,
-                        segments,
-                        vias: copper.vias.clone(),
-                        fixed: true,
-                    });
-                }
-            }
-            let first_open = stub_groups.len();
-            for &(position, polarity, (layer, pad, end)) in &open {
-                let mut segments: [Vec<(usize, Point, Point)>; 2] = Default::default();
-                let from = add(end, scale(sub(pad, end), fraction));
-                segments[polarity].push((layer, from, end));
-                stub_groups.push(Group {
-                    pair: candidates[position].0,
-                    segments,
-                    vias: Default::default(),
-                    fixed: false,
-                });
-            }
-            let stub_refused = refused_groups(&base, &pairs, &stub_groups);
-            let mut still = Vec::new();
-            for (offset, &(position, polarity, stub)) in open.iter().enumerate() {
-                let group = &stub_groups[first_open + offset];
-                match &stub_refused[first_open + offset] {
-                    None => kept_stubs[position][polarity]
-                        .extend(group.segments[polarity].iter().copied()),
-                    Some(why) => {
-                        if std::env::var_os("PCB_ROUTER_DIFF_PAIRS_DEBUG").is_some() {
-                            eprintln!(
-                                "diff pair stub {:?} ({fraction}) refused: {why}",
-                                group.segments
-                            );
-                        }
-                        still.push((position, polarity, stub));
-                    }
-                }
-            }
-            open = still;
-        }
-        for (position, (index, link, mut copper)) in candidates.into_iter().enumerate() {
-            if let Some(why) = &refused[position] {
-                entries[index].why.push(format!("link {}: {why}", link + 1));
-                continue;
-            }
-            for (polarity, stubs) in kept_stubs[position].iter_mut().enumerate() {
-                copper.segments[polarity].extend(std::mem::take(stubs));
-            }
-            // The kept copper is fixed copper of the next group's board.
-            let pair = &pairs[index];
-            for (polarity, net) in [(0, pair.positive), (1, pair.negative)] {
-                for &(layer, start, end) in &copper.segments[polarity] {
-                    base.obstacles.push(core::Obstacle {
-                        shape: core::Shape::Capsule {
-                            start,
-                            end,
-                            radius: pair.width / 2.0,
-                        },
-                        layers: 1 << layer,
-                        kind: core::ObstacleKind::Copper,
-                        net: Some(net),
-                        clearance: 0.0,
-                        clearance_override: None,
-                        blocks_tracks: true,
-                        blocks_vias: true,
-                        label: "existing track".into(),
-                    });
-                }
-                for &at in &copper.vias[polarity] {
-                    base.obstacles.push(core::Obstacle {
-                        shape: core::Shape::Circle {
-                            center: at,
-                            radius: pair.via_diameter / 2.0,
-                        },
-                        layers: base.all_layers(),
-                        kind: core::ObstacleKind::Copper,
-                        net: Some(net),
-                        clearance: 0.0,
-                        clearance_override: None,
-                        blocks_tracks: true,
-                        blocks_vias: true,
-                        label: "existing via".into(),
-                    });
-                }
-            }
-            entries[index].links_coupled += 1;
-            entries[index].coupled_mm += copper.coupled;
-            report.crossed += copper.crossed as usize;
-            kept.push((index, copper));
-        }
-    }
-    // Into the board.
+    copper: &PairCopper,
+    layer_names: &[String],
+) -> Result<(), String> {
     let Expr::List(items) = pcb else {
         return Err("PCB root is not a list".into());
     };
-    for (index, copper) in &kept {
-        let pair = &pairs[*index];
+    for (name, width, size, drill, segments, vias) in &copper.items {
+        for &(layer, start, end) in segments {
+            items.push(supplemental_segment_expr(&SupplementalSegment {
+                connection: name.clone(),
+                start: nanometres(start),
+                end: nanometres(end),
+                width: *width,
+                layer: layer_names[layer].clone(),
+            }));
+        }
+        for &at in vias {
+            items.push(supplemental_via_expr(&SupplementalVia {
+                connection: name.clone(),
+                at: nanometres(at),
+                size: *size,
+                drill: *drill,
+                layers: ["F.Cu".into(), "B.Cu".into()],
+            }));
+        }
+    }
+    Ok(())
+}
+
+/// A routed board with its pairs' links as nets (`plan_pairs`) turned back
+/// into the board as lowered: each link's route offset into the pair's
+/// tracks and vias from one run start to the other (where the pair's nets'
+/// stubs end) and checked (`refused_groups`, against everything routed);
+/// what holds is kept copper of the returned board (`existing track`,
+/// `existing via`) and in the returned `PairCopper`; the links' nets and
+/// the stubs' end terminals are gone from the board and the result; what
+/// the links left open is routed for the pairs' nets with everything else
+/// kept (the fallback, its work in the report). `None`: the board has no
+/// plan.
+pub(crate) fn finish_pairs(
+    board: &core::Board,
+    result: &mut core::RoutingResult,
+    config: &KiCadBoardRouterConfig,
+) -> Option<(core::Board, PairCopper, KiCadDiffPairs)> {
+    let plan = board
+        .attachment
+        .0
+        .as_ref()
+        .and_then(|any| any.clone().downcast::<PairPlan>().ok())?;
+    let mut entries = plan.entries.clone();
+    let mut report = KiCadDiffPairs {
+        found: plan.pairs.len(),
+        ..KiCadDiffPairs::default()
+    };
+    // The board as lowered.
+    let mut restored = board.clone();
+    restored.attachment = core::Attachment::default();
+    restored.nets.truncate(plan.nets);
+    restored.obstacles.truncate(plan.obstacles);
+    restored.classes.truncate(plan.classes);
+    for (net, original) in &plan.originals {
+        restored.nets[*net as usize] = original.clone();
+    }
+    restored.merged_pads = plan.merged_pads.clone();
+    restored.terminal_copper = plan.terminal_copper.clone();
+    let link_routes: Vec<core::NetRoute> =
+        result.routes.split_off(plan.nets.min(result.routes.len()));
+    let link_status: Vec<core::NetStatus> =
+        result.status.split_off(plan.nets.min(result.status.len()));
+    // The links' nets in the router's diagnostics are their pairs'.
+    let pair_net = |net: core::NetId| {
+        if (net as usize) < plan.nets {
+            net
+        } else {
+            plan.links
+                .iter()
+                .find(|link| link.net == net)
+                .map_or(0, |link| plan.pairs[link.pair].positive)
+        }
+    };
+    for dead in &mut result.diagnostics.dead_pads {
+        dead.net = pair_net(dead.net);
+    }
+    for net in &mut result.diagnostics.conflicted {
+        *net = pair_net(*net);
+    }
+    result.diagnostics.conflicted.sort_unstable();
+    result.diagnostics.conflicted.dedup();
+    // The links' copper.
+    let mut candidates: Vec<(usize, usize, LinkCopper)> = Vec::new();
+    let mut open_pairs: BTreeSet<usize> = BTreeSet::new();
+    for plan_link in &plan.links {
+        let (index, link) = (plan_link.pair, plan_link.link);
+        let pair = &plan.pairs[index];
+        let offset = (plan_link.net as usize) - plan.nets;
+        if link_status.get(offset) != Some(&core::NetStatus::Routed) {
+            entries[index]
+                .why
+                .push(format!("link {}: the coupled run was not routed", link + 1));
+            open_pairs.insert(index);
+            continue;
+        }
+        let [at_a, at_b] = plan_link.launches;
+        let [start_a, start_b] = plan_link.starts;
+        // The run from its start (the stubs' ends beside it) to the
+        // route's first node past the launch (the route's own stub to the
+        // launch goes), and the same at its end.
+        let path = link_path(&link_routes[offset], at_a, at_b).map(|mut path| {
+            if path.len() >= 3
+                && path[0].1 == path[1].1
+                && core::geometry::distance(path[0].0, at_a) < 1.0e-6
+            {
+                path.remove(0);
+            }
+            let count = path.len();
+            if count >= 3
+                && path[count - 1].1 == path[count - 2].1
+                && core::geometry::distance(path[count - 1].0, at_b) < 1.0e-6
+            {
+                path.pop();
+            }
+            let (first, last) = (path[0], path[path.len() - 1]);
+            path.insert(0, (start_a, first.1));
+            path.push((start_b, last.1));
+            path
+        });
+        if debug() {
+            eprintln!("diff pair link {} path {:?}", plan_link.net, path);
+            for net in [pair.positive, pair.negative] {
+                let route = &result.routes[net as usize];
+                eprintln!(
+                    "  net {} status {:?} segments {:?} vias {:?}",
+                    restored.nets[net as usize].name,
+                    result.status[net as usize],
+                    route
+                        .segments
+                        .iter()
+                        .map(|s| (s.layer, s.start, s.end))
+                        .collect::<Vec<_>>(),
+                    route.vias.iter().map(|v| v.at).collect::<Vec<_>>()
+                );
+            }
+        }
+        let copper = path.as_ref().and_then(|path| {
+            link_copper(path, pair, plan_link.side).map(|mut copper| {
+                copper.crossed = plan_link.crossed;
+                copper
+            })
+        });
+        match copper {
+            Some(copper) => candidates.push((index, link, copper)),
+            None => {
+                entries[index].why.push(format!(
+                    "link {}: the coupled route has no clean path",
+                    link + 1
+                ));
+                open_pairs.insert(index);
+            }
+        }
+    }
+    let groups: Vec<Group> = candidates
+        .iter()
+        .map(|(index, _, copper)| Group {
+            pair: *index,
+            segments: copper.segments.clone(),
+            vias: copper.vias.clone(),
+        })
+        .collect();
+    let refused = refused_groups(&restored, &result.routes, &plan.pairs, &groups);
+    let mut copper_out = PairCopper { items: Vec::new() };
+    for (position, (index, link, copper)) in candidates.into_iter().enumerate() {
+        if let Some(why) = &refused[position] {
+            entries[index].why.push(format!("link {}: {why}", link + 1));
+            open_pairs.insert(index);
+            continue;
+        }
+        let pair = &plan.pairs[index];
         for (polarity, net) in [(0, pair.positive), (1, pair.negative)] {
-            let name = &board.nets[net as usize].name;
             for &(layer, start, end) in &copper.segments[polarity] {
-                items.push(supplemental_segment_expr(&SupplementalSegment {
-                    connection: name.clone(),
-                    start: nanometres(start),
-                    end: nanometres(end),
-                    width: pair.width,
-                    layer: layer_names[layer].clone(),
-                }));
+                restored.obstacles.push(core::Obstacle {
+                    shape: core::Shape::Capsule {
+                        start,
+                        end,
+                        radius: pair.width / 2.0,
+                    },
+                    layers: 1 << layer,
+                    kind: core::ObstacleKind::Copper,
+                    net: Some(net),
+                    clearance: 0.0,
+                    clearance_override: None,
+                    blocks_tracks: true,
+                    blocks_vias: true,
+                    label: "existing track".into(),
+                });
             }
             for &at in &copper.vias[polarity] {
-                items.push(supplemental_via_expr(&SupplementalVia {
-                    connection: name.clone(),
-                    at: nanometres(at),
-                    size: pair.via_diameter,
-                    drill: pair.via_drill,
-                    layers: ["F.Cu".into(), "B.Cu".into()],
-                }));
+                restored.obstacles.push(core::Obstacle {
+                    shape: core::Shape::Circle {
+                        center: at,
+                        radius: pair.via_diameter / 2.0,
+                    },
+                    layers: restored.all_layers(),
+                    kind: core::ObstacleKind::Copper,
+                    net: Some(net),
+                    clearance: 0.0,
+                    clearance_override: None,
+                    blocks_tracks: true,
+                    blocks_vias: true,
+                    label: "existing via".into(),
+                });
             }
+            copper_out.items.push((
+                restored.nets[net as usize].name.clone(),
+                pair.width,
+                pair.via_diameter,
+                pair.via_drill,
+                copper.segments[polarity].clone(),
+                copper.vias[polarity].clone(),
+            ));
+        }
+        entries[index].links_coupled += 1;
+        entries[index].coupled_mm += copper.coupled;
+        report.crossed += copper.crossed as usize;
+    }
+    // The fallback: the pairs' nets with a connection a link left open,
+    // routed with everything else kept.
+    if !open_pairs.is_empty() {
+        report.work_seconds = route_fallback(&restored, result, &plan.pairs, &open_pairs, config);
+    }
+    // A pair's net whose pads the links joined all is routed, not trivial.
+    for (net, original) in &plan.originals {
+        let net = *net as usize;
+        if original.terminals.len() >= 2 && result.status[net] == core::NetStatus::Trivial {
+            result.status[net] = core::NetStatus::Routed;
         }
     }
     for entry in &entries {
@@ -1200,26 +1502,197 @@ pub(crate) fn route_diff_pairs(
         }
     }
     report.pairs = entries;
-    Ok(report)
+    if debug() {
+        eprintln!(
+            "diff pairs written: {} of {} links coupled, fallback {:.2} s of work for {} pairs",
+            report.links_coupled,
+            report.links,
+            report.work_seconds,
+            open_pairs.len()
+        );
+    }
+    Some((restored, copper_out, report))
 }
 
-/// Copper checked together (`refused_groups`): a link's run and vias, or
-/// one stub; `fixed` copper is checked against, never refused.
+/// Routes the connections of the pairs `open` (indices into `pairs`) that
+/// are still open on `board` (the board as lowered, the pairs' copper kept
+/// on it) with every route of `result` kept, and adds what it routes to
+/// `result` (the pairs' nets' status from it). Returns its work.
+fn route_fallback(
+    board: &core::Board,
+    result: &mut core::RoutingResult,
+    pairs: &[Pair],
+    open: &BTreeSet<usize>,
+    config: &KiCadBoardRouterConfig,
+) -> f64 {
+    let nets: BTreeSet<core::NetId> = open
+        .iter()
+        .flat_map(|&index| [pairs[index].positive, pairs[index].negative])
+        .collect();
+    let mut fallback = board.clone();
+    for (net, route) in result.routes.iter().enumerate() {
+        for segment in &route.segments {
+            fallback.obstacles.push(core::Obstacle {
+                shape: core::Shape::Capsule {
+                    start: segment.start,
+                    end: segment.end,
+                    radius: segment.width / 2.0,
+                },
+                layers: 1 << segment.layer,
+                kind: core::ObstacleKind::Copper,
+                net: Some(net as core::NetId),
+                clearance: 0.0,
+                clearance_override: None,
+                blocks_tracks: true,
+                blocks_vias: true,
+                label: "existing track".into(),
+            });
+        }
+        for via in &route.vias {
+            fallback.obstacles.push(core::Obstacle {
+                shape: core::Shape::Circle {
+                    center: via.at,
+                    radius: via.diameter / 2.0,
+                },
+                layers: fallback.all_layers(),
+                kind: core::ObstacleKind::Copper,
+                net: Some(net as core::NetId),
+                clearance: 0.0,
+                clearance_override: None,
+                blocks_tracks: true,
+                blocks_vias: true,
+                label: "existing via".into(),
+            });
+        }
+    }
+    keep_existing_copper(&mut fallback, true);
+    // Only the pairs' nets route; one class (static maps of the whole
+    // board each), their widest track, the largest clearance and via of
+    // all, so that every other net's copper keeps its clearance.
+    let class = core::RuleClass {
+        trace_width: nets
+            .iter()
+            .map(|&net| board.classes[board.nets[net as usize].class].trace_width)
+            .fold(0.0, f64::max),
+        clearance: board
+            .classes
+            .iter()
+            .map(|class| class.clearance)
+            .fold(0.0, f64::max),
+        via_diameter: board
+            .classes
+            .iter()
+            .map(|class| class.via_diameter)
+            .fold(0.0, f64::max),
+        via_drill: board
+            .classes
+            .iter()
+            .map(|class| class.via_drill)
+            .fold(0.0, f64::max),
+        layers: 0,
+    };
+    fallback.classes = vec![class];
+    for (index, net) in fallback.nets.iter_mut().enumerate() {
+        net.class = 0;
+        if !nets.contains(&(index as core::NetId)) {
+            net.terminals.clear();
+        }
+    }
+    fallback.planes.retain(|plane| nets.contains(&plane.net));
+    for plane in &mut fallback.planes {
+        plane.class = 0;
+    }
+    let mut router_config = core_config(config);
+    router_config.verbose = false;
+    router_config.deadline_work = Some(work_budget(config.ladder_budget_seconds.unwrap_or(1200.0)));
+    router_config.run_work = None;
+    router_config.net_rules = None;
+    let routed = core::route(&fallback, &router_config);
+    for &net in &nets {
+        let (net, from) = (net as usize, &routed.routes[net as usize]);
+        result.routes[net]
+            .segments
+            .extend(from.segments.iter().cloned());
+        result.routes[net].vias.extend(from.vias.iter().cloned());
+        result.status[net] = routed.status[net];
+    }
+    routed.expansions as f64 / core::router::expansions_per_second()
+        + routed.build_work
+        + routed.pour_work
+}
+
+/// Copper checked together (`refused_groups`): a link's run and vias.
 #[derive(Clone)]
 struct Group {
     pair: usize,
     segments: [Vec<(usize, Point, Point)>; 2],
     vias: [Vec<Point>; 2],
-    fixed: bool,
 }
 
 /// Per group: why its copper is refused (`None`: kept). The copper of
 /// every group is checked at once against the board (`verify`: its
-/// obstacles, the edge, each other); a finding between the two nets of one
-/// pair counts only below their gap (KiCad lets them come that close: the
-/// class's diff pair rule, or the gap is no less than the clearance).
-fn refused_groups(board: &core::Board, pairs: &[Pair], groups: &[Group]) -> Vec<Option<String>> {
+/// obstacles, the edge, each other) and the routes near it; a finding
+/// between the two nets of one pair counts only below their gap (KiCad
+/// lets them come that close: the class's diff pair rule, or the gap is no
+/// less than the clearance).
+fn refused_groups(
+    board: &core::Board,
+    routed: &[core::NetRoute],
+    pairs: &[Pair],
+    groups: &[Group],
+) -> Vec<Option<String>> {
+    if groups.is_empty() {
+        return Vec::new();
+    }
+    // The routes near the groups' copper.
+    let mut bounds = core::geometry::Aabb {
+        minimum: [f64::INFINITY; 2],
+        maximum: [f64::NEG_INFINITY; 2],
+    };
+    let mut grow = |point: Point| {
+        bounds.minimum = [
+            bounds.minimum[0].min(point[0]),
+            bounds.minimum[1].min(point[1]),
+        ];
+        bounds.maximum = [
+            bounds.maximum[0].max(point[0]),
+            bounds.maximum[1].max(point[1]),
+        ];
+    };
+    for group in groups {
+        for polarity in 0..2 {
+            for &(_, start, end) in &group.segments[polarity] {
+                grow(start);
+                grow(end);
+            }
+            for &at in &group.vias[polarity] {
+                grow(at);
+            }
+        }
+    }
+    let bounds = bounds.inflated(CHECK_REACH);
+    let near = |a: Point, b: Point| {
+        core::geometry::Aabb {
+            minimum: [a[0].min(b[0]), a[1].min(b[1])],
+            maximum: [a[0].max(b[0]), a[1].max(b[1])],
+        }
+        .intersects(bounds)
+    };
     let mut routes = vec![core::NetRoute::default(); board.nets.len()];
+    for (net, route) in routed.iter().enumerate().take(board.nets.len()) {
+        routes[net].segments = route
+            .segments
+            .iter()
+            .filter(|segment| near(segment.start, segment.end))
+            .cloned()
+            .collect();
+        routes[net].vias = route
+            .vias
+            .iter()
+            .filter(|via| near(via.at, via.at))
+            .cloned()
+            .collect();
+    }
     let mut owner_of_segment: BTreeMap<(core::NetId, usize), usize> = BTreeMap::new();
     let mut vias_of: BTreeMap<core::NetId, Vec<(Point, usize)>> = BTreeMap::new();
     for (position, group) in groups.iter().enumerate() {
@@ -1254,12 +1727,15 @@ fn refused_groups(board: &core::Board, pairs: &[Pair], groups: &[Group]) -> Vec<
             ]
         })
         .collect();
+    // A finding at a via names its net and where it is: the group of the
+    // nearest of the groups' vias of the net, if one is that close.
     let via_owner = |net: core::NetId, at: Point| -> Option<usize> {
         vias_of.get(&net).and_then(|vias| {
             vias.iter()
                 .min_by(|a, b| {
                     core::geometry::distance(a.0, at).total_cmp(&core::geometry::distance(b.0, at))
                 })
+                .filter(|(via, _)| core::geometry::distance(*via, at) < 1.0)
                 .map(|(_, position)| *position)
         })
     };
@@ -1273,9 +1749,13 @@ fn refused_groups(board: &core::Board, pairs: &[Pair], groups: &[Group]) -> Vec<
             Some(segment) => owner_of_segment.get(&(violation.net, segment)).copied(),
             None => via_owner(violation.net, violation.at),
         };
-        let Some(own) = own else {
+        let other = violation
+            .other_segment
+            .and_then(|key| owner_of_segment.get(&key).copied());
+        if own.is_none() && other.is_none() {
+            // Between routes the router made: not the pairs'.
             continue;
-        };
+        }
         let other_net = violation.other_segment.map(|(net, _)| net).or_else(|| {
             board
                 .nets
@@ -1283,40 +1763,37 @@ fn refused_groups(board: &core::Board, pairs: &[Pair], groups: &[Group]) -> Vec<
                 .position(|net| violation.other == format!("via of {}", net.name))
                 .map(|net| net as core::NetId)
         });
-        if let (Some(other), Some(&(mate, gap))) = (other_net, partner.get(&violation.net))
-            && other == mate
+        if let (Some(other_net), Some(&(mate, gap))) = (other_net, partner.get(&violation.net))
+            && other_net == mate
             && !violation.other.contains("hole")
             && violation.actual + 1.0e-6 >= gap.min(violation.required)
         {
             continue;
         }
-        let other = violation
-            .other_segment
-            .and_then(|key| owner_of_segment.get(&key).copied());
         let why = format!(
             "its copper is {:.3} mm from {} (needs {:.3})",
             violation.actual.max(0.0),
             violation.other,
             violation.required
         );
-        // A finding between two groups refuses the one not fixed (both
-        // when neither is).
-        let blame: Vec<usize> = match other {
-            Some(other) if groups[own].fixed => vec![other],
-            Some(other) if groups[other].fixed => vec![own],
-            Some(other) => vec![own, other],
-            None => vec![own],
-        };
-        for position in blame {
-            if !groups[position].fixed {
-                refused[position].get_or_insert_with(|| why.clone());
-            }
+        if debug() {
+            eprintln!(
+                "diff pair copper refused at {:?} layer {} (net {}, segment {:?}): {why}",
+                violation.at,
+                violation.layer,
+                board.nets[violation.net as usize].name,
+                violation.segment
+            );
+        }
+        // A finding between two groups refuses both.
+        for position in own.into_iter().chain(other) {
+            refused[position].get_or_insert_with(|| why.clone());
         }
     }
     refused
 }
 
-/// The pairs router's work deadline for a ladder of `budget` seconds.
+/// The fallback router's work deadline for a ladder of `budget` seconds.
 pub(crate) fn work_budget(budget: f64) -> f64 {
     // `PCB_ROUTER_DIFF_PAIRS_WORK` (seconds): an experiment's override.
     if let Some(seconds) = std::env::var("PCB_ROUTER_DIFF_PAIRS_WORK")

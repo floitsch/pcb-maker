@@ -142,54 +142,16 @@ pub fn route_kicad_board(
         }
         None => (source_directory, None),
     };
-    // Differential pairs (`diff_pairs`): the coupled runs first, written
-    // into a copy of the project as the board's own copper, which the
-    // route keeps (`kept`).
-    let paired_directory = output_directory.with_extension("paired");
+    // Differential pairs (`diff_pairs`): each lowering makes the pairs'
+    // links nets of the route (`plan_pairs`), each attempt written turns
+    // them into the pairs' copper (`finish_pairs`); the pairs' nets route at
+    // the pairs' width.
     let paired_config;
-    let mut diff_pairs = None;
-    let (source_directory, config) = if config.diff_pairs_on()
-        && config.engine.as_deref() != Some("topological")
-    {
+    let config = if config.diff_pairs_on() && config.engine.as_deref() != Some("topological") {
         paired_config = with_pairs(config);
-        let board = source_directory.join(format!("{board_id}.kicad_pcb"));
-        let text = fs::read_to_string(&board)
-            .map_err(|error| format!("failed to read {}: {error}", board.display()))?;
-        let mut pcb = crate::canonical_order::parse_board(&text)?;
-        let report = route_diff_pairs(
-            &mut pcb,
-            &paired_config,
-            pairs_work_budget(paired_config.ladder_budget_seconds.unwrap_or(1200.0)),
-        )?;
-        eprintln!(
-            "diff pairs: {} found, {} coupled, {} partly, {} fallen back ({} of {} links coupled, {:.1} mm, {:.1} s of work)",
-            report.found,
-            report.coupled,
-            report.partly_coupled,
-            report.fallen_back,
-            report.links_coupled,
-            report.links,
-            report.coupled_mm,
-            report.work_seconds
-        );
-        let coupled = report.links_coupled > 0;
-        diff_pairs = Some(report);
-        if coupled {
-            if paired_directory.exists() {
-                fs::remove_dir_all(&paired_directory).map_err(|error| error.to_string())?;
-            }
-            copy_directory_tree(source_directory, &paired_directory)?;
-            fs::write(
-                paired_directory.join(format!("{board_id}.kicad_pcb")),
-                format!("{}\n", encode(&pcb)),
-            )
-            .map_err(|error| error.to_string())?;
-            (paired_directory.as_path(), &paired_config)
-        } else {
-            (source_directory, &paired_config)
-        }
+        &paired_config
     } else {
-        (source_directory, config)
+        config
     };
     // The topological engine makes one attempt, pour nets as tracks.
     if config.engine.as_deref() == Some("topological") {
@@ -251,9 +213,6 @@ pub fn route_kicad_board(
         memory_total_mb(),
     );
     ladder.panic_at = TestPanic::from_env();
-    if let Some(report) = &diff_pairs {
-        ladder.work += report.work_seconds;
-    }
     ladder.run(&runner)?;
     let Some((final_open, mut result)) = ladder.best.take() else {
         return Err(if ladder.failed.is_empty() {
@@ -284,17 +243,24 @@ pub fn route_kicad_board(
     if config.pin_swaps.is_some() {
         fs::remove_dir_all(&swapped_directory).map_err(|error| error.to_string())?;
     }
-    if paired_directory.exists() {
-        fs::remove_dir_all(&paired_directory).map_err(|error| error.to_string())?;
-    }
-    if let Some(mut report) = diff_pairs {
+    if let Some(report) = result.diff_pairs.as_mut() {
         let board = output_directory.join(format!("{board_id}.kicad_pcb"));
         if let Ok(text) = fs::read_to_string(&board)
             && let Ok(pcb) = parse(&text)
         {
-            measure_uncoupled(&mut report, &pcb);
+            measure_uncoupled(report, &pcb);
         }
-        result.diff_pairs = Some(report);
+        eprintln!(
+            "diff pairs: {} found, {} coupled, {} partly, {} fallen back ({} of {} links coupled, {:.1} mm; fallback {:.1} s of work)",
+            report.found,
+            report.coupled,
+            report.partly_coupled,
+            report.fallen_back,
+            report.links_coupled,
+            report.links,
+            report.coupled_mm,
+            report.work_seconds
+        );
     }
     // Pads KiCad finds starved, solid (`solid_starved_thermals`, on unless
     // false). Also the pads whose spokes reach only an isolated island of
@@ -401,6 +367,9 @@ impl LadderRunner for KiCadRunner<'_> {
         // The board's own tracks and vias: what they join is connected.
         let kept = keep_existing_copper(&mut board, attempt.diff_pairs_on());
         let _ = self.kept.set(kept);
+        if attempt.diff_pairs_on() {
+            plan_pairs(&mut board, attempt);
+        }
         Ok(board)
     }
 

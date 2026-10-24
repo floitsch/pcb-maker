@@ -128,6 +128,9 @@ pub(super) fn route_kicad_board_lowered(
                 expressions,
             } = lower(&pcb, config, connect_pours)?;
             let kept = keep_existing_copper(&mut board, config.diff_pairs_on());
+            if config.diff_pairs_on() && config.engine.as_deref() != Some("topological") {
+                plan_pairs(&mut board, config);
+            }
             (board, lowering_work_of(expressions), kept)
         }
     };
@@ -315,6 +318,14 @@ pub(super) fn write_attempt(
         result.routes = routes;
         routing_seconds += tightening.elapsed().as_secs_f64();
     }
+    // Differential pairs: the links' routes into the pairs' copper (written
+    // first, so that the nets' names are made canonical with the rest), the
+    // board as lowered.
+    let paired = finish_pairs(board, &mut result, config);
+    let board = paired.as_ref().map_or(board, |(restored, _, _)| restored);
+    if let Some((_, copper, _)) = &paired {
+        write_pair_copper(&mut pcb, copper, layer_names)?;
+    }
     let nets = emit_routes(&mut pcb, board, &result, layer_names, true)?;
     let mut report = finish_routed_board(
         &pcb,
@@ -329,5 +340,6 @@ pub(super) fn write_attempt(
         [lowering_seconds, routing_seconds],
     )?;
     report.warnings = warnings;
+    report.diff_pairs = paired.map(|(_, _, pairs)| pairs);
     Ok(report)
 }

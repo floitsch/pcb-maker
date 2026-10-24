@@ -55,6 +55,7 @@ fn two_nets(layer_count: usize) -> Board {
             clearance: 0.2,
             via_diameter: 0.6,
             via_drill: 0.3,
+            layers: 0,
         }],
         neck_width: 0.15,
         obstacles,
@@ -87,6 +88,7 @@ fn two_nets(layer_count: usize) -> Board {
         fill_passes: Vec::new(),
         pin_row_gaps: Vec::new(),
         terminal_copper: Vec::new(),
+        attachment: Default::default(),
     }
 }
 
@@ -275,6 +277,7 @@ fn a_via_keeps_the_hole_to_hole_spacing_from_its_own_nets_pad_hole() {
         clearance: 0.1,
         via_diameter: 0.4,
         via_drill: 0.2,
+        layers: 0,
     };
     board.hole_to_hole = 0.5;
     board.hole_clearance = 0.2;

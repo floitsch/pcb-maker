@@ -544,6 +544,7 @@ pub fn rasterize(board: &Board, frame: &TileFrame) -> FeatureMaps {
             clearance: 0.2,
             via_diameter: 0.6,
             via_drill: 0.3,
+            layers: 0,
         });
     for (name, value) in [
         ("layer_count", layers as f64 / SLOTS as f64),
@@ -649,6 +650,7 @@ mod tests {
                 clearance: 0.2,
                 via_diameter: 0.6,
                 via_drill: 0.3,
+                layers: 0,
             }],
             neck_width: 0.2,
             // A 0.5 mm square SMD pad on the front (5 x 5 nodes at 0.1 mm)
@@ -685,6 +687,7 @@ mod tests {
             fill_passes: Vec::new(),
             pin_row_gaps: Vec::new(),
             terminal_copper: Vec::new(),
+            attachment: Default::default(),
         }
     }
 
@@ -757,6 +760,7 @@ mod tests {
             clearance: 1.0,
             via_diameter: 0.6,
             via_drill: 0.3,
+            layers: 0,
         };
         let maps = rasterize(&board, &frame(32, 32));
         let near = (1.55 - 0.4) / 1.6;

@@ -236,6 +236,7 @@ fn diagonal_channel(notch: bool) -> (Router, [f64; 2]) {
         clearance: 0.2,
         via_diameter: 0.6,
         via_drill: 0.3,
+        layers: 0,
     };
     let mut obstacles = vec![
         copper(
@@ -340,6 +341,7 @@ fn diagonal_channel(notch: bool) -> (Router, [f64; 2]) {
         fill_passes: Vec::new(),
         pin_row_gaps: Vec::new(),
         terminal_copper: Vec::new(),
+        attachment: Default::default(),
     };
     let config = Config {
         pitches: vec![0.1],
@@ -357,6 +359,7 @@ fn walled_in_pad() -> Router {
         clearance: 0.2,
         via_diameter: 0.6,
         via_drill: 0.3,
+        layers: 0,
     };
     let pads = [[3.0, 10.0], [8.0, 10.0], [27.0, 4.0], [27.0, 16.0]];
     let mut obstacles: Vec<Obstacle> = pads
@@ -428,6 +431,7 @@ fn walled_in_pad() -> Router {
         fill_passes: Vec::new(),
         pin_row_gaps: Vec::new(),
         terminal_copper: Vec::new(),
+        attachment: Default::default(),
     };
     let config = Config {
         pitches: vec![0.1],
@@ -445,6 +449,7 @@ fn halves(apart_trees: bool) -> Router {
         clearance: 0.2,
         via_diameter: 0.6,
         via_drill: 0.3,
+        layers: 0,
     };
     let pads = [[3.0, 10.0], [8.0, 4.0], [22.0, 10.0], [27.0, 16.0]];
     let mut obstacles: Vec<Obstacle> = pads
@@ -508,6 +513,7 @@ fn halves(apart_trees: bool) -> Router {
         fill_passes: Vec::new(),
         pin_row_gaps: Vec::new(),
         terminal_copper: Vec::new(),
+        attachment: Default::default(),
     };
     let config = Config {
         pitches: vec![0.1],
@@ -591,6 +597,7 @@ fn crossed_net() -> Router {
         clearance: 0.2,
         via_diameter: 0.6,
         via_drill: 0.3,
+        layers: 0,
     };
     let nets: [(&str, Vec<[f64; 2]>); 3] = [
         ("A", vec![[3.0, 10.0], [15.0, 10.0], [27.0, 10.0]]),
@@ -646,6 +653,7 @@ fn crossed_net() -> Router {
         fill_passes: Vec::new(),
         pin_row_gaps: Vec::new(),
         terminal_copper: Vec::new(),
+        attachment: Default::default(),
     };
     let config = Config {
         pitches: vec![0.1],
@@ -861,6 +869,7 @@ fn board(
             clearance: 0.2,
             via_diameter: 0.6,
             via_drill: 0.3,
+            layers: 0,
         }],
         neck_width: 0.25,
         obstacles,
@@ -876,6 +885,7 @@ fn board(
         fill_passes: Vec::new(),
         pin_row_gaps: Vec::new(),
         terminal_copper: Vec::new(),
+        attachment: Default::default(),
     }
 }
 
@@ -1053,6 +1063,7 @@ fn a_spoke_passing_another_nets_copper_too_closely_does_not_count() {
         clearance: 0.3,
         via_diameter: 0.6,
         via_drill: 0.3,
+        layers: 0,
     });
     let joined = |spoke_clearance: bool| {
         let router = Router::new(
@@ -4296,6 +4307,7 @@ fn the_pin_row_cost_keeps_other_nets_out_from_between_a_parts_pads() {
         clearance: 0.1,
         via_diameter: 0.6,
         via_drill: 0.3,
+        layers: 0,
     };
     let pad = |x: f64, net: NetId, label: &str| {
         let half = 0.25;
@@ -4381,6 +4393,7 @@ fn the_pin_row_cost_keeps_other_nets_out_from_between_a_parts_pads() {
         fill_passes: Vec::new(),
         pin_row_gaps: gaps,
         terminal_copper: Vec::new(),
+        attachment: Default::default(),
     };
     let crosses = |cost: f64| {
         let config = Config {

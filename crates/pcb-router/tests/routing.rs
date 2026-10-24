@@ -13,6 +13,7 @@ fn class() -> RuleClass {
         clearance: 0.2,
         via_diameter: 0.7,
         via_drill: 0.3,
+        layers: 0,
     }
 }
 
@@ -44,6 +45,7 @@ impl Builder {
                 fill_passes: Vec::new(),
                 pin_row_gaps: Vec::new(),
                 terminal_copper: Vec::new(),
+                attachment: Default::default(),
             },
         }
     }

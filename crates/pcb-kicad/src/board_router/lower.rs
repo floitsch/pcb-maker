@@ -407,6 +407,7 @@ fn lower_board(
             clearance: rules.clearance_mm,
             via_diameter: rules.via_size_mm,
             via_drill: rules.via_drill_mm,
+            layers: 0,
         };
         let class_index = classes
             .iter()
@@ -1858,6 +1859,7 @@ fn lower_board(
             fill_passes,
             pin_row_gaps,
             terminal_copper: Vec::new(),
+            attachment: Default::default(),
         },
         expressions: 0,
     })

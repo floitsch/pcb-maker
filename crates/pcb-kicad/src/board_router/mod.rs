@@ -25,8 +25,9 @@ mod route;
 mod tests;
 mod tools;
 
-pub(crate) use self::diff_pairs::{measure_uncoupled, route_diff_pairs};
-pub(crate) use self::diff_pairs::{with_pairs, work_budget as pairs_work_budget};
+pub(crate) use self::diff_pairs::{
+    finish_pairs, measure_uncoupled, plan_pairs, with_pairs, write_pair_copper,
+};
 pub(crate) use self::kept::{count_tracks, keep_existing_copper, strip_tracks};
 pub(crate) use self::{attempt::*, budget::*, geometry::*, ladder::*, lower::*, memory::*};
 pub use self::{

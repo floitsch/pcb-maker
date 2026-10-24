@@ -859,6 +859,7 @@ impl<'a> Ladder<'a> {
     /// the shared parts of its build once a phase (`lattice_charge`), its
     /// lowering once (the seeds share one).
     fn charge_result(&mut self, result: &KiCadBoardRouterResult, times: f64) {
+        self.charge_pairs(result);
         let search = work_of(result.expansions) * times;
         if self.charges_all {
             let lattice =
@@ -871,6 +872,14 @@ impl<'a> Ladder<'a> {
             );
         } else {
             self.charge(search, self.extra_charge(result) * times, 0.0, 0.0);
+        }
+    }
+
+    /// Counts the differential pairs' fallback router's work of an
+    /// attempt written (`finish_pairs`) as search.
+    fn charge_pairs(&mut self, result: &KiCadBoardRouterResult) {
+        if let Some(pairs) = &result.diff_pairs {
+            self.charge(pairs.work_seconds, 0.0, 0.0, 0.0);
         }
     }
 
@@ -1696,6 +1705,7 @@ impl<'a> Ladder<'a> {
             return Ok(());
         };
         let mut result = written?;
+        self.charge_pairs(&result);
         // The probe's work and its own are counted: with all work charged,
         // its pour analyses (the manual spokes' among them) too; else its
         // manual spokes.

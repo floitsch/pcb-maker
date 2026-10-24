@@ -1219,6 +1219,15 @@ impl StaticMaps {
             "{} copper layers: free_layers holds 32 (check_capacity)",
             board.layer_count
         );
+        // A class kept to some layers (`RuleClass::layers`) has no track
+        // on the others.
+        if rules.layers != 0 {
+            for (layer, map) in trace.iter_mut().enumerate() {
+                if rules.layers & (1 << layer) == 0 {
+                    map.fill(BLOCKED16);
+                }
+            }
+        }
         let mut free_layers = vec![0u32; if searched { cells } else { 0 }];
         let via_blocked = NodeBits::from_bools(&via_blocked);
         if searched {
@@ -1451,6 +1460,7 @@ mod tests {
             fill_passes: Vec::new(),
             pin_row_gaps: Vec::new(),
             terminal_copper: Vec::new(),
+            attachment: Default::default(),
         }
     }
 
