@@ -1558,6 +1558,12 @@ pub(crate) fn finish_pairs(
     // routed with everything else kept.
     if !open_pairs.is_empty() {
         report.work_seconds = route_fallback(&restored, result, &plan.pairs, &open_pairs, config);
+        // What is left of the failed links' stubs that joins nothing.
+        for &index in &open_pairs {
+            for net in [plan.pairs[index].positive, plan.pairs[index].negative] {
+                prune_dangling(&restored, &mut result.routes[net as usize], net);
+            }
+        }
     }
     // A pair's net whose pads the links joined all is routed, not trivial.
     for (net, original) in &plan.originals {
@@ -1734,6 +1740,48 @@ fn straighten_stubs(
             } else {
                 segments.extend(removed);
             }
+        }
+    }
+}
+
+/// Removes the tracks of `net`'s route with an end that touches nothing
+/// of the net (no other track, via, pad or kept copper), until none is
+/// left: a failed link's stub the fallback did not use (KiCad's
+/// `track_dangling`, an error in some projects).
+fn prune_dangling(board: &core::Board, route: &mut core::NetRoute, net: core::NetId) {
+    let own: Vec<&core::Obstacle> = board
+        .obstacles
+        .iter()
+        .filter(|obstacle| obstacle.net == Some(net) && obstacle.kind == core::ObstacleKind::Copper)
+        .collect();
+    loop {
+        let touches =
+            |index: usize, point: Point, layer: usize| {
+                route.segments.iter().enumerate().any(|(other, segment)| {
+                    other != index
+                        && segment.layer == layer
+                        && core::geometry::point_segment_distance(point, segment.start, segment.end)
+                            <= segment.width / 2.0 + 1.0e-6
+                }) || route.vias.iter().any(|via| {
+                    core::geometry::distance(via.at, point) <= via.diameter / 2.0 + 1.0e-6
+                }) || own.iter().any(|obstacle| {
+                    obstacle.layers & (1 << layer) != 0
+                        && obstacle.shape.distance_to_point(point) <= 1.0e-6
+                })
+            };
+        let dangling = route
+            .segments
+            .iter()
+            .enumerate()
+            .position(|(index, segment)| {
+                !touches(index, segment.start, segment.layer)
+                    || !touches(index, segment.end, segment.layer)
+            });
+        match dangling {
+            Some(index) => {
+                route.segments.remove(index);
+            }
+            None => break,
         }
     }
 }
