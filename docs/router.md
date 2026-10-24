@@ -1953,8 +1953,9 @@ the pads where those hold (the router's stubs leave the pads parallel at
 the pads' pitch, which KiCad takes for a coupled piece out of the gap's
 range). The links' nets and the stubs' end terminals go; the router's
 diagnostics name the pair's nets for them. A link not routed, refused
-or crossed leaves connections open: its stubs go and the *fallback*
-routes the pair's nets with every other route kept (the board's
+or crossed leaves connections open: its stubs go (and after the
+fallback what is left of them dangling, followed from the stub's end) and
+the *fallback* routes the pair's nets with every other route kept (the board's
 classes; 0.05 of the ladder's budget, at least 1 s,
 `PCB_ROUTER_DIFF_PAIRS_WORK`; its work charged to the ladder as search).
 
@@ -1969,16 +1970,17 @@ fell back (`fewer than two parts with the pair's pads side by side`,
 `the coupled run was not routed`, `its copper is ... from ...`).
 
 **Measured** (route mode, 30 s, 8 x 1; off x1753, main at 4d9965e; on
-x1763): docs/changelog.md, "Committed on 2026-10-24 (differential pairs,
+x1766): docs/changelog.md, "Committed on 2026-10-24 (differential pairs,
 phase 2)", and phase 1's in "Committed on 2026-10-23 (differential pairs,
 phase 1)". The expansion tier's 21 boards without pairs route as with the
 switch off (x1762, identical rows); on the 25 with pairs unconnected 556
--> 576, passes 9 -> 6, new errors 1 -> 1: the switch stays off. The
+-> 576, passes 9 -> 7, new errors 1 -> 3; the rule boards' gap findings
+113 -> 83: the switch stays off. The
 launches work (no "no launch" fallback; 55 links, 16 coupled); what
-costs is the negotiation itself: on MSign's mainboard (19 -> 76) six
+costs is the negotiation itself: on MSign's mainboard six
 link nets of the envelope's width in the dense USB corner leave its
 power nets (VDD, +5V, VBUS) tens of terminals short at 30 s although
-only two links couple; on AMLing2's drone carrier (3 -> 9) the CSI
+only two links couple (19 -> 75); on AMLing2's drone carrier (3 -> 9) the CSI
 bundle at the CM5 connector: six of twelve link runs not routed, three
 refused; on ducktop2's bms (0 -> 5) the one current-sense link is
 refused and the board's other nets lose what the negotiation spent on
@@ -2013,9 +2015,12 @@ offset per layer at the write, the class's layers then all the pair's.
 (7) Pairs through series parts (AC capacitors: ducktop2-center couples
 2 of its 61 pairs; "fewer than two pair points" is 65 fallbacks on the
 rule boards and 25 of 60 pairs on the tier) need links through two-pad
-parts (a capacitor pair as a pair point of two parts). (8) The rule
-boards' gap findings did not improve (113 -> 115): KiCad counts the
-fallen-back pairs' parallel stretches and the crossed stubs.
+parts (a capacitor pair as a pair point of two parts). (8) On the rule
+boards the gap findings fall (113 -> 83) but ducktop2's pairs gain
+items_not_allowed (+89): the pairs' nets, and the fallback, route on
+the inner layers their rules disallow (route mode does not lower rule
+areas from rules); the fallback and the stubs should keep the pair's
+layers too.
 (9) Coupled branches (a T at an ESD part) instead of one run per link.
 
 ## Determinism and the wall clock (2026-10-14)
