@@ -102,6 +102,8 @@ const WORK_SHARE: f64 = 0.05;
 const MINIMUM_WORK: f64 = 1.0;
 /// Other nets' copper within this of the pairs' copper is checked with it.
 const CHECK_REACH: f64 = 2.0;
+/// Room between the two stubs' ends beyond the router's clearance.
+const ENDS_MARGIN: f64 = 0.01;
 /// At a layer change the pair's two vias move apart along the bisector of
 /// the runs' normals by up to 1 / this (a right-angle turn).
 const VIA_TURN: f64 = 0.7;
@@ -183,6 +185,14 @@ impl Pair {
     }
     fn envelope(&self) -> f64 {
         2.0 * self.width + self.gap
+    }
+    /// How far from the run's centreline the pads' stubs end: the offset,
+    /// or as far apart as the router keeps the two nets (its clearance, not
+    /// the pair's gap, between their stubs), so that both ends have legal
+    /// nodes; a jog joins them to the run.
+    fn ends_offset(&self) -> f64 {
+        self.offset()
+            .max((self.width + self.clearance) / 2.0 + ENDS_MARGIN)
     }
     /// Half the distance between the two vias' centres: the vias keep the
     /// clearance from each other and from the other net's track.
@@ -502,29 +512,24 @@ fn part_middle(board: &core::Board, label: &str) -> Option<Point> {
     (count > 2).then(|| scale(sum, 1.0 / count as f64))
 }
 
-/// Whether a track of the pair's width from `at` to `to` on `layer`, of
-/// `net`, keeps its clearance from the obstacles `near` (`mate`'s, the
-/// pair's other net's, only the pair's gap).
+/// Whether a track of the pair's width from `at` to `to` on `layer`
+/// keeps its clearance from the obstacles `near`, the pair's own copper
+/// the pair's gap (either net may end there: where the pads' order crosses
+/// the run's, the stubs swap sides).
 fn end_clear(
     board: &core::Board,
     near: &[usize],
     pair: &Pair,
     (at, to): (Point, Point),
     layer: core::LayerMask,
-    net: core::NetId,
 ) -> bool {
-    let mate = if net == pair.positive {
-        pair.negative
-    } else {
-        pair.positive
-    };
     near.iter().all(|&index| {
         let obstacle = &board.obstacles[index];
-        if obstacle.layers & layer == 0 || obstacle.net == Some(net) {
+        if obstacle.layers & layer == 0 {
             return true;
         }
         let mut keep = keep_from(board, obstacle, pair.clearance);
-        if obstacle.net == Some(mate) {
+        if obstacle.net == Some(pair.positive) || obstacle.net == Some(pair.negative) {
             keep = keep.min(pair.gap);
         }
         obstacle.shape.distance_to_segment(at, to) >= pair.width / 2.0 + keep
@@ -613,13 +618,14 @@ fn launch(
             }) {
                 return None;
             }
+            let e = pair.ends_offset();
             let ends = [
-                add(start, scale(left(outward), side * d)),
-                add(start, scale(left(outward), -side * d)),
+                add(start, scale(left(outward), side * e)),
+                add(start, scale(left(outward), -side * e)),
             ];
             let lead_of = |end: Point| (end, add(end, scale(outward, reserve)));
-            (end_clear(board, &near, pair, lead_of(ends[0]), layers, pair.positive)
-                && end_clear(board, &near, pair, lead_of(ends[1]), layers, pair.negative))
+            (end_clear(board, &near, pair, lead_of(ends[0]), layers)
+                && end_clear(board, &near, pair, lead_of(ends[1]), layers))
             .then_some(Launch {
                 at,
                 start,
@@ -659,6 +665,8 @@ struct LinkPlan {
     /// starts.
     launches: [Point; 2],
     starts: [Point; 2],
+    /// Per end and polarity: where the stubs end.
+    ends: [[Point; 2]; 2],
     /// The side of the run the positive net takes (1 left, -1 right),
     /// along the run from the first end.
     side: f64,
@@ -885,6 +893,7 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
             let side = launch_a.side;
             let crossed = launch_b.side != side;
             let mut terminals = Vec::new();
+            let mut stub_ends = [[[0.0; 2]; 2]; 2];
             for (end, found) in [launch_a, launch_b].into_iter().enumerate() {
                 let label = format!("pair launch {}{}", link + 1, ["a", "b"][end]);
                 // The lead past the stubs' ends: the terminal's copper; the
@@ -923,14 +932,21 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
                     scale(left(found.outward), -1.0)
                 };
                 let reach = found.ends;
-                for (net, sign) in [(pair.positive, side), (pair.negative, -side)] {
-                    let at = add(found.start, scale(across, sign * pair.offset()));
+                for (polarity, (net, sign)) in [(pair.positive, side), (pair.negative, -side)]
+                    .into_iter()
+                    .enumerate()
+                {
+                    let at = add(found.start, scale(across, sign * pair.ends_offset()));
+                    stub_ends[end][polarity] = at;
                     let terminals = &mut board.nets[net as usize].terminals;
                     terminals.push(core::Terminal {
                         anchor: at,
                         layers: found.layers,
                         pad: board.obstacles.len(),
-                        contact: None,
+                        contact: Some(core::Shape::Circle {
+                            center: at,
+                            radius: LAUNCH_CONTACT,
+                        }),
                         label: format!("pair run {}{}", link + 1, ["a", "b"][end]),
                     });
                     board.obstacles.push(core::Obstacle {
@@ -976,6 +992,7 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
                 link,
                 launches: [launch_a.at, launch_b.at],
                 starts: [launch_a.start, launch_b.start],
+                ends: stub_ends,
                 side,
                 crossed,
             });
@@ -1374,8 +1391,13 @@ pub(crate) fn finish_pairs(
             {
                 path.pop();
             }
+            // Half the lead straight along the launch's direction, so that
+            // the run's tracks start beside the stubs' ends.
             let (first, last) = (path[0], path[path.len() - 1]);
+            let half = |start: Point, at: Point| scale(add(start, at), 0.5);
+            path.insert(0, (half(start_a, at_a), first.1));
             path.insert(0, (start_a, first.1));
+            path.push((half(start_b, at_b), last.1));
             path.push((start_b, last.1));
             path
         });
@@ -1399,6 +1421,20 @@ pub(crate) fn finish_pairs(
         let copper = path.as_ref().and_then(|path| {
             link_copper(path, pair, plan_link.side).map(|mut copper| {
                 copper.crossed = plan_link.crossed;
+                // The jogs from the stubs' ends to the run's tracks.
+                for (polarity, segments) in copper.segments.iter_mut().enumerate() {
+                    let [from, to] = [plan_link.ends[0][polarity], plan_link.ends[1][polarity]];
+                    if let Some(&(layer, tip, _)) = segments.first()
+                        && core::geometry::distance(tip, from) > 1.0e-6
+                    {
+                        segments.insert(0, (layer, from, tip));
+                    }
+                    if let Some(&(layer, _, tip)) = segments.last()
+                        && core::geometry::distance(tip, to) > 1.0e-6
+                    {
+                        segments.push((layer, tip, to));
+                    }
+                }
                 copper
             })
         });
