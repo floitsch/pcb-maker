@@ -798,6 +798,15 @@ without them) routes as before, byte for byte.
   `track_width (min ...)` rule on some nets holds in their neck-downs and
   in the narrow-signal step (the lowering sets the narrow width as the
   class width; the floor raises it again).
+- **Widths per layer** (2026-10-24). A net of `NetRules::layer_widths`
+  gets a class of its widths and floors per layer
+  (`ClassRules::class_widths`, `class_floors`; `width_on`, `floor_on`,
+  `neck_width_on`), and `Resolved::layer_variant` tells layers apart
+  where any net's bounds differ, so that each variant's stamps and each
+  layer's static maps measure the tracks at that layer's width
+  (`variant_layer`: the layer a variant's widths are read on). A net
+  whose bounds give the same width and floor on every layer keeps one
+  class, as before.
 - **Pair clearances.** `Resolved` tabulates, per pair of groups, pair of
   kinds (track, via, pad) and layer variant (layers the same rules hold
   on), the clearance the rules ask beyond the classes. The stamps are
@@ -2477,8 +2486,15 @@ vias beside each pair via: the link's via disc already holds room for
 two vias; a return via each side needs the disc wider by a via and a
 clearance (`2 dv / 0.7 + 2 V + 2 c`) or a separate obstacle placed with
 the pair's vias. (6) Per-layer widths in one run (ducktop2's DIFF_85,
-0.183 mm outside, 0.114 on In2): a link class per layer width, with the
-offset per layer at the write, the class's layers then all the pair's.
+0.183 mm outside, 0.114 on In2): the router has widths per layer for a
+net since 2026-10-24 (`NetRules::layer_widths`, "Project rules" above:
+classes split by their widths per layer, a stamp variant per layer
+width), so a link class may now carry the pair's width per layer; what
+is left is to give the links' classes those widths (the pairs' rules are
+`inDiffPair()` conditions, which the custom rules' lowering does not
+turn into widths per layer), the offset per layer at the write, and then
+the class's layers all the pair's (and the pairs' nets no longer kept off
+the layers where one width breaks the bounds, phase 3's "Layers").
 (7) Done in phase 4: pairs through series parts (a capacitor pair as a
 pair point of two parts; "fewer than two pair points" 65 -> 22 on the
 rule boards). (8) Done in phase 3: the pairs' nets keep to the layers their rules

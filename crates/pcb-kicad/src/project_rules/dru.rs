@@ -2101,30 +2101,9 @@ fn lower_constraint(
             };
             match kind {
                 "track_width" if by_layer => {
-                    // Per layer (`Lowered::layer_width_min`, ...): the router
+                    // Per layer (`Lowered::layer_width_min`, ...; written
+                    // below unless the rule has no effect): the router
                     // routes each layer at its own width.
-                    let layer_count = board.copper_layers.len();
-                    if lowered.layer_width_min.is_empty() {
-                        lowered.layer_width_min = vec![vec![0.0; board.nets.len()]; layer_count];
-                        lowered.layer_width_max =
-                            vec![vec![f64::INFINITY; board.nets.len()]; layer_count];
-                        lowered.layer_width_opt = vec![vec![None; board.nets.len()]; layer_count];
-                    }
-                    for (layer, nets) in per_layer.iter().enumerate() {
-                        for &net in nets {
-                            if let Some(min) = constraint.min {
-                                let slot = &mut lowered.layer_width_min[layer][net];
-                                *slot = slot.max(min);
-                            }
-                            if let Some(max) = constraint.max {
-                                let slot = &mut lowered.layer_width_max[layer][net];
-                                *slot = slot.min(max);
-                            }
-                            if let Some(opt) = constraint.opt {
-                                lowered.layer_width_opt[layer][net] = Some(opt);
-                            }
-                        }
-                    }
                     if let Some(min) = constraint.min {
                         parts.push(format!("width at least {}", mm(min)));
                     }
@@ -2279,6 +2258,30 @@ fn lower_constraint(
                 detail.push_str(": the net classes and the board setup keep it");
                 lowered.note(rule, constraint, "no_effect", detail);
                 return;
+            }
+            if by_layer {
+                let layer_count = board.copper_layers.len();
+                if lowered.layer_width_min.is_empty() {
+                    lowered.layer_width_min = vec![vec![0.0; board.nets.len()]; layer_count];
+                    lowered.layer_width_max =
+                        vec![vec![f64::INFINITY; board.nets.len()]; layer_count];
+                    lowered.layer_width_opt = vec![vec![None; board.nets.len()]; layer_count];
+                }
+                for (layer, nets) in per_layer.iter().enumerate() {
+                    for &net in nets {
+                        if let Some(min) = constraint.min {
+                            let slot = &mut lowered.layer_width_min[layer][net];
+                            *slot = slot.max(min);
+                        }
+                        if let Some(max) = constraint.max {
+                            let slot = &mut lowered.layer_width_max[layer][net];
+                            *slot = slot.min(max);
+                        }
+                        if let Some(opt) = constraint.opt {
+                            lowered.layer_width_opt[layer][net] = Some(opt);
+                        }
+                    }
+                }
             }
             lowered.note(
                 rule,
@@ -2907,6 +2910,19 @@ mod tests {
         );
         assert_eq!(rules.layer_width_max[1], [f64::INFINITY, 0.1]);
         assert_eq!(rules.report[0].status, "applied");
+        // A layer rule the classes keep (tuxkeychain's 0.127 mm outside
+        // over classes and a neck of 0.13) changes nothing.
+        let mut kept = board.clone();
+        kept.neck_width = 0.13;
+        kept.current
+            .iter_mut()
+            .for_each(|rules| rules.trace_width_mm = 0.2);
+        let rules = lowered(
+            "(rule outer (constraint track_width (min 0.127mm)) (layer outer))",
+            &kept,
+        );
+        assert_eq!(rules.report[0].status, "no_effect");
+        assert!(rules.layer_width_min.is_empty());
         // A layer clause that names every layer of the board is a rule on
         // every layer: per net, as before.
         let two = self::board(&[("A", &["Default"])]);
