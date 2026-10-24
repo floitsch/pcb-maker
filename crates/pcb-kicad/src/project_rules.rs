@@ -62,10 +62,10 @@ pub struct KiCadProjectRulesReport {
     /// holds the board to the project's.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub overrides: Vec<KiCadRuleOverride>,
-    /// The clearance a custom rule asks between the pads of every two
-    /// nets on some layer, where it is more than the classes' (the
-    /// placer keeps parts that far apart: `largest_clearance`); a rule on
-    /// some layers only reaches the router as a pair rule
+    /// The largest clearance a custom rule asks between the pads of every
+    /// two nets on some layer (the placer keeps parts at least that far
+    /// apart, and at least the classes' largest: `largest_clearance`); a
+    /// rule on some layers only reaches the router as a pair rule
     /// (`net_rules.clearances`), which no class shows.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pad_clearance_mm: Option<f64>,

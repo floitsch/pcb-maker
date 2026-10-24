@@ -233,7 +233,7 @@ The fields `project` flattens into `rules`; each is left out when empty. Source:
 | `rules.unmodelled` | `Vec<String>` | The project's routing rules the router does not keep, one line each; KiCad still checks them, so their findings are left to the designer (the verdict's next_actions name them). |
 | `rules.minimums` | `Option<KiCadProjectMinimums>` | The board's minimum track width and clearance, with where each comes from (the project's board setup or KiCad's default). |
 | `rules.overrides` | `Vec<KiCadRuleOverride>` | Widths and clearances a router file asked for below the project's (`allow_below_project_minimum`): the run used them; KiCad's DRC holds the board to the project's. |
-| `rules.pad_clearance_mm` | `Option<f64>` | The clearance a custom rule asks between the pads of every two nets on some layer, where it is more than the classes' (the placer keeps parts that far apart: `largest_clearance`); a rule on some layers only reaches the router as a pair rule (`net_rules.clearances`), which no class shows. |
+| `rules.pad_clearance_mm` | `Option<f64>` | The largest clearance a custom rule asks between the pads of every two nets on some layer (the placer keeps parts at least that far apart, and at least the classes' largest: `largest_clearance`); a rule on some layers only reaches the router as a pair rule (`net_rules.clearances`), which no class shows. |
 | `rules.net_classes` | `BTreeMap<String, Vec<String>>` | Per net (as the router names it): its classes, the highest priority first ("Default" for a net in none). |
 | `rules.class_values` | `BTreeMap<String, [Option<f64>; 2]>` | Per class of the project: its track width and clearance as the project states them (before the board's minimums). |
 
