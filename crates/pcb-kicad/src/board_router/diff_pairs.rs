@@ -250,6 +250,21 @@ fn find_pairs(board: &core::Board, config: &KiCadBoardRouterConfig) -> Vec<Pair>
         .map(|(index, net)| (net.name.as_str(), index as core::NetId))
         .collect();
     let mut pairs = Vec::new();
+    // Per part (its reference): its pads' centres.
+    let mut parts: BTreeMap<String, Vec<Point>> = BTreeMap::new();
+    for obstacle in &board.obstacles {
+        if obstacle.kind == core::ObstacleKind::Copper
+            && let Some((part, pad)) = obstacle.label.rsplit_once('.')
+            && !pad.contains(' ')
+            && !part.contains(' ')
+        {
+            let bounds = obstacle.shape.aabb();
+            parts
+                .entry(part.to_string())
+                .or_default()
+                .push(scale(add(bounds.minimum, bounds.maximum), 0.5));
+        }
+    }
     for (index, net) in board.nets.iter().enumerate() {
         let Some((partner, _, true)) = crate::project_rules::diff_pair_of(&net.name) else {
             continue;
@@ -317,24 +332,36 @@ fn find_pairs(board: &core::Board, config: &KiCadBoardRouterConfig) -> Vec<Pair>
                 .map_or(label, |(part, _)| part)
                 .to_string()
         };
-        let mut candidates: Vec<(f64, usize, usize)> = Vec::new();
+        // Or a pad of each of two two-pad parts side by side (the pair's
+        // series or AC-coupling capacitors, resistors, ESD diodes: each
+        // part's other pad beside the other's), after those of one part:
+        // the pair is coupled up to the parts and on from them.
+        let mut candidates: Vec<(bool, f64, usize, usize)> = Vec::new();
         for (a, ta) in p.terminals.iter().enumerate() {
             for (b, tb) in n.terminals.iter().enumerate() {
                 let span = core::geometry::distance(ta.anchor, tb.anchor);
+                let (part_a, part_b) = (reference(&ta.label), reference(&tb.label));
+                let series = part_a != part_b
+                    && series_parts(&parts, &part_a, &part_b, ta.anchor, tb.anchor);
                 if span <= PAIR_POINT_SPAN
                     && span > EPSILON
-                    && reference(&ta.label) == reference(&tb.label)
+                    && (part_a == part_b || series)
                     && ta.layers & tb.layers != 0
                     && !straddles(board, ta, tb, [positive, negative])
                 {
-                    candidates.push((span, a, b));
+                    candidates.push((series, span, a, b));
                 }
             }
         }
-        candidates.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)).then(x.2.cmp(&y.2)));
+        candidates.sort_by(|x, y| {
+            x.0.cmp(&y.0)
+                .then(x.1.total_cmp(&y.1))
+                .then(x.2.cmp(&y.2))
+                .then(x.3.cmp(&y.3))
+        });
         let (mut used_p, mut used_n) = (BTreeSet::new(), BTreeSet::new());
         let mut points = Vec::new();
-        for (_, a, b) in candidates {
+        for (_, _, a, b) in candidates {
             if !used_p.contains(&a) && !used_n.contains(&b) {
                 used_p.insert(a);
                 used_n.insert(b);
@@ -352,7 +379,17 @@ fn find_pairs(board: &core::Board, config: &KiCadBoardRouterConfig) -> Vec<Pair>
                 0.5,
             )
         };
-        let part = |point: &(usize, usize)| reference(&p.terminals[point.0].label);
+        let part = |point: &(usize, usize)| {
+            let (part_p, part_n) = (
+                reference(&p.terminals[point.0].label),
+                reference(&n.terminals[point.1].label),
+            );
+            if part_p == part_n {
+                part_p
+            } else {
+                format!("{part_p}+{part_n}")
+            }
+        };
         let mut links = Vec::new();
         if points.len() >= 2 {
             let mut inside = vec![false; points.len()];
@@ -395,6 +432,43 @@ fn find_pairs(board: &core::Board, config: &KiCadBoardRouterConfig) -> Vec<Pair>
         });
     }
     pairs
+}
+
+/// Whether parts `a` and `b` (references) are two-pad parts side by side:
+/// their pads at `at_a` and `at_b`, their other pads close too
+/// (`PAIR_POINT_SPAN`) and the parts parallel (a pair's series
+/// capacitors).
+fn series_parts(
+    parts: &BTreeMap<String, Vec<Point>>,
+    a: &str,
+    b: &str,
+    at_a: Point,
+    at_b: Point,
+) -> bool {
+    let other = |pads: Option<&Vec<Point>>, at: Point| -> Option<Point> {
+        let pads = pads?;
+        (pads.len() == 2).then_some(())?;
+        let far = if core::geometry::distance(pads[0], at) > core::geometry::distance(pads[1], at)
+        {
+            pads[0]
+        } else {
+            pads[1]
+        };
+        // The pad given is one of the two.
+        (pads
+            .iter()
+            .map(|pad| core::geometry::distance(*pad, at))
+            .fold(f64::INFINITY, f64::min)
+            < 0.05)
+            .then_some(far)
+    };
+    match (other(parts.get(a), at_a), other(parts.get(b), at_b)) {
+        (Some(far_a), Some(far_b)) => {
+            core::geometry::distance(far_a, far_b) <= PAIR_POINT_SPAN
+                && dot(unit(sub(far_a, at_a)), unit(sub(far_b, at_b))) > 0.9
+        }
+        _ => false,
+    }
 }
 
 /// Whether another net's copper lies between two pads (a pin between
@@ -2973,6 +3047,62 @@ mod tests {
         let (a, b) = pair.links[0];
         let ends = [labels[a].as_str(), labels[b].as_str()];
         assert!(ends.contains(&"U2.1"), "{ends:?}");
+    }
+
+    /// Two two-pad parts side by side on the pair (its AC-coupling
+    /// capacitors) are a pair point; a capacitor turned across the other is
+    /// not.
+    #[test]
+    fn series_parts_side_by_side_are_a_pair_point() {
+        let caps = BOARD.replace(
+            r#"  (footprint "test" (layer "F.Cu") (at 18 4)"#,
+            r#"  (footprint "test" (layer "F.Cu") (at 26 10)
+    (property "Reference" "C1" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at -0.5 0) (size 0.5 0.5) (layers "F.Cu") (net "/D+"))
+    (pad "2" smd rect (at 0.5 0) (size 0.5 0.5) (layers "F.Cu") (net "/X+")))
+  (footprint "test" (layer "F.Cu") (at 26 11)
+    (property "Reference" "C2" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at -0.5 0) (size 0.5 0.5) (layers "F.Cu") (net "/D-"))
+    (pad "2" smd rect (at 0.5 0) (size 0.5 0.5) (layers "F.Cu") (net "/X-")))
+  (footprint "test" (layer "F.Cu") (at 10 5)
+    (property "Reference" "C3" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at -0.5 0) (size 0.5 0.5) (layers "F.Cu") (net "/D+"))
+    (pad "2" smd rect (at 0.5 0) (size 0.5 0.5) (layers "F.Cu") (net "/Y")))
+  (footprint "test" (layer "F.Cu") (at 9.5 6)
+    (property "Reference" "C4" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net "/D-"))
+    (pad "2" smd rect (at 0 1) (size 0.5 0.5) (layers "F.Cu") (net "/Z")))
+  (footprint "test" (layer "F.Cu") (at 18 4)"#,
+        );
+        let pcb = parse(&caps).unwrap();
+        let (_, config) = lowered();
+        let board = lower(&pcb, &config, true).unwrap().board;
+        let pairs = find_pairs(&board, &config);
+        let pair = pairs
+            .iter()
+            .find(|pair| board.nets[pair.positive as usize].name.ends_with("D+"))
+            .unwrap();
+        let (p, n) = (
+            &board.nets[pair.positive as usize],
+            &board.nets[pair.negative as usize],
+        );
+        let labels: Vec<(String, String)> = pair
+            .points
+            .iter()
+            .map(|&(a, b)| (p.terminals[a].label.clone(), n.terminals[b].label.clone()))
+            .collect();
+        assert!(
+            labels.contains(&("C1.1".to_string(), "C2.1".to_string())),
+            "{labels:?}"
+        );
+        // C3 and C4 lie at right angles: their other pads are apart.
+        assert!(
+            !labels.iter().any(|(a, _)| a == "C3.1"),
+            "{labels:?}"
+        );
+        // J1's rows and U2 as before, and the capacitors: three links.
+        assert_eq!(labels.len(), 4, "{labels:?}");
+        assert_eq!(pair.links.len(), 2);
     }
 
     #[test]
