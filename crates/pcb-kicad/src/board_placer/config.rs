@@ -233,8 +233,9 @@ pub struct KiCadBoardPlacerConfig {
     /// cross. The legaliser and the refinement pay `weight` mm of
     /// wirelength per crossing the moved part's nets make, and the
     /// layout's race ranks the seeds' placements by their crossings beside
-    /// the congestion score (docs/placer.md, "Ratsnest crossings
-    /// (2026-10-24)").
+    /// the congestion score. Keys `weight`, `legalise`, `refine`,
+    /// `rank_seeds` (defaults 3 mm, on, on, on; docs/placer.md, "Ratsnest
+    /// crossings (2026-10-24)").
     #[serde(default)]
     pub ratsnest_crossings: Option<KiCadRatsnestCrossings>,
     /// The router's configuration the guidance lowers with (set by the
