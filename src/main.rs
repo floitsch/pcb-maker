@@ -368,6 +368,7 @@ const RESEARCH_USAGE: &[&str] = &[
     "export-congestion-sample <source-directory> <board-id> <output-directory> [job.json] [router-config.json|auto]",
     "score-congestion-sample <sample.json> <model.onnx>",
     "score-congestion <source-directory> <board-id> <model.onnx> [router-config.json|auto]",
+    "ablate-kicad-placement <designer.kicad_pcb> <placed-directory> <board-id> <output-directory> [ablation.json] [router-config.json|auto]",
     "global-route-kicad-board <source-directory> <board-id> [router-config.json|auto] [--global <global.json>] [--probe <work-seconds>] [--corridors <out.json>]",
     "dump-pour-map <source-directory> <board-id> <output-directory> [config.json|auto]",
     "bench-search <source-directory> <board-id> <iterations> [config.json|auto]",
@@ -680,6 +681,41 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
                 "{}",
                 serde_json::to_string(&score).map_err(|error| error.to_string())?
             );
+            Ok(())
+        }
+        "ablate-kicad-placement" => {
+            let usage = "usage: pcb-maker ablate-kicad-placement <designer.kicad_pcb> <placed-directory> <board-id> <output-directory> [ablation.json] [router-config.json|auto]";
+            let designer = arguments.next().ok_or_else(|| usage.to_string())?;
+            let placed = arguments.next().ok_or_else(|| usage.to_string())?;
+            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            pcb_kicad::check_board_id(&board_id)?;
+            let output = arguments.next().ok_or_else(|| usage.to_string())?;
+            let config: pcb_kicad::KiCadAblationConfig = match arguments.next().as_deref() {
+                None | Some("default") => Default::default(),
+                Some(path) => serde_json::from_str(
+                    &std::fs::read_to_string(path)
+                        .map_err(|error| format!("failed to read {path}: {error}"))?,
+                )
+                .map_err(|error| format!("{path}: {error}"))?,
+            };
+            let router_path = arguments.next();
+            if arguments.next().is_some() {
+                return Err(usage.into());
+            }
+            let router = board_router_config(router_path.as_deref(), &placed, &board_id)?;
+            let report = pcb_kicad::ablate_kicad_placement(
+                Path::new(&designer),
+                Path::new(&placed),
+                &board_id,
+                Path::new(&output),
+                &config,
+                &router,
+            )?;
+            let text = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
+            let path = Path::new(&output).join("ablation.json");
+            std::fs::write(&path, format!("{text}\n"))
+                .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+            println!("{}", path.display());
             Ok(())
         }
         "global-route-kicad-board" => {
