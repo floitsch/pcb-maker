@@ -114,6 +114,64 @@ pub struct KiCadBoardLayoutConfig {
     /// than the first route did. False: from scratch, as before.
     /// `PCB_LAYOUT_FINAL_FROM_STATE` (0 or 1) overrides.
     pub final_route_from_state: bool,
+    /// The race's route probe (docs/placer.md, "The race's route probe
+    /// (2026-10-25)"; off when absent, `{}` for the defaults): the race
+    /// probes its `seeds` best-ranked placements for `share` of
+    /// `total_seconds` of work each, all of them charged to the layout's
+    /// work clock (without it, a probe gets the router's `probe_seconds`,
+    /// 75 s, and the placements past 40 % of the budget count for
+    /// nothing), ranks them by the probe's open terminals (then its
+    /// unfinished nets, then its nets in conflict) and routes on with
+    /// the best. The pre-ranking (`congestion_score`) chooses the probed
+    /// placements as before, `seeds` of them instead of
+    /// `congestion_probes`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub race_probe: Option<KiCadRaceProbe>,
+}
+
+/// The race's route probe (`KiCadBoardLayoutConfig::race_probe`).
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct KiCadRaceProbe {
+    /// How many placements the race probes (the best-ranked; at least
+    /// one, default 3).
+    pub seeds: usize,
+    /// The work each probe negotiates, as a share of the layout's
+    /// `total_seconds` (default 0.08: 24 % for three probes; the probe the
+    /// race keeps is the first part of the first route).
+    pub share: f64,
+}
+
+impl Default for KiCadRaceProbe {
+    fn default() -> Self {
+        Self {
+            seeds: 3,
+            share: 0.08,
+        }
+    }
+}
+
+/// One placement the race probed (`race_probe`): its index among the
+/// placements the race ranked (0 the placer's kept one, then the other
+/// seeds by the placer's key, as `congestion.scores`), the probe's
+/// standing and its work.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct KiCadRaceProbeScore {
+    pub placement: usize,
+    pub open_terminals: usize,
+    pub unfinished: usize,
+    pub conflicted: usize,
+    pub work_seconds: f64,
+}
+
+/// What the race's route probe did (the verdict's `race`): every probed
+/// placement in the ranking's order, and the one kept.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct KiCadRaceReport {
+    pub probe: Vec<KiCadRaceProbeScore>,
+    pub kept: usize,
+    /// The work each probe was given.
+    pub probe_seconds: f64,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -217,6 +275,7 @@ impl Default for KiCadBoardLayoutConfig {
             silkscreen: KiCadSilkscreenConfig::default(),
             move_descent: None,
             final_route_from_state: false,
+            race_probe: None,
         }
     }
 }
@@ -285,6 +344,10 @@ pub struct KiCadBoardLayoutResult {
     /// the ones the race probed, best first.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub congestion: Option<KiCadCongestionRanking>,
+    /// The race's route probe (`race_probe`; absent when off or when the
+    /// race did not run).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub race: Option<KiCadRaceReport>,
     pub pin_swaps: Option<KiCadPinSwapResult>,
     /// Every placement constraint with whether the final placement keeps it.
     pub constraints: Vec<KiCadConstraintStatus>,
@@ -1273,11 +1336,17 @@ pub fn layout_kicad_board(
     // placer makes per seed and sorts by its own key: nothing here
     // depends on thread timing.
     let mut congestion = None;
-    if pre_ranking
-        && seeds == 1
-        && pin_swaps.is_none()
-        && others.len() + 1 > config.congestion_probes.max(1)
-    {
+    // How many placements the race probes, with the route probe its own
+    // count.
+    let race_probe = config.race_probe.as_ref();
+    let probes = race_probe
+        .map_or(config.congestion_probes, |probe| probe.seeds)
+        .max(1);
+    // Each raced placement's index among the ranked ones (as
+    // `congestion.scores`; without a pre-ranking, the kept one and the
+    // others in seed order).
+    let mut labels: Vec<usize> = (0..=others.len()).collect();
+    if pre_ranking && seeds == 1 && pin_swaps.is_none() && others.len() + 1 > probes {
         pool.push((problem.problem.poses.clone(), first_relaxation));
         pool.extend(
             others
@@ -1343,11 +1412,7 @@ pub fn layout_kicad_board(
                 pool[*index].1.on_marks.len(),
             )
         });
-        let keep: Vec<usize> = order
-            .iter()
-            .copied()
-            .take(config.congestion_probes.max(1))
-            .collect();
+        let keep: Vec<usize> = order.iter().copied().take(probes).collect();
         eprintln!(
             "placement pre-ranking ({}): {} placements scored in {:.2} s (lowering {:.2} s, features {:.2} s, inference {:.2} s); probing {:?} (scores {:?})",
             config.congestion_score,
@@ -1385,13 +1450,21 @@ pub fn layout_kicad_board(
             .iter()
             .map(|index| (&pool[*index].0, &pool[*index].1))
             .collect();
+        labels = keep.clone();
         congestion = Some(KiCadCongestionRanking {
             scores: ranked.scores,
             probed: keep,
             crossings,
         });
     }
+    if race_probe.is_some() {
+        // Without a pre-ranking all seeds' placements would race: the
+        // probe takes the first `probes` (the kept one, then seed order).
+        others.truncate(probes - 1);
+        labels.truncate(probes);
+    }
     let mut race = Vec::new();
+    let mut race_report = None;
     let (mut router, mut result) = if seeds == 1
         && pin_swaps.is_none()
         && !others.is_empty()
@@ -1402,7 +1475,10 @@ pub fn layout_kicad_board(
         // with the fewest nets unfinished routes on (routing the others in
         // full took as long as the first route and left link no time for
         // anything after).
-        let probe_seconds = router_config.probe_seconds.unwrap_or(75.0);
+        let probe_seconds = match race_probe {
+            Some(probe) => probe.share.max(0.0) * config.total_seconds.max(0.0),
+            None => router_config.probe_seconds.unwrap_or(75.0),
+        };
         // The other seeds' placements, lowered, in seed order.
         let mut candidates = Vec::new();
         for (poses, relaxation) in others {
@@ -1450,12 +1526,18 @@ pub fn layout_kicad_board(
             );
         }
         let mut probed: Vec<(usize, core::router::Router)> = Vec::new();
+        let mut standings: Vec<Option<core::router::ProbeStanding>> = Vec::new();
         let mut first = Some(first);
         let mut next = 0;
         while next <= candidates.len() {
             let wave: Vec<usize> =
                 (next..(next + side_by_side).min(candidates.len() + 1)).collect();
-            let routers: Vec<(usize, usize, core::router::Router)> = std::thread::scope(|scope| {
+            let routers: Vec<(
+                usize,
+                usize,
+                Option<core::router::ProbeStanding>,
+                core::router::Router,
+            )> = std::thread::scope(|scope| {
                 let handles: Vec<_> = wave
                     .iter()
                     .map(|&index| {
@@ -1473,7 +1555,8 @@ pub fn layout_kicad_board(
                             let mut router =
                                 built.unwrap_or_else(|| core::router::Router::new(board, &quiet));
                             let unfinished = router.probe(probe_seconds);
-                            (index, unfinished, router)
+                            let standing = race_probe.map(|_| router.probe_standing());
+                            (index, unfinished, standing, router)
                         })
                     })
                     .collect();
@@ -1482,31 +1565,77 @@ pub fn layout_kicad_board(
                     .map(|handle| handle.join().expect("probe thread"))
                     .collect()
             });
-            for (index, unfinished, router) in routers {
+            for (index, unfinished, standing, router) in routers {
                 probed.push((index, router));
                 race.push(unfinished);
+                standings.push(standing);
             }
             next += wave.len();
         }
         let mut probed = probed.into_iter();
         let (_, mut kept) = probed.next().expect("the first placement's probe");
         let mut best_unfinished = race[0];
-        work += kept.expansions() as f64 / core::router::expansions_per_second();
+        let mut best_standing = standings[0];
+        let first_work = kept.expansions() as f64 / core::router::expansions_per_second();
+        work += first_work;
+        let mut scores = Vec::new();
+        if let Some(standing) = standings[0] {
+            scores.push(KiCadRaceProbeScore {
+                placement: labels[0],
+                open_terminals: standing.open_terminals,
+                unfinished: standing.unfinished,
+                conflicted: standing.conflicted,
+                work_seconds: first_work,
+            });
+            eprintln!(
+                "placement race: probed placement {} ({probe_seconds:.0} s): {} open terminals, {} nets unfinished, {} in conflict",
+                labels[0], standing.open_terminals, standing.unfinished, standing.conflicted
+            );
+        }
+        let mut kept_label = labels[0];
         let mut raced = 1;
         let mut candidates = candidates.into_iter();
         for (index, mut candidate_router) in probed {
             let (candidate, candidate_board, relaxation) =
                 candidates.next().expect("a candidate per probe");
-            if work > 0.4 * config.total_seconds {
+            // The route probe charges every probe it ran to the clock.
+            if race_probe.is_none() && work > 0.4 * config.total_seconds {
                 break;
             }
             let unfinished = race[index];
             raced += 1;
-            work += candidate_router.expansions() as f64 / core::router::expansions_per_second();
-            eprintln!(
-                "placement race: another seed's placement leaves {unfinished} nets unfinished (best {best_unfinished})"
-            );
-            if unfinished < best_unfinished {
+            let candidate_work =
+                candidate_router.expansions() as f64 / core::router::expansions_per_second();
+            work += candidate_work;
+            let better = match (standings[index], best_standing) {
+                (Some(standing), Some(best)) => {
+                    scores.push(KiCadRaceProbeScore {
+                        placement: labels[index],
+                        open_terminals: standing.open_terminals,
+                        unfinished: standing.unfinished,
+                        conflicted: standing.conflicted,
+                        work_seconds: candidate_work,
+                    });
+                    eprintln!(
+                        "placement race: probed placement {} ({probe_seconds:.0} s): {} open terminals, {} nets unfinished, {} in conflict (best {} open)",
+                        labels[index],
+                        standing.open_terminals,
+                        standing.unfinished,
+                        standing.conflicted,
+                        best.open_terminals
+                    );
+                    standing < best
+                }
+                _ => {
+                    eprintln!(
+                        "placement race: another seed's placement leaves {unfinished} nets unfinished (best {best_unfinished})"
+                    );
+                    unfinished < best_unfinished
+                }
+            };
+            if better {
+                best_standing = standings[index];
+                kept_label = labels[index];
                 best_unfinished = unfinished;
                 pcb = candidate;
                 board = candidate_board;
@@ -1519,6 +1648,13 @@ pub fn layout_kicad_board(
         }
         // The placements past the work limit count for nothing.
         race.truncate(raced);
+        if race_probe.is_some() {
+            race_report = Some(KiCadRaceReport {
+                probe: scores,
+                kept: kept_label,
+                probe_seconds,
+            });
+        }
         arm(&mut kept, work + pool_excess);
         // The negotiation gets at most half of what is left before the
         // deadline: the hard repair after it may take as long as the
@@ -2618,6 +2754,7 @@ pub fn layout_kicad_board(
         outline_sizing,
         placement_race: race,
         congestion,
+        race: race_report,
         labels,
         quality: crate::quality::score_kicad_board(&output_directory.join("result"), board_id).ok(),
         pin_swaps,

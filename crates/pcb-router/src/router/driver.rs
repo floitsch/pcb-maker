@@ -333,6 +333,42 @@ impl Router {
         count
     }
 
+    /// After `probe`: what the layout's race ranks probed placements by
+    /// (`race_probe`, docs/placer.md, "The race's route probe"): the
+    /// terminals left open, as `board_open_terminals` counts them, plus
+    /// one for every complete net still in conflict (its repair may open
+    /// one connection at least) and every pour pad its pour does not
+    /// reach; then `unfinished`; then the nets in conflict.
+    pub fn probe_standing(&self) -> ProbeStanding {
+        let mut conflicted = 0;
+        let mut conflicted_complete = 0;
+        let mut stranded = 0;
+        for net in 0..self.nets.len() as NetId {
+            let state = &self.nets[net as usize];
+            if !state.routable {
+                continue;
+            }
+            if !self.conflicts(net).is_empty() {
+                conflicted += 1;
+                if state.complete {
+                    conflicted_complete += 1;
+                }
+            }
+            if !state.plane.is_empty() {
+                let (pours, mut parent, main) = self.analyze_pours(net);
+                let terminal_base = pours.pieces + 1;
+                stranded += (0..state.terminal_nodes.len())
+                    .filter(|terminal| find(&mut parent, terminal_base + terminal) != main)
+                    .count();
+            }
+        }
+        ProbeStanding {
+            open_terminals: self.board_open_terminals() + conflicted_complete + stranded,
+            unfinished: self.unfinished(),
+            conflicted,
+        }
+    }
+
     /// `finish`, skipping the clean-up and the via reduction without
     /// `polish`.
     pub(super) fn finish_polished(&mut self, order: &[NetId], polish: bool) -> RoutingResult {

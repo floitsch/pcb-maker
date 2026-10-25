@@ -724,6 +724,8 @@ pub struct KiCadRunFacts {
     /// Where the lattice searches went and what the capacitated
     /// corridors learned (`KiCadCorridors`), when the run routed.
     pub corridors: Option<crate::KiCadCorridors>,
+    /// A layout's race route probe, when it ran.
+    pub race: Option<crate::board_layout::KiCadRaceReport>,
 }
 
 impl KiCadRunFacts {
@@ -762,6 +764,7 @@ impl KiCadRunFacts {
             pours: Vec::new(),
             moves: None,
             corridors: None,
+            race: None,
         }
     }
 
@@ -930,6 +933,12 @@ pub struct KiCadVerdict {
     /// of the run (docs/router.md, "Capacitated corridors (2026-10-24)").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub corridors: Option<crate::KiCadCorridors>,
+    /// A layout's race route probe (`race_probe` in layout.json): every
+    /// probed placement's open terminals, unfinished nets, nets in
+    /// conflict and work, and the placement kept (`probe`, `kept`,
+    /// `probe_seconds`). Absent when it did not run.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub race: Option<crate::board_layout::KiCadRaceReport>,
 }
 
 fn counts(map: &BTreeMap<String, usize>) -> String {
@@ -1463,6 +1472,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         pours: facts.pours.clone(),
         moves: facts.moves.clone(),
         corridors: facts.corridors.clone(),
+        race: facts.race.clone(),
     }
 }
 

@@ -255,6 +255,14 @@ struct Branch {
     end_terminal: u16,
 }
 
+/// A probe's standing (`Router::probe_standing`), compared in this order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ProbeStanding {
+    pub open_terminals: usize,
+    pub unfinished: usize,
+    pub conflicted: usize,
+}
+
 /// What the pour model makes of one thermal spoke of a pad
 /// (`analyze_pours_full`): no fill where the spoke would land, fill it
 /// cannot reach for other nets' copper beside it, a piece without copper
