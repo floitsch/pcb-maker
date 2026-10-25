@@ -51,7 +51,8 @@ mod global_route;
 mod move_descent;
 pub use board_layout::{
     KiCadBoardLayoutConfig, KiCadBoardLayoutMove, KiCadBoardLayoutResult, KiCadOutlineTrial,
-    KiCadSilkscreenConfig, KiCadSwappable, layout_kicad_board,
+    KiCadRaceProbe, KiCadRaceProbeScore, KiCadRaceReport, KiCadSilkscreenConfig, KiCadSwappable,
+    layout_kicad_board,
 };
 pub use congestion_rank::{KiCadCongestionScore, score_congestion_sample, score_kicad_congestion};
 pub use congestion_samples::{

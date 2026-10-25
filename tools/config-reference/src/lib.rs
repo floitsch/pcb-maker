@@ -1176,6 +1176,16 @@ fn tables(root: &Path) -> Result<Vec<Table>, String> {
             role: Role::File,
         },
         Table {
+            title: "Layout settings: race_probe",
+            prefix: "race_probe.",
+            intro: "The `race_probe` object of the layout settings (off when absent, `{}` for the defaults): the race probes its best-ranked placements for a share of the layout's budget each, every probe charged to the work clock, and routes on with the fewest open terminals after the probe (docs/placer.md, \"The race's route probe (2026-10-25)\").",
+            file: layout_file,
+            name: "KiCadRaceProbe",
+            fields: parse(layout_file, "KiCadRaceProbe")?,
+            defaults: json_defaults::<pcb_kicad::KiCadRaceProbe>()?,
+            role: Role::File,
+        },
+        Table {
             title: "Layout settings: move_descent",
             prefix: "move_descent.",
             intro: "The `move_descent` object of the layout settings (an experiment, off when absent): single parts nudged, turned or swapped after the first route where the incremental global route and a local reroute say fewer terminals stay open (docs/experiments/move-descent.md).",

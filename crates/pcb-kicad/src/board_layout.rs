@@ -2973,4 +2973,33 @@ mod budget_tests {
             serde_json::from_str(r#"{"total_seconds": 40}"#).unwrap();
         assert_eq!(config.wall_guard, DEFAULT_WALL_GUARD);
     }
+
+    #[test]
+    fn the_race_probe_is_off_unless_named_and_an_empty_object_means_its_defaults() {
+        let config: KiCadBoardLayoutConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.race_probe, None);
+        let config: KiCadBoardLayoutConfig = serde_json::from_str(r#"{"race_probe": {}}"#).unwrap();
+        assert_eq!(
+            config.race_probe,
+            Some(KiCadRaceProbe {
+                seeds: 3,
+                share: 0.08
+            })
+        );
+        let config: KiCadBoardLayoutConfig =
+            serde_json::from_str(r#"{"race_probe": {"seeds": 2, "share": 0.1}}"#).unwrap();
+        assert_eq!(
+            config.race_probe,
+            Some(KiCadRaceProbe {
+                seeds: 2,
+                share: 0.1
+            })
+        );
+        assert!(
+            serde_json::from_str::<KiCadBoardLayoutConfig>(r#"{"race_probe": {"k": 2}}"#).is_err()
+        );
+        // Off, the config serializes as before.
+        let text = serde_json::to_string(&KiCadBoardLayoutConfig::default()).unwrap();
+        assert!(!text.contains("race_probe"), "{text}");
+    }
 }

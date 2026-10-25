@@ -35,10 +35,11 @@ The environment variables are indexed in the hand-over
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 69 | - | 0 | 69 | - |
 | [Placer settings](#placer-settings) | 49 | 45 | 4 | 49 | 22 |
-| [Layout settings](#layout-settings) | 19 | 19 | 0 | 19 | 8 |
+| [Layout settings](#layout-settings) | 20 | 20 | 0 | 20 | 8 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 2 |
 | [Layout settings: silkscreen](#layout-settings-silkscreen) | 1 | 1 | 0 | 1 | 1 |
+| [Layout settings: race_probe](#layout-settings-race_probe) | 2 | 2 | 0 | 2 | 2 |
 | [Layout settings: move_descent](#layout-settings-move_descent) | 7 | 7 | 0 | 7 | 0 |
 | [Placer core](#placer-core) | 8 | - | 0 | 8 | - |
 | [Placer core: global](#placer-core-global) | 12 | - | 0 | 12 | - |
@@ -405,6 +406,7 @@ The layout config file of `layout-kicad-board`. Unknown keys are rejected; a mis
 | `silkscreen` | `KiCadSilkscreenConfig` | its own table | placer.md | The footprints' Reference and Value fields on the silkscreen, placed after routing where KiCad's silkscreen checks find nothing. |
 | `move_descent` | `Option<crate::move_descent::KiCadMoveDescent>` | unset | - | The move descent after the first route (an experiment, off when absent; docs/experiments/move-descent.md): single parts nudged, turned or swapped where the incremental global route and then a local reroute say fewer terminals stay open, also on boards far from complete. `PCB_LAYOUT_MOVE_DESCENT` overrides (`0` off). |
 | `final_route_from_state` | `bool` | `false` | placer.md | Routes survive moves: the final route (the ladder, or the narrow-signal attempt standing in for it) starts from the router's state after the first route and the moves, its complete and legal nets without a pour kept as the board's own copper, and routes the rest; from scratch only when its first attempt leaves more open than the first route did. False: from scratch, as before. `PCB_LAYOUT_FINAL_FROM_STATE` (0 or 1) overrides. |
+| `race_probe` | `Option<KiCadRaceProbe>` | unset | - | The race's route probe (docs/placer.md, "The race's route probe (2026-10-25)"; off when absent, `{}` for the defaults): the race probes its `seeds` best-ranked placements for `share` of `total_seconds` of work each, all of them charged to the layout's work clock (without it, a probe gets the router's `probe_seconds`, 75 s, and the placements past 40 % of the budget count for nothing), ranks them by the probe's open terminals (then its unfinished nets, then its nets in conflict) and routes on with the best. The pre-ranking (`congestion_score`) chooses the probed placements as before, `seeds` of them instead of `congestion_probes`. |
 
 ## Layout settings: swappable entries
 
@@ -441,6 +443,15 @@ The `silkscreen` object of the layout settings: the footprints' Reference and Va
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
 | `silkscreen.hide_when_blocked` | `bool` | `false` | placer.md | Hide a field no spot around (or inside) its part is clean for (default false: it stays at the spot with the fewest findings, and the verdict's `silkscreen` fact lists it). |
+
+## Layout settings: race_probe
+
+The `race_probe` object of the layout settings (off when absent, `{}` for the defaults): the race probes its best-ranked placements for a share of the layout's budget each, every probe charged to the work clock, and routes on with the fewest open terminals after the probe (docs/placer.md, "The race's route probe (2026-10-25)"). Source: `KiCadRaceProbe` in [crates/pcb-kicad/src/board_layout.rs](../crates/pcb-kicad/src/board_layout.rs).
+
+| Key | Type | Default | Docs | Description |
+|---|---|---|---|---|
+| `race_probe.seeds` | `usize` | `3` | router.md, placer.md | How many placements the race probes (the best-ranked; at least one, default 3). |
+| `race_probe.share` | `f64` | `0.08` | router.md | The work each probe negotiates, as a share of the layout's `total_seconds` (default 0.08: 24 % for three probes; the probe the race keeps is the first part of the first route). |
 
 ## Layout settings: move_descent
 
