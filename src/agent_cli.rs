@@ -1425,6 +1425,23 @@ pub const SILKSCREEN_INCOMPLETE: &str =
 pub const IMPORT_INCOMPLETE: &str = "footprints are missing from the board (the report's missing): add their libraries to the project's fp-lib-table (or put the .pretty folders in the project, or give a board that has them with --footprints-from; for KiCad's own libraries outside the standard install folders, set KICAD10_FOOTPRINT_DIR to its footprints folder) and import again into the same directory (constraints.json and layout.json are kept)";
 
 /// Runs an agent command; `None` when `command` is not one.
+/// Diagnostic commands that were removed, with what replaces them: an
+/// agent that read of them (an older guide, the 2026-10-18 remapper
+/// trial) gets the replacement, not "unknown command".
+pub fn removed(command: &str) -> Option<String> {
+    let what = match command {
+        "inspect-kicad-terminal-access"
+        | "inspect-kicad-routing-cut"
+        | "inspect-kicad-route-obstructions" => {
+            "it inspected the research grid router and read only an outline of one gr_rect or one loop of gr_lines"
+        }
+        _ => return None,
+    };
+    Some(format!(
+        "{command} was removed on 2026-10-21 ({what}); `pcb-maker inspect-routing-run <run-dir> --terminal REF:PAD` (or --net <net>) names the pad's net, its groups of pads, the rules and KiCad's pairs on any outline the router reads (lines, arcs, rectangles, polygons, circles, curves); no access probe or cut exists (its access and cause say unknown)"
+    ))
+}
+
 pub fn run(command: &str, arguments: Vec<String>) -> Option<Result<KiCadRunStatus, Failure>> {
     // The commands that route or run KiCad's check reserve their memory in
     // the machine's ledger (`pcb_kicad::ledger`).
@@ -1564,12 +1581,15 @@ usage: pcb-maker inspect-routing-run <run-dir> [--net <net>] [--terminal <REF:PA
 Per net: components (groups of pads the result board's copper joins, pours not counted: ref,
 number, uuid, at in mm, copper layers; the largest marked), counts (the router's terminals and
 unconnected terminals, the groups and links missing, KiCad's unconnected pairs, explained apart),
-native_pairs (each pair's items and the groups they lie in), rules (track width and clearance with
-their sources: class, board minimum, custom rule; the class's own value below the minimum; the
-run's overrides; the widths emitted), reference, dead_pads, hot_spots_near, and access and cause:
-unknown (not measured). Top level: checks (router, native: not_run|passed|failed, components) and
-attempts (the ladder's ledger: each attempt's pitch, pours, open, work, negotiation_stop, the
-selected one). Any outline the router reads is read. Exits 0 when the report was written, 2 on
+native_pairs (each pair's items and the groups they lie in: a pad by its uuid, a track or via by
+the copper it lies on), rules (track width and clearance with their sources: class, board minimum,
+custom rule; the class's own value below the minimum; the run's overrides; the widths emitted),
+reference (connected: true, false, or null where a zone of the net may join its groups),
+dead_pads, hot_spots_near (indices into hot_spots), and access and cause: unknown (not measured).
+Top level: checks (router, native: not_run|passed|failed, components), attempts (the ladder's
+ledger: each attempt's pitch, pours, open, work, negotiation_stop, the selected one) and hot_spots
+(each tile's box, pads with ref, number and net, the nets whose copper crosses it, those still in
+conflict; links_from says where they were read). Any outline the router reads is read. Exits 0 when the report was written, 2 on
 usage or input errors (no board-router.json, an unknown net or pad), 4 on internal errors.";
 
 const LAYOUT_HELP: &str = "\

@@ -726,6 +726,9 @@ pub struct KiCadRunFacts {
     pub corridors: Option<crate::KiCadCorridors>,
     /// A layout's race route probe, when it ran.
     pub race: Option<crate::board_layout::KiCadRaceReport>,
+    /// The router file's values below the project's minimum that the run
+    /// allowed, with what became of them.
+    pub rule_overrides: Vec<crate::run_diagnosis::KiCadOverrideOutcome>,
 }
 
 impl KiCadRunFacts {
@@ -765,6 +768,7 @@ impl KiCadRunFacts {
             moves: None,
             corridors: None,
             race: None,
+            rule_overrides: Vec::new(),
         }
     }
 
@@ -939,6 +943,15 @@ pub struct KiCadVerdict {
     /// `probe_seconds`). Absent when it did not run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub race: Option<crate::board_layout::KiCadRaceReport>,
+    /// The router file's values below the project's minimum that the run
+    /// routed with (`allow_below_project_minimum`), each with the value
+    /// requested, the project's minimum and its source, the value routed
+    /// with, the track widths written on its nets (and how many are below
+    /// the minimum), the value KiCad's DRC requires and KiCad's findings
+    /// of that kind on its nets (`KiCadOverrideOutcome`). Absent without
+    /// such values.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub rule_overrides: Vec<crate::run_diagnosis::KiCadOverrideOutcome>,
 }
 
 fn counts(map: &BTreeMap<String, usize>) -> String {
@@ -1094,7 +1107,7 @@ fn next_actions(
             ));
         }
         actions.push(format!(
-            "connections are open: {}; `pcb-maker inspect-routing-run` on this output names each open net's pads, rules and KiCad's pairs (--reference: the designer's route of the net): read it before changing the design; then make room there (move parts apart, enlarge the outline, add layers) or narrow the net classes, not below the board's minimum",
+            "connections are open: {}; `pcb-maker inspect-routing-run` on this output names each open net's pads, rules and KiCad's pairs and each hot spot's pads and nets (--reference: the designer's route of the net): read it before changing the design. Where the designer's board routes those nets on this placement under these rules (reference.connected), density is not shown to be the reason and more room, layers or narrower classes are not called for; without that evidence they are hypotheses to test (classes never below the board's minimum)",
             if where_.is_empty() { "the router's count; drc.json lists KiCad's unconnected items".to_string() } else { where_.join(", ") }
         ));
     }
@@ -1473,6 +1486,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         moves: facts.moves.clone(),
         corridors: facts.corridors.clone(),
         race: facts.race.clone(),
+        rule_overrides: facts.rule_overrides.clone(),
     }
 }
 
@@ -1565,6 +1579,19 @@ pub fn route_facts(
     // lacks): the next_actions lead with it.
     facts.input_warnings = result.warnings.clone();
     facts.pours = result.pour_quality.clone();
+    if !result.rules.project.overrides.is_empty() {
+        let drc = facts
+            .native
+            .is_some()
+            .then(|| fs::read_to_string(directory.join("drc.json")).ok())
+            .flatten()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+        facts.rule_overrides = crate::run_diagnosis::override_outcomes(
+            &result.rules.project.overrides,
+            &directory.join(format!("{}.kicad_pcb", result.board_id)),
+            drc.as_ref(),
+        );
+    }
     Ok(facts)
 }
 
@@ -1975,6 +2002,18 @@ mod tests {
                 .iter()
                 .any(|action| action.contains("hot_spots"))
         );
+        // The open connections' action asks for the evidence first: a
+        // design change is a hypothesis unless the reference rules
+        // density out (the remapper trial: no "too dense" without it).
+        let open = verdict
+            .next_actions
+            .iter()
+            .find(|action| action.starts_with("connections are open"))
+            .unwrap();
+        assert!(open.contains("inspect-routing-run"), "{open}");
+        assert!(open.contains("hypotheses to test"), "{open}");
+        assert!(!open.contains("too dense"), "{open}");
+        assert!(!open.contains("enlarge the outline"), "{open}");
     }
 
     #[test]

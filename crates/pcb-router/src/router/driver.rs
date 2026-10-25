@@ -464,6 +464,7 @@ impl Router {
                             self.grid.origin[0] + x * self.grid.pitch,
                             self.grid.origin[1] + y * self.grid.pitch,
                         ],
+                        half_size: TILE as f64 / 2.0 * self.grid.pitch,
                         history: *value,
                     });
                 }

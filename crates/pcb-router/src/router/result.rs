@@ -92,5 +92,7 @@ pub struct DeadPad {
 pub struct HotSpot {
     pub layer: usize,
     pub center: crate::geometry::Point,
+    /// Half the tile's side in mm: the tile is `center` +- this.
+    pub half_size: f64,
     pub history: f32,
 }

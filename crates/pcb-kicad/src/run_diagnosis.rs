@@ -176,10 +176,19 @@ pub struct KiCadNetCopper {
 /// The reference board's route of a net.
 #[derive(Clone, Debug, Serialize)]
 pub struct KiCadReferenceRoute {
-    /// Whether its copper joins every pad of the net (pours not counted;
-    /// `components` says how many groups).
-    pub connected: bool,
+    /// Whether its copper joins every pad of the net: `true` when its
+    /// tracks, arcs and vias leave one group, `false` when they leave
+    /// several and the net has no zone on the reference, `null` when they
+    /// leave several and a zone of the net may join them (zone fill is
+    /// not modelled here; `connected_reason` says so).
+    pub connected: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub connected_reason: Option<String>,
+    /// The groups its copper leaves without pours.
     pub components: usize,
+    /// Layers on which the reference has a zone of the net.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub pour_layers: Vec<String>,
     #[serde(flatten)]
     pub copper: KiCadNetCopper,
 }
@@ -236,7 +245,8 @@ pub struct KiCadNetDiagnosis {
     pub dead_pads: Vec<serde_json::Value>,
     /// The router's hot spots within 3 mm of a pad of this net, at most
     /// five, the most contested first: where nets fought longest near it
-    /// (an observation, not a cause).
+    /// (an observation, not a cause); `hot_spot` indexes the report's
+    /// `hot_spots`, which list the tile's pads and nets.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hot_spots_near: Vec<serde_json::Value>,
     /// The pad `--terminal` named: its group.
@@ -257,6 +267,11 @@ pub struct KiCadRunDiagnosis {
     /// Route mode's ladder (board-router.json `attempts`): every attempt
     /// judged and the one written; `null` for a run before the ledger.
     pub attempts: serde_json::Value,
+    /// The router's hot spots (board-router.json), each with its tile's
+    /// objects: pads, nets, nets still in conflict (`links_from` says
+    /// whether the router recorded them or this command read them off the
+    /// result board).
+    pub hot_spots: Vec<serde_json::Value>,
     pub nets: Vec<KiCadNetDiagnosis>,
 }
 
@@ -373,6 +388,132 @@ fn net_copper(pcb: &Expr, names: &NetNames, net: &str) -> KiCadNetCopper {
     copper
 }
 
+/// What became of a router file's value below the project's minimum
+/// that the run allowed (`allow_below_project_minimum`): asked for, held
+/// to by the project, routed with, written, and what KiCad's DRC
+/// requires and found (the verdict's `rule_overrides`).
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct KiCadOverrideOutcome {
+    /// The router file's key (`net_classes[Narrow]`, `default_rules`, ...).
+    pub source: String,
+    /// `track_width` or `clearance`.
+    pub quantity: String,
+    /// The nets (or patterns) it applies to; empty for every net.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub nets: Vec<String>,
+    pub requested_mm: f64,
+    /// The project's minimum and where it comes from.
+    pub project_minimum_mm: f64,
+    pub project_source: String,
+    /// The router's rule for those nets: the requested value, which the
+    /// run allowed (the project's minimum is not raised to it).
+    pub routed_with_mm: f64,
+    /// Track width: the distinct widths of the tracks and arcs the result
+    /// board has on those nets (every net for an override without nets),
+    /// and how many of them are below the project's minimum. `null` for
+    /// a clearance (nothing here measures the clearances written).
+    pub emitted_track_widths_mm: Option<Vec<f64>>,
+    pub emitted_below_minimum: Option<usize>,
+    /// What KiCad's DRC holds the board to: the project's minimum.
+    pub native_required_mm: f64,
+    /// KiCad's findings of that kind (`track_width`, `clearance`) on those
+    /// nets (every net for an override without nets); `null` when KiCad
+    /// did not check the board.
+    pub native_findings: Option<usize>,
+}
+
+fn names_net(patterns: &[String], net: &str) -> bool {
+    patterns.is_empty()
+        || patterns.iter().any(|pattern| {
+            let pattern = pattern.trim_start_matches('/');
+            wildcard_match(pattern, net) || wildcard_match(pattern, net.trim_start_matches('/'))
+        })
+}
+
+/// The outcome of each override the run allowed, on the board it wrote
+/// (`board`) and KiCad's report of it (`drc`, when KiCad checked).
+pub fn override_outcomes(
+    overrides: &[crate::project_rules::KiCadRuleOverride],
+    board: &Path,
+    drc: Option<&serde_json::Value>,
+) -> Vec<KiCadOverrideOutcome> {
+    if overrides.is_empty() {
+        return Vec::new();
+    }
+    const EPSILON: f64 = 1.0e-9;
+    // Per net, the widths of its tracks and arcs on the board written.
+    let mut widths: Vec<(String, f64)> = Vec::new();
+    if let Ok(pcb) = fs::read_to_string(board)
+        .map_err(|error| error.to_string())
+        .and_then(|text| parse(&text))
+    {
+        let codes = net_codes(&pcb);
+        let names = NetNames::of(&pcb);
+        for item in pcb.children() {
+            if !matches!(item.head(), Some("segment" | "arc")) {
+                continue;
+            }
+            if let (Some(net), Ok(width)) = (item_net(item, &codes), form_f64(item, "width", 1)) {
+                widths.push((names.normalize(net).to_string(), width));
+            }
+        }
+    }
+    overrides
+        .iter()
+        .map(|item| {
+            let width = item.quantity == "track_width";
+            let mine: Vec<f64> = widths
+                .iter()
+                .filter(|(net, _)| names_net(&item.nets, net))
+                .map(|(_, width)| *width)
+                .collect();
+            let distinct: BTreeSet<i64> = mine
+                .iter()
+                .map(|width| (width * 1.0e6).round() as i64)
+                .collect();
+            let kind = if width { "track_width" } else { "clearance" };
+            let native_findings = drc.map(|drc| {
+                drc["violations"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter(|finding| finding["type"].as_str() == Some(kind))
+                    .filter(|finding| {
+                        finding["items"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .any(|part| {
+                                part["description"]
+                                    .as_str()
+                                    .and_then(described_net)
+                                    .is_some_and(|net| names_net(&item.nets, net))
+                            })
+                    })
+                    .count()
+            });
+            KiCadOverrideOutcome {
+                source: item.source.clone(),
+                quantity: item.quantity.clone(),
+                nets: item.nets.clone(),
+                requested_mm: item.requested_mm,
+                project_minimum_mm: item.project_minimum_mm,
+                project_source: item.project_source.clone(),
+                routed_with_mm: item.requested_mm,
+                emitted_track_widths_mm: width
+                    .then(|| distinct.iter().map(|width| *width as f64 / 1.0e6).collect()),
+                emitted_below_minimum: width.then(|| {
+                    mine.iter()
+                        .filter(|width| **width < item.project_minimum_mm - EPSILON)
+                        .count()
+                }),
+                native_required_mm: item.project_minimum_mm,
+                native_findings,
+            }
+        })
+        .collect()
+}
+
 /// A board lowered as the router lowers it, with its pads and layer
 /// names, for the connectivity of its nets.
 struct LoweredBoard {
@@ -486,6 +627,70 @@ impl LoweredBoard {
         components
     }
 
+    /// The groups (indices into `components(net)`) that KiCad's items of
+    /// the net lie in which are no pad: a track or arc at `at` on the
+    /// layer given, a via at `at` (`None` for the layer). `None` where no
+    /// copper of the net is there, or where it joins no pad. Each item is
+    /// a probe terminal on the copper found there, so it falls into that
+    /// copper's group and joins nothing else.
+    fn item_components(
+        &mut self,
+        net: core::NetId,
+        items: &[([f64; 2], Option<usize>)],
+    ) -> Vec<Option<usize>> {
+        const REACH_MM: f64 = 0.005;
+        let real = self.board.nets[net as usize].terminals.len();
+        let groups = core::verify::copper_components(&self.board, net, &core::NetRoute::default());
+        let mut order: Vec<usize> = Vec::new();
+        for group in &groups {
+            if !order.contains(group) {
+                order.push(*group);
+            }
+        }
+        let mut probed: Vec<Option<usize>> = vec![None; items.len()];
+        let mut probes = Vec::new();
+        for (index, (at, layer)) in items.iter().enumerate() {
+            let found = self
+                .board
+                .obstacles
+                .iter()
+                .enumerate()
+                .filter(|(_, obstacle)| {
+                    obstacle.net == Some(net)
+                        && obstacle.kind == core::ObstacleKind::Copper
+                        && crate::board_router::pad_of_label(&obstacle.label).is_none()
+                        && layer.is_none_or(|layer| obstacle.layers & (1 << layer) != 0)
+                })
+                .map(|(obstacle, shape)| (obstacle, shape.shape.distance_to_point(*at)))
+                .filter(|(_, distance)| *distance <= REACH_MM)
+                .min_by(|a, b| a.1.total_cmp(&b.1));
+            if let Some((obstacle, _)) = found {
+                probed[index] = Some(probes.len());
+                probes.push(core::Terminal {
+                    anchor: *at,
+                    layers: self.board.obstacles[obstacle].layers,
+                    pad: obstacle,
+                    contact: None,
+                    label: "probe".into(),
+                });
+            }
+        }
+        if probes.is_empty() {
+            return probed;
+        }
+        self.board.nets[net as usize].terminals.extend(probes);
+        let with_probes =
+            core::verify::copper_components(&self.board, net, &core::NetRoute::default());
+        self.board.nets[net as usize].terminals.truncate(real);
+        probed
+            .into_iter()
+            .map(|probe| {
+                let group = with_probes[real + probe?];
+                order.iter().position(|known| *known == group)
+            })
+            .collect()
+    }
+
     fn pour_layers(&self, net: core::NetId) -> Vec<String> {
         let mut layers: Vec<String> = self
             .board
@@ -498,6 +703,77 @@ impl LoweredBoard {
         layers.dedup();
         layers
     }
+}
+
+/// The router's hot spots with their tiles' objects. A run since
+/// 2026-10-25 recorded them (`pads`, `nets`, `conflicted_nets` in
+/// board-router.json, as the board stood when the router stopped); for an
+/// older run they are read off the result board (the copper written,
+/// after the finishing steps), the tile from the hot spot's centre and
+/// the lattice's pitch (16 x 16 nodes).
+fn linked_hot_spots(report: &serde_json::Value, result: &LoweredBoard) -> Vec<serde_json::Value> {
+    let conflicted: BTreeSet<String> = report["diagnostics"]["conflicted_nets"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|net| net.as_str().map(str::to_string))
+        .collect();
+    let half = report["grid_pitch_mm"].as_f64().map(|pitch| pitch * 8.0);
+    report["diagnostics"]["hot_spots"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|spot| {
+            let mut spot = spot.clone();
+            if spot.get("pads").is_some() {
+                spot["links_from"] = "board-router.json: the board as it stood when the router stopped".into();
+                return spot;
+            }
+            let at = [spot["at"][0].as_f64(), spot["at"][1].as_f64()];
+            let layer = spot["layer"]
+                .as_str()
+                .and_then(|name| result.layers.names.iter().position(|known| known == name));
+            match (at, layer, half) {
+                ([Some(x), Some(y)], Some(layer), Some(half)) => {
+                    let bounds = [x - half, y - half, x + half, y + half];
+                    let links = crate::board_router::hot_spot_links(
+                        &result.board,
+                        &[],
+                        layer,
+                        bounds,
+                        &conflicted,
+                    );
+                    spot["box"] = serde_json::json!(bounds.map(round));
+                    if let (Some(target), Ok(serde_json::Value::Object(links))) =
+                        (spot.as_object_mut(), serde_json::to_value(&links))
+                    {
+                        target.extend(links);
+                    }
+                    spot["links_from"] = "the result board (board-router.json predates hot-spot links): the copper written, after the router's finishing steps".into();
+                }
+                _ => {
+                    spot["links_from"] = serde_json::Value::Null;
+                }
+            }
+            spot
+        })
+        .collect()
+}
+
+/// The layer of a DRC item that is a track or an arc (`Track [SDA] on
+/// F.Cu, length 0.2983 mm`): `Some(Some(layer))`; a via (`Via [SDA] on
+/// F.Cu - B.Cu`): `Some(None)`, every layer; anything else `None`.
+fn copper_item_layer(description: &str, layers: &LayerTable) -> Option<Option<usize>> {
+    if description.starts_with("Via ") {
+        return Some(None);
+    }
+    if !description.starts_with("Track ") && !description.starts_with("Arc ") {
+        return None;
+    }
+    let after = &description[description.find("] on ")? + 5..];
+    let name = after.split([',', ' ']).next()?;
+    let layer = layers.names.iter().position(|known| known == name)?;
+    Some(Some(layer))
 }
 
 /// The net named in a DRC item's description (`Pad 52 [QSPI_SCLK] of
@@ -679,7 +955,7 @@ pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDi
         .clone()
         .or_else(|| Some(directory.join("drc.json")).filter(|path| path.is_file()));
     let drc = drc_path.as_ref().map(|path| read_value(path)).transpose()?;
-    let result = LoweredBoard::read(directory, board_id)?;
+    let mut result = LoweredBoard::read(directory, board_id)?;
     let config = resolve_project_rules(
         &directory.join(format!("{board_id}.kicad_pro")),
         &directory.join(format!("{board_id}.kicad_pcb")),
@@ -788,10 +1064,7 @@ pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDi
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let hot_spots: Vec<serde_json::Value> = report["diagnostics"]["hot_spots"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
+    let hot_spots = linked_hot_spots(&report, &result);
     let mut nets = Vec::new();
     for name in &selected {
         let router = router_nets.get(name);
@@ -822,6 +1095,31 @@ pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDi
             }
             pairs
         });
+        // KiCad's items that are a track, an arc or a via: the group of
+        // the copper they lie on.
+        let native_pairs = native_pairs.map(|mut pairs| {
+            let Some(id) = result.net_id(name) else {
+                return pairs;
+            };
+            let mut wanted = Vec::new();
+            for (pair_index, pair) in pairs.iter().enumerate() {
+                for (item_index, item) in pair.items.iter().enumerate() {
+                    if pair.components[item_index].is_some() {
+                        continue;
+                    }
+                    if let Some(layer) = copper_item_layer(&item.description, &result.layers) {
+                        wanted.push(((pair_index, item_index), (item.at, layer)));
+                    }
+                }
+            }
+            let probes: Vec<([f64; 2], Option<usize>)> =
+                wanted.iter().map(|(_, probe)| *probe).collect();
+            let found = result.item_components(id, &probes);
+            for (((pair_index, item_index), _), group) in wanted.into_iter().zip(found) {
+                pairs[pair_index].components[item_index] = group;
+            }
+            pairs
+        });
         let counts = KiCadNetCounts {
             router_terminals: router
                 .and_then(|net| net["terminals"].as_u64())
@@ -842,12 +1140,27 @@ pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDi
         let rules = inspected_rules(config.as_ref(), name, &overrides, &copper);
         let reference_route = reference.as_ref().map(|reference| {
             let copper = net_copper(&reference.pcb, &reference.names, name);
-            let groups = reference
-                .net_id(name)
-                .map_or(0, |id| reference.components(id).len());
+            let (groups, pour_layers) = reference.net_id(name).map_or((0, Vec::new()), |id| {
+                (reference.components(id).len(), reference.pour_layers(id))
+            });
+            let (connected, connected_reason) = if groups <= 1 {
+                (Some(true), None)
+            } else if pour_layers.is_empty() {
+                (Some(false), None)
+            } else {
+                (
+                    None,
+                    Some(format!(
+                        "its tracks, arcs and vias leave {groups} groups; its zone on {} may join them (zone fill is not modelled here: KiCad's DRC of the reference decides)",
+                        pour_layers.join(", ")
+                    )),
+                )
+            };
             KiCadReferenceRoute {
-                connected: groups <= 1,
+                connected,
+                connected_reason,
                 components: groups,
+                pour_layers,
                 copper,
             }
         });
@@ -857,16 +1170,22 @@ pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDi
             .collect();
         let hot_spots_near: Vec<serde_json::Value> = hot_spots
             .iter()
-            .filter_map(|spot| {
+            .enumerate()
+            .filter_map(|(index, spot)| {
                 let at = [spot["at"][0].as_f64()?, spot["at"][1].as_f64()?];
                 let nearest = pads
                     .iter()
                     .map(|pad| distance_squared(pad.at, at).sqrt())
                     .fold(f64::INFINITY, f64::min);
                 (nearest <= HOT_SPOT_REACH_MM).then(|| {
-                    let mut spot = spot.clone();
-                    spot["nearest_pad_mm"] = round(nearest).into();
-                    spot
+                    serde_json::json!({
+                        "hot_spot": index,
+                        "at": spot["at"],
+                        "layer": spot["layer"],
+                        "history": spot["history"],
+                        "nearest_pad_mm": round(nearest),
+                        "conflicted_nets": spot["conflicted_nets"],
+                    })
                 })
             })
             .take(5)
@@ -1046,6 +1365,182 @@ pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDi
         run,
         checks,
         attempts,
+        hot_spots,
         nets,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BOARD: &str = r#"(kicad_pcb (version 20241229) (generator "pcbnew")
+  (general (thickness 1.6)) (paper "A4")
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+  (gr_rect (start 0 0) (end 20 20) (stroke (width 0.05) (type default)) (layer "Edge.Cuts"))
+  (footprint "test" (layer "F.Cu") (at 10 10)
+    (property "Reference" "U1" (at 0 -2) (layer "F.SilkS")
+      (effects (font (size 1 1) (thickness 0.15))))
+    (pad "1" smd rect (at -0.5 0) (size 0.3 1) (layers "F.Cu") (net "A"))
+    (pad "2" smd rect (at 0.5 0) (size 0.3 1) (layers "F.Cu") (net "B")))
+  (footprint "test" (layer "F.Cu") (at 16 10)
+    (property "Reference" "J1" (at 0 -2) (layer "F.SilkS")
+      (effects (font (size 1 1) (thickness 0.15))))
+    (pad "1" smd circle (at 0 0) (size 1 1) (layers "F.Cu") (net "A"))
+    (pad "2" smd circle (at 0 2) (size 1 1) (layers "F.Cu") (net "B")))
+  (segment (start 10.5 10) (end 16 12) (width 0.2) (layer "F.Cu") (net "B"))
+  (segment (start 16 10) (end 17 10) (width 0.15) (layer "F.Cu") (net "A")))
+"#;
+
+    /// A hot spot's tile names the pads in it, the nets whose copper
+    /// crosses it on its layer (the board's own and the router's) and
+    /// those of them still in conflict; on the other layer only the
+    /// router's track of A.
+    #[test]
+    fn a_hot_spot_names_its_pads_and_nets() {
+        let directory =
+            std::env::temp_dir().join(format!("pcb-maker-hot-spot-links-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("t.kicad_pcb"), BOARD).unwrap();
+        let lowered = LoweredBoard::read(&directory, "t").unwrap();
+        fs::remove_dir_all(&directory).unwrap();
+        let (board, table) = (&lowered.board, &lowered.layers);
+        let layer = |name: &str| table.names.iter().position(|known| known == name).unwrap();
+        let a = board.nets.iter().position(|net| net.name == "A").unwrap();
+        let mut routes = vec![core::NetRoute::default(); board.nets.len()];
+        routes[a].segments.push(core::Segment {
+            layer: layer("B.Cu"),
+            start: [9.0, 12.0],
+            end: [10.0, 8.0],
+            width: 0.2,
+        });
+        let conflicted = BTreeSet::from(["A".to_string()]);
+        let front = crate::board_router::hot_spot_links(
+            board,
+            &routes,
+            layer("F.Cu"),
+            [9.0, 9.0, 11.0, 11.0],
+            &conflicted,
+        );
+        let pads: Vec<(String, String, Option<String>)> = front
+            .pads
+            .iter()
+            .map(|pad| (pad.reference.clone(), pad.number.clone(), pad.net.clone()))
+            .collect();
+        assert_eq!(
+            pads,
+            [
+                ("U1".into(), "1".into(), Some("A".into())),
+                ("U1".into(), "2".into(), Some("B".into()))
+            ]
+        );
+        assert_eq!(front.pads[0].at, [9.5, 10.0]);
+        assert_eq!(front.pads_in_tile, 2);
+        assert_eq!(front.nets, ["B"]);
+        assert_eq!(front.conflicted_nets, ["A"]);
+        let back = crate::board_router::hot_spot_links(
+            board,
+            &routes,
+            layer("B.Cu"),
+            [9.0, 9.0, 11.0, 11.0],
+            &conflicted,
+        );
+        assert!(back.pads.is_empty());
+        assert_eq!(back.nets, ["A"]);
+        assert_eq!(back.conflicted_nets, ["A"]);
+        // A tile with nothing in it.
+        let empty = crate::board_router::hot_spot_links(
+            board,
+            &routes,
+            layer("F.Cu"),
+            [1.0, 1.0, 2.0, 2.0],
+            &conflicted,
+        );
+        assert_eq!(empty, crate::board_router::KiCadHotSpotLinks::default());
+    }
+
+    /// An override the run allowed: the widths written on its nets, how
+    /// many are below the minimum, and KiCad's findings of its kind on its
+    /// nets; a clearance has no widths.
+    #[test]
+    fn an_allowed_override_reports_what_was_written_and_found() {
+        let directory = std::env::temp_dir().join(format!(
+            "pcb-maker-override-outcomes-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let board = directory.join("t.kicad_pcb");
+        fs::write(
+            &board,
+            BOARD.replace(
+                "(net \"A\")))\n",
+                "(net \"A\"))\n  (segment (start 17 10) (end 17 11) (width 0.2) (layer \"F.Cu\") (net \"A\")))\n",
+            ),
+        )
+        .unwrap();
+        let finding = |kind: &str, net: &str| {
+            serde_json::json!({"type": kind, "severity": "error",
+                "items": [{"description": format!("Track [{net}] on F.Cu, length 1.0000 mm"), "pos": {"x": 16.0, "y": 10.0}}]})
+        };
+        let drc = serde_json::json!({"violations": [
+            finding("track_width", "A"), finding("track_width", "B"), finding("clearance", "A")]});
+        let width = crate::project_rules::KiCadRuleOverride {
+            source: "net_classes[Narrow]".into(),
+            quantity: "track_width".into(),
+            requested_mm: 0.15,
+            project_minimum_mm: 0.2,
+            project_source: "board.design_settings.rules.min_track_width in the .kicad_pro".into(),
+            nets: vec!["A".into()],
+        };
+        let clearance = crate::project_rules::KiCadRuleOverride {
+            source: "net_classes[Narrow]".into(),
+            quantity: "clearance".into(),
+            requested_mm: 0.1,
+            project_minimum_mm: 0.15,
+            ..width.clone()
+        };
+        let outcomes = override_outcomes(&[width, clearance], &board, Some(&drc));
+        assert_eq!(outcomes[0].routed_with_mm, 0.15);
+        assert_eq!(outcomes[0].native_required_mm, 0.2);
+        assert_eq!(outcomes[0].emitted_track_widths_mm, Some(vec![0.15, 0.2]));
+        assert_eq!(outcomes[0].emitted_below_minimum, Some(1));
+        assert_eq!(outcomes[0].native_findings, Some(1));
+        assert_eq!(outcomes[1].emitted_track_widths_mm, None);
+        assert_eq!(outcomes[1].native_findings, Some(1));
+        // KiCad did not check: no findings, not zero.
+        let unchecked = override_outcomes(&outcomes_input(), &board, None);
+        assert_eq!(unchecked[0].native_findings, None);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    fn outcomes_input() -> Vec<crate::project_rules::KiCadRuleOverride> {
+        vec![crate::project_rules::KiCadRuleOverride {
+            source: "default_rules".into(),
+            quantity: "track_width".into(),
+            requested_mm: 0.15,
+            project_minimum_mm: 0.2,
+            project_source: "x".into(),
+            nets: Vec::new(),
+        }]
+    }
+
+    #[test]
+    fn kicad_items_name_their_copper_layer() {
+        let pcb = parse(BOARD).unwrap();
+        let table = LayerTable::from_pcb(&pcb).unwrap();
+        let back = table.names.iter().position(|name| name == "B.Cu");
+        assert_eq!(
+            copper_item_layer("Track [SDA] on B.Cu, length 0.2983 mm", &table),
+            Some(back)
+        );
+        assert_eq!(
+            copper_item_layer("Track (arc) [SDA] on B.Cu, length 1 mm", &table),
+            Some(back)
+        );
+        assert_eq!(
+            copper_item_layer("Via [SDA] on F.Cu - B.Cu", &table),
+            Some(None)
+        );
+        assert_eq!(copper_item_layer("Pad 1 [SDA] of U1 on F.Cu", &table), None);
+    }
 }

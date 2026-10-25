@@ -384,10 +384,11 @@ fn inspect_routing_run_names_the_groups_and_reconciles_the_counts() {
             .unwrap()
             .contains("KiCad reports 1 unconnected pair")
     );
-    // The pair's pad is in J3's group; the via is no pad.
+    // The pair's pad is in J3's group; the via in the group its copper
+    // joins (the other one).
     assert_eq!(
         net["native_pairs"][0]["components"],
-        serde_json::json!([null, alone])
+        serde_json::json!([1 - alone, alone])
     );
     assert_eq!(net["rules"]["track_width_mm"], 0.25);
     assert!(
@@ -411,6 +412,8 @@ fn inspect_routing_run_names_the_groups_and_reconciles_the_counts() {
     assert_eq!(net["cause"]["status"], "unknown");
     assert_eq!(diagnosis["checks"]["native"]["status"], "failed");
     assert_eq!(diagnosis["checks"]["native"]["unconnected_pairs"], 1);
+    // The hot spots with their tiles' objects (none on a board this easy).
+    assert!(diagnosis["hot_spots"].is_array(), "{diagnosis}");
     assert!(diagnosis["attempts"]["ledger"].is_array());
     assert!(diagnosis["attempts"]["selected"].is_object());
     // Without --output: the same JSON on stdout.
@@ -495,6 +498,7 @@ fn a_class_below_the_boards_minimum_is_refused_unless_allowed() {
     )
     .unwrap();
     let out = root.join("allowed");
+    // --strip: the board's own 0.25 mm tracks go, the class routes.
     let output = binary()
         .env("PCB_SKIP_NATIVE", "1")
         .args([
@@ -503,6 +507,7 @@ fn a_class_below_the_boards_minimum_is_refused_unless_allowed() {
             "t",
             &out.display().to_string(),
             &allowed.display().to_string(),
+            "--strip",
         ])
         .output()
         .unwrap();
@@ -524,6 +529,23 @@ fn a_class_below_the_boards_minimum_is_refused_unless_allowed() {
         serde_json::from_str(&fs::read_to_string(out.join("board-router.json")).unwrap()).unwrap();
     assert_eq!(report["rules"]["overrides"][0]["requested_mm"], 0.15);
     assert_eq!(report["rules"]["overrides"][0]["project_minimum_mm"], 0.2);
+    // The verdict says what became of it: asked for, the project's
+    // minimum, routed with, written, KiCad's (not checked here).
+    let outcome = &verdict["rule_overrides"][0];
+    assert_eq!(outcome["source"], "net_classes[Narrow]", "{verdict}");
+    assert_eq!(outcome["requested_mm"], 0.15);
+    assert_eq!(outcome["project_minimum_mm"], 0.2);
+    assert_eq!(outcome["routed_with_mm"], 0.15);
+    assert_eq!(outcome["native_required_mm"], 0.2);
+    assert_eq!(
+        outcome["emitted_track_widths_mm"],
+        serde_json::json!([0.15])
+    );
+    assert!(
+        outcome["emitted_below_minimum"].as_u64().unwrap() > 0,
+        "{outcome}"
+    );
+    assert_eq!(outcome["native_findings"], serde_json::Value::Null);
     let described = binary()
         .args(["describe-kicad-board", &out.display().to_string(), "t"])
         .output()
@@ -540,6 +562,33 @@ fn a_class_below_the_boards_minimum_is_refused_unless_allowed() {
     assert_eq!(net["track_width_mm"], 0.2, "{net}");
     assert_eq!(net["class_track_width_mm"], 0.15, "{net}");
     fs::remove_dir_all(root).unwrap();
+}
+
+/// The remapper trial ran inspect-kicad-terminal-access and
+/// inspect-kicad-routing-cut, removed since: they name what replaces them
+/// (exit 2), with or without --help.
+#[test]
+fn a_removed_diagnostic_names_its_replacement() {
+    for arguments in [
+        vec![
+            "inspect-kicad-terminal-access",
+            "board.kicad_pcb",
+            "QSPI_SCLK",
+            "out.json",
+        ],
+        vec!["inspect-kicad-routing-cut", "--help"],
+        vec!["help", "inspect-kicad-routing-cut"],
+    ] {
+        let output = binary().args(&arguments).output().unwrap();
+        assert_eq!(code(&output), 2, "{arguments:?}: {}", stderr(&output));
+        let message = stderr(&output);
+        assert!(message.contains("was removed on 2026-10-21"), "{message}");
+        assert!(
+            message.contains("inspect-routing-run <run-dir> --terminal REF:PAD"),
+            "{message}"
+        );
+        assert!(message.contains("arcs"), "{message}");
+    }
 }
 
 #[test]

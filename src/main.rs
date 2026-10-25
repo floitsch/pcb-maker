@@ -119,6 +119,12 @@ fn dispatch(arguments: Vec<String>) -> u8 {
     } else {
         None
     };
+    if let Some(message) =
+        agent_cli::removed(asked.clone().flatten().as_deref().unwrap_or(&command))
+    {
+        eprintln!("error: {message}");
+        return pcb_kicad::EXIT_USAGE;
+    }
     if let Some(topic) = asked {
         return match topic {
             None => {

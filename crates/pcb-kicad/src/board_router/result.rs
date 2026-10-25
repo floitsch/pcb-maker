@@ -413,7 +413,8 @@ pub struct KiCadRoutingDiagnostics {
     /// Nets still competing for room when negotiation stopped.
     pub conflicted_nets: Vec<String>,
     /// Where nets fought longest (16 x 16-node tiles), most contested
-    /// first: the places to give more room.
+    /// first, each with its tile's pads, nets and nets still in conflict
+    /// (`KiCadHotSpotLinks`): observations, not a cause.
     pub hot_spots: Vec<KiCadHotSpot>,
     /// Pads KiCad finds short of thermal spokes (its starved_thermal),
     /// with what to do about each.
@@ -512,6 +513,163 @@ pub struct KiCadHotSpot {
     pub layer: String,
     pub at: [f64; 2],
     pub history: f32,
+    /// The tile: `[min x, min y, max x, max y]` in mm.
+    #[serde(rename = "box")]
+    pub bounds: [f64; 4],
+    /// What lies in the tile on its layer when the router stopped
+    /// (`hot_spot_links`): observations, not a cause.
+    #[serde(flatten)]
+    pub links: KiCadHotSpotLinks,
+}
+
+/// The objects of a hot spot's tile on its layer, as the board stood when
+/// the router stopped: the pads whose copper reaches into the tile, the
+/// nets whose copper (tracks, vias, kept copper) crosses it, and those of
+/// the nets of both that were still in conflict.
+#[derive(Clone, Debug, Default, Serialize, PartialEq)]
+pub struct KiCadHotSpotLinks {
+    /// Nearest the tile's centre first, at most `HOT_SPOT_PADS`.
+    pub pads: Vec<KiCadHotSpotPad>,
+    /// All pads in the tile (`pads` may list fewer).
+    pub pads_in_tile: usize,
+    /// Sorted.
+    pub nets: Vec<String>,
+    /// The nets of `pads` and `nets` the router still had in conflict
+    /// when negotiation stopped (`conflicted_nets`), sorted.
+    pub conflicted_nets: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct KiCadHotSpotPad {
+    #[serde(rename = "ref")]
+    pub reference: String,
+    pub number: String,
+    pub net: Option<String>,
+    pub at: [f64; 2],
+}
+
+/// How many pads a hot spot lists.
+pub const HOT_SPOT_PADS: usize = 12;
+
+/// The pad an obstacle is (`REF.NUMBER`, a padstack layer's
+/// `REF.NUMBER padstack`), split into reference and number.
+pub(crate) fn pad_of_label(label: &str) -> Option<(&str, &str)> {
+    let label = label.strip_suffix(" padstack").unwrap_or(label);
+    if label.contains(' ') {
+        return None;
+    }
+    label.split_once('.')
+}
+
+/// The objects in a hot spot's tile (`bounds`, `[min x, min y, max x,
+/// max y]`) on `layer`: pads of `board` (copper obstacles labelled as
+/// pads) whose copper reaches into it, and the nets whose copper crosses
+/// it: `board`'s own copper of a net (kept tracks and vias, graphics) and
+/// `routes` (per net, the router's). `conflicted`: the nets still in
+/// conflict.
+pub fn hot_spot_links(
+    board: &core::Board,
+    routes: &[core::NetRoute],
+    layer: usize,
+    bounds: [f64; 4],
+    conflicted: &BTreeSet<String>,
+) -> KiCadHotSpotLinks {
+    let tile = core::Shape::Polygon {
+        points: vec![
+            [bounds[0], bounds[1]],
+            [bounds[2], bounds[1]],
+            [bounds[2], bounds[3]],
+            [bounds[0], bounds[3]],
+        ],
+    };
+    let tile_box = tile.aabb();
+    let reaches = |shape: &core::Shape| {
+        shape.aabb().intersects(tile_box) && core::verify::shape_distance(shape, &tile) <= 0.0
+    };
+    let net_name = |net: core::NetId| board.nets.get(net as usize).map(|net| net.name.clone());
+    let centre = [(bounds[0] + bounds[2]) / 2.0, (bounds[1] + bounds[3]) / 2.0];
+    let mut pads: Vec<(f64, KiCadHotSpotPad)> = Vec::new();
+    let mut nets: BTreeSet<String> = BTreeSet::new();
+    for obstacle in &board.obstacles {
+        if obstacle.kind != core::ObstacleKind::Copper
+            || obstacle.layers & (1 << layer) == 0
+            || !reaches(&obstacle.shape)
+        {
+            continue;
+        }
+        match pad_of_label(&obstacle.label) {
+            Some((reference, number)) => {
+                let aabb = obstacle.shape.aabb();
+                let at = [
+                    (aabb.minimum[0] + aabb.maximum[0]) / 2.0,
+                    (aabb.minimum[1] + aabb.maximum[1]) / 2.0,
+                ];
+                let pad = KiCadHotSpotPad {
+                    reference: reference.to_string(),
+                    number: number.to_string(),
+                    net: obstacle.net.and_then(net_name),
+                    at: [
+                        (at[0] * 10_000.0).round() / 10_000.0,
+                        (at[1] * 10_000.0).round() / 10_000.0,
+                    ],
+                };
+                if !pads.iter().any(|(_, known)| {
+                    known.reference == pad.reference && known.number == pad.number
+                }) {
+                    let distance = (at[0] - centre[0]).hypot(at[1] - centre[1]);
+                    pads.push((distance, pad));
+                }
+            }
+            None => {
+                if let Some(name) = obstacle.net.and_then(net_name) {
+                    nets.insert(name);
+                }
+            }
+        }
+    }
+    for (net, route) in routes.iter().enumerate() {
+        let crosses = route.segments.iter().any(|segment| {
+            segment.layer == layer
+                && reaches(&core::Shape::Capsule {
+                    start: segment.start,
+                    end: segment.end,
+                    radius: segment.width / 2.0,
+                })
+        }) || route.vias.iter().any(|via| {
+            reaches(&core::Shape::Circle {
+                center: via.at,
+                radius: via.diameter / 2.0,
+            })
+        });
+        if crosses && let Some(name) = net_name(net as core::NetId) {
+            nets.insert(name);
+        }
+    }
+    pads.sort_by(|a, b| {
+        a.0.total_cmp(&b.0)
+            .then_with(|| a.1.reference.cmp(&b.1.reference))
+            .then_with(|| a.1.number.cmp(&b.1.number))
+    });
+    let pads_in_tile = pads.len();
+    let pads: Vec<KiCadHotSpotPad> = pads
+        .into_iter()
+        .take(HOT_SPOT_PADS)
+        .map(|(_, pad)| pad)
+        .collect();
+    let conflicted_nets: Vec<String> = nets
+        .iter()
+        .cloned()
+        .chain(pads.iter().filter_map(|pad| pad.net.clone()))
+        .filter(|net| conflicted.contains(net))
+        .collect::<BTreeSet<String>>()
+        .into_iter()
+        .collect();
+    KiCadHotSpotLinks {
+        pads,
+        pads_in_tile,
+        nets: nets.into_iter().collect(),
+        conflicted_nets,
+    }
 }
 
 pub(super) fn diagnostics(
@@ -525,6 +683,12 @@ pub(super) fn diagnostics(
             (point[1] * 1000.0).round() / 1000.0,
         ]
     };
+    let conflicted: BTreeSet<String> = result
+        .diagnostics
+        .conflicted
+        .iter()
+        .map(|net| board.nets[*net as usize].name.clone())
+        .collect();
     KiCadRoutingDiagnostics {
         dead_pads: result
             .diagnostics
@@ -547,10 +711,21 @@ pub(super) fn diagnostics(
             .diagnostics
             .hot_spots
             .iter()
-            .map(|spot| KiCadHotSpot {
-                layer: layer_names.get(spot.layer).cloned().unwrap_or_default(),
-                at: round(spot.center),
-                history: spot.history,
+            .map(|spot| {
+                let bounds = [
+                    spot.center[0] - spot.half_size,
+                    spot.center[1] - spot.half_size,
+                    spot.center[0] + spot.half_size,
+                    spot.center[1] + spot.half_size,
+                ];
+                let corners = [round([bounds[0], bounds[1]]), round([bounds[2], bounds[3]])];
+                KiCadHotSpot {
+                    layer: layer_names.get(spot.layer).cloned().unwrap_or_default(),
+                    at: round(spot.center),
+                    history: spot.history,
+                    bounds: [corners[0][0], corners[0][1], corners[1][0], corners[1][1]],
+                    links: hot_spot_links(board, &result.routes, spot.layer, bounds, &conflicted),
+                }
             })
             .collect(),
         starved_thermals: Vec::new(),
