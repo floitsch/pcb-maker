@@ -818,6 +818,93 @@ class MemoryLedger(unittest.TestCase):
         self.assertTrue(600 <= started <= 600 + 60 + 15, started)
         self.assertEqual(ran, 179)
 
+    @staticmethod
+    def tonight(small_mb, horizon=4 * 3600):
+        """The machine of 2026-10-25 22:30, second by second (as ledger.rs's
+        `tonight`): a ledger of 58 066 MB, 42 000 MB available beside the
+        reservations (each run resident at its reservation), a run of
+        8800 MB holding until 900 s, three nightly boards waiting from 0 s
+        (27 876, 24 724 and 23 215 MB expected, a floor of 10 240 MB,
+        looking every 15 s, each running 1500 s) and three agents' chains of
+        binaries (2000 MB, 120 s each, the next one as one ends, looking
+        every 2 s). `small_mb`: the drain's small-request bound (0: the
+        rule of 2026-10-25). Returns the nightly boards' starts, the
+        binaries' longest wait and how many ran."""
+        h = run.harness_common
+        capacity, free, floor = 58066.0, 42000.0, 10240.0
+        book = [[{"pid": 2, "started": 0, "megabytes": 8800.0, "label": "layout", "held_since": 0,
+                  "expected_end": 900.0}, 900, None]]
+        for pid, megabytes in ((11, 27876.0), (12, 24724.0), (13, 23215.0)):
+            book.append([{"pid": pid, "started": 0, "megabytes": 0.0, "label": "nightly", "waiting_mb": megabytes,
+                          "waiting_since": 0, "floor_mb": floor, "waits_on_floor": True, "priority": "nightly",
+                          "drain_after": 0.0}, None, None])
+        starts, longest, ran, next_pid = [], 0, 0, 100
+        for t in range(horizon):
+            book = [entry for entry in book if entry[1] is None or entry[1] > t]
+            for chain in range(3):
+                if not any(entry[2] == chain for entry in book):
+                    next_pid += 1
+                    book.append([{"pid": next_pid, "started": t, "megabytes": 0.0, "label": "route",
+                                  "waiting_mb": 2000.0, "waiting_since": t}, None, chain])
+            for entry in [e for e in book if e[0].get("waiting_mb") is not None]:
+                me = entry[0]
+                nightly = me.get("priority") == "nightly"
+                if (t - me["waiting_since"]) % (15 if nightly else 2):
+                    continue
+                wanted, since = me["waiting_mb"], me["waiting_since"]
+                others = [r for r, _, _ in book if r is not me]
+                available = free - sum(r["megabytes"] for r in others)
+                held = {r["pid"]: r["megabytes"] for r in others}
+                fits = (h.memory_room(others, wanted, floor, capacity, available, resident=held.get,
+                                      own_pid=me["pid"])[0] if nightly
+                        else h.memory_room(others, wanted, 0.0, capacity, None)[0])
+                priority = me.get("priority")
+                drained = h.drained_for(others, since, t, own_pid=me["pid"], priority=priority)
+                end = t + 1500.0 if nightly else None
+                if (fits and h.order_allows(others, wanted, since, capacity, own_pid=me["pid"], priority=priority)
+                        and (drained is None or h.drain_allows(drained, others, wanted, capacity, available, end,
+                                                               small_mb=small_mb))):
+                    me.update(megabytes=me.pop("waiting_mb"), held_since=t)
+                    if nightly:
+                        me["expected_end"] = end
+                        starts.append(t)
+                    else:
+                        longest = max(longest, t - since)
+                        ran += 1
+                    entry[1] = t + (1500 if nightly else 120)
+        return starts, longest, ran
+
+    def test_small_requests_go_while_the_waiter_waits_for_a_large_run_to_end(self):
+        # The rule of 2026-10-25: a binary waits up to 3900 s (from the
+        # first board's end to the third board's start every request is
+        # held: each board needs 33-38 GB available, the machine has 42).
+        self.assertEqual(self.tonight(0.0), ([900, 2400, 3900], 3900, 264))
+        # The feasibility cap: the binaries go beside the large runs (the
+        # next board cannot fit before the running one ends) and wait at
+        # most one of their own runs (the full drain before each board);
+        # the boards start 60 s later.
+        self.assertEqual(self.tonight(run.harness_common.SMALL_REQUEST_MB), ([960, 2460, 3960], 120, 348))
+
+    def test_a_waiter_blocked_by_a_large_run_lets_small_requests_go(self):
+        h = run.harness_common
+        holder = lambda pid, megabytes: {"pid": pid, "megabytes": megabytes, "held_since": 1.0,  # noqa: E731
+                                         "label": ""}
+        waiter = {"pid": 13, "started": 10.0, "megabytes": 0.0, "waiting_mb": 8000.0, "waiting_since": 10.0,
+                  "floor_mb": 2000.0, "waits_on_floor": True, "priority": "nightly", "label": ""}
+        others = [holder(11, 5000.0), holder(12, 1000.0), waiter]
+        small = h.SMALL_REQUEST_MB
+        # 6000 available: with the small run gone 7000 less the floor is
+        # 5000, short of 8000: the large run must end first.
+        self.assertTrue(h.blocked_by_large(waiter, others, 20000.0, 6000.0))
+        self.assertTrue(h.drain_allows(waiter, others, small, 20000.0, 6000.0))
+        self.assertFalse(h.drain_allows(waiter, others, small + 1, 20000.0, 6000.0))
+        # 9000 available: with the small run gone it fits: the drain holds
+        # the small requests back too.
+        self.assertFalse(h.blocked_by_large(waiter, others, 20000.0, 9000.0))
+        self.assertFalse(h.drain_allows(waiter, others, 1000.0, 20000.0, 9000.0))
+        # Only small runs hold memory: the drain empties the machine.
+        self.assertFalse(h.blocked_by_large(waiter, [holder(12, 1000.0), waiter], 20000.0, 1000.0))
+
     def test_a_drain_admits_what_leaves_the_waiter_its_room_or_ends_first(self):
         h = run.harness_common
         holder = {"pid": 11, "started": 1.0, "megabytes": 4000.0, "held_since": 1.0, "expected_end": 900.0,

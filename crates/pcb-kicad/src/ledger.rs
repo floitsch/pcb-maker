@@ -50,6 +50,16 @@
 //! `nightly`) goes first among the waiters and drains at once, without
 //! the end exception: it is never passed once waiting.
 //!
+//! The drain's feasibility cap (since 2026-10-26, `blocked_by_large`):
+//! while the waiter cannot fit before a run larger than
+//! `SMALL_REQUEST_MB` ends (with every smaller run gone its room still
+//! falls short), requests of at most that size go: they do not delay it.
+//! The drain holds back the large ones until that run ends, then drains in
+//! full. Until then the nightly's three designer boards of 23-28 GB
+//! expected (with a floor of 10 GB, 33-38 GB of the 42 GB available on an
+//! idle machine) ran one after the other, and each next one held every
+//! other request back while the one before it ran.
+//!
 //! `PCB_MAKER_LEDGER` names the file (default
 //! `$XDG_RUNTIME_DIR/pcb-maker-ledger.json`, else
 //! `/tmp/pcb-maker-ledger.json`; `off`: no ledger),
@@ -83,6 +93,12 @@ pub const DEFAULT_DRAIN_AFTER_SECONDS: f64 = 600.0;
 /// The priority of the nightly's requests (run.py's
 /// `--ledger-priority nightly`): first among the waiters, never passed.
 pub const PRIORITY_NIGHTLY: &str = "nightly";
+
+/// The drain's feasibility cap (since 2026-10-26): while the waiter
+/// cannot fit before a run larger than this ends (`blocked_by_large`),
+/// requests of at most this many megabytes are not held back by the
+/// drain (`drain_allows`).
+pub const SMALL_REQUEST_MB: f64 = 4096.0;
 
 /// How often a waiting process looks again, and how often it says so.
 const WAIT_POLL: Duration = Duration::from_secs(2);
@@ -527,8 +543,34 @@ pub fn drained_for<'a>(
 /// it back); so the reservations shrink toward the waiter's room as runs
 /// end. Or, except for the nightly's waiter, if it is expected to end no
 /// later than every run that holds memory (each with an expected end):
-/// it does not delay the drain.
+/// it does not delay the drain. Or (the feasibility cap, since
+/// 2026-10-26) if it is small (at most `SMALL_REQUEST_MB`) and the waiter
+/// cannot fit before a larger run ends anyway (`blocked_by_large`):
+/// holding it back gains the waiter nothing (a waiter of 23-28 GB behind a
+/// 28 GB run held every other agent's request for hours).
 pub fn drain_allows(
+    waiter: &Reservation,
+    others: &[&Reservation],
+    wanted_mb: f64,
+    capacity: Option<f64>,
+    available_mb: Option<f64>,
+    expected_end: Option<f64>,
+) -> bool {
+    drain_allows_up_to(
+        SMALL_REQUEST_MB,
+        waiter,
+        others,
+        wanted_mb,
+        capacity,
+        available_mb,
+        expected_end,
+    )
+}
+
+/// `drain_allows` with `small_mb` for `SMALL_REQUEST_MB` (0: no cap, the
+/// rule of 2026-10-25).
+fn drain_allows_up_to(
+    small_mb: f64,
     waiter: &Reservation,
     others: &[&Reservation],
     wanted_mb: f64,
@@ -538,12 +580,10 @@ pub fn drain_allows(
 ) -> bool {
     let wants = waiter.waiting_mb.unwrap_or(0.0);
     let rest = || others.iter().filter(|r| !std::ptr::eq(**r, waiter));
-    let reserved: f64 = rest().map(|r| r.megabytes).sum();
-    let ledger_room = capacity.map_or(f64::INFINITY, |capacity| capacity - reserved - wanted_mb);
-    let floor_room = available_mb.map_or(f64::INFINITY, |available| {
-        available - wanted_mb - waiter.floor_mb.unwrap_or(0.0).max(0.0) + waiter.megabytes
-    });
-    if ledger_room.min(floor_room) >= wants {
+    if waiter_room(waiter, others, capacity, available_mb, wanted_mb, 0.0) >= wants {
+        return true;
+    }
+    if wanted_mb <= small_mb && blocked_by_large(small_mb, waiter, others, capacity, available_mb) {
         return true;
     }
     if waiter.nightly() {
@@ -554,6 +594,64 @@ pub fn drain_allows(
     };
     let mut holders = rest().filter(|r| r.megabytes > 0.0).peekable();
     holders.peek().is_some() && holders.all(|r| r.expected_end.is_some_and(|their| end <= their))
+}
+
+/// The drain's room for `waiter` beside `others` (but the waiter) after a
+/// request of `wanted_mb`, with `freed_mb` of the reservations gone: the
+/// smaller of the capacity less the reservations (None: unbounded) and
+/// `available_mb` (None: unbounded) less the waiter's floor (what the
+/// waiter holds counts back).
+fn waiter_room(
+    waiter: &Reservation,
+    others: &[&Reservation],
+    capacity: Option<f64>,
+    available_mb: Option<f64>,
+    wanted_mb: f64,
+    freed_mb: f64,
+) -> f64 {
+    let reserved: f64 = others
+        .iter()
+        .filter(|r| !std::ptr::eq(**r, waiter))
+        .map(|r| r.megabytes)
+        .sum::<f64>()
+        - freed_mb;
+    let ledger_room = capacity.map_or(f64::INFINITY, |capacity| capacity - reserved - wanted_mb);
+    let floor_room = available_mb.map_or(f64::INFINITY, |available| {
+        available + freed_mb - wanted_mb - waiter.floor_mb.unwrap_or(0.0).max(0.0)
+            + waiter.megabytes
+    });
+    ledger_room.min(floor_room)
+}
+
+/// Whether `waiter` cannot fit before a run larger than `small_mb`
+/// (`SMALL_REQUEST_MB`) ends: such a run holds memory, and with every smaller run gone the
+/// waiter's room (`waiter_room`: the capacity and the memory available,
+/// each with the smaller runs' megabytes back) still does not cover what
+/// it waits for. The small runs then do not delay it: the drain lets them
+/// go (`drain_allows`) and holds back only the large ones until that run
+/// ends; then it drains in full. benchmarks/harness_common.py,
+/// `blocked_by_large`: the same rule.
+pub fn blocked_by_large(
+    small_mb: f64,
+    waiter: &Reservation,
+    others: &[&Reservation],
+    capacity: Option<f64>,
+    available_mb: Option<f64>,
+) -> bool {
+    let holders = || {
+        others
+            .iter()
+            .filter(|r| !std::ptr::eq(**r, waiter) && r.megabytes > 0.0)
+    };
+    if !holders().any(|r| r.megabytes > small_mb) {
+        return false;
+    }
+    let small: f64 = holders()
+        .filter(|r| r.megabytes <= small_mb)
+        .map(|r| r.megabytes)
+        .sum();
+    waiter_room(waiter, others, capacity, available_mb, 0.0, small)
+        < waiter.waiting_mb.unwrap_or(0.0)
 }
 
 /// The memory available now (MemAvailable) less what the reservations in
@@ -1451,6 +1549,228 @@ mod tests {
             Reservation::default().drain_after(),
             DEFAULT_DRAIN_AFTER_SECONDS
         );
+    }
+
+    /// The machine of 2026-10-25 22:30, second by second: a ledger of
+    /// 58 066 MB, 42 000 MB available beside the reservations (each run
+    /// resident at its reservation), a run of 8800 MB holding until 900 s,
+    /// three nightly boards waiting from 0 s (27 876, 24 724 and 23 215 MB
+    /// expected, a floor of 10 240 MB, looking every 15 s, each running
+    /// 1500 s) and three agents' chains of binaries (2000 MB, 120 s each,
+    /// the next one as one ends, looking every 2 s), for `horizon` seconds.
+    /// `small_mb`: the drain's small-request bound (0: the rule of
+    /// 2026-10-25). Returns the nightly boards' starts, the binaries'
+    /// longest wait and how many ran. test_run.py's `tonight`: the same.
+    fn tonight(small_mb: f64, horizon: u32) -> (Vec<u32>, u32, usize) {
+        const CAPACITY: f64 = 58_066.0;
+        const FREE: f64 = 42_000.0;
+        const FLOOR: f64 = 10_240.0;
+        // (reservation, end once it holds, the binaries' chain)
+        let mut book: Vec<(Reservation, Option<u32>, Option<u32>)> = vec![(
+            Reservation {
+                pid: 2,
+                megabytes: 8800.0,
+                label: "layout".into(),
+                held_since: Some(0.0),
+                expected_end: Some(900.0),
+                ..Default::default()
+            },
+            Some(900),
+            None,
+        )];
+        for (pid, megabytes) in [(11, 27_876.0), (12, 24_724.0), (13, 23_215.0)] {
+            book.push((
+                Reservation {
+                    pid,
+                    label: "nightly".into(),
+                    waiting_mb: Some(megabytes),
+                    waiting_since: Some(0.0),
+                    floor_mb: Some(FLOOR),
+                    waits_on_floor: true,
+                    priority: Some(PRIORITY_NIGHTLY.into()),
+                    drain_after: Some(0.0),
+                    ..Default::default()
+                },
+                None,
+                None,
+            ));
+        }
+        let (mut starts, mut longest, mut ran, mut next_pid) = (Vec::new(), 0, 0, 100);
+        for t in 0..horizon {
+            let now = f64::from(t);
+            book.retain(|(_, end, _)| end.is_none_or(|end| end > t));
+            for chain in 0..3 {
+                if !book.iter().any(|(_, _, c)| *c == Some(chain)) {
+                    next_pid += 1;
+                    book.push((
+                        Reservation {
+                            pid: next_pid,
+                            started: now,
+                            label: "route".into(),
+                            waiting_mb: Some(2000.0),
+                            waiting_since: Some(now),
+                            ..Default::default()
+                        },
+                        None,
+                        Some(chain),
+                    ));
+                }
+            }
+            let lookers: Vec<u32> = book
+                .iter()
+                .filter(|(r, _, _)| r.waiting_mb.is_some())
+                .filter(|(r, _, _)| {
+                    (t - r.waiting_since() as u32).is_multiple_of(if r.nightly() { 15 } else { 2 })
+                })
+                .map(|(r, _, _)| r.pid)
+                .collect();
+            for pid in lookers {
+                let index = book.iter().position(|(r, _, _)| r.pid == pid).unwrap();
+                let me = book[index].0.clone();
+                let (wanted, since, nightly) =
+                    (me.waiting_mb.unwrap(), me.waiting_since(), me.nightly());
+                let others: Vec<&Reservation> = book
+                    .iter()
+                    .map(|(r, _, _)| r)
+                    .filter(|r| r.pid != pid)
+                    .collect();
+                let reserved: f64 = others.iter().map(|r| r.megabytes).sum();
+                let available = FREE - reserved;
+                let fits = if nightly {
+                    // The harness's rule (harness_common.memory_room).
+                    (reserved + wanted <= CAPACITY && available - wanted >= FLOOR)
+                        || !others.iter().any(|r| r.megabytes > 0.0)
+                } else {
+                    reserved + wanted <= CAPACITY || !others.iter().any(|r| r.megabytes > 0.0)
+                };
+                let end = nightly.then(|| now + 1500.0);
+                // A binary's request is never the nightly's (order_allows
+                // and drained_for rank it after them); the harness's
+                // nightly boards rank by their priority: the first of them
+                // is behind no one.
+                let first = first_waiter(&book.iter().map(|(r, _, _)| r).collect::<Vec<_>>())
+                    .is_some_and(|r| r.pid == pid);
+                let admitted = fits
+                    && (first || order_allows(&others, pid, since, wanted, Some(CAPACITY)))
+                    && (first
+                        || drained_for(&others, pid, since, now).is_none_or(|waiter| {
+                            drain_allows_up_to(
+                                small_mb,
+                                waiter,
+                                &others,
+                                wanted,
+                                Some(CAPACITY),
+                                Some(available),
+                                end,
+                            )
+                        }));
+                if admitted {
+                    let entry = &mut book[index];
+                    entry.0.megabytes = wanted;
+                    entry.0.waiting_mb = None;
+                    entry.0.waiting_since = None;
+                    entry.0.held_since = Some(now);
+                    entry.0.expected_end = end;
+                    entry.1 = Some(t + if nightly { 1500 } else { 120 });
+                    if nightly {
+                        starts.push(t);
+                    } else {
+                        longest = longest.max(t - since as u32);
+                        ran += 1;
+                    }
+                }
+            }
+        }
+        (starts, longest, ran)
+    }
+
+    #[test]
+    fn small_requests_go_while_the_waiter_waits_for_a_large_run_to_end() {
+        // The rule of 2026-10-25: a binary waits up to 3900 s (from the
+        // first board's end to the third board's start every request is
+        // held: each board needs 33-38 GB available, the machine has 42).
+        assert_eq!(tonight(0.0, 4 * 3600), (vec![900, 2400, 3900], 3900, 264));
+        // The feasibility cap: the binaries go beside the large runs (the
+        // next board cannot fit before the running one ends) and wait at
+        // most one of their own runs (the full drain before each board);
+        // the boards start 60 s later.
+        assert_eq!(
+            tonight(SMALL_REQUEST_MB, 4 * 3600),
+            (vec![960, 2460, 3960], 120, 348)
+        );
+    }
+
+    #[test]
+    fn a_waiter_blocked_by_a_large_run_lets_small_requests_go() {
+        let holder = |pid: u32, megabytes: f64| Reservation {
+            pid,
+            megabytes,
+            held_since: Some(1.0),
+            ..Default::default()
+        };
+        let waiter = Reservation {
+            pid: 13,
+            started: 10.0,
+            waiting_mb: Some(8000.0),
+            waiting_since: Some(10.0),
+            floor_mb: Some(2000.0),
+            waits_on_floor: true,
+            priority: Some(PRIORITY_NIGHTLY.into()),
+            ..Default::default()
+        };
+        let book = [holder(11, 5000.0), holder(12, 1000.0), waiter.clone()];
+        let others = refs(&book);
+        // 6000 available: with the small run gone 7000 less the floor is
+        // 5000, short of 8000: the large run must end first.
+        assert!(blocked_by_large(
+            SMALL_REQUEST_MB,
+            &book[2],
+            &others,
+            Some(20_000.0),
+            Some(6000.0)
+        ));
+        assert!(drain_allows(
+            &book[2],
+            &others,
+            SMALL_REQUEST_MB,
+            Some(20_000.0),
+            Some(6000.0),
+            None
+        ));
+        assert!(!drain_allows(
+            &book[2],
+            &others,
+            SMALL_REQUEST_MB + 1.0,
+            Some(20_000.0),
+            Some(6000.0),
+            None
+        ));
+        // 9000 available: with the small run gone the waiter fits (10 000
+        // less the floor): the drain holds the small requests back too.
+        assert!(!blocked_by_large(
+            SMALL_REQUEST_MB,
+            &book[2],
+            &others,
+            Some(20_000.0),
+            Some(9000.0)
+        ));
+        assert!(!drain_allows(
+            &book[2],
+            &others,
+            1000.0,
+            Some(20_000.0),
+            Some(9000.0),
+            None
+        ));
+        // Only small runs hold memory: the drain empties the machine.
+        let small = [holder(12, 1000.0), waiter];
+        assert!(!blocked_by_large(
+            SMALL_REQUEST_MB,
+            &small[1],
+            &refs(&small),
+            Some(20_000.0),
+            Some(1000.0)
+        ));
     }
 
     #[test]

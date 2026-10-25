@@ -213,6 +213,12 @@ LEDGER_MARGIN_MB = 6144.0
 DEFAULT_DRAIN_AFTER_SECONDS = 600.0
 PRIORITY_NIGHTLY = "nightly"
 
+# The drain's feasibility cap (ledger.rs, SMALL_REQUEST_MB, since
+# 2026-10-26): while the waiter cannot fit before a run larger than this
+# ends (`blocked_by_large`), requests of at most this many megabytes are
+# not held back by the drain.
+SMALL_REQUEST_MB = 4096.0
+
 
 def ledger_path(environ=None):
     """The ledger file PCB_MAKER_LEDGER names (default
@@ -500,7 +506,7 @@ def drained_for(others, since, now, own_pid=None, priority=None):
     return waiter if now - _waiting_since(waiter) >= _drain_after(waiter) else None
 
 
-def drain_allows(waiter, others, megabytes, capacity_mb, available_mb, expected_end=None):
+def drain_allows(waiter, others, megabytes, capacity_mb, available_mb, expected_end=None, small_mb=SMALL_REQUEST_MB):
     """The drain (crates/pcb-kicad/src/ledger.rs, `drain_allows`: the same
     rule, since 2026-10-25): whether a new request of `megabytes`, expected
     to end at `expected_end` (None: unknown), may go beside `others` while
@@ -512,21 +518,55 @@ def drain_allows(waiter, others, megabytes, capacity_mb, available_mb, expected_
     every run that holds memory (each with an `expected_end`). Until then
     the nightly's designer boards (17-27 GB, a floor of 10 GB) waited from
     11:00 to past 20:00 while five agents' 1-8 GB routes kept the running
-    set from draining (katia: 33034 s)."""
+    set from draining (katia: 33034 s). Or (the feasibility cap, since
+    2026-10-26) if it is small (at most SMALL_REQUEST_MB) and the waiter
+    cannot fit before a larger run ends anyway (blocked_by_large): then
+    holding it back gains the waiter nothing, and a waiter of 23-28 GB
+    behind a 28 GB run held every other agent's request for hours.
+    `small_mb`: the bound (0: no cap, the rule of 2026-10-25)."""
     wants = float(waiter["waiting_mb"])
     rest = [r for r in others if r is not waiter]
-    reserved = sum(r.get("megabytes", 0.0) for r in rest)
-    inf = float("inf")
-    ledger_room = inf if capacity_mb is None else capacity_mb - reserved - megabytes
-    floor_room = inf if available_mb is None else (
-        available_mb - megabytes - max(0.0, float(waiter.get("floor_mb") or 0.0)) + waiter.get("megabytes", 0.0))
-    if min(ledger_room, floor_room) >= wants:
+    if min(_waiter_room(waiter, rest, capacity_mb, available_mb, megabytes)) >= wants:
+        return True
+    if megabytes <= small_mb and blocked_by_large(waiter, others, capacity_mb, available_mb, small_mb):
         return True
     if waiter.get("priority") == PRIORITY_NIGHTLY or expected_end is None:
         return False
     holders = [r for r in rest if r.get("megabytes", 0.0) > 0]
     return bool(holders) and all(isinstance(r.get("expected_end"), (int, float)) and expected_end <= r["expected_end"]
                                  for r in holders)
+
+
+def _waiter_room(waiter, rest, capacity_mb, available_mb, megabytes=0.0, freed_mb=0.0):
+    """The drain's two rooms for `waiter` beside `rest` after a request of
+    `megabytes`, with `freed_mb` of the reservations gone: the capacity
+    less the reservations, and `available_mb` (None: unknown, unbounded)
+    less the waiter's floor (what the waiter holds counts back)."""
+    inf = float("inf")
+    reserved = sum(r.get("megabytes", 0.0) for r in rest) - freed_mb
+    ledger_room = inf if capacity_mb is None else capacity_mb - reserved - megabytes
+    floor_room = inf if available_mb is None else (
+        available_mb + freed_mb - megabytes - max(0.0, float(waiter.get("floor_mb") or 0.0))
+        + waiter.get("megabytes", 0.0))
+    return ledger_room, floor_room
+
+
+def blocked_by_large(waiter, others, capacity_mb, available_mb, small_mb=SMALL_REQUEST_MB):
+    """Whether `waiter` cannot fit before a run larger than
+    SMALL_REQUEST_MB ends (crates/pcb-kicad/src/ledger.rs,
+    `blocked_by_large`: the same rule): such a run holds memory, and with
+    every smaller run gone the waiter's room (_waiter_room: the capacity,
+    and the memory available, each with the smaller runs' megabytes back)
+    still does not cover what it waits for. Then the small runs do not
+    delay it: the drain lets them go (drain_allows), and holds back only
+    the large ones until that run ends; then it drains in full. `small_mb`:
+    the bound."""
+    rest = [r for r in others if r is not waiter]
+    holders = [r for r in rest if r.get("megabytes", 0.0) > 0]
+    if not any(r["megabytes"] > small_mb for r in holders):
+        return False
+    small = sum(r["megabytes"] for r in holders if r["megabytes"] <= small_mb)
+    return min(_waiter_room(waiter, rest, capacity_mb, available_mb, freed_mb=small)) < float(waiter["waiting_mb"])
 
 
 def _is_waiting_entry(reservation, pid, label, since):
