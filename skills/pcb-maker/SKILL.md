@@ -28,8 +28,9 @@ docs/agents.md in the pcb-maker repository.
 
 Nets left open: `pcb-maker inspect-routing-run <out> --reference <project-dir>` names each
 open net's groups of pads (ref, number, uuid, position, layers), KiCad's pairs, the rules and
-their sources, the designer's route and the ladder's attempts; `access` and `cause` stay
-`unknown`. Read it before concluding the board is too dense.
+their sources, the designer's route, the hot spots' pads and nets and the ladder's attempts;
+`access` and `cause` stay `unknown`. Read it before any design change: where the designer's
+board routes the open nets (`reference.connected: true`), density is not the reason.
 
 Other commands: `drc-kicad-board` (KiCad's DRC, cached), `score-kicad-board`
 (quality measures and price), `repair-kicad-silkscreen`, `swap-kicad-pins`,

@@ -11,6 +11,81 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-25 (the remapper trial's items: run-aware diagnosis, override preflight, arc outlines, hot-spot links)
+
+The four items of the remapper diagnostic trial
+([reviews/2026-10-18-remapper-agent-diagnostic-trial.md](reviews/2026-10-18-remapper-agent-diagnostic-trial.md),
+its new "Taken" section) that 2026-10-23 left open or had not checked on
+the trial's own board. Branch remapper-items, binary x14440 (x1821 the
+main it is measured against). Nothing changes in routing: the router's
+hot spots gain a field, the rest reads outputs.
+
+**1. Run-aware diagnosis on the remapper board** (run_diagnosis.rs).
+inspect-routing-run on the trial's deep run (its board, KiCad's
+`native-deep.json` as drc.json, the designer's board as reference)
+answers the trial's acceptance check: QSPI_SCLK's two groups are U3:52 at
+(138.9, 130.2625) and U5:6 at (136.25, 125.525), both F.Cu with the
+trial's uuids, 0.2 mm track and clearance from the Default class and the
+board's 0.2 mm minimum with its source, KiCad's one pair joined to both
+groups, the designer's route 7 segments of 0.2 mm on F.Cu, no vias; the
+counts side by side: the router's 19 nets and 20 unreached terminals, 39
+groups and 20 missing links, KiCad's 20 pairs and one starved thermal.
+Two gaps closed: a KiCad item that is a track, an arc or a via is joined
+to the group of the copper it lies on (a probe terminal on that copper,
+`LoweredBoard::item_components`; on the deep run 5 such items (tracks), all
+joined, none `null`), and a reference net whose tracks leave several
+groups but which has a zone is `connected: null` with
+`connected_reason` and `pour_layers` (the deep run's +1V1, +1V2 and +3V3
+had read `false` while the designer's board is clean). The JSON of
+QSPI_SCLK and +1V1 is in agents.md.
+
+**2. Override preflight, the verdict's side** (verdict.rs,
+run_diagnosis.rs `override_outcomes`). The narrow-four config is refused
+before any work (exit 2, 0.01 s) with the four nets and the
+min_track_width source (since 2026-10-23, checked on the trial's config).
+New: with `allow_below_project_minimum` the verdict's `rule_overrides`
+lists per value `requested_mm`, `project_minimum_mm` and its source,
+`routed_with_mm`, `emitted_track_widths_mm` and `emitted_below_minimum`
+(the result board's tracks on its nets), `native_required_mm` (the
+project's minimum: describe-kicad-board keeps it) and `native_findings`
+(KiCad's track_width or clearance findings on its nets, `null` unchecked).
+On the trial's recorded narrow-four output inspect-routing-run shows
+`class_track_width_mm` 0.15 beside the project's 0.2 and 0.15 emitted.
+
+**3. Outlines with arcs.** The two commands the trial ran were removed
+on 2026-10-21; they (and inspect-kicad-route-obstructions) now exit 2
+with one line naming `inspect-routing-run --terminal REF:PAD` and the
+outlines it reads, not "unknown command" (main.rs, agent_cli.rs
+`removed`). describe-kicad-board, score-kicad-board, inspect-kicad-board
+and inspect-kicad-connections run on the remapper's eight lines and eight
+arcs.
+
+**4. Hot spots with object links** (pcb-router HotSpot `half_size`;
+board_router/result.rs `hot_spot_links`). Each hot spot in
+board-router.json carries its tile's `box`, the pads in it (ref, number,
+net, at; twelve nearest the centre, `pads_in_tile` all), the nets whose
+copper crosses it on its layer and `conflicted_nets`, as the board stood
+when the router stopped. inspect-routing-run lists them at the top
+(`hot_spots`, per net `hot_spots_near` by index) and reads them off the
+result board for older runs (`links_from`). The deep run's hottest tile
+is the 1.2 mm above U3:50-52 with +1V1, QSPI_SCLK and QSPI_SD3 in
+conflict; a fresh 60 s route of the board with x14440 records the tile
+over U103:52-56 with the 1QSPI nets. "Too dense for its layer count" is
+gone from agents.md and SKILL.md; the verdict's open-connections action
+no longer says "make room there (move parts apart, enlarge the outline,
+add layers)": it asks for the inspection first and calls room, layers
+and narrower classes hypotheses where the designer's route does not rule
+density out.
+
+Tests: hot-spot links on a two-part board (pads, nets on each layer,
+conflicts, an empty tile), override outcomes (widths, below-minimum
+count, findings by kind, unchecked), KiCad item layers; the CLI tests
+join the via of the inspection test to its group, check the verdict's
+`rule_overrides` (with --strip, so the class routes) and the removed
+commands' message.
+
+**Measured.** TIER_PLACEHOLDER
+
 ## Committed on 2026-10-25 (router profile round: the hop test, the heap's root, the neighbourhood prefetch)
 
 A speed package with identical results. Branch router-profile, snapshots

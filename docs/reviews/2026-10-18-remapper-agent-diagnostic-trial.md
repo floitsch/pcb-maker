@@ -33,6 +33,66 @@ The existing verdict's explicit `native: null`, `kicad_unconnected_items: null` 
 
 `describe` reporting 0.2 mm is not itself evidence that its project-rule resolution is wrong: the output project's minimum remains 0.2 mm. The failure is that this view does not expose the override the run actually used, and the routing path accepted a conflicting value. The requested/run/project/native distinction needs to be explicit.
 
+## Taken (2026-10-23, 2026-10-25)
+
+What pcb-maker did with the ranked items; the changelog's "Committed on
+2026-10-23 (run diagnosis and override preflight)" and "Committed on
+2026-10-25 (the remapper trial's items: run-aware diagnosis, override
+preflight, arc outlines, hot-spot links)" have the details, docs/agents.md
+("Which nets stayed open") the interface.
+
+- **P0, run-aware inspection: taken.** `pcb-maker inspect-routing-run
+  <run-dir> [--net] [--terminal] [--reference] [--native-check]` (2026-10-23)
+  writes the proposed join. On this board's deep run with the trial's
+  `native-deep.json` as its drc.json and the designer's board as reference
+  (2026-10-25, x14440): QSPI_SCLK's groups are U3:52 (138.9, 130.2625) and
+  U5:6 (136.25, 125.525), F.Cu, uuids as in the trial, 0.2 mm track and
+  clearance with their sources, KiCad's one pair joined to both groups, the
+  reference connected (7 segments, 0.2 mm, no vias); at the top the router's
+  19 nets / 20 unreached terminals, 39 groups / 20 missing links and KiCad's
+  20 pairs plus one starved thermal, side by side and explained apart. Since
+  2026-10-25 a pair's track or via item is joined to the group of the copper
+  it lies on (the deep run: none left `null`), and a reference net with a
+  zone (+1V1, +1V2, +3V3 here) is `connected: null` with the reason instead
+  of `false`. `access` and `cause` stay `unknown`.
+- **P0, override preflight: taken.** The narrow-four config is refused
+  before any work (exit 2, 0.01 s): `net_classes[diagnostic_narrow_four]
+  asks for track width 0.15 mm below the project's 0.2 mm
+  (board.design_settings.rules.min_track_width in the .kicad_pro) on
+  QSPI_SCLK, QSPI_SD2, Net-(U3-USB_DM), CTS1RTS`. With
+  `allow_below_project_minimum` the verdict's `rule_overrides` (2026-10-25)
+  gives requested, project minimum and source, routed with, the widths
+  written, native required and KiCad's findings. On the trial's recorded
+  narrow-four output, `inspect-routing-run --net QSPI_SCLK` shows the class's
+  0.15 mm beside the project's 0.2 mm and 0.15 mm emitted;
+  `describe-kicad-board` keeps the project's 0.2 mm `track_width_mm` and adds
+  `class_track_width_mm: 0.15`.
+- **P0, access/cut on the unchanged outline: taken as a structured error.**
+  Both commands were removed with the research grid router on 2026-10-21;
+  called, they now exit 2 naming `inspect-routing-run --terminal REF:PAD` and
+  the outlines it reads (lines, arcs, rectangles, polygons, circles,
+  curves) rather than "unknown command". Every remaining command that reads
+  an outline uses the router's lowering: on this board's arcs and lines
+  `describe-kicad-board`, `score-kicad-board`, `inspect-kicad-board` and
+  `inspect-kicad-connections` run. No access probe or cut exists.
+- **P1, native reconciliation without rerouting: partly taken.**
+  `--native-check` runs KiCad's DRC on a saved run and reports `not_run`,
+  `passed` or `failed` with the pairs and error counts; input hashes beyond
+  the board's sha256 and the reference comparison beyond the pairs are not.
+- **P1, hot spots and "too dense": taken.** Hot spots carry their tile
+  (`box`), the pads in it (ref, number, net), the nets whose copper crosses
+  it and those still in conflict (board-router.json from 2026-10-25;
+  `inspect-routing-run` reads them off the result board for older runs).
+  The deep run's hottest tile is the 1.2 mm above U3:50-52 with +1V1,
+  QSPI_SCLK and QSPI_SD3 in conflict. "Too dense for its layer count" is
+  gone from the docs, the skill and the verdict: the open-connections next
+  action asks for the inspection first and calls room, layers and narrower
+  classes hypotheses where the reference does not rule density out.
+- **P1, attempt ledger: taken** (2026-10-23, board-router.json `attempts`);
+  config hash, grid origin and seed are not in it.
+- **P2, help and overlays: partly taken.** `inspect-routing-run --help`
+  lists its fields; no region overlay.
+
 ## Minimum implementation for the next trial
 
 First implement the run-aware unresolved endpoint/rule/native join and the below-minimum override preflight. Reuse saved outputs where possible: this should not require an expensive new search. Correct the categorical “too dense” troubleshooting text at the same time. Then make the access/cut diagnostics accept the same unchanged outline and resolved rules as the whole-board router. These changes allow the next agent to select a representative failure and ask a causal question instead of spending most of its effort reconstructing missing context.

@@ -372,10 +372,19 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     narrower classes give width findings. To route with them anyway (a
     diagnostic control), add `"allow_below_project_minimum": true`: the
     run goes on, board-router.json's `rules.overrides` lists them and the
-    verdict's first next actions warn. `describe-kicad-board` on the
+    verdict's first next actions warn. The verdict's `rule_overrides`
+    (since 2026-10-25) says per value what became of it:
+    `requested_mm`, `project_minimum_mm` with `project_source`,
+    `routed_with_mm`, `emitted_track_widths_mm` (the widths written on its
+    nets) and `emitted_below_minimum` (how many tracks are narrower than
+    the minimum; both `null` for a clearance), `native_required_mm` (what
+    KiCad's DRC holds the board to: the project's minimum, unchanged) and
+    `native_findings` (KiCad's `track_width` or `clearance` findings on
+    its nets; `null` when KiCad did not check). `describe-kicad-board` on the
     result shows both: `track_width_mm` (the project's, raised to the
     minimum) and `class_track_width_mm` (the class's own, which that run
-    routed with).
+    routed with); it does not report a changed minimum, since the
+    project's is unchanged.
   - `existing_tracks` (default `keep`): route mode's handling of the
     board's own tracks and vias; `strip` is `--strip`.
   - `diff_pairs` (default by need; `PCB_ROUTER_DIFF_PAIRS=1` or `0`
@@ -780,7 +789,7 @@ input errors and 4 on internal errors.
 | `constraints[]` | Every constraint: `kind`, `part`, `other`, `satisfied`, `violation_mm`. The ones the placer keeps by construction are listed too: `back` and `front` (a part on its side), `rotation` and `opening_outwards` (a part at an allowed angle). |
 | `routed.diagnostics.dead_pads[]` | Pads no track of their net's class can enter (`pad`, `net`, `at`, the objects `near` it): a class too wide for the pad pitch, or something covering the pad. |
 | `routed.diagnostics.conflicted_nets` | Nets still fighting for room when the router gave up. |
-| `routed.diagnostics.hot_spots[]` | Where they fought longest (`layer`, `at`, `history`), worst first: give these areas more room. |
+| `routed.diagnostics.hot_spots[]` | Where they fought longest (`layer`, `at`, `history`, the tile's `box`), worst first, with what was there when the router stopped: `pads` (`ref`, `number`, `net`, `at`; `pads_in_tile`), `nets` (copper crossing the tile on that layer) and `conflicted_nets`. Observations, not a cause. |
 | `constraint_warnings` (in `placed/board-placer.json`) | Inputs accepted but not acted on; the verdict's `next_actions` repeat them. |
 
 ## When it does not work out
@@ -814,12 +823,12 @@ input errors and 4 on internal errors.
   project>` (section "Which nets stayed open") names each open net's groups
   of pads, KiCad's pairs, the rules and their sources, and the designer's
   route of the net. `routed.diagnostics` adds `hot_spots` (where nets
-  fought longest) and `dead_pads` (pads whose class is too wide for
-  them). That the board is too dense for its layer count or size is a
-  hypothesis, not a finding: when the designer's board routes the same
-  placement under the same rules (`reference.connected: true` for the
-  open nets), density is not the reason, and a larger outline, more layers
-  or narrower classes are not called for. The discriminating query is the
+  fought longest, with the pads and nets in each tile) and `dead_pads`
+  (pads whose class is too wide for them). Density is a hypothesis, not a
+  finding: when the designer's board routes the same placement under the
+  same rules (`reference.connected: true` for the open nets), density is
+  not the reason, and a larger outline, more layers or narrower classes
+  are not called for. The verdict's next action says the same. The discriminating query is the
   reference's route of the open nets beside the groups the run left;
   `benchmarks/corpus/run.py --shrink` shows how much a design can shrink
   when there is no reference.
@@ -944,7 +953,9 @@ Per net:
   `explanation` of how they relate. They are different quantities: never
   add or compare them as one.
 - `native_pairs`: KiCad's pairs with their items and the groups the
-  items lie in (`null` for a track or via).
+  items lie in: a pad by its uuid, a track, arc or via by the group of
+  the copper it lies on (since 2026-10-25; `null` where it lies on copper
+  that joins no pad).
 - `rules`: track width, clearance and vias as the run's project resolves
   them, each with its source (the class, the board's minimum with its own
   source, a custom rule), the class's own value where it is below
@@ -952,8 +963,14 @@ Per net:
   board has on the net (`emitted_track_widths_mm`).
 - `reference` (with `--reference`): the designer's route of the net:
   `connected`, `components`, segments, vias, layers, widths, length.
+  `connected` is `true` when its tracks, arcs and vias join every pad,
+  `false` when they do not and the net has no zone there, `null` (with
+  `connected_reason` and `pour_layers`) when a zone of the net may join
+  the groups: this command does not fill zones, KiCad's DRC of the
+  reference decides.
 - `dead_pads` and `hot_spots_near` (hot spots within 3 mm of the net's
-  pads): observations from board-router.json.
+  pads, each with its index into the top-level `hot_spots` and the nets
+  still in conflict there): observations from board-router.json.
 - `access` and `cause`: `unknown` (nothing here measures them; a hot spot
   near a pad is no cause).
 
@@ -965,29 +982,89 @@ each attempt's name, pitch, pours, open count, vias, iterations, work,
 routing seconds, `negotiation_stop` (`conflict_free`, `stalled`,
 `work_deadline`, `negotiation_work_limit`, `probe_work_limit`,
 `wall_guard`, `past_wall_deadline`, `hopeless`, `iteration_cap`) and the
-`selected` one, with the run's `skipped` steps and `cut`.
+`selected` one, with the run's `skipped` steps and `cut`. `hot_spots`
+(since 2026-10-25): the router's hot spots, each with its tile (`box`,
+16 x 16 lattice nodes), the pads in it (`ref`, `number`, `net`, `at`;
+the twelve nearest the centre, `pads_in_tile` all), the nets whose copper
+crosses it on its layer (`nets`) and those of both still in conflict
+(`conflicted_nets`); `links_from` says whether the router recorded them
+or, for a run before them, this command read them off the result board.
+They say where nets fought, not why.
 
-An excerpt (MegaDrive on its v19 placement, 30 s of work):
+`inspect-kicad-terminal-access`, `inspect-kicad-routing-cut` and
+`inspect-kicad-route-obstructions` were removed on 2026-10-21 with the
+research grid router (they read only an outline of one `gr_rect` or one
+loop of `gr_line`s). Called, they exit 2 with one line naming this
+command as the replacement (`--terminal REF:PAD`, `--net`); there is no
+access probe or cut today.
+
+Two nets of the remapper trial's board (jfedor2/hid-remapper, two RP2040s
+at 0.4 mm pitch, 0.2 mm tracks and clearances; the trial's deep run, 300 s
+of work, 19 nets open; KiCad's DRC of it as drc.json; the designer's board
+as `--reference`). The run's counts, reconciled at the top: the router's
+19 nets and 20 unreached terminals, 39 groups with 20 links missing, KiCad's
+20 pairs, one starved thermal. QSPI_SCLK, the trial's question "which
+pads, under which rules, and does the designer route it":
 
 ```json
-{"net": "VD1", "status": "partial",
- "counts": {"router_terminals": 6, "router_unconnected_terminals": 6,
-            "components": 3, "missing_links": 2, "native_pairs": 2,
-            "explanation": "the result board's copper (pours not counted) leaves 3 groups of pads, 2 links missing; ..."},
+{"net": "QSPI_SCLK", "status": "partial",
+ "counts": {"router_terminals": 2, "router_unconnected_terminals": 1, "components": 2, "missing_links": 1, "native_pairs": 1,
+            "explanation": "the result board's copper (pours not counted) leaves 2 groups of pads, 1 link missing; ..."},
  "components": [
-   {"pads": [{"ref": "J2", "number": "a5", "uuid": "677b946b-...", "at": [272.125, 127.635], "layers": ["B.Cu"]}, "..."], "largest": true},
-   {"pads": [{"ref": "J3", "number": "a23", "uuid": "83818903-...", "at": [186.69, 76.2], "layers": ["F.Cu", "B.Cu"]}], "largest": false},
-   {"pads": [{"ref": "U4", "number": "139", "uuid": "b6f5cf55-...", "at": [156.55, 106.42], "layers": ["F.Cu"]}], "largest": false}],
- "native_pairs": [{"items": [{"description": "PTH pad a23 [/VD1] of J3", "...": "..."},
-                             {"description": "Pad 139 [/VD1] of U4 on F.Cu", "...": "..."}],
-                   "components": [1, 2]}, "..."],
- "rules": {"track_width_mm": 0.25, "clearance_mm": 0.2, "classes": ["Default"],
+   {"pads": [{"ref": "U3", "number": "52", "uuid": "eae0ab9f-65b2-44d3-aba7-873c3227fba7", "at": [138.9, 130.2625], "layers": ["F.Cu"]}], "largest": true},
+   {"pads": [{"ref": "U5", "number": "6", "uuid": "7cd0194c-2aba-437b-a016-5ca4880c9dd2", "at": [136.25, 125.525], "layers": ["F.Cu"]}], "largest": false}],
+ "native_pairs": [{"items": [{"description": "Pad 6 [QSPI_SCLK] of U5 on F.Cu", "at": [136.25, 125.525], "uuid": "7cd0194c-..."},
+                             {"description": "Pad 52 [QSPI_SCLK] of U3 on F.Cu", "at": [138.9, 130.2625], "uuid": "eae0ab9f-..."}],
+                   "components": [1, 0]}],
+ "copper": {"segments": 0, "arcs": 0, "vias": 0, "layers": [], "track_widths_mm": [], "length_mm": 0.0},
+ "rules": {"track_width_mm": 0.2, "clearance_mm": 0.2, "via_diameter_mm": 0.6, "via_drill_mm": 0.35, "classes": ["Default"],
            "track_width_source": "class Default (net_settings.classes in the .kicad_pro)",
-           "project_minimums": {"track_width_mm": 0.1, "track_width_source": "board.design_settings.rules.min_track_width in the .kicad_pro", "...": "..."},
-           "emitted_track_widths_mm": [0.1, 0.25]},
- "reference": {"connected": true, "components": 1, "segments": 79, "vias": 6, "layers": ["B.Cu", "F.Cu"], "track_widths_mm": [0.25, 1.0]},
+           "project_minimums": {"track_width_mm": 0.2, "track_width_source": "board.design_settings.rules.min_track_width in the .kicad_pro", "...": "..."},
+           "emitted_track_widths_mm": []},
+ "reference": {"connected": true, "components": 1, "segments": 7, "arcs": 0, "vias": 0, "layers": ["F.Cu"], "track_widths_mm": [0.2], "length_mm": 7.6538},
+ "hot_spots_near": [{"hot_spot": 0, "at": [139.375, 129.95], "layer": "F.Cu", "history": 47.09993, "nearest_pad_mm": 0.5686,
+                     "conflicted_nets": ["+1V1", "QSPI_SCLK", "QSPI_SD3"]}, "..."],
  "access": {"status": "unknown", "reason": "not measured: this command runs no access probe"},
- "cause": {"status": "unknown", "reason": "..."}}
+ "cause": {"status": "unknown", "reason": "not measured: this command reads the run's outputs; a cause needs a discriminating experiment"}}
+```
+
++1V1, a supply with a zone: KiCad's pairs name a track, which lies in
+the largest group; the designer's tracks alone leave three groups, and its
+F.Cu zone may join them, so `connected` is `null`, not `false`:
+
+```json
+{"net": "+1V1", "status": "partial",
+ "counts": {"router_terminals": 6, "router_unconnected_terminals": 2, "components": 3, "missing_links": 2, "native_pairs": 2, "explanation": "..."},
+ "components": [
+   {"pads": [{"ref": "C1", "number": "1", "...": "..."}, {"ref": "C2", "number": "1", "...": "..."}, {"ref": "C13", "number": "1", "...": "..."},
+             {"ref": "U3", "number": "45", "uuid": "25e5aa8e-...", "at": [141.7, 130.2625], "layers": ["F.Cu"]}], "largest": true},
+   {"pads": [{"ref": "U3", "number": "23", "uuid": "8c1605f9-...", "at": [140.5, 137.1375], "layers": ["F.Cu"]}], "largest": false},
+   {"pads": [{"ref": "U3", "number": "50", "uuid": "7afa54c4-...", "at": [139.7, 130.2625], "layers": ["F.Cu"]}], "largest": false}],
+ "native_pairs": [
+   {"items": [{"description": "Pad 50 [+1V1] of U3 on F.Cu", "...": "..."}, {"description": "Track [+1V1] on F.Cu, length 0.4875 mm", "at": [141.7, 130.2625], "...": "..."}],
+    "components": [2, 0]},
+   {"items": [{"description": "Pad 23 [+1V1] of U3 on F.Cu", "...": "..."}, {"description": "Track [+1V1] on B.Cu, length 2.4750 mm", "at": [141.175, 135.65], "...": "..."}],
+    "components": [1, 0]}],
+ "copper": {"segments": 22, "arcs": 0, "vias": 4, "layers": ["B.Cu", "F.Cu"], "track_widths_mm": [0.2], "length_mm": 36.0545},
+ "rules": {"track_width_mm": 0.2, "clearance_mm": 0.2, "...": "..."},
+ "reference": {"connected": null,
+               "connected_reason": "its tracks, arcs and vias leave 3 groups; its zone on F.Cu may join them (zone fill is not modelled here: KiCad's DRC of the reference decides)",
+               "components": 3, "pour_layers": ["F.Cu"], "segments": 18, "vias": 4, "layers": ["B.Cu", "F.Cu"], "track_widths_mm": [0.2, 0.4], "...": "..."},
+ "hot_spots_near": [{"hot_spot": 8, "at": [140.575, 137.15], "nearest_pad_mm": 0.076, "conflicted_nets": ["+1V1", "+3V3", "SWCLK"], "...": "..."}, "..."],
+ "access": {"status": "unknown", "...": "..."}, "cause": {"status": "unknown", "...": "..."}}
+```
+
+and the hot spot both nets are near, from the report's `hot_spots`: the
+1.2 mm tile above U3's pads 50 to 52, with the nets still in conflict
+there:
+
+```json
+{"at": [139.375, 129.95], "box": [138.775, 129.35, 139.975, 130.55], "layer": "F.Cu", "history": 47.09993,
+ "pads": [{"ref": "U3", "number": "51", "net": "QSPI_SD3", "at": [139.3, 130.2625]},
+          {"ref": "U3", "number": "50", "net": "+1V1", "at": [139.7, 130.2625]},
+          {"ref": "U3", "number": "52", "net": "QSPI_SCLK", "at": [138.9, 130.2625]}],
+ "pads_in_tile": 3, "nets": ["QSPI_SD3"], "conflicted_nets": ["+1V1", "QSPI_SCLK", "QSPI_SD3"],
+ "links_from": "the result board (board-router.json predates hot-spot links): the copper written, after the router's finishing steps"}
 ```
 
 ## Score a board
