@@ -197,6 +197,7 @@ impl Router {
             scratch.nodes[state].seen = generation;
             scratch.nodes[state].cost = 0.0;
             scratch.nodes[state].parent = PARENT_SOURCE;
+            scratch.nodes[state].since_via = 0;
             heap.push(heap_key(
                 heuristic(node.layer as usize, x as i32, y as i32),
                 state,
@@ -260,6 +261,8 @@ impl Router {
             let x = cell % nx;
             let y = cell / nx;
             let here = scratch.nodes[state].cost;
+            let since_via = scratch.nodes[state].since_via;
+            let next_since_via = since_via.saturating_add(1);
             let arrived = scratch.nodes[state].parent;
             let here_statics = if necks {
                 &self.statics[class_xy(x, y)]
@@ -448,6 +451,7 @@ impl Router {
                             scratch.nodes[target_state].seen = generation;
                             scratch.nodes[target_state].cost = total;
                             scratch.nodes[target_state].parent = direction as u8;
+                            scratch.nodes[target_state].since_via = next_since_via;
                             let estimate = total + heuristic(layer, tx as i32, ty as i32);
                             heap.push(heap_key(estimate, target_state));
                         }
@@ -483,7 +487,8 @@ impl Router {
                 && statics.via_allowed(cell, net)
                 && !(hard && via_occupied > 0.0)
                 && scratch.own_via_near[cell] != generation
-                && !self.hops_from_a_via(scratch, state, x, y, arrived, hop_steps, hop_reach)
+                && (since_via as usize > hop_steps
+                    || !self.hops_from_a_via(scratch, state, x, y, arrived, hop_steps, hop_reach))
             {
                 let occupied = via_occupied;
                 let history = if self.cleanup {
@@ -563,6 +568,7 @@ impl Router {
                         scratch.nodes[target_state].seen = generation;
                         scratch.nodes[target_state].cost = total;
                         scratch.nodes[target_state].parent = 8 + layer as u8;
+                        scratch.nodes[target_state].since_via = 0;
                         let estimate = total + heuristic(target_layer, x as i32, y as i32);
                         heap.push(heap_key(estimate, target_state));
                     }
@@ -625,10 +631,12 @@ impl Router {
     /// here is the same via (another layer of it).
     ///
     /// `x`, `y` are the state's cell and `arrived` its parent: the walk
-    /// follows the coordinates rather than dividing the states (until
-    /// 2026-10-25 two divisions a step back and two for the cell's centre:
-    /// 5 to 8 % of the route's CPU on Castor; the profile round,
-    /// docs/profiling.md).
+    /// follows the coordinates rather than dividing the states. The search
+    /// asks only where the node's `since_via` is at most `steps` (else
+    /// every node the walk would reach arrived by a step, and it would
+    /// find nothing): until 2026-10-25 every expansion walked back with
+    /// two divisions a step, 3 to 6.5 % of the route's CPU (the profile
+    /// round, docs/profiling.md).
     #[allow(clippy::too_many_arguments)]
     #[inline(always)]
     fn hops_from_a_via(

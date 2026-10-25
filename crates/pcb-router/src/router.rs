@@ -495,13 +495,20 @@ fn prefetch<T>(value: &T) {
     let _ = value;
 }
 
-/// `prefetch` of `values[index]`, nothing past the slice's end (an index
-/// below 0 wraps past it).
+/// `prefetch` of `values[index]` without a bounds check: a prefetch of an
+/// address past the slice (an index below 0 wraps past it) faults on
+/// nothing and reads nothing.
 #[inline(always)]
 fn prefetch_index<T>(values: &[T], index: usize) {
-    if let Some(value) = values.get(index) {
-        prefetch(value);
-    }
+    // SAFETY: as `prefetch`; the pointer is never dereferenced.
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(
+            values.as_ptr().wrapping_add(index) as *const i8,
+        )
+    };
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = (values, index);
 }
 
 /// A net's stamps (`NetState::stamped`): (map index, cell) pairs in
@@ -890,7 +897,17 @@ struct SearchNode {
     closed: u16,
     target_mark: u16,
     parent: u8,
+    /// Steps along the path from the last node arrived at through a via
+    /// or from a source (0 there; at most 255), set with `parent`: the hop
+    /// test (`hops_from_a_via`) walks back only where a via can lie within
+    /// its reach (the byte the struct's padding had; since 2026-10-25,
+    /// docs/profiling.md).
+    since_via: u8,
 }
+
+// `since_via` took the padding: a node stays 12 bytes (a thread's scratch
+// is the biggest part of a large board's footprint).
+const _: () = assert!(std::mem::size_of::<SearchNode>() == 12);
 
 /// Per-thread search state: A* arrays, generation marks and counters.
 #[derive(Default)]
