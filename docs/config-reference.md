@@ -39,7 +39,7 @@ The environment variables are indexed in the hand-over
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 2 |
 | [Layout settings: silkscreen](#layout-settings-silkscreen) | 1 | 1 | 0 | 1 | 1 |
-| [Layout settings: race_probe](#layout-settings-race_probe) | 2 | 2 | 0 | 2 | 2 |
+| [Layout settings: race_probe](#layout-settings-race_probe) | 3 | 3 | 0 | 3 | 3 |
 | [Layout settings: move_descent](#layout-settings-move_descent) | 7 | 7 | 0 | 7 | 0 |
 | [Placer core](#placer-core) | 8 | - | 0 | 8 | - |
 | [Placer core: global](#placer-core-global) | 12 | - | 0 | 12 | - |
@@ -452,6 +452,7 @@ The `race_probe` object of the layout settings (off when absent, `{}` for the de
 |---|---|---|---|---|
 | `race_probe.seeds` | `usize` | `3` | router.md, placer.md | How many placements the race probes (the best-ranked; at least one, default 3). |
 | `race_probe.share` | `f64` | `0.08` | router.md | The work each probe negotiates, as a share of the layout's `total_seconds` (default 0.08: 24 % for three probes; the probe the race keeps is the first part of the first route). |
+| `race_probe.repair` | `bool` | `false` | router.md, placer.md | Each probe is a whole first route within its share (half of it negotiating, then the first route's repair and its trouble rounds, no polish), ranked by the open terminals it leaves; the kept one's is the layout's first route (default false: the probe negotiates only, and the kept one routes on). |
 
 ## Layout settings: move_descent
 

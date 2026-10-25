@@ -140,6 +140,12 @@ pub struct KiCadRaceProbe {
     /// `total_seconds` (default 0.08: 24 % for three probes; the probe the
     /// race keeps is the first part of the first route).
     pub share: f64,
+    /// Each probe is a whole first route within its share (half of it
+    /// negotiating, then the first route's repair and its trouble rounds,
+    /// no polish), ranked by the open terminals it leaves; the kept one's
+    /// is the layout's first route (default false: the probe negotiates
+    /// only, and the kept one routes on).
+    pub repair: bool,
 }
 
 impl Default for KiCadRaceProbe {
@@ -147,9 +153,21 @@ impl Default for KiCadRaceProbe {
         Self {
             seeds: 3,
             share: 0.08,
+            repair: false,
         }
     }
 }
+
+/// A probe of the race: its index in the race, the nets it left
+/// unfinished, its standing (with `race_probe`), its whole first route
+/// (with `race_probe.repair`) and its router.
+type RaceProbed = (
+    usize,
+    usize,
+    Option<core::router::ProbeStanding>,
+    Option<core::RoutingResult>,
+    core::router::Router,
+);
 
 /// One placement the race probed (`race_probe`): its index among the
 /// placements the race ranked (0 the placer's kept one, then the other
@@ -172,6 +190,9 @@ pub struct KiCadRaceReport {
     pub kept: usize,
     /// The work each probe was given.
     pub probe_seconds: f64,
+    /// Whether each probe was a whole first route (`repair`): its
+    /// `open_terminals` are then the route's.
+    pub repair: bool,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -1527,17 +1548,14 @@ pub fn layout_kicad_board(
         }
         let mut probed: Vec<(usize, core::router::Router)> = Vec::new();
         let mut standings: Vec<Option<core::router::ProbeStanding>> = Vec::new();
+        let mut results: Vec<Option<core::RoutingResult>> = Vec::new();
+        let repair = race_probe.is_some_and(|probe| probe.repair);
         let mut first = Some(first);
         let mut next = 0;
         while next <= candidates.len() {
             let wave: Vec<usize> =
                 (next..(next + side_by_side).min(candidates.len() + 1)).collect();
-            let routers: Vec<(
-                usize,
-                usize,
-                Option<core::router::ProbeStanding>,
-                core::router::Router,
-            )> = std::thread::scope(|scope| {
+            let routers: Vec<RaceProbed> = std::thread::scope(|scope| {
                 let handles: Vec<_> = wave
                     .iter()
                     .map(|&index| {
@@ -1554,9 +1572,24 @@ pub fn layout_kicad_board(
                         scope.spawn(move || {
                             let mut router =
                                 built.unwrap_or_else(|| core::router::Router::new(board, &quiet));
-                            let unfinished = router.probe(probe_seconds);
-                            let standing = race_probe.map(|_| router.probe_standing());
-                            (index, unfinished, standing, router)
+                            if !repair {
+                                let unfinished = router.probe(probe_seconds);
+                                let standing = race_probe.map(|_| router.probe_standing());
+                                return (index, unfinished, standing, None, router);
+                            }
+                            // A whole first route within the share: half of
+                            // it negotiating at most, then the repair.
+                            let end = router.work() + probe_seconds;
+                            let saved = router.config_mut().deadline_work;
+                            router.config_mut().deadline_work =
+                                Some(saved.unwrap_or(f64::INFINITY).min(end));
+                            let unfinished = router.probe(probe_seconds / 2.0);
+                            let mut standing = router.probe_standing();
+                            let left = (end - router.work()).max(0.0);
+                            let result = router.resume_polished((left / 2.0).max(1.0), false);
+                            standing.open_terminals = score(&result, board).0;
+                            router.config_mut().deadline_work = saved;
+                            (index, unfinished, Some(standing), Some(result), router)
                         })
                     })
                     .collect();
@@ -1565,10 +1598,11 @@ pub fn layout_kicad_board(
                     .map(|handle| handle.join().expect("probe thread"))
                     .collect()
             });
-            for (index, unfinished, standing, router) in routers {
+            for (index, unfinished, standing, repaired, router) in routers {
                 probed.push((index, router));
                 race.push(unfinished);
                 standings.push(standing);
+                results.push(repaired);
             }
             next += wave.len();
         }
@@ -1593,6 +1627,7 @@ pub fn layout_kicad_board(
             );
         }
         let mut kept_label = labels[0];
+        let mut kept_result = 0;
         let mut raced = 1;
         let mut candidates = candidates.into_iter();
         for (index, mut candidate_router) in probed {
@@ -1636,6 +1671,7 @@ pub fn layout_kicad_board(
             if better {
                 best_standing = standings[index];
                 kept_label = labels[index];
+                kept_result = index;
                 best_unfinished = unfinished;
                 pcb = candidate;
                 board = candidate_board;
@@ -1653,32 +1689,39 @@ pub fn layout_kicad_board(
                 probe: scores,
                 kept: kept_label,
                 probe_seconds,
+                repair,
             });
         }
         arm(&mut kept, work + pool_excess);
-        // The negotiation gets at most half of what is left before the
-        // deadline: the hard repair after it may take as long as the
-        // negotiation did, and a deadline inside the negotiation leaves
-        // every net still in conflict open (video: 195 nets in conflict
-        // when the wall clock ended its repair after 26 to 98 of them, at
-        // a point that depended on the load).
-        let left = (work_deadline - work - pool_excess).max(0.0);
-        // (The router's negotiation budget in work: its seconds are the
-        // wall-clock guard, `GUARD` times that.)
-        let budget =
-            core_config.negotiation_expansions as f64 / core::router::expansions_per_second();
-        let mut seconds = (budget - probe_seconds).max(60.0);
-        if seconds > left / 2.0 {
-            seconds = (left / 2.0).max(1.0);
-            eprintln!(
-                "layout: the first route negotiates on for at most {seconds:.0} s of work ({left:.0} s left before the deadline)"
-            );
+        // A whole first route as the probe: the kept one's is the first
+        // route.
+        if let Some(result) = results.get_mut(kept_result).and_then(Option::take) {
+            (kept, result)
+        } else {
+            // The negotiation gets at most half of what is left before the
+            // deadline: the hard repair after it may take as long as the
+            // negotiation did, and a deadline inside the negotiation leaves
+            // every net still in conflict open (video: 195 nets in conflict
+            // when the wall clock ended its repair after 26 to 98 of them, at
+            // a point that depended on the load).
+            let left = (work_deadline - work - pool_excess).max(0.0);
+            // (The router's negotiation budget in work: its seconds are the
+            // wall-clock guard, `GUARD` times that.)
+            let budget =
+                core_config.negotiation_expansions as f64 / core::router::expansions_per_second();
+            let mut seconds = (budget - probe_seconds).max(60.0);
+            if seconds > left / 2.0 {
+                seconds = (left / 2.0).max(1.0);
+                eprintln!(
+                    "layout: the first route negotiates on for at most {seconds:.0} s of work ({left:.0} s left before the deadline)"
+                );
+            }
+            let before = kept.expansions();
+            let result = kept.resume_polished(seconds, false);
+            work += kept.expansions().saturating_sub(before) as f64
+                / core::router::expansions_per_second();
+            (kept, result)
         }
-        let before = kept.expansions();
-        let result = kept.resume_polished(seconds, false);
-        work +=
-            kept.expansions().saturating_sub(before) as f64 / core::router::expansions_per_second();
-        (kept, result)
     } else {
         let (router, result, first_work) = route_once(&board);
         work += first_work;
@@ -2983,7 +3026,8 @@ mod budget_tests {
             config.race_probe,
             Some(KiCadRaceProbe {
                 seeds: 3,
-                share: 0.08
+                share: 0.08,
+                repair: false
             })
         );
         let config: KiCadBoardLayoutConfig =
@@ -2992,7 +3036,8 @@ mod budget_tests {
             config.race_probe,
             Some(KiCadRaceProbe {
                 seeds: 2,
-                share: 0.1
+                share: 0.1,
+                repair: false
             })
         );
         assert!(
