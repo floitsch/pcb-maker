@@ -325,6 +325,13 @@ impl Router {
                     self.occupancy.prefetch_index(occupancy_map, row);
                 }
             }
+            // The node's own cell on the other layers (the via's targets).
+            let mut other_layers = (u64::MAX >> (64 - layers)) & !(1u64 << layer);
+            while other_layers != 0 {
+                let other = other_layers.trailing_zeros() as usize;
+                other_layers &= other_layers - 1;
+                prefetch_index(&scratch.nodes, other * cells + cell);
+            }
             // The eight steps unrolled (one copy each, the step's direction
             // known: whether it is diagonal and its bend cost are no longer
             // decided per step at run time).
