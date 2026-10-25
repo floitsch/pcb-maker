@@ -134,6 +134,21 @@ pub struct KiCadPlacementSignals {
     /// The same, only between lines whose both ends lie on parts of more
     /// than `large_pads` pins (the buses between the large parts).
     pub large_crossings: usize,
+    /// The crossings weighted by the nets' sizes: a line of a net with n
+    /// pins weighs 1 / (n - 1) (each net's tree weighs 1), a crossing the
+    /// product of its two lines' weights. Two-pin signals count fully, a
+    /// line of a 20-pin net a twentieth.
+    pub weighted_crossings: f64,
+    /// Crossings between two lines that join the same two parts: a bus
+    /// between two parts whose order is twisted.
+    pub bus_crossings: usize,
+    /// Pins of parts of more than `passive_pads` pads whose net's nearest
+    /// pin on another part lies behind the pin's own row (more than
+    /// `AWAY_MM` against the outward normal of the body side nearest the
+    /// pin): a row that faces away from what it connects to.
+    pub away_pins: usize,
+    /// How far behind the rows those targets lie, summed (mm).
+    pub away_mm: f64,
     /// Parts illegal in the placer's tightest model.
     pub illegal: usize,
     /// Pairs of parts that collide (`conflict`: pads within 0.1 mm, or one
@@ -430,10 +445,21 @@ type Measured = (
     Option<Vec<f64>>,
 );
 
+/// The ratsnest's crossings (`ratsnest_crossings` and its variants).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Crossings {
+    all: usize,
+    between_large: usize,
+    weighted: f64,
+    bus: usize,
+}
+
 /// Each counted net's minimum spanning tree over its pins (Prim's, by
 /// straight distance) as lines, with whether both ends lie on parts of
-/// more than `large` pins; then the pairs of lines of different nets that
-/// cross (all, and those between two such lines).
+/// more than `large` pins, the line's weight (1 / (n - 1) for a net of n
+/// pins) and the two parts it joins; then the pairs of lines of different
+/// nets that cross (all, those between two such lines, weighted, and those
+/// of two lines joining the same two parts).
 fn ratsnest_crossings(
     problem: &placer::Problem,
     fact: &escape::Escape,
@@ -441,13 +467,21 @@ fn ratsnest_crossings(
     poses: &[placer::Pose],
     count: usize,
     large: usize,
-) -> (usize, usize) {
-    let mut lines: Vec<(usize, [f64; 2], [f64; 2], bool)> = Vec::new();
+) -> Crossings {
+    struct Line {
+        net: usize,
+        from: [f64; 2],
+        to: [f64; 2],
+        large: bool,
+        weight: f64,
+        parts: (usize, usize),
+    }
+    let mut lines: Vec<Line> = Vec::new();
     for (net, pins) in members.iter().enumerate() {
         if !fact.counted.get(net).copied().unwrap_or(false) {
             continue;
         }
-        let points: Vec<([f64; 2], bool)> = pins
+        let points: Vec<([f64; 2], bool, usize)> = pins
             .iter()
             .filter(|(part, _)| *part < count)
             .map(|(part, pin)| {
@@ -455,35 +489,108 @@ fn ratsnest_crossings(
                 (
                     component.pin_position(&component.pins[*pin], poses[*part]),
                     component.pins.len() > large,
+                    *part,
                 )
             })
             .collect();
-        for (from, to) in
-            placer::crossings::spanning_tree(&points.iter().map(|(at, _)| *at).collect::<Vec<_>>())
-        {
-            lines.push((
+        let weight = 1.0 / (points.len().max(2) - 1) as f64;
+        for (from, to) in placer::crossings::spanning_tree(
+            &points.iter().map(|(at, _, _)| *at).collect::<Vec<_>>(),
+        ) {
+            let (a, b) = (points[from].2, points[to].2);
+            lines.push(Line {
                 net,
-                points[from].0,
-                points[to].0,
-                points[from].1 && points[to].1,
-            ));
+                from: points[from].0,
+                to: points[to].0,
+                large: points[from].1 && points[to].1,
+                weight,
+                parts: (a.min(b), a.max(b)),
+            });
         }
     }
-    let mut all = 0;
-    let mut between_large = 0;
+    let mut result = Crossings::default();
     for (index, first) in lines.iter().enumerate() {
         for second in &lines[index + 1..] {
-            if first.0 != second.0
-                && placer::crossings::lines_cross(first.1, first.2, second.1, second.2)
+            if first.net != second.net
+                && placer::crossings::lines_cross(first.from, first.to, second.from, second.to)
             {
-                all += 1;
-                if first.3 && second.3 {
-                    between_large += 1;
+                result.all += 1;
+                result.weighted += first.weight * second.weight;
+                if first.large && second.large {
+                    result.between_large += 1;
+                }
+                if first.parts == second.parts && first.parts.0 != first.parts.1 {
+                    result.bus += 1;
                 }
             }
         }
     }
-    (all, between_large)
+    result
+}
+
+/// A target this far behind a pin's row (mm) faces away from it.
+const AWAY_MM: f64 = 1.0;
+
+/// Pins of parts with more than `passive_pads` pads whose net's nearest pin
+/// on another part lies behind the pin's row: the outward normal of the
+/// body side nearest the pin, against the direction to that pin, more
+/// than `AWAY_MM` behind. Their count and how far behind, summed (mm).
+fn away_pins(
+    problem: &placer::Problem,
+    fact: &escape::Escape,
+    members: &[escape::NetPins],
+    poses: &[placer::Pose],
+    count: usize,
+    passive_pads: usize,
+) -> (usize, f64) {
+    let mut pins_away = 0;
+    let mut behind_mm = 0.0;
+    for index in 0..count {
+        let component = &problem.components[index];
+        if component.pins.len() <= passive_pads {
+            continue;
+        }
+        let pose = poses[index];
+        let (center, half) = escape::body_box(problem, index, pose);
+        for pin in &component.pins {
+            if !fact.counted.get(pin.net).copied().unwrap_or(false) {
+                continue;
+            }
+            let at = component.pin_position(pin, pose);
+            let inside = [
+                at[0] - (center[0] - half[0]),
+                center[0] + half[0] - at[0],
+                at[1] - (center[1] - half[1]),
+                center[1] + half[1] - at[1],
+            ];
+            let side = (0..escape::SIDES)
+                .min_by(|a, b| inside[*a].total_cmp(&inside[*b]))
+                .unwrap_or(0);
+            let normal = match side {
+                0 => [-1.0, 0.0],
+                1 => [1.0, 0.0],
+                2 => [0.0, -1.0],
+                _ => [0.0, 1.0],
+            };
+            let nearest = members[pin.net]
+                .iter()
+                .filter(|(other, _)| *other != index && *other < count)
+                .map(|(other, other_pin)| {
+                    let part = &problem.components[*other];
+                    part.pin_position(&part.pins[*other_pin], poses[*other])
+                })
+                .min_by(|a, b| distance(at, *a).total_cmp(&distance(at, *b)));
+            let Some(target) = nearest else {
+                continue;
+            };
+            let ahead = (target[0] - at[0]) * normal[0] + (target[1] - at[1]) * normal[1];
+            if ahead < -AWAY_MM {
+                pins_away += 1;
+                behind_mm += -ahead;
+            }
+        }
+    }
+    (pins_away, behind_mm)
 }
 
 /// The signals of one placement.
@@ -499,6 +606,7 @@ fn signals(
     references: &[String],
     threshold: f64,
     large: usize,
+    passive_pads: usize,
 ) -> Result<Measured, String> {
     let exits = all_exits(problem, fact, members, poses, count);
     let (per, channels_over, channel_total) = channel_overflow(problem, fact, poses, &exits);
@@ -539,7 +647,8 @@ fn signals(
         .into_iter()
         .filter(|index| *index < count && !problem.components[*index].fixed)
         .count();
-    let (ratsnest, large_lines) = ratsnest_crossings(problem, fact, members, poses, count, large);
+    let crossings = ratsnest_crossings(problem, fact, members, poses, count, large);
+    let (away, away_mm) = away_pins(problem, fact, members, poses, count, passive_pads);
     let mut overlaps = 0;
     for a in 0..count {
         for b in a + 1..count {
@@ -575,8 +684,12 @@ fn signals(
             channel_overflow: channel_total,
             channels_over,
             blocked_exits: blocked,
-            ratsnest_crossings: ratsnest,
-            large_crossings: large_lines,
+            ratsnest_crossings: crossings.all,
+            large_crossings: crossings.between_large,
+            weighted_crossings: crossings.weighted,
+            bus_crossings: crossings.bus,
+            away_pins: away,
+            away_mm,
             illegal,
             overlaps,
             global,
@@ -1175,6 +1288,7 @@ pub fn ablate_kicad_placement(
             references,
             config.threshold,
             config.large_pads,
+            config.passive_pads,
         )
     };
     let mut variants = Vec::new();
@@ -1522,6 +1636,76 @@ mod tests {
             designer_back: false,
             ours_back: false,
         }
+    }
+
+    /// Two parts of three pads each on facing sides, one net per pad pair,
+    /// the second part's nets in `order` (top to bottom).
+    fn bus(order: [usize; 3], angle: f64) -> (Problem, escape::Escape) {
+        let row = |x: f64| {
+            vec![
+                [x - 0.2, -1.2, x + 0.2, -0.8],
+                [x - 0.2, -0.2, x + 0.2, 0.2],
+                [x - 0.2, 0.8, x + 0.2, 1.2],
+            ]
+        };
+        let mut a = part("U1", [2.0, 4.0], row(0.8), 0);
+        let mut b = part("U2", [2.0, 4.0], row(-0.8), 0);
+        for (pin, net) in a.pins.iter_mut().zip([0, 1, 2]) {
+            pin.net = net;
+        }
+        for (pin, net) in b.pins.iter_mut().zip(order) {
+            pin.net = net;
+        }
+        let poses = vec![
+            pose(0.0, 0.0),
+            Pose {
+                position: [10.0, 0.0],
+                angle,
+            },
+        ];
+        let mut problem = problem(vec![a, b], poses);
+        problem.net_weights = vec![1.0; 3];
+        let fact = escape::Escape {
+            pitch: 0.4,
+            layers: 2.0,
+            counted: vec![true; 3],
+            weight: 2.0,
+            inflate: 1.0,
+            turn_tolerance: 0.05,
+            measured: None,
+            measure_every: 20,
+        };
+        (problem, fact)
+    }
+
+    #[test]
+    fn a_twisted_bus_crosses_and_a_row_facing_away_is_counted() {
+        let (straight, fact) = bus([0, 1, 2], 0.0);
+        let members = escape::members(&straight);
+        let poses = straight.poses.clone();
+        let crossings = ratsnest_crossings(&straight, &fact, &members, &poses, 2, 2);
+        assert_eq!(crossings, Crossings::default());
+        assert_eq!(
+            away_pins(&straight, &fact, &members, &poses, 2, 2),
+            (0, 0.0)
+        );
+        // The outer two nets swapped on the second part: the three lines
+        // cross at one point, three pairs, all between the same two parts
+        // and of two-pin nets (weight 1 each).
+        let (twisted, fact) = bus([2, 1, 0], 0.0);
+        let members = escape::members(&twisted);
+        let crossings = ratsnest_crossings(&twisted, &fact, &members, &twisted.poses, 2, 2);
+        assert_eq!(crossings.all, 3);
+        assert_eq!(crossings.bus, 3);
+        assert_eq!(crossings.between_large, 3);
+        assert!((crossings.weighted - 3.0).abs() < 1e-9);
+        // Turned half round, the second part's row faces away: its three
+        // pins' targets lie 10 mm behind it.
+        let (away, fact) = bus([2, 1, 0], 180.0);
+        let members = escape::members(&away);
+        let (pins, behind) = away_pins(&away, &fact, &members, &away.poses, 2, 2);
+        assert_eq!(pins, 3);
+        assert!((behind - 30.0).abs() < 1e-6, "{behind}");
     }
 
     #[test]
