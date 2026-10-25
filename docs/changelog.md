@@ -11,6 +11,40 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-25 (the seven sweep boards without a result)
+
+Branch panel-refusals, snapshot x14421 (x14420 the same but for the
+zones' order and the hints' wording, never measured); docs/placer.md "The
+sweep boards without a result (2026-10-25)" has the diagnosis. The
+nightly of 2026-10-25 (356c8db) had nine rows without a result, not the
+seven of v20: katia and the laptop's power board were refused there
+too, and still on x1820.
+
+- **KiCad check repairs** (`check_repairs`, before every DRC with zones
+  refilled): copper zones of two nets that overlap at one priority get
+  distinct priorities in KiCad's own tie order (by uuid), Edge.Cuts lines
+  of no length go. The 0xCB pcb-panel's check was a hang in KiCad
+  10.0.7's filler (no CPU used after 15 s), not a slow check: two of its
+  overlapping pours suffice; the designer's board hangs too. Its result
+  board's check now takes about 110 s. The timeout rule is unchanged.
+- **The legaliser tests legality before escape demand**: the same spots,
+  less work (katia's passes 134 s to about 25 s).
+- **The levels go on to the tight bodies (or, where courtyards may not
+  overlap, the fine grid without spacing) when many parts lack room and
+  the work left cannot pay for the levels before them** (`skip_to_tight`).
+- **Refusals name movable parts once, a repeated reference with its
+  uuid** (`unplaced_parts` in board-placer.json, with `held_by`), not the
+  fixed parts and marks a part was left on.
+
+ROWS
+
+Short tier (3 x 2), x1820 against x14421: 11 of 12 boards give
+byte-identical placed and result boards (only their placement work is
+less, 0.3-8 s); MIDAS-MK1.1, whose placement runs into its budget, places
+differently (wirelength 2495 to 2448 mm) and ends 8 to 9 open, 253 to
+245 vias. Totals: unconnected 24 to 25, strict passes 7 to 7, new errors
+0 to 0, CPU 4964 to 4220 s (unpaired, loaded machine).
+
 ## Committed on 2026-10-25 (the ledger drains for a starved waiter)
 
 Branch ledger-drain. Ordered admission (2026-10-24) let a new request pass
