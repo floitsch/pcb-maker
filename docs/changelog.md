@@ -11,6 +11,32 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-25 (the crossings term's work booking)
+
+A correctness fix of the work clock. Branch crossings-booking, snapshots
+x14340-x14343 (x14343 the measured one), off side x1818 (main ab86b54);
+docs/placer.md "The crossings' work booking (2026-10-25)" has the tables.
+
+- **Measured** (`PCB_PLACER_CROSSINGS_PROFILE`, new, with
+  `PCB_PLACER_DEBUG`: per phase the count's wall time against its booked
+  work and the rest of the placement's; `ops` times each operation):
+  the ratsnest-crossings count took 1.5 to 3.7 times the CPU per booked
+  unit of the rest of the placement (legaliser: MegaDrive 3.0-3.1,
+  Glasgow 2.2-2.6, video 3.4-3.7, split72_left 1.7-1.8; refinement 2.5-2.6,
+  1.5-1.8, 3.0-3.6, 1.5-1.7). The grid's upkeep (inserting and removing
+  lines) was not booked at all, and a line met cost about 2.5 units.
+- **The count books per operation**: 5/2 a line met, 7/2 a cell walked
+  to insert or remove a line, 1/4 a list entry scanned (the rest as
+  before). After: 0.6 to 1.2 by board and phase. The count itself is
+  unchanged (exact). The anneal's term (off) books 8/5 of the new
+  booking instead of 13/5 of the old (1.60 and 1.57 measured).
+- **Layouts** (eleven dense boards, seeds 1, 101, 201): 31 of the 33
+  placements byte-identical; KiCad unconnected, summed medians 926 to
+  920, the pairs 947 to 933, 898 to 898, 1032 to 1014. The placement's
+  booked work +2.4 %; its wall clock per second of work 0.438 to 0.393
+  on the pair run side by side (seed 201). Short tier: unconnected 26 to
+  24, strict passes 7 and 7. No weight adjustment needed.
+
 ## Committed on 2026-10-25 (ratsnest crossings in the anneal)
 
 Where the order of parts is decided. Branch crossings-anneal, snapshot

@@ -1591,7 +1591,9 @@ the relation repairs' refinements 4 to 100 s); the capped legaliser is
 within 10 % of off. In the dense layouts below the placement's work
 (board-placer.json, summed over the eleven boards) rose 3078 to 3604,
 3177 to 3684 and 2914 to 3590 s (+17 to +23 %), out of the same layout
-budget.
+budget. These are the count's own units of then, which booked
+1.5 to 3.7 times too little of its CPU; since 2026-10-25 it books per
+operation ("The crossings' work booking" below).
 
 ### Measurement
 
@@ -1924,6 +1926,157 @@ and open connections from seed to seed with the term. MegaDrive's QFP
 order, the finding this was for, is not what the anneal changes: in
 our placements U4 and U8 lie one above the other, and no trade of the
 two pays.
+
+### The crossings' work booking (2026-10-25)
+
+Every placement decision is taken in work, so the count has to book
+what it costs: a unit of its work should take the CPU of a unit of the
+rest of the placement. Until 2026-10-25 it booked a unit per cell a
+query walked and per line it met, a tree's pins and Prim's k² steps,
+and nothing for keeping the grid (inserting a new tree's lines,
+removing them again, the search in a cell's list for the line to
+remove). Under-booked, the term made the placement run longer than its
+budget said (split72_left spends two fifths of its placement in the
+count), the layout's wall guard came nearer, and work-based comparisons
+between binaries were skewed.
+
+**The measure** (`PCB_PLACER_CROSSINGS_PROFILE` with
+`PCB_PLACER_DEBUG`; `ops` times each operation too): per placer phase a
+line `placer crossings <phase>` with the wall time inside the count's
+calls, the work they booked and what they did (trees, pins, Prim's
+steps, cells walked, lines met and tested, cells walked to insert and
+remove, list entries scanned), beside the phase's wall time and work.
+The factor is the count's wall time per booked unit against the rest of
+the placement's (all phases of the run, the count's time and work taken
+out): the same thread, the same load, so it is the CPU ratio. Runs:
+`place-kicad-board` on the dense tier's task inputs (3 seeds, the
+default 600 s of work, 2 threads, `PCB_WORK_RATE=3.15e6,150e6`), the
+legaliser = legalize, legalize first, legalize keeping, evict and
+legalize on marks, the refinement = refine and repair and align;
+`build/book1-prof/p1` (x14340), `p2` (x14341, every operation timed),
+`p3` (x14342, the new booking), `p3a` (the same with
+`ratsnest_crossings.anneal`).
+
+CPU per booked unit against the rest of the placement:
+
+| Board | legaliser, before (two runs) | refinement, before | legaliser, after (two runs) | refinement, after | count's share of the placement's wall |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| MegaDrive | 3.04, 3.14 | 2.51, 2.64 | 1.01, 1.14 | 0.96, 0.95 | 7 % |
+| Glasgow | 2.18, 2.56 | 1.48, 1.79 | 0.84, 0.85 | 0.61, 0.77 | 10 % |
+| video | 3.65, 3.40 | 3.62, 2.99 | 1.17 | 1.22 | 5 % |
+| split72_left | 1.78, 1.73 | 1.49, 1.69 | 1.12 | 0.92 | 39 % |
+
+(before: x14340 and x14341; after: x14342 default and with the anneal's
+term; the share from x14340.) One factor would not have done: the old
+booking was 1.5 times short on split72_left, whose cost is mostly
+Prim's trees (its matrix nets) and booked about right, and 3.6 times on
+video, whose cost is the queries and the grid's lists (long tree lines
+through crowded cells). Timing each operation (x14341) gave, in units
+of ordinary placement work per counted operation: a tree's pins and
+Prim's steps 0.6 to 1.0 of what they book (kept), a query 1.5 to 3.0
+per line met (cells walked are a few percent of it), an insert 3.1 to
+5.0 per cell walked, a remove 4.6 to 6.6 per cell walked or 0.4 to 0.9
+per list entry scanned (the search goes 7 to 16 entries deep on average). The count now
+books (`crossings::MET_WORK`, `GRID_CELL_WORK`, `SCAN_WORK`) 5/2 a line
+met, 7/2 a cell walked to insert or remove a line, 1/4 a list entry
+scanned, and as before 1 a cell a query walks, `PIN_WORK` a pin and 1 a
+Prim step. After it the factor is 0.6 to 1.2 by board and phase
+(Glasgow's operations cost less than the others'; why is not measured); the counts are exact as before (the unit tests
+unchanged, and the boards `place-kicad-board` writes at its default
+budget are byte-identical before and after on all four boards; two of
+Glasgow's other seeds end elsewhere, 850 to 848 and 679 to 672
+crossings: what changes is where a budget stops, not what a step does).
+
+The anneal's term (off) books 8/5 of the count's new booking
+(`anneal::CROSSING_WORK`, 13/5 of the old): with the new booking its
+queries took 1.60 (MegaDrive) and 1.57 (Glasgow) times the CPU per unit
+against the anneal's own work (the kept lines counted again, the new
+lines among themselves directly, most never entering the grid).
+
+**`place-kicad-board` side by side** (`build/book1-prof/pair1`, x1818
+against x14343, all eight at once, 2 threads each, the shell's CPU time
+of the whole process against the seeds' summed work): CPU seconds per
+second of work MegaDrive 1.027 to 0.924, Glasgow 0.973 to 0.900, video
+0.862 to 0.813, split72_left 1.107 to 1.080; all four write the same
+board. Glasgow's seeds stop at the budget (1801 s of work either way),
+so the honest booking is 130 s less CPU there; on the others the same
+steps book more (MegaDrive 920 to 956 s, split72_left 654 to 736 s).
+
+**Layouts.** The crossings default's protocol: the eleven dense boards
+in layout mode at the task budgets (tasks v7, pinned rates), seeds 1,
+101 and 201 (`--placer '{"seed": N}'`), off x1818 (main ab86b54), on
+x14343 (branch crossings-booking: ab86b54 and the booking), 3 x 2 with
+at most six layouts in flight, through the memory ledger with 10 GB
+kept free, beside the nightly; no row cut by the wall clock. Output
+`build/book1-dense-s{1,101,201}-{off,on}`, `build/book1-short-{off,on}`.
+The off side reproduces x1817's pairs of the anneal measurement
+exactly (947, 898, 1032: the same placements, pinned rates).
+
+KiCad unconnected per board, off / on:
+
+| Board | seed 1 | seed 101 | seed 201 | median |
+| --- | ---: | ---: | ---: | ---: |
+| OpenESC 4in1-mini | 81 / 81 | 82 / 82 | 99 / 99 | 82 / 82 |
+| OpenESC 4in1 | 139 / 125 | 92 / 92 | 93 / 93 | 93 / 93 |
+| DSP-ADAU1452 | 17 / 17 | 7 / 7 | 25 / 25 | 17 / 17 |
+| split72_left | 23 / 23 | 21 / 21 | 33 / 33 | 23 / 23 |
+| video | 190 / 190 | 145 / 145 | 159 / 159 | 159 / 159 |
+| Glasgow | 145 / 145 | 163 / 163 | 175 / 157 | 163 / 157 |
+| SmartSpin2k | 34 / 34 | 59 / 59 | 52 / 52 | 52 / 52 |
+| 0xCB panel | 50 / 50 | 50 / 50 | 51 / 51 | 50 / 50 |
+| protoesp | 105 / 105 | 76 / 76 | 90 / 90 | 90 / 90 |
+| MegaDrive | 110 / 110 | 108 / 108 | 168 / 168 | 110 / 110 |
+| SNSP-CPU-01 | 53 / 53 | 95 / 95 | 87 / 87 | 87 / 87 |
+| sum | 947 / 933 | 898 / 898 | 1032 / 1014 | 926 / 920 |
+
+Of the 33 placements 31 are byte-identical; 4in1's seed 1 and Glasgow's
+seed 201 differ (the race keeps another seed: where its budget ends
+moved), and both route better (139 to 125, 175 to 157). The summed
+medians fall 926 to 920, the pairs 947 to 933, 898 to 898 and 1032 to
+1014. The first route's open terminals 1416 to 1421, 1280 to 1280, 1388
+to 1390.
+
+Placement (board-placer.json of `layout/placed`, the three seeds
+summed): the race's seeds' work and the placement's wall clock, off /
+on:
+
+| Board | placement work off / on (s, 3 seeds summed) | placement wall off / on (s) | wall per work off / on |
+| --- | ---: | ---: | ---: |
+| OpenESC 4in1-mini | 2018 / 2054 | 1498 / 874 | 0.742 / 0.425 |
+| OpenESC 4in1 | 5449 / 5463 | 2735 / 2230 | 0.502 / 0.408 |
+| DSP-ADAU1452 | 1889 / 1871 | 759 / 613 | 0.402 / 0.327 |
+| split72_left | 2030 / 2271 | 1381 / 1045 | 0.680 / 0.460 |
+| video | 4109 / 4148 | 1563 / 1113 | 0.380 / 0.268 |
+| Glasgow | 5106 / 5196 | 2198 / 2099 | 0.431 / 0.404 |
+| SmartSpin2k | 2910 / 3136 | 1369 / 1347 | 0.470 / 0.430 |
+| 0xCB panel | 1871 / 1896 | 720 / 735 | 0.385 / 0.388 |
+| protoesp | 1857 / 1865 | 687 / 670 | 0.370 / 0.359 |
+| MegaDrive | 2585 / 2690 | 907 / 873 | 0.351 / 0.325 |
+| SNSP-CPU-01 | 1924 / 1911 | 785 / 714 | 0.408 / 0.374 |
+| sum | 31748 / 32502 | 14601 / 12314 | 0.460 / 0.379 |
+
+The booked work rises 2.4 % (split72_left 12 %, SmartSpin2k 8 %,
+MegaDrive 4 %: the boards whose count is large), and the placement's
+wall clock per second of work falls 0.460 to 0.379. The load is not the
+same on both sides there: seed 201's pair ran side by side (both at a
+mean load of 9.6) and fell 0.438 to 0.393 (-10 %); seeds 1 and 101 fell
+0.472 to 0.366 and 0.469 to 0.378, but their off sides shared the
+machine with the profiling runs above. Where the crossings count is a
+large share the fall is largest (split72_left 0.680 to 0.460 over the
+three seeds, 4in1-mini 0.742 to 0.425, the latter partly the load).
+
+**Short tier** (one pair, the tier's seed, 3 x 2, the same binaries):
+KiCad unconnected 26 to 24, strict passes 7 and 7, first-route open
+terminals 48 to 38; the one board that changes is MIDAS-MK1.1 (10 to 8
+unconnected, 20 to 10 open after the first route), the other eleven
+are equal.
+
+**Judgement.** The booking is a correctness fix of the work clock and
+ships: a unit of the count's work now costs 0.6 to 1.2 units of the
+rest of the placement's CPU (1.5 to 3.7 before). The default placements
+barely move (two of 33 dense placements, both better; the dense sum of
+medians 926 to 920), so no weight adjustment is needed: no phase lost
+reach that the layouts show.
 
 ## What went wrong on the way (kept as lessons)
 
