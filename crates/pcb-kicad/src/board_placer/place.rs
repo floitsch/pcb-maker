@@ -404,6 +404,23 @@ pub fn place_kicad_board(
         }
     }
     let utilization = used.map(|used| (used / outline_area.max(1.0e-9) * 1000.0).round() / 1000.0);
+    let repeated_references = {
+        let mut seen = BTreeSet::new();
+        let mut repeated = BTreeSet::new();
+        for reference in &lowered.references[..uuids.len().min(lowered.references.len())] {
+            if !seen.insert(reference.as_str()) {
+                repeated.insert(reference.clone());
+            }
+        }
+        repeated
+    };
+    let unplaced_parts = unplaced_parts(
+        problem,
+        &lowered.references,
+        &uuids,
+        &repeated_references,
+        &placement,
+    );
     let mut hints = Vec::new();
     if !placement.unplaced.is_empty() || !placement.illegal.is_empty() {
         for (side, share) in ["front", "back"].iter().zip(utilization) {
@@ -414,25 +431,16 @@ pub fn place_kicad_board(
                 ));
             }
         }
-        let constraints = &problem.constraints;
         // Fixed parts are only illegal where a part that found no place
-        // lies on them; the moving parts are the ones to talk about.
-        for index in placement
-            .unplaced
-            .iter()
-            .chain(&placement.illegal)
-            .filter(|index| !problem.components[**index].fixed)
-        {
-            let name = &lowered.references[*index];
-            if constraints.edges.iter().any(|(part, _, _)| part == index)
-                || constraints.regions.iter().any(|(part, _)| part == index)
-                || constraints
-                    .overhangs
-                    .iter()
-                    .any(|(part, _, _)| part == index)
-            {
+        // lies on them; the moving parts are the ones to talk about, each
+        // with the constraints that hold it (a repeated reference with
+        // its uuid).
+        for part in &unplaced_parts {
+            if !part.held_by.is_empty() {
                 hints.push(format!(
-                    "{name} is held by an edge, region or overhang constraint: loosen it (a larger max_mm or region)"
+                    "{} is held by {}: loosen it (a larger max_mm or region)",
+                    part.label,
+                    part.held_by.join(", ")
                 ));
             }
         }
@@ -451,23 +459,6 @@ pub fn place_kicad_board(
         hints.sort();
         hints.dedup();
     }
-    let repeated_references = {
-        let mut seen = BTreeSet::new();
-        let mut repeated = BTreeSet::new();
-        for reference in &lowered.references[..uuids.len().min(lowered.references.len())] {
-            if !seen.insert(reference.as_str()) {
-                repeated.insert(reference.clone());
-            }
-        }
-        repeated
-    };
-    let unplaced_parts = unplaced_parts(
-        problem,
-        &lowered.references,
-        &uuids,
-        &repeated_references,
-        &placement,
-    );
     let room = crate::placement_room::room(
         problem,
         &lowered.references,
