@@ -35,7 +35,7 @@ The environment variables are indexed in the hand-over
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 69 | - | 0 | 69 | - |
 | [Placer settings](#placer-settings) | 49 | 45 | 4 | 49 | 22 |
-| [Layout settings](#layout-settings) | 20 | 20 | 0 | 20 | 8 |
+| [Layout settings](#layout-settings) | 20 | 20 | 0 | 20 | 9 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 2 |
 | [Layout settings: silkscreen](#layout-settings-silkscreen) | 1 | 1 | 0 | 1 | 1 |
@@ -118,7 +118,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `placer_work_rate` | `Option<f64>` | unset | router.md | With `work_rate`: the placement units a second stands for (default: the reference's, scaled as `work_rate` scales the reference's search rate). |
 | `negotiation_seconds` | `Option<f64>` | unset | router.md | Seconds one negotiation may run (default 900 s). The ladder sets it per attempt from what is left of its budget, so that a hopeless first rung leaves time for the next (video's exclusive-plane rung ran 1180 s with 222 open, and no other rung ran). |
 | `probe_ladder` | `Option<bool>` | unset | - | Large multilayer boards: probe every rung briefly and continue the best (default on). |
-| `probe_seconds` | `Option<f64>` | unset | router.md | Seconds of negotiation per probe (default 75). |
+| `probe_seconds` | `Option<f64>` | unset | router.md, placer.md | Seconds of negotiation per probe (default 75). |
 | `escape_stub_mm` | `Option<f64>` | unset | router.md | Fixed escape stubs for fine-pitch pad rows, this long in mm (router `escape_stub_mm`; off by default). |
 | `fixed_plane_stubs` | `Option<bool>` | unset | router.md | Connect every pour-net pad to its plane by a fixed stub and via before the signals route (router `fixed_plane_stubs`). |
 | `trouble_repair` | `Option<bool>` | unset | router.md | The trouble-makers' repair after the hard repair (router `trouble_repair`; docs/experiments/human-level-routing.md): unset, the router's default; `PCB_ROUTER_TROUBLE` overrides this. |
@@ -392,7 +392,7 @@ The layout config file of `layout-kicad-board`. Unknown keys are rejected; a mis
 | `steps_mm` | `Vec<f64>` | `[0.5, 1.0, 2.0, 4.0]` | - | Move distances tried, in millimetres, in the four axis directions. |
 | `move_seconds` | `f64` | `600.0` | - | Budget of the move phase, in seconds of work (search expansions and placement units at the run's work rates; docs/router.md, "Determinism and the wall clock"). |
 | `polish_seconds` | `f64` | `60.0` | - | Once every connection is routed, moves only polish (fewer vias, less copper): they stop after this many seconds of the move phase. |
-| `total_seconds` | `f64` | `1500.0` | router.md | Budget of the whole layout, in seconds of work (as `move_seconds`; the wall clock only guards it: `wall_guard`): the placement race stops at 40 % of it, the moves at 65 %, and the final ladder gets what is left. Every route stops by it (then only the native check runs). An agent waits for this; the best board so far is what it gets. |
+| `total_seconds` | `f64` | `1500.0` | router.md, placer.md | Budget of the whole layout, in seconds of work (as `move_seconds`; the wall clock only guards it: `wall_guard`): the placement race stops at 40 % of it, the moves at 65 %, and the final ladder gets what is left. Every route stops by it (then only the native check runs). An agent waits for this; the best board so far is what it gets. |
 | `wall_guard` | `f64` | `2.0` | router.md | How far past `total_seconds` (counted in work) the wall clock may run before the layout's phases are cut short, as a factor of it (default 2: the layout stops at `total_seconds` of work; the wall clock only guards against a machine far busier or slower than the work rates say: `wall_guard_seconds`). A load margin, not a budget. |
 | `placer` | `KiCadBoardPlacerConfig` | its own table | router.md, placer.md | The settings of the layout's placement (as place-kicad-board's placer config; its constraints relative to the source directory). |
 | `pin_swaps` | `Option<PathBuf>` | unset | placer.md | Interchangeable pins (`pin-swaps.json`; relative to the source directory). The nets on them are permuted after placement. |
@@ -406,7 +406,7 @@ The layout config file of `layout-kicad-board`. Unknown keys are rejected; a mis
 | `silkscreen` | `KiCadSilkscreenConfig` | its own table | placer.md | The footprints' Reference and Value fields on the silkscreen, placed after routing where KiCad's silkscreen checks find nothing. |
 | `move_descent` | `Option<crate::move_descent::KiCadMoveDescent>` | unset | - | The move descent after the first route (an experiment, off when absent; docs/experiments/move-descent.md): single parts nudged, turned or swapped where the incremental global route and then a local reroute say fewer terminals stay open, also on boards far from complete. `PCB_LAYOUT_MOVE_DESCENT` overrides (`0` off). |
 | `final_route_from_state` | `bool` | `false` | placer.md | Routes survive moves: the final route (the ladder, or the narrow-signal attempt standing in for it) starts from the router's state after the first route and the moves, its complete and legal nets without a pour kept as the board's own copper, and routes the rest; from scratch only when its first attempt leaves more open than the first route did. False: from scratch, as before. `PCB_LAYOUT_FINAL_FROM_STATE` (0 or 1) overrides. |
-| `race_probe` | `Option<KiCadRaceProbe>` | unset | - | The race's route probe (docs/placer.md, "The race's route probe (2026-10-25)"; off when absent, `{}` for the defaults): the race probes its `seeds` best-ranked placements for `share` of `total_seconds` of work each, all of them charged to the layout's work clock (without it, a probe gets the router's `probe_seconds`, 75 s, and the placements past 40 % of the budget count for nothing), ranks them by the probe's open terminals (then its unfinished nets, then its nets in conflict) and routes on with the best. The pre-ranking (`congestion_score`) chooses the probed placements as before, `seeds` of them instead of `congestion_probes`. |
+| `race_probe` | `Option<KiCadRaceProbe>` | unset | placer.md | The race's route probe (docs/placer.md, "The race's route probe (2026-10-25)"; off when absent, `{}` for the defaults): the race probes its `seeds` best-ranked placements for `share` of `total_seconds` of work each, all of them charged to the layout's work clock (without it, a probe gets the router's `probe_seconds`, 75 s, and the placements past 40 % of the budget count for nothing), ranks them by the probe's open terminals (then its unfinished nets, then its nets in conflict) and routes on with the best. The pre-ranking (`congestion_score`) chooses the probed placements as before, `seeds` of them instead of `congestion_probes`. |
 
 ## Layout settings: swappable entries
 
@@ -432,7 +432,7 @@ The `free_dimension` object of the layout settings: one edge of a rectangular ou
 | `free_dimension.prefer_below` | `Vec<f64>` | optional | - | Price thresholds (JLCPCB's 100 mm): a size at or below one is preferred over any larger size, and is tried itself when it lies in the range. |
 | `free_dimension.accept` | `Option<String>` | optional | - | What counts as clean: `pass_strict` (default: the layout's verdict is complete, exit 0: KiCad finds no unconnected item and no error that counts, every part placed, every constraint kept) or `pass` (electrically good: KiCad finds no unconnected item and no new error by the count rule, every part placed; missed soft constraints allowed). |
 | `free_dimension.band_mm` | `Option<f64>` | optional | - | What moves with the edge: everything within this distance of it (footprints by their origin, held parts also by a body at the edge, board texts and other rigid items by their box, drawn shapes and zones point by point, arcs by their ends, constraint boxes side by side). Default 0.5 mm: what lies on the edge. |
-| `free_dimension.probe_seconds` | `Option<f64>` | optional | router.md | The work budget of one probe (default a third of `confirm_seconds`). |
+| `free_dimension.probe_seconds` | `Option<f64>` | optional | router.md, placer.md | The work budget of one probe (default a third of `confirm_seconds`). |
 | `free_dimension.confirm_seconds` | `Option<f64>` | optional | - | The work kept for the full runs after the probes (default a third of the layout's `total_seconds`, which is the whole search's budget): probes start only while it stays. The full runs (a smaller size retried, the confirmation, the closest size) get everything left. |
 | `free_dimension.parallel` | `Option<usize>` | optional | - | Probes run side by side (default: a quarter of the threads, at most 4, at most one per 3 GB of available memory). Each gets this share of the threads and of the memory (`PCB_MAKER_MEMORY_MB`). |
 
@@ -451,7 +451,7 @@ The `race_probe` object of the layout settings (off when absent, `{}` for the de
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
 | `race_probe.seeds` | `usize` | `3` | router.md, placer.md | How many placements the race probes (the best-ranked; at least one, default 3). |
-| `race_probe.share` | `f64` | `0.08` | router.md | The work each probe negotiates, as a share of the layout's `total_seconds` (default 0.08: 24 % for three probes; the probe the race keeps is the first part of the first route). |
+| `race_probe.share` | `f64` | `0.08` | router.md, placer.md | The work each probe negotiates, as a share of the layout's `total_seconds` (default 0.08: 24 % for three probes; the probe the race keeps is the first part of the first route). |
 | `race_probe.repair` | `bool` | `false` | router.md, placer.md | Each probe is a whole first route within its share (half of it negotiating, then the first route's repair and its trouble rounds, no polish), ranked by the open terminals it leaves; the kept one's is the layout's first route (default false: the probe negotiates only, and the kept one routes on). |
 
 ## Layout settings: move_descent
