@@ -1098,7 +1098,12 @@ findings less the designer's). Rows are route rows with `placement:
 (or say which binaries) and the same list; the gap is only as sound as
 the rows are uncut (CUT rows are marked).
 `designer.json` gives the memory gate and the runner each board's peak
-and seconds from its v17 layout row (x1170).
+and seconds: the largest of its rows in five designer runs (the
+nightlies of 2026-10-24 and 2026-10-25, x1725, x1539 and x1404 matched;
+`tier_estimates.py designer.json --placement designer <logs>` rewrites
+them). Until 2026-10-26 they were its v17 layout row's (x1170), 1.8 times
+the measured peak at the median and up to 34 times (the ULK boards:
+23 215 MB expected, 674-1512 MB measured).
 
 **Matched budgets** (the review's H3, 2026-10-22). The tier gives the
 router the layout's whole `total_seconds` (1500 s of work), but in a
