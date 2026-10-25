@@ -628,18 +628,50 @@ fn phase_line(debug: bool, name: &str, mark: Mark) {
             (Some(start), Some(now)) => now - start,
             _ => seconds,
         };
-        let counted = (work() - mark.1) as f64 / work_per_second();
+        let work = work() - mark.1;
+        let counted = work as f64 / work_per_second();
         eprintln!(
             "placer phase {name}: {seconds:.2} s, cpu {cpu:.2} s, work {counted:.2} s ({:.2})",
             counted / cpu.max(1.0e-6)
         );
+        if crossings::profile::enabled() {
+            let tally = crossings::profile::since(mark.3, crossings::profile::tally());
+            // Wall per unit in the count against the rest of the phase.
+            let inside = tally.nanos as f64 * 1.0e-9;
+            let rest_rate = (work - tally.booked) as f64 / (seconds - inside).max(1.0e-9);
+            let inside_rate = tally.booked as f64 / inside.max(1.0e-9);
+            eprintln!(
+                "placer crossings {name}: wall {seconds:.4} s, work {work}, inside {inside:.4} s, booked {}, calls {}, pins {}, prim {}, lines {}, cells {}, met {}, tested {}, grid_cells {}, scanned {}; rest {rest_rate:.0}/s, inside {inside_rate:.0}/s, factor {:.3}",
+                tally.booked,
+                tally.calls,
+                tally.pins,
+                tally.prim,
+                tally.lines,
+                tally.cells,
+                tally.met,
+                tally.tested,
+                tally.grid_cells,
+                tally.scanned,
+                rest_rate / inside_rate.max(1.0e-9),
+            );
+        }
     }
 }
 
-type Mark = (std::time::Instant, u64, Option<f64>);
+type Mark = (
+    std::time::Instant,
+    u64,
+    Option<f64>,
+    crossings::profile::Tally,
+);
 
 fn mark() -> Mark {
-    (std::time::Instant::now(), work(), thread_cpu_seconds())
+    (
+        std::time::Instant::now(),
+        work(),
+        thread_cpu_seconds(),
+        crossings::profile::tally(),
+    )
 }
 
 /// Refinement, edge-copper centring, relation repair and alignment: what

@@ -103,6 +103,123 @@ pub fn total(problem: &Problem, crossings: &Crossings, poses: &[Pose]) -> u64 {
     CrossingState::new(problem, crossings, poses).total()
 }
 
+/// Profiling of the count's work against its time
+/// (`PCB_PLACER_CROSSINGS_PROFILE` with `PCB_PLACER_DEBUG`: the placer's
+/// phase lines say per phase the wall time spent in the count, the work
+/// it booked and what it did, docs/placer.md "Ratsnest crossings").
+pub mod profile {
+    use std::cell::Cell;
+
+    /// What the count did on this thread since the process started.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct Tally {
+        /// Wall time inside the count's calls, nanoseconds.
+        pub nanos: u64,
+        /// The work those calls booked.
+        pub booked: u64,
+        /// Calls (outermost).
+        pub calls: u64,
+        /// Pins of the trees built.
+        pub pins: u64,
+        /// Prim's k^2 over the trees built.
+        pub prim: u64,
+        /// Tree lines built.
+        pub lines: u64,
+        /// Cells walked by the queries.
+        pub cells: u64,
+        /// Lines met in those cells (each once a query line).
+        pub met: u64,
+        /// Lines met that were tested for a crossing.
+        pub tested: u64,
+        /// Cells walked to insert or remove lines.
+        pub grid_cells: u64,
+        /// Entries scanned in the cells' lists to remove lines.
+        pub scanned: u64,
+    }
+
+    thread_local! {
+        static TALLY: Cell<Tally> = const { Cell::new(Tally {
+            nanos: 0, booked: 0, calls: 0, pins: 0, prim: 0, lines: 0, cells: 0,
+            met: 0, tested: 0, grid_cells: 0, scanned: 0,
+        }) };
+        static DEPTH: Cell<u32> = const { Cell::new(0) };
+    }
+
+    /// Whether profiling is on (`PCB_PLACER_CROSSINGS_PROFILE`).
+    pub fn enabled() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var_os("PCB_PLACER_CROSSINGS_PROFILE").is_some())
+    }
+
+    /// This thread's tally so far.
+    pub fn tally() -> Tally {
+        TALLY.with(|tally| tally.get())
+    }
+
+    pub(crate) fn add(change: impl FnOnce(&mut Tally)) {
+        if enabled() {
+            TALLY.with(|cell| {
+                let mut tally = cell.get();
+                change(&mut tally);
+                cell.set(tally);
+            });
+        }
+    }
+
+    /// Times a call of the count from its creation to its drop (the
+    /// outermost one only).
+    pub(crate) struct Timed(Option<(std::time::Instant, u64)>);
+
+    impl Timed {
+        pub(crate) fn start() -> Self {
+            if !enabled() {
+                return Timed(None);
+            }
+            let depth = DEPTH.with(|depth| {
+                let now = depth.get();
+                depth.set(now + 1);
+                now
+            });
+            Timed((depth == 0).then(|| (std::time::Instant::now(), crate::work())))
+        }
+    }
+
+    impl Drop for Timed {
+        fn drop(&mut self) {
+            if !enabled() {
+                return;
+            }
+            DEPTH.with(|depth| depth.set(depth.get() - 1));
+            if let Some((started, work)) = self.0 {
+                let nanos = started.elapsed().as_nanos() as u64;
+                let booked = crate::work() - work;
+                add(|tally| {
+                    tally.nanos += nanos;
+                    tally.booked += booked;
+                    tally.calls += 1;
+                });
+            }
+        }
+    }
+
+    /// `after` minus `before`, field by field.
+    pub fn since(before: Tally, after: Tally) -> Tally {
+        Tally {
+            nanos: after.nanos - before.nanos,
+            booked: after.booked - before.booked,
+            calls: after.calls - before.calls,
+            pins: after.pins - before.pins,
+            prim: after.prim - before.prim,
+            lines: after.lines - before.lines,
+            cells: after.cells - before.cells,
+            met: after.met - before.met,
+            tested: after.tested - before.tested,
+            grid_cells: after.grid_cells - before.grid_cells,
+            scanned: after.scanned - before.scanned,
+        }
+    }
+}
+
 /// One tree line.
 #[derive(Clone, Copy, Debug)]
 struct Line {
@@ -213,6 +330,7 @@ impl LineGrid {
         let mut cells = std::mem::take(&mut self.scratch);
         cells.clear();
         self.walk(line.a, line.b, |cell| cells.push(cell));
+        profile::add(|tally| tally.grid_cells += cells.len() as u64);
         for &cell in &cells {
             self.cells[cell].push(id);
         }
@@ -223,13 +341,20 @@ impl LineGrid {
         let mut cells = std::mem::take(&mut self.scratch);
         cells.clear();
         self.walk(line.a, line.b, |cell| cells.push(cell));
+        let mut scanned = 0;
+        let walked = cells.len() as u64;
         for &cell in &cells {
             let list = &mut self.cells[cell];
             if let Some(position) = list.iter().position(|other| *other == id) {
+                scanned += position as u64 + 1;
                 list.swap_remove(position);
             }
         }
         self.scratch = cells;
+        profile::add(|tally| {
+            tally.grid_cells += walked;
+            tally.scanned += scanned;
+        });
     }
 }
 
@@ -282,6 +407,7 @@ const DIRECT_LINES: usize = 48;
 
 impl<'a> CrossingState<'a> {
     pub fn new(problem: &'a Problem, crossings: &'a Crossings, poses: &[Pose]) -> Self {
+        let _timed = profile::Timed::start();
         let nets = problem.net_weights.len();
         let mut members = vec![Vec::new(); nets];
         for (index, component) in problem.components.iter().enumerate() {
@@ -397,6 +523,11 @@ impl<'a> CrossingState<'a> {
         let edges = spanning_tree(&points);
         let pins = points.len() as u64;
         crate::add_work(crate::PIN_WORK * pins + pins * pins);
+        profile::add(|tally| {
+            tally.pins += pins;
+            tally.prim += pins * pins;
+            tally.lines += edges.len() as u64;
+        });
         let mut ids = Vec::with_capacity(edges.len());
         for (from, to) in edges {
             let line = Line {
@@ -459,6 +590,8 @@ impl<'a> CrossingState<'a> {
         }
         let mut found = 0u64;
         let mut work = 0u64;
+        let mut tested = 0u64;
+        let mut near_total = 0u64;
         let mut near = std::mem::take(&mut self.near);
         for &id in ids {
             let line = self.lines[id as usize];
@@ -474,6 +607,7 @@ impl<'a> CrossingState<'a> {
                 }
             }) as u64;
             work += near.len() as u64;
+            near_total += near.len() as u64;
             for &other in &near {
                 let theirs = self.lines[other as usize];
                 if theirs.net == line.net {
@@ -487,6 +621,7 @@ impl<'a> CrossingState<'a> {
                 } else if self.touched[theirs.net] == query {
                     continue;
                 }
+                tested += 1;
                 if lines_cross(line.a, line.b, theirs.a, theirs.b) {
                     found += 1;
                 }
@@ -494,6 +629,11 @@ impl<'a> CrossingState<'a> {
         }
         self.near = near;
         crate::add_work(work);
+        profile::add(|tally| {
+            tally.cells += work - near_total;
+            tally.met += near_total;
+            tally.tested += tested;
+        });
         found
     }
 
@@ -501,6 +641,7 @@ impl<'a> CrossingState<'a> {
     /// all lines, the parts where `poses` has them; the lines kept are
     /// unchanged.
     pub fn involving(&mut self, poses: &[Pose], moved: &[usize]) -> u64 {
+        let _timed = profile::Timed::start();
         let nets = self.nets_of(moved);
         if nets.is_empty() {
             return 0;
@@ -518,6 +659,7 @@ impl<'a> CrossingState<'a> {
     /// After a kept move of `moved` (to where `poses` has them): their
     /// nets' trees again, and the total.
     pub fn kept(&mut self, poses: &[Pose], moved: &[usize]) {
+        let _timed = profile::Timed::start();
         for &part in moved {
             self.poses[part] = poses[part];
         }
@@ -544,6 +686,7 @@ impl<'a> CrossingState<'a> {
     /// Every part's trees again at `poses` where a part moved since they
     /// were kept (moves made by others between two refinements).
     pub fn resync(&mut self, poses: &[Pose]) {
+        let _timed = profile::Timed::start();
         let moved: Vec<usize> = (0..poses.len().min(self.poses.len()))
             .filter(|index| self.poses[*index] != poses[*index])
             .collect();
