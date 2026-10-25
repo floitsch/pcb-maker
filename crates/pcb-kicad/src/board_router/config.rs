@@ -592,6 +592,11 @@ pub struct KiCadDiffPairRule {
     pub width_bounds: Vec<(f64, f64)>,
     /// The custom rules' `diff_pair_uncoupled` maximum, if any.
     pub max_uncoupled: Option<f64>,
+    /// The custom rules' `skew` maximum, if any (KiCad: the nets' lengths
+    /// apart, over the nets a rule matches).
+    pub max_skew: Option<f64>,
+    /// The custom rules' `length` (min, opt, max), if any.
+    pub length: Option<(f64, Option<f64>, f64)>,
     /// Where the width and gap came from, per layer ("rule 'name'", "net
     /// class 'name'", "net class clearance").
     pub sources: Vec<String>,

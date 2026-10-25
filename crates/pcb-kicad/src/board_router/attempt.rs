@@ -321,7 +321,12 @@ pub(super) fn write_attempt(
     // Differential pairs: the links' routes into the pairs' copper (written
     // first, so that the nets' names are made canonical with the rest), the
     // board as lowered.
-    let paired = finish_pairs(board, &mut result, config);
+    let heights = copper_heights(&pcb);
+    let heights: Vec<f64> = layer_names
+        .iter()
+        .map(|name| heights.get(name).copied().unwrap_or(0.0))
+        .collect();
+    let paired = finish_pairs(board, &mut result, config, &heights);
     let board = paired.as_ref().map_or(board, |(restored, _, _)| restored);
     if let Some((_, copper, _)) = &paired {
         write_pair_copper(&mut pcb, copper, layer_names)?;

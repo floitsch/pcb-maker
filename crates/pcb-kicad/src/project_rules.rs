@@ -1167,6 +1167,23 @@ fn diff_pair_rules(
             let gap = dru::track_constraint(rules, &paired, layer, copper, "diff_pair_gap");
             let uncoupled =
                 dru::track_constraint(rules, &paired, layer, copper, "diff_pair_uncoupled");
+            // KiCad's `skew` (the pair's nets' lengths apart) and `length`
+            // (each net's): the skew pass matches them (docs/router.md,
+            // "Skew and length").
+            let skew = dru::track_constraint(rules, &paired, layer, copper, "skew");
+            let length = dru::track_constraint(rules, &paired, layer, copper, "length");
+            if let Some(max) = skew.as_ref().and_then(|picked| picked.max) {
+                rule.max_skew = Some(rule.max_skew.map_or(max, |known: f64| known.min(max)));
+            }
+            if let Some(picked) = &length
+                && rule.length.is_none()
+            {
+                rule.length = Some((
+                    picked.min.unwrap_or(0.0),
+                    picked.opt,
+                    picked.max.unwrap_or(f64::INFINITY),
+                ));
+            }
             let w = pick(&width, class.width.unwrap_or(current.trace_width_mm)).max(min_width);
             let g = pick(&gap, class.gap.unwrap_or(current.clearance_mm)).max(pair_clearance);
             rule.layers.push((w, g));
@@ -1185,7 +1202,10 @@ fn diff_pair_rules(
                 (None, None) if class.gap.is_some() => format!("net class '{}'", class.class),
                 _ => "net class clearance".into(),
             });
-            for picked in [&width, &gap, &uncoupled].into_iter().flatten() {
+            for picked in [&width, &gap, &uncoupled, &skew, &length]
+                .into_iter()
+                .flatten()
+            {
                 if !rule.rules.contains(&picked.rule) {
                     rule.rules.push(picked.rule.clone());
                 }

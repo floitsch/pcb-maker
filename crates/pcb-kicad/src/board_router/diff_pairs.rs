@@ -57,6 +57,11 @@ pub struct KiCadDiffPairs {
     /// Coupled links whose pads' order crosses the run's at one end (the
     /// router routes the stubs there, crossing with a via).
     pub crossed: usize,
+    /// Of those, the links whose crossed end has a crossover in its lead:
+    /// one net dives under the other with a via on each side of it, so the
+    /// stubs do not cross (docs/router.md, "Polarity").
+    #[serde(default)]
+    pub crossovers: usize,
     /// The coupled runs' length (millimetres, along the positive net).
     pub coupled_mm: f64,
     /// The coupled pairs' length beyond their coupled runs, after routing:
@@ -66,8 +71,35 @@ pub struct KiCadDiffPairs {
     /// The fallback router's work (seconds of an idle machine), charged
     /// to the ladder.
     pub work_seconds: f64,
+    /// The largest skew of a pair with a coupled link (its nets' lengths
+    /// apart after the route, from the written copper: tracks, and vias at
+    /// the stackup's heights; docs/router.md, "Skew and length").
+    #[serde(default)]
+    pub skew_mm: f64,
+    /// Meanders added to match the pairs' lengths (`KiCadPairSkew`).
+    #[serde(default)]
+    pub meanders: usize,
+    /// Per pair with a coupled link: its lengths and skew (kept in the
+    /// verdict, unlike `pairs`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub skews: Vec<KiCadPairSkew>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pairs: Vec<KiCadDiffPair>,
+}
+
+/// One coupled pair's lengths (`KiCadDiffPairs::skews`).
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct KiCadPairSkew {
+    pub positive: String,
+    pub negative: String,
+    /// The two nets' lengths (positive, negative), millimetres.
+    pub lengths_mm: [f64; 2],
+    pub skew_mm: f64,
+    /// The skew the pair is matched to: the custom rules' `skew` maximum,
+    /// else the pair's gap.
+    pub target_mm: f64,
+    /// What the meander added to the shorter net (0: none).
+    pub meander_mm: f64,
 }
 
 /// Reports from before the switch's default by need were made with the
@@ -94,6 +126,14 @@ pub struct KiCadDiffPair {
     /// Why links fell back, when some did.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub why: Vec<String>,
+    /// After routing: the two nets' lengths apart (`KiCadPairSkew`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skew_mm: Option<f64>,
+    /// The skew it is matched to and what the meander added.
+    #[serde(default)]
+    pub skew_target_mm: f64,
+    #[serde(default)]
+    pub meander_mm: f64,
 }
 
 /// The largest distance between the centres of a pair's two pads on one
@@ -174,6 +214,19 @@ fn debug() -> bool {
     std::env::var_os("PCB_ROUTER_DIFF_PAIRS_DEBUG").is_some()
 }
 
+/// Whether the pairs' lengths are matched (`match_skew`):
+/// `PCB_ROUTER_DIFF_PAIRS_SKEW=0` turns it off (an experiment's switch).
+fn skew_matching() -> bool {
+    std::env::var("PCB_ROUTER_DIFF_PAIRS_SKEW").map_or(true, |value| value != "0")
+}
+
+/// Whether crossed ends get a crossover in their lead (`crossover`):
+/// `PCB_ROUTER_DIFF_PAIRS_CROSSOVER=0` turns it off (an experiment's
+/// switch: the crossed end's stubs are then the router's, as before).
+fn crossovers() -> bool {
+    std::env::var("PCB_ROUTER_DIFF_PAIRS_CROSSOVER").map_or(true, |value| value != "0")
+}
+
 /// A pair found on the board: its nets and its geometry.
 #[derive(Clone)]
 struct Pair {
@@ -197,6 +250,10 @@ struct Pair {
     /// Links between pair points of different parts: indices into
     /// `points`.
     links: Vec<(usize, usize)>,
+    /// The custom rules' `skew` maximum and `length` (min, opt, max) for
+    /// the pair's nets, if any.
+    max_skew: Option<f64>,
+    length: Option<(f64, Option<f64>, f64)>,
 }
 
 impl Pair {
@@ -239,6 +296,12 @@ struct LinkCopper {
     vias: [Vec<Point>; 2],
     coupled: f64,
     crossed: bool,
+    /// Crossovers in its leads (`Crossover`).
+    crossovers: usize,
+    /// Per polarity: the coupled run's tracks among `segments` (the rest
+    /// are stubs, jogs and crossovers), each along the run from the first
+    /// end, its partner on its right where the sign is 1 (left -1).
+    run: [std::ops::Range<usize>; 2],
 }
 
 /// The pairs of a lowered board, by name, with their rules.
@@ -296,6 +359,10 @@ fn find_pairs(board: &core::Board, config: &KiCadBoardRouterConfig) -> Vec<Pair>
             })
             .map(|rule| rule.clearance)
             .fold(class_p.clearance.max(class_n.clearance), f64::max);
+        let (max_skew, length) = config
+            .diff_pair_rules
+            .get(&net.name)
+            .map_or((None, None), |rule| (rule.max_skew, rule.length));
         let (mut width, mut gap, mut layers, mut source) = (
             class_p.trace_width,
             clearance,
@@ -429,6 +496,8 @@ fn find_pairs(board: &core::Board, config: &KiCadBoardRouterConfig) -> Vec<Pair>
             hole_to_hole: board.hole_to_hole,
             points,
             links,
+            max_skew,
+            length,
         });
     }
     pairs
@@ -557,7 +626,7 @@ fn clear_layers(
 
 /// A launch: where a link's coupled run starts at a pair point, and where
 /// its net starts in the route.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct Launch {
     /// Where the link's net starts: the end of the run's straight lead.
     at: Point,
@@ -580,6 +649,11 @@ struct Launch {
     fixed: bool,
     /// Where those stubs start on the pads (positive, negative).
     stubs: [Point; 2],
+    /// Where the stubs end (positive, negative), on the pads' sides.
+    stub_ends: [Point; 2],
+    /// A crossover in the lead (`crossover`; asked for at a crossed end):
+    /// the run past it has the nets on the other sides.
+    crossover: Option<Crossover>,
 }
 
 /// The straight lead of a run from its start to its launch, at least, in
@@ -711,6 +785,134 @@ fn end_clear(
     })
 }
 
+/// A crossover in a launch's lead (`crossover`): where the pads' order at
+/// a link end is against the run's (a *crossed* end), one net (`straight`)
+/// runs straight on from its stub's end while the other dives under it, a
+/// via beside the run on each side of the straight track, and comes up on
+/// its far side; the run starts past it, its centreline beside the
+/// straight track. KiCad's gap check sees the straight track and the
+/// diving net's tracks beside it a gap apart, as in the run.
+#[derive(Clone, Debug)]
+struct Crossover {
+    /// The run's start past the crossover (on its centreline).
+    run_start: Point,
+    /// Per polarity: the tracks (layer index, from, to) from the stub's end
+    /// to the run's start, in order, and the vias.
+    segments: [Vec<(usize, Point, Point)>; 2],
+    vias: [Vec<Point>; 2],
+}
+
+/// A crossover at a run start `start` going `outward` on `layer` (one
+/// bit), the positive pad on `side` of it (1 left): the stubs' ends at
+/// `ends` (positive, negative, on the pads' sides), the run past it with
+/// the nets on the other sides. Either net may run straight; the first
+/// whose copper (the tracks, the vias on every layer, the diving net's
+/// track on another of the pair's layers) keeps every clearance from the
+/// obstacles `near` and the edge wins. `None`: no layer or no room.
+fn crossover(
+    board: &core::Board,
+    near: &[usize],
+    pair: &Pair,
+    (start, outward, side): (Point, Point, f64),
+    (ends, e): ([Point; 2], f64),
+    layer: core::LayerMask,
+) -> Option<Crossover> {
+    let index = layer.trailing_zeros() as usize;
+    let mut others: Vec<usize> = (0..board.layer_count)
+        .filter(|&other| other != index && pair.layers & (1 << other) != 0)
+        .collect();
+    others.sort_by_key(|&other| (other as i64 - index as i64).abs());
+    if others.is_empty() {
+        return None;
+    }
+    let v = left(outward);
+    let at = |x: f64, y: f64| add(start, add(scale(outward, x), scale(v, y)));
+    let (d, w) = (pair.offset(), pair.width);
+    let radius = pair.via_diameter / 2.0;
+    // A via of the diving net keeps the clearance from the straight track,
+    // its hole the hole clearance.
+    let apart = (radius + pair.clearance).max(pair.via_drill / 2.0 + pair.hole_clearance)
+        + w / 2.0
+        + ENDS_MARGIN;
+    let round = |value: f64| (value.max(0.0) / 0.01).ceil() * 0.01;
+    let (out_near, out_far) = (round(apart - 2.0 * e), round(apart - 2.0 * d));
+    for straight in [0usize, 1] {
+        let dive = 1 - straight;
+        // The straight net's side (in `v`) at the pads.
+        let sigma = if straight == 0 { side } else { -side };
+        let jog = LAUNCH_STEP;
+        let first = at(jog + out_near, -sigma * (e + out_near));
+        let second = at(jog + out_near, sigma * (e + 2.0 * d + out_far));
+        let back = at(jog + out_near + out_far, sigma * (e + 2.0 * d));
+        let end_x = jog + out_near + out_far + LAUNCH_STEP;
+        let run_start = at(end_x, sigma * (e + d));
+        if core::geometry::distance(first, second) < pair.via_drill + board.hole_to_hole {
+            continue;
+        }
+        let mut segments: [Vec<(usize, Point, Point)>; 2] = Default::default();
+        segments[straight].push((index, ends[straight], at(end_x, sigma * e)));
+        let corner = at(jog, -sigma * e);
+        let diving = &mut segments[dive];
+        diving.push((index, ends[dive], corner));
+        if out_near > 0.0 {
+            diving.push((index, corner, first));
+        }
+        let mut on_layer = None;
+        for &other in &others {
+            if end_clear(board, near, pair, (first, second), 1 << other) {
+                on_layer = Some(other);
+                break;
+            }
+        }
+        let Some(other) = on_layer else {
+            continue;
+        };
+        diving.push((other, first, second));
+        if out_far > 0.0 {
+            diving.push((index, second, back));
+        }
+        diving.push((index, back, at(end_x, sigma * (e + 2.0 * d))));
+        let vias = [first, second];
+        let tracks_clear = segments.iter().flatten().all(|&(layer, from, to)| {
+            core::geometry::distance(from, to) < EPSILON
+                || end_clear(board, near, pair, (from, to), 1 << layer)
+        });
+        // The vias' copper keeps the clearance, their holes the hole
+        // clearance from other copper and hole to hole from other holes.
+        let vias_clear = vias.iter().all(|&via| {
+            clear_layers(board, near, via, radius, pair.clearance, board.all_layers())
+                == board.all_layers()
+                && near.iter().all(|&index| {
+                    let obstacle = &board.obstacles[index];
+                    let distance = obstacle.shape.distance_to_point(via);
+                    match obstacle.kind {
+                        core::ObstacleKind::Hole => {
+                            distance >= pair.via_drill / 2.0 + board.hole_to_hole
+                        }
+                        core::ObstacleKind::Copper
+                            if obstacle
+                                .net
+                                .is_none_or(|net| net != pair.positive && net != pair.negative) =>
+                        {
+                            distance >= pair.via_drill / 2.0 + board.hole_clearance
+                        }
+                        _ => true,
+                    }
+                })
+        });
+        if tracks_clear && vias_clear {
+            let mut all_vias: [Vec<Point>; 2] = Default::default();
+            all_vias[dive] = vias.to_vec();
+            return Some(Crossover {
+                run_start,
+                segments,
+                vias: all_vias,
+            });
+        }
+    }
+    None
+}
+
 /// A launch for a link at the pair point of pads `p` and `n` toward
 /// `toward`: from between the pads along the pads' normal away from their
 /// part (toward the link's other end where the part does not say), or
@@ -727,6 +929,7 @@ fn launch(
     n: &core::Terminal,
     toward: Point,
     want_fixed: bool,
+    cross: bool,
 ) -> Option<Launch> {
     let middle = scale(add(p.anchor, n.anchor), 0.5);
     let mut normal = left(unit(sub(n.anchor, p.anchor)));
@@ -773,8 +976,104 @@ fn launch(
         } else {
             -1.0
         };
+        // A start with a crossover in its lead: the stubs' ends on the
+        // pads' sides, the crossover's copper clear, the run's lead past it
+        // (beside the straight net) and the envelope at its end clear.
+        let crossed_with = |start: Point, e: f64| -> Option<Launch> {
+            let ends = [
+                add(start, scale(left(outward), side * e)),
+                add(start, scale(left(outward), -side * e)),
+            ];
+            let found = crossover(
+                board,
+                &near,
+                pair,
+                (start, outward, side),
+                (ends, e),
+                layers,
+            )?;
+            let run_start = found.run_start;
+            let lead = LEAD * d;
+            let at = add(run_start, scale(outward, lead));
+            if clear_layers(
+                board,
+                &near,
+                at,
+                half + LAUNCH_MARGIN,
+                class.clearance,
+                layers,
+            ) == 0
+            {
+                return None;
+            }
+            let samples = (lead / LAUNCH_STEP).ceil() as usize;
+            if (0..samples).any(|sample| {
+                let point = add(run_start, scale(outward, sample as f64 * LAUNCH_STEP));
+                clear_layers(board, &near, point, half, class.clearance, layers) == 0
+            }) {
+                return None;
+            }
+            let stubs = [
+                stub_start(board, p, ends[0], pair.width),
+                stub_start(board, n, ends[1], pair.width),
+            ];
+            // The stubs keep their clearance from the other net's crossover
+            // copper too.
+            let apart_from_crossover = |polarity: usize| {
+                let (pad, end) = (stubs[polarity], ends[polarity]);
+                let other = 1 - polarity;
+                found.segments[other]
+                    .iter()
+                    .filter(|(layer, ..)| 1 << layer == layers)
+                    .all(|&(_, from, to)| {
+                        core::geometry::segment_segment_distance(pad, end, from, to)
+                            >= pair.width + pair.gap.min(pair.clearance) - EPSILON
+                    })
+                    && found.vias[other].iter().all(|&via| {
+                        core::geometry::point_segment_distance(via, pad, end)
+                            >= pair.width / 2.0
+                                + (pair.via_diameter / 2.0 + pair.clearance)
+                                    .max(pair.via_drill / 2.0 + pair.hole_clearance)
+                    })
+            };
+            let fixed = want_fixed
+                && stubs_clear(board, &near, pair, stubs, ends, layers)
+                && apart_from_crossover(0)
+                && apart_from_crossover(1);
+            Some(Launch {
+                at,
+                start,
+                reserved: run_start,
+                ends: scale(outward, ends_reach),
+                outward,
+                layers,
+                side,
+                fixed,
+                stubs,
+                stub_ends: ends,
+                crossover: Some(found),
+            })
+        };
+        let crossed_at = |start: Point| -> Option<Launch> {
+            // The stubs' ends an offset apart where the link carries the
+            // stubs (KiCad then sees the tracks before the crossover a gap
+            // apart), else as far apart as the router keeps the two nets.
+            let (d, e) = (pair.offset(), pair.ends_offset());
+            let offsets: &[f64] = if e > d + EPSILON && want_fixed {
+                &[d, e]
+            } else {
+                &[e]
+            };
+            offsets.iter().find_map(|&offset| {
+                let launch = crossed_with(start, offset)?;
+                (launch.fixed || offset >= e).then_some(launch)
+            })
+        };
         let clear_at = |step: usize| {
             let start = add(middle, scale(outward, step as f64 * LAUNCH_STEP));
+            if cross {
+                return crossed_at(start);
+            }
             let at = add(start, scale(outward, lead));
             let reserved = add(start, scale(outward, reserve));
             // The envelope at the launch, with room for lattice nodes, and
@@ -831,6 +1130,8 @@ fn launch(
                 side,
                 fixed,
                 stubs,
+                stub_ends: ends,
+                crossover: None,
             })
         };
         let cost_of = |found: &Launch| {
@@ -845,10 +1146,10 @@ fn launch(
                 continue;
             };
             let cost = cost_of(&found);
-            if best.is_none_or(|(known, _)| cost < known - 1.0e-9) {
-                best = Some((cost, found));
+            if best.as_ref().is_none_or(|(known, _)| cost < known - 1.0e-9) {
+                best = Some((cost, found.clone()));
             }
-            if !want_fixed || best_fixed.is_some_and(|(known, _)| known <= cost) {
+            if !want_fixed || best_fixed.as_ref().is_some_and(|(known, _)| *known <= cost) {
                 break;
             }
             if found.fixed {
@@ -864,7 +1165,7 @@ fn launch(
             "diff pair launch {} / {}: {:?}",
             p.label,
             n.label,
-            best.map(|(_, launch)| launch)
+            best.as_ref().map(|(_, launch)| launch)
         );
     }
     best.map(|(_, launch)| launch)
@@ -896,6 +1197,10 @@ struct LinkPlan {
     fixed: [bool; 2],
     /// Per end and polarity: where those stubs start on the pads.
     stubs: [[Point; 2]; 2],
+    /// Per end: the crossover in its lead (at a crossed end, where one
+    /// fits): the run starts past it (`starts`), the stubs' ends are on the
+    /// pads' sides.
+    crossovers: [Option<Crossover>; 2],
 }
 
 impl LinkPlan {
@@ -1102,7 +1407,7 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
                 ),
             ];
             let middle = |end: usize| scale(add(ends[end].0.anchor, ends[end].1.anchor), 0.5);
-            let launch_at = |end: usize, want_fixed: bool| {
+            let launch_at = |end: usize, want_fixed: bool, cross: bool| {
                 launch(
                     board,
                     pair,
@@ -1111,25 +1416,27 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
                     &ends[end].1,
                     middle(1 - end),
                     want_fixed,
+                    cross,
                 )
             };
             // Launches whose stubs the link carries where there are such,
             // else (or where those leave no run) the closest.
-            let mut launches = [launch_at(0, true), launch_at(1, true)];
+            let mut launches = [launch_at(0, true, false), launch_at(1, true, false)];
             let too_close = |launches: &[Option<Launch>; 2]| match launches {
                 [Some(a), Some(b)] => core::geometry::distance(a.at, b.at) < MINIMUM_RUN,
                 _ => false,
             };
             if too_close(&launches) && launches.iter().flatten().any(|found| found.fixed) {
-                launches = [launch_at(0, false), launch_at(1, false)];
+                launches = [launch_at(0, false, false), launch_at(1, false, false)];
             }
+            let close = too_close(&launches);
             let [Some(mut launch_a), Some(mut launch_b)] = launches else {
                 entries[index]
                     .why
                     .push(format!("link {}: no launch clear of the pads", link + 1));
                 continue;
             };
-            if too_close(&launches) {
+            if close {
                 entries[index].why.push(format!(
                     "link {}: the launches are too close for a coupled run",
                     link + 1
@@ -1145,18 +1452,53 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
             // at one end, which the router routes (with a via): the second
             // end, unless only the second end's stubs are straight.
             let crossed = launch_b.side == launch_a.side;
-            let side = if crossed && !launch_a.fixed && launch_b.fixed {
+            let mut side = if crossed && !launch_a.fixed && launch_b.fixed {
                 -launch_b.side
             } else {
                 launch_a.side
             };
-            if crossed {
+            // At a crossed end a crossover in the lead (`crossover`), where
+            // one fits: at the second end, else at the first; one whose
+            // stubs the link carries first.
+            let mut crossing = None;
+            if crossed && crossovers() {
+                let at_b = launch_at(1, true, true);
+                let at_a = launch_at(0, true, true);
+                let far = |found: &Launch, other: &Launch| {
+                    core::geometry::distance(found.at, other.at) >= MINIMUM_RUN
+                };
+                let options = [
+                    at_b.filter(|found| far(found, &launch_a))
+                        .map(|found| (1, found)),
+                    at_a.filter(|found| far(found, &launch_b))
+                        .map(|found| (0, found)),
+                ];
+                let fixed_at = |end: usize, found: &Launch| {
+                    found.fixed && [&launch_a, &launch_b][1 - end].fixed
+                };
+                // Both ends' stubs the link's first.
+                crossing = options
+                    .iter()
+                    .flatten()
+                    .find(|(end, found)| fixed_at(*end, found))
+                    .or(options.iter().flatten().next())
+                    .cloned();
+            }
+            if let Some((end, found)) = crossing {
+                if end == 1 {
+                    side = launch_a.side;
+                    launch_b = found;
+                } else {
+                    side = -launch_a.side;
+                    launch_a = found;
+                }
+            } else if crossed {
                 // The crossed end's stubs are routed: its closest launch.
                 if side == launch_a.side {
-                    launch_b = launch_at(1, false).unwrap_or(launch_b);
+                    launch_b = launch_at(1, false, false).unwrap_or(launch_b);
                     launch_b.fixed = false;
                 } else {
-                    launch_a = launch_at(0, false).unwrap_or(launch_a);
+                    launch_a = launch_at(0, false, false).unwrap_or(launch_a);
                     launch_a.fixed = false;
                 }
                 if core::geometry::distance(launch_a.at, launch_b.at) < MINIMUM_RUN {
@@ -1169,7 +1511,7 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
             }
             let mut terminals = Vec::new();
             let mut stub_ends = [[[0.0; 2]; 2]; 2];
-            for (end, found) in [launch_a, launch_b].into_iter().enumerate() {
+            for (end, found) in [&launch_a, &launch_b].into_iter().enumerate() {
                 let label = format!("pair launch {}{}", link + 1, ["a", "b"][end]);
                 // The lead past the stubs' ends: the terminal's copper; the
                 // search starts close to the launch.
@@ -1190,7 +1532,7 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
                 // link down near it, `Router::prepare_net`).
                 board.obstacles.push(core::Obstacle {
                     shape: core::Shape::Capsule {
-                        start: if found.fixed {
+                        start: if found.fixed && found.crossover.is_none() {
                             found.start
                         } else {
                             found.reserved
@@ -1220,7 +1562,12 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
                     .into_iter()
                     .enumerate()
                 {
-                    let at = add(found.start, scale(across, sign * pair.ends_offset()));
+                    // At a crossover the stubs' ends are on the pads' sides.
+                    let at = if found.crossover.is_some() {
+                        found.stub_ends[polarity]
+                    } else {
+                        add(found.start, scale(across, sign * pair.ends_offset()))
+                    };
                     stub_ends[end][polarity] = at;
                     let terminals = &mut board.nets[net as usize].terminals;
                     terminals.push(core::Terminal {
@@ -1271,8 +1618,69 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
                         });
                     }
                 }
+                // A crossover's copper: of the pair's nets (other nets keep
+                // clear of it).
+                if let Some(crossing) = &found.crossover {
+                    for (polarity, net) in [pair.positive, pair.negative].into_iter().enumerate() {
+                        for &(layer, from, to) in &crossing.segments[polarity] {
+                            board.obstacles.push(core::Obstacle {
+                                shape: core::Shape::Capsule {
+                                    start: from,
+                                    end: to,
+                                    radius: pair.width / 2.0,
+                                },
+                                layers: 1 << layer,
+                                kind: core::ObstacleKind::Copper,
+                                net: Some(net),
+                                clearance: 0.0,
+                                clearance_override: None,
+                                blocks_tracks: true,
+                                blocks_vias: true,
+                                label: format!("pair crossover {}{}", link + 1, ["a", "b"][end]),
+                            });
+                        }
+                        for &via in &crossing.vias[polarity] {
+                            for (kind, radius) in [
+                                (core::ObstacleKind::Copper, pair.via_diameter / 2.0),
+                                (core::ObstacleKind::Hole, pair.via_drill / 2.0),
+                            ] {
+                                board.obstacles.push(core::Obstacle {
+                                    shape: core::Shape::Circle {
+                                        center: via,
+                                        radius,
+                                    },
+                                    layers: board.all_layers(),
+                                    kind,
+                                    net: Some(net),
+                                    clearance: 0.0,
+                                    clearance_override: None,
+                                    blocks_tracks: true,
+                                    blocks_vias: true,
+                                    label: format!(
+                                        "pair crossover {}{}",
+                                        link + 1,
+                                        ["a", "b"][end]
+                                    ),
+                                });
+                            }
+                        }
+                    }
+                }
             }
             let fixed = [launch_a.fixed, launch_b.fixed];
+            if debug() {
+                eprintln!(
+                    "diff pair link plan {} / {} link {}: crossed {crossed}, fixed {fixed:?}, layers {:#x}, side {side}, launches {:?} {:?}, crossovers {:?} {:?}",
+                    board.nets[pair.positive as usize].name,
+                    board.nets[pair.negative as usize].name,
+                    link + 1,
+                    pair.layers,
+                    (launch_a.start, launch_a.at, launch_a.side),
+                    (launch_b.start, launch_b.at, launch_b.side),
+                    launch_a.crossover,
+                    launch_b.crossover
+                );
+            }
             board.nets.push(core::Net {
                 name: format!(
                     "{} / {} link {}",
@@ -1308,7 +1716,13 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
                 pair: index,
                 link,
                 launches: [launch_a.at, launch_b.at],
-                starts: [launch_a.start, launch_b.start],
+                // Past a crossover the run starts beyond it.
+                starts: [&launch_a, &launch_b].map(|found| {
+                    found
+                        .crossover
+                        .as_ref()
+                        .map_or(found.start, |crossing| crossing.run_start)
+                }),
                 ends: stub_ends,
                 pads: [
                     [ends[0].0.anchor, ends[0].1.anchor],
@@ -1318,6 +1732,7 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
                 crossed,
                 fixed,
                 stubs: [launch_a.stubs, launch_b.stubs],
+                crossovers: [launch_a.crossover, launch_b.crossover],
             });
         }
     }
@@ -1423,6 +1838,64 @@ fn link_path(route: &core::NetRoute, start: Point, end: Point) -> Option<Vec<(Po
             .map(|(point, layer)| (points[&point], layer))
             .collect(),
     )
+}
+
+/// A link's path without its hairpins, which the offset tracks cannot
+/// follow apart: a point of one layer where the path turns back by more
+/// than a right angle goes, and two turns the same way with less than
+/// `short` between them become one at the lines' meeting point, where that
+/// lies within `short` of both (the first and last two points, the run's
+/// lead, stay).
+fn despiked(path: &[(Point, usize)], short: f64) -> Vec<(Point, usize)> {
+    let mut out = path.to_vec();
+    let same_layer = |points: &[(Point, usize)]| points.windows(2).all(|w| w[0].1 == w[1].1);
+    loop {
+        let count = out.len();
+        let spike = (2..count.saturating_sub(2)).find(|&i| {
+            let (a, b, c) = (out[i - 1], out[i], out[i + 1]);
+            same_layer(&out[i - 1..=i + 1])
+                && core::geometry::distance(a.0, b.0) > 1.0e-6
+                && core::geometry::distance(b.0, c.0) > 1.0e-6
+                && dot(unit(sub(b.0, a.0)), unit(sub(c.0, b.0))) < -1.0e-3
+        });
+        if let Some(i) = spike {
+            out.remove(i);
+            continue;
+        }
+        // A short piece between two turns the same way: A B C D, B to C
+        // short.
+        let merged = (2..count.saturating_sub(3)).find_map(|i| {
+            let (a, b, c, e) = (out[i - 1].0, out[i].0, out[i + 1].0, out[i + 2].0);
+            if !same_layer(&out[i - 1..=i + 2]) || core::geometry::distance(b, c) >= short {
+                return None;
+            }
+            let (u1, u2, u3) = (unit(sub(b, a)), unit(sub(c, b)), unit(sub(e, c)));
+            let (t1, t2) = (cross(u1, u2), cross(u2, u3));
+            if t1 * t2 <= 0.0 || t1.abs() < 1.0e-6 || t2.abs() < 1.0e-6 {
+                return None;
+            }
+            // Where line A B meets line C D.
+            let denominator = cross(u1, u3);
+            if denominator.abs() < 1.0e-6 {
+                return None;
+            }
+            let along = cross(sub(c, b), u3) / denominator;
+            let meet = add(b, scale(u1, along));
+            (along > 0.0
+                && core::geometry::distance(meet, b) <= short
+                && core::geometry::distance(meet, c) <= short
+                && dot(sub(meet, a), u1) > 0.0
+                && dot(sub(e, meet), u3) > 0.0)
+                .then_some((i, meet))
+        });
+        match merged {
+            Some((i, meet)) => {
+                out[i].0 = meet;
+                out.remove(i + 1);
+            }
+            None => return out,
+        }
+    }
 }
 
 /// A polyline's points without repeats and without points in a straight
@@ -1588,6 +2061,25 @@ pub(crate) struct PairCopper {
         Vec<(usize, Point, Point)>,
         Vec<Point>,
     )>,
+    /// Meanders, written as KiCad tuning patterns (`generated`, type
+    /// `tuning_pattern`: KiCad's gap check skips their tracks).
+    patterns: Vec<Meander>,
+}
+
+/// A meander on one net of a pair's coupled run (`match_skew`).
+#[derive(Clone, Debug)]
+struct Meander {
+    net: String,
+    width: f64,
+    layer: usize,
+    /// The meander's polyline, from where it leaves the run's track to
+    /// where it rejoins it.
+    points: Vec<Point>,
+    gap: f64,
+    amplitude: f64,
+    spacing: f64,
+    /// The length it adds.
+    added: f64,
 }
 
 /// Writes the pairs' copper into `pcb` as tracks and vias of their nets.
@@ -1619,7 +2111,78 @@ pub(crate) fn write_pair_copper(
             }));
         }
     }
+    // The meanders: their tracks, grouped as KiCad's tuning patterns (a
+    // diff pair skew pattern; KiCad's gap check skips a pattern's tracks).
+    for meander in &copper.patterns {
+        let layer = layer_names[meander.layer].clone();
+        let mut members = Vec::new();
+        for pair in meander.points.windows(2) {
+            let segment = supplemental_segment_expr(&SupplementalSegment {
+                connection: meander.net.clone(),
+                start: nanometres(pair[0]),
+                end: nanometres(pair[1]),
+                width: meander.width,
+                layer: layer.clone(),
+            });
+            if let Some(uuid) = segment
+                .child("uuid")
+                .and_then(|uuid| uuid.children().get(1))
+                .and_then(Expr::atom)
+            {
+                members.push(Expr::Atom(quote(uuid)));
+            }
+            items.push(segment);
+        }
+        items.push(tuning_pattern_expr(meander, &layer, members));
+    }
     Ok(())
+}
+
+/// A KiCad tuning pattern (`generated`) over a meander's tracks.
+fn tuning_pattern_expr(meander: &Meander, layer: &str, members: Vec<Expr>) -> Expr {
+    let atom = |text: String| Expr::Atom(text);
+    let form = |head: &str, values: Vec<Expr>| {
+        let mut items = vec![atom(head.into())];
+        items.extend(values);
+        Expr::List(items)
+    };
+    let number = |value: f64| atom(format!("{value:.6}"));
+    let xy = |point: Point| form("xy", vec![number(point[0]), number(point[1])]);
+    let (first, last) = (meander.points[0], meander.points[meander.points.len() - 1]);
+    let identity = format!(
+        "pcb-maker:tuning-pattern:{}:{:.9}:{:.9}:{:.9}:{:.9}:{layer}",
+        meander.net, first[0], first[1], last[0], last[1]
+    );
+    let text = |value: &str| atom(quote(value));
+    let mut items = vec![
+        form("uuid", vec![text(&deterministic_uuid_for(&identity))]),
+        form("type", vec![atom("tuning_pattern".into())]),
+        form("name", vec![text("Tuning Pattern")]),
+        form("layer", vec![text(layer)]),
+        form("base_line", vec![form("pts", vec![xy(first), xy(last)])]),
+        form("corner_radius_percent", vec![atom("0".into())]),
+        form("end", vec![xy(last)]),
+        form("initial_side", vec![text("default")]),
+        form("is_time_domain", vec![atom("no".into())]),
+        form("last_diff_pair_gap", vec![number(meander.gap)]),
+        form("last_netname", vec![text(&written_net_name(&meander.net))]),
+        form("last_status", vec![text("tuned")]),
+        form("last_track_width", vec![number(meander.width)]),
+        form("last_tuning_length", vec![number(meander.added)]),
+        form("max_amplitude", vec![number(meander.amplitude)]),
+        form("min_amplitude", vec![number(meander.amplitude)]),
+        form("min_spacing", vec![number(meander.spacing)]),
+        form("origin", vec![xy(first)]),
+        form("override_custom_rules", vec![atom("no".into())]),
+        form("rounded", vec![atom("no".into())]),
+        form("single_sided", vec![atom("yes".into())]),
+        form("target_skew", vec![number(0.0)]),
+        form("target_skew_max", vec![number(meander.gap)]),
+        form("target_skew_min", vec![number(-meander.gap)]),
+        form("tuning_mode", vec![text("diff_pair_skew")]),
+    ];
+    items.push(form("members", members));
+    form("generated", items)
 }
 
 /// A routed board with its pairs' links as nets (`plan_pairs`) turned back
@@ -1636,6 +2199,7 @@ pub(crate) fn finish_pairs(
     board: &core::Board,
     result: &mut core::RoutingResult,
     config: &KiCadBoardRouterConfig,
+    heights: &[f64],
 ) -> Option<(core::Board, PairCopper, KiCadDiffPairs)> {
     let plan = board
         .attachment
@@ -1684,6 +2248,7 @@ pub(crate) fn finish_pairs(
     // The links' copper.
     let mut candidates: Vec<(usize, usize, LinkCopper)> = Vec::new();
     let mut candidate_links: Vec<&LinkPlan> = Vec::new();
+    let mut alternatives: Vec<Option<LinkCopper>> = Vec::new();
     let mut open_pairs: BTreeSet<usize> = BTreeSet::new();
     for plan_link in &plan.links {
         let (index, link) = (plan_link.pair, plan_link.link);
@@ -1737,18 +2302,33 @@ pub(crate) fn finish_pairs(
         if debug() {
             eprintln!("diff pair link {} path {:?}", plan_link.net, path);
         }
-        let copper = path.as_ref().and_then(|path| {
+        let build = |path: &Vec<(Point, usize)>| {
             link_copper(path, pair, plan_link.side).map(|mut copper| {
                 copper.crossed = plan_link.crossed;
                 // The jogs from the stubs' ends to the run's tracks.
                 for (polarity, segments) in copper.segments.iter_mut().enumerate() {
                     let [from, to] = [plan_link.ends[0][polarity], plan_link.ends[1][polarity]];
-                    if let Some(&(layer, tip, _)) = segments.first()
+                    let length = segments.len();
+                    let mut front = 0;
+                    // A crossover's copper from the stubs' ends to the run,
+                    // else a jog.
+                    if let Some(crossing) = &plan_link.crossovers[0] {
+                        segments.splice(0..0, crossing.segments[polarity].iter().copied());
+                        front += crossing.segments[polarity].len();
+                    } else if let Some(&(layer, tip, _)) = segments.first()
                         && core::geometry::distance(tip, from) > 1.0e-6
                     {
                         segments.insert(0, (layer, from, tip));
+                        front += 1;
                     }
-                    if let Some(&(layer, _, tip)) = segments.last()
+                    if let Some(crossing) = &plan_link.crossovers[1] {
+                        segments.extend(
+                            crossing.segments[polarity]
+                                .iter()
+                                .rev()
+                                .map(|&(layer, from, to)| (layer, to, from)),
+                        );
+                    } else if let Some(&(layer, _, tip)) = segments.last()
                         && core::geometry::distance(tip, to) > 1.0e-6
                     {
                         segments.push((layer, tip, to));
@@ -1758,16 +2338,35 @@ pub(crate) fn finish_pairs(
                         && let Some(&(layer, _, _)) = segments.first()
                     {
                         segments.insert(0, (layer, plan_link.stubs[0][polarity], from));
+                        front += 1;
                     }
                     if plan_link.fixed[1]
                         && let Some(&(layer, _, _)) = segments.last()
                     {
                         segments.push((layer, to, plan_link.stubs[1][polarity]));
                     }
+                    copper.run[polarity] = front..front + length;
+                }
+                for crossing in plan_link.crossovers.iter().flatten() {
+                    for polarity in 0..2 {
+                        copper.vias[polarity].extend(crossing.vias[polarity].iter().copied());
+                    }
+                    copper.crossovers += 1;
                 }
                 copper
             })
-        });
+        };
+        // The run without its hairpins (the route turning back by more
+        // than a right angle, which the offset tracks cannot follow apart),
+        // the route as it is the alternative where that is refused.
+        let despiked = path
+            .as_ref()
+            .map(|path| despiked(path, 2.5 * pair.offset()));
+        let copper = despiked.as_ref().and_then(build);
+        let alternative = path
+            .as_ref()
+            .filter(|path| despiked.as_ref().is_some_and(|other| other != *path))
+            .and_then(build);
         // Each pad's stub must reach its end of the run (else the run is an
         // island and the pad open): the link falls back.
         let reach = |net: core::NetId| {
@@ -1793,6 +2392,12 @@ pub(crate) fn finish_pairs(
                     )
                 })
         });
+        if copper.is_some() && !stubs_joined && debug() {
+            eprintln!(
+                "diff pair link {} stub fails: crossed {}, fixed {:?}",
+                board.nets[plan_link.net as usize].name, plan_link.crossed, plan_link.fixed
+            );
+        }
         if copper.is_some() && !stubs_joined {
             entries[index].why.push(format!(
                 "link {}: a pad's stub does not reach the run",
@@ -1804,6 +2409,7 @@ pub(crate) fn finish_pairs(
         match copper {
             Some(copper) => {
                 candidates.push((index, link, copper));
+                alternatives.push(alternative);
                 candidate_links.push(plan_link);
             }
             None => {
@@ -1823,8 +2429,51 @@ pub(crate) fn finish_pairs(
             vias: copper.vias.clone(),
         })
         .collect();
-    let refused = refused_groups(&restored, &result.routes, &plan.pairs, &groups);
-    let mut copper_out = PairCopper { items: Vec::new() };
+    let mut refused = refused_groups(&restored, &result.routes, &plan.pairs, &groups);
+    // A refused link with an alternative copper (its route's hairpins kept)
+    // is checked again with it, beside every other link's.
+    if refused
+        .iter()
+        .zip(&alternatives)
+        .any(|(why, other)| why.is_some() && other.is_some())
+    {
+        let swapped: Vec<bool> = refused
+            .iter()
+            .zip(&alternatives)
+            .map(|(why, other)| why.is_some() && other.is_some())
+            .collect();
+        let second: Vec<Group> = candidates
+            .iter()
+            .zip(&alternatives)
+            .zip(&swapped)
+            .map(|(((index, _, copper), other), &swap)| {
+                let copper = if swap {
+                    other.as_ref().expect("an alternative")
+                } else {
+                    copper
+                };
+                Group {
+                    pair: *index,
+                    segments: copper.segments.clone(),
+                    vias: copper.vias.clone(),
+                }
+            })
+            .collect();
+        let again = refused_groups(&restored, &result.routes, &plan.pairs, &second);
+        for position in 0..candidates.len() {
+            if swapped[position] && again[position].is_none() {
+                refused[position] = None;
+                candidates[position].2 = alternatives[position].take().expect("an alternative");
+            }
+        }
+    }
+    let mut copper_out = PairCopper {
+        items: Vec::new(),
+        patterns: Vec::new(),
+    };
+    // Per kept link: its pair, its copper's items (positive, negative) and
+    // run ranges, and the positive net's side.
+    let mut kept_runs: Vec<(usize, [usize; 2], [std::ops::Range<usize>; 2], f64)> = Vec::new();
     let mut kept_links: Vec<&LinkPlan> = Vec::new();
     for (position, (index, link, copper)) in candidates.into_iter().enumerate() {
         if let Some(why) = &refused[position] {
@@ -1833,6 +2482,12 @@ pub(crate) fn finish_pairs(
             continue;
         }
         kept_links.push(candidate_links[position]);
+        kept_runs.push((
+            index,
+            [copper_out.items.len(), copper_out.items.len() + 1],
+            copper.run.clone(),
+            candidate_links[position].side,
+        ));
         let pair = &plan.pairs[index];
         for (polarity, net) in [(0, pair.positive), (1, pair.negative)] {
             for &(layer, start, end) in &copper.segments[polarity] {
@@ -1867,6 +2522,22 @@ pub(crate) fn finish_pairs(
                     blocks_vias: true,
                     label: "existing via".into(),
                 });
+                // Its drill keeps the hole clearance from other nets'
+                // copper (the fallback routes beside it).
+                restored.obstacles.push(core::Obstacle {
+                    shape: core::Shape::Circle {
+                        center: at,
+                        radius: pair.via_drill / 2.0,
+                    },
+                    layers: restored.all_layers(),
+                    kind: core::ObstacleKind::Hole,
+                    net: Some(net),
+                    clearance: 0.0,
+                    clearance_override: None,
+                    blocks_tracks: true,
+                    blocks_vias: true,
+                    label: "existing via hole".into(),
+                });
             }
             copper_out.items.push((
                 restored.nets[net as usize].name.clone(),
@@ -1880,6 +2551,7 @@ pub(crate) fn finish_pairs(
         entries[index].links_coupled += 1;
         entries[index].coupled_mm += copper.coupled;
         report.crossed += copper.crossed as usize;
+        report.crossovers += copper.crossovers;
     }
     // The stubs of the links not kept go (the fallback routes the pads
     // anew).
@@ -1957,6 +2629,22 @@ pub(crate) fn finish_pairs(
             }
         }
     }
+    // The skew: per pair with a kept link, the shorter net's meander.
+    for index in 0..plan.pairs.len() {
+        if skew_matching() && kept_runs.iter().any(|(owner, ..)| *owner == index) {
+            match_skew(
+                &mut restored,
+                result,
+                &plan.pairs,
+                index,
+                &kept_runs,
+                &mut copper_out,
+                &mut entries[index],
+                heights,
+            );
+            report.meanders += (entries[index].meander_mm > 0.0) as usize;
+        }
+    }
     // A pair's net whose pads the links joined all is routed, not trivial.
     for (net, original) in &plan.originals {
         let net = *net as usize;
@@ -1987,6 +2675,225 @@ pub(crate) fn finish_pairs(
         );
     }
     Some((restored, copper_out, report))
+}
+
+/// A meander's polyline on the track from `a` to `b`: `count` bumps of
+/// `height` toward `outward`, each `spacing` wide and `spacing` apart,
+/// starting `from` along the track, their corners cut at 45 degrees.
+fn bumps(
+    (a, b): (Point, Point),
+    outward: Point,
+    from: f64,
+    count: usize,
+    height: f64,
+    spacing: f64,
+) -> Vec<Point> {
+    let u = unit(sub(b, a));
+    let at = |x: f64, y: f64| add(a, add(scale(u, x), scale(outward, y)));
+    let cut = (height / 2.0).min(spacing / 4.0);
+    let mut points = Vec::new();
+    let mut x = from;
+    for _ in 0..count {
+        points.extend([
+            at(x, 0.0),
+            at(x, height - cut),
+            at(x + cut, height),
+            at(x + spacing - cut, height),
+            at(x + spacing, height - cut),
+            at(x + spacing, 0.0),
+        ]);
+        x += 2.0 * spacing;
+    }
+    points
+}
+
+fn polyline_length(points: &[Point]) -> f64 {
+    points
+        .windows(2)
+        .map(|pair| core::geometry::distance(pair[0], pair[1]))
+        .sum()
+}
+
+/// Matches a pair's lengths (KiCad's `skew` and `length`): the two nets'
+/// lengths from their copper (the routes and the kept links', vias at the
+/// stackup's `heights`); where they are further apart than the target (the
+/// rules' `skew` maximum, else the pair's gap), or a net is shorter than
+/// the rules' `length` minimum, a meander on a straight track of the
+/// shorter net's coupled run adds what it lacks: bumps away from its
+/// partner, the first placement whose copper keeps every clearance
+/// (`refused_groups`), else none. KiCad's gap check skips the meander's
+/// tracks (a tuning pattern, `write_pair_copper`).
+#[allow(clippy::too_many_arguments)]
+fn match_skew(
+    restored: &mut core::Board,
+    result: &core::RoutingResult,
+    pairs: &[Pair],
+    index: usize,
+    kept_runs: &[(usize, [usize; 2], [std::ops::Range<usize>; 2], f64)],
+    copper_out: &mut PairCopper,
+    entry: &mut KiCadDiffPair,
+    heights: &[f64],
+) {
+    let pair = &pairs[index];
+    let target = pair.max_skew.unwrap_or(pair.gap);
+    entry.skew_target_mm = target;
+    let length_of = |net: core::NetId, copper_out: &PairCopper| {
+        let route = &result.routes[net as usize];
+        let mut tracks: Vec<(usize, Point, Point)> = route
+            .segments
+            .iter()
+            .map(|segment| (segment.layer, segment.start, segment.end))
+            .collect();
+        let mut vias: Vec<Point> = route.vias.iter().map(|via| via.at).collect();
+        let name = &restored.nets[net as usize].name;
+        for item in copper_out.items.iter().filter(|item| &item.0 == name) {
+            tracks.extend(item.4.iter().copied());
+            vias.extend(item.5.iter().copied());
+        }
+        // A meander's track is in its pattern, not its item.
+        let meanders: f64 = copper_out
+            .patterns
+            .iter()
+            .filter(|pattern| &pattern.net == name)
+            .map(|pattern| polyline_length(&pattern.points))
+            .sum();
+        copper_length(&tracks, &vias, heights) + meanders
+    };
+    let nets = [pair.positive, pair.negative];
+    let lengths = nets.map(|net| length_of(net, copper_out));
+    let longer = lengths[0].max(lengths[1]);
+    let mut goal = longer;
+    if let Some((min, opt, _)) = pair.length
+        && longer < min
+    {
+        goal = opt.unwrap_or(min).max(min);
+    }
+    let w = pair.width;
+    let spacing = (w + pair.clearance).max(2.0 * w);
+    let cap = (3.0 * w).max(2.0 * pair.gap);
+    for polarity in 0..2 {
+        let need = goal - lengths[polarity];
+        let skewed = (lengths[0] - lengths[1]).abs() > target && lengths[polarity] < longer;
+        let short = goal > longer && need > 0.0;
+        if need < 0.005 || !(skewed || short) {
+            continue;
+        }
+        // Bumps of at most `cap`: as few as hold the length, as high as
+        // needed (bisected).
+        let added = |height: f64| {
+            polyline_length(&bumps(
+                ([0.0, 0.0], [1.0, 0.0]),
+                [0.0, 1.0],
+                0.0,
+                1,
+                height,
+                spacing,
+            )) - spacing
+        };
+        let count = (need / added(cap)).ceil().max(1.0) as usize;
+        let (mut low, mut high) = (0.0, cap);
+        for _ in 0..40 {
+            let middle = (low + high) / 2.0;
+            if count as f64 * added(middle) < need {
+                low = middle;
+            } else {
+                high = middle;
+            }
+        }
+        let height = high;
+        let span = (2 * count - 1) as f64 * spacing;
+        let margin = spacing.max(2.0 * pair.offset());
+        // The straight tracks of the run long enough, the longest first;
+        // per track the meander nearest its start, its middle, its end.
+        let mut tracks: Vec<(usize, usize, f64)> = Vec::new();
+        for (_, items, runs, _) in kept_runs.iter().filter(|run| run.0 == index) {
+            let item = &copper_out.items[items[polarity]];
+            for position in runs[polarity].clone() {
+                let Some(&(_, a, b)) = item.4.get(position) else {
+                    continue;
+                };
+                let length = core::geometry::distance(a, b);
+                if length >= span + 2.0 * margin {
+                    tracks.push((items[polarity], position, length));
+                }
+            }
+        }
+        tracks.sort_by(|x, y| y.2.total_cmp(&x.2).then(x.0.cmp(&y.0)).then(x.1.cmp(&y.1)));
+        let sign_of = |item: usize| {
+            kept_runs
+                .iter()
+                .find(|run| run.1[polarity] == item)
+                .map_or(1.0, |run| if polarity == 0 { run.3 } else { -run.3 })
+        };
+        'tracks: for (item, position, length) in tracks {
+            let (layer, a, b) = copper_out.items[item].4[position];
+            let outward = scale(left(unit(sub(b, a))), sign_of(item));
+            for from in [margin, (length - span) / 2.0, length - margin - span] {
+                let points = bumps((a, b), outward, from, count, height, spacing);
+                let mut group = Group {
+                    pair: index,
+                    segments: Default::default(),
+                    vias: Default::default(),
+                };
+                group.segments[polarity] = points
+                    .windows(2)
+                    .map(|pair_of_points| (layer, pair_of_points[0], pair_of_points[1]))
+                    .collect();
+                let refused = refused_groups(restored, &result.routes, pairs, &[group]);
+                if refused[0].is_some() {
+                    continue;
+                }
+                // The track splits around the meander.
+                let (first, last) = (points[0], points[points.len() - 1]);
+                let item_copper = &mut copper_out.items[item].4;
+                item_copper.splice(position..=position, [(layer, a, first), (layer, last, b)]);
+                let net = nets[polarity];
+                let pieces: Vec<(Point, Point)> = std::iter::once((a, first))
+                    .chain(points.windows(2).map(|w| (w[0], w[1])))
+                    .chain(std::iter::once((last, b)))
+                    .collect();
+                if let Some(obstacle) = restored.obstacles.iter().position(|obstacle| {
+                    obstacle.net == Some(net)
+                        && obstacle.layers == 1 << layer
+                        && matches!(obstacle.shape, core::Shape::Capsule { start, end, .. }
+                            if core::geometry::distance(start, a) < 1.0e-9
+                                && core::geometry::distance(end, b) < 1.0e-9)
+                }) {
+                    restored.obstacles.remove(obstacle);
+                }
+                for (start, end) in pieces {
+                    restored.obstacles.push(core::Obstacle {
+                        shape: core::Shape::Capsule {
+                            start,
+                            end,
+                            radius: w / 2.0,
+                        },
+                        layers: 1 << layer,
+                        kind: core::ObstacleKind::Copper,
+                        net: Some(net),
+                        clearance: 0.0,
+                        clearance_override: None,
+                        blocks_tracks: true,
+                        blocks_vias: true,
+                        label: "existing track".into(),
+                    });
+                }
+                let added = polyline_length(&points) - core::geometry::distance(first, last);
+                copper_out.patterns.push(Meander {
+                    net: restored.nets[net as usize].name.clone(),
+                    width: w,
+                    layer,
+                    points,
+                    gap: pair.gap,
+                    amplitude: height,
+                    spacing,
+                    added,
+                });
+                entry.meander_mm += added;
+                break 'tracks;
+            }
+        }
+    }
 }
 
 /// The segments of a route's stub from `pad` to `stub_end` (its track
@@ -2936,22 +3843,151 @@ pub(crate) fn with_pairs(config: &KiCadBoardRouterConfig) -> KiCadBoardRouterCon
     copy
 }
 
+/// The copper layers' heights by name (millimetres from the board's top,
+/// at each layer's middle): the board's stackup (`setup`'s `stackup`), else
+/// its thickness (`general`, 1.6 mm if none) spread evenly over the copper
+/// layers it declares. A via's length is the height between the layers it
+/// joins (KiCad's length with the stackup's height).
+pub(crate) fn copper_heights(pcb: &Expr) -> BTreeMap<String, f64> {
+    let mut heights = BTreeMap::new();
+    if let Some(stackup) = pcb.child("setup").and_then(|setup| setup.child("stackup")) {
+        let mut z = 0.0;
+        for layer in stackup
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("layer"))
+        {
+            let name = layer.children().get(1).and_then(Expr::atom).unwrap_or("");
+            let thickness = form_f64(layer, "thickness", 1).unwrap_or(0.0);
+            let copper = layer
+                .child("type")
+                .and_then(|kind| kind.children().get(1))
+                .and_then(Expr::atom)
+                == Some("copper");
+            if copper {
+                heights.insert(name.to_string(), z + thickness / 2.0);
+            }
+            z += thickness;
+        }
+    }
+    if heights.len() >= 2 {
+        return heights;
+    }
+    let thickness = pcb
+        .child("general")
+        .and_then(|general| form_f64(general, "thickness", 1).ok())
+        .unwrap_or(1.6);
+    let names: Vec<String> = pcb
+        .child("layers")
+        .map(|layers| {
+            layers
+                .children()
+                .iter()
+                .filter_map(|layer| {
+                    let name = layer.children().get(1).and_then(Expr::atom)?;
+                    name.ends_with(".Cu").then(|| name.to_string())
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let last = names.len().saturating_sub(1).max(1) as f64;
+    names
+        .into_iter()
+        .enumerate()
+        .map(|(index, name)| (name, thickness * index as f64 / last))
+        .collect()
+}
+
+/// A net's length from its copper: its tracks (layer, start, end) and its
+/// vias, each via the height between the outermost layers of the tracks
+/// that end on it (`heights` per layer; a via joining no two layers counts
+/// nothing).
+fn copper_length(tracks: &[(usize, Point, Point)], vias: &[Point], heights: &[f64]) -> f64 {
+    let along: f64 = tracks
+        .iter()
+        .map(|&(_, start, end)| core::geometry::distance(start, end))
+        .sum();
+    let through: f64 = vias
+        .iter()
+        .map(|&via| {
+            let zs: Vec<f64> = tracks
+                .iter()
+                .filter(|&&(_, start, end)| {
+                    core::geometry::distance(start, via) < 1.0e-4
+                        || core::geometry::distance(end, via) < 1.0e-4
+                })
+                .filter_map(|&(layer, ..)| heights.get(layer).copied())
+                .collect();
+            let (low, high) = zs
+                .iter()
+                .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), &z| {
+                    (low.min(z), high.max(z))
+                });
+            if high > low { high - low } else { 0.0 }
+        })
+        .sum();
+    along + through
+}
+
 /// After the route: each coupled pair's uncoupled length (the longer net's
 /// tracks less the coupled run), from the routed board.
 pub(crate) fn measure_uncoupled(report: &mut KiCadDiffPairs, pcb: &Expr) {
     let mut lengths: BTreeMap<String, f64> = BTreeMap::new();
+    // Per net: its tracks (layer as an index into `names`) and vias, for
+    // the skew.
+    let by_name = copper_heights(pcb);
+    let names: Vec<&String> = by_name.keys().collect();
+    let heights: Vec<f64> = by_name.values().copied().collect();
+    let mut copper: BTreeMap<String, (Vec<(usize, Point, Point)>, Vec<Point>)> = BTreeMap::new();
     for item in pcb.children() {
-        if item.head() != Some("segment") {
+        let kind = item.head();
+        if kind != Some("segment") && kind != Some("via") {
+            continue;
+        }
+        let Some(net) = node_net(item) else {
+            continue;
+        };
+        let net = crate::kicad_nets::normalize_net(&unescape(net)).to_string();
+        if kind == Some("via") {
+            if let Ok(at) = form_xy(item, "at") {
+                copper.entry(net).or_default().1.push(at);
+            }
             continue;
         }
         let (Ok(start), Ok(end)) = (form_xy(item, "start"), form_xy(item, "end")) else {
             continue;
         };
-        if let Some(net) = node_net(item) {
-            *lengths
-                .entry(crate::kicad_nets::normalize_net(&unescape(net)).to_string())
-                .or_default() += core::geometry::distance(start, end);
+        *lengths.entry(net.clone()).or_default() += core::geometry::distance(start, end);
+        let layer = form_atom(item, "layer", 1)
+            .and_then(|layer| names.iter().position(|name| name.as_str() == layer))
+            .unwrap_or(usize::MAX);
+        copper.entry(net).or_default().0.push((layer, start, end));
+    }
+    // The skew: per pair with a coupled link its nets' lengths apart, the
+    // vias at the stackup's heights.
+    report.skew_mm = 0.0;
+    report.skews.clear();
+    for pair in &mut report.pairs {
+        if pair.links_coupled == 0 {
+            continue;
         }
+        let length = |net: &str| {
+            copper
+                .get(net)
+                .map_or(0.0, |(tracks, vias)| copper_length(tracks, vias, &heights))
+        };
+        let (p, n) = (length(&pair.positive), length(&pair.negative));
+        let skew = (p - n).abs();
+        pair.skew_mm = Some(skew);
+        report.skew_mm = report.skew_mm.max(skew);
+        report.skews.push(KiCadPairSkew {
+            positive: pair.positive.clone(),
+            negative: pair.negative.clone(),
+            lengths_mm: [p, n],
+            skew_mm: skew,
+            target_mm: pair.skew_target_mm,
+            meander_mm: pair.meander_mm,
+        });
     }
     report.uncoupled_mm = 0.0;
     for pair in &mut report.pairs {
@@ -3248,6 +4284,85 @@ mod tests {
                 board.nets[net].name
             );
         }
+    }
+
+    /// U2's pads in the other order (D- above D+): the link is crossed at
+    /// one end, which gets a crossover in its lead (the negative net dives
+    /// under the positive one or the other way round): the link couples,
+    /// its stubs straight, no stub crossing another.
+    #[test]
+    fn a_crossed_end_crosses_over_in_its_lead() {
+        let crossed = BOARD.replace(
+            r#"(pad "1" smd rect (at 0 0) (size 1 0.3) (layers "F.Cu") (net "/D+"))
+    (pad "2" smd rect (at 0 0.5) (size 1 0.3) (layers "F.Cu") (net "/D-")))
+  (footprint "test" (layer "F.Cu") (at 18 4)"#,
+            r#"(pad "1" smd rect (at 0 0) (size 1 0.3) (layers "F.Cu") (net "/D-"))
+    (pad "2" smd rect (at 0 0.5) (size 1 0.3) (layers "F.Cu") (net "/D+")))
+  (footprint "test" (layer "F.Cu") (at 18 4)"#,
+        );
+        assert_ne!(crossed, BOARD);
+        let pcb = parse(&crossed).unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let mut board = lower(&pcb, &config, true).unwrap().board;
+        plan_pairs(&mut board, &config);
+        let plan = board
+            .attachment
+            .0
+            .clone()
+            .unwrap()
+            .downcast::<PairPlan>()
+            .unwrap();
+        let link_plan = &plan.links[0];
+        assert!(link_plan.crossed);
+        let crossing = link_plan
+            .crossovers
+            .iter()
+            .flatten()
+            .next()
+            .expect("a crossover");
+        // One net dives: two vias, a track on B.Cu.
+        let vias: usize = crossing.vias.iter().map(Vec::len).sum();
+        assert_eq!(vias, 2);
+        assert!(
+            crossing
+                .segments
+                .iter()
+                .flatten()
+                .any(|(layer, ..)| *layer == 1)
+        );
+        // At each end the stubs' ends keep the pads' order: the stubs do
+        // not cross.
+        for end in 0..2 {
+            let [p, n] = link_plan.pads[end];
+            let [end_p, end_n] = link_plan.ends[end];
+            assert!(
+                core::geometry::segment_segment_distance(p, end_p, n, end_n) > 0.2,
+                "end {end}: stubs cross"
+            );
+        }
+        let mut result = core::route(&board, &core_config(&config));
+        let (_, copper, report) = finish_pairs(&board, &mut result, &config, &[0.0, 1.6]).unwrap();
+        assert_eq!(report.links_coupled, 1, "{:?}", report.pairs);
+        assert_eq!(report.crossovers, 1);
+        // The diving net's two vias (1.6 mm each between F.Cu and B.Cu) and
+        // its detour make the pair's lengths differ by more than its gap:
+        // the shorter net gets a meander of what it lacks, its tracks a
+        // tuning pattern.
+        assert_eq!(report.meanders, 1, "{:?}", report.pairs);
+        let entry = report.pairs.iter().find(|pair| pair.links > 0).unwrap();
+        assert!(entry.meander_mm > 0.2, "{entry:?}");
+        assert_eq!(copper.patterns.len(), 1);
+        let meander = &copper.patterns[0];
+        assert!((meander.added - entry.meander_mm).abs() < 1.0e-9);
+        assert!(meander.amplitude <= 3.0 * 0.2 + 1.0e-9);
     }
 
     /// A fallen-back pair's leftovers: what joins nothing at one end goes
