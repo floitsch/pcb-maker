@@ -31,8 +31,10 @@ explains, from both sides,
 
 their mean the group's attributed cost, ranked; the nulls give the noise
 (a nudge that should cost nothing). Then the signal check: for each signal
-(wirelength, escape demand's channel overflow, blocked exits, the global
-route's overflow and soft overflow at 0.5), its change between the same
+(wirelength, escape demand's channel overflow, blocked exits, the ratsnest
+crossings, also weighted by net size and within buses, pins whose row faces
+away from their net, the global route's overflow and soft overflow at 0.5),
+its change between the same
 pairs, whether it orders the two placements as the routes do, and how
 often it orders a group's two variants (cost_d and cost_o separately) the
 same way as the open connections (pairwise agreement over the variants
@@ -57,6 +59,10 @@ SIGNALS = [
     ("blocked_exits", "exits facing a body within 5 mm", lambda s: s["blocked_exits"]),
     ("ratsnest_crossings", "ratsnest crossings", lambda s: s.get("ratsnest_crossings")),
     ("large_crossings", "ratsnest crossings between large parts", lambda s: s.get("large_crossings")),
+    ("weighted_crossings", "ratsnest crossings weighted by net size", lambda s: s.get("weighted_crossings")),
+    ("bus_crossings", "crossings within a bus (two lines joining the same two parts)", lambda s: s.get("bus_crossings")),
+    ("away_pins", "pins whose row faces away from their net", lambda s: s.get("away_pins")),
+    ("away_mm", "how far behind their rows those targets lie (mm)", lambda s: s.get("away_mm")),
     ("global_overflow", "global route overflow", lambda s: (s.get("global") or {}).get("total_overflow")),
     ("global_soft", "global route soft overflow at 0.5", lambda s: (s.get("global") or {}).get("soft_overflow_05")),
     ("global_nets", "global route overflowed nets", lambda s: (s.get("global") or {}).get("overflowed_nets")),
@@ -278,16 +284,18 @@ def analyse(out):
         checks.append(dict(signal=key, label=label, designer=sd_, ours=so, whole_right=whole,
                            spearman=spearman([p[0] for p in pairs], [p[1] for p in pairs]),
                            pairs=len(pairs), moved=len(moved), agree=agree))
-    return dict(task=meta["task"], report=report, rows=rows, base=base, base_runs=base_runs, sd=sd,
-                groups=groups, checks=checks)
+    return dict(task=meta["task"], report=report, variants=variants, rows=rows, base=base, base_runs=base_runs,
+                sd=sd, groups=groups, checks=checks)
 
 
-def part_summary(parts, members):
+def part_summary(parts, members, other=None):
     """A group's escape in one placement, from the tool's per-part
     descriptions: channel overflow, the demand on sides that face a body
     within 5 mm, the sides where two dense pin rows face each other, the
-    connections' mean distance, the nearest board edge, the global route's
-    attribution."""
+    mean gap on the sides with demand that face a body, the connections'
+    mean distance, the nearest board edge, the global route's attribution;
+    against the other placement's table (`other`) the parts turned
+    differently, and the parts on the back."""
     chosen = [parts[name] for name in members if name in parts]
     if not chosen:
         return None
@@ -297,28 +305,54 @@ def part_summary(parts, members):
     tight = sum(side["demand"] for part in chosen for side in part["sides"]
                 if side.get("faces") and side["gap_mm"] < 1.0)
     demand = sum(side["demand"] for part in chosen for side in part["sides"])
+    gaps = [side["gap_mm"] for part in chosen for side in part["sides"]
+            if side["demand"] and side.get("faces")]
+    turned = None
+    if other is not None:
+        turned = sum(1 for part in chosen if part["reference"] in other
+                     and abs(((part["at"][2] - other[part["reference"]]["at"][2]) + 180) % 360 - 180) > 1)
     return dict(parts=len(chosen), demand=demand, facing=facing, tight=tight, dense=dense,
                 channel=sum(part["channel_overflow"] for part in chosen),
+                gap=sum(gaps) / len(gaps) if gaps else None,
                 connection=sum(part["connection_mm"] for part in chosen) / len(chosen),
                 edge=sum(min(side["edge_mm"] for side in part["sides"]) for part in chosen) / len(chosen),
+                turned=turned, back=sum(1 for part in chosen if part.get("side") == "back"),
                 attribution=sum(part.get("global_attribution") or 0 for part in chosen))
 
 
 def describe(result, describe_path, top=3):
-    """The top groups' escape, the designer's against ours."""
+    """The top groups' escape, the designer's against ours, with the
+    crossings and the rows facing away that our group adds (d: our group in
+    the designer's placement against it; o: ours against ours with the
+    designer's group)."""
     parts = json.loads(Path(describe_path).read_text())
     designer = {part["reference"]: part for part in parts["parts_designer"]}
     ours = {part["reference"]: part for part in parts["parts_ours"]}
-    lines = ["", "| group | placement | demand | on sides facing a body within 5 mm | within 1 mm | dense rows facing | channel overflow | connection mm | edge mm | global attribution |",
-             "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
+    variants = result["variants"]
+
+    def added(group, key):
+        try:
+            sig = {name: variants[name]["signals"] for name in
+                   ("designer", "ours", f"d-{group}", f"o-{group}")}
+            d = sig[f"d-{group}"][key] - sig["designer"][key]
+            o = sig["ours"][key] - sig[f"o-{group}"][key]
+            return f"{fmt(d)} / {fmt(o)}"
+        except (KeyError, TypeError):
+            return "-"
+    lines = ["", "| group | placement | demand | facing a body within 5 mm | within 1 mm | channel overflow "
+             "| mean gap on faced sides mm | connection mm | edge mm | turned | back "
+             "| crossings our group adds d / o | facing-away mm our group adds d / o |",
+             "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"]
     for group in [group for group in result["groups"] if group["cost"] is not None][:top]:
-        for label, table in (("designer's", designer), ("ours", ours)):
-            summary = part_summary(table, group["members"])
+        for label, table, other in (("designer's", designer, None), ("ours", ours, designer)):
+            summary = part_summary(table, group["members"], other)
             if summary is None:
                 continue
+            extra = (f"{added(group['name'], 'ratsnest_crossings')} | {added(group['name'], 'away_mm')}"
+                     if other is not None else " | ")
             lines.append(f"| {group['name']} | {label} | {summary['demand']} | {summary['facing']} | {summary['tight']} "
-                         f"| {summary['dense']} | {summary['channel']:.1f} | {summary['connection']:.1f} "
-                         f"| {summary['edge']:.1f} | {summary['attribution']:.0f} |")
+                         f"| {summary['channel']:.1f} | {fmt(summary['gap'], 1)} | {summary['connection']:.1f} "
+                         f"| {summary['edge']:.1f} | {fmt(summary['turned'])} | {summary['back']} | {extra} |")
     return "\n".join(lines)
 
 
@@ -339,6 +373,8 @@ def markdown(result):
     lines += ["", "| group | parts | open d+ours / o+designer's (routes) | cost d / o (± se) | cost (mean) | displaced d / o |",
               "| --- | ---: | ---: | ---: | ---: | ---: |"]
     for group in result["groups"]:
+        if not group["runs_d"] and not group["runs_o"]:
+            continue  # not routed
         lines.append(f"| {group['name']} | {len(group['members'])} "
                      f"| {fmt(group['open_d'], 1)} ({len(group['runs_d'])}) / {fmt(group['open_o'], 1)} ({len(group['runs_o'])}) "
                      f"| {fmt(group['cost_d'], 1)} ± {fmt(group['se_d'], 0)} / {fmt(group['cost_o'], 1)} ± {fmt(group['se_o'], 0)} "
@@ -358,6 +394,8 @@ def report_command(arguments):
         if arguments.markdown:
             print(markdown(result))
             describe_path = out.resolve().parent / (out.name + "-describe") / "ablation.json"
+            if not describe_path.exists():
+                describe_path = out.resolve().parent / (out.name + "-sig") / "ablation.json"
             if describe_path.exists():
                 print(describe(result, describe_path))
             print()

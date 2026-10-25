@@ -1130,8 +1130,9 @@ Score the designer's board and yours side by side.
   them. `<out-dir>/ablation.json` has the groups, per variant the
   displaced parts and the signals a placer can read before routing
   (wirelength, escape demand's channel overflow, exits facing a body,
-  overlapping parts, ratsnest crossings, the global route's overflow and
-  soft overflow at 0.5), and per moved part of both placements its escape (demand per
+  overlapping parts, ratsnest crossings, also weighted by net size and
+  within buses, pins whose row faces away from their net, the global
+  route's overflow and soft overflow at 0.5), and per moved part of both placements its escape (demand per
   side, the body it faces, the gap and the channel's capacity, the board
   edge, its connections' distance). Settings: `large_pads` (20),
   `passive_pads` (4), `passive_mm` (3), `repair` (true), `groups` (only
