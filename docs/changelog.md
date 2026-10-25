@@ -11,6 +11,47 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-25 (layout profile round: the placer's turns, the near-any relations' anchors, the neighbour lookups)
+
+Branch layout-profile, snapshot x14490 against main's x1824 (09299b6). A
+CPU profile of `layout-kicad-board` beyond the router's search on
+MegaDrive and Glasgow (task budgets) and the short tier's 1337-v4.0 and
+OpenFC (a third), two threads, pinned rates: docs/profiling.md, "The
+layout round". The placer is 30 to 61 % of a layout's CPU, the router's
+search 35 to 59 %, the router's pour analyses 0.3 to 12.7 %, kicad-cli 0.3
+to 3.8 % (1 to 5 DRCs a layout, none on a board checked before), the
+lowering, the file's parse and the encoding below 0.1 %.
+
+Three changes in the placer, each identical by construction (the
+placement, the routed board, the fingerprints and the verdict unchanged on
+all four boards, both orientations of each pair):
+
+- **The turns without libm**: `sin_cos_degrees` gives the bits of
+  `angle.to_radians().sin_cos()` with the quarter and eighth turns from a
+  table filled once by the same expression; `rotation` answers the exact
+  quarter turns without its division and `round`, `direction_of` without
+  `fmod`; boxes and turned rectangles turn once a pose instead of once a
+  box. (sincos was 2.2 to 7.9 % of a layout, `round` 1.3 to 3.2 %.)
+- **A near-any relation's anchors** (`nearest_violation`): the least
+  violation over a decoupling capacitor's supply pins stops at the first
+  anchor within the tolerance and skips the hypot of an anchor whose gap
+  along one axis already reaches the least (hypot was 6.4 % of Glasgow's
+  layout, 12 % of its placement).
+- **The neighbour lookups**: the bucket grid's query without a branch on
+  seen items (the same items in the same order); the linked pairs looked
+  up in each part's partner list instead of a `BTreeSet`.
+
+Measured (two pairs a board on SMT siblings, x1824 against x14490, the
+layout process's CPU seconds, geometric mean of the pairs): MegaDrive
+2338 / 2321 to 2177 / 2183 (-6.4 %), Glasgow 2689 / 2522 to 2287 / 2167
+(-14.5 %), 1337-v4.0 275 / 185 to 251 / 166 (-9.6 %), OpenFC 709 / 598 to
+670 / 578 (-4.3 %). Wall: Glasgow -19.7 %, MegaDrive -2.8 %, the short
+boards within the ledger's waits (+1.0, +0.4 %). The kicad-cli calls are
+the same (no call removed or merged); KiCad's findings are the same by type
+and count and in every violation but the unconnected items, whose named
+track differs between kicad-cli runs on one board (three runs of x1824's
+MegaDrive result gave three lists of the same 301 findings).
+
 ## Committed on 2026-10-25 (the seven sweep boards without a result)
 
 Branch panel-refusals, snapshot x14421 (x14420 the same but for the

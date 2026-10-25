@@ -1,8 +1,10 @@
-# Profiling the router
+# Profiling the router and the layout
 
 How to take a CPU profile of a route, where the route's CPU goes, and what
 the profile round of 2026-10-25 changed (branch router-profile, snapshots
-x14380 and x14381 against main's x1820, 23f629e).
+x14380 and x14381 against main's x1820, 23f629e). The layout round of the
+same day ("The layout round" below: branch layout-profile, snapshot x14490
+against main's x1824, 09299b6) profiled everything else a layout does.
 
 ## How to profile
 
@@ -268,3 +270,232 @@ of work is about a second of this machine's wall clock"); recalibrating
 `REFERENCE_CANNED_EXPANSIONS_PER_SECOND` (which would keep the measured
 rate where it was and hand the saving back as wall time instead of more
 search) is left to a separate package.
+
+## The layout round (2026-10-25)
+
+Everything a layout does outside the router's search: the placer (global
+placement, anneal, legaliser, refinement, the crossings, the escape
+demand), the board lowering (the KiCad file's parse, the geometry, the
+rules), the pour model, the write-back, and kicad-cli's checks.
+
+### How
+
+`layout-kicad-board` under `perf record -F 499 -m 16 -g` (the profiling
+binary as above), the task's source prepared as run.py prepares it (copy,
+`strip-kicad-tracks`, `unplace`, constraints.json, layout.json; tasks v7),
+at the task budgets (MegaDrive and Glasgow 1500 s, the short tier's
+1337-v4.0 and OpenFC a third: 500 s), `PCB_WORK_RATE=3.15e6,150e6
+PCB_ROUTER_NO_WALL_GUARD=1 PCB_ROUTER_FINGERPRINT=1 RAYON_NUM_THREADS=2`,
+two CPUs each (`taskset`), a DRC cache of its own per run
+(`PCB_MAKER_CACHE_DIR`, cold: every check runs kicad-cli) and kicad-cli
+through a logging wrapper (`PCB_KICAD_CLI`: each call's arguments, wall
+and CPU). `perf record` follows the children, so kicad-cli's samples are
+in the profile under its own command name. The layout's own phases come
+from its log's timestamps (`layout: placing`, `placed`, `routed`, `done`).
+
+Two traps: `perf script` resolves inlined frames through addr2line and
+took minutes per thousand samples (`--no-inline`: seconds for 600 000);
+libm has no frame pointers, so a sample in libm names the caller's
+caller, not the caller (glibc's own symbols, `objdump -d
+/usr/lib/libm.so.6`, at the sample's offset in the mapping that
+`--show-mmap-events` gives, name the libm function: `__sincos_fma`,
+`__hypot_finite`).
+
+### Where the layout's time goes (x1824's code, 2026-10-25)
+
+**CPU** (% of the layout process's samples; kicad-cli's beside them as a
+share of all):
+
+| phase | MegaDrive | Glasgow | 1337-v4.0 | OpenFC |
+| --- | ---: | ---: | ---: | ---: |
+| placer (place_kicad_board and the placement race's lowering) | 30.9 | 60.9 | 30.0 | 32.6 |
+| of it: legaliser and refinement | 16.7 | 30.0 | 7.9 | 6.6 |
+| of it: anneal | 8.6 | 12.2 | 14.9 | 19.2 |
+| of it: escape demand | 3.6 | 12.3 | 3.2 | 3.8 |
+| of it: ratsnest crossings | 2.0 | 6.2 | 0.3 | 0.3 |
+| of it: global placement | 0.0 | 0.2 | 3.5 | 2.6 |
+| router | 68.8 | 39.0 | 68.6 | 66.8 |
+| of it: the search (with its heuristic) | 58.7 | 35.5 | 51.5 | 54.6 |
+| of it: pour analyses, maps and spokes | 2.1 | 0.3 | 12.7 | 6.1 |
+| of it: stamping | 4.6 | 1.1 | 2.5 | 3.5 |
+| of it: tile planner | 2.4 | 1.5 | 0.5 | 0.8 |
+| lowering, the file's parse, encode, write-back | 0.00 | 0.00 | 0.02 | 0.01 |
+| calibration, verification, silkscreen | 0.3 | 0.1 | 1.3 | 0.5 |
+| kicad-cli (share of all samples) | 1.0 | 0.3 | 3.8 | 2.1 |
+
+The lowering of the board, the KiCad file's parse and the board's
+encoding for kicad-cli are below a tenth of a percent on every board (37
+lowerings of 1337-v4.0 took 0.2 s in all): not worth a change. The placer
+is a third of the CPU on three boards and three fifths on Glasgow (its
+placement uses its whole 600 s of work).
+
+**Wall** (seconds, x1824 in the measurement below, the two runs of each
+board; the placement's wall includes the memory ledger's waits for the
+placement race's routers, up to 715 s on MegaDrive, and so do the
+totals):
+
+| phase | MegaDrive | Glasgow | 1337-v4.0 | OpenFC |
+| --- | ---: | ---: | ---: | ---: |
+| start (rates, check model) | 3 / 2 | 2 / 3 | 2 / 3 | 2 / 2 |
+| placement (with the ledger's waits) | 590 / 1222 | 1148 / 1470 | 51 / 41 | 266 / 102 |
+| race, first route, moves, polish, the kept board's check | 1240 / 1321 | 288 / 299 | 184 / 124 | 77 / 60 |
+| final ladder or narrow-signal attempts, their checks | 4 / 5 | 465 / 465 | 4 / 4 | 226 / 205 |
+| kicad-cli in all (DRC, previews, version) | 14.7 / 16.4 | 7.8 / 6.5 | 6.6 / 6.1 | 14.8 / 13.2 |
+| total | 1837 / 2550 | 1904 / 2237 | 242 / 171 | 572 / 368 |
+
+The write-back after the layout's last line (silkscreen labels, the
+reports) is 0.1 s.
+
+kicad-cli runs once per DRC (`pcb drc --refill-zones`) and once per
+preview (`pcb export svg`, after every DRC), plus `version` once: 1 to 5
+DRCs per layout (MegaDrive 1, 1337-v4.0 2, Glasgow 3, OpenFC 5), 1.2 to
+22 s each uncached (MegaDrive's one 14 to 22 s), 0.4 to 0.8 s per
+preview; 6 to 16 s of a layout's 171 to 2550 s of wall (0.3 to 3.6 %). No
+DRC repeats a board within a run (the
+cache, cold here, answered none: each check is a board the ladder or the
+starved-thermal repair changed), so none can be dropped or merged without
+changing what is checked. The previews of ladder attempts that are not
+kept (OpenFC: 4 of 5) are 0.5 s each; rendering only the kept one would
+save 1 to 2 s a layout and was not taken.
+
+**The top symbols outside the search** (self time, % of the layout
+process's samples; in brackets where not among the board's top 15):
+
+| symbol (self) | MegaDrive | Glasgow | 1337-v4.0 | OpenFC |
+| --- | ---: | ---: | ---: | ---: |
+| libm (all functions) | 2.49 | 10.24 | 7.61 | 2.80 |
+| `placer buckets::Grid::query` | 7.35 | 3.84 | 2.45 | 3.01 |
+| `placer anneal::State::overlap_with` | 1.07 | (1.04) | 2.05 | 6.62 |
+| `placer legal::refine_with` | (0.19) | 5.27 | (0.09) | (0.09) |
+| `placer legal::refine_with::{closure#2}` | (0.50) | 4.95 | (0.80) | (0.58) |
+| `router router::Router::stamp` | 4.27 | (0.97) | 2.34 | 3.22 |
+| `router pour::PourMap::build` | (0.37) | (0.05) | 4.05 | 1.67 |
+| `placer crossings::CrossingState::count` | 1.16 | 3.76 | (0.13) | (0.16) |
+| `placer escape::channel` | (0.10) | 3.56 | (0.36) | (0.75) |
+| `placer constraints::Constraints::bare` | 1.32 | 3.49 | (0.64) | 0.99 |
+| `placer global::global_place` | (0.02) | (0.10) | 3.44 | 2.15 |
+| `round` | 1.45 | 3.18 | 1.48 | 1.27 |
+| `placer legal::turned_rects (box iterator)` | 2.76 | 1.28 | 1.03 | (0.76) |
+| `placer escape::exits` | 2.39 | 2.70 | 0.82 | 1.28 |
+| `placer anneal::State::wirelength` | (0.76) | 2.52 | 2.24 | 2.22 |
+| `placer constraints::relation_violation` | (0.04) | 2.39 | (0.07) | (0.05) |
+| `router geometry::Shape::distance_to_point` | (0.25) | (0.07) | 2.38 | (0.60) |
+| `placer legal::overlaps` | 2.35 | (0.79) | (0.64) | (0.36) |
+| `placer problem::Component::boxes (box iterator)` | 1.11 | (0.33) | 1.91 | 1.78 |
+| `placer constraints::anchor_point` | (0.02) | 1.75 | (0.04) | (0.02) |
+| `[unknown]` | 1.00 | (0.75) | 1.54 | 0.95 |
+| `router pour::PourMap::pieces_near` | (0.07) | (0.05) | - | 1.54 |
+| `placer anneal::anneal` | (0.20) | 1.36 | (0.35) | (0.49) |
+| `placer legal::clear_of::core::iter::adapters::copied::Copiedcore::slice::iter::I` | (0.50) | 1.31 | (0.18) | (0.38) |
+| `router geometry::point_in_polygon` | (0.20) | (0.02) | 1.19 | (0.30) |
+| `router pour::PourMap::piece_near` | (0.05) | (0.03) | - | 1.01 |
+| `router router::Router (iterator)` | (0.14) | (0.01) | 0.95 | (0.48) |
+| `placer legal::inside_outline` | (0.10) | (0.27) | (0.05) | 0.95 |
+| `router router::Router::plan_corridor` | 0.92 | (0.65) | (0.19) | (0.33) |
+| `router router::Router::plan_corridor::{closure#2}` | 0.87 | (0.44) | (0.16) | (0.26) |
+| `placer legal::far_side_overlap::{closure#0}` | 0.81 | (0.29) | (0.14) | (0.14) |
+
+libm by function: MegaDrive `__sincos_fma` 2.24, `__hypot_finite` 0.19;
+Glasgow `__hypot_finite` 6.36, `__sincos_fma` 3.52; 1337-v4.0
+`__sincos_fma` 7.90; OpenFC `__sincos_fma` 2.72 (exp and log2 below 0.1).
+`round` (1.3 to 3.2 %) and `fmod` (0.2 to 0.6 %) are the same turns'
+quarter-turn tests (`rotate`, `turn_of`).
+
+### The changes (bit-identical)
+
+Three hot spots in the placer, all with the same placement by
+construction (the placer's work is counted in units of its operations,
+not in time, so a faster placer does the same work and stops where it
+stopped):
+
+1. **The turns without libm** (problem.rs `sin_cos_degrees`, `rotation`;
+   legal.rs `direction_of`). Every box, half extent and turned rectangle
+   computed `(-angle).to_radians().sin_cos()` (a call into libm's sincos)
+   per box, and `rotate` divided and rounded (`round`, a libm call on
+   x86-64's baseline) to find a quarter turn. `sin_cos_degrees` returns
+   the bits of that expression for any angle: for the quarter and eighth
+   turns of either sign (and both zeros) from a table the same expression
+   filled once at run time (`black_box`, so that no compile-time folding
+   by another libm enters); `rotation` answers the exact quarter turns
+   without dividing; `direction_of` answers them without `rem_euclid`'s
+   fmod; `boxes` and `turned_rects` turn once a pose, not once a box.
+   Tests compare the bits with the old expressions over 2900 angles.
+2. **A near-any relation measures its anchors only as far as needed**
+   (constraints.rs `nearest_violation`). Each decoupling capacitor is
+   near any of its supply pins (Glasgow: 23 anchors), and its violation
+   was the least of `(box_gap - max).max(0)` over all anchors, each with
+   a `hypot` (1.2 billion calls in 60 s of Glasgow's placement work, 7 %
+   with a zero argument). The least is now taken with two shortcuts that
+   keep the value `relation_violation` makes of it: once an anchor lies
+   within `RELATION_TOLERANCE` the violation is none whatever the others
+   give (the rest are not looked at), and an anchor whose gap along one
+   axis already reaches the least so far is skipped without its `hypot`
+   (a hypot is at least the larger of its arguments; a test checks that
+   on a million pairs, another the violation against the old fold on
+   100 000 random cases).
+3. **The neighbour lookups** (buckets.rs `Grid::query`;
+   constraints.rs `linked_partners`). The bucket grid's query (the
+   anneal's overlap sum, the legaliser's and the refinement's legality
+   tests: 7.4 % of MegaDrive's layout, 29 % of its placement after the
+   first change) tested each item of a cell against its stamp and pushed
+   it when new; its samples sat on that test and load. It now writes each
+   item into the free slot past the list's end and counts it only when
+   new: the same items in the same order, without the branch. The linked
+   pairs (`near` relations' tied parts, a `BTreeSet` searched for every
+   pair of neighbours by `bare`: 1 to 3.5 %) are looked up in each part's
+   list of partners, filled with the set by `link_pairs`.
+
+Not taken: the router's pour analyses (12.7 % of 1337-v4.0, 6 % of OpenFC:
+`analyze_pours_uncounted` builds full-lattice masks per analysis; a change
+there is a change of the router's pour model, for its own round), the
+escape demand's `exits` and `channel` (2.4 to 6 % on the dense boards),
+the crossings' counts (`CrossingState::count`, 3.8 % of Glasgow), and the
+previews above.
+
+### Measured (2026-10-25)
+
+Snapshots x1824 (main 09299b6) and x14490 (d912ce0), side by side on
+sibling CPUs (x1824 on 8,9 / 10,11 / 12,13 / 14,15, x14490 on the SMT
+siblings 16 higher; then swapped), two threads, pinned rates,
+`PCB_ROUTER_NO_WALL_GUARD=1 PCB_ROUTER_FINGERPRINT=1`, a cold DRC cache
+each, the four boards at once beside other agents' runs (load 14 to 18).
+CPU seconds are the layout process's own (utime + stime from /proc,
+polled; kicad-cli's left out); wall includes the ledger's waits.
+
+Cells: the two pairs (x1824's first orientation first); the change, the
+geometric mean of the two pairs' ratios; the longest ledger wait of each
+run.
+
+| board | budget | x1824 CPU s | x14490 CPU s | CPU | x1824 wall s | x14490 wall s | wall | ledger waits (old / new, longest) | identical |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| MegaDrive | 1500 | 2338 / 2321 | 2177 / 2183 | -6.4 % | 1837 / 2550 | 1768 / 2502 | -2.8 % | 24, 715 / 62, 743 s | yes (2 pairs) |
+| Glasgow | 1500 | 2689 / 2522 | 2287 / 2167 | -14.5 % | 1904 / 2237 | 1657 / 1660 | -19.7 % | 36, 550 / 8, 82 s | yes (2 pairs) |
+| 1337-v4.0 | 500 | 275 / 185 | 251 / 166 | -9.6 % | 242 / 171 | 230 / 184 | +1.0 % | 2, 14 / 0, 40 s | yes (2 pairs) |
+| OpenFC | 500 | 709 / 598 | 670 / 578 | -4.3 % | 572 / 368 | 575 / 369 | +0.4 % | 134, 0 / 156, 0 s | yes (2 pairs) |
+
+The CPU falls 4.3 to 14.5 % (the placer's share and its geometry decide:
+Glasgow's placement is three fifths of its CPU and the near-any relations
+are its hot spot). The wall follows where the ledger let the runs alone
+(Glasgow's first pair -13.0 %, MegaDrive's -3.8 %; their placements took
+867 against 1148 s and 514 against 590 s) and is noise elsewhere: the
+ledger's waits for the placement race's routers (up to 743 s) differ
+between the two binaries of a pair.
+
+**Identical** in every pair: the placed board's and the routed board's
+SHA-256, every fingerprint line (as a set: the ladder's rungs print theirs
+in the order they finish), the verdict apart from the version, the
+measured rates, the wall seconds and the output directory, and KiCad's
+findings by type and count and every violation other than the
+unconnected items in full. The unconnected items' named track or zone
+differ between runs of kicad-cli on one board: three runs of x1824's
+MegaDrive result through `kicad-cli pcb drc` gave three different lists of
+the same 301 findings, and OpenFC's two x1824 runs differ from each other
+as much as from x14490's. The number of kicad-cli calls is the same in
+every pair (no call was removed or merged).
+
+Placement alone (`place-kicad-board`, 100 s of work, one pair each,
+indicative): Glasgow 379 to 307 CPU s with the first two changes and 299
+with the third, MegaDrive 318 to 293 and 254; 1337-v4.0 and OpenFC with
+the first change (200 s of work) 17.0 to 13.3 and 95.5 to 85.7 CPU s;
+every placement identical.
+
