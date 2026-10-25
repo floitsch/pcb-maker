@@ -990,6 +990,13 @@ Diagnosed on the tasks' prepared boards with `place-kicad-board` and
   the outline. With 4000 s of work the 4x4 still leaves 28 parts, the
   5x4_wave 1-2. They stay refused, now with a reason an agent can act
   on (below).
+- **Measured** (layout rows at the task budget, x1820 against x14421,
+  in the changelog): the 4in1 panel, katia, the power board and the
+  0xCB pcb-panel have a result now (499, 155, 16 and 93 unconnected, no
+  new error); the molecules' parts without a place fall from 48, 60, 22,
+  42, 48 to 29, 45, 5, 3, 9. The short tier keeps 11 of 12 boards
+  byte-identical; MIDAS-MK1.1, whose placement ran into its budget,
+  changed (8 to 9 open).
 - **Refusals name movable parts, a repeated reference by uuid.** The
   verdict's "N parts without a legal place (...)" took the unplaced
   parts' names and added those of every illegal part not yet named,

@@ -36,7 +36,31 @@ too, and still on x1820.
   uuid** (`unplaced_parts` in board-placer.json, with `held_by`), not the
   fixed parts and marks a part was left on.
 
-ROWS
+Each board in layout mode at its task budget (tasks/v7, `--quality`, 2 x
+2 through the ledger), x1820 (`build/panel1-before-x1820.log`) against
+x14421 (`build/panel1-after-x14421.log`); unconnected and new errors are
+KiCad's, work and wall the row's seconds (a refused row has no work):
+
+| Board | x1820 | x14421 | work / wall s |
+| --- | --- | --- | --- |
+| OpenESC 4in1-panel | 34 parts without a place | 499 unconnected, 0 new errors (designer's own board: 130) | 1479 / 1368 |
+| katia | 10 parts without a place | 155 unconnected, 0 new errors (v20: 37) | 1756 / 2415 |
+| laptop power | 27 parts without a place | 16 unconnected, 0 new errors (v20: 1) | 1381 / 2049 |
+| 0xCB pcb-panel | kicad-cli timed out (900 s) | 93 unconnected, 0 new errors | 1316 / 3101 |
+| molecule 4x4 | 48 without a place (fixed parts and marks among them) | 29, by uuid | - / 995 |
+| molecule 4x5 | 60 | 45 | - / 1728 |
+| molecule 5x4_wave | 22 | 5 | - / 798 |
+| molecule 5x2_shifted | 42 | 3 | - / 506 |
+| molecule 7x5_wave_left | 48 | 9 | - / 1188 |
+
+No board passes (strict or per type) on either side; four rows with a
+result instead of none. Not solved: the 4in1 panel's two boards share
+their net names (so its copies cannot be kept apart and KiCad wants the
+boards joined across the tabs; 43 of 184 connections routed on tight
+bodies), katia routes worse than before its refusals (348 open after the
+first route against v20's 169: its placement with escape demand), and
+the molecules stay refused (their designer's placement is illegal in the
+placer's loosest model: 128 parts of the 4x4).
 
 Short tier (3 x 2), x1820 against x14421: 11 of 12 boards give
 byte-identical placed and result boards (only their placement work is
