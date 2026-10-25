@@ -2659,7 +2659,10 @@ boards; KiCad's gap findings are unchanged on every board. With the
 crossovers on as well (x14400, seed 0, meanders on against off): the same
 rows, the meanders longer (a crossover's diving net carries two vias from
 F.Cu to B.Cu: oculink_port's RX0, RX1 and CLOCK got 5.32, 3.23 and 4.71
-mm).
+mm). The expansion tier's 46 boards (no board's rules ask) are identical
+to x1820 with x14401, rows and routed boards byte for byte. Tables:
+docs/changelog.md, "Committed on 2026-10-25 (differential pairs: polarity
+and skew)".
 
 **Phase 2's remaining items, and what was learnt.**
 (1) A link must not cost the board: the gate failed on boards where the

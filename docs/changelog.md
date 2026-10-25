@@ -180,7 +180,11 @@ Branch differential-pairs-5 (rebased onto 3786a9e); snapshots x14400
   matched by a meander (0.21 to 2.05 mm) to 0.000 mm; the largest skew of
   a coupled pair 0.562 mm (right_io's GBE_REFCLK, no straight track with
   room), 0.007 mm elsewhere. **Kept.**
-- **The expansion tier**: TIER
+- **The expansion tier** (46 boards, route mode, 8 x 1, 30 s, x1820
+  against x14401, neither with a setting): every row identical (routed,
+  vias, length, KiCad's findings, pass, open, strict findings) and every
+  routed board identical byte for byte, the 25 boards with pairs among
+  them; the default fires on none. Unconnected 588, passes 20 both ways.
 - Unit tests `a_crossed_end_crosses_over_in_its_lead` (off by default; on:
   a crossover of two vias and a B.Cu track, the stubs uncrossed, the link
   coupled, the meander) and
