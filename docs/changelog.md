@@ -11,6 +11,34 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-25 (the race counts every probe it ran)
+
+A fix of the race's accounting. Branch race-gate, snapshot x14370, off
+side x14343 (main c7b5552's code, the default layouts of x1820);
+docs/placer.md "The race counts every probe it ran (2026-10-25)" has the
+tables.
+
+- **The gate is gone**: the race's probes ran side by side and a gate
+  dropped, uncharged, every one judged past 40 % of the budget, so on
+  the boards whose placement takes its share (Glasgow, 4in1, video's
+  seed 201) the race kept the placer's pick. Now every probe that runs
+  counts and is charged to the work clock; the race probes fewer
+  placements (lowest-ranked first, decided before any probe from the
+  work so far) only where the final route would keep less than 45 % of
+  the budget (`RACE_MIN_FINAL_SHARE`; never on the dense boards, once on
+  the short tier: MIDAS-MK1.1 at 500 s).
+- **Reported**: `race` in board-layout.json and the verdict whenever
+  the race runs: each probe's standing, work and `gated` (the old rule
+  would have dropped it), `kept`, `kept_gated`, `dropped`.
+- **Measured** (eleven dense boards, seeds 1, 101, 201): the gate fired
+  in 7 races (4in1 and Glasgow on every seed, video seed 201), the kept
+  placement changed in 4; the 26 other seed-boards are byte-identical.
+  Pairs 933 to 891, 898 to 888, 1014 to 1111 (video seed 201 159 to
+  270, a probe that cannot tell placements apart deep in conflict);
+  summed medians 920 to 932. Short tier 24 to 25 unconnected, 7 / 7
+  strict passes. By the agreed rule (medians do not rise, no pair rises
+  by more than about 40) it does not pass; without video's seed 201
+  the medians would be 901.
 ## Committed on 2026-10-25 (placement ablation: video, SNSP-CPU-01, 4in1, protoesp)
 
 A diagnostic; nothing in the placer or the router changed. Branch
