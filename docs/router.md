@@ -121,7 +121,8 @@ model) and `tests`.
    rip-up used to unstamp them and other nets crossed them.
    `escape_stub_mm` (off) fixes a straight stub outward for every pad of a
    fine-pitch row before negotiation; it did not gain on Tiny Tapeout or
-   ColdFire yet. `fixed_plane_stubs` connects every surface pad of a pour
+   ColdFire yet. How the escape stubs stamp ("Fine-pitch escapes"
+   below) decides whether a 0.4 mm row can leave at all. `fixed_plane_stubs` connects every surface pad of a pour
    net to an inner plane by a stub and via before the signals route (only
    inner planes count: on the empty board every pad touches its own
    layer's pour, which the signals then cut to pieces); the KiCad ladder
@@ -2158,6 +2159,141 @@ has grown (counted per net, the pour analyses' work moved the route
 ladder's shares: flexypin's tracks rung 20.77 to 19.49 s). Eight step checks count as one
 expansion of work. `PCB_ROUTER_FINGERPRINT` prints a fingerprint after
 it.
+
+## Fine-pitch escapes (2026-10-25)
+
+A pad too narrow to hold a legal lattice node leaves by an escape stub
+(router/escapes.rs, `escape_nodes`): a straight or bent segment from the
+pad centre to a nearby legal node, kept as the first piece of copper of
+the branch that starts there (the search starts and ends at the stub's
+node). At 0.4 mm pitch with 0.2 mm pads, tracks and clearance (RP2040's
+QFN-56) every pad of the row needs one even on a lattice aligned with
+the pad centres: the centre line keeps exactly 0.2 mm from both
+neighbours, and the static maps' margin (`SAFETY`, 2 nm) refuses an
+exact fit, so the column inside the pad is blocked and the first legal
+node is just beyond the pad's end. The stub along the column is legal to
+the nanometre (`stub_is_clear`), as the designer's tracks are.
+
+**What kept the rows open.** A stub stamped the lattice's discs grown by
+the error of snapping an off-lattice sample to its node (`snap`, three
+quarters of a pitch and a sagitta: 0.525 mm against 0.4 mm at a 0.1 mm
+lattice with 0.2/0.2). Neighbouring stubs in a 0.4 or 0.5 mm row are
+0.4 or 0.5 mm apart, so each stub covered its neighbours' and every pair
+of adjacent escapes was in conflict whatever the negotiation did: the
+conflict sits on the pads themselves, which nothing reroutes, and the
+hard repair's test of a stub (`escape_is_free`: no other net within one
+node of any of its cells) refused them too. Measured with
+`PCB_ROUTER_DEBUG` on jfedor2/hid-remapper (x1823, the 30 s task budget,
+0.1 mm lattice aligned with U3's and U103's rows, 27 nets open): at the
+end of the negotiation every one of the 27 open nets had its conflict
+spots on its own fine-pitch pads (the stub's cells), against the nets of
+the neighbouring pads: the QFN rows of U3 and U103 (22 nets: QSPI,
+USB_DP/DM, GPIO, JACK, UART, SWD, XOUT, SDA, +1V1, +1V2), the USONs U5
+and U105 (0.3 mm pads at 0.5 mm, half a pitch off the lattice: oblique
+stubs; QSPI_SD1, 1QSPI_SD3 and the far ends of the QSPI nets), the USB-C
+connector's 0.5 mm row (1D-) and U3's ground pad 19 between XIN and
+XOUT. Not the lattice phase (0.1 mm is aligned with the QFN rows), not
+the neck-down (the neck is the 0.2 mm track), not the order.
+
+**The change** (`Config::exact_escape_stubs`; KiCad config
+`exact_escape_stubs`; `PCB_ROUTER_EXACT_ESCAPES` overrides either):
+
+- A stub along a lattice line (one segment, parallel to an axis through
+  its node: the pad's centre line on an aligned lattice) is lattice
+  copper: its nodes, from the one at or beyond the pad centre to the
+  escape node, stamp a branch node's footprints, and the hard repair
+  tests those nodes alone, exactly as a branch's.
+- A stub off the lattice's lines stamps its measured footprint
+  (`escapes::stub_footprint`): the nodes closer than the radius to the
+  stub, the nearer node of every axis step that passes closer (a step's
+  nearest point to an off-lattice vertex may lie between its nodes), the
+  via nodes closer than the via radius and the diagonal steps passing
+  closer; exactly the radius is legal, as for the discs.
+- A pad leaves by straight stubs along a lattice line where it has any;
+  bent and oblique stubs only where none leaves. What a bent stub
+  reaches, the lattice reaches from the straight stub's node, and the
+  bent ones of a pad beside its own net's pad (U3's +3V3 pad 44 into the
+  gap to pad 43) had covered the neighbour on the other side.
+
+Stubs off the lattice's lines keep the hard repair's test of their
+sampled nodes and the nodes beside them (`escape_is_free`): an exact
+test of such a stub against other copper needs where that copper's
+centrelines are, which the occupancy (zones, not centrelines) does not
+say.
+
+**Measured.** The steps one at a time on the remapper at 30 s (KiCad
+unconnected): x1823 33; lattice-line stubs exact 24 (x14470); straight
+stubs first 14 (x14471); oblique stubs measured, both ends of a close
+step 6 (x14473); the nearer end only 0 (x14474, the change).
+
+*jfedor2/hid-remapper in route mode* (the designer's placement, tracks
+stripped, the intake's 30 s of work, 1 x 1; routed / KiCad unconnected /
+new errors / vias / length / work):
+
+| | x1823 (off) | x14475 (on) |
+| --- | --- | --- |
+| 30 s | 93/120 / 33 / 0 / 109 / 2057 mm / 31.9 s | **120/120 / 0 / 0 / 95 / 2548 mm / 31.9 s, pass** |
+| 300 s | 102/120 / 19 / 0 / 63 / 2881 mm / 250.2 s | **120/120 / 0 / 0 / 92 / 2520 mm / 67.3 s, pass** |
+
+The designer's board has 100 vias and 1052 segments. Off and on with
+one binary (x14476, `PCB_ROUTER_EXACT_ESCAPES=0` and `1`) give x1823's
+and x14475's rows; the default-off head (x14477) routes the remapper and
+the 22 tier boards that moved exactly as x1823.
+
+*The expansion tier* (46 boards, 8 x 1, 30 s; x1823 identical to
+x1821 on every row): 24 boards route identically; KiCad unconnected 588
+to 556, passes 20 to 21 (strict too), new errors 3 to 8, vias 4308 to
+4291, work 1250 to 1155 s; better 10, same 33, worse 3. The rows that
+moved (routed / unconnected / new errors):
+
+| Board | off (x1823) | on (x14475) | Why |
+| --- | --- | --- | --- |
+| node_v6_0_0 | 55/77 / 32 / 0 | 67/77 / 11 / 0 | 64 SMD pads under 0.35 mm |
+| facade60_daughterboard | 41/47 / 9 / 0 | 47/47 / 0 / 0, pass | no pad under 0.35 mm: wider pads that hold no node leave by stubs too |
+| ch32v003_rbo12864h-wfi | 19/21 / 2 / 0 | 21/21 / 0 / 0, pass | 28 pads under 0.35 mm |
+| 3117_AUSIGN | 69/70 / 1 / 0 | 70/70 / 0 / 0, pass | 68 pads under 0.35 mm |
+| rpi_cm5_dronecarrier | 125/129 / 3 / 0 | 128/129 / 1 / 0 | 354 pads under 0.35 mm |
+| tuxkeychain, nervous-ecg, OpenRX-Mono, MSign | 11, 4, 12, 19 | 9, 2, 11, 18 | fewer open |
+| BloopBox_LED-Board-I2C | 7/8 / 1 / 0 | 8/8 / 0 / 1 | complete; a connector pad's thermal starved by the new route |
+| pdlc | 23/33 / 10 / 0 | 23/33 / 10 / 1 | a via 0.16 mm from NT1's net-tie copper (KiCad's hole clearance): the router reads that copper as its net's, an older gap the new route met |
+| anthracite-bottom | 139/139 / 0 / 0, pass | 139/139 / 0 / 2 | two starved thermals at J107's PTH pads (In2.Cu) |
+| backplane | 77/78 / 1 / 0 | 76/78 / 2 / 1 | one connection and a starved thermal at J4 |
+| ED052TC4-Adapter | 36/37 / 2 / 0 | 34/37 / 4 / 0 | its first attempt better (16 to 8 open), the kept result worse |
+| bms | 99/99 / 0 / 0, pass | 91/99 / 7 / 0 | the probes rank the plane-stubs rung first (85 against 86 unfinished nets; tracks ranked first before, 81 against 88) and its continuation ends with 9 open |
+
+The four starved thermals are at through-hole connector pads (no
+escape stubs); they come with routes moved elsewhere, as do the ladder's
+changed choices.
+
+*The fingerprints* (route mode on the v16 placements, 1 x 4, a quarter of
+the budget, `PCB_ROUTER_FINGERPRINT`, no wall guard; routed / KiCad
+unconnected / new errors / vias / work): unconnected 43 to 42, new
+errors 20 and 20, passes 2 and 2 (strict 1 and 1); Castor and k30-SBC
+route identically.
+
+| Board | off (x1823) | on (x14475) |
+| --- | --- | --- |
+| jetson | 320/340 / 20 / 0 / 584 / 315 s | 327/340 / 13 / 0 / 606 / 308 s |
+| Sisu | 184/192 / 23 / 20 / 379 / 315 s | 180/192 / 29 / 20 / 373 / 315 s |
+
+**Default: off.** By the rule (unconnected not worse in total, passes
+not fewer, errors not more on the tier and the dense boards) the tier
+loses on errors (3 to 8) while it wins on connections and passes; the
+dense boards and the fingerprints gain a little (8 and 1 connections).
+The switch closes the remapper at its task budget. Open: why the
+starved thermals and the net-tie via appear (other routes, not the
+stubs), and an exact hard-repair test for oblique stubs.
+
+*The eleven dense boards* (route mode on the v19 placements at the task
+budgets, 3 x 2, `PCB_ROUTER_NO_WALL_GUARD`; routed / KiCad unconnected /
+vias / work): 9 of 11 route identically; unconnected 1020 to 1012, new
+errors 115 and 115 (SmartSpin2k's 113 and protoesp's 2 as before),
+passes 0 and 0, vias 7283 to 7367, work 11034 to 11092 s.
+
+| Board | off (x1823) | on (x14475) |
+| --- | --- | --- |
+| poly_kybd_split72_left | 403/420 / 25 / 884 / 1255 s | 413/420 / 9 / 955 / 1191 s |
+| DSP-ADAU1452 | 168/190 / 25 / 206 / 1056 s | 162/190 / 33 / 219 / 1178 s |
 
 ## Pin-row cost (2026-10-23)
 

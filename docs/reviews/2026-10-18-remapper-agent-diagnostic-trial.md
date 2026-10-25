@@ -92,6 +92,24 @@ preflight, arc outlines, hot-spot links)" have the details, docs/agents.md
   config hash, grid origin and seed are not in it.
 - **P2, help and overlays: partly taken.** `inspect-routing-run --help`
   lists its fields; no region overlay.
+- **The routing hypothesis (tight escapes): tested and taken as a
+  switch** (2026-10-25, docs/router.md "Fine-pitch escapes", the
+  changelog's "Committed on 2026-10-25 (fine-pitch escapes)"). The cause
+  was neither the lattice's phase nor congestion as such: every pad of a
+  0.4 mm row with 0.2/0.2 leaves by an escape stub (the centre line keeps
+  the clearance only exactly, which the static maps refuse), and the
+  stubs stamped discs grown by a snapping margin of 0.525 mm, so every
+  pair of neighbouring stubs was in conflict for good. With
+  `PCB_ROUTER_DEBUG` on main's 30 s route (x1823, 0.1 mm lattice aligned
+  with U3's rows, 27 nets open, KiCad 33 unconnected) all 27 open nets
+  ended with their conflicts on their own fine-pitch pads (U3, U103,
+  U5, U105, USB101) against the neighbouring pads' nets. With
+  `exact_escape_stubs` (stubs along a lattice line stamped as lattice
+  nodes, oblique ones by their measured footprint, straight stubs
+  first) the board routes complete and clean at 30 s: 120/120, KiCad 0
+  unconnected and no new error, 95 vias (x14475). The switch is off by
+  default: the expansion tier gains 32 connections and a pass but has
+  five KiCad errors more.
 
 ## Minimum implementation for the next trial
 

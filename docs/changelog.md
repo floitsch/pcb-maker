@@ -312,6 +312,41 @@ main's harness_common.py the waiter gave up after 180 s without starting
 `drain_after` 60 s it started after waiting 75 s (8 holders left, 15
 newer requests waiting).
 
+## Committed on 2026-10-25 (fine-pitch escapes)
+
+The remapper trial's routing hypothesis (tight escapes at U3/U103),
+tested and fixed generally. Branch fine-pitch-escapes, snapshots x14470
+to x14477 (x14475 the change with the switch on, x14477 the head, off by
+default); off side main's x1823. docs/router.md, "Fine-pitch escapes
+(2026-10-25)", has the mechanism and the tables.
+
+- **Diagnosis** (`PCB_ROUTER_DEBUG`, jfedor2/hid-remapper, 30 s, 0.1 mm
+  lattice aligned with the QFN rows): all 27 open nets end the
+  negotiation with their conflict spots on their own fine-pitch pads
+  (U3, U103, U5, U105, USB101) against the neighbouring pads' nets. Every
+  pad of a 0.4 mm row with 0.2/0.2 leaves by an escape stub (the centre
+  line fits only exactly, which the static maps refuse), and the stubs
+  stamped the lattice's discs grown by the snapping error (0.525 mm), so
+  neighbouring stubs 0.4 or 0.5 mm apart were in conflict for good; the
+  hard repair's test refused them too. Neither the lattice's phase nor
+  the neck-down nor the order.
+- **`exact_escape_stubs`** (router and KiCad config,
+  `PCB_ROUTER_EXACT_ESCAPES`; off by default): a stub along a lattice
+  line stamps and is tested as lattice nodes; an oblique or bent one
+  stamps its measured footprint (`escapes::stub_footprint`); a pad leaves
+  by straight stubs along a lattice line where it has any. Off is
+  identical to x1823 (the remapper, the 22 tier boards that move on).
+- **Measured** (on against off): the remapper at 30 s 33 unconnected to
+  0, 120/120, no new error, a pass (at 300 s 19 to 0 in 67 s of work).
+  Expansion tier 588 to 556 unconnected, passes 20 to 21, new errors 3 to
+  8 (four starved thermals at connector PTH pads, a via at pdlc's net-tie
+  copper, all with routes moved elsewhere), better 10 / worse 3 (bms
+  loses its pass to the probe ranking, epdInky 2 to 4, backplane 1 to
+  2). Fingerprints 43 to 42 (jetson 20 to 13, Sisu 23 to 29), errors and
+  passes the same. Dense boards 1020 to 1012 (split72 25 to 9, DSP 25 to
+  33, nine identical), errors 115 and 115. **Default off**: the tier has
+  more errors.
+
 ## Committed on 2026-10-25 (the remapper trial's items: run-aware diagnosis, override preflight, arc outlines, hot-spot links)
 
 The four items of the remapper diagnostic trial
