@@ -173,9 +173,18 @@ pub mod profile {
         }
     }
 
-    /// The time now where profiling is on.
+    /// Whether each operation is timed too (`PCB_PLACER_CROSSINGS_PROFILE=ops`;
+    /// its clock reads add to the time measured, about 100 ns a line).
+    pub fn detailed() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| {
+            std::env::var_os("PCB_PLACER_CROSSINGS_PROFILE").is_some_and(|value| value == "ops")
+        })
+    }
+
+    /// The time now where operations are timed.
     pub(crate) fn now() -> Option<std::time::Instant> {
-        enabled().then(std::time::Instant::now)
+        detailed().then(std::time::Instant::now)
     }
 
     /// Adds the time since `start` (from `now`) with `change`.
@@ -263,6 +272,25 @@ struct LineGrid {
     cells: Vec<Vec<u32>>,
     /// The cells of the line being inserted or removed.
     scratch: Vec<usize>,
+}
+
+/// The count's work in the placer's units (docs/placer.md "Ratsnest
+/// crossings", the booking, 2026-10-25), as (numerator, denominator): a
+/// line met in a query (gathered once, then its net and the crossing
+/// tested) costs 5/2 units of ordinary placement work, a cell walked to
+/// insert or remove a line 7/2 (the cell's list touched), an entry of a
+/// cell's list scanned to remove one 1/4. A cell walked in a query is 1
+/// unit, a tree's pin `PIN_WORK` and Prim's k^2 one per step, as before.
+/// Measured on MegaDrive, Glasgow, video and split72_left: with one unit
+/// per cell and line met and nothing for the grid's upkeep the count took
+/// 1.5 to 3.7 times the CPU time per unit of the rest of the placement.
+const MET_WORK: (u64, u64) = (5, 2);
+const GRID_CELL_WORK: (u64, u64) = (7, 2);
+const SCAN_WORK: (u64, u64) = (1, 4);
+
+/// `amount` at `rate` (numerator, denominator), rounded up.
+fn at_rate(amount: u64, rate: (u64, u64)) -> u64 {
+    (amount * rate.0).div_ceil(rate.1)
 }
 
 /// Slack around a line's passage through a column: a meeting point on a
@@ -356,6 +384,7 @@ impl LineGrid {
         cells.clear();
         self.walk(line.a, line.b, |cell| cells.push(cell));
         profile::add(|tally| tally.grid_cells += cells.len() as u64);
+        crate::add_work(at_rate(cells.len() as u64, GRID_CELL_WORK));
         for &cell in &cells {
             self.cells[cell].push(id);
         }
@@ -378,6 +407,7 @@ impl LineGrid {
             }
         }
         self.scratch = cells;
+        crate::add_work(at_rate(walked, GRID_CELL_WORK) + at_rate(scanned, SCAN_WORK));
         profile::add(|tally| {
             tally.grid_cells += walked;
             tally.scanned += scanned;
@@ -637,7 +667,6 @@ impl<'a> CrossingState<'a> {
                     }
                 }
             }) as u64;
-            work += near.len() as u64;
             near_total += near.len() as u64;
             for &other in &near {
                 let theirs = self.lines[other as usize];
@@ -659,9 +688,9 @@ impl<'a> CrossingState<'a> {
             }
         }
         self.near = near;
-        crate::add_work(work);
+        crate::add_work(work + at_rate(near_total, MET_WORK));
         profile::add(|tally| {
-            tally.cells += work - near_total;
+            tally.cells += work;
             tally.met += near_total;
             tally.tested += tested;
         });
@@ -739,6 +768,7 @@ impl<'a> CrossingState<'a> {
     /// at the new poses, then `settle` keeps or drops them. `before` minus
     /// `after` is what `involving` gives at the old and the new poses.
     pub fn before(&mut self, moved: &[usize]) -> u64 {
+        let _timed = profile::Timed::start();
         debug_assert!(self.pending_nets.is_empty() && !self.pending_built);
         self.pending_nets = self.nets_of(moved);
         if self.pending_nets.is_empty() {
@@ -757,6 +787,7 @@ impl<'a> CrossingState<'a> {
     /// The crossings of the moved parts' nets (since `before`) at
     /// `poses`, their new lines held until `settle`.
     pub fn after(&mut self, poses: &[Pose]) -> u64 {
+        let _timed = profile::Timed::start();
         debug_assert!(!self.pending_built);
         self.pending_built = true;
         if self.pending_nets.is_empty() {
@@ -808,6 +839,7 @@ impl<'a> CrossingState<'a> {
     /// kept ones and the parts' poses are `poses`'; otherwise the new
     /// lines go.
     pub fn settle(&mut self, poses: &[Pose], moved: &[usize], keep: bool, change: i64) {
+        let _timed = profile::Timed::start();
         let lines = std::mem::take(&mut self.pending_lines);
         if keep {
             assert!(self.pending_built, "a kept move was counted at its poses");
