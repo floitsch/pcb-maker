@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 94 | 78 | 16 | 94 | 36 |
+| [Router settings](#router-settings) | 94 | 78 | 16 | 94 | 37 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 1 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 1 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
@@ -37,7 +37,7 @@ The environment variables are indexed in the hand-over
 | [Placer settings](#placer-settings) | 49 | 45 | 4 | 49 | 22 |
 | [Layout settings](#layout-settings) | 20 | 20 | 0 | 20 | 9 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
-| [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 2 |
+| [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 3 |
 | [Layout settings: silkscreen](#layout-settings-silkscreen) | 1 | 1 | 0 | 1 | 1 |
 | [Layout settings: race_probe](#layout-settings-race_probe) | 3 | 3 | 0 | 3 | 3 |
 | [Layout settings: move_descent](#layout-settings-move_descent) | 7 | 7 | 0 | 7 | 0 |
@@ -105,7 +105,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `seeds_side_by_side` (internal) | `Option<usize>` | unset (internal) | - | How many seeds of one attempt route at once (memory; the number of seeds, and so the result, does not depend on it). |
 | `cleanup_seconds` (internal) | `Option<f64>` | unset (internal) | - | A cap on the clean-up's work budget (router `cleanup_seconds`; set by the layout for a narrow-signal attempt run alone, whose negotiation needs the work more than its length and vias do). |
 | `seeds` | `Option<usize>` | unset | router.md, placer.md | Route every attempt this many ways at once (the deterministic order plus perturbed orders, in parallel) and keep the best: fewest open connections, then vias, then copper. `None`/1: one way. |
-| `first_seed` | `Option<u64>` | unset | - | The first of the `seeds` (0: the deterministic order). |
+| `first_seed` | `Option<u64>` | unset | router.md | The first of the `seeds` (0: the deterministic order). |
 | `retry_seeds` | `Option<usize>` | unset | - | An attempt that leaves connections open is routed again this many perturbed ways at once (default 4; 0: never). Many failures depend on the order: Starling fails unseeded and completes for 5 of 8 seeds. |
 | `plane_skeleton` | `Option<bool>` | unset | - | Route pour nets first as a fixed tree on their plane layer. |
 | `skeleton_bias` | `Option<f64>` | unset | - | Router `skeleton_bias`: the cost factor of a skeleton step off the plane layer (default 6). |
@@ -426,7 +426,7 @@ The `free_dimension` object of the layout settings: one edge of a rectangular ou
 |---|---|---|---|---|
 | `free_dimension.edge` | `String` | required | - | The edge of the rectangular outline that moves: `bottom`, `top`, `left` or `right`. The opposite edge stays where it is. |
 | `free_dimension.min` | `Option<f64>` | optional | router.md, placer.md | The smallest extent of the board along the free axis (its height for `top` and `bottom`, its width for `left` and `right`), in millimetres; with `max` and `step`. |
-| `free_dimension.max` | `Option<f64>` | optional | - | The largest extent along the free axis, in millimetres. |
+| `free_dimension.max` | `Option<f64>` | optional | router.md | The largest extent along the free axis, in millimetres. |
 | `free_dimension.step` | `Option<f64>` | optional | - | The sizes tried: `min`, `min + step`, ... up to `max` (and `max` itself). |
 | `free_dimension.sizes` | `Vec<f64>` | optional | - | The sizes tried, instead of a range and a step. |
 | `free_dimension.prefer_below` | `Vec<f64>` | optional | - | Price thresholds (JLCPCB's 100 mm): a size at or below one is preferred over any larger size, and is tried itself when it lies in the range. |

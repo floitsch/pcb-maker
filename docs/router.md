@@ -2217,7 +2217,7 @@ designers' crossings) 2 mm took crossings 452 to 410 and 6 mm 437 to 365
 (of the ten run at 6), but SNSP-CPU-01 went 6 to 11 unconnected (22 at
 6 mm) and video 0 to 1.
 
-## Differential pairs (2026-10-23, phases 2 to 4 2026-10-24)
+## Differential pairs (2026-10-23, phases 2 to 4 2026-10-24, polarity and skew 2026-10-25)
 
 `diff_pairs` in the router settings (route mode). **Default by need**
 (phase 3): on where the project's custom rules ask for pairs, that is
@@ -2409,9 +2409,10 @@ or failed link falls back as above instead.
 `explicit`: the setting or `PCB_ROUTER_DIFF_PAIRS`), `reason` (the rule
 and the net it holds for, or why nothing asks; route mode reports it on
 every board), and with the switch on `found`, `coupled` (every link), `partly_coupled`, `fallen_back`,
-`links`, `links_coupled`, `crossed`, `coupled_mm`, `uncoupled_mm`
+`links`, `links_coupled`, `crossed`, `crossovers` (2026-10-25), `coupled_mm`, `uncoupled_mm`
 (after the route, per coupled pair the longer net's tracks less the
-coupled run: KiCad's measure), `work_seconds` (the fallback's), and in
+coupled run: KiCad's measure), `skew_mm`, `meanders`, `skews` (2026-10-25,
+"Skew and length" below), `work_seconds` (the fallback's), and in
 board-router.json per pair its nets, width, gap, source and why links
 fell back (`fewer than two parts with the pair's pads side by side`,
 `the launches are too close for a coupled run` (under 1 mm),
@@ -2516,6 +2517,150 @@ expansion tier's 46 boards (no board's rules ask) are identical to x1798,
 rows and routed boards byte for byte. Tables: docs/changelog.md,
 "Committed on 2026-10-24 (differential pairs: the coupled share)".
 
+**Polarity (2026-10-25; off by default).** A link is *crossed* where the
+pads' order at one end is against the run's (the positive pad on the side
+the run gives the negative net). Two remedies exist. *A swap at the part*
+(P and N exchanged on the part's pins where the schematic allows it) needs
+swap data: KiCad has none, and the one hook here (pin-swaps.json,
+docs/pin-swap.md, layout mode) is set on none of the rule boards, so no
+swap is made. *A crossover in the run* is built: at the crossed end's
+launch (`crossover`, `Launch::crossover`) the stubs' ends keep the pads'
+order (the stubs do not cross, so the link can carry them straight), one
+net (the *straight* one) runs on from its stub's end, the other *dives*:
+out by what its via needs (a via's radius plus the clearance, or the
+drill's radius plus the hole clearance, plus half the width, from the
+straight track), a via, a track across under the straight net on the
+nearest other layer of the pair's, a via on the straight net's far side,
+back on the launch layer two offsets beside it. The run starts past it,
+its centreline beside the straight track (the run's lead and envelope
+checked there as at any launch). On the launch layer every track of the
+diving net lies two offsets (a gap) from the straight one, so KiCad's gap
+check (which pairs any P and N segments whose projections overlap with
+nothing between, KiCad 10's drc_test_provider_diff_pair_coupling) sees the
+gap; where the link carries the stubs their ends lie an offset from the
+centreline (not the router's wider end offset), so the tracks before the
+crossover are a gap apart as well. Either net may run straight, the first
+that fits; the crossover's copper (tracks, both vias on every layer with
+their holes; hole to hole and hole clearance from other holes and copper)
+keeps every clearance, and is copper of the pair's nets in the plan (other
+nets keep clear of it). The second end gets it, else the first; an end
+whose crossover leaves both ends' stubs to the link first. With it come
+two changes the crossed links needed once they reached the copper check:
+the link's path loses its hairpins (`despiked`: a point where the path
+turns back by more than a right angle goes, two turns the same way with
+less than 2.5 offsets between them meet at the lines' crossing; the raw
+path is the alternative where that copper is refused), and a kept link's
+vias keep their holes' clearance in the fallback's board (the fallback
+routed beside them at the copper clearance: hole_clearance errors on
+oculink_m2). Verdict: `crossovers` (coupled links through a crossover).
+`PCB_ROUTER_DIFF_PAIRS_CROSSOVER=1` turns all three on.
+
+**Skew and length (2026-10-25; on with the pairs).** After the fallback,
+per pair with a kept link (`match_skew`), the two nets' lengths from their
+copper: the routes' and the kept links' tracks, and each via at the
+stackup's height between the outermost layers of the tracks that end on
+it (`copper_heights`: the board's `stackup`, each copper layer at its
+middle; else the board's thickness spread over its copper layers), as
+KiCad measures with the stackup's height. The offset tracks are measured,
+not the centreline: at a bend of θ the outer track is longer by about
+`2 d tan(θ/2)`, and a crossover's diving net carries two vias. The target
+is the custom rules' `skew` maximum for the pair's nets (the least over
+the layers; `project_rules`, `KiCadDiffPairRule::max_skew`), else the
+pair's gap; a `length` rule's minimum (or its opt) is a target length for
+both nets. Where the nets lie further apart than the target (or a net is
+shorter than the length), the shorter net gets a meander on a straight
+track of its coupled run: rectangular bumps with 45° corners away from
+its partner, `max(w + c, 2 w)` wide and apart, at most `max(3 w, 2 g)`
+high, as few as hold the length and their height bisected so that they
+add exactly what it lacks; the longest straight tracks first, per track
+the meander near its start, in its middle, near its end, the first whose
+copper keeps every clearance (`refused_groups`); none where none fits.
+The meander's tracks are written as a KiCad tuning pattern (`generated`,
+`tuning_pattern`, `diff_pair_skew`): KiCad 10's gap check skips a tuning
+pattern's tracks (their bumps would otherwise be P and N pieces out of the
+gap's range). KiCad's own `skew` rule compares every net the rule matches
+(without `within_diff_pairs`), so a rule over a class compares more than
+one pair; the pass matches each pair. KiCad has no skew check without a
+rule; the gap as the default target is this router's. Verdict and
+board-router.json: `skew_mm` (the largest skew of a pair with a coupled
+link, from the written board), `meanders`, and `skews` (per such pair its
+nets, both lengths, the skew, the target and what the meander added; the
+verdict keeps it, unlike `pairs`); per pair in board-router.json
+`skew_mm`, `skew_target_mm`, `meander_mm`. `PCB_ROUTER_DIFF_PAIRS_SKEW=0`
+turns the meanders off (the skew is still measured).
+
+**Measured (2026-10-25).** The 7 rule boards, route mode, 30 s of work,
+one thread, the board's own tracks kept, KiCad's DRC with
+`--refill-zones`, no setting (the default by rules fires on all 7); unlike
+the phases before, the wall guard raised to 1200 s (`deadline_seconds`)
+on both sides: at 90 s the ducktop2 boards were cut by the wall clock on a
+loaded machine (x1820's ducktop2-center 96 s of work against 419 s uncut)
+and their rows depended on the load. Off side x1820 (main); the crossovers
+with x14400 (the code before the default flipped: crossovers on, meanders
+off with `PCB_ROUTER_DIFF_PAIRS_SKEW=0`); the default with x14401 (the
+branch: crossovers off, meanders on). Gap, uncoupled and length are
+KiCad's diff_pair_gap_out_of_range, diff_pair_uncoupled_length_too_long and
+length_out_of_range plus skew_out_of_range; errors are KiCad's errors;
+dangling are track_dangling and via_dangling.
+
+*Polarity* (x1820 -> x14400 with crossovers; links coupled with the
+crossovers among them in brackets):
+
+| board | gap/uncoupled/length | errors | unconnected | vias | dangling | links coupled/total | uncoupled mm |
+|---|---|---|---|---|---|---|---|
+| ducktop2-center | (12, 0, 0) -> (8, 0, 0) | 15 -> 11 | 499 -> 499 | 700 -> 684 | 0 -> 0 | 3/54 -> 4/54 (3) | 6 -> 12 |
+| ducktop2 left_io | (15, 0, 0) -> (30, 0, 0) | 15 -> 30 | 356 -> 360 | 239 -> 238 | 0 -> 2 | 0/41 -> 3/41 (1) | 0 -> 8 |
+| ducktop2 right_io | (38, 0, 0) -> (54, 0, 0) | 40 -> 54 | 166 -> 179 | 154 -> 146 | 3 -> 1 | 1/23 -> 1/23 (0) | 1 -> 1 |
+| OpenAIO-Whoop | (1, 0, 1) -> (1, 0, 1) | 0 -> 0 | 183 -> 183 | 36 -> 36 | 0 -> 0 | 0/4 -> 0/4 | 0 -> 0 |
+| oculink m2_card | (1, 0, 0) -> (1, 0, 0) | 2 -> 2 | 2 -> 2 | 22 -> 22 | 0 -> 0 | 9/9 -> 9/9 (0) | 10 -> 10 |
+| oculink_m2 | (0, 0, 0) -> (11, 0, 0) | 4 -> 14 | 9 -> 1 | 47 -> 38 | 2 -> 0 | 4/10 -> 9/10 (5) | 8 -> 32 |
+| oculink_port | (0, 0, 0) -> (1, 0, 0) | 21 -> 29 | 12 -> 14 | 18 -> 12 | 34 -> 34 | 3/9 -> 3/9 (3) | 8 -> 12 |
+
+Totals: links coupled 20/150 -> 29/150 (12 through a crossover), errors
+97 -> 140, unconnected 1 227 -> 1 238, gap findings 67 -> 106, vias 1 216
+-> 1 176. Of the 106 gap findings 2 are on pairs with a coupled link: the
+rise is on the pairs that fall back, whose two nets the fallback routes
+apart (KiCad pairs any of their segments with overlapping projections and
+nothing between, at any distance). The fallbacks: run not routed 83 -> 78,
+a pad's stub does not reach the run 25 -> 18, fewer than two pair points
+22 -> 22, launches under 1 mm apart 11 -> 12, no launch 7 -> 7, copper
+refused 4 -> 6. Perturbed (the router's `first_seed` 2; on the ducktop2
+boards, where the seed changes nothing, the ladder's budget at 28 and 32
+s): seed 2 coupled 17 -> 25, errors 110 -> 296 (oculink_port 24 -> 183:
+its ladder kept a narrow rung, track_width 22 -> 147), unconnected 1 228
+-> 1 231, gap 73 -> 137; left_io is the same at every budget (gap 15 ->
+30, unconnected 356 -> 360), right_io's unconnected is worse at each
+(166 -> 186, 178, 179; gap 39 -> 27, 38 -> 52). ducktop2-center with
+crossovers at 28 and 32 s was refused memory by the ledger and has no
+row. Where it works it works: oculink_m2 couples 9 of 10 links (5 through
+a crossover) and leaves 1 connection open instead of 9. But coupled links
+rise while errors, gap findings and unconnected rise too, on both
+perturbations: **not the default** (`PCB_ROUTER_DIFF_PAIRS_CROSSOVER=1`).
+What stops it: the crossovers crowd a dense connector's neighbours
+(oculink_port's TX stubs at J1 fail beside the RX crossovers, which couple
+instead), and the links they let through reach the copper check and are
+refused there (a run turning back at a via, which swaps the pair's sides
+in the plane: the vias of a U-turn on a layer change collide), and each
+refused link is a pair that falls back.
+
+*Skew and length* (x1820 -> x14401, the default): every row identical
+(the routes are; the meanders add copper only): links coupled 20/150,
+errors 97, unconnected 1 227, gap findings 67, skew/length findings 1
+(OpenAIO-Whoop's `/USB_D_P` is not routed: KiCad's skew from a net of
+length 0; it has no coupled link) both ways, vias 1 216. Eight pairs got a
+meander (oculink_port TX0 0.61 mm, TX1 0.32, TX2 2.05; oculink_m2 TX0 to
+TX3 0.21 to 0.49; ducktop2-center's WIFI_PCIE_TX_RAW 0.27), their skew now
+0.000 mm; the other coupled pairs lay within their gap already (m2_card's
+nine at most 0.002 mm, two of center's 0.007), but for right_io's
+GBE_REFCLK at 0.562 mm, whose run has no straight track with room for the
+bumps. Largest skew of a coupled pair: 0.562 mm on right_io, 0.007 mm on
+the other boards. The meanders' tracks are tuning patterns in the written
+boards; KiCad's gap findings are unchanged on every board. With the
+crossovers on as well (x14400, seed 0, meanders on against off): the same
+rows, the meanders longer (a crossover's diving net carries two vias from
+F.Cu to B.Cu: oculink_port's RX0, RX1 and CLOCK got 5.32, 3.23 and 4.71
+mm).
+
 **Phase 2's remaining items, and what was learnt.**
 (1) A link must not cost the board: the gate failed on boards where the
 link nets lose or are refused. Candidates: a link net that stays in
@@ -2529,12 +2674,19 @@ run's offset tracks where the negotiation ended with conflicts. (3)
 Polarity: a crossed end (14 of the coupled or partly coupled links on the
 tier) now crosses in the stubs with a via, which the router places; KiCad
 then counts the crossed stubs as uncoupled and, where they run parallel,
-out of the gap's range (the fixture's LVDS pair). Swapping the pads'
-order where the part allows, or a crossing inside the run with staggered
-vias, would keep it coupled. (4) Length and skew (KiCad's `length`,
-`skew`): the coupled run's offset makes the outer track of each bend
-longer by `2 d tan(θ/2)`; a skew pass would add the difference to the
-inner one at the run's ends, where the lead is straight. (5) GND return
+out of the gap's range (the fixture's LVDS pair). 2026-10-25: a crossover
+in the lead is built and measured, not the default (above, "Polarity");
+left: a crossover where the run changes layers anyway (its two vias
+staggered, no via added: a U-turn at a layer change needs one), a
+crossover that leaves a dense connector's neighbours their stubs, and the
+swap at a part, which needs swap data no rule board has. (4) Length and
+skew (KiCad's `length`, `skew`): the coupled run's offset makes the outer
+track of each bend longer by `2 d tan(θ/2)`. Done 2026-10-25 (above, "Skew
+and length"): measured from the written copper, matched by a meander on
+the shorter net, a KiCad tuning pattern; left: a meander where the run has
+no straight track with room (right_io's GBE_REFCLK, 0.562 mm), and length
+matching across pairs (a bus's `length` rule over several pairs, which
+KiCad's `skew` without `within_diff_pairs` compares too). (5) GND return
 vias beside each pair via: the link's via disc already holds room for
 two vias; a return via each side needs the disc wider by a via and a
 clearance (`2 dv / 0.7 + 2 V + 2 c`) or a separate obstacle placed with

@@ -273,6 +273,16 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "differential pairs: the fallback router's work deadline in seconds, which routes what the coupled runs left open (default 0.05 of the ladder's budget, at least 1 s; for experiments).",
     ),
     (
+        "PCB_ROUTER_DIFF_PAIRS_CROSSOVER",
+        Kind::Switch,
+        "differential pairs: `1` gives a crossed link end a crossover in its lead (one net dives under the other, a via each side), with the links' hairpins removed and the kept links' via holes kept clear in the fallback (default off: more links coupled, more errors on the rule boards; docs/router.md, \"Polarity\").",
+    ),
+    (
+        "PCB_ROUTER_DIFF_PAIRS_SKEW",
+        Kind::Switch,
+        "differential pairs: `0` turns off the meanders that match a coupled pair's two lengths to the rules' skew (else the pair's gap) or length (the skew is still measured and reported; docs/router.md, \"Skew and length\").",
+    ),
+    (
         "PCB_ROUTER_DIFF_PAIRS_DEBUG",
         Kind::Diagnostic,
         "differential pairs: prints each launch, each link's path, the copper refused with the reason, each stub straightened or not, and the fallback's work.",
