@@ -126,9 +126,7 @@ impl KeyHeap {
             // sift's loads overlap instead of waiting one after the other.
             let grandchildren = 4 * q - 10;
             for group in [grandchildren, grandchildren + 2, grandchildren + 3] {
-                if let Some(group) = self.groups.get(group) {
-                    super::prefetch(group);
-                }
+                super::prefetch_index(&self.groups, group);
             }
             // The least of the four children without branches (`NO_KEY`
             // past the end; the first of equal keys, as any order would
