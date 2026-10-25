@@ -11,6 +11,76 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-26 (the drain's feasibility cap; the nightly's order)
+
+Branch ledger-feasibility. On 2026-10-25 from about 22:30 to past 00:30
+the nightly's designer stage had three boards left (neotron-pico 27.9 GB
+expected, ULK_sl_PG1316s 24.7, ULK 23.2, `--min-free-gb 10`), five agents
+were held back and the nightly did not progress. Routing is untouched:
+only who is admitted when, and the designer tier's estimates and order,
+change.
+
+**What happened.** The nightly ran main 356c8db, built before the drain
+landed (21:00): its waiting entries had no `floor_mb` and no `priority`.
+Other agents' harnesses (with the drain) drained for it with a floor of
+0 and the end exception, holding each other to 23-28 GB of room while
+the waiter's own harness needed 33-38 GB available (about 42 GB on an
+idle machine) or an empty ledger. The estimates were wrong too: the
+designer tier's `peak_rss_mb` came from its boards' v17 layout rows
+(x1170), not from routes on the designer's placement. Measured, the
+largest of five designer runs (the nightlies of 2026-10-24 and
+2026-10-25, x1725, x1539 and x1404 matched): neotron-pico 5497 MB, ULK
+1512, ULK_sl_PG1316s 1389 (674-704 in the nightlies), katia 6550,
+0xCB-1337 panel 1534, jiran-ble-lite 4917; the median estimate was 1.8
+times the measured peak, the ULK boards' 34 times.
+
+**The feasibility cap** (`blocked_by_large`, `SMALL_REQUEST_MB` 4096 in
+ledger.rs and harness_common.py, the same rule). While the drained-for
+waiter cannot fit before a run larger than 4096 MB ends (with every
+smaller run gone its room, the capacity and the memory available less
+its floor, still falls short), the drain lets requests of at most
+4096 MB go and holds back the larger ones. Once no large run blocks it,
+the drain holds everything as before. With tonight's (x1824) nightly the
+three boards would each have needed the machine nearly to themselves,
+and each next board's drain would have held every other request while
+the one before it ran.
+
+**Simulation** (ledger.rs `small_requests_go_while_the_waiter_waits_for_a_large_run_to_end`,
+test_run.py `MemoryLedger.tonight`, the same numbers): a 58 066 MB
+ledger, 42 000 MB available on an idle machine, an 8.8 GB run until
+900 s, the three nightly boards waiting from 0 s (floor 10 240 MB, each
+running 1500 s), three agents' chains of 2 GB binaries of 120 s. Before:
+the boards start at 900, 2400 and 3900 s; a binary waits up to 3900 s;
+264 binaries run in four hours. After: 960, 2460 and 3960 s; 120 s at
+most; 348. A drain deadline (giving up after the waiter's run time) was
+simulated as well and not taken: the second and third boards never
+started in eight hours. A scratch simulation with five run.py agents of
+1.2-6 GB boards beside it showed the same for binaries (longest wait
+4036 s before, 180 s after); the agents' own boards still wait while a
+28 GB board runs, by their own 10 GB floor.
+
+**Smoke** (two processes and a phantom 6000 MB holder until 60 s, a
+private ledger, `PCB_MAKER_LEDGER_TOTAL_MB` 12000): a nightly waiter of
+8000 MB and a stream of 1000 MB requests every 2 s, each held 20 s. With
+main's harness_common.py the stream got none in while the waiter waited
+("the ledger drains for it"); with the branch's about ten went in between
+3 and 60 s. The waiter started at 60.1 s in both (57 s of waiting).
+
+**The estimates.** designer.json's `peak_rss_mb` and `seconds` are now
+per board the largest of those five runs' designer-placement rows
+(`benchmarks/agent-tasks/tier_estimates.py <tier> --placement designer
+<logs>`, test test_tier_estimates.py). With them the largest designer
+board expects 6.5 GB.
+
+**The nightly's order.** scripts/nightly.sh runs the designer tier
+before the sweep, with `run.py --order peak-desc` (new: the largest
+expected peak first, then the longest; the default `seconds-desc` is the
+tier's order as before). The designer tier is the stage with the large
+boards and the shorter one (46 000 s of boards on 2026-10-25 against the
+sweep's 91 000), and after the sweep it began at 06:27-10:29, in the
+agents' day. Its budget scale now comes from the newest earlier night's
+sweep (the matched share of the binary of the night before; 0.695
+without one).
 ## Committed on 2026-10-25 (the race counts every probe it ran)
 
 A fix of the race's accounting, with a margin for its pick. Branch

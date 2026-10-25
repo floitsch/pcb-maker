@@ -57,7 +57,7 @@ boards that gained or lost the pass.
   expected first (layout sweep v20 below). run.py should admit smaller
   boards past a waiting large one (or hold memory for it in turn); a
   harness item, not done yet.
-## Memory ledger: who runs next (2026-10-24, the drain 2026-10-25)
+## Memory ledger: who runs next (2026-10-24, the drain 2026-10-25, its feasibility cap 2026-10-26)
 
 Benchmarks share the machine through the memory ledger
 (`$XDG_RUNTIME_DIR/pcb-maker-ledger.json`; how a run reserves and waits:
@@ -128,6 +128,45 @@ nightly request goes first among the waiters (before an older one that is
 not the nightly's) and is never passed once waiting: the ledger drains
 for it at once and without the end exception. `pcb-maker ledger` marks
 it `[nightly]`.
+
+**The drain's feasibility cap** (2026-10-26). A drain for a waiter that
+cannot fit before a large run ends holds back requests that would not
+delay it. On 2026-10-25 from 22:30 the nightly's last designer boards
+(neotron-pico, ULK_sl_PG1316s, ULK: 27.9, 24.7 and 23.2 GB expected, with
+the 10 GB floor 33-38 GB of the roughly 42 GB available on an idle
+machine) could only run one at a time, and each next one's drain would
+hold every other request back while the one before it ran. Now, while
+the drained-for waiter is `blocked_by_large` (a run larger than
+`SMALL_REQUEST_MB`, 4096, holds memory, and with every smaller run gone
+the waiter's room, the capacity and the memory available less its
+floor, still does not cover it), a request of at most 4096 MB goes; the
+large ones wait. Once the large run ends (or none holds memory), the
+drain holds everything as before and the small runs end before the
+waiter goes. Tests `small_requests_go_while_the_waiter_waits_for_a_large_run_to_end`
+(ledger.rs) and test_run.py's `MemoryLedger` (the same simulation:
+58 066 MB, 42 000 available, an 8.8 GB run until 900 s, the three nightly
+boards each running 1500 s, three agents' chains of 2 GB binaries of
+120 s): without the cap a binary waits up to 3900 s (264 run in four
+hours), with it 120 s (348); the boards start at 960, 2460 and 3960 s
+instead of 900, 2400 and 3900. A drain deadline (the drain gives up after
+the waiter's run time) was simulated too and not taken: the second and
+third boards never started in eight hours, as before the drain.
+
+That night itself was not this rule's case: the nightly ran main
+356c8db, from before the drain (2026-10-25 21:00), so its waiting
+entries had no `floor_mb` and no `priority`. The other agents' harnesses
+drained for it with a floor of 0 and the end exception: they held each
+other back to keep 23-28 GB of room it could not use (it needed 33-38 GB
+by its own floor, or an empty ledger), while newcomers that ended before
+every holder kept the ledger from emptying. And the estimates were wrong:
+the designer tier's peaks were its boards' v17 layout rows (x1170,
+placement and routing), not routes on the designer's placement. Measured
+(five designer runs, the largest row): neotron-pico 5497 MB, ULK 1512,
+ULK_sl_PG1316s 1389, katia 6550, the 0xCB panel 1534; the median board's
+estimate was 1.8 times its measured peak. designer.json now carries the
+measured peaks and seconds (`benchmarks/agent-tasks/tier_estimates.py`),
+and scripts/nightly.sh runs the designer tier before the sweep, its
+largest boards first (`run.py --order peak-desc`).
 
 Older binaries and harness copies ignore the new fields (`floor_mb`,
 `drain_after`, `expected_end`, `priority`) and do not drain; an older
