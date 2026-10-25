@@ -27,6 +27,15 @@ pub(super) const NO_KEY: u64 = u64::MAX;
 /// 9-13 % less CPU per routed board, k30-SBC and Sisu, identical routes).
 /// Keys order totally (a key holds its state; equal keys are the same
 /// entry twice), so the pops are those of any other min-heap.
+///
+/// A pop leaves its slot empty (`hole`) and the next push fills it, sifting
+/// the new key down from the root (since 2026-10-25). The search pops a
+/// node and then pushes its neighbours, whose estimates are near the
+/// least: they stop a level or two below the root, where the heap's last
+/// key, moved to the root by a plain pop, sank to the bottom through every
+/// level (the sift's loads were 10 to 15 % of the route's CPU;
+/// docs/profiling.md). A pop with the root still empty fills it as a
+/// plain pop does. The heap pops the same keys either way.
 #[derive(Default)]
 pub(super) struct KeyHeap {
     /// Slot `q` is `groups[q / 4].0[q % 4]`. The root is slot 3, the
@@ -34,13 +43,19 @@ pub(super) struct KeyHeap {
     /// `4p - 5`), so that siblings never straddle a cache line. Slots 0 to
     /// 2 and those past the end hold `NO_KEY`.
     pub(super) groups: Vec<KeyGroup>,
+    /// The keys held. With `hole` they lie in slots 4 to `3 + len`, the
+    /// root empty; otherwise in slots 3 to `2 + len`.
     pub(super) len: usize,
+    /// Whether the root is empty (the last pop's), to be filled by the
+    /// next push or pop.
+    hole: bool,
 }
 
 impl KeyHeap {
     pub(super) fn clear(&mut self) {
         self.groups.clear();
         self.len = 0;
+        self.hole = false;
     }
 
     #[inline(always)]
@@ -50,6 +65,13 @@ impl KeyHeap {
 
     #[inline(always)]
     pub(super) fn push(&mut self, key: u64) {
+        if self.hole {
+            // The root is empty: the new key goes there and down.
+            self.hole = false;
+            self.len += 1;
+            self.sift_down(key, 3 + self.len);
+            return;
+        }
         let mut q = 3 + self.len;
         if self.groups.len() <= q >> 2 {
             self.groups.push(KeyGroup([NO_KEY; 4]));
@@ -69,20 +91,44 @@ impl KeyHeap {
 
     #[inline(always)]
     pub(super) fn pop(&mut self) -> Option<u64> {
+        if self.hole {
+            // Nothing was pushed since the last pop: the last key fills
+            // the root, as a plain pop does.
+            self.hole = false;
+            if self.len == 0 {
+                return None;
+            }
+            let end = 3 + self.len;
+            let last = std::mem::replace(self.slot(end), NO_KEY);
+            self.sift_down(last, end);
+        }
         if self.len == 0 {
             return None;
         }
         let top = *self.slot(3);
         self.len -= 1;
-        let end = 3 + self.len;
-        let last = std::mem::replace(self.slot(end), NO_KEY);
-        if self.len == 0 {
-            return Some(top);
-        }
+        self.hole = true;
+        Some(top)
+    }
+
+    /// Puts `key` into the empty root and sifts it down among the slots
+    /// before `end`.
+    #[inline(always)]
+    fn sift_down(&mut self, key: u64, end: usize) {
         let mut q = 3;
         loop {
             if 4 * q - 8 >= end {
                 break;
+            }
+            // The four children's own children, the next level's groups
+            // (4q - 10 to 4q - 7, 128 bytes on two or three cache lines):
+            // asked for while this level's least is chosen, so that the
+            // sift's loads overlap instead of waiting one after the other.
+            let grandchildren = 4 * q - 10;
+            for group in [grandchildren, grandchildren + 2, grandchildren + 3] {
+                if let Some(group) = self.groups.get(group) {
+                    super::prefetch(group);
+                }
             }
             // The least of the four children without branches (`NO_KEY`
             // past the end; the first of equal keys, as any order would
@@ -96,13 +142,12 @@ impl KeyHeap {
             } else {
                 (first, low)
             };
-            if least >= last {
+            if least >= key {
                 break;
             }
             *self.slot(q) = least;
             q = 4 * q - 8 + which;
         }
-        *self.slot(q) = last;
-        Some(top)
+        *self.slot(q) = key;
     }
 }

@@ -167,6 +167,38 @@ fn key_heap_pops_in_order() {
 }
 
 #[test]
+fn key_heap_fills_the_root_a_pop_leaves() {
+    // A search's rhythm: a pop, then a few pushes (none at times), pops
+    // of an empty heap between; the root a pop leaves is filled by the
+    // next push or pop.
+    let mut heap = KeyHeap::default();
+    let mut reference = std::collections::BinaryHeap::new();
+    assert_eq!(heap.pop(), None);
+    heap.push(7);
+    assert_eq!(heap.pop(), Some(7));
+    assert_eq!(heap.pop(), None);
+    assert_eq!(heap.pop(), None);
+    let mut state = 0x6a09_e667_f3bc_c908u64;
+    for round in 0..100_000u64 {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let popped = heap.pop();
+        assert_eq!(popped, reference.pop().map(|std::cmp::Reverse(key)| key));
+        let base = popped.unwrap_or(state >> 44);
+        for push in 0..(state >> 61) {
+            let key = base + ((state >> (8 * push)) & 0xfff) * (round % 5);
+            heap.push(key);
+            reference.push(std::cmp::Reverse(key));
+        }
+    }
+    while let Some(std::cmp::Reverse(key)) = reference.pop() {
+        assert_eq!(heap.pop(), Some(key));
+    }
+    assert_eq!(heap.pop(), None);
+}
+
+#[test]
 fn key_heap_pops_as_binary_heap_across_clears() {
     // A search's pattern: keys mostly at or above the last popped one,
     // a few below it, repeats, and the heap cleared between searches.
