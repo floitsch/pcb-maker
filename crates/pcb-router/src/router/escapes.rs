@@ -22,7 +22,7 @@ impl Router {
         net: NetId,
         terminal: &crate::board::Terminal,
         nodes: &mut Vec<Node>,
-        escapes: &mut HashMap<Node, (Vec<u32>, f64, Vec<crate::geometry::Point>)>,
+        escapes: &mut HashMap<Node, Escape>,
     ) {
         const REACH: f64 = 2.0;
         const WANTED: usize = 12;
@@ -62,8 +62,7 @@ impl Router {
             }
             candidates.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
             let mut accepted = 0;
-            let mut found_here: Vec<(Node, (Vec<u32>, f64, Vec<crate::geometry::Point>))> =
-                Vec::new();
+            let mut found_here: Vec<(Node, Escape)> = Vec::new();
             // Exit points along the pad's long axis, for bent stubs.
             let pad = self.board.obstacles[terminal.pad].shape.aabb();
             let extent = [

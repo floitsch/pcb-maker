@@ -333,7 +333,7 @@ struct NetState {
     on_plane: Vec<bool>,
     /// Terminal nodes outside their (too narrow) pad, with the lattice
     /// nodes sampled along the straight stub from the pad centre.
-    escapes: HashMap<Node, (Vec<u32>, f64, Vec<crate::geometry::Point>)>,
+    escapes: HashMap<Node, Escape>,
     /// Short tracks from a pad merged into its terminal's larger pad (an
     /// exposed pad's thermal via) into fill over that pad, which KiCad's
     /// DRC counts as the via's spokes (`add_inner_spokes`): layer, start
@@ -386,6 +386,10 @@ struct NetState {
     capacitated_miss: Option<capacitated::Miss>,
     capacitated_fallback: bool,
 }
+
+/// An escape stub behind its node: the lattice nodes it covers, its width
+/// and its polyline from the pad centre to the node.
+type Escape = (Vec<u32>, f64, Vec<crate::geometry::Point>);
 
 #[derive(Clone)]
 struct Stamps {

@@ -13,8 +13,7 @@ impl Router {
         let statics = &self.statics[description.class];
         let mut terminal_nodes = Vec::new();
         let mut terminal_reach = Vec::new();
-        let mut escapes: HashMap<Node, (Vec<u32>, f64, Vec<crate::geometry::Point>)> =
-            HashMap::new();
+        let mut escapes: HashMap<Node, Escape> = HashMap::new();
         let mut counts = [0u64; 2];
         // A padstack pad's copper on the layers its stack names
         // (`MergedPad::padstack`): there the terminal is that shape.
