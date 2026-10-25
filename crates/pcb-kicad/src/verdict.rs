@@ -941,8 +941,10 @@ pub struct KiCadVerdict {
     /// probed placement's open terminals, unfinished nets, nets in
     /// conflict and work, whether the 40 % gate before 2026-10-25 would
     /// have dropped it, the placement kept and the one the gate would
-    /// have kept (`probe`, `kept`, `kept_gated`, `probe_seconds`,
-    /// `dropped`). Absent when it did not run.
+    /// have kept, the probes' best, whether they separated the
+    /// placements and why (`probe`, `kept`, `kept_gated`, `best`,
+    /// `confident`, `reason`, `probe_seconds`, `dropped`). Absent when it
+    /// did not run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub race: Option<crate::board_layout::KiCadRaceReport>,
     /// The router file's values below the project's minimum that the run

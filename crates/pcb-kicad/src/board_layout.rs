@@ -168,25 +168,92 @@ impl Default for KiCadRaceProbe {
 /// placement overran its share by less than 75 s.
 pub const RACE_MIN_FINAL_SHARE: f64 = 0.45;
 
-/// How many of `others` placements besides the kept one the race probes
-/// for `probe_seconds` each: as many as leave the final route
+/// The shortest probe the race shortens its probes to for the final
+/// route's minimum share, as a share of `probe_seconds` (below it the
+/// race probes fewer placements instead).
+pub const RACE_SHORTEST_PROBE: f64 = 1.0 / 3.0;
+
+/// How many of `others` placements besides the kept one the race probes,
+/// and for how long each: as many as leave the final route
 /// `RACE_MIN_FINAL_SHARE` of `total_seconds` after `clock` seconds of
 /// work so far (the kept placement's probe is the first part of its
-/// first route and does not count).
+/// first route and does not count). All of them at `probe_seconds`
+/// where they fit; else every probe shortened alike to share the room,
+/// down to `RACE_SHORTEST_PROBE` of it; else fewer placements (the
+/// lowest-ranked dropped first); none where not even one fits.
 fn race_probes_that_fit(
     total_seconds: f64,
     clock: f64,
     probe_seconds: f64,
     others: usize,
-) -> usize {
+) -> (usize, f64) {
     let room = (1.0 - RACE_MIN_FINAL_SHARE) * total_seconds - clock;
-    if probe_seconds <= 0.0 {
-        return others;
+    if probe_seconds <= 0.0 || others == 0 {
+        return (others, probe_seconds);
     }
-    if room <= 0.0 {
-        return 0;
+    for count in (1..=others).rev() {
+        let seconds = (room / count as f64).min(probe_seconds);
+        if seconds >= RACE_SHORTEST_PROBE * probe_seconds {
+            return (count, seconds);
+        }
     }
-    others.min((room / probe_seconds).floor() as usize)
+    (0, probe_seconds)
+}
+
+/// The margin by which a placement's probe must beat the first-ranked
+/// placement's (fewer nets unfinished, as a share of the first-ranked
+/// one's) for the race to route on with it (`race_pick`).
+pub const RACE_CONFIDENT_MARGIN: f64 = 0.05;
+
+/// The race's pick without the route probe: the probes' `best` (by
+/// unfinished nets, `race`, in the ranking's order) where it leaves at
+/// least `RACE_CONFIDENT_MARGIN` fewer nets unfinished than the
+/// first-ranked placement, else the first-ranked one (the pre-route
+/// ranking: the placer's key, RUDY and the crossings). Returns the
+/// chosen index, whether the probes were confident, and why.
+/// Calibrated on the 31 dense races of 2026-10-25 (docs/placer.md, "The
+/// race counts every probe it ran"): video's seed 201 (504 against 529,
+/// 4.7 %, a far worse route) reverts; 4in1's picks (33 % and 16 %) stand.
+fn race_pick(race: &[usize], best: usize, labels: &[usize]) -> (usize, bool, String) {
+    if best == 0 {
+        return (
+            0,
+            true,
+            "the first-ranked placement left the fewest nets unfinished".to_string(),
+        );
+    }
+    let first = race[0] as f64;
+    let margin = if first > 0.0 {
+        (first - race[best] as f64) / first
+    } else {
+        0.0
+    };
+    if margin >= RACE_CONFIDENT_MARGIN {
+        (
+            best,
+            true,
+            format!(
+                "placement {} left {:.1} % fewer nets unfinished than the first-ranked ({} against {})",
+                labels[best],
+                margin * 100.0,
+                race[best],
+                race[0]
+            ),
+        )
+    } else {
+        (
+            0,
+            false,
+            format!(
+                "placement {} left only {:.1} % fewer nets unfinished than the first-ranked ({} against {}, less than {:.0} %): the probes do not separate them, the first-ranked kept",
+                labels[best],
+                margin * 100.0,
+                race[best],
+                race[0],
+                RACE_CONFIDENT_MARGIN * 100.0
+            ),
+        )
+    }
 }
 
 /// A probe of the race: its index in the race, the nets it left
@@ -234,6 +301,16 @@ pub struct KiCadRaceReport {
     pub kept_gated: usize,
     #[serde(default)]
     pub dropped: usize,
+    /// The placement the probes ranked best (`kept` unless the race was
+    /// not `confident`).
+    #[serde(default)]
+    pub best: usize,
+    /// Whether the probes separated the placements (`race_pick`); when
+    /// not, the race kept the first-ranked placement. `reason` says why.
+    #[serde(default)]
+    pub confident: bool,
+    #[serde(default)]
+    pub reason: String,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -1528,9 +1605,10 @@ pub fn layout_kicad_board(
     }
     // Every probe that runs counts and is charged to the work clock; the
     // final route keeps at least `RACE_MIN_FINAL_SHARE` of the budget.
-    // Where the placement overran its share, the race probes fewer
-    // placements (the lowest-ranked dropped first, each a whole probe at
-    // the others' length, so the probes stay comparable). The kept
+    // Where the placement overran its share (or the budget is small for
+    // 75 s probes), the race shortens every probe alike (they stay
+    // comparable), to a third at most, then probes fewer placements (the
+    // lowest-ranked dropped first; `race_probes_that_fit`). The kept
     // placement's probe is the first part of its first route: only the
     // others count against the minimum. Decided before any probe runs,
     // from the work so far: deterministic. (Until 2026-10-25 the probes
@@ -1538,18 +1616,19 @@ pub fn layout_kicad_board(
     // uncharged: the race kept the placer's pick on the boards whose
     // placement takes its whole share.)
     let mut dropped = 0;
+    let mut shortened = None;
     if race_probe.is_none() && seeds == 1 && pin_swaps.is_none() && !others.is_empty() {
         let probe_seconds = router_config.probe_seconds.unwrap_or(75.0);
-        let fit = race_probes_that_fit(
+        let (fit, seconds) = race_probes_that_fit(
             config.total_seconds.max(0.0),
             work + pool_excess,
             probe_seconds,
             others.len(),
         );
-        if fit < others.len() {
+        if fit < others.len() || seconds < probe_seconds {
             dropped = others.len() - fit;
             eprintln!(
-                "placement race: {dropped} of {} other placements not probed (work {:.0} s of {:.0}: the final route keeps {:.0} %)",
+                "placement race: {fit} of {} other placements probed, {seconds:.0} s each (work {:.0} s of {:.0}: the final route keeps {:.0} %)",
                 others.len(),
                 work + pool_excess,
                 config.total_seconds,
@@ -1559,6 +1638,9 @@ pub fn layout_kicad_board(
             labels.truncate(fit + 1);
             if let Some(congestion) = &mut congestion {
                 congestion.probed.truncate(fit + 1);
+            }
+            if seconds < probe_seconds {
+                shortened = Some(seconds);
             }
         }
     }
@@ -1576,7 +1658,7 @@ pub fn layout_kicad_board(
         // anything after).
         let probe_seconds = match race_probe {
             Some(probe) => probe.share.max(0.0) * config.total_seconds.max(0.0),
-            None => router_config.probe_seconds.unwrap_or(75.0),
+            None => shortened.unwrap_or(router_config.probe_seconds.unwrap_or(75.0)),
         };
         // The other seeds' placements, lowered, in seed order.
         let mut candidates = Vec::new();
@@ -1684,103 +1766,109 @@ pub fn layout_kicad_board(
             }
             next += wave.len();
         }
-        let mut probed = probed.into_iter();
-        let (_, mut kept) = probed.next().expect("the first placement's probe");
-        let mut best_unfinished = race[0];
-        let mut best_standing = standings[0];
-        let first_work = kept.expansions() as f64 / core::router::expansions_per_second();
-        work += first_work;
+        // Every probe that ran is charged.
+        let probe_work: Vec<f64> = probed
+            .iter()
+            .map(|(_, router)| router.expansions() as f64 / core::router::expansions_per_second())
+            .collect();
+        work += probe_work.iter().sum::<f64>();
         // What the race did until 2026-10-25 (the 40 % gate, its probes
         // uncharged), for the report: whether each probe would have been
         // dropped, and the placement it would have kept.
         let gate = 0.4 * config.total_seconds;
-        let mut gated_work = work;
+        let mut gated_work = work - probe_work[1..].iter().sum::<f64>();
         let mut gated_best = race[0];
         let mut kept_gated = labels[0];
         let mut gated = false;
-        let mut scores = vec![KiCadRaceProbeScore {
-            placement: labels[0],
-            open_terminals: standings[0].open_terminals,
-            unfinished: standings[0].unfinished,
-            conflicted: standings[0].conflicted,
-            work_seconds: first_work,
-            gated: false,
-        }];
-        eprintln!(
-            "placement race: probed placement {} ({probe_seconds:.0} s): {} open terminals, {} nets unfinished, {} in conflict",
-            labels[0],
-            standings[0].open_terminals,
-            standings[0].unfinished,
-            standings[0].conflicted
-        );
-        let mut kept_label = labels[0];
-        let mut kept_result = 0;
-        let mut candidates = candidates.into_iter();
-        for (index, mut candidate_router) in probed {
-            let (candidate, candidate_board, relaxation) =
-                candidates.next().expect("a candidate per probe");
-            let unfinished = race[index];
-            let standing = standings[index];
-            let candidate_work =
-                candidate_router.expansions() as f64 / core::router::expansions_per_second();
-            work += candidate_work;
-            gated = gated || gated_work > gate;
-            if !gated {
-                gated_work += candidate_work;
-                if unfinished < gated_best {
-                    gated_best = unfinished;
-                    kept_gated = labels[index];
+        let mut scores = Vec::new();
+        for index in 0..race.len() {
+            if index > 0 {
+                gated = gated || gated_work > gate;
+                if !gated {
+                    gated_work += probe_work[index];
+                    if race[index] < gated_best {
+                        gated_best = race[index];
+                        kept_gated = labels[index];
+                    }
                 }
             }
+            let standing = standings[index];
             scores.push(KiCadRaceProbeScore {
                 placement: labels[index],
                 open_terminals: standing.open_terminals,
                 unfinished: standing.unfinished,
                 conflicted: standing.conflicted,
-                work_seconds: candidate_work,
+                work_seconds: probe_work[index],
                 gated,
             });
             eprintln!(
-                "placement race: probed placement {} ({probe_seconds:.0} s): {} open terminals, {} nets unfinished, {} in conflict (best {} open, {best_unfinished} unfinished){}",
+                "placement race: probed placement {} ({probe_seconds:.0} s): {} open terminals, {} nets unfinished, {} in conflict{}",
                 labels[index],
                 standing.open_terminals,
                 standing.unfinished,
                 standing.conflicted,
-                best_standing.open_terminals,
                 if gated {
-                    "; the 40 % gate would have dropped it"
+                    " (the 40 % gate would have dropped it)"
                 } else {
                     ""
                 }
             );
-            // With the route probe by the standing, else by the nets left
-            // unfinished; a tie to the better-ranked placement.
+        }
+        // The probes' best: with the route probe by the standing, else by
+        // the nets left unfinished; a tie to the better-ranked placement.
+        let mut best = 0;
+        for index in 1..race.len() {
             let better = if race_probe.is_some() {
-                standing < best_standing
+                standings[index] < standings[best]
             } else {
-                unfinished < best_unfinished
+                race[index] < race[best]
             };
             if better {
-                best_standing = standings[index];
-                kept_label = labels[index];
-                kept_result = index;
-                best_unfinished = unfinished;
-                pcb = candidate;
-                board = candidate_board;
-                candidate_router.config_mut().verbose = core_config.verbose;
-                kept = candidate_router;
-                placer_config.tight_bodies = Some(relaxation.tight);
-                problem = lower_placement(&pcb, &placer_config)?;
-                relaxation.apply(&mut problem.problem);
+                best = index;
             }
         }
+        // Without the route probe the pick needs a margin over the
+        // first-ranked placement (`race_pick`).
+        let (chosen, confident, reason) = if race_probe.is_some() {
+            (
+                best,
+                true,
+                "the route probe ranks by its standing".to_string(),
+            )
+        } else {
+            race_pick(&race, best, &labels)
+        };
+        eprintln!(
+            "placement race: placement {} kept: {reason}",
+            labels[chosen]
+        );
+        let mut probed: Vec<Option<core::router::Router>> =
+            probed.into_iter().map(|(_, router)| Some(router)).collect();
+        let mut kept = probed[chosen].take().expect("the chosen placement's probe");
+        drop(probed);
+        if chosen > 0 {
+            let (candidate, candidate_board, relaxation) = candidates
+                .into_iter()
+                .nth(chosen - 1)
+                .expect("a candidate per probe");
+            pcb = candidate;
+            board = candidate_board;
+            kept.config_mut().verbose = core_config.verbose;
+            placer_config.tight_bodies = Some(relaxation.tight);
+            problem = lower_placement(&pcb, &placer_config)?;
+            relaxation.apply(&mut problem.problem);
+        }
+        let kept_result = chosen;
         race_report = Some(KiCadRaceReport {
             probe: scores,
-            kept: kept_label,
+            kept: labels[chosen],
             probe_seconds,
             repair,
             kept_gated,
             dropped,
+            best: labels[best],
+            confident,
+            reason,
         });
         arm(&mut kept, work + pool_excess);
         // A whole first route as the probe: the kept one's is the first
@@ -3111,14 +3199,40 @@ mod budget_tests {
     fn the_race_probes_fewer_placements_only_where_the_final_route_would_keep_less_than_its_share()
     {
         // The dense boards' budget: placement at its 40 %, two others fit.
-        assert_eq!(race_probes_that_fit(1500.0, 600.0, 75.0, 2), 2);
-        // Overrun by 76 s: 825 - 676 = 149 s, one other probe.
-        assert_eq!(race_probes_that_fit(1500.0, 676.0, 75.0, 2), 1);
-        // Past 55 %: none.
-        assert_eq!(race_probes_that_fit(1500.0, 830.0, 75.0, 2), 0);
+        assert_eq!(race_probes_that_fit(1500.0, 600.0, 75.0, 2), (2, 75.0));
+        // Overrun by 76 s: 825 - 676 = 149 s, two probes of 74.5 s.
+        let (count, seconds) = race_probes_that_fit(1500.0, 676.0, 75.0, 2);
+        assert_eq!(count, 2);
+        assert!((seconds - 74.5).abs() < 1.0e-9, "{seconds}");
+        // The short tier's 500 s, placement at 200 s: two of 37.5 s.
+        let (count, seconds) = race_probes_that_fit(500.0, 200.0, 75.0, 2);
+        assert_eq!(count, 2);
+        assert!((seconds - 37.5).abs() < 1.0e-9, "{seconds}");
+        // Shorter than a third: fewer placements (40 s for one).
+        let (count, seconds) = race_probes_that_fit(500.0, 235.0, 75.0, 2);
+        assert_eq!(count, 1);
+        assert!((seconds - 40.0).abs() < 1.0e-9, "{seconds}");
+        // Not even one of 25 s: none.
+        assert_eq!(race_probes_that_fit(1500.0, 810.0, 75.0, 2).0, 0);
         // Never more than there are.
-        assert_eq!(race_probes_that_fit(1500.0, 0.0, 75.0, 2), 2);
-        assert_eq!(race_probes_that_fit(1500.0, 0.0, 0.0, 2), 2);
+        assert_eq!(race_probes_that_fit(1500.0, 0.0, 75.0, 2), (2, 75.0));
+        assert_eq!(race_probes_that_fit(1500.0, 0.0, 0.0, 2), (2, 0.0));
+    }
+
+    #[test]
+    fn the_race_keeps_the_first_ranked_placement_unless_a_probe_beats_it_by_the_margin() {
+        let labels = [0, 1, 2];
+        // video seed 201: 504 against 529 (4.7 %).
+        let (chosen, confident, _) = race_pick(&[529, 504], 1, &labels);
+        assert_eq!((chosen, confident), (0, false));
+        // 4in1 seed 201: 185 against 220 (16 %).
+        let (chosen, confident, _) = race_pick(&[220, 189, 185], 2, &labels);
+        assert_eq!((chosen, confident), (2, true));
+        // The first-ranked best.
+        let (chosen, confident, _) = race_pick(&[164, 199], 0, &labels);
+        assert_eq!((chosen, confident), (0, true));
+        // Exactly the margin counts.
+        assert_eq!(race_pick(&[100, 95], 1, &labels).0, 1);
     }
 
     #[test]
