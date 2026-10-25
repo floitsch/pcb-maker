@@ -63,6 +63,8 @@ SIGNALS = [
     ("bus_crossings", "crossings within a bus (two lines joining the same two parts)", lambda s: s.get("bus_crossings")),
     ("away_pins", "pins whose row faces away from their net", lambda s: s.get("away_pins")),
     ("away_mm", "how far behind their rows those targets lie (mm)", lambda s: s.get("away_mm")),
+    ("objective", "wirelength + 3 mm per crossing (the placer's pair, unweighted)",
+     lambda s: s["wirelength_mm"] + 3 * s["ratsnest_crossings"] if s.get("ratsnest_crossings") is not None else None),
     ("global_overflow", "global route overflow", lambda s: (s.get("global") or {}).get("total_overflow")),
     ("global_soft", "global route soft overflow at 0.5", lambda s: (s.get("global") or {}).get("soft_overflow_05")),
     ("global_nets", "global route overflowed nets", lambda s: (s.get("global") or {}).get("overflowed_nets")),
