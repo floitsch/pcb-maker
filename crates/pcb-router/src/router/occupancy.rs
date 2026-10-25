@@ -94,6 +94,14 @@ impl Occupancy {
         prefetch(&self.maps[map][cell]);
     }
 
+    /// `prefetch` of `cell` of `map` where there is such a cell.
+    #[inline(always)]
+    pub(super) fn prefetch_index(&self, map: usize, cell: usize) {
+        if let Some(values) = self.maps.get(map) {
+            prefetch_index(values, cell);
+        }
+    }
+
     /// Every count back to 0.
     pub(super) fn clear(&mut self) {
         for map in &mut self.maps {

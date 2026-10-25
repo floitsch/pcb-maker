@@ -495,6 +495,15 @@ fn prefetch<T>(value: &T) {
     let _ = value;
 }
 
+/// `prefetch` of `values[index]`, nothing past the slice's end (an index
+/// below 0 wraps past it).
+#[inline(always)]
+fn prefetch_index<T>(values: &[T], index: usize) {
+    if let Some(value) = values.get(index) {
+        prefetch(value);
+    }
+}
+
 /// A net's stamps (`NetState::stamped`): (map index, cell) pairs in
 /// order, packed in one 32-bit word each where the lattice's maps and
 /// cells fit (the map above the cell's bits; every board measured), else

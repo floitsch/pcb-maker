@@ -309,6 +309,22 @@ impl Router {
                     }
                 }
             };
+            // The rows below and above the node, asked for before the
+            // steps read them: their search nodes, packed maps and
+            // occupancy lie a row of the lattice away, on other cache
+            // lines, and a step's branches would otherwise wait for each
+            // load in turn (the profile round of 2026-10-25,
+            // docs/profiling.md).
+            if corridor_test != 2 {
+                let occupancy_map = class * (layers + 1) + layer;
+                for row in [cell.wrapping_sub(nx + 1), cell + nx - 1] {
+                    for column in [row, row.wrapping_add(2)] {
+                        prefetch_index(&scratch.nodes, column.wrapping_add(layer * cells));
+                        prefetch_index(layer_hot, column);
+                    }
+                    self.occupancy.prefetch_index(occupancy_map, row);
+                }
+            }
             // The eight steps unrolled (one copy each, the step's direction
             // known: whether it is diagonal and its bend cost are no longer
             // decided per step at run time).
