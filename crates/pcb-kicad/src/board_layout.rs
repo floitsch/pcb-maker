@@ -1094,7 +1094,8 @@ pub fn layout_kicad_board(
     if placer_config.copper_edge_clearance_mm.is_none() {
         placer_config.copper_edge_clearance_mm = Some(router_config.edge_clearance_mm);
     }
-    // Placement gets 40 % of the budget, as the placement race does.
+    // Placement gets 40 % of the budget (the race after it leaves the
+    // final route `RACE_MIN_FINAL_SHARE` at least).
     let placement_budget = 0.4 * config.total_seconds.max(0.0);
     // The placement's budget is its work; its wall-clock guard is the
     // layout's own deadline (at the placement's share of it, the placement
@@ -1599,8 +1600,8 @@ pub fn layout_kicad_board(
         // as many at once as fit half the memory available (the first
         // router tells its size). The outcome is the one of probing them
         // one after the other: the first placement, then the others in
-        // seed order while the work stays under 40 % of the budget, the
-        // fewest unfinished nets kept, a tie to the earlier one. A probe's
+        // the ranking's order, each counted and charged, the fewest
+        // unfinished nets kept, a tie to the earlier one. A probe's
         // budget is work, so what runs beside it does not change it.
         let before_mb = crate::board_router::resident_mb();
         let first = core::router::Router::new(&board, &core_config);
