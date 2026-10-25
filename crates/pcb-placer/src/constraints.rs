@@ -684,9 +684,38 @@ fn body(problem: &Problem, index: usize, pose: Pose) -> (Point, Point) {
 
 /// Gap between two boxes (0 when they touch or overlap).
 fn box_gap(a: (Point, Point), b: (Point, Point)) -> f64 {
+    let (dx, dy) = box_gap_axes(a, b);
+    dx.hypot(dy)
+}
+
+/// `NearAny`'s raw violation: the least over the anchors' boxes of
+/// `(box_gap(own, anchor) - max).max(0.0)` (`f64::MAX` for none) where it
+/// exceeds `RELATION_TOLERANCE`, else at most the tolerance; the anchors'
+/// boxes are taken only as far as needed.
+fn nearest_violation(
+    own: (Point, Point),
+    anchors: impl Iterator<Item = (Point, Point)>,
+    max: f64,
+) -> f64 {
+    let mut least = f64::INFINITY;
+    for other in anchors {
+        if least <= RELATION_TOLERANCE {
+            break;
+        }
+        let (dx, dy) = box_gap_axes(own, other);
+        if !dx.is_nan() && !dy.is_nan() && (dx.max(dy) - max).max(0.0) >= least {
+            continue;
+        }
+        least = least.min((dx.hypot(dy) - max).max(0.0));
+    }
+    least.min(f64::MAX)
+}
+
+/// `box_gap` along each axis: its `hypot`'s arguments.
+fn box_gap_axes(a: (Point, Point), b: (Point, Point)) -> (f64, f64) {
     let dx = ((a.0[0] - b.0[0]).abs() - a.1[0] - b.1[0]).max(0.0);
     let dy = ((a.0[1] - b.0[1]).abs() - a.1[1] - b.1[1]).max(0.0);
-    dx.hypot(dy)
+    (dx, dy)
 }
 
 fn anchor_point(problem: &Problem, poses: &[Pose], anchor: Anchor) -> (Point, Point) {
@@ -911,11 +940,21 @@ fn raw_relation_violation(problem: &Problem, poses: &[Pose], relation: &Relation
         }
         Relation::NearAny { part, anchors, max } => {
             let own = body(problem, *part, poses[*part]);
-            anchors
-                .iter()
-                .map(|anchor| (box_gap(own, anchor_point(problem, poses, *anchor)) - max).max(0.0))
-                .fold(f64::INFINITY, f64::min)
-                .min(f64::MAX)
+            // The least over the anchors of `(box_gap - max).max(0.0)`, with
+            // two shortcuts that keep the value `relation_violation` makes
+            // of it: once an anchor lies within the tolerance the violation
+            // is none whatever the others give, and an anchor whose gap
+            // along one axis alone already reaches the least so far cannot
+            // lower it (`hypot` is at least the larger of its arguments).
+            // The hypot of every anchor took 12 % of glasgow's placement
+            // (its decoupling capacitors, each near any of 23 supply pins).
+            nearest_violation(
+                own,
+                anchors
+                    .iter()
+                    .map(|anchor| anchor_point(problem, poses, *anchor)),
+                *max,
+            )
         }
         Relation::Near { part, anchor, max } => {
             let gap = box_gap(
@@ -1330,6 +1369,62 @@ pub fn relation_target(problem: &Problem, poses: &[Pose], relation: &Relation) -
                 Edge::Right => [b[0] + bh[0] + gap + ah[0], b[1]],
                 Edge::Left => [b[0] - bh[0] - gap - ah[0], b[1]],
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod nearest_tests {
+    use super::*;
+
+    /// A small deterministic generator (xorshift).
+    fn numbers(seed: u64) -> impl FnMut() -> f64 {
+        let mut state = seed;
+        move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        }
+    }
+
+    #[test]
+    fn hypot_is_at_least_the_larger_argument() {
+        let mut next = numbers(7);
+        for _ in 0..1_000_000 {
+            let scale = 10f64.powi((next() * 8.0) as i32 - 4);
+            let (x, y) = (next() * scale, next() * scale * next());
+            assert!(x.hypot(y) >= x.max(y), "{x} {y}");
+        }
+    }
+
+    #[test]
+    fn the_nearest_anchor_gives_the_violation_of_every_anchor() {
+        let as_read = |value: f64| {
+            if value <= RELATION_TOLERANCE {
+                0.0
+            } else {
+                value
+            }
+        };
+        let mut next = numbers(11);
+        for case in 0..100_000 {
+            let mut point = |spread: f64| [next() * spread, next() * spread];
+            let own = (point(40.0), point(3.0));
+            let count = case % 30;
+            let anchors: Vec<(Point, Point)> = (0..count).map(|_| (point(40.0), point(2.0))).collect();
+            let max = [0.0, 0.5, 2.0, 5.0][case % 4];
+            let every = anchors
+                .iter()
+                .map(|anchor| (box_gap(own, *anchor) - max).max(0.0))
+                .fold(f64::INFINITY, f64::min)
+                .min(f64::MAX);
+            let nearest = nearest_violation(own, anchors.iter().copied(), max);
+            assert_eq!(
+                as_read(nearest).to_bits(),
+                as_read(every).to_bits(),
+                "case {case}: {nearest} against {every}"
+            );
         }
     }
 }
