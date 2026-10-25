@@ -94,13 +94,25 @@ impl Grid {
             self.stamp = 1;
         }
         let (x0, y0, x1, y1) = self.range(center, half);
+        let (stamp, seen) = (self.stamp, &mut self.seen);
         for y in y0..=y1 {
-            for x in x0..=x1 {
-                for &item in &self.cells[y * self.columns + x] {
-                    if self.seen[item] != self.stamp {
-                        self.seen[item] = self.stamp;
-                        out.push(item);
-                    }
+            let row = y * self.columns;
+            for cell in &self.cells[row + x0..=row + x1] {
+                // Without a branch on whether the item was seen (a part
+                // spanning several cells is met in each; the test and its
+                // load were most of the query's samples on MegaDrive): the
+                // item goes into the free slot past the end and counts only
+                // when new. The same items in the same order as a `push` of
+                // the new ones.
+                out.reserve(cell.len());
+                for &item in cell {
+                    let new = seen[item] != stamp;
+                    seen[item] = stamp;
+                    let length = out.len();
+                    out.spare_capacity_mut()[0].write(item);
+                    // SAFETY: `reserve` left room for the cell's items, and
+                    // the slot at `length` was just written.
+                    unsafe { out.set_len(length + new as usize) };
                 }
             }
         }

@@ -96,12 +96,7 @@ fn direction_of(angle: f64) -> Option<Point> {
 /// board at `pose`, grown by `margin`: turned with the part when it is not
 /// at a quarter turn (a 45 degree 0402's pads are not the square around
 /// them).
-fn turned_rects(
-    component: &crate::problem::Component,
-    boxes: &[[f64; 4]],
-    pose: Pose,
-    margin: f64,
-) -> Vec<Rect> {
+fn turned_rects(boxes: &[[f64; 4]], pose: Pose, margin: f64) -> Vec<Rect> {
     let (sin, cos) = crate::problem::sin_cos_degrees(-pose.angle);
     // The pose's turns once for all its boxes (`offset`, `turn_of`).
     let turn = crate::problem::rotation(-pose.angle);
@@ -699,7 +694,7 @@ fn copper_meets_cutout(
     let margin = problem.edge_margin;
     let outline = &problem.components[hole].cutout_outline;
     let component = &problem.components[part];
-    let pads = turned_rects(component, &component.pads, pose_part, margin);
+    let pads = turned_rects(&component.pads, pose_part, margin);
     *work += list_work(pads.len());
     if outline.len() >= 3 {
         // The hole's own outline: its box covers much more board where
@@ -888,9 +883,9 @@ fn hollow_overlap(
             return vec![rect(problem, index, pose).grown(-halo)];
         }
         let against = &problem.components[other];
-        let mut rects = turned_rects(component, &component.hollow, pose, 0.0);
+        let mut rects = turned_rects(&component.hollow, pose, 0.0);
         if against.has_holes() && !component.holes_inside {
-            rects.extend(turned_rects(component, &component.courtyards, pose, 0.0));
+            rects.extend(turned_rects(&component.courtyards, pose, 0.0));
         }
         rects
     };
@@ -921,8 +916,8 @@ fn far_side_overlap(
             return false;
         }
         let other = &problem.components[body];
-        let far = turned_rects(component, &component.far_side, pose_holes, 0.0);
-        let copper = turned_rects(component, &component.far_copper, pose_holes, 0.0);
+        let far = turned_rects(&component.far_side, pose_holes, 0.0);
+        let copper = turned_rects(&component.far_copper, pose_holes, 0.0);
         *work += list_work(far.len()) + list_work(copper.len());
         // The other part's copper: its pads, or all of it where it has
         // none (artwork, a copper graphic, a rule area).
@@ -930,7 +925,7 @@ fn far_side_overlap(
             let pads = if other.pads.is_empty() {
                 vec![rect(problem, body, pose_body)]
             } else {
-                turned_rects(other, &other.pads, pose_body, 0.0)
+                turned_rects(&other.pads, pose_body, 0.0)
             };
             *work += list_work(pads.len());
             pads
@@ -986,8 +981,8 @@ fn far_courtyard_overlap(
         }
         *work += (component.far_courtyard.len() * against.far_side.len()) as u64;
         let gap = body_spacing(problem, yard, other);
-        let yards = turned_rects(component, &component.far_courtyard, pose_yard, 0.0);
-        let theirs = turned_rects(against, &against.far_side, pose_other, 0.0);
+        let yards = turned_rects(&component.far_courtyard, pose_yard, 0.0);
+        let theirs = turned_rects(&against.far_side, pose_other, 0.0);
         yards
             .iter()
             .any(|yard| theirs.iter().any(|their| overlaps(*yard, *their, gap)))

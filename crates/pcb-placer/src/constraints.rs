@@ -149,6 +149,10 @@ pub struct Constraints {
     /// Pairs (smaller index first) a `near` relation ties together: their
     /// routing halos do not keep them apart. Filled by `link_pairs`.
     pub linked: BTreeSet<(usize, usize)>,
+    /// `linked` by part: each part's partners, for `linked`'s lookup (a
+    /// tree search per pair of neighbours took 3 to 7 % of a placement).
+    /// Filled with `linked` by `link_pairs`; empty, `linked` searches the set.
+    pub linked_partners: Vec<Vec<usize>>,
     /// Parts held at an edge are on the board when their copper is: a card
     /// edge's fingers fill a tab their courtyard overhangs, key notch and
     /// all. The last relaxation level.
@@ -234,10 +238,26 @@ impl Constraints {
                 self.linked.insert((part.min(anchor), part.max(anchor)));
             }
         }
+        self.linked_partners.clear();
+        if let Some(last) = self.linked.iter().map(|&(_, b)| b).max() {
+            self.linked_partners = vec![Vec::new(); last + 1];
+            for &(a, b) in &self.linked {
+                self.linked_partners[a].push(b);
+                self.linked_partners[b].push(a);
+            }
+        }
     }
 
     pub fn linked(&self, a: usize, b: usize) -> bool {
-        !self.linked.is_empty() && self.linked.contains(&(a.min(b), a.max(b)))
+        if self.linked.is_empty() {
+            return false;
+        }
+        if self.linked_partners.is_empty() {
+            return self.linked.contains(&(a.min(b), a.max(b)));
+        }
+        self.linked_partners
+            .get(a)
+            .is_some_and(|partners| partners.contains(&b))
     }
 
     /// Whether two parts meet without their halos: tied together, or one
@@ -1412,7 +1432,8 @@ mod nearest_tests {
             let mut point = |spread: f64| [next() * spread, next() * spread];
             let own = (point(40.0), point(3.0));
             let count = case % 30;
-            let anchors: Vec<(Point, Point)> = (0..count).map(|_| (point(40.0), point(2.0))).collect();
+            let anchors: Vec<(Point, Point)> =
+                (0..count).map(|_| (point(40.0), point(2.0))).collect();
             let max = [0.0, 0.5, 2.0, 5.0][case % 4];
             let every = anchors
                 .iter()

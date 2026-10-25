@@ -545,7 +545,15 @@ mod tests {
     fn angles() -> Vec<f64> {
         let mut angles: Vec<f64> = TABLED_ANGLES.to_vec();
         angles.extend((-1440..=1440).map(|step| step as f64 * 0.25));
-        angles.extend([30.0, -30.0, 1.0e-10, -1.0e-10, 90.0 + 1.0e-10, 359.9999999, 720.0]);
+        angles.extend([
+            30.0,
+            -30.0,
+            1.0e-10,
+            -1.0e-10,
+            90.0 + 1.0e-10,
+            359.9999999,
+            720.0,
+        ]);
         angles
     }
 
@@ -565,8 +573,16 @@ mod tests {
             for local in [[1.25, -0.5], [-3.0, 7.125], [0.0, -0.0], [-0.0, 2.0]] {
                 let now = rotate(local, angle);
                 let before = rotate_before(local, angle);
-                assert_eq!(now[0].to_bits(), before[0].to_bits(), "{local:?} at {angle}");
-                assert_eq!(now[1].to_bits(), before[1].to_bits(), "{local:?} at {angle}");
+                assert_eq!(
+                    now[0].to_bits(),
+                    before[0].to_bits(),
+                    "{local:?} at {angle}"
+                );
+                assert_eq!(
+                    now[1].to_bits(),
+                    before[1].to_bits(),
+                    "{local:?} at {angle}"
+                );
             }
         }
     }
