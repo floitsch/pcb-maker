@@ -13,8 +13,8 @@ fn fresh_footprints_mark_as_whole_ones() {
     let words = ((nx * ny) as usize).div_ceil(64);
     let disc_offsets = disc(0.33, 0.1);
     let stamps = Stamps {
-        stub_to_trace: Vec::new(),
-        stub_to_via: Vec::new(),
+        trace_radius: 0.33,
+        via_radius: 0.21,
         trace_to_trace: disc_offsets.clone(),
         trace_to_via: disc(0.21, 0.1),
         via_to_trace: Vec::new(),
@@ -23,7 +23,6 @@ fn fresh_footprints_mark_as_whole_ones() {
         diagonal_to_via: Vec::new(),
         diagonal_block: diagonal_block(0.33, 0.1),
         diagonal_block_via: [Vec::new(), Vec::new()],
-        stub_diagonal_block: [Vec::new(), Vec::new()],
         fresh: Fresh::default(),
     };
     let fresh = Fresh::of(&stamps);
@@ -4453,4 +4452,76 @@ fn the_pin_row_cost_keeps_other_nets_out_from_between_a_parts_pads() {
     };
     assert!(crosses(0.0));
     assert!(!crosses(5.0));
+}
+
+/// An oblique stub's measured footprint: every node closer than the radius
+/// and the nearer node of every axis step that passes closer, nothing at
+/// exactly the radius or beyond; the diagonal steps passing closer at
+/// their starts. An USON's stub (0.3 mm pads 0.5 mm apart, 0.2 mm tracks
+/// and clearance, the pad centre at x = 1.25 on a 0.1 mm lattice) keeps
+/// off its neighbour's stub, which the snapping margin (0.525 mm at this
+/// pitch) had covered.
+#[test]
+fn an_oblique_stubs_footprint_is_measured() {
+    let grid = crate::grid::Grid {
+        origin: [0.0, 0.0],
+        pitch: 0.1,
+        nx: 40,
+        ny: 40,
+    };
+    let (radius, via_radius) = (0.4, 0.55);
+    let polyline = [[1.25, 1.0], [1.2, 0.5]];
+    let end = grid.index(12, 5) as u32;
+    let footprint = escapes::stub_footprint(&grid, &polyline, end, radius, via_radius);
+    let distance = |point: crate::geometry::Point| {
+        crate::geometry::point_segment_distance(point, polyline[0], polyline[1])
+    };
+    let at = |(dx, dy): (i32, i32)| [1.2 + dx as f64 * 0.1, 0.5 + dy as f64 * 0.1];
+    let marked: HashSet<(i32, i32)> = footprint.trace.iter().copied().collect();
+    for dy in -12..=12 {
+        for dx in -12..=12 {
+            let node = at((dx, dy));
+            let near = distance(node) < radius - 1.0e-9;
+            let step_near = [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().any(|(sx, sy)| {
+                let other = at((dx + sx, dy + sy));
+                crate::geometry::segment_segment_distance(node, other, polyline[0], polyline[1])
+                    < radius - 1.0e-9
+                    && distance(node) <= distance(other)
+            });
+            assert_eq!(
+                marked.contains(&(dx, dy)),
+                near || step_near,
+                "node {node:?} at {:.4}",
+                distance(node)
+            );
+            assert_eq!(
+                footprint.via.contains(&(dx, dy)),
+                distance(node) < via_radius - 1.0e-9
+            );
+        }
+    }
+    // The neighbour's stub runs from (1.75, 1.0) to a node at x = 1.7 or
+    // 1.8: none of its nodes is covered.
+    for y in 0..=10 {
+        for x in [17, 18] {
+            assert!(!marked.contains(&(x - 12, y - 5)), "({x}, {y})");
+        }
+    }
+    // A diagonal step beside the stub, (1.4, 0.7) to (1.5, 0.8), passes
+    // it within 0.3 mm.
+    assert!(footprint.diagonal[0].contains(&(2, 2)));
+}
+
+/// A stub along a lattice line: the nodes from the one at or beyond the
+/// pad centre (away from the escape node) to the escape node.
+#[test]
+fn a_straight_stub_is_a_lattice_run() {
+    assert!(Router::stub_on_lattice(&[[13.9, 10.2625], [13.9, 9.8]]));
+    assert!(Router::stub_on_lattice(&[[13.9, 10.0], [14.3, 10.0]]));
+    assert!(!Router::stub_on_lattice(&[[13.95, 10.2625], [13.9, 9.8]]));
+    assert!(!Router::stub_on_lattice(&[
+        [13.9, 10.2625],
+        [13.9, 9.85],
+        [13.8, 9.8]
+    ]));
 }

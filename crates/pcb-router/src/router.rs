@@ -388,10 +388,12 @@ struct NetState {
 
 #[derive(Clone)]
 struct Stamps {
-    /// Like `trace_to_*`, grown by the error of snapping an off-lattice
-    /// stub sample to its nearest node.
-    stub_to_trace: Vec<(i32, i32)>,
-    stub_to_via: Vec<(i32, i32)>,
+    /// The radii of `trace_to_trace` and `trace_to_via` (centreline to
+    /// the querying class's centreline and via centre), for the exact
+    /// footprints of escape stubs off the lattice's lines
+    /// (`stub_footprint`).
+    trace_radius: f64,
+    via_radius: f64,
     trace_to_trace: Vec<(i32, i32)>,
     trace_to_via: Vec<(i32, i32)>,
     via_to_trace: Vec<(i32, i32)>,
@@ -408,7 +410,6 @@ struct Stamps {
     /// closely, per orientation (see `Router::diagonal_map`).
     diagonal_block: [Vec<(i32, i32)>; 2],
     diagonal_block_via: [Vec<(i32, i32)>; 2],
-    stub_diagonal_block: [Vec<(i32, i32)>; 2],
     /// What the node footprints add to the same footprint stamped at the
     /// node before (see `Fresh`).
     fresh: Fresh,
@@ -446,8 +447,6 @@ impl Fresh {
             })
         }
         let lists = [
-            &stamps.stub_to_trace,
-            &stamps.stub_to_via,
             &stamps.trace_to_trace,
             &stamps.trace_to_via,
             &stamps.via_to_trace,
@@ -458,8 +457,6 @@ impl Fresh {
             &stamps.diagonal_block[1],
             &stamps.diagonal_block_via[0],
             &stamps.diagonal_block_via[1],
-            &stamps.stub_diagonal_block[0],
-            &stamps.stub_diagonal_block[1],
         ];
         let reach = lists
             .iter()

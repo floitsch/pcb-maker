@@ -160,7 +160,7 @@ impl Router {
                 let classes = &node_classes[first..first + branch.nodes.len()];
                 first += branch.nodes.len();
                 for end in [branch.nodes[0], *branch.nodes.last().unwrap()] {
-                    if let Some((cells, width, _)) = escapes.get(&end) {
+                    if let Some((cells, width, polyline)) = escapes.get(&end) {
                         // A stub at the neck width stamps the neck's footprint.
                         let stub_class = match self.neck_of[class] {
                             Some(neck)
@@ -186,45 +186,86 @@ impl Router {
                             }
                         };
                         let reach = stub_stamps.fresh.reach;
-                        for cell in cells {
-                            let map = base + end.layer as usize;
-                            mark_footprint(
-                                marks,
-                                words,
-                                &mut stamped,
-                                map,
-                                *cell,
-                                &stub_stamps.stub_to_trace,
-                                (1, 1),
-                                size,
-                                reach,
-                            );
-                            let map = base + layers;
-                            mark_footprint(
-                                marks,
-                                words,
-                                &mut stamped,
-                                map,
-                                *cell,
-                                &stub_stamps.stub_to_via,
-                                (1, 1),
-                                size,
-                                reach,
-                            );
-                            for orientation in 0..2 {
-                                let map = diagonal_base
-                                    + (querying * layers + end.layer as usize) * 2
-                                    + orientation;
+                        let map = base + end.layer as usize;
+                        if Self::stub_on_lattice(polyline) {
+                            // Along a lattice line the stub is lattice
+                            // copper: its nodes stamp a branch node's
+                            // footprints.
+                            for cell in cells {
                                 mark_footprint(
                                     marks,
                                     words,
                                     &mut stamped,
                                     map,
                                     *cell,
-                                    &stub_stamps.stub_diagonal_block[orientation],
+                                    &stub_stamps.trace_to_trace,
                                     (1, 1),
                                     size,
                                     reach,
+                                );
+                                mark_footprint(
+                                    marks,
+                                    words,
+                                    &mut stamped,
+                                    base + layers,
+                                    *cell,
+                                    &stub_stamps.trace_to_via,
+                                    (1, 1),
+                                    size,
+                                    reach,
+                                );
+                                for orientation in 0..2 {
+                                    mark_footprint(
+                                        marks,
+                                        words,
+                                        &mut stamped,
+                                        diagonal_base
+                                            + (querying * layers + end.layer as usize) * 2
+                                            + orientation,
+                                        *cell,
+                                        &stub_stamps.diagonal_block[orientation],
+                                        (1, 1),
+                                        size,
+                                        reach,
+                                    );
+                                }
+                            }
+                        } else {
+                            // Off the lattice's lines: the nodes, steps
+                            // and vias the stub's geometry keeps away,
+                            // measured (`stub_footprint`).
+                            let footprint = escapes::stub_footprint(
+                                &self.grid,
+                                polyline,
+                                end.cell,
+                                stub_stamps.trace_radius,
+                                stub_stamps.via_radius,
+                            );
+                            let unbounded = i64::MAX;
+                            for (map, offsets) in [
+                                (map, &footprint.trace),
+                                (base + layers, &footprint.via),
+                                (
+                                    diagonal_base + (querying * layers + end.layer as usize) * 2,
+                                    &footprint.diagonal[0],
+                                ),
+                                (
+                                    diagonal_base
+                                        + (querying * layers + end.layer as usize) * 2
+                                        + 1,
+                                    &footprint.diagonal[1],
+                                ),
+                            ] {
+                                mark_footprint(
+                                    marks,
+                                    words,
+                                    &mut stamped,
+                                    map,
+                                    end.cell,
+                                    offsets,
+                                    (1, 1),
+                                    size,
+                                    unbounded,
                                 );
                             }
                         }

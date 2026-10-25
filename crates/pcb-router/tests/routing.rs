@@ -535,3 +535,105 @@ fn parallel_diagonal_tracks_in_a_channel_keep_their_clearance() {
         .count();
     assert!(routed >= 2, "{:?}", result.status);
 }
+
+/// A row of `count` fine-pitch pads (`width` x 0.875 mm, `pitch` apart,
+/// centres from `first` along x), each its own net to a round pad 6 mm
+/// above, 1.5 mm apart: the tracks fan out of the row. One layer, 0.2 mm
+/// tracks and clearance.
+fn fine_pitch_fanout(first: f64, pitch: f64, width: f64, count: usize) -> (Board, Config) {
+    fine_pitch_row(first, pitch, width, count, 1.5)
+}
+
+/// `fine_pitch_fanout` with the round pads `spread` apart.
+fn fine_pitch_row(
+    first: f64,
+    pitch: f64,
+    width: f64,
+    count: usize,
+    spread: f64,
+) -> (Board, Config) {
+    let mut builder = Builder::new(30.0, 24.0, 1);
+    builder.board.classes[0].trace_width = 0.2;
+    builder.board.classes[0].clearance = 0.2;
+    builder.board.neck_width = 0.2;
+    builder.board.edge_clearance = 0.2;
+    for index in 0..count {
+        let x = first + index as f64 * pitch;
+        let name = format!("N{index}");
+        let far = 15.0 + (index as f64 - (count as f64 - 1.0) / 2.0) * spread;
+        builder.net(&name, &[([far, 4.0], 0b1)]);
+        let net = builder.board.nets.len() as u32 - 1;
+        let target = builder.board.obstacles.len() - 1;
+        builder.board.obstacles[target].shape = Shape::Circle {
+            center: [far, 4.0],
+            radius: (spread / 2.0 - 0.2).min(0.5),
+        };
+        builder.board.obstacles.push(Obstacle {
+            shape: Shape::rectangle([x, 10.0], [width / 2.0, 0.4375], 0.0),
+            layers: 0b1,
+            kind: ObstacleKind::Copper,
+            net: Some(net),
+            clearance: 0.0,
+            clearance_override: None,
+            blocks_tracks: true,
+            blocks_vias: true,
+            label: format!("U1.{index}"),
+        });
+        builder.board.nets[net as usize].terminals.push(Terminal {
+            anchor: [x, 10.0],
+            layers: 0b1,
+            pad: builder.board.obstacles.len() - 1,
+            contact: None,
+            label: format!("U1.{index}"),
+        });
+    }
+    let mut config = config();
+    config.pitches = vec![0.1];
+    (builder.board, config)
+}
+
+#[test]
+fn a_fine_pitch_row_at_exactly_its_clearance_fans_out() {
+    // RP2040's QFN-56: 0.2 mm pads 0.4 mm apart with 0.2 mm tracks and
+    // clearance, the centre lines on the lattice. A track leaves each pad
+    // straight along its centre, exactly 0.2 mm from both neighbours, so
+    // every pad leaves by a stub along its lattice column. Stamped with
+    // the snapping margin of an off-lattice stub, each stub covered its
+    // neighbours' and the row never came out of conflict
+    // (jfedor2/hid-remapper: 27 of 120 connections open at 30 s).
+    let (board, config) = fine_pitch_fanout(12.9, 0.4, 0.2, 8);
+    let result = route(&board, &config);
+    assert!(
+        result
+            .status
+            .iter()
+            .all(|status| *status == NetStatus::Routed),
+        "{:?}",
+        result.status
+    );
+    let violations = verify(&board, &result.routes);
+    assert!(violations.is_empty(), "{violations:?}");
+}
+
+#[test]
+fn a_fine_pitch_row_off_the_lattice_routes_straight_and_clean() {
+    // An USON's 0.3 mm pads 0.5 mm apart, their centres half a pitch off
+    // the 0.1 mm lattice: the inner pads hold no legal node (both nodes
+    // beside a centre keep exactly the clearance to a neighbour, which the
+    // static maps' margin refuses), so each leaves by an oblique stub to a
+    // node beside its centre line, and the tracks run straight on at the
+    // pads' pitch. The stubs' measured footprints (`stub_footprint`) must
+    // keep every clearance: the result verifies clean.
+    let (board, config) = fine_pitch_row(13.75, 0.5, 0.3, 6, 0.5);
+    let result = route(&board, &config);
+    assert!(
+        result
+            .status
+            .iter()
+            .all(|status| *status == NetStatus::Routed),
+        "{:?}",
+        result.status
+    );
+    let violations = verify(&board, &result.routes);
+    assert!(violations.is_empty(), "{violations:?}");
+}
