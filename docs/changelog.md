@@ -13,32 +13,38 @@ v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
 ## Committed on 2026-10-25 (the race counts every probe it ran)
 
-A fix of the race's accounting. Branch race-gate, snapshot x14370, off
-side x14343 (main c7b5552's code, the default layouts of x1820);
-docs/placer.md "The race counts every probe it ran (2026-10-25)" has the
-tables.
+A fix of the race's accounting, with a margin for its pick. Branch
+race-gate, snapshots x14370 (the gate removed) and x14371 (the margin
+and shortened probes), off side x14343 (main c7b5552's code, the
+default layouts of x1820); docs/placer.md "The race counts every probe
+it ran (2026-10-25)" has the tables.
 
 - **The gate is gone**: the race's probes ran side by side and a gate
   dropped, uncharged, every one judged past 40 % of the budget, so on
   the boards whose placement takes its share (Glasgow, 4in1, video's
   seed 201) the race kept the placer's pick. Now every probe that runs
-  counts and is charged to the work clock; the race probes fewer
-  placements (lowest-ranked first, decided before any probe from the
-  work so far) only where the final route would keep less than 45 % of
-  the budget (`RACE_MIN_FINAL_SHARE`; never on the dense boards, once on
-  the short tier: MIDAS-MK1.1 at 500 s).
+  counts and is charged to the work clock. Where the probes would leave
+  the final route less than 45 % of the budget (`RACE_MIN_FINAL_SHARE`)
+  they are shortened alike, to a third at most, then fewer placements
+  are probed (never on the dense boards; the short tier's MIDAS-MK1.1
+  at 500 s probes three placements for 37 s each).
+- **The pick needs a margin**: the probes' best routes on only where it
+  leaves at least 5 % fewer nets unfinished than the first-ranked
+  placement (`RACE_CONFIDENT_MARGIN`), else the first-ranked does.
+  Calibrated on the 31 dense races: reverts video's seed 201 (504
+  against 529, 159 to 270 with the probes' pick), keeps 4in1's two
+  (125 to 82, 93 to 79).
 - **Reported**: `race` in board-layout.json and the verdict whenever
   the race runs: each probe's standing, work and `gated` (the old rule
-  would have dropped it), `kept`, `kept_gated`, `dropped`.
+  would have dropped it), `kept`, `best`, `confident`, `reason`,
+  `kept_gated`, `probe_seconds`, `dropped`.
 - **Measured** (eleven dense boards, seeds 1, 101, 201): the gate fired
-  in 7 races (4in1 and Glasgow on every seed, video seed 201), the kept
-  placement changed in 4; the 26 other seed-boards are byte-identical.
-  Pairs 933 to 891, 898 to 888, 1014 to 1111 (video seed 201 159 to
-  270, a probe that cannot tell placements apart deep in conflict);
-  summed medians 920 to 932. Short tier 24 to 25 unconnected, 7 / 7
-  strict passes. By the agreed rule (medians do not rise, no pair rises
-  by more than about 40) it does not pass; without video's seed 201
-  the medians would be 901.
+  in 7 races; the 23 seed-boards neither gated nor reverted (21 races,
+  video's two seeds without one) are byte-identical to off. Pairs 933 to 891, 898 to 888, 1014 to 983; summed medians 920
+  to 892 (-3.0 %). Without the margin (x14370): 1014 to 1111 on seed
+  201, medians 920 to 932. Short tier 24 / 24 unconnected, 7 / 7 strict
+  passes.
+
 ## Committed on 2026-10-25 (placement ablation: video, SNSP-CPU-01, 4in1, protoesp)
 
 A diagnostic; nothing in the placer or the router changed. Branch

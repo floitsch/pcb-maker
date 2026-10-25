@@ -113,13 +113,16 @@ less copper); on PIC and the hierarchy board the automatic one is.
    and pad copper; `pcb_congestion::rudy_overflow`). The best three by that
    score are probed by the router for 75 s of work each, side by side, and
    the one with the fewest unfinished nets routes on (ties to the better
-   ranked). Every probe that runs counts and is charged to the work
-   clock; where the placement overran its share so far that the other
-   probes would leave the final route less than 45 % of the budget
-   (`RACE_MIN_FINAL_SHARE`), the race probes fewer placements, the
-   lowest-ranked dropped first (until 2026-10-25 a gate dropped, uncharged,
-   every probe judged past 40 % of the budget: see "The race counts every
-   probe it ran (2026-10-25)"). Ranking takes 10-100 ms a placement (lowering, rasterizing);
+   ranked) where it leaves at least 5 % fewer than the first-ranked
+   placement (`RACE_CONFIDENT_MARGIN`); else the first-ranked does (the
+   probes do not separate them). Every probe that runs counts and is
+   charged to the work clock; where the other probes would leave the
+   final route less than 45 % of the budget (`RACE_MIN_FINAL_SHARE`),
+   the race shortens every probe alike, down to a third of its 75 s, and
+   below that probes fewer placements, the lowest-ranked dropped first
+   (until 2026-10-25 a gate dropped, uncharged, every probe judged past
+   40 % of the budget: see "The race counts every probe it ran
+   (2026-10-25)"). Ranking takes 10-100 ms a placement (lowering, rasterizing);
    the 16 seeds cost placement wall time (about 30 s a board on the quick
    tier) but no extra placement work. Quick tier, 2026-10-10, one binary
    (x402), the plain race of three seeds against the pre-ranked race of 16:
@@ -2595,16 +2598,17 @@ unchanged. What the step showed:
 
 ## The race counts every probe it ran (2026-10-25)
 
-A fix of the race's accounting (code `board_layout.rs`,
-`race_probes_that_fit`, `RACE_MIN_FINAL_SHARE`). Until now the race
-probed its placements side by side and then judged them in order, and a
-gate (`work > 0.4 * total_seconds`) dropped every probe judged past
-40 % of the budget: uncharged (its work was spent on the wall clock but
-not booked), and uncounted (the race kept the placer's own pick). On the
-boards whose placement takes its whole 40 % (Glasgow, 4in1, video's
-seed 201) the gate fired on every race. The route-probe step found
-the cost on 4in1's seed 1: 43 connections (125 against 82 when the
-other probe counts).
+A fix of the race's accounting, with a margin for its pick (code
+`board_layout.rs`: `race_probes_that_fit`, `race_pick`,
+`RACE_MIN_FINAL_SHARE`, `RACE_SHORTEST_PROBE`, `RACE_CONFIDENT_MARGIN`).
+Until now the race probed its placements side by side and then judged
+them in order, and a gate (`work > 0.4 * total_seconds`) dropped every
+probe judged past 40 % of the budget: uncharged (its work was spent on
+the wall clock but not booked) and uncounted (the race kept the placer's
+own pick). On the boards whose placement takes its whole 40 % (Glasgow,
+4in1, video's seed 201) the gate fired on every race. The route-probe
+step found its cost on 4in1's seed 1: 43 connections (125 against 82
+when the other probe counts).
 
 Now:
 
@@ -2614,26 +2618,34 @@ Now:
 - **The final route keeps at least 45 % of the budget**
   (`RACE_MIN_FINAL_SHARE`): before any probe runs, from the work so far
   (placement, the pool's excess, anything before the race), the race
-  probes only as many of the other placements, at their full
-  `probe_seconds` each, as leave that share (the lowest-ranked dropped
-  first; the kept placement's probe is the first part of its first
-  route and does not count against it). At the dense boards' 1500 s
-  the placement's 40 % plus two other probes of 75 s leave 50 %: none
-  of the 31 dense races dropped a probe. At small budgets two 75 s probes are
-  more than 15 % of the budget, so a placement that took its 40 % can
-  leave no room: the short tier's MIDAS-MK1.1 (500 s, placement 200 s)
-  probes no other placement and routes its placement directly (the gate
-  had dropped both probes there as well).
-  Deterministic: the decision is work, made before the probes run.
+  gives the other placements' probes what is left above that share. All
+  at `probe_seconds` (75 s) where they fit; else every probe (the kept
+  one's too, so they stay comparable) shortened alike to share the
+  room, down to a third of `probe_seconds` (`RACE_SHORTEST_PROBE`);
+  below that fewer placements, the lowest-ranked dropped first; none
+  where not even one fits. The kept placement's probe is the first part
+  of its first route and does not count against the share. At the
+  dense boards' 1500 s the placement's 40 % plus two other probes of
+  75 s leave 50 %: none of the 31 dense races is shortened. The short
+  tier's MIDAS-MK1.1 (500 s, placement 200 s) probes its three
+  placements for 37 s each. Deterministic: the decision is work, made
+  before the probes run.
+- **The pick needs a margin** (`race_pick`, without `race_probe`): the
+  probes' best (fewest unfinished nets, a tie to the better-ranked)
+  routes on only where it leaves at least 5 % fewer nets unfinished than
+  the first-ranked placement's probe (`RACE_CONFIDENT_MARGIN`); else the
+  probes do not separate the placements and the first-ranked one (the
+  pre-route ranking: the placer's key, RUDY and the crossings) routes
+  on. `race_probe` ranks by its standing as before.
 - **The report**: board-layout.json and the verdict carry `race`
   whenever the race runs (until now only with `race_probe`): each
   probed placement's standing (`open_terminals`, `unfinished`,
   `conflicted`), its work, `gated` (whether the old rule would have
   dropped it: judged past 40 % of the budget, the probes it counted
-  before included), the placement kept, `kept_gated` (the one the old
-  rule would have kept) and `dropped` (placements the minimum share left
-  unprobed). The ranking without `race_probe` is unchanged: fewest
-  unfinished nets, a tie to the better-ranked.
+  before included); the placement kept, `best` (the probes' best),
+  `confident` and `reason` (the pick's margin, or why the first-ranked
+  was kept), `kept_gated` (the one the old rule would have kept),
+  `probe_seconds` (shortened where it was) and `dropped`.
 
 ### Measurement
 
@@ -2644,82 +2656,106 @@ at most six layouts in flight, through the memory ledger with 10 GB kept
 free, beside the nightly and other agents' runs; no row cut by the wall
 clock. Off: x14343 (`build/book1-dense-s{1,101,201}-on`, main c7b5552's
 code, the default layouts of x1820), inputs unchanged (`project_sha256`
-equal on every row). On: x14370 (branch race-gate 27f58e1),
-`build/race2-dense-s{1,101,201}-on`.
+equal on every row). Two rounds:
 
-KiCad unconnected per board, off / on; "gate" lists the seeds whose
-race the old gate cut (a probe `gated`), "kept" those where the race now
-keeps another placement than the gate did:
+- **Round 1, the gate removed** (x14370, branch race-gate on main
+  23f629e, `build/race2-dense-s{1,101,201}-on`, `build/race2-short-on`):
+  every board and seed. The gate fired in 7 of the 31 races (4in1 and
+  Glasgow on every seed, video's seed 201; video's seeds 1 and 101 have
+  no other placement to race); the race kept another placement on 4 of
+  them, and **the 26 other seed-boards were byte-identical** to off.
+  Pairs 933 / 891, 898 / 888, 1014 / 1111, summed medians 920 / 932:
+  video's seed 201 alone went 159 to 270 (the probes left 504 and 529
+  nets unfinished; placement 1's first route left 334 open where
+  placement 0's left 189).
+- **The margin, calibrated on round 1's 31 races** (their `race.probe`
+  standings). The probes' best differed from the first-ranked placement
+  in 18 races; its margin (fewer nets unfinished, as a share of the
+  first-ranked's): video seed 201 4.7 % (wrong: 159 to 270), MegaDrive
+  seed 201 4.4 %, SNSP-CPU-01 seed 201 1.8 %, DSP-ADAU1452 seed 201
+  1.2 %; then Glasgow seed 1 5.7 % (145 to 146), 4in1 seed 201 15.9 %
+  (right: 93 to 79), 4in1-mini seed 201 16.2 %, protoesp seed 101 18.8 %,
+  SmartSpin2k seed 201 19.5 %, DSP-ADAU1452 seed 1 21.6 %, SNSP-CPU-01
+  seed 101 22.3 %, 4in1-mini seed 101 25.1 %, 4in1 seed 1 32.8 % (right:
+  125 to 82), split72_left seed 1 41.4 %, DSP-ADAU1452 seed 101 41.8 %,
+  protoesp seed 201 43.3 %, SmartSpin2k seed 101 46.4 %, split72_left
+  seed 101 73.7 %. At 5 % the four smallest revert, 4in1's two picks
+  stand. Two other rules were rejected on the same data: the gap
+  between the best and the second-best probe (under 5 % on 4in1 seed
+  201, 185 against 189, so it would revert one of the two right picks,
+  and on DSP-ADAU1452 seed 101, 146 against 152, where the first-ranked
+  probe left 251); and the best probe's unfinished share of the board's
+  nets (4in1's right picks leave 205 and 185 for 152 nets, video's wrong
+  one 504 for 371: 1.35, 1.22 against 1.36, no threshold separates them).
+- **Round 2, the margin and the shortened probes** (x14371, branch
+  race-gate on main 09299b6, whose race and placement are main
+  c7b5552's; `build/race2b-dense-s{1,101,201}`, `build/race2b-short`):
+  only the races that can change, the 7 the gate cut and the 3 others
+  the margin reverts (DSP-ADAU1452, MegaDrive and SNSP-CPU-01, seed 201),
+  and MIDAS-MK1.1 on the short tier. The other rows are round 1's,
+  byte-identical to off: their picks have margins of 0 or at least
+  5.7 %, and no race is shortened. The 6 gated races whose pick stands
+  wrote the same boards as round 1.
 
-| Board | seed 1 | seed 101 | seed 201 | median | gate | kept |
-| --- | ---: | ---: | ---: | ---: | --- | --- |
-| OpenESC 4in1-mini | 81 / 81 | 82 / 82 | 99 / 99 | 82 / 82 | - | - |
-| OpenESC 4in1 | 125 / 82 | 92 / 96 | 93 / 79 | 93 / 82 | 1, 101, 201 | 1, 201 |
-| split72_left | 23 / 23 | 21 / 21 | 33 / 33 | 23 / 23 | - | - |
-| video | 190 / 190 | 145 / 145 | 159 / 270 | 159 / 190 | 201 | 201 |
-| DSP-ADAU1452 | 17 / 17 | 7 / 7 | 25 / 25 | 17 / 17 | - | - |
-| 0xCB panel | 50 / 50 | 50 / 50 | 51 / 51 | 50 / 50 | - | - |
-| Glasgow | 145 / 146 | 163 / 149 | 157 / 157 | 157 / 149 | 1, 101, 201 | 1 |
-| SmartSpin2k | 34 / 34 | 59 / 59 | 52 / 52 | 52 / 52 | - | - |
-| SNSP-CPU-01 | 53 / 53 | 95 / 95 | 87 / 87 | 87 / 87 | - | - |
-| protoesp | 105 / 105 | 76 / 76 | 90 / 90 | 90 / 90 | - | - |
-| MegaDrive | 110 / 110 | 108 / 108 | 168 / 168 | 110 / 110 | - | - |
-| sum | 933 / 891 | 898 / 888 | 1014 / 1111 | 920 / 932 | 7 races | 4 |
+KiCad unconnected per board, off (x14343) / on (round 1's rows, round
+2's where it ran); "gate" lists the seeds whose race the old gate cut,
+"kept" those where the race keeps another placement than off did, "rev"
+those where the margin kept the first-ranked against the probes' best:
 
-- **Where the gate never fired the boards are byte-identical**: 26 of
-  26 seed-boards (every board but 4in1, Glasgow and video's seed
-  201; video's seeds 1 and 101 have no other placement to race), the
-  written `.kicad_pcb` the same bytes as off's.
-- **Where it fired** (7 seed-boards), the race kept another placement on
-  4: 4in1 seed 1 (placement 1, 205 against 305 unfinished: 125 to 82)
-  and seed 201 (placement 2, 185 against 220: 93 to 79), Glasgow seed 1
-  (placement 1, 183 against 194: 145 to 146), video seed 201 (placement
-  1, 504 against 529: 159 to 270, its first route 189 to 334 open). On
-  the 3 where it kept the same placement only the charge changed (the
-  final route 64 to 150 s shorter): 4in1 seed 101 92 to 96, Glasgow seed
-  101 163 to 149, seed 201 157 to 157 (the same board).
-- Video's seed 201 is the race's ranking, not its accounting: both
-  probes end 75 s deep in conflict (504 and 529 nets unfinished of
-  about 560), and the probe picks the placement whose full route is far
-  worse, as the route probe's 120 s did there (302). The old gate was
-  right on that board by luck: it never looked.
-- Work and CPU per pair (s, off / on): seed 1 14792 / 14847 work, 18208 / 17738 CPU;
-  seed 101 14766 / 14831, 17684 / 17323; seed 201 15218 / 15047, 19976 /
-  23435 (seed 201 ran beside a load of up to 28 and waited two hours in
-  the ledger: its CPU is not a measurement). First-route open
-  terminals 1421 / 1238, 1280 / 1280, 1390 / 1543.
+| Board | seed 1 | seed 101 | seed 201 | median | gate | kept | rev |
+| --- | ---: | ---: | ---: | ---: | --- | --- | --- |
+| OpenESC 4in1-mini | 81 / 81 | 82 / 82 | 99 / 99 | 82 / 82 | - | - | - |
+| OpenESC 4in1 | 125 / 82 | 92 / 96 | 93 / 79 | 93 / 82 | 1, 101, 201 | 1, 201 | - |
+| split72_left | 23 / 23 | 21 / 21 | 33 / 33 | 23 / 23 | - | - | - |
+| video | 190 / 190 | 145 / 145 | 159 / 158 | 159 / 158 | 201 | - | 201 |
+| DSP-ADAU1452 | 17 / 17 | 7 / 7 | 25 / 28 | 17 / 17 | - | 201 | 201 |
+| 0xCB panel | 50 / 50 | 50 / 50 | 51 / 51 | 50 / 50 | - | - | - |
+| Glasgow | 145 / 146 | 163 / 149 | 157 / 157 | 157 / 149 | 1, 101, 201 | 1 | - |
+| SmartSpin2k | 34 / 34 | 59 / 59 | 52 / 52 | 52 / 52 | - | - | - |
+| SNSP-CPU-01 | 53 / 53 | 95 / 95 | 87 / 79 | 87 / 79 | - | 201 | 201 |
+| protoesp | 105 / 105 | 76 / 76 | 90 / 90 | 90 / 90 | - | - | - |
+| MegaDrive | 110 / 110 | 108 / 108 | 168 / 157 | 110 / 110 | - | 201 | 201 |
+| sum | 933 / 891 | 898 / 888 | 1014 / 983 | 920 / 892 | 7 races | 6 | 4 |
 
-**Short tier** (seed 1, 3 x 2, x14343 `build/book1-short-on` against
-x14370 `build/race2-short-on`): KiCad unconnected 24 / 25, strict passes
-7 / 7; 11 of 12 boards byte-identical. The one that differs is
-MIDAS-MK1.1 (8 to 9): its gate had fired (placement 200 s of 500, the
-first probe past 40 %), and the minimum share now leaves no room for the
-other two probes (above), so it routes its placement without a race.
+- All three pairs fall (-42, -10, -31) and the summed medians fall 920
+  to 892 (-3.0 %).
+- Where the gate fired: 4in1's two picks (125 to 82, 93 to 79) and
+  Glasgow seed 1's (145 to 146) stand; video's seed 201 reverts to the
+  first-ranked placement (158: its probes' work charged, the final
+  route 75 s shorter). Where the race kept the same placement only the
+  charge changed (the final route 64 to 150 s shorter): 4in1 seed 101 92
+  to 96, Glasgow seed 101 163 to 149, seed 201 157 to 157 (the same
+  board).
+- The margin's three other reverts, not gated: DSP-ADAU1452 seed 201 25
+  to 28, MegaDrive seed 201 168 to 157, SNSP-CPU-01 seed 201 87 to 79
+  (-17 together).
+- Work per pair (s, off / on): seed 1 14792 / 14847, seed 101 14766 /
+  14831, seed 201 15218 / 15080. First-route open terminals 1421 / 1238,
+  1280 / 1280, 1390 / 1384. CPU is not compared: round 1's seed 201
+  waited two hours in the ledger beside a load of up to 28.
+
+**Short tier** (seed 1, 3 x 2, x14343 `build/book1-short-on`; round 1
+x14370 `build/race2-short-on`, round 2 x14371 `build/race2b-short` for
+MIDAS-MK1.1 alone): 11 of 12 boards byte-identical in round 1 (none of
+their races is shortened, none of their picks within the margin). MIDAS
+(its gate had fired: placement 200 s of 500): round 1 probed no other
+placement (two 75 s probes did not fit the minimum share) and routed
+its placement directly, 8 to 9; round 2 probes all three for 37 s, keeps
+the first-ranked (12 against 16 and 19 unfinished), 8. KiCad unconnected
+24 / 24, strict passes 7 / 7.
 
 ### Judgement
 
 By the rule agreed for this step (the dense sum of medians does not
 rise, no pair's sum rises by more than the noise, about 40, the short
-tier loses no strict pass) the fix does **not** pass: the summed medians
-rise 920 to 932, seed 201's pair 1014 to 1111 (+97); seeds 1 and 101
-fall (933 to 891, 898 to 888), the short tier keeps its 7 strict passes
-(24 to 25 unconnected). The whole rise is one race, video's seed 201
-(159 to 270): without it the three pairs move -42, -10, -14 and the
-medians 920 to 901. What the step showed:
-
-- The accounting is now honest: no probe runs uncharged or is thrown
-  away; the effect is confined to the seven races where the gate fired
-  (26 of 26 other seed-boards byte-identical), and the race kept another
-  placement on four of them.
-- Where the gate mattered, counting the probe is right twice (4in1: 125
-  to 82, 93 to 79), neutral once (Glasgow seed 1) and badly wrong once
-  (video seed 201), where a 75 s probe deep in conflict does not tell
-  the placements apart. That is the probe's ranking, which the route
-  probe step already found unreliable on the large boards; the gate hid
-  it by never looking.
-- Charging the probes costs the final route 64 to 150 s on the boards
-  whose placement takes its share, with no consistent sign (4in1 seed
-  101 +4, Glasgow seed 101 -14).
+tier loses no strict pass) the fix passes: medians 920 to 892, pairs
+-42, -10, -31, the short tier 24 / 24 unconnected and 7 / 7 strict
+passes. Round 1 alone did not (920 to 932, video's seed 201): the gate
+had hidden a ranking that cannot tell placements apart deep in
+conflict, and the margin is what makes counting the probes safe. The
+margin is calibrated on these 31 races; four of its decisions are on
+seed 201 and three of them were measured only after it was chosen
+(-17 together), so it is not yet confirmed on other seeds.
 
 ## What went wrong on the way (kept as lessons)
 
