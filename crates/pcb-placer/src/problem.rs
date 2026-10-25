@@ -176,9 +176,28 @@ impl Problem {
 }
 
 pub fn rotate(local: Point, angle_degrees: f64) -> Point {
+    rotate_by(local, rotation(angle_degrees))
+}
+
+/// The (sin, cos) `rotate` turns by: exact for the quarter turns.
+pub fn rotation(angle_degrees: f64) -> (f64, f64) {
+    // The quarter turns parts sit at, without the division and the
+    // rounding below (`round` is a call into libm): the same answers.
+    if angle_degrees == 0.0 || angle_degrees == 360.0 || angle_degrees == -360.0 {
+        return (0.0, 1.0);
+    }
+    if angle_degrees == 90.0 || angle_degrees == -270.0 {
+        return (1.0, 0.0);
+    }
+    if angle_degrees == 180.0 || angle_degrees == -180.0 {
+        return (0.0, -1.0);
+    }
+    if angle_degrees == 270.0 || angle_degrees == -90.0 {
+        return (-1.0, 0.0);
+    }
     // Exact for the common quarter turns.
     let quarter = (angle_degrees / 90.0).round();
-    let (sin, cos) = if (angle_degrees - quarter * 90.0).abs() < 1.0e-9 {
+    if (angle_degrees - quarter * 90.0).abs() < 1.0e-9 {
         match (quarter as i64).rem_euclid(4) {
             0 => (0.0, 1.0),
             1 => (1.0, 0.0),
@@ -186,12 +205,46 @@ pub fn rotate(local: Point, angle_degrees: f64) -> Point {
             _ => (-1.0, 0.0),
         }
     } else {
-        angle_degrees.to_radians().sin_cos()
-    };
+        sin_cos_degrees(angle_degrees)
+    }
+}
+
+/// `local` turned by a `rotation`.
+pub fn rotate_by(local: Point, (sin, cos): (f64, f64)) -> Point {
     [
         local[0] * cos - local[1] * sin,
         local[0] * sin + local[1] * cos,
     ]
+}
+
+/// The angles `sin_cos_degrees` looks up, the most frequent first.
+const TABLED_ANGLES: [f64; 18] = [
+    -0.0, 0.0, -90.0, 90.0, -180.0, 180.0, -270.0, 270.0, -45.0, 45.0, -135.0, 135.0, -225.0,
+    225.0, -315.0, 315.0, -360.0, 360.0,
+];
+
+/// `angle_degrees.to_radians().sin_cos()`, bit for bit. The quarter and
+/// eighth turns (either sign, either zero) come from a table that the same
+/// expression filled once: the placer turned every box and half extent
+/// with a call into libm (3 to 6 % of a layout's CPU, 2026-10-25).
+pub fn sin_cos_degrees(angle_degrees: f64) -> (f64, f64) {
+    static TABLE: std::sync::OnceLock<[(u64, (f64, f64)); TABLED_ANGLES.len()]> =
+        std::sync::OnceLock::new();
+    let table = TABLE.get_or_init(|| {
+        TABLED_ANGLES.map(|angle| {
+            // Computed at run time as at every call site, never folded at
+            // compile time by another libm.
+            let angle = std::hint::black_box(angle);
+            (angle.to_bits(), angle.to_radians().sin_cos())
+        })
+    });
+    let bits = angle_degrees.to_bits();
+    for (key, value) in table {
+        if *key == bits {
+            return *value;
+        }
+    }
+    angle_degrees.to_radians().sin_cos()
 }
 
 impl Component {
@@ -202,7 +255,7 @@ impl Component {
 
     /// Axis-aligned half extents of the body at `angle`.
     pub fn half_extent(&self, angle: f64) -> Point {
-        let (sin, cos) = (-angle).to_radians().sin_cos();
+        let (sin, cos) = sin_cos_degrees(-angle);
         let half = [self.body_size[0] / 2.0, self.body_size[1] / 2.0];
         [
             (cos.abs() * half[0] + sin.abs() * half[1]),
@@ -313,15 +366,17 @@ impl Component {
     }
 
     fn boxes(&self, boxes: &[[f64; 4]], pose: Pose) -> Vec<(Point, Point)> {
+        // The pose's turns once for all its boxes (`offset` and the extent).
+        let turn = rotation(-pose.angle);
+        let (sin, cos) = sin_cos_degrees(-pose.angle);
         boxes
             .iter()
             .map(|local| {
-                let center = self.offset(
+                let center = rotate_by(
                     [(local[0] + local[2]) / 2.0, (local[1] + local[3]) / 2.0],
-                    pose.angle,
+                    turn,
                 );
                 let half = [(local[2] - local[0]) / 2.0, (local[3] - local[1]) / 2.0];
-                let (sin, cos) = (-pose.angle).to_radians().sin_cos();
                 (
                     [pose.position[0] + center[0], pose.position[1] + center[1]],
                     [
@@ -462,4 +517,57 @@ pub fn point_in_polygon(point: Point, polygon: &[Point]) -> bool {
         }
     }
     inside
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `rotate` before the table and the quarter-turn shortcut.
+    fn rotate_before(local: Point, angle_degrees: f64) -> Point {
+        let quarter = (angle_degrees / 90.0).round();
+        let (sin, cos) = if (angle_degrees - quarter * 90.0).abs() < 1.0e-9 {
+            match (quarter as i64).rem_euclid(4) {
+                0 => (0.0, 1.0),
+                1 => (1.0, 0.0),
+                2 => (0.0, -1.0),
+                _ => (-1.0, 0.0),
+            }
+        } else {
+            angle_degrees.to_radians().sin_cos()
+        };
+        [
+            local[0] * cos - local[1] * sin,
+            local[0] * sin + local[1] * cos,
+        ]
+    }
+
+    fn angles() -> Vec<f64> {
+        let mut angles: Vec<f64> = TABLED_ANGLES.to_vec();
+        angles.extend((-1440..=1440).map(|step| step as f64 * 0.25));
+        angles.extend([30.0, -30.0, 1.0e-10, -1.0e-10, 90.0 + 1.0e-10, 359.9999999, 720.0]);
+        angles
+    }
+
+    #[test]
+    fn the_table_gives_the_bits_of_the_call() {
+        for angle in angles() {
+            let (sin, cos) = sin_cos_degrees(angle);
+            let (want_sin, want_cos) = std::hint::black_box(angle).to_radians().sin_cos();
+            assert_eq!(sin.to_bits(), want_sin.to_bits(), "sin at {angle}");
+            assert_eq!(cos.to_bits(), want_cos.to_bits(), "cos at {angle}");
+        }
+    }
+
+    #[test]
+    fn rotate_gives_the_bits_it_gave_before() {
+        for angle in angles() {
+            for local in [[1.25, -0.5], [-3.0, 7.125], [0.0, -0.0], [-0.0, 2.0]] {
+                let now = rotate(local, angle);
+                let before = rotate_before(local, angle);
+                assert_eq!(now[0].to_bits(), before[0].to_bits(), "{local:?} at {angle}");
+                assert_eq!(now[1].to_bits(), before[1].to_bits(), "{local:?} at {angle}");
+            }
+        }
+    }
 }

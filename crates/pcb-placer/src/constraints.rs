@@ -695,7 +695,7 @@ fn anchor_point(problem: &Problem, poses: &[Pose], anchor: Anchor) -> (Point, Po
         Anchor::Area(index, _, local, half) => {
             let component = &problem.components[index];
             let offset = component.offset(local, poses[index].angle);
-            let (sin, cos) = (-poses[index].angle).to_radians().sin_cos();
+            let (sin, cos) = crate::problem::sin_cos_degrees(-poses[index].angle);
             (
                 [
                     poses[index].position[0] + offset[0],

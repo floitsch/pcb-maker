@@ -66,13 +66,30 @@ impl Rect {
 
 /// The direction of a body at `angle` when it is not a quarter turn.
 fn turn_of(angle: f64, half: Point) -> Option<(Point, Point)> {
+    direction_of(angle).map(|direction| (direction, half))
+}
+
+/// The direction `turn_of` gives a body at `angle`: None at a quarter turn.
+fn direction_of(angle: f64) -> Option<Point> {
+    // The quarter turns parts sit at, without `rem_euclid` (a call into
+    // libm's fmod): the same answer as below.
+    if angle == 0.0
+        || angle == 90.0
+        || angle == 180.0
+        || angle == 270.0
+        || angle == -90.0
+        || angle == -180.0
+        || angle == -270.0
+    {
+        return None;
+    }
     let quarter = angle.rem_euclid(90.0);
     if quarter < 1.0e-6 || 90.0 - quarter < 1.0e-6 {
         return None;
     }
     // KiCad turns a local point by -angle (y down).
-    let (sin, cos) = (-angle).to_radians().sin_cos();
-    Some(([cos, sin], half))
+    let (sin, cos) = crate::problem::sin_cos_degrees(-angle);
+    Some([cos, sin])
 }
 
 /// Boxes of a part's own frame ([min x, min y, max x, max y]) on the
@@ -85,13 +102,16 @@ fn turned_rects(
     pose: Pose,
     margin: f64,
 ) -> Vec<Rect> {
-    let (sin, cos) = (-pose.angle).to_radians().sin_cos();
+    let (sin, cos) = crate::problem::sin_cos_degrees(-pose.angle);
+    // The pose's turns once for all its boxes (`offset`, `turn_of`).
+    let turn = crate::problem::rotation(-pose.angle);
+    let direction = direction_of(pose.angle);
     boxes
         .iter()
         .map(|local| {
-            let center = component.offset(
+            let center = crate::problem::rotate_by(
                 [(local[0] + local[2]) / 2.0, (local[1] + local[3]) / 2.0],
-                pose.angle,
+                turn,
             );
             let own = [
                 (local[2] - local[0]) / 2.0 + margin,
@@ -104,7 +124,7 @@ fn turned_rects(
                     sin.abs() * own[0] + cos.abs() * own[1],
                 ],
                 round: false,
-                turn: turn_of(pose.angle, own),
+                turn: direction.map(|direction| (direction, own)),
             }
         })
         .collect()
@@ -2119,6 +2139,30 @@ pub fn center_edge_copper(problem: &Problem, poses: &mut [Pose]) {
         centered.position[axis] += middle;
         if middle != 0.0 && is_legal(problem, poses, part, centered, everyone.clone()) {
             poses[part] = centered;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_direction_is_the_one_before_the_shortcut() {
+        let before = |angle: f64| {
+            let quarter = angle.rem_euclid(90.0);
+            if quarter < 1.0e-6 || 90.0 - quarter < 1.0e-6 {
+                return None;
+            }
+            let (sin, cos) = (-angle).to_radians().sin_cos();
+            Some([cos.to_bits(), sin.to_bits()])
+        };
+        for step in -1440..=1440 {
+            let angle = step as f64 * 0.25;
+            for angle in [angle, -angle, angle + 1.0e-7] {
+                let now = direction_of(angle).map(|[cos, sin]| [cos.to_bits(), sin.to_bits()]);
+                assert_eq!(now, before(angle), "at {angle}");
+            }
         }
     }
 }
