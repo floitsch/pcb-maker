@@ -1141,6 +1141,23 @@ fn lower_board(
                 // every pad dead behind its own bridge before). Other nets
                 // keep clear of the rest and of the pads.
                 for (shape, copper, label) in tie_copper {
+                    // The whole bridge keeps every via out, the tie's own
+                    // nets' too: a track of a tie net may touch the bridge,
+                    // a drill may not come within the hole clearance of
+                    // it (KiCad's hole_clearance: brown-studios/pdlc's EN
+                    // via 0.164 mm from NT1's bridge, carved away above
+                    // for EN's tracks).
+                    obstacles.push(core::Obstacle {
+                        shape: shape.clone(),
+                        layers: copper,
+                        kind: core::ObstacleKind::Copper,
+                        net: None,
+                        clearance: no_net_clearance,
+                        clearance_override: None,
+                        blocks_tracks: false,
+                        blocks_vias: true,
+                        label: format!("{label} (vias)"),
+                    });
                     let carves: Vec<([f64; 2], f64)> = tie_pads
                         .iter()
                         .filter(|(_, pad_layers, _)| pad_layers & copper != 0)

@@ -3073,6 +3073,55 @@ mod terminal_tests {
     }
 
     #[test]
+    fn a_net_ties_bridge_keeps_every_via_out() {
+        // brown-studios/pdlc's NT1: a via of EN, one of the tie's own
+        // nets, 0.164 mm from the bridge's copper where the bridge is
+        // carved back for EN's tracks; KiCad's hole_clearance (0.25)
+        // holds against the bridge for every net. The whole bridge keeps
+        // vias out; tracks of the tie's nets still reach their pads.
+        let config = rules();
+        let tied = lower(
+            &parse(&net_tie_board(20240108, r#"(net_tie_pad_groups "1, 2")"#)).unwrap(),
+            &config,
+            false,
+        )
+        .unwrap()
+        .board;
+        let bridge: Vec<&core::Obstacle> = tied
+            .obstacles
+            .iter()
+            .filter(|obstacle| obstacle.label == "NT1 copper fp_poly (vias)")
+            .collect();
+        assert_eq!(bridge.len(), 1);
+        assert_eq!(bridge[0].net, None);
+        assert!(bridge[0].blocks_vias && !bridge[0].blocks_tracks);
+        for point in [[9.6, 5.0], [10.0, 5.0], [10.4, 5.0]] {
+            assert!(bridge[0].shape.contains(point), "{point:?}");
+        }
+        // On the lattice no via of A or B lies where its drill comes
+        // within the hole clearance of the bridge.
+        let grid = core::grid::Grid::choose(&tied, &[0.1]);
+        let a = tied.nets.iter().position(|net| net.name == "A").unwrap();
+        let class = tied.nets[a].class;
+        let statics = core::grid::StaticMaps::build(&tied, &grid, class, true);
+        let rules = tied.classes[class];
+        let keep = rules.via_drill / 2.0 + tied.hole_clearance;
+        for y in 0..grid.ny {
+            for x in 0..grid.nx {
+                let center = grid.center(x, y);
+                if bridge[0].shape.distance_to_point(center) < keep {
+                    for net in 0..tied.nets.len() as u32 {
+                        assert!(
+                            !statics.via_allowed(grid.index(x, y), net),
+                            "{center:?} net {net}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
     fn a_kicad_6_footprint_tagged_net_tie_is_a_tie() {
         // kicad-cli 10.0.7: `(tags "net tie")` without net_tie_pad_groups
         // makes a tie of all its pads on a board before version 20220817
