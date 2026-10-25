@@ -16,14 +16,16 @@
 //! Board_1-GND) are enough. Not every such pair hangs (BAGEL-MK1's twelve
 //! do not; two overlapping pours with pads in the overlap on a small test
 //! board do not either), but distinct priorities (any order) let it
-//! finish, and KiCad says what equal priorities mean for overlapping pours
-//! of two nets nowhere: the fill of the overlap was undefined, so choosing
-//! an order loses nothing the designer could rely on. Every copper zone's
-//! priority `p` becomes `p * k + r`, where `r` is 0 for a zone in no pair
-//! and, among the zones in pairs at one priority, larger for the zone
-//! earlier in the file (so every order the board had stays, and the
-//! earlier zone of a pair wins the overlap); `k` is one more than the
-//! zones in pairs.
+//! finish. KiCad breaks a tie of priorities by the zones' uuids (the
+//! greater uuid fills first and the other keeps clear of it,
+//! `ZONE::HigherPriority`), and the repair writes that order out: every
+//! copper zone's priority `p` becomes `p * k + r`, where `r` is 0 for a
+//! zone in no pair and, among the zones in pairs at one priority, their
+//! rank by uuid (1 for the least); `k` is one more than the zones in
+//! pairs. Every order the board had stays, and the fill is KiCad's own:
+//! the fixture F1 (a +5V pour inside a GND pour on B.Cu at one priority)
+//! gives the same DRC report before and after; ranking by file order
+//! instead changed it (one GND item unconnected more).
 //!
 //! **Edge.Cuts lines of no length.** KiCad finds no outline on a board
 //! with one ("malformed outline (segment has null or very small length)")
@@ -39,6 +41,8 @@ use super::*;
 /// copper layers and outline.
 struct Pour {
     item: usize,
+    /// The zone's uuid, lower case (KiCad's tie between equal priorities).
+    uuid: String,
     net: String,
     priority: u64,
     layers: Vec<String>,
@@ -61,7 +65,7 @@ impl Separated {
             .map(|(a, b, layer)| format!("{a} and {b} on {layer}"))
             .collect();
         format!(
-            "{} pairs of copper zones of two nets overlap at one priority ({}{}): KiCad 10.0.7's filler can wait forever on them, so their priorities were made distinct (the zone earlier in the file wins the overlap)",
+            "{} pairs of copper zones of two nets overlap at one priority ({}{}): KiCad 10.0.7's filler can wait forever on them, so their priorities were made distinct in KiCad's own order (by uuid)",
             self.pairs.len(),
             shown.join(", "),
             if self.pairs.len() > shown.len() {
@@ -199,6 +203,9 @@ fn pours(board: &Expr) -> Vec<Pour> {
             let outline = zone_outline(zone);
             (!layers.is_empty() && outline.len() >= 3).then(|| Pour {
                 item,
+                uuid: crate::kicad_nets::footprint_uuid(zone)
+                    .unwrap_or_default()
+                    .to_ascii_lowercase(),
                 net: zone_net(zone),
                 priority: form_atom(zone, "priority", 1)
                     .and_then(|value| value.parse().ok())
@@ -237,19 +244,22 @@ pub(crate) fn separate(board: &mut Expr) -> Option<Separated> {
         return None;
     }
     let k = paired.iter().filter(|paired| **paired).count() as u64 + 1;
-    // Among the paired zones of one priority, the earlier the larger r.
-    let mut rank: BTreeMap<u64, u64> = BTreeMap::new();
-    let mut new_priority = vec![0u64; pours.len()];
-    for index in (0..pours.len()).rev() {
-        let pour = &pours[index];
-        let r = if paired[index] {
-            let next = rank.entry(pour.priority).or_insert(0);
-            *next += 1;
-            *next
-        } else {
-            0
-        };
-        new_priority[index] = pour.priority * k + r;
+    // Among the paired zones of one priority, KiCad's own order: the
+    // greater uuid is the higher priority (`ZONE::HigherPriority`).
+    let mut order: Vec<usize> = (0..pours.len()).filter(|index| paired[*index]).collect();
+    order.sort_by(|a, b| {
+        (pours[*a].priority, &pours[*a].uuid, *a).cmp(&(pours[*b].priority, &pours[*b].uuid, *b))
+    });
+    let mut new_priority: Vec<u64> = pours.iter().map(|pour| pour.priority * k).collect();
+    let mut rank = 0;
+    let mut level = None;
+    for index in order {
+        if level != Some(pours[index].priority) {
+            level = Some(pours[index].priority);
+            rank = 0;
+        }
+        rank += 1;
+        new_priority[index] += rank;
     }
     let Expr::List(items) = board else {
         return None;
@@ -323,8 +333,9 @@ mod tests {
     use super::*;
 
     fn zone(net: &str, priority: Option<u64>, layer: &str, x: [f64; 2]) -> String {
+        // The uuid follows the net name (KiCad's tie: the greater uuid).
         format!(
-            "(zone (net 1) (net_name \"{net}\") (layer \"{layer}\") (uuid \"u\") {}(hatch edge 0.5) (connect_pads (clearance 0.2)) (polygon (pts (xy {} 0) (xy {} 0) (xy {} 10) (xy {} 10))))",
+            "(zone (net 1) (net_name \"{net}\") (layer \"{layer}\") (uuid \"0000-{net}\") {}(hatch edge 0.5) (connect_pads (clearance 0.2)) (polygon (pts (xy {} 0) (xy {} 0) (xy {} 10) (xy {} 10))))",
             priority.map_or(String::new(), |p| format!("(priority {p}) ")),
             x[0],
             x[1],
@@ -357,9 +368,9 @@ mod tests {
             separated.pairs,
             vec![("A".into(), "B".into(), "F.Cu".into())]
         );
-        // k = 3: A (earlier) 1*3+2, B 1*3+1, C untouched in rank 1*3, D 2*3:
-        // D still over all, C still below A and B's level.
-        assert_eq!(priorities(&board), vec!["5", "4", "3", "6"]);
+        // k = 3: B (the greater uuid) 1*3+2, A 1*3+1, C in no pair 1*3,
+        // D 2*3: D still over all, C still below A and B.
+        assert_eq!(priorities(&board), vec!["4", "5", "3", "6"]);
     }
 
     #[test]
@@ -411,7 +422,7 @@ mod tests {
         let mut board = parse(&text).unwrap();
         let separated = separate(&mut board).unwrap();
         assert_eq!(separated.pairs[0].2, "B.Cu");
-        assert_eq!(priorities(&board), vec!["2", "1"]);
+        assert_eq!(priorities(&board), vec!["1", "2"]);
         assert!(separated.describe().contains("A and B on B.Cu"));
     }
 
