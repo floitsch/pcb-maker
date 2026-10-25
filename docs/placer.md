@@ -1595,6 +1595,205 @@ to about 65 of 78 (42 and 26, not additive). The cross-placement table sets the 
 six MegaDrive layouts the three with the fewest crossings left 99, 116
 and 126 open, the three with the most 157, 174 and 191.
 
+### Four more boards: video, SNSP-CPU-01, the 4in1, protoesp (2026-10-25)
+
+The same experiment on the four boards with the largest placement gaps
+after MegaDrive and Glasgow, now with crossings on in our placements:
+what is left, and does a signal see it?
+
+**Method.** Our placements are main's at the task budget, seed 1
+(`build/book1-dense-s1-on`, x14343, whose placement is x1820's default:
+the crossings on, the race probe off). The hybrids come from x1820's
+`ablate-kicad-placement` with the default settings. x14392 (this
+branch, with the new signals below) measured the signals again on the
+same boards, which are byte-identical. x1820 (main 23f629e) routed
+every variant in route mode at the task budget, with pinned rates, 3 at
+a time with 2 threads, through the memory ledger with 10 GB kept free.
+Other agents' 16 GB routes held the machine for the first three hours,
+so the plan was cut:
+
+- the quadrants on all four boards;
+- protoesp's connectors (it has no part with more than 20 pads);
+- on the 4in1 the clusters of U9 (27 pads) and U4 (25 pads);
+- on video, two groups of its own: the memory bank (U12 to U19, eight
+  75-pad parts that the designer stacks in one column at x 234, with
+  their clusters' passives) and the hubs (the 160- and 100-pad U10,
+  U11, U24, U22 and U23, with theirs).
+
+Nulls: two per side on protoesp and the 4in1, one per side on video and
+SNSP-CPU-01. **Partial:** video's south-west and south-east quadrants,
+SNSP-CPU-01's connectors and its U13 cluster, and the second nulls of
+video and SNSP-CPU-01 were not routed. Output is in `build/abl2/`:
+`{video,video-extra,snsp,4in1,protoesp}` hold the hybrids, `*-sig` the
+signals measured again, `all/routes-*.log` the routes, `abl2-report.md`
+the full report, and `abl2-crosstable.md` our own layouts' table.
+
+**New signals in the tool** (`ablate-kicad-placement`, ablation.py):
+
+- `weighted_crossings`: each line of a net with n pins weighs
+  1 / (n - 1), and a crossing weighs the product of its two lines'
+  weights.
+- `bus_crossings`: crossings between two lines that join the same two
+  parts.
+- `away_pins` and `away_mm`: pins of parts with more than 4 pads whose
+  net's nearest pin on another part lies more than 1 mm behind the
+  pin's own row (against the outward normal of the body side nearest
+  the pin), and how far behind those pins lie, summed.
+- `objective`: wirelength plus 3 mm per crossing, the placer's pair
+  with unweighted wirelength. The placer weights large nets down, and
+  its objective has other terms.
+
+**Attribution** (cost d: our group in the designer's placement; cost o:
+the designer's group in ours; open is KiCad's unconnected count):
+
+| board | designer's / ours open (routes) | noise sd | group | parts | cost d / o | cost | displaced d / o |
+| --- | --- | ---: | --- | ---: | ---: | ---: | ---: |
+| video | 1, 0 / 124, 120 | 2.1 | memory bank (extra) | 42 | 237.5 / 40.0 | 138.8 | 27 / 29 |
+| | | | quadrant-ne | 43 | 241.5 / 4.0 | 122.8 | 27 / 18 |
+| | | | quadrant-nw | 66 | 213.5 / -82.0 | 65.8 | 16 / 10 |
+| | | | hubs (extra) | 56 | 79.5 / -83.0 | -1.8 | 19 / 24 |
+| SNSP-CPU-01 | 44, 20 / 87, 84 | 12.1 | quadrant-ne | 98 | 110.0 / -32.5 | 38.8 | 20 / 7 |
+| | | | quadrant-sw | 129 | 94.0 / -31.5 | 31.2 | 20 / 29 |
+| | | | quadrant-nw | 74 | 39.0 / -27.5 | 5.8 | 21 / 17 |
+| | | | quadrant-se | 71 | 39.0 / -37.5 | 0.8 | 9 / 6 |
+| 4in1 | 15, 13, 15 / 158, 158, 158 | 0.8 | quadrant-nw | 60 | 92.7 / 63.0 | 77.8 | 35 / 20 |
+| | | | quadrant-ne | 59 | 83.7 / 63.0 | 73.3 | 37 / 18 |
+| | | | quadrant-sw | 54 | 52.7 / 50.0 | 51.3 | 27 / 19 |
+| | | | cluster-U9 | 42 | 44.7 / 52.0 | 48.3 | 15 / 12 |
+| | | | quadrant-se | 48 | 33.7 / 35.0 | 34.3 | 15 / 25 |
+| | | | cluster-U4 | 28 | 7.7 / 26.0 | 16.8 | 4 / 11 |
+| protoesp | 1, 0, 1 / 71, 67, 80 | 4.7 | connectors | 29 | 42.3 / 40.7 | 41.5 | 16 / 23 |
+| | | | quadrant-nw | 53 | 26.3 / 37.7 | 32.0 | 12 / 10 |
+| | | | quadrant-sw | 26 | 12.3 / 28.7 | 20.5 | 10 / 11 |
+| | | | quadrant-ne | 32 | 12.3 / 4.7 | 8.5 | 19 / 10 |
+| | | | quadrant-se | 11 | 2.3 / 7.7 | 5.0 | 4 / 4 |
+
+Each group is a single route, so its standard error is the noise times
+about 1.2 (1.4 on video and SNSP-CPU-01).
+
+- **The 4in1 and protoesp: local costs, both sides positive.** On the
+  4in1 each copy of the ESC costs on its own: each quadrant is 34 to 78,
+  and one MCU cluster (U9 with its 41 passives) is 48, nearly a
+  quadrant. The groups are not additive (the quadrants sum to 237
+  against a gap of 144). In ours, U9's passives sit 0.05 to 0.1 mm in
+  front of three of its four pin rows, where a channel holds 0.3 to 0.6
+  tracks; the designer leaves 0.17 to 0.4 mm. In the U9 cluster, 17
+  faced sides are under 0.2 mm in ours against 7 in the designer's. Ours
+  turns 41 to 51 parts in each of the three top quadrants (the designer
+  turns the copies; ours keeps the ICs at 0 degrees), and its MOSFETs'
+  faced gaps are 1.3 mm narrower. On protoesp (106 of 228 parts fixed) the connectors
+  cost 41.5: ours turns 16 of 29 and puts them farther from what they
+  connect to (mean 21.1 against 14.0 mm; CN34 31 mm against 5 mm). Ours
+  is 74 % longer (6008 against 3459 mm) with three times the crossings
+  (1102 against 373).
+- **Video and SNSP-CPU-01: global costs.** The d side is large
+  everywhere (our quadrant alone makes the designer's board worse than
+  ours: video 214 and 242 against 122). The o side is near zero or
+  negative: the designer's group in ours disrupts the rest. Our
+  placement is a different arrangement of the whole board, and a
+  region taken alone does not carry over. One group is clean: the
+  designer's memory bank in ours saves 40 of video's 121 (82 open
+  against 122) and removes 3833 crossings. Ours scatters the eight
+  75-pad parts that share the bus over x 119 to 236, at a mean
+  connection of 10 to 48 mm against the designer's 10.5. The hubs in
+  ours cost 83 more (displacement: 24 parts move). On SNSP-CPU-01, ours
+  spaces parts wider: 0, 0 and 13 exits face a body within 1 mm in the
+  north-east, south-west and north-west, against 71, 113 and 21 in the
+  designer's, and the mean faced gap is 2.6 to 2.9 mm against 1.1 to
+  2.4. It turns most parts (69 of 98 in the north-east), and its
+  connections are longer (10.3 to 12.5 against 5.8 to 10.1 mm).
+
+**Signal check** (per board: whether the signal orders the two
+placements right, its Spearman correlation with the groups' costs, and
+how many of the pairs beyond 2 se agree in sign; then the Spearman over
+the d side alone, which displaces fewer parts):
+
+| signal | video | SNSP-CPU-01 | 4in1 | protoesp | d side only: video, SNSP, 4in1, protoesp |
+| --- | --- | --- | --- | --- | --- |
+| wirelength | yes, 0.71, 4/7 | yes, 0.91, 7/7 | yes, 0.34, 6/12 | yes, 0.72, 7/7 | 0.60, 0.63, 0.83, 0.97 |
+| escape channel overflow | yes, 0.81, 6/7 | no, 0.29, 5/7 | yes, 0.32, 7/12 | no, -0.03, 2/7 | 0.40, -0.21, 0.49, -0.26 |
+| ratsnest crossings | yes, 0.98, 7/7 | **no**, 0.78, 7/7 | yes, 0.25, 6/12 | yes, 0.75, 7/7 | 1.00, 0.95, 0.89, 0.97 |
+| crossings weighted by net size | yes, 0.83, 6/7 | no, 0.78, 7/7 | yes, 0.21, 6/12 | yes, 0.61, 7/7 | 0.80, 0.95, 0.94, 0.41 |
+| crossings within a bus | yes, 0.67, 5/7 | no, 0.12, 3/7 | yes, 0.05, 8/12 | no, -0.38, 3/7 | 0.80, -0.32, 0.14, -0.21 |
+| pins facing away (count) | yes, 0.74, 4/7 | yes, 0.49, 4/7 | yes, 0.40, 8/12 | yes, -0.52, 2/7 | 0.80, 0.74, 0.77, -0.67 |
+| pins facing away (mm) | yes, 0.71, 4/7 | yes, 0.87, 6/7 | yes, 0.35, 8/12 | yes, 0.33, 5/7 | 0.40, 0.95, 0.83, 0.36 |
+| wirelength + 3 mm per crossing | yes, 0.98, 7/7 | no, 0.83, 7/7 | yes, 0.24, 6/12 | yes, 0.74, 7/7 | 1.00, 0.95, 0.77, 0.97 |
+| global route soft overflow at 0.5 | yes, 0.79, 5/7 | yes, 0.81, 7/7 | yes, 0.34, 7/12 | yes, 0.94, 7/7 | 0.60, 0.63, 0.83, 0.97 |
+| global route overflow | yes, 0.14, 5/7 | yes, 0.78, 6/7 | no, 0.17, 0/12 | yes, 0.69, 5/7 | -0.40, 0.63, -, 0.92 |
+
+The placements' values (designer's / ours):
+
+| board | wirelength mm | crossings | weighted | within a bus | facing away (mm) | wirelength + 3 mm per crossing | soft overflow |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| video | 30912 / 42531 | 8765 / 19726 | 1170 / 2765 | 897 / 1594 | 431 / 536 (6468 / 12016) | 57207 / 101709 | 4608 / 8395 |
+| SNSP-CPU-01 | 18644 / 19483 | 5076 / 4286 | 850 / 698 | 665 / 573 | 253 / 286 (3676 / 5111) | 33872 / 32341 | 3778 / 3790 |
+| 4in1 | 1190 / 1452 | 242 / 376 | 47 / 83 | 4 / 16 | 73 / 115 (284 / 714) | 1916 / 2580 | 124 / 265 |
+| protoesp | 3459 / 6008 | 373 / 1102 | 49 / 192 | 47 / 25 | 84 / 85 (1012 / 1482) | 4578 / 9314 | 440 / 1273 |
+
+Our own layouts serve as the independent check: the same signals on
+every distinct placement of these boards that a layout left from v20
+to now (x1725 to x14370). Placements that came out byte-identical
+count once, with their mean open. The 4in1's cross1 rows are left out
+because they carry that day's clearance errors. Spearman with open,
+and on how many placements the designer's value is lower:
+
+| signal | video (9) | SNSP-CPU-01 (9) | 4in1 (11) | protoesp (9) |
+| --- | --- | --- | --- | --- |
+| wirelength | 0.51, 9 of 9 | -0.11, 5 of 9 | 0.77, 10 of 11 | 0.33, 9 of 9 |
+| ratsnest crossings | 0.64, 9 of 9 | 0.88, 6 of 9 | 0.26, 11 of 11 | -0.01, 9 of 9 |
+| crossings weighted by net size | 0.54, 9 of 9 | 0.81, 6 of 9 | 0.23, 11 of 11 | 0.42, 9 of 9 |
+| pins facing away (mm) | 0.45, 9 of 9 | 0.03, 9 of 9 | 0.80, 11 of 11 | -0.19, 9 of 9 |
+| wirelength + 3 mm per crossing | 0.64, 9 of 9 | 0.88, 6 of 9 | 0.51, 11 of 11 | 0.20, 9 of 9 |
+| global route soft overflow at 0.5 | 0.65, 9 of 9 | 0.70, 8 of 9 | 0.63, 11 of 11 | 0.34, 9 of 9 |
+
+- **Crossings still lead.** On the d side they follow the cost on every
+  board (Spearman 1.00, 0.95, 0.89, 0.97); no new candidate does as
+  well. The o side's weak values (the 4in1's 0.25) are displacement:
+  the designer's U9 cluster in ours adds 414 crossings and 12 displaced
+  parts, yet saves 52 open.
+- **Where crossings order wrong: SNSP-CPU-01.** Ours has fewer
+  crossings than the designer's (4286 against 5076) and fewer by the
+  placer's pair (32341 against 33872), but leaves 85.5 open against 32.
+  Wirelength (ours 4.5 % longer), the facing-away distance (+39 %) and
+  the soft overflow (3790 against 3778) order it right. The facing-away
+  distance follows SNSP's variants (0.87; d side 0.95), but over our own
+  nine SNSP layouts it has a Spearman of 0.03 and it is weak on
+  protoesp (0.33): not a confirmed signal.
+- **Our objective already prefers the designer's placement on three
+  boards.** By wirelength plus 3 mm per crossing the designer's
+  placement is cheaper by 44 % on video (57207 against 101709), 26 % on
+  the 4in1 and 51 % on protoesp, and lower than every one of our
+  layouts on all three (9 of 9, 11 of 11, 9 of 9). There the placer
+  does not reach the placement its own pair prefers: what is missing is
+  the search (the anneal and the global placement, which make the
+  orders; above, "Where the order is decided"), not the signal. One
+  caveat is legality. 107 of protoesp's 122 movable designer parts are
+  illegal in the placer's tightest model (ours none), so part of that
+  gap may be out of the placer's reach. On the 4in1 the model also
+  calls our own placement illegal (212), so it tells nothing there.
+  Video's designer placement has 25 illegal parts and no colliding pair.
+- **The global route's soft overflow** orders all four boards right and
+  is positive on our own layouts on all four (0.65, 0.70, 0.63, 0.34),
+  but on MegaDrive it ordered the two placements wrong and ranked our
+  own layouts at 0.03 (above).
+
+**Recommendation: no new signal; the crossings suffice as the signal
+on these four boards, and the rest is placement search, not routing.**
+The designer's placements route to 0.5 to 14 open where ours leave 73
+to 158, and on video, the 4in1 and protoesp our own wirelength-plus-
+crossings already scores them 26 to 51 % better than what the placer
+finds. The lever is moving whole groups to the orders the pair prefers
+(the anneal's crossing term, off since "Where the order is decided",
+and group moves of parts that share a bus). The upper bounds from the
+attribution are not measured and not additive: video's memory bank 40
+of 121 (the clean o side), the 4in1 34 to 78 per ESC copy (gap 144),
+and protoesp's connectors 41 and north-west 32 (gap 72). SNSP-CPU-01
+is the one board where the pair orders wrong (gap 53.5, noise 12). A
+second signal there (the facing-away distance) is not confirmed by our
+own layouts. Not done: video's two southern quadrants, SNSP's
+connectors and U13 cluster, and the new signals on MegaDrive's and
+Glasgow's hybrids.
+
 ## Ratsnest crossings (2026-10-24)
 
 `ratsnest_crossings` (placer option, on since 2026-10-24, `null` turns

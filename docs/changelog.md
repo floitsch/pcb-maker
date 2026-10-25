@@ -11,6 +11,44 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-25 (placement ablation: video, SNSP-CPU-01, 4in1, protoesp)
+
+A diagnostic; nothing in the placer or the router changed. Branch
+placement-ablation-2. Hybrids from x1820's tool, signals from x14392
+(the branch), routes by x1820 (main 23f629e) in route mode. Our
+placements are main's at the task budget, seed 1, crossings on. Tables
+are in docs/placer.md, "Four more boards".
+
+- **Tool**: `ablate-kicad-placement` adds weighted crossings (a line of
+  an n-pin net weighs 1/(n-1)), crossings within a bus (two lines
+  joining the same two parts), and pins whose row faces away from their
+  net (count and mm). ablation.py adds the placer's pair (wirelength +
+  3 mm per crossing) and describes the groups: faced gaps, turned
+  parts, and the crossings and facing-away distance a group adds.
+- **Gaps left** (route mode, designer's / ours, open connections):
+  video 0.5 / 122, SNSP-CPU-01 32 / 85.5, the 4in1 14.3 / 158,
+  protoesp 0.7 / 72.7. The costly groups:
+  - the 4in1: every ESC copy, 34 to 78 per quadrant; the U9 cluster is
+    48 on its own (passives 0.05 to 0.1 mm off its pin rows);
+  - protoesp: the connectors (41.5) and the north-west (32);
+  - video: the designer's memory bank in ours saves 40.
+  On video and SNSP-CPU-01 the quadrant costs are global: the d side is
+  large and the o side negative.
+- **Signals**: crossings follow the costs best on the d side on all
+  four boards (Spearman 1.00, 0.95, 0.89, 0.97) and order the
+  placements right on three. On SNSP-CPU-01 they order them wrong (ours
+  4286 against 5076, yet 85.5 open against 32). There wirelength and
+  the new facing-away distance order it right, but the distance's
+  Spearman over our own SNSP layouts is 0.03. The new candidates do not
+  beat crossings.
+- **Judgement**: no new signal. By wirelength + 3 mm per crossing the
+  designer's placement is already 44 %, 26 % and 51 % cheaper on video,
+  the 4in1 and protoesp, and cheaper than all 29 of our layouts there.
+  The gap is the search reaching those orders (the anneal's crossing
+  term, group moves of parts sharing a bus), not a missing signal.
+  Partial: video's southern quadrants and SNSP's connectors and U13
+  cluster were not routed.
+
 ## Committed on 2026-10-25 (layout profile round: the placer's turns, the near-any relations' anchors, the neighbour lookups)
 
 Branch layout-profile, snapshot x14490 against main's x1824 (09299b6). A
