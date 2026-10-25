@@ -2398,8 +2398,8 @@ def main():
     arguments.binary_sha256 = file_sha256(arguments.binary) if arguments.binary.is_file() else None
     print(f"binary {arguments.binary} (sha256 {(arguments.binary_sha256 or '?')[:12]})", file=sys.stderr)
     arguments.expected_mb = arguments.expected_gb * 1024
-    if arguments.ledger_drain_after < 0:
-        parser.error("--ledger-drain-after must not be negative")
+    if not 0 <= arguments.ledger_drain_after < float("inf"):
+        parser.error("--ledger-drain-after must be a finite number of seconds, at least 0")
     arguments.gate = MemoryGate(arguments.min_free_gb, drain_after=arguments.ledger_drain_after,
                                 priority=None if arguments.ledger_priority == "normal" else arguments.ledger_priority)
     tasks = []

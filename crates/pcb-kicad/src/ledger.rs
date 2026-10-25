@@ -1336,7 +1336,7 @@ mod tests {
                     None,
                 ));
             }
-            if t % 5 == 0 && t > 0 {
+            if t.is_multiple_of(5) && t > 0 {
                 next_pid += 1;
                 book.push((
                     Reservation {
@@ -1357,9 +1357,9 @@ mod tests {
                 .filter(|(r, _)| {
                     let waited = t - r.waiting_since() as u32;
                     if r.pid == large_pid {
-                        waited % 15 == 0
+                        waited.is_multiple_of(15)
                     } else {
-                        waited % 2 == 0
+                        waited.is_multiple_of(2)
                     }
                 })
                 .map(|(r, _)| r.pid)

@@ -589,7 +589,9 @@ def try_admit(ledger, megabytes, label, min_free_mb=0.0, since=None, expected_se
                 del entry["start_ticks"]
             if min_free_mb > 0:
                 entry["floor_mb"] = float(min_free_mb)
-            if drain_after is not None:
+            # (JSON has neither infinity nor NaN, and a binary that cannot
+            # read the file sees an empty ledger: such a bound is left out.)
+            if drain_after is not None and float(drain_after) < float("inf"):
                 entry["drain_after"] = float(drain_after)
             if priority:
                 entry["priority"] = priority
