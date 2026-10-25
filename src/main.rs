@@ -337,7 +337,7 @@ fn print_ledger(json: bool) -> Result<(), String> {
     );
     for reservation in &live {
         println!(
-            "  pid {:>7}  {:>6.0} MB{}  {:>6.0} s  {}",
+            "  pid {:>7}  {:>6.0} MB{}  {:>6.0} s  {}{}",
             reservation.pid,
             reservation.megabytes,
             reservation
@@ -346,7 +346,12 @@ fn print_ledger(json: bool) -> Result<(), String> {
                     " (waits for {wanted:.0} MB)"
                 )),
             (now - reservation.started).max(0.0),
-            reservation.label
+            reservation.label,
+            if reservation.nightly() {
+                " [nightly]"
+            } else {
+                ""
+            }
         );
     }
     Ok(())

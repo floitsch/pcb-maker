@@ -36,6 +36,20 @@
 //! run that holds memory and grows is not held back (the oldest may be
 //! waiting for it to end).
 //!
+//! The ledger drains for a starved waiter (since 2026-10-25,
+//! `drain_allows`): once the first waiter has waited longer than its bound
+//! (`drain_after`, default `DEFAULT_DRAIN_AFTER_SECONDS`), a new request
+//! goes only if the waiter's room (the capacity less the reservations, and
+//! the memory available less what the reservations still grow by and the
+//! waiter's floor) still covers what it waits for after it, or if it is
+//! expected to end before every run that holds memory (it does not delay
+//! the drain). Until then a waiter held back by its harness's floor (the
+//! nightly's designer boards of 17-27 GB, `--min-free-gb 10`) was passed
+//! by a stream of 1-8 GB routes that never let the running set drain:
+//! katia waited 33034 s. A request of the nightly (`priority`
+//! `nightly`) goes first among the waiters and drains at once, without
+//! the end exception: it is never passed once waiting.
+//!
 //! `PCB_MAKER_LEDGER` names the file (default
 //! `$XDG_RUNTIME_DIR/pcb-maker-ledger.json`, else
 //! `/tmp/pcb-maker-ledger.json`; `off`: no ledger),
@@ -60,6 +74,15 @@ pub const KICAD_CHECK_MB: f64 = 2.2 * 1024.0;
 /// The memory the ledger keeps free of reservations by default: other
 /// work on the machine (editors, builds, the harnesses) is not in it.
 pub const DEFAULT_MARGIN_MB: f64 = 6144.0;
+
+/// How long the first waiter waits before newer requests are held to a
+/// drain (`drain_allows`), unless its entry says otherwise
+/// (`drain_after`; run.py's `--ledger-drain-after`).
+pub const DEFAULT_DRAIN_AFTER_SECONDS: f64 = 600.0;
+
+/// The priority of the nightly's requests (run.py's
+/// `--ledger-priority nightly`): first among the waiters, never passed.
+pub const PRIORITY_NIGHTLY: &str = "nightly";
 
 /// How often a waiting process looks again, and how often it says so.
 const WAIT_POLL: Duration = Duration::from_secs(2);
@@ -96,6 +119,28 @@ pub struct Reservation {
     /// pass it as when it cannot fit (`order_allows`).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub waits_on_floor: bool,
+    /// While it waits: the floor of available memory its harness keeps
+    /// beside it (`--min-free-gb`), for the drain (`drain_allows`); none
+    /// where absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub floor_mb: Option<f64>,
+    /// While it waits: how long it waits before newer requests are held to
+    /// a drain (seconds; `DEFAULT_DRAIN_AFTER_SECONDS` where absent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drain_after: Option<f64>,
+    /// When the run is expected to end (seconds since the epoch; run.py's
+    /// boards of a tier, from the tier's seconds), for the drain's end
+    /// exception; unknown where absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_end: Option<f64>,
+    /// `nightly` (`PRIORITY_NIGHTLY`): first among the waiters and never
+    /// passed; none where absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub priority: Option<String>,
+    /// Fields of newer writers, kept as they are when this binary rewrites
+    /// the ledger.
+    #[serde(flatten)]
+    pub other: serde_json::Map<String, serde_json::Value>,
 }
 
 impl Reservation {
@@ -107,6 +152,28 @@ impl Reservation {
     /// When it began holding memory (`held_since`, else `started`).
     pub fn held_since(&self) -> f64 {
         self.held_since.unwrap_or(self.started)
+    }
+
+    /// Whether it is the nightly's (`PRIORITY_NIGHTLY`).
+    pub fn nightly(&self) -> bool {
+        self.priority.as_deref() == Some(PRIORITY_NIGHTLY)
+    }
+
+    /// How long it waits before newer requests are held to a drain: 0 for
+    /// the nightly's, else `drain_after` or the default.
+    pub fn drain_after(&self) -> f64 {
+        if self.nightly() {
+            return 0.0;
+        }
+        self.drain_after
+            .filter(|seconds| *seconds >= 0.0)
+            .unwrap_or(DEFAULT_DRAIN_AFTER_SECONDS)
+    }
+
+    /// Its place among the waiters: the nightly's first, then by when the
+    /// wait began, then by pid.
+    pub fn order_key(&self) -> (u8, f64, u32) {
+        (u8::from(!self.nightly()), self.waiting_since(), self.pid)
     }
 }
 
@@ -387,7 +454,8 @@ pub fn may_hold(
 /// it beside the reservations that began holding after it began waiting
 /// (`held_since`) and this request: once the runs it waits on end, it
 /// fits. A waiter larger than the capacity runs alone: no newer request
-/// passes it.
+/// passes it. The first waiter is the nightly's where one waits
+/// (`first_waiter`); a binary's own request is never the nightly's.
 pub fn order_allows(
     others: &[&Reservation],
     me: u32,
@@ -398,20 +466,10 @@ pub fn order_allows(
     let Some(capacity) = capacity else {
         return true;
     };
-    let key = |r: &Reservation| (r.waiting_since(), r.pid);
-    let Some(oldest) = others
-        .iter()
-        .copied()
-        .filter(|r| r.waiting_mb.is_some())
-        .min_by(|a, b| {
-            key(a)
-                .partial_cmp(&key(b))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-    else {
+    let Some(oldest) = first_waiter(others) else {
         return true;
     };
-    if key(oldest) >= (since, me) {
+    if oldest.order_key() >= (1, since, me) {
         return true;
     }
     let wants = oldest.waiting_mb.unwrap_or(0.0);
@@ -426,6 +484,90 @@ pub fn order_allows(
         .map(|r| r.megabytes)
         .sum();
     newer + wanted_mb + wants <= capacity
+}
+
+/// The waiting request the others let go first (`Reservation::order_key`:
+/// the nightly's, then the one that has waited longest, then the lower
+/// pid); None when nothing waits.
+pub fn first_waiter<'a>(others: &[&'a Reservation]) -> Option<&'a Reservation> {
+    others
+        .iter()
+        .copied()
+        .filter(|r| r.waiting_mb.is_some())
+        .min_by(|a, b| {
+            a.order_key()
+                .partial_cmp(&b.order_key())
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+}
+
+/// The waiter a new request of process `me`, waiting since `since`, is
+/// held to a drain for at `now`: the first waiter (`first_waiter`), when it
+/// comes before the request and has waited its `drain_after` (the
+/// nightly's at once).
+pub fn drained_for<'a>(
+    others: &[&'a Reservation],
+    me: u32,
+    since: f64,
+    now: f64,
+) -> Option<&'a Reservation> {
+    let waiter = first_waiter(others)?;
+    (waiter.order_key() < (1, since, me) && now - waiter.waiting_since() >= waiter.drain_after())
+        .then_some(waiter)
+}
+
+/// The drain (since 2026-10-25): whether a new request of `wanted_mb`,
+/// expected to end at `expected_end` (None: unknown), may go beside
+/// `others` while `waiter` (`drained_for`) is drained for. Only if after
+/// it the waiter's room still covers what the waiter waits for: the
+/// capacity less every other reservation (None: unbounded), and
+/// `available_mb` (the memory available less what the reservations still
+/// grow by, `available_less_growth`; None: unknown, unbounded) less the
+/// waiter's floor (`floor_mb`; a waiter that holds memory already counts
+/// it back); so the reservations shrink toward the waiter's room as runs
+/// end. Or, except for the nightly's waiter, if it is expected to end no
+/// later than every run that holds memory (each with an expected end):
+/// it does not delay the drain.
+pub fn drain_allows(
+    waiter: &Reservation,
+    others: &[&Reservation],
+    wanted_mb: f64,
+    capacity: Option<f64>,
+    available_mb: Option<f64>,
+    expected_end: Option<f64>,
+) -> bool {
+    let wants = waiter.waiting_mb.unwrap_or(0.0);
+    let rest = || others.iter().filter(|r| !std::ptr::eq(**r, waiter));
+    let reserved: f64 = rest().map(|r| r.megabytes).sum();
+    let ledger_room = capacity.map_or(f64::INFINITY, |capacity| capacity - reserved - wanted_mb);
+    let floor_room = available_mb.map_or(f64::INFINITY, |available| {
+        available - wanted_mb - waiter.floor_mb.unwrap_or(0.0).max(0.0) + waiter.megabytes
+    });
+    if ledger_room.min(floor_room) >= wants {
+        return true;
+    }
+    if waiter.nightly() {
+        return false;
+    }
+    let Some(end) = expected_end else {
+        return false;
+    };
+    let mut holders = rest().filter(|r| r.megabytes > 0.0).peekable();
+    holders.peek().is_some() && holders.all(|r| r.expected_end.is_some_and(|their| end <= their))
+}
+
+/// The memory available now (MemAvailable) less what the reservations in
+/// `others` still grow by (each one's megabytes less its process's
+/// resident size, at least 0), in megabytes; None when unknown (off
+/// Linux).
+pub fn available_less_growth(others: &[&Reservation]) -> Option<f64> {
+    let available = crate::board_router::memory_available_mb()?;
+    let growth: f64 = others
+        .iter()
+        .filter(|r| r.megabytes > 0.0)
+        .map(|r| (r.megabytes - crate::board_router::resident_mb_of(r.pid)).max(0.0))
+        .sum();
+    Some(available - growth)
 }
 
 /// The sum of the reservations' megabytes.
@@ -547,7 +689,12 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
     let held = own.base_mb + own.extra_mb;
     let now = now_seconds();
     let since = own.waiting_since.unwrap_or(now);
-    let entry = |megabytes: f64, waiting_mb: Option<f64>, held_since: Option<f64>| Reservation {
+    // What the entry it replaces (a harness's reservation for this process,
+    // or its own) says of the run beyond the memory: kept.
+    let entry = |megabytes: f64,
+                 waiting_mb: Option<f64>,
+                 held_since: Option<f64>,
+                 inherited: Option<&Reservation>| Reservation {
         pid: me,
         started: own.started,
         start_ticks: own.start_ticks,
@@ -556,7 +703,10 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
         waiting_mb,
         waiting_since: waiting_mb.map(|_| since),
         held_since: held_since.filter(|_| megabytes > 0.0),
-        waits_on_floor: false,
+        expected_end: inherited.and_then(|r| r.expected_end),
+        priority: inherited.and_then(|r| r.priority.clone()),
+        other: inherited.map(|r| r.other.clone()).unwrap_or_default(),
+        ..Default::default()
     };
     let ancestors = &own.ancestors;
     let held_since = own.held_since;
@@ -582,40 +732,58 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
         let others: Vec<&Reservation> = reservations.iter().filter(|r| r.pid != me).collect();
         let reserved: f64 = others.iter().map(|r| r.megabytes).sum();
         let count = others.len();
-        // Ordered admission for a new request only: a run that holds memory
-        // grows as before (the oldest waiter may wait for it to end).
-        let ordered =
-            held > 0.0 || harness.is_some() || order_allows(&others, me, since, wanted, capacity);
-        let behind = (fits && !ordered)
-            .then(|| {
-                others
-                    .iter()
-                    .filter(|r| r.waiting_mb.is_some())
-                    .min_by(|a, b| {
-                        (a.waiting_since(), a.pid)
-                            .partial_cmp(&(b.waiting_since(), b.pid))
-                            .unwrap_or(std::cmp::Ordering::Equal)
-                    })
-                    .map(|r| {
-                        format!(
-                            "{} (pid {}, waiting {:.0} s for {:.0} MB)",
-                            r.label,
-                            r.pid,
-                            (now - r.waiting_since()).max(0.0),
-                            r.waiting_mb.unwrap_or(0.0)
-                        )
-                    })
-            })
+        // Ordered admission and the drain for a new request only: a run
+        // that holds memory grows as before (the oldest waiter may wait for
+        // it to end). A binary does not know when it will end: in a drain
+        // it goes by the waiter's room alone.
+        let new_request = held <= 0.0 && harness.is_none();
+        let drained = new_request
+            .then(|| drained_for(&others, me, since, now))
             .flatten();
+        let ordered = !new_request
+            || (order_allows(&others, me, since, wanted, capacity)
+                && drained.is_none_or(|waiter| {
+                    drain_allows(
+                        waiter,
+                        &others,
+                        wanted,
+                        capacity,
+                        available_less_growth(&others),
+                        None,
+                    )
+                }));
+        let behind = (fits && !ordered)
+            .then(|| first_waiter(&others))
+            .flatten()
+            .map(|r| {
+                format!(
+                    "{} (pid {}, waiting {:.0} s for {:.0} MB{})",
+                    r.label,
+                    r.pid,
+                    (now - r.waiting_since()).max(0.0),
+                    r.waiting_mb.unwrap_or(0.0),
+                    if drained.is_some() {
+                        "; the ledger drains for it"
+                    } else {
+                        ""
+                    }
+                )
+            });
         let fits = fits && ordered;
         let held_since = held_since.or(harness).unwrap_or(now);
         // A harness's reservation for this process gives way to the
         // process's own.
+        let inherited = reservations.iter().find(|r| r.pid == me).cloned();
         reservations.retain(|r| r.pid != me);
         if fits {
-            reservations.push(entry(wanted, None, Some(held_since)));
+            reservations.push(entry(wanted, None, Some(held_since), inherited.as_ref()));
         } else if wait || held > 0.0 {
-            reservations.push(entry(held, wait.then_some(wanted), Some(held_since)));
+            reservations.push(entry(
+                held,
+                wait.then_some(wanted),
+                Some(held_since),
+                inherited.as_ref(),
+            ));
         }
         (fits, reserved, count, behind, held_since)
     });
@@ -1126,6 +1294,364 @@ mod tests {
         ];
         assert!(order_allows(&refs(&old), 99, 30.0, 2000.0, capacity));
         assert!(!order_allows(&refs(&old), 99, 30.0, 2001.0, capacity));
+    }
+
+    /// The machine of 2026-10-25, simulated second by second: a ledger of
+    /// 56 000 MB, 30 000 MB available beside the reservations (each run
+    /// resident at its reservation), a stream of binaries' requests of
+    /// 2000 MB, one every 5 s, each running 60 s once admitted and looking
+    /// every 2 s while it waits, and from `ARRIVES` s a harness's request
+    /// of 19 000 MB that keeps a floor of 10 000 MB (katia), looking every
+    /// 15 s. Returns how long the large request waited (None: it did not
+    /// start within `horizon` seconds) and how many small ones ran.
+    fn starve(drain_after: f64, horizon: u32) -> (Option<u32>, usize) {
+        const CAPACITY: f64 = 56_000.0;
+        const FREE: f64 = 30_000.0;
+        const FLOOR: f64 = 10_000.0;
+        const LARGE: f64 = 19_000.0;
+        const SMALL: f64 = 2000.0;
+        const ARRIVES: u32 = 300;
+        let large_pid = 1;
+        // (reservation, end of its run once it holds)
+        let mut book: Vec<(Reservation, Option<u32>)> = Vec::new();
+        let mut large_started = None;
+        let mut small_ran = 0;
+        let mut next_pid = 100;
+        for t in 0..ARRIVES + horizon {
+            let now = f64::from(t);
+            book.retain(|(_, end)| end.is_none_or(|end| end > t));
+            if t == ARRIVES {
+                book.push((
+                    Reservation {
+                        pid: large_pid,
+                        started: now,
+                        label: "katia".into(),
+                        waiting_mb: Some(LARGE),
+                        waiting_since: Some(now),
+                        waits_on_floor: true,
+                        floor_mb: Some(FLOOR),
+                        drain_after: Some(drain_after),
+                        ..Default::default()
+                    },
+                    None,
+                ));
+            }
+            if t % 5 == 0 && t > 0 {
+                next_pid += 1;
+                book.push((
+                    Reservation {
+                        pid: next_pid,
+                        started: now,
+                        label: "route".into(),
+                        waiting_mb: Some(SMALL),
+                        waiting_since: Some(now),
+                        ..Default::default()
+                    },
+                    None,
+                ));
+            }
+            // Who looks this second, in the order of their pids.
+            let lookers: Vec<u32> = book
+                .iter()
+                .filter(|(r, _)| r.waiting_mb.is_some())
+                .filter(|(r, _)| {
+                    let waited = t - r.waiting_since() as u32;
+                    if r.pid == large_pid {
+                        waited % 15 == 0
+                    } else {
+                        waited % 2 == 0
+                    }
+                })
+                .map(|(r, _)| r.pid)
+                .collect();
+            for pid in lookers {
+                let index = book.iter().position(|(r, _)| r.pid == pid).unwrap();
+                let me = book[index].0.clone();
+                let wanted = me.waiting_mb.unwrap();
+                let others: Vec<&Reservation> = book
+                    .iter()
+                    .map(|(r, _)| r)
+                    .filter(|r| r.pid != pid)
+                    .collect();
+                let reserved: f64 = others.iter().map(|r| r.megabytes).sum();
+                let available = FREE - reserved;
+                let admitted = if pid == large_pid {
+                    // The harness's rule (harness_common.memory_room): the
+                    // ledger and the floor, or nothing held.
+                    (reserved + wanted <= CAPACITY && available - wanted >= FLOOR)
+                        || !others.iter().any(|r| r.megabytes > 0.0)
+                } else {
+                    // A binary's (try_hold): the capacity, the order and
+                    // the drain.
+                    let since = me.waiting_since();
+                    may_hold(
+                        &book.iter().map(|(r, _)| r.clone()).collect::<Vec<_>>(),
+                        pid,
+                        0.0,
+                        me.started,
+                        wanted,
+                        Some(CAPACITY),
+                        &[],
+                    ) && order_allows(&others, pid, since, wanted, Some(CAPACITY))
+                        && drained_for(&others, pid, since, now).is_none_or(|waiter| {
+                            drain_allows(
+                                waiter,
+                                &others,
+                                wanted,
+                                Some(CAPACITY),
+                                Some(available),
+                                None,
+                            )
+                        })
+                };
+                if admitted {
+                    let entry = &mut book[index];
+                    entry.0.megabytes = wanted;
+                    entry.0.waiting_mb = None;
+                    entry.0.waiting_since = None;
+                    entry.0.held_since = Some(now);
+                    if pid == large_pid {
+                        large_started = Some(t - ARRIVES);
+                        break;
+                    } else {
+                        small_ran += 1;
+                        entry.1 = Some(t + 60);
+                    }
+                }
+            }
+            if large_started.is_some() {
+                break;
+            }
+        }
+        (large_started, small_ran)
+    }
+
+    #[test]
+    fn a_stream_of_small_requests_starves_a_waiter_until_the_ledger_drains() {
+        // Without the drain (the rule of 2026-10-24: a waiter held back by
+        // its floor is passed as long as the capacity has its room) the
+        // small ones keep about 12 runs and 24 000 MB going: the large one
+        // never sees its 29 000 MB, in four hours.
+        let (started, ran) = starve(f64::INFINITY, 4 * 3600);
+        assert_eq!(started, None);
+        assert!(ran > 2800, "{ran} small runs");
+        // With the drain after 600 s: no newer request goes once 600 s have
+        // passed (none leaves the large one its room), the runs end within
+        // 60 s, the large one goes alone at its next look.
+        let (started, ran) = starve(600.0, 4 * 3600);
+        let started = started.expect("the large request starts");
+        assert!(
+            (600..=600 + 60 + 15).contains(&started),
+            "started at {started} s"
+        );
+        // (60 before it began waiting, 119 until 600 s, none since.)
+        assert_eq!(ran, 179, "{ran} small runs");
+        // The default bound for an entry that names none.
+        assert_eq!(
+            Reservation::default().drain_after(),
+            DEFAULT_DRAIN_AFTER_SECONDS
+        );
+    }
+
+    #[test]
+    fn a_drain_admits_what_leaves_the_waiter_its_room_or_ends_first() {
+        let holder = |pid: u32, megabytes: f64, end: Option<f64>| Reservation {
+            pid,
+            started: 1.0,
+            megabytes,
+            held_since: Some(1.0),
+            expected_end: end,
+            ..Default::default()
+        };
+        let waiter = Reservation {
+            pid: 13,
+            started: 10.0,
+            waiting_mb: Some(8000.0),
+            waiting_since: Some(10.0),
+            floor_mb: Some(2000.0),
+            waits_on_floor: true,
+            ..Default::default()
+        };
+        let capacity = Some(20_000.0);
+        let book = [holder(11, 4000.0, Some(900.0)), waiter.clone()];
+        let others = refs(&book);
+        // Not drained before its 600 s, nor for a request older than it.
+        assert!(drained_for(&others, 99, 30.0, 609.0).is_none());
+        assert!(drained_for(&others, 99, 5.0, 700.0).is_none());
+        let drained = drained_for(&others, 99, 30.0, 610.0).expect("drained");
+        assert_eq!(drained.pid, 13);
+        // Available 12 000 MB beside the reservations: a request of 2000
+        // leaves 12 000 - 2000 - 2000 (floor) = 8000, the waiter's room.
+        assert!(drain_allows(
+            drained,
+            &others,
+            2000.0,
+            capacity,
+            Some(12_000.0),
+            None
+        ));
+        assert!(!drain_allows(
+            drained,
+            &others,
+            2001.0,
+            capacity,
+            Some(12_000.0),
+            None
+        ));
+        // The capacity counts as well: 20 000 - 4000 - 8001 < 8000.
+        assert!(!drain_allows(
+            drained, &others, 8001.0, capacity, None, None
+        ));
+        // A request expected to end before every run that holds memory
+        // does not delay the drain: it goes; after one, or with a holder
+        // whose end is unknown, it waits.
+        assert!(drain_allows(
+            drained,
+            &others,
+            5000.0,
+            capacity,
+            Some(12_000.0),
+            Some(900.0)
+        ));
+        assert!(!drain_allows(
+            drained,
+            &others,
+            5000.0,
+            capacity,
+            Some(12_000.0),
+            Some(901.0)
+        ));
+        let unknown = [
+            holder(11, 4000.0, Some(900.0)),
+            holder(12, 100.0, None),
+            waiter.clone(),
+        ];
+        let unknown_refs = refs(&unknown);
+        assert!(!drain_allows(
+            &unknown[2],
+            &unknown_refs,
+            5000.0,
+            capacity,
+            Some(12_000.0),
+            Some(800.0)
+        ));
+        // Nothing holds memory: no end to come before.
+        let alone = [waiter.clone()];
+        assert!(!drain_allows(
+            &alone[0],
+            &refs(&alone),
+            5000.0,
+            capacity,
+            Some(5000.0),
+            Some(800.0)
+        ));
+        // A waiter that holds memory and waits to grow counts what it holds
+        // back on the floor's side (its resident memory is not available).
+        let mut growing = waiter.clone();
+        growing.megabytes = 3000.0;
+        let grow = [holder(11, 4000.0, None), growing];
+        assert!(drain_allows(
+            &grow[1],
+            &refs(&grow),
+            2000.0,
+            capacity,
+            Some(9000.0),
+            None
+        ));
+        assert!(!drain_allows(
+            &grow[1],
+            &refs(&grow),
+            2001.0,
+            capacity,
+            Some(9000.0),
+            None
+        ));
+    }
+
+    #[test]
+    fn the_nightly_s_request_goes_first_and_is_never_passed() {
+        let holder = Reservation {
+            pid: 11,
+            started: 1.0,
+            megabytes: 4000.0,
+            held_since: Some(1.0),
+            expected_end: Some(900.0),
+            ..Default::default()
+        };
+        let waiter = |pid: u32, since: f64, nightly: bool| Reservation {
+            pid,
+            started: since,
+            waiting_mb: Some(8000.0),
+            waiting_since: Some(since),
+            priority: nightly.then(|| PRIORITY_NIGHTLY.to_string()),
+            ..Default::default()
+        };
+        // An older request and a nightly one that began waiting later: the
+        // nightly's is the first waiter.
+        let book = [
+            holder.clone(),
+            waiter(12, 5.0, false),
+            waiter(13, 20.0, true),
+        ];
+        let others = refs(&book);
+        assert_eq!(first_waiter(&others).map(|r| r.pid), Some(13));
+        // It drains at once (a second after it began waiting), and the end
+        // exception does not hold for it.
+        let drained = drained_for(&others, 99, 21.0, 21.0).expect("drained at once");
+        assert_eq!(drained.pid, 13);
+        assert!(!drain_allows(
+            drained,
+            &others,
+            2000.0,
+            Some(20_000.0),
+            Some(9000.0),
+            Some(100.0)
+        ));
+        assert!(drain_allows(
+            drained,
+            &others,
+            1000.0,
+            Some(20_000.0),
+            Some(9000.0),
+            Some(100.0)
+        ));
+        // The older request is behind it in the order: it is a newer
+        // request to the nightly's, which cannot fit now (4000 + 8000 of
+        // 11 000): room for it beside the runs since 20 s (none) and this
+        // request.
+        assert!(!order_allows(&others, 12, 5.0, 3001.0, Some(11_000.0)));
+        assert!(order_allows(&others, 12, 5.0, 3000.0, Some(11_000.0)));
+        assert_eq!(waiter(1, 0.0, true).drain_after(), 0.0);
+    }
+
+    #[test]
+    fn the_new_fields_and_those_of_newer_writers_survive_a_rewrite() {
+        let directory = scratch("fields");
+        let path = directory.join("ledger.json");
+        let me = std::process::id();
+        let text = serde_json::json!({"reservations": [{
+            "pid": me, "started": 1.0, "start_ticks": start_ticks(me), "megabytes": 100.0,
+            "label": "run.py: katia (expected peak)", "expected_end": 900.5, "priority": "nightly",
+            "floor_mb": 10240.0, "drain_after": 300.0, "a_later_field": [1, 2]
+        }]});
+        fs::write(&path, text.to_string()).unwrap();
+        let ledger = Ledger::at(&path);
+        let live = ledger.live().unwrap();
+        assert_eq!(live[0].expected_end, Some(900.5));
+        assert!(live[0].nightly());
+        assert_eq!(live[0].floor_mb, Some(10240.0));
+        assert_eq!(live[0].drain_after, Some(300.0));
+        // A change elsewhere rewrites the file: every field stays.
+        ledger
+            .update(|reservations| reservations.push(reservation(me, 5.0, "another")))
+            .unwrap();
+        let stored: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let first = &stored["reservations"][0];
+        assert_eq!(first["a_later_field"], serde_json::json!([1, 2]));
+        assert_eq!(first["priority"], "nightly");
+        assert_eq!(first["expected_end"], 900.5);
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]
