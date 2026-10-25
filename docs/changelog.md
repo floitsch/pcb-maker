@@ -84,7 +84,15 @@ join the via of the inspection test to its group, check the verdict's
 `rule_overrides` (with --strip, so the class routes) and the removed
 commands' message.
 
-**Measured.** TIER_PLACEHOLDER
+**Measured.** The expansion tier (46 boards, route mode, 30 s of work,
+8 jobs x 1 thread, `--min-free-gb 10`; build/remap1-exp-x1821,
+build/remap1-exp-x14440): every row identical on every field but the
+timings and `outcome` (a wall-clock class: 7 rows moved between
+fast/medium/slow or early/at budget under the load), no row cut; all 92
+boards (46 stripped, 46 routed) byte for byte; 20 / 46 pass on both,
+work 1250.5 s on both, KiCad's unconnected items 588 on both. The router
+fingerprint test passes unchanged. Not measured: CPU (the diagnostics run
+once per routed board after routing, ten tiles).
 
 ## Committed on 2026-10-25 (router profile round: the hop test, the heap's root, the neighbourhood prefetch)
 
