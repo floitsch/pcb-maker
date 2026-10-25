@@ -121,7 +121,7 @@ fn zone_outline(zone: &Expr) -> Vec<[f64; 2]> {
         .children()
         .iter()
         .filter(|point| point.head() == Some("xy"))
-        .filter_map(|point| form_xy_point(point))
+        .filter_map(form_xy_point)
         .collect()
 }
 

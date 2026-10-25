@@ -948,9 +948,15 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         side_overfull(&last, false) || strips_overfull(&last)
     };
     let mut overfull_sides = false;
-    // The first level with tight bodies, and the work the last level that
-    // ran took (`skip_to_tight`).
-    let first_tight = levels.iter().position(|level| level.4);
+    // Where the levels go on to when work runs short (`skip_to_tight`):
+    // the first level with tight bodies, or without them the first with
+    // no spacing on the fine grid; and the work the last level that ran
+    // took.
+    let first_tight = levels.iter().position(|level| level.4).or_else(|| {
+        levels
+            .iter()
+            .position(|level| level.1 == 0.0 && level.2 == fine && level.2 < problem.grid)
+    });
     let mut last_level_work: Option<u64> = None;
     let mut skipping_to_tight = false;
     for (
@@ -966,7 +972,10 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         // every level before the tight bodies: on to them (OpenESC's
         // panel: 27 of 398 parts without room at the spacing level, each
         // looser grid and edge level 250-330 s of the 600, and the tight
-        // level, which places it, never came).
+        // level, which places it, never came). Where the rules keep
+        // courtyards apart, on to the fine grid without spacing (the
+        // laptop's power board: 35 parts without room after the halo
+        // levels, placed on the fine grid with 4000 s, refused with 600).
         if !skipping_to_tight
             && let (Some(first_tight), Some(level_work), Some(stop), Some((failed, _, _))) =
                 (first_tight, last_level_work, stop_at_work, best.as_ref())
@@ -982,7 +991,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
             skipping_to_tight = true;
             if debug {
                 eprintln!(
-                    "placer: {} parts without room, {:.0} s of work left, a level {:.0} s: on to the tight bodies",
+                    "placer: {} parts without room, {:.0} s of work left, a level {:.0} s: on to level {first_tight}",
                     failed.len(),
                     stop.saturating_sub(work()) as f64 / work_per_second(),
                     level_work as f64 / work_per_second()
