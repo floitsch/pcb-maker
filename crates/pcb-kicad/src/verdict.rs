@@ -724,7 +724,7 @@ pub struct KiCadRunFacts {
     /// Where the lattice searches went and what the capacitated
     /// corridors learned (`KiCadCorridors`), when the run routed.
     pub corridors: Option<crate::KiCadCorridors>,
-    /// A layout's race route probe, when it ran.
+    /// A layout's placement race, when it ran.
     pub race: Option<crate::board_layout::KiCadRaceReport>,
     /// The router file's values below the project's minimum that the run
     /// allowed, with what became of them.
@@ -937,10 +937,12 @@ pub struct KiCadVerdict {
     /// of the run (docs/router.md, "Capacitated corridors (2026-10-24)").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub corridors: Option<crate::KiCadCorridors>,
-    /// A layout's race route probe (`race_probe` in layout.json): every
+    /// A layout's placement race (with or without `race_probe`): every
     /// probed placement's open terminals, unfinished nets, nets in
-    /// conflict and work, and the placement kept (`probe`, `kept`,
-    /// `probe_seconds`). Absent when it did not run.
+    /// conflict and work, whether the 40 % gate before 2026-10-25 would
+    /// have dropped it, the placement kept and the one the gate would
+    /// have kept (`probe`, `kept`, `kept_gated`, `probe_seconds`,
+    /// `dropped`). Absent when it did not run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub race: Option<crate::board_layout::KiCadRaceReport>,
     /// The router file's values below the project's minimum that the run
