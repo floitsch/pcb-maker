@@ -1974,7 +1974,7 @@ Prim's trees (its matrix nets) and booked about right, and 3.6 times on
 video, whose cost is the queries and the grid's lists (long tree lines
 through crowded cells). Timing each operation (x14341) gave, in units
 of ordinary placement work per counted operation: a tree's pins and
-Prim's steps 0.6 to 1.0 of what they book (kept), a query 1.5 to 3.0
+Prim's steps 0.55 to 0.96 of what they book (kept), a query 1.5 to 3.0
 per line met (cells walked are a few percent of it), an insert 3.1 to
 5.0 per cell walked, a remove 4.6 to 6.6 per cell walked or 0.4 to 0.9
 per list entry scanned (the search goes 7 to 16 entries deep on average). The count now
