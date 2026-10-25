@@ -350,6 +350,14 @@ fn run_kicad_report_untimed(arguments: &[&str], output: &Path, input: &Path) -> 
     let program = program.as_os_str();
     warn_if_old_kicad(program);
     // ERC too: its library warnings are not counted (`is_erc_library_warning`).
+    // The defects KiCad 10.0.7's refill cannot get past are repaired
+    // first (`check_repairs`); the cache key below is the board as KiCad
+    // reads it.
+    if arguments.get(..2) == Some(&["pcb", "drc"]) && arguments.contains(&"--refill-zones") {
+        for repair in crate::check_repairs::repair_file(input)? {
+            eprintln!("kicad check: {repair}");
+        }
+    }
     let config_home = match arguments.get(..2) {
         Some(["pcb", "drc"]) => crate::kicad_config::drc_config_home(program, input),
         Some(["sch", "erc"]) => crate::kicad_config::erc_config_home(program, input),

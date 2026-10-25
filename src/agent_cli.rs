@@ -739,10 +739,24 @@ fn placement_facts(command: &str, report: &serde_json::Value) -> KiCadRunFacts {
     };
     let mut facts = KiCadRunFacts::new(command);
     facts.routes = false;
-    facts.unplaced = strings("unplaced");
-    for part in strings("illegal") {
-        if !facts.unplaced.contains(&part) {
-            facts.unplaced.push(part);
+    // The movable parts without a legal place, each once, a repeated
+    // reference with its uuid (`unplaced_parts`); without them (an older
+    // report) by name, with the illegal parts' names not yet there (a
+    // fixed part or a board mark a part was left on among them).
+    let parts: Vec<String> = report["unplaced_parts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|part| part["label"].as_str().map(str::to_string))
+        .collect();
+    if !parts.is_empty() {
+        facts.unplaced = parts;
+    } else {
+        facts.unplaced = strings("unplaced");
+        for part in strings("illegal") {
+            if !facts.unplaced.contains(&part) {
+                facts.unplaced.push(part);
+            }
         }
     }
     facts.placement_hints = strings("hints");

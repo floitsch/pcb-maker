@@ -1225,6 +1225,18 @@ pub fn legalize_keeping(
                         if best.is_some_and(|(best, _)| best <= distance) {
                             continue;
                         }
+                        // Legal first, then the escape overflow: on a
+                        // crowded board most spots are illegal, and the
+                        // overflow (each pin's way out, the channels with
+                        // the parts around) cost several times the test
+                        // there (katia: a pass of 134 s against 21 s
+                        // without escape demand, the deadline before the
+                        // level that places it). The spot chosen is the
+                        // same: the least distance of the legal spots.
+                        buckets.near(problem, index, pose, &mut near);
+                        if !is_legal(problem, poses, index, pose, near.iter().copied()) {
+                            continue;
+                        }
                         let distance = match escape.as_mut() {
                             None => distance,
                             Some(state) => {
@@ -1239,34 +1251,30 @@ pub fn legalize_keeping(
                                 total
                             }
                         };
-                        buckets.near(problem, index, pose, &mut near);
-                        if is_legal(problem, poses, index, pose, near.iter().copied()) {
-                            let distance = match crossings.as_mut() {
-                                None => distance,
-                                Some(state) => {
-                                    if plain.is_none_or(|plain| distance < plain) {
-                                        plain = Some(distance);
-                                    }
-                                    poses[index] = pose;
-                                    let added = state
-                                        .involving(poses, &[index])
-                                        .saturating_sub(wanted_crossings);
-                                    poses[index] = wanted;
-                                    if added == 0 {
-                                        distance
-                                    } else {
-                                        let total = (distance.sqrt()
-                                            + state.weight() * added as f64)
-                                            .powi(2);
-                                        if best.is_some_and(|(best, _)| best <= total) {
-                                            continue;
-                                        }
-                                        total
-                                    }
+                        let distance = match crossings.as_mut() {
+                            None => distance,
+                            Some(state) => {
+                                if plain.is_none_or(|plain| distance < plain) {
+                                    plain = Some(distance);
                                 }
-                            };
-                            best = Some((distance, pose));
-                        }
+                                poses[index] = pose;
+                                let added = state
+                                    .involving(poses, &[index])
+                                    .saturating_sub(wanted_crossings);
+                                poses[index] = wanted;
+                                if added == 0 {
+                                    distance
+                                } else {
+                                    let total =
+                                        (distance.sqrt() + state.weight() * added as f64).powi(2);
+                                    if best.is_some_and(|(best, _)| best <= total) {
+                                        continue;
+                                    }
+                                    total
+                                }
+                            }
+                        };
+                        best = Some((distance, pose));
                     }
                 }
             }

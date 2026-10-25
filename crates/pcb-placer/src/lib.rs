@@ -273,6 +273,23 @@ fn outline_area(problem: &Problem) -> f64 {
         / 2.0
 }
 
+/// Whether the level loop goes on to the tight bodies at once: more
+/// parts without room than a level's passes seat (a fiftieth of the
+/// parts, three at least), and less work left than twice the last level's
+/// for each level before the tight one (a level is a kept placement and a
+/// fresh anneal: on OpenESC's panel 1.5 to 2 times the one before).
+fn skip_to_tight(
+    failed: usize,
+    parts: usize,
+    work_left: u64,
+    level_work: u64,
+    levels_before: usize,
+) -> bool {
+    failed > (parts / 50).max(3)
+        && level_work > 0
+        && (work_left as u128) < 2 * level_work as u128 * levels_before as u128
+}
+
 /// Whether the parts on a side need more area than the board has, bodies
 /// and spacing alone (halos are a wish; cutouts take no room): no packing
 /// can place them all.
@@ -931,6 +948,11 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         side_overfull(&last, false) || strips_overfull(&last)
     };
     let mut overfull_sides = false;
+    // The first level with tight bodies, and the work the last level that
+    // ran took (`skip_to_tight`).
+    let first_tight = levels.iter().position(|level| level.4);
+    let mut last_level_work: Option<u64> = None;
+    let mut skipping_to_tight = false;
     for (
         level,
         (halo_scale, spacing_scale, grid, inset, tight, edge_copper, edge_rule, small_factor),
@@ -940,6 +962,37 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         if best.is_some() && out_of_budget() {
             break;
         }
+        // Many parts still without room and too little work left to try
+        // every level before the tight bodies: on to them (OpenESC's
+        // panel: 27 of 398 parts without room at the spacing level, each
+        // looser grid and edge level 250-330 s of the 600, and the tight
+        // level, which places it, never came).
+        if !skipping_to_tight
+            && let (Some(first_tight), Some(level_work), Some(stop), Some((failed, _, _))) =
+                (first_tight, last_level_work, stop_at_work, best.as_ref())
+            && level < first_tight
+            && skip_to_tight(
+                failed.len(),
+                problem.components.len(),
+                stop.saturating_sub(work()),
+                level_work,
+                first_tight - level,
+            )
+        {
+            skipping_to_tight = true;
+            if debug {
+                eprintln!(
+                    "placer: {} parts without room, {:.0} s of work left, a level {:.0} s: on to the tight bodies",
+                    failed.len(),
+                    stop.saturating_sub(work()) as f64 / work_per_second(),
+                    level_work as f64 / work_per_second()
+                );
+            }
+        }
+        if skipping_to_tight && first_tight.is_some_and(|first| level < first) {
+            continue;
+        }
+        let level_mark = work();
         if grid == fine && fine == problem.grid && spacing_scale == 0.0 && !inset && best.is_some()
         {
             // Same as the previous level.
@@ -1210,6 +1263,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
             best = Some((failed, poses, relaxed));
             best_annealed = Some(annealed_for_trace);
         }
+        last_level_work = Some(work() - level_mark);
         if done {
             break;
         }
@@ -1402,5 +1456,24 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         stage_poses,
         routing_room_failed,
         overfull: overfull_sides,
+    }
+}
+
+#[cfg(test)]
+mod level_tests {
+    use super::skip_to_tight;
+
+    #[test]
+    fn the_levels_go_on_to_tight_bodies_only_when_many_parts_lack_room_and_work_runs_short() {
+        // OpenESC's panel after its spacing level: 27 of 482 parts, 436 s
+        // left, a level 164 s, two levels before the tight one.
+        assert!(skip_to_tight(27, 482, 436, 164, 2));
+        // Enough work for every level before it.
+        assert!(!skip_to_tight(27, 482, 700, 164, 2));
+        // Few parts without room: the next levels' passes seat them.
+        assert!(!skip_to_tight(3, 100, 10, 164, 2));
+        assert!(!skip_to_tight(9, 482, 10, 164, 2));
+        // No level ran yet.
+        assert!(!skip_to_tight(27, 482, 10, 0, 2));
     }
 }

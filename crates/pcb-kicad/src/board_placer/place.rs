@@ -281,10 +281,12 @@ pub fn place_kicad_board(
     items.retain(|item| !matches!(item.head(), Some("segment" | "arc" | "via")));
     let mut index = 0;
     let mut footprints = Vec::new();
+    let mut uuids = Vec::new();
     for footprint in items
         .iter_mut()
         .filter(|item| item.head() == Some("footprint"))
     {
+        uuids.push(crate::kicad_nets::footprint_uuid(footprint));
         let pose = placement.poses[index];
         let source_at = lowered.source_at[index];
         let at = write_footprint_pose(footprint, pose)?;
@@ -449,6 +451,23 @@ pub fn place_kicad_board(
         hints.sort();
         hints.dedup();
     }
+    let repeated_references = {
+        let mut seen = BTreeSet::new();
+        let mut repeated = BTreeSet::new();
+        for reference in &lowered.references[..uuids.len().min(lowered.references.len())] {
+            if !seen.insert(reference.as_str()) {
+                repeated.insert(reference.clone());
+            }
+        }
+        repeated
+    };
+    let unplaced_parts = unplaced_parts(
+        problem,
+        &lowered.references,
+        &uuids,
+        &repeated_references,
+        &placement,
+    );
     let room = crate::placement_room::room(
         problem,
         &lowered.references,
@@ -496,6 +515,7 @@ pub fn place_kicad_board(
         wirelength_final_mm: placement.wirelength_final,
         unplaced: names(&placement.unplaced),
         illegal: names(&placement.illegal),
+        unplaced_parts,
         constraints: constraint_report(&lowered.problem, &placement.poses, &lowered.references),
         constraint_warnings: lowered.constraint_warnings.clone(),
         outline_mm: outline_size,
@@ -516,4 +536,64 @@ pub fn place_kicad_board(
     )
     .map_err(|error| format!("failed to write {}: {error}", report_path.display()))?;
     Ok(result)
+}
+
+/// The movable parts without a legal place, each once (unplaced first),
+/// with their uuids and the constraints that hold them.
+fn unplaced_parts(
+    problem: &core::Problem,
+    references: &[String],
+    uuids: &[Option<String>],
+    repeated: &BTreeSet<String>,
+    placement: &core::Placement,
+) -> Vec<KiCadUnplacedPart> {
+    let constraints = &problem.constraints;
+    let mut seen = BTreeSet::new();
+    let mut parts = Vec::new();
+    for (index, status) in placement
+        .unplaced
+        .iter()
+        .map(|index| (*index, "unplaced"))
+        .chain(placement.illegal.iter().map(|index| (*index, "illegal")))
+    {
+        // Fixed parts and the board's marks are illegal only where a part
+        // that found no place lies on them.
+        if problem.components[index].fixed || index >= uuids.len() || !seen.insert(index) {
+            continue;
+        }
+        let mut held_by = Vec::new();
+        for (part, edge, max) in &constraints.edges {
+            if *part == index {
+                held_by.push(format!("edge {} within {max:.2} mm", edge.name()));
+            }
+        }
+        for (part, region) in &constraints.regions {
+            if *part == index {
+                held_by.push(format!(
+                    "region x {:.2}..{:.2}, y {:.2}..{:.2}",
+                    region[0], region[2], region[1], region[3]
+                ));
+            }
+        }
+        for (part, edge, _) in &constraints.overhangs {
+            if *part == index {
+                held_by.push(format!("overhang {}", edge.name()));
+            }
+        }
+        let pose = placement.poses[index];
+        let reference = &references[index];
+        let label = match &uuids[index] {
+            Some(uuid) if repeated.contains(reference) => format!("{reference} (uuid {uuid})"),
+            _ => reference.clone(),
+        };
+        parts.push(KiCadUnplacedPart {
+            reference: reference.clone(),
+            label,
+            uuid: uuids[index].clone(),
+            status,
+            at: [pose.position[0], pose.position[1], pose.angle],
+            held_by,
+        });
+    }
+    parts
 }

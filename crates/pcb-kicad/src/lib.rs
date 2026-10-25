@@ -32,6 +32,7 @@ mod check_work;
 mod drc_cache;
 mod kicad_config;
 pub use drc_cache::{DrcCacheCounts, drc_cache_counts, write_atomically};
+mod check_repairs;
 mod electrical_terminals;
 #[cfg(test)]
 mod geometry_queries;

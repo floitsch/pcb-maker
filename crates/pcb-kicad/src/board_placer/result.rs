@@ -18,6 +18,29 @@ pub struct KiCadPlacedFootprint {
     pub at: [f64; 3],
 }
 
+/// A movable part the placement found no legal place for, said so that
+/// an agent can act on it: a repeated reference (a panel's copies, a
+/// keyboard's cells) is told apart by the footprint's uuid, which
+/// constraints.json takes too.
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadUnplacedPart {
+    pub reference: String,
+    /// The part in a message (the verdict's reason): its reference, with
+    /// its uuid where the reference repeats on the board.
+    pub label: String,
+    /// The footprint's uuid (absent where the board has none).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub uuid: Option<String>,
+    /// `unplaced` (no spot found) or `illegal` (left where it overlaps).
+    pub status: &'static str,
+    /// Where the placement left it (its origin and angle).
+    pub at: [f64; 3],
+    /// The constraints that hold it (`edge left within 0.52 mm`, `region`,
+    /// `overhang top`): loosening one gives it more room.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub held_by: Vec<String>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct KiCadBoardPlacerResult {
     pub board_id: String,
@@ -32,6 +55,10 @@ pub struct KiCadBoardPlacerResult {
     pub wirelength_final_mm: f64,
     pub unplaced: Vec<String>,
     pub illegal: Vec<String>,
+    /// The movable parts of `unplaced` and `illegal`, each once, with its
+    /// uuid and what holds it (`KiCadUnplacedPart`); fixed parts and the
+    /// board's marks a part was left on are not in it.
+    pub unplaced_parts: Vec<KiCadUnplacedPart>,
     /// Every placement constraint with whether the placement keeps it.
     pub constraints: Vec<KiCadConstraintStatus>,
     pub constraint_warnings: Vec<String>,
