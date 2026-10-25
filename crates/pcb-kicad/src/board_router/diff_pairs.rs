@@ -220,11 +220,22 @@ fn skew_matching() -> bool {
     std::env::var("PCB_ROUTER_DIFF_PAIRS_SKEW").map_or(true, |value| value != "0")
 }
 
-/// Whether crossed ends get a crossover in their lead (`crossover`):
-/// `PCB_ROUTER_DIFF_PAIRS_CROSSOVER=0` turns it off (an experiment's
-/// switch: the crossed end's stubs are then the router's, as before).
+/// Whether crossed ends get a crossover in their lead (`crossover`), the
+/// links' paths lose their hairpins (`despiked`) and the kept links' vias
+/// keep their holes' clearance in the fallback: off by default (measured
+/// 2026-10-25: more links coupled, but more errors and gap findings on the
+/// rule boards; docs/router.md, "Polarity"), on with
+/// `PCB_ROUTER_DIFF_PAIRS_CROSSOVER=1` (an experiment's switch). Off, a
+/// crossed end's stubs are the router's, as before.
 fn crossovers() -> bool {
-    std::env::var("PCB_ROUTER_DIFF_PAIRS_CROSSOVER").map_or(true, |value| value != "0")
+    CROSSOVERS.with(|cell| cell.get()).unwrap_or_else(|| {
+        std::env::var("PCB_ROUTER_DIFF_PAIRS_CROSSOVER").is_ok_and(|value| value == "1")
+    })
+}
+
+thread_local! {
+    /// A test's override of `crossovers` (this thread only).
+    static CROSSOVERS: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
 /// A pair found on the board: its nets and its geometry.
@@ -2359,9 +2370,13 @@ pub(crate) fn finish_pairs(
         // The run without its hairpins (the route turning back by more
         // than a right angle, which the offset tracks cannot follow apart),
         // the route as it is the alternative where that is refused.
-        let despiked = path
-            .as_ref()
-            .map(|path| despiked(path, 2.5 * pair.offset()));
+        let despiked = path.as_ref().map(|path| {
+            if crossovers() {
+                despiked(path, 2.5 * pair.offset())
+            } else {
+                path.clone()
+            }
+        });
         let copper = despiked.as_ref().and_then(build);
         let alternative = path
             .as_ref()
@@ -2524,6 +2539,9 @@ pub(crate) fn finish_pairs(
                 });
                 // Its drill keeps the hole clearance from other nets'
                 // copper (the fallback routes beside it).
+                if !crossovers() {
+                    continue;
+                }
                 restored.obstacles.push(core::Obstacle {
                     shape: core::Shape::Circle {
                         center: at,
@@ -4311,6 +4329,26 @@ mod tests {
             }),
             ..KiCadBoardRouterConfig::default()
         };
+        let plan_of = |board: &core::Board| {
+            board
+                .attachment
+                .0
+                .clone()
+                .unwrap()
+                .downcast::<PairPlan>()
+                .unwrap()
+        };
+        // Off by default: the crossed end's stubs are the router's.
+        CROSSOVERS.with(|cell| cell.set(Some(false)));
+        let mut board = lower(&pcb, &config, true).unwrap().board;
+        plan_pairs(&mut board, &config);
+        assert!(
+            plan_of(&board).links[0]
+                .crossovers
+                .iter()
+                .all(Option::is_none)
+        );
+        CROSSOVERS.with(|cell| cell.set(Some(true)));
         let mut board = lower(&pcb, &config, true).unwrap().board;
         plan_pairs(&mut board, &config);
         let plan = board
@@ -4384,7 +4422,10 @@ mod tests {
         )
         .unwrap();
         let heights = copper_heights(&pcb);
-        assert!((heights["B.Cu"] - heights["F.Cu"] - 1.535).abs() < 1.0e-9, "{heights:?}");
+        assert!(
+            (heights["B.Cu"] - heights["F.Cu"] - 1.535).abs() < 1.0e-9,
+            "{heights:?}"
+        );
         let mut report = KiCadDiffPairs {
             pairs: vec![KiCadDiffPair {
                 positive: "D+".into(),

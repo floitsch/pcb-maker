@@ -267,14 +267,17 @@ pub fn route_kicad_board(
             measure_uncoupled(report, &pcb);
         }
         eprintln!(
-            "diff pairs: {} found, {} coupled, {} partly, {} fallen back ({} of {} links coupled, {:.1} mm; fallback {:.1} s of work)",
+            "diff pairs: {} found, {} coupled, {} partly, {} fallen back ({} of {} links coupled, {} through a crossover, {:.1} mm; {} meanders, skew at most {:.3} mm; fallback {:.1} s of work)",
             report.found,
             report.coupled,
             report.partly_coupled,
             report.fallen_back,
             report.links_coupled,
             report.links,
+            report.crossovers,
             report.coupled_mm,
+            report.meanders,
+            report.skew_mm,
             report.work_seconds
         );
     }
