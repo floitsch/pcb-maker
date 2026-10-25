@@ -488,6 +488,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "`full`: judge the designer's poses at the full spacing; `tight`, `touch`: with tight bodies, and courtyards touching (default: the smallest spacing, no halos).",
     ),
     (
+        "PCB_PLACER_CROSSINGS_PROFILE",
+        Kind::Diagnostic,
+        "with `PCB_PLACER_DEBUG`: per placer phase a `placer crossings` line, the wall time inside the ratsnest-crossings count against the work it booked and the rest of the phase's (the booking's calibration); `ops` times each of its operations too (docs/placer.md, \"The crossings' work booking\").",
+    ),
+    (
         "PCB_PLACER_CHECK_OVERLAP",
         Kind::Diagnostic,
         "the annealer checks its incremental overlap against a full recount.",

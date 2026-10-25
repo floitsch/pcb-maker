@@ -505,6 +505,7 @@ Diagnostics (stderr unless said; the result does not change):
 - `PCB_PLACER_TRACE`: `<file>`: per seed the weighted wirelength after each stage and per part how far each stage moved it.
 - `PCB_PLACER_DESIGNER`: `<board>`: the designer's poses judged by the placer's model (their wirelength, what each illegal movable part meets), and with `PCB_PLACER_TRACE` in the trace beside ours.
 - `PCB_PLACER_DESIGNER_LEVEL`: `full`: judge the designer's poses at the full spacing; `tight`, `touch`: with tight bodies, and courtyards touching (default: the smallest spacing, no halos).
+- `PCB_PLACER_CROSSINGS_PROFILE`: with `PCB_PLACER_DEBUG`: per placer phase a `placer crossings` line, the wall time inside the ratsnest-crossings count against the work it booked and the rest of the phase's (the booking's calibration); `ops` times each of its operations too (docs/placer.md, "The crossings' work booking").
 - `PCB_PLACER_CHECK_OVERLAP`: the annealer checks its incremental overlap against a full recount.
 - `PCB_LADDER_STATS`: the probe ladder prints each probe's other statistics (the ladder's judge).
 - `PCB_KICAD_NECKS_DEBUG`: the neck finder per net and layer.
