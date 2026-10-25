@@ -1097,12 +1097,15 @@ fn judge_with_crossings(
 }
 
 /// The crossings' work in the anneal counts this many times (numerator,
-/// denominator) what the count itself books: against the anneal's own
-/// work its queries take 2.5 to 2.7 times the CPU time per unit booked
-/// (MegaDrive, Glasgow, 2026-10-25: the lines a long tree line meets are
-/// gathered and tested, each booked as one unit), and a budget in work
-/// should see what the term costs.
-const CROSSING_WORK: (u64, u64) = (13, 5);
+/// denominator) what the count itself books: the count books each
+/// operation at the CPU it takes in the legaliser and the refinement
+/// (crossings.rs, `MET_WORK`), and against the anneal's own work its
+/// queries (the kept lines counted again, the new lines among themselves
+/// directly, most never entering the grid) take 1.6 times the CPU per unit
+/// booked (MegaDrive 1.60, Glasgow 1.57, 2026-10-25; 13/5 of the count's
+/// earlier booking of one unit per cell and line met), and a budget in
+/// work should see what the term costs.
+const CROSSING_WORK: (u64, u64) = (8, 5);
 
 /// The anneal's side of `AnnealConfig::guidance`.
 struct Guide<'a> {
