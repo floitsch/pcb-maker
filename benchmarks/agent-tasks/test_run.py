@@ -756,6 +756,131 @@ class MemoryLedger(unittest.TestCase):
         self.assertGreaterEqual(newer_at, older_at + 0.5)
         self.assertEqual(self.ledger.live(), [])
 
+    @staticmethod
+    def starve(drain_after, horizon):
+        """The machine of 2026-10-25, second by second (as ledger.rs's
+        `starve`): a ledger of 56 000 MB, 30 000 MB available beside the
+        reservations (each run resident at its reservation), requests of
+        2000 MB, one every 5 s, each running 60 s and looking every 2 s
+        while it waits (the ledger, the order and the drain, no floor of
+        their own), and from 300 s a harness's request of 19 000 MB with
+        a floor of 10 000 MB looking every 15 s (memory_room). Returns how
+        long it waited (None: not within `horizon` s) and how many small
+        ones ran before it."""
+        h = run.harness_common
+        capacity, free, floor, large, small, arrives = 56000.0, 30000.0, 10000.0, 19000.0, 2000.0, 300
+        book = []  # [reservation, end]
+        ran = 0
+        resident = lambda pid: next(r["megabytes"] for r, _ in book if r["pid"] == pid)  # noqa: E731
+        for t in range(arrives + horizon):
+            book = [entry for entry in book if entry[1] is None or entry[1] > t]
+            if t == arrives:
+                book.append([{"pid": 1, "started": t, "megabytes": 0.0, "label": "katia", "waiting_mb": large,
+                              "waiting_since": t, "waits_on_floor": True, "floor_mb": floor,
+                              "drain_after": drain_after}, None])
+            if t % 5 == 0 and t > 0:
+                book.append([{"pid": 100 + t, "started": t, "megabytes": 0.0, "label": "route",
+                              "waiting_mb": small, "waiting_since": t}, None])
+            for entry in [e for e in book if e[0].get("waiting_mb") is not None]:
+                me = entry[0]
+                waited = t - me["waiting_since"]
+                if waited % (15 if me["pid"] == 1 else 2):
+                    continue
+                others = [r for r, _ in book if r is not me]
+                available = free - sum(r["megabytes"] for r in others)
+                if me["pid"] == 1:
+                    admitted = h.memory_room(others, large, floor, capacity, available, resident=resident,
+                                             own_pid=1)[0]
+                else:
+                    since = me["waiting_since"]
+                    drained = h.drained_for(others, since, t, own_pid=me["pid"])
+                    admitted = (h.memory_room(others, small, 0.0, capacity, None)[0]
+                                and h.order_allows(others, small, since, capacity, own_pid=me["pid"])
+                                and (drained is None
+                                     or h.drain_allows(drained, others, small, capacity, available)))
+                if admitted:
+                    if me["pid"] == 1:
+                        return t - arrives, ran
+                    me.update(megabytes=me.pop("waiting_mb"), held_since=t)
+                    entry[1] = t + 60
+                    ran += 1
+        return None, ran
+
+    def test_a_stream_of_small_requests_starves_a_waiter_until_the_ledger_drains(self):
+        # Without the drain (the rule of 2026-10-24) the large request never
+        # starts in four hours; with it, once it has waited 600 s, the
+        # running set ends within 60 s and it goes at its next look.
+        started, ran = self.starve(float("inf"), 4 * 3600)
+        self.assertIsNone(started)
+        self.assertGreater(ran, 2800)
+        started, ran = self.starve(600.0, 4 * 3600)
+        self.assertIsNotNone(started)
+        self.assertTrue(600 <= started <= 600 + 60 + 15, started)
+        self.assertEqual(ran, 179)
+
+    def test_a_drain_admits_what_leaves_the_waiter_its_room_or_ends_first(self):
+        h = run.harness_common
+        holder = {"pid": 11, "started": 1.0, "megabytes": 4000.0, "held_since": 1.0, "expected_end": 900.0,
+                  "label": ""}
+        waiter = {"pid": 13, "started": 10.0, "megabytes": 0.0, "waiting_mb": 8000.0, "waiting_since": 10.0,
+                  "floor_mb": 2000.0, "waits_on_floor": True, "label": ""}
+        others = [holder, waiter]
+        self.assertIsNone(h.drained_for(others, 30.0, 609.0, own_pid=99))
+        self.assertIsNone(h.drained_for(others, 5.0, 700.0, own_pid=99))
+        self.assertIs(h.drained_for(others, 30.0, 610.0, own_pid=99), waiter)
+        self.assertIsNone(h.drained_for([holder, dict(waiter, drain_after=1000.0)], 30.0, 610.0, own_pid=99))
+        # 12 000 available: 2000 leave 12 000 - 2000 - 2000 = 8000, its room.
+        self.assertTrue(h.drain_allows(waiter, others, 2000.0, 20000.0, 12000.0))
+        self.assertFalse(h.drain_allows(waiter, others, 2001.0, 20000.0, 12000.0))
+        self.assertFalse(h.drain_allows(waiter, others, 8001.0, 20000.0, None))
+        # Ends before every holder: goes; after, or beside a holder of unknown end: waits.
+        self.assertTrue(h.drain_allows(waiter, others, 5000.0, 20000.0, 12000.0, expected_end=900.0))
+        self.assertFalse(h.drain_allows(waiter, others, 5000.0, 20000.0, 12000.0, expected_end=901.0))
+        unknown = [holder, {"pid": 12, "megabytes": 100.0, "label": ""}, waiter]
+        self.assertFalse(h.drain_allows(waiter, unknown, 5000.0, 20000.0, 12000.0, expected_end=800.0))
+        # The nightly's: first among the waiters, drained for at once, no end exception.
+        nightly = dict(waiter, pid=14, waiting_since=20.0, priority="nightly")
+        both = [holder, waiter, nightly]
+        self.assertIs(h.oldest_waiter(both), nightly)
+        self.assertIs(h.drained_for(both, 21.0, 21.0, own_pid=99), nightly)
+        self.assertFalse(h.drain_allows(nightly, both, 5000.0, 20000.0, 12000.0, expected_end=100.0))
+        # A nightly request is not behind an older one that is not.
+        self.assertTrue(h.order_allows([holder, waiter], 9000.0, 30.0, 10000.0, own_pid=99, priority="nightly"))
+        self.assertIsNone(h.drained_for([holder, waiter], 30.0, 9999.0, own_pid=99, priority="nightly"))
+
+    def test_waiting_entries_carry_what_the_drain_reads_and_newer_requests_wait(self):
+        other = self.sleeper()
+        self.ledger.reserve(3000, "another run", pid=other.pid)
+        h = run.harness_common
+        # A request that cannot fit (3000 + 3500 of 4000), waiting since 700 s ago.
+        since = time.time() - 700
+        key, _ = h.try_admit(self.ledger, 3500, "large", 1024, since=since, drain_after=600.0,
+                             priority="nightly")
+        self.assertIsNone(key)
+        entry = next(r for r in self.ledger.live() if r["label"] == "large")
+        self.assertEqual((entry["floor_mb"], entry["drain_after"], entry["priority"]), (1024.0, 600.0, "nightly"))
+        # The holder held before the large one began waiting: the order lets
+        # 500 more go (the large one fits once the holder ends: 500 + 3500).
+        # In the drain they wait, and say so; under its bound they go.
+        self.ledger.update(lambda reservations: [r.update(held_since=since - 10) for r in reservations
+                                                  if r["label"] == "another run"])
+        key, text = h.try_admit(self.ledger, 500, "small")
+        self.assertIsNone(key)
+        self.assertIn("the ledger drains for it", text)
+        self.ledger.update(lambda reservations: [r.update(drain_after=800.0, priority=None) for r in reservations
+                                                  if r["label"] == "large"])
+        key, text = h.try_admit(self.ledger, 500, "small")
+        self.assertIsNotNone(key, text)
+        self.ledger.release(key)
+        # Admitted, a reservation carries its expected end and priority.
+        h.withdraw(self.ledger, "large", since)
+        key, _ = h.try_admit(self.ledger, 500, "small", expected_seconds=60, priority="nightly")
+        self.assertIsNotNone(key)
+        entry = next(r for r in self.ledger.live() if r["label"] == "small")
+        self.assertAlmostEqual(entry["expected_end"], time.time() + 60, delta=5)
+        self.assertEqual(entry["priority"], "nightly")
+        self.ledger.release(key)
+
     def test_dead_and_reused_pids_are_dropped_and_other_fields_kept(self):
         child = self.sleeper()
         self.ledger.reserve(100, "live", pid=child.pid)

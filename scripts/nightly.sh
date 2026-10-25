@@ -23,7 +23,14 @@
 #      of those. When the newest nightly measured the same commit with
 #      every stage planned tonight, it stops there (--force runs anyway).
 #   2. Runs, one after the other, each through the memory ledger (no
-#      lock) with --min-free-gb 10, from the nightly checkout:
+#      lock) with --min-free-gb 10 and --ledger-priority nightly, from
+#      the nightly checkout. The priority puts the nightly's boards first
+#      among the ledger's waiters and has the ledger drain for them at
+#      once: a newer request (another agent's route, a sweep's board) goes
+#      only while it leaves the waiting board its room, so the night ends
+#      within the night (docs/benchmarks.md, "Memory ledger"; until
+#      2026-10-25 the designer tier's large boards waited from 11:00 to
+#      past 20:00 behind other agents' 1-8 GB routes):
 #        fingerprints  Castor, k30-SBC, jetson, Sisu in route mode from
 #                      build/github-layout-v16, 1 x 4, budget scale 0.25,
 #                      PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1
@@ -258,7 +265,7 @@ done
 
 run_py="${PCB_NIGHTLY_RUN_PY:-$source_dir/benchmarks/agent-tasks/run.py}"
 tasks="$source_dir/benchmarks/agent-tasks/tasks/v7/tasks.json"
-common=(--binary "$snapshot" --min-free-gb 10)
+common=(--binary "$snapshot" --min-free-gb 10 --ledger-priority nightly)
 statuses=()
 
 stage() {

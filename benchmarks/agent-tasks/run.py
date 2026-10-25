@@ -1245,21 +1245,30 @@ class MemoryGate:
     it with its own, which grows with the router's maps and KiCad's
     check) and released when the board is done. Until 2026-10-22 the
     reservations were this process's alone (other runs on the machine did
-    not see them) and only MemAvailable counted."""
+    not see them) and only MemAvailable counted. A board that has waited
+    `drain_after` seconds has the ledger drain for it (harness_common.
+    drain_allows; --ledger-drain-after); `priority` "nightly" (--ledger-
+    priority nightly) puts its boards first among the waiters and has the
+    ledger drain for them at once. A board's reservation carries its
+    expected end (the tier's seconds), which the drain reads."""
 
-    def __init__(self, minimum_gb, ledger=None, poll_seconds=15.0):
+    def __init__(self, minimum_gb, ledger=None, poll_seconds=15.0, drain_after=None, priority=None):
         self.minimum_gb = max(0.0, minimum_gb)
         self.ledger = ledger if ledger is not None else harness_common.Ledger.from_env()
         self.poll_seconds = poll_seconds
+        self.drain_after = harness_common.DEFAULT_DRAIN_AFTER_SECONDS if drain_after is None else drain_after
+        self.priority = priority
         self.lock = threading.Lock()
         # token -> the reservation's key in the ledger
         self.keys = {}
         self.next_token = 0
 
-    def admit(self, what, expected_mb):
+    def admit(self, what, expected_mb, expected_seconds=None):
         key = harness_common.admit(self.ledger, expected_mb, f"run.py: {what} (expected peak)",
                                    self.minimum_gb * 1024, poll_seconds=self.poll_seconds,
-                                   log=lambda text: print(text, file=sys.stderr, flush=True))
+                                   log=lambda text: print(text, file=sys.stderr, flush=True),
+                                   expected_seconds=expected_seconds, drain_after=self.drain_after,
+                                   priority=self.priority)
         with self.lock:
             token = self.next_token
             self.next_token += 1
@@ -1304,7 +1313,8 @@ def task_directory(task):
 def run_task(task, arguments):
     # Admitted before the designer's DRC: kicad-cli takes 2.2 GB on any
     # board, and twelve jobs start with it at once.
-    token = arguments.gate.admit(task["name"], task.get("peak_rss_mb", arguments.expected_mb))
+    token = arguments.gate.admit(task["name"], task.get("peak_rss_mb", arguments.expected_mb),
+                                 task.get("expected_seconds"))
     try:
         row = run_admitted(task, arguments, token)
     finally:
@@ -2280,6 +2290,13 @@ def main():
                         help="a floor beside the memory ledger: start a board only when this much memory "
                              "stays available after its expected peak and what the runs in the ledger are "
                              "still expected to grow by (0: the ledger alone)")
+    parser.add_argument("--ledger-drain-after", type=float, default=harness_common.DEFAULT_DRAIN_AFTER_SECONDS,
+                        help="seconds a board waits for memory before the ledger drains for it: newer requests "
+                             "then go only if they leave it its room or end before every running board "
+                             "(default %(default).0f; docs/benchmarks.md, \"Memory ledger\")")
+    parser.add_argument("--ledger-priority", choices=("normal", harness_common.PRIORITY_NIGHTLY), default="normal",
+                        help="nightly: this run's boards go first among the waiters and are never passed once "
+                             "waiting (the ledger drains for them at once); scripts/nightly.sh sets it")
     parser.add_argument("--expected-gb", type=float, default=3.0,
                         help="expected peak of a board the tier does not estimate")
     parser.add_argument("--budget-scale", type=float, default=None,
@@ -2381,7 +2398,10 @@ def main():
     arguments.binary_sha256 = file_sha256(arguments.binary) if arguments.binary.is_file() else None
     print(f"binary {arguments.binary} (sha256 {(arguments.binary_sha256 or '?')[:12]})", file=sys.stderr)
     arguments.expected_mb = arguments.expected_gb * 1024
-    arguments.gate = MemoryGate(arguments.min_free_gb)
+    if arguments.ledger_drain_after < 0:
+        parser.error("--ledger-drain-after must not be negative")
+    arguments.gate = MemoryGate(arguments.min_free_gb, drain_after=arguments.ledger_drain_after,
+                                priority=None if arguments.ledger_priority == "normal" else arguments.ledger_priority)
     tasks = []
     # The boards of the tier (or task list) that --only leaves out: with
     # --splice-from their rows come from the earlier log.
