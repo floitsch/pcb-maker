@@ -2554,6 +2554,17 @@ rule boards). (8) Done in phase 3: the pairs' nets keep to the layers their rule
 allow (above, "Layers").
 (9) Coupled branches (a T at an ESD part) instead of one run per link.
 
+## CPU profile (2026-10-25)
+
+Where a route's CPU goes and how to profile it: [profiling.md](profiling.md).
+The search is 76 to 90 % of a route's CPU (its heuristic a further 4 to
+7 %); inside it the heap's sift (15 to 18 %), the neighbour steps' search
+nodes and occupancy bytes (18 to 26 %) and the hop test (3 to 9 %). The
+profile round made the hop test walk only where a via can lie within its
+reach (`SearchNode::since_via`), the heap's root wait for the next push
+(`KeyHeap`), and the expansion prefetch its neighbourhood: identical
+routes, 9 to 12 % less CPU.
+
 ## Determinism and the wall clock (2026-10-14)
 
 Every routing decision is taken in work (search expansions at

@@ -11,6 +11,46 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-25 (router profile round: the hop test, the heap's root, the neighbourhood prefetch)
+
+A speed package with identical results. Branch router-profile, snapshots
+x14380 (the first version) and x14381 (the measured one) against main's
+x1820 (23f629e); [profiling.md](profiling.md) has how to profile, the
+tables and the measurements.
+
+- **The profile** (perf 7.2 run from its Arch package as the user; route
+  mode, two pinned threads; the fingerprints at a quarter budget and
+  SmartSpin2k and protoesp at the task budget): the search is 76 to 90 %
+  of the CPU, its heuristic 4 to 7 % more. Inside it the heap's sift 15
+  to 18 % (one load, the children of a level, 8 to 11 %), the neighbour
+  steps and their occupancy bytes 18 to 26 %, the hop test 3 to 9 %, the
+  via steps 3 to 6 %. The tile planner 1 to 6 %, stamping 1 to 5 %,
+  hashing under 1 %, allocation at most 0.11 %, the corridor
+  instrumentation under 0.05 %.
+- **The hop test** walks back only where a via can lie within its reach
+  (`SearchNode::since_via`, the struct's padding byte: steps since the
+  last via or source on the node's path), by coordinates and with its
+  reach once a search.
+- **The heap** leaves the root a pop empties for the next push to fill
+  (the neighbours' keys stop near the root, where the last key sank to the
+  bottom), and its sift prefetches the next level.
+- **The expansion** prefetches the rows below and above (search nodes,
+  packed maps, occupancy) and its cell on the other layers.
+- **Measured**: x1820 against x14381 side by side on SMT siblings, two
+  pairs a board with the CPUs swapped, pinned rates: CPU -10.7 % Castor,
+  -11.1 % k30-SBC, -9.4 % jetson, -9.0 % Sisu (300 s of work), -12.4 %
+  SmartSpin2k, -10.6 % protoesp (1200 s); expansions per CPU second
+  0.67-2.43 M before, 0.74-2.82 M after. Identical in every pair: the
+  routed board's SHA-256, the fingerprints, expansions, searches and the
+  verdict apart from its seconds; the fingerprints equal the nightly's of
+  2026-10-25 at two and four threads.
+- **The work clock**: at pinned rates (the tiers) nothing changes but
+  the CPU. The measured rate (the default outside the tiers) follows the
+  canned search, which is the router's: x14381's canned search is 1.12 to
+  1.16 times x1820's, so an unpinned run spends about 15 % more
+  expansions per budget second and its result changes. Not recalibrated
+  (`REFERENCE_CANNED_EXPANSIONS_PER_SECOND` stays 6.9e6).
+
 ## Committed on 2026-10-25 (the race picks its seed by a route probe)
 
 An experiment, off by default. Branch race-probe, snapshots x14350
