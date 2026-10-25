@@ -735,6 +735,11 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     if let Some(length) = config.escape_stub_mm {
         router_config.escape_stub_mm = length;
     }
+    if let Some(exact) = config.exact_escape_stubs
+        && core::router::exact_escapes_override().is_none()
+    {
+        router_config.exact_escape_stubs = exact;
+    }
     if let Some(fixed) = config.fixed_plane_stubs {
         router_config.fixed_plane_stubs = fixed;
     }

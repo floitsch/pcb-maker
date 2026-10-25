@@ -162,6 +162,7 @@ impl Router {
         };
         let statics_built = built.elapsed().as_secs_f64();
         let maps = board.classes.len() * (layers + 1) + board.classes.len() * layers * 2;
+        let step = grid.pitch * std::f64::consts::SQRT_2;
         let variants = class_rules
             .as_ref()
             .map_or(1, |split| split.resolved.variants);
@@ -218,6 +219,7 @@ impl Router {
                         // `diagonal_extra`; the search checks the cells a
                         // diagonal step cuts).
                         let with_margin = |radius: f64| radius;
+                        let snap = grid.pitch * 0.75 + step * step / (4.0 * grid.pitch);
                         let trace_radius =
                             own.trace_width / 2.0 + other.trace_width / 2.0 + trace_clearance;
                         // Copper keeps the copper clearance from a via's
@@ -242,6 +244,9 @@ impl Router {
                             diagonal_block_via: diagonal_block(own_via_radius, grid.pitch),
                             trace_radius,
                             via_radius,
+                            stub_diagonal_block: diagonal_block(trace_radius + snap, grid.pitch),
+                            stub_to_trace: disc(trace_radius + snap, grid.pitch),
+                            stub_to_via: disc(with_margin(via_radius) + snap, grid.pitch),
                             trace_to_trace: disc(
                                 with_margin(
                                     own.trace_width / 2.0

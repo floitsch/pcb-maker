@@ -15,6 +15,8 @@ fn fresh_footprints_mark_as_whole_ones() {
     let stamps = Stamps {
         trace_radius: 0.33,
         via_radius: 0.21,
+        stub_to_trace: Vec::new(),
+        stub_to_via: Vec::new(),
         trace_to_trace: disc_offsets.clone(),
         trace_to_via: disc(0.21, 0.1),
         via_to_trace: Vec::new(),
@@ -23,6 +25,7 @@ fn fresh_footprints_mark_as_whole_ones() {
         diagonal_to_via: Vec::new(),
         diagonal_block: diagonal_block(0.33, 0.1),
         diagonal_block_via: [Vec::new(), Vec::new()],
+        stub_diagonal_block: [Vec::new(), Vec::new()],
         fresh: Fresh::default(),
     };
     let fresh = Fresh::of(&stamps);

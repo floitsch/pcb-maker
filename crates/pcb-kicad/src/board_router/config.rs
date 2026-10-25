@@ -341,6 +341,12 @@ pub struct KiCadBoardRouterConfig {
     /// `escape_stub_mm`; off by default).
     #[serde(default)]
     pub escape_stub_mm: Option<f64>,
+    /// Escape stubs stamped exactly, straight ones along a lattice line
+    /// first (router `exact_escape_stubs`; docs/router.md, "Fine-pitch
+    /// escapes"): unset, the router's default (on);
+    /// `PCB_ROUTER_EXACT_ESCAPES` overrides this.
+    #[serde(default)]
+    pub exact_escape_stubs: Option<bool>,
     /// Connect every pour-net pad to its plane by a fixed stub and via
     /// before the signals route (router `fixed_plane_stubs`).
     #[serde(default)]

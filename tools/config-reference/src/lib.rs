@@ -178,6 +178,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "overrides the router's `trouble_repair` (`0` off, anything else on): the trouble-makers' repair after the hard repair (an open net routed through others at a price, the nets it displaces routed again hard, kept when the open terminals drop; docs/experiments/human-level-routing.md).",
     ),
     (
+        "PCB_ROUTER_EXACT_ESCAPES",
+        Kind::Switch,
+        "overrides the router's `exact_escape_stubs` (`0` off, anything else on; on by default): escape stubs stamp exactly (along a lattice line as lattice nodes, oblique ones by their measured footprint) and a pad leaves by straight stubs along a lattice line where it has any; off, the stubs stamp the lattice's discs grown by the snapping error (docs/router.md, \"Fine-pitch escapes\").",
+    ),
+    (
         "PCB_ROUTER_CAPACITATED_CORRIDORS",
         Kind::Switch,
         "overrides the router's `capacitated_corridors` (`0` off, anything else on; off by default): the negotiation's corridors from the global route with hard capacities, a search that misses its corridor lowering the capacity of the boundary it failed at and re-planning the nets through it (docs/router.md, \"Capacitated corridors (2026-10-24)\"; an experiment).",

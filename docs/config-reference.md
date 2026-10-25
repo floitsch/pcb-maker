@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 94 | 78 | 16 | 94 | 37 |
+| [Router settings](#router-settings) | 95 | 79 | 16 | 95 | 37 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 1 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 1 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
@@ -33,7 +33,7 @@ The environment variables are indexed in the hand-over
 | [Router report: rules](#router-report-rules) | 5 | - | 0 | 5 | - |
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 10 | - | 2 | 10 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
-| [Router core](#router-core) | 69 | - | 0 | 69 | - |
+| [Router core](#router-core) | 70 | - | 0 | 70 | - |
 | [Placer settings](#placer-settings) | 49 | 45 | 4 | 49 | 22 |
 | [Layout settings](#layout-settings) | 20 | 20 | 0 | 20 | 9 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
@@ -120,6 +120,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `probe_ladder` | `Option<bool>` | unset | - | Large multilayer boards: probe every rung briefly and continue the best (default on). |
 | `probe_seconds` | `Option<f64>` | unset | router.md, placer.md | Seconds of negotiation per probe (default 75). |
 | `escape_stub_mm` | `Option<f64>` | unset | router.md | Fixed escape stubs for fine-pitch pad rows, this long in mm (router `escape_stub_mm`; off by default). |
+| `exact_escape_stubs` | `Option<bool>` | unset | - | Escape stubs stamped exactly, straight ones along a lattice line first (router `exact_escape_stubs`; docs/router.md, "Fine-pitch escapes"): unset, the router's default (on); `PCB_ROUTER_EXACT_ESCAPES` overrides this. |
 | `fixed_plane_stubs` | `Option<bool>` | unset | router.md | Connect every pour-net pad to its plane by a fixed stub and via before the signals route (router `fixed_plane_stubs`). |
 | `trouble_repair` | `Option<bool>` | unset | router.md | The trouble-makers' repair after the hard repair (router `trouble_repair`; docs/experiments/human-level-routing.md): unset, the router's default; `PCB_ROUTER_TROUBLE` overrides this. |
 | `capacitated_corridors` | `Option<bool>` | unset | router.md | The negotiation's corridors from the global route with hard capacities, learning from the searches that miss them (router `capacitated_corridors`, an experiment; docs/router.md, "Capacitated corridors (2026-10-24)"): unset, the router's default; `PCB_ROUTER_CAPACITATED_CORRIDORS` overrides this. |
@@ -283,6 +284,7 @@ One constraint of one rule of the project's `.kicad_dru`. Source: `KiCadCustomRu
 | `pour_aware_via_reduction` | `bool` | `true` | - | The same for a via reduction round. |
 | `pour_whole_rip_up` | `bool` | `true` | - | Whether a pour net stuck in conflict is ripped up whole now and then like the other nets (`rip_up_whole`). |
 | `escape_stub_mm` | `f64` | `0.0` | `escape_stub_mm` | Fine-pitch pads (narrower than the track plus its clearance, on one layer, in a row of their kind) get a straight stub outward fixed before negotiation, up to this long in mm (0, the default, turns it off). The stubs keep every pad's only way out open: nothing else may run along the row inside the escape zone. Tried on Tiny Tapeout (82/108 either way) and ColdFire (205 vs 208 of 209): no gain yet. |
+| `exact_escape_stubs` | `bool` | `true` | `exact_escape_stubs` | Escape stubs (a pad too narrow for a lattice node leaves by a stub from its centre) stamp exactly: one along a lattice line as a run of lattice nodes, an oblique or bent one by its measured footprint (`escapes::stub_footprint`); and a pad leaves by straight stubs along a lattice line where it has any. Off: every stub stamps the lattice's discs grown by the snapping error (0.525 mm at a 0.1 mm lattice with 0.2 mm tracks and clearance), which in a 0.4 or 0.5 mm pitch row covers the neighbouring pads' stubs for good (jfedor2/hid-remapper's RP2040 rows, docs/router.md "Fine-pitch escapes"). |
 | `history_increment` | `f64` | `0.3` | - | History cost added to a lattice node (and its tile) for every net still in conflict there after an iteration; also the amplitude of the noise a `seed` puts into the history. |
 | `max_iterations` | `usize` | `80` | `maximum_iterations` | Negotiation iterations at most (each reroutes the conflicted nets). |
 | `window_margin` | `f64` | `10.0` | - | Minimum search window margin around a net's terminals. |

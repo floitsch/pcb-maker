@@ -149,6 +149,17 @@ pub struct Config {
     /// may run along the row inside the escape zone. Tried on Tiny Tapeout
     /// (82/108 either way) and ColdFire (205 vs 208 of 209): no gain yet.
     pub escape_stub_mm: f64,
+    /// Escape stubs (a pad too narrow for a lattice node leaves by a stub
+    /// from its centre) stamp exactly: one along a lattice line as a run
+    /// of lattice nodes, an oblique or bent one by its measured footprint
+    /// (`escapes::stub_footprint`); and a pad leaves by straight stubs
+    /// along a lattice line where it has any. Off: every stub stamps the
+    /// lattice's discs grown by the snapping error (0.525 mm at a 0.1 mm
+    /// lattice with 0.2 mm tracks and clearance), which in a 0.4 or 0.5 mm
+    /// pitch row covers the neighbouring pads' stubs for good
+    /// (jfedor2/hid-remapper's RP2040 rows, docs/router.md "Fine-pitch
+    /// escapes").
+    pub exact_escape_stubs: bool,
     /// History cost added to a lattice node (and its tile) for every net
     /// still in conflict there after an iteration; also the amplitude of
     /// the noise a `seed` puts into the history.
@@ -368,6 +379,7 @@ impl Default for Config {
             pour_aware_via_reduction: true,
             pour_whole_rip_up: true,
             escape_stub_mm: 0.0,
+            exact_escape_stubs: super::escapes::exact_escapes_override().unwrap_or(true),
             global_routing: false,
             neck_reach: 1.5,
             fixed_plane_stubs: false,

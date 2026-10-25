@@ -6,6 +6,13 @@
 
 use super::*;
 
+/// `PCB_ROUTER_EXACT_ESCAPES` when set: overrides
+/// `Config::exact_escape_stubs` (`0` or empty off, anything else on).
+pub fn exact_escapes_override() -> Option<bool> {
+    let value = std::env::var("PCB_ROUTER_EXACT_ESCAPES").ok()?;
+    Some(!(value.is_empty() || value == "0"))
+}
+
 impl Router {
     /// Access for a pad too narrow to hold a lattice node: nearby legal
     /// nodes that a straight stub from the pad centre reaches without coming
@@ -171,7 +178,12 @@ impl Router {
             // neighbouring pads' stubs: a conflict no negotiation
             // resolves. Bent and oblique stubs only where no straight one
             // leaves.
-            for straight in [true, false] {
+            let passes: &[bool] = if self.config.exact_escape_stubs {
+                &[true, false]
+            } else {
+                &[false]
+            };
+            for &straight in passes {
                 for (_, cell) in candidates.iter().copied().take(600) {
                     let center = self.grid.center_of(cell);
                     let mut found: Option<(f64, Vec<crate::geometry::Point>)> = None;
@@ -211,6 +223,7 @@ impl Router {
                     };
                     let cells = self
                         .lattice_stub_cells(&polyline)
+                        .filter(|_| self.config.exact_escape_stubs)
                         .unwrap_or_else(|| self.sampled_stub_cells(&polyline));
                     let node = Node {
                         layer: layer as u8,
@@ -264,7 +277,7 @@ impl Router {
         let map = self.map_index(class, node.layer as usize);
         // A stub along a lattice line is lattice copper: its nodes are
         // all there is to test, as for a branch.
-        if Self::stub_on_lattice(&net_state.escapes[&node].2) {
+        if self.config.exact_escape_stubs && Self::stub_on_lattice(&net_state.escapes[&node].2) {
             return cells
                 .iter()
                 .all(|cell| self.occupancy_seen(scratch, class, map, *cell as usize) == 0);

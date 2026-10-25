@@ -187,7 +187,44 @@ impl Router {
                         };
                         let reach = stub_stamps.fresh.reach;
                         let map = base + end.layer as usize;
-                        if Self::stub_on_lattice(polyline) {
+                        let exact = self.config.exact_escape_stubs;
+                        if !exact {
+                            // The lattice's discs grown by the snapping
+                            // error, at every sampled node.
+                            for cell in cells {
+                                for (map, offsets) in [
+                                    (map, &stub_stamps.stub_to_trace),
+                                    (base + layers, &stub_stamps.stub_to_via),
+                                ] {
+                                    mark_footprint(
+                                        marks,
+                                        words,
+                                        &mut stamped,
+                                        map,
+                                        *cell,
+                                        offsets,
+                                        (1, 1),
+                                        size,
+                                        reach,
+                                    );
+                                }
+                                for orientation in 0..2 {
+                                    mark_footprint(
+                                        marks,
+                                        words,
+                                        &mut stamped,
+                                        diagonal_base
+                                            + (querying * layers + end.layer as usize) * 2
+                                            + orientation,
+                                        *cell,
+                                        &stub_stamps.stub_diagonal_block[orientation],
+                                        (1, 1),
+                                        size,
+                                        reach,
+                                    );
+                                }
+                            }
+                        } else if Self::stub_on_lattice(polyline) {
                             // Along a lattice line the stub is lattice
                             // copper: its nodes stamp a branch node's
                             // footprints.
