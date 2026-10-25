@@ -180,7 +180,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_ROUTER_EXACT_ESCAPES",
         Kind::Switch,
-        "overrides the router's `exact_escape_stubs` (`0` off, anything else on; on by default): escape stubs stamp exactly (along a lattice line as lattice nodes, oblique ones by their measured footprint) and a pad leaves by straight stubs along a lattice line where it has any; off, the stubs stamp the lattice's discs grown by the snapping error (docs/router.md, \"Fine-pitch escapes\").",
+        "overrides the router's `exact_escape_stubs` (`0` off, anything else on; off by default): escape stubs stamp exactly (along a lattice line as lattice nodes, oblique ones by their measured footprint) and a pad leaves by straight stubs along a lattice line where it has any; off, the stubs stamp the lattice's discs grown by the snapping error (docs/router.md, \"Fine-pitch escapes\").",
     ),
     (
         "PCB_ROUTER_CAPACITATED_CORRIDORS",

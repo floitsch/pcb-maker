@@ -589,6 +589,7 @@ fn fine_pitch_row(
     }
     let mut config = config();
     config.pitches = vec![0.1];
+    config.exact_escape_stubs = true;
     (builder.board, config)
 }
 

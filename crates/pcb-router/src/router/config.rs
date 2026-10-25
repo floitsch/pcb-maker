@@ -158,7 +158,9 @@ pub struct Config {
     /// lattice with 0.2 mm tracks and clearance), which in a 0.4 or 0.5 mm
     /// pitch row covers the neighbouring pads' stubs for good
     /// (jfedor2/hid-remapper's RP2040 rows, docs/router.md "Fine-pitch
-    /// escapes").
+    /// escapes"). Off by default: on the expansion tier it closes 32
+    /// connections and gains a pass but has five KiCad errors more
+    /// (starved thermals at connector pads, a via at a net tie's copper).
     pub exact_escape_stubs: bool,
     /// History cost added to a lattice node (and its tile) for every net
     /// still in conflict there after an iteration; also the amplitude of
@@ -379,7 +381,7 @@ impl Default for Config {
             pour_aware_via_reduction: true,
             pour_whole_rip_up: true,
             escape_stub_mm: 0.0,
-            exact_escape_stubs: super::escapes::exact_escapes_override().unwrap_or(true),
+            exact_escape_stubs: super::escapes::exact_escapes_override().unwrap_or(false),
             global_routing: false,
             neck_reach: 1.5,
             fixed_plane_stubs: false,
