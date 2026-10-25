@@ -4365,6 +4365,44 @@ mod tests {
         assert!(meander.amplitude <= 3.0 * 0.2 + 1.0e-9);
     }
 
+    /// The skew from the written copper: the tracks, and a via at the
+    /// stackup's height between the layers its tracks join.
+    #[test]
+    fn the_skew_counts_tracks_and_vias_at_the_stackups_height() {
+        let pcb = parse(
+            r#"(kicad_pcb (version 20241229) (generator "pcbnew")
+  (general (thickness 1.6))
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+  (setup (stackup
+    (layer "F.Cu" (type "copper") (thickness 0.035))
+    (layer "dielectric 1" (type "core") (thickness 1.5))
+    (layer "B.Cu" (type "copper") (thickness 0.035))))
+  (segment (start 0 0) (end 10 0) (width 0.2) (layer "F.Cu") (net "/D+"))
+  (via (at 10 0) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net "/D+"))
+  (segment (start 10 0) (end 15 0) (width 0.2) (layer "B.Cu") (net "/D+"))
+  (segment (start 0 0.4) (end 15 0.4) (width 0.2) (layer "F.Cu") (net "/D-")))"#,
+        )
+        .unwrap();
+        let heights = copper_heights(&pcb);
+        assert!((heights["B.Cu"] - heights["F.Cu"] - 1.535).abs() < 1.0e-9, "{heights:?}");
+        let mut report = KiCadDiffPairs {
+            pairs: vec![KiCadDiffPair {
+                positive: "D+".into(),
+                negative: "D-".into(),
+                links: 1,
+                links_coupled: 1,
+                skew_target_mm: 0.2,
+                ..KiCadDiffPair::default()
+            }],
+            ..KiCadDiffPairs::default()
+        };
+        measure_uncoupled(&mut report, &pcb);
+        let skew = &report.skews[0];
+        assert!((skew.lengths_mm[0] - 16.535).abs() < 1.0e-9, "{skew:?}");
+        assert!((skew.lengths_mm[1] - 15.0).abs() < 1.0e-9, "{skew:?}");
+        assert!((report.skew_mm - 1.535).abs() < 1.0e-9);
+    }
+
     /// A fallen-back pair's leftovers: what joins nothing at one end goes
     /// (a track to nowhere, a via on no copper), what joins the two pads
     /// stays.
