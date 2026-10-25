@@ -11,6 +11,40 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-25 (the race picks its seed by a route probe)
+
+An experiment, off by default. Branch race-probe, snapshots x14350
+(the probe) and x14351 (its `repair` variant), off side x14343 (code
+of main c7b5552, x1819); docs/placer.md "The race's route probe
+(2026-10-25)" has the tables.
+
+- **The ceiling** (existing runs, x1818, eleven dense boards, three
+  layout seeds): summed medians 926, the best of three seeds 812
+  (-12 %). The race already probed (75 s, fewest unfinished nets) its
+  three best-ranked placements, but where the placement takes its 40 %
+  of the budget (Glasgow, 4in1, video) the probes after the first ran
+  and were dropped. Across runs the kept placement's probe picks the
+  best run on 6 of 11 boards, the first route's open terminals on 7
+  (regret 79 against 18 connections).
+- **`race_probe`** (layout option, `{}` for `{"seeds": 3, "share":
+  0.08}`): the race probes its `seeds` best-ranked placements for
+  `share` of `total_seconds` each, every probe charged to the work
+  clock (no 40 % gate), ranks them by the probe's open terminals
+  (`Router::probe_standing`: unconnected terminals plus complete nets
+  in conflict plus stranded pour pads; then unfinished nets; then
+  conflicts) and routes on with the best. board-layout.json and the
+  verdict carry `race` (each probed placement's standing and work, the
+  kept one). `repair: true` makes each probe a whole first route within
+  its share.
+- **Measured**: seeds 1 and 101, summed medians 915.5 to 872 (pairs 933
+  to 872, 898 to 872), about one standard deviation of the seed noise;
+  seed 201 1014 to 1151 (video 159 to 302, Glasgow 157 to 182), over the
+  three seeds 920 to 924. Short tier unchanged (24 / 24 unconnected,
+  7 / 7 strict passes). `repair` (seed 101): 898 to 966. Two probes at
+  10 % on 4in1 and protoesp: no better than three. The probe kept the
+  best known placement on 10 of 16 seed-boards where two finals are
+  known. **Default: off.**
+
 ## Committed on 2026-10-25 (the crossings term's work booking)
 
 A correctness fix of the work clock. Branch crossings-booking, snapshots

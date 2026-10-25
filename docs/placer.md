@@ -122,6 +122,10 @@ less copper); on PIC and the hierarchy board the automatic one is.
    passes 16 -> 18. `congestion_score: "none"` in layout.json asks for the
    plain race; `congestion_model` ranks with the learned predictor
    instead (an experiment, [congestion-model.md](congestion-model.md)).
+   Where the placement takes its whole 40 %, the race's other probes
+   run but count for nothing (the probes past 40 % of the budget are
+   dropped); `race_probe` (below, "The race's route probe") charges
+   every probe to the clock and gives each a share of the budget.
 7. **Coupling.** `layout-kicad-board` routes the placement once, then the
    router and placer take turns on one in-memory state: congested footprints
    are nudged, the router reroutes only what the nudge touched, and moves are
@@ -2078,6 +2082,210 @@ rest of the placement's CPU (1.5 to 3.7 before). The default placements
 barely move (two of 33 dense placements, both better; the dense sum of
 medians 926 to 920), so no weight adjustment is needed: no phase lost
 reach that the layouts show.
+
+## The race's route probe (2026-10-25)
+
+`race_probe` (layout option, off by default; `{}` for the defaults
+`{"seeds": 3, "share": 0.08}`; code `board_layout.rs`, the standing
+`Router::probe_standing`). Layout results swing with the placer's seed
+far more than with any lever of the week; the question was whether the
+race picks well among the seeds it has.
+
+**The ceiling, from the data at hand** (no runs): the eleven dense
+boards at the task budgets, KiCad unconnected per layout seed (each
+layout seed is its own set of placer seeds), main's x1818
+(`build/book1-dense-s{1,101,201}-off`; x1817's
+`cross2-dense-*-off` are the same rows). The pick columns ask which
+run a selector would have chosen among the three, from what each run
+recorded, and by how much it missed the best (`python3 -I
+experiments/race-probe/ceiling.py`: board-layout.json's
+`placement_race`, results.json's first-route open terminals,
+cross2-crossings.json; "75 s probe" is the kept placement's race
+probe, unfinished nets):
+
+| Board | seed 1 | seed 101 | seed 201 | median | min | max | spread | 75 s probe picks | first route picks | crossings pick |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- | --- |
+| OpenESC 4in1-mini | 81 | 82 | 99 | 82 | 81 | 99 | 18 | yes (s1, +0) | no (s101, +1) | yes (s1, +0) |
+| OpenESC 4in1 | 139 | 92 | 93 | 93 | 92 | 139 | 47 | yes (s101, +0) | no (s201, +1) | no (s1, +47) |
+| DSP-ADAU1452 | 17 | 7 | 25 | 17 | 7 | 25 | 18 | no (s1, +10) | yes (s101, +0) | yes (s101, +0) |
+| split72_left | 23 | 21 | 33 | 23 | 21 | 33 | 12 | yes (s101, +0) | no (s1, +2) | no (s1, +2) |
+| video | 190 | 145 | 159 | 159 | 145 | 190 | 45 | - | no (s201, +14) | no (s201, +14) |
+| Glasgow | 145 | 163 | 175 | 163 | 145 | 175 | 30 | yes (s1, +0) | yes (s1, +0) | yes (s1, +0) |
+| SmartSpin2k | 34 | 59 | 52 | 52 | 34 | 59 | 25 | no (s101, +25) | yes (s1, +0) | yes (s1, +0) |
+| 0xCB panel | 50 | 50 | 51 | 50 | 50 | 51 | 1 | yes (s1, +0) | yes (s101, +0) | yes (s1, +0) |
+| protoesp | 105 | 76 | 90 | 90 | 76 | 105 | 29 | yes (s101, +0) | yes (s101, +0) | yes (s101, +0) |
+| MegaDrive | 110 | 108 | 168 | 110 | 108 | 168 | 60 | no (s1, +2) | yes (s101, +0) | no (s1, +2) |
+| SNSP-CPU-01 | 53 | 95 | 87 | 87 | 53 | 95 | 42 | no (s101, +42) | yes (s1, +0) | yes (s1, +0) |
+| sum | 947 | 898 | 1032 | 926 | 812 | 1139 | | probe 6/11 regret 79 | first 7/11 regret 18 | cross 7/11 regret 65 |
+
+- The oracle (the best of three layout seeds) is 812 against the
+  summed medians' 926 (-12 %; x1819, which differs from x1818 on two
+  rows, 4in1 seed 1 125 and Glasgow seed 201 157: 920 and 812); over all nine runs of the three variants
+  (main, the booking x14343, the anneal's term x14312) 626.
+- **The race already probes.** Since 2026-10-10 the race probes its
+  three best-ranked placements with the router for `probe_seconds`
+  (75 s of work) each and routes on with the fewest unfinished nets;
+  RUDY and the crossings only choose which three, and only where the
+  placer kept more than three seeds (board-layout.json's
+  `congestion.probed`: 0xCB panel, protoesp, DSP-ADAU1452 and
+  SNSP-CPU-01 on every seed, 4in1-mini on two, split72_left on one).
+  On the boards whose placement uses its whole 40 % (Glasgow, 4in1,
+  video's seed 201) the work gate (`work > 0.4 * total_seconds`)
+  discards the other probes after they ran: those boards route the
+  placer's own pick (video's seeds 1 and 101 have no other placement
+  to race).
+- **Across runs, the first route ranks better than the race's probe.**
+  The kept placement's race probe (at most 75 s) picks the best run on 6 of 11 boards (regret 79
+  connections summed), the full first route's open terminals on 7 of
+  11 (regret 18), the ratsnest crossings on 7 (regret 65). On the
+  anneal's runs: 7, 9 and 4 (regrets 58, 29, 136). The first route is
+  several hundred seconds of work, its repair included; the probe only
+  negotiates.
+
+**The design.** With `race_probe` the race probes the `seeds` best
+placements of its ranking (the pre-ranking by RUDY and crossings as
+before where there are more; the first `seeds` in the placer's order
+where there are not), each for `share` times `total_seconds` of work
+(120 s at the task budget of 1500 s), all of them charged to the
+layout's work clock: the 40 % gate is gone, and the final route's
+budget is what the clock has left. The kept probe's router routes on
+(its probe is the first part of the first route, as before). The
+probes are ranked by their standing, compared in order: the open
+terminals (`board_open_terminals`, plus one for every complete net
+still in conflict and every pour pad its pour does not reach), the
+unfinished nets (the race's measure until now), the nets in conflict;
+a tie to the better-ranked placement. Deterministic: each probe is
+work-bounded and judged in the ranking's order whatever finishes first.
+board-layout.json and the verdict carry `race`: every probed
+placement (its index among the ranked ones, 0 the placer's kept one),
+its standing and work, the one kept and the probe's work.
+
+### Measurement
+
+The dense pairs' protocol: the eleven dense boards in layout mode at
+the task budgets (tasks v7, pinned rates), `--placer '{"seed": N}'`,
+3 x 2 with at most six layouts in flight, through the memory ledger
+with 10 GB kept free, beside the nightly and other agents' runs; no row
+cut by the wall clock. Off: x14343's rows (`build/book1-dense-s*-on`:
+branch crossings-booking 5a12f57, whose code is main c7b5552's, x1819;
+the later commits are docs). On: x14350 (branch race-probe ed36a79),
+`--layout '{"race_probe": {}}'`, `build/race1-dense-s{1,101,201}-on`.
+With the switch off x14350 writes byte-identical boards to x14343 on
+the 0xCB panel and DSP-ADAU1452 (seed 1, `build/race1-ident-x14350`).
+Seeds 1 and 101 were the plan; seed 201 was added when the first two
+fell by about one seed-noise standard deviation.
+
+KiCad unconnected per board, off / on:
+
+| Board | seed 1 | seed 101 | seed 201 | median (1, 101) | median (all three) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| OpenESC 4in1-mini | 81 / 80 | 82 / 82 | 99 / 99 | 81.5 / 81 | 82 / 82 |
+| OpenESC 4in1 | 125 / 82 | 92 / 96 | 93 / 79 | 108.5 / 89 | 93 / 82 |
+| DSP-ADAU1452 | 17 / 17 | 7 / 19 | 25 / 25 | 12 / 18 | 17 / 19 |
+| split72_left | 23 / 22 | 21 / 14 | 33 / 22 | 22 / 18 | 23 / 22 |
+| video | 190 / 190 | 145 / 145 | 159 / 302 | 167.5 / 167.5 | 159 / 190 |
+| Glasgow | 145 / 146 | 163 / 164 | 157 / 182 | 154 / 155 | 157 / 164 |
+| SmartSpin2k | 34 / 37 | 59 / 60 | 52 / 57 | 46.5 / 48.5 | 52 / 57 |
+| 0xCB panel | 50 / 50 | 50 / 50 | 51 / 51 | 50 / 50 | 50 / 50 |
+| protoesp | 105 / 92 | 76 / 51 | 90 / 77 | 90.5 / 71.5 | 90 / 77 |
+| MegaDrive | 110 / 102 | 108 / 110 | 168 / 186 | 109 / 106 | 110 / 110 |
+| SNSP-CPU-01 | 53 / 54 | 95 / 81 | 87 / 71 | 74 / 67.5 | 87 / 71 |
+| sum | 933 / 872 | 898 / 872 | 1014 / 1151 | 915.5 / 872 | 920 / 924 |
+
+- Seeds 1 and 101: the summed medians fall 915.5 to 872 (-4.8 %), both
+  pairs fall (933 to 872, 898 to 872). The seed noise of a two-seed
+  median sum (x1819's per-board spread over its three seeds, the
+  boards independent) is about 40; the fall is about one standard
+  deviation.
+- Seed 201 rises 1014 to 1151 (+137): video 159 to 302 (the probe kept
+  placement 1, 456 against 488 open terminals at 120 s; its first route
+  left 432 open where placement 0's left 189), Glasgow 157 to 182,
+  MegaDrive 168 to 186. Over the three seeds the summed medians are
+  920 / 924: flat.
+- By board the gains are where the 40 % gate had discarded the better
+  probe or where 120 s of probing separates the seeds: 4in1 (125 to
+  82, 93 to 79), protoesp (105 to 92, 76 to 51, 90 to 77),
+  split72_left (21 to 14, 33 to 22), SNSP-CPU-01 (95 to 81, 87 to 71).
+  The losses are the boards whose placement takes its 40 % and whose
+  probes end deep in conflict (Glasgow 169-182 nets in conflict, video
+  291 and 316 after 120 s): there the probes do not tell the seeds apart,
+  and the other probes' work (150 to 200 s on Glasgow, 120 s on video)
+  comes out of the final route (Glasgow is worse on all three seeds,
+  by 1, 1 and 25).
+- **Pick accuracy** (the verdict's `race.probe`): of the 31 races, 15
+  kept another placement than off; on the 16 seed-boards where the
+  finals of two placements or more are known (off's, on's and the
+  repair variant's runs) the probe kept the best known on 10. The open
+  terminals and the unfinished nets pick differently in 4 of the 31
+  races: twice the unfinished nets' pick was the better one
+  (DSP-ADAU1452 seed 101: placement 2 ends at 7 open, the open
+  terminals' placement 1 at 19; Glasgow seed 201: 157 against 182),
+  once the open terminals' (protoesp seed 101, a tie on both broken by
+  the conflicts: 51 against 76), once alike (4in1-mini seed 1, 80
+  against 81).
+- **Half the boards' probes stop early.** With the first route's fast settings
+  (stall patience 8, 10 at the price cap) the negotiation ends when the
+  conflicts stop falling: on 4in1-mini, 4in1, DSP-ADAU1452, the 0xCB
+  panel and Glasgow after 9 to 108 s, so the 8 % share is a ceiling
+  there (those races cost 37 to 294 s of work in all); on
+  split72_left, SmartSpin2k, protoesp, MegaDrive, SNSP-CPU-01 and video
+  every probe ran its 120 s. Work and
+  CPU per pair (s): seed 1 14792 / 15000 work, 18208 / 19066 CPU;
+  seed 101 14766 / 14598, 17684 / 18881; seed 201 15218 / 15606,
+  19976 / 18893. First-route open terminals 1421 / 1148, 1280 / 1274,
+  1390 / 1693.
+
+**Short tier** (seed 1, 3 x 2, x14343 against x14350 with the probe):
+KiCad unconnected 24 / 24, strict passes 7 / 7, first-route open 38 /
+38: every row the same (the boards' probes end in seconds and keep the
+same placements).
+
+**Variant: a whole first route as the probe** (`race_probe.repair`,
+x14351, seed 101 only, `build/race1-dense-s101-rep`): each probe
+negotiates for half its share and then runs the first route's repair
+within the rest, ranked by the open terminals it leaves; the kept one's
+is the layout's first route. 898 to 966 (MegaDrive 108 to 150,
+SNSP-CPU-01 95 to 136, Glasgow 163 to 155): 120 s is too little for a
+first route on the large boards (first-route open terminals 1280 to
+2737), and the shortened first route decides too much afterwards (no
+moves where many stay open). Rejected; the option stays for an
+experiment with a larger share.
+
+**Two probes at 10 % each** (`{"seeds": 2, "share": 0.1}`, x14350,
+on the two boards with the largest gains, seeds 1 and 101,
+`build/race1-k2-s{1,101}`), KiCad unconnected, off / three probes / two:
+
+| Board | seed 1 | seed 101 |
+| --- | ---: | ---: |
+| OpenESC 4in1 | 125 / 82 / 82 | 92 / 96 / 96 |
+| protoesp | 105 / 92 / 105 | 76 / 51 / 69 |
+| sum | 230 / 174 / 187 | 168 / 147 / 165 |
+
+On 4in1 only two placements race anyway (the same picks); on protoesp
+the pre-ranking's best two leave out the placement the third probe
+found on both seeds. Two probes are no better than three here.
+
+### Judgement
+
+By the rule agreed for this step (the dense sum of medians falls by
+more than the seed noise, each pair's sum falls, the short tier loses
+no strict pass) `race_probe` stays off: on the two planned pairs the
+fall (915.5 to 872) is about one standard deviation of the noise, and
+the third pair rises by 137 (video's 302 alone undoes it), so over
+three seeds the medians are flat (920 / 924). The short tier is
+unchanged. What the step showed:
+
+- The 40 % gate costs something real on the boards where placement
+  takes its share: 4in1's seed 1 lost 43 connections to it (125 against
+  82 with the other probe counted). A gate that charges the probes but
+  keeps them would be a smaller change than this one.
+- The probe's pick is right about two times in three where it can be
+  checked, as docs/global-route.md's validation found for the 75 s
+  probe (pair accuracy 0.68-0.74); 120 s does not make it better on the
+  large boards, where the probes end with 170-320 nets in conflict.
+- The oracle's 12 % is not within reach of a pick among one layout's
+  seeds by a short probe: much of the spread is between the layout
+  seeds' placer seeds (a seed set of three), not inside one race.
 
 ## What went wrong on the way (kept as lessons)
 
