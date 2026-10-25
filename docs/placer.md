@@ -910,6 +910,100 @@ free-dimension change.
   (`keep_board_marks: false`) it places. The other four molecules were
   refused by v18 already.
 
+## The sweep boards without a result (2026-10-25)
+
+The nightly sweep of 2026-10-25 (main 356c8db) left nine of the 109
+boards without a result: six panels and boards of repeated cells refused
+by the placer (the OpenESC 4in1 panel and the five PolyKybd molecules),
+two boards refused since the binaries of 2026-10-24 (katia, the laptop's
+power board), and the 0xCB pcb-panel, whose KiCad check never finished.
+Diagnosed on the tasks' prepared boards with `place-kicad-board` and
+`PCB_PLACER_DEBUG` (the levels below are its lines), on x1820 (main
+23f629e). The layout rows before and after are in the changelog
+("Committed on 2026-10-25 (the seven sweep boards without a result)").
+
+- **The 0xCB pcb-panel: KiCad waits forever, not slowly.** `kicad-cli
+  pcb drc --refill-zones` used 15 s of CPU and then slept (main thread in
+  a polling sleep, every worker idle) until the 900 s limit, on our
+  result, on our placed board without tracks and on the designer's own
+  board alike. Bisected by removing zones: two of the panel's pours alone
+  (Board_0-GND and Board_1-GND, F&B.Cu, priority 1: each copy's pours
+  reach 23 mm into its neighbour) hang it; any one pour, or two on
+  different layers, does not. With distinct priorities it finishes. It is
+  not every such pair: BAGEL-MK1 has twelve and its checks finish, and a
+  small test board with two overlapping pours and pads of both nets in
+  the overlap finishes too. The panel's outline also has 36 Edge.Cuts
+  lines from a point to itself (SmartSpin2k's panel 115): KiCad then
+  finds no outline (`invalid_outline`, "segment has null or very small
+  length") and fills to the board's box; with them removed the placed
+  board's check took 210 s instead of 504 s (load about 20). The repair
+  (`check_repairs`, before every DRC with zones refilled, so on the
+  boards a layout writes and in drc-kicad-board's copy of a reference):
+  the lines of no length go, and the overlapping copper zones of two nets
+  at one priority get distinct priorities in KiCad's own order: KiCad
+  breaks the tie by uuid (`ZONE::HigherPriority`, the greater uuid fills
+  first), so the repair writes `p * k + r` (r the rank by uuid among the
+  paired zones of priority p, 0 for the others): the fixture F1 (a +5V
+  pour inside a GND pour at one priority) gives the same report, where an
+  order by file position changed it. Boards without either defect are not
+  touched; in the tiers only the two 0xCB panels, the OpenESC 4in1 panel
+  (+BATT and GND on F.Cu), BAGEL-MK1 and BAGEL-MK1.1-Avocado have such
+  pairs, and SmartSpin2k's and the 0xCB pcb-panel's outlines lines of no
+  length. Our result's check: about 110 s. The timeout stays at 900 s.
+- **The OpenESC 4in1 panel: the budget, not the room.** Two different
+  boards (the 4in1 and the 4in1-mini) joined by tabs, sharing net names
+  (so `keep_copies` does not apply). Its front side is 107 % full at the
+  full spacing; the single 4in1 board places at the tight-body level,
+  which every level before it skips as overfull. The panel's levels are
+  not overfull by area (the tabs' outline holds more), so each ran: the
+  spacing level (27-37 parts without room), the fine grid (a kept
+  placement and a fresh anneal, 250-330 s), the edge inset; the 600 s of
+  work ended before the tight bodies. With 3000 s it places at the tight
+  level (0 parts left). Now the level loop goes on to the first
+  tight-body level at once when more parts lack room than a level's
+  passes seat (a fiftieth of the parts, three at least) and the work left
+  is less than twice the last level's work for each level before it
+  (`skip_to_tight`): the panel then places within its 600 s (seeds with
+  17 and 23 parts left jump with 174 and 100 s left; one seats every
+  part). Where the rules keep courtyards apart (no tight level) the jump
+  goes to the fine grid without spacing: the laptop's power board (98 %
+  of its front full, its pad clearance of 0.127 mm floors the spacing
+  since 2026-10-24) went from 35 parts left after the halo levels to 4-5
+  on the fine grid and none at the edge inset (refused at 600 s before,
+  placed at 4000 s).
+- **katia: the legaliser's escape demand.** On since 2026-10-24, the
+  escape term was computed at every spot the legaliser tried, before the
+  legality test: a pass took 134 s against 21 s without it, and the
+  deadline came before the level that places katia (2 parts left at every
+  halo level). The legaliser now tests legality first and prices the
+  escape overflow of legal spots only. The spot chosen is the same (the
+  least distance among the legal spots); the work counted is less, so
+  placements that ran into their budget change.
+- **The molecules: the designer's own placement is illegal.** Boards of
+  repeated key cells (4 x 4 to 7 x 5) joined by AtomConnect edge
+  connectors, one net group (not a panel of copies), courtyard overlaps
+  an error. `PCB_PLACER_DESIGNER` on the designer's board, at the
+  placer's loosest level: 128 movable parts of the 4x4 (87 of the
+  5x4_wave) are illegal at the designer's poses: the mating connectors of
+  neighbouring cells (J3/J4, J5/J6) lie on each other, J1 sits closer to
+  C2 than the copper clearance, and the edge connectors' pads reach over
+  the outline. With 4000 s of work the 4x4 still leaves 28 parts, the
+  5x4_wave 1-2. They stay refused, now with a reason an agent can act
+  on (below).
+- **Refusals name movable parts, a repeated reference by uuid.** The
+  verdict's "N parts without a legal place (...)" took the unplaced
+  parts' names and added those of every illegal part not yet named,
+  fixed ones and the board's marks included: the 4x4 molecule's list
+  ended in "D1, J1, J5, R1, SW1, silkscreen mark, cutout" (fixed parts
+  and obstacles a part was left on) and named J3 four times without
+  saying which. board-placer.json now has `unplaced_parts`: each movable
+  part without a legal place once, its `label` (the reference, with
+  `(uuid ...)` where the reference repeats on the board, as
+  constraints.json takes it), `status` (unplaced or illegal), `at` and
+  `held_by` (the edge, region and overhang constraints that hold it,
+  "edge left within 0.52 mm"); the verdict's list is the labels, and the
+  hint for a held part names its label and constraints.
+
 ## Escape demand (2026-10-23)
 
 `escape_demand` (placer option, on since 2026-10-24, `null` turns it off; `{"weight",
