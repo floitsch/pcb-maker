@@ -1786,7 +1786,8 @@ cell walked and per line met, and against the anneal's own work its
 queries took 2.5 to 2.7 times the CPU time per unit booked (MegaDrive,
 every net: the anneal's CPU 47 s off, 121 s on, its booked work 75 to
 106 s), so the anneal books the term's work at 13/5 of the count's
-(`anneal::CROSSING_WORK`). With the cap the anneal's booked work per CPU
+(`anneal::CROSSING_WORK`; since the count's own booking was corrected,
+8/5 of its new booking: "The crossings' work booking" below). With the cap the anneal's booked work per CPU
 second is that of the plain anneal (1.35 to 1.58 on the three boards,
 off 1.43 to 1.60).
 
