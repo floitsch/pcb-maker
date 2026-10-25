@@ -932,6 +932,7 @@ fn crossover(
 /// at the lead's end are clear; of those the one closest to the pads (a
 /// turn costs `ANGLE_COST` a right angle). The stubs themselves are the
 /// route's: the pair's nets' ordinary routing from the pads to the ends.
+#[allow(clippy::too_many_arguments)]
 fn launch(
     board: &core::Board,
     pair: &Pair,
@@ -2077,6 +2078,14 @@ pub(crate) struct PairCopper {
     patterns: Vec<Meander>,
 }
 
+/// A kept link's run (`match_skew`): its pair, its copper's items in
+/// `PairCopper::items` (positive, negative), their run ranges
+/// (`LinkCopper::run`) and the positive net's side.
+type KeptRun = (usize, [usize; 2], [std::ops::Range<usize>; 2], f64);
+
+/// A net's copper: tracks (layer, start, end) and vias.
+type NetCopper = (Vec<(usize, Point, Point)>, Vec<Point>);
+
 /// A meander on one net of a pair's coupled run (`match_skew`).
 #[derive(Clone, Debug)]
 struct Meander {
@@ -2488,7 +2497,7 @@ pub(crate) fn finish_pairs(
     };
     // Per kept link: its pair, its copper's items (positive, negative) and
     // run ranges, and the positive net's side.
-    let mut kept_runs: Vec<(usize, [usize; 2], [std::ops::Range<usize>; 2], f64)> = Vec::new();
+    let mut kept_runs: Vec<KeptRun> = Vec::new();
     let mut kept_links: Vec<&LinkPlan> = Vec::new();
     for (position, (index, link, copper)) in candidates.into_iter().enumerate() {
         if let Some(why) = &refused[position] {
@@ -2648,7 +2657,7 @@ pub(crate) fn finish_pairs(
         }
     }
     // The skew: per pair with a kept link, the shorter net's meander.
-    for index in 0..plan.pairs.len() {
+    for (index, entry) in entries.iter_mut().enumerate() {
         if skew_matching() && kept_runs.iter().any(|(owner, ..)| *owner == index) {
             match_skew(
                 &mut restored,
@@ -2657,10 +2666,10 @@ pub(crate) fn finish_pairs(
                 index,
                 &kept_runs,
                 &mut copper_out,
-                &mut entries[index],
+                entry,
                 heights,
             );
-            report.meanders += (entries[index].meander_mm > 0.0) as usize;
+            report.meanders += (entry.meander_mm > 0.0) as usize;
         }
     }
     // A pair's net whose pads the links joined all is routed, not trivial.
@@ -2747,7 +2756,7 @@ fn match_skew(
     result: &core::RoutingResult,
     pairs: &[Pair],
     index: usize,
-    kept_runs: &[(usize, [usize; 2], [std::ops::Range<usize>; 2], f64)],
+    kept_runs: &[KeptRun],
     copper_out: &mut PairCopper,
     entry: &mut KiCadDiffPair,
     heights: &[f64],
@@ -3956,7 +3965,7 @@ pub(crate) fn measure_uncoupled(report: &mut KiCadDiffPairs, pcb: &Expr) {
     let by_name = copper_heights(pcb);
     let names: Vec<&String> = by_name.keys().collect();
     let heights: Vec<f64> = by_name.values().copied().collect();
-    let mut copper: BTreeMap<String, (Vec<(usize, Point, Point)>, Vec<Point>)> = BTreeMap::new();
+    let mut copper: BTreeMap<String, NetCopper> = BTreeMap::new();
     for item in pcb.children() {
         let kind = item.head();
         if kind != Some("segment") && kind != Some("via") {
