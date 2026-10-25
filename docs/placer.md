@@ -1493,8 +1493,9 @@ and 126 open, the three with the most 157, 174 and 191.
 ## Ratsnest crossings (2026-10-24)
 
 `ratsnest_crossings` (placer option, on since 2026-10-24, `null` turns
-it off; `{"weight", "legalise", "refine", "rank_seeds"}`, defaults 3 mm,
-on, on, on). The
+it off; `{"weight", "legalise", "refine", "rank_seeds", "anneal",
+"global"}`, defaults 3 mm, on, on, on, off, off; the last two below,
+"Where the order is decided"). The
 placement ablation's lever (above): on MegaDrive and Glasgow the costly
 decisions are part orders along buses, which wirelength cannot see and
 ratsnest crossings can. Code `crates/pcb-placer/src/crossings.rs`, the
@@ -1551,7 +1552,9 @@ were added in, so the count is deterministic.
   score (RUDY) and by the crossings, a tie to the better score; the
   courtyard-touching last resort sorts after as before. The counts are
   in board-layout.json's `congestion.crossings`.
-- Not in the global placement or the anneal (measured first without).
+- The anneal and the global placement: behind the sub-switches
+  `anneal` and `global`, off by default (below, "Where the order is
+  decided").
 
 With the switch off none of this runs (`Problem::crossings` is `None`):
 `place-kicad-board` with x14270 off and x1813 (main 2e41ea3) writes
@@ -1697,8 +1700,230 @@ four), the dense spread per board is as large as any perturbation gives
 more placement work. Next: the global placement and the anneal do not
 see the crossings yet (they make the orders the legaliser and the
 refinement can only repair locally; MegaDrive's U4/U8 order is such a
-case), and a weight per board (by layers: a crossing costs less with
-more of them) is untried.
+case; tried 2026-10-25, below: the anneal's term stays off), and a
+weight per board (by layers: a crossing costs less with more of them)
+is untried.
+
+### Where the order is decided: the anneal and the global placement (2026-10-25)
+
+The legaliser and the refinement repair orders locally; the anneal and
+the global placement make them. Two sub-switches of
+`ratsnest_crossings`, off by default (the judgement below):
+
+- **`anneal`**: every anneal move (shift, quarter turn, swap) pays
+  `weight` mm per crossing it adds to the moved parts' nets and earns
+  as much per crossing it removes (the anneal takes uphill moves, so
+  unlike the legaliser's the term is signed). Only nets of up to 16
+  pins count there (`anneal::ANNEAL_NET_PINS`; the legaliser and the
+  refinement count all). The anneal judges 1.5 to 2.9 million moves a
+  placement, so the count works in three steps
+  (`CrossingState::before`, `after`, `settle`): `before` counts the
+  moved nets' kept lines (in the grid already, no tree built); since a
+  move can at best remove all of those, it bounds what the move can
+  save, and when even that leaves the move rejected by the random
+  number the plain anneal would draw, no new tree is built (exact: the
+  same number is drawn and the same decision falls). Otherwise `after`
+  builds the new trees and counts them (up to 48 new lines against each
+  other directly, outside the grid, so that a rejected move never
+  touches the grid's lists), and `settle` keeps or drops them. Half of
+  a part's swaps trade it with a peer: a part on the same side of the
+  same footprint (pin count and body) or, for parts of 16 pins or more,
+  one with at least half its pins (QFP-160 and QFP-128); a random
+  partner of a QFP is nearly always a passive, which the overlap
+  rejects at once. Tested: the three steps give `involving`'s change on
+  300 random moves of two random boards (one whose moves have more than
+  48 lines), and the anneal uncrosses a two-net bus.
+- **`global`**: after the global placement (`crossings::reorder`) the
+  movable parts of 16 pins or more trade places (body centre to body
+  centre, angles kept) and turn where that lowers their nets' weighted
+  half-perimeter wirelength plus `weight` times their crossings, in at
+  most four first-improvement passes; a trade that breaks a part's
+  constraint or relation is not taken. Cheap (under 0.1 s for
+  MegaDrive's 10 such parts) and without effect where it counts: on
+  MegaDrive it traded or turned parts in two of three seeds' global
+  placements (crossings 18023 to 15795, 15441 to 14823), but the seed
+  the placement keeps had nothing to trade, and the placed board came
+  out the same (`place-kicad-board`, seed 1: 8135 crossings without
+  either switch, 8135 with `global`, 6831 with the uncapped `anneal`,
+  6831 with both); on Glasgow (3 such parts) it found nothing. Not
+  measured in layouts; it stays off.
+
+**The anneal's work per move** (`PCB_PLACER_DEBUG`'s `anneal:` line,
+`place-kicad-board` at the default budget, three seeds; placer units,
+the reference's 150e6 a second; the main anneal of each placement):
+
+| board | moves | off (x1817) | every net, to the end (x14310) | nets of up to 16 pins, to the end (x14311) | up to 16 pins, share 0.5 (x14312) | of it the term (x14312) | judged with the term | rejected by the bound | taken | crossings when the term ends (x14312) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| MegaDrive | 1587200 | 7101-7367 | 14982-15831 | 10935-11626 | 10309-10560 | 3453-3545 | 1.13-1.25 M | 0.54-0.63 M | 49-68 k | 16883 -> 7010, 14358 -> 7720, 15456 -> 5965 |
+| Glasgow (nine anneals) | 1516800 | 3818-3861 | 6308-6754 | 4767-4971 | 4767-4971 | 962-1200 | 1.42-1.44 M | 0.65-0.93 M | 147-309 k | 2422 -> 656, 2629 -> 976, 2397 -> 475 |
+| video | 1068800 | 2779-2857 | | 15372-17482 | 4104-4316 | 1420-1489 | 84-90 k | 37-41 k | 5 k | 36206 -> 8823, 23891 -> 6948, 30651 -> 9889 |
+| split72_left | 2892800 | 3619-3622 | 49751-50491, cut at 1.8 M moves | 4368-4431 | as x14311 | 755-813 | 2.74 M | 1.77-1.81 M | 199-205 k | 2605 -> 1391, 3552 -> 1289, 2864 -> 1829 |
+
+Two things set the cost. **The lines are long and meet many**:
+MegaDrive's 826 tree lines average 51 mm, and the CPU goes into
+gathering and testing the lines a moved line meets, not into the trees
+(MegaDrive, one seed alone, every net: of 57 s in the term 4.4 s built
+trees). A finer grid makes it worse (cells of 4.4, 2.2 and 1.1 mm
+against `new`'s 10.5 mm: the anneal's CPU 98, 115 and 159 s against
+96 s), reusing the buffers changed nothing. **Large nets dominate**:
+with every net counted, a move of any part on split72_left's VDD (165
+pins), VSUP (110) or a matrix row (36 to 41) builds that whole tree
+again and walks its lines: 46000 units a move in the term against the
+anneal's own 3600; the anneal used the placement's whole budget (600 s
+of work a seed) in 1.8 of its 2.9 million moves, two parts found no
+place, and the layout stopped there (the first on-run of the
+measurement, x14310, set aside in `build/cross2-dense-s1-on-x14310-aborted`).
+Hence the cap at 16 pins: the orders the term is for are buses of few
+pins, while power nets and matrix rows spread over the board whatever
+the order (above the cap besides GND: MegaDrive's VCCQ, 54 pins, and
+VCC, 38; Glasgow's +3V3, VIOA, VIOB and +5V; each counts only where no
+pour carries it).
+
+The work booked is honest against the CPU: the count books a unit per
+cell walked and per line met, and against the anneal's own work its
+queries took 2.5 to 2.7 times the CPU time per unit booked (MegaDrive,
+every net: the anneal's CPU 47 s off, 121 s on, its booked work 75 to
+106 s), so the anneal books the term's work at 13/5 of the count's
+(`anneal::CROSSING_WORK`). With the cap the anneal's booked work per CPU
+second is that of the plain anneal (1.35 to 1.58 on the three boards,
+off 1.43 to 1.60).
+
+**The term's share of the work.** Where lines are dense the term
+costs several times the anneal even with the cap (video: 12700 to 14700
+units a move in the term against the anneal's 2800), and that anneal
+placed worse than without the term: the board after the legaliser had
+21361 crossings against 19728 off. An anneal that pays for crossings to
+its end resists the moves that resolve its last overlaps, and the
+legaliser resolves them by moving parts far (video's annealed
+wirelength 26592 mm became 30531 legalised, against 22843 to 25005 off).
+So the term ends once its work reaches half the anneal's own, projected
+over all stages (`anneal::TERM_SHARE`, 0.5); the anneal goes on without
+it. The variants on the placed boards (`place-kicad-board`, seed 1, the
+placement the three seeds keep; crossings and unweighted HPWL by
+`ablate-kicad-placement`; the stages are where the term ended):
+
+| board | off | the term to the end (x14311) | the first half of the stages | half the stages, share 0.5 | a quarter, share 0.5 | share 1 | share 0.5 (x14312) | share 0.25 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| MegaDrive crossings | 8135 | 6627 | | 7460 | 7123 | | 7018 (119-132 of 160) | 7493 (57-62) |
+| Glasgow | 816 | 631 | | 915 | 816 | | 631 (all 160) | |
+| video | 19728 | 21361 | 18414 | 14280 | | 17828 (26-28) | 14280 (13-14) | 15992 (6-7) |
+| MegaDrive wirelength mm | 30116 | 28560 | | 28926 | 27728 | | 27972 | 28198 |
+| Glasgow | 3148 | 3655 | | 3416 | 3343 | | 3655 | |
+| video | 42530 | 43922 | 38665 | 38936 | | 44314 | 38936 | 42735 |
+
+The designer's: MegaDrive 7931 crossings and 29390 mm, Glasgow 815 and
+3641 mm, video 8765 crossings. One seed of each, so a few hundred
+crossings either way is the seed's luck; what the table shows is that
+on video the term must end early and that ending it early elsewhere
+gives some of the gain back. On split72_left (term to the end) 3787
+crossings off, 3317 on (the designer's 3201).
+
+MegaDrive's QFP order did not change: in x1817's placement U4 sits
+above U8 ((171, 91) and (184, 171)), not beside it as in v20, and so it
+does with the term ((177, 107) and (184, 161)); neither the peers'
+swaps nor `reorder` find the trade worth it there. The crossings fall
+through the small parts.
+
+#### Measurement
+
+The protocol of the crossings' own measurement: the eleven dense boards
+in layout mode at the task budgets (tasks v7, pinned rates), three seed
+pairs (`--placer '{"seed": N}'`, N = 1, 101, 201, and on the on side
+`"ratsnest_crossings": {"anneal": true}`), off x1817 (main 356c8db), on
+x14312 (branch crossings-anneal 3707bf0: the sub-switches off by
+default), 3 x 2 with at most six layouts in flight, through the memory
+ledger with 10 GB kept free, beside other agents' runs and the nightly
+of 2026-10-25; no row cut by the wall clock. Output
+`build/cross2-dense-s{1,101,201}-{off,on}`, `build/cross2-short-{off,on}`.
+`global` stays off on both sides (above). With the switches off,
+x14312 places MegaDrive and Glasgow byte-identically to x1817
+(`place-kicad-board`).
+
+KiCad unconnected per board, off / on:
+
+| Board | seed 1 | seed 101 | seed 201 | median |
+| --- | ---: | ---: | ---: | ---: |
+| OpenESC 4in1-mini | 81 / 91 | 82 / 70 | 99 / 89 | 82 / 89 |
+| OpenESC 4in1 | 139 / 68 | 92 / 60 | 93 / 122 | 93 / 68 |
+| DSP-ADAU1452 | 17 / 6 | 7 / 4 | 25 / 10 | 17 / 6 |
+| split72_left | 23 / 5 | 21 / 26 | 33 / 36 | 23 / 26 |
+| video | 190 / 262 | 145 / 83 | 159 / 338 | 159 / 262 |
+| Glasgow | 145 / 127 | 163 / 122 | 175 / 147 | 163 / 127 |
+| SmartSpin2k | 34 / 49 | 59 / 59 | 52 / 80 | 52 / 59 |
+| 0xCB panel | 50 / 54 | 50 / 53 | 51 / 47 | 50 / 53 |
+| protoesp | 105 / 76 | 76 / 88 | 90 / 77 | 90 / 77 |
+| MegaDrive | 110 / 105 | 108 / 114 | 168 / 88 | 110 / 105 |
+| SNSP-CPU-01 | 53 / 55 | 95 / 103 | 87 / 37 | 87 / 55 |
+| sum | 947 / 898 | 898 / 782 | 1032 / 1071 | 926 / 927 |
+
+The summed medians stay where they were (926 to 927). Two pairs fall
+(seed 1: 947 to 898, seed 101: 898 to 782), the third rises (1032 to
+1071). By the median 6 boards are better (4in1 93 to 68, DSP 17 to 6,
+Glasgow 163 to 127, protoesp 90 to 77, MegaDrive 110 to 105, SNSP-CPU-01
+87 to 55) and 5 worse, video by most (159 to 262: 190 to 262, 145 to 83
+and 159 to 338, the widest swing of any board). The router's open
+terminals after the first route: 1416 to 1253, 1280 to 1161, 1388 to
+1472; vias 10189 to 9155, 9512 to 9736, 9570 to 9732. The placement's
+work (board-placer.json's `work_seconds`, summed over the boards) 3265
+to 2974, 3334 to 3084, 3174 to 3152 s: not more, as the anneal's term
+ends on the dense boards where it would cost most, and on video the
+placement no longer runs into its budget (608 s off, 265 and 358 s on
+two seeds).
+
+Ratsnest crossings of the placed boards (`layout/placed`, counted by
+`ablate-kicad-placement`, x1817), off / on:
+
+| Board | designer's | seed 1 | seed 101 | seed 201 |
+| --- | ---: | ---: | ---: | ---: |
+| OpenESC 4in1-mini | 279 | 80 / 79 | 84 / 75 | 91 / 55 |
+| OpenESC 4in1 | 242 | 376 / 474 | 543 / 408 | 488 / 293 |
+| DSP-ADAU1452 | 170 | 744 / 660 | 710 / 664 | 720 / 628 |
+| split72_left | 3201 | 3639 / 3471 | 3745 / 3388 | 3853 / 3726 |
+| video | 8765 | 19726 / 15160 | 16987 / 11126 | 14018 / 26030 |
+| Glasgow | 815 | 829 / 631 | 843 / 702 | 953 / 773 |
+| SmartSpin2k | 1410 | 3149 / 3017 | 3348 / 3101 | 3301 / 3181 |
+| 0xCB panel | 319 | 460 / 523 | 493 / 491 | 480 / 530 |
+| protoesp | 373 | 1102 / 844 | 875 / 1273 | 1046 / 1003 |
+| MegaDrive | 7931 | 8136 / 7021 | 9042 / 9257 | 9952 / 7837 |
+| SNSP-CPU-01 | 5076 | 4286 / 4219 | 4765 / 4343 | 4336 / 4196 |
+| sum | 28581 | 42527 / 36099 | 41435 / 34828 | 39238 / 48252 |
+
+Fewer crossings on 27 of the 33 pairs; the sums fall 15 % and 16 % on
+two seeds and rise 23 % on the third, all of it video's seed 201
+(14018 to 26030; without video the three sums fall 3 to 12 %). Glasgow
+goes below the designer's count on every seed (631, 702, 773 against
+815), MegaDrive on two (7021 and 7837 against 7931; 9257 on seed 101).
+Where the crossings fell the open connections mostly followed, but not
+always (protoesp seed 101: 875 to 1273 crossings, 76 to 88 open;
+SmartSpin2k: fewer crossings on all seeds, more open on two).
+
+**Short tier** (one pair, the tier's seed, 3 x 2, the same binaries):
+KiCad unconnected 26 to 36, strict passes 7 to 6 (framework_mobo_lefthalf
+loses its pass with one open connection), first-route open terminals
+48 to 58. The losses are WLED_Matrix 8 to 14, MIDAS-MK1.1 10 to 13 and
+framework_mobo_lefthalf 0 to 1; no board gains.
+
+The intermediate x14311 (every stage, nets of up to 16 pins) ran seed 1
+once: 947 to 1010, video 190 to 319 with 21361 crossings
+(`build/cross2-dense-s1-on-x14311`); that is what the share fixed.
+
+#### Judgement
+
+By the rule agreed for this step (the dense sum of medians falls, each
+pair's sum falls, the short tier loses no strict pass and its
+unconnected does not rise, MegaDrive's median improves) the anneal's
+term stays off: the summed medians are flat (926 to 927), seed 201's
+sum rises, the short tier loses a pass and 10 connections, and
+MegaDrive's 110 to 105 is within one route's noise there (sd 12.7).
+`global` stays off (no effect on the placed boards). What the step
+showed: the anneal can take the crossings below the designer's counts
+on MegaDrive and Glasgow at a bounded cost (the term's work at most
+half the anneal's), but fewer crossings alone do not route better on
+this set, and video's placement swings by a factor of two in crossings
+and open connections from seed to seed with the term. MegaDrive's QFP
+order, the finding this was for, is not what the anneal changes: in
+our placements U4 and U8 lie one above the other, and no trade of the
+two pays.
 
 ## What went wrong on the way (kept as lessons)
 

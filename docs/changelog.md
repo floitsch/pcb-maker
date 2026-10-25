@@ -11,6 +11,44 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-25 (ratsnest crossings in the anneal)
+
+Where the order of parts is decided. Branch crossings-anneal, snapshot
+x14312 (the sub-switches off by default), off side x1817 (main
+356c8db); docs/placer.md "Where the order is decided: the anneal and
+the global placement (2026-10-25)" has the tables.
+
+- **`ratsnest_crossings.anneal`** (off): the anneal's moves pay the
+  crossings change of the moved parts' nets at the same 3 mm, signed,
+  counting the nets of up to 16 pins, until the term's work reaches
+  half the anneal's own. The count works in three steps for the
+  anneal's 1 to 3 million moves (the kept lines first, a bound that
+  skips the new trees when the move is rejected anyway, then the new
+  trees, then keep or drop); half the swaps trade a part with a peer
+  (same footprint, or both with 16 pins or more and at least half the
+  other's pins). The term's work is booked at 13/5 of what the count
+  books, which brings the anneal's booked work in line with its CPU.
+  The anneal's work a move: MegaDrive 7101-7367 off, 10309-10560 on;
+  Glasgow 3818-3861, 4767-4971; video 2779-2857, 4104-4316;
+  split72_left 3619-3622, 4368-4431. Every net to the end cost split72
+  14 times the anneal's work and two unplaced parts; every stage cost
+  video its placement (crossings 19728 to 21361); hence the cap and the
+  share.
+- **`ratsnest_crossings.global`** (off): after the global placement the
+  parts with 16 pins or more trade places and turn where wirelength
+  plus crossings fall. Cheap, but the placed boards came out unchanged
+  on MegaDrive and Glasgow; not measured in layouts.
+- **Measured** (the eleven dense boards in layout mode, seeds 1, 101,
+  201, off / on): KiCad unconnected, summed medians 926 to 927; the
+  pairs 947 to 898, 898 to 782, 1032 to 1071; MegaDrive's median 110 to
+  105, Glasgow 163 to 127, video 159 to 262 (the widest swing). The
+  placed boards' crossings fall on 27 of 33 pairs (Glasgow below the
+  designer's on every seed, MegaDrive on two). Short tier: unconnected
+  26 to 36, strict passes 7 to 6. Placement work not higher.
+- **Default stays off** by the agreed rule (flat medians, one pair up,
+  a strict pass lost). MegaDrive's QFP order is not what the anneal
+  changes: in our placements U4 and U8 lie one above the other.
+
 ## Committed on 2026-10-24 (ratsnest crossings as a placement cost)
 
 The placement ablation's lever, on by default. Branch ratsnest-crossings,

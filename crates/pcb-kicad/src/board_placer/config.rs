@@ -399,13 +399,16 @@ pub struct KiCadRatsnestCrossings {
     /// The layout's race ranks the seeds' placements by the sum of their
     /// ranks by the congestion score and by the crossings.
     pub rank_seeds: bool,
-    /// The anneal pays for them too, and half its swaps trade a part with
-    /// one like it (the same footprint, or both with many pins): where
-    /// the order of parts along a bus is decided. Off by default.
+    /// The anneal pays for them too (the nets of up to 16 pins, until the
+    /// term's work reaches half the anneal's own), and half its swaps
+    /// trade a part with one like it (the same footprint, or both with
+    /// many pins): where the order of parts along a bus is decided. Off
+    /// by default (measured 2026-10-25: flat on the dense boards, worse
+    /// on the short tier).
     pub anneal: bool,
     /// After the global placement, the parts with 16 pins or more trade
     /// places and turn where that saves wirelength plus crossings. Off by
-    /// default.
+    /// default (no effect on the placed boards of MegaDrive and Glasgow).
     pub global: bool,
 }
 
