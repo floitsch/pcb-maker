@@ -11,6 +11,66 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-25 (the ledger drains for a starved waiter)
+
+Branch ledger-drain. Ordered admission (2026-10-24) let a new request pass
+the first waiter whenever the waiter would still fit beside every
+reservation made since it began waiting; a waiter held back by its
+harness's floor (`waits_on_floor`) was passed by the capacity alone. On
+2026-10-25 five agents' stream of 1-8 GB routes kept the running set from
+ever draining, and the nightly's last designer boards (katia 19 GB
+expected, the others 6-27 GB, `--min-free-gb 10`) waited from about 11:00
+to past 20:00 (build/nightly/2026-10-25/designer.err: "katia started after
+waiting 33034 s"; five rows still waiting at 20:00 with 20-33 GB
+available). Routing is untouched: only who is admitted when changes.
+
+**The drain** (`drained_for`, `drain_allows` in
+crates/pcb-kicad/src/ledger.rs and benchmarks/harness_common.py, the same
+rule). Once the first waiter has waited longer than its bound
+(`drain_after` in its entry; run.py `--ledger-drain-after`, default
+600 s), a new request goes only if after it the waiter's room still
+covers what it waits for (the capacity less every other reservation, and
+the memory available less what the reservations still grow by and less
+the waiter's floor `floor_mb`), or if it is expected to end no later than
+every run that holds memory (`expected_end`, which run.py's tier boards
+carry from the tier's seconds; binaries have none and go by the room
+alone). Runs that hold memory and grow, and binaries a harness admitted,
+are not held back. `--lock` works as before.
+
+**The nightly's priority.** run.py `--ledger-priority nightly` marks its
+requests `priority: "nightly"`: first among the waiters, drained for at
+once and without the end exception, so never passed once waiting.
+scripts/nightly.sh sets it on every stage; `pcb-maker ledger` marks such
+entries `[nightly]`.
+
+**Compatibility.** The new fields are optional; older binaries and
+harness copies ignore them (an older binary that rewrites the ledger
+drops them until the harness's next poll rewrites its waiting entry). A
+binary of this change keeps unknown fields when it rewrites the ledger
+(`Reservation::other`) and carries a harness reservation's
+`expected_end` and `priority` into its own entry.
+
+**Tests.** A second-by-second simulation of that day in both languages
+(ledger.rs `a_stream_of_small_requests_starves_a_waiter_until_the_ledger_drains`,
+test_run.py `MemoryLedger` likewise): a 56 GB ledger, 30 GB available, a
+19 GB waiter with a 10 GB floor arriving at 300 s and looking every 15 s,
+a 2 GB request every 5 s that runs 60 s. Under the rule of 2026-10-24 the
+waiter does not start in four hours (2939 small runs); with the drain it
+starts 660 s after it began waiting (600 s bound + the 60 s the last
+admitted runs take), 179 small runs before it. Unit tests of the room and
+end clauses, the nightly's order and drain, the fields surviving a
+rewrite, and a real-ledger test that a request the order admits waits in
+the drain ("the ledger drains for it") and goes under the bound.
+
+**Smoke** (two processes, a private ledger, `PCB_MAKER_LEDGER_TOTAL_MB`
+200000 so that only the floor binds, phantom reservations): a stream
+keeping as many 3 GB holders as admitted (a request every 2 s, each held
+30 s, no floor) and from 20 s a 10 GB waiter with a 2 GB floor. With
+main's harness_common.py the waiter gave up after 180 s without starting
+(78 holders admitted beside it); with the branch's and
+`drain_after` 60 s it started after waiting 75 s (8 holders left, 15
+newer requests waiting).
+
 ## Committed on 2026-10-25 (the remapper trial's items: run-aware diagnosis, override preflight, arc outlines, hot-spot links)
 
 The four items of the remapper diagnostic trial

@@ -380,7 +380,10 @@ measurement). The discipline:
   expected peak reserved at once and handed to the board's binary when it
   starts. Admission is ordered (since 2026-10-24): a waiting board is in
   the ledger, and newer requests pass the one that has waited longest
-  only with what still leaves it its room
+  only with what still leaves it its room; once it has waited
+  `--ledger-drain-after` (600 s) the ledger drains for it, and the
+  nightly's boards (`--ledger-priority nightly`) go first and are never
+  passed
   ([docs/benchmarks.md](../../docs/benchmarks.md), "Memory ledger: who
   runs next"). `pcb-maker ledger` lists who holds what. Why: the lock queued
   every agent's tier behind every other's (progress slowed to the queue),

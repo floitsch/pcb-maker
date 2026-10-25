@@ -44,7 +44,8 @@ boards that gained or lost the pass.
 ## Known issues of the harness
 
 - **A waiting large job starves behind a stream of small ones** (seen
-  2026-10-23/24, to fix). The memory ledger admits whichever request
+  2026-10-23/24; ordered admission since 2026-10-24 and the drain since
+  2026-10-25, "Memory ledger: who runs next" below). The memory ledger admits whichever request
   fits when memory frees, so a job that waits for a large reservation
   waits while smaller requests, its own run's or other agents', take
   each freed gigabyte. run.py's tiers start the longest boards first,
@@ -56,7 +57,7 @@ boards that gained or lost the pass.
   expected first (layout sweep v20 below). run.py should admit smaller
   boards past a waiting large one (or hold memory for it in turn); a
   harness item, not done yet.
-## Memory ledger: who runs next (2026-10-24)
+## Memory ledger: who runs next (2026-10-24, the drain 2026-10-25)
 
 Benchmarks share the machine through the memory ledger
 (`$XDG_RUNTIME_DIR/pcb-maker-ledger.json`; how a run reserves and waits:
@@ -87,6 +88,52 @@ not pass the request that has waited longest:
   (`--min-free-gb`; the ledger has its room: `waits_on_floor`), the
   oldest is passed as when it cannot fit, so a floor no other run can see
   does not stop the machine.
+
+**The ledger drains for a starved waiter** (2026-10-25). Ordered
+admission alone did not stop a waiter held back by its floor from
+starving: on 2026-10-25 the nightly's last designer boards (katia 19 GB
+expected, the others 6-27 GB, `--min-free-gb 10`) waited from about
+11:00 to past 20:00 ("katia started after waiting 33034 s") while five
+agents' 1-8 GB routes kept arriving: each fit the ledger's capacity and
+left the waiter its room there, so the running set never drained to the
+29 GB of available memory katia's floor asks for. Now, once the first
+waiter has waited longer than its bound (`drain_after` in its entry;
+run.py's `--ledger-drain-after`, default 600 s), a new request goes only
+if
+
+- after it, the waiter's room still covers what it waits for: the
+  capacity less every other reservation, and the memory available less
+  what the reservations still grow by and less the waiter's floor
+  (`floor_mb`, run.py's `--min-free-gb`), so the reservations shrink
+  toward what lets the waiter in as runs end; or
+- it is expected to end no later than every run that holds memory
+  (`expected_end`: run.py's boards of a tier carry the tier's seconds),
+  so it does not extend the drain. Binaries do not know their end: in a
+  drain they go by the waiter's room alone.
+
+A run that holds memory and grows, and a binary run.py admitted, are not
+held back, as before. `drained_for` and `drain_allows` in ledger.rs and
+harness_common.py (the same rule); tests
+`a_stream_of_small_requests_starves_a_waiter_until_the_ledger_drains`
+(a simulation of that day: a 19 GB waiter with a 10 GB floor, 30 GB
+available, a 2 GB request every 5 s that runs 60 s: without the drain it
+never starts in four hours beside 2939 small runs; with it, it starts
+660 s after it began waiting), `a_drain_admits_what_leaves_the_waiter_its_room_or_ends_first`
+and test_run.py's `MemoryLedger` (the same simulation on the Python
+side).
+
+**The nightly's priority.** `--ledger-priority nightly` (scripts/nightly.sh
+sets it on every stage) marks run.py's requests `priority: "nightly"`: a
+nightly request goes first among the waiters (before an older one that is
+not the nightly's) and is never passed once waiting: the ledger drains
+for it at once and without the end exception. `pcb-maker ledger` marks
+it `[nightly]`.
+
+Older binaries and harness copies ignore the new fields (`floor_mb`,
+`drain_after`, `expected_end`, `priority`) and do not drain; an older
+binary that rewrites the ledger drops them until the harness writes its
+waiting entry again (every poll, 15 s). A binary of this change keeps the
+fields it does not know when it rewrites the ledger.
 
 The rule is `order_allows` in crates/pcb-kicad/src/ledger.rs and in
 benchmarks/harness_common.py (the same rule; tests
