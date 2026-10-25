@@ -36,10 +36,17 @@
 #                      PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1
 #        expansion     --tier expansion, 8 x 1 (the designer's placement)
 #        short         --tier short, 3 x 2
+#        designer      --tier designer, 8 x 1, --quality, --order
+#                      peak-desc, --budget-scale the median
+#                      ladder_budget_share of the newest earlier night's
+#                      sweep (0.695 without one)
 #        sweep         tasks/v7, 10 x 2, --quality (the full layout sweep)
-#        designer      --tier designer, 8 x 1, --quality, --budget-scale
-#                      the sweep's median ladder_budget_share (0.695
-#                      without one)
+#      The designer tier runs before the sweep and its largest boards
+#      first (since 2026-10-26): it is the stage with the large boards
+#      (up to 6.5 GB measured) and the shorter one (about 46 000 s of
+#      boards against the sweep's 91 000), so it runs while the machine is
+#      quiet; after the sweep it began at 06:27-10:29 and its large boards
+#      waited into the agents' day (on 2026-10-25 past midnight).
 #      The sweep and the designer tier run on the days of --sweep-days
 #      (PCB_NIGHTLY_SWEEP_DAYS; default all; else ISO weekdays 1-7 or
 #      mon..sun, comma separated); --no-sweep, --no-designer and --quick
@@ -292,16 +299,18 @@ stage fingerprints PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1 -- \
   antmicro__jetson-nano-baseboard__jetson-nano-baseboard briskspirit__Sisu_SSE-9__Sisu_SSE-9
 stage expansion -- --tier expansion --jobs 8 --threads 1
 stage short -- --tier short --jobs 3 --threads 2
+if [ "$designer" = 1 ]; then
+  # The matched designer tier: the median final-ladder share of the
+  # newest earlier night's sweep (README.md, "The designer tier"; the
+  # designer stage runs before tonight's sweep); 0.695 (v18's) without a
+  # sweep row that records it.
+  last_sweep="$(ls -1d "$nights"/[0-9]*/sweep.log 2> /dev/null | grep -v "^$directory/" | sort | tail -1 || true)"
+  scale="$(python3 "$here/scripts/nightly-report.py" --ladder-share "${last_sweep:-/nonexistent}" --default 0.695)"
+  echo "designer budget scale $scale (${last_sweep:-no earlier sweep})"
+  stage designer -- --tier designer --budget-scale "$scale" --quality --jobs 8 --threads 1 --order peak-desc
+fi
 if [ "$sweep" = 1 ]; then
   stage sweep -- --tasks "$tasks" --jobs 10 --threads 2 --quality
-fi
-if [ "$designer" = 1 ]; then
-  # The matched designer tier: the sweep's median final-ladder share
-  # (README.md, "The designer tier"); 0.695 (v18's) without a sweep row
-  # that records it.
-  scale="$(python3 "$here/scripts/nightly-report.py" --ladder-share "$directory/sweep.log" --default 0.695)"
-  echo "designer budget scale $scale"
-  stage designer -- --tier designer --budget-scale "$scale" --quality --jobs 8 --threads 1
 fi
 
 # --- the summary -----------------------------------------------------------------

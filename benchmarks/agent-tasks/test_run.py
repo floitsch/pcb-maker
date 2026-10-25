@@ -549,6 +549,19 @@ class TierLock(unittest.TestCase):
         self.assertIn("held by this run's caller", result.stderr)
 
 
+class Order(unittest.TestCase):
+    def test_a_tier_starts_the_longest_or_the_largest_first(self):
+        tasks = [{"name": "a", "peak_rss_mb": 500, "expected_seconds": 900.0},
+                 {"name": "b", "peak_rss_mb": 6500, "expected_seconds": 100.0},
+                 {"name": "c", "expected_seconds": 300.0},
+                 {"name": "d", "peak_rss_mb": 6500, "expected_seconds": 800.0}]
+        names = lambda tasks: [task["name"] for task in tasks]  # noqa: E731
+        self.assertEqual(names(run.order_tasks(tasks, "seconds-desc", True, 3072)), ["a", "d", "c", "b"])
+        self.assertEqual(names(run.order_tasks(tasks, "seconds-desc", False, 3072)), ["a", "b", "c", "d"])
+        # The largest first (ties: the longest); one without a peak counts --expected-gb.
+        self.assertEqual(names(run.order_tasks(tasks, "peak-desc", True, 3072)), ["d", "b", "c", "a"])
+
+
 class MemoryLedger(unittest.TestCase):
     """The admission against the machine's memory ledger
     (harness_common.Ledger, admit, memory_room; run.MemoryGate)."""

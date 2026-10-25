@@ -121,9 +121,14 @@ def test_the_stages_run_with_their_settings(two_nights):
     assert "--tier short --jobs 3 --threads 2" in " ".join(argv(two_nights, "2026-10-23", "short")["argv"])
     sweep = " ".join(argv(two_nights, "2026-10-23", "sweep")["argv"])
     assert "tasks/v7/tasks.json --jobs 10 --threads 2 --quality" in sweep
-    # The matched designer tier: the median of the sweep's shares.
+    # The matched designer tier: the median of the newest earlier night's
+    # sweep shares (it runs before tonight's sweep, the largest boards
+    # first); the first night has none: 0.695.
     designer = " ".join(argv(two_nights, "2026-10-23", "designer")["argv"])
-    assert "--tier designer --budget-scale 0.7 --quality --jobs 8 --threads 1" in designer
+    assert "--tier designer --budget-scale 0.7 --quality --jobs 8 --threads 1 --order peak-desc" in designer
+    assert "--budget-scale 0.695 " in " ".join(argv(two_nights, "2026-10-22", "designer")["argv"])
+    log = (two_nights / "build/nightly/2026-10-23/nightly.log").read_text()
+    assert log.index("== short:") < log.index("== designer:") < log.index("== sweep:")
     for stage in report.STAGES:
         words = argv(two_nights, "2026-10-23", stage)["argv"]
         assert "--lock" not in words

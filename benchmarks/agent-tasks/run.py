@@ -1291,6 +1291,20 @@ class MemoryGate:
             self.ledger.release(key)
 
 
+def order_tasks(tasks, order, tier, expected_mb):
+    """The tasks in the order their boards start: `order` seconds-desc
+    (only for a tier: a task list keeps its order) the longest expected
+    first, so that the last job is not a slow one; peak-desc the largest
+    expected peak first (a task without one: `expected_mb`), then the
+    longest. Python's sort is stable: ties keep the list's order."""
+    if order == "peak-desc":
+        return sorted(tasks, key=lambda task: (-task.get("peak_rss_mb", expected_mb),
+                                               -(task.get("expected_seconds") or 0)))
+    if tier:
+        return sorted(tasks, key=lambda task: -(task.get("expected_seconds") or 0))
+    return tasks
+
+
 def task_directory(task):
     """The task's board directory: relative to the checkout, or absolute.
     The committed lists (tasks/v6, tasks/v7) name the main checkout's
@@ -2297,6 +2311,11 @@ def main():
     parser.add_argument("--ledger-priority", choices=("normal", harness_common.PRIORITY_NIGHTLY), default="normal",
                         help="nightly: this run's boards go first among the waiters and are never passed once "
                              "waiting (the ledger drains for them at once); scripts/nightly.sh sets it")
+    parser.add_argument("--order", choices=("seconds-desc", "peak-desc"), default="seconds-desc",
+                        help="the order the boards start in: seconds-desc (a tier's default) the longest "
+                             "expected first, so that the last job is not a slow one; peak-desc the largest "
+                             "expected peak first (scripts/nightly.sh's designer stage: the large boards while "
+                             "the machine is quiet), then the longest")
     parser.add_argument("--expected-gb", type=float, default=3.0,
                         help="expected peak of a board the tier does not estimate")
     parser.add_argument("--budget-scale", type=float, default=None,
@@ -2429,8 +2448,7 @@ def main():
         missing = sorted(set(tier["boards"]) - {task["name"] for task in tasks})
         if missing and not arguments.only:
             print(f"tier {arguments.tier}: {len(missing)} boards not in {arguments.tasks}: {missing}", file=sys.stderr)
-        # The longest first, so that the last job is not a slow one.
-        tasks.sort(key=lambda task: -(task.get("expected_seconds") or 0))
+    tasks = order_tasks(tasks, arguments.order, tier is not None, arguments.expected_mb)
     # Each row names its input beyond the constraints compare.py checks:
     # the task's entry, the designer's board and its project files, the
     # .kicad_pro and .kicad_dru (compare.py marks a board whose task,

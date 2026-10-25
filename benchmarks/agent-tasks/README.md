@@ -1232,8 +1232,16 @@ lock at `--min-free-gb 10`:
 | fingerprints | Castor, k30-SBC, jetson, Sisu; `--route-from build/github-layout-v16 --tasks tasks/v7`, 1 x 4, `--budget-scale 0.25`, `PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1` | 20 min |
 | expansion | `--tier expansion`, 8 x 1 | 5-10 min |
 | short | `--tier short`, 3 x 2 | 15-20 min |
-| sweep | `--tasks tasks/v7`, 10 x 2, `--quality` | 4 h |
-| designer | `--tier designer --quality`, 8 x 1, `--budget-scale` the sweep's median `ladder_budget_share` (0.695 without one) | 6 h |
+| designer | `--tier designer --quality`, 8 x 1, `--order peak-desc`, `--budget-scale` the median `ladder_budget_share` of the newest earlier night's sweep (0.695 without one) | 1.5-2 h (the boards' measured seconds) |
+| sweep | `--tasks tasks/v7`, 10 x 2, `--quality` | 5-7 h |
+
+The designer tier runs before the sweep and its largest boards first
+(since 2026-10-26): it is the stage with the large boards and the
+shorter one, so it runs while the machine is quiet. After the sweep it
+began at 06:27-10:29, and its large boards (then estimated at 17-28 GB
+from v17 layout rows) waited into the agents' day: on 2026-10-25 past
+midnight. Its budget scale comes from the previous night's sweep, not
+tonight's: the match is to the binary of the night before.
 
 The sweep and the matched designer tier run on the days of
 `--sweep-days` (`PCB_NIGHTLY_SWEEP_DAYS` in the service: `all`, the
