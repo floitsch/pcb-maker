@@ -135,12 +135,19 @@ pub mod profile {
         pub grid_cells: u64,
         /// Entries scanned in the cells' lists to remove lines.
         pub scanned: u64,
+        /// Wall time building trees (pin positions and Prim's), in
+        /// queries (`count`), inserting and removing lines, nanoseconds.
+        pub tree_nanos: u64,
+        pub count_nanos: u64,
+        pub insert_nanos: u64,
+        pub remove_nanos: u64,
     }
 
     thread_local! {
         static TALLY: Cell<Tally> = const { Cell::new(Tally {
             nanos: 0, booked: 0, calls: 0, pins: 0, prim: 0, lines: 0, cells: 0,
-            met: 0, tested: 0, grid_cells: 0, scanned: 0,
+            met: 0, tested: 0, grid_cells: 0, scanned: 0, tree_nanos: 0, count_nanos: 0,
+            insert_nanos: 0, remove_nanos: 0,
         }) };
         static DEPTH: Cell<u32> = const { Cell::new(0) };
     }
@@ -163,6 +170,19 @@ pub mod profile {
                 change(&mut tally);
                 cell.set(tally);
             });
+        }
+    }
+
+    /// The time now where profiling is on.
+    pub(crate) fn now() -> Option<std::time::Instant> {
+        enabled().then(std::time::Instant::now)
+    }
+
+    /// Adds the time since `start` (from `now`) with `change`.
+    pub(crate) fn lap(start: Option<std::time::Instant>, change: impl FnOnce(&mut Tally, u64)) {
+        if let Some(start) = start {
+            let nanos = start.elapsed().as_nanos() as u64;
+            add(|tally| change(tally, nanos));
         }
     }
 
@@ -216,6 +236,10 @@ pub mod profile {
             tested: after.tested - before.tested,
             grid_cells: after.grid_cells - before.grid_cells,
             scanned: after.scanned - before.scanned,
+            tree_nanos: after.tree_nanos - before.tree_nanos,
+            count_nanos: after.count_nanos - before.count_nanos,
+            insert_nanos: after.insert_nanos - before.insert_nanos,
+            remove_nanos: after.remove_nanos - before.remove_nanos,
         }
     }
 }
@@ -327,6 +351,7 @@ impl LineGrid {
     }
 
     fn insert(&mut self, id: u32, line: &Line) {
+        let started = profile::now();
         let mut cells = std::mem::take(&mut self.scratch);
         cells.clear();
         self.walk(line.a, line.b, |cell| cells.push(cell));
@@ -335,9 +360,11 @@ impl LineGrid {
             self.cells[cell].push(id);
         }
         self.scratch = cells;
+        profile::lap(started, |tally, nanos| tally.insert_nanos += nanos);
     }
 
     fn remove(&mut self, id: u32, line: &Line) {
+        let started = profile::now();
         let mut cells = std::mem::take(&mut self.scratch);
         cells.clear();
         self.walk(line.a, line.b, |cell| cells.push(cell));
@@ -355,6 +382,7 @@ impl LineGrid {
             tally.grid_cells += walked;
             tally.scanned += scanned;
         });
+        profile::lap(started, |tally, nanos| tally.remove_nanos += nanos);
     }
 }
 
@@ -514,6 +542,7 @@ impl<'a> CrossingState<'a> {
     /// The tree of `net` at `poses`, its lines in the grid where `insert`;
     /// their ids.
     fn tree(&mut self, poses: &[Pose], net: usize, insert: bool) -> Vec<u32> {
+        let started = profile::now();
         let mut points = std::mem::take(&mut self.points);
         points.clear();
         for (part, pin) in &self.members[net] {
@@ -528,6 +557,7 @@ impl<'a> CrossingState<'a> {
             tally.prim += pins * pins;
             tally.lines += edges.len() as u64;
         });
+        profile::lap(started, |tally, nanos| tally.tree_nanos += nanos);
         let mut ids = Vec::with_capacity(edges.len());
         for (from, to) in edges {
             let line = Line {
@@ -578,6 +608,7 @@ impl<'a> CrossingState<'a> {
     /// part's nets' trees as kept, while `ids` holds their new ones), each
     /// pair once.
     fn count(&mut self, ids: &[u32], hidden: &[usize]) -> u64 {
+        let started = profile::now();
         let query = Self::next_stamp(&mut self.query, &mut self.subject);
         if query == 1 {
             self.touched.iter_mut().for_each(|mark| *mark = 0);
@@ -634,6 +665,7 @@ impl<'a> CrossingState<'a> {
             tally.met += near_total;
             tally.tested += tested;
         });
+        profile::lap(started, |tally, nanos| tally.count_nanos += nanos);
         found
     }
 

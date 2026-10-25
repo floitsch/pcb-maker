@@ -641,7 +641,7 @@ fn phase_line(debug: bool, name: &str, mark: Mark) {
             let rest_rate = (work - tally.booked) as f64 / (seconds - inside).max(1.0e-9);
             let inside_rate = tally.booked as f64 / inside.max(1.0e-9);
             eprintln!(
-                "placer crossings {name}: wall {seconds:.4} s, work {work}, inside {inside:.4} s, booked {}, calls {}, pins {}, prim {}, lines {}, cells {}, met {}, tested {}, grid_cells {}, scanned {}; rest {rest_rate:.0}/s, inside {inside_rate:.0}/s, factor {:.3}",
+                "placer crossings {name}: wall {seconds:.4} s, work {work}, inside {inside:.4} s, booked {}, calls {}, pins {}, prim {}, lines {}, cells {}, met {}, tested {}, grid_cells {}, scanned {}, tree {:.4} s, count {:.4} s, insert {:.4} s, remove {:.4} s; rest {rest_rate:.0}/s, inside {inside_rate:.0}/s, factor {:.3}",
                 tally.booked,
                 tally.calls,
                 tally.pins,
@@ -652,6 +652,10 @@ fn phase_line(debug: bool, name: &str, mark: Mark) {
                 tally.tested,
                 tally.grid_cells,
                 tally.scanned,
+                tally.tree_nanos as f64 * 1.0e-9,
+                tally.count_nanos as f64 * 1.0e-9,
+                tally.insert_nanos as f64 * 1.0e-9,
+                tally.remove_nanos as f64 * 1.0e-9,
                 rest_rate / inside_rate.max(1.0e-9),
             );
         }
