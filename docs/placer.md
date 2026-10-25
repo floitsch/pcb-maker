@@ -1766,7 +1766,7 @@ and on how many placements the designer's value is lower:
   layouts on all three (9 of 9, 11 of 11, 9 of 9). There the placer
   does not reach the placement its own pair prefers: what is missing is
   the search (the anneal and the global placement, which make the
-  orders; above, "Where the order is decided"), not the signal. One
+  orders; below, "Where the order is decided"), not the signal. One
   caveat is legality. 107 of protoesp's 122 movable designer parts are
   illegal in the placer's tightest model (ours none), so part of that
   gap may be out of the placer's reach. On the 4in1 the model also
@@ -1783,8 +1783,8 @@ The designer's placements route to 0.5 to 14 open where ours leave 73
 to 158, and on video, the 4in1 and protoesp our own wirelength-plus-
 crossings already scores them 26 to 51 % better than what the placer
 finds. The lever is moving whole groups to the orders the pair prefers
-(the anneal's crossing term, off since "Where the order is decided",
-and group moves of parts that share a bus). The upper bounds from the
+(the anneal's crossing term, tried and off, below "Where the order is
+decided", and group moves of parts that share a bus). The upper bounds from the
 attribution are not measured and not additive: video's memory bank 40
 of 121 (the clean o side), the 4in1 34 to 78 per ESC copy (gap 144),
 and protoesp's connectors 41 and north-west 32 (gap 72). SNSP-CPU-01
