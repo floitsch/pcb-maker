@@ -11,6 +11,35 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Reviewed on 2026-10-26 (a fresh agent's trial from the schematic)
+
+Branch schematic-trial, x1844 (main 56ce9a4).
+[reviews/2026-10-26-schematic-trial.md](reviews/2026-10-26-schematic-trial.md):
+an agent new to pcb-maker took little-red-rover (2 layers, 65 parts, 328
+pads, one sheet) from its `.kicad_sch` to a fab release with the user
+documentation alone, and routed the designer's placement for comparison.
+
+- **Result.** The layout from the schematic: 64/64, KiCad 0 unconnected,
+  65 vias, 2468 mm in 160 s; 4 hole_clearance errors, J1's (USB4105) own
+  pads against its own holes, which the designer's board has too, cleared
+  by a custom rule for J1 and then released (21 files). The designer's
+  placement routed: complete, 163 vias, 4404 mm (designer 170, 4011; with
+  their GND pour, which the layout lacks). 18 commands in 25 minutes, 11
+  of them one wait in the memory ledger.
+- **Frictions that remain** (proposals in the review): the ledger still
+  drains for a run.py waiter that does not start (657 s for a 1.5 s DRC);
+  a footprint's own hole_clearance blocks layout and release without a
+  reference; the decoupling action repeats after `decoupling_near` is
+  turned on and names pins without a capacitor to give them; KiCad 10's
+  renamed WSON-8 is reported missing, not substituted; the template put a
+  bulk capacitor at an LDO's EN pin.
+- **Fixed** (each its own commit): the decoupling action's example names
+  the board's farthest pin (it was `U2:39` on every board); a DRC type
+  whose findings lie within one footprint each says so instead of "move
+  the parts apart"; docs on taking another board's outline from
+  `describe-kicad-board`'s `points` and on `--refill-zones` for a direct
+  kicad-cli check (24 unconnected without it on a complete board).
+
 ## Committed on 2026-10-26 (length and skew rules for single nets)
 
 Branch length-rules (docs/router.md, "Length and skew rules
