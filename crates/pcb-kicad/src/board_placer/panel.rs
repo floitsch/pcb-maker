@@ -960,6 +960,26 @@ fn replicate(
     poses
 }
 
+/// The share of the copies' movable parts above which replicated parts
+/// not legal where they land send the board to a placement as a whole.
+const MOST_ILLEGAL_SHARE: f64 = 0.1;
+
+/// The board placed as a whole, with the seed's whole budget (the first
+/// copy's work spent on top of it; the copies' placement is not used).
+fn place_whole(
+    problem: &core::Problem,
+    config: &core::Config,
+    started: u64,
+    why: &str,
+) -> core::Placement {
+    if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
+        eprintln!("panel copies: {why}: placed as a whole");
+    }
+    let mut whole = core::place(problem, config);
+    whole.work = core::work() - started;
+    whole
+}
+
 /// Places a panel by its copies (the module's comment): one seed's
 /// placement of the whole board.
 pub(crate) fn place_copies(
@@ -974,22 +994,15 @@ pub(crate) fn place_copies(
     let mut first_config = config.clone();
     first_config.work_limit = config.work_limit.map(|limit| limit / 4 * 3);
     let first = core::place(&sub, &first_config);
+    // Even the tightest bodies of one copy need more area than its region
+    // has: no replication seats them; the board is placed as a whole.
     if first.overfull {
-        // Even the tightest bodies of one copy need more area than its
-        // region has (the molecules' cells, whose connectors reach into
-        // the neighbours'): no replication seats them; the board is placed
-        // as a whole.
-        if debug {
-            eprintln!("panel copies: the first copy does not fit its region: placed as a whole");
-        }
-        let mut whole_config = config.clone();
-        let used = core::work() - started;
-        whole_config.work_limit = config
-            .work_limit
-            .map(|limit| limit.saturating_sub(used).max(limit / 10));
-        let mut whole = core::place(problem, &whole_config);
-        whole.work = core::work() - started;
-        return whole;
+        return place_whole(
+            problem,
+            config,
+            started,
+            "the first copy does not fit its region",
+        );
     }
     let replicated = replicate(problem, copies, &first.poses);
     // The replicated parts that are not legal where they land, at the
@@ -1080,6 +1093,19 @@ pub(crate) fn place_copies(
             illegal.len(),
             copies.movable(problem).len(),
             shared.len()
+        );
+    }
+    // Many replicated parts not legal where they land: the copies'
+    // surroundings differ (the molecules' cells: an edge constraint on the
+    // outer cells' connectors, the board's marks; 37 of 144 parts of the
+    // 4x4, which then left 55 parts without a place against 31 placed as
+    // a whole): the board is placed as a whole.
+    if illegal.len() as f64 > MOST_ILLEGAL_SHARE * copies.movable(problem).len() as f64 {
+        return place_whole(
+            problem,
+            config,
+            started,
+            "many replicated parts are not legal where they land",
         );
     }
     let (poses, relaxation, unplaced, overfull, rest_work) =
