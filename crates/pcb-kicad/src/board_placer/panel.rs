@@ -1440,6 +1440,15 @@ mod tests {
     }
 
     #[test]
+    fn on_by_default_and_off_by_the_key() {
+        let config: KiCadBoardPlacerConfig = serde_json::from_str("{}").unwrap();
+        assert!(config.panel_copies);
+        let config: KiCadBoardPlacerConfig =
+            serde_json::from_str(r#"{"panel_copies": false}"#).unwrap();
+        assert!(!config.panel_copies);
+    }
+
+    #[test]
     fn clip_cuts_a_square() {
         let square = [[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]];
         let clipped = clip(&square, [5.0, -1.0, 20.0, 20.0]);

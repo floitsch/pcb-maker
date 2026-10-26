@@ -1032,7 +1032,7 @@ pub struct KiCadVerdict {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bus_groups: Option<crate::board_placer::KiCadBusGroupsReport>,
     /// The panel's copies (`panel_copies` in the placer's configuration,
-    /// off by default) where the placement found them: how many, the parts
+    /// on by default) where the placement found them: how many, the parts
     /// and movable parts per copy, how they were told apart (`net
     /// islands`, `numbered references`, `repeated references`), where
     /// their regions came from, the movable parts in no copy, how many

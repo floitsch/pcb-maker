@@ -3816,8 +3816,8 @@ Panelised boards (several copies of one circuit in one outline, joined
 by tabs or rails) placed badly: every part was placed on its own, and the
 copies interleaved (where nothing kept them apart) or each copy got a
 share of the work and came out different. Designers place one copy and
-replicate it. `panel_copies` (a placer switch, **off by default**) does
-the same. Code: `crates/pcb-kicad/src/board_placer/panel.rs`.
+replicate it. `panel_copies` (a placer switch, **on by default** since
+the hole-clearance fix below; `false` turns it off) does the same. Code: `crates/pcb-kicad/src/board_placer/panel.rs`.
 
 **Detection** (`panel::detect`, on the lowered problem: footprints with
 pins). Three ways to tell the copies apart, tried in this order:
@@ -3959,17 +3959,58 @@ x14891 with the switch on; `build/panel2/short-{off,on}`): no copies on
 any of the 12 boards; every placed board and every result board is byte
 for byte the same.
 
+### The hole clearance: pads against a non-plated hole's ring
+
+OpenRX's two `hole_clearance` errors were the placer's legality, not
+the replication (which tests every replicated part at the first copy's
+level, as the placement tests any part). A non-plated hole's pad box is
+grown by a ring (the project's hole clearance less the copper
+clearance: 0.2 - 0.09 = 0.11 mm on OpenRX) on the assumption that the
+spacing tests add the copper clearance to it. They add it to the
+bodies. A mouse bite's 0.5 mm holes sit in a 0.7 mm courtyard: the ring
+reached 0.01 mm past the courtyard, and at the levels whose spacing is
+the copper clearance (and at the courtyard-spacing level, whose share
+counts copper inside the body only) a pad could come 0.09 mm to the
+body, 0.19 mm to the hole. `PCB_PLACER_DESIGNER` with the placed board
+at that level, before: legal; after: C208 and C308 "pads in a hole's
+clearance".
+
+The fix (`Component::hole_rings`, `legal::pads_in_hole_rings`): each
+footprint keeps its holes' rings, and another part on a colliding side
+keeps its pads the copper clearance from them at every level (the far
+side already tested the rings against its pads). A first try grew the
+bodies to the rings instead: on 32 of the 109 sweep boards (key switch
+pegs, mouse bites) the bodies grew by 0.05-0.25 mm, and the short tier
+changed on four boards and lost two strict passes (eternal-keypad,
+urchin); the ring test changes nothing there. Unit test
+`pads_keep_the_hole_clearance_from_a_non_plated_hole` (OpenRX's mouse
+bite: 0.19 mm illegal, 0.201 mm legal at the last level).
+
+Measured with the fix (x14894, `panel_copies` on; `build/panel2/fix2-*`):
+
+| Board | seed | off (x1842) | on, before the fix (x14890) | on, with the fix (x14894) |
+| --- | ---: | --- | --- | --- |
+| OpenRX-panel-rev2 | 1 | 213 (328) | 214 (301), 2 hole_clearance | 191 (324), no error |
+| | 101 | 226 (340) | 215 (341) | 211 (275), no error |
+| 0xCB-1337 pcb-panel | 1 | 93 (198) | 43 (92) | 43 (92), byte for byte x14890's |
+| 0xCB-1337 panel | 1 | 60 (269), 2 starved_thermal | 0, strict pass | 0, strict pass, byte for byte |
+| SmartSpin2k_Panelized | 1 | 33 (35) | 21 (22) | 21 (22), the same placement |
+
+SmartSpin2k's placement is byte for byte x14890's; its pool work (the
+race's batches, 248 against 356 s for 641 and 643 s of seeds' work)
+moved the route. The short tier (3 x 2, x14894 with the switch on
+against x1842): all 12 placed and result boards byte for byte the same.
+
 ### Judgement
 
-The panels with copies improve in total (seed 1 399 to 278 unconnected,
-seed 101 411 to 271; the 0xCB panel passes strict at both seeds, where it
-left 54-60 open), the 4in1 panel and every board without copies are
-unchanged. The default stays **off**: the rule asks for no new errors,
-and OpenRX's seed-1 row has two (`hole_clearance` at a tab's NPTH, a
-legality miss in the first copy that the replication doubled).
-To make it the default: find why the placement let a pad come 0.19 mm
-to an NPTH where the board's hole clearance is 0.2 (a legality
-question, not the replication's), then rerun OpenRX.
+The panels with copies improve in total: seed 1 399 to 255 unconnected
+(x14894), seed 101 411 to 267 (OpenRX at x14894, the others' x14890
+rows: their placements do not meet a hole's ring); the 0xCB panel passes
+strict at both seeds, where it left 54-60 open. No new errors (the
+0xCB panel's two starved thermals are gone); the 4in1 panel, the
+molecules (placed as a whole) and every board without copies are
+unchanged, the short tier byte for byte. **`panel_copies` is on by
+default.**
 
 ## What went wrong on the way (kept as lessons)
 

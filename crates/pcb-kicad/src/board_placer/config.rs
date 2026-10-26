@@ -151,7 +151,8 @@ pub struct KiCadBoardPlacerConfig {
     /// `keep_copies_apart`): the copies are told apart by their nets. On:
     /// boards whose nets form one group do not change.
     pub keep_copies: bool,
-    /// Panel-aware placement (off by default): where the board holds
+    /// Panel-aware placement (on since 2026-10-26; false turns it off):
+    /// where the board holds
     /// copies of one circuit (the same footprints, nets that map one to
     /// one; told apart by net islands, numbered or repeated references),
     /// the first copy is placed with the ordinary placer inside its region
@@ -161,8 +162,8 @@ pub struct KiCadBoardPlacerConfig {
     /// and the replicated parts that are not legal where they land and
     /// the parts in no copy are placed after it. `board-placer.json` and
     /// the verdict report the copies (`panel_copies`; docs/placer.md,
-    /// "Panel copies (2026-10-26)").
-    #[serde(default)]
+    /// "Panel copies (2026-10-26)"). Boards without copies place as with
+    /// it off.
     pub panel_copies: bool,
     /// A footprint without a courtyard whose pads stand in rows of pins
     /// (three or more at most 2.6 mm apart, holding three quarters of its
@@ -351,7 +352,7 @@ impl Default for KiCadBoardPlacerConfig {
             decoupling_near: false,
             keep_on_pieces: true,
             keep_copies: true,
-            panel_copies: false,
+            panel_copies: true,
             solid_pin_rows: true,
             mask_openings: true,
             solder_mask_to_copper_mm: None,
