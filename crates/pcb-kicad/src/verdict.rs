@@ -1425,11 +1425,60 @@ fn finding_action(kind: &str, count: usize, findings: &[&DrcFinding]) -> String 
         }
         _ => "see drc.json",
     };
+    // A finding between items of one footprint (a USB receptacle's pad
+    // and its own locating hole) is the library's geometry: moving parts
+    // does not change it.
+    let step = match own_footprints(findings) {
+        Some(references) => format!(
+            "each finding lies between items of one footprint ({}): its library geometry, which no placement or route changes; the designer's board as --reference makes it pre-existing where it has the same footprint, a custom rule for the footprint (.kicad_dru) or a KiCad exclusion accepts it, and fab-kicad-board --allow-findings releases with it",
+            references.join(", ")
+        ),
+        None => step.to_string(),
+    };
     if what.is_empty() {
         format!("{kind} {count}: {step}")
     } else {
         format!("{kind} {count} ({}): {step}", what.join("; "))
     }
+}
+
+/// The footprints of findings whose items all belong to one footprint
+/// each ("Pad B1 [GND] of J1 on F.Cu" and "NPTH pad of J1"), in order;
+/// `None` when a finding has fewer than two items or an item of no
+/// footprint or of another.
+fn own_footprints(findings: &[&DrcFinding]) -> Option<Vec<String>> {
+    if findings.is_empty() {
+        return None;
+    }
+    let mut references: Vec<String> = Vec::new();
+    for finding in findings {
+        if finding.item_descriptions.len() < 2 {
+            return None;
+        }
+        let mut owner: Option<&str> = None;
+        for item in &finding.item_descriptions {
+            let reference = footprint_of(item)?;
+            match owner {
+                Some(other) if other != reference => return None,
+                _ => owner = Some(reference),
+            }
+        }
+        let owner = owner?.to_string();
+        if !references.contains(&owner) {
+            references.push(owner);
+        }
+    }
+    Some(references)
+}
+
+/// The footprint an item of KiCad's report belongs to: the reference after
+/// " of " (past the net in brackets), as in "Pad 2 [GND] of C1 on F.Cu".
+fn footprint_of(item: &str) -> Option<&str> {
+    let tail = item.rfind(']').map_or(item, |end| &item[end + 1..]);
+    let rest = &tail[tail.find(" of ")? + 4..];
+    rest.split_whitespace()
+        .next()
+        .filter(|reference| !reference.is_empty())
 }
 
 /// The next action for a project with rules the router does not keep.
@@ -2378,6 +2427,30 @@ mod tests {
             finding_action("clearance", 1, &[&finding])
                 .starts_with("clearance 1 (clearance 0.1270 mm; actual 0.0000 mm): ")
         );
+        // A footprint's own pad and hole (the schematic trial's USB-C
+        // receptacle): no "move the parts apart".
+        let own = |pad: &str| {
+            DrcFinding {
+            kind: "hole_clearance".into(),
+            description: "Hole clearance violation (board setup constraints hole clearance 0.2500 mm; actual 0.1944 mm)".into(),
+            nets: vec!["GND".into()],
+            item_descriptions: vec![format!("Pad {pad} [GND] of J1 on F.Cu"), "NPTH pad of J1".into()],
+            ..DrcFinding::default()
+        }
+        };
+        let (a1, b1) = (own("A1"), own("B1"));
+        let action = finding_action("hole_clearance", 2, &[&a1, &b1]);
+        assert!(
+            action.contains("between items of one footprint (J1)")
+                && action.contains("--allow-findings")
+                && !action.contains("move the parts apart"),
+            "{action}"
+        );
+        let apart = DrcFinding {
+            item_descriptions: vec!["Pad 1 [GND] of J1 on F.Cu".into(), "NPTH pad of H2".into()],
+            ..own("A1")
+        };
+        assert!(finding_action("hole_clearance", 1, &[&apart]).contains("move the parts apart"));
     }
 
     #[test]
