@@ -429,10 +429,14 @@ pub(crate) fn connector_mouth(footprint: &Expr) -> Result<Option<[f64; 2]>, Stri
     Ok((sides[0].0 >= 1.0 && sides[0].0 >= 1.5 * sides[1].0.max(0.0)).then_some(sides[0].1))
 }
 
+/// A side of a footprint: how far its courtyard reaches beyond its pads
+/// there, and the side's direction in the footprint's own frame.
+pub(crate) type FootprintSide = (f64, [f64; 2]);
+
 /// How far a footprint's courtyard reaches beyond its pads on each side, in
-/// its own frame, with each side's direction (`connector_mouth` takes the
-/// side that clearly reaches farthest); `None` without a courtyard or pads.
-pub(crate) fn connector_sides(footprint: &Expr) -> Result<Option<[(f64, [f64; 2]); 4]>, String> {
+/// its own frame (`FootprintSide`; `connector_mouth` takes the side that
+/// clearly reaches farthest); `None` without a courtyard or pads.
+pub(crate) fn connector_sides(footprint: &Expr) -> Result<Option<[FootprintSide; 4]>, String> {
     let footprint_angle = form_at(footprint)?[2];
     let mut courtyard = [
         f64::INFINITY,
