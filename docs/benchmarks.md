@@ -2359,7 +2359,7 @@ same inputs as v21 (no board INPUT).
 | pass, strict rule (rule 4) | 53 of 109 | 53 of 109 | **56 of 109** |
 | strict passes on the 95 boards of the same input as v20 | 49 | - | 53 |
 | unconnected (all rows) | 1848 | 1788 | 2444 |
-| unconnected, the boards with a result in both | 1651 / 1561 (88 boards, same input) | 1788 / 1672 (100 boards) | |
+| unconnected where both have a result (that run / v21) | 1651 / **1561** (88 boards, same input) | 1788 / **1672** (100 boards) | - |
 | new DRC errors (per-type rule) | 34 | 56 | 50 |
 | new DRC errors (strict rule) | 26 | 49 | 44 |
 | vias (rows with a result) | 33748 (102) | 32671 (100) | 33673 (104) |
