@@ -52,6 +52,11 @@ pub(super) struct KeyHeap {
 }
 
 impl KeyHeap {
+    /// The bytes its buffer holds.
+    pub(super) fn bytes(&self) -> usize {
+        self.groups.capacity() * std::mem::size_of::<KeyGroup>()
+    }
+
     pub(super) fn clear(&mut self) {
         self.groups.clear();
         self.len = 0;

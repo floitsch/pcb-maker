@@ -388,6 +388,7 @@ impl Router {
             last_conflicted: Vec::new(),
             probe_shapes: Arc::default(),
             mem_token: Default::default(),
+            _lattice_user: LatticeUser::new((cells * board.layer_count, cells)),
             grid,
         };
         if let Some(seed) = config.seed.or_else(experiment_seed) {
@@ -622,6 +623,7 @@ impl Router {
             ("footprints", footprints, None),
             ("scratch", self.scratch.held_bytes(), None),
             ("spare scratches", spare, None),
+            ("search arrays", SearchArrays::all_bytes(), Some(0)),
             ("tiles", tiles, None),
             ("sever", bytes(&self.sever), None),
             ("pin rows", bytes(&self.pin_row), None),

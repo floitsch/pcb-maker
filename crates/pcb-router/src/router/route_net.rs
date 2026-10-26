@@ -99,8 +99,25 @@ impl Router {
     /// Connects all terminals of `net` into one tree, reusing any branches
     /// the net still has. With `hard`, nodes claimed by other nets are
     /// impassable and a partial result may be kept.
+    /// The search's arrays are the process's idle ones of this lattice,
+    /// taken for the net and given back after it (`Scratch::ensure`,
+    /// `Scratch::release`).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn route_net(
+        &self,
+        scratch: &mut Scratch,
+        net: NetId,
+        net_state: &mut NetState,
+        present: f32,
+        hard: bool,
+        window_growth: f64,
+    ) {
+        self.route_net_with_arrays(scratch, net, net_state, present, hard, window_growth);
+        scratch.release();
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn route_net_with_arrays(
         &self,
         scratch: &mut Scratch,
         net: NetId,

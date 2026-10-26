@@ -1029,6 +1029,7 @@ impl Scratch {
     fn held_bytes(&self) -> usize {
         self.nodes.capacity() * std::mem::size_of::<SearchNode>()
             + self.own_via_near.capacity() * 2
+            + self.heap.bytes()
             + self.own_mark.capacity() * 8
             + self.own_set.capacity() * 8
             + self.own_claimed.capacity() * 4
@@ -1091,24 +1092,179 @@ impl Scratch {
         };
     }
 
-    /// Allocates the arrays for a lattice of `states` (a copy has none).
-    /// The mask of the routed net's own stamps (`mask_own`, set before
-    /// the search allocates: a router's scratch and a pool's are allocated
-    /// on first use) stays.
+    /// Takes the arrays for a lattice of `states` (a copy has none): the
+    /// process's idle arrays of that lattice (`IDLE_ARRAYS`) when there
+    /// are, else new ones. The mask of the routed net's own stamps
+    /// (`mask_own`, set before the search takes its arrays), the counters
+    /// and the rest stay.
     fn ensure(&mut self, states: usize, cells: usize) {
         if !self.fits(states, cells) {
-            let own_mark = std::mem::take(&mut self.own_mark);
-            let own_set = std::mem::take(&mut self.own_set);
-            let own_claimed = std::mem::take(&mut self.own_claimed);
-            *self = Self {
+            let arrays = SearchArrays::take(states, cells).unwrap_or_else(|| SearchArrays {
                 nodes: vec![SearchNode::default(); states],
                 own_via_near: vec![0; cells],
-                own_mark,
-                own_set,
-                own_claimed,
-                own_active: self.own_active,
-                ..self.clone()
+                heap: KeyHeap::default(),
+                generation: 0,
+            });
+            ARRAYS_IN_USE.fetch_add(arrays.bytes(), std::sync::atomic::Ordering::Relaxed);
+            self.nodes = arrays.nodes;
+            self.own_via_near = arrays.own_via_near;
+            self.heap = arrays.heap;
+            self.generation = arrays.generation;
+        }
+    }
+
+    /// Gives the arrays of the lattice (`ensure`) back to the process's
+    /// idle ones, after a net's search (`Router::route_net`): a router
+    /// holds them only while it searches. Until 2026-10-26 every router
+    /// kept its own and a spare per search thread of its parallel batches
+    /// for as long as it lived: the four probes of video held eight, 878
+    /// of their 3292 MB, while at most the search threads' worth were in
+    /// use at once.
+    fn release(&mut self) {
+        if !self.nodes.is_empty() {
+            let arrays = SearchArrays {
+                nodes: std::mem::take(&mut self.nodes),
+                own_via_near: std::mem::take(&mut self.own_via_near),
+                heap: std::mem::take(&mut self.heap),
+                generation: self.generation,
             };
+            // (Its heap may have grown in the search.)
+            ARRAYS_IN_USE.fetch_sub(
+                arrays
+                    .bytes()
+                    .min(ARRAYS_IN_USE.load(std::sync::atomic::Ordering::Relaxed)),
+                std::sync::atomic::Ordering::Relaxed,
+            );
+            SearchArrays::give(arrays);
+        }
+    }
+}
+
+/// A search's per-node arrays with the generation their marks belong to
+/// (`Scratch::ensure`, `Scratch::release`). Any search may take any
+/// arrays of its lattice: a search reads only marks of its own
+/// generation, and the generation travels with the marks (a parallel
+/// batch's jobs took any of the batch's scratches before).
+struct SearchArrays {
+    nodes: Vec<SearchNode>,
+    own_via_near: Vec<u16>,
+    heap: KeyHeap,
+    generation: u16,
+}
+
+/// The process's idle search arrays, of every lattice a live router has
+/// (`LatticeUser`), at most as many of a lattice as searches of it ran at
+/// once.
+static IDLE_ARRAYS: std::sync::Mutex<Vec<SearchArrays>> = std::sync::Mutex::new(Vec::new());
+
+/// The bytes of the search arrays taken (`Scratch::ensure`) and not given
+/// back yet (the memory profile).
+static ARRAYS_IN_USE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// How many live routers use each lattice (states, cells): the idle arrays
+/// of a lattice go when its last router does.
+static LATTICE_USERS: std::sync::Mutex<Vec<((usize, usize), usize)>> =
+    std::sync::Mutex::new(Vec::new());
+
+impl SearchArrays {
+    fn take(states: usize, cells: usize) -> Option<Self> {
+        let mut idle = IDLE_ARRAYS
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        let index = idle.iter().rposition(|arrays| {
+            arrays.nodes.len() == states && arrays.own_via_near.len() == cells
+        })?;
+        Some(idle.swap_remove(index))
+    }
+
+    fn give(arrays: Self) {
+        let key = (arrays.nodes.len(), arrays.own_via_near.len());
+        let used = LATTICE_USERS
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .iter()
+            .any(|(lattice, users)| *lattice == key && *users > 0);
+        // Arrays of a lattice no live router has (a scratch outliving its
+        // router) are freed.
+        if used {
+            IDLE_ARRAYS
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner())
+                .push(arrays);
+        }
+    }
+
+    fn bytes(&self) -> usize {
+        self.nodes.capacity() * std::mem::size_of::<SearchNode>()
+            + self.own_via_near.capacity() * 2
+            + self.heap.bytes()
+    }
+
+    /// The bytes the idle arrays and those in use hold (the memory
+    /// profile; the heaps in use as they were taken).
+    pub(crate) fn all_bytes() -> usize {
+        IDLE_ARRAYS
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .iter()
+            .map(Self::bytes)
+            .sum::<usize>()
+            + ARRAYS_IN_USE.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+/// A router's claim on its lattice's idle search arrays (`IDLE_ARRAYS`):
+/// counted while the router lives, its copies too.
+struct LatticeUser((usize, usize));
+
+impl LatticeUser {
+    fn new(lattice: (usize, usize)) -> Self {
+        let mut users = LATTICE_USERS
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner());
+        match users.iter_mut().find(|(key, _)| *key == lattice) {
+            Some((_, count)) => *count += 1,
+            None => users.push((lattice, 1)),
+        }
+        Self(lattice)
+    }
+}
+
+impl Clone for LatticeUser {
+    fn clone(&self) -> Self {
+        Self::new(self.0)
+    }
+}
+
+impl Drop for LatticeUser {
+    fn drop(&mut self) {
+        let last = {
+            let mut users = LATTICE_USERS
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            let Some(index) = users.iter().position(|(key, _)| *key == self.0) else {
+                return;
+            };
+            users[index].1 -= 1;
+            let last = users[index].1 == 0;
+            if last {
+                users.swap_remove(index);
+            }
+            last
+        };
+        if last {
+            // Freed outside the lock.
+            let gone: Vec<SearchArrays> = {
+                let mut idle = IDLE_ARRAYS
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner());
+                let (gone, kept) = std::mem::take(&mut *idle)
+                    .into_iter()
+                    .partition(|arrays| (arrays.nodes.len(), arrays.own_via_near.len()) == self.0);
+                *idle = kept;
+                gone
+            };
+            drop(gone);
         }
     }
 }
@@ -1416,6 +1572,8 @@ pub struct Router {
     probe_shapes: Arc<std::sync::OnceLock<FastMap<usize, Vec<fill::ProbePart>>>>,
     /// This router's entry in the memory profile (`mem_profile`).
     mem_token: crate::mem_profile::Token,
+    /// This router's claim on its lattice's idle search arrays.
+    _lattice_user: LatticeUser,
 }
 
 pub fn route(board: &Board, config: &Config) -> RoutingResult {
