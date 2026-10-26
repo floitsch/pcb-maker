@@ -11,6 +11,59 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-10-26 (layout sweep v21, matched designer tier)
+
+The full measurement on x1832 (main 2087046) and the README's numbers
+moved to it: tasks v7, `--quality`, pinned work rates, 10 GB kept free,
+`--ledger-priority nightly`, through the memory ledger without the lock
+([benchmarks.md](benchmarks.md#layout-sweep-v21-2026-10-26)). Since v20
+(x1725): x1753, x1754, ratsnest crossings by default, the race gate fix
+(5 % pick margin), thermals solidified first, ordered admission, the
+pad-clearance floor, per-layer widths and the connection-width floor,
+diff pairs by rule, the panels fixes, the net tie's vias, the
+default-losers switches and memory round 3. 14 boards gained
+`.kicad_dru` files on 2026-10-24 (INPUT against v20).
+
+- **Layout sweep v21** (`build/github-layout-v21.log`, 10 x 2; the task
+  list has no memory estimates, so it ran in three parts by measured peak
+  with an `--expected-gb` above each board's: 5 boards at 4 GB and 7 at
+  8 GB side by side, merged into `build/github-layout-v21-ab.log`, then
+  the other 97 at 3.5 GB spliced from it; 07:31 to 11:13, largest peak
+  4.6 GB): **56 of 109 pass the strict rule** (56 per type), 2444
+  unconnected in all, strict errors 44, no row cut or killed, five
+  without a result (molecule panels). Against the nightly of 2026-10-25
+  (x1817, same inputs): better 6, same 91, worse 3, 86 rows identical;
+  on the 100 boards with a result in both 1788 -> 1672 open; strict pass
+  gained by homebrew_486, neotron-pico and ghoul, none lost. Against v20
+  on the 95 boards of the same input: better 20, same 59, worse 9;
+  1651 -> 1561 open on the 88 with a result in both; strict 49 -> 53
+  (gained hackrf-one, eternal-keypad, ghoul, neotron-pico; MokyaLora,
+  INPUT, lost by clearance 3).
+- **Results for four boards the nightly had none for**: the OpenESC
+  4in1 panel (499 open), katia (162), the 0xCB pcb-panel (93; its DRC
+  finishes now) and laptop power (18); the five molecule panels still
+  refuse with fewer unplaced parts (3 to 45).
+- **Medians against the designer's**: vias x0.72, length x1.04, open
+  mean 0.124 (the new results' open counts), bends x1.06, stair-steps
+  +63.5, crossings +0.5; no via in a pad on any of the 104 boards with
+  a result.
+- **Matched designer tier** (`build/designer-x1832-matched.log`, budget
+  scale 0.762 = v21's median final-ladder share, 8 x 1, `--order
+  peak-desc`, all 109 rows in one part, 11958 s, none cut or killed):
+  62 strict passes (66 per type). **Gap over the 100 target boards**:
+  layout open 1740, designer route 742, placement 57 %, routing 43 %
+  (72 / 28 without Batch_1); over all 104 boards with both results
+  51 / 49.
+- **Placement costs most** on video (+189: 190 / 1), katia (+152: 162 /
+  10), the 0xCB pcb-panel (+93: 93 / 0), the OpenESC 4in1 (+91: 106 /
+  15) and Glasgow (+88: 143 / 55).
+- **Worse than the nightly** (the next triage): RP2040_base 47 -> 50,
+  the Hub 21 -> 22, woagboard 4 -> 5; none loses a pass. Larger: katia
+  (162 open; v20 37) and laptop power (18; v20 1), which the nightly had
+  no result for.
+- **Since v21**: x1833 (exact escape stubs on by default, the pour model
+  matching KiCad) moves routing, so v22 is expected to improve.
+
 ## Committed on 2026-10-26 (the ledger drains only for a waiter it could start)
 
 Branch ledger-startable. Since the evening of 2026-10-25 the

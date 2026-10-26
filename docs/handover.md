@@ -1,4 +1,4 @@
-# Hand-over (state as of 2026-10-23, main 38edddd, snapshot x1725; measured by layout sweep v20; x1753 and x1754 since)
+# Hand-over (state as of 2026-10-26; measured by layout sweep v21 on x1832 = main 2087046; x1833, exact escape stubs and the pour model, since)
 
 What the tool does today, which benchmarks count, what is known to be
 wrong, where everything is and how to work on it. What each round of work
@@ -111,6 +111,25 @@ x1753 (the narrow step's bound) and x1754 (escape demand on) post-date
 it. `build/github-layout-v20.log`, `build/designer-x1725-matched.log`;
 table, gap split and the boards in
 [benchmarks.md](benchmarks.md#layout-sweep-v20-2026-10-23).
+
+**Layout sweep v21** (x1832 = main 2087046, tasks v7, 10 jobs x 2
+threads, in three parts by measured peak, 12 rows spliced, all x1832):
+**56 of 109 pass the strict rule** (rule 4; 56 the per-type rule; the
+nightly of 2026-10-25 and v20: 53), 2444 unconnected in all (1672 on the
+100 boards with a result in the nightly too, which left 1788 there; four
+boards without a result in the nightly have one now, 772 open among
+them), strict errors 44, no row cut or killed, five without a result
+(PolyKybd molecule panels); medians against the designer's board: vias
+x0.72, length x1.04, open 0.000 (mean 0.124), bends x1.06, stair-steps
++63.5, crossings +0.5. 14 boards gained `.kicad_dru` files after v20
+(INPUT against it). The matched designer tier on the same binary
+(`build/designer-x1832-matched.log`, budget scale 0.762, all 109 rows):
+62 strict passes (66 per type); over the 100 target boards placement
+57 % and routing 43 % of the open connections (72 / 28 without
+Batch_1). x1833 (exact escape stubs on, the pour model matching KiCad)
+post-dates it. `build/github-layout-v21.log`; table, gap split, the
+costliest placements and the boards worse than the nightly in
+[benchmarks.md](benchmarks.md#layout-sweep-v21-2026-10-26).
 
 **Quick tier** (30 boards, full budget, the merge gate):
 `build/quick30-x1152.log` (x1152 = main 015676c, tasks v6): **24 of 30

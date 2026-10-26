@@ -2319,6 +2319,190 @@ power, hackrf-one and BAGEL-MK1.1-Avocado (one open each; the designer
 route passes the first two and leaves BAGEL two), Explorer (3 open, the
 designer route passes) and the boards with nothing open above.
 
+## Layout sweep v21 (2026-10-26)
+
+The full measurement after the packages of 2026-10-24 to 26: ratsnest
+crossings on by default (x1817), the race gate fix with its 5 % pick
+margin (x1828), the thermals solidified first and ordered admission
+(x1790), the pad-clearance floor from the layer rules (x1814),
+per-layer widths and the connection-width floor (x1815, x1816),
+differential pairs by rule (x1798, x1799), the panels fixes (x1825), the
+net tie's vias (x1830), the default-losers switches (x1831) and memory
+round 3 (x1832, routes identical). `build/github-layout-v21.log`, binary
+x1832 (main 2087046, sha256 5e9898f282f3), tasks v7 (sha256
+c8f95caf5089, the same list as v18 to v20), `--quality`, at the pinned
+work rates (the measured router rate had a median of 1.5e6, work over
+wall 0.67: four other agents shared the machine), 10 jobs x 2 threads
+through the memory ledger (no lock) with 10 GB kept free and
+`--ledger-priority nightly` (and `--order peak-desc`, which does nothing
+without estimates), as scripts/nightly.sh runs it, except for
+the memory estimates: the task list carries none, so run.py declares
+`--expected-gb` for every board, and the sweep ran in three parts by
+the boards' measured peaks (the largest of v20's and the nightly's rows)
+so that no board is declared below its measured peak:
+`build/github-layout-v21-a.log` (5 boards of 3.1-3.6 GB measured,
+`--expected-gb 4`, 1407 s) and `-b` (7 boards of 4.5-7.2 GB, 8 GB,
+2486 s) side by side, both merged into `build/github-layout-v21-ab.log`,
+then the other 97 boards (at most 3.1 GB measured, 3.5 GB) with
+`--splice-from` that log (10954 s): 12 rows spliced, all of x1832.
+07:31 to 11:13, largest peak 4.6 GB (ULK; v20 7.0 GB, the nightly
+6.0), no row cut or killed.
+
+**Inputs.** 14 boards gained `.kicad_dru` files on 2026-10-24 (12:38)
+after v20, so compare.py marks them INPUT against v20 and the comparison
+with v20 is over the other 95; the nightly of 2026-10-25 ran on the
+same inputs as v21 (no board INPUT).
+
+| | v20 (x1725) | nightly 2026-10-25 (356c8db, x1817) | v21 (x1832) |
+|---|---|---|---|
+| pass, per-type rule | 53 of 109 | 53 of 109 | **56 of 109** |
+| pass, strict rule (rule 4) | 53 of 109 | 53 of 109 | **56 of 109** |
+| strict passes on the 95 boards of the same input as v20 | 49 | - | 53 |
+| unconnected (all rows) | 1848 | 1788 | 2444 |
+| unconnected, the boards with a result in both | 1651 / 1561 (88 boards, same input) | 1788 / 1672 (100 boards) | |
+| new DRC errors (per-type rule) | 34 | 56 | 50 |
+| new DRC errors (strict rule) | 26 | 49 | 44 |
+| vias (rows with a result) | 33748 (102) | 32671 (100) | 33673 (104) |
+| length (rows with a result) | 809 m (102) | 791 m (100) | 800 m (104) |
+| work s | 83334 (102) | 78342 (100) | 83193 (104) |
+| CPU s (unpaired, a loaded machine) | 134234 | 135906 | 162932 |
+| first-route open terminals | 3878 (102) | 3672 (100) | 4908 (104) |
+| rows cut by the wall clock / killed | 0 / 0 | 0 / 0 | **0 / 0** |
+| rows without a result | 7 | 9 | **5** |
+| our vias in pads (score-kicad-board) | 0 on all 102 | 0 on all 100 | **0 on all 104** |
+| vias against the designer's (median) | x0.76 (102) | x0.72 (100) | x0.72 (104) |
+| length against the designer's (median) | x1.05 | x1.05 | x1.04 |
+| open over connections (median, mean) | 0.000, 0.091 | 0.000, 0.097 | 0.000, 0.124 |
+| bends per connection against the designer's (median) | x1.11 | x1.05 | x1.06 |
+| stair-steps, ours less the designer's (median) | +60.5 | +56 | +63.5 |
+| pin-row crossings, ours less the designer's (median) | +1 | +0 | +0.5 |
+| ground pour cut, ours less the designer's (median) | +0 mm (95; 1 lost) | +0 mm (93; 1 lost) | +0 mm (97; 1 lost) |
+| final ladder's share of the budget (median) | 0.721 (49 rows) | 0.772 (41 rows) | **0.762** (45 rows) |
+
+The all-rows unconnected total rises because four boards without a
+result in the nightly have one now, all with many open: the OpenESC
+4in1 panel 499, katia 162, the 0xCB pcb-panel 93 and laptop power 18
+(772 in all). On the boards with a result in both, v21 leaves fewer open
+than either: 1672 against the nightly's 1788 (100 boards) and 1561
+against v20's 1651 (the 88 of the same input with a result in both;
+vias 29498 against 30189, length 728 m against 745). Over the 95 boards
+of the same input compare.py's medians move: vias x0.77 -> x0.75, length
+x1.05 -> x1.03, bends x1.10 -> x1.05, stair-steps +59 -> +63.5, crossings
++0.5 -> +0, strict errors 19 -> 9.
+
+**Against the nightly** (compare.py, 109 boards, same inputs): better 6,
+same 91, worse 3; 86 rows are identical in routed count, unconnected,
+vias, length and strict findings. Better: the OpenRX panel 248 -> 200,
+protoesp 105 -> 70, the OpenESC 4in1 139 -> 106, Glasgow 145 -> 143,
+koeg 13 -> 11, homebrew_486 1 -> 0. Worse: RP2040_base 47 -> 50, the Hub
+21 -> 22, woagboard 4 -> 5. Strict pass gained, 3, none lost:
+homebrew_486 (its one open item routed), neotron-pico (hole_clearance 4
+-> none) and ghoul (hole_clearance 1 -> none), both with nothing open
+before and after.
+
+**Against v20** (compare.py, the 95 boards of the same input): better
+20, same 59, worse 9. Better, the largest: MegaDrive 191 -> 110,
+SmartSpin2k_Panelized 80 -> 34, SNSP-CPU-01 91 -> 53, ATAT1800 28 -> 5,
+split72_left 38 -> 23, jetson 15 -> 1, eurorack-pmod 21 -> 10,
+split42_right 27 -> 20, protoesp 76 -> 70, the Hub 28 -> 22. Worse:
+katia 37 -> 162, video 165 -> 190, split42_left 5 -> 18, split72_right
+20 -> 24, koeg 7 -> 11, DSP-ADAU1452 15 -> 17, woagboard 3 -> 5,
+ULK_sl_PG1316s 2 -> 3, Quanta75 BareRP2040 34 -> 35. Strict pass gained,
+4: hackrf-one, eternal-keypad, ghoul, neotron-pico; lost, 1, of the
+INPUT boards: MokyaLora (clearance 3, nothing open; it gained a
+`.kicad_dru`). Of the other INPUT boards, laptop motherboard 3 -> 38,
+4in1-mini 37 -> 81, the OpenESC 4in1 79 -> 106 and laptop power 1 -> 18
+leave more open, Sisu 28 -> 19, the A13 module 18 -> 5 and SUMEC 12 -> 5
+fewer.
+
+**The nine boards without a result in the nightly**:
+
+| Board | nightly 2026-10-25 | v21 |
+| --- | --- | --- |
+| OpenESC-30x30 4in1-panel | 34 parts without a legal place | 43/184 routed, 499 open |
+| katia | 10 parts without a legal place | 72/162 routed, 162 open (v20: 37) |
+| laptop power | 27 parts without a legal place | 99/115 routed, 18 open (v20: 1; INPUT) |
+| 0xCB-1337 pcb-panel | kicad-cli's DRC timed out after 900 s | 274/340 routed, 93 open |
+| PolyKybd molecule 4x4 | 48 parts without a legal place | 29 parts without a legal place |
+| molecule 4x5 | 60 | 45 |
+| molecule 5x2_shifted | 42 | 3 |
+| molecule 5x4_wave | 21 | 5 |
+| molecule 7x5_wave_left | 48 | 9 |
+
+Four have a result now, none passes; the five molecule panels still
+refuse, with fewer parts left without a place (v20 had 18, 35, 10, 2 and
+3). None of the nine is a target.
+
+**Strict errors, 44 on 10 boards**: link length_out_of_range 12, Sisu
+items_not_allowed 8 and diff_pair_uncoupled_length_too_long 1, vaio_re
+solder_mask_bridge 5, USB_Keypad connection_width 4, WLED_Matrix
+connection_width 3 and track_dangling 1, the A13 module items_not_allowed
+3, MokyaLora clearance 3, protoesp solder_mask_bridge 1 and clearance 1,
+the 0xCB panel starved_thermal 1, osprey copper_edge_clearance 1. One
+board fails the strict rule with nothing open: MokyaLora (clearance 3).
+Of the 53 that fail, 17 are within five connections and five errors of
+clean, 20 leave more than 20 open, 5 have no result.
+
+### Placement or routing on one binary (matched designer tier, x1832)
+
+`build/designer-x1832-matched.log`: all 109 boards routed by x1832 on the
+designer's placement at `--budget-scale 0.762` (v21's median final-ladder
+share over 45 rows, `nightly-report.py --ladder-share`; 1143 s of work),
+`--quality`, 8 jobs x 1 thread, `--order peak-desc` (designer.json's
+measured peaks, the largest first), `--min-free-gb 10`, `--ledger-priority
+nightly`, in one part after the sweep: 11:14 to 14:33, 11958 s wall,
+largest peak 5.0 GB, no row cut or killed, every row with a result.
+**66 of 109 pass the per-type rule, 62 the strict rule** (x1539's matched
+tier: 61 / 54); 3465 unconnected in all, of which the five PolyKybd
+molecule panels leave 2276 (the layout refuses them) and Batch_1 326;
+strict errors 55; medians against the designer's own board: vias x0.53,
+length x0.98, bends x0.86, stair-steps +7.
+
+`compare.py --gap build/github-layout-v21.log build/designer-x1832-matched.log --targets`
+over the **100 target boards with both results** (every target board):
+**layout open 1740, designer-route open 742: placement gap +998 (57 %),
+routing gap 742 (43 %)**; ours is worse on 33, the same on 60, better on
+7. Batch_1 again dominates the routing side (the designer route 326
+open, ours 268); without it 1472 against 416: placement 72 %, routing
+28 %. Over all 104 boards with both results (the panels included):
+2444 against 1189, placement 51 %, routing 49 %. v19's matched split
+(x1539, 97 target boards) was 59 / 41; v20's (25 boards) is not
+comparable.
+
+**The five boards whose placement costs most** (ours / designer route,
+open connections):
+
+| Board | Connections | Layout open | Designer route open | Placement gap |
+| --- | --- | --- | --- | --- |
+| video | 371 | 190 | 1 | +189 |
+| katia | 162 | 162 | 10 | +152 |
+| 0xCB-1337 pcb-panel | 340 | 93 | 0 | +93 |
+| OpenESC-30x30 4in1 | 152 | 106 | 15 | +91 |
+| glasgow revC3 | 226 | 143 | 55 | +88 |
+
+Next: protoesp +69 (70 / 1), MegaDrive +54 (110 / 56), the 0xCB panel
++50 (50 / 0), 4in1-mini +44 (81 / 37), SmartSpin2k_Panelized +34 (34 /
+0). Routing first (the designer route leaves as much or more): Batch_1
+326 / ours 268, ATAT1800 35 / 5, Sisu 21 / 19, vaio_re 11 / 9, and
+RP2040_base 46 / 50, where the placement adds 4.
+
+**Worse than the nightly, for the next triage.** The rows are
+deterministic for their binary, so every change is the binary's; by
+open connections only three boards are worse than the nightly, all by
+one to three: RP2040_base 47 -> 50 (vias 399 -> 482), the Hub 21 -> 22,
+woagboard 4 -> 5 (a spliced row of x1832). None loses a pass. The
+boards the nightly had no result for and v21 lays out badly are the
+larger triage items: katia 162 open (v20 37; the designer route 10) and
+laptop power 18 (v20 1; the designer route passes), and, against v20 on
+the same input, split42_left 5 -> 18, video 165 -> 190 and split72_right
+20 -> 24, the same in the nightly (18, 190, 24), and koeg 7 -> 11 (the
+nightly 13); the designer route leaves 4, 1, 1 and 1 on them.
+
+**Since v21**: x1833 (main e935324: exact escape stubs on by default and
+the pour model matching KiCad; the expansion tier 589 -> 557 open,
+passes 21 -> 24) post-dates this sweep and moves routing, so v22 is
+expected to improve.
+
 ## Expansion intake: 5 834 boards routed on the designer's placement (2026-10-18)
 
 `benchmarks/expansion/` (README there) harvested 5 834 native KiCad boards
