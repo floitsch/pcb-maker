@@ -209,15 +209,31 @@ impl Router {
             // thermal vias merged into it inherit the zone's thermal
             // relief, which KiCad's DRC checks (ray4477's U1.33 and
             // OpenAir's U5.17 vias on the far layers: no model row).
-            if isolated(terminal)
-                || (solid_pad(terminal)
-                    && (pad_index == description.terminals[terminal].pad
-                        || self
-                            .board
-                            .merged_pads
-                            .iter()
-                            .any(|merged| merged.padstack && merged.pad == pad_index)))
-            {
+            // A pad merged into its terminal that is not its terminal's
+            // own copper (an exposed pad's thermal via) has its own zone
+            // connection, which KiCad's DRC checks by pad
+            // (`merged_pad_thermal`: glasgow's U1.57, whose vias are set
+            // to solid inside a thermal exposed pad).
+            let merged = self.board.merged_pads.iter().find(|merged| {
+                merged.net == net
+                    && !merged.padstack
+                    && merged.pad == pad_index
+                    && merged.host == terminal
+            });
+            let skipped = match merged {
+                Some(merged) => !self.merged_pad_thermal(merged),
+                None => {
+                    isolated(terminal)
+                        || (solid_pad(terminal)
+                            && (pad_index == description.terminals[terminal].pad
+                                || self
+                                    .board
+                                    .merged_pads
+                                    .iter()
+                                    .any(|merged| merged.padstack && merged.pad == pad_index)))
+                }
+            };
+            if skipped {
                 continue;
             }
             for layer in layers_of_nodes {
@@ -1017,6 +1033,7 @@ impl Router {
                 Some(_) => false,
             }
         };
+        let neck_kept: std::cell::RefCell<HashMap<(usize, u32), bool>> = Default::default();
         let kept_piece = |parent: &mut Vec<usize>, layer: usize, point: crate::geometry::Point| {
             let radius = self.board.classes[state.plane_class[layer]].trace_width / 2.0 + pitch;
             let mut best: Option<(f64, u32)> = None;
@@ -1040,10 +1057,30 @@ impl Router {
                     }
                 }
             }
-            best.is_some_and(|(_, piece)| {
+            let Some((_, piece)) = best else {
+                return false;
+            };
+            let kept = |parent: &mut Vec<usize>, piece: u32, at: crate::geometry::Point| {
                 terminal_roots.contains(&find(parent, piece as usize))
-                    || kept_bare(layer, point, piece)
-            })
+                    || kept_bare(layer, at, piece)
+            };
+            if kept(parent, piece, point) {
+                return true;
+            }
+            // A piece holding nothing may be one outline of KiCad's with
+            // a kept piece the lattice cuts it from (`neck_joined`).
+            if let Some(known) = neck_kept.borrow().get(&(layer, piece)) {
+                return *known;
+            }
+            let joined = self.neck_joined(
+                &probe,
+                &pours.label[layer],
+                layer,
+                piece,
+                &mut |other, at| kept(parent, other, at),
+            );
+            neck_kept.borrow_mut().insert((layer, piece), joined);
+            joined
         };
         // Per layer, the plated holes of the net's thermal pads there.
         let thermal_holes: Vec<Vec<usize>> = (0..layers)
@@ -1275,17 +1312,28 @@ impl Router {
                     // its own spoke, Castor's C12.1; U11.10's spoke is cut
                     // over the pad by its neighbours in the row).
                     spokes.iter().any(|spoke| {
+                        let outcome = records_outcomes[spoke.record][spoke.index];
                         if spoke.layer != record.layer
-                            || matches!(
-                                records_outcomes[spoke.record][spoke.index],
-                                SpokeOutcome::NoFill | SpokeOutcome::Blocked
-                            )
+                            || matches!(outcome, SpokeOutcome::NoFill)
                             || !inside(spoke, point)
                         {
                             return false;
                         }
                         let offset = [point[0] - spoke.anchor[0], point[1] - spoke.anchor[1]];
                         let along = offset[0] * spoke.direction[0] + offset[1] * spoke.direction[1];
+                        // A spoke whose end lands is KiCad's (its filler
+                        // tests the end alone) and other nets' clearances
+                        // cut it only beyond the pad: where they block it
+                        // the part over the pad stays fill (video's
+                        // U15.59, its tracks to the pad's edge end there).
+                        let reach = if matches!(outcome, SpokeOutcome::Blocked) {
+                            if along > spoke.edge + 1.0e-6 {
+                                return false;
+                            }
+                            spoke.edge
+                        } else {
+                            spoke.tip
+                        };
                         let across =
                             offset[0] * spoke.direction[1] - offset[1] * spoke.direction[0];
                         // A brush centre in the spoke (within `side` of its
@@ -1299,7 +1347,7 @@ impl Router {
                         let mut tried: Vec<(i64, i64)> = Vec::new();
                         (-4..=4).any(|i: i64| {
                             (-4..=4).any(|j: i64| {
-                                let along = (along + i as f64 * step).clamp(0.0, spoke.tip);
+                                let along = (along + i as f64 * step).clamp(0.0, reach);
                                 let across =
                                     (across + j as f64 * step).clamp(-spoke.side, spoke.side);
                                 let key = (
@@ -1784,6 +1832,209 @@ impl Router {
             }
         }
         segments
+    }
+
+    /// Whether lattice piece `piece` of the fill on `layer` (`labels`, the
+    /// pour map's) is one outline of KiCad's fill with a piece `kept`
+    /// accepts, joined by a neck the lattice misses: a passage whose brush
+    /// centres lie between the nodes. KiCad's fill keeps a passage as wide
+    /// as the zone's minimum width, whose centres may lie on one line a few
+    /// microns wide (video's +5V on In2.Cu: a 0.26 mm strip between the
+    /// zone's edge and a via's clearance, its centres 10 microns from the
+    /// nearest node; the 50 mm² piece beyond it holds a via, and a track of
+    /// U21.7 ending over it is a spoke to KiCad's DRC). From the pieces
+    /// reached so far (a few at most), for each other piece with a node
+    /// within `NECK_REACH` of one of theirs, the closest pairs of nodes are
+    /// tried: a flood of brush centres (`FillProbe::fits`) on a grid of a
+    /// twelfth of the pitch, 8-connected, in their box grown by one and a
+    /// half pitches. `kept` gets the other piece and a point of it. No work
+    /// is charged beyond the probe's own: it runs only for track ends over
+    /// a piece holding nothing.
+    pub(super) fn neck_joined(
+        &self,
+        probe: &fill::FillProbe,
+        labels: &[u32],
+        layer: usize,
+        piece: u32,
+        kept: &mut dyn FnMut(u32, crate::geometry::Point) -> bool,
+    ) -> bool {
+        const NECK_REACH_PITCHES: i64 = 10;
+        const PAIRS_PER_PIECE: usize = 4;
+        const MAX_PIECES: usize = 6;
+        let (nx, ny) = (self.grid.nx as i64, self.grid.ny as i64);
+        let label = |x: i64, y: i64| {
+            if x < 0 || y < 0 || x >= nx || y >= ny {
+                0
+            } else {
+                labels[(y * nx + x) as usize]
+            }
+        };
+        let mut reached = vec![piece];
+        let mut queue = vec![piece];
+        let mut tried: HashSet<u32> = HashSet::new();
+        while let Some(current) = queue.pop() {
+            // Its rim: nodes with a side neighbour outside it.
+            let rim: Vec<(i64, i64)> = labels
+                .iter()
+                .enumerate()
+                .filter(|(_, label)| **label == current)
+                .map(|(index, _)| ((index as i64) % nx, (index as i64) / nx))
+                .filter(|(x, y)| {
+                    [(1, 0), (-1, 0), (0, 1), (0, -1)]
+                        .iter()
+                        .any(|(dx, dy)| label(x + dx, y + dy) != current)
+                })
+                .collect();
+            let mut pairs: HashMap<u32, Vec<(i64, (i64, i64), (i64, i64))>> = HashMap::new();
+            for &(x, y) in &rim {
+                for dy in -NECK_REACH_PITCHES..=NECK_REACH_PITCHES {
+                    for dx in -NECK_REACH_PITCHES..=NECK_REACH_PITCHES {
+                        let distance = dx * dx + dy * dy;
+                        if distance > NECK_REACH_PITCHES * NECK_REACH_PITCHES {
+                            continue;
+                        }
+                        let other = label(x + dx, y + dy);
+                        if other == 0 || reached.contains(&other) || tried.contains(&other) {
+                            continue;
+                        }
+                        let entry = pairs.entry(other).or_default();
+                        entry.push((distance, (x, y), (x + dx, y + dy)));
+                        if entry.len() > 4 * PAIRS_PER_PIECE {
+                            entry.sort_unstable();
+                            entry.truncate(PAIRS_PER_PIECE);
+                        }
+                    }
+                }
+            }
+            let mut others: Vec<(u32, Vec<(i64, (i64, i64), (i64, i64))>)> =
+                pairs.into_iter().collect();
+            others.sort_unstable_by_key(|(other, candidates)| {
+                (candidates.iter().map(|pair| pair.0).min(), *other)
+            });
+            for (other, mut candidates) in others {
+                candidates.sort_unstable();
+                candidates.truncate(PAIRS_PER_PIECE);
+                tried.insert(other);
+                let passage = candidates
+                    .iter()
+                    .any(|(_, from, to)| self.brush_passage(probe, layer, *from, *to));
+                if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() {
+                    eprintln!(
+                        "neck layer {layer}: piece {current} to {other} ({:?}): {passage}",
+                        candidates
+                            .iter()
+                            .map(|(_, from, to)| (
+                                self.grid.center(from.0 as usize, from.1 as usize),
+                                self.grid.center(to.0 as usize, to.1 as usize)
+                            ))
+                            .collect::<Vec<_>>()
+                    );
+                }
+                if !passage {
+                    continue;
+                }
+                let (x, y) = candidates[0].2;
+                if kept(other, self.grid.center(x as usize, y as usize)) {
+                    return true;
+                }
+                if reached.len() < MAX_PIECES {
+                    reached.push(other);
+                    queue.push(other);
+                }
+            }
+        }
+        false
+    }
+
+    /// Whether brush centres of the fill join lattice node `from` to node
+    /// `to` (`neck_joined`): a flood of centres from `from` reaches one
+    /// whose brush overlaps `to`'s, less than the minimum width from it.
+    /// KiCad's pruning deflates the fill by half the minimum width and
+    /// inflates it again, so two sets of centres closer than that are one
+    /// outline (and a centre that close to the net's own track touches
+    /// its copper: video's U21.8, a strip of fill beside its track).
+    fn brush_passage(
+        &self,
+        probe: &fill::FillProbe,
+        layer: usize,
+        from: (i64, i64),
+        to: (i64, i64),
+    ) -> bool {
+        const STEPS: i64 = 12;
+        let pitch = self.grid.pitch;
+        let step = pitch / STEPS as f64;
+        let origin = self.grid.center(from.0 as usize, from.1 as usize);
+        let target = self.grid.center(to.0 as usize, to.1 as usize);
+        let overlap = 2.0 * probe.brush_half(layer) - 1.0e-6;
+        let margin = STEPS + STEPS / 2;
+        let (x0, x1) = (
+            (to.0 - from.0).min(0) * STEPS - margin,
+            (to.0 - from.0).max(0) * STEPS + margin,
+        );
+        let (y0, y1) = (
+            (to.1 - from.1).min(0) * STEPS - margin,
+            (to.1 - from.1).max(0) * STEPS + margin,
+        );
+        let width = (x1 - x0 + 1) as usize;
+        let mut state = vec![false; width * (y1 - y0 + 1) as usize];
+        let slot = |x: i64, y: i64| ((y - y0) as usize) * width + (x - x0) as usize;
+        let mut stack = vec![(0i64, 0i64)];
+        state[slot(0, 0)] = true;
+        while let Some((x, y)) = stack.pop() {
+            let point = [origin[0] + x as f64 * step, origin[1] + y as f64 * step];
+            if crate::geometry::distance(point, target) < overlap {
+                return true;
+            }
+            for dy in -1..=1 {
+                for dx in -1..=1 {
+                    let (px, py) = (x + dx, y + dy);
+                    if (dx, dy) == (0, 0) || px < x0 || px > x1 || py < y0 || py > y1 {
+                        continue;
+                    }
+                    let index = slot(px, py);
+                    if state[index] {
+                        continue;
+                    }
+                    state[index] = true;
+                    let point = [origin[0] + px as f64 * step, origin[1] + py as f64 * step];
+                    if probe.fits(layer, point, &[]) {
+                        stack.push((px, py));
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Whether a pad merged into its terminal's larger pad (an exposed
+    /// pad's thermal via, not a padstack's other shape) connects to the
+    /// zone by a thermal relief. KiCad resolves the zone connection per pad
+    /// (`DRC_ENGINE::EvalZoneConnection`: the pad's own, else its
+    /// footprint's, else the zone's), and its DRC checks the spokes of a
+    /// thermal pad only: a via set to solid (`(zone_connect 2)`) is joined
+    /// by the fill wherever it touches, one set to none not at all, and
+    /// neither is a starved thermal however few spokes its neighbours
+    /// leave (glasgow's U1.57: the exposed pad on F.Cu thermal, its 25
+    /// vias solid, no finding on In1.Cu where the model counted one spoke).
+    /// The pad's own setting comes from the lowering's per-pad lists
+    /// (`Board::solid_pad_obstacles`, `isolated_pad_obstacles`); a board
+    /// without them (not lowered from KiCad) keeps the label's isolation.
+    pub(super) fn merged_pad_thermal(&self, merged: &crate::board::MergedPad) -> bool {
+        let board = &self.board;
+        if board.solid_pad_obstacles.is_empty() && board.isolated_pad_obstacles.is_empty() {
+            return board.nets[merged.net as usize]
+                .terminals
+                .get(merged.host)
+                .is_some_and(|host| board.isolated_pads.binary_search(&host.label).is_err());
+        }
+        board
+            .solid_pad_obstacles
+            .binary_search(&merged.pad)
+            .is_err()
+            && board
+                .isolated_pad_obstacles
+                .binary_search(&merged.pad)
+                .is_err()
     }
 
     /// Whether the spokes of a pad on a layer leave it a starved thermal to

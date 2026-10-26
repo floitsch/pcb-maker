@@ -4717,3 +4717,164 @@ fn idle_search_arrays_are_shared_and_go_with_the_last_router_of_their_lattice() 
     stray.release();
     assert_eq!(idle(), 0);
 }
+
+#[test]
+fn a_thermal_via_set_to_solid_is_no_thermal_pad() {
+    // P.1: a pad on the back (the terminal) and a through-hole pad of
+    // its number merged into it (an exposed pad's thermal via), zones on
+    // both layers. KiCad takes each pad's own zone connection: a via set
+    // to solid (glasgow's U1.57, `(zone_connect 2)` inside a thermal
+    // exposed pad) is no thermal pad, so it has no spokes to count; the
+    // exposed pad set to solid leaves its thermal via a thermal pad
+    // (ray4477's U1.33).
+    let records_of_the_via = |solid: Vec<usize>| {
+        let mut obstacles = vec![
+            copper(rect([5.0, 5.0], [0.8, 0.4]), 0, "P.1"),
+            copper(
+                Shape::Circle {
+                    center: [5.0, 5.0],
+                    radius: 0.4,
+                },
+                0,
+                "P.1",
+            ),
+        ];
+        obstacles[0].layers = 0b10;
+        obstacles[1].layers = 0b11;
+        let mut board = board(
+            2,
+            obstacles,
+            vec![Net {
+                name: "P".into(),
+                class: 0,
+                terminals: vec![Terminal {
+                    anchor: [5.0, 5.0],
+                    layers: 0b10,
+                    pad: 0,
+                    contact: None,
+                    label: "P.1".into(),
+                }],
+            }],
+            vec![plane(0, 0, Some((0.3, 0.4))), plane(0, 1, Some((0.3, 0.4)))],
+            vec!["P.1".into()],
+        );
+        board.solid_pad_obstacles = solid;
+        board.merged_pads.push(crate::board::MergedPad {
+            net: 0,
+            host: 0,
+            pad: 1,
+            anchor: [5.0, 5.0],
+            layers: 0b11,
+            padstack: false,
+        });
+        let router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
+        let (report, _, _) = spoke_report(&router, 0);
+        let via: Vec<usize> = report
+            .iter()
+            .filter(|record| record.pad == 1)
+            .map(|record| record.layer)
+            .collect();
+        (via, router.thermal_ring_pads(0))
+    };
+    let (via, rings) = records_of_the_via(vec![1]);
+    assert!(via.is_empty());
+    assert!(
+        rings
+            .iter()
+            .all(|pads| pads.iter().all(|(pad, _)| *pad != 1))
+    );
+    let (via, rings) = records_of_the_via(vec![0]);
+    assert_eq!(via, vec![0, 1]);
+    assert!(rings[0].iter().any(|(pad, _)| *pad == 1));
+}
+
+#[test]
+fn a_neck_the_lattice_misses_joins_two_pieces() {
+    // Q's wall splits P's zone in two, but for a strip 0.26 mm wide (the
+    // minimum width 0.25) between its two parts: the brush centres there
+    // lie on a line 0.01 mm wide that no node of the 0.1 mm lattice
+    // takes. KiCad's fill is one outline; the lattice has two pieces,
+    // which the neck search joins (video's +5V on In2.Cu).
+    let mut lower = copper(rect([5.0, 1.5], [0.2, 2.5]), 1, "Q.1");
+    let mut upper = copper(rect([5.0, 8.33], [0.2, 3.67]), 1, "Q.2");
+    lower.clearance = 0.0;
+    upper.clearance = 0.0;
+    let board = board(
+        1,
+        vec![
+            copper(
+                Shape::Circle {
+                    center: [8.0, 5.0],
+                    radius: 0.4,
+                },
+                0,
+                "P.1",
+            ),
+            lower,
+            upper,
+        ],
+        vec![
+            Net {
+                name: "P".into(),
+                class: 0,
+                terminals: vec![terminal(0, [8.0, 5.0], "P.1")],
+            },
+            Net {
+                name: "Q".into(),
+                class: 0,
+                terminals: vec![
+                    terminal(1, [5.0, 1.5], "Q.1"),
+                    terminal(2, [5.0, 8.33], "Q.2"),
+                ],
+            },
+        ],
+        vec![plane(0, 0, Some((0.3, 0.4)))],
+        Vec::new(),
+    );
+    let router = Router::new(
+        &board,
+        &Config {
+            pitches: vec![0.1],
+            ..Config::default()
+        },
+    );
+    let grid = router.grid().clone();
+    let (pours, _, _) = router.analyze_pours(0);
+    let piece = |x: f64, y: f64| pours.label[0][grid.nearest_node([x, y]).unwrap()];
+    let (left, right) = (piece(2.0, 5.0), piece(8.0, 3.0));
+    assert!(left != 0 && right != 0 && left != right);
+    let rings = vec![Vec::new()];
+    let probe = fill::FillProbe::new(&router, 0, &rings);
+    // The strip's centres: between Q's clearances, 4.2 + 0.125 to
+    // 4.46 - 0.125.
+    assert!(probe.fits(0, [5.0, 4.33], &[]));
+    assert!(!probe.fits(0, [5.0, 4.3], &[]) && !probe.fits(0, [5.0, 4.4], &[]));
+    assert!(
+        router.neck_joined(&probe, &pours.label[0], 0, left, &mut |other, _| other
+            == right)
+    );
+    // Without the strip (the wall closed), nothing joins them.
+    let mut closed = board.clone();
+    closed.obstacles[2].shape = rect([5.0, 8.0], [0.2, 4.0]);
+    let router = Router::new(
+        &closed,
+        &Config {
+            pitches: vec![0.1],
+            ..Config::default()
+        },
+    );
+    let (pours, _, _) = router.analyze_pours(0);
+    let piece = |x: f64, y: f64| pours.label[0][grid.nearest_node([x, y]).unwrap()];
+    let (left, right) = (piece(2.0, 5.0), piece(8.0, 3.0));
+    let probe = fill::FillProbe::new(&router, 0, &rings);
+    assert!(
+        !router.neck_joined(&probe, &pours.label[0], 0, left, &mut |other, _| other
+            == right)
+    );
+}
