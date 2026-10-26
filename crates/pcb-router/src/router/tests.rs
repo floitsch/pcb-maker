@@ -4885,3 +4885,89 @@ fn a_neck_the_lattice_misses_joins_two_pieces() {
             == right)
     );
 }
+
+#[test]
+fn a_spoke_cut_short_of_its_end_joins_the_fill_beside_it() {
+    // Q's edge runs at 45 degrees across the end of P.1's right spoke:
+    // its clearance leaves no brush room across the spoke where the fill's
+    // own brush centres begin, but below the spoke's axis the fill reaches
+    // the spoke's remnant (0xCB's U3.23 on B.Cu, a VCC track's clearance
+    // across its diagonal spoke). KiCad counts the spoke; the measurement
+    // does (`spoke_joins_fill`), routing's model keeps it blocked.
+    let obstacles = vec![
+        copper(rect([5.0, 5.0], [0.5, 0.5]), 0, "P.1"),
+        copper(
+            Shape::Circle {
+                center: [2.0, 8.0],
+                radius: 0.4,
+            },
+            0,
+            "P.2",
+        ),
+        copper(
+            Shape::Polygon {
+                points: vec![[6.795, 4.5], [7.5, 4.5], [7.5, 6.0], [5.295, 6.0]],
+            },
+            1,
+            "Q.1",
+        ),
+    ];
+    let board = board(
+        1,
+        obstacles,
+        vec![
+            Net {
+                name: "P".into(),
+                class: 0,
+                terminals: vec![
+                    terminal(0, [5.0, 5.0], "P.1"),
+                    terminal(1, [2.0, 8.0], "P.2"),
+                ],
+            },
+            Net {
+                name: "Q".into(),
+                class: 0,
+                terminals: vec![terminal(2, [7.0, 5.5], "Q.1")],
+            },
+        ],
+        vec![plane(0, 0, Some((0.3, 0.4)))],
+        vec!["P.2".into()],
+    );
+    let outcome = |measured: bool| {
+        let router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                measured_thermals: measured,
+                ..Config::default()
+            },
+        );
+        let (report, _, _) = spoke_report(&router, 0);
+        report
+            .iter()
+            .find(|record| record.terminal == 0)
+            .unwrap()
+            .outcomes
+    };
+    let good = |outcomes: &[SpokeOutcome; 4]| {
+        outcomes
+            .iter()
+            .filter(|outcome| matches!(outcome, SpokeOutcome::Good(piece) if *piece != 0))
+            .count()
+    };
+    let measured = outcome(true);
+    let routing = outcome(false);
+    let blocked = |outcomes: &[SpokeOutcome; 4]| {
+        outcomes
+            .iter()
+            .filter(|outcome| matches!(outcome, SpokeOutcome::Blocked))
+            .count()
+    };
+    assert_eq!(blocked(&routing), 1, "{routing:?}");
+    assert_eq!(blocked(&measured), 0, "{measured:?}");
+    assert_eq!(
+        good(&measured),
+        good(&routing) + 1,
+        "{measured:?} {routing:?}"
+    );
+}
