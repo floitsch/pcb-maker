@@ -259,8 +259,9 @@ it.
 
 ## Committed on 2026-10-26 (pours: the second zone and the keep_whole check; decoupling by default; starter constraints)
 
-Branch pours-decoupling, snapshots x14740 to x14742 (x14741: the switch
-on, measured; x14742: the branch head's default, the placement x1835's).
+Branch pours-decoupling, snapshots x14740 to x14743 (x14741: the switch
+on, measured against x1835; x14743: the head, rebased on d7159a3, its
+default placements byte-identical to x1838's, the switch's to x14741's).
 From the trial's frictions 2, 3, 4 and 7
 ([reviews/2026-10-26-fresh-agent-trial.md](reviews/2026-10-26-fresh-agent-trial.md)).
 
