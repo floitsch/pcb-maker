@@ -34,14 +34,14 @@ The environment variables are indexed in the hand-over
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 10 | - | 2 | 10 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 72 | - | 0 | 72 | - |
-| [Placer settings](#placer-settings) | 53 | 49 | 4 | 53 | 27 |
+| [Placer settings](#placer-settings) | 54 | 50 | 4 | 54 | 27 |
 | [Layout settings](#layout-settings) | 20 | 20 | 0 | 20 | 9 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 3 |
 | [Layout settings: silkscreen](#layout-settings-silkscreen) | 1 | 1 | 0 | 1 | 1 |
 | [Layout settings: race_probe](#layout-settings-race_probe) | 3 | 3 | 0 | 3 | 3 |
 | [Layout settings: move_descent](#layout-settings-move_descent) | 7 | 7 | 0 | 7 | 0 |
-| [Placer core](#placer-core) | 10 | - | 0 | 10 | - |
+| [Placer core](#placer-core) | 11 | - | 0 | 11 | - |
 | [Placer core: global](#placer-core-global) | 12 | - | 0 | 12 | - |
 | [Placer core: anneal](#placer-core-anneal) | 9 | - | 0 | 9 | - |
 
@@ -366,6 +366,7 @@ The placer config file of `place-kicad-board`, and the `placer` object of the la
 | `copper_edge_clearance_mm` | `Option<f64>` | unset | - | The board's copper-to-edge clearance: pads of parts held at an edge keep it. Read from the project when not given. |
 | `tight_bodies` | `Option<bool>` | unset | - | When nothing else fits, bodies may shrink to their fabrication outline and pads (courtyards overlap). Read from the project when not given: allowed unless KiCad's DRC treats a courtyard overlap as an error. |
 | `holes_in_courtyards_error` | `Option<bool>` | unset | - | Whether the project makes a hole inside another part's courtyard an error (`pth_inside_courtyard` or `npth_inside_courtyard`); `None`: read it from the project. Where it does not, a part's holes and pads on the other side keep only the copper clearance from that side's pads (leads through the board still keep off bodies). |
+| `silk_over_parts_error` | `Option<bool>` | unset | - | Whether the project makes the board's silkscreen over a part an error (`silk_overlap` or `silk_over_copper`); `None`: read it from the project. Where it does not, the board's silkscreen marks are no obstacle at the placer's last level (KiCad's legality), only a preference at the others. |
 | `auto_decoupling` | `bool` | `true` | - | Decoupling capacitors (small capacitors between a supply rail and ground) are pulled to the supply pins of the ICs on their rail, unless a constraint already names them. |
 | `decoupling_mm` | `Option<f64>` | unset | placer.md | How close (body to pin) a decoupling capacitor below 4.7 uF is pulled to its IC's supply pin; `None` (the default): 1 mm with `decoupling_near`, else 2.5 mm. At 2.5 mm (first pins only) a third of the capacitors ended within 3 mm of their pin where designers put 60 % there (quick tier). Bulk capacitors (4.7 uF and more) 5 mm. |
 | `decoupling_near` | `bool` | `false` | placer.md | Decoupling at the pins (default off; docs/placer.md, "Decoupling at the pins (2026-10-26)"): each decoupling capacitor is pulled to the nearest of every supply pin of its rail on the ICs (an RP2350's ten +3V3 pins), not only to each IC's first pin on the rail, at 1 mm (`decoupling_mm`); and near relations follow their anchors in the legaliser (`follow_anchors`: a part near another is legalised right after it, from its annealed place moved as far as its anchor moved, and pays for the relation at each spot). The trial's rp2350-dual-usb went from 14 % of its capacitors within 3 mm of a pin to 50 %; on the eleven dense boards the capacitors' median fell on nine and rose on the two OpenESC boards, KiCad's unconnected within the noise (summed medians 974 to 987), so by the agreed rule it is a switch. |
@@ -497,6 +498,7 @@ The `move_descent` object of the layout settings (an experiment, off when absent
 | `orientation_search` | `bool` | `true` | `orientation_search` | The orientation search starts from a canonical pose (`orient`): angle options in a fixed order, every movable part that may turn at the first of them, so that the placement does not depend on the angles the board held (0 degrees from an import, the designer's in a stack). Off: the parts start at the angles they hold, options in the order given (the placer before 2026-10-15). |
 | `bus_groups` | `Option<groups::Settings>` | unset | `bus_groups` | Bus-group moves (`groups`, docs/placer.md "Bus-group moves (2026-10-26)"): banks of parts on one bus and parts with their passives move, turn, trade places and reorder as units in the anneal and the refinement. Off (`None`) by default. |
 | `kicad_legality` | `bool` | `false` | `legality` | KiCad's legality at the levels whose spacing is the rules' least (`Constraints::pad_clearance`): what KiCad's DRC accepts of a designer's placement there, rather than bodies kept the copper clearance apart. Off by default (docs/placer.md, "The legality model against KiCad"). |
+| `kicad_last_level` | `bool` | `false` | `legality` | KiCad's legality at the last level (where courtyards may touch), whatever `kicad_legality` says: courtyards touch where the pads keep the copper clearance pad to pad, an unheld part's pads keep the edge margin, the board's silkscreen marks the project does not rate an error over a part are no obstacle, and a lead through the board keeps the copper clearance from the far side's pads (docs/placer.md, "The legality model against KiCad", the molecules). |
 
 ## Placer core: global
 
