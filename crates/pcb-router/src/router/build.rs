@@ -635,6 +635,15 @@ impl Router {
     pub(super) fn mem_update(&self) {
         if crate::mem_profile::enabled() {
             self.mem_token.update(self.memory_parts());
+            if self.occupancy.overflowing() > 0 {
+                crate::mem_profile::note(
+                    &format!(
+                        "occupancy: {} counts beyond 15 kept apart,",
+                        self.occupancy.overflowing()
+                    ),
+                    self.occupancy.bytes(),
+                );
+            }
         }
     }
 
