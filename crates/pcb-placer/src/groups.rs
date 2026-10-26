@@ -258,9 +258,9 @@ impl BusGroups {
         }
         // Every part that may lead leads a cluster.
         let mut cluster_of = vec![None; count];
-        for index in 0..count {
+        for (index, cluster) in cluster_of.iter_mut().enumerate() {
             if leads(index) {
-                cluster_of[index] = Some(groups.len());
+                *cluster = Some(groups.len());
                 groups.push(Group {
                     kind: Kind::Cluster,
                     chain: vec![index],
@@ -801,7 +801,7 @@ pub fn arrange(problem: &Problem, groups: &BusGroups, poses: &mut [Pose]) -> Arr
         nets.sort_unstable();
         nets.dedup();
         let length_before = wirelength(poses, &nets);
-        let mut best: Option<(f64, Vec<(usize, Pose)>, i64)> = None;
+        let mut best: Option<(f64, Vec<(usize, Pose)>)> = None;
         let mut first = true;
         for how in [Reorder::InPlace, Reorder::Along(0), Reorder::Along(1)] {
             let Some(moved) = reordered(problem, poses, group, parts, how, &margin) else {
@@ -843,14 +843,14 @@ pub fn arrange(problem: &Problem, groups: &BusGroups, poses: &mut [Pose]) -> Arr
                 result.cost_before += length_before;
                 first = false;
             }
-            if cost < best.as_ref().map_or(-1.0e-9, |(least, _, _)| *least) {
-                best = Some((cost, moved, change));
+            if cost < best.as_ref().map_or(-1.0e-9, |(least, _)| *least) {
+                best = Some((cost, moved));
             }
             for (part, pose) in old {
                 poses[part] = pose;
             }
         }
-        if let Some((cost, moved, _)) = best {
+        if let Some((cost, moved)) = best {
             let list: Vec<usize> = moved.iter().map(|(part, _)| *part).collect();
             for (part, pose) in &moved {
                 poses[*part] = *pose;
