@@ -1293,22 +1293,27 @@ fn length_rules(
                 {
                     continue;
                 }
-                let group = groups.entry((index, kind)).or_insert_with(|| KiCadLengthRule {
-                    rule: picked.rule.clone(),
-                    constraint: kind.to_string(),
-                    min: picked.min,
-                    opt: picked.opt,
-                    max: picked.max,
-                    within_diff_pairs: rule
-                        .constraints
-                        .iter()
-                        .rev()
-                        .find(|constraint| constraint.kind == kind)
-                        .is_some_and(|constraint| {
-                            constraint.words.iter().any(|word| word == "within_diff_pairs")
-                        }),
-                    nets: Vec::new(),
-                });
+                let group = groups
+                    .entry((index, kind))
+                    .or_insert_with(|| KiCadLengthRule {
+                        rule: picked.rule.clone(),
+                        constraint: kind.to_string(),
+                        min: picked.min,
+                        opt: picked.opt,
+                        max: picked.max,
+                        within_diff_pairs: rule
+                            .constraints
+                            .iter()
+                            .rev()
+                            .find(|constraint| constraint.kind == kind)
+                            .is_some_and(|constraint| {
+                                constraint
+                                    .words
+                                    .iter()
+                                    .any(|word| word == "within_diff_pairs")
+                            }),
+                        nets: Vec::new(),
+                    });
                 let net = key(&fact.name);
                 if group.nets.last().is_none_or(|member| member.net != net) {
                     group.nets.push(KiCadLengthMember {
@@ -1533,7 +1538,10 @@ mod tests {
         let config = resolve_project_rules(&path, &board).unwrap();
         let rules = &config.length_rules;
         assert_eq!(rules.len(), 2, "{rules:?}");
-        let length = rules.iter().find(|rule| rule.constraint == "length").unwrap();
+        let length = rules
+            .iter()
+            .find(|rule| rule.constraint == "length")
+            .unwrap();
         assert_eq!(length.rule, "bus length");
         assert_eq!((length.min, length.max), (Some(25.0), Some(27.0)));
         assert_eq!(
@@ -1544,7 +1552,12 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["CLK", "D0", "D1"]
         );
-        assert!(length.nets.iter().all(|member| member.vias && member.layers.len() == 3));
+        assert!(
+            length
+                .nets
+                .iter()
+                .all(|member| member.vias && member.layers.len() == 3)
+        );
         // The skew rule holds on In1.Cu only: its nets' tracks there, no
         // via (KiCad evaluates a via's rules on F.Cu).
         let skew = rules.iter().find(|rule| rule.constraint == "skew").unwrap();

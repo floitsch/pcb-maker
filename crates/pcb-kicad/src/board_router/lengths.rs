@@ -349,7 +349,9 @@ pub(crate) fn match_lengths(
     // rule's all together (or each differential pair's two nets).
     let groups_of = |rule: &KiCadLengthRule| -> Vec<Vec<usize>> {
         if rule.constraint == "length" {
-            (0..rule.nets.len()).map(|position| vec![position]).collect()
+            (0..rule.nets.len())
+                .map(|position| vec![position])
+                .collect()
         } else if rule.within_diff_pairs {
             let mut by_base: BTreeMap<String, Vec<usize>> = BTreeMap::new();
             for (position, member) in rule.nets.iter().enumerate() {
@@ -485,7 +487,7 @@ fn meander_net(
     counted: &[bool],
     target: [f64; 3],
 ) -> (f64, Vec<LengthPattern>) {
-    let clearance = board.classes[board.nets[net as usize].class as usize].clearance;
+    let clearance = board.classes[board.nets[net as usize].class].clearance;
     let mut patterns = Vec::new();
     let mut added = 0.0;
     // The straight tracks, the longest first (by their geometry: the route
@@ -832,7 +834,13 @@ mod tests {
         };
         // CASE_2: the pad on F.Cu, a via in it, 13.335 mm on B.Cu.
         let tracks = [(3, [0.0, 0.0], [13.335, 0.0])];
-        let length = kicad_length(&tracks, &[[0.0, 0.0]], std::slice::from_ref(&pad), &heights, all);
+        let length = kicad_length(
+            &tracks,
+            &[[0.0, 0.0]],
+            std::slice::from_ref(&pad),
+            &heights,
+            all,
+        );
         assert!((length - 28.475).abs() < 1.0e-9, "{length}");
         // CASE_7 and CASE_8: F.Cu, In1.Cu, In2.Cu and back to F.Cu (or on
         // to B.Cu), a via at each change.
@@ -901,8 +909,14 @@ mod tests {
         let board = lower(&pcb, &config, true).unwrap().board;
         let mut result = core::route(&board, &core_config(&config));
         let names: Vec<String> = vec!["F.Cu".into(), "B.Cu".into()];
-        let (patterns, lengths) =
-            match_lengths(&board, &mut result, &config, &[0.0, 1.6], &names, &BTreeSet::new());
+        let (patterns, lengths) = match_lengths(
+            &board,
+            &mut result,
+            &config,
+            &[0.0, 1.6],
+            &names,
+            &BTreeSet::new(),
+        );
         assert_eq!(lengths.len(), 3, "{lengths:?}");
         // /A: from about 30 mm to the middle of its bounds; then /B to
         // within the skew of /A's new length.
@@ -953,8 +967,14 @@ mod tests {
         };
         let mut again = core::route(&board, &core_config(&config));
         let before = again.routes.clone();
-        let (patterns, lengths) =
-            match_lengths(&board, &mut again, &off, &[0.0, 1.6], &names, &BTreeSet::new());
+        let (patterns, lengths) = match_lengths(
+            &board,
+            &mut again,
+            &off,
+            &[0.0, 1.6],
+            &names,
+            &BTreeSet::new(),
+        );
         assert!(patterns.is_empty() && lengths.is_empty());
         assert_eq!(again.routes.len(), before.len());
     }

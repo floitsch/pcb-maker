@@ -293,6 +293,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "differential pairs: `0` turns off the return vias of the reference net (GND) beside a coupled run's vias, `1` turns them on (default on; the settings' `diff_pair_return_vias` wins; docs/router.md, \"Return vias\").",
     ),
     (
+        "PCB_ROUTER_LENGTH_MATCHING",
+        Kind::Switch,
+        "turns the length and skew rules' meanders off (0) or on (1) where the settings name none (`length_matching`; unset, on): a net shorter than a custom rule's `length` minimum, or further than a `skew` maximum below the longest net of its rule, gets a meander on a straight track of its route, written as a KiCad tuning pattern, and the verdict's `lengths` reports each such net (off: neither; docs/router.md, \"Length and skew rules\").",
+    ),
+    (
         "PCB_ROUTER_DIFF_PAIRS_DEBUG",
         Kind::Diagnostic,
         "differential pairs: prints each launch, each link's path, the copper refused with the reason, each stub straightened or not, and the fallback's work.",
