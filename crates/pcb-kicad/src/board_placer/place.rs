@@ -170,6 +170,7 @@ pub fn place_kicad_board(
     placer_config.anneal.legal_far_side = config.anneal_far_side_gaps;
     placer_config.routing_room = routing_room(config, &lowered);
     placer_config.orientation_search = config.orientation_search;
+    placer_config.bus_groups = config.bus_groups.as_ref().map(KiCadBusGroups::settings);
     if let Some(guidance) = &config.global_guidance {
         let router_config = config.guidance_router.clone().unwrap_or_default();
         placer_config.anneal.guidance = Some(core::guidance::Guidance {
@@ -539,6 +540,14 @@ pub fn place_kicad_board(
         seeds_run: seeds_run.get() as usize,
         seed_kept: kept_seeds[0],
         footprints,
+        bus_groups: config.bus_groups.as_ref().map(|bus_groups| {
+            KiCadBusGroupsReport::of(
+                &lowered.problem,
+                &bus_groups.settings(),
+                &placement.poses,
+                &lowered.references,
+            )
+        }),
     };
     let report_path = output_directory.join("board-placer.json");
     fs::write(

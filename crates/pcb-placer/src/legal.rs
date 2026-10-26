@@ -1779,7 +1779,14 @@ pub fn refine(problem: &Problem, poses: &mut [Pose], passes: usize) -> usize {
         .as_deref()
         .filter(|crossings| crossings.refine)
         .map(|crossings| crate::crossings::CrossingState::new(problem, crossings, poses));
-    refine_with(problem, poses, passes, escape.as_mut(), crossings.as_mut())
+    refine_with(
+        problem,
+        poses,
+        passes,
+        escape.as_mut(),
+        crossings.as_mut(),
+        None,
+    )
 }
 
 /// `refine`, with escape demand (`Problem::escape`) kept in `escape`
@@ -1791,6 +1798,7 @@ pub fn refine_with(
     passes: usize,
     mut escape: Option<&mut crate::escape::EscapeState>,
     mut crossings: Option<&mut crate::crossings::CrossingState>,
+    groups: Option<&crate::groups::BusGroups>,
 ) -> usize {
     if let Some(state) = escape.as_mut() {
         state.resync(poses);
@@ -2080,11 +2088,316 @@ pub fn refine_with(
                 }
             }
         }
+        // Bus groups as units (`crate::groups`).
+        if let Some(groups) = groups.filter(|groups| groups.settings.refine) {
+            let kept = refine_groups(
+                problem,
+                poses,
+                groups,
+                &mut buckets,
+                &cost,
+                escape.as_deref_mut(),
+                crossings.as_deref_mut(),
+            );
+            if kept > 0 {
+                improved = true;
+                improvements += kept;
+            }
+        }
         if !improved {
             break;
         }
     }
     improvements
+}
+
+/// The refinement's bus-group pass (`crate::groups`): each group with more
+/// than one part (its parts at the poses of now) tries to shift towards
+/// the pull of its nets (the whole way, half, a quarter), to turn about
+/// its centre, to trade places with each group like it and, a bank, to
+/// reorder its members along its axis; each candidate placed as a unit
+/// (`place_unit`) and judged by the wirelength of the moved parts' nets,
+/// their relations and their nets' crossings. The best that lowers that
+/// cost is kept. Escape demand does not judge these moves (the parts'
+/// own moves after it do); it is kept up to date. Returns the moves kept.
+fn refine_groups(
+    problem: &Problem,
+    poses: &mut [Pose],
+    groups: &crate::groups::BusGroups,
+    buckets: &mut Buckets,
+    cost: &dyn Fn(&[Pose], &[usize]) -> f64,
+    mut escape: Option<&mut crate::escape::EscapeState>,
+    mut crossings: Option<&mut crate::crossings::CrossingState>,
+) -> usize {
+    use crate::groups::{Kind, Reorder, chain_center, pull, reordered, rotated, translated};
+    let step = if problem.grid > 0.0 {
+        problem.grid
+    } else {
+        0.25
+    };
+    let rings = ((3.0 / step).ceil() as i64).clamp(1, 12);
+    let incident: Vec<Vec<usize>> = problem
+        .components
+        .iter()
+        .map(|component| {
+            let mut nets: Vec<usize> = component.pins.iter().map(|pin| pin.net).collect();
+            nets.sort_unstable();
+            nets.dedup();
+            nets
+        })
+        .collect();
+    let margin = |part: usize| problem.components[part].halo + problem.spacing / 2.0;
+    let mut kept = 0;
+    let mut parts = groups.attach(problem, poses);
+    for index in 0..groups.groups.len() {
+        if crate::out_of_work(0) {
+            break;
+        }
+        let group = &groups.groups[index];
+        let unit = &parts[index];
+        if group.kind == Kind::Cluster && unit.len() < 2 {
+            continue;
+        }
+        let mut candidates: Vec<Vec<(usize, Pose)>> = Vec::new();
+        if let Some(towards) = pull(problem, poses, unit) {
+            for fraction in [1.0, 0.5, 0.25] {
+                let shift = [towards[0] * fraction, towards[1] * fraction];
+                if shift[0].abs().max(shift[1].abs()) >= step / 2.0 {
+                    candidates.push(translated(problem, poses, unit, shift));
+                }
+            }
+        }
+        let center = chain_center(problem, poses, &group.chain);
+        for turn in [90.0, 180.0, 270.0] {
+            if let Some(moved) = rotated(problem, poses, unit, center, turn) {
+                candidates.push(moved);
+            }
+        }
+        for &other in &group.peers {
+            let theirs = &parts[other];
+            if unit.iter().any(|part| theirs.binary_search(part).is_ok()) {
+                continue;
+            }
+            let at = chain_center(problem, poses, &groups.groups[other].chain);
+            let mut moved =
+                translated(problem, poses, unit, [at[0] - center[0], at[1] - center[1]]);
+            moved.extend(translated(
+                problem,
+                poses,
+                theirs,
+                [center[0] - at[0], center[1] - at[1]],
+            ));
+            candidates.push(moved);
+        }
+        if group.kind == Kind::Bank {
+            for how in [Reorder::InPlace, Reorder::Along(0), Reorder::Along(1)] {
+                if let Some(moved) = reordered(problem, poses, group, unit, how, &margin) {
+                    candidates.push(moved);
+                }
+            }
+        }
+        let mut best: Option<(f64, Vec<(usize, Pose)>)> = None;
+        for wanted in candidates {
+            let mut list: Vec<usize> = wanted.iter().map(|(part, _)| *part).collect();
+            list.sort_unstable();
+            let mut nets: Vec<usize> = list
+                .iter()
+                .flat_map(|part| incident[*part].iter().copied())
+                .collect();
+            nets.sort_unstable();
+            nets.dedup();
+            let score = |poses: &[Pose]| {
+                cost(poses, &nets) + crate::groups::held_cost(problem, poses, &list)
+            };
+            let mut current = score(poses);
+            if let Some(state) = crossings.as_mut() {
+                current += state.weight() * state.involving(poses, &list) as f64;
+            }
+            let Some(placed) = place_unit_in(problem, poses, buckets, &wanted, rings) else {
+                continue;
+            };
+            let old: Vec<(usize, Pose)> = placed
+                .iter()
+                .map(|(part, _)| (*part, poses[*part]))
+                .collect();
+            for (part, pose) in &placed {
+                poses[*part] = *pose;
+            }
+            let mut candidate = score(poses);
+            let floor = best.as_ref().map_or(1.0e-9, |(gain, _)| *gain);
+            if current - candidate > floor
+                && let Some(state) = crossings.as_mut()
+            {
+                candidate += state.weight() * state.involving(poses, &list) as f64;
+            }
+            let gain = current - candidate;
+            if gain > floor {
+                best = Some((gain, placed));
+            }
+            for (part, pose) in old {
+                poses[part] = pose;
+            }
+        }
+        if let Some((_, placed)) = best {
+            let list: Vec<usize> = placed.iter().map(|(part, _)| *part).collect();
+            for (part, pose) in &placed {
+                buckets.remove(problem, *part, poses[*part]);
+                poses[*part] = *pose;
+                buckets.insert(problem, *part, *pose);
+            }
+            if let Some(state) = escape.as_mut() {
+                state.kept(poses, &list);
+            }
+            if let Some(state) = crossings.as_mut() {
+                state.kept(poses, &list);
+            }
+            kept += 1;
+            parts = groups.attach(problem, poses);
+        }
+    }
+    kept
+}
+
+/// Places a group of parts as a unit (the bus-group moves,
+/// `crate::groups`): `wanted` gives each part's pose; the largest part
+/// goes to the nearest legal spot around its own (the whole unit shifted
+/// with it, in rings of the grid out to `rings`), then each other part
+/// at its pose shifted alike, or where that is taken at the nearest legal
+/// spot within a millimetre of it. A unit whose largest part finds a legal
+/// spot and whose others do not is tried at the next few spots. Returns
+/// the poses, or `None` when the unit does not fit there. Legal against
+/// every part outside the unit (at `poses`) and among the unit's parts.
+pub fn place_unit(
+    problem: &Problem,
+    poses: &[Pose],
+    wanted: &[(usize, Pose)],
+    rings: i64,
+) -> Option<Vec<(usize, Pose)>> {
+    let mut buckets = Buckets::new(problem);
+    for (index, pose) in poses.iter().enumerate() {
+        buckets.insert(problem, index, *pose);
+    }
+    place_unit_in(problem, poses, &mut buckets, wanted, rings)
+}
+
+/// The anchor spots `place_unit` tries at most.
+const UNIT_TRIES: usize = 6;
+
+/// `place_unit` with the parts at `poses` in `buckets`.
+fn place_unit_in(
+    problem: &Problem,
+    poses: &[Pose],
+    buckets: &mut Buckets,
+    wanted: &[(usize, Pose)],
+    rings: i64,
+) -> Option<Vec<(usize, Pose)>> {
+    if wanted.is_empty() {
+        return Some(Vec::new());
+    }
+    let mut unit: Vec<usize> = wanted.iter().map(|(part, _)| *part).collect();
+    unit.sort_unstable();
+    let in_unit = |part: usize| unit.binary_search(&part).is_ok();
+    let mut order: Vec<(usize, Pose)> = wanted.to_vec();
+    order.sort_by(|(a, _), (b, _)| {
+        let area = |index: usize| {
+            let size = problem.components[index].body_size;
+            size[0] * size[1]
+        };
+        area(*b).total_cmp(&area(*a)).then(a.cmp(b))
+    });
+    let step = if problem.grid > 0.0 {
+        problem.grid
+    } else {
+        0.25
+    };
+    let member_rings = ((1.0 / step).ceil() as i64).max(1);
+    let mut scratch = poses.to_vec();
+    crate::add_work(poses.len() as u64 / 4);
+    let mut near = Vec::new();
+    let ring_offsets = |ring: i64| {
+        let mut offsets: Vec<(i64, i64)> = Vec::new();
+        for dy in -ring..=ring {
+            for dx in -ring..=ring {
+                if dx.abs().max(dy.abs()) == ring {
+                    offsets.push((dx, dy));
+                }
+            }
+        }
+        offsets.sort_by_key(|(dx, dy)| (dx * dx + dy * dy, *dy, *dx));
+        offsets
+    };
+    let shifted = |part: usize, pose: Pose, shift: Point| Pose {
+        position: constraints::snap_position(
+            problem,
+            part,
+            [pose.position[0] + shift[0], pose.position[1] + shift[1]],
+            pose.angle,
+        ),
+        angle: pose.angle,
+    };
+    // Whether `part` at `pose` is legal against the parts outside the unit
+    // and the unit's parts placed so far.
+    let mut legal = |scratch: &[Pose], placed: &[(usize, Pose)], part: usize, pose: Pose| {
+        buckets.near(problem, part, pose, &mut near);
+        near.retain(|other| !in_unit(*other));
+        is_legal(
+            problem,
+            scratch,
+            part,
+            pose,
+            near.iter()
+                .copied()
+                .chain(placed.iter().map(|(other, _)| *other)),
+        )
+    };
+    let (anchor, anchor_pose) = order[0];
+    let mut tries = 0;
+    for ring in 0..=rings {
+        for (dx, dy) in ring_offsets(ring) {
+            let shift = [dx as f64 * step, dy as f64 * step];
+            let pose = shifted(anchor, anchor_pose, shift);
+            if !legal(&scratch, &[], anchor, pose) {
+                continue;
+            }
+            tries += 1;
+            let mut placed = vec![(anchor, pose)];
+            scratch[anchor] = pose;
+            let mut fits = true;
+            for &(part, wanted_pose) in &order[1..] {
+                let target = shifted(part, wanted_pose, shift);
+                let mut found = None;
+                'search: for member_ring in 0..=member_rings {
+                    for (mx, my) in ring_offsets(member_ring) {
+                        let pose = shifted(part, target, [mx as f64 * step, my as f64 * step]);
+                        if legal(&scratch, &placed, part, pose) {
+                            found = Some(pose);
+                            break 'search;
+                        }
+                    }
+                }
+                match found {
+                    Some(pose) => {
+                        scratch[part] = pose;
+                        placed.push((part, pose));
+                    }
+                    None => {
+                        fits = false;
+                        break;
+                    }
+                }
+            }
+            if fits {
+                return Some(placed);
+            }
+            for (part, _) in &placed {
+                scratch[*part] = poses[*part];
+            }
+            if tries >= UNIT_TRIES {
+                return None;
+            }
+        }
+    }
+    None
 }
 
 /// Parts placed by their copper at an edge (a card edge in its tab) have

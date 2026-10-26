@@ -729,6 +729,8 @@ pub struct KiCadRunFacts {
     /// The router file's values below the project's minimum that the run
     /// allowed, with what became of them.
     pub rule_overrides: Vec<crate::run_diagnosis::KiCadOverrideOutcome>,
+    /// The placement's bus groups (`bus_groups` on), when it had them.
+    pub bus_groups: Option<crate::board_placer::KiCadBusGroupsReport>,
 }
 
 impl KiCadRunFacts {
@@ -769,6 +771,7 @@ impl KiCadRunFacts {
             corridors: None,
             race: None,
             rule_overrides: Vec::new(),
+            bus_groups: None,
         }
     }
 
@@ -956,6 +959,12 @@ pub struct KiCadVerdict {
     /// such values.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub rule_overrides: Vec<crate::run_diagnosis::KiCadOverrideOutcome>,
+    /// The placement's bus groups (`bus_groups` in the placer's
+    /// configuration, off by default): how many groups moved more than
+    /// one part, the banks (members, parts moved), the clusters, and the
+    /// parts per group (`KiCadBusGroupsReport`). Absent when off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bus_groups: Option<crate::board_placer::KiCadBusGroupsReport>,
 }
 
 fn counts(map: &BTreeMap<String, usize>) -> String {
@@ -1490,6 +1499,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         moves: facts.moves.clone(),
         corridors: facts.corridors.clone(),
         race: facts.race.clone(),
+        bus_groups: facts.bus_groups.clone(),
         rule_overrides: facts.rule_overrides.clone(),
     }
 }

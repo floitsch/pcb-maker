@@ -44,6 +44,11 @@ pub struct AnnealConfig {
     /// The global route inside the anneal (`crate::guidance`, an
     /// experiment): off (`None`) by default.
     pub guidance: Option<crate::guidance::Guidance>,
+    /// Bus-group moves (`crate::groups`, `Config::bus_groups`): after each
+    /// stage, groups of parts move, turn, trade places and reorder as
+    /// units, judged with the crossings of their nets. Off (`None`) by
+    /// default.
+    pub bus_groups: Option<std::sync::Arc<crate::groups::BusGroups>>,
 }
 
 impl Default for AnnealConfig {
@@ -57,6 +62,7 @@ impl Default for AnnealConfig {
             stop_at_work: None,
             legal_far_side: false,
             guidance: None,
+            bus_groups: None,
         }
     }
 }
@@ -758,6 +764,48 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
         .as_ref()
         .map(|guidance| Guide::new(guidance, &mut state, &movable));
     let mut anneal_work = 0u64;
+    // Bus-group moves: their own crossings state (the nets of up to the
+    // groups' bus size), brought to the poses before each batch.
+    let groups = config
+        .bus_groups
+        .as_deref()
+        .filter(|groups| groups.settings.anneal && !groups.groups.is_empty());
+    let group_fact = groups.and_then(|groups| {
+        problem.crossings.as_deref().map(|crossings| {
+            let mut fact = crossings.clone();
+            for (net, counted) in fact.counted.iter_mut().enumerate() {
+                if state
+                    .members
+                    .get(net)
+                    .is_some_and(|pins| pins.len() > groups.settings.bus_net_pins)
+                {
+                    *counted = false;
+                }
+            }
+            fact
+        })
+    });
+    let mut group_crossings = group_fact
+        .as_ref()
+        .map(|fact| crate::crossings::CrossingState::new(problem, fact, &state.poses));
+    let rigid: Vec<bool> = match groups.filter(|groups| groups.settings.rigid_banks) {
+        Some(groups) => {
+            let mut rigid = vec![false; problem.components.len()];
+            for group in &groups.groups {
+                if group.kind == crate::groups::Kind::Bank {
+                    for &part in &group.chain {
+                        rigid[part] = true;
+                    }
+                }
+            }
+            rigid
+        }
+        None => Vec::new(),
+    };
+    let mut group_tally = GroupTally {
+        crossings_before: group_crossings.as_ref().map(|state| state.total()),
+        ..Default::default()
+    };
 
     for stage in 0..config.stages {
         if config
@@ -783,6 +831,10 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                 }
                 _ => movable[random.below(movable.len())],
             };
+            // A bank's members move with their bank (`Settings::rigid_banks`).
+            if rigid.get(index) == Some(&true) {
+                continue;
+            }
             work += move_work[index];
             let component = &problem.components[index];
             let kind = random.next();
@@ -794,7 +846,7 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                     }
                     _ => movable[random.below(movable.len())],
                 };
-                if other == index {
+                if other == index || rigid.get(other) == Some(&true) {
                     continue;
                 }
                 work += move_work[other];
@@ -920,6 +972,22 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                 guide.accepted += 1;
             }
         }
+        if let Some(groups) = groups {
+            work += group_batch(
+                &mut state,
+                groups,
+                &move_work,
+                GroupStep {
+                    radius,
+                    temperature,
+                    penalty,
+                },
+                group_crossings.as_mut(),
+                crossings.as_mut(),
+                &mut random,
+                &mut group_tally,
+            );
+        }
         let stage_work = work + state.work.replace(0);
         anneal_work += stage_work;
         crate::add_work(stage_work);
@@ -940,6 +1008,18 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
     }
     if let Some(guide) = guide.as_mut() {
         guide.finish(&mut state, anneal_work);
+    }
+    if groups.is_some() && std::env::var_os("PCB_PLACER_DEBUG").is_some() {
+        eprintln!(
+            "anneal: bus groups: {} moves tried, taken: {} shifts, {} turns, {} swaps, {} reorders; crossings of the groups' nets {:?} -> {:?} (after the last batch)",
+            group_tally.tried,
+            group_tally.taken[0],
+            group_tally.taken[1],
+            group_tally.taken[2],
+            group_tally.taken[3],
+            group_tally.crossings_before,
+            group_crossings.as_ref().map(|state| state.total()),
+        );
     }
     if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
         let work = crate::work() - work_before;
@@ -1106,6 +1186,253 @@ fn judge_with_crossings(
 /// earlier booking of one unit per cell and line met), and a budget in
 /// work should see what the term costs.
 const CROSSING_WORK: (u64, u64) = (8, 5);
+
+/// Counts of the bus-group moves for the debug line: tried, and taken
+/// by kind (shift, turn, swap, reorder).
+#[derive(Default)]
+struct GroupTally {
+    tried: u64,
+    taken: [u64; 4],
+    crossings_before: Option<u64>,
+    /// The crossings' own counts (kept apart from the anneal term's,
+    /// whose share of the work they would change).
+    crossings: Tally,
+}
+
+/// A rigid bank's share of a stage's group moves: this many per member
+/// (each with `Settings::anneal_moves`), where its members' single moves
+/// would be `moves_per_part` each.
+const BANK_SHARE: usize = 3;
+
+/// The stage's move radius, temperature and overlap penalty.
+#[derive(Clone, Copy)]
+struct GroupStep {
+    radius: f64,
+    temperature: f64,
+    penalty: f64,
+}
+
+/// One stage's bus-group moves (`AnnealConfig::bus_groups`): groups
+/// (their parts at the poses of now, `BusGroups::attach`) chosen at
+/// random shift (half the time towards the pull of their nets, else by
+/// a step of the stage's radius), turn about their centre, trade places
+/// with a group like them, or (a bank) reorder along their axis; each
+/// judged as a single move is, by the wirelength of the parts' nets,
+/// their constraints and their overlap at the stage's penalty, and with
+/// `group_crossings` the crossings of their nets (`judge_with_crossings`)
+/// at the stage's temperature. Returns the work besides what the overlap
+/// sums and the crossings count book.
+#[allow(clippy::too_many_arguments)]
+fn group_batch(
+    state: &mut State,
+    groups: &crate::groups::BusGroups,
+    move_work: &[u64],
+    step: GroupStep,
+    mut group_crossings: Option<&mut crate::crossings::CrossingState>,
+    mut crossings: Option<&mut crate::crossings::CrossingState>,
+    random: &mut Random,
+    group_tally: &mut GroupTally,
+) -> u64 {
+    use crate::groups::{Kind, Reorder, chain_center, pull, reordered, rotated, translated};
+    let problem = state.problem;
+    let parts = groups.attach(problem, &state.poses);
+    let active: Vec<usize> = (0..groups.groups.len())
+        .filter(|group| groups.groups[*group].kind == Kind::Bank || parts[*group].len() > 1)
+        .collect();
+    if active.is_empty() {
+        return 0;
+    }
+    if let Some(group_crossings) = group_crossings.as_mut() {
+        group_crossings.resync(&state.poses);
+    }
+    // Each active group's share of the attempts: one, a rigid bank's as
+    // many as its members get single moves in an eighth of a stage.
+    let shares: Vec<f64> = active
+        .iter()
+        .map(|group| {
+            let group = &groups.groups[*group];
+            if group.kind == Kind::Bank && groups.settings.rigid_banks {
+                (BANK_SHARE * group.chain.len()) as f64
+            } else {
+                1.0
+            }
+        })
+        .collect();
+    let total: f64 = shares.iter().sum();
+    let attempts = (groups.settings.anneal_moves * total).round() as usize;
+    let grid = if problem.grid > 0.0 {
+        problem.grid
+    } else {
+        0.05
+    };
+    let mut work = 0;
+    for _ in 0..attempts {
+        let index = {
+            let mut draw = random.next() * total;
+            let mut chosen = active[active.len() - 1];
+            for (position, share) in shares.iter().enumerate() {
+                if draw < *share {
+                    chosen = active[position];
+                    break;
+                }
+                draw -= share;
+            }
+            chosen
+        };
+        let group = &groups.groups[index];
+        let kind = random.next();
+        let (which, moved) = if kind < 0.2 && group.kind == Kind::Bank {
+            let how = match random.below(3) {
+                0 => Reorder::InPlace,
+                1 => Reorder::Along(0),
+                _ => Reorder::Along(1),
+            };
+            let margin = |part: usize| {
+                let component = &problem.components[part];
+                component.halo + state.share(component)
+            };
+            (
+                3,
+                reordered(problem, &state.poses, group, &parts[index], how, &margin),
+            )
+        } else if kind < 0.45 && !group.peers.is_empty() {
+            let other = group.peers[random.below(group.peers.len())];
+            if parts[index]
+                .iter()
+                .any(|part| parts[other].binary_search(part).is_ok())
+            {
+                (2, None)
+            } else {
+                let a = chain_center(problem, &state.poses, &group.chain);
+                let b = chain_center(problem, &state.poses, &groups.groups[other].chain);
+                let mut moved = translated(
+                    problem,
+                    &state.poses,
+                    &parts[index],
+                    [b[0] - a[0], b[1] - a[1]],
+                );
+                moved.extend(translated(
+                    problem,
+                    &state.poses,
+                    &parts[other],
+                    [a[0] - b[0], a[1] - b[1]],
+                ));
+                (2, Some(moved))
+            }
+        } else if kind < 0.6 {
+            let center = chain_center(problem, &state.poses, &group.chain);
+            let turn = [90.0, 180.0, 270.0][random.below(3)];
+            (
+                1,
+                rotated(problem, &state.poses, &parts[index], center, turn),
+            )
+        } else {
+            let shift = if random.next() < 0.5 {
+                pull(problem, &state.poses, &parts[index]).map(|towards| {
+                    let fraction = random.next();
+                    [towards[0] * fraction, towards[1] * fraction]
+                })
+            } else {
+                let cells = (step.radius / grid).max(1.0);
+                let mut draw = || ((random.next() * 2.0 - 1.0) * cells).round() * grid;
+                Some([draw(), draw()])
+            };
+            (
+                0,
+                shift
+                    .filter(|shift| shift[0] != 0.0 || shift[1] != 0.0)
+                    .map(|shift| translated(problem, &state.poses, &parts[index], shift)),
+            )
+        };
+        let Some(moved) = moved else {
+            continue;
+        };
+        if moved.iter().all(|(part, pose)| state.poses[*part] == *pose) {
+            continue;
+        }
+        group_tally.tried += 1;
+        let list: Vec<usize> = moved.iter().map(|(part, _)| *part).collect();
+        let mut nets: Vec<usize> = list
+            .iter()
+            .flat_map(|part| state.incident[*part].iter().copied())
+            .collect();
+        nets.sort_unstable();
+        nets.dedup();
+        for part in &list {
+            work += move_work[*part];
+        }
+        let mut sorted = list.clone();
+        sorted.sort_unstable();
+        let cost = |state: &State| {
+            state.wirelength(&nets)
+                + crate::groups::held_cost(problem, &state.poses, &sorted)
+                + step.penalty
+                    * list
+                        .iter()
+                        .map(|part| state.overlap(*part, state.rects[*part]))
+                        .sum::<f64>()
+        };
+        let before = cost(state);
+        let saved: Vec<(usize, Pose, Rect)> = list
+            .iter()
+            .map(|part| (*part, state.poses[*part], state.rects[*part]))
+            .collect();
+        for (part, pose) in &moved {
+            state.poses[*part] = *pose;
+            let rect = state.rect(*part, *pose);
+            state.set_rect(*part, rect);
+        }
+        let delta = cost(state) - before;
+        if which == 3 && std::env::var_os("PCB_GROUPS_TRACE").is_some() {
+            let overlap = |state: &State| {
+                list.iter()
+                    .map(|part| state.overlap(*part, state.rects[*part]))
+                    .sum::<f64>()
+            };
+            let after_overlap = overlap(state);
+            let after_length = state.wirelength(&nets);
+            for (part, pose, rect) in &saved {
+                state.poses[*part] = *pose;
+                state.set_rect(*part, *rect);
+            }
+            let (before_overlap, before_length) = (overlap(state), state.wirelength(&nets));
+            for (part, pose) in &moved {
+                state.poses[*part] = *pose;
+                let rect = state.rect(*part, *pose);
+                state.set_rect(*part, rect);
+            }
+            eprintln!(
+                "groups trace: reorder of {} parts: length {before_length:.0} -> {after_length:.0}, overlap {before_overlap:.0} -> {after_overlap:.0} at {:.2}, delta {delta:.0}",
+                list.len(),
+                step.penalty
+            );
+        }
+        let taken = match group_crossings.as_mut() {
+            Some(group_crossings) => judge_with_crossings(
+                group_crossings,
+                &state.poses,
+                &list,
+                delta,
+                step.temperature,
+                random,
+                &mut group_tally.crossings,
+            ),
+            None => delta <= 0.0 || random.next() < (-delta / step.temperature).exp(),
+        };
+        if taken {
+            group_tally.taken[which] += 1;
+            if let Some(crossings) = crossings.as_mut() {
+                crossings.kept(&state.poses, &list);
+            }
+        } else {
+            for (part, pose, rect) in saved {
+                state.poses[part] = pose;
+                state.set_rect(part, rect);
+            }
+        }
+    }
+    work
+}
 
 /// The anneal's side of `AnnealConfig::guidance`.
 struct Guide<'a> {

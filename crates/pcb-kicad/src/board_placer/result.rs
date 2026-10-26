@@ -41,6 +41,54 @@ pub struct KiCadUnplacedPart {
     pub held_by: Vec<String>,
 }
 
+/// The bus groups of a placement (`bus_groups` in the placer's
+/// configuration): the groups that moved more than one part at the
+/// placement kept.
+#[derive(Clone, Debug, Default, Serialize, serde::Deserialize, PartialEq)]
+pub struct KiCadBusGroupsReport {
+    /// Groups with more than one part: banks and clusters.
+    pub groups: usize,
+    /// The banks: their members and the parts they move with their
+    /// passives.
+    pub banks: Vec<KiCadBusBank>,
+    /// Clusters (a part and its passives) with more than one part.
+    pub clusters: usize,
+    /// Parts per group, the largest first.
+    pub sizes: Vec<usize>,
+}
+
+/// A bank of `KiCadBusGroupsReport`.
+#[derive(Clone, Debug, Serialize, serde::Deserialize, PartialEq)]
+pub struct KiCadBusBank {
+    pub parts: Vec<String>,
+    pub moved: usize,
+}
+
+impl KiCadBusGroupsReport {
+    pub fn of(
+        problem: &core::Problem,
+        settings: &core::groups::Settings,
+        poses: &[core::Pose],
+        references: &[String],
+    ) -> Self {
+        let groups = core::groups::BusGroups::detect(problem, settings);
+        let mut report = KiCadBusGroupsReport::default();
+        for (kind, chain, moved) in groups.summary(problem, poses) {
+            report.groups += 1;
+            report.sizes.push(moved);
+            match kind {
+                core::groups::Kind::Bank => report.banks.push(KiCadBusBank {
+                    parts: chain.iter().map(|part| references[*part].clone()).collect(),
+                    moved,
+                }),
+                core::groups::Kind::Cluster => report.clusters += 1,
+            }
+        }
+        report.sizes.sort_unstable_by(|a, b| b.cmp(a));
+        report
+    }
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct KiCadBoardPlacerResult {
     pub board_id: String,
@@ -152,4 +200,7 @@ pub struct KiCadBoardPlacerResult {
     #[serde(default)]
     pub seed_kept: u64,
     pub footprints: Vec<KiCadPlacedFootprint>,
+    /// The bus groups (`bus_groups` on): absent when off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bus_groups: Option<KiCadBusGroupsReport>,
 }

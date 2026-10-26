@@ -238,6 +238,22 @@ pub struct KiCadBoardPlacerConfig {
     /// off; docs/placer.md, "Ratsnest crossings (2026-10-24)").
     #[serde(default = "default_ratsnest_crossings")]
     pub ratsnest_crossings: Option<KiCadRatsnestCrossings>,
+    /// Bus-group moves (off by default; `{}` for the defaults): banks of
+    /// parts of one footprint that share a bus (`min_shared` nets of up
+    /// to `bus_net_pins` pins between two) and each part with the
+    /// passives (up to `passive_pins` pins, `passive_area_mm2`) within
+    /// `reach_mm` of it move, turn, trade places with a group like them
+    /// and, a bank, reorder along its axis by the pins they connect to,
+    /// as units, judged by wirelength plus the crossings of their nets, in
+    /// the anneal (`anneal`, `anneal_moves` tries per group a stage) and
+    /// the refinement (`refine`); after the global placement each bank
+    /// takes the order and arrangement that lowers its nets' wirelength
+    /// plus crossings (`arrange`). Keys and defaults: `min_shared` 4,
+    /// `bus_net_pins` 24, `passive_pins` 4, `passive_area_mm2` 16,
+    /// `reach_mm` 3, `arrange` true, `anneal` true, `rigid_banks` true, `refine` true, `anneal_moves` 2,
+    /// `max_bank` 16 (docs/placer.md, "Bus-group moves (2026-10-26)").
+    #[serde(default)]
+    pub bus_groups: Option<KiCadBusGroups>,
     /// The router's configuration the guidance lowers with (set by the
     /// layout; the default otherwise).
     #[serde(skip)]
@@ -295,6 +311,7 @@ impl Default for KiCadBoardPlacerConfig {
             global_guidance: None,
             escape_demand: default_escape_demand(),
             ratsnest_crossings: default_ratsnest_crossings(),
+            bus_groups: None,
             guidance_router: None,
         }
     }
@@ -436,6 +453,71 @@ impl Default for KiCadRatsnestCrossings {
             anneal: false,
             global: false,
             per_layer: false,
+        }
+    }
+}
+
+/// `KiCadBoardPlacerConfig::bus_groups`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct KiCadBusGroups {
+    /// Two parts of one footprint form a bank when they share this many
+    /// bus nets.
+    pub min_shared: usize,
+    /// Nets of up to this many pins are bus nets.
+    pub bus_net_pins: usize,
+    /// Passives: at most this many pins and this body area.
+    pub passive_pins: usize,
+    pub passive_area_mm2: f64,
+    /// A passive goes with a part whose body lies within this gap.
+    pub reach_mm: f64,
+    /// After the global placement, each bank takes the order and
+    /// arrangement that lowers its nets' wirelength plus crossings.
+    pub arrange: bool,
+    /// Group moves in the anneal and the refinement.
+    pub anneal: bool,
+    pub refine: bool,
+    /// In the anneal a bank's members move only with their bank.
+    pub rigid_banks: bool,
+    /// The anneal's group moves per group a stage.
+    pub anneal_moves: f64,
+    /// Larger banks are not banks.
+    pub max_bank: usize,
+}
+
+impl Default for KiCadBusGroups {
+    fn default() -> Self {
+        let settings = core::groups::Settings::default();
+        Self {
+            min_shared: settings.min_shared,
+            bus_net_pins: settings.bus_net_pins,
+            passive_pins: settings.passive_pins,
+            passive_area_mm2: settings.passive_area,
+            reach_mm: settings.reach,
+            arrange: settings.arrange,
+            anneal: settings.anneal,
+            refine: settings.refine,
+            rigid_banks: settings.rigid_banks,
+            anneal_moves: settings.anneal_moves,
+            max_bank: settings.max_bank,
+        }
+    }
+}
+
+impl KiCadBusGroups {
+    pub fn settings(&self) -> core::groups::Settings {
+        core::groups::Settings {
+            min_shared: self.min_shared,
+            bus_net_pins: self.bus_net_pins,
+            passive_pins: self.passive_pins,
+            passive_area: self.passive_area_mm2,
+            reach: self.reach_mm,
+            arrange: self.arrange,
+            anneal: self.anneal,
+            refine: self.refine,
+            rigid_banks: self.rigid_banks,
+            anneal_moves: self.anneal_moves,
+            max_bank: self.max_bank,
         }
     }
 }

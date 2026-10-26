@@ -740,6 +740,7 @@ fn placement_facts(command: &str, report: &serde_json::Value) -> KiCadRunFacts {
     };
     let mut facts = KiCadRunFacts::new(command);
     facts.routes = false;
+    facts.bus_groups = serde_json::from_value(report["bus_groups"].clone()).ok();
     // The movable parts without a legal place, each once, a repeated
     // reference with its uuid (`unplaced_parts`); without them (an older
     // report) by name, with the illegal parts' names not yet there (a
@@ -918,6 +919,7 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
         .unwrap_or_default();
     facts.room = serde_json::from_value(placed["room"].clone()).ok();
+    facts.bus_groups = serde_json::from_value(placed["bus_groups"].clone()).ok();
     facts.input_warnings = constraint_warnings(input_warnings, &placed);
     facts.cut = result.cut.clone();
     facts.work_seconds = Some(result.work_seconds + result.routed.work_seconds);

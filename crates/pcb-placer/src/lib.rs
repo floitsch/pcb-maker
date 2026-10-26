@@ -11,6 +11,7 @@ pub mod constraints;
 pub mod crossings;
 pub mod escape;
 pub mod global;
+pub mod groups;
 pub mod guidance;
 pub mod legal;
 pub mod orient;
@@ -53,6 +54,11 @@ pub struct Config {
     /// a stack). Off: the parts start at the angles they hold, options in
     /// the order given (the placer before 2026-10-15).
     pub orientation_search: bool,
+    /// Bus-group moves (`groups`, docs/placer.md "Bus-group moves
+    /// (2026-10-26)"): banks of parts on one bus and parts with their
+    /// passives move, turn, trade places and reorder as units in the
+    /// anneal and the refinement. Off (`None`) by default.
+    pub bus_groups: Option<groups::Settings>,
 }
 
 impl Config {
@@ -66,6 +72,7 @@ impl Config {
             work_limit: None,
             routing_room: None,
             orientation_search: true,
+            bus_groups: None,
         }
     }
 }
@@ -697,7 +704,13 @@ fn mark() -> Mark {
 
 /// Refinement, edge-copper centring, relation repair and alignment: what
 /// follows legalization.
-fn finish(problem: &Problem, poses: &mut [Pose], passes: usize, debug: bool) {
+fn finish(
+    problem: &Problem,
+    poses: &mut [Pose],
+    passes: usize,
+    groups: Option<&groups::BusGroups>,
+    debug: bool,
+) {
     let refine_mark = mark();
     // Escape demand: one state through the refinements, its measured
     // correction taken now and every so many kept moves.
@@ -713,7 +726,14 @@ fn finish(problem: &Problem, poses: &mut [Pose], passes: usize, debug: bool) {
         .filter(|crossings| crossings.refine)
         .map(|crossings| crossings::CrossingState::new(problem, crossings, poses));
     let crossings_before = crossings.as_ref().map(|state| state.total());
-    legal::refine_with(problem, poses, passes, escape.as_mut(), crossings.as_mut());
+    legal::refine_with(
+        problem,
+        poses,
+        passes,
+        escape.as_mut(),
+        crossings.as_mut(),
+        groups,
+    );
     phase_line(debug, "refine", refine_mark);
     let repair_mark = mark();
     legal::center_edge_copper(problem, poses);
@@ -723,7 +743,14 @@ fn finish(problem: &Problem, poses: &mut [Pose], passes: usize, debug: bool) {
         if legal::repair_relations(problem, poses) == 0 {
             break;
         }
-        legal::refine_with(problem, poses, passes, escape.as_mut(), crossings.as_mut());
+        legal::refine_with(
+            problem,
+            poses,
+            passes,
+            escape.as_mut(),
+            crossings.as_mut(),
+            groups,
+        );
     }
     // Parts of a kind turned alike where it costs next to nothing.
     legal::align_orientations(problem, poses, 0.5);
@@ -782,6 +809,34 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     let stop_at_work = config.work_limit.map(|limit| work_started + limit);
     let mut anneal_config = config.anneal.clone();
     anneal_config.stop_at_work = stop_at_work.or(anneal_config.stop_at_work);
+    // Bus groups: found once, on the fitted problem (the levels change
+    // halos and spacing, not nets).
+    let bus_groups = config.bus_groups.as_ref().map(|settings| {
+        let groups = std::sync::Arc::new(groups::BusGroups::detect(problem, settings));
+        if debug {
+            let banks: Vec<String> = groups
+                .groups
+                .iter()
+                .filter(|group| group.kind == groups::Kind::Bank)
+                .map(|group| {
+                    group
+                        .chain
+                        .iter()
+                        .map(|part| problem.components[*part].name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                })
+                .collect();
+            eprintln!(
+                "placer: bus groups: {} banks [{}], {} clusters",
+                banks.len(),
+                banks.join("; "),
+                groups.groups.len() - banks.len()
+            );
+        }
+        groups
+    });
+    anneal_config.bus_groups = bus_groups.clone();
     let out_of_budget = || {
         config
             .anneal
@@ -821,6 +876,21 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 reordered.turns,
                 reordered.crossings_before,
                 reordered.crossings_after
+            );
+        }
+    }
+    // Bus groups: the banks' order and arrangement (`groups::arrange`).
+    if let Some(groups) = bus_groups
+        .as_deref()
+        .filter(|groups| groups.settings.arrange)
+    {
+        let arrange_mark = mark();
+        let arranged = groups::arrange(problem, groups, &mut global_poses);
+        phase_line(debug, "arrange", arrange_mark);
+        if debug {
+            eprintln!(
+                "placer: arrange: {} banks, {} arranged, cost {:.0} -> {:.0}",
+                arranged.banks, arranged.taken, arranged.cost_before, arranged.cost_after
             );
         }
     }
@@ -1305,7 +1375,13 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         poses: poses.clone(),
     });
     let finishing = std::time::Instant::now();
-    finish(&relaxed, &mut poses, config.refine_passes, debug);
+    finish(
+        &relaxed,
+        &mut poses,
+        config.refine_passes,
+        bus_groups.as_deref(),
+        debug,
+    );
     if debug {
         eprintln!(
             "placer: refinement and relation repair {:.1}s",
@@ -1401,7 +1477,13 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
             );
         }
         if failed.is_empty() {
-            finish(&roomy, &mut again, config.refine_passes, debug);
+            finish(
+                &roomy,
+                &mut again,
+                config.refine_passes,
+                bus_groups.as_deref(),
+                debug,
+            );
             relaxed.sync_followers(&mut poses);
             stage_poses.push(("pin_halos", poses.clone()));
             poses = again;
