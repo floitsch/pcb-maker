@@ -1024,7 +1024,10 @@ Diagnosed on the tasks' prepared boards with `place-kicad-board` and
 
 `escape_demand` (placer option, on since 2026-10-24, `null` turns it off; `{"weight",
 "inflate", "turn_tolerance", "measured", "measure_every",
-"threshold"}`, defaults 2 mm, 1, 0.05, on, 20, 0.5). The plan agreed
+"threshold", "fixed_share"}`, defaults 2 mm, 1, 0.05, on, 20, 0.5, 0.6;
+`fixed_share` since 2026-10-26: no escape demand on a board where at
+least that share of the footprints is fixed, "The 45 fixed-heavy boards
+(2026-10-26)" below). The plan agreed
 with Florian: put the routing structure where the placement is made,
 from general signals, and keep it to the end (phase 2 of
 [global-route.md](global-route.md) put a routing term into the anneal
@@ -2905,9 +2908,9 @@ weight by layers), without a trait behind it.
 
 Both guards are keys of the existing settings, off by default:
 
-- `escape_demand.fixed_share` (a share, `null` by default): where at
-  least that share of the board's footprints is fixed, escape demand is
-  not applied (`Problem::escape` stays `None`; stderr says `placer:
+- `escape_demand.fixed_share` (a share, `null` by default here; 0.6
+  since the 45-board sweep below): where at least that share of the
+  board's footprints is fixed, escape demand is not applied (`Problem::escape` stays `None`; stderr says `placer:
   escape demand not applied: N of M footprints fixed`). Measured at 0.5.
 - `ratsnest_crossings.per_layer` (false by default): the weight times
   two over the routing layers (two layers unchanged, 2 mm on three, 1.5
@@ -2996,7 +2999,8 @@ seed-1 result is no direction.
   molecules among them). With katia's row confirming, the default is one line
   (`fixed_share: Some(0.5)` in `KiCadEscapeDemand::default`); a sweep of
   the 45 fixed-heavy boards (the rest are identical by construction)
-  should run before or with it.
+  should run before or with it. That sweep is below ("The 45 fixed-heavy
+  boards"): katia's row confirms (162 to 38), and the default is 0.6.
 - **The crossings guard** (`ratsnest_crossings.per_layer`) does not
   ship: it loses framework_mobo's strict pass, the dense rows move by
   seed-sized amounts both ways, and OpenRX, the one sweep loser crossings
@@ -3007,6 +3011,129 @@ seed-1 result is no direction.
   (protoesp, homebrew_486), and four are perturbations of a good v20
   draw that no single switch restores (video, split42_left, koeg,
   split72_right).
+
+### The 45 fixed-heavy boards (2026-10-26)
+
+Every sweep board the guard fires on at 0.5 (45 of the 109; the fixed
+share is `build/triage1/fixed.json`, and each guarded layout's own line
+`placer: escape demand not applied: N of M footprints fixed` agrees on
+all 45). Layout mode at the task budget (tasks v7), seed 1, the defaults
+(off) against `--placer '{"escape_demand": {"fixed_share": 0.5}}'` (on),
+one binary per board for both sides: x1832 (main 2087046), the first
+three boards (Quanta75_BareRP2040, homebrew_486, ghoul) x14720 (main
+5935cfd, byte for byte x1831; x1832's memory round leaves routes
+identical). At most 6 in flight x 2 threads through the ledger with 10
+GB kept free. Scripts and outputs in `build/guard1/` (run-one.sh,
+queue.py, summarize.py, table.py; `{off,on}-s{1,101,201}`). The 64
+boards it does not fire on are identical by construction, checked on
+two: `place-kicad-board` with the task's constraints writes the same
+MIDAS-MK1.1 (fixed share 0.48, the nearest below) and OpenFC (0.17)
+byte for byte with and without the guard set.
+
+Cells: KiCad unconnected (the first route's open terminals), strict
+pass; the molecules are refused on both sides (parts without a legal
+place); work in seconds.
+
+| Board | fixed share | off | on | change | strict | work off / on |
+| --- | ---: | ---: | ---: | ---: | --- | ---: |
+| bumwings_v001R64_rp2040zero_sd | 0.99 | 0 (0), pass | 0 (0), pass | +0 | both | 54 / 54 |
+| bumwings_v001 | 0.99 | 0 (0), pass | 0 (0), pass | +0 | both | 243 / 243 |
+| CyberKeeb2040 | 0.99 | 0 (0), pass | 0 (0), pass | +0 | both | 491 / 491 |
+| bumwings_v001R64_xiao_sd | 0.98 | 0 (0), pass | 0 (0), pass | +0 | both | 156 / 292 |
+| bumwings_v001_xiao_s | 0.98 | 0 (1), pass | 0 (0), pass | +0 | both | 128 / 166 |
+| ULK | 0.98 | 2 (2) | 4 (4) | +2 |  | 1075 / 1454 |
+| bumwings_v001R55_rp2040zero_sd | 0.98 | 0 (0), pass | 0 (0), pass | +0 | both | 132 / 58 |
+| ULK_sl_PG1316s | 0.97 | 3 (7) | 2 (7) | -1 |  | 1178 / 1143 |
+| bumwings_v001R55_xiao_sd | 0.97 | 0 (0), pass | 0 (0), pass | +0 | both | 292 / 174 |
+| bumwings_v001R64_nano_sd | 0.96 | 0 (0), pass | 0 (0), pass | +0 | both | 96 / 134 |
+| bumwings_v001_xiao | 0.96 | 0 (0), pass | 0 (0), pass | +0 | both | 169 / 210 |
+| krishveercard | 0.86 | 0 (18), pass | 0 (19), pass | +0 | both | 1161 / 1043 |
+| Hub | 0.86 | 22 (97) | 21 (95) | -1 |  | 695 / 728 |
+| poly_kb_molecule_4x5 | 0.86 | refused (45 unplaced) | refused (42 unplaced) | -3 unplaced |  |  |
+| poly_kb_molecule_4x4 | 0.86 | refused (29 unplaced) | refused (31 unplaced) | +2 unplaced |  |  |
+| laptop keyboard | 0.84 | 2 (6) | 2 (9) | +0 |  | 1076 / 1099 |
+| urchin (main) | 0.84 | 0 (0), pass | 0 (0), pass | +0 | both | 101 / 85 |
+| interchange-pcb-right | 0.83 | 0 (0), pass | 0 (0), pass | +0 | both | 418 / 538 |
+| poly_kb_molecule_5x2_shifted | 0.82 | refused (3 unplaced) | refused (22 unplaced) | +19 unplaced |  |  |
+| bumwings_v001_core | 0.81 | 0 (0), pass | 0 (0), pass | +0 | both | 312 / 241 |
+| spell_tome_bottom | 0.81 | 0 (0), pass | 0 (0), pass | +0 | both | 11 / 69 |
+| slab-pcb-left | 0.81 | 0 (1), pass | 0 (0), pass | +0 | both | 395 / 403 |
+| poly_kb_molecule_7x5_wave_left | 0.81 | refused (9 unplaced) | refused (6 unplaced) | -3 unplaced |  |  |
+| poly_kb_molecule_5x4_wave | 0.80 | refused (5 unplaced) | refused (5 unplaced) | +0 unplaced |  |  |
+| d20_pcb | 0.79 | 0 (0), pass | 0 (0), pass | +0 | both | 130 / 117 |
+| 0xCB panel | 0.77 | 50 (77) | 60 (269) | +10 |  | 1196 / 1155 |
+| RP2040_base | 0.76 | 50 (50) | 47 (51) | -3 |  | 1479 / 1383 |
+| mackerel-08-v1 | 0.68 | 0 (0), pass | 0 (0), pass | +0 | both | 839 / 1004 |
+| USB_Cable_Tester | 0.68 | 0 (0), pass | 0 (0), pass | +0 | both | 202 / 213 |
+| E-Fidget-Lite | 0.66 | 0 (0), pass | 0 (0), pass | +0 | both | 76 / 74 |
+| 1337-v4.0 | 0.64 | 0 (0), pass | 0 (0), pass | +0 | both | 154 / 168 |
+| ATAT1800 | 0.64 | 5 (32) | 27 (45) | +22 |  | 1207 / 1328 |
+| osprey_rev_a | 0.64 | 1 (3) | 1 (6) | +0 |  | 1460 / 1408 |
+| katia | 0.63 | 162 (356) | 38 (160) | -124 |  | 1702 / 1392 |
+| protoesp | 0.63 | 70 (118) | 73 (90) | +3 |  | 1204 / 1298 |
+| MotionCubeViewAllForces | 0.59 | 0 (2), pass | 0 (3), pass | +0 | both | 94 / 88 |
+| homebrew_486 | 0.56 | 0 (0), pass | 0 (0), pass | +0 | both | 1328 / 820 |
+| hackrf-one | 0.56 | 0 (1), pass | 0 (0), pass | +0 | both | 838 / 890 |
+| Quanta75_BareRP2040 | 0.55 | 35 (37) | 31 (34) | -4 |  | 1362 / 1304 |
+| ErgoSNM_keyboard | 0.54 | 0 (0), pass | 0 (0), pass | +0 | both | 414 / 426 |
+| koeg-board-pcb | 0.52 | 11 (108) | 12 (101) | +1 |  | 1376 / 1196 |
+| TelemetryOnboard | 0.51 | 0 (2), pass | 0 (4), pass | +0 | both | 587 / 1164 |
+| little_red_rover | 0.51 | 0 (1), pass | 0 (2), pass | +0 | both | 287 / 141 |
+| ghoul | 0.51 | 0 (0), pass | 0 (1) | +0 | **lost** | 838 / 934 |
+| rosco_m68k | 0.50 | 0 (0), pass | 0 (0), pass | +0 | both | 569 / 576 |
+
+Sums over the 40 rows with a result on both sides (the five molecules
+are refused on both: unplaced 91 off, 106 on, the 5x2_shifted 3 to 22),
+a board below a threshold counting its off row on both sides:
+
+| Threshold | fires on (of 45) | unconnected | first-route open | strict passes | work s |
+| ---: | ---: | --- | --- | --- | --- |
+| 0.5 | 45 | 413 to 318 (-95) | 919 to 900 (-19) | 28 to 27 (ghoul) | 25524 to 25704 |
+| 0.6 | 35 | 413 to 321 (-92) | 919 to 906 (-13) | 28 to 28 | 25524 to 25858 |
+| 0.7 | 27 | 413 to 420 (+7) | 919 to 1114 (+195) | 28 to 28 | 25524 to 25817 |
+
+Three rows were repeated at more seeds (off / on):
+
+| Board | seed 1 | seed 101 | seed 201 |
+| --- | --- | --- | --- |
+| katia (0.63) | 162 (356) / 38 (160) | 11 (155) / 6 (170) | |
+| ATAT1800 (0.64) | 5 (32) / 27 (45) | 11 (40) / 5 (38) | |
+| ghoul (0.51) | 0, pass / 0, no pass | 0, no pass / 0, pass | 0, pass / 0, pass |
+
+- **katia**, the loser the guard is for, recovers: 162 to 38 at seed 1
+  (the x1825 attribution's escape-off row was 38 too), 11 to 6
+  at seed 101. Its off side spreads 11 to 162 over the two seeds, so most
+  of the gain is seed 1's bad draw; the guard wins on both.
+- **ATAT1800** loses 22 at seed 1 and gains 6 at seed 101 (16 to 32 over
+  the two): its guarded side spreads 5 to 27, within the size of a seed
+  change; the 0xCB panel loses 10 (as on x1829's three seeds, +4 to
+  +10). Both are far below katia's gain.
+- **ghoul's strict pass** at seed 1 is lost to one starved thermal (the
+  pour model's miss, unconnected 0 on both); over three seeds both sides
+  pass twice, so it is noise. It is the only strict pass that moves, and
+  only at 0.5 (ghoul's share is 0.51).
+- **Everything else is within a few connections**: Quanta75_BareRP2040
+  -4, RP2040_base -3, protoesp +3 (its x1829 seeds gained 37, 31 and 32;
+  on x1832 the off side is 70, not 110), ULK +2, koeg +1, the Hub and
+  ULK_sl -1; the 27 boards that pass strict on both sides stay at 0.
+- **0.7 loses the guard's point**: katia and protoesp (0.63) and ATAT
+  (0.64) fall below it, the panel (0.77) stays, and the sum rises by 7.
+  Between 0.5 and 0.6 are ten boards (ghoul, Quanta75, koeg and seven
+  that pass on both sides): together -3 open and ghoul's strict flip.
+
+**Decision: `fixed_share` 0.6 is the default.** At 0.6 every clause of
+the rule holds on the seed-1 rows: unconnected falls by 92 over the 45
+boards, no strict pass falls (28 to 28), and the boards that lose
+(ATAT1800 +22, the panel +10) lose less than katia gains (124). 0.5 meets
+it as well once ghoul's flip is counted as the noise its three seeds
+show (2 strict passes of 3 on each side), and buys 3 connections more; by
+the rule as stated (strict passes at the measured seed) it does not, so
+the default is the threshold that needs no exception. The dense tier and
+the short tier are unchanged against the 0.5 measurement above: their
+fixed-heavy boards (protoesp 0.63, the panel 0.77; 1337-v4.0,
+USB_Cable_Tester, spell_tome_bottom, urchin 0.64 to 0.84) are all above
+0.6. `{"escape_demand": {"fixed_share": null}}` restores escape demand on
+every board.
 
 ## Bus-group moves (2026-10-26)
 

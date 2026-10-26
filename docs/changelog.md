@@ -11,6 +11,29 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-26 (escape demand's fixed-share guard: the 45 boards)
+
+Branch escape-guard-sweep. The 45 sweep boards `escape_demand.fixed_share`
+0.5 fires on, layout mode at the task budget, seed 1, the defaults
+against the guard (x1832; three boards x14720 = x1831), and
+`fixed_share` 0.6 made the default; placer.md "The 45 fixed-heavy boards
+(2026-10-26)" has the table.
+
+- **katia** 162 to 38 at seed 1 (11 to 6 at seed 101): the loser the
+  guard was for recovers.
+- **Sums** over the 40 rows with a result on both sides (the five
+  molecules are refused on both): at 0.5 unconnected 413 to 318, strict
+  passes 28 to 27 (ghoul: one starved thermal; over three seeds both
+  sides pass twice); at 0.6 413 to 321 with 28 to 28; at 0.7 413 to 420
+  (katia, protoesp and ATAT1800 fall below it).
+- **Losers**: ATAT1800 +22 at seed 1, -6 at seed 101; the 0xCB panel
+  +10; the rest within 4.
+- **`fixed_share` 0.6 by default** (35 of the 109 sweep boards): it
+  meets the rule at the measured seed without counting ghoul's flip as
+  noise; the dense and short tiers' fixed-heavy boards are all above 0.6,
+  so their 0.5 measurement stands. The 64 boards below 0.5 are identical
+  (MIDAS-MK1.1 and OpenFC placed byte for byte the same).
+
 ## Committed on 2026-10-26 (thermal vias of exposed pads in the pour model)
 
 Branch thermal-vias (docs/router.md, "Thermal vias, custom pads and
