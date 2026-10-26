@@ -13,7 +13,8 @@ struct Part {
     reference: String,
     name: String,
     at: [f64; 3],
-    /// Pad name, net (normalized), centre on the board, power pin.
+    /// Pad name, net (normalized), centre on the board, supply pin
+    /// (`supply_pin`).
     pads: Vec<(String, Option<String>, [f64; 2], bool)>,
     value: String,
     body: Option<[f64; 4]>,
@@ -41,18 +42,24 @@ fn parts_of(pcb: &Expr) -> Result<Vec<Part>, String> {
                 continue;
             };
             let offset = crate::geometry::rotate_vector(position, -at[2]);
-            pads.push((
-                pad.children()
-                    .get(1)
-                    .and_then(Expr::atom)
-                    .unwrap_or("")
-                    .to_string(),
-                node_net(pad)
-                    .filter(|net| !net.is_empty())
-                    .map(|net| names.normalize(net).to_string()),
-                [at[0] + offset[0], at[1] + offset[1]],
-                form_atom(pad, "pintype", 1) == Some("power_in"),
-            ));
+            let name = pad
+                .children()
+                .get(1)
+                .and_then(Expr::atom)
+                .unwrap_or("")
+                .to_string();
+            let net = node_net(pad)
+                .filter(|net| !net.is_empty())
+                .map(|net| names.normalize(net).to_string());
+            let supply = net.as_deref().is_some_and(|net| {
+                supply_pin(
+                    form_atom(pad, "pinfunction", 1),
+                    form_atom(pad, "pintype", 1),
+                    &name,
+                    net,
+                )
+            });
+            pads.push((name, net, [at[0] + offset[0], at[1] + offset[1]], supply));
         }
         let value = footprint
             .children()
@@ -81,9 +88,257 @@ fn parts_of(pcb: &Expr) -> Result<Vec<Part>, String> {
     Ok(parts)
 }
 
+/// A pin function without KiCad's appended pad number and markup
+/// (`EN_3` -> `EN`, `~{SHDN}` -> `SHDN`), upper case.
+fn pin_function(function: &str, pad: &str) -> String {
+    let function = function
+        .strip_suffix(&format!("_{pad}"))
+        .unwrap_or(function);
+    function
+        .replace("~{", "")
+        .replace(['{', '}', '~'], "")
+        .trim()
+        .to_ascii_uppercase()
+}
+
+/// Whether a pin function names an enable, shutdown or other control
+/// input (`EN`, `~{SHDN}`, `CE`, `ON/OFF`, `SLEEP`), which a rail may drive
+/// but no capacitor decouples.
+fn control_function(function: &str) -> bool {
+    const CONTROLS: [&str; 18] = [
+        "EN", "ENA", "ENABLE", "SHDN", "SD", "CE", "ON", "ON/OFF", "RUN", "SLEEP", "RESET", "RST",
+        "PG", "PGOOD", "MODE", "SYNC", "CS", "SEL",
+    ];
+    let control = |name: &str| {
+        CONTROLS.iter().any(|control| {
+            name.strip_prefix(control)
+                .is_some_and(|rest| rest.chars().all(|c| c.is_ascii_digit()))
+        })
+    };
+    // `nCE`, `nSHDN`: active low.
+    control(function) || function.strip_prefix('N').is_some_and(control)
+}
+
+/// Whether a pin function names a supply (`VDD`, `VCC`, `AVDD`, `VIN`,
+/// `VBAT`, `VM`, `3V3`, ...).
+fn supply_function(function: &str) -> bool {
+    let name = function.trim_start_matches('+');
+    [
+        "VDD", "VCC", "AVDD", "DVDD", "PVDD", "IOVDD", "AVCC", "DVCC", "VIN", "PVIN", "VBAT",
+        "BAT", "VBUS", "VSYS", "VREG", "VOUT", "VDDIO", "VDDA", "VCCIO", "VPP",
+    ]
+    .iter()
+    .any(|supply| name.starts_with(supply))
+        || ["VM", "VS", "V+", "VCCA", "VCCB"].iter().any(|supply| {
+            name.strip_prefix(supply).is_some_and(|rest| {
+                rest.is_empty() || rest.chars().all(|c| c.is_ascii_digit() || c == '_')
+            })
+        })
+        || name.split_once('V').is_some_and(|(volts, rest)| {
+            !volts.is_empty()
+                && volts.chars().all(|c| c.is_ascii_digit())
+                && rest.chars().all(|c| c.is_ascii_digit())
+        })
+}
+
+/// Whether an IC's pad on a (non-ground) net is a supply pin a decoupling
+/// capacitor belongs at: by the pin's function where the board names it
+/// (never an enable or other control input tied to the rail: the
+/// schematic trial's C7, 22 uF, went to the LDO's EN pin), else by its
+/// electrical type (power in or out; a logic input or output tied to a
+/// rail is none), else by the net's name (`rail_name`).
+fn supply_pin(function: Option<&str>, pintype: Option<&str>, pad: &str, net: &str) -> bool {
+    if let Some(function) = function.map(|function| pin_function(function, pad))
+        && !function.is_empty()
+    {
+        if control_function(&function) {
+            return false;
+        }
+        if supply_function(&function) {
+            return true;
+        }
+    }
+    let pintype = pintype.unwrap_or("");
+    if pintype.starts_with("power_in") || pintype.starts_with("power_out") {
+        return true;
+    }
+    if [
+        "input",
+        "output",
+        "bidirectional",
+        "tri_state",
+        "open_collector",
+        "open_emitter",
+    ]
+    .iter()
+    .any(|logic| pintype.starts_with(logic))
+    {
+        return false;
+    }
+    rail_name(net)
+}
+
 /// The reference's letters (`U` of `U12`).
 fn prefix(reference: &str) -> &str {
     reference.trim_end_matches(|c: char| c.is_ascii_digit() || c == '_')
+}
+
+/// Where the project's schematics (every `.kicad_sch` beside the board)
+/// draw each symbol: per reference, the sheet instance it is on (file and
+/// instance path) and its position there.
+fn schematic_positions(directory: &Path) -> BTreeMap<String, (String, [f64; 2])> {
+    let mut positions = BTreeMap::new();
+    let Ok(entries) = fs::read_dir(directory) else {
+        return positions;
+    };
+    let mut files: Vec<PathBuf> = entries
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "kicad_sch")
+        })
+        .collect();
+    files.sort();
+    for file in files {
+        let Some(schematic) = fs::read_to_string(&file)
+            .ok()
+            .and_then(|text| parse(&text).ok())
+        else {
+            continue;
+        };
+        let sheet = file
+            .file_name()
+            .map_or(String::new(), |name| name.to_string_lossy().to_string());
+        for symbol in schematic
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("symbol"))
+        {
+            let Ok(at) = form_xy(symbol, "at") else {
+                continue;
+            };
+            let instances = symbol
+                .child("instances")
+                .map(Expr::children)
+                .unwrap_or_default();
+            for path in instances
+                .iter()
+                .filter(|project| project.head() == Some("project"))
+                .flat_map(|project| project.children())
+                .filter(|path| path.head() == Some("path"))
+            {
+                if let (Some(instance), Some(reference)) = (
+                    path.children().get(1).and_then(Expr::atom),
+                    form_atom(path, "reference", 1),
+                ) {
+                    positions
+                        .entry(reference.to_string())
+                        .or_insert((format!("{sheet}{instance}"), at));
+                }
+            }
+        }
+    }
+    positions
+}
+
+/// Each capacitor's supply pin by the schematic (`positions`): first the IC
+/// of its rail drawn nearest to it on its sheet instance; then an IC of the
+/// rail that got none takes an extra of an IC with more capacitors than
+/// supply pins on that rail (the extra drawn farthest from its IC, to the
+/// IC nearest to it), until none is left without or none has extras; at
+/// each IC its capacitors go to its pins in turn. Capacitors the schematic
+/// does not place stay out (the caller assigns them in turn). The schematic
+/// trial: C7 and C8 (22 uF on VDD) both drawn nearest the second motor
+/// driver U6; U5 takes C8, as the designer's board has them.
+fn schematic_assignment(
+    capacitors: &[(String, String)],
+    supplies: &BTreeMap<String, Vec<(String, [f64; 2])>>,
+    positions: &BTreeMap<String, (String, [f64; 2])>,
+) -> BTreeMap<String, String> {
+    let ic_of = |pin: &str| pin.split_once(':').map_or(pin, |(ic, _)| ic).to_string();
+    let mut assigned = BTreeMap::new();
+    let rails: BTreeSet<&String> = capacitors.iter().map(|(_, net)| net).collect();
+    for rail in rails {
+        let pins = &supplies[rail];
+        // The rail's ICs with their supply pins, in board order.
+        let mut ics: Vec<(String, Vec<String>)> = Vec::new();
+        for (pin, _) in pins {
+            let ic = ic_of(pin);
+            match ics.iter_mut().find(|(known, _)| *known == ic) {
+                Some((_, list)) => list.push(pin.clone()),
+                None => ics.push((ic, vec![pin.clone()])),
+            }
+        }
+        let distance = |capacitor: &str, ic: &str| {
+            let (sheet, at) = positions.get(capacitor)?;
+            let (other, there) = positions.get(ic)?;
+            (sheet == other).then(|| crate::geometry::distance_squared(*at, *there).sqrt())
+        };
+        // Pass 1: the nearest IC.
+        let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for (capacitor, _) in capacitors.iter().filter(|(_, net)| net == rail) {
+            if let Some((ic, _)) = ics
+                .iter()
+                .filter_map(|(ic, _)| distance(capacitor, ic).map(|d| (ic, d)))
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+            {
+                groups
+                    .entry(ic.clone())
+                    .or_default()
+                    .push(capacitor.clone());
+            }
+        }
+        // Pass 2: an IC drawn without a capacitor takes another's extra.
+        loop {
+            let pin_count = |ic: &str| {
+                ics.iter()
+                    .find(|(known, _)| known == ic)
+                    .map_or(0, |(_, pins)| pins.len())
+            };
+            let extra = groups
+                .iter()
+                .filter(|(ic, group)| group.len() > pin_count(ic))
+                .flat_map(|(ic, group)| {
+                    group.iter().filter_map(move |capacitor| {
+                        distance(capacitor, ic).map(|d| (ic, capacitor, d))
+                    })
+                })
+                .max_by(|a, b| a.2.total_cmp(&b.2))
+                .map(|(ic, capacitor, _)| (ic.clone(), capacitor.clone()));
+            let Some((from, capacitor)) = extra else {
+                break;
+            };
+            let Some(to) = ics
+                .iter()
+                .filter(|(ic, _)| groups.get(ic).is_none_or(Vec::is_empty))
+                .filter_map(|(ic, _)| distance(&capacitor, ic).map(|d| (ic, d)))
+                .min_by(|a, b| a.1.total_cmp(&b.1))
+                .map(|(ic, _)| ic.clone())
+            else {
+                break;
+            };
+            groups
+                .get_mut(&from)
+                .expect("the extra's IC")
+                .retain(|known| *known != capacitor);
+            groups.entry(to).or_default().push(capacitor);
+        }
+        // At each IC, its pins in turn, the capacitors in board order.
+        for (ic, ic_pins) in &ics {
+            let Some(group) = groups.get(ic) else {
+                continue;
+            };
+            let mut ordered: Vec<&String> = group.iter().collect();
+            ordered.sort_by_key(|capacitor| {
+                capacitors.iter().position(|(known, _)| known == *capacitor)
+            });
+            for (turn, capacitor) in ordered.into_iter().enumerate() {
+                assigned.insert(capacitor.clone(), ic_pins[turn % ic_pins.len()].clone());
+            }
+        }
+    }
+    assigned
 }
 
 /// Whether the board's parts have a placement: most footprints at
@@ -168,7 +423,7 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
         if has_placement {
             "The board has a placement: each connector's edge is the side of the outline it lies at (or faces), each capacitor's pin the supply pin it sits closest to.".into()
         } else {
-            "The board has no placement yet (the parts share a few positions): the connectors' edges are \"any\" (the side nearest to where the placer puts them) and each capacitor goes to a supply pin of its rail in turn.".into()
+            "The board has no placement yet (the parts share a few positions): the connectors' edges are \"any\" (the side nearest to where the placer puts them) and each capacitor goes to a supply pin of the IC the schematic draws it nearest to (an IC of its rail drawn with none gets one of another's extras), else to the rail's supply pins in turn.".into()
         },
         "move_all: every part is placed anew, wherever it starts (remove it to keep the parts that look deliberately placed).".into(),
     ];
@@ -255,11 +510,11 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
         .filter(|part| matches!(prefix(&part.reference), "U" | "IC") && part.pads.len() >= 3)
     {
         let mut seen = BTreeSet::new();
-        for (pad, net, center, power) in &part.pads {
+        for (pad, net, center, supply) in &part.pads {
             let Some(net) = net else {
                 continue;
             };
-            if ground(net) || !(*power || rail_name(net)) || !seen.insert(pad.clone()) {
+            if ground(net) || !*supply || !seen.insert(pad.clone()) {
                 continue;
             }
             supplies
@@ -268,8 +523,8 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
                 .push((format!("{}:{pad}", part.reference), *center));
         }
     }
-    let mut near = Vec::new();
-    let mut taken: BTreeMap<String, usize> = BTreeMap::new();
+    // The decoupling capacitors: (part, its supply pad's net, centre).
+    let mut capacitors: Vec<(&Part, String, [f64; 2])> = Vec::new();
     for part in parts
         .iter()
         .filter(|part| prefix(&part.reference) == "C" && part.pads.len() == 2)
@@ -282,17 +537,38 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
             (true, false) => &part.pads[1],
             _ => continue,
         };
-        let net = supply.1.as_ref().expect("a supply pad has a net");
-        let Some(pins) = supplies.get(net) else {
-            continue;
-        };
+        let net = supply.1.clone().expect("a supply pad has a net");
+        if supplies.contains_key(&net) {
+            capacitors.push((part, net, supply.2));
+        }
+    }
+    // Without a placement, the schematic says which IC a capacitor is
+    // drawn at.
+    let assigned = if has_placement {
+        BTreeMap::new()
+    } else {
+        schematic_assignment(
+            &capacitors
+                .iter()
+                .map(|(part, net, _)| (part.reference.clone(), net.clone()))
+                .collect::<Vec<_>>(),
+            &supplies,
+            &schematic_positions(directory),
+        )
+    };
+    let mut near = Vec::new();
+    let mut taken: BTreeMap<String, usize> = BTreeMap::new();
+    for (part, net, center) in &capacitors {
+        let pins = &supplies[net];
         let pin = if has_placement {
             pins.iter()
                 .min_by(|x, y| {
-                    crate::geometry::distance_squared(x.1, supply.2)
-                        .total_cmp(&crate::geometry::distance_squared(y.1, supply.2))
+                    crate::geometry::distance_squared(x.1, *center)
+                        .total_cmp(&crate::geometry::distance_squared(y.1, *center))
                 })
                 .map(|(pin, _)| pin.clone())
+        } else if let Some(pin) = assigned.get(&part.reference) {
+            Some(pin.clone())
         } else {
             // In turn over the rail's pins: one capacitor a pin first.
             let turn = taken.entry(net.clone()).or_default();
@@ -362,6 +638,130 @@ mod tests {
                 (pad "2" smd rect (at -0.9 0) (size 0.9 1.2) (layers "F.Cu") (net 2 "GND"))))"#
         );
         fs::write(dir.join("t.kicad_pcb"), text).unwrap();
+    }
+
+    #[test]
+    fn a_decoupling_capacitor_goes_to_a_supply_pin_of_the_ic_the_schematic_draws_it_at() {
+        // The schematic trial, stacked: VDD feeds an LDO (U3: VIN, and EN
+        // tied to VDD) and two motor drivers (U5, U6: VM); C4 is drawn at
+        // U3, C7 and C8 (22 uF) both nearest U6.
+        let dir = std::env::temp_dir().join(format!("ux3-template-sch-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let pad = |name: &str, net: &str, function: &str, kind: &str| {
+            format!(
+                r#"(pad "{name}" smd rect (at 0 0) (size 0.3 0.3) (layers "F.Cu") (net 1 "{net}") (pinfunction "{function}_{name}") (pintype "{kind}"))"#
+            )
+        };
+        let ic = |reference: &str, pads: &[String]| {
+            format!(
+                r#"(footprint "IC" (at 0 0) (property "Reference" "{reference}") {})"#,
+                pads.join(" ")
+            )
+        };
+        let capacitor = |reference: &str, value: &str| {
+            format!(
+                r#"(footprint "C_0805" (at 0 0) (property "Reference" "{reference}") (property "Value" "{value}")
+                    (pad "1" smd rect (at -0.9 0) (size 0.9 1.2) (layers "F.Cu") (net 1 "VDD"))
+                    (pad "2" smd rect (at 0.9 0) (size 0.9 1.2) (layers "F.Cu") (net 2 "GND")))"#
+            )
+        };
+        let driver = |reference: &str| {
+            ic(
+                reference,
+                &[
+                    pad("1", "VDD", "VM", "power_in"),
+                    pad("4", "GND", "GND", "power_in"),
+                    pad("7", "VDD", "~{SLEEP}", "input"),
+                ],
+            )
+        };
+        let board = [
+            capacitor("C4", "1uF"),
+            capacitor("C7", "22uF"),
+            capacitor("C8", "22uF"),
+            ic(
+                "U3",
+                &[
+                    pad("1", "VDD", "VIN", "power_in"),
+                    pad("2", "GND", "GND", "power_in"),
+                    pad("3", "VDD", "EN", "input"),
+                ],
+            ),
+            driver("U5"),
+            driver("U6"),
+        ];
+        fs::write(
+            dir.join("t.kicad_pcb"),
+            format!(
+                r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal)) {})"#,
+                board.join(" ")
+            ),
+        )
+        .unwrap();
+        let symbol = |reference: &str, x: f64, y: f64| {
+            format!(
+                r#"(symbol (lib_id "x") (at {x} {y} 0) (instances (project "t" (path "/root" (reference "{reference}") (unit 1)))))"#
+            )
+        };
+        let schematic = [
+            symbol("U3", 320.0, 426.7),
+            symbol("C4", 306.1, 433.1),
+            symbol("U5", 73.7, 250.2),
+            symbol("U6", 74.9, 292.1),
+            symbol("C7", 104.1, 332.7),
+            symbol("C8", 115.6, 332.7),
+        ];
+        fs::write(
+            dir.join("t.kicad_sch"),
+            format!("(kicad_sch (version 20231120) {})", schematic.join(" ")),
+        )
+        .unwrap();
+        let template = constraints_template(&dir, "t").unwrap();
+        let pins: Vec<(&str, &str)> = template["near"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| {
+                (
+                    entry["part"].as_str().unwrap(),
+                    entry["pin_of"].as_str().unwrap(),
+                )
+            })
+            .collect();
+        // Never U3:3 (EN) or a driver's SLEEP input; C7 at U6, C8 at U5.
+        assert_eq!(pins, vec![("C4", "U3:1"), ("C7", "U6:1"), ("C8", "U5:1")]);
+        // Without the schematic: the supply pins in turn, still no EN.
+        fs::remove_file(dir.join("t.kicad_sch")).unwrap();
+        let template = constraints_template(&dir, "t").unwrap();
+        let pins: Vec<&str> = template["near"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["pin_of"].as_str().unwrap())
+            .collect();
+        assert_eq!(pins, vec!["U3:1", "U5:1", "U6:1"]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn supply_pins_are_told_by_function_type_and_net() {
+        assert!(supply_pin(Some("VIN_1"), Some("power_in"), "1", "VDD"));
+        assert!(!supply_pin(Some("EN_3"), Some("input"), "3", "VDD"));
+        assert!(!supply_pin(Some("~{SHDN}"), None, "4", "+3V3"));
+        assert!(!supply_pin(Some("nCE"), Some("passive"), "4", "+3V3"));
+        assert!(supply_pin(Some("3V3_3"), Some("passive"), "3", "+3.3V"));
+        assert!(supply_pin(Some("VM"), None, "1", "MOTOR"));
+        assert!(!supply_pin(
+            Some("SDO/SA0_1"),
+            Some("bidirectional"),
+            "1",
+            "+3.3V"
+        ));
+        assert!(!supply_pin(Some("VSS"), Some("passive"), "8", "SIG"));
+        // Nothing known: the net's name.
+        assert!(supply_pin(None, None, "1", "+3V3"));
+        assert!(!supply_pin(None, None, "1", "SIG"));
     }
 
     #[test]
