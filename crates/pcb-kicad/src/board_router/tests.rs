@@ -3317,6 +3317,151 @@ mod solid_starved_tests {
         assert!(!solid_kept(Some(&report(0, 10)), &report(0, 10)));
         assert!(solid_kept(None, &report(3, 10)));
     }
+
+    /// A panel of two copies of U3, each an exposed pad 45 with two
+    /// thermal vias of its number; the second copy turned by 90 degrees.
+    fn panel() -> crate::kicad_sexpr::Expr {
+        let copy = |x: f64, angle: f64| {
+            format!(
+                r#"(footprint "QFN" (layer "F.Cu") (at {x} 10 {angle})
+                  (property "Reference" "U3")
+                  (pad "45" smd rect (at 0 0) (size 2 2) (layers "F.Cu"))
+                  (pad "45" thru_hole circle (at 0.5 0.5) (size 0.5 0.5) (drill 0.3) (layers "*.Cu"))
+                  (pad "45" thru_hole circle (at -0.5 0.5) (size 0.5 0.5) (drill 0.3) (layers "*.Cu") (zone_connect 1))
+                  (pad "1" smd rect (at -1.5 0) (size 0.3 0.8) (layers "F.Cu")))"#
+            )
+        };
+        crate::kicad_sexpr::parse(&format!(
+            "(kicad_pcb {} {})",
+            copy(10.0, 0.0),
+            copy(30.0, 90.0)
+        ))
+        .unwrap()
+    }
+
+    /// Per footprint, its pads' numbers and zone connections (None: the
+    /// pad's own is not set).
+    fn connections(pcb: &crate::kicad_sexpr::Expr) -> Vec<Vec<(String, Option<String>)>> {
+        pcb.children()
+            .iter()
+            .filter(|item| item.head() == Some("footprint"))
+            .map(|footprint| {
+                footprint
+                    .children()
+                    .iter()
+                    .filter(|item| item.head() == Some("pad"))
+                    .map(|pad| {
+                        (
+                            pad.children()[1].atom().unwrap().to_string(),
+                            pad.child("zone_connect")
+                                .and_then(|form| form.children().get(1))
+                                .and_then(|value| value.atom())
+                                .map(str::to_string),
+                        )
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_solid_step_connects_only_the_starved_pads_of_a_label() {
+        use super::super::route::{SolidPad, set_pads_solid};
+        let solid = |reference: &str, number: &str, at: &[[f64; 2]]| SolidPad {
+            reference: reference.into(),
+            number: number.into(),
+            at: at.to_vec(),
+        };
+        let some = |value: &str| Some(value.to_string());
+        // The second copy's via at (-0.5, 0.5), turned by 90 degrees (Y
+        // down: clockwise on the screen), lies at (30.5, 10.5): only it.
+        let mut pcb = panel();
+        let change = set_pads_solid(&mut pcb, &[solid("U3", "45", &[[30.5, 10.5]])]);
+        assert_eq!(change.pads, 1);
+        assert!(change.whole.is_empty());
+        let pads = connections(&pcb);
+        assert_eq!(
+            pads[0],
+            vec![
+                ("45".into(), None),
+                ("45".into(), None),
+                ("45".into(), some("1")),
+                ("1".into(), None)
+            ]
+        );
+        assert_eq!(
+            pads[1],
+            vec![
+                ("45".into(), None),
+                ("45".into(), None),
+                ("45".into(), some("2")),
+                ("1".into(), None)
+            ]
+        );
+        // Two points: the first copy's exposed pad and the second's
+        // other via (0.5, 0.5 turned: 30.5, 9.5).
+        let mut pcb = panel();
+        let change = set_pads_solid(&mut pcb, &[solid("U3", "45", &[[10.0, 10.0], [30.5, 9.5]])]);
+        assert_eq!(change.pads, 2);
+        let pads = connections(&pcb);
+        assert_eq!(pads[0][0].1, some("2"));
+        assert_eq!(pads[0][1].1, None);
+        assert_eq!(pads[1][1].1, some("2"));
+        assert_eq!(pads[1][2].1, some("1"));
+        // A point no pad of the label lies at, or no point at all: the
+        // whole label, every copy, as before 2026-10-26.
+        for at in [vec![[20.0, 20.0]], Vec::new()] {
+            let mut pcb = panel();
+            let change = set_pads_solid(&mut pcb, &[solid("U3", "45", &at)]);
+            assert_eq!(change.pads, 6);
+            assert_eq!(change.whole, vec!["U3.45".to_string()]);
+            for footprint in connections(&pcb) {
+                for (number, connection) in footprint {
+                    assert_eq!(connection.is_some_and(|c| c == "2"), number == "45");
+                }
+            }
+        }
+        // Another label is left alone.
+        let mut pcb = panel();
+        assert_eq!(
+            set_pads_solid(&mut pcb, &[solid("U4", "45", &[[10.0, 10.0]])]).pads,
+            0
+        );
+    }
+
+    #[test]
+    fn kicads_findings_name_their_pads_by_label_and_point() {
+        use super::super::route::{SolidPad, solid_pads_of_findings};
+        let finding = |pad: &str, at: [f64; 2]| super::super::KiCadStarvedThermal {
+            pad: pad.into(),
+            layer: "F.Cu".into(),
+            at,
+            spokes: Some(1),
+            needed: Some(2),
+            advice: String::new(),
+        };
+        let pads = solid_pads_of_findings(&[
+            finding("Pad 45 [GND] of U3 on F.Cu", [30.5, 10.5]),
+            finding("Through hole pad 45 [GND] of U3", [10.5, 10.5]),
+            finding("Pad 45 [GND] of U3 on F.Cu", [30.5, 10.5]),
+            finding("Pad 2 [GND] of C8 on B.Cu", [1.0, 2.0]),
+        ]);
+        assert_eq!(
+            pads,
+            vec![
+                SolidPad {
+                    reference: "U3".into(),
+                    number: "45".into(),
+                    at: vec![[30.5, 10.5], [10.5, 10.5]],
+                },
+                SolidPad {
+                    reference: "C8".into(),
+                    number: "2".into(),
+                    at: vec![[1.0, 2.0]],
+                },
+            ]
+        );
+    }
 }
 
 /// Hostile and odd boards (docs/reviews/2026-10-21-review-robustness.md).

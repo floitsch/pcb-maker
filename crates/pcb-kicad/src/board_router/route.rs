@@ -1053,46 +1053,198 @@ pub(crate) fn starved_thermals(directory: &Path) -> usize {
     })
 }
 
-/// Gives the pads named (reference, number) KiCad's solid zone connection
-/// (`(zone_connect 2)`, replacing their own); returns how many pads changed.
-pub(crate) fn set_pads_solid(pcb: &mut Expr, pads: &[(String, String)]) -> usize {
-    let mut changed = 0;
-    if let Expr::List(items) = pcb {
-        for footprint in items
-            .iter_mut()
-            .filter(|item| item.head() == Some("footprint"))
+/// How near a finding's point a pad of its label must lie to be the pad
+/// it names (KiCad's DRC report gives the pad's position to a micron or
+/// better; the router's anchor is the pad's position in the board file).
+pub(crate) const SOLID_PAD_MATCH_MM: f64 = 0.005;
+
+/// A pad the solid step connects solid: its footprint's reference and its
+/// number, and where KiCad's findings or the pour model put the starved
+/// pads of that label (board coordinates). Without a point, every pad of
+/// the label.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SolidPad {
+    pub reference: String,
+    pub number: String,
+    pub at: Vec<[f64; 2]>,
+}
+
+/// What `set_pads_solid` changed: the pads given `(zone_connect 2)`, and
+/// the labels (`REF.NUMBER`) it set whole because a point matched no pad
+/// of theirs.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct SolidChange {
+    pub pads: usize,
+    pub whole: Vec<String>,
+}
+
+/// Each footprint pad of `pcb` with its footprint's reference, its number
+/// and its position on the board (None where an `at` form does not read).
+fn pads_on_board(pcb: &Expr) -> Vec<(String, String, Option<[f64; 2]>)> {
+    let mut pads = Vec::new();
+    for footprint in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        let reference = footprint_reference(footprint).unwrap_or_default();
+        let footprint_at = form_at(footprint).ok();
+        for pad in footprint
+            .children()
+            .iter()
+            .filter(|child| child.head() == Some("pad"))
         {
-            let reference = footprint_reference(footprint)
-                .unwrap_or_default()
+            let number = pad
+                .children()
+                .get(1)
+                .and_then(Expr::atom)
+                .unwrap_or("")
                 .to_string();
-            let Expr::List(children) = footprint else {
+            pads.push((reference.clone(), number, pad_position(footprint_at, pad)));
+        }
+    }
+    pads
+}
+
+/// A footprint pad's position on the board: the footprint's place plus
+/// the pad's, turned by the footprint's angle (Y down: a positive angle
+/// turns clockwise, `copper_geometry::lower_pad`).
+fn pad_position(footprint_at: Option<[f64; 3]>, pad: &Expr) -> Option<[f64; 2]> {
+    let footprint_at = footprint_at?;
+    let pad_at = form_at(pad).ok()?;
+    let offset = crate::geometry::rotate_vector([pad_at[0], pad_at[1]], -footprint_at[2]);
+    Some([footprint_at[0] + offset[0], footprint_at[1] + offset[1]])
+}
+
+/// Gives the pads `pads` names KiCad's solid zone connection (`(zone_connect
+/// 2)`, replacing their own), per pad: of a label (reference and number)
+/// only the pads within `SOLID_PAD_MATCH_MM` of one of its points, so that
+/// on a panel of copies, or on an exposed pad with thermal vias of its
+/// number, the pads not starved keep their relief (0xCB's panel: one
+/// starved via of U3.45 made all 60 pads of the label solid until
+/// 2026-10-26). KiCad resolves the connection per pad (`EvalZoneConnection`:
+/// the pad's own first), so one pad's setting is enough. A label without
+/// points, or with a point no pad of it lies at (a pad whose position does
+/// not read, a finding's point off the pad's), falls back to all its pads,
+/// as before; those labels are in `whole`.
+pub(crate) fn set_pads_solid(pcb: &mut Expr, pads: &[SolidPad]) -> SolidChange {
+    let board_pads = pads_on_board(pcb);
+    let near = |at: [f64; 2], point: [f64; 2]| {
+        crate::geometry::distance_squared(at, point) <= SOLID_PAD_MATCH_MM * SOLID_PAD_MATCH_MM
+    };
+    // Per request, whether it falls back to its whole label.
+    let whole: Vec<bool> = pads
+        .iter()
+        .map(|request| {
+            request.at.is_empty()
+                || request.at.iter().any(|point| {
+                    !board_pads.iter().any(|(reference, number, at)| {
+                        *reference == request.reference
+                            && *number == request.number
+                            && at.is_some_and(|at| near(at, *point))
+                    })
+                })
+        })
+        .collect();
+    let mut change = SolidChange::default();
+    for (request, whole) in pads.iter().zip(&whole) {
+        let label = format!("{}.{}", request.reference, request.number);
+        if *whole && !change.whole.contains(&label) {
+            change.whole.push(label);
+        }
+    }
+    let Expr::List(items) = pcb else {
+        return change;
+    };
+    for footprint in items
+        .iter_mut()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        let reference = footprint_reference(footprint).unwrap_or_default();
+        let footprint_at = form_at(footprint).ok();
+        let Expr::List(children) = footprint else {
+            continue;
+        };
+        for pad in children
+            .iter_mut()
+            .filter(|child| child.head() == Some("pad"))
+        {
+            let number = pad
+                .children()
+                .get(1)
+                .and_then(Expr::atom)
+                .unwrap_or("")
+                .to_string();
+            let at = pad_position(footprint_at, pad);
+            let solid = pads.iter().zip(&whole).any(|(request, whole)| {
+                request.reference == reference
+                    && request.number == number
+                    && (*whole
+                        || at.is_some_and(|at| request.at.iter().any(|point| near(at, *point))))
+            });
+            if !solid {
                 continue;
-            };
-            for pad in children
-                .iter_mut()
-                .filter(|child| child.head() == Some("pad"))
-            {
-                let number = pad
-                    .children()
-                    .get(1)
-                    .and_then(Expr::atom)
-                    .unwrap_or("")
-                    .to_string();
-                if !pads.iter().any(|(r, n)| *r == reference && *n == number) {
-                    continue;
-                }
-                if let Expr::List(fields) = pad {
-                    fields.retain(|field| field.head() != Some("zone_connect"));
-                    fields.push(Expr::List(vec![
-                        Expr::Atom("zone_connect".into()),
-                        Expr::Atom("2".into()),
-                    ]));
-                    changed += 1;
-                }
+            }
+            if let Expr::List(fields) = pad {
+                fields.retain(|field| field.head() != Some("zone_connect"));
+                fields.push(Expr::List(vec![
+                    Expr::Atom("zone_connect".into()),
+                    Expr::Atom("2".into()),
+                ]));
+                change.pads += 1;
             }
         }
     }
-    changed
+    change
+}
+
+/// The requests of `starved` (KiCad's findings): per label its findings'
+/// points.
+pub(crate) fn solid_pads_of_findings(starved: &[KiCadStarvedThermal]) -> Vec<SolidPad> {
+    let mut pads: Vec<SolidPad> = Vec::new();
+    for finding in starved {
+        let text = &finding.pad;
+        let (Some(number), Some(reference)) = (
+            text.split("ad ")
+                .nth(1)
+                .and_then(|rest| rest.split(" [").next()),
+            text.split(" of ")
+                .nth(1)
+                .and_then(|rest| rest.split(" on ").next()),
+        ) else {
+            continue;
+        };
+        add_solid_pad(&mut pads, reference, number, Some(finding.at));
+    }
+    pads
+}
+
+/// Adds `at` to the request of label (reference, number), or a request.
+pub(crate) fn add_solid_pad(
+    pads: &mut Vec<SolidPad>,
+    reference: &str,
+    number: &str,
+    at: Option<[f64; 2]>,
+) {
+    let position = match pads
+        .iter()
+        .position(|pad| pad.reference == reference && pad.number == number)
+    {
+        Some(position) => position,
+        None => {
+            pads.push(SolidPad {
+                reference: reference.to_string(),
+                number: number.to_string(),
+                at: Vec::new(),
+            });
+            pads.len() - 1
+        }
+    };
+    if let Some(at) = at
+        && !pads[position].at.contains(&at)
+    {
+        pads[position].at.push(at);
+    }
 }
 
 /// `solid_starved_thermals` on a checked board: the pads KiCad finds
@@ -1106,23 +1258,20 @@ pub(crate) fn solidify_starved_thermals(
     board_id: &str,
 ) -> Result<usize, String> {
     let mut checks = 0;
-    let starved: Vec<(String, String)> = result
-        .diagnostics
-        .starved_thermals
-        .iter()
-        .filter_map(|starved| {
-            let text = &starved.pad;
-            let number = text.split("ad ").nth(1)?.split(" [").next()?.to_string();
-            let reference = text.split(" of ").nth(1)?.split(" on ").next()?.to_string();
-            Some((reference, number))
-        })
-        .collect();
+    let starved = solid_pads_of_findings(&result.diagnostics.starved_thermals);
     if !starved.is_empty() {
         let board_path = output_directory.join(format!("{board_id}.kicad_pcb"));
         let text = fs::read_to_string(&board_path)
             .map_err(|error| format!("failed to read {}: {error}", board_path.display()))?;
         let mut pcb = parse(&text)?;
-        let changed = set_pads_solid(&mut pcb, &starved);
+        let change = set_pads_solid(&mut pcb, &starved);
+        let changed = change.pads;
+        if !change.whole.is_empty() {
+            eprintln!(
+                "starved pads not found at KiCad's points: all pads of {} connected solid",
+                change.whole.join(", ")
+            );
+        }
         if changed > 0 {
             // The checked board and its reports, to go back to: a solid
             // pad changes the fill, which can cost more than it gains

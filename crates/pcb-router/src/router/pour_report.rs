@@ -41,6 +41,10 @@ pub struct StarvedThermal {
     pub tracks: usize,
     /// How many spokes the worst zone of several on the layer is short.
     pub seam_short: usize,
+    /// Where the starved pads of the label lie on the layer (their
+    /// anchors: a terminal's, or a pad merged into it such as an exposed
+    /// pad's thermal via), for a solid step per pad.
+    pub at: Vec<crate::geometry::Point>,
 }
 
 impl Router {
@@ -98,11 +102,17 @@ impl Router {
                     islands: count(false),
                     tracks: record.tracks,
                     seam_short: record.seam_short,
+                    at: vec![record.anchor],
                 };
-                if !starved.iter().any(|other: &StarvedThermal| {
+                match starved.iter_mut().find(|other: &&mut StarvedThermal| {
                     other.label == entry.label && other.layer == entry.layer
                 }) {
-                    starved.push(entry);
+                    Some(other) => {
+                        if !other.at.contains(&record.anchor) {
+                            other.at.push(record.anchor);
+                        }
+                    }
+                    None => starved.push(entry),
                 }
             }
             // Elements past the pieces are the net's terminals and

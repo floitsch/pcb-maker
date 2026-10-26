@@ -123,6 +123,10 @@ pub struct KiCadPredictedStarved {
     pub spokes: usize,
     pub islands: usize,
     pub tracks: usize,
+    /// Where the label's starved pads on the layer lie (board
+    /// coordinates, mm): the solid step's pads (`set_pads_solid`).
+    #[serde(default)]
+    pub at: Vec<[f64; 2]>,
 }
 
 /// `measure_pours` and the pads the same analyses find starved
@@ -183,6 +187,7 @@ pub fn measure_board_pours(
             spokes: pad.spokes,
             islands: pad.islands,
             tracks: pad.tracks,
+            at: pad.at,
         })
         .collect();
     let mut result = Vec::new();
@@ -308,19 +313,30 @@ fn solidify_predicted(
     config: &KiCadBoardRouterConfig,
     measured: &MeasuredBoard,
 ) -> Result<Option<MeasuredBoard>, String> {
-    let pads: Vec<(String, String)> = measured
-        .starved
-        .iter()
-        .filter_map(|pad| {
-            let (reference, number) = pad.pad.split_once('.')?;
-            Some((reference.to_string(), number.to_string()))
-        })
-        .collect();
+    let mut pads: Vec<super::route::SolidPad> = Vec::new();
+    for pad in &measured.starved {
+        let Some((reference, number)) = pad.pad.split_once('.') else {
+            continue;
+        };
+        if pad.at.is_empty() {
+            super::route::add_solid_pad(&mut pads, reference, number, None);
+        }
+        for at in &pad.at {
+            super::route::add_solid_pad(&mut pads, reference, number, Some(*at));
+        }
+    }
     let path = directory.join(format!("{board_id}.kicad_pcb"));
     let text = fs::read_to_string(&path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
     let mut pcb = parse(&text)?;
-    let changed = super::route::set_pads_solid(&mut pcb, &pads);
+    let change = super::route::set_pads_solid(&mut pcb, &pads);
+    let changed = change.pads;
+    if !change.whole.is_empty() {
+        eprintln!(
+            "pads the pour model finds starved not found at its points: all pads of {} connected solid",
+            change.whole.join(", ")
+        );
+    }
     if changed == 0 {
         return Ok(None);
     }
