@@ -426,7 +426,7 @@ def main():
     sources = [(path, kind) for kind in KINDS for path in getattr(arguments, kind)]
     for night in arguments.night:
         sources += night_sources(night)
-    if not sources:
+    if not sources and not arguments.night:
         night = newest_night(ROOT / "build/nightly")
         if night is None:
             parser.error("no logs given and no night under build/nightly")

@@ -40,7 +40,12 @@
 #                      peak-desc, --budget-scale the median
 #                      ladder_budget_share of the newest earlier night's
 #                      sweep (0.695 without one)
-#        sweep         tasks/v7, 10 x 2, --quality (the full layout sweep)
+#        sweep         tasks/v7, 10 x 2, --quality, --order peak-desc (the
+#                      full layout sweep, its largest boards first)
+#      Every stage declares each board's expected peak from the nightly's
+#      own estimates, build/nightly/estimates.json (step 4), else from the
+#      committed benchmarks/agent-tasks/estimates.json (run.py --estimates;
+#      README.md, "How to measure").
 #      The designer tier runs before the sweep and its largest boards
 #      first (since 2026-10-26): it is the stage with the large boards
 #      (up to 6.5 GB measured) and the shorter one (about 46 000 s of
@@ -58,7 +63,15 @@
 #      summary.md (scripts/nightly-report.py --summarize). Nights beyond
 #      the newest 14 keep their logs and summaries; their stages' board
 #      directories are removed.
-#   4. With --commit-report (PCB_NIGHTLY_COMMIT_REPORT=1), puts the night
+#   4. Refreshes the estimates (tier_estimates.py --refresh): the night's
+#      sweep, designer, short and expansion rows join the rows of
+#      build/nightly/estimates.json and the committed sidecar, the newest
+#      three sources per board and kind count, and the result is
+#      build/nightly/estimates.json (the next night's stages read it), so
+#      that the estimates follow the binary; build/nightly/<date>/
+#      estimates.log says what changed. The committed sidecar changes only
+#      by hand (tier_estimates.py --refresh after a sweep, committed).
+#   5. With --commit-report (PCB_NIGHTLY_COMMIT_REPORT=1), puts the night
 #      into docs/benchmarks.md ("Nightly") and docs/handover.md (the
 #      nightly state line) and commits and pushes those two files on main
 #      (scripts/nightly-report.py --commit). Off by default.
@@ -273,6 +286,11 @@ done
 run_py="${PCB_NIGHTLY_RUN_PY:-$source_dir/benchmarks/agent-tasks/run.py}"
 tasks="$source_dir/benchmarks/agent-tasks/tasks/v7/tasks.json"
 common=(--binary "$snapshot" --min-free-gb 10 --ledger-priority nightly)
+# The nightly's own estimates (refreshed at the end of each night, below),
+# else run.py's default, the committed sidecar.
+estimates="$nights/estimates.json"
+committed_estimates="$source_dir/benchmarks/agent-tasks/estimates.json"
+if [ -f "$estimates" ]; then common+=(--estimates "$estimates"); fi
 statuses=()
 
 stage() {
@@ -310,7 +328,7 @@ if [ "$designer" = 1 ]; then
   stage designer -- --tier designer --budget-scale "$scale" --quality --jobs 8 --threads 1 --order peak-desc
 fi
 if [ "$sweep" = 1 ]; then
-  stage sweep -- --tasks "$tasks" --jobs 10 --threads 2 --quality
+  stage sweep -- --tasks "$tasks" --jobs 10 --threads 2 --quality --order peak-desc
 fi
 
 # --- the summary -----------------------------------------------------------------
@@ -319,6 +337,18 @@ python3 "$here/scripts/nightly-report.py" --summarize "$directory" --nights "$ni
   --binary "$snapshot" --harness "$source_dir" --planned "${planned[@]}" --statuses "${statuses[@]}" \
   --seconds "$(($(date +%s) - started))"
 echo "summary $directory/summary.md"
+
+# The estimates follow the binary: tonight's rows into the nightly's own
+# sidecar (from the committed one on the first night).
+base="$estimates"
+[ -f "$base" ] || base="$committed_estimates"
+if python3 "$source_dir/benchmarks/agent-tasks/tier_estimates.py" --refresh --night "$directory" \
+     --estimates "$base" --merge "$committed_estimates" --output "$estimates" > "$directory/estimates.log" 2>&1; then
+  echo "estimates $estimates: $(head -1 "$directory/estimates.log" | sed 's/^[^:]*: //')"
+else
+  echo "the estimates' refresh failed (estimates.log):" >&2
+  tail -5 "$directory/estimates.log" >&2
+fi
 
 # Nights beyond the newest 14 keep their logs and summaries, not their
 # board directories (a night with the sweep and the designer tier holds

@@ -38,7 +38,8 @@ STUB = textwrap.dedent('''\
     def row(name, unconnected, **extra):
         r = {"name": name, "mode": "route" if stage != "sweep" else "layout", "routed": f"{50 - unconnected}/50",
              "native": {"unconnected": unconnected, "errors": {}}, "new_findings_strict": {}, "vias": 10,
-             "length_mm": 100.0, "work_seconds": 30.0, "pass": unconnected == 0, "pass_strict": unconnected == 0}
+             "length_mm": 100.0, "work_seconds": 30.0, "pass": unconnected == 0, "pass_strict": unconnected == 0,
+             "peak_rss_mb": 1000 * night + unconnected, "seconds": 60.0}
         r.update(extra)
         return r
 
@@ -120,7 +121,7 @@ def test_the_stages_run_with_their_settings(two_nights):
     assert "--tier expansion --jobs 8 --threads 1" in " ".join(argv(two_nights, "2026-10-23", "expansion")["argv"])
     assert "--tier short --jobs 3 --threads 2" in " ".join(argv(two_nights, "2026-10-23", "short")["argv"])
     sweep = " ".join(argv(two_nights, "2026-10-23", "sweep")["argv"])
-    assert "tasks/v7/tasks.json --jobs 10 --threads 2 --quality" in sweep
+    assert "tasks/v7/tasks.json --jobs 10 --threads 2 --quality --order peak-desc" in sweep
     # The matched designer tier: the median of the newest earlier night's
     # sweep shares (it runs before tonight's sweep, the largest boards
     # first); the first night has none: 0.695.
@@ -135,6 +136,25 @@ def test_the_stages_run_with_their_settings(two_nights):
         assert words[words.index("--min-free-gb") + 1] == "10"
         assert words[words.index("--ledger-priority") + 1] == "nightly"
         assert words[words.index("--binary") + 1].endswith("pcb-maker-nightly-2026-10-23-222222222222")
+
+
+def test_the_estimates_follow_the_nights(two_nights):
+    # The first night's stages had no nightly estimates yet (run.py's
+    # default, the committed sidecar); the second night's read the first
+    # night's refresh, and its own refresh adds its rows.
+    estimates = two_nights / "build/nightly/estimates.json"
+    assert "--estimates" not in argv(two_nights, "2026-10-22", "sweep")["argv"]
+    for stage in report.STAGES:
+        words = argv(two_nights, "2026-10-23", stage)["argv"]
+        assert words[words.index("--estimates") + 1] == str(estimates)
+    sidecar = json.loads(estimates.read_text())
+    alpha = sidecar["boards"]["repo__Alpha"]
+    assert [row[1] for row in alpha["layout"]["rows"]] == [2000, 1000]
+    assert alpha["layout"]["peak_rss_mb"] == 2500
+    assert alpha["designer"]["measured_mb"] == 2000
+    # The committed sidecar's boards stay.
+    assert "Goga64__ULK__ULK" in sidecar["boards"]
+    assert "with a measured row" in (two_nights / "build/nightly/2026-10-23/estimates.log").read_text()
 
 
 def test_snapshots_keep_the_newest_seven(two_nights):
