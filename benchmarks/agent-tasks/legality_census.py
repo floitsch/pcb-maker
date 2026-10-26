@@ -6,7 +6,8 @@ relaxation level (`pcb-maker legality-kicad-board`), beside KiCad's DRC of
 the designer's board (`drc-kicad-board`, through the DRC cache).
 
   legality_census.py <out-dir> --binary build/bin/pcb-maker-xNNNN \
-      [--sources build/github-layout-v20] [--tasks .../tasks.json] [--only NAME ...]
+      [--sources build/github-layout-v20] [--tasks .../tasks.json] [--only NAME ...] \
+      [--legality kicad]
 
 `--sources` is a run.py output tree whose `<task>/source` holds the tasks'
 prepared boards and constraints (what the placer lowers); the designer's
@@ -25,7 +26,7 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
-def run_board(binary, task, sources, out):
+def run_board(binary, task, sources, out, legality=None):
     name = task["name"]
     report = out / f"{name}.json"
     drc = out / "drc" / f"{name}.json"
@@ -41,6 +42,14 @@ def run_board(binary, task, sources, out):
                "--poses", str(designer)]
     if drc.exists():
         command += ["--drc", str(drc)]
+    if legality:
+        placer = out / "placer.json"
+        constraints = source / "constraints.json"
+        settings = {"legality": legality}
+        if constraints.exists():
+            settings["constraints"] = "constraints.json"
+        placer.write_text(json.dumps(settings))
+        command += ["--placer", str(placer)]
     done = subprocess.run(command, capture_output=True, text=True, timeout=3600)
     if done.returncode != 0:
         print(f"{name}: {done.stderr.strip()[:300]}", file=sys.stderr)
@@ -69,6 +78,7 @@ def main():
     parser.add_argument("--sources", default=str(ROOT / "build/github-layout-v20"))
     parser.add_argument("--tasks", default=str(ROOT / "benchmarks/agent-tasks/tasks/v7/tasks.json"))
     parser.add_argument("--only", nargs="*")
+    parser.add_argument("--legality", help="the placer's legality setting (default: the placer's)")
     arguments = parser.parse_args()
     out = pathlib.Path(arguments.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -79,7 +89,7 @@ def main():
     sums = {"loose": collections.Counter(), "zero": collections.Counter(), "tight": collections.Counter()}
     stricter = {"zero": collections.Counter(), "tight": collections.Counter()}
     for task in tasks:
-        report = run_board(arguments.binary, task, pathlib.Path(arguments.sources), out)
+        report = run_board(arguments.binary, task, pathlib.Path(arguments.sources), out, arguments.legality)
         if report is None:
             continue
         loose, zero, tight = report["levels"][0], zero_halo(report), tightest(report)

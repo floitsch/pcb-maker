@@ -909,6 +909,14 @@ pub fn legality_kicad_board(
                 }
             } else if test == "shaped or hollow boxes" {
                 "shaped or hollow boxes within the spacing, courtyards apart".into()
+            } else if courtyard.is_none() {
+                "a part without courtyard closer than the spacing, pads keep their clearance".into()
+            } else if relaxed.constraints.courtyard_spacing {
+                "courtyards apart but closer than their copper's least inset allows, pads keep their clearance"
+                    .into()
+            } else if courtyard.is_some_and(|gap| gap >= relaxed.spacing - TOUCH) {
+                "bodies past their courtyards (pads, mask or copper) closer than the spacing, courtyards keep it"
+                    .into()
             } else {
                 "courtyards apart but closer than the spacing, pads keep their clearance".into()
             };

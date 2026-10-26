@@ -34,14 +34,14 @@ The environment variables are indexed in the hand-over
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 10 | - | 2 | 10 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 71 | - | 0 | 71 | - |
-| [Placer settings](#placer-settings) | 50 | 46 | 4 | 50 | 23 |
+| [Placer settings](#placer-settings) | 51 | 47 | 4 | 51 | 23 |
 | [Layout settings](#layout-settings) | 20 | 20 | 0 | 20 | 9 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 3 |
 | [Layout settings: silkscreen](#layout-settings-silkscreen) | 1 | 1 | 0 | 1 | 1 |
 | [Layout settings: race_probe](#layout-settings-race_probe) | 3 | 3 | 0 | 3 | 3 |
 | [Layout settings: move_descent](#layout-settings-move_descent) | 7 | 7 | 0 | 7 | 0 |
-| [Placer core](#placer-core) | 9 | - | 0 | 9 | - |
+| [Placer core](#placer-core) | 10 | - | 0 | 10 | - |
 | [Placer core: global](#placer-core-global) | 12 | - | 0 | 12 | - |
 | [Placer core: anneal](#placer-core-anneal) | 9 | - | 0 | 9 | - |
 
@@ -378,6 +378,7 @@ The placer config file of `place-kicad-board`, and the `placer` object of the la
 | `placement_seeds` | `usize` | `3` | placer.md | Placements tried with different seeds (in parallel); the best is kept: fewest illegal parts, least missed constraints, least wire. |
 | `routing_demand` | `f64` | `0.0` | - | Routing demand as charge in the global placement: every net's estimated wire area (half perimeter times the track pitch, over its signal layers) spreads over its bounding box and pushes parts apart where the wires will run, scaled by this (0: off). |
 | `orientation_search` | `bool` | `true` | placer.md | The placement's orientation search starts from a canonical pose (`core::orient`): every movable part that may turn at the first of its angle options (in a fixed order), so that the placement is the same whether the board holds 0 degrees (an import from a schematic) or the designer's angles (a stack). On; off: the parts start at the angles the board holds. |
+| `legality` | `KiCadPlacerLegality` | `"model"` | - | What the levels whose spacing is the rules' least call legal: `"model"` (the default) or `"kicad"` (`KiCadPlacerLegality`). |
 | `keep_board_marks` | `bool` | `true` | placer.md | The board's own texts (header pin names, a title) and silkscreen graphics (a logo, a frame around a group) stay where the input put them: each is a placement obstacle on its side with a keepout's semantics (texts on F.SilkS, B.SilkS, F.Cu and B.Cu by their box from font size, thickness and justification; graphics on the silkscreen by their strokes, in clusters, leaving out a cluster that spans most of the board; a part meets a silkscreen mark without its routing halo; a mark on a movable part at its input position belongs to that part and is none: `attached_marks` in `board-placer.json`), and a part that finds no room off them at a level lies on them (`parts_on_marks` in `board-placer.json`); the layout routes around copper texts instead of moving them afterwards, and the polish moves only the parts' reference and value labels. Movable parts whose silkscreen or pads lie on a mark are reported (`labels.overlaps` in `board-layout.json`, the verdict's next_actions); fixed parts on a mark get a warning. On; off: the behaviour before 2026-10-21 (the marks are no obstacles, the polish moves them off the parts). |
 | `attached_marks` (internal) | `Option<Vec<(usize, usize)>>` | unset (internal) | - | The board's marks that belong to a movable part, taken from the input (`attach_marks`: the mark's place among the board's marks, the part); set by the layout for the lowerings of the placed board, where the parts no longer lie where the input had them. |
 | `global_guidance` | `Option<KiCadGlobalGuidance>` | unset | - | The global route inside the placer's search (an experiment, off): the anneal re-evaluates the global route of its placement and prefers moves away from overflowing boundaries, proposing the parts whose nets cross them more often; the coupled loop moves those parts first (docs/global-route.md, "Phase 2"). |
@@ -488,6 +489,7 @@ The `move_descent` object of the layout settings (an experiment, off when absent
 | `routing_room` | `Option<room::RoutingRoom>` | unset | the KiCad layer | Routing room from congestion (`room`): after placing with the pin-count halos, each part's halo is rescaled by the routing demand around it, within the same halo area, and the placement is annealed again from there. Off (`None`) by default. |
 | `orientation_search` | `bool` | `true` | `orientation_search` | The orientation search starts from a canonical pose (`orient`): angle options in a fixed order, every movable part that may turn at the first of them, so that the placement does not depend on the angles the board held (0 degrees from an import, the designer's in a stack). Off: the parts start at the angles they hold, options in the order given (the placer before 2026-10-15). |
 | `bus_groups` | `Option<groups::Settings>` | unset | `bus_groups` | Bus-group moves (`groups`, docs/placer.md "Bus-group moves (2026-10-26)"): banks of parts on one bus and parts with their passives move, turn, trade places and reorder as units in the anneal and the refinement. Off (`None`) by default. |
+| `kicad_legality` | `bool` | `false` | `legality` | KiCad's legality at the levels whose spacing is the rules' least (`Constraints::pad_clearance`): what KiCad's DRC accepts of a designer's placement there, rather than bodies kept the copper clearance apart. Off by default (docs/placer.md, "The legality model against KiCad"). |
 
 ## Placer core: global
 

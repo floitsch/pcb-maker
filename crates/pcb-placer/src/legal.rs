@@ -337,10 +337,12 @@ fn on_board(problem: &Problem, index: usize, pose: Pose) -> bool {
         .iter()
         .any(|(part, _, _)| *part == index)
         || problem.constraints.overhang(index).is_some();
+    // At KiCad's legality an unheld part's pads keep the margin, its body
+    // only the outline (where its copper lies inside its body).
+    if problem.constraints.pad_clearance && !held && component.edge_inset > 0.0 {
+        return pads_keep_edge(problem, index, pose);
+    }
     if problem.constraints.is_empty() || (!held && turn_of(pose.angle, [0.0, 0.0]).is_some()) {
-        if problem.constraints.pad_clearance && component.edge_inset > 0.0 {
-            return pads_keep_edge(problem, index, pose);
-        }
         let margin = problem.components[index].edge_margin(problem.edge_margin);
         return inside_outline(problem, bare(problem, index, pose, margin));
     }
@@ -2550,6 +2552,97 @@ pub fn center_edge_copper(problem: &Problem, poses: &mut [Pose]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::problem::{Component, Side};
+
+    /// A 2 x 1 mm body (courtyard and pads) with two 0.6 x 0.6 mm pads at
+    /// its ends, `inset` inside its courtyard on the long sides.
+    fn resistor(inset: f64) -> Component {
+        Component {
+            name: "R".into(),
+            body_center: [0.0, 0.0],
+            body_size: [2.0, 1.0],
+            round: false,
+            halo: 0.0,
+            pins: Vec::new(),
+            side: Side::Front,
+            fixed: false,
+            angle_options: vec![0.0],
+            far_side: Vec::new(),
+            far_copper: Vec::new(),
+            far_courtyard: Vec::new(),
+            hollow: Vec::new(),
+            tight: None,
+            edge_inset: 0.0,
+            courtyards: Vec::new(),
+            holes_inside: false,
+            pads: vec![
+                [-1.0 + inset, -0.3, -0.4 + inset, 0.3],
+                [0.4 - inset, -0.3, 1.0 - inset, 0.3],
+            ],
+            copper_only: false,
+            cutout_outline: Vec::new(),
+            tight_hollow: Vec::new(),
+        }
+    }
+
+    fn pair(inset: f64, gap: f64) -> (Problem, Vec<Pose>) {
+        let poses = vec![
+            Pose {
+                position: [10.0, 10.0],
+                angle: 0.0,
+            },
+            Pose {
+                position: [12.0 + gap, 10.0],
+                angle: 0.0,
+            },
+        ];
+        let problem = Problem {
+            outline: vec![[0.0, 0.0], [40.0, 0.0], [40.0, 40.0], [0.0, 40.0]],
+            components: vec![resistor(inset), resistor(inset)],
+            net_weights: Vec::new(),
+            poses: poses.clone(),
+            spacing: 0.2,
+            grid: 0.1,
+            edge_margin: 0.5,
+            min_spacing: 0.2,
+            constraints: Default::default(),
+            far_side_pads_only: false,
+            shared_halos: false,
+            pieces: Vec::new(),
+            escape: None,
+            crossings: None,
+        };
+        (problem, poses)
+    }
+
+    #[test]
+    fn kicad_legality_lets_courtyards_touch_where_the_pads_keep_their_clearance() {
+        // Pads 0.25 mm inside the courtyards' facing ends: touching
+        // courtyards leave the pads 0.5 mm apart, which KiCad accepts.
+        let (mut problem, poses) = pair(0.25, 0.0);
+        assert!(!is_legal(&problem, &poses, 1, poses[1], 0..2));
+        problem.constraints.pad_clearance = true;
+        problem.constraints.courtyard_spacing = true;
+        assert!(is_legal(&problem, &poses, 1, poses[1], 0..2));
+        // Overlapping courtyards stay illegal.
+        let (mut problem, poses) = pair(0.25, -0.05);
+        problem.constraints.pad_clearance = true;
+        assert!(!is_legal(&problem, &poses, 1, poses[1], 0..2));
+    }
+
+    #[test]
+    fn kicad_legality_keeps_the_pads_the_clearance_apart() {
+        // Pads at the courtyards' ends: 0.1 mm between the courtyards is
+        // 0.1 mm between the pads, less than the 0.2 mm clearance.
+        let (mut problem, poses) = pair(0.0, 0.1);
+        problem.constraints.pad_clearance = true;
+        problem.constraints.courtyard_spacing = true;
+        assert!(!is_legal(&problem, &poses, 1, poses[1], 0..2));
+        let (mut problem, poses) = pair(0.0, 0.2);
+        problem.constraints.pad_clearance = true;
+        problem.constraints.courtyard_spacing = true;
+        assert!(is_legal(&problem, &poses, 1, poses[1], 0..2));
+    }
 
     #[test]
     fn the_direction_is_the_one_before_the_shortcut() {

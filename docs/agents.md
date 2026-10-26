@@ -1144,6 +1144,33 @@ Score the designer's board and yours side by side.
   variants in route mode (run.py, the memory ledger) and attributes the
   open connections per group (`prepare`, `route`, `report --markdown`).
 
+- `pcb-maker legality-kicad-board <project-dir> <board-id> <report.json> [--poses <board.kicad_pcb>] [--drc <drc.json>] [--placer <placer.json>]`
+  (a diagnostic, [placer.md](placer.md) "The legality model against
+  KiCad (2026-10-26)"): judges a placement by the placer's own legality
+  at every relaxation level it walks down (loosest first), without
+  placing anything. The board is lowered as `place-kicad-board` lowers
+  it (the directory's `constraints.json` unless `--placer` names a
+  placer config; its project rules); `--poses` takes every footprint's
+  pose from another board first (by uuid, else by reference: a
+  designer's placement on a task's prepared board). One line per level
+  on stdout (its halos, spacing, grid, edge and courtyard settings, the
+  movable parts illegal there); the report has per level the illegal
+  parts and their causes, and per part that is illegal at some level
+  what it meets at the tightest such level: the other part or obstacle
+  (`outline`, a keepout, the board's silkscreen marks), the placer's
+  test, the cause measured on the footprints' own shapes (courtyards
+  overlap, pads closer than their clearance, courtyards apart but closer
+  than the spacing, bodies past their courtyards, the edge margin, the
+  far side, ...), the courtyard, body, pad and edge gaps in mm. With
+  `--drc` (KiCad's report of the board whose poses are judged, as
+  `drc-kicad-board` writes it) each conflict lists KiCad's errors and
+  warnings between the two footprints, each part and level counts the
+  parts KiCad agrees on (`kicad_agrees`: an error against what it meets)
+  and those where the placer is stricter than KiCad (`model_stricter`).
+  `--placer` with `{"legality": "kicad"}` judges the levels as that
+  setting would. `benchmarks/agent-tasks/legality_census.py` runs it on
+  every task's designer placement.
+
 `pcb-maker <command> --help` gives every command's arguments and
 defaults.
 
