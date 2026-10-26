@@ -59,6 +59,12 @@ pub struct Config {
     /// passives move, turn, trade places and reorder as units in the
     /// anneal and the refinement. Off (`None`) by default.
     pub bus_groups: Option<groups::Settings>,
+    /// KiCad's legality at the levels whose spacing is the rules' least
+    /// (`Constraints::pad_clearance`): what KiCad's DRC accepts of a
+    /// designer's placement there, rather than bodies kept the copper
+    /// clearance apart. Off by default (docs/placer.md, "The legality
+    /// model against KiCad").
+    pub kicad_legality: bool,
 }
 
 impl Config {
@@ -73,6 +79,7 @@ impl Config {
             routing_room: None,
             orientation_search: true,
             bus_groups: None,
+            kicad_legality: false,
         }
     }
 }
@@ -133,6 +140,8 @@ pub struct Relaxation {
     /// Courtyards may touch where their copper keeps the clearance
     /// (`Constraints::courtyard_spacing`).
     pub courtyard_spacing: bool,
+    /// KiCad's legality at this level (`Constraints::pad_clearance`).
+    pub pad_clearance: bool,
     /// Per component, the halo the placement gave it, where it is not the
     /// pin-count halo times the scales (`Config::routing_room`).
     pub halos: Option<std::sync::Arc<Vec<f64>>>,
@@ -250,7 +259,8 @@ impl Relaxation {
             }
         }
         problem.constraints.edge_copper = self.edge_copper;
-        problem.constraints.courtyard_spacing = self.courtyard_spacing;
+        problem.constraints.courtyard_spacing = self.courtyard_spacing || self.pad_clearance;
+        problem.constraints.pad_clearance = self.pad_clearance;
         problem.edge_margin = problem.edge_margin.min(self.edge_rule);
         problem.constraints.on_marks = self.on_marks.clone();
     }
@@ -789,6 +799,160 @@ fn halos_area(problem: &Problem) -> f64 {
 /// halos of parts with fewer than `MANY_PINS` pins.
 type Level = (f64, f64, f64, bool, bool, bool, f64, f64);
 
+/// The relaxation levels a placement walks down, loosest comfort first,
+/// and the index of the last, where courtyards may touch
+/// (`Constraints::courtyard_spacing`).
+fn relaxation_levels(problem: &Problem) -> (Vec<Level>, usize) {
+    // The last level also snaps to a finer grid: on small, crowded boards
+    // the regular grid leaves no legal spot where a finer one does.
+    let fine = problem.grid.min(0.1);
+    // Then bodies may come closer to the edge, as far as their copper
+    // allows (the full margin is room for routing too). Last, where the
+    // board's rules let courtyards overlap: bodies without the courtyard's
+    // margin.
+    let inset = problem
+        .components
+        .iter()
+        .any(|component| component.edge_inset > 0.0);
+    let tight = problem
+        .components
+        .iter()
+        .any(|component| component.tight.is_some());
+    // Halos go in steps: halved, then only the many-pin parts' (whose
+    // escapes need the room most), then all. The last number is the factor
+    // on the other parts' halos.
+    let mut levels = vec![
+        (1.0, 1.0, problem.grid, false, false, 1.0),
+        (0.5, 1.0, problem.grid, false, false, 1.0),
+        (0.5, 1.0, problem.grid, false, false, 0.0),
+        (0.0, 1.0, problem.grid, false, false, 0.0),
+        (0.0, 0.0, problem.grid, false, false, 0.0),
+        (0.0, 0.0, fine, false, false, 0.0),
+    ];
+    if inset {
+        levels.push((0.0, 0.0, fine, true, false, 0.0));
+    }
+    if tight {
+        levels.push((0.0, 0.0, fine, true, true, 0.0));
+    }
+    // Then bodies keep only the rules' copper-to-edge clearance from the
+    // edge (a narrow board whose parts' copper barely fits). Last, parts
+    // held at an edge only need their copper on the board (a card edge in
+    // its tab).
+    let rule_margin = (problem.constraints.copper_edge + 0.05).min(problem.edge_margin);
+    let mut levels: Vec<Level> = levels
+        .into_iter()
+        .map(|(halo, spacing, grid, inset, tight, small)| {
+            (
+                halo,
+                spacing,
+                grid,
+                inset,
+                tight,
+                false,
+                problem.edge_margin,
+                small,
+            )
+        })
+        .collect();
+    if rule_margin < problem.edge_margin {
+        levels.push((0.0, 0.0, fine, true, tight, false, rule_margin, 0.0));
+    }
+    if !problem.constraints.edges.is_empty() {
+        levels.push((0.0, 0.0, fine, true, tight, true, rule_margin, 0.0));
+    }
+    // Last, courtyards may touch where the copper inside them keeps the
+    // clearance: how designers pack a crowded side.
+    let courtyard_level = levels.len();
+    {
+        let last = *levels.last().expect("levels");
+        levels.push(last);
+    }
+    (levels, courtyard_level)
+}
+
+/// The problem at level `level` of `relaxation_levels`: its halos,
+/// spacing, grid and bodies.
+fn relax_level(
+    problem: &Problem,
+    config: &Config,
+    level: usize,
+    courtyard_level: usize,
+    (halo_scale, spacing_scale, grid, inset, tight, edge_copper, edge_rule, small_factor): Level,
+) -> Problem {
+    let mut relaxed = problem.clone();
+    relaxed.grid = grid;
+    relaxed.spacing = (relaxed.spacing * spacing_scale).max(relaxed.min_spacing);
+    relaxed.constraints.edge_copper = edge_copper;
+    relaxed.constraints.courtyard_spacing = level == courtyard_level;
+    // KiCad's legality where the spacing is the rules' least.
+    if config.kicad_legality && spacing_scale == 0.0 {
+        relaxed.constraints.courtyard_spacing = true;
+        relaxed.constraints.pad_clearance = true;
+    }
+    relaxed.far_side_pads_only = tight && config.overlap_far_side_pads;
+    relaxed.edge_margin = relaxed.edge_margin.min(edge_rule);
+    for component in &mut relaxed.components {
+        component.halo *= halo_scale;
+        if component.pins.len() < MANY_PINS {
+            component.halo *= small_factor;
+        }
+        if !inset {
+            component.edge_inset = 0.0;
+        }
+        if tight {
+            component.use_tight_body();
+        }
+    }
+    relaxed
+}
+
+/// One relaxation level as `level_problems` gives it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LevelShape {
+    /// Factors on the halos of the parts with many pins and the others.
+    pub halo_scale: f64,
+    pub small_halo_scale: f64,
+    /// Spacing between bodies, mm, and the placement grid.
+    pub spacing: f64,
+    pub grid: f64,
+    pub edge_inset: bool,
+    pub tight: bool,
+    pub edge_copper: bool,
+    pub edge_rule: f64,
+    pub courtyard_spacing: bool,
+    pub pad_clearance: bool,
+}
+
+/// The problem at every relaxation level a placement may walk down, the
+/// loosest first, with the board's halos fitted as `place` fits them: for
+/// diagnostics that judge given poses (a designer's) level by level.
+pub fn level_problems(problem: &Problem, config: &Config) -> Vec<(LevelShape, Problem)> {
+    let (mut fitted, _) = fit_halos(problem, config.maximum_utilization);
+    fitted.constraints.link_pairs();
+    let (levels, courtyard_level) = relaxation_levels(&fitted);
+    levels
+        .into_iter()
+        .enumerate()
+        .map(|(index, level)| {
+            let relaxed = relax_level(&fitted, config, index, courtyard_level, level);
+            let shape = LevelShape {
+                halo_scale: level.0,
+                small_halo_scale: level.7,
+                spacing: relaxed.spacing,
+                grid: relaxed.grid,
+                edge_inset: level.3,
+                tight: level.4,
+                edge_copper: level.5,
+                edge_rule: level.6,
+                courtyard_spacing: index == courtyard_level,
+                pad_clearance: relaxed.constraints.pad_clearance,
+            };
+            (shape, relaxed)
+        })
+        .collect()
+}
+
 pub fn place(problem: &Problem, config: &Config) -> Placement {
     // The pin-count halos as asked for, before the board's fit.
     let requested: Vec<f64> = problem
@@ -900,71 +1064,9 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     // Crowded boards cannot afford the full comfort margins: give up halos,
     // then the spacing, before giving up on a part.
     let mut best: Option<(Vec<usize>, Vec<Pose>, Problem)> = None;
-    // The last level also snaps to a finer grid: on small, crowded boards
-    // the regular grid leaves no legal spot where a finer one does.
+    // The last level also snaps to a finer grid (`relaxation_levels`).
     let fine = problem.grid.min(0.1);
-    // Then bodies may come closer to the edge, as far as their copper
-    // allows (the full margin is room for routing too). Last, where the
-    // board's rules let courtyards overlap: bodies without the courtyard's
-    // margin.
-    let inset = problem
-        .components
-        .iter()
-        .any(|component| component.edge_inset > 0.0);
-    let tight = problem
-        .components
-        .iter()
-        .any(|component| component.tight.is_some());
-    // Halos go in steps: halved, then only the many-pin parts' (whose
-    // escapes need the room most), then all. The last number is the factor
-    // on the other parts' halos.
-    let mut levels = vec![
-        (1.0, 1.0, problem.grid, false, false, 1.0),
-        (0.5, 1.0, problem.grid, false, false, 1.0),
-        (0.5, 1.0, problem.grid, false, false, 0.0),
-        (0.0, 1.0, problem.grid, false, false, 0.0),
-        (0.0, 0.0, problem.grid, false, false, 0.0),
-        (0.0, 0.0, fine, false, false, 0.0),
-    ];
-    if inset {
-        levels.push((0.0, 0.0, fine, true, false, 0.0));
-    }
-    if tight {
-        levels.push((0.0, 0.0, fine, true, true, 0.0));
-    }
-    // Then bodies keep only the rules' copper-to-edge clearance from the
-    // edge (a narrow board whose parts' copper barely fits). Last, parts
-    // held at an edge only need their copper on the board (a card edge in
-    // its tab).
-    let rule_margin = (problem.constraints.copper_edge + 0.05).min(problem.edge_margin);
-    let mut levels: Vec<Level> = levels
-        .into_iter()
-        .map(|(halo, spacing, grid, inset, tight, small)| {
-            (
-                halo,
-                spacing,
-                grid,
-                inset,
-                tight,
-                false,
-                problem.edge_margin,
-                small,
-            )
-        })
-        .collect();
-    if rule_margin < problem.edge_margin {
-        levels.push((0.0, 0.0, fine, true, tight, false, rule_margin, 0.0));
-    }
-    if !problem.constraints.edges.is_empty() {
-        levels.push((0.0, 0.0, fine, true, tight, true, rule_margin, 0.0));
-    }
-    // Last, courtyards may touch where the copper inside them keeps the
-    // clearance: how designers pack a crowded side.
-    let courtyard_level = levels.len();
-    {
-        let last = *levels.last().expect("levels");
-        levels.push(last);
-    }
+    let (levels, courtyard_level) = relaxation_levels(problem);
     let mut relaxation = None;
     // The work of the last level's full legalization: what a pass over
     // every part costs (`seat_on_marks`).
@@ -975,38 +1077,8 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     let mut annealed_shape: Option<(f64, bool)> = None;
     let level_count = levels.len();
     // The problem at a level: its halos, spacing, grid and bodies.
-    let relax = |level: usize,
-                 (
-        halo_scale,
-        spacing_scale,
-        grid,
-        inset,
-        tight,
-        edge_copper,
-        edge_rule,
-        small_factor,
-    ): Level| {
-        let mut relaxed = problem.clone();
-        relaxed.grid = grid;
-        relaxed.spacing = (relaxed.spacing * spacing_scale).max(relaxed.min_spacing);
-        relaxed.constraints.edge_copper = edge_copper;
-        relaxed.constraints.courtyard_spacing = level == courtyard_level;
-        relaxed.far_side_pads_only = tight && config.overlap_far_side_pads;
-        relaxed.edge_margin = relaxed.edge_margin.min(edge_rule);
-        for component in &mut relaxed.components {
-            component.halo *= halo_scale;
-            if component.pins.len() < MANY_PINS {
-                component.halo *= small_factor;
-            }
-            if !inset {
-                component.edge_inset = 0.0;
-            }
-            if tight {
-                component.use_tight_body();
-            }
-        }
-        relaxed
-    };
+    let relax =
+        |level: usize, shape: Level| relax_level(problem, config, level, courtyard_level, shape);
     // No packing fits the parts even at the loosest level (the last): the
     // movable bodies need more area than a side has, or more than strips
     // of the board can hold (`strips_overfull`). Then no level can place
@@ -1131,6 +1203,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 edge_copper,
                 edge_rule,
                 courtyard_spacing: level == courtyard_level,
+                pad_clearance: config.kicad_legality && spacing_scale == 0.0,
                 halos: None,
                 on_marks: relaxed.constraints.on_marks.clone(),
             });
@@ -1224,6 +1297,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                     edge_copper,
                     edge_rule,
                     courtyard_spacing: level == courtyard_level,
+                    pad_clearance: config.kicad_legality && spacing_scale == 0.0,
                     halos: None,
                     on_marks: relaxed.constraints.on_marks.clone(),
                 });
@@ -1336,6 +1410,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 edge_copper,
                 edge_rule,
                 courtyard_spacing: level == courtyard_level,
+                pad_clearance: config.kicad_legality && spacing_scale == 0.0,
                 halos: None,
                 on_marks: relaxed.constraints.on_marks.clone(),
             });

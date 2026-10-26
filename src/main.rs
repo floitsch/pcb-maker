@@ -415,6 +415,7 @@ const RESEARCH_USAGE: &[&str] = &[
     "export-congestion-sample <source-directory> <board-id> <output-directory> [job.json] [router-config.json|auto]",
     "score-congestion-sample <sample.json> <model.onnx>",
     "score-congestion <source-directory> <board-id> <model.onnx> [router-config.json|auto]",
+    "legality-kicad-board <project-dir> <board-id> <report.json> [--poses <board.kicad_pcb>] [--drc <drc.json>] [--placer <placer.json>]",
     "ablate-kicad-placement <designer.kicad_pcb> <placed-directory> <board-id> <output-directory> [ablation.json] [router-config.json|auto]",
     "global-route-kicad-board <source-directory> <board-id> [router-config.json|auto] [--global <global.json>] [--probe <work-seconds>] [--corridors <out.json>]",
     "dump-pour-map <source-directory> <board-id> <output-directory> [config.json|auto]",
@@ -728,6 +729,62 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
                 "{}",
                 serde_json::to_string(&score).map_err(|error| error.to_string())?
             );
+            Ok(())
+        }
+        "legality-kicad-board" => {
+            let usage = "usage: pcb-maker legality-kicad-board <project-dir> <board-id> <report.json> [--poses <board.kicad_pcb>] [--drc <drc.json>] [--placer <placer.json>]";
+            let directory = arguments.next().ok_or_else(|| usage.to_string())?;
+            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            pcb_kicad::check_board_id(&board_id)?;
+            let output = arguments.next().ok_or_else(|| usage.to_string())?;
+            let mut drc = None;
+            let mut poses = None;
+            let mut config = pcb_kicad::KiCadBoardPlacerConfig::default();
+            while let Some(flag) = arguments.next() {
+                let value = arguments.next().ok_or_else(|| usage.to_string())?;
+                match flag.as_str() {
+                    "--drc" => drc = Some(value),
+                    "--poses" => poses = Some(value),
+                    "--placer" => {
+                        config = serde_json::from_str(
+                            &std::fs::read_to_string(&value)
+                                .map_err(|error| format!("failed to read {value}: {error}"))?,
+                        )
+                        .map_err(|error| format!("{value}: {error}"))?
+                    }
+                    _ => return Err(usage.into()),
+                }
+            }
+            let report = pcb_kicad::legality_kicad_board(
+                Path::new(&directory),
+                &board_id,
+                &config,
+                poses.as_deref().map(Path::new),
+                drc.as_deref().map(Path::new),
+            )?;
+            let text = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
+            std::fs::write(&output, format!("{text}\n"))
+                .map_err(|error| format!("failed to write {output}: {error}"))?;
+            for level in &report.levels {
+                println!(
+                    "level {}: halo {} spacing {:.3} grid {} inset {} tight {} courtyards touch {}: {} of {} movable illegal{}",
+                    level.index,
+                    level.halo_scale,
+                    level.spacing_mm,
+                    level.grid_mm,
+                    level.edge_inset,
+                    level.tight,
+                    level.courtyard_spacing,
+                    level.illegal,
+                    report.movable,
+                    match (level.kicad_agrees, level.model_stricter) {
+                        (Some(agrees), Some(stricter)) =>
+                            format!(" ({agrees} with a KiCad error, {stricter} without)"),
+                        _ => String::new(),
+                    }
+                );
+            }
+            println!("{output}");
             Ok(())
         }
         "ablate-kicad-placement" => {

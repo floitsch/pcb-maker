@@ -210,7 +210,11 @@ fn overlaps(a: Rect, b: Rect, spacing: f64) -> bool {
 /// The gap two bodies on one side keep: the spacing, or at the
 /// courtyard-spacing level what their copper needs.
 fn body_spacing(problem: &Problem, a: usize, b: usize) -> f64 {
-    if problem.constraints.courtyard_spacing {
+    if problem.constraints.pad_clearance {
+        // Courtyards may touch; the pads keep their clearance
+        // (`pads_too_close`).
+        0.0
+    } else if problem.constraints.courtyard_spacing {
         let components = &problem.components;
         components[a].copper_share(problem.min_spacing)
             + components[b].copper_share(problem.min_spacing)
@@ -334,6 +338,9 @@ fn on_board(problem: &Problem, index: usize, pose: Pose) -> bool {
         .any(|(part, _, _)| *part == index)
         || problem.constraints.overhang(index).is_some();
     if problem.constraints.is_empty() || (!held && turn_of(pose.angle, [0.0, 0.0]).is_some()) {
+        if problem.constraints.pad_clearance && component.edge_inset > 0.0 {
+            return pads_keep_edge(problem, index, pose);
+        }
         let margin = problem.components[index].edge_margin(problem.edge_margin);
         return inside_outline(problem, bare(problem, index, pose, margin));
     }
@@ -371,6 +378,27 @@ fn on_board(problem: &Problem, index: usize, pose: Pose) -> bool {
             turn: None,
         },
     )
+}
+
+/// At KiCad's legality, for a part whose copper lies inside its body at
+/// the levels that let bodies near the edge (`edge_inset`): the body inside
+/// the outline, each pad the edge margin from it, as KiCad checks copper
+/// against the edge (not the body by its copper's least inset).
+fn pads_keep_edge(problem: &Problem, index: usize, pose: Pose) -> bool {
+    let component = &problem.components[index];
+    if !inside_outline(problem, bare(problem, index, pose, 0.0)) {
+        return false;
+    }
+    // Pads near no side of the body cannot be nearer the edge than the
+    // body's own margin allows.
+    let body = bare(problem, index, pose, 0.0);
+    let reach = problem.edge_margin;
+    if inside_outline(problem, body.grown(reach)) {
+        return true;
+    }
+    turned_rects(&component.pads, pose, reach)
+        .into_iter()
+        .all(|pad| inside_outline(problem, pad))
 }
 
 /// Whether the body itself (without any margin) lies inside the outline.
@@ -531,6 +559,11 @@ fn clear_of(
                 return false;
             }
             if !hollow && far_courtyard_overlap(problem, index, pose, other, poses[other], work) {
+                return false;
+            }
+            if problem.constraints.pad_clearance
+                && pads_too_close(problem, index, pose, other, poses[other], work)
+            {
                 return false;
             }
         } else if side.opposite(other_side)
@@ -861,6 +894,46 @@ fn rect_meets_polygon(rect: &Rect, polygon: &[[f64; 2]], work: &mut u64) -> bool
     })
 }
 
+/// At KiCad's legality (`Constraints::pad_clearance`): whether two parts
+/// on one side whose bodies keep clear of each other bring pads closer
+/// than the copper clearance (boxes grown on both axes: a little
+/// conservative at diagonal corners). Parts whose bodies are farther
+/// apart than that cannot.
+fn pads_too_close(
+    problem: &Problem,
+    a: usize,
+    pose_a: Pose,
+    b: usize,
+    pose_b: Pose,
+    work: &mut u64,
+) -> bool {
+    let clearance = problem.min_spacing;
+    let (first, second) = (&problem.components[a], &problem.components[b]);
+    if first.pads.is_empty() || second.pads.is_empty() {
+        return false;
+    }
+    let bare =
+        |part: usize, pose: Pose| rect(problem, part, pose).grown(-problem.components[part].halo);
+    if !overlaps(bare(a, pose_a), bare(b, pose_b), clearance) {
+        return false;
+    }
+    let mine = turned_rects(&first.pads, pose_a, 0.0);
+    let reach = bare(b, pose_b);
+    let mine: Vec<Rect> = mine
+        .into_iter()
+        .filter(|pad| overlaps(*pad, reach, clearance))
+        .collect();
+    if mine.is_empty() {
+        return false;
+    }
+    let theirs = turned_rects(&second.pads, pose_b, 0.0);
+    *work += list_work(first.pads.len())
+        + list_work(second.pads.len())
+        + (mine.len() * theirs.len()) as u64;
+    mine.iter()
+        .any(|pad| theirs.iter().any(|other| overlaps(*pad, *other, clearance)))
+}
+
 /// Whether two parts on the same side meet where one of them is hollow:
 /// only its blocking boxes count.
 fn hollow_overlap(
@@ -893,11 +966,15 @@ fn hollow_overlap(
     let mine = blocking(a, pose_a, b);
     // The lists, and every pair at worst.
     *work += list_work(mine.len()) + list_work(theirs.len()) + (mine.len() * theirs.len()) as u64;
-    mine.into_iter().any(|mine| {
-        theirs
-            .iter()
-            .any(|other| overlaps(mine, *other, problem.spacing))
-    })
+    // At KiCad's legality the boxes may touch, the pads keeping their
+    // clearance (`pads_too_close`).
+    let spacing = if problem.constraints.pad_clearance {
+        0.0
+    } else {
+        problem.spacing
+    };
+    mine.into_iter()
+        .any(|mine| theirs.iter().any(|other| overlaps(mine, *other, spacing)))
 }
 
 /// Whether a part's holes and pads on the far side meet the other part's

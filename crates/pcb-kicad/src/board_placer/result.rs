@@ -137,6 +137,10 @@ pub struct KiCadBoardPlacerResult {
     /// Courtyards came as close as their copper allows (touching).
     #[serde(default)]
     pub courtyard_spacing: bool,
+    /// KiCad's legality held at the placement's level (`legality`:
+    /// courtyards touching, pads the copper clearance apart).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pad_clearance: bool,
     /// The parts that lie on the board's own texts or silkscreen graphics,
     /// having found no room off them at the placement's level
     /// (`core::Relaxation::on_marks`).

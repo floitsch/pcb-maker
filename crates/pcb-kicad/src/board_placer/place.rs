@@ -5,13 +5,27 @@
 use super::*;
 use pcb_placer as core;
 
-pub fn place_kicad_board(
+/// A board read, its constraints resolved and its project's rules taken,
+/// and lowered as the placer places it (`prepare_board`).
+pub(crate) struct PreparedBoard {
+    pub pcb: Expr,
+    pub config: KiCadBoardPlacerConfig,
+    pub lowered: LoweredPlacement,
+    pub outline_size: Option<[f64; 2]>,
+    pub edges_chosen: BTreeMap<String, String>,
+}
+
+/// Reads `<board_id>.kicad_pcb` from `source_directory`, resolves the
+/// constraints and the project's rules into `config`, applies the outline,
+/// keepout and side constraints, and lowers the board: everything
+/// `place_kicad_board` does before it places (also the legality census,
+/// `legality_kicad_board`).
+pub(crate) fn prepare_board(
     source_directory: &Path,
     board_id: &str,
-    output_directory: &Path,
     config: &KiCadBoardPlacerConfig,
-) -> Result<KiCadBoardPlacerResult, String> {
-    let started = std::time::Instant::now();
+    poses_from: Option<&Expr>,
+) -> Result<PreparedBoard, String> {
     let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
     // Errors up to the lowering are the input's (`input_error`).
     let source = fs::read_to_string(&source_board).map_err(|error| {
@@ -22,6 +36,9 @@ pub fn place_kicad_board(
     })?;
     let mut pcb =
         crate::canonical_order::parse_board(&source).map_err(crate::verdict::input_error)?;
+    if let Some(from) = poses_from {
+        take_poses(&mut pcb, from)?;
+    }
     let mut config =
         resolve_constraints(config, source_directory).map_err(crate::verdict::input_error)?;
     // Parts added by the import (`add`) stay where the entry puts them.
@@ -66,7 +83,6 @@ pub fn place_kicad_board(
     }
     let edges_chosen = choose_any_edges(source_directory, board_id, &mut config)
         .map_err(crate::verdict::input_error)?;
-    let config = &config;
     let mut outline_size = None;
     if let Some(KiCadConstraintsSource::Inline(constraints)) = &config.constraints
         && let Some(outline) = &constraints.outline
@@ -88,14 +104,38 @@ pub fn place_kicad_board(
         let held = if constraints.keepout.is_empty() {
             HeldParts::default()
         } else {
-            held_parts(&pcb, config).map_err(crate::verdict::input_error)?
+            held_parts(&pcb, &config).map_err(crate::verdict::input_error)?
         };
         keepout_warnings = apply_keepouts(&mut pcb, &constraints.keepout, &held)
             .map_err(crate::verdict::input_error)?;
         apply_sides(&mut pcb, constraints).map_err(crate::verdict::input_error)?;
     }
-    let mut lowered = lower_placement(&pcb, config).map_err(crate::verdict::input_error)?;
+    let mut lowered = lower_placement(&pcb, &config).map_err(crate::verdict::input_error)?;
     lowered.constraint_warnings.extend(keepout_warnings);
+    Ok(PreparedBoard {
+        pcb,
+        config,
+        lowered,
+        outline_size,
+        edges_chosen,
+    })
+}
+
+pub fn place_kicad_board(
+    source_directory: &Path,
+    board_id: &str,
+    output_directory: &Path,
+    config: &KiCadBoardPlacerConfig,
+) -> Result<KiCadBoardPlacerResult, String> {
+    let started = std::time::Instant::now();
+    let PreparedBoard {
+        mut pcb,
+        config,
+        mut lowered,
+        outline_size,
+        edges_chosen,
+    } = prepare_board(source_directory, board_id, config, None)?;
+    let config = &config;
     if let Some(designer) = std::env::var_os("PCB_PLACER_DESIGNER") {
         diagnose_designer(&lowered, Path::new(&designer))?;
     }
@@ -171,6 +211,7 @@ pub fn place_kicad_board(
     placer_config.routing_room = routing_room(config, &lowered);
     placer_config.orientation_search = config.orientation_search;
     placer_config.bus_groups = config.bus_groups.as_ref().map(KiCadBusGroups::settings);
+    placer_config.kicad_legality = config.legality == KiCadPlacerLegality::Kicad;
     if let Some(guidance) = &config.global_guidance {
         let router_config = config.guidance_router.clone().unwrap_or_default();
         placer_config.anneal.guidance = Some(core::guidance::Guidance {
@@ -496,6 +537,7 @@ pub fn place_kicad_board(
         edge_copper: placement.relaxation.edge_copper,
         edge_rule_mm: placement.relaxation.edge_rule,
         courtyard_spacing: placement.relaxation.courtyard_spacing,
+        pad_clearance: placement.relaxation.pad_clearance,
         parts_on_marks: placement
             .relaxation
             .on_marks

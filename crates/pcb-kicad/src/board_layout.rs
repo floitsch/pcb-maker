@@ -1357,6 +1357,7 @@ pub fn layout_kicad_board(
         edge_copper: placement.edge_copper,
         edge_rule: placement.edge_rule_mm,
         courtyard_spacing: placement.courtyard_spacing,
+        pad_clearance: placement.pad_clearance,
         halos: placement.halos.clone(),
         on_marks: placement.on_marks.clone(),
     };

@@ -166,6 +166,12 @@ pub struct Constraints {
     /// power's designer packed 0603s edge to edge on a 96 % full side).
     /// The last relaxation level.
     pub courtyard_spacing: bool,
+    /// KiCad's legality (`Config::kicad_legality`, at the levels whose
+    /// spacing is the rules' least): courtyards may touch, and two parts'
+    /// pads keep the copper clearance pad to pad (not the bodies by their
+    /// copper's least inset); a body may come to the board edge where its
+    /// pads keep the copper-to-edge clearance.
+    pub pad_clearance: bool,
     /// Constraints the lowering keeps by construction (a side, the turns a
     /// part may take): the placer never breaks them, they are only
     /// reported (`report_kept`), so that an agent sees them kept.

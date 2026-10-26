@@ -5,6 +5,22 @@
 use super::*;
 use pcb_placer as core;
 
+/// What the placer's tightest levels call legal (`legality`).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum KiCadPlacerLegality {
+    /// The placer's own model: bodies (courtyard and pads) keep the copper
+    /// clearance apart, courtyards touch only at the last level.
+    #[default]
+    Model,
+    /// What KiCad's DRC accepts, at the levels whose spacing is the rules'
+    /// least: courtyards may touch where the pads keep the copper
+    /// clearance pad to pad, and a body may come to the edge where its
+    /// pads keep the edge margin (docs/placer.md, "The legality model
+    /// against KiCad").
+    Kicad,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct KiCadBoardPlacerConfig {
@@ -187,6 +203,9 @@ pub struct KiCadBoardPlacerConfig {
     /// or the designer's angles (a stack). On; off: the parts start at
     /// the angles the board holds.
     pub orientation_search: bool,
+    /// What the levels whose spacing is the rules' least call legal:
+    /// `"model"` (the default) or `"kicad"` (`KiCadPlacerLegality`).
+    pub legality: KiCadPlacerLegality,
     /// The board's own texts (header pin names, a title) and silkscreen
     /// graphics (a logo, a frame around a group) stay where the input put
     /// them: each is a placement obstacle on its side with a keepout's
@@ -309,6 +328,7 @@ impl Default for KiCadBoardPlacerConfig {
             placement_seeds: 3,
             routing_demand: 0.0,
             orientation_search: true,
+            legality: KiCadPlacerLegality::Model,
             keep_board_marks: true,
             attached_marks: None,
             global_guidance: None,
