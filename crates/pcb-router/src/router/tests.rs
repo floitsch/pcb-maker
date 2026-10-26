@@ -4554,4 +4554,46 @@ fn a_straight_stub_is_a_lattice_run() {
         [13.9, 9.85],
         [13.8, 9.8]
     ]));
+
+#[test]
+fn idle_search_arrays_are_shared_and_go_with_the_last_router_of_their_lattice() {
+    // A lattice no other test builds (the idle arrays are the process's).
+    let (states, cells) = (3 * 4099, 4099);
+    let idle = || {
+        IDLE_ARRAYS
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|arrays| arrays.nodes.len() == states && arrays.own_via_near.len() == cells)
+            .count()
+    };
+    let user = LatticeUser::new((states, cells));
+    let mut first = Scratch::default();
+    first.ensure(states, cells);
+    first.next_generation();
+    first.nodes[5].closed = first.generation;
+    let generation = first.generation;
+    first.release();
+    assert!(first.nodes.is_empty() && first.own_via_near.is_empty());
+    assert_eq!(idle(), 1);
+    // Another scratch takes them, with the generation of their marks.
+    let mut second = Scratch::default();
+    second.ensure(states, cells);
+    assert_eq!(idle(), 0);
+    assert_eq!(second.generation, generation);
+    assert_eq!(second.nodes[5].closed, generation);
+    assert_eq!(second.next_generation(), generation + 1);
+    // A copy of the router keeps the lattice's idle arrays; the last one
+    // to go takes them along.
+    let copy = user.clone();
+    drop(user);
+    second.release();
+    assert_eq!(idle(), 1);
+    drop(copy);
+    assert_eq!(idle(), 0);
+    // Arrays given back with no router of their lattice are freed.
+    let mut stray = Scratch::default();
+    stray.ensure(states, cells);
+    stray.release();
+    assert_eq!(idle(), 0);
 }
