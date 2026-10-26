@@ -939,6 +939,13 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         .quality
         .as_ref()
         .map(|quality| quality.decoupling.clone());
+    facts.decoupling_near = config.placer.decoupling_near;
+    facts.decoupling_constrained = result
+        .constraints
+        .iter()
+        .filter(|status| status.kind == "near")
+        .map(|status| status.part.clone())
+        .collect();
     // The placement's room (the parts and the outline the layout kept)
     // and what it warned of.
     let placed = fs::read_to_string(output.join("placed/board-placer.json"))

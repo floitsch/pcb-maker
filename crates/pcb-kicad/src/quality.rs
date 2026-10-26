@@ -90,6 +90,11 @@ pub struct KiCadDecoupling {
     /// its rail. Median, and share within 3 mm.
     pub capacitor_median_mm: Option<f64>,
     pub capacitors_within_3mm: Option<f64>,
+    /// For each of `worst`, the capacitors that count for it (1 uF or less
+    /// on its rail; a regulator's pin also its rail's bulk ones): the
+    /// verdict names only pins one of these could still serve.
+    #[serde(skip)]
+    pub worst_capacitors: Vec<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -593,6 +598,9 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
     }
     let mut bulk_pads: BTreeMap<String, Vec<[f64; 2]>> = BTreeMap::new();
     let mut capacitor_pads: BTreeMap<String, Vec<[f64; 2]>> = BTreeMap::new();
+    // The same capacitors by reference, per rail.
+    let mut bulk_parts: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut capacitor_parts: BTreeMap<String, Vec<String>> = BTreeMap::new();
     let mut supply_pads: BTreeMap<String, Vec<[f64; 2]>> = BTreeMap::new();
     for part in parts.iter().filter(|part| ic(part)) {
         for pad in &part.pads {
@@ -625,12 +633,20 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         let net = part.pads[supply].net.clone().unwrap();
         if small {
             capacitors += 1;
+            capacitor_parts
+                .entry(net.clone())
+                .or_default()
+                .push(part.reference.clone());
             capacitor_pads
                 .entry(net)
                 .or_default()
                 .push(part.pads[supply].center);
         } else if regulator_pads.contains_key(&net) {
             capacitors += 1;
+            bulk_parts
+                .entry(net.clone())
+                .or_default()
+                .push(part.reference.clone());
             bulk_pads
                 .entry(net)
                 .or_default()
@@ -654,7 +670,14 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
                 .flatten()
                 .map(|center| distance(*center, pad.center))
                 .reduce(f64::min);
-            pin_distances.push((format!("{}:{}", part.reference, pad.name), nearest));
+            let serving: Vec<String> = capacitor_parts
+                .get(net)
+                .into_iter()
+                .chain(regulator(part).then(|| bulk_parts.get(net)).flatten())
+                .flatten()
+                .cloned()
+                .collect();
+            pin_distances.push((format!("{}:{}", part.reference, pad.name), nearest, serving));
         }
     }
     // A bulk capacitor against its rail's regulator pins.
@@ -680,13 +703,13 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         capacitor_distances.len(),
     );
     let capacitor_median_mm = median(&mut capacitor_distances).map(round);
-    let mut found: Vec<f64> = pin_distances.iter().filter_map(|(_, d)| *d).collect();
+    let mut found: Vec<f64> = pin_distances.iter().filter_map(|(_, d, _)| *d).collect();
     let supply_pins = pin_distances.len();
     let within = |limit: f64| {
         share(
             pin_distances
                 .iter()
-                .filter(|(_, d)| d.is_some_and(|d| d <= limit))
+                .filter(|(_, d, _)| d.is_some_and(|d| d <= limit))
                 .count(),
             supply_pins,
         )
@@ -705,10 +728,15 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         worst: pin_distances
             .iter()
             .take(5)
-            .map(|(pin, d)| (pin.clone(), d.map(round)))
+            .map(|(pin, d, _)| (pin.clone(), d.map(round)))
             .collect(),
         capacitor_median_mm,
         capacitors_within_3mm,
+        worst_capacitors: pin_distances
+            .iter()
+            .take(5)
+            .map(|(_, _, serving)| serving.clone())
+            .collect(),
     };
 
     // Crystals: pads to the IC pins on the same nets.

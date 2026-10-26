@@ -19,7 +19,7 @@
 
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -845,6 +845,11 @@ pub struct KiCadRunFacts {
     /// board written): below `DECOUPLING_SHARE` of the capacitors within
     /// 3 mm of a supply pin adds a next action.
     pub decoupling: Option<crate::quality::KiCadDecoupling>,
+    /// Whether the layout's placer had `decoupling_near` on.
+    pub decoupling_near: bool,
+    /// The parts a `near` constraint of the layout held (its capacitors
+    /// among them).
+    pub decoupling_constrained: BTreeSet<String>,
 }
 
 /// The share of decoupling capacitors within 3 mm of a supply pin below
@@ -853,43 +858,102 @@ pub struct KiCadRunFacts {
 pub const DECOUPLING_SHARE: f64 = 0.6;
 
 /// The next action for a layout whose decoupling capacitors lie far from
-/// their supply pins (`DECOUPLING_SHARE`), naming the farthest pins.
-fn decoupling_action(decoupling: &crate::quality::KiCadDecoupling) -> Option<String> {
+/// their supply pins (`DECOUPLING_SHARE`), naming the farthest pins that a
+/// capacitor could still serve: one of 1 uF or less on the pin's rail (a
+/// regulator's: also a bulk one) that no `near` constraint holds
+/// (`constrained`). The placer's `decoupling_near` is offered only when it
+/// is off and such a capacitor exists (the schematic trial followed it on a
+/// board whose every capacitor was constrained and got the same board).
+fn decoupling_action(
+    decoupling: &crate::quality::KiCadDecoupling,
+    decoupling_near: bool,
+    constrained: &BTreeSet<String>,
+) -> Option<String> {
     let share = decoupling.capacitors_within_3mm?;
     if decoupling.capacitors < 3 || share >= DECOUPLING_SHARE {
         return None;
     }
-    let far: Vec<String> = decoupling
+    // Per far pin, the capacitors free to serve it (`None`: not known).
+    let far: Vec<(&str, f64, Option<Vec<&String>>)> = decoupling
         .worst
         .iter()
-        .filter_map(|(pin, distance)| {
-            distance
-                .filter(|distance| *distance > 3.0)
-                .map(|distance| format!("{pin} {distance:.1} mm"))
+        .enumerate()
+        .filter_map(|(index, (pin, distance))| {
+            let distance = distance.filter(|distance| *distance > 3.0)?;
+            let free = decoupling.worst_capacitors.get(index).map(|serving| {
+                serving
+                    .iter()
+                    .filter(|part| !constrained.contains(*part))
+                    .collect::<Vec<_>>()
+            });
+            Some((pin.as_str(), distance, free))
         })
         .collect();
-    // The example names the farthest pin, not a pin of another board
-    // (until 2026-10-26 it was U2:39 on every board).
-    let example_pin = decoupling
-        .worst
+    let line = |pins: &[&(&str, f64, Option<Vec<&String>>)]| {
+        pins.iter()
+            .map(|(pin, distance, _)| format!("{pin} {distance:.1} mm"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let named: Vec<&(&str, f64, Option<Vec<&String>>)> = far
         .iter()
-        .find(|(_, distance)| distance.is_some_and(|distance| distance > 3.0))
-        .map_or("U1:3", |(pin, _)| pin.as_str());
-    Some(format!(
-        "decoupling: {:.0} % of the decoupling capacitors lie within 3 mm of a supply pin (designers 60 % or more), a median {} mm{}: give the capacitors of those pins a near constraint ({{\"part\": \"<capacitor>\", \"pin_of\": \"{example_pin}\", \"max_mm\": 1.5}} in constraints.json; describe-kicad-board --constraints-template writes them for every capacitor), or turn on the placer's decoupling_near (layout.json {{\"placer\": {{\"decoupling_near\": true}}}}: every capacitor within 1 mm of the nearest supply pin of its rail, off by default)",
+        .filter(|(_, _, free)| free.as_ref().is_none_or(|free| !free.is_empty()))
+        .collect();
+    let unnamed: Vec<&(&str, f64, Option<Vec<&String>>)> = far
+        .iter()
+        .filter(|(_, _, free)| free.as_ref().is_some_and(Vec::is_empty))
+        .collect();
+    let head = format!(
+        "decoupling: {:.0} % of the decoupling capacitors lie within 3 mm of a supply pin (designers 60 % or more), a median {} mm",
         share * 100.0,
         decoupling
             .capacitor_median_mm
             .map_or("?".to_string(), |median| format!("{median:.1}")),
-        if far.is_empty() {
-            String::new()
-        } else {
-            format!(
-                "; supply pins farthest from a capacitor: {}",
-                far.join(", ")
-            )
-        }
-    ))
+    );
+    let mut steps = Vec::new();
+    if let Some((pin, _, free)) = named.first() {
+        let part = free
+            .as_ref()
+            .and_then(|free| free.first())
+            .map_or("<capacitor>", |part| part.as_str());
+        steps.push(format!(
+            "give the capacitors of those pins a near constraint ({{\"part\": \"{part}\", \"pin_of\": \"{pin}\", \"max_mm\": 1.5}} in constraints.json; describe-kicad-board --constraints-template writes them for every capacitor)"
+        ));
+    }
+    let any_free = far.is_empty()
+        || far
+            .iter()
+            .any(|(_, _, free)| free.as_ref().is_none_or(|free| !free.is_empty()));
+    if !decoupling_near && any_free {
+        steps.push("turn on the placer's decoupling_near (layout.json {\"placer\": {\"decoupling_near\": true}}: every capacitor within 1 mm of the nearest supply pin of its rail, off by default)".into());
+    }
+    let mut text = head;
+    if !named.is_empty() {
+        text.push_str(&format!(
+            "; supply pins farthest from a capacitor: {}",
+            line(&named)
+        ));
+    }
+    if !steps.is_empty() {
+        text.push_str(&format!(": {}", steps.join(", or ")));
+    }
+    if !unnamed.is_empty() {
+        text.push_str(&format!(
+            "; {} ({}) have no capacitor of their own: every capacitor of 1 uF or less on their rails is held at another pin by a near constraint{}, so no placement brings one nearer, and one at them is a schematic change",
+            if named.is_empty() {
+                "the supply pins farthest from a capacitor"
+            } else {
+                "these other far pins"
+            },
+            line(&unnamed),
+            if decoupling_near {
+                " (and decoupling_near is on)"
+            } else {
+                ""
+            },
+        ));
+    }
+    Some(text)
 }
 
 impl KiCadRunFacts {
@@ -934,6 +998,8 @@ impl KiCadRunFacts {
             bus_groups: None,
             panel_copies: None,
             decoupling: None,
+            decoupling_near: false,
+            decoupling_constrained: BTreeSet::new(),
         }
     }
 
@@ -1424,7 +1490,13 @@ fn next_actions(
     for pour in facts.pours.iter().filter(|pour| pour.in_many_pieces()) {
         actions.push(pour_action(pour));
     }
-    actions.extend(facts.decoupling.as_ref().and_then(decoupling_action));
+    actions.extend(facts.decoupling.as_ref().and_then(|decoupling| {
+        decoupling_action(
+            decoupling,
+            facts.decoupling_near,
+            &facts.decoupling_constrained,
+        )
+    }));
     if facts.routes && facts.native.is_none() {
         actions.push("KiCad's check did not run (PCB_SKIP_NATIVE or skip_native_verification): the router's own count is no verdict; run KiCad's DRC (pcb-maker drc-kicad-board) before using the board".into());
     }
@@ -2490,6 +2562,7 @@ mod tests {
             ],
             capacitor_median_mm: Some(6.94),
             capacitors_within_3mm: Some(share),
+            worst_capacitors: vec![vec![], vec!["C4".into(), "C9".into()], vec!["C5".into()]],
         };
         // The trial's rp2350-dual-usb: complete, with one action.
         facts.decoupling = Some(decoupling(0.071));
@@ -2501,11 +2574,40 @@ mod tests {
             action.starts_with("decoupling: 7 % of the decoupling capacitors")
                 && action.contains("a median 6.9 mm")
                 && action.contains("U4:5 29.8 mm, U2:39 14.3 mm")
-                && action.contains("\"pin_of\": \"U4:5\"")
+                && action.contains("{\"part\": \"C4\", \"pin_of\": \"U4:5\", \"max_mm\": 1.5}")
                 && !action.contains("U2:46")
                 && action.contains("decoupling_near"),
             "{action}"
         );
+        // A near constraint holds C4: C9 is still free for U4:5.
+        facts.decoupling_constrained = BTreeSet::from(["C4".to_string()]);
+        let action = judge(&facts).next_actions[0].clone();
+        assert!(
+            action.contains("\"part\": \"C9\", \"pin_of\": \"U4:5\""),
+            "{action}"
+        );
+        // decoupling_near on: not offered again.
+        facts.decoupling_near = true;
+        let action = judge(&facts).next_actions[0].clone();
+        assert!(
+            !action.contains("turn on the placer's decoupling_near"),
+            "{action}"
+        );
+        // The schematic trial: every capacitor of those rails held at
+        // another pin. No pin to give one, no decoupling_near: said so.
+        facts.decoupling_constrained = ["C4", "C5", "C9"]
+            .iter()
+            .map(|part| part.to_string())
+            .collect();
+        facts.decoupling_near = false;
+        let action = judge(&facts).next_actions[0].clone();
+        assert!(
+            !action.contains("pin_of")
+                && !action.contains("turn on the placer's decoupling_near")
+                && action.contains("(U4:5 29.8 mm, U2:39 14.3 mm) have no capacitor of their own"),
+            "{action}"
+        );
+        facts.decoupling_constrained.clear();
         // As a designer places them: nothing to say.
         facts.decoupling = Some(decoupling(0.857));
         assert!(judge(&facts).next_actions.is_empty());
