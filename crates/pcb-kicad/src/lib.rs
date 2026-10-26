@@ -73,8 +73,9 @@ pub use board_placer::{
 mod board_router;
 mod verdict;
 pub use verdict::{
-    DrcTally, EXIT_COMPLETE, EXIT_CUT, EXIT_INCOMPLETE, EXIT_INTERNAL, EXIT_USAGE, KiCadReference,
-    KiCadRunFacts, KiCadRunStatus, KiCadVerdict, decide, error_verdict, input_error, is_cosmetic,
+    DrcFinding, DrcTally, EXIT_COMPLETE, EXIT_CUT, EXIT_INCOMPLETE, EXIT_INTERNAL, EXIT_USAGE,
+    KiCadReference, KiCadRunFacts, KiCadRunStatus, KiCadVerdict, decide, drc_finding,
+    error_verdict, footprint_findings_note, footprint_own_unreferenced, input_error, is_cosmetic,
     is_input_error, judge, kicad_drc_report, load_drc_tally, noted_input_actions, read_drc_tally,
     reference_findings, room_action, route_facts, set_build_version, split_findings, tally_drc,
     wall_cuts,

@@ -180,6 +180,31 @@ pub struct DrcTally {
     pub schematic_parity_pins_only: bool,
 }
 
+/// One violation of KiCad's report with its items.
+pub fn drc_finding(finding: &Value) -> DrcFinding {
+    let item_descriptions: Vec<String> = finding["items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item["description"].as_str().map(str::to_string))
+        .collect();
+    DrcFinding {
+        kind: finding["type"].as_str().unwrap_or("").to_string(),
+        description: finding["description"].as_str().unwrap_or("").to_string(),
+        nets: item_descriptions
+            .iter()
+            .filter_map(|description| item_net(description))
+            .collect(),
+        item_descriptions,
+        items: finding["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|item| drc_item(item, finding))
+            .collect(),
+    }
+}
+
 pub fn tally_drc(report: &Value) -> DrcTally {
     let mut tally = DrcTally::default();
     for finding in report["violations"].as_array().into_iter().flatten() {
@@ -191,27 +216,7 @@ pub fn tally_drc(report: &Value) -> DrcTally {
             tally.cosmetic += 1;
         } else if finding["severity"].as_str() == Some("error") {
             *tally.errors.entry(kind.to_string()).or_default() += 1;
-            let item_descriptions: Vec<String> = finding["items"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|item| item["description"].as_str().map(str::to_string))
-                .collect();
-            tally.findings.push(DrcFinding {
-                kind: kind.to_string(),
-                description: finding["description"].as_str().unwrap_or("").to_string(),
-                nets: item_descriptions
-                    .iter()
-                    .filter_map(|description| item_net(description))
-                    .collect(),
-                item_descriptions,
-                items: finding["items"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(|item| drc_item(item, finding))
-                    .collect(),
-            });
+            tally.findings.push(drc_finding(finding));
         } else {
             tally.warnings += 1;
         }
@@ -522,6 +527,105 @@ pub fn footprint_own(finding: &DrcFinding) -> bool {
         return false;
     };
     owners.all(|owner| owner == Some(first))
+}
+
+/// Whether a finding of a result judged without a reference board is its
+/// footprint's own: between items of one footprint (`footprint_own`), and
+/// not a short. A library footprint whose pads lie closer to its own holes
+/// than the project's rule (the schematic trial's USB4105: GND pads 0.19
+/// mm from its locating holes against 0.25 mm) fails every layout from a
+/// schematic otherwise, and no placement or route changes it; a short
+/// within one footprint is the schematic's nets on its pads, which stays
+/// judged.
+pub fn footprint_own_unreferenced(finding: &DrcFinding) -> bool {
+    finding.kind != "shorting_items" && footprint_own(finding)
+}
+
+/// The constraint of KiCad's custom rules that a finding type is checked
+/// by, where a rule for one footprint can set it.
+fn custom_rule_constraint(kind: &str) -> Option<&'static str> {
+    Some(match kind {
+        "clearance" => "clearance",
+        "hole_clearance" => "hole_clearance",
+        "hole_to_hole" => "hole_to_hole",
+        "copper_edge_clearance" => "edge_clearance",
+        "annular_width" => "annular_width",
+        "drill_out_of_range" => "hole_size",
+        "connection_width" => "connection_width",
+        _ => return None,
+    })
+}
+
+/// The value KiCad measured, from its description ("...; actual 0.1944
+/// mm)").
+fn actual_mm(description: &str) -> Option<f64> {
+    let rest = &description[description.rfind("actual ")? + 7..];
+    rest.split_whitespace().next()?.parse().ok()
+}
+
+/// What a result's footprint findings (`footprint_own_unreferenced`) are and
+/// how KiCad's own DRC accepts them: per footprint and type, a custom rule
+/// for `dru` (the board's `.kicad_dru`) at the smallest value KiCad
+/// measured, rounded down to 0.01 mm, or an exclusion. `None` without such
+/// findings.
+pub fn footprint_findings_note(findings: &[&DrcFinding], dru: &str) -> Option<String> {
+    // (footprint, type): count, smallest actual value.
+    let mut groups: BTreeMap<(String, String), (usize, Option<f64>)> = BTreeMap::new();
+    for finding in findings {
+        let Some(owner) = finding
+            .item_descriptions
+            .first()
+            .and_then(|description| item_footprint(description))
+        else {
+            continue;
+        };
+        let entry = groups
+            .entry((owner.to_string(), finding.kind.clone()))
+            .or_insert((0, None));
+        entry.0 += 1;
+        if let Some(actual) = actual_mm(&finding.description) {
+            entry.1 = Some(entry.1.map_or(actual, |smallest: f64| smallest.min(actual)));
+        }
+    }
+    if groups.is_empty() {
+        return None;
+    }
+    let listed: Vec<String> = groups
+        .iter()
+        .map(|((owner, kind), (count, _))| format!("{owner}: {kind} {count}"))
+        .collect();
+    let mut rules = Vec::new();
+    let mut excluded = Vec::new();
+    for ((owner, kind), (_, smallest)) in &groups {
+        match (custom_rule_constraint(kind), smallest) {
+            (Some(constraint), Some(smallest)) => {
+                let min = ((smallest * 100.0 + 1.0e-9).floor() / 100.0).max(0.0);
+                rules.push(format!(
+                    "(rule \"{owner} own {kind}\" (constraint {constraint} (min {min}mm)) (condition \"A.memberOfFootprint('{owner}') && B.memberOfFootprint('{owner}')\"))"
+                ));
+            }
+            _ => excluded.push(format!("{owner}'s {kind}")),
+        }
+    }
+    let mut accept = Vec::new();
+    if !rules.is_empty() {
+        accept.push(format!(
+            "add to {dru} (a new file starts with (version 1)): {}",
+            rules.join(" ")
+        ));
+    }
+    if !excluded.is_empty() {
+        accept.push(format!(
+            "exclude {} in KiCad's DRC dialog (Exclude this violation)",
+            excluded.join(", ")
+        ));
+    }
+    Some(format!(
+        "{} DRC findings lie within one footprint each ({}): the footprint's own geometry as its library draws it, which no placement or route changes, so they are not judged (footprint_findings) and fab-kicad-board releases with them. KiCad's own DRC still reports them; to accept them there, {}",
+        groups.values().map(|(count, _)| count).sum::<usize>(),
+        listed.join(", "),
+        accept.join("; or ")
+    ))
 }
 
 /// A result's errors split by the strict rule.
@@ -879,6 +983,13 @@ pub struct KiCadVerdict {
     /// type): only the findings at the same place are subtracted, since
     /// its true count is unknown.
     pub preexisting_unknown: Vec<String>,
+    /// Without a reference board: KiCad errors per type that lie within one
+    /// footprint each (its pads and holes as the library draws them; no
+    /// short), which no placement or route changes
+    /// (`footprint_own_unreferenced`). They do not count; next_actions says
+    /// how KiCad's own DRC accepts them (a custom rule, an exclusion).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub footprint_findings: BTreeMap<String, usize>,
     /// KiCad checked the result and finds no unconnected item and no error
     /// that counts, with nothing subtracted.
     pub clean_without_subtraction: bool,
@@ -1142,6 +1253,7 @@ fn next_actions(
     new_findings: &BTreeMap<String, usize>,
     own: &[&DrcFinding],
     unknown: &[String],
+    footprint: &[&DrcFinding],
 ) -> Vec<String> {
     let mut actions = facts.input_warnings.clone();
     if !facts.attempts_failed.is_empty() {
@@ -1234,6 +1346,15 @@ fn next_actions(
             actions.push(finding_action(kind, *count, &findings));
         }
     }
+    // The board's .kicad_dru: beside the board written.
+    let dru = facts.outputs.get("board").map_or_else(
+        || "the board's .kicad_dru".to_string(),
+        |board| match board.strip_suffix(".kicad_pcb") {
+            Some(stem) => format!("{stem}.kicad_dru"),
+            None => "the board's .kicad_dru".to_string(),
+        },
+    );
+    actions.extend(footprint_findings_note(footprint, &dru));
     if !facts.board_mark_overlaps.is_empty() {
         let shown = 6;
         let mut listed: Vec<String> = facts
@@ -1571,21 +1692,50 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
             split_findings_strict(&findings, reference_findings),
             Some(from.display().to_string()),
         ),
-        KiCadReference::None | KiCadReference::Failed { .. } => (
-            errors.clone(),
-            StrictSplit {
-                new: errors,
-                new_indices: (0..findings.len()).collect(),
-                ..Default::default()
-            },
-            None,
-        ),
+        // Without a reference, a footprint's own findings are set apart
+        // (`footprint_own_unreferenced`); every other error counts.
+        KiCadReference::None | KiCadReference::Failed { .. } => {
+            let mut new = errors.clone();
+            let mut new_indices = Vec::new();
+            for (index, finding) in findings.iter().enumerate() {
+                if footprint_own_unreferenced(finding) {
+                    if let Some(count) = new.get_mut(&finding.kind) {
+                        *count -= 1;
+                        if *count == 0 {
+                            new.remove(&finding.kind);
+                        }
+                    }
+                } else {
+                    new_indices.push(index);
+                }
+            }
+            (
+                new.clone(),
+                StrictSplit {
+                    new,
+                    new_indices,
+                    ..Default::default()
+                },
+                None,
+            )
+        }
     };
     let own: Vec<&DrcFinding> = strict
         .new_indices
         .iter()
         .filter_map(|&index| findings.get(index))
         .collect();
+    let footprint: Vec<&DrcFinding> = match &facts.reference {
+        KiCadReference::Findings { .. } => Vec::new(),
+        KiCadReference::None | KiCadReference::Failed { .. } => findings
+            .iter()
+            .filter(|finding| footprint_own_unreferenced(finding))
+            .collect(),
+    };
+    let mut footprint_findings: BTreeMap<String, usize> = BTreeMap::new();
+    for finding in &footprint {
+        *footprint_findings.entry(finding.kind.clone()).or_default() += 1;
+    }
     let (status, reason) = decide(facts, &strict.new);
     KiCadVerdict {
         status,
@@ -1599,7 +1749,15 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         unconnected_terminals: facts.unconnected_terminals,
         kicad_checked: facts.native.is_some(),
         kicad_unconnected_items: facts.native.as_ref().map(|native| native.unconnected),
-        next_actions: next_actions(facts, status, &strict.new, &own, &strict.unknown),
+        next_actions: next_actions(
+            facts,
+            status,
+            &strict.new,
+            &own,
+            &strict.unknown,
+            &footprint,
+        ),
+        footprint_findings,
         clean_without_subtraction: facts
             .native
             .as_ref()
@@ -1902,6 +2060,68 @@ mod tests {
             errors: tally.errors,
             findings: tally.findings,
         }
+    }
+
+    #[test]
+    fn a_footprints_own_findings_do_not_fail_a_layout_without_a_reference() {
+        // The schematic trial's USB-C receptacle: its GND pads 0.19 mm from
+        // its own locating holes (rule 0.25 mm), no reference board.
+        let own = |pad: &str, x: f64| {
+            json!({"type": "hole_clearance", "severity": "error",
+                   "description": "Hole clearance violation (board setup constraints hole clearance 0.2500 mm; actual 0.1944 mm)",
+                   "items": [{"description": format!("Pad {pad} [GND] of J1 on F.Cu"), "uuid": pad, "pos": {"x": x, "y": 1.0}},
+                             {"description": "NPTH pad of J1", "uuid": "hole", "pos": {"x": x, "y": 2.0}}]})
+        };
+        let mut facts = routed(tally_drc(&report(vec![own("A1", 1.0), own("B1", 5.0)])));
+        facts
+            .outputs
+            .insert("board".into(), "out/result/board.kicad_pcb".into());
+        let verdict = judge(&facts);
+        assert_eq!(
+            verdict.status,
+            KiCadRunStatus::Complete,
+            "{}",
+            verdict.reason
+        );
+        assert!(verdict.new_findings_strict.is_empty() && verdict.new_findings.is_empty());
+        assert_eq!(verdict.footprint_findings, map(&[("hole_clearance", 2)]));
+        assert!(!verdict.clean_without_subtraction);
+        let note = verdict
+            .next_actions
+            .iter()
+            .find(|action| action.contains("within one footprint"))
+            .expect("a line for the footprint's findings");
+        assert!(
+            note.contains("J1: hole_clearance 2")
+                && note.contains("out/result/board.kicad_dru")
+                && note.contains("(rule \"J1 own hole_clearance\" (constraint hole_clearance (min 0.19mm)) (condition \"A.memberOfFootprint('J1') && B.memberOfFootprint('J1')\"))")
+                && !note.contains("move the parts apart"),
+            "{note}"
+        );
+        // A hole of another part, and a short within one footprint, count.
+        let mut apart = own("A1", 1.0);
+        apart["items"][1]["description"] = "NPTH pad of H2".into();
+        let short = json!({"type": "shorting_items", "severity": "error", "description": "Items shorting two nets",
+            "items": [{"description": "Pad 1 [VDD] of U1 on F.Cu", "uuid": "p1", "pos": {"x": 0.0, "y": 0.0}},
+                      {"description": "Pad 2 [GND] of U1 on F.Cu", "uuid": "p2", "pos": {"x": 0.1, "y": 0.0}}]});
+        let verdict = judge(&routed(tally_drc(&report(vec![
+            own("B1", 5.0),
+            apart,
+            short,
+        ]))));
+        assert_eq!(verdict.status, KiCadRunStatus::Incomplete);
+        assert_eq!(
+            verdict.new_findings_strict,
+            map(&[("hole_clearance", 1), ("shorting_items", 1)])
+        );
+        assert_eq!(verdict.footprint_findings, map(&[("hole_clearance", 1)]));
+        // With a reference, they are the reference's, as before.
+        let mut facts = routed(tally_drc(&report(vec![own("A1", 1.0)])));
+        facts.reference = reference(Vec::new());
+        let verdict = judge(&facts);
+        assert_eq!(verdict.status, KiCadRunStatus::Complete);
+        assert!(verdict.footprint_findings.is_empty());
+        assert_eq!(verdict.preexisting_findings, map(&[("hole_clearance", 1)]));
     }
 
     #[test]

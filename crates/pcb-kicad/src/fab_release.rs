@@ -39,9 +39,19 @@ pub struct KiCadFabOptions {
 /// KiCad's DRC as the release gate saw it.
 #[derive(Clone, Debug, Default, Serialize)]
 pub struct KiCadFabDrc {
-    /// Error-severity findings by type, excluded and cosmetic ones left out:
-    /// with unconnected items, what blocks a release.
+    /// Error-severity findings by type, excluded and cosmetic ones left out,
+    /// and a footprint's own (`footprint_own`): with unconnected items,
+    /// what blocks a release.
     pub errors: BTreeMap<String, usize>,
+    /// Error-severity findings by type that lie within one footprint each
+    /// (its pads and holes as the library draws them, no short), which do
+    /// not block: the verdict's `footprint_findings`.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub footprint_own: BTreeMap<String, usize>,
+    /// What those are and how KiCad's own DRC accepts them (a custom rule
+    /// for the board's .kicad_dru, an exclusion).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footprint_note: Option<String>,
     pub unconnected_items: usize,
     pub warnings: usize,
     pub cosmetic: usize,
@@ -433,6 +443,7 @@ fn finding_lines(report: &serde_json::Value, limit: usize) -> Vec<String> {
             finding["excluded"].as_bool() != Some(true)
                 && finding["severity"].as_str() == Some("error")
                 && !is_cosmetic(finding["type"].as_str().unwrap_or(""))
+                && !footprint_own_unreferenced(&drc_finding(finding))
         })
         .map(describe)
         .collect();
@@ -445,6 +456,40 @@ fn finding_lines(report: &serde_json::Value, limit: usize) -> Vec<String> {
     );
     lines.truncate(limit);
     lines
+}
+
+/// KiCad's DRC as the release gate judges it: the errors that block, and
+/// apart from them a footprint's own findings (a receptacle's pads at its
+/// own locating holes), which no layout changes and which do not block,
+/// with the custom rule for `dru` that accepts them.
+fn release_gate(tally: &crate::verdict::DrcTally, dru: &str) -> KiCadFabDrc {
+    let own: Vec<&crate::verdict::DrcFinding> = tally
+        .findings
+        .iter()
+        .filter(|finding| footprint_own_unreferenced(finding))
+        .collect();
+    let mut errors = tally.errors.clone();
+    let mut footprint_own = BTreeMap::new();
+    for finding in &own {
+        *footprint_own.entry(finding.kind.clone()).or_insert(0) += 1;
+        if let Some(count) = errors.get_mut(&finding.kind) {
+            *count -= 1;
+            if *count == 0 {
+                errors.remove(&finding.kind);
+            }
+        }
+    }
+    KiCadFabDrc {
+        clean: errors.is_empty() && tally.unconnected == 0,
+        errors,
+        footprint_note: footprint_findings_note(&own, dru),
+        footprint_own,
+        unconnected_items: tally.unconnected,
+        warnings: tally.warnings,
+        cosmetic: tally.cosmetic,
+        findings_allowed: false,
+        report: "drc.json".into(),
+    }
 }
 
 /// The release of `<directory>/<board_id>.kicad_pcb` into `output` (which
@@ -505,16 +550,8 @@ pub fn fab_kicad_board(
     // without the global libraries, zones refilled), the schematic's ERC.
     let drc_path = output.join("drc.json");
     let drc = kicad_drc_report(directory, board_id, &drc_path, true)?;
-    let tally = tally_drc(&drc);
-    manifest.drc = KiCadFabDrc {
-        errors: tally.errors.clone(),
-        unconnected_items: tally.unconnected,
-        warnings: tally.warnings,
-        cosmetic: tally.cosmetic,
-        clean: tally.errors.is_empty() && tally.unconnected == 0,
-        findings_allowed: false,
-        report: "drc.json".into(),
-    };
+    let dru = directory.join(format!("{board_id}.kicad_dru"));
+    manifest.drc = release_gate(&tally_drc(&drc), &dru.display().to_string());
     let schematic = directory.join(format!("{board_id}.kicad_sch"));
     if schematic.is_file() {
         let erc_path = output.join("erc.json");
@@ -875,6 +912,33 @@ fn write_manifest(output: &Path, manifest: &mut KiCadFabRelease) -> Result<(), S
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_footprints_own_findings_do_not_block_the_release() {
+        let own = serde_json::json!({"type": "hole_clearance", "severity": "error",
+            "description": "Hole clearance violation (board setup constraints hole clearance 0.2500 mm; actual 0.1944 mm)",
+            "items": [{"description": "Pad A1 [GND] of J1 on F.Cu", "pos": {"x": 1.0, "y": 1.0}},
+                      {"description": "NPTH pad of J1", "pos": {"x": 1.0, "y": 2.0}}]});
+        let report = |violations: Vec<serde_json::Value>| serde_json::json!({"violations": violations, "unconnected_items": []});
+        let gate = release_gate(&tally_drc(&report(vec![own.clone()])), "p/b.kicad_dru");
+        assert!(gate.clean && gate.errors.is_empty());
+        assert_eq!(
+            gate.footprint_own,
+            BTreeMap::from([("hole_clearance".to_string(), 1)])
+        );
+        let note = gate.footprint_note.unwrap();
+        assert!(
+            note.contains("p/b.kicad_dru") && note.contains("min 0.19mm"),
+            "{note}"
+        );
+        assert!(finding_lines(&report(vec![own.clone()]), 20).is_empty());
+        // Between two parts, it blocks.
+        let mut apart = own;
+        apart["items"][1]["description"] = "NPTH pad of H1".into();
+        let gate = release_gate(&tally_drc(&report(vec![apart.clone()])), "p/b.kicad_dru");
+        assert!(!gate.clean && gate.footprint_note.is_none());
+        assert_eq!(finding_lines(&report(vec![apart]), 20).len(), 1);
+    }
 
     #[test]
     fn a_zip_holds_its_files_with_their_crcs() {

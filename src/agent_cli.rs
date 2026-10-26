@@ -1111,7 +1111,21 @@ fn drc(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     // The project's rules the router does not keep: KiCad checks them, so
     // their findings are for the designer (board-router.json's rules has
     // every rule read).
-    let failed = !tally.errors.is_empty() || tally.unconnected > 0;
+    // A footprint's own findings (its pads at its own holes) are said
+    // apart and do not fail the check, as in a layout's verdict and the
+    // fab release.
+    let own: Vec<&pcb_kicad::DrcFinding> = tally
+        .findings
+        .iter()
+        .filter(|finding| pcb_kicad::footprint_own_unreferenced(finding))
+        .collect();
+    if let Some(note) = pcb_kicad::footprint_findings_note(
+        &own,
+        &path_text(&Path::new(source).join(format!("{board_id}.kicad_dru"))),
+    ) {
+        println!("footprint: {note}");
+    }
+    let failed = tally.errors.values().sum::<usize>() > own.len() || tally.unconnected > 0;
     if failed
         && let Ok(config) = pcb_kicad::resolve_project_rules(
             &Path::new(source).join(format!("{board_id}.kicad_pro")),
@@ -1315,6 +1329,10 @@ fn fab(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     verdict.status = status;
     verdict.exit_code = status.exit_code();
     verdict.next_actions.clear();
+    // A footprint's own findings: not blocking, said first.
+    verdict
+        .next_actions
+        .extend(drc.footprint_note.iter().cloned());
     if manifest.released {
         verdict.reason = format!(
             "released{}: {} files, {}; {counts}",
@@ -1767,7 +1785,9 @@ usage: pcb-maker fab-kicad-board <project-dir> <board-id> <out-dir> [--allow-fin
   --no-step         skip the 3D model.
 
 The DRC is drc-kicad-board's (cached, zones refilled, without the global libraries); warnings,
-excluded and cosmetic findings (silkscreen, text, library) do not block. The ERC (with a schematic)
+excluded and cosmetic findings (silkscreen, text, library) do not block, nor errors that lie
+within one footprint each (its pads at its own holes: the manifest's footprint_own, with the
+custom rule that accepts them in footprint_note). The ERC (with a schematic)
 is counted, never blocking. Released, <out-dir> holds gerbers/ (Gerbers, Excellon drill files PTH
 and NPTH, their Gerber maps), <board-id>-gerbers.zip (what the fab's upload takes), assembly/
 (<board-id>-pos.csv: kicad-cli's position file, both sides, mm, KiCad's rotations, DNP parts out;
@@ -1835,9 +1855,7 @@ pub const AGENT_COMMANDS: [(&str, &str, &str); 14] = [
     (
         "drc-kicad-board",
         "runs KiCad's DRC on a board (cached) and writes its JSON report",
-        "usage: pcb-maker drc-kicad-board <project-dir> <board-id> <report.json> [--no-refill]\n\n  <project-dir>  the KiCad project directory holding <board-id>.kicad_pcb.\n  <board-id>     the board's file stem.\n  <report.json>  where KiCad's DRC report (JSON, every severity) goes; its directory is created.\n  --no-refill    check the zones as stored; default: refilled first, as KiCad's fab outputs do.\n\nThe board and its rules (.kicad_pro, .kicad_dru) are checked without the schematic, as the\nreference board is. The DRC cache answers a board it has seen (docs/agents.md). Exits 0 when\nKiCad finds no error that counts (warnings, excluded and cosmetic findings do not) and no\nunconnected item, 1 when it does; one line on stdout counts them, and when it does and the
-project has rules the router does not keep (creepage, lengths, rules on areas), a line
-\"next: ...\" names them.",
+        "usage: pcb-maker drc-kicad-board <project-dir> <board-id> <report.json> [--no-refill]\n\n  <project-dir>  the KiCad project directory holding <board-id>.kicad_pcb.\n  <board-id>     the board's file stem.\n  <report.json>  where KiCad's DRC report (JSON, every severity) goes; its directory is created.\n  --no-refill    check the zones as stored; default: refilled first, as KiCad's fab outputs do.\n\nThe board and its rules (.kicad_pro, .kicad_dru) are checked without the schematic, as the\nreference board is. The DRC cache answers a board it has seen (docs/agents.md). Exits 0 when\nKiCad finds no error that counts (warnings, excluded and cosmetic findings do not, nor errors\nthat lie within one footprint each: a line \"footprint: ...\" names them with the custom rule\nthat accepts them) and no unconnected item, 1 when it does; one line on stdout counts them, and\nwhen it does and the project has rules the router does not keep (creepage, lengths, rules on\nareas), a line \"next: ...\" names them.",
     ),
     (
         "inspect-routing-run",
