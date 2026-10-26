@@ -83,6 +83,7 @@ import harness_common  # noqa: E402
 from harness_common import COSMETIC, counts_as_error, error_counts, file_sha256  # noqa: E402, F401
 import quality  # noqa: E402
 import schematic  # noqa: E402
+import tier_estimates  # noqa: E402
 ROOT = HERE.parents[1]
 # Benchmark tiers: subsets of a task list with their reasons (README.md).
 TIERS = {"quick": HERE / "quick.json", "short": HERE / "short.json", "schematic": HERE / "schematic.json",
@@ -1308,6 +1309,64 @@ def order_tasks(tasks, order, tier, expected_mb):
     return tasks
 
 
+# The expected peak of a board that nothing estimates (run.py's
+# --expected-gb default until 2026-10-26 for every board outside a tier).
+DEFAULT_EXPECTED_GB = 3.0
+
+
+def estimate_kind(task, arguments):
+    """Which of the sidecar's estimates a board's run takes
+    (tier_estimates.KINDS): the designer, schematic and short tiers their
+    own, route-mode tasks (the expansion tier and the other route lists)
+    the expansion tier's, and the rest (the sweep, the quick tier,
+    --route-from) the layout's."""
+    if arguments.designer:
+        return "designer"
+    if arguments.schematic:
+        return "schematic"
+    if arguments.tier == "short":
+        return "short"
+    if task.get("mode") == "route" and arguments.route_from is None:
+        return "expansion"
+    return "layout"
+
+
+def with_estimate(task, kind, sidecar, entry=None, override_mb=None):
+    """The task with its expected peak (`peak_rss_mb`, the memory gate's
+    reservation) and seconds (`expected_seconds`, the order and the
+    ledger's expected end) and (MB, where from): `override_mb`
+    (--expected-gb) when given, else tier_estimates.declared from the
+    sidecar, the tier's `entry` and the board's size (read from its file
+    only for a board the sidecar does not size). Neither field counts for
+    the task's digest (compare.task_digest)."""
+    size = None
+    board = ((sidecar or {}).get("boards") or {}).get(task["name"]) or {}
+    if board.get("pads") is None:
+        size = tier_estimates.board_size(task_directory(task) / f"{task['board_id']}.kicad_pcb")
+    megabytes, seconds, where = tier_estimates.declared(sidecar, task["name"], kind, entry, size)
+    if override_mb is not None:
+        megabytes, where = round(override_mb), "--expected-gb"
+    task = {key: value for key, value in task.items() if key not in ("peak_rss_mb", "expected_seconds")}
+    if megabytes is not None:
+        task["peak_rss_mb"] = megabytes
+    if seconds is not None:
+        task["expected_seconds"] = seconds
+    return task, (megabytes, where if megabytes is not None else None)
+
+
+def declarations_line(tasks, arguments):
+    """Where the boards' expected peaks come from, counted."""
+    counts = {}
+    for task in tasks:
+        where = arguments.declared[task["name"]][1] or f"the default {arguments.expected_mb / 1024:g} GB"
+        counts[where] = counts.get(where, 0) + 1
+    largest = max((task.get("peak_rss_mb", arguments.expected_mb) for task in tasks), default=0)
+    source = tier_estimates.source_label(arguments.estimates) if arguments.sidecar else "no estimates file"
+    return (f"expected peaks ({source}): "
+            + ", ".join(f"{count} from {where}" for where, count in sorted(counts.items(), key=lambda c: -c[1]))
+            + f"; the largest {largest / 1024:.1f} GB")
+
+
 def task_directory(task):
     """The task's board directory: relative to the checkout, or absolute.
     The committed lists (tasks/v6, tasks/v7) name the main checkout's
@@ -2323,8 +2382,16 @@ def main():
                              "expected first, so that the last job is not a slow one; peak-desc the largest "
                              "expected peak first (scripts/nightly.sh's designer stage: the large boards while "
                              "the machine is quiet), then the longest")
-    parser.add_argument("--expected-gb", type=float, default=3.0,
-                        help="expected peak of a board the tier does not estimate")
+    parser.add_argument("--expected-gb", type=float, default=None,
+                        help="the expected peak of every board, over its estimate (default: each board's "
+                             "estimate from --estimates, else the tier's entry, else the size model, else "
+                             f"{DEFAULT_EXPECTED_GB:g})")
+    parser.add_argument("--estimates", type=Path, default=tier_estimates.DEFAULT_ESTIMATES,
+                        help="the per-board estimates (default %(default)s; tier_estimates.py --refresh "
+                             "writes it; scripts/nightly.sh passes its own, build/nightly/estimates.json)")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="print the boards in the order they would start with each one's declared peak "
+                             "and seconds and where they come from, and run nothing")
     parser.add_argument("--budget-scale", type=float, default=None,
                         help="scale the work budget (layout: total_seconds, move_seconds, polish_seconds; "
                              "route mode: ladder_budget_seconds) and the timeout beyond its fixed 300 s "
@@ -2423,7 +2490,14 @@ def main():
     # snapshot's path alone does not say which build it is.
     arguments.binary_sha256 = file_sha256(arguments.binary) if arguments.binary.is_file() else None
     print(f"binary {arguments.binary} (sha256 {(arguments.binary_sha256 or '?')[:12]})", file=sys.stderr)
-    arguments.expected_mb = arguments.expected_gb * 1024
+    # A board's expected peak: --expected-gb when given, else its estimate
+    # (estimates.json; tier_estimates.declared), else DEFAULT_EXPECTED_GB.
+    arguments.override_mb = None if arguments.expected_gb is None else arguments.expected_gb * 1024
+    arguments.expected_mb = (DEFAULT_EXPECTED_GB if arguments.expected_gb is None else arguments.expected_gb) * 1024
+    try:
+        arguments.sidecar = tier_estimates.load(arguments.estimates)
+    except ValueError as error:
+        parser.error(f"--estimates: {arguments.estimates}: {error}")
     if not 0 <= arguments.ledger_drain_after < float("inf"):
         parser.error("--ledger-drain-after must be a finite number of seconds, at least 0")
     if not 0 <= arguments.ledger_drain_max < float("inf"):
@@ -2432,6 +2506,7 @@ def main():
                                 priority=None if arguments.ledger_priority == "normal" else arguments.ledger_priority,
                                 drain_max=arguments.ledger_drain_max)
     tasks = []
+    arguments.declared = {}
     # The boards of the tier (or task list) that --only leaves out: with
     # --splice-from their rows come from the earlier log.
     left_out = []
@@ -2441,13 +2516,13 @@ def main():
         if arguments.only and task["name"] not in arguments.only:
             left_out.append(task["name"])
             continue
+        entry = None
         if tier is not None:
             entry = tier["boards"].get(task["name"])
             if entry is None:
                 continue
-            task = {**task, "peak_rss_mb": entry.get("peak_rss_mb"), "expected_seconds": entry.get("seconds")}
-            if task["peak_rss_mb"] is None:
-                del task["peak_rss_mb"]
+        task, arguments.declared[task["name"]] = with_estimate(task, estimate_kind(task, arguments),
+                                                               arguments.sidecar, entry, arguments.override_mb)
         directory = task_directory(task)
         # A route-mode task with a source is fetched when its job runs.
         if not directory.exists() and not (task.get("mode") == "route" and task.get("source")):
@@ -2459,6 +2534,14 @@ def main():
         if missing and not arguments.only:
             print(f"tier {arguments.tier}: {len(missing)} boards not in {arguments.tasks}: {missing}", file=sys.stderr)
     tasks = order_tasks(tasks, arguments.order, tier is not None, arguments.expected_mb)
+    print(declarations_line(tasks, arguments), file=sys.stderr)
+    if arguments.dry_run:
+        for task in tasks:
+            megabytes, where = arguments.declared[task["name"]]
+            seconds = task.get("expected_seconds")
+            print(f"{task['name']}: {megabytes if megabytes is not None else round(arguments.expected_mb)} MB"
+                  + (f", {seconds:g} s" if seconds else "") + f" ({where or 'the default'})")
+        return
     # Each row names its input beyond the constraints compare.py checks:
     # the task's entry, the designer's board and its project files, the
     # .kicad_pro and .kicad_dru (compare.py marks a board whose task,

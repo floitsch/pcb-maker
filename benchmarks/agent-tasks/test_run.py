@@ -562,6 +562,78 @@ class Order(unittest.TestCase):
         self.assertEqual(names(run.order_tasks(tasks, "peak-desc", True, 3072)), ["d", "b", "c", "a"])
 
 
+class Estimates(unittest.TestCase):
+    """run.py reads each board's expected peak from the sidecar
+    (--estimates), falls back to the size model on the board's file and
+    to --expected-gb's default, and --expected-gb overrides every one."""
+
+    def test_the_declarations_of_a_dry_run(self):
+        directory = Path(tempfile.mkdtemp(prefix="est1-run-"))
+        self.addCleanup(shutil.rmtree, directory)
+        tasks = []
+        for name in ("small", "large", "unsized", "absent"):
+            board = directory / name
+            board.mkdir()
+            if name != "absent":
+                (board / "b.kicad_pcb").write_text(
+                    '(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal)) (footprint "R" (pad "1" smd) '
+                    '(pad "2" smd)))')
+            tasks.append({"name": name, "directory": str(board), "board_id": "b"})
+        (directory / "tasks.json").write_text(json.dumps({"tasks": tasks}))
+        sidecar = {"margin": 1.25, "model": {"layout": {"base_mb": 1000, "mb_per_pad_layer": 100.0}},
+                   "boards": {"small": {"pads": 2, "layers": 2, "layout": {"peak_rss_mb": 500, "seconds": 30.0}},
+                              "large": {"layout": {"peak_rss_mb": 7000, "seconds": 20.0}}}}
+        (directory / "estimates.json").write_text(json.dumps(sidecar))
+
+        def dry_run(*extra):
+            result = subprocess.run([sys.executable, str(HERE / "run.py"), str(directory / "out"), "--tasks",
+                                     str(directory / "tasks.json"), "--estimates", str(directory / "estimates.json"),
+                                     "--binary", str(directory / "none"), "--min-free-gb", "10", "--dry-run",
+                                     *extra], capture_output=True, text=True, timeout=60)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return result.stdout.splitlines(), result.stderr
+
+        lines, err = dry_run("--order", "peak-desc")
+        # The largest first; a board without a row by the size model on its
+        # file (2 pads x 2 layers), one without a file by the default.
+        self.assertEqual(lines, ["large: 7000 MB, 20 s (layout rows)",
+                                 "absent: 3072 MB (the default)",
+                                 "unsized: 1750 MB (size model)",
+                                 "small: 500 MB, 30 s (layout rows)"])
+        for part in ("2 from layout rows", "1 from size model", "1 from the default 3 GB", "the largest 6.8 GB"):
+            self.assertIn(part, err)
+        lines, err = dry_run("--expected-gb", "2")
+        self.assertEqual(lines, ["small: 2048 MB, 30 s (--expected-gb)", "large: 2048 MB, 20 s (--expected-gb)",
+                                 "unsized: 2048 MB (--expected-gb)", "absent: 2048 MB (--expected-gb)"])
+        (directory / "estimates.json").unlink()
+        lines, err = dry_run()
+        self.assertEqual(lines, ["small: 3072 MB (the default)", "large: 3072 MB (the default)",
+                                 "unsized: 3072 MB (the default)", "absent: 3072 MB (the default)"])
+        self.assertIn("expected peaks (no estimates file): 4 from the default 3 GB", err)
+
+    def test_a_board_takes_the_estimate_of_its_kind(self):
+        def kind(task=None, **given):
+            arguments = type("A", (), {"designer": False, "schematic": False, "tier": None, "route_from": None,
+                                       **given})()
+            return run.estimate_kind(task or {}, arguments)
+
+        self.assertEqual(kind(), "layout")
+        self.assertEqual(kind(tier="quick"), "layout")
+        self.assertEqual(kind(tier="short"), "short")
+        self.assertEqual(kind(designer=True, tier="designer"), "designer")
+        self.assertEqual(kind(schematic=True, tier="schematic"), "schematic")
+        self.assertEqual(kind({"mode": "route"}, tier="expansion"), "expansion")
+        self.assertEqual(kind({"mode": "route"}), "expansion")
+        self.assertEqual(kind(route_from=Path("build/x")), "layout")
+        # The estimate's fields are not the task's identity.
+        task = {"name": "a", "directory": "/nonexistent", "board_id": "b", "router": {}}
+        estimated, declared = run.with_estimate(task, "layout", {"boards": {"a": {"layout": {
+            "peak_rss_mb": 900, "seconds": 12.0}}}})
+        self.assertEqual((estimated["peak_rss_mb"], estimated["expected_seconds"], declared),
+                         (900, 12.0, (900, "layout rows")))
+        self.assertEqual(compare.task_digest(estimated, None), compare.task_digest(task, None))
+
+
 class MemoryLedger(unittest.TestCase):
     """The admission against the machine's memory ledger
     (harness_common.Ledger, admit, memory_room; run.MemoryGate)."""
