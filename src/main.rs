@@ -18,9 +18,16 @@ static PANIC: std::sync::Mutex<Option<(String, String)>> = std::sync::Mutex::new
 /// build.rs; "unknown" without git.
 const VERSION: &str = concat!(env!("BUILD_COMMIT"), " ", env!("BUILD_DATE"));
 
+/// The system allocator, counting the live heap under the memory profile
+/// (`PCB_ROUTER_MEM_PROFILE`; otherwise one relaxed load an allocation).
+#[global_allocator]
+static ALLOCATOR: pcb_kicad::mem_profile::CountingAllocator =
+    pcb_kicad::mem_profile::CountingAllocator;
+
 fn main() -> ExitCode {
     // Large blocks go back to the system when freed (a router's maps).
     pcb_kicad::configure_allocator();
+    pcb_kicad::mem_profile::start();
     // A panic is reported as one line (and in the run's report) by `main`;
     // RUST_BACKTRACE keeps the default report with its backtrace too.
     let default_hook = std::panic::take_hook();
@@ -53,6 +60,7 @@ fn main() -> ExitCode {
     // The reservation goes with the run (a panic included; a signal's
     // death by the ledger's pid rule).
     pcb_kicad::ledger::release();
+    pcb_kicad::mem_profile::finish();
     let code = match outcome {
         Ok(code) => code,
         Err(payload) => {

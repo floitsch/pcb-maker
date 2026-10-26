@@ -387,6 +387,7 @@ impl Router {
             iterations: 0,
             last_conflicted: Vec::new(),
             probe_shapes: Arc::default(),
+            mem_token: Default::default(),
             grid,
         };
         if let Some(seed) = config.seed.or_else(experiment_seed) {
@@ -448,6 +449,7 @@ impl Router {
                 built.elapsed().as_secs_f64()
             );
         }
+        router.mem_update();
         router
     }
 
@@ -522,6 +524,120 @@ impl Router {
             } else {
                 0.0
             }
+    }
+
+    /// The router's parts for the memory profile (`mem_profile`): name,
+    /// bytes held (capacities) and, for a part routers share (the static
+    /// maps), its key.
+    pub fn memory_parts(&self) -> Vec<(&'static str, usize, Option<usize>)> {
+        fn bytes<T>(maps: &[Vec<T>]) -> usize {
+            maps.iter()
+                .map(|map| map.capacity() * std::mem::size_of::<T>())
+                .sum::<usize>()
+                + std::mem::size_of_val(maps)
+        }
+        let statics: usize = self.statics.iter().map(StaticMaps::bytes).sum();
+        let nets = &self.nets;
+        let net_sum = |each: &dyn Fn(&NetState) -> usize| -> usize { nets.iter().map(each).sum() };
+        let stamp_lists = net_sum(&|state| state.stamped.words.capacity() * 4);
+        let pour_masks = net_sum(&|state| bytes(&state.plane) + bytes(&state.plane_target));
+        let branches = net_sum(&|state| {
+            state.branches.capacity() * std::mem::size_of::<Branch>()
+                + state
+                    .branches
+                    .iter()
+                    .map(|branch| branch.nodes.capacity() * std::mem::size_of::<Node>())
+                    .sum::<usize>()
+        });
+        let net_rest = net_sum(&|state| {
+            std::mem::size_of::<NetState>()
+                + state
+                    .terminal_nodes
+                    .iter()
+                    .map(|nodes| nodes.capacity() * std::mem::size_of::<Node>())
+                    .sum::<usize>()
+                + state
+                    .escapes
+                    .values()
+                    .map(|(cells, _, points)| cells.capacity() * 4 + points.capacity() * 16 + 64)
+                    .sum::<usize>()
+                + state.adopted.len() * 48
+                + state.inner_spokes.capacity() * 48
+        });
+        let footprints: usize = self
+            .stamps
+            .iter()
+            .flatten()
+            .map(|stamps| {
+                let lists = [
+                    &stamps.stub_to_trace,
+                    &stamps.stub_to_via,
+                    &stamps.trace_to_trace,
+                    &stamps.trace_to_via,
+                    &stamps.via_to_trace,
+                    &stamps.via_to_via,
+                    &stamps.diagonal_to_trace,
+                    &stamps.diagonal_to_via,
+                ];
+                let fresh = &stamps.fresh;
+                lists.iter().map(|list| list.capacity() * 8).sum::<usize>()
+                    + stamps
+                        .diagonal_block
+                        .iter()
+                        .chain(&stamps.diagonal_block_via)
+                        .chain(&stamps.stub_diagonal_block)
+                        .chain(&fresh.trace_to_trace)
+                        .chain(&fresh.trace_to_via)
+                        .chain(fresh.diagonal_block.iter().flatten())
+                        .map(|list| list.capacity() * 8)
+                        .sum::<usize>()
+            })
+            .sum();
+        let spare: usize = self.spare_scratches.0.iter().map(Scratch::held_bytes).sum();
+        let tiles = bytes(&self.tile_claimed)
+            + bytes(&self.tile_routable)
+            + bytes(&self.tile_history)
+            + bytes(&self.tile_covered);
+        vec![
+            (
+                "statics",
+                statics,
+                Some(Arc::as_ptr(&self.statics) as usize),
+            ),
+            ("occupancy", self.occupancy.bytes(), None),
+            ("stamp marks", self.stamp_mark.capacity() * 8, None),
+            ("hot records", bytes(&self.hot), None),
+            ("history", bytes(&self.history), None),
+            ("guard", bytes(&self.guard), None),
+            ("cover", bytes(&self.covered), None),
+            (
+                "via marks/cover",
+                self.via_marks.capacity() + 4 * self.via_cover.capacity(),
+                None,
+            ),
+            ("pour masks", pour_masks, None),
+            ("stamp lists", stamp_lists, None),
+            ("branches", branches, None),
+            ("net tables", net_rest, None),
+            ("footprints", footprints, None),
+            ("scratch", self.scratch.held_bytes(), None),
+            ("spare scratches", spare, None),
+            ("tiles", tiles, None),
+            ("sever", bytes(&self.sever), None),
+            ("pin rows", bytes(&self.pin_row), None),
+            (
+                "board",
+                crate::mem_profile::board_bytes(&self.board),
+                None,
+            ),
+        ]
+    }
+
+    /// Registers the router's parts with the memory profile, when it is on.
+    pub(super) fn mem_update(&self) {
+        if crate::mem_profile::enabled() {
+            self.mem_token.update(self.memory_parts());
+        }
     }
 
     /// What the router's lattice maps hold, in megabytes per part, and in

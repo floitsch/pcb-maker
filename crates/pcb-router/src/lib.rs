@@ -14,6 +14,7 @@ pub mod capacitated;
 pub mod geometry;
 pub(crate) mod global;
 pub mod grid;
+pub mod mem_profile;
 pub mod pour;
 pub mod router;
 pub mod rules;

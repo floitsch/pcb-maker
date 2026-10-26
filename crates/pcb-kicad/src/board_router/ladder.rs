@@ -700,8 +700,10 @@ impl<'a> Ladder<'a> {
     /// rounds, the narrow-signal and minimum-clearance steps. The best
     /// board is then in `best` (None only when every attempt failed).
     pub(crate) fn run<R: LadderRunner>(&mut self, runner: &R) -> Result<(), String> {
+        crate::mem_profile::phase("probes");
         self.probes(runner)?;
         if !self.gave_up {
+            crate::mem_profile::phase("rungs");
             self.rungs(runner)?;
         }
         // Probes whose leader finished the board leave their maps unused.
@@ -710,7 +712,9 @@ impl<'a> Ladder<'a> {
         if self.gave_up {
             return Ok(());
         }
+        crate::mem_profile::phase("seeds");
         self.seed_rounds(runner)?;
+        crate::mem_profile::phase("steps");
         self.steps(runner)
     }
 

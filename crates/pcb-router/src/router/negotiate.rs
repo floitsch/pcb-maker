@@ -423,6 +423,7 @@ impl Router {
             conflicted.push(*net);
         }
         self.profile.conflicts += conflicts_started.elapsed().as_secs_f64();
+        self.mem_update();
         if let Some(hook) = self.frame_hook.clone() {
             hook(self.iterations, &self.snapshot());
         }

@@ -158,6 +158,10 @@ pub fn configure_allocator() {
     board_router::configure_malloc();
 }
 
+/// The memory profile (`PCB_ROUTER_MEM_PROFILE`): the counting allocator,
+/// the sampler, the phases (docs/profiling.md, "Memory").
+pub use pcb_router::mem_profile;
+
 // Split out of lib.rs on 2026-10-21.
 mod kicad_sexpr;
 use kicad_sexpr::*;

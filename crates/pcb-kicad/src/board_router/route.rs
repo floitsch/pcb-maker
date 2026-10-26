@@ -164,7 +164,9 @@ pub fn route_kicad_board(
     let source_board = source_directory.join(format!("{board_id}.kicad_pcb"));
     let source = fs::read_to_string(&source_board)
         .map_err(|error| format!("failed to read {}: {error}", source_board.display()))?;
+    crate::mem_profile::phase("parse");
     let parsed = crate::canonical_order::parse_board(&source)?;
+    crate::mem_profile::phase("parsed");
     let layer_table = LayerTable::from_pcb(&parsed)?;
     let pour_nets: Vec<String> = pours(&parsed, &layer_table)?
         .into_iter()
@@ -331,6 +333,7 @@ pub fn route_kicad_board(
     drop(runner);
     drop(parsed);
     drop(source);
+    crate::mem_profile::phase("pour measure");
     if config.kicad_kept.is_none() {
         result.pour_quality = measured_pours(output_directory, board_id, config);
     }

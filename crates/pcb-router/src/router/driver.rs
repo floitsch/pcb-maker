@@ -372,12 +372,14 @@ impl Router {
     /// `finish`, skipping the clean-up and the via reduction without
     /// `polish`.
     pub(super) fn finish_polished(&mut self, order: &[NetId], polish: bool) -> RoutingResult {
+        self.mem_update();
         let (cleanup, rounds) = (self.config.cleanup_passes, self.config.via_reduction_rounds);
         if !polish {
             self.config.cleanup_passes = 0;
             self.config.via_reduction_rounds = 0;
         }
         let result = self.finish(order);
+        self.mem_update();
         self.config.cleanup_passes = cleanup;
         self.config.via_reduction_rounds = rounds;
         result

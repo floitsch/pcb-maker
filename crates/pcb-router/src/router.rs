@@ -984,6 +984,16 @@ impl Scratch {
         ]
     }
 
+    /// What its arrays hold now (the memory profile).
+    fn held_bytes(&self) -> usize {
+        self.nodes.capacity() * std::mem::size_of::<SearchNode>()
+            + self.own_via_near.capacity() * 2
+            + self.own_mark.capacity() * 8
+            + self.own_set.capacity() * 8
+            + self.own_claimed.capacity() * 4
+            + self.corridor.as_ref().map_or(0, Vec::capacity)
+    }
+
     fn fits(&self, states: usize, cells: usize) -> bool {
         self.nodes.len() == states && self.own_via_near.len() == cells
     }
@@ -1363,6 +1373,8 @@ pub struct Router {
     /// probe measures them (`probe_shape`): built on a probe's first
     /// question, shared by the router's copies, new with a new board.
     probe_shapes: Arc<std::sync::OnceLock<FastMap<usize, Vec<fill::ProbePart>>>>,
+    /// This router's entry in the memory profile (`mem_profile`).
+    mem_token: crate::mem_profile::Token,
 }
 
 pub fn route(board: &Board, config: &Config) -> RoutingResult {

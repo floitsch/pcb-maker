@@ -374,6 +374,7 @@ pub(crate) fn check_attempt(
     directory: &Path,
     board_id: &str,
 ) -> Result<(), String> {
+    crate::mem_profile::phase("check");
     let started = std::time::Instant::now();
     result.native = Some(verify_materialized_rung(directory, board_id)?);
     result.native_verification_seconds = started.elapsed().as_secs_f64();

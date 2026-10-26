@@ -294,6 +294,7 @@ pub(super) fn write_attempt(
     config: &KiCadBoardRouterConfig,
     seconds: [f64; 2],
 ) -> Result<KiCadBoardRouterResult, String> {
+    crate::mem_profile::phase("write-back");
     let [lowering_seconds, mut routing_seconds] = seconds;
     // Read before the items on undefined layers move away.
     let warnings = input_warnings(&pcb);
