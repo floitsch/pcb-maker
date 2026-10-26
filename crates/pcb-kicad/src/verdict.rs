@@ -761,8 +761,15 @@ fn decoupling_action(decoupling: &crate::quality::KiCadDecoupling) -> Option<Str
                 .map(|distance| format!("{pin} {distance:.1} mm"))
         })
         .collect();
+    // The example names the farthest pin, not a pin of another board
+    // (until 2026-10-26 it was U2:39 on every board).
+    let example_pin = decoupling
+        .worst
+        .iter()
+        .find(|(_, distance)| distance.is_some_and(|distance| distance > 3.0))
+        .map_or("U1:3", |(pin, _)| pin.as_str());
     Some(format!(
-        "decoupling: {:.0} % of the decoupling capacitors lie within 3 mm of a supply pin (designers 60 % or more), a median {} mm{}: give the capacitors of those pins a near constraint ({{\"part\": \"C5\", \"pin_of\": \"U2:39\", \"max_mm\": 1.5}} in constraints.json; describe-kicad-board --constraints-template writes them for every capacitor), or turn on the placer's decoupling_near (layout.json {{\"placer\": {{\"decoupling_near\": true}}}}: every capacitor within 1 mm of the nearest supply pin of its rail, off by default)",
+        "decoupling: {:.0} % of the decoupling capacitors lie within 3 mm of a supply pin (designers 60 % or more), a median {} mm{}: give the capacitors of those pins a near constraint ({{\"part\": \"<capacitor>\", \"pin_of\": \"{example_pin}\", \"max_mm\": 1.5}} in constraints.json; describe-kicad-board --constraints-template writes them for every capacitor), or turn on the placer's decoupling_near (layout.json {{\"placer\": {{\"decoupling_near\": true}}}}: every capacitor within 1 mm of the nearest supply pin of its rail, off by default)",
         share * 100.0,
         decoupling
             .capacitor_median_mm
@@ -2209,6 +2216,7 @@ mod tests {
             action.starts_with("decoupling: 7 % of the decoupling capacitors")
                 && action.contains("a median 6.9 mm")
                 && action.contains("U4:5 29.8 mm, U2:39 14.3 mm")
+                && action.contains("\"pin_of\": \"U4:5\"")
                 && !action.contains("U2:46")
                 && action.contains("decoupling_near"),
             "{action}"
