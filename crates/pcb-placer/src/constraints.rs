@@ -178,6 +178,19 @@ pub struct Constraints {
     /// joins openings closer than that; WLED_Matrix: 2 x 0 + 0.23 mm
     /// against a clearance of 0.127). Zero: the clearance alone.
     pub pad_mask_gap: f64,
+    /// The board's silkscreen marks (texts and graphics, not copper) whose
+    /// overlap with a part the project does not rate an error
+    /// (`silk_overlap`, `silk_over_copper`; KiCad's default is a warning),
+    /// in ascending order: no obstacle at KiCad's legality
+    /// (`pad_clearance`). KiCad accepts a part over them; the placer keeps
+    /// off them at the other levels, for legible boards.
+    pub passable_marks: Vec<usize>,
+    /// The project does not rate a hole inside another part's courtyard an
+    /// error (`pth_inside_courtyard`): at KiCad's legality a lead through
+    /// the board keeps only the copper clearance from the pads of a part
+    /// on the other side, as KiCad checks it (a capacitor on the back
+    /// beside a key switch's pin, the molecules' C2), not off its body.
+    pub leads_keep_copper: bool,
     /// Constraints the lowering keeps by construction (a side, the turns a
     /// part may take): the placer never breaks them, they are only
     /// reported (`report_kept`), so that an agent sees them kept.

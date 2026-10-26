@@ -1333,10 +1333,21 @@ pub(crate) fn lower_placement(
     // KiCad reports copper touching the edge even where the clearance is
     // zero (hackrf's SMA connector P4, its pads flush with the outline: 5
     // copper_edge_clearance findings; 0.01 mm off it, none).
-    problem.constraints.copper_edge = config.copper_edge_clearance_mm.unwrap_or(0.0).max(0.02);
+    // 0.01 mm off it, none: the floor; above it the project's clearance
+    // (the molecules' 0.01 mm, their edge connectors' copper 0.012 mm
+    // from the edge: KiCad finds nothing).
+    problem.constraints.copper_edge = config.copper_edge_clearance_mm.unwrap_or(0.0).max(0.01);
     problem.constraints.pad_mask_gap = pad_mask_gap(pcb);
     problem.constraints.solid_cutouts = solid_cutouts;
     problem.constraints.yielding = marks.iter().map(|(index, _)| *index).collect();
+    problem.constraints.leads_keep_copper = config.holes_in_courtyards_error != Some(true);
+    if config.silk_over_parts_error != Some(true) {
+        problem.constraints.passable_marks = marks
+            .iter()
+            .filter(|(_, mark)| !mark.copper)
+            .map(|(index, _)| *index)
+            .collect();
+    }
     problem.constraints.halo_free = marks
         .iter()
         .filter(|(_, mark)| !mark.copper)

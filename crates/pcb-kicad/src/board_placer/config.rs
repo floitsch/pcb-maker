@@ -10,9 +10,17 @@ use pcb_placer as core;
 #[serde(rename_all = "lowercase")]
 pub enum KiCadPlacerLegality {
     /// The placer's own model: bodies (courtyard and pads) keep the copper
-    /// clearance apart, courtyards touch only at the last level.
+    /// clearance apart; at the last level KiCad's legality (courtyards
+    /// touch where the pads keep the copper clearance pad to pad, the
+    /// board's silkscreen marks the project does not rate an error no
+    /// obstacle, leads keep the copper clearance from the other side's
+    /// pads).
     #[default]
     Model,
+    /// The model before 2026-10-27: at the last level, too, bodies keep
+    /// the clearance their copper's least inset needs, the marks are
+    /// obstacles and leads keep off the other side's bodies.
+    Strict,
     /// What KiCad's DRC accepts, at the levels whose spacing is the rules'
     /// least: courtyards may touch where the pads keep the copper
     /// clearance pad to pad, and a body may come to the edge where its
@@ -118,6 +126,12 @@ pub struct KiCadBoardPlacerConfig {
     /// on the other side keep only the copper clearance from that side's
     /// pads (leads through the board still keep off bodies).
     pub holes_in_courtyards_error: Option<bool>,
+    /// Whether the project makes the board's silkscreen over a part an
+    /// error (`silk_overlap` or `silk_over_copper`); `None`: read it from
+    /// the project. Where it does not, the board's silkscreen marks are no
+    /// obstacle at the placer's last level (KiCad's legality), only a
+    /// preference at the others.
+    pub silk_over_parts_error: Option<bool>,
     /// Decoupling capacitors (small capacitors between a supply rail and
     /// ground) are pulled to the supply pins of the ICs on their rail,
     /// unless a constraint already names them.
@@ -347,6 +361,7 @@ impl Default for KiCadBoardPlacerConfig {
             copper_edge_clearance_mm: None,
             tight_bodies: None,
             holes_in_courtyards_error: None,
+            silk_over_parts_error: None,
             auto_decoupling: true,
             decoupling_mm: None,
             decoupling_near: false,

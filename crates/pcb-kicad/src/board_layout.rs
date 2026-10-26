@@ -1346,6 +1346,11 @@ pub fn layout_kicad_board(
                 &source_directory.join(format!("{board_id}.kicad_pro")),
             ));
     }
+    if placer_config.silk_over_parts_error.is_none() {
+        placer_config.silk_over_parts_error = Some(crate::board_placer::silk_over_parts_error(
+            &source_directory.join(format!("{board_id}.kicad_pro")),
+        ));
+    }
     let mut problem = lower_placement(&pcb, &placer_config)?;
     let first_relaxation = placer::Relaxation {
         spacing: placement.spacing_mm,

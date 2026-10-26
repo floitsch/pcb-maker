@@ -21,6 +21,21 @@ pub(crate) fn holes_in_courtyards_error(project: &Path) -> bool {
         })
 }
 
+/// Whether the project's DRC makes the board's silkscreen over a part an
+/// error (`silk_overlap` or `silk_over_copper`; KiCad's default for both
+/// is a warning).
+pub(crate) fn silk_over_parts_error(project: &Path) -> bool {
+    fs::read_to_string(project)
+        .ok()
+        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+        .is_some_and(|project| {
+            let severities = &project["board"]["design_settings"]["rule_severities"];
+            ["silk_overlap", "silk_over_copper"]
+                .iter()
+                .any(|rule| severities[rule].as_str() == Some("error"))
+        })
+}
+
 pub(crate) fn courtyards_may_overlap(project: &Path) -> bool {
     fs::read_to_string(project)
         .ok()

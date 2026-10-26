@@ -81,6 +81,11 @@ pub(crate) fn prepare_board(
             &source_directory.join(format!("{board_id}.kicad_pro")),
         ));
     }
+    if config.silk_over_parts_error.is_none() {
+        config.silk_over_parts_error = Some(silk_over_parts_error(
+            &source_directory.join(format!("{board_id}.kicad_pro")),
+        ));
+    }
     let edges_chosen = choose_any_edges(source_directory, board_id, &mut config)
         .map_err(crate::verdict::input_error)?;
     let mut outline_size = None;
@@ -212,6 +217,7 @@ pub fn place_kicad_board(
     placer_config.orientation_search = config.orientation_search;
     placer_config.bus_groups = config.bus_groups.as_ref().map(KiCadBusGroups::settings);
     placer_config.kicad_legality = config.legality == KiCadPlacerLegality::Kicad;
+    placer_config.kicad_last_level = config.legality != KiCadPlacerLegality::Strict;
     if let Some(guidance) = &config.global_guidance {
         let router_config = config.guidance_router.clone().unwrap_or_default();
         placer_config.anneal.guidance = Some(core::guidance::Guidance {

@@ -32,7 +32,7 @@ pub use self::{
     config::*,
     guidance::KiCadGlobalGuidance,
     legality::*,
-    panel::{KiCadPanelCopiesReport, KiCadPanelCopy},
+    panel::{KiCadPanelCellClass, KiCadPanelCopiesReport, KiCadPanelCopy},
     place::*,
     result::*,
 };

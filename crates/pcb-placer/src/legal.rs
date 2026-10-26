@@ -614,6 +614,12 @@ pub fn conflict_kind(
             -1.0e-3,
         ) {
             "bodies overlap"
+        } else if far_courtyard_overlap(problem, index, pose, other, poses[other], &mut work) {
+            "courtyards on the other side"
+        } else if problem.constraints.pad_clearance
+            && pads_too_close(problem, index, pose, other, poses[other], &mut work)
+        {
+            "pads closer than the clearance"
         } else {
             "bodies closer than the spacing"
         }
@@ -926,9 +932,10 @@ fn pads_too_close(
     }
     let mine = turned_rects(&first.pads, pose_a, 0.0);
     let reach = bare(b, pose_b);
-    let mine: Vec<Rect> = mine
+    let mine: Vec<(usize, Rect)> = mine
         .into_iter()
-        .filter(|pad| overlaps(*pad, reach, clearance))
+        .enumerate()
+        .filter(|(_, pad)| overlaps(*pad, reach, clearance))
         .collect();
     if mine.is_empty() {
         return false;
@@ -937,8 +944,49 @@ fn pads_too_close(
     *work += list_work(first.pads.len())
         + list_work(second.pads.len())
         + (mine.len() * theirs.len()) as u64;
-    mine.iter()
-        .any(|pad| theirs.iter().any(|other| overlaps(*pad, *other, clearance)))
+    let close: Vec<(usize, usize)> = mine
+        .iter()
+        .flat_map(|(index, pad)| {
+            theirs
+                .iter()
+                .enumerate()
+                .filter(|(_, other)| overlaps(*pad, **other, clearance))
+                .map(move |(other, _)| (*index, other))
+        })
+        .collect();
+    if close.is_empty() {
+        return false;
+    }
+    // KiCad keeps the clearance between copper of different nets: two
+    // pads of one net may come closer (mating connectors of neighbouring
+    // cells, the molecules' J3 and J4, 0.03 mm apart).
+    let (nets_a, nets_b) = (pad_nets(first), pad_nets(second));
+    *work += (first.pads.len() * first.pins.len() + second.pads.len() * second.pins.len()) as u64;
+    close.iter().any(|(a, b)| match (nets_a[*a], nets_b[*b]) {
+        (Some(x), Some(y)) => x != y,
+        _ => true,
+    })
+}
+
+/// Per pad of a part (`Component::pads`), the net of the pin inside it
+/// (None: no pin, a pad of no net).
+fn pad_nets(component: &crate::problem::Component) -> Vec<Option<usize>> {
+    component
+        .pads
+        .iter()
+        .map(|pad| {
+            component
+                .pins
+                .iter()
+                .find(|pin| {
+                    pin.offset[0] >= pad[0] - 1.0e-9
+                        && pin.offset[0] <= pad[2] + 1.0e-9
+                        && pin.offset[1] >= pad[1] - 1.0e-9
+                        && pin.offset[1] <= pad[3] + 1.0e-9
+                })
+                .map(|pin| pin.net)
+        })
+        .collect()
 }
 
 /// Whether one part's pads come into the other's non-plated holes'
@@ -1054,6 +1102,15 @@ fn far_side_overlap(
         };
         if problem.far_side_pads_only {
             // Copper against copper only.
+            let pads = pads(work);
+            *work += ((far.len() + copper.len()) * pads.len()) as u64;
+            return far.iter().chain(&copper).any(|far| {
+                pads.iter()
+                    .any(|pad| overlaps(*far, *pad, problem.min_spacing))
+            });
+        }
+        if problem.constraints.pad_clearance && problem.constraints.leads_keep_copper {
+            // At KiCad's legality the leads are copper to the other side.
             let pads = pads(work);
             *work += ((far.len() + copper.len()) * pads.len()) as u64;
             return far.iter().chain(&copper).any(|far| {

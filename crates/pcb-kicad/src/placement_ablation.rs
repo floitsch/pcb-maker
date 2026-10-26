@@ -26,7 +26,7 @@
 use super::*;
 use crate::board_layout::footprint_items;
 use crate::board_placer::{
-    KiCadBoardPlacerConfig, attribution, courtyards_may_overlap, holes_in_courtyards_error,
+    KiCadBoardPlacerConfig, attribution, courtyards_may_overlap, holes_in_courtyards_error, silk_over_parts_error,
     largest_clearance, lower_placement, reference_index, write_footprint_pose,
 };
 use crate::placement_constraints::{KiCadConstraintsSource, resolve_constraints};
@@ -299,6 +299,7 @@ fn ablation_problem(
         .and_then(|rules| rules.solder_mask_to_copper_mm);
     config.tight_bodies = Some(courtyards_may_overlap(&project));
     config.holes_in_courtyards_error = Some(holes_in_courtyards_error(&project));
+    config.silk_over_parts_error = Some(silk_over_parts_error(&project));
     let mut lowered = lower_placement(pcb, &config)?;
     lowered.problem.spacing = lowered.problem.min_spacing;
     for component in &mut lowered.problem.components {

@@ -166,6 +166,16 @@ pub struct Problem {
 }
 
 impl Problem {
+    /// At KiCad's legality: the board's marks that are no obstacle there
+    /// (`Constraints::passable_marks`) take no side.
+    pub fn pass_marks(&mut self) {
+        for &index in &self.constraints.passable_marks {
+            if let Some(component) = self.components.get_mut(index) {
+                component.side = Side::Neither;
+            }
+        }
+    }
+
     /// Moves every follower (a row's parts) to where its leader carries it.
     pub fn sync_followers(&self, poses: &mut [Pose]) {
         for follower in &self.constraints.followers {

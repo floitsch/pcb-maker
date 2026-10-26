@@ -73,7 +73,7 @@ mod board_placer;
 mod canonical_order;
 pub use board_placer::{
     KiCadBoardPlacerConfig, KiCadBoardPlacerResult, KiCadLegalityReport, KiCadPanelCopiesReport,
-    KiCadPanelCopy, KiCadPlacedFootprint, legality_kicad_board, place_kicad_board,
+    KiCadPanelCellClass, KiCadPanelCopy, KiCadPlacedFootprint, legality_kicad_board, place_kicad_board,
 };
 mod board_router;
 mod verdict;

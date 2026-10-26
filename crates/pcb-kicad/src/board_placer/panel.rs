@@ -87,6 +87,26 @@ impl CopyTransform {
     fn inverse_region(&self, region: [f64; 4]) -> [f64; 4] {
         boxed(corners(region).map(|corner| self.inverse_point(corner)))
     }
+
+    /// A direction (no offset) in the first copy's frame.
+    fn inverse_direction(&self, direction: core::problem::Point) -> core::problem::Point {
+        core::problem::rotate(direction, self.angle)
+    }
+}
+
+/// A pose of copy `rep` carried to copy `copy` (through the first copy's
+/// frame; from the first copy itself directly, as the replication always
+/// did).
+fn carry(copies: &PanelCopies, rep: usize, copy: usize, pose: core::Pose) -> core::Pose {
+    if rep == 0 {
+        return copies.transforms[copy].pose(pose);
+    }
+    let from = copies.transforms[rep];
+    let first = core::Pose {
+        position: from.inverse_point(pose.position),
+        angle: normal_angle(pose.angle - from.angle),
+    };
+    copies.transforms[copy].pose(first)
 }
 
 fn normal_angle(angle: f64) -> f64 {
@@ -165,6 +185,27 @@ pub(crate) struct PanelCopies {
     /// Where the regions came from: `fixed parts`, `outline pieces` or
     /// `slices`.
     pub regions_from: &'static str,
+    /// The copies grouped by their surroundings (`cell_classes`), the
+    /// most constrained class first.
+    pub classes: Vec<CellClass>,
+}
+
+/// Copies whose surroundings are alike (`cell_classes`): the same
+/// constraints on their parts, the same board edges within reach of their
+/// regions and the same obstacles there, each seen from its own frame.
+/// One placement of a class's first copy (its representative) is legal in
+/// every copy of the class.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct CellClass {
+    /// The copies, ascending; the first is the representative.
+    pub copies: Vec<usize>,
+    /// Edge, overhang, region and turn constraints on the copy's parts.
+    pub constraints: usize,
+    /// Pieces of the board outline within reach of the copy's region.
+    pub outline: usize,
+    /// Obstacles there: fixed parts not of the copy, keepouts, cutouts,
+    /// the board's marks that block the last level.
+    pub obstacles: usize,
 }
 
 impl PanelCopies {
@@ -616,6 +657,352 @@ fn cut_regions(
     Some((regions, "fixed parts"))
 }
 
+/// A length on the grid the cell classes compare on (0.05 mm).
+fn quantum(value: f64) -> i64 {
+    (value * 20.0).round() as i64
+}
+
+fn edge_direction(edge: core::constraints::Edge) -> core::problem::Point {
+    match edge {
+        core::constraints::Edge::Left => [-1.0, 0.0],
+        core::constraints::Edge::Top => [0.0, -1.0],
+        core::constraints::Edge::Right => [1.0, 0.0],
+        core::constraints::Edge::Bottom => [0.0, 1.0],
+    }
+}
+
+/// The edge a direction points to, as an index (left, top, right, bottom).
+fn direction_index(direction: core::problem::Point) -> i64 {
+    if direction[0].abs() >= direction[1].abs() {
+        if direction[0] < 0.0 { 0 } else { 2 }
+    } else if direction[1] < 0.0 {
+        1
+    } else {
+        3
+    }
+}
+
+/// The piece of segment `a`-`b` inside `region` (Liang and Barsky).
+fn clip_segment(
+    a: core::problem::Point,
+    b: core::problem::Point,
+    region: [f64; 4],
+) -> Option<(core::problem::Point, core::problem::Point)> {
+    let delta = [b[0] - a[0], b[1] - a[1]];
+    let (mut low, mut high) = (0.0f64, 1.0f64);
+    for (p, q) in [
+        (-delta[0], a[0] - region[0]),
+        (delta[0], region[2] - a[0]),
+        (-delta[1], a[1] - region[1]),
+        (delta[1], region[3] - a[1]),
+    ] {
+        if p.abs() < 1.0e-12 {
+            if q < 0.0 {
+                return None;
+            }
+            continue;
+        }
+        let t = q / p;
+        if p < 0.0 {
+            low = low.max(t);
+        } else {
+            high = high.min(t);
+        }
+        if low > high {
+            return None;
+        }
+    }
+    let at = |t: f64| [a[0] + t * delta[0], a[1] + t * delta[1]];
+    let (start, end) = (at(low), at(high));
+    ((end[0] - start[0]).hypot(end[1] - start[1]) > 1.0e-6).then_some((start, end))
+}
+
+/// The copies grouped by their surroundings, each seen from its own frame
+/// (mapped back to the first copy's): the edge, overhang and region
+/// constraints on its parts and the turns they may take, the pieces of
+/// the board outline within reach of its region (the edge margin), and
+/// the obstacles there (fixed parts not of the copy, keepouts, cutouts,
+/// the board's marks that still block at the last level). The most
+/// constrained class first (constraints, then outline pieces, then
+/// obstacles), then by the first copy.
+fn cell_classes(
+    problem: &core::Problem,
+    members: &[Vec<usize>],
+    transforms: &[CopyTransform],
+    regions: &[[f64; 4]],
+) -> Vec<CellClass> {
+    let reach = problem.edge_margin.max(problem.min_spacing);
+    let passable: BTreeSet<usize> = problem
+        .constraints
+        .passable_marks
+        .iter()
+        .copied()
+        .collect();
+    type Signature = (Vec<Vec<i64>>, Vec<Vec<i64>>, Vec<Vec<i64>>);
+    let signature = |copy: usize| -> Signature {
+        let transform = transforms[copy];
+        let rank: BTreeMap<usize, usize> = members[copy]
+            .iter()
+            .enumerate()
+            .map(|(rank, part)| (*part, rank))
+            .collect();
+        let edge = |edge: core::constraints::Edge| {
+            direction_index(transform.inverse_direction(edge_direction(edge)))
+        };
+        let boxed_back = |region: [f64; 4]| transform.inverse_region(region).map(quantum).to_vec();
+        let mut constraints: Vec<Vec<i64>> = Vec::new();
+        let held = &problem.constraints;
+        for (part, side, max) in &held.edges {
+            if let Some(rank) = rank.get(part) {
+                constraints.push(vec![0, *rank as i64, edge(*side), (max * 100.0).round() as i64]);
+            }
+        }
+        for (part, side, local) in &held.overhangs {
+            if let Some(rank) = rank.get(part) {
+                let mut entry = vec![1, *rank as i64, edge(*side)];
+                entry.extend(local.map(quantum));
+                constraints.push(entry);
+            }
+        }
+        for (part, region) in &held.regions {
+            if let Some(rank) = rank.get(part) {
+                let mut entry = vec![2, *rank as i64];
+                entry.extend(boxed_back(*region));
+                constraints.push(entry);
+            }
+        }
+        for (rank, part) in members[copy].iter().enumerate() {
+            let component = &problem.components[*part];
+            if component.fixed {
+                continue;
+            }
+            let mut turns: Vec<i64> = component
+                .angle_options
+                .iter()
+                .map(|angle| (normal_angle(angle - transform.angle) * 100.0).round() as i64 % 36000)
+                .collect();
+            turns.sort_unstable();
+            turns.dedup();
+            // A part free to take every quarter turn is not held.
+            if turns != [0, 9000, 18000, 27000] && !turns.is_empty() {
+                let mut entry = vec![3, rank as i64];
+                entry.extend(turns);
+                constraints.push(entry);
+            }
+        }
+        constraints.sort();
+        let region = regions[copy];
+        let near = [
+            region[0] - reach,
+            region[1] - reach,
+            region[2] + reach,
+            region[3] + reach,
+        ];
+        let mut outline: Vec<Vec<i64>> = Vec::new();
+        let points = &problem.outline;
+        for index in 0..points.len() {
+            let (a, b) = (points[index], points[(index + 1) % points.len()]);
+            if let Some((start, end)) = clip_segment(a, b, near) {
+                let mut ends = [
+                    transform.inverse_point(start).map(quantum),
+                    transform.inverse_point(end).map(quantum),
+                ];
+                ends.sort();
+                outline.push(ends.concat());
+            }
+        }
+        outline.sort();
+        let own: BTreeSet<usize> = members[copy].iter().copied().collect();
+        let mut obstacles: Vec<Vec<i64>> = Vec::new();
+        for (index, component) in problem.components.iter().enumerate() {
+            if !component.fixed
+                || own.contains(&index)
+                || passable.contains(&index)
+                || component.side == core::Side::Neither
+            {
+                continue;
+            }
+            let pose = problem.poses[index];
+            let (center, half) = (component.center(pose), component.half_extent(pose.angle));
+            let body = [
+                center[0] - half[0],
+                center[1] - half[1],
+                center[0] + half[0],
+                center[1] + half[1],
+            ];
+            if empty(intersect(body, near)) {
+                continue;
+            }
+            let side = match component.side {
+                core::Side::Front => 0,
+                core::Side::Back => 1,
+                core::Side::Both => 2,
+                core::Side::Neither => 3,
+            };
+            let mut entry = vec![side, component.copper_only as i64];
+            entry.extend(boxed_back(body));
+            obstacles.push(entry);
+        }
+        obstacles.sort();
+        (constraints, outline, obstacles)
+    };
+    let mut classes: Vec<(Signature, CellClass)> = Vec::new();
+    for copy in 0..members.len() {
+        let signature = signature(copy);
+        match classes.iter_mut().find(|(known, _)| *known == signature) {
+            Some((_, class)) => class.copies.push(copy),
+            None => {
+                let class = CellClass {
+                    copies: vec![copy],
+                    constraints: signature.0.len(),
+                    outline: signature.1.len(),
+                    obstacles: signature.2.len(),
+                };
+                classes.push((signature, class));
+            }
+        }
+    }
+    let mut classes: Vec<CellClass> = classes.into_iter().map(|(_, class)| class).collect();
+    classes.sort_by(|a, b| {
+        (b.constraints, b.outline, b.obstacles, a.copies[0]).cmp(&(
+            a.constraints,
+            a.outline,
+            a.obstacles,
+            b.copies[0],
+        ))
+    });
+    classes
+}
+
+/// Whether part `part` can keep its hard constraints (edge, overhang,
+/// region) somewhere in `region`: flush with one of the region's sides
+/// (at nine places along it) or at its centre, at any turn it may take.
+fn holds_in(problem: &core::Problem, part: usize, region: [f64; 4]) -> bool {
+    let component = &problem.components[part];
+    let angles: Vec<f64> = if component.angle_options.is_empty() {
+        vec![problem.poses[part].angle]
+    } else {
+        component.angle_options.clone()
+    };
+    for angle in angles {
+        let half = component.half_extent(angle);
+        let (low, high) = (
+            [region[0] + half[0], region[1] + half[1]],
+            [region[2] - half[0], region[3] - half[1]],
+        );
+        if low[0] > high[0] || low[1] > high[1] {
+            continue;
+        }
+        let mut centres = vec![[(low[0] + high[0]) / 2.0, (low[1] + high[1]) / 2.0]];
+        for step in 0..9 {
+            let t = step as f64 / 8.0;
+            let along = [low[0] + t * (high[0] - low[0]), low[1] + t * (high[1] - low[1])];
+            centres.push([low[0], along[1]]);
+            centres.push([high[0], along[1]]);
+            centres.push([along[0], low[1]]);
+            centres.push([along[0], high[1]]);
+        }
+        for centre in centres {
+            let offset = core::problem::rotate(component.body_center, -angle);
+            let pose = core::Pose {
+                position: [centre[0] - offset[0], centre[1] - offset[1]],
+                angle,
+            };
+            if core::constraints::hard_ok(problem, part, pose) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Where references repeat, the movable instances of a reference were
+/// given to the copies in turn: their places say nothing (a task stacks
+/// them). An instance an edge, overhang or region constraint holds goes
+/// to a copy whose region lets it keep that constraint (an outer cell's
+/// connector at the board's edge to an outer cell: the molecules' J3
+/// held at the left edge to a cell of the left column), by a matching of
+/// the held instances to the copies; the free instances fill the other
+/// copies in turn. Only instances whose pins are on the same nets trade
+/// places (the copies' nets map as before).
+fn assign_held(problem: &core::Problem, members: &mut [Vec<usize>], regions: &[[f64; 4]]) {
+    let constraints = &problem.constraints;
+    let held = |part: usize| {
+        constraints.edges.iter().any(|(p, _, _)| *p == part)
+            || constraints.overhangs.iter().any(|(p, _, _)| *p == part)
+            || constraints.regions.iter().any(|(p, _)| *p == part)
+    };
+    let count = members.len();
+    let ranks = members[0].len();
+    for rank in 0..ranks {
+        let slots: Vec<usize> = (0..count)
+            .filter(|copy| !problem.components[members[*copy][rank]].fixed)
+            .collect();
+        let instances: Vec<usize> = slots.iter().map(|copy| members[*copy][rank]).collect();
+        let held_instances: Vec<usize> = instances.iter().copied().filter(|p| held(*p)).collect();
+        if held_instances.is_empty() || slots.len() < 2 {
+            continue;
+        }
+        let nets = |part: usize| -> Vec<usize> {
+            problem.components[part]
+                .pins
+                .iter()
+                .map(|pin| pin.net)
+                .collect()
+        };
+        if instances.iter().any(|part| nets(*part) != nets(instances[0])) {
+            continue;
+        }
+        // Kuhn's augmenting paths: held instance -> slot.
+        let fits: Vec<Vec<usize>> = held_instances
+            .iter()
+            .map(|part| {
+                (0..slots.len())
+                    .filter(|slot| holds_in(problem, *part, regions[slots[*slot]]))
+                    .collect()
+            })
+            .collect();
+        let mut owner: Vec<Option<usize>> = vec![None; slots.len()];
+        fn augment(
+            instance: usize,
+            fits: &[Vec<usize>],
+            owner: &mut [Option<usize>],
+            seen: &mut [bool],
+        ) -> bool {
+            for &slot in &fits[instance] {
+                if seen[slot] {
+                    continue;
+                }
+                seen[slot] = true;
+                if owner[slot].is_none_or(|other| augment(other, fits, owner, seen)) {
+                    owner[slot] = Some(instance);
+                    return true;
+                }
+            }
+            false
+        }
+        for instance in 0..held_instances.len() {
+            let mut seen = vec![false; slots.len()];
+            augment(instance, &fits, &mut owner, &mut seen);
+        }
+        let matched: BTreeSet<usize> = owner.iter().flatten().copied().collect();
+        // The held instances without a fitting copy and the free ones, in
+        // turn, fill the other slots.
+        let mut rest = held_instances
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !matched.contains(index))
+            .map(|(_, part)| *part)
+            .chain(instances.iter().copied().filter(|part| !held(*part)));
+        for (slot, copy) in slots.iter().enumerate() {
+            members[*copy][rank] = match owner[slot] {
+                Some(instance) => held_instances[instance],
+                None => rest.next().expect("as many instances as slots"),
+            };
+        }
+    }
+}
+
 /// The copies of a panel, or why there are none (for the debug line).
 pub(crate) fn detect(problem: &core::Problem, footprints: usize) -> Result<PanelCopies, String> {
     let parts = candidates(problem, footprints);
@@ -740,12 +1127,18 @@ fn copies_from(
             }
         }
     }
+    let mut members = members;
+    if detected_by == "repeated references" {
+        assign_held(problem, &mut members, &regions);
+    }
+    let classes = cell_classes(problem, &members, &transforms, &regions);
     Ok(PanelCopies {
         members,
         transforms,
         regions,
         detected_by,
         regions_from,
+        classes,
     })
 }
 
@@ -810,19 +1203,19 @@ fn make_inert(component: &mut core::Component) {
     component.halo = 0.0;
 }
 
-/// The first copy's problem: its outline is the board's inside the first
-/// copy's region; its movable parts are the first copy's, held in that
-/// region; the other movable parts take no room and pull no net; fixed
+/// Copy `copy`'s problem (the first copy's, or a cell class's
+/// representative's): its outline is the board's inside the copy's
+/// region; its movable parts are the copy's, held in that region; the other movable parts take no room and pull no net; fixed
 /// parts away from the region keep their bodies but pull no net (the other
 /// copies' pins of a shared net would pull the copy across the board).
-fn reference_problem(problem: &core::Problem, copies: &PanelCopies) -> core::Problem {
-    let region = copies.regions[0];
-    let active: BTreeSet<usize> = copies.members[0]
+fn reference_problem(problem: &core::Problem, copies: &PanelCopies, copy: usize) -> core::Problem {
+    let region = copies.regions[copy];
+    let active: BTreeSet<usize> = copies.members[copy]
         .iter()
         .copied()
         .filter(|part| !problem.components[*part].fixed)
         .collect();
-    let first: BTreeSet<usize> = copies.members[0].iter().copied().collect();
+    let first: BTreeSet<usize> = copies.members[copy].iter().copied().collect();
     let mut sub = problem.clone();
     for (index, component) in sub.components.iter_mut().enumerate() {
         if active.contains(&index) {
@@ -965,6 +1358,10 @@ fn replicate(
 /// not legal where they land send the board to a placement as a whole.
 const MOST_ILLEGAL_SHARE: f64 = 0.1;
 
+/// The replicated stage's name where each cell class was placed from its
+/// own representative.
+const REPLICATED_BY_CLASSES: &str = "replicated by cell classes";
+
 /// The board placed as a whole, with the seed's whole budget (the first
 /// copy's work spent on top of it; the copies' placement is not used).
 fn place_whole(
@@ -981,6 +1378,119 @@ fn place_whole(
     whole
 }
 
+/// The copies' movable parts carried from the placements of their
+/// sources (`source[c]`: the copy whose placement copy c takes, its
+/// class's representative; `placements` by source), the level they are
+/// judged at (the loosest of the sources', with every source's parts on
+/// the board's marks lying on their images' marks too), and the movable
+/// parts of the copies that are not legal where they land at that level
+/// (against the fixed parts and every other copy's parts; a turn the part
+/// may not take, or a part its source left without a place, counts as
+/// not legal).
+fn carried(
+    problem: &core::Problem,
+    copies: &PanelCopies,
+    source: &[usize],
+    placements: &BTreeMap<usize, core::Placement>,
+) -> (Vec<core::Pose>, core::Relaxation, Vec<usize>) {
+    let mut poses = problem.poses.clone();
+    for (copy, parts) in copies.members.iter().enumerate() {
+        let rep = source[copy];
+        let from = &placements[&rep].poses;
+        for (rank, &part) in parts.iter().enumerate() {
+            if !problem.components[part].fixed {
+                poses[part] = carry(copies, rep, copy, from[copies.members[rep][rank]]);
+            }
+        }
+    }
+    problem.sync_followers(&mut poses);
+    let mut relaxation = placements[&0].relaxation.clone();
+    for (rep, placement) in placements {
+        if *rep != 0 {
+            relaxation = loosest(&relaxation, &placement.relaxation);
+        }
+    }
+    for (rep, placement) in placements {
+        let rank_in: BTreeMap<usize, usize> = copies.members[*rep]
+            .iter()
+            .enumerate()
+            .map(|(rank, part)| (*part, rank))
+            .collect();
+        for part in &placement.relaxation.on_marks {
+            if let Some(rank) = rank_in.get(part) {
+                for (copy, members) in copies.members.iter().enumerate() {
+                    if copy != *rep && source[copy] == *rep {
+                        relaxation.on_marks.push(members[*rank]);
+                    }
+                }
+            }
+        }
+    }
+    relaxation.on_marks.sort_unstable();
+    relaxation.on_marks.dedup();
+    let mut check = problem.clone();
+    relaxation.apply(&mut check);
+    let in_copies: BTreeSet<usize> = copies.members.iter().flatten().copied().collect();
+    let others: Vec<usize> = (0..problem.components.len())
+        .filter(|part| problem.components[*part].fixed || in_copies.contains(part))
+        .collect();
+    let unplaced: BTreeMap<usize, BTreeSet<usize>> = placements
+        .iter()
+        .map(|(rep, placement)| (*rep, placement.unplaced.iter().copied().collect()))
+        .collect();
+    let debug = std::env::var_os("PCB_PLACER_DEBUG").is_some();
+    let mut illegal = Vec::new();
+    for (copy, parts) in copies.members.iter().enumerate() {
+        let rep = source[copy];
+        for (rank, &part) in parts.iter().enumerate() {
+            if problem.components[part].fixed {
+                continue;
+            }
+            let pose = poses[part];
+            let options = &problem.components[part].angle_options;
+            let turn_allowed = options.is_empty()
+                || options.iter().any(|option| {
+                    let difference = (normal_angle(*option) - pose.angle).abs();
+                    difference < 0.01 || difference > 359.99
+                });
+            if unplaced[&rep].contains(&copies.members[rep][rank])
+                || !turn_allowed
+                || !core::legal::is_legal(&check, &poses, part, pose, others.iter().copied())
+            {
+                illegal.push(part);
+            }
+        }
+    }
+    if debug {
+        // Why the replicated parts are not legal: the first few.
+        for &part in illegal.iter().take(12) {
+            let pose = poses[part];
+            let mut met: Vec<String> = Vec::new();
+            if !core::legal::is_legal(&check, &poses, part, pose, std::iter::empty()) {
+                met.push("outline or hard constraint".into());
+            }
+            for &other in &others {
+                if other != part
+                    && let Some(kind) = core::legal::conflict_kind(&check, &poses, part, pose, other)
+                {
+                    met.push(format!("{} {kind}", check.components[other].name));
+                }
+            }
+            let copy = copies
+                .members
+                .iter()
+                .position(|members| members.contains(&part))
+                .unwrap_or(0);
+            eprintln!(
+                "panel copies: {} (copy {copy}) not legal: {}",
+                check.components[part].name,
+                met.join(", ")
+            );
+        }
+    }
+    (poses, relaxation, illegal)
+}
+
 /// Places a panel by its copies (the module's comment): one seed's
 /// placement of the whole board.
 pub(crate) fn place_copies(
@@ -991,7 +1501,7 @@ pub(crate) fn place_copies(
     let debug = std::env::var_os("PCB_PLACER_DEBUG").is_some();
     let started = core::work();
     // The first copy, with three quarters of the budget.
-    let sub = reference_problem(problem, copies);
+    let sub = reference_problem(problem, copies, 0);
     let mut first_config = config.clone();
     first_config.work_limit = config.work_limit.map(|limit| limit / 4 * 3);
     let first = core::place(&sub, &first_config);
@@ -1005,37 +1515,10 @@ pub(crate) fn place_copies(
             "the first copy does not fit its region",
         );
     }
-    let replicated = replicate(problem, copies, &first.poses);
-    // The replicated parts that are not legal where they land, at the
-    // first copy's level (the parts in no copy are placed after).
-    // The first copy's parts that lie on the board's marks (having found
-    // no room off them) lie on their copies' marks in every copy.
-    let mut first_relaxation = first.relaxation.clone();
-    let rank_in_first: BTreeMap<usize, usize> = copies.members[0]
-        .iter()
-        .enumerate()
-        .map(|(rank, part)| (*part, rank))
-        .collect();
-    for part in &first.relaxation.on_marks {
-        if let Some(rank) = rank_in_first.get(part) {
-            for members in &copies.members[1..] {
-                first_relaxation.on_marks.push(members[*rank]);
-            }
-        }
-    }
-    first_relaxation.on_marks.sort_unstable();
-    first_relaxation.on_marks.dedup();
-    let mut check = problem.clone();
-    first_relaxation.apply(&mut check);
     let in_copies: BTreeSet<usize> = copies.members.iter().flatten().copied().collect();
     let shared: Vec<usize> = (0..problem.components.len())
         .filter(|part| !problem.components[*part].fixed && !in_copies.contains(part))
         .collect();
-    let shared_set: BTreeSet<usize> = shared.iter().copied().collect();
-    let others: Vec<usize> = (0..problem.components.len())
-        .filter(|part| !shared_set.contains(part))
-        .collect();
-    let first_unplaced: BTreeSet<usize> = first.unplaced.iter().copied().collect();
     let copy_of: BTreeMap<usize, (usize, usize)> = copies
         .members
         .iter()
@@ -1047,61 +1530,80 @@ pub(crate) fn place_copies(
                 .map(move |(rank, part)| (*part, (copy, rank)))
         })
         .collect();
-    let illegal: Vec<usize> = copies
-        .movable(problem)
-        .into_iter()
-        .filter(|part| {
-            let (_, rank) = copy_of[part];
-            let pose = replicated[*part];
-            let options = &problem.components[*part].angle_options;
-            let turn_allowed = options.is_empty()
-                || options.iter().any(|option| {
-                    let difference = (normal_angle(*option) - pose.angle).abs();
-                    difference < 0.01 || difference > 359.99
-                });
-            first_unplaced.contains(&copies.members[0][rank])
-                || !turn_allowed
-                || !core::legal::is_legal(&check, &replicated, *part, pose, others.iter().copied())
-        })
-        .collect();
+    let movable = copies.movable(problem).len();
+    let mut source = vec![0usize; copies.members.len()];
+    let mut placements: BTreeMap<usize, core::Placement> = BTreeMap::new();
+    placements.insert(0, first);
+    let (mut replicated, mut first_relaxation, mut illegal) =
+        carried(problem, copies, &source, &placements);
     if debug {
-        // Why the replicated parts are not legal: the first few.
-        for &part in illegal.iter().take(12) {
-            let pose = replicated[part];
-            let mut met: Vec<String> = Vec::new();
-            if !core::legal::is_legal(&check, &replicated, part, pose, std::iter::empty()) {
-                met.push("outline or hard constraint".into());
-            }
-            for &other in &others {
-                if other != part
-                    && let Some(kind) =
-                        core::legal::conflict_kind(&check, &replicated, part, pose, other)
-                {
-                    met.push(format!("{} {kind}", check.components[other].name));
-                }
-            }
-            eprintln!(
-                "panel copies: {} (copy {}) not legal: {}",
-                check.components[part].name,
-                copy_of[&part].0,
-                met.join(", ")
-            );
-        }
         eprintln!(
-            "panel copies: first copy placed ({} unplaced, wirelength {:.0}), {} of {} replicated parts not legal, {} parts in no copy",
-            first.unplaced.len(),
-            first.wirelength_final,
+            "panel copies: first copy placed ({} unplaced, wirelength {:.0}), {} of {} replicated parts not legal, {} parts in no copy, {} cell classes",
+            placements[&0].unplaced.len(),
+            placements[&0].wirelength_final,
             illegal.len(),
-            copies.movable(problem).len(),
-            shared.len()
+            movable,
+            shared.len(),
+            copies.classes.len()
         );
     }
     // Many replicated parts not legal where they land: the copies'
     // surroundings differ (the molecules' cells: an edge constraint on the
-    // outer cells' connectors, the board's marks; 37 of 144 parts of the
-    // 4x4, which then left 55 parts without a place against 31 placed as
-    // a whole): the board is placed as a whole.
-    if illegal.len() as f64 > MOST_ILLEGAL_SHARE * copies.movable(problem).len() as f64 {
+    // outer cells' connectors). Where the copies fall into classes of
+    // alike surroundings, each class's representative is placed in its
+    // region (the most constrained class first; the first copy's class
+    // keeps the first copy's placement) and replicated within its class.
+    let mut by_classes = false;
+    if illegal.len() as f64 > MOST_ILLEGAL_SHARE * movable as f64 && copies.classes.len() > 1 {
+        by_classes = true;
+        let mut left = copies.classes.len() - 1;
+        for class in &copies.classes {
+            if class.copies.contains(&0) {
+                continue;
+            }
+            let rep = class.copies[0];
+            let mut class_config = config.clone();
+            let used = core::work() - started;
+            class_config.work_limit = config
+                .work_limit
+                .map(|limit| (limit / 4 * 3).saturating_sub(used).max(limit / 10) / left as u64);
+            left -= 1;
+            let placed = core::place(&reference_problem(problem, copies, rep), &class_config);
+            if debug {
+                eprintln!(
+                    "panel copies: class of copies {:?} ({} constraints, {} outline pieces, {} obstacles) placed from copy {rep}: {} unplaced{}",
+                    class.copies,
+                    class.constraints,
+                    class.outline,
+                    class.obstacles,
+                    placed.unplaced.len(),
+                    if placed.overfull { ", overfull" } else { "" }
+                );
+            }
+            if placed.overfull {
+                return place_whole(
+                    problem,
+                    config,
+                    started,
+                    "a cell class's copy does not fit its region",
+                );
+            }
+            for &copy in &class.copies {
+                source[copy] = rep;
+            }
+            placements.insert(rep, placed);
+        }
+        (replicated, first_relaxation, illegal) = carried(problem, copies, &source, &placements);
+        if debug {
+            eprintln!(
+                "panel copies: by cell classes, {} of {} replicated parts not legal",
+                illegal.len(),
+                movable
+            );
+        }
+    }
+    let first = &placements[&0];
+    if illegal.len() as f64 > MOST_ILLEGAL_SHARE * movable as f64 {
         return place_whole(
             problem,
             config,
@@ -1196,7 +1698,17 @@ pub(crate) fn place_copies(
         constraints,
         relaxation,
         work: core::work() - started,
-        stage_poses: vec![("replicated", replicated), ("final", poses.clone())],
+        stage_poses: vec![
+            (
+                if by_classes {
+                    REPLICATED_BY_CLASSES
+                } else {
+                    "replicated"
+                },
+                replicated,
+            ),
+            ("final", poses.clone()),
+        ],
         routing_room_failed: first.routing_room_failed,
         overfull: first.overfull || overfull,
         poses,
@@ -1220,6 +1732,16 @@ pub struct KiCadPanelCopiesReport {
     /// (false: the first copy did not fit its region even with the
     /// tightest bodies, and the board was placed as a whole).
     pub replicated: bool,
+    /// Whether each cell class was placed from its own representative
+    /// (many of the first copy's replicated parts were not legal in the
+    /// other classes' copies).
+    #[serde(default)]
+    pub by_cell_classes: bool,
+    /// The copies grouped by their surroundings (the constraints on their
+    /// parts, the board edges within reach, the obstacles in their
+    /// regions, each in its own frame), the most constrained first.
+    #[serde(default)]
+    pub cell_classes: Vec<KiCadPanelCellClass>,
     /// Movable parts in no copy, placed after the copies.
     pub shared_parts: usize,
     /// Movable parts of the copies the placement kept that do not lie
@@ -1230,6 +1752,21 @@ pub struct KiCadPanelCopiesReport {
     /// parts' references in the first copy's order (the r-th reference of
     /// every copy is the same part of the circuit).
     pub copies: Vec<KiCadPanelCopy>,
+}
+
+/// A class of copies with alike surroundings (`cell_classes`).
+#[derive(Clone, Debug, Default, Serialize, serde::Deserialize, PartialEq)]
+pub struct KiCadPanelCellClass {
+    /// The copies (indices into `copies`); the first is the one placed
+    /// where the class was placed on its own.
+    pub copies: Vec<usize>,
+    /// Edge, overhang, region and turn constraints on a copy's parts.
+    pub constraints: usize,
+    /// Pieces of the board outline within reach of a copy's region.
+    pub outline_pieces: usize,
+    /// Obstacles there (fixed parts not of the copy, keepouts, cutouts,
+    /// marks that block at the last level).
+    pub obstacles: usize,
 }
 
 #[derive(Clone, Debug, Default, Serialize, serde::Deserialize, PartialEq)]
@@ -1250,8 +1787,12 @@ impl KiCadPanelCopiesReport {
         let replicated = placement
             .stage_poses
             .iter()
-            .find(|(stage, _)| *stage == "replicated")
+            .find(|(stage, _)| *stage == "replicated" || *stage == REPLICATED_BY_CLASSES)
             .map(|(_, poses)| poses);
+        let by_cell_classes = placement
+            .stage_poses
+            .iter()
+            .any(|(stage, _)| *stage == REPLICATED_BY_CLASSES);
         let movable = copies.movable(problem);
         let moved = replicated.map_or(0, |replicated| {
             movable
@@ -1266,6 +1807,17 @@ impl KiCadPanelCopiesReport {
         let in_copies: BTreeSet<usize> = copies.members.iter().flatten().copied().collect();
         KiCadPanelCopiesReport {
             replicated: replicated.is_some(),
+            by_cell_classes,
+            cell_classes: copies
+                .classes
+                .iter()
+                .map(|class| KiCadPanelCellClass {
+                    copies: class.copies.clone(),
+                    constraints: class.constraints,
+                    outline_pieces: class.outline,
+                    obstacles: class.obstacles,
+                })
+                .collect(),
             count: copies.members.len(),
             parts_per_copy: copies.members[0].len(),
             movable_per_copy: movable.len() / copies.members.len(),
