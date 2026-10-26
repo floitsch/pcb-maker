@@ -98,7 +98,8 @@ pub fn measure_pours(
     board_id: &str,
     config: &KiCadBoardRouterConfig,
 ) -> Result<Vec<KiCadPourQuality>, String> {
-    measure_board_pours(directory, board_id, config).map(|(pours, _)| pours)
+    // As routing sees them: the ladder ranks attempts by them.
+    measure_board_pours(directory, board_id, config, false).map(|(pours, _)| pours)
 }
 
 /// A pad the pour model finds starved on the routed board: KiCad's DRC
@@ -117,11 +118,14 @@ pub struct KiCadPredictedStarved {
 }
 
 /// `measure_pours` and the pads the same analyses find starved
-/// (`KiCadPredictedStarved`), from one lowering and one router.
+/// (`KiCadPredictedStarved`), from one lowering and one router; with
+/// `measured`, the pour model as the measurement of the board as written
+/// takes it (router `measured_thermals`), else as routing does.
 pub fn measure_board_pours(
     directory: &Path,
     board_id: &str,
     config: &KiCadBoardRouterConfig,
+    measured: bool,
 ) -> Result<(Vec<KiCadPourQuality>, Vec<KiCadPredictedStarved>), String> {
     let path = directory.join(format!("{board_id}.kicad_pcb"));
     let text = fs::read_to_string(&path)
@@ -152,9 +156,8 @@ pub fn measure_board_pours(
     // parse is ten times its file).
     drop(pcb);
     drop(text);
-    // The pour model as the measurement takes it (`measured_thermals`).
     let mut router_config = core_config(config);
-    router_config.measured_thermals = true;
+    router_config.measured_thermals |= measured;
     let mut router = core::router::Router::new(&board, &router_config);
     router.adopt_existing_copper();
     let (report, starved) = router.pour_report_with_starved();
@@ -241,7 +244,7 @@ pub(crate) fn measured_board(
     solidify: bool,
 ) -> MeasuredBoard {
     let started = std::time::Instant::now();
-    let mut measured = match measure_board_pours(directory, board_id, config) {
+    let mut measured = match measure_board_pours(directory, board_id, config, true) {
         Ok((pours, starved)) => MeasuredBoard {
             pours,
             starved,
@@ -305,7 +308,7 @@ fn solidify_predicted(
     }
     fs::write(&path, format!("{}\n", encode(&pcb)))
         .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
-    let (pours, starved) = measure_board_pours(directory, board_id, config)?;
+    let (pours, starved) = measure_board_pours(directory, board_id, config, true)?;
     if starved.len() < measured.starved.len() {
         eprintln!(
             "{changed} pads the pour model finds starved connected solid: {} left",
