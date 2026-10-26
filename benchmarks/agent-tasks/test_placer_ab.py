@@ -122,6 +122,21 @@ class Resolution(unittest.TestCase):
         self.assertIsNotNone(placer_ab.seeds_needed(values, 0.3, alpha=0.1, reps=200, key="pair_sums_change"))
 
 
+class Rule(unittest.TestCase):
+    def test_the_verdict_of_each_stage(self):
+        self.assertTrue(placer_ab.verdict(0.02, 5).startswith("BETTER"))
+        self.assertTrue(placer_ab.verdict(0.10, 5).startswith("EXTEND to 9"))
+        self.assertIn("501, 601, 701, 801", placer_ab.verdict(0.10, 5))
+        self.assertTrue(placer_ab.verdict(0.10, 9).startswith("NOT BETTER"))
+        self.assertTrue(placer_ab.verdict(0.40, 5).startswith("NOT BETTER"))
+        self.assertTrue(placer_ab.verdict(0.99, 3).startswith("WORSE"))
+
+    def test_the_rule_keeps_its_false_positive_rate_and_finds_a_large_effect(self):
+        table = placer_ab.protocol(noise_values(), [0.0, 0.3], reps=300)
+        self.assertLessEqual(table[0.0][3], 0.09)
+        self.assertGreaterEqual(table[0.3][3], 0.95)
+
+
 class Noise(unittest.TestCase):
     def test_the_report_has_a_row_per_board_and_the_pooled_correlation(self):
         noise = {"binaries": ["x"], "seeds": [1, 2, 3],

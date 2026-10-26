@@ -3,7 +3,8 @@
 """A placer A/B on the dense boards, judged with a known resolution.
 
     benchmarks/agent-tasks/placer_ab.py compare --off DIR... --on DIR... [--noise FILE] [--metric M] [--tool BINARY]
-    benchmarks/agent-tasks/placer_ab.py resolution [--noise FILE] [--k 3 5 9] [--alpha 0.05] [--power 0.8]
+    benchmarks/agent-tasks/placer_ab.py resolution [--noise FILE] [--k 3 5 9] [--alpha 0.05] [--power 0.8] [--at 0.03 0.05]
+    benchmarks/agent-tasks/placer_ab.py protocol [--noise FILE] [--at 0 0.03 0.05 ...]
     benchmarks/agent-tasks/placer_ab.py noise DIR... --out FILE [--tool BINARY]
     benchmarks/agent-tasks/placer_ab.py report [--noise FILE]
 
@@ -32,11 +33,17 @@ final unconnected count. `resolution` simulates k-seed comparisons from
 the noise file (each board's values by a smoothed bootstrap, the on side
 scaled by 1 - delta on every board) and prints, per statistic, the false
 positive rate at its threshold and the smallest effect it detects with
-the given power. `compare` judges one A/B: the per-board table, every
-statistic, the verdict of the recommended one (the weighted relative
-change, below) with its confidence (a paired sign-flip randomisation
-test) and its interval from the noise file, and the seeds a confirmation
-would need.
+the given power; `protocol` the rule's false positive rate and power.
+`compare` judges one A/B: the per-board table, every statistic, the
+rule's verdict on the weighted relative change (below) by its confidence
+(a paired sign-flip randomisation test: BETTER, WORSE, EXTEND to the
+second stage's seeds, NOT BETTER), its interval from the noise file, and
+the seeds a change of the observed size would need.
+
+The rule (FIRST, SECOND, ALPHA, EXTEND): five seed pairs (placer seeds 1,
+101, 201, 301, 401: the race takes seeds N to N + 15, so nearer seeds
+share candidates); better when p <= 0.03; when 0.03 < p <= 0.25, four
+more pairs (501 to 801) and better when p <= 0.03 over the nine.
 
 The statistics (change = on - off; negative is better):
 - `sum_medians`: the summed per-board medians (the rule until 2026-10-26),
@@ -74,6 +81,12 @@ STATISTICS = ("sum_medians", "pair_sums", "old_rule", "sign", "weighted")
 # board that routed nearly alike on every seed (the 0xCB panel, 50 to 57)
 # would otherwise carry the tier alone.
 CV_FLOOR = 0.10
+# The rule for placer defaults (docs/benchmarks.md, "Measurement
+# discipline: placer defaults"): FIRST seed pairs; better when the
+# weighted change's sign-flip p is at most ALPHA; when it is at most
+# EXTEND, SECOND pairs in all and the same test again; else not better.
+FIRST, SECOND, ALPHA, EXTEND = 5, 9, 0.03, 0.25
+RULE_SEEDS = (1, 101, 201, 301, 401, 501, 601, 701, 801)
 
 
 # --- reading runs -----------------------------------------------------------
@@ -511,6 +524,49 @@ def seeds_needed(values, delta, alpha=0.05, power=0.8, reps=1000, cv_floor=CV_FL
     return None
 
 
+def protocol(values, deltas, first=FIRST, second=SECOND, alpha=ALPHA, extend=EXTEND, reps=2000, cv_floor=CV_FLOOR,
+             seed=5):
+    """The two-stage rule simulated: {delta: (better after `first`, extended,
+    better after `second`, better in all)}, p taken against the weighted
+    statistic's simulated null of each stage."""
+    reference = weights_of(values, cv_floor)
+    boards = sorted(values)
+    draw = {b: smoothed(values[b]) for b in boards}
+
+    def null(k):
+        rng = random.Random(seed + k)
+        return sorted(statistics_of({b: {s: (draw[b](rng), draw[b](rng)) for s in range(k)} for b in boards},
+                                    reference)["weighted"] for _ in range(2 * reps))
+
+    nulls = {first: null(first), second: null(second)}
+
+    def p_of(k, x):
+        import bisect
+        return (bisect.bisect_right(nulls[k], x + 1e-12) + 1) / (len(nulls[k]) + 1)
+
+    out = {}
+    for delta in deltas:
+        rng = random.Random(seed)
+        better_first = extended = better_second = 0
+        for _ in range(reps):
+            off = {b: [draw[b](rng) for _ in range(second)] for b in boards}
+            on = {b: [draw[b](rng) * (1 - delta) for _ in range(second)] for b in boards}
+
+            def p_at(k):
+                return p_of(k, statistics_of({b: {s: (off[b][s], on[b][s]) for s in range(k)} for b in boards},
+                                             reference)["weighted"])
+            p = p_at(first)
+            if p <= alpha:
+                better_first += 1
+            elif p <= extend:
+                extended += 1
+                if p_at(second) <= alpha:
+                    better_second += 1
+        out[delta] = (better_first / reps, extended / reps, better_second / reps,
+                      (better_first + better_second) / reps)
+    return out
+
+
 # --- the A/B ------------------------------------------------------------------
 
 def paired(off, on, metric="unconnected", tool=None, tasks=None):
@@ -532,8 +588,20 @@ def paired(off, on, metric="unconnected", tool=None, tasks=None):
     return pairs, missing
 
 
-def compare_lines(pairs, missing, noise_values, alpha=0.05, power=0.8, rounds=20000, cv_floor=CV_FLOOR,
-                  metric="unconnected"):
+def verdict(p, k, alpha=ALPHA, extend=EXTEND, second=SECOND):
+    """The rule's verdict on a weighted sign-flip p after k seed pairs."""
+    if p <= alpha:
+        return f"BETTER (confidence {100 * (1 - p):.1f} %, the rule asks {100 * (1 - alpha):.0f} %)"
+    if 1 - p <= alpha:
+        return f"WORSE (confidence {100 * p:.1f} %)"
+    if k < second and p <= extend:
+        return (f"EXTEND to {second} seed pairs (p {p:.3f} is within {extend}; seeds "
+                f"{', '.join(map(str, RULE_SEEDS[k:second]))})")
+    return f"NOT BETTER (confidence on better {100 * (1 - p):.1f} %, the rule asks {100 * (1 - alpha):.0f} %)"
+
+
+def compare_lines(pairs, missing, noise_values, alpha=ALPHA, power=0.8, rounds=20000, cv_floor=CV_FLOOR,
+                  metric="unconnected", extend=EXTEND, second=SECOND):
     reference = weights_of({b: v for b, v in noise_values.items() if b in pairs}, cv_floor)
     seeds = sorted({s for by_seed in pairs.values() for s in by_seed})
     lines = [f"{metric}, seeds {', '.join(map(str, seeds))}" +
@@ -577,15 +645,9 @@ def compare_lines(pairs, missing, noise_values, alpha=0.05, power=0.8, rounds=20
         lo, hi = noise_interval(values, k, s["weighted"], fire=fire)
         interval = f" (90 % interval from the noise file {100 * lo:+.1f} to {100 * hi:+.1f} %)"
     lines.append(f"weighted relative change {100 * s['weighted']:+.1f} %{interval}")
-    if p_weighted <= alpha:
-        verdict = f"BETTER at {100 * (1 - p_weighted):.1f} % confidence"
-    elif 1 - p_weighted <= alpha:
-        verdict = f"WORSE at {100 * p_weighted:.1f} % confidence"
-    else:
-        verdict = (f"NOT RESOLVED (confidence on better {100 * (1 - p_weighted):.1f} %, "
-                   f"the rule asks {100 * (1 - alpha):.0f} %)")
     lines.append("")
-    lines.append(f"verdict ({k} seed pairs, weighted, one-sided alpha {alpha}): {verdict}")
+    lines.append(f"verdict ({k} seed pairs, weighted, sign-flip p {p_weighted:.3f}): "
+                 + verdict(p_weighted, k, alpha, extend, second))
     if values and fire and s["weighted"] != 0:
         # The observed change as a relative effect on the boards it moved:
         # the weighted statistic over those boards alone.
@@ -605,7 +667,9 @@ def main():
     p.add_argument("--noise", type=Path, default=DEFAULT_NOISE)
     p.add_argument("--metric", choices=METRICS, default="unconnected")
     p.add_argument("--tool", type=Path, help="pcb-maker with ablate-kicad-placement (objective, crossings)")
-    p.add_argument("--alpha", type=float, default=0.05)
+    p.add_argument("--alpha", type=float, default=ALPHA)
+    p.add_argument("--extend", type=float, default=EXTEND)
+    p.add_argument("--second", type=int, default=SECOND)
     p.add_argument("--power", type=float, default=0.8)
     p.add_argument("--rounds", type=int, default=20000)
     p = commands.add_parser("resolution")
@@ -617,6 +681,10 @@ def main():
     p.add_argument("--reps", type=int, default=2000)
     p.add_argument("--cv-floor", type=float, default=CV_FLOOR)
     p.add_argument("--at", type=float, nargs="*", default=[], help="relative effects to print the power at")
+    p = commands.add_parser("protocol")
+    p.add_argument("--noise", type=Path, default=DEFAULT_NOISE)
+    p.add_argument("--at", type=float, nargs="+", default=[0.0, 0.03, 0.05, 0.065, 0.08, 0.10])
+    p.add_argument("--reps", type=int, default=2000)
     p = commands.add_parser("noise")
     p.add_argument("runs", nargs="+")
     p.add_argument("--out", type=Path, required=True)
@@ -630,6 +698,14 @@ def main():
         print("\n".join(report(load_noise(arguments.out))))
     elif arguments.command == "report":
         print("\n".join(report(load_noise(arguments.noise))))
+    elif arguments.command == "protocol":
+        values = board_values(load_noise(arguments.noise))
+        print(f"the rule: {FIRST} seed pairs, better at p <= {ALPHA}, extended to {SECOND} at p <= {EXTEND}; "
+              f"{arguments.reps} simulated comparisons, the effect on every board")
+        print("| effect | better at 5 | extended | better at 9 | better in all |")
+        print("| ---: | ---: | ---: | ---: | ---: |")
+        for delta, (a, b, c, d) in protocol(values, arguments.at, reps=arguments.reps).items():
+            print(f"| {100 * delta:g} % | {a:.3f} | {b:.3f} | {c:.3f} | {d:.3f} |")
     elif arguments.command == "resolution":
         values = board_values(load_noise(arguments.noise), arguments.metric)
         table = resolution(values, arguments.k, arguments.alpha, arguments.power, arguments.reps,
@@ -657,7 +733,8 @@ def main():
                                 arguments.tool, tasks)
         values = board_values(load_noise(arguments.noise), arguments.metric)
         print("\n".join(compare_lines(pairs, missing, values, arguments.alpha, arguments.power,
-                                      arguments.rounds, metric=arguments.metric)))
+                                      arguments.rounds, metric=arguments.metric, extend=arguments.extend,
+                                      second=arguments.second)))
 
 
 if __name__ == "__main__":
