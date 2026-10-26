@@ -29,13 +29,14 @@ board's unweighted wirelength and ratsnest crossings (the placement
 objective is wirelength plus 3 mm per crossing). `report` prints the
 noise table and the correlations across seeds between each proxy and the
 final unconnected count. `resolution` simulates k-seed comparisons from
-the noise file (each board's seeds drawn with replacement, the on side
+the noise file (each board's values by a smoothed bootstrap, the on side
 scaled by 1 - delta on every board) and prints, per statistic, the false
 positive rate at its threshold and the smallest effect it detects with
 the given power. `compare` judges one A/B: the per-board table, every
 statistic, the verdict of the recommended one (the weighted relative
 change, below) with its confidence (a paired sign-flip randomisation
-test) and a bootstrap interval, and the seeds a confirmation would need.
+test) and its interval from the noise file, and the seeds a confirmation
+would need.
 
 The statistics (change = on - off; negative is better):
 - `sum_medians`: the summed per-board medians (the rule until 2026-10-26),
@@ -381,21 +382,15 @@ def sign_flip(pairs, reference, key, rounds=20000, rng=None):
     return (at_most + 1) / (rounds + 1)
 
 
-def bootstrap_interval(pairs, reference, key="weighted", rounds=4000, level=0.90, rng=None):
-    """The statistic's bootstrap interval, the seeds of each board drawn with
-    replacement (as pairs)."""
-    rng = rng or random.Random(2)
-    values = []
-    for _ in range(rounds):
-        drawn = {}
-        for b, by_seed in pairs.items():
-            items = list(by_seed.values())
-            drawn[b] = {i: rng.choice(items) for i in range(len(items))}
-        values.append(statistics_of(drawn, reference)[key])
-    values.sort()
-    lo = values[int((1 - level) / 2 * rounds)]
-    hi = values[min(rounds - 1, int((1 + level) / 2 * rounds))]
-    return lo, hi
+def noise_interval(values, k, observed, fire=None, level=0.90, reps=2000, cv_floor=CV_FLOOR):
+    """The weighted statistic's interval from the noise file: the observed
+    value less the null distribution's quantiles of a k-seed comparison on
+    the boards in `fire` (the others alike on both sides). A bootstrap
+    over two or three seeds of the comparison itself is far too narrow."""
+    null = sorted(row["weighted"] for row in simulate(values, k, [], reps=reps, cv_floor=cv_floor, fire=fire)[0.0])
+    lo = null[int((1 - level) / 2 * reps)]
+    hi = null[min(reps - 1, int((1 + level) / 2 * reps))]
+    return observed - hi, observed - lo
 
 
 # --- resolution by simulation ------------------------------------------------
@@ -571,12 +566,16 @@ def compare_lines(pairs, missing, noise_values, alpha=0.05, power=0.8, rounds=20
     p_medians = sign_flip(pairs, reference, "sum_medians_change", rounds)
     p_sums = sign_flip(pairs, reference, "pair_sums_change", rounds)
     p_weighted = sign_flip(pairs, reference, "weighted", rounds)
-    lo, hi = bootstrap_interval(pairs, reference)
+    k = min(len(by_seed) for by_seed in pairs.values()) if pairs else 0
+    values = {b: v for b, v in noise_values.items() if b in pairs}
+    fire = [b for b in pairs if any(p[0] != p[1] for p in pairs[b].values())]
     lines.append(f"sign-flip p (on better): sum of medians {p_medians:.3f}, pair sums {p_sums:.3f}, "
                  f"weighted {p_weighted:.3f}")
-    lines.append(f"weighted relative change {100 * s['weighted']:+.1f} % (bootstrap 90 % interval "
-                 f"{100 * lo:+.1f} to {100 * hi:+.1f} %)")
-    k = min(len(by_seed) for by_seed in pairs.values()) if pairs else 0
+    interval = ""
+    if values and fire and k >= 1:
+        lo, hi = noise_interval(values, k, s["weighted"], fire=fire)
+        interval = f" (90 % interval from the noise file {100 * lo:+.1f} to {100 * hi:+.1f} %)"
+    lines.append(f"weighted relative change {100 * s['weighted']:+.1f} %{interval}")
     if p_weighted <= alpha:
         verdict = f"BETTER at {100 * (1 - p_weighted):.1f} % confidence"
     elif 1 - p_weighted <= alpha:
@@ -586,8 +585,6 @@ def compare_lines(pairs, missing, noise_values, alpha=0.05, power=0.8, rounds=20
                    f"the rule asks {100 * (1 - alpha):.0f} %)")
     lines.append("")
     lines.append(f"verdict ({k} seed pairs, weighted, one-sided alpha {alpha}): {verdict}")
-    values = {b: v for b, v in noise_values.items() if b in pairs}
-    fire = [b for b in pairs if any(p[0] != p[1] for p in pairs[b].values())]
     if values and fire and s["weighted"] != 0:
         # The observed change as a relative effect on the boards it moved:
         # the weighted statistic over those boards alone.

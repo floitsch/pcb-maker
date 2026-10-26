@@ -82,7 +82,9 @@ class Statistics(unittest.TestCase):
         self.assertLess(placer_ab.sign_flip(better, reference, "weighted", rounds=2000), 0.01)
         worse = {b: {s: (on, off) for s, (off, on) in by_seed.items()} for b, by_seed in better.items()}
         self.assertGreater(placer_ab.sign_flip(worse, reference, "weighted", rounds=2000), 0.99)
-        lo, hi = placer_ab.bootstrap_interval(better, reference, rounds=500)
+        observed = placer_ab.statistics_of(better, reference)["weighted"]
+        lo, hi = placer_ab.noise_interval(values, 5, observed, reps=500)
+        self.assertLess(lo, observed)
         self.assertLess(hi, 0.0)
 
     def test_the_weight_floors_the_coefficient_of_variation(self):
