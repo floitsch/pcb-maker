@@ -61,6 +61,19 @@ pub(crate) fn largest_clearance(config: &KiCadBoardRouterConfig) -> f64 {
 /// graphic opening has none), and covered copper within the project's
 /// `solder_mask_to_copper_clearance`. Zero where the copper clearance is
 /// the larger (most boards).
+/// The gap two parts' pads need so that KiCad does not bridge their mask
+/// openings: each pad's expansion (the board's `pad_to_mask_clearance`)
+/// and the mask's least web (`solder_mask_min_width`) between them.
+pub(super) fn pad_mask_gap(pcb: &Expr) -> f64 {
+    let setup = |key: &str| {
+        pcb.child("setup")
+            .and_then(|setup| form_f64(setup, key, 1).ok())
+            .unwrap_or(0.0)
+            .max(0.0)
+    };
+    2.0 * setup("pad_to_mask_clearance") + setup("solder_mask_min_width")
+}
+
 pub(super) fn mask_opening_growth(pcb: &Expr, config: &KiCadBoardPlacerConfig) -> f64 {
     let setup = |key: &str| {
         pcb.child("setup")

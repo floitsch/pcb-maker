@@ -909,7 +909,7 @@ fn pads_too_close(
     pose_b: Pose,
     work: &mut u64,
 ) -> bool {
-    let clearance = problem.min_spacing;
+    let clearance = problem.min_spacing.max(problem.constraints.pad_mask_gap);
     let (first, second) = (&problem.components[a], &problem.components[b]);
     if first.pads.is_empty() || second.pads.is_empty() {
         return false;

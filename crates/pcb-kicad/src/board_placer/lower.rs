@@ -1324,6 +1324,7 @@ pub(crate) fn lower_placement(
     // zero (hackrf's SMA connector P4, its pads flush with the outline: 5
     // copper_edge_clearance findings; 0.01 mm off it, none).
     problem.constraints.copper_edge = config.copper_edge_clearance_mm.unwrap_or(0.0).max(0.02);
+    problem.constraints.pad_mask_gap = pad_mask_gap(pcb);
     problem.constraints.solid_cutouts = solid_cutouts;
     problem.constraints.yielding = marks.iter().map(|(index, _)| *index).collect();
     problem.constraints.halo_free = marks

@@ -172,6 +172,12 @@ pub struct Constraints {
     /// copper's least inset); a body may come to the board edge where its
     /// pads keep the copper-to-edge clearance.
     pub pad_clearance: bool,
+    /// The gap two parts' pads keep at KiCad's legality where it exceeds
+    /// the copper clearance: their mask openings' expansion on both and
+    /// the mask's least web between them (KiCad's solder_mask_bridge
+    /// joins openings closer than that; WLED_Matrix: 2 x 0 + 0.23 mm
+    /// against a clearance of 0.127). Zero: the clearance alone.
+    pub pad_mask_gap: f64,
     /// Constraints the lowering keeps by construction (a side, the turns a
     /// part may take): the placer never breaks them, they are only
     /// reported (`report_kept`), so that an agent sees them kept.
