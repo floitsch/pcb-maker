@@ -240,17 +240,20 @@ pub struct KiCadBoardPlacerConfig {
     pub ratsnest_crossings: Option<KiCadRatsnestCrossings>,
     /// Bus-group moves (off by default; `{}` for the defaults): banks of
     /// parts of one footprint that share a bus (`min_shared` nets of up
-    /// to `bus_net_pins` pins between two) and each part with the
-    /// passives (up to `passive_pins` pins, `passive_area_mm2`) within
-    /// `reach_mm` of it move, turn, trade places with a group like them
-    /// and, a bank, reorder along its axis by the pins they connect to,
-    /// as units, judged by wirelength plus the crossings of their nets, in
-    /// the anneal (`anneal`, `anneal_moves` tries per group a stage) and
-    /// the refinement (`refine`); after the global placement each bank
-    /// takes the order and arrangement that lowers its nets' wirelength
-    /// plus crossings (`arrange`). Keys and defaults: `min_shared` 4,
-    /// `bus_net_pins` 24, `passive_pins` 4, `passive_area_mm2` 16,
-    /// `reach_mm` 3, `arrange` true, `anneal` true, `rigid_banks` true, `refine` true, `anneal_moves` 2,
+    /// to `bus_net_pins` pins between two, at most `max_bank` parts), and
+    /// each other part with its passives (up to `passive_pins` pins and
+    /// `passive_area_mm2`: those a relation binds to it, a decoupling
+    /// capacitor, and those sharing a net within `reach_mm`), move as
+    /// units. After the global placement each bank takes the order and
+    /// arrangement (in place, side by side along x or y) that lowers its
+    /// nets' wirelength plus crossings (`arrange`); the anneal shifts,
+    /// turns, swaps and reorders groups each stage (`anneal`,
+    /// `anneal_moves` tries per group, a bank's members moving only with
+    /// it: `rigid_banks`), and the refinement does so legally, each unit
+    /// placed whole (`refine`), all judged by wirelength plus their nets'
+    /// crossings. Defaults: `min_shared` 4, `bus_net_pins` 24,
+    /// `passive_pins` 4, `passive_area_mm2` 16, `reach_mm` 3, `arrange`,
+    /// `anneal`, `rigid_banks` and `refine` true, `anneal_moves` 2,
     /// `max_bank` 16 (docs/placer.md, "Bus-group moves (2026-10-26)").
     #[serde(default)]
     pub bus_groups: Option<KiCadBusGroups>,

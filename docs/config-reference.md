@@ -34,16 +34,16 @@ The environment variables are indexed in the hand-over
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 10 | - | 2 | 10 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 71 | - | 0 | 71 | - |
-| [Placer settings](#placer-settings) | 49 | 45 | 4 | 49 | 22 |
+| [Placer settings](#placer-settings) | 50 | 46 | 4 | 50 | 22 |
 | [Layout settings](#layout-settings) | 20 | 20 | 0 | 20 | 9 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 3 |
 | [Layout settings: silkscreen](#layout-settings-silkscreen) | 1 | 1 | 0 | 1 | 1 |
 | [Layout settings: race_probe](#layout-settings-race_probe) | 3 | 3 | 0 | 3 | 3 |
 | [Layout settings: move_descent](#layout-settings-move_descent) | 7 | 7 | 0 | 7 | 0 |
-| [Placer core](#placer-core) | 8 | - | 0 | 8 | - |
+| [Placer core](#placer-core) | 9 | - | 0 | 9 | - |
 | [Placer core: global](#placer-core-global) | 12 | - | 0 | 12 | - |
-| [Placer core: anneal](#placer-core-anneal) | 8 | - | 0 | 8 | - |
+| [Placer core: anneal](#placer-core-anneal) | 9 | - | 0 | 9 | - |
 
 ## Router settings
 
@@ -383,6 +383,7 @@ The placer config file of `place-kicad-board`, and the `placer` object of the la
 | `global_guidance` | `Option<KiCadGlobalGuidance>` | unset | - | The global route inside the placer's search (an experiment, off): the anneal re-evaluates the global route of its placement and prefers moves away from overflowing boundaries, proposing the parts whose nets cross them more often; the coupled loop moves those parts first (docs/global-route.md, "Phase 2"). |
 | `escape_demand` | `Option<KiCadEscapeDemand>` | `{"fixed_share":null,"inflate":1.0,"measure_every":20,"measured":true,"threshold":0.5,"turn_tolerance":0.05,"weight":2.0}` | placer.md | Escape demand in placement (on; `null` turns it off): where each part's nets leave its body, and the channels between parts that must carry them, shape the global placement's density, the rotation choice, the legaliser and the refinement; in a layout the refinement corrects the estimate by the global route's overflow attribution (docs/placer.md, "Escape demand (2026-10-23)"). |
 | `ratsnest_crossings` | `Option<KiCadRatsnestCrossings>` | `{"anneal":false,"global":false,"legalise":true,"per_layer":false,"rank_seeds":true,"refine":true,"weight":3.0}` | placer.md | Ratsnest crossings as a placement cost (on since 2026-10-24; `null` turns it off): per net the minimum spanning tree of its pins, and the pairs of tree lines of different nets that cross. The legaliser and the refinement pay `weight` mm of wirelength per crossing the moved part's nets make, and the layout's race ranks the seeds' placements by their crossings beside the congestion score. Keys `weight`, `legalise`, `refine`, `rank_seeds`, `anneal`, `global` (defaults 3 mm, on, on, on, off, off; docs/placer.md, "Ratsnest crossings (2026-10-24)"). |
+| `bus_groups` | `Option<KiCadBusGroups>` | unset | - | Bus-group moves (off by default; `{}` for the defaults): banks of parts of one footprint that share a bus (`min_shared` nets of up to `bus_net_pins` pins between two, at most `max_bank` parts), and each other part with its passives (up to `passive_pins` pins and `passive_area_mm2`: those a relation binds to it, a decoupling capacitor, and those sharing a net within `reach_mm`), move as units. After the global placement each bank takes the order and arrangement (in place, side by side along x or y) that lowers its nets' wirelength plus crossings (`arrange`); the anneal shifts, turns, swaps and reorders groups each stage (`anneal`, `anneal_moves` tries per group, a bank's members moving only with it: `rigid_banks`), and the refinement does so legally, each unit placed whole (`refine`), all judged by wirelength plus their nets' crossings. Defaults: `min_shared` 4, `bus_net_pins` 24, `passive_pins` 4, `passive_area_mm2` 16, `reach_mm` 3, `arrange`, `anneal`, `rigid_banks` and `refine` true, `anneal_moves` 2, `max_bank` 16 (docs/placer.md, "Bus-group moves (2026-10-26)"). |
 | `guidance_router` (internal) | `Option<KiCadBoardRouterConfig>` | unset (internal) | - | The router's configuration the guidance lowers with (set by the layout; the default otherwise). |
 
 ## Layout settings
@@ -486,6 +487,7 @@ The `move_descent` object of the layout settings (an experiment, off when absent
 | `work_limit` | `Option<u64>` | unset | `work_seconds` | Placement work (see `work`) after which no further level or anneal stage starts; the best placement so far stands. |
 | `routing_room` | `Option<room::RoutingRoom>` | unset | the KiCad layer | Routing room from congestion (`room`): after placing with the pin-count halos, each part's halo is rescaled by the routing demand around it, within the same halo area, and the placement is annealed again from there. Off (`None`) by default. |
 | `orientation_search` | `bool` | `true` | `orientation_search` | The orientation search starts from a canonical pose (`orient`): angle options in a fixed order, every movable part that may turn at the first of them, so that the placement does not depend on the angles the board held (0 degrees from an import, the designer's in a stack). Off: the parts start at the angles they hold, options in the order given (the placer before 2026-10-15). |
+| `bus_groups` | `Option<groups::Settings>` | unset | `bus_groups` | Bus-group moves (`groups`, docs/placer.md "Bus-group moves (2026-10-26)"): banks of parts on one bus and parts with their passives move, turn, trade places and reorder as units in the anneal and the refinement. Off (`None`) by default. |
 
 ## Placer core: global
 
@@ -520,3 +522,4 @@ The `move_descent` object of the layout settings (an experiment, off when absent
 | `anneal.stop_at_work` | `Option<u64>` | unset | - | No further stage starts once this thread's `crate::work()` reaches this count. |
 | `anneal.legal_far_side` | `bool` | `false` | `anneal_far_side_gaps` | Parts across the board meet at the legality test's gaps (`State::far_overlap`): holes the full spacing from bodies, far-side copper the copper clearance from pads. Without it holes meet bodies at half the spacing and far-side copper not at all, and the legalizer moves what the annealer could not see (Castor: 33 of 69 conflicted parts). Off: flat on the quick tier, worse on video and OpenESC 4in1 (2026-10-14). |
 | `anneal.guidance` | `Option<crate::guidance::Guidance>` | unset | - | The global route inside the anneal (`crate::guidance`, an experiment): off (`None`) by default. |
+| `anneal.bus_groups` | `Option<std::sync::Arc<crate::groups::BusGroups>>` | unset | - | Bus-group moves (`crate::groups`, `Config::bus_groups`): after each stage, groups of parts move, turn, trade places and reorder as units, judged with the crossings of their nets. Off (`None`) by default. |
