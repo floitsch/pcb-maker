@@ -11,6 +11,52 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-26 (a neutral spoke debug flag; the solid step per pad)
+
+Branch spoke-debug-solidify (docs/router.md, "Determinism and the wall
+clock" and "The solid step per pad"); snapshots x14940 to x14942.
+
+- **`PCB_ROUTER_SPOKE_DEBUG` only prints.** Its lines asked the fill
+  probe questions of their own (`blocker`, `fill_at`, `in_ring`,
+  `in_hatch_hole`, the necks' pieces), whose items, queries and vertices
+  were charged as pour work, and whose hatch holes and neck verdicts
+  stayed cached for the probe's own later questions: the work decides
+  budgets, so the route moved (F1's pour work 0.20 to 0.36 s; on x1844,
+  route mode, 30 s: Miniboard 6 unconnected without the flag and 10 with
+  it, 10 and 5 with `PCB_ROUTER_MEASURED_THERMALS=1`, ZSWatch's and
+  brickpico's boards moved too). They run inside
+  `FillProbe::quietly` now (counts put back, nothing cached, an index
+  they build charged where the probe first needs it, the router's probe
+  shapes not built for them). With x14940 and x14941 the three boards
+  are byte for byte the same with and without the flag, with the exact
+  model off and on, and the same as x1844 without it.
+- **`PCB_ROUTER_FINGERPRINT`'s pour analysis before stitching is not
+  charged either** (`Router::uncharged`; F1's pour work 0.200 to 0.205 s
+  with the flag). Its fingerprint lines are unchanged; the nightly's
+  fingerprints stage, which sets the flag, now routes as a run without
+  it does.
+- **The solid step per pad.** `set_pads_solid` sets solid only the pads
+  of a label at KiCad's findings' points or the pour model's (the
+  starved records' anchors, now in `predicted_starved_thermals` as
+  `at`), the whole label only as the fallback when a point matches no
+  pad. 0xCB's panel (the exact model on, task budget): 60 pads solid to
+  1, KiCad's starved thermals 0 and 0, unconnected 53 and 53, findings
+  327 and 327, the board otherwise byte for byte. On the other boards
+  where the step fired (BloopBox, backplane, anthracite-bottom,
+  LC_PAMV4b on the expansion tier; protoesp, video, DSP-ADAU1452,
+  SNSP-CPU-01 dense; framework_mobo_lefthalf on the short tier; jetson
+  and k30-SBC) every starved label is one pad: the same pads, boards byte
+  for byte.
+- **The expansion tier** (8 x 1, 30 s): x1844 against x14941 46 of 46
+  boards byte for byte (557 unconnected, 0 new errors, 4263 vias both);
+  x1845 against x14942 (this branch rebased onto the length rules)
+  46 of 46 byte for byte too (557, 0, 4263).
+- Tests: `a_fill_probe_counts_nothing_for_the_debug_output` (pcb-router),
+  `debug_flags_change_neither_the_route_nor_its_work` (tests/fixtures.rs:
+  F1 routed without flags and with each, board bytes and work compared),
+  `the_solid_step_connects_only_the_starved_pads_of_a_label` and
+  `kicads_findings_name_their_pads_by_label_and_point` (pcb-kicad).
+
 ## Reviewed on 2026-10-26 (a fresh agent's trial from the schematic)
 
 Branch schematic-trial, x1844 (main 56ce9a4).

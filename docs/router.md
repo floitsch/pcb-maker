@@ -2148,6 +2148,56 @@ Miniboard, ZSWatch and brickpico route differently on both sides
 (Miniboard 10 off, 5 on), while the tier without it repeats byte for
 byte.
 
+### The solid step per pad (2026-10-26)
+
+The solid step (`solidify_starved_thermals` on a board KiCad checks, the
+pour model's `solid_by_model` on one it does not) gave `(zone_connect 2)`
+to every pad of a starved pad's label: its reference and number. A label
+can be many pads: an exposed pad and its thermal vias share a number,
+and a panel repeats each reference once per copy. On 0xCB's panel (the
+exact model while routing, the section above) KiCad found one of
+U3.45's vias starved and the step set all 60 pads of U3.45 (four copies
+of two SMD pads of the exposed pad and 13 thermal vias) solid, the
+designer's relief lost on 59.
+
+Now the step is per pad (`set_pads_solid`, board_router/route.rs): of a
+label only the pads within `SOLID_PAD_MATCH_MM` (5 microns) of a starved
+pad's point are set solid, the point being KiCad's finding's (its pad
+item's `pos`, `solid_pads_of_findings`) or the pour model's (the starved
+records' anchors, `StarvedThermal::at`, `KiCadPredictedStarved::at` in
+board-router.json's `predicted_starved_thermals`). A pad's place on the
+board is the footprint's plus the pad's turned by the footprint's angle,
+as the lowering computes a terminal's anchor. KiCad resolves the zone
+connection per pad (the pad's own first, `EvalZoneConnection`), so one
+pad's setting changes only that pad's fill. The fallback is the whole
+label, as before: a label without points, or with a point no pad of it
+lies at (a pad whose position does not read, a finding's point off the
+pad's position); the log says so (`starved pads not found at KiCad's
+points: all pads of ... connected solid`). The model's starved list stays
+one entry per label and layer (its counts, which decide whether the
+model's step is kept, are unchanged); the entry carries every starved
+pad's point.
+
+**Measured** (route mode, `PCB_WORK_RATE=3.15e6,150e6`, no wall guard;
+x1844, main, against x14941; pads set solid by the step, KiCad's
+starved thermals and unconnected items on the final board; "same route"
+is the written board byte for byte, the solid pads' `(zone_connect 2)`
+aside; the tier also with this branch rebased onto x1845, x14942
+against x1845: 46 of 46 byte for byte):
+
+| board (set) | pads solid x1844 / x14941 | KiCad starved after | KiCad unconnected | findings | same route |
+| --- | --- | --- | --- | --- | --- |
+| 0xCB panel, U3.45 (dense, task budget, 1 x 2, `PCB_ROUTER_MEASURED_THERMALS=1`; KiCad's step) | 60 / 1 (the starved via of one copy) | 0 / 0 | 53 / 53 | 327 / 327 | yes, all but the 59 pads' `(zone_connect 2)` |
+| protoesp, video, DSP-ADAU1452, SNSP-CPU-01 (dense, task budgets, 4 x 2, the default model; KiCad's step) | 1, 22, 6, 1 / the same | 0 / 0 | 65, 125, 33, 117 / the same | 624, 196, 599, 306 / the same | 4 of 4 byte for byte |
+| BloopBox J1.1, backplane J4.A1, anthracite-bottom J107.1 and J107.4, LC_PAMV4b J9.1 (expansion tier, 8 x 1, 30 s; the model's step) | 1, 1, 2, 1 / the same | 0 / 0 | 557 / 557 (the tier) | 0 / 0 new errors (the tier) | 46 of 46 boards byte for byte |
+| framework_mobo_lefthalf (short tier, its layout, 3 x 2; KiCad's step) | 2 / 2 | 0 / 0 | 0 / 0 | pass / pass | yes (1337-v4.0 and eternal-keypad too) |
+| jetson, k30-SBC (fingerprints, a quarter budget, 2 x 4; KiCad's step) | 1 and 4 / the same | 0 and 1 / the same | 13 and 0 / the same | | 2 of 2 byte for byte |
+
+On every board but 0xCB each starved label is one pad, so per pad and per
+label are the same. The short tier's 1337-v4.0, whose layout took the
+step on x1780 (placer.md, "Only thermals starved"), did not take it on
+either side here, nor did eternal-keypad.
+
 ### KiCad's connection width (necks)
 
 KiCad's `connection_width` check (drc_test_provider_connection_width.cpp,
