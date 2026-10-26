@@ -418,6 +418,12 @@ pub struct KiCadRatsnestCrossings {
     /// places and turn where that saves wirelength plus crossings. Off by
     /// default (no effect on the placed boards of MegaDrive and Glasgow).
     pub global: bool,
+    /// A guard (off by default): the weight scales by two over the
+    /// routing layers (unchanged on two layers, two thirds on three, half
+    /// on four): with more layers a crossing costs a via and a layer
+    /// change rather than a detour (docs/placer.md, "Per-board losers of
+    /// the defaults (2026-10-25)").
+    pub per_layer: bool,
 }
 
 impl Default for KiCadRatsnestCrossings {
@@ -429,6 +435,7 @@ impl Default for KiCadRatsnestCrossings {
             rank_seeds: true,
             anneal: false,
             global: false,
+            per_layer: false,
         }
     }
 }

@@ -144,7 +144,11 @@ pub fn place_kicad_board(
     {
         lowered.problem.crossings = Some(std::sync::Arc::new(core::crossings::Crossings {
             counted: crossing_nets(&lowered),
-            weight: crossings.weight,
+            weight: if crossings.per_layer {
+                crossings.weight * (2.0 / lowered.routing_layers.max(1.0)).min(1.0)
+            } else {
+                crossings.weight
+            },
             legalise: crossings.legalise,
             refine: crossings.refine,
             anneal: crossings.anneal,
