@@ -3810,6 +3810,167 @@ of a layout under 60 % within 3 mm says both. Open: a pull that keeps the
 few-capacitor boards (a tolerance that grows with the capacitors a pin
 shares was tried in placement only on DSP-ADAU1452: no clear change).
 
+## Panel copies (2026-10-26)
+
+Panelised boards (several copies of one circuit in one outline, joined
+by tabs or rails) placed badly: every part was placed on its own, and the
+copies interleaved (where nothing kept them apart) or each copy got a
+share of the work and came out different. Designers place one copy and
+replicate it. `panel_copies` (a placer switch, **off by default**) does
+the same. Code: `crates/pcb-kicad/src/board_placer/panel.rs`.
+
+**Detection** (`panel::detect`, on the lowered problem: footprints with
+pins). Three ways to tell the copies apart, tried in this order:
+
+- *Net islands*: groups of parts no net leaves, with the same references
+  and footprints (KiKit names a copy's nets `Board_N-...`; the copies
+  `keep_copies` already held apart).
+- *Numbered references*: the hundreds of the reference are the copy
+  (U101, C110 against U201, C210). Sheets of variants are copies in the
+  parts they share where those are nine in ten of each (OpenRX's panel:
+  one sheet has a U.FL connector where the other has a chip antenna; the
+  two other sheets of that panel are other circuits).
+- *Repeated references*: the references every copy has (the count most
+  parts repeat); each fixed instance goes to the copy of the nearest
+  anchor (the largest footprint whose instances are all fixed: a key
+  switch), the movable ones in turn.
+
+A footprint is its reference with its side, body and pin offsets. The
+candidates must be isomorphic: at least 95 % of the pins map net to net
+one to one (a net inside the first copy onto a net inside the copy, a
+net that reaches beyond the first copy onto itself). Each copy's
+transform from the first comes from the fixed parts both hold (a quarter
+turn and a translation; of the three largest as anchors the one four in
+five of the others agree with): the 0xCB pcb-panel's lower copies are
+turned half a turn. Each copy's region: its own outline piece where the
+board has pieces; else the board's box cut between the copies' fixed
+parts (and the fixed parts in no copy, where they keep apart), halfway
+moved by half the difference of the board's margins (as `keep_copies`
+cuts); the first copy's region is narrowed until every copy's image of
+it lies in that copy's own, and the copies' regions are its images.
+Copies without any fixed part get slices of the board's box along its
+longer axis, but only copies no net joins (net islands): an LED matrix
+numbered D101-D199 and D201-D299 (hackclub's PixelWave) is one circuit,
+not a panel. Not detected: copies with no fixed part that share nets,
+mouse bites and V-cuts as region boundaries (an outline of one piece is
+cut by the fixed parts, not by its slots), mirrored copies.
+
+**Placement** (`panel::place_copies`, each seed of the race):
+
+1. The first copy with the ordinary placer (three quarters of the
+   seed's budget): the outline clipped to its region, its movable parts
+   held there and started at its centre; every other movable part takes
+   no room and pulls no net; fixed parts away from the region keep their
+   bodies but pull no net (a shared net's pins in the other copies would
+   pull the copy across the board); the measured escape correction is
+   off (it routes the whole board).
+2. The placement replicated to every copy by its transform; the first
+   copy's parts lying on the board's marks lie on them in every copy.
+3. Each replicated part checked at the first copy's level against the
+   fixed parts and the other copies' parts (a turn the part may not
+   take counts as not legal). More than a tenth not legal: the copies'
+   surroundings differ, and the seed places the board as a whole (also
+   when even one copy's tightest bodies overfill its region).
+4. The rest with the ordinary placer (the budget left, a tenth at least):
+   the legal replicated parts stay, fixed; those not legal start where
+   their copy put them, held in its region; the movable parts in no copy
+   (shared connectors, rails, a variant's extra parts) anywhere. The
+   placement reports the looser of the two levels, field by field.
+
+With the switch off nothing changes (placements byte for byte x1842's on
+the 0xCB panel and 1337-v4.0). On the 109 sweep boards (the tasks'
+prepared boards, `place-kicad-board` with the switch on) copies are found
+on nine: the four panels with copies and the five molecules. The OpenESC
+4in1 panel has none (two different boards sharing net names: no
+isomorphism); the other 100 boards none, so they place as with it off.
+
+**Report**: `panel_copies` in `board-placer.json` and the verdict:
+`count`, `parts_per_copy`, `movable_per_copy`, `detected_by`,
+`regions_from`, `replicated` (false where the seed kept placed the board
+as a whole), `shared_parts`, `moved_after_replication`, and per copy its
+`region`, `rotation`, `offset` and `references` in the first copy's
+order (the mapping).
+
+| Board | copies | detected by | regions from | movable per copy | parts in no copy |
+| --- | --- | --- | --- | ---: | ---: |
+| 0xCB-1337 pcb-panel | 4 x 115 (two turned half a turn) | net islands | fixed parts | 86 | 0 |
+| 0xCB-1337 panel (dense) | 4 x 53 | net islands | fixed parts | 30 | 0 |
+| SmartSpin2k_Panelized | 9 x 79 | net islands | fixed parts | 70 | 0 |
+| OpenRX-panel-rev2 | 2 x 46 (sheets 2 and 3) | numbered references | fixed parts | 40 | 136 |
+| OpenESC 4in1 panel | none | | | | |
+| molecule 4x4, 4x5, 5x2_shifted, 5x4_wave, 7x5_wave_left | 16 x 16, 20 x 16, 10 x 20, 20 x 13, 28 x 13 | repeated references | fixed parts | 9, 9, 13, 6, 6 | 16, 16, 0, 32, 67 (test points of the outer rows; cells the count leaves out) |
+
+### Measurement
+
+Layout mode at the task budgets (tasks v7, pinned rates), seeds 1 and
+101 (`--placer '{"seed": N}'`, the on side with `"panel_copies": true`),
+3 jobs x 2 threads through the memory ledger with 10 GB kept free. Off
+x1842 (main 5255222, the escape guard's default), on x14890 (the
+replication) for the panels; x14891 (the PixelWave rule) and x14892 (the
+whole-board fallback) change nothing on them (their copies have fixed
+parts, and at most 1 of 80 replicated parts is not legal). Output
+`build/panel2/{off,on1}-s{1,101}`. KiCad unconnected (first route's open
+terminals); strict new errors; `pw`: the placement's pool work, s.
+
+| Board | seed | off | on | routed off / on | vias off / on | pw off / on |
+| --- | ---: | --- | --- | --- | --- | --- |
+| 0xCB-1337 pcb-panel | 1 | 93 (198) | 43 (92) | 274 / 312 of 340 | 566 / 613 | 247 / 80 |
+| | 101 | 78 (165) | 28 (76) | 288 / 320 | 666 / 530 | 239 / 84 |
+| 0xCB-1337 panel (dense) | 1 | 60 (269), 2 starved_thermal | **0 (1), strict pass** | 139 / 188 of 188 | 325 / 362 | 126 / 40 |
+| | 101 | 54 (91), 2 starved_thermal | **0 (0), strict pass** | 143 / 188 | 250 / 343 | 117 / 42 |
+| SmartSpin2k_Panelized | 1 | 33 (35) | 21 (22) | 558 / 564 of 585 | 1646 / 744 | 305 / 248 |
+| | 101 | 53 (54) | 28 (28) | 539 / 557 | 1612 / 1012 | 299 / 316 |
+| OpenRX-panel-rev2 | 1 | 213 (328) | 214 (301), 2 hole_clearance | 34 / 45 of 127 | 145 / 154 | 601 / 219 |
+| | 101 | 226 (340) | 215 (341) | 50 / 47 | 143 / 155 | 601 / 254 |
+| OpenESC 4in1 panel (no copies) | 1 | 499 (1009) | 499 (1009), identical | 43 / 43 of 184 | 160 / 160 | 648 / 648 |
+| | 101 | 4 parts without a place | the same, identical | | | 651 / 651 |
+
+Sums over the four panels with copies: seed 1 399 to 278, seed 101
+411 to 271. Placement wirelength (the placer's): SmartSpin2k 15735 to 7527
+mm (seed 1; its copies' tracks 25.6 to 14.1 m), the pcb-panel 6189 to
+4831, the 0xCB panel 4448 to 4190. The placement's pool work falls on
+the 0xCB boards (126 to 40-42 s, 247 to 80-84 s: each seed places one
+copy) and on OpenRX (601 to 219-254 s), and stays about the same on
+SmartSpin2k (305 and 299 to 248 and 316 s). OpenRX's two
+copies are 80 of its 216 movable parts; the other 136 (two other
+circuits) are placed after them as before, and its rows move by seed
+amounts (213 to 214, 226 to 215). Its seed-1 row has two new
+`hole_clearance` errors: C208 and C308, the same capacitor in both
+copies, 0.19 mm from a tab's NPTH (REF**) where the rules ask 0.2: the
+first copy's placement put it there and the replication repeated it
+(the two lie 16 mm apart, the copies' offset; the placement reports the
+courtyard-spacing level).
+
+**The molecules** (the five PolyKybd boards, seed 1, x14892 against
+x1842; `build/panel2/mol-{off,on3}-s1`): still refused, with the same
+parts without a place (31, 42, 22, 5, 6) and the same placement
+wirelength: each seed's first cell places (0 parts without a place at
+300 s of work), but 37-46 of the 4x4's 144 replicated parts are not
+legal where they land (the outer cells' connectors have edge
+constraints the first cell does not, the board's marks differ between
+cells), and placing the rest left more without a place than the whole
+board did (x14890, before the fallback: 55, 60, 57, 8, 14). With more
+than a tenth of the replicated parts not legal the seed now places the
+board as a whole, which costs the first cell's work on top (pool work
++5 to +7 s).
+
+**The short tier** (3 x 2, its budget scale, seed 1, x1842 against
+x14891 with the switch on; `build/panel2/short-{off,on}`): no copies on
+any of the 12 boards; every placed board and every result board is byte
+for byte the same.
+
+### Judgement
+
+The panels with copies improve in total (seed 1 399 to 278 unconnected,
+seed 101 411 to 271; the 0xCB panel passes strict at both seeds, where it
+left 54-60 open), the 4in1 panel and every board without copies are
+unchanged. The default stays **off**: the rule asks for no new errors,
+and OpenRX's seed-1 row has two (`hole_clearance` at a tab's NPTH, a
+legality miss in the first copy that the replication doubled).
+To make it the default: find why the placement let a pad come 0.19 mm
+to an NPTH where the board's hole clearance is 0.2 (a legality
+question, not the replication's), then rerun OpenRX.
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a

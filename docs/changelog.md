@@ -324,6 +324,39 @@ tables.
   route-mode tasks of 30 s, `designer_budget` false, router `seeds` 1,
   `skip_native_verification`, `deadline_seconds` 1200).
 
+## Committed on 2026-10-26 (panel copies: place one, replicate)
+
+Branch panel-copies, snapshots x14890 (the replication), x14891
+(without fixed parts only net islands are a panel), x14892 (more than a
+tenth of the replicated parts not legal: the board as a whole).
+`panel_copies`, a placer switch, **off by default**; placer.md "Panel
+copies (2026-10-26)" has the method and the tables.
+
+- **Detection**: copies by net islands (KiKit), numbered references
+  (U201/U301; variants that share nine in ten of their parts) or
+  repeated references (a fixed anchor per copy), the nets mapping one to
+  one; each copy's transform (translation, quarter turn) from the fixed
+  parts both hold, its region from its outline piece or the cuts between
+  the copies' fixed parts. Found on the 0xCB pcb-panel (4 x 115, two
+  turned half a turn), the 0xCB panel (4 x 53), SmartSpin2k (9 x 79),
+  OpenRX (2 x 46 of its four sheets) and the five molecules; on none of
+  the other 100 sweep boards, the OpenESC 4in1 panel included.
+- **Placement**: the first copy with the ordinary placer in its region,
+  replicated, the replicated parts that are not legal and the parts in
+  no copy placed after it; more than a tenth not legal (the molecules),
+  the board as a whole. `panel_copies` in board-placer.json and the
+  verdict (count, parts per copy, how found, regions, the mapping).
+- **Measured** (layout, task budgets, x1842 against x14890): the four
+  panels with copies 399 to 278 unconnected at seed 1 and 411 to 271 at
+  seed 101; the 0xCB panel 60 and 54 to 0, strict passes; the
+  pcb-panel 93/78 to 43/28; SmartSpin2k 33/53 to 21/28 (vias 1646 to
+  744); OpenRX 213/226 to 214/215, with two new `hole_clearance` errors
+  at seed 1 (one capacitor, both copies, 0.19 mm from a tab's NPTH). The
+  4in1 panel and the short tier (12 boards) byte for byte the same; the
+  molecules still refused with the same parts without a place.
+- **Default off**: the rule asks for no new errors; OpenRX's two are a
+  legality miss the replication doubles.
+
 ## Committed on 2026-10-26 (escape demand's fixed-share guard: the 45 boards)
 
 Branch escape-guard-sweep. The 45 sweep boards `escape_demand.fixed_share`
