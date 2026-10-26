@@ -11,6 +11,56 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-26 (the thermal-pad model matches KiCad's islands)
+
+Branch thermal-islands (snapshots x14700 to x14703; x14703 measured). The fine-pitch escapes
+left four starved thermals with `exact_escape_stubs` on (BloopBox J1.1,
+backplane J4.A1, anthracite-bottom J107.1 and J107.4) and LC_PAMV4b's
+J9.1 on main, all KiCad errors the router did not prevent.
+docs/router.md, "The pour model against KiCad's islands (2026-10-26)".
+
+- **Why.** The census of the tier's routed boards (x14482, both switch
+  settings; the model on the board as written against KiCad's fill)
+  found three of the five in the model already (spokes only into
+  isolated islands; no manual spoke or island via could help, and the
+  tier's route mode does not run KiCad, so nothing solidified them) and
+  two missed: J4.A1 and J107.1 lie inside another net's zone of a
+  higher priority, which KiCad 10 knocks out of the lower zone by its
+  *fill* grown by the clearance, not by its outline, so the lower zone
+  fills over its own via (J107.1) and into gaps the higher zone cannot
+  fill (J4.A1). The chase's first guesses (a B.Cu track counted as an
+  F.Cu spoke, spokes off the board's edge) were not it. The census also
+  showed 23 and 26 false alarms a run: all pads on boards whose setup
+  asks for one spoke (`min_resolved_spokes` 1) or ignores the finding.
+- **The model** (pcb-router): reclaimed fill inside other nets' higher
+  zones (router/reclaim.rs, `PCB_ROUTER_NO_RECLAIM`), the zones' island
+  removal (`Plane::island_min_area` from `island_removal_mode`: KiCad
+  keeps a piece holding a track or via of the net, and the DRC counts a
+  pad's track ending over it), and the board's spoke minimum and the
+  finding's severity (`min_resolved_spokes` in the router settings,
+  router `min_spokes`, `SpokeRecord::required`).
+- **The act** (pcb-kicad): the model's starved pads on the final board
+  in board-router.json (`predicted_starved_thermals`, measured with the
+  pours, no work); where KiCad does not check the board, those pads get
+  the solid connection when the project allows it and the model then
+  finds fewer (`solid_by_model`).
+- **A spoke beside a plated hole**: a pad's track meets the part of a
+  spoke the hole leaves (k30-SBC's C16.1, a fingerprint's false alarm).
+- **Measured.** Census: on 5 of 5 (was 3, false alarms 23 to 0), off 1
+  of 1 (false alarms 26 to 0), the fingerprints 1 of 1. Expansion tier
+  (x14703 against x14482): the model's final starved count equals
+  KiCad's on all 46 boards both ways; off 588 to 589 unconnected, 21
+  passes, errors 1 to 0; on 556 to 557, passes 22 to 24, errors 5 to 0.
+  Fingerprints identical to x1823 (off) and x14475 (on), the model's
+  count equal to KiCad's on all four.
+- **`exact_escape_stubs` on by default**: with the model fixed the tier
+  meets the rule (off 589 / 21 / 0, on 557 / 24 / 0); the fingerprints
+  43 to 42 unconnected, errors 20 and 20. Dense boards (3 x 2): 1018 to 1010
+  unconnected, errors 115 and 115; the model predicts 4 starved thermal
+  vias of exposed pads on inner layers there that KiCad does not report
+  (glasgow, video; KiCad checks those boards, nothing acts on them).
+
+
 ## Committed on 2026-10-26 (memory round 3: the stamp lists, the search arrays, the occupancy)
 
 Branch memory-round-3, snapshot x14553 against main's x1830 (a905905);

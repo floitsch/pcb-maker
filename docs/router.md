@@ -1,47 +1,3 @@
-**Chasing the five new errors** (2026-10-26). The net tie: the lowering
-carved a tie's bridge back where its own nets end their tracks, so a via
-of a tie net could come within the hole clearance of the bridge's copper
-(KiCad's hole_clearance holds against the bridge for every net). The
-whole bridge now keeps every via out (an obstacle for vias only, beside
-the carved one for tracks; on by default, not part of the switch):
-pdlc's error goes, and FUEL4EP's two (a hole clearance and a starved
-thermal, the designer's net tie) with it; the fingerprint and dense
-boards with net ties (k30-SBC, split72, protoesp, MegaDrive) route as
-before. The expansion tier with it
-(x14482, the switch off and on; off identical to x1823 on every other
-row):
-
-| | off | on |
-| --- | --- | --- |
-| KiCad unconnected | 588 | 556 |
-| passes (strict) | 21 | 22 |
-| new errors | 1 (LC_PAMV4b's starved thermal, as before) | 5 |
-
-The four starved thermals left with the switch on (BloopBox J1.1,
-backplane J4.A1, anthracite J107.1 and J107.4) are pour-model misses at
-connector through-hole pads, where routes moved for reasons unrelated to
-the stubs: BloopBox's SDA and SCL leave a 0.4 mm DFN side by side and
-enclose J1.1's fill, which the model counts as joined (it counts the
-pad's B.Cu track as a track spoke of F.Cu); backplane's and anthracite's
-pads are at the board's edge, where the model finds their spokes outside
-the zone while KiCad draws one into an island, so the pad leans on its
-own tracks, and the new route moved one of them to another layer. A
-longer thermal guard (the corridor reaching as far as another net's
-centreline starves a spoke: the gap, the zone's minimum width and
-clearance, half a track; for every pad, then only for pads with two or
-fewer spokes that land on the empty board) took the errors with the
-switch on from 8 to 5 but moved starved thermals rather than removing
-them (ZSWatch and anthracite got new ones) and cost connections with
-the switch off (588 to 596, then 606: MSign 19 to 35, OpenDeck 12 to 14);
-not kept.
-
-**Default: off.** By the rule (unconnected not worse in total, passes
-not fewer, errors not more) the tier still loses on errors (1 to 5)
-while it wins on connections (32) and passes (1); the dense boards and
-the fingerprints gain a little (8 and 1 connections). The switch closes
-the remapper at its task budget. Open: the four pour-model misses above,
-and an exact hard-repair test for oblique stubs.
-
 # The whole-board router (`pcb-router`)
 
 `pcb-router` is the project's routing core. It replaces the per-net,
@@ -1842,6 +1798,122 @@ starved thermals". What it costs: a KiCad check where starved pads are
 left, and the designer's thermal relief on those pads (a soldering
 choice; false keeps it).
 
+### The pour model against KiCad's islands (2026-10-26)
+
+Four starved thermals of the fine-pitch escapes' tier (BloopBox J1.1,
+backplane J4.A1, anthracite-bottom J107.1 and J107.4) and LC_PAMV4b's
+J9.1 on main were KiCad errors the router did not prevent. The census
+(`experiments/pour-fidelity/census.py`: the model on the board as
+written, `dump-pour-map`, against KiCad's own fill and DRC rule,
+`spokes.py`) on the tier's routed boards (x14482, both switch settings)
+split them: the model saw three of the five starved (J1.1, J107.4,
+J9.1: spokes only into isolated islands, the pad's own track the one
+spoke counted) and missed two (J4.A1, J107.1: no spoke at all in the
+model), and on top it flagged 23 to 26 pads per run that KiCad does not.
+What KiCad does that the model did not:
+
+- **A higher zone of another net is knocked out by its fill, not its
+  outline.** zone_filler.cpp's `buildDifferentNetZoneClearances` grows
+  the higher zone's *filled* polygons by the zones' clearance
+  (`ZONE::TransformShapeToPolygon` uses `m_FilledPolysList`), and its
+  iterative refill (`ZoneFillIterativeRefill`, on by default in 10.0)
+  hands back what the higher zone's island removal deletes. So the lower
+  zone fills over its own copper inside the higher zone (anthracite's
+  GNDPWR via inside the +5V zone on In2.Cu: a disc of GNDPWR fill that
+  J107.1's spoke lands in, one counted spoke, starved) and the gaps the
+  higher zone cannot fill (backplane's J4.A1 inside VIN's zone on F.Cu:
+  one spoke into such a gap, an isolated island). The model now
+  reclaims that fill (`Router::reclaimed_fill`, router/reclaim.rs): near
+  the net's own pads, vias and tracks inside a region `Plane::excluded`
+  leaves to another net's zone, a node is the net's brush centre where
+  no brush centre of that zone (its outline less its own exclusions, its
+  static fill map, the routed copper of other nets in its brush's
+  occupancy) lies within the zones' clearance and both brushes' halves.
+  The pour analysis adds those nodes to the net's fill, the fill probe
+  takes them as inside (`FillProbe::reclaimed_at`).
+  `PCB_ROUTER_NO_RECLAIM` turns it off.
+- **The zone's island removal** (`island_removal_mode`, now
+  `Plane::island_min_area`: always, never, or below an area). KiCad
+  deletes only pieces with no connection at all; a piece holding a
+  track or via of the net is kept even where no pad reaches it, and the
+  DRC counts a pad's track that ends over it (anthracite's J107.4 with
+  the switch off: three tracks ending, on other layers, over pieces of
+  In2.Cu's +5V fill that hold a via; the model, which kept only pieces
+  a pad reaches, counted one). A zone that never removes islands keeps
+  every piece, one by area those of the area. In the reclaimed fill the
+  higher zone's pieces it removes are not its fill (a bounded flood of
+  its brush centres, diagonals included; one larger than 20 mm² at a
+  0.1 mm lattice is taken as kept).
+- **The board setup's minimum spoke count and the finding's severity.**
+  The DRC's minimum is `min_resolved_spokes` (KiCad's default 2; 1 on
+  17 of the tier's 46 boards, 0 on one), and a project that ignores
+  `starved_thermal` gets no finding (5 boards). Every false alarm of the
+  census was such a pad: one spoke on a board that asks for one, or any
+  shortfall on a board that ignores the finding. The model now takes
+  both from the project (`min_resolved_spokes` in the router settings,
+  router `min_spokes`, 0 where ignored; `SpokeRecord::required`), and
+  everything that counts spokes (the manual spokes, the lost-spoke
+  repair, the island vias) asks for that many.
+
+- **A spoke beside a plated hole.** KiCad's spoke runs from the pad's
+  centre and the plated hole is knocked out of the fill at the end, so
+  what is left of a diagonal spoke beside a large drill reaches nearer
+  the centre than the hole's radius along the spoke; a track leaving
+  along an axis touches it there and is an item of the piece (the
+  fingerprint k30-SBC's C16.1 on In1.Cu: 0.8 mm drill, its stub straight
+  down; the model began the spoke's strip at the hole's radius along the
+  spoke and saw an isolated island). A track now meets a spoke where a
+  point of its centreline outside the hole lies within its half width of
+  the whole strip.
+
+**What the router does with it.** The model's starved pads on the board
+as written are measured with the pours' pieces after the final route
+(`measured_board`, one lowering and one router; no work) and written to
+board-router.json (`predicted_starved_thermals`: pad, net, layer,
+spokes, island spokes, tracks). The repairs inside the route (manual
+spokes into the main piece, island vias to another layer's pour, the
+lost-spoke reroute) act on the same model, which now sees the reclaimed
+fill and asks for the board's minimum. Where they cannot (J1.1: two
+DFN escapes enclose its F.Cu fill; no other layer pours GND) and KiCad
+does not check the board (`skip_native_verification`, the expansion
+tier), the pads the model finds starved get KiCad's solid connection,
+as `solidify_starved_thermals` gives the pads KiCad finds starved on a
+checked board, when the project allows it (`solid_starved_thermals`):
+the board is measured again and kept when the model then finds fewer
+starved pads (`solid_by_model` in board-router.json). On a checked
+board KiCad's own findings stay the last resort, as before.
+
+**Measured.** The census on the tier's x14482 boards: with the switch
+on, KiCad 5 starved pads, the model 5 of them (was 3) and no false
+alarm (was 23); off, 1 and 1 (J9.1) and none (was 26); on the
+fingerprints' boards (x14701's routes, the switch off) 1 and 1 (k30's
+J1.39) and none (C16.1 before the plated-hole fix). The expansion tier
+(x14703, 8 x 1, 30 s; the model's starved count on the final board
+against KiCad's starved_thermal findings, board by board): equal on all
+46 boards with the switch off and on (0 and 0 everywhere). Before its
+solid step the model found 1 pad off (J9.1) and 5 on (J9.1, J1.1,
+J4.A1, J107.1, J107.4), the same pads KiCad reported on x14482's
+boards. Against x14482 (main's code):
+
+| | x14482 off | x14703 off | x14482 on | x14703 on |
+| --- | --- | --- | --- | --- |
+| KiCad unconnected | 588 | 589 | 556 | 557 |
+| passes (strict) | 21 | 21 | 22 | 24 |
+| new errors | 1 | 0 | 5 | 0 |
+| vias | 4312 | 4280 | 4295 | 4263 |
+
+The rows that moved: LC_PAMV4b's error goes both ways, BloopBox's and
+anthracite-bottom's (on) too, both now passing; backplane keeps 2
+unconnected and loses its error; MSign (starved thermals ignored by its
+project) 19 to 20 off, 18 to 19 on; every other board routes as before.
+The fingerprints (x14703, both switch settings): the model's count equals
+KiCad's on all four (k30's J1.39). Left: on the dense boards the model
+predicts 4 starved thermal vias of exposed pads on inner layers that
+KiCad does not report (glasgow's U1.57, video's U15.59, U21.7, U21.8;
+"Fine-pitch escapes"); KiCad checks those boards, so nothing acts on
+them, but on an unchecked board the solid step would connect such an
+exposed pad solid for nothing.
+
 ### KiCad's connection width (necks)
 
 KiCad's `connection_width` check (drc_test_provider_connection_width.cpp,
@@ -2341,6 +2413,7 @@ The switch closes the remapper at its task budget. Open: why the
 starved thermals and the net-tie via appear (other routes, not the
 stubs), and an exact hard-repair test for oblique stubs.
 
+
 *The eleven dense boards* (route mode on the v19 placements at the task
 budgets, 3 x 2, `PCB_ROUTER_NO_WALL_GUARD`; routed / KiCad unconnected /
 vias / work): 9 of 11 route identically; unconnected 1020 to 1012, new
@@ -2351,6 +2424,74 @@ passes 0 and 0, vias 7283 to 7367, work 11034 to 11092 s.
 | --- | --- | --- |
 | poly_kybd_split72_left | 403/420 / 25 / 884 / 1255 s | 413/420 / 9 / 955 / 1191 s |
 | DSP-ADAU1452 | 168/190 / 25 / 206 / 1056 s | 162/190 / 33 / 219 / 1178 s |
+
+**Chasing the five new errors** (2026-10-26). The net tie: the lowering
+carved a tie's bridge back where its own nets end their tracks, so a via
+of a tie net could come within the hole clearance of the bridge's copper
+(KiCad's hole_clearance holds against the bridge for every net). The
+whole bridge now keeps every via out (an obstacle for vias only, beside
+the carved one for tracks; on by default, not part of the switch):
+pdlc's error goes, and FUEL4EP's two (a hole clearance and a starved
+thermal, the designer's net tie) with it; the fingerprint and dense
+boards with net ties (k30-SBC, split72, protoesp, MegaDrive) route as
+before. The expansion tier with it
+(x14482, the switch off and on; off identical to x1823 on every other
+row):
+
+| | off | on |
+| --- | --- | --- |
+| KiCad unconnected | 588 | 556 |
+| passes (strict) | 21 | 22 |
+| new errors | 1 (LC_PAMV4b's starved thermal, as before) | 5 |
+
+The four starved thermals left with the switch on (BloopBox J1.1,
+backplane J4.A1, anthracite J107.1 and J107.4) are at connector
+through-hole pads, where routes moved for reasons unrelated to the
+stubs. What the chase guessed at first (a B.Cu track counted as an F.Cu
+spoke, spokes off the board's edge) was not it; see "The pour model
+against KiCad's islands (2026-10-26)": the model on the written board
+already saw J1.1, J107.4 and LC_PAMV4b's J9.1 starved (spokes into
+islands, no repair possible: no straight track reaches the main piece,
+no other layer holds a pour of the net) but nothing acted on it where
+KiCad does not check the board; J4.A1 and J107.1 lie inside another
+net's zone of a higher priority, whose fill KiCad knocks out of the
+lower zone, not its outline, and the model saw no spoke at all. A
+longer thermal guard (the corridor reaching as far as another net's
+centreline starves a spoke: the gap, the zone's minimum width and
+clearance, half a track; for every pad, then only for pads with two or
+fewer spokes that land on the empty board) took the errors with the
+switch on from 8 to 5 but moved starved thermals rather than removing
+them (ZSWatch and anthracite got new ones) and cost connections with
+the switch off (588 to 596, then 606: MSign 19 to 35, OpenDeck 12 to 14);
+not kept.
+
+**Default: on** (2026-10-26, with the pour model matching KiCad's
+starved thermals, "The pour model against KiCad's islands"). The four
+starved thermals the switch brought, and LC_PAMV4b's on main, are now
+predicted and connected solid where KiCad does not check the board.
+The rule (unconnected not worse, passes not fewer, errors not more on
+the tier) holds: the expansion tier on x14703, one binary, the switch
+off and on: KiCad unconnected 589 to 557, passes 21 to 24 (strict
+too), new errors 0 and 0, vias 4280 to 4263; better 10 boards (node_v6
+32 to 11 unconnected; facade60, AUSIGN, ch32v003 and BloopBox to
+passes), worse 3 (bms 0 to 7: the probes rank another rung first, as
+on x14475; ED052TC4 2 to 4; backplane 1 to 2). The fingerprints (1 x
+4, a quarter of the budget): unconnected 43 to 42 (jetson 20 to 13,
+Sisu 23 to 29), new errors 20 and 20, passes 2 and 2 (strict 1 and 1),
+the model's starved count equal to KiCad's (k30's J1.39, 1 and 1).
+The eleven dense boards (route mode on the v19 placements at the task
+budgets, 3 x 2, no wall guard; x14703 off and on): 9 of 11 route
+identically; unconnected 1018 to 1010 (poly_kybd_split72_left 25 to 9,
+DSP-ADAU1452 25 to 33), new errors 115 and 115 (SmartSpin2k's 113 and
+protoesp's 2), passes 0 and 0, vias 7359 to 7429, work 11031 to 11076
+s. There the model predicts 4 starved pads KiCad does not report, both
+ways (glasgow's U1.57 on In1.Cu, video's U15.59, U21.7 and U21.8 on
+In2.Cu: thermal vias of exposed pads on inner layers, the limit "Starved
+thermals at scale" names); KiCad checks those boards, so nothing acts on
+them. The test fixture f1 closes its last connection with it (its
+goldens updated). `exact_escape_stubs: false` in the router settings
+or `PCB_ROUTER_EXACT_ESCAPES=0` turns it off. Open: an exact
+hard-repair test for oblique stubs.
 
 ## Pin-row cost (2026-10-23)
 
