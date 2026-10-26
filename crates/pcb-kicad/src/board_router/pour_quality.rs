@@ -31,6 +31,14 @@ pub struct KiCadPourQuality {
     /// The length of other nets' tracks on the layer (score-kicad-board's
     /// `cut_by_mm`): what cuts the pour.
     pub cut_mm: f64,
+    /// For a pour in many pieces (`in_many_pieces`): the parts (six pads
+    /// or more) under which a `keep_whole` region on this layer would
+    /// cover no other net's pad there, the most pads first, at most four;
+    /// empty when every such part's region would cut pads off (the
+    /// verdict's pour advice then does not suggest `keep_whole` under
+    /// parts).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub keep_whole_parts: Vec<String>,
 }
 
 impl KiCadPourQuality {
@@ -152,6 +160,10 @@ pub fn measure_board_pours(
             distance_squared(start, end).sqrt(),
         ));
     }
+    // What a keep_whole region under a part would cover, for the advice
+    // on a pour in many pieces.
+    let region_pads = region_pads(&pcb, &layers)?;
+    let region_parts = keep_whole_parts(&pcb, &region_pads)?;
     // The parse is done with before the router is built (a big board's
     // parse is ten times its file).
     drop(pcb);
@@ -201,7 +213,7 @@ pub fn measure_board_pours(
             let scale = 10f64.powi(digits);
             (value * scale).round() / scale + 0.0
         };
-        result.push(KiCadPourQuality {
+        let mut quality = KiCadPourQuality {
             net,
             layer,
             pieces: pieces.len(),
@@ -212,7 +224,13 @@ pub fn measure_board_pours(
             area_mm2: round(entry.inside_mm2, 1),
             islands_removed: entry.islands,
             cut_mm: round(cut_mm, 1),
-        });
+            keep_whole_parts: Vec::new(),
+        };
+        if quality.in_many_pieces() {
+            quality.keep_whole_parts =
+                keep_whole_candidates(&region_parts, &region_pads, &quality.net, entry.layer);
+        }
+        result.push(quality);
     }
     Ok((result, starved))
 }

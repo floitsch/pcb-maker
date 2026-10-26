@@ -484,6 +484,7 @@ fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     let report = output.join("board-router.json");
     set_target(command, report.clone(), outputs.clone());
     let kicad_warning = check_kicad(config.skip_native_verification)?;
+    let pour_warnings = check_pours(source, board_id, &config, true)?;
     calibrate_work_rate(Some(&config))?;
     set_target(command, report.clone(), outputs.clone());
     // Test hook: a panic once the run has started (tests/cli_exit_codes.rs).
@@ -538,6 +539,7 @@ fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     }
     facts.outputs = existing(&outputs);
     facts.input_warnings.extend(kicad_warning);
+    facts.input_warnings.extend(pour_warnings);
     facts.input_warnings.extend(override_warnings(&config));
     check_reference(
         &mut facts,
@@ -728,6 +730,25 @@ fn check_constraints(
     Ok(warnings)
 }
 
+/// The input check of the router file's `keep_whole` regions
+/// (`pcb_kicad::keep_whole_input_warnings`): the other nets' pads they
+/// would cut off, printed now, before the run. `placed`: route mode (the
+/// board's positions are final).
+fn check_pours(
+    source: &str,
+    board_id: &str,
+    config: &pcb_kicad::KiCadBoardRouterConfig,
+    placed: bool,
+) -> Result<Vec<String>, Failure> {
+    let warnings =
+        pcb_kicad::keep_whole_input_warnings(Path::new(source), board_id, config, placed)
+            .map_err(Failure::Usage)?;
+    for warning in &warnings {
+        eprintln!("warning: {warning}");
+    }
+    Ok(warnings)
+}
+
 /// The placement's facts from its report (`board-placer.json`).
 fn placement_facts(command: &str, report: &serde_json::Value) -> KiCadRunFacts {
     let strings = |key: &str| -> Vec<String> {
@@ -813,6 +834,7 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         )]),
     );
     input_warnings.extend(check_kicad(router.skip_native_verification)?);
+    input_warnings.extend(check_pours(source, board_id, &router, false)?);
     input_warnings.extend(override_warnings(&router));
     // A free dimension: the layout at several sizes (src/agent_cli/free_dimension.rs).
     if let Some(free) = &config.free_dimension {

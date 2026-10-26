@@ -1509,6 +1509,96 @@ mod pour_request_tests {
     }
 
     #[test]
+    fn a_zone_on_a_layer_set_counts_as_existing_on_each_of_its_layers() {
+        // The trial's board A (2026-10-26): GND on "F&B.Cu"; a request
+        // for F.Cu wrote a second zone over it (zones_intersect).
+        for layers in [
+            r#"(layers "F&B.Cu")"#,
+            r#"(layers "*.Cu")"#,
+            r#"(layers "F.Cu" "B.Cu")"#,
+        ] {
+            let mut pcb = parse(&format!(
+                r#"(kicad_pcb
+              (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+              (footprint "a" (at 5 5) (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "GND")))
+              (zone (net 1) (net_name "GND") {layers} (polygon (pts (xy 0 0) (xy 20 0) (xy 20 10)))))"#
+            ))
+            .unwrap();
+            let request = KiCadPourRequest {
+                net: "GND".into(),
+                layers: vec!["F.Cu".into(), "B.Cu".into()],
+                clearance_mm: None,
+                plane: false,
+                keep_whole: Vec::new(),
+            };
+            add_pour_zones(&mut pcb, &[request]).unwrap();
+            let zones = pcb
+                .children()
+                .iter()
+                .filter(|item| item.head() == Some("zone"))
+                .count();
+            assert_eq!(zones, 1, "{layers}");
+        }
+    }
+
+    #[test]
+    fn keep_whole_regions_over_other_nets_pads_are_warned_of_naming_the_pads() {
+        // U1 on F.Cu with a GND pad and two signal pads; a GND pour on F.Cu
+        // kept whole under U1 would cut U1:2 and U1:3 off; on B.Cu nothing.
+        let pcb = parse(
+            r#"(kicad_pcb
+          (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+          (gr_rect (start 0 0) (end 30 10) (layer "Edge.Cuts"))
+          (footprint "u" (at 10 5) (property "Reference" "U1")
+            (fp_rect (start -2 -2) (end 2 2) (layer "F.CrtYd"))
+            (pad "1" smd rect (at -1 0) (size 0.5 0.5) (layers "F.Cu") (net "/GND"))
+            (pad "2" smd rect (at 1 0) (size 0.5 0.5) (layers "F.Cu") (net "/A"))
+            (pad "3" smd rect (at 1 1) (size 0.5 0.5) (layers "F.Cu") (net "/B"))
+            (pad "4" smd rect (at 1 -1) (size 0.5 0.5) (layers "F.Cu") (net "/GND"))
+            (pad "5" smd rect (at -1 1) (size 0.5 0.5) (layers "F.Cu") (net "/GND"))
+            (pad "6" smd rect (at -1 -1) (size 0.5 0.5) (layers "F.Cu") (net "/GND")))
+          (footprint "r" (at 11 5) (property "Reference" "R1")
+            (pad "1" smd rect (at 0 0.5) (size 0.5 0.5) (layers "F.Cu") (net "/C"))))"#,
+        )
+        .unwrap();
+        let request = |layer: &str| -> KiCadPourRequest {
+            serde_json::from_str(&format!(
+                r#"{{"net": "GND", "layers": ["{layer}"], "keep_whole": [{{"parts": ["U1"]}}]}}"#
+            ))
+            .unwrap()
+        };
+        let placed = keep_whole_warnings(&pcb, &[request("F.Cu")], true).unwrap();
+        assert_eq!(placed.len(), 1);
+        assert!(
+            placed[0].contains("covers 3 pads") && placed[0].contains("U1:2, U1:3, R1:1"),
+            "{}",
+            placed[0]
+        );
+        // Before a layout's placement only U1's own pads count.
+        let unplaced = keep_whole_warnings(&pcb, &[request("F.Cu")], false).unwrap();
+        assert!(
+            unplaced[0].contains("covers 2 pads of other nets on that layer (U1:2, U1:3)"),
+            "{}",
+            unplaced[0]
+        );
+        assert!(
+            keep_whole_warnings(&pcb, &[request("B.Cu")], true)
+                .unwrap()
+                .is_empty()
+        );
+        // The pour advice's candidates: U1 on B.Cu, nothing on F.Cu.
+        let layers = LayerTable::from_pcb(&pcb).unwrap();
+        let pads = region_pads(&pcb, &layers).unwrap();
+        let parts = keep_whole_parts(&pcb, &pads).unwrap();
+        assert_eq!(
+            keep_whole_candidates(&parts, &pads, "GND", 1),
+            vec!["U1".to_string()]
+        );
+        assert!(keep_whole_candidates(&parts, &pads, "GND", 0).is_empty());
+    }
+
+    #[test]
     fn a_plane_request_keeps_tracks_off_its_layer_by_a_rule_area() {
         // The fence's four layers: GND's zone on In1.Cu exists; a plane
         // request adds the rule area alone, once.

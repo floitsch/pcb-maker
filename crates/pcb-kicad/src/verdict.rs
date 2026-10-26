@@ -1224,11 +1224,7 @@ fn next_actions(
         actions.push(unmodelled_rules_action(&facts.unmodelled_rules));
     }
     for pour in facts.pours.iter().filter(|pour| pour.in_many_pieces()) {
-        actions.push(format!(
-            "the {} pour is in many pieces ({}): \"keep_whole\" in its add_pours entry keeps other nets' tracks and vias out of it under named parts or a box, so its main piece stays whole there (a region over another net's pad on that layer leaves the pad unreachable there: name parts or a box clear of other nets' pads on that layer, not a signal IC on it); more room or layers give it more",
-            pour.net,
-            pour.line()
-        ));
+        actions.push(pour_action(pour));
     }
     if facts.routes && facts.native.is_none() {
         actions.push("KiCad's check did not run (PCB_SKIP_NATIVE or skip_native_verification): the router's own count is no verdict; run KiCad's DRC (pcb-maker drc-kicad-board) before using the board".into());
@@ -1237,6 +1233,38 @@ fn next_actions(
         actions.extend(facts.skipped.iter().cloned());
     }
     actions
+}
+
+/// The next action for a pour in many pieces: `keep_whole` under the
+/// parts whose regions on the layer hold no other net's pad
+/// (`KiCadPourQuality::keep_whole_parts`), and not under parts where every
+/// region would cut another net's pads off (the trial's board A,
+/// 2026-10-26: keep_whole under its ICs on F.Cu opened 22 connections).
+fn pour_action(pour: &crate::board_router::KiCadPourQuality) -> String {
+    let advice = if pour.keep_whole_parts.is_empty() {
+        format!(
+            "a keep_whole region under any part of six pads or more would cover other nets' pads on {} and leave them unreachable there, so keep_whole under parts does not fit this layer (a box clear of other nets' pads may)",
+            pour.layer
+        )
+    } else {
+        format!(
+            "\"keep_whole\" in its add_pours entry keeps other nets' tracks and vias out of it under named parts or a box, so its main piece stays whole there; on {layer} the regions of {parts} hold no other net's pad: {{\"net\": \"{net}\", \"layers\": [\"{layer}\"], \"keep_whole\": [{{\"parts\": [{quoted}]}}]}} (a region over another net's pad leaves that pad unreachable)",
+            layer = pour.layer,
+            net = pour.net,
+            parts = pour.keep_whole_parts.join(", "),
+            quoted = pour
+                .keep_whole_parts
+                .iter()
+                .map(|part| format!("\"{part}\""))
+                .collect::<Vec<_>>()
+                .join(", "),
+        )
+    };
+    format!(
+        "the {} pour is in many pieces ({}): {advice}; more room or layers give it more",
+        pour.net,
+        pour.line()
+    )
 }
 
 /// The finding types the verdict gives an action of their own, the
@@ -2110,6 +2138,7 @@ mod tests {
             area_mm2: 2591.0,
             islands_removed: 4,
             cut_mm: 1453.0,
+            keep_whole_parts: vec!["U1".into()],
         };
         // Whole: in the verdict, no action.
         facts.pours = vec![pour(3, 600.0)];
@@ -2131,6 +2160,21 @@ mod tests {
                 && verdict.next_actions[0].contains("keep_whole"),
             "{}",
             verdict.next_actions[0]
+        );
+        assert!(
+            verdict.next_actions[0].contains(r#""keep_whole": [{"parts": ["U1"]}]"#),
+            "{}",
+            verdict.next_actions[0]
+        );
+        // No part whose region keeps clear of other nets' pads: no
+        // keep_whole under parts (the trial's board A on F.Cu).
+        let mut crowded = pour(43, 120.0);
+        crowded.keep_whole_parts.clear();
+        facts.pours = vec![crowded];
+        let action = &judge(&facts).next_actions[0];
+        assert!(
+            action.contains("does not fit this layer") && !action.contains("\"parts\""),
+            "{action}"
         );
         // Few pieces, but the largest holds less than half the copper.
         facts.pours = vec![pour(4, 200.0)];

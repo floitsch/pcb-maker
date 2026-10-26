@@ -225,7 +225,9 @@ pub(crate) fn add_pour_zones(pcb: &mut Expr, requests: &[KiCadPourRequest]) -> R
         }
     }
     // Zones the board already has, by (net, layer): a requested pour that
-    // exists already is not added twice.
+    // exists already is not added twice. A zone on a layer set (`F&B.Cu`,
+    // `*.Cu`, a list) has each of its layers (the trial's board A wrote a
+    // second F.Cu zone over its F&B.Cu one, 2026-10-26).
     let mut existing = BTreeSet::new();
     for zone in pcb
         .children()
@@ -235,21 +237,11 @@ pub(crate) fn add_pour_zones(pcb: &mut Expr, requests: &[KiCadPourRequest]) -> R
         let Some(net) = form_atom(zone, "net_name", 1).or_else(|| node_net(zone)) else {
             continue;
         };
-        let names: Vec<String> = zone
-            .child("layers")
-            .map(|layers| {
-                layers
-                    .children()
-                    .iter()
-                    .skip(1)
-                    .filter_map(Expr::atom)
-                    .map(str::to_owned)
-                    .collect()
-            })
-            .or_else(|| form_atom(zone, "layer", 1).map(|layer| vec![layer.to_string()]))
-            .unwrap_or_default();
-        for layer in names {
-            existing.insert((net_names.normalize(net).to_string(), layer));
+        let mask = layers.mask_of_item(zone)?;
+        for (index, layer) in layers.names.iter().enumerate() {
+            if mask & (1 << index) != 0 {
+                existing.insert((net_names.normalize(net).to_string(), layer.clone()));
+            }
         }
     }
     let mut zones = Vec::new();
@@ -361,4 +353,223 @@ pub(crate) fn add_pour_zones(pcb: &mut Expr, requests: &[KiCadPourRequest]) -> R
     }
     items.extend(zones);
     Ok(())
+}
+
+/// A pad of a board for the keep_whole checks: `REF:NUMBER`, its part, its
+/// net (normalized; none for a pad without one), its centre and its copper
+/// layers.
+pub(crate) struct RegionPad {
+    pub label: String,
+    pub reference: String,
+    pub net: Option<String>,
+    pub center: [f64; 2],
+    pub mask: pcb_router::LayerMask,
+}
+
+/// Every pad of `pcb` with a copper layer (`RegionPad`).
+pub(crate) fn region_pads(pcb: &Expr, layers: &LayerTable) -> Result<Vec<RegionPad>, String> {
+    let net_names = NetNames::of(pcb);
+    let mut pads = Vec::new();
+    for footprint in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        let reference = footprint_reference(footprint).unwrap_or_default();
+        let at = form_at(footprint)?;
+        for pad in footprint
+            .children()
+            .iter()
+            .filter(|child| child.head() == Some("pad"))
+        {
+            let Ok(position) = form_xy(pad, "at") else {
+                continue;
+            };
+            let mask = layers.mask_of_item(pad)?;
+            if mask == 0 {
+                continue;
+            }
+            let offset = crate::geometry::rotate_vector(position, -at[2]);
+            let number = pad.children().get(1).and_then(Expr::atom).unwrap_or("");
+            pads.push(RegionPad {
+                label: format!("{reference}:{number}"),
+                reference: reference.clone(),
+                net: node_net(pad)
+                    .filter(|net| !net.is_empty())
+                    .map(|net| net_names.normalize(net).to_string()),
+                center: [at[0] + offset[0], at[1] + offset[1]],
+                mask,
+            });
+        }
+    }
+    Ok(pads)
+}
+
+/// The pads of other nets than `net` (normalized, as `RegionPad::net`) on
+/// layer `layer` (an index) whose
+/// centre lies in `region` [x0, y0, x1, y1]: KiCad's fill leaves them
+/// out of the pour, and the region keeps their tracks off the layer and
+/// their vias out, so they can only be reached from beyond it.
+pub(crate) fn foreign_pads_in<'a>(
+    pads: &'a [RegionPad],
+    net: &'a str,
+    layer: usize,
+    region: [f64; 4],
+) -> impl Iterator<Item = &'a RegionPad> + 'a {
+    pads.iter().filter(move |pad| {
+        pad.mask & (1 << layer) != 0
+            && pad.net.as_deref().is_some_and(|other| other != net)
+            && (region[0]..=region[2]).contains(&pad.center[0])
+            && (region[1]..=region[3]).contains(&pad.center[1])
+    })
+}
+
+/// How many pads a warning names before it says how many more.
+const NAMED_PADS: usize = 8;
+
+/// The input check of the `keep_whole` regions of `requests` on `pcb`: one
+/// warning per pour and layer whose regions hold pads of other nets on
+/// that layer, naming the pads (they would be cut off there: the region
+/// keeps their tracks and vias out). With `placed` false (a layout, which
+/// places the parts first) only a named part's own pads count, which move
+/// with it; a box and other parts' pads are judged where the board has
+/// them only when `placed`.
+pub fn keep_whole_warnings(
+    pcb: &Expr,
+    requests: &[KiCadPourRequest],
+    placed: bool,
+) -> Result<Vec<String>, String> {
+    if requests.iter().all(|request| request.keep_whole.is_empty()) {
+        return Ok(Vec::new());
+    }
+    let layers = LayerTable::from_pcb(pcb)?;
+    let pads = region_pads(pcb, &layers)?;
+    let net_names = NetNames::of(pcb);
+    let mut warnings = Vec::new();
+    for request in requests
+        .iter()
+        .filter(|request| !request.keep_whole.is_empty())
+    {
+        for layer in &request.layers {
+            let Some(index) = layers.index(layer) else {
+                continue;
+            };
+            let mut covered: Vec<&str> = Vec::new();
+            for entry in &request.keep_whole {
+                if !placed && entry.parts.is_empty() {
+                    continue;
+                }
+                for region in keep_whole_boxes(pcb, &request.net, std::slice::from_ref(entry))? {
+                    let net = net_names.normalize(&request.net);
+                    for pad in foreign_pads_in(&pads, net, index, region) {
+                        let own = entry.parts.iter().any(|pattern| {
+                            crate::board_placer::glob_matches(pattern, &pad.reference)
+                        });
+                        if (placed || own) && !covered.contains(&pad.label.as_str()) {
+                            covered.push(&pad.label);
+                        }
+                    }
+                }
+            }
+            if covered.is_empty() {
+                continue;
+            }
+            let named: Vec<&str> = covered.iter().take(NAMED_PADS).copied().collect();
+            let more = covered.len() - named.len();
+            warnings.push(format!(
+                "keep_whole of the {} pour on {layer} covers {} pad{} of other nets on that layer ({}{}): the region keeps their tracks off {layer} and their vias out, so they can only be reached from beyond it; keep the regions clear of other nets' pads (name parts on the other side, or a box), or pour another layer",
+                request.net,
+                covered.len(),
+                if covered.len() == 1 { "" } else { "s" },
+                named.join(", "),
+                if more > 0 { format!(" and {more} more") } else { String::new() },
+            ));
+        }
+    }
+    Ok(warnings)
+}
+
+/// The parts of `pcb` with at least `KEEP_WHOLE_PADS` pads, each with
+/// its pad count and the region a `keep_whole` entry naming it would
+/// cover (its box grown by the default 0.5 mm margin).
+pub(crate) fn keep_whole_parts(
+    pcb: &Expr,
+    pads: &[RegionPad],
+) -> Result<Vec<(String, usize, [f64; 4])>, String> {
+    let mut parts = Vec::new();
+    for footprint in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        let reference = footprint_reference(footprint).unwrap_or_default();
+        let count = pads.iter().filter(|pad| pad.reference == reference).count();
+        if count < KEEP_WHOLE_PADS {
+            continue;
+        }
+        if let Some(bounds) = crate::placement_constraints::part_box(footprint)? {
+            let region = [
+                bounds[0] - 0.5,
+                bounds[1] - 0.5,
+                bounds[2] + 0.5,
+                bounds[3] + 0.5,
+            ];
+            parts.push((reference, count, region));
+        }
+    }
+    Ok(parts)
+}
+
+/// Of `parts` (`keep_whole_parts`), those under which a `keep_whole`
+/// region for `net` on layer `layer` (an index) would cover no other
+/// net's pad on that layer, at most `NAMED_PARTS`, the most pads first:
+/// the verdict's pour advice names them, and none when every such region
+/// would cut pads off.
+pub(crate) fn keep_whole_candidates(
+    parts: &[(String, usize, [f64; 4])],
+    pads: &[RegionPad],
+    net: &str,
+    layer: usize,
+) -> Vec<String> {
+    let mut candidates: Vec<&(String, usize, [f64; 4])> = parts
+        .iter()
+        .filter(|(_, _, region)| foreign_pads_in(pads, net, layer, *region).next().is_none())
+        .collect();
+    candidates.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    candidates
+        .into_iter()
+        .take(NAMED_PARTS)
+        .map(|(reference, _, _)| reference.clone())
+        .collect()
+}
+
+/// A part with this many pads or more is a `keep_whole` candidate (an
+/// IC, a connector; not a capacitor).
+const KEEP_WHOLE_PADS: usize = 6;
+
+/// How many candidate parts the pour advice names.
+const NAMED_PARTS: usize = 4;
+
+/// `keep_whole_warnings` for the `add_pours` of `config` on the board
+/// `source/<board_id>.kicad_pcb`, before the run: route mode passes
+/// `placed` (the board's positions are final), a layout does not (only the
+/// named parts' own pads, which move with them).
+pub fn keep_whole_input_warnings(
+    source: &Path,
+    board_id: &str,
+    config: &KiCadBoardRouterConfig,
+    placed: bool,
+) -> Result<Vec<String>, String> {
+    if config
+        .add_pours
+        .iter()
+        .all(|request| request.keep_whole.is_empty())
+    {
+        return Ok(Vec::new());
+    }
+    let path = source.join(format!("{board_id}.kicad_pcb"));
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let pcb = crate::canonical_order::parse_board(&text)?;
+    keep_whole_warnings(&pcb, &config.add_pours, placed)
 }
