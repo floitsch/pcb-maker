@@ -89,12 +89,15 @@ pub fn enabled() -> bool {
 
 const MB: f64 = 1024.0 * 1024.0;
 
+/// A router's parts: (name, bytes, shared key: a part with a key counts
+/// once for all routers that hold it).
+pub type Parts = Vec<(&'static str, usize, Option<usize>)>;
+
 struct State {
     started: Instant,
     phase: String,
-    /// Router id -> its parts: (name, bytes, shared key: a part with a key
-    /// counts once for all routers that hold it).
-    routers: BTreeMap<u64, Vec<(&'static str, usize, Option<usize>)>>,
+    /// Router id -> its parts.
+    routers: BTreeMap<u64, Parts>,
     printed_mb: f64,
     peak: Option<Peak>,
 }
@@ -290,7 +293,7 @@ impl Drop for Token {
 
 impl Token {
     /// Registers the router's parts now.
-    pub(crate) fn update(&self, parts: Vec<(&'static str, usize, Option<usize>)>) {
+    pub(crate) fn update(&self, parts: Parts) {
         lock().routers.insert(self.0, parts);
     }
 }

@@ -530,7 +530,7 @@ impl Router {
     /// The router's parts for the memory profile (`mem_profile`): name,
     /// bytes held (capacities) and, for a part routers share (the static
     /// maps), its key.
-    pub fn memory_parts(&self) -> Vec<(&'static str, usize, Option<usize>)> {
+    pub fn memory_parts(&self) -> crate::mem_profile::Parts {
         fn bytes<T>(maps: &[Vec<T>]) -> usize {
             maps.iter()
                 .map(|map| map.capacity() * std::mem::size_of::<T>())
