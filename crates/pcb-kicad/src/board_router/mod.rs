@@ -28,10 +28,11 @@ mod tests;
 mod tools;
 
 pub(crate) use self::diff_pairs::{
-    copper_heights, finish_pairs, measure_uncoupled, plan_pairs, with_pairs, write_pair_copper,
+    finish_pairs, measure_uncoupled, plan_pairs, with_pairs, write_pair_copper,
 };
+pub(crate) use self::meander::copper_heights;
 pub(crate) use self::kept::{count_tracks, keep_existing_copper, strip_tracks};
-pub(crate) use self::lengths::{match_lengths, measure_lengths, with_lengths, write_length_patterns};
+pub(crate) use self::lengths::{match_lengths, with_lengths, write_length_patterns};
 pub(crate) use self::{attempt::*, budget::*, geometry::*, ladder::*, lower::*, memory::*};
 pub use self::{
     config::*,

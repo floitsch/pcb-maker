@@ -7,8 +7,9 @@
 //! router as `KiCadLengthRule`s: per rule the nets it holds for and, per
 //! net, the layers (and whether the vias) whose copper KiCad counts for it.
 //! After the route (`match_lengths`, when an attempt is written, after the
-//! differential pairs), each net's length is measured from its copper
-//! (tracks, vias at the stackup's height: `meander::copper_length_on`); a
+//! differential pairs), each net's length is measured from its copper as
+//! KiCad counts it (`kicad_length`: tracks, the pads' insides as straight
+//! lines, vias at the stackup's height); a
 //! net shorter than a `length` minimum, or further than a `skew` maximum
 //! below the longest net of its rule's group, gets a meander on a straight
 //! track of its route: bumps of at most `MAX_AMPLITUDE`, their height
@@ -18,12 +19,11 @@
 //! the route's and are written as a KiCad tuning pattern
 //! (`write_length_patterns`). A `length` maximum is not kept by the search:
 //! a net longer than it is reported. The verdict's `lengths` lists per rule
-//! and net the length from the written board (`measure_lengths`), the
-//! target, the bounds and what the meander added.
+//! and net the length as the attempt writes it, the target, the bounds and
+//! what the meander added.
 
 use super::meander::{
-    Point, Tuned, Tuning, bump_adds, bump_height, bumps, copper_length_on, polyline_length,
-    tuning_pattern_expr,
+    Point, Tuned, Tuning, bump_adds, bump_height, bumps, polyline_length, tuning_pattern_expr,
 };
 use super::*;
 use pcb_router as core;
@@ -80,6 +80,9 @@ pub(crate) struct LengthPattern {
 const MAX_AMPLITUDE: f64 = 1.0;
 /// Other copper within this of a meander is checked with it.
 const CHECK_REACH: f64 = 2.0;
+/// Tracks tried per net, and placements along one track.
+const MAX_TRACKS: usize = 200;
+const POSITIONS: usize = 12;
 /// A length short of its target by less than this needs no meander.
 const ENOUGH: f64 = 0.005;
 /// A length this close to a bound is on it.
@@ -148,9 +151,8 @@ fn length_target(rule: &KiCadLengthRule) -> (f64, Option<f64>, Option<f64>) {
 /// The board's copper of each net that is not the route's (the board's
 /// own tracks and vias, the pairs' copper: obstacles `existing track` and
 /// `existing via`), as tracks (layer, start, end) and vias.
-fn fixed_copper(board: &core::Board) -> BTreeMap<core::NetId, (Vec<(usize, Point, Point)>, Vec<Point>)> {
-    let mut copper: BTreeMap<core::NetId, (Vec<(usize, Point, Point)>, Vec<Point>)> =
-        BTreeMap::new();
+fn fixed_copper(board: &core::Board) -> BTreeMap<core::NetId, (Vec<Track>, Vec<Point>)> {
+    let mut copper: BTreeMap<core::NetId, (Vec<Track>, Vec<Point>)> = BTreeMap::new();
     for obstacle in &board.obstacles {
         let Some(net) = obstacle.net else { continue };
         match (&obstacle.shape, obstacle.label.as_str()) {
@@ -169,12 +171,114 @@ fn fixed_copper(board: &core::Board) -> BTreeMap<core::NetId, (Vec<(usize, Point
     copper
 }
 
+type Track = (usize, Point, Point);
+
+/// A pad of a net: its layers, its copper and its position (where KiCad
+/// starts the net's length).
+struct Pad<'a> {
+    layers: core::LayerMask,
+    shape: &'a core::Shape,
+    at: Point,
+}
+
+/// A net's length as KiCad counts it for a rule (KiCad 10's length
+/// calculation, as kicad-cli 10.0.7 measures KiCad's QA board
+/// length_calculations): its tracks on the layers the rule counts
+/// (`counts`), where the tracks run inside a pad that they leave once the
+/// straight line from the pad's position to where they leave it instead,
+/// and with `vias` each via at the height between the outermost layers of
+/// what it joins (the tracks that end on it, the pads it lies in).
+fn kicad_length(
+    tracks: &[Track],
+    vias: &[Point],
+    pads: &[Pad],
+    heights: &[f64],
+    counts: impl Fn(usize) -> bool,
+) -> f64 {
+    let mut length = 0.0;
+    for &(layer, start, end) in tracks {
+        if counts(layer) {
+            length += core::geometry::distance(start, end);
+        }
+    }
+    // Inside the pads.
+    for pad in pads {
+        for layer in (0..32).filter(|&layer| pad.layers & (1 << layer) != 0 && counts(layer)) {
+            let mut inside = 0.0;
+            let mut exits: Vec<Point> = Vec::new();
+            for &(_, start, end) in tracks.iter().filter(|track| track.0 == layer) {
+                let (a, b) = (pad.shape.contains(start), pad.shape.contains(end));
+                match (a, b) {
+                    (true, true) => inside += core::geometry::distance(start, end),
+                    (true, false) | (false, true) => {
+                        let (from, to) = if a { (start, end) } else { (end, start) };
+                        // Bisected to where the track leaves the pad.
+                        let (mut low, mut high) = (0.0, 1.0);
+                        for _ in 0..40 {
+                            let middle = (low + high) / 2.0;
+                            let point = [
+                                from[0] + (to[0] - from[0]) * middle,
+                                from[1] + (to[1] - from[1]) * middle,
+                            ];
+                            if pad.shape.contains(point) {
+                                low = middle;
+                            } else {
+                                high = middle;
+                            }
+                        }
+                        let exit = [
+                            from[0] + (to[0] - from[0]) * low,
+                            from[1] + (to[1] - from[1]) * low,
+                        ];
+                        inside += core::geometry::distance(from, exit);
+                        exits.push(exit);
+                    }
+                    (false, false) => {}
+                }
+            }
+            if exits.len() == 1 {
+                let direct = core::geometry::distance(pad.at, exits[0]);
+                if direct < inside {
+                    length -= inside - direct;
+                }
+            }
+        }
+    }
+    for &via in vias {
+        let mut low = f64::INFINITY;
+        let mut high = f64::NEG_INFINITY;
+        let mut reach = |layer: usize| {
+            if let Some(&z) = heights.get(layer) {
+                low = low.min(z);
+                high = high.max(z);
+            }
+        };
+        for &(layer, start, end) in tracks {
+            if core::geometry::distance(start, via) < 1.0e-4
+                || core::geometry::distance(end, via) < 1.0e-4
+            {
+                reach(layer);
+            }
+        }
+        for pad in pads.iter().filter(|pad| pad.shape.contains(via)) {
+            for layer in (0..32).filter(|&layer| pad.layers & (1 << layer) != 0) {
+                reach(layer);
+            }
+        }
+        if high > low {
+            length += high - low;
+        }
+    }
+    length
+}
+
 /// After the route, before the attempt is written: the meanders the
 /// length and skew rules ask for, added to the routes (their tracks), and
-/// per rule and net what came of it (lengths from the board as routed; the
-/// written board's in `measure_lengths`). `coupled`: the nets of pairs
-/// with a coupled link, which the pairs' own pass matches (a meander on
-/// one track of a coupled run would part the pair).
+/// per rule and net what came of it: the lengths of the routes so
+/// finished, the bounds (a skew rule's from the longest net of its group),
+/// whether each lies within them. `coupled`: the nets of pairs with a
+/// coupled link, which the pairs' own pass matches (a meander on one track
+/// of a coupled run would part the pair).
 pub(crate) fn match_lengths(
     board: &core::Board,
     result: &mut core::RoutingResult,
@@ -193,48 +297,58 @@ pub(crate) fn match_lengths(
         .map(|(id, net)| (net.name.as_str(), id as core::NetId))
         .collect();
     let fixed = fixed_copper(board);
+    let pads_of = |id: core::NetId| -> Vec<Pad> {
+        let mut seen = BTreeSet::new();
+        board.nets[id as usize]
+            .terminals
+            .iter()
+            .filter(|terminal| seen.insert(terminal.pad))
+            .filter_map(|terminal| {
+                let obstacle = board.obstacles.get(terminal.pad)?;
+                Some(Pad {
+                    layers: obstacle.layers,
+                    shape: &obstacle.shape,
+                    at: terminal.anchor,
+                })
+            })
+            .collect()
+    };
     let mut patterns: Vec<LengthPattern> = Vec::new();
     let mut report: Vec<KiCadNetLength> = Vec::new();
-    // Length rules first: a skew then compares the lengths they made.
-    let mut order: Vec<&KiCadLengthRule> = config.length_rules.iter().collect();
-    order.sort_by_key(|rule| rule.constraint != "length");
-    for rule in order {
-        let counted: Vec<Vec<bool>> = rule
-            .nets
+    // Per rule's member: the layers it counts, by the router's index.
+    let counted_of = |member: &KiCadLengthMember| -> Vec<bool> {
+        layer_names
             .iter()
-            .map(|member| {
-                layer_names
-                    .iter()
-                    .map(|name| member.layers.iter().any(|layer| layer == name))
-                    .collect()
-            })
-            .collect();
-        let length_of = |position: usize, routes: &[core::NetRoute]| -> f64 {
-            let member = &rule.nets[position];
-            let Some(&id) = ids.get(member.net.as_str()) else {
-                return 0.0;
-            };
-            let route = &routes[id as usize];
-            let mut tracks: Vec<(usize, Point, Point)> = route
-                .segments
-                .iter()
-                .map(|segment| (segment.layer, segment.start, segment.end))
-                .collect();
-            let mut vias: Vec<Point> = route.vias.iter().map(|via| via.at).collect();
-            if let Some((own_tracks, own_vias)) = fixed.get(&id) {
-                tracks.extend(own_tracks.iter().copied());
-                vias.extend(own_vias.iter().copied());
-            }
-            if !member.vias {
-                vias.clear();
-            }
-            copper_length_on(&tracks, &vias, heights, |layer| {
-                counted[position].get(layer).copied().unwrap_or(false)
-            })
+            .map(|name| member.layers.iter().any(|layer| layer == name))
+            .collect()
+    };
+    let length_of = |member: &KiCadLengthMember, routes: &[core::NetRoute]| -> f64 {
+        let Some(&id) = ids.get(member.net.as_str()) else {
+            return 0.0;
         };
-        // The groups compared: a length rule's nets one by one, a skew
-        // rule's all together (or each differential pair's two nets).
-        let groups: Vec<Vec<usize>> = if rule.constraint == "length" {
+        let route = &routes[id as usize];
+        let mut tracks: Vec<Track> = route
+            .segments
+            .iter()
+            .map(|segment| (segment.layer, segment.start, segment.end))
+            .collect();
+        let mut vias: Vec<Point> = route.vias.iter().map(|via| via.at).collect();
+        if let Some((own_tracks, own_vias)) = fixed.get(&id) {
+            tracks.extend(own_tracks.iter().copied());
+            vias.extend(own_vias.iter().copied());
+        }
+        if !member.vias {
+            vias.clear();
+        }
+        let counted = counted_of(member);
+        kicad_length(&tracks, &vias, &pads_of(id), heights, |layer| {
+            counted.get(layer).copied().unwrap_or(false)
+        })
+    };
+    // The groups a rule compares: a length rule's nets one by one, a skew
+    // rule's all together (or each differential pair's two nets).
+    let groups_of = |rule: &KiCadLengthRule| -> Vec<Vec<usize>> {
+        if rule.constraint == "length" {
             (0..rule.nets.len()).map(|position| vec![position]).collect()
         } else if rule.within_diff_pairs {
             let mut by_base: BTreeMap<String, Vec<usize>> = BTreeMap::new();
@@ -243,26 +357,38 @@ pub(crate) fn match_lengths(
                     by_base.entry(base).or_default().push(position);
                 }
             }
-            by_base.into_values().filter(|group| group.len() == 2).collect()
+            by_base
+                .into_values()
+                .filter(|group| group.len() == 2)
+                .collect()
         } else {
             vec![(0..rule.nets.len()).collect()]
-        };
-        for group in groups {
+        }
+    };
+    // The target and bounds of a group with these lengths.
+    let bounds_of = |rule: &KiCadLengthRule, lengths: &[f64]| {
+        if rule.constraint == "length" {
+            length_target(rule)
+        } else {
+            let longest = lengths.iter().copied().fold(0.0, f64::max);
+            let tolerance = rule.max.unwrap_or(0.0);
+            (
+                longest - tolerance / 2.0,
+                Some(longest - tolerance),
+                Some(longest),
+            )
+        }
+    };
+    // Length rules first: a skew then compares the lengths they made.
+    let mut order: Vec<&KiCadLengthRule> = config.length_rules.iter().collect();
+    order.sort_by_key(|rule| rule.constraint != "length");
+    for rule in order {
+        for group in groups_of(rule) {
             let lengths: Vec<f64> = group
                 .iter()
-                .map(|&position| length_of(position, &result.routes))
+                .map(|&position| length_of(&rule.nets[position], &result.routes))
                 .collect();
-            let longest = lengths.iter().copied().fold(0.0, f64::max);
-            let (target, min, max) = if rule.constraint == "length" {
-                length_target(rule)
-            } else {
-                let tolerance = rule.max.unwrap_or(0.0);
-                (
-                    longest - tolerance / 2.0,
-                    Some(longest - tolerance),
-                    Some(longest),
-                )
-            };
+            let (target, min, max) = bounds_of(rule, &lengths);
             for (&position, &length) in group.iter().zip(&lengths) {
                 let member = &rule.nets[position];
                 let mut entry = KiCadNetLength {
@@ -292,26 +418,56 @@ pub(crate) fn match_lengths(
                         &mut result.routes,
                         id,
                         need,
-                        &counted[position],
+                        &counted_of(member),
                         [target, min.unwrap_or(0.0), max.unwrap_or(f64::INFINITY)],
                     );
                     entry.meander_mm = added;
-                    entry.length_mm = length + added;
                     patterns.extend(made);
                     if need - added > ENOUGH {
                         entry.note = format!(
-                            "no straight track with room for all of it ({:.3} of {:.3} mm added)",
-                            added, need
+                            "no straight track with room for all of it ({added:.3} of {need:.3} mm added)"
                         );
                     }
                 }
-                if max.is_some_and(|max| length > max + ON_BOUND) && rule.constraint == "length"
-                {
-                    entry.note =
-                        "longer than the maximum: the search does not bound a net's length"
-                            .into();
-                }
                 report.push(entry);
+            }
+        }
+    }
+    // The lengths as the routes are written, a skew rule's bounds from its
+    // group's longest net then.
+    for rule in &config.length_rules {
+        for group in groups_of(rule) {
+            let lengths: Vec<f64> = group
+                .iter()
+                .map(|&position| length_of(&rule.nets[position], &result.routes))
+                .collect();
+            let (target, min, max) = bounds_of(rule, &lengths);
+            for (&position, &length) in group.iter().zip(&lengths) {
+                let net = &rule.nets[position].net;
+                let Some(entry) = report.iter_mut().find(|entry| {
+                    &entry.net == net
+                        && entry.rule == rule.rule
+                        && entry.constraint == rule.constraint
+                }) else {
+                    continue;
+                };
+                entry.length_mm = length;
+                entry.target_mm = target;
+                entry.min_mm = min;
+                entry.max_mm = max;
+                entry.within = length > 0.0
+                    && min.is_none_or(|min| length >= min - ON_BOUND)
+                    && max.is_none_or(|max| length <= max + ON_BOUND);
+                if !entry.within
+                    && entry.note.is_empty()
+                    && max.is_some_and(|max| length > max + ON_BOUND)
+                {
+                    entry.note = if rule.constraint == "length" {
+                        "longer than the maximum: the search does not bound a net's length".into()
+                    } else {
+                        "longer than the group's longest less the skew".into()
+                    };
+                }
             }
         }
     }
@@ -373,9 +529,12 @@ fn meander_net(
         .filter(|obstacle| obstacle.shape.aabb().intersects(bounds))
         .cloned()
         .collect();
-    for segment in candidates {
+    // A work list: what is left of a track a meander split is tried again.
+    let mut tries = 0;
+    while let Some(segment) = (!candidates.is_empty()).then(|| candidates.remove(0)) {
         let remaining = need - added;
-        if remaining < ENOUGH {
+        tries += 1;
+        if remaining < ENOUGH || tries > MAX_TRACKS {
             break;
         }
         let w = segment.width;
@@ -386,61 +545,97 @@ fn meander_net(
         let along = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
         let left = [-along[1], along[0]];
         let top = MAX_AMPLITUDE.max(3.0 * w);
-        'placed: for cap in [top, top / 2.0, top / 4.0] {
-            let room = ((length - 2.0 * margin) / spacing + 1.0) / 2.0;
-            if room < 1.0 {
-                break;
-            }
-            let count = ((remaining / bump_adds(cap, spacing)).ceil().max(1.0) as usize)
+        let room = ((length - 2.0 * margin) / spacing + 1.0) / 2.0;
+        if room < 1.0 {
+            continue;
+        }
+        let mut placed: Option<(Vec<Point>, f64)> = None;
+        'search: for cap in [top, top / 2.0, top / 4.0] {
+            let most = ((remaining / bump_adds(cap, spacing)).ceil().max(1.0) as usize)
                 .min(room.floor() as usize);
-            let want = remaining.min(count as f64 * bump_adds(cap, spacing));
-            let height = bump_height(want, count, spacing, cap);
-            let span = (2 * count - 1) as f64 * spacing;
-            for side in [1.0, -1.0] {
-                let outward = [left[0] * side, left[1] * side];
-                for from in [margin, (length - span) / 2.0, length - margin - span] {
-                    let points = bumps((a, b), outward, from, count, height, spacing);
-                    let (first, last) = (points[0], points[points.len() - 1]);
-                    if joined_between(board, &routes[net as usize], net, &segment, first, last) {
-                        continue;
-                    }
-                    let pieces: Vec<(Point, Point)> =
-                        points.windows(2).map(|pair| (pair[0], pair[1])).collect();
-                    if refused(&near, routes, net, segment.layer, w, &pieces) {
-                        continue;
-                    }
-                    // The track splits around the meander.
-                    let route = &mut routes[net as usize];
-                    let Some(position) = route.segments.iter().position(|other| {
-                        other.layer == segment.layer && other.start == a && other.end == b
-                    }) else {
-                        continue;
-                    };
-                    let piece = |start: Point, end: Point| core::Segment {
-                        layer: segment.layer,
-                        start,
-                        end,
-                        width: w,
-                    };
-                    let mut replaced = vec![piece(a, first)];
-                    replaced.extend(pieces.iter().map(|&(start, end)| piece(start, end)));
-                    replaced.push(piece(last, b));
-                    route.segments.splice(position..=position, replaced);
-                    let gained = polyline_length(&points) - core::geometry::distance(first, last);
-                    added += gained;
-                    patterns.push(LengthPattern {
-                        net,
-                        width: w,
-                        layer: segment.layer,
-                        points,
-                        amplitude: height,
-                        spacing,
-                        added: gained,
-                        target,
-                    });
-                    break 'placed;
+            // As many bumps as hold the length, else fewer (the rest on
+            // other tracks).
+            let mut counts = vec![most];
+            for fewer in [most / 2, most / 4, 1] {
+                if fewer >= 1 && !counts.contains(&fewer) {
+                    counts.push(fewer);
                 }
             }
+            for count in counts {
+                let want = remaining.min(count as f64 * bump_adds(cap, spacing));
+                let height = bump_height(want, count, spacing, cap);
+                let span = (2 * count - 1) as f64 * spacing;
+                let free = length - 2.0 * margin - span;
+                // Along the track: its start, its end, its middle, and
+                // evenly between.
+                let mut froms = vec![margin, margin + free, margin + free / 2.0];
+                let steps = ((free / spacing).floor() as usize).min(POSITIONS);
+                for step in 1..steps {
+                    froms.push(margin + free * step as f64 / steps as f64);
+                }
+                for side in [1.0, -1.0] {
+                    let outward = [left[0] * side, left[1] * side];
+                    for &from in &froms {
+                        let points = bumps((a, b), outward, from, count, height, spacing);
+                        let (first, last) = (points[0], points[points.len() - 1]);
+                        if joined_between(board, &routes[net as usize], net, &segment, first, last)
+                        {
+                            continue;
+                        }
+                        let pieces: Vec<(Point, Point)> =
+                            points.windows(2).map(|pair| (pair[0], pair[1])).collect();
+                        if refused(&near, routes, net, segment.layer, w, &pieces) {
+                            continue;
+                        }
+                        placed = Some((points, height));
+                        break 'search;
+                    }
+                }
+            }
+        }
+        let Some((points, height)) = placed else {
+            continue;
+        };
+        // The track splits around the meander.
+        let route = &mut routes[net as usize];
+        let Some(position) = route
+            .segments
+            .iter()
+            .position(|other| other.layer == segment.layer && other.start == a && other.end == b)
+        else {
+            continue;
+        };
+        let (first, last) = (points[0], points[points.len() - 1]);
+        let piece = |start: Point, end: Point| core::Segment {
+            layer: segment.layer,
+            start,
+            end,
+            width: w,
+        };
+        let mut replaced = vec![piece(a, first)];
+        replaced.extend(points.windows(2).map(|pair| piece(pair[0], pair[1])));
+        replaced.push(piece(last, b));
+        route.segments.splice(position..=position, replaced);
+        let gained = polyline_length(&points) - core::geometry::distance(first, last);
+        added += gained;
+        patterns.push(LengthPattern {
+            net,
+            width: w,
+            layer: segment.layer,
+            points,
+            amplitude: height,
+            spacing,
+            added: gained,
+            target,
+        });
+        // What is left of the track either side, the longest first.
+        for rest in [piece(a, first), piece(last, b)] {
+            let length = core::geometry::distance(rest.start, rest.end);
+            let at = candidates
+                .iter()
+                .position(|other| core::geometry::distance(other.start, other.end) < length)
+                .unwrap_or(candidates.len());
+            candidates.insert(at, rest);
         }
     }
     (added, patterns)
@@ -591,111 +786,6 @@ pub(crate) fn write_length_patterns(
     Ok(())
 }
 
-/// After the route: each rule's nets' lengths from the written board
-/// (`lengths`, as `match_lengths` left them with their meanders and notes),
-/// the bounds of a skew rule from its group's longest net measured, and
-/// whether each lies within them.
-pub(crate) fn measure_lengths(
-    lengths: &mut [KiCadNetLength],
-    config: &KiCadBoardRouterConfig,
-    pcb: &Expr,
-) {
-    if lengths.is_empty() {
-        return;
-    }
-    let by_name = copper_heights(pcb);
-    let names: Vec<&String> = by_name.keys().collect();
-    let heights: Vec<f64> = by_name.values().copied().collect();
-    let mut copper: BTreeMap<String, (Vec<(usize, Point, Point)>, Vec<Point>)> = BTreeMap::new();
-    for item in pcb.children() {
-        let kind = item.head();
-        if !matches!(kind, Some("segment" | "arc" | "via")) {
-            continue;
-        }
-        let Some(net) = node_net(item) else { continue };
-        let net = crate::kicad_nets::normalize_net(&unescape(net)).to_string();
-        if kind == Some("via") {
-            if let Ok(at) = form_xy(item, "at") {
-                copper.entry(net).or_default().1.push(at);
-            }
-            continue;
-        }
-        let layer = form_atom(item, "layer", 1)
-            .and_then(|layer| names.iter().position(|name| name.as_str() == layer))
-            .unwrap_or(usize::MAX);
-        let (Ok(start), Ok(end)) = (form_xy(item, "start"), form_xy(item, "end")) else {
-            continue;
-        };
-        let entry = copper.entry(net).or_default();
-        match form_xy(item, "mid") {
-            Ok(mid) if kind == Some("arc") => {
-                let points = crate::outline::arc_points(start, mid, end);
-                for pair in points.windows(2) {
-                    entry.0.push((layer, pair[0], pair[1]));
-                }
-            }
-            _ => entry.0.push((layer, start, end)),
-        }
-    }
-    for rule in &config.length_rules {
-        let measured: Vec<(usize, f64)> = lengths
-            .iter()
-            .enumerate()
-            .filter(|(_, entry)| entry.rule == rule.rule && entry.constraint == rule.constraint)
-            .filter_map(|(index, entry)| {
-                let member = rule.nets.iter().find(|member| member.net == entry.net)?;
-                let length = copper.get(&entry.net).map_or(0.0, |(tracks, vias)| {
-                    let vias: &[Point] = if member.vias { vias } else { &[] };
-                    copper_length_on(tracks, vias, &heights, |layer| {
-                        names
-                            .get(layer)
-                            .is_some_and(|name| member.layers.iter().any(|ruled| ruled == *name))
-                    })
-                });
-                Some((index, length))
-            })
-            .collect();
-        for &(index, length) in &measured {
-            lengths[index].length_mm = length;
-        }
-        if rule.constraint == "skew" {
-            // The group's longest, as measured (each pair's with
-            // `within_diff_pairs`).
-            let group_of = |net: &str| {
-                if rule.within_diff_pairs {
-                    crate::project_rules::diff_pair_of(net).map(|(_, base, _)| base)
-                } else {
-                    Some(String::new())
-                }
-            };
-            let mut longest: BTreeMap<String, f64> = BTreeMap::new();
-            for &(index, length) in &measured {
-                if let Some(group) = group_of(&lengths[index].net) {
-                    let value = longest.entry(group).or_insert(0.0);
-                    *value = value.max(length);
-                }
-            }
-            let tolerance = rule.max.unwrap_or(0.0);
-            for &(index, _) in &measured {
-                if let Some(top) = group_of(&lengths[index].net).and_then(|g| longest.get(&g)) {
-                    lengths[index].min_mm = Some(top - tolerance);
-                    lengths[index].max_mm = Some(*top);
-                    lengths[index].target_mm = top - tolerance / 2.0;
-                }
-            }
-        }
-    }
-    for entry in lengths.iter_mut() {
-        entry.within = entry.length_mm > 0.0
-            && entry
-                .min_mm
-                .is_none_or(|min| entry.length_mm >= min - ON_BOUND)
-            && entry
-                .max_mm
-                .is_none_or(|max| entry.length_mm <= max + ON_BOUND);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -723,6 +813,60 @@ mod tests {
             layers: vec!["F.Cu".into(), "B.Cu".into()],
             vias: true,
         }
+    }
+
+    /// KiCad's QA board length_calculations (kicad-cli 10.0.7 holds each
+    /// case's net within 1 µm of its rule): a via in an SMD pad counts from
+    /// the pad's layer, a track's wander inside a pad counts as the straight
+    /// line from the pad's position to where it leaves.
+    #[test]
+    fn lengths_count_as_kicads_qa_board_measures_them() {
+        // Copper 0.035 mm, dielectrics 5 mm: F.Cu, In1.Cu, In2.Cu, B.Cu.
+        let heights = [0.0, 5.0525, 10.0875, 15.14];
+        let all = |_: usize| true;
+        let pad_shape = core::Shape::rectangle([0.0, 0.0], [0.5, 0.5], 0.0);
+        let pad = Pad {
+            layers: 1,
+            shape: &pad_shape,
+            at: [0.0, 0.0],
+        };
+        // CASE_2: the pad on F.Cu, a via in it, 13.335 mm on B.Cu.
+        let tracks = [(3, [0.0, 0.0], [13.335, 0.0])];
+        let length = kicad_length(&tracks, &[[0.0, 0.0]], std::slice::from_ref(&pad), &heights, all);
+        assert!((length - 28.475).abs() < 1.0e-9, "{length}");
+        // CASE_7 and CASE_8: F.Cu, In1.Cu, In2.Cu and back to F.Cu (or on
+        // to B.Cu), a via at each change.
+        let path = |last: usize| {
+            [
+                (0, [0.0, 0.0], [3.0, 0.0]),
+                (1, [3.0, 0.0], [6.0, 0.0]),
+                (2, [6.0, 0.0], [9.0, 0.0]),
+                (last, [9.0, 0.0], [13.335, 0.0]),
+            ]
+        };
+        let vias = [[3.0, 0.0], [6.0, 0.0], [9.0, 0.0]];
+        let back = kicad_length(&path(0), &vias, &[], &heights, all);
+        assert!((back - 33.51).abs() < 1.0e-9, "{back}");
+        let through = kicad_length(&path(3), &vias, &[], &heights, all);
+        assert!((through - 28.475).abs() < 1.0e-9, "{through}");
+        // CASE_5: into a 1.025 x 1.4 mm pad's centre by a jog: 13.6942 mm
+        // of track, 13.547 to KiCad (whose pad is rounded: within 5 µm).
+        let pad_shape = core::Shape::rectangle([135.636, 70.485], [0.5125, 0.7], 0.0);
+        let pad = Pad {
+            layers: 1,
+            shape: &pad_shape,
+            at: [135.636, 70.485],
+        };
+        let tracks = [
+            (0, [135.382, 69.977], [122.301, 69.977]),
+            (0, [135.636, 70.231], [135.382, 69.977]),
+            (0, [135.636, 70.485], [135.636, 70.231]),
+        ];
+        let length = kicad_length(&tracks, &[], std::slice::from_ref(&pad), &heights, all);
+        assert!((length - 13.547).abs() < 0.005, "{length}");
+        // A rule on some layers only counts their tracks.
+        let inner = kicad_length(&path(0), &[], &[], &heights, |layer| layer == 1);
+        assert!((inner - 3.0).abs() < 1.0e-9);
     }
 
     #[test]
@@ -757,7 +901,7 @@ mod tests {
         let board = lower(&pcb, &config, true).unwrap().board;
         let mut result = core::route(&board, &core_config(&config));
         let names: Vec<String> = vec!["F.Cu".into(), "B.Cu".into()];
-        let (patterns, mut lengths) =
+        let (patterns, lengths) =
             match_lengths(&board, &mut result, &config, &[0.0, 1.6], &names, &BTreeSet::new());
         assert_eq!(lengths.len(), 3, "{lengths:?}");
         // /A: from about 30 mm to the middle of its bounds; then /B to
@@ -801,7 +945,6 @@ mod tests {
                 assert!(uuids.contains(member.atom().unwrap()));
             }
         }
-        measure_lengths(&mut lengths, &config, &pcb);
         assert!(lengths.iter().all(|entry| entry.within), "{lengths:?}");
         // Off, nothing changes.
         let off = KiCadBoardRouterConfig {

@@ -271,12 +271,6 @@ pub fn route_kicad_board(
         );
     }
     if !result.lengths.is_empty() {
-        let board = output_directory.join(format!("{board_id}.kicad_pcb"));
-        if let Ok(text) = fs::read_to_string(&board)
-            && let Ok(pcb) = parse(&text)
-        {
-            measure_lengths(&mut result.lengths, config, &pcb);
-        }
         let within = result.lengths.iter().filter(|entry| entry.within).count();
         let meanders: f64 = result.lengths.iter().map(|entry| entry.meander_mm).sum();
         eprintln!(

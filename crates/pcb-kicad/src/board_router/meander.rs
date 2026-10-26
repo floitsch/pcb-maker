@@ -105,20 +105,8 @@ pub(crate) fn copper_length(
     vias: &[Point],
     heights: &[f64],
 ) -> f64 {
-    copper_length_on(tracks, vias, heights, |_| true)
-}
-
-/// `copper_length` of the tracks on the layers `counts` holds for (the
-/// vias' heights still from every track; pass no vias to count none).
-pub(crate) fn copper_length_on(
-    tracks: &[(usize, Point, Point)],
-    vias: &[Point],
-    heights: &[f64],
-    counts: impl Fn(usize) -> bool,
-) -> f64 {
     let along: f64 = tracks
         .iter()
-        .filter(|&&(layer, ..)| counts(layer))
         .map(|&(_, start, end)| core::geometry::distance(start, end))
         .sum();
     let through: f64 = vias
@@ -227,4 +215,84 @@ pub(crate) fn tuning_pattern_expr(meander: &Tuned, layer: &str, members: Vec<Exp
     }
     items.push(form("members", members));
     form("generated", items)
+}
+
+/// The copper layers' heights by name (millimetres from the board's top),
+/// as KiCad's length with the stackup's height measures a via between two
+/// of them (kicad-cli 10.0.7 on KiCad's QA board length_calculations: a
+/// through via from F.Cu to B.Cu counts the whole stack, copper included;
+/// to an inner layer, to its middle): the outer copper layers at the
+/// board's two faces, each inner one at its middle, from the board's
+/// stackup (`setup`'s `stackup`, a dielectric's sublayers summed), else
+/// its thickness (`general`, 1.6 mm if none) spread evenly over the
+/// copper layers it declares. A via's length is the height between the
+/// layers it joins.
+pub(crate) fn copper_heights(pcb: &Expr) -> BTreeMap<String, f64> {
+    let mut heights = BTreeMap::new();
+    if let Some(stackup) = pcb.child("setup").and_then(|setup| setup.child("stackup")) {
+        let mut z = 0.0;
+        // Per copper layer: its name, top and thickness.
+        let mut copper: Vec<(String, f64, f64)> = Vec::new();
+        for layer in stackup
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("layer"))
+        {
+            let name = layer.children().get(1).and_then(Expr::atom).unwrap_or("");
+            // A dielectric's sublayers (`addsublayer`) each have their own.
+            let thickness: f64 = layer
+                .children()
+                .iter()
+                .filter(|item| item.head() == Some("thickness"))
+                .filter_map(|item| item.children().get(1).and_then(Expr::atom))
+                .filter_map(|value| value.parse::<f64>().ok())
+                .sum();
+            let is_copper = layer
+                .child("type")
+                .and_then(|kind| kind.children().get(1))
+                .and_then(Expr::atom)
+                == Some("copper");
+            if is_copper {
+                copper.push((name.to_string(), z, thickness));
+            }
+            z += thickness;
+        }
+        let last = copper.len().saturating_sub(1);
+        for (index, (name, top, thickness)) in copper.into_iter().enumerate() {
+            let at = if index == 0 {
+                top
+            } else if index == last {
+                top + thickness
+            } else {
+                top + thickness / 2.0
+            };
+            heights.insert(name, at);
+        }
+    }
+    if heights.len() >= 2 {
+        return heights;
+    }
+    let thickness = pcb
+        .child("general")
+        .and_then(|general| form_f64(general, "thickness", 1).ok())
+        .unwrap_or(1.6);
+    let names: Vec<String> = pcb
+        .child("layers")
+        .map(|layers| {
+            layers
+                .children()
+                .iter()
+                .filter_map(|layer| {
+                    let name = layer.children().get(1).and_then(Expr::atom)?;
+                    name.ends_with(".Cu").then(|| name.to_string())
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let last = names.len().saturating_sub(1).max(1) as f64;
+    names
+        .into_iter()
+        .enumerate()
+        .map(|(index, name)| (name, thickness * index as f64 / last))
+        .collect()
 }

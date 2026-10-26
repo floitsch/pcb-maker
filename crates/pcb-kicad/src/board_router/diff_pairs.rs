@@ -23,7 +23,9 @@
 //! end) is routed for the pair's nets with everything else kept (the
 //! *fallback*).
 
-use super::meander::{Tuned, Tuning, bumps, copper_length, polyline_length, tuning_pattern_expr};
+use super::meander::{
+    Tuned, Tuning, bumps, copper_heights, copper_length, polyline_length, tuning_pattern_expr,
+};
 use super::*;
 use pcb_router as core;
 
@@ -4258,61 +4260,6 @@ pub(crate) fn with_pairs(config: &KiCadBoardRouterConfig) -> KiCadBoardRouterCon
     copy
 }
 
-/// The copper layers' heights by name (millimetres from the board's top,
-/// at each layer's middle): the board's stackup (`setup`'s `stackup`), else
-/// its thickness (`general`, 1.6 mm if none) spread evenly over the copper
-/// layers it declares. A via's length is the height between the layers it
-/// joins (KiCad's length with the stackup's height).
-pub(crate) fn copper_heights(pcb: &Expr) -> BTreeMap<String, f64> {
-    let mut heights = BTreeMap::new();
-    if let Some(stackup) = pcb.child("setup").and_then(|setup| setup.child("stackup")) {
-        let mut z = 0.0;
-        for layer in stackup
-            .children()
-            .iter()
-            .filter(|item| item.head() == Some("layer"))
-        {
-            let name = layer.children().get(1).and_then(Expr::atom).unwrap_or("");
-            let thickness = form_f64(layer, "thickness", 1).unwrap_or(0.0);
-            let copper = layer
-                .child("type")
-                .and_then(|kind| kind.children().get(1))
-                .and_then(Expr::atom)
-                == Some("copper");
-            if copper {
-                heights.insert(name.to_string(), z + thickness / 2.0);
-            }
-            z += thickness;
-        }
-    }
-    if heights.len() >= 2 {
-        return heights;
-    }
-    let thickness = pcb
-        .child("general")
-        .and_then(|general| form_f64(general, "thickness", 1).ok())
-        .unwrap_or(1.6);
-    let names: Vec<String> = pcb
-        .child("layers")
-        .map(|layers| {
-            layers
-                .children()
-                .iter()
-                .filter_map(|layer| {
-                    let name = layer.children().get(1).and_then(Expr::atom)?;
-                    name.ends_with(".Cu").then(|| name.to_string())
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    let last = names.len().saturating_sub(1).max(1) as f64;
-    names
-        .into_iter()
-        .enumerate()
-        .map(|(index, name)| (name, thickness * index as f64 / last))
-        .collect()
-}
-
 /// After the route: each coupled pair's uncoupled length (the longer net's
 /// tracks less the coupled run), from the routed board.
 pub(crate) fn measure_uncoupled(report: &mut KiCadDiffPairs, pcb: &Expr) {
@@ -4868,9 +4815,11 @@ mod tests {
   (segment (start 0 0.4) (end 15 0.4) (width 0.2) (layer "F.Cu") (net "/D-")))"#,
         )
         .unwrap();
+        // A via from F.Cu to B.Cu counts the whole stack, its copper
+        // included (KiCad 10, `copper_heights`).
         let heights = copper_heights(&pcb);
         assert!(
-            (heights["B.Cu"] - heights["F.Cu"] - 1.535).abs() < 1.0e-9,
+            (heights["B.Cu"] - heights["F.Cu"] - 1.57).abs() < 1.0e-9,
             "{heights:?}"
         );
         let mut report = KiCadDiffPairs {
@@ -4886,9 +4835,9 @@ mod tests {
         };
         measure_uncoupled(&mut report, &pcb);
         let skew = &report.skews[0];
-        assert!((skew.lengths_mm[0] - 16.535).abs() < 1.0e-9, "{skew:?}");
+        assert!((skew.lengths_mm[0] - 16.57).abs() < 1.0e-9, "{skew:?}");
         assert!((skew.lengths_mm[1] - 15.0).abs() < 1.0e-9, "{skew:?}");
-        assert!((report.skew_mm - 1.535).abs() < 1.0e-9);
+        assert!((report.skew_mm - 1.57).abs() < 1.0e-9);
     }
 
     /// A fallen-back pair's leftovers: what joins nothing at one end goes
