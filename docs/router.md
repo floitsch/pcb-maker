@@ -1,3 +1,47 @@
+**Chasing the five new errors** (2026-10-26). The net tie: the lowering
+carved a tie's bridge back where its own nets end their tracks, so a via
+of a tie net could come within the hole clearance of the bridge's copper
+(KiCad's hole_clearance holds against the bridge for every net). The
+whole bridge now keeps every via out (an obstacle for vias only, beside
+the carved one for tracks; on by default, not part of the switch):
+pdlc's error goes, and FUEL4EP's two (a hole clearance and a starved
+thermal, the designer's net tie) with it; the fingerprint and dense
+boards with net ties (k30-SBC, split72, protoesp, MegaDrive) route as
+before. The expansion tier with it
+(x14482, the switch off and on; off identical to x1823 on every other
+row):
+
+| | off | on |
+| --- | --- | --- |
+| KiCad unconnected | 588 | 556 |
+| passes (strict) | 21 | 22 |
+| new errors | 1 (LC_PAMV4b's starved thermal, as before) | 5 |
+
+The four starved thermals left with the switch on (BloopBox J1.1,
+backplane J4.A1, anthracite J107.1 and J107.4) are pour-model misses at
+connector through-hole pads, where routes moved for reasons unrelated to
+the stubs: BloopBox's SDA and SCL leave a 0.4 mm DFN side by side and
+enclose J1.1's fill, which the model counts as joined (it counts the
+pad's B.Cu track as a track spoke of F.Cu); backplane's and anthracite's
+pads are at the board's edge, where the model finds their spokes outside
+the zone while KiCad draws one into an island, so the pad leans on its
+own tracks, and the new route moved one of them to another layer. A
+longer thermal guard (the corridor reaching as far as another net's
+centreline starves a spoke: the gap, the zone's minimum width and
+clearance, half a track; for every pad, then only for pads with two or
+fewer spokes that land on the empty board) took the errors with the
+switch on from 8 to 5 but moved starved thermals rather than removing
+them (ZSWatch and anthracite got new ones) and cost connections with
+the switch off (588 to 596, then 606: MSign 19 to 35, OpenDeck 12 to 14);
+not kept.
+
+**Default: off.** By the rule (unconnected not worse in total, passes
+not fewer, errors not more) the tier still loses on errors (1 to 5)
+while it wins on connections (32) and passes (1); the dense boards and
+the fingerprints gain a little (8 and 1 connections). The switch closes
+the remapper at its task budget. Open: the four pour-model misses above,
+and an exact hard-repair test for oblique stubs.
+
 # The whole-board router (`pcb-router`)
 
 `pcb-router` is the project's routing core. It replaces the per-net,

@@ -109,7 +109,8 @@ preflight, arc outlines, hot-spot links)" have the details, docs/agents.md
   first) the board routes complete and clean at 30 s: 120/120, KiCad 0
   unconnected and no new error, 95 vias (x14475). The switch is off by
   default: the expansion tier gains 32 connections and a pass but has
-  five KiCad errors more.
+  more KiCad errors (after the net-tie fix of 2026-10-26: 1 off, 5 on,
+  four starved thermals at connector pads the pour model misses).
 
 ## Minimum implementation for the next trial
 

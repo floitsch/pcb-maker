@@ -159,8 +159,8 @@ pub struct Config {
     /// pitch row covers the neighbouring pads' stubs for good
     /// (jfedor2/hid-remapper's RP2040 rows, docs/router.md "Fine-pitch
     /// escapes"). Off by default: on the expansion tier it closes 32
-    /// connections and gains a pass but has five KiCad errors more
-    /// (starved thermals at connector pads, a via at a net tie's copper).
+    /// connections and gains a pass but has four KiCad errors more
+    /// (starved thermals at connector pads the pour model misses).
     pub exact_escape_stubs: bool,
     /// History cost added to a lattice node (and its tile) for every net
     /// still in conflict there after an iteration; also the amplitude of

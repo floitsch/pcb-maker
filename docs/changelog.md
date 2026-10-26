@@ -346,6 +346,13 @@ default); off side main's x1823. docs/router.md, "Fine-pitch escapes
   passes the same. Dense boards 1020 to 1012 (split72 25 to 9, DSP 25 to
   33, nine identical), errors 115 and 115. **Default off**: the tier has
   more errors.
+- **The new errors chased** (2026-10-26): a net tie's whole bridge keeps
+  every via out (lowering, on by default: pdlc's error and FUEL4EP's two
+  go; the tier with the switch off 588 unconnected, 21 passes, 1 error;
+  on 556, 22, 5). The four starved thermals left are pour-model misses
+  at connector through-hole pads (router.md, "Fine-pitch escapes"). A
+  longer thermal guard was measured and not kept: it moved starved
+  thermals and cost connections (off 588 to 606).
 
 ## Committed on 2026-10-25 (the remapper trial's items: run-aware diagnosis, override preflight, arc outlines, hot-spot links)
 
