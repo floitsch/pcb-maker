@@ -82,6 +82,10 @@ NIGHT_STAGES = {"sweep": "layout", "designer": "designer", "short": "short", "ex
 MARGIN = 1.25
 WINDOW = 3
 QUANTILE = 0.9
+# The overshoot of a kind (since 2026-10-27): the quantile of measured peak
+# less declared over the newest WINDOW sources' rows, added to a board's
+# floor of available memory (harness_common.measured_floor_mb).
+OVERSHOOT_QUANTILE = 0.95
 
 
 # --- the older form: a tier file's own estimates ---------------------------------
@@ -249,12 +253,22 @@ def model_mb(model, pads, layers, margin=MARGIN):
     return math.ceil(margin * max(0.0, model["base_mb"] + model["mb_per_pad_layer"] * pads * layers))
 
 
-def refresh(bases, new_sources, sizes=None, margin=MARGIN, window=WINDOW, now=None):
+def refresh(bases, new_sources, sizes=None, margin=MARGIN, window=WINDOW, now=None, without=()):
     """The sidecar from the rows of `bases` (earlier sidecars, the first
     one's description kept) and `new_sources` ((path, kind) of run.py
     logs; a source of the same name replaces a base's), keeping per board
     and kind the rows of the newest `window` sources. `sizes` gives (pads,
-    layers) per board name for boards the bases do not size."""
+    layers) per board name for boards the bases do not size; `without`:
+    the bases' rows of these sources do not count. Per kind the overshoot
+    of each new source's rows against what the bases (without the new
+    sources' own rows) declared for them (`overshoot`, since 2026-10-27)."""
+    prior = refresh(bases, [], sizes, margin, window, now,
+                    without={source_label(path) for path, _ in new_sources}) if new_sources else None
+    overshoot_sources = {}  # kind -> label -> {"date", "over"}
+    for base in bases:
+        for kind, entry in ((base or {}).get("overshoot") or {}).items():
+            for label, source in (entry.get("sources") or {}).items():
+                overshoot_sources.setdefault(kind, {}).setdefault(label, source)
     sources = {}
     rows = {}  # name -> kind -> label -> (peak, seconds)
     board_sizes = {}
@@ -271,14 +285,21 @@ def refresh(bases, new_sources, sizes=None, margin=MARGIN, window=WINDOW, now=No
                 board_sizes[name] = (board["pads"], board["layers"])
             for kind in KINDS:
                 for label, peak, seconds in (board.get(kind) or {}).get("rows", []):
-                    rows.setdefault(name, {}).setdefault(kind, {})[label] = (peak, seconds)
+                    if label not in without:
+                        rows.setdefault(name, {}).setdefault(kind, {})[label] = (peak, seconds)
     for path, kind in new_sources:
         label = source_label(path)
         sources[label] = {"kind": kind, "date": source_time(path)}
         for found in rows.values():
             found.get(kind, {}).pop(label, None)
+        over = []
         for name, measured_row in log_rows(path, kind).items():
             rows.setdefault(name, {}).setdefault(kind, {})[label] = measured_row
+            expected = declared(prior, name, kind)[0]
+            if expected is not None:
+                over.append(measured_row[0] - expected)
+        if over:
+            overshoot_sources.setdefault(kind, {})[label] = {"date": sources[label]["date"], "over": sorted(over)}
     for name, size in (sizes or {}).items():
         if size and name not in board_sizes:
             board_sizes[name] = size
@@ -311,8 +332,39 @@ def refresh(bases, new_sources, sizes=None, margin=MARGIN, window=WINDOW, now=No
     return {"description": description or DESCRIPTION,
             "refreshed": (now or datetime.datetime.now()).strftime("%Y-%m-%dT%H:%M"),
             "margin": margin, "window": window, "quantile": QUANTILE, "model": models,
+            "overshoot": overshoot(overshoot_sources, window),
             "sources": {label: sources[label] for label in sorted(used, key=lambda label: sources[label]["date"])},
             "boards": boards}
+
+
+def overshoot(by_kind, window=WINDOW):
+    """Per kind the overshoot of the newest `window` sources' rows (peak
+    less what the estimates declared before the source; `by_kind`: kind ->
+    label -> {"date", "over"}): their OVERSHOOT_QUANTILE (`p95_mb`, at
+    least 0; harness_common.measured_floor_mb adds it to a board's floor),
+    how many rows and how many exceeded what was declared, and the
+    sources' values."""
+    found = {}
+    for kind in KINDS:
+        labelled = by_kind.get(kind) or {}
+        kept = sorted(labelled, key=lambda label: (labelled[label]["date"], label), reverse=True)[:window]
+        values = [value for label in kept for value in labelled[label]["over"]]
+        if not values:
+            continue
+        found[kind] = {"p95_mb": max(0, harness_common.nearest_rank(values, OVERSHOOT_QUANTILE)),
+                       "rows": len(values), "exceeded": sum(1 for value in values if value > 0),
+                       "sources": {label: labelled[label] for label in sorted(kept)}}
+    return found
+
+
+def overshoot_mb(sidecar, kind):
+    """The overshoot margin of a run of `kind` (its `p95_mb`, else its
+    fallbacks', FALLBACK), 0 when none is measured."""
+    entries = (sidecar or {}).get("overshoot") or {}
+    for measured_kind in FALLBACK[kind]:
+        if measured_kind in entries:
+            return entries[measured_kind].get("p95_mb", 0)
+    return 0
 
 
 DESCRIPTION = ("Per-board estimates for run.py's memory gate and its order (tier_estimates.py --refresh writes "
@@ -331,6 +383,11 @@ def dumps(sidecar):
     lines = ["{"]
     for key in ("description", "refreshed", "margin", "window", "quantile", "model"):
         lines.append(f"{json.dumps(key)}: {json.dumps(sidecar[key])},")
+    items = list((sidecar.get("overshoot") or {}).items())
+    lines.append('"overshoot": {')
+    lines.extend(f" {json.dumps(kind)}: {json.dumps(value)}" + ("," if index < len(items) - 1 else "")
+                 for index, (kind, value) in enumerate(items))
+    lines.append("},")
     for key in ("sources", "boards"):
         items = list(sidecar[key].items())
         lines.append(f"{json.dumps(key)}: {{")

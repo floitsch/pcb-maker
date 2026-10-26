@@ -1366,5 +1366,79 @@ class Labels(unittest.TestCase):
         self.assertNotIn("Edge.Cuts", result)
 
 
+class MeasuredFloor(unittest.TestCase):
+    """The floor from measured headroom (harness_common.measured_floor_mb,
+    outside_rises, memory_sample, record_headroom; run.MemoryGate.floor_mb;
+    since 2026-10-27). ledger.rs's `the_floor_is_measured_from_the_headroom_samples`:
+    the same numbers."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="pcb-maker-floor-test-"))
+        self.addCleanup(shutil.rmtree, self.root)
+        self.ledger = run.harness_common.Ledger(self.root / "ledger.json")
+
+    def test_the_floor_is_measured_from_the_headroom_samples(self):
+        h = run.harness_common
+        # The outside memory's rises within 600 s of each sample: 3400
+        # (to 22 400 at 300 s), 2900, 0 (it fell); 700 s and 1400 s have no
+        # later sample within the window.
+        samples = [[0.0, 0, 19000], [10.0, 0, 19500], [300.0, 0, 22400], [700.0, 0, 19100], [1400.0, 0, 19000]]
+        self.assertEqual(h.outside_rises(samples, 600.0), [3400, 2900, 0])
+        self.assertEqual(h.nearest_rank([3400, 2900, 0], 0.95), 3400)
+        self.assertEqual(h.nearest_rank([3400, 2900, 0], 0.5), 2900)
+        self.assertIsNone(h.nearest_rank([], 0.95))
+        # 2048 to keep + 3123 outside growth + 91 overshoot (the designer
+        # tier's); fewer than 360 samples or none within a day: 10 GB.
+        now = 1_793_000_000.0
+        summary = {"samples": 360, "updated": now - 60, "outside_growth_mb": 3123}
+        self.assertEqual(h.measured_floor_mb(summary, 91, now)[0], 5262)
+        self.assertEqual(h.measured_floor_mb(summary, -500, now)[0], 5171)
+        self.assertEqual(h.measured_floor_mb(dict(summary, samples=359), 91, now)[0], 10240)
+        self.assertEqual(h.measured_floor_mb(dict(summary, updated=now - 86_401), 91, now)[0], 10240)
+        self.assertEqual(h.measured_floor_mb(None, 91, now),
+                         (10240, "the default 10 GB (0 samples)"))
+        self.assertEqual(h.measured_floor_mb(summary, 91, now)[1],
+                         "measured: 2.0 GB to keep + 3.0 GB outside growth + 0.1 GB overshoot (360 samples)")
+
+    def test_a_sample_counts_the_holders_trees_and_what_they_hold_above_their_reservations(self):
+        h = run.harness_common
+        # pid 10 holds 3000 MB, resident 1000, its child kicad-cli 2500:
+        # its tree 3500, 500 above; pid 12 (4000) is outside the ledger.
+        table = {10: (1, 1000.0), 11: (10, 2500.0), 12: (1, 4000.0)}
+        reservations = [{"pid": 10, "megabytes": 3000.0}, {"pid": 13, "megabytes": 0.0, "waiting_mb": 900.0}]
+        sample = h.memory_sample(reservations, now=5.0, table=table, available_mb=30_000, total_mb=64_000)
+        # [time, available, outside, reserved, growth (own resident), over]
+        self.assertEqual(sample, [5.0, 30_000, 64_000 - 30_000 - 3500, 3000, 2000, 500])
+
+    def test_samples_are_recorded_once_every_ten_seconds_and_kept_six_hours(self):
+        h = run.harness_common
+        def take(at, outside):
+            return h.record_headroom(self.ledger, now=at, sample=[at, 30_000, outside, 0, 0, 0])
+        take(1000.0, 19_000)
+        take(1005.0, 25_000)  # another writer's, too soon: not added
+        summary = take(1011.0, 20_000)
+        stored = h.read_headroom(h.headroom_path(self.ledger.path))
+        self.assertEqual([s[0] for s in stored["samples"]], [1000.0, 1011.0])
+        self.assertEqual((summary["samples"], summary["outside_growth_mb"], summary["updated"]), (2, 1000, 1011.0))
+        take(1000.0 + 6 * 3600 + 1, 19_500)
+        stored = h.read_headroom(h.headroom_path(self.ledger.path))
+        self.assertEqual([s[0] for s in stored["samples"]], [1011.0, 1000.0 + 6 * 3600 + 1])
+        self.assertIsNone(h.headroom_path(None))
+
+    def test_the_gate_measures_its_floor_unless_given_one(self):
+        h = run.harness_common
+        path = h.headroom_path(self.ledger.path)
+        h.atomic_json(path, {"summary": {"samples": 400, "updated": time.time(), "outside_growth_mb": 3000},
+                             "samples": []})
+        sidecar = {"overshoot": {"designer": {"p95_mb": 91}, "layout": {"p95_mb": 56}}}
+        gate = run.MemoryGate(None, ledger=self.ledger, sidecar=sidecar)
+        self.assertEqual(gate.floor_mb("designer")[0], 2048 + 3000 + 91)
+        self.assertEqual(gate.floor_mb("short")[0], 2048 + 3000 + 56)
+        self.assertEqual(gate.floor_mb("expansion")[0], 2048 + 3000)
+        self.assertEqual(run.MemoryGate(10, ledger=self.ledger).floor_mb("designer"), (10240, "--min-free-gb"))
+        self.assertEqual(run.MemoryGate(None, ledger=run.harness_common.Ledger(self.root / "none.json"))
+                         .floor_mb("designer")[0], 10240)
+
+
 if __name__ == "__main__":
     unittest.main()

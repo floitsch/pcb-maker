@@ -94,6 +94,40 @@ class Sidecar(unittest.TestCase):
         self.assertEqual(again["boards"]["a"]["designer"], a["designer"])
         self.assertEqual(again["boards"]["z"], {"pads": 100, "layers": 4})
 
+    def test_the_overshoot_is_each_new_sources_peak_less_what_was_declared_before_it(self):
+        # (since 2026-10-27, the floor's second part) Board a declared
+        # 1250 MB (1000 times 1.25) before the second night, which measures
+        # 1400 (150 over) and b 600 against 1000 (-400); a board nothing
+        # declares (c, no size) does not count. A refresh that reads the
+        # same log again compares it with the rows before it, not itself.
+        d = self.directory
+        first = write_log(d / "night1.log", [{"name": "a", "placement": "designer", "peak_rss_mb": 1000},
+                                              {"name": "b", "placement": "designer", "peak_rss_mb": 800}], 1000)
+        second = write_log(d / "night2.log", [{"name": "a", "placement": "designer", "peak_rss_mb": 1400},
+                                               {"name": "b", "placement": "designer", "peak_rss_mb": 600},
+                                               {"name": "c", "placement": "designer", "peak_rss_mb": 900}], 2000)
+        base = tier_estimates.refresh([None], [(first, "designer")])
+        self.assertEqual(base["overshoot"], {})
+        sidecar = tier_estimates.refresh([base], [(second, "designer")])
+        entry = sidecar["overshoot"]["designer"]
+        self.assertEqual(entry["sources"][str(second)]["over"], [-400, 150])
+        self.assertEqual((entry["p95_mb"], entry["rows"], entry["exceeded"]), (150, 2, 1))
+        self.assertEqual(tier_estimates.refresh([sidecar], [(second, "designer")])["overshoot"], sidecar["overshoot"])
+        # The newest WINDOW sources count; the quantile is at least 0; a
+        # kind without one falls back (short: layout), else 0.
+        self.assertEqual(tier_estimates.overshoot({"layout": {f"s{i}": {"date": f"2026-10-2{i}", "over": [-5 - i]}
+                                                              for i in range(5)}})["layout"]["p95_mb"], 0)
+        kept = tier_estimates.overshoot({"layout": {f"s{i}": {"date": f"2026-10-2{i}", "over": [100 * i]}
+                                                    for i in range(5)}})["layout"]
+        self.assertEqual((kept["rows"], kept["p95_mb"], sorted(kept["sources"])), (3, 400, ["s2", "s3", "s4"]))
+        self.assertEqual(tier_estimates.overshoot_mb({"overshoot": {"layout": kept}}, "short"), 400)
+        self.assertEqual(tier_estimates.overshoot_mb({"overshoot": {"layout": kept}}, "expansion"), 0)
+        self.assertEqual(tier_estimates.overshoot_mb(None, "designer"), 0)
+        # Written and read back.
+        path = d / "estimates.json"
+        path.write_text(tier_estimates.dumps(sidecar))
+        self.assertEqual(tier_estimates.load(path)["overshoot"], json.loads(json.dumps(sidecar["overshoot"])))
+
     def test_the_size_model_lies_above_the_quantile_of_the_measured_peaks(self):
         points = [(x, 1000 + 2 * x + noise) for x, noise in zip(range(100, 1100, 100), (0, 50, -50, 0, 400, 0, 0,
                                                                                          -100, 0, 20))]

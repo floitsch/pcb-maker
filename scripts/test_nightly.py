@@ -133,7 +133,8 @@ def test_the_stages_run_with_their_settings(two_nights):
     for stage in report.STAGES:
         words = argv(two_nights, "2026-10-23", stage)["argv"]
         assert "--lock" not in words
-        assert words[words.index("--min-free-gb") + 1] == "10"
+        # run.py's measured floor (since 2026-10-27), not a fixed one.
+        assert "--min-free-gb" not in words
         assert words[words.index("--ledger-priority") + 1] == "nightly"
         assert words[words.index("--binary") + 1].endswith("pcb-maker-nightly-2026-10-23-222222222222")
 

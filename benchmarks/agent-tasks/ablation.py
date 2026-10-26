@@ -5,7 +5,7 @@ which of our placement's decisions cost open connections.
 
     ablation.py prepare <out> --task NAME --designer <designer project dir> --placed <our placed dir> \\
         --tool <pcb-maker with ablate-kicad-placement> [--groups ...] [--config ablation.json]
-    ablation.py route <out> --binary <snapshot> [--jobs 3 --threads 2 --min-free-gb 10] [--only VARIANT ...]
+    ablation.py route <out> --binary <snapshot> [--jobs 3 --threads 2 --min-free-gb N] [--only VARIANT ...]
     ablation.py report <out> [<out> ...] [--markdown]
 
 `prepare` runs `pcb-maker ablate-kicad-placement` (the hybrids: the
@@ -140,7 +140,9 @@ def route(arguments):
     command = [sys.executable, str(HERE / "run.py"), str(out / "routes"), "--tasks", str(out / "tasks.json"),
                "--route-from", str(out / "tree"), "--binary", str(arguments.binary),
                "--jobs", str(arguments.jobs), "--threads", str(arguments.threads),
-               "--min-free-gb", str(arguments.min_free_gb), "--expected-gb", str(arguments.expected_gb)]
+               "--expected-gb", str(arguments.expected_gb)]
+    if arguments.min_free_gb is not None:
+        command += ["--min-free-gb", str(arguments.min_free_gb)]
     if arguments.only:
         task = json.loads((out / "task.json").read_text())["task"]
         command += ["--only"] + [f"{task}__{variant}" for variant in arguments.only]
@@ -424,7 +426,7 @@ def main():
     r.add_argument("--binary", type=Path, required=True)
     r.add_argument("--jobs", type=int, default=3)
     r.add_argument("--threads", type=int, default=2)
-    r.add_argument("--min-free-gb", type=float, default=10)
+    r.add_argument("--min-free-gb", type=float, default=None, help="run.py's floor (default: its measured one)")
     r.add_argument("--expected-gb", type=float, default=3)
     r.add_argument("--only", nargs="*")
     r.add_argument("--log-suffix")

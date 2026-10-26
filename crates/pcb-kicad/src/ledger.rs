@@ -88,6 +88,15 @@
 //! agent's board waited 657 s behind a harness's 3 GB board that its floor
 //! of 10 GB held back for 4300 s.
 //!
+//! A harness's floor from measured headroom (since 2026-10-27,
+//! `measured_floor_mb`): run.py's floor of available memory beside the
+//! reservations' growth is `FLOOR_KEEP_MB` plus the 0.95 quantile of how
+//! far the memory outside the ledger rose within ten minutes (the
+//! harnesses' samples in `<ledger>.headroom.json`) plus the board's
+//! tier's overshoot of its estimate, `DEFAULT_FLOOR_MB` without samples.
+//! Until then it was 10 GB by opinion, and a 3 GB board waited 4371 s
+//! with 9.4 GB beside the growth. Binaries keep no floor.
+//!
 //! `PCB_MAKER_LEDGER` names the file (default
 //! `$XDG_RUNTIME_DIR/pcb-maker-ledger.json`, else
 //! `/tmp/pcb-maker-ledger.json`; `off`: no ledger),
@@ -1365,6 +1374,137 @@ fn start_watchdog() {
                 std::process::exit(crate::EXIT_INTERNAL as i32);
             }
         });
+}
+
+/// The memory available a harness's measured floor keeps beside every
+/// run's expected peak (since 2026-10-27, `measured_floor_mb`): below it
+/// the kernel reclaims and swaps hard.
+pub const FLOOR_KEEP_MB: f64 = 2048.0;
+
+/// How far ahead of a sample the outside memory's rise is measured
+/// (`outside_rises`).
+pub const HEADROOM_WINDOW_SECONDS: f64 = 600.0;
+
+/// The quantile of the outside memory's rises the floor covers.
+pub const HEADROOM_QUANTILE: f64 = 0.95;
+
+/// How many samples the floor needs before it is measured (an hour at
+/// one every 10 s), and how old the newest may be.
+pub const HEADROOM_MIN_SAMPLES: usize = 360;
+pub const HEADROOM_MAX_AGE_SECONDS: f64 = 24.0 * 3600.0;
+
+/// What the floor reads of the ledger's headroom samples
+/// (`<ledger>.headroom.json`, `summary`; benchmarks/harness_common.py,
+/// `headroom_summary`, writes it).
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+pub struct HeadroomSummary {
+    /// The newest sample's time (seconds since the epoch).
+    #[serde(default)]
+    pub updated: Option<f64>,
+    #[serde(default)]
+    pub samples: usize,
+    #[serde(default)]
+    pub span_seconds: Option<f64>,
+    /// The `HEADROOM_QUANTILE` of the outside memory's rises within
+    /// `HEADROOM_WINDOW_SECONDS` of a sample.
+    #[serde(default)]
+    pub outside_growth_mb: Option<f64>,
+    /// The median memory outside the ledger.
+    #[serde(default)]
+    pub outside_mb: Option<f64>,
+    /// The 0.95 quantile of the runs' memory above their reservations.
+    #[serde(default)]
+    pub over_mb: Option<f64>,
+    /// The least MemAvailable seen.
+    #[serde(default)]
+    pub available_min_mb: Option<f64>,
+}
+
+impl Ledger {
+    /// The headroom samples beside the ledger (`<ledger>.headroom.json`).
+    pub fn headroom_path(&self) -> PathBuf {
+        let mut name = self.path.as_os_str().to_owned();
+        name.push(".headroom.json");
+        PathBuf::from(name)
+    }
+
+    /// The samples' summary (None: no file, or it does not read).
+    pub fn headroom(&self) -> Option<HeadroomSummary> {
+        let text = fs::read_to_string(self.headroom_path()).ok()?;
+        let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+        serde_json::from_value(value.get("summary")?.clone()).ok()
+    }
+}
+
+/// The `quantile` of `values` by nearest rank (the smallest value with at
+/// least that share at or below it); None for none.
+pub fn nearest_rank(values: &[f64], quantile: f64) -> Option<f64> {
+    let mut sorted = values.to_vec();
+    sorted.sort_by(f64::total_cmp);
+    let rank = ((quantile * sorted.len() as f64).ceil() as usize).max(1);
+    sorted.get(rank - 1).copied()
+}
+
+/// For each sample (time, memory outside the ledger; by time) the most
+/// the outside memory rose within `window_seconds` after it (at least 0);
+/// a sample with no later one within the window has none.
+pub fn outside_rises(samples: &[(f64, f64)], window_seconds: f64) -> Vec<f64> {
+    let mut rises = Vec::new();
+    for (index, &(at, outside)) in samples.iter().enumerate() {
+        let highest = samples[index + 1..]
+            .iter()
+            .take_while(|(later, _)| later - at <= window_seconds)
+            .map(|&(_, megabytes)| megabytes)
+            .reduce(f64::max);
+        if let Some(highest) = highest {
+            rises.push((highest - outside).max(0.0));
+        }
+    }
+    rises
+}
+
+/// A harness's floor of available memory from measured headroom (since
+/// 2026-10-27): `FLOOR_KEEP_MB` + the outside memory's growth (`summary`'s
+/// `outside_growth_mb`) + `overshoot_mb`, the board's tier's 0.95 quantile
+/// of measured peak less declared (estimates.json, `overshoot`; at least
+/// 0); `DEFAULT_FLOOR_MB` without `HEADROOM_MIN_SAMPLES` samples whose
+/// newest is at most `HEADROOM_MAX_AGE_SECONDS` old. With what it is made
+/// of. Until then the floor was 10 GB by opinion: on the evening of
+/// 2026-10-26 it held a 3 GB board for 4371 s with 9.4 GB beside the
+/// reservations' growth. benchmarks/harness_common.py,
+/// `measured_floor_mb`: the same rule (run.py's floor unless
+/// `--min-free-gb` is given).
+pub fn measured_floor_mb(
+    summary: Option<&HeadroomSummary>,
+    overshoot_mb: f64,
+    now: f64,
+) -> (f64, String) {
+    let count = summary.map_or(0, |summary| summary.samples);
+    let growth = summary.and_then(|summary| summary.outside_growth_mb);
+    let updated = summary.and_then(|summary| summary.updated).unwrap_or(0.0);
+    match growth {
+        Some(growth)
+            if count >= HEADROOM_MIN_SAMPLES && now - updated <= HEADROOM_MAX_AGE_SECONDS =>
+        {
+            let (growth, overshoot) = (growth.max(0.0), overshoot_mb.max(0.0));
+            (
+                FLOOR_KEEP_MB + growth + overshoot,
+                format!(
+                    "measured: {:.1} GB to keep + {:.1} GB outside growth + {:.1} GB overshoot ({count} samples)",
+                    FLOOR_KEEP_MB / 1024.0,
+                    growth / 1024.0,
+                    overshoot / 1024.0
+                ),
+            )
+        }
+        _ => (
+            DEFAULT_FLOOR_MB,
+            format!(
+                "the default {:.0} GB ({count} samples)",
+                DEFAULT_FLOOR_MB / 1024.0
+            ),
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -2647,5 +2787,67 @@ mod tests {
         let text = serde_json::to_string(&with[1]).unwrap();
         assert!(text.contains("\"short\":true"), "{text}");
         assert!(!serde_json::to_string(&with[0]).unwrap().contains("short"));
+    }
+
+    /// The floor from measured headroom (since 2026-10-27): test_run.py's
+    /// `MeasuredFloor`, the same numbers.
+    #[test]
+    fn the_floor_is_measured_from_the_headroom_samples() {
+        let samples = [
+            (0.0, 19_000.0),
+            (10.0, 19_500.0),
+            (300.0, 22_400.0),
+            (700.0, 19_100.0),
+            (1400.0, 19_000.0),
+        ];
+        let rises = outside_rises(&samples, 600.0);
+        assert_eq!(rises, vec![3400.0, 2900.0, 0.0]);
+        assert_eq!(nearest_rank(&rises, 0.95), Some(3400.0));
+        assert_eq!(nearest_rank(&rises, 0.5), Some(2900.0));
+        assert_eq!(nearest_rank(&[], 0.95), None);
+        let now = 1_793_000_000.0;
+        let summary = HeadroomSummary {
+            samples: 360,
+            updated: Some(now - 60.0),
+            outside_growth_mb: Some(3123.0),
+            ..Default::default()
+        };
+        assert_eq!(measured_floor_mb(Some(&summary), 91.0, now).0, 5262.0);
+        assert_eq!(measured_floor_mb(Some(&summary), -500.0, now).0, 5171.0);
+        let few = HeadroomSummary {
+            samples: 359,
+            ..summary.clone()
+        };
+        assert_eq!(measured_floor_mb(Some(&few), 91.0, now).0, DEFAULT_FLOOR_MB);
+        let old = HeadroomSummary {
+            updated: Some(now - 86_401.0),
+            ..summary.clone()
+        };
+        assert_eq!(measured_floor_mb(Some(&old), 91.0, now).0, DEFAULT_FLOOR_MB);
+        assert_eq!(
+            measured_floor_mb(None, 91.0, now),
+            (DEFAULT_FLOOR_MB, "the default 10 GB (0 samples)".into())
+        );
+        assert_eq!(
+            measured_floor_mb(Some(&summary), 91.0, now).1,
+            "measured: 2.0 GB to keep + 3.0 GB outside growth + 0.1 GB overshoot (360 samples)"
+        );
+        // The summary as harness_common.record_headroom writes it, beside
+        // the ledger.
+        let directory = scratch("headroom");
+        let ledger = Ledger::at(directory.join("ledger.json"));
+        assert_eq!(ledger.headroom(), None);
+        fs::write(
+            ledger.headroom_path(),
+            r#"{"summary": {"updated": 1011.0, "samples": 2, "span_seconds": 11.0, "outside_growth_mb": 1000, "outside_mb": 19000, "over_mb": 0, "available_min_mb": 30000, "newer": 1}, "samples": [[1000.0, 30000, 19000, 0, 0, 0]]}"#,
+        )
+        .unwrap();
+        let read = ledger.headroom().unwrap();
+        assert_eq!((read.samples, read.outside_growth_mb), (2, Some(1000.0)));
+        assert_eq!(
+            ledger.headroom_path().file_name().unwrap(),
+            "ledger.json.headroom.json"
+        );
+        let _ = fs::remove_dir_all(directory);
     }
 }

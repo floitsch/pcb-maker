@@ -14,6 +14,7 @@ with the benchmarks directory on the path:
 
 import hashlib
 import json
+import math
 import os
 import re
 import signal
@@ -776,7 +777,9 @@ def admit(ledger, megabytes, label, min_free_mb=0.0, poll_seconds=15.0, log=None
     DEFAULT_DRAIN_AFTER_SECONDS, the ledger drains for it: drain_allows,
     while it could start and for at most `drain_max` seconds of its wait,
     default DEFAULT_DRAIN_MAX_SECONDS: drain_state). `short`: a request
-    that holds its memory for seconds (try_admit).
+    that holds its memory for seconds (try_admit). `min_free_mb`: the
+    floor, or a function giving it, called on every poll (run.py's
+    measured floor follows the samples).
     Returns the reservation's key, None when `stop()` said to give up.
     `log` gets the waiting lines."""
     started = time.monotonic()
@@ -785,7 +788,8 @@ def admit(ledger, megabytes, label, min_free_mb=0.0, poll_seconds=15.0, log=None
     key = None
     try:
         while True:
-            key, text = try_admit(ledger, megabytes, label, min_free_mb, since=since,
+            floor = min_free_mb() if callable(min_free_mb) else min_free_mb
+            key, text = try_admit(ledger, megabytes, label, floor, since=since,
                                   expected_seconds=expected_seconds, drain_after=drain_after, priority=priority,
                                   drain_max=drain_max, short=short)
             waited = time.monotonic() - started
@@ -802,3 +806,224 @@ def admit(ledger, megabytes, label, min_free_mb=0.0, poll_seconds=15.0, log=None
     finally:
         if key is None:
             withdraw(ledger, label, since)
+
+
+# The floor from measured headroom (since 2026-10-27; crates/pcb-kicad/src/
+# ledger.rs, `measured_floor_mb`: the same rule). A harness's floor
+# (run.py's --min-free-gb) keeps MemAvailable, less what the reservations
+# still grow by, above it after a board's expected peak: it is the room
+# for what the ledger does not count, the memory outside the ledger (the
+# desktop, the browser, the agents themselves, builds) growing and runs
+# growing past what was declared for them. Until then it was 10 GB by
+# opinion; on the evening of 2026-10-26 it held a 3 GB board for 4371 s
+# with 9.4 GB beside the growth. Now it is
+#
+#   FLOOR_KEEP_MB (2 GB: MemAvailable never to go below)
+#   + the outside memory's growth: the HEADROOM_QUANTILE (0.95) of how far
+#     the memory outside the ledger rose within HEADROOM_WINDOW_SECONDS
+#     (600) of a sample, over the samples of the last HEADROOM_KEEP_SECONDS
+#   + the overshoot of the board's tier: the 0.95 quantile of measured peak
+#     less what the estimates declared (estimates.json, `overshoot`, per
+#     kind; tier_estimates.py --refresh)
+#
+# from the samples in `<ledger>.headroom.json` (record_headroom: every
+# harness's MemoryGate samples every SAMPLE_EVERY_SECONDS while it runs,
+# benchmarks/ledger_headroom.py --sample for the rest). With fewer than
+# HEADROOM_MIN_SAMPLES samples, or none newer than HEADROOM_MAX_AGE_SECONDS,
+# it is DEFAULT_FLOOR_MB. --min-free-gb given overrides it.
+FLOOR_KEEP_MB = 2048.0
+HEADROOM_WINDOW_SECONDS = 600.0
+HEADROOM_QUANTILE = 0.95
+HEADROOM_KEEP_SECONDS = 6 * 3600.0
+HEADROOM_MIN_SAMPLES = 360
+HEADROOM_MAX_AGE_SECONDS = 24 * 3600.0
+SAMPLE_EVERY_SECONDS = 10.0
+
+
+def headroom_path(ledger):
+    """The samples beside ledger file `ledger` (`<ledger>.headroom.json`),
+    None for none (PCB_MAKER_LEDGER=off)."""
+    return None if ledger is None else Path(str(ledger) + ".headroom.json")
+
+
+def nearest_rank(values, quantile):
+    """The `quantile` of `values` by nearest rank (the smallest value with
+    at least that share at or below it; tier_estimates.fit's rule), None
+    for none."""
+    values = sorted(values)
+    if not values:
+        return None
+    return values[max(0, math.ceil(quantile * len(values)) - 1)]
+
+
+def outside_rises(samples, window_seconds=HEADROOM_WINDOW_SECONDS):
+    """For each sample ([t, available, outside, ...], by time) the most the
+    memory outside the ledger rose within `window_seconds` after it (at
+    least 0); samples with no later one within the window have none."""
+    rises = []
+    for index, sample in enumerate(samples):
+        highest = None
+        for later in samples[index + 1:]:
+            if later[0] - sample[0] > window_seconds:
+                break
+            highest = later[2] if highest is None else max(highest, later[2])
+        if highest is not None:
+            rises.append(max(0.0, highest - sample[2]))
+    return rises
+
+
+def headroom_summary(samples, now=None):
+    """What the floor reads of the samples: their count and span, the newest
+    one's time, the HEADROOM_QUANTILE of the outside memory's rises within
+    HEADROOM_WINDOW_SECONDS (`outside_growth_mb`), and for the record the
+    median outside memory, the 0.95 quantile of the runs' memory above their
+    reservations (`over_mb`) and the least MemAvailable seen."""
+    if not samples:
+        return {"samples": 0}
+    return {"updated": samples[-1][0], "samples": len(samples), "span_seconds": samples[-1][0] - samples[0][0],
+            "outside_growth_mb": nearest_rank(outside_rises(samples), HEADROOM_QUANTILE),
+            "outside_mb": nearest_rank([s[2] for s in samples], 0.5),
+            "over_mb": nearest_rank([s[5] for s in samples], HEADROOM_QUANTILE),
+            "available_min_mb": min(s[1] for s in samples)}
+
+
+def measured_floor_mb(summary, overshoot_mb=0.0, now=None):
+    """The floor for a board whose tier overshoots by `overshoot_mb` (the
+    0.95 quantile of peak less expected, at least 0), from the samples'
+    `summary` (headroom_summary; None: none): (megabytes, what it is made
+    of). FLOOR_KEEP_MB + the outside memory's growth + the overshoot, or
+    DEFAULT_FLOOR_MB without HEADROOM_MIN_SAMPLES samples newer than
+    HEADROOM_MAX_AGE_SECONDS. ledger.rs, `measured_floor_mb`: the same."""
+    now = time.time() if now is None else now
+    summary = summary or {}
+    count = summary.get("samples") or 0
+    growth = summary.get("outside_growth_mb")
+    if count < HEADROOM_MIN_SAMPLES or growth is None or now - (summary.get("updated") or 0) > HEADROOM_MAX_AGE_SECONDS:
+        return DEFAULT_FLOOR_MB, f"the default {DEFAULT_FLOOR_MB / 1024:.0f} GB ({count} samples)"
+    overshoot = max(0.0, float(overshoot_mb or 0.0))
+    floor = FLOOR_KEEP_MB + max(0.0, growth) + overshoot
+    return floor, (f"measured: {FLOOR_KEEP_MB / 1024:.1f} GB to keep + {max(0.0, growth) / 1024:.1f} GB outside "
+                   f"growth + {overshoot / 1024:.1f} GB overshoot ({count} samples)")
+
+
+def read_headroom(path):
+    """The samples file at `path` ({"summary", "samples"}), None when there
+    is none or it does not read."""
+    if path is None:
+        return None
+    value = read_json(path)
+    return value if isinstance(value, dict) else None
+
+
+def _process_table(proc="/proc"):
+    """pid -> (parent pid, resident MB) of the live processes."""
+    table = {}
+    for name in os.listdir(proc):
+        if not name.isdigit():
+            continue
+        try:
+            with open(f"{proc}/{name}/stat") as stat:
+                fields = stat.read().rsplit(")", 1)[1].split()
+            table[int(name)] = (int(fields[1]), int(fields[21]) * PAGE_MB)
+        except (OSError, IndexError, ValueError):
+            pass
+    return table
+
+
+PAGE_MB = os.sysconf("SC_PAGE_SIZE") / (1024 * 1024) if hasattr(os, "sysconf") else 4096 / (1024 * 1024)
+
+
+def memory_sample(reservations, now=None, table=None, available_mb=None, total_mb=None):
+    """One sample beside the ledger's `reservations`: [time, MemAvailable,
+    the memory outside the ledger (MemTotal less MemAvailable less the
+    resident memory of the holders' process trees), the reserved megabytes,
+    what they still grow by (growth_mb), the holders' memory above their
+    reservations (their trees' resident memory less their megabytes, at
+    least 0, summed)], in MB; None when /proc/meminfo cannot be read."""
+    now = time.time() if now is None else now
+    available = memory_available_bytes() if available_mb is None else available_mb * 1024 * 1024
+    total = memory_total_mb() if total_mb is None else total_mb
+    if available is None or total is None:
+        return None
+    available = available / (1024 * 1024)
+    table = _process_table() if table is None else table
+    children = {}
+    for pid, (parent, _) in table.items():
+        children.setdefault(parent, []).append(pid)
+    counted = set()
+    trees = 0.0
+    over = 0.0
+    for r in sorted(reservations, key=lambda r: -r.get("megabytes", 0.0)):
+        if r.get("megabytes", 0.0) <= 0 or r.get("pid") not in table:
+            continue
+        tree, stack = 0.0, [r["pid"]]
+        while stack:
+            pid = stack.pop()
+            if pid in counted:
+                continue
+            counted.add(pid)
+            tree += table.get(pid, (0, 0.0))[1]
+            stack.extend(children.get(pid, []))
+        trees += tree
+        over += max(0.0, tree - r["megabytes"])
+    growth = growth_mb(reservations, resident=lambda pid: table.get(pid, (0, 0.0))[1], own_pid=-1)
+    reserved = sum(r.get("megabytes", 0.0) for r in reservations)
+    return [round(now, 1), round(available), round(total - available - trees), round(reserved), round(growth),
+            round(over)]
+
+
+def record_headroom(ledger, now=None, every=SAMPLE_EVERY_SECONDS, sample=None):
+    """Adds a sample of the machine beside `ledger` (a Ledger) to its
+    samples file (headroom_path) unless another writer added one less than
+    `every` seconds ago, drops those older than HEADROOM_KEEP_SECONDS and
+    rewrites the summary, under the file's own lock. Returns the summary
+    (None without a ledger file)."""
+    import fcntl
+    path = headroom_path(ledger.path)
+    if path is None:
+        return None
+    now = time.time() if now is None else now
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(str(path) + ".lock", "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        stored = read_headroom(path) or {}
+        samples = [s for s in stored.get("samples", []) if isinstance(s, list) and len(s) >= 6
+                   and now - s[0] <= HEADROOM_KEEP_SECONDS]
+        if samples and now - samples[-1][0] < every * 0.9:
+            return stored.get("summary")
+        taken = sample if sample is not None else memory_sample(ledger.live(), now)
+        if taken is None:
+            return stored.get("summary")
+        samples.append(taken)
+        summary = headroom_summary(samples, now)
+        atomic_json(path, {"summary": summary, "samples": samples}, indent=None, newline=True)
+        return summary
+
+
+class HeadroomSampler:
+    """Samples the machine beside the ledger every `every` seconds on a
+    daemon thread (record_headroom) until stopped: run.py's MemoryGate runs
+    one while it admits boards, so that the floor follows the machine."""
+
+    def __init__(self, ledger, every=SAMPLE_EVERY_SECONDS):
+        import threading
+        self.ledger = ledger
+        self.every = every
+        self.stopped = threading.Event()
+        self.thread = threading.Thread(target=self._run, name="headroom", daemon=True)
+
+    def start(self):
+        if self.ledger.path is not None:
+            self.thread.start()
+        return self
+
+    def _run(self):
+        while not self.stopped.is_set():
+            try:
+                record_headroom(self.ledger, every=self.every)
+            except OSError:
+                pass
+            self.stopped.wait(self.every)
+
+    def stop(self):
+        self.stopped.set()

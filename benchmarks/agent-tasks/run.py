@@ -1253,11 +1253,23 @@ class MemoryGate:
     drain_state; --ledger-drain-max); `priority` "nightly" (--ledger-
     priority nightly) puts its boards first among the waiters and has the
     ledger drain for them at once. A board's reservation carries its
-    expected end (the tier's seconds), which the drain reads."""
+    expected end (the tier's seconds), which the drain reads.
 
-    def __init__(self, minimum_gb, ledger=None, poll_seconds=15.0, drain_after=None, priority=None, drain_max=None):
-        self.minimum_gb = max(0.0, minimum_gb)
+    The floor (since 2026-10-27): `minimum_gb` (--min-free-gb) when given;
+    None, measured per board (harness_common.measured_floor_mb: 2 GB to
+    keep, the outside memory's growth from the ledger's headroom samples,
+    the overshoot of the board's kind from `sidecar`, estimates.json; 10
+    GB without samples), read again on every poll of a wait. `sample`: the
+    gate samples the machine beside the ledger every 10 s while the run
+    goes (harness_common.HeadroomSampler)."""
+
+    def __init__(self, minimum_gb, ledger=None, poll_seconds=15.0, drain_after=None, priority=None, drain_max=None,
+                 sidecar=None, sample=False):
+        self.minimum_gb = None if minimum_gb is None else max(0.0, minimum_gb)
+        self.sidecar = sidecar
         self.ledger = ledger if ledger is not None else harness_common.Ledger.from_env()
+        self.sampler = harness_common.HeadroomSampler(self.ledger).start() if sample else None
+        self.headroom = (None, -float("inf"))  # (summary, when read)
         self.poll_seconds = poll_seconds
         self.drain_after = harness_common.DEFAULT_DRAIN_AFTER_SECONDS if drain_after is None else drain_after
         self.drain_max = harness_common.DEFAULT_DRAIN_MAX_SECONDS if drain_max is None else drain_max
@@ -1267,9 +1279,22 @@ class MemoryGate:
         self.keys = {}
         self.next_token = 0
 
-    def admit(self, what, expected_mb, expected_seconds=None):
+    def floor_mb(self, kind=None):
+        """The floor for a board of `kind` (estimate_kind; None: no
+        overshoot): (megabytes, what it is made of)."""
+        if self.minimum_gb is not None:
+            return self.minimum_gb * 1024, "--min-free-gb"
+        summary, read = self.headroom
+        if time.monotonic() - read > 30:
+            path = harness_common.headroom_path(self.ledger.path)
+            summary = (harness_common.read_headroom(path) or {}).get("summary")
+            self.headroom = (summary, time.monotonic())
+        overshoot = 0 if kind is None else tier_estimates.overshoot_mb(self.sidecar, kind)
+        return harness_common.measured_floor_mb(summary, overshoot)
+
+    def admit(self, what, expected_mb, expected_seconds=None, kind=None):
         key = harness_common.admit(self.ledger, expected_mb, f"run.py: {what} (expected peak)",
-                                   self.minimum_gb * 1024, poll_seconds=self.poll_seconds,
+                                   lambda: self.floor_mb(kind)[0], poll_seconds=self.poll_seconds,
                                    log=lambda text: print(text, file=sys.stderr, flush=True),
                                    expected_seconds=expected_seconds, drain_after=self.drain_after,
                                    priority=self.priority, drain_max=self.drain_max)
@@ -1367,6 +1392,14 @@ def declarations_line(tasks, arguments):
             + f"; the largest {largest / 1024:.1f} GB")
 
 
+def floor_line(tasks, arguments):
+    """The floor of available memory the boards start against, per kind
+    (MemoryGate.floor_mb)."""
+    kinds = sorted({estimate_kind(task, arguments) for task in tasks})
+    floors = [(kind, *arguments.gate.floor_mb(kind)) for kind in kinds]
+    return "memory floor: " + "; ".join(f"{kind} {floor / 1024:.1f} GB ({text})" for kind, floor, text in floors)
+
+
 def task_directory(task):
     """The task's board directory: relative to the checkout, or absolute.
     The committed lists (tasks/v6, tasks/v7) name the main checkout's
@@ -1390,7 +1423,7 @@ def run_task(task, arguments):
     # Admitted before the designer's DRC: kicad-cli takes 2.2 GB on any
     # board, and twelve jobs start with it at once.
     token = arguments.gate.admit(task["name"], task.get("peak_rss_mb", arguments.expected_mb),
-                                 task.get("expected_seconds"))
+                                 task.get("expected_seconds"), estimate_kind(task, arguments))
     try:
         row = run_admitted(task, arguments, token)
     finally:
@@ -2362,10 +2395,12 @@ def main():
                         help="search threads per board (RAYON_NUM_THREADS; default with --tier and no --jobs: "
                              "TIER_THREADS; else with several jobs the physical cores shared among them, "
                              "at most 4; with one job: all)")
-    parser.add_argument("--min-free-gb", type=float, default=12.0,
+    parser.add_argument("--min-free-gb", type=float, default=None,
                         help="a floor beside the memory ledger: start a board only when this much memory "
                              "stays available after its expected peak and what the runs in the ledger are "
-                             "still expected to grow by (0: the ledger alone)")
+                             "still expected to grow by (0: the ledger alone; default: measured, 2 GB plus "
+                             "the memory outside the ledger's growth plus the board's tier's overshoot, "
+                             "10 GB without samples: python3 benchmarks/ledger_headroom.py)")
     parser.add_argument("--ledger-drain-after", type=float, default=harness_common.DEFAULT_DRAIN_AFTER_SECONDS,
                         help="seconds a board waits for memory before the ledger drains for it: newer requests "
                              "then go only if they leave it its room or end before every running board "
@@ -2504,7 +2539,8 @@ def main():
         parser.error("--ledger-drain-max must be a finite number of seconds, at least 0")
     arguments.gate = MemoryGate(arguments.min_free_gb, drain_after=arguments.ledger_drain_after,
                                 priority=None if arguments.ledger_priority == "normal" else arguments.ledger_priority,
-                                drain_max=arguments.ledger_drain_max)
+                                drain_max=arguments.ledger_drain_max, sidecar=arguments.sidecar,
+                                sample=not arguments.dry_run)
     tasks = []
     arguments.declared = {}
     # The boards of the tier (or task list) that --only leaves out: with
@@ -2535,6 +2571,7 @@ def main():
             print(f"tier {arguments.tier}: {len(missing)} boards not in {arguments.tasks}: {missing}", file=sys.stderr)
     tasks = order_tasks(tasks, arguments.order, tier is not None, arguments.expected_mb)
     print(declarations_line(tasks, arguments), file=sys.stderr)
+    print(floor_line(tasks, arguments), file=sys.stderr)
     if arguments.dry_run:
         for task in tasks:
             megabytes, where = arguments.declared[task["name"]]

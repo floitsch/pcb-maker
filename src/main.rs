@@ -337,11 +337,17 @@ fn print_ledger(json: bool) -> Result<(), String> {
             ledger::drain_state(waiter, &all, now, capacity, available),
         )
     });
+    // run.py's floor of available memory (before its board's tier's
+    // overshoot): measured from the headroom samples, else the default.
+    let headroom = book.headroom();
+    let (floor, floor_text) = ledger::measured_floor_mb(headroom.as_ref(), 0.0, now);
     if json {
         let value = serde_json::json!({
             "path": book.path(),
             "capacity_mb": capacity,
             "reserved_mb": total,
+            "headroom": headroom,
+            "floor_mb": floor,
             "reservations": live,
             "first_waiter": first.map(|(waiter, state)| serde_json::json!({
                 "pid": waiter.pid,
@@ -386,6 +392,11 @@ fn print_ledger(json: bool) -> Result<(), String> {
             }
         );
     }
+    println!(
+        "run.py's floor of available memory: {:.1} GB before a board's tier's overshoot ({floor_text}; {})",
+        floor / 1024.0,
+        book.headroom_path().display()
+    );
     if let Some((waiter, state)) = first {
         println!(
             "first waiter: pid {}, {}, waiting {:.0} s for {:.0} MB: {}",

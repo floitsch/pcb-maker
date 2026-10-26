@@ -23,8 +23,9 @@
 #      of those. When the newest nightly measured the same commit with
 #      every stage planned tonight, it stops there (--force runs anyway).
 #   2. Runs, one after the other, each through the memory ledger (no
-#      lock) with --min-free-gb 10 and --ledger-priority nightly, from
-#      the nightly checkout. The priority puts the nightly's boards first
+#      lock) with run.py's measured floor of available memory (since
+#      2026-10-27; 10 GB until then, and without headroom samples) and
+#      --ledger-priority nightly, from the nightly checkout. The priority puts the nightly's boards first
 #      among the ledger's waiters and has the ledger drain for them at
 #      once: a newer request (another agent's route, a sweep's board) goes
 #      only while it leaves the waiting board its room, so the night ends
@@ -285,7 +286,7 @@ done
 
 run_py="${PCB_NIGHTLY_RUN_PY:-$source_dir/benchmarks/agent-tasks/run.py}"
 tasks="$source_dir/benchmarks/agent-tasks/tasks/v7/tasks.json"
-common=(--binary "$snapshot" --min-free-gb 10 --ledger-priority nightly)
+common=(--binary "$snapshot" --ledger-priority nightly)
 # The nightly's own estimates (refreshed at the end of each night, below),
 # else run.py's default, the committed sidecar.
 estimates="$nights/estimates.json"
