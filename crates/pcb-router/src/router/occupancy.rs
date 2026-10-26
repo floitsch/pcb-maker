@@ -174,7 +174,7 @@ mod tests {
             let (map, cell) = ((state % 3) as usize, ((state >> 8) % 5) as usize);
             // Up more than down early, then down to empty.
             let up = if step < 12_000 {
-                (state >> 20) % 3 != 0
+                !(state >> 20).is_multiple_of(3)
             } else {
                 false
             };
