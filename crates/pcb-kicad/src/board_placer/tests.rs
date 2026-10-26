@@ -1662,3 +1662,62 @@ fn a_decoupling_capacitor_is_near_every_supply_pin_of_its_rail_with_decoupling_n
     };
     assert_eq!(relation(&on), (1, 2, 1.0));
 }
+
+#[test]
+fn a_non_plated_holes_clearance_ring_is_part_of_the_body() {
+    // A mouse bite (0.5 mm holes in a 0.7 mm courtyard) and a capacitor
+    // whose courtyard may touch others (`tight_bodies`): OpenRX's panel,
+    // where the hole clearance 0.2 less the copper clearance 0.09 left a
+    // ring of 0.11 mm reaching 0.01 mm past the courtyard, and a pad came
+    // 0.19 mm to a hole.
+    let pcb = parse(
+        r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+        (gr_rect (start 0 0) (end 40 30) (layer "Edge.Cuts"))
+        (footprint "MouseBite" (layer "F.Cu") (at 20 15)
+            (fp_rect (start -1.2 -0.35) (end 1.2 0.35) (layer "F.CrtYd"))
+            (pad "" np_thru_hole circle (at -0.85 0) (size 0.5 0.5) (drill 0.5) (layers "*.Cu" "*.Mask"))
+            (pad "" np_thru_hole circle (at 0 0) (size 0.5 0.5) (drill 0.5) (layers "*.Cu" "*.Mask"))
+            (pad "" np_thru_hole circle (at 0.85 0) (size 0.5 0.5) (drill 0.5) (layers "*.Cu" "*.Mask")))
+        (footprint "C" (layer "F.Cu") (at 10 10)
+            (fp_rect (start -0.91 -0.46) (end 0.91 0.46) (layer "F.CrtYd"))
+            (fp_rect (start -0.5 -0.25) (end 0.5 0.25) (layer "F.Fab"))
+            (pad "1" smd rect (at -0.48 0) (size 0.56 0.62) (layers "F.Cu") (net 1 "A"))
+            (pad "2" smd rect (at 0.48 0) (size 0.56 0.62) (layers "F.Cu") (net 2 "B"))))"#,
+    )
+    .unwrap();
+    let config = KiCadBoardPlacerConfig {
+        copper_clearance_mm: Some(0.09),
+        hole_clearance_mm: Some(0.2),
+        tight_bodies: Some(true),
+        ..KiCadBoardPlacerConfig::default()
+    };
+    let lowered = lower_placement(&pcb, &config).unwrap();
+    // The bite's body holds its rings: 0.25 + 0.11 mm about each hole.
+    let bite = &lowered.problem.components[0];
+    assert!((bite.body_size[1] - 0.72).abs() < 1.0e-9);
+    // At the last level (tight bodies, courtyards touching where the
+    // copper keeps the clearance), a pad under the middle hole keeps the
+    // hole clearance from it.
+    let mut problem = lowered.problem.clone();
+    problem.spacing = problem.min_spacing;
+    problem.grid = 0.01;
+    problem.constraints.courtyard_spacing = true;
+    for component in &mut problem.components {
+        component.halo = 0.0;
+        component.use_tight_body();
+    }
+    let mut poses = problem.poses.clone();
+    // The capacitor's pad 1 under the hole at (20, 15): its top edge at
+    // y - 0.31, the hole's bottom edge at 15.25.
+    let at_gap = |gap: f64| [20.48, 15.25 + gap + 0.31];
+    let legal =
+        |poses: &[core::Pose]| !core::legal::illegal_components(&problem, poses).contains(&1);
+    poses[1].position = at_gap(0.19);
+    assert!(!legal(&poses), "0.19 mm from the hole is legal");
+    poses[1].position = at_gap(0.201);
+    let why = core::legal::conflict_kind(&problem, &poses, 1, poses[1], 0);
+    assert!(
+        legal(&poses),
+        "0.201 mm from the hole is not legal: {why:?}"
+    );
+}
