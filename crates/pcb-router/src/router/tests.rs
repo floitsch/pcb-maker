@@ -3524,6 +3524,81 @@ fn another_nets_zone_of_a_higher_priority_keeps_its_clearance() {
     assert_eq!(record.tracks, 1);
 }
 
+#[test]
+fn the_board_setups_spoke_minimum_decides_what_is_starved() {
+    // P.1 has one spoke: short of KiCad's default two, enough for a board
+    // whose setup asks for one, and no finding where the project ignores
+    // starved thermals (min_resolved_spokes, rule_severities).
+    let board = one_spoke_board();
+    let short = |min_spokes: usize| {
+        let router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                min_spokes,
+                ..Config::default()
+            },
+        );
+        let record = spoke_report(&router, 0)
+            .0
+            .into_iter()
+            .find(|record| record.terminal == 0)
+            .unwrap();
+        (record.required, Router::spokes_short(&record))
+    };
+    assert_eq!(short(2), (2, 1));
+    assert_eq!(short(1), (1, 0));
+    assert_eq!(short(0), (0, 0));
+}
+
+#[test]
+fn a_pour_reclaims_its_own_via_inside_another_nets_higher_zone() {
+    // Q's zone of a higher priority covers P.1 and the space above it;
+    // KiCad knocks it out of P's fill by its fill grown by the clearance,
+    // not by its outline: a via of P inside it keeps Q's fill away, P's
+    // fill covers the via, and P.1's +y spoke lands there (anthracite's
+    // J107.1 on In2.Cu). Without the via Q's fill takes the place.
+    let mut board = one_spoke_board();
+    board.layer_count = 2;
+    board.obstacles[3].shape = rect([9.0, 9.0], [0.25, 0.25]);
+    board.nets[1].terminals[1].anchor = [9.0, 9.0];
+    let region = vec![[3.5, 3.5], [7.0, 3.5], [7.0, 7.0], [3.5, 7.0]];
+    board.planes[0].excluded.push(region.clone());
+    let mut above = plane(1, 0, None);
+    above.polygon = region;
+    board.planes.push(above);
+    let outcome = |via: bool| {
+        let mut router = Router::new(
+            &board,
+            &Config {
+                pitches: vec![0.1],
+                ..Config::default()
+            },
+        );
+        if via {
+            let cell = router.grid().nearest_node([5.0, 6.0]).unwrap() as u32;
+            router.nets[0].branches = vec![Branch {
+                nodes: vec![Node { layer: 0, cell }, Node { layer: 1, cell }],
+                start_terminal: FREE_END,
+                end_terminal: FREE_END,
+            }];
+            router.stamp(0);
+        }
+        spoke_report(&router, 0)
+            .0
+            .into_iter()
+            .find(|record| record.terminal == 0)
+            .unwrap()
+            .outcomes[2]
+    };
+    assert_eq!(outcome(false), SpokeOutcome::NoFill);
+    assert!(
+        matches!(outcome(true), SpokeOutcome::Good(_)),
+        "{:?}",
+        outcome(true)
+    );
+}
+
 /// `one_spoke_board` with a fourth pad of Q left of P.1: none of P.1's
 /// spokes lands, and the diagonals past Q's corners reach the fill.
 fn spokeless_board() -> Board {
