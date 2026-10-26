@@ -1861,6 +1861,9 @@ impl Router {
         const NECK_REACH_PITCHES: i64 = 10;
         const PAIRS_PER_PIECE: usize = 4;
         const MAX_PIECES: usize = 6;
+        // A pair of nodes: their squared distance in pitches, this
+        // piece's node, the other's.
+        type Pair = (i64, (i64, i64), (i64, i64));
         let (nx, ny) = (self.grid.nx as i64, self.grid.ny as i64);
         let label = |x: i64, y: i64| {
             if x < 0 || y < 0 || x >= nx || y >= ny {
@@ -1885,7 +1888,7 @@ impl Router {
                         .any(|(dx, dy)| label(x + dx, y + dy) != current)
                 })
                 .collect();
-            let mut pairs: HashMap<u32, Vec<(i64, (i64, i64), (i64, i64))>> = HashMap::new();
+            let mut pairs: HashMap<u32, Vec<Pair>> = HashMap::new();
             for &(x, y) in &rim {
                 for dy in -NECK_REACH_PITCHES..=NECK_REACH_PITCHES {
                     for dx in -NECK_REACH_PITCHES..=NECK_REACH_PITCHES {
@@ -1906,8 +1909,7 @@ impl Router {
                     }
                 }
             }
-            let mut others: Vec<(u32, Vec<(i64, (i64, i64), (i64, i64))>)> =
-                pairs.into_iter().collect();
+            let mut others: Vec<(u32, Vec<Pair>)> = pairs.into_iter().collect();
             others.sort_unstable_by_key(|(other, candidates)| {
                 (candidates.iter().map(|pair| pair.0).min(), *other)
             });
