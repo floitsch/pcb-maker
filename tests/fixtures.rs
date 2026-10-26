@@ -26,7 +26,9 @@
 //!
 //! Every route pins the work rates (`PCB_WORK_RATE`), the memory
 //! (`PCB_MAKER_MEMORY_MB`) and turns the wall guard off, so that the
-//! machine's load cannot change a result. Golden files are in
+//! machine's load cannot change a result. The one run that measures its
+//! rates (the free dimension's children at the parent's rates) asserts
+//! the rates alone, no outcome. Golden files are in
 //! `tests/fixtures/golden`; `PCB_UPDATE_GOLDEN=1` rewrites them.
 
 use std::{
@@ -1081,8 +1083,12 @@ fn f2s_free_dimension_stops_at_the_first_clean_size() {
     // clean). F2 is F1 with its bottom edge free from 18 to 24 mm, two
     // sizes side by side, and a fake kicad-cli clean from 22 mm: the
     // probes stop after the batch of 22, 20 is retried and 22 confirmed
-    // with what is left, the result's outline is 22 mm with the
-    // band's items moved, and the children run at the parent's rates.
+    // with what is left, and the result's outline is 22 mm with the
+    // band's items moved. The rates are pinned as in every other fixture:
+    // with the parent measuring them, a busy machine measured a low rate,
+    // the layouts' work counted more seconds of the search's 60 and the
+    // confirmation did not fit (that the children run at the parent's
+    // rates is f2s_free_dimension_children_run_at_the_parents_rates).
     let root = scratch("free-dimension");
     let source = project("f1", &root);
     let bin = sized_kicad(&root);
@@ -1093,8 +1099,6 @@ fn f2s_free_dimension_stops_at_the_first_clean_size() {
     );
     let out = root.join("out");
     let output = binary(4)
-        // The parent measures its rates and pins them for the children.
-        .env_remove("PCB_WORK_RATE")
         .env("PATH", &path)
         .args([
             "layout-kicad-board",
@@ -1213,24 +1217,78 @@ fn f2s_free_dimension_stops_at_the_first_clean_size() {
             .any(|corner| (corner[1] - 21.5).abs() < 1.0e-9),
         "the hatched zone's bottom moved from 24.5 to 21.5: {corners:?}"
     );
-    // The children ran at the parent's rates, pinned.
-    let parent = (
-        verdict["work_rate"].as_f64().unwrap(),
-        verdict["placer_work_rate"].as_f64().unwrap(),
-    );
-    for size in ["20mm-probe", "22mm-probe"] {
-        let child = read_json(&out.join(format!("free-dimension/{size}/layout/verdict.json")));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn f2s_free_dimension_children_run_at_the_parents_rates() {
+    // The other half of fixture test 8: without PCB_WORK_RATE the parent
+    // measures its rates and pins them for every layout it starts, so
+    // that a size's probe is the same however many run beside it. The
+    // measurement follows the machine's load, so this run checks only the
+    // rates, never an outcome: short budgets, KiCad's check off.
+    let root = scratch("free-dimension-rates");
+    let source = project("f1", &root);
+    let config = root.join("layout.json");
+    fs::write(
+        &config,
+        json!({"total_seconds": 3, "moves": 0,
+               "placer": {"fixed": ["J1", "H1", "U1", "D1"]},
+               "free_dimension": {"edge": "bottom", "sizes": [20, 22], "band_mm": 7,
+                                  "probe_seconds": 1, "confirm_seconds": 1, "parallel": 2}})
+        .to_string(),
+    )
+    .unwrap();
+    let out = root.join("out");
+    let output = binary(4)
+        // The parent measures its rates and pins them for the children.
+        .env_remove("PCB_WORK_RATE")
+        .env("PCB_SKIP_NATIVE", "1")
+        .args([
+            "layout-kicad-board",
+            &source.display().to_string(),
+            "f1",
+            &out.display().to_string(),
+            "auto",
+            &config.display().to_string(),
+        ])
+        .output()
+        .unwrap();
+    let text = stderr(&output);
+    let table = read_json(&out.join("free-dimension.json"));
+    // The parent's rates, as it pinned them: measured, not the fixtures'.
+    let pinned = table["work_rate"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{table}\n{text}"))
+        .to_string();
+    let parent: Vec<f64> = pinned
+        .split(',')
+        .map(|rate| rate.parse().unwrap())
+        .collect();
+    assert_eq!(parent.len(), 2, "{pinned}");
+    assert_ne!(parent, vec![3.15e6, 150e6], "the parent measured its rates");
+    let runs: Vec<&Value> = table["runs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|run| run["kind"] != "infeasible")
+        .collect();
+    assert!(runs.len() >= 2, "both sizes probed: {table}");
+    for run in runs {
+        let directory = PathBuf::from(run["directory"].as_str().unwrap());
+        let child = read_json(&directory.join("verdict.json"));
+        let name = format!("{} mm {}", run["size_mm"], run["kind"]);
         assert_eq!(
             child["work_rate_source"], "PCB_WORK_RATE",
-            "{size}: {child}"
+            "{name}: {child}"
         );
         assert_eq!(
-            (
+            vec![
                 child["work_rate"].as_f64().unwrap(),
                 child["placer_work_rate"].as_f64().unwrap()
-            ),
+            ],
             parent,
-            "{size}"
+            "{name}"
         );
     }
     fs::remove_dir_all(root).unwrap();
