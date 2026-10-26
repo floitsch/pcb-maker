@@ -103,31 +103,58 @@ fn fresh_footprints_mark_as_whole_ones() {
 }
 
 #[test]
-fn stamps_pack_in_one_word_where_maps_and_cells_fit_else_two() {
-    // katia's lattice: 130 maps of 2775 x 1077 cells, one word a stamp.
+fn stamps_keep_every_pair_in_order_as_differences() {
+    // katia's lattice (130 maps of 2775 x 1077 cells) and the extremes: a
+    // lattice of 2^28 cells and 17 maps (which took two words a stamp),
+    // a jump down, the largest pair and back to zero.
     let cells = 2775 * 1077;
-    let mut packed = Stamped::with_capacity(4, 130, cells);
-    let pairs = [(0, 0), (129, cells as u32 - 1), (7, 12345), (64, 1 << 21)];
+    let pairs = [
+        (0, 0),
+        (129, cells as u32 - 1),
+        (7, 12345),
+        (64, 1 << 21),
+        (16, (1 << 28) - 1),
+        (3, 5),
+        (u32::MAX, u32::MAX),
+        (0, 0),
+        (u32::MAX, 0),
+        (0, u32::MAX),
+    ];
+    let mut stamped = Stamped::with_capacity(4, 130, cells);
     for (map, cell) in pairs {
-        packed.push(map, cell);
+        stamped.push(map, cell);
     }
-    assert_eq!(packed.words.len(), 4);
-    assert_eq!(packed.iter().collect::<Vec<_>>(), pairs);
-    assert_eq!(packed.get(1), Some((129, cells as u32 - 1)));
-    assert_eq!(packed.get(4), None);
-    assert!(packed.contains((7, 12345)) && !packed.contains((7, 12346)));
-    // 2^28 cells leave four bits: 17 maps take two words a stamp.
-    let mut wide = Stamped::with_capacity(2, 17, 1 << 28);
-    wide.push(16, (1 << 28) - 1);
-    wide.push(3, 5);
-    assert_eq!(wide.words.len(), 4);
-    assert_eq!(wide.len(), 2);
-    assert_eq!(
-        wide.iter().collect::<Vec<_>>(),
-        [(16, (1 << 28) - 1), (3, 5)]
-    );
-    // 16 maps still fit.
-    assert_eq!(Stamped::with_capacity(0, 16, 1 << 28).shift, 28);
+    assert_eq!(stamped.len(), pairs.len());
+    assert_eq!(stamped.iter().collect::<Vec<_>>(), pairs);
+    assert!(stamped.contains((7, 12345)) && !stamped.contains((7, 12346)));
+    let skipped: Vec<_> = stamped.iter().skip(3).collect();
+    assert_eq!(skipped, pairs[3..]);
+    // A footprint's column on one map and the next map's: a byte a stamp
+    // within the column, a few for the map's change.
+    let mut column = Stamped::default();
+    for map in [20, 21] {
+        for row in 0..9u32 {
+            column.push(map, 500_000 + row * 60);
+        }
+    }
+    assert_eq!(column.len(), 18);
+    assert!(column.bytes.len() <= 2 * 18 + 8, "{}", column.bytes.len());
+    assert!(Stamped::default().is_empty() && Stamped::default().iter().next().is_none());
+    // A random walk round-trips.
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    let mut walk = Vec::new();
+    let mut random = Stamped::default();
+    for _ in 0..10_000 {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        let pair = ((state >> 40) as u32 % 200, state as u32 % (1 << 26));
+        walk.push(pair);
+        random.push(pair.0, pair.1);
+    }
+    assert_eq!(random.iter().collect::<Vec<_>>(), walk);
+    random.trim();
+    assert_eq!(random.iter().collect::<Vec<_>>(), walk);
 }
 
 #[test]

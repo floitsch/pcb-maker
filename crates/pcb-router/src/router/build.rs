@@ -539,7 +539,7 @@ impl Router {
         let statics: usize = self.statics.iter().map(StaticMaps::bytes).sum();
         let nets = &self.nets;
         let net_sum = |each: &dyn Fn(&NetState) -> usize| -> usize { nets.iter().map(each).sum() };
-        let stamp_lists = net_sum(&|state| state.stamped.words.capacity() * 4);
+        let stamp_lists = net_sum(&|state| state.stamped.held_bytes());
         let pour_masks = net_sum(&|state| bytes(&state.plane) + bytes(&state.plane_target));
         let branches = net_sum(&|state| {
             state.branches.capacity() * std::mem::size_of::<Branch>()
@@ -625,11 +625,7 @@ impl Router {
             ("tiles", tiles, None),
             ("sever", bytes(&self.sever), None),
             ("pin rows", bytes(&self.pin_row), None),
-            (
-                "board",
-                crate::mem_profile::board_bytes(&self.board),
-                None,
-            ),
+            ("board", crate::mem_profile::board_bytes(&self.board), None),
         ]
     }
 

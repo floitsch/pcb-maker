@@ -524,72 +524,113 @@ fn prefetch_index<T>(values: &[T], index: usize) {
 }
 
 /// A net's stamps (`NetState::stamped`): (map index, cell) pairs in
-/// order, packed in one 32-bit word each where the lattice's maps and
-/// cells fit (the map above the cell's bits; every board measured), else
-/// two. Four bytes a stamp instead of eight: the lists of a big board's
-/// nets were its largest part beside the lattice maps (katia: 250 MB).
+/// order. Each pair is the key `map << 32 | cell`, kept as the difference
+/// from the key before it (the first's from 0), zigzag-folded and written
+/// in seven-bit groups (LEB128: one to ten bytes, the high bit set on all
+/// but the last). A list is read only in order (`iter`), and consecutive
+/// stamps lie on one map a row or a column apart, or on the next of a
+/// node's maps: 1.5 bytes a stamp on Castor and Sisu instead of the
+/// packed word's 4 (memory round 3, 2026-10-26; until then a 32-bit word a
+/// stamp where the maps and cells fit, else two: the lists were the
+/// largest part of a router beside its lattice maps, katia 124 MB a
+/// router, Castor's four probes 165 MB of their 729).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 struct Stamped {
-    words: Vec<u32>,
-    /// The bits of a packed word below the map; `WIDE_STAMPS` for two
-    /// words a stamp.
-    shift: u32,
+    bytes: Vec<u8>,
+    /// How many stamps.
+    len: usize,
+    /// The last stamp's key.
+    last: u64,
 }
 
-/// `Stamped::shift` where a stamp takes two words.
-const WIDE_STAMPS: u32 = u32::MAX;
-
 impl Stamped {
-    /// An empty list for a lattice of `maps` maps of `cells` cells.
-    fn with_capacity(capacity: usize, maps: usize, cells: usize) -> Self {
-        let shift = usize::BITS - cells.saturating_sub(1).leading_zeros();
-        let packs = shift < 32 && (maps.saturating_sub(1) as u64) < (1u64 << (32 - shift));
-        let shift = if packs { shift } else { WIDE_STAMPS };
+    /// An empty list with room for about `capacity` stamps (the maps and
+    /// cells of the lattice need no layout of their own any more).
+    fn with_capacity(capacity: usize, _maps: usize, _cells: usize) -> Self {
         Self {
-            words: Vec::with_capacity(if packs { capacity } else { capacity * 2 }),
-            shift,
+            bytes: Vec::with_capacity(capacity * 2),
+            len: 0,
+            last: 0,
         }
     }
 
     #[inline(always)]
     fn push(&mut self, map: u32, cell: u32) {
-        if self.shift == WIDE_STAMPS {
-            self.words.push(map);
-            self.words.push(cell);
-        } else {
-            self.words.push(map << self.shift | cell);
+        let key = ((map as u64) << 32) | cell as u64;
+        let delta = key.wrapping_sub(self.last) as i64;
+        self.last = key;
+        let mut value = ((delta << 1) ^ (delta >> 63)) as u64;
+        while value >= 0x80 {
+            self.bytes.push(value as u8 | 0x80);
+            value >>= 7;
         }
+        self.bytes.push(value as u8);
+        self.len += 1;
     }
 
     fn len(&self) -> usize {
-        if self.shift == WIDE_STAMPS {
-            self.words.len() / 2
-        } else {
-            self.words.len()
-        }
+        self.len
     }
 
     fn is_empty(&self) -> bool {
-        self.words.is_empty()
+        self.len == 0
     }
 
-    #[inline(always)]
-    fn get(&self, index: usize) -> Option<(u32, u32)> {
-        if self.shift == WIDE_STAMPS {
-            Some((*self.words.get(2 * index)?, self.words[2 * index + 1]))
-        } else {
-            let word = *self.words.get(index)?;
-            Some((word >> self.shift, word & ((1u32 << self.shift) - 1)))
+    /// Gives back the room a full restamp left beyond the list (a list
+    /// grows by doubling; a net keeps its list until it is stamped again).
+    fn trim(&mut self) {
+        if self.bytes.capacity() > self.bytes.len() + self.bytes.len() / 8 + 64 {
+            self.bytes.shrink_to_fit();
         }
     }
 
+    /// The bytes the list holds (its capacity).
+    fn held_bytes(&self) -> usize {
+        self.bytes.capacity()
+    }
+
     /// The (map, cell) pairs in order.
-    fn iter(&self) -> impl Iterator<Item = (u32, u32)> + '_ {
-        (0..self.len()).map(|index| self.get(index).unwrap())
+    #[inline(always)]
+    fn iter(&self) -> StampIter<'_> {
+        StampIter {
+            bytes: &self.bytes,
+            position: 0,
+            last: 0,
+        }
     }
 
     fn contains(&self, pair: (u32, u32)) -> bool {
         self.iter().any(|stamp| stamp == pair)
+    }
+}
+
+/// The stamps of a `Stamped` in order.
+#[derive(Clone)]
+struct StampIter<'a> {
+    bytes: &'a [u8],
+    position: usize,
+    last: u64,
+}
+
+impl Iterator for StampIter<'_> {
+    type Item = (u32, u32);
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<(u32, u32)> {
+        let mut value = 0u64;
+        let mut shift = 0;
+        loop {
+            let byte = *self.bytes.get(self.position)?;
+            self.position += 1;
+            value |= ((byte & 0x7f) as u64) << shift;
+            if byte < 0x80 {
+                break;
+            }
+            shift += 7;
+        }
+        let delta = ((value >> 1) as i64) ^ -((value & 1) as i64);
+        self.last = self.last.wrapping_add(delta as u64);
+        Some(((self.last >> 32) as u32, self.last as u32))
     }
 }
 

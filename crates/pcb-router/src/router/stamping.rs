@@ -506,8 +506,9 @@ impl Router {
         // are larger than the core's cache and a list visits dozens of them.
         let nxu = self.grid.nx;
         const AHEAD: usize = 32;
-        for (index, (map, cell)) in old.iter().enumerate() {
-            if let Some((map, cell)) = old.get(index + AHEAD) {
+        let mut ahead = old.iter().skip(AHEAD);
+        for (map, cell) in old.iter() {
+            if let Some((map, cell)) = ahead.next() {
                 self.occupancy.prefetch(map as usize, cell as usize);
             }
             let (map, cell) = (map as usize, cell as usize);
@@ -522,8 +523,9 @@ impl Router {
             }
         }
         // A new stamp still marked was not stamped before: it counts.
-        for (index, (map, cell)) in stamped.iter().enumerate() {
-            if let Some((map, cell)) = stamped.get(index + AHEAD) {
+        let mut ahead = stamped.iter().skip(AHEAD);
+        for (map, cell) in stamped.iter() {
+            if let Some((map, cell)) = ahead.next() {
                 self.occupancy.prefetch(map as usize, cell as usize);
             }
             let (map, cell) = (map as usize, cell as usize);
@@ -540,6 +542,7 @@ impl Router {
         let state = &mut self.nets[net as usize];
         state.branches = branches;
         state.escapes = escapes;
+        stamped.trim();
         state.stamped = stamped;
     }
 
