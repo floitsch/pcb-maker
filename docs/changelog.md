@@ -55,9 +55,23 @@ Branch length-rules (docs/router.md, "Length and skew rules
   the QA skew group): length/skew findings 31 -> 19 (oro 12 -> 5, the
   five left the unrouted ULPI nets; Sisu 4 -> 1; firestarter 10 -> 8),
   errors 47 -> 35, unconnected 482 -> 482, vias 509 -> 509; Sisu's
-  diff_pair_gap 3 -> 4 (a meandered fallen-back pair). LEN1_DESIGNER_CL
+  diff_pair_gap 3 -> 4 (a meandered fallen-back pair). At the task budget
+  (the designer tier, 1500 s, the two census boards): oro 12 -> 1 (11 of
+  12 nets at 31.500 mm; ULPI_D4 32.94 mm, over the maximum), errors 12
+  -> 1, unconnected 1 -> 1, vias 370 -> 370; Sisu skew 4 -> 1, errors 14
+  -> 11, unconnected 17 -> 17, vias 281 -> 281. Rebased onto the
+  pairs' return vias (x14863): Sisu (30 s and task budget), oro and the
+  QA board byte-identical to x14861.
   The expansion tier (46 boards, 8 x 1): 46 of 46 routed boards
-  byte-identical to x1840's, rows identical. LEN1_DEFAULT_CL
+  byte-identical to x1840's, rows identical. **On by default**: the
+  length and skew findings fall on the three boards whose rules are
+  lowered (OpenAIO's are warnings, the QA board's class is undefined:
+  both unchanged), unconnected and vias are unchanged, errors fall. Known costs: a meandered net of a
+  fallen-back pair can leave its partner's gap (Sisu's diff_pair_gap +1
+  at 30 s); the nightly's fingerprint stage routes Sisu, whose route
+  gains its meanders (not a regression of the routes: the rest of the
+  board is unchanged).
+
 ## Committed on 2026-10-26 (the exact thermal model while routing)
 
 Branch exact-thermals-routing (docs/router.md, "The last miss, and the

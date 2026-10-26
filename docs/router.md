@@ -3580,7 +3580,12 @@ work, 2 x 1; the two census boards, both in tasks v7):
 | Sisu_SSE-9 | 4 -> 1 | 14 -> 11 | 17 -> 17 | 281 -> 281 | RP_USB_N, RP_USB_P (33.0 and 37.2 mm) and MODEM_USB_P to MODEM_USB_N's 58.31 mm; RP_USB_PHY_P 9.6 of 53.8 mm placed (its finding) |
 
 Sisu's other findings are unchanged at this budget (diff_pair_gap 7,
-uncoupled 3). LEN1_SISU43
+uncoupled 3). After main took the pairs' return vias (x1843), the
+branch rebased (x14863) routes Sisu at 30 s and at the task budget, oro
+and the QA board at 30 s byte-identically to x14861 (Sisu's pairs fall
+back, so no return via is placed): the tables stand. Default: **on**
+(the findings fall on the three boards whose rules are lowered;
+unconnected and vias do not change; errors fall).
 
 **What is left.** (1) Room: on a dense bus the router lays the nets side
 by side at the clearance, and no bump fits beside a track with a
