@@ -2022,10 +2022,131 @@ U3.23 on B.Cu (a QFN pin with a 0.15 mm gap at 45 degrees, in two
 panel copies), which KiCad finds starved with one spoke and the model
 not: the model blocks a spoke KiCad keeps and counts a track over the
 pad KiCad does not (tight spots, "Starved thermals at scale"; on x1838
-too). Not modelled: the zone's `thru_hole_only` connection (SMD pads
-solid, the rest thermal; Castor and jetson have two such zones, whose
-SMD pads the model takes for thermal) and `no`; neither changes a
-thermal via.
+too; the next section). Not modelled: the zone's `thru_hole_only`
+connection (SMD pads solid, the rest thermal; Castor and jetson have two
+such zones, whose SMD pads the model takes for thermal) and `no`;
+neither changes a thermal via.
+
+### The last miss, and the exact model while routing (2026-10-26)
+
+**0xCB's U3.23 on B.Cu.** The panel holds four copies of the board; the
+QFN pin (1.075 x 0.25 mm at 45 degrees, GND, a hatched zone with a
+0.15 mm gap, 0.3 mm clearance and a 0.2 mm web) is starved in KiCad on
+Board_2 and Board_3, one spoke each and no track counted. The model had
+two errors that cancelled on Board_2 and not on Board_3:
+
+- **A spoke end in its own ring, by microns.** The spoke along the pin
+  towards the exposed pad ends (gap, 5 microns and half a web past the
+  pin) in the pin's own hatch ring, between U3.22's clearance and the
+  exposed pad's corner. KiCad's fill ends 0.5 microns short of that
+  point (pcbnew's fill, the board as written): the spoke is dropped. The
+  model's ring test found a brush centre for it 1 to 2 microns inside
+  U3.22's clearance (`in_ring` at the probe's `EPSILON` of 3 microns; at
+  1 micron it finds none), kept the spoke as blocked and, by the rule
+  for a blocked spoke's part over its pad, counted the pin's own track,
+  which ends over the pin there: two, not starved (Board_3; Board_2 had
+  the same track and so one, starved by accident). In the measurement a
+  spoke's end now lies in a ring only where a brush keeps the clearances
+  to a micron (`SPOKE_END_RING_TOLERANCE`, the filler's pruning micron).
+- **A spoke cut short of its end that joins the fill beside it.** On
+  Board_2 a VCC track runs 0.69 mm below the pin; its clearance cuts the
+  diagonal spoke 0.06 mm before the fill's own brush centres begin, so
+  `spoke_clear` (a brush across the spoke at every step to there) found
+  it blocked. KiCad adds the spoke, cuts the clearances out and prunes:
+  the remnant joins the fill to its side and crosses the ring, one
+  spoke. In the measurement a spoke that fails `spoke_clear` still
+  counts where a flood of brush centres (a quarter of the brush's
+  radius apart, 8-connected) from the spoke at the ring, through the
+  spoke and through the fill, reaches the fill (`spoke_joins_fill`).
+
+Both hold for the measurement only (`measured_thermals`). With them the
+model's U3.23 rows match KiCad's on all four copies (Board_0 no spoke,
+Board_1 two, Board_2 and Board_3 one).
+
+**The prediction check** (the model alone on the written boards,
+`dump-pour-map` and the DRC's rule, x1840 against x14870; predicted
+starved pads against KiCad's starved_thermal findings, by pad label and
+layer; missed / false):
+
+| routes | boards | KiCad's starved | x1840 | x14870 | predictions changed |
+| --- | --- | --- | --- | --- | --- |
+| pour4's dense, 30 s (x14853) | 11 | 1 (0xCB U3.23 B.Cu) | 1 / 0 | 0 / 0 | 1 |
+| pour4's tier (x14853) | 46 | 0 | 0 / 0 | 0 / 0 | 0 |
+| pour4's fingerprints (x14853) | 4 | 1 (k30 J1.39) | 0 / 0 | 0 / 0 | 0 |
+| pour3's dense, both escape settings (x14703) | 22 | 0 | 0 / 0 | 0 / 0 | 0 |
+| pour3's tier and fingerprints, both settings (x14703) | 100 | 2 (k30 J1.39 twice) | 0 / 0 | 0 / 0 | 0 |
+| this A/B's tier, off and on | 92 | 0 | 0 / 0 | 0 / 0 | 0 |
+| this A/B's fingerprints, off and on | 8 | 2 (k30 J1.39 twice) | 0 / 0 | 0 / 0 | 0 |
+| this A/B's dense, task budgets, off | 11 | 0 | 0 / 0 | 0 / 0 | 0 |
+
+**The exact model while routing** (`PCB_ROUTER_MEASURED_THERMALS=1`, all
+of the measurement's rules: thermal vias by their own connection, a
+blocked spoke's part over its pad, necks, custom pads' frame, and the
+two above). Route mode, `PCB_WORK_RATE=3.15e6,150e6`, no wall guard; off
+is x1840 (main's default), on is x14870 with the variable; one run a
+side (a second run of the tier on each side gave the same 46 boards byte
+for byte); errors are the strict new findings, starved thermals apart;
+work in work seconds:
+
+| set | KiCad unconnected | passes (strict) | errors | starved thermals | vias | work | same route |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| expansion tier, 8 x 1, 30 s, off / on | 557 / 564 | 24 / 22 | 0 / 0 | 0 / 0 | 4263 / 4244 | 1143.0 / 1147.1 | 39 of 46 |
+| fingerprints, 1 x 4, a quarter budget | 42 / 42 | 1 / 1 | 20 / 20 | 1 / 1 (k30 J1.39) | 1562 / 1562 | 1074.5 / 1075.3 | 4 of 4 |
+| dense, 3 x 2, task budgets | 1010 / 1010 | 0 / 0 | 115 / 115 | 0 / 0 | 7429 / 7431 | 11076.0 / 11084.1 | 8 of 11 |
+
+What moved and why (the first spoke verdict that differs, from
+`PCB_ROUTER_SPOKE_DEBUG` reruns where they reproduced the runs, else the
+two models' verdicts on the written board):
+
+- siderakb's Miniboard, 6 to 10 unconnected (73 to 63 vias): the first
+  two rungs route alike; in the narrow-signal step the trouble round
+  closed 9 open terminals off and none on (the exchanges' pour checks
+  judged differently; the two models' verdicts on the written boards
+  are equal, so the pad is one of an intermediate state). A second run
+  of each side gave the same boards; the rerun with the spoke debug did
+  not (the debug output changes this board's route: 10 off, 5 on), so
+  the pad is not named.
+- siderakb's facade60_daughterboard, 0 to 2 unconnected, pass lost
+  (102 to 94 vias): C15.2's right spoke, cut by a track's clearance,
+  joins the fill beside it in the exact model (`spoke_joins_fill`), so
+  the routing no longer guards it as blocked.
+- marchmare's snaphat main_board, 0 to 1 unconnected, pass lost: the
+  mounting holes H26.1 to H31.1 (custom pads) get KiCad's frame, their
+  spokes at 45 degrees instead of along the axes.
+- AMLing2's rpi_cm5_dronecarrier (the same counts) and AUSIGN (86 to 85
+  vias): J6.MP and J16.MP (custom pads, their spokes from the copper's
+  centre: the one into the other pad's relief now lands); U8.41's
+  thermal vias, `(zone_connect 2)` on the input board, lose their
+  reliefs and spokes.
+- brickpico (the same counts): H1.1's vias (a pad-and-via mounting
+  hole, the footprint's `(zone_connect 2)`) lose their spokes. ZSWatch (the same counts): the written boards' verdicts are
+  equal, an intermediate state differs.
+- 0xCB (53 and 53 unconnected, 277 to 279 vias): off the routing placed
+  manual spokes for C8.2, C9.2 and R6.1 and left no pad starved; on it
+  placed U1.1's and KiCad found one of U3.45's thermal vias starved, so
+  the solid step set all 60 of U3.45's pads (four copies of 15) to
+  solid: the designer's relief is lost.
+- video (the same counts): no manual spoke for U18.30 on the router's
+  layer 2 (the exact model counts it fed). DSP-ADAU1452 (the same
+  counts): none for P503.1 on layer 2.
+
+**The default stays the inexact model while routing** (router
+`measured_thermals` off; `PCB_ROUTER_MEASURED_THERMALS=1` for trials):
+the tier is worse (7 more unconnected, 2 passes fewer: Miniboard,
+facade, snaphat), the fingerprints are identical and the dense set
+equal but for vias (+2) and 0xCB's relief. What the inexact model gets
+right by accident is conservatism: it gives every thermal via a relief
+and spokes and sees a spoke blocked where the clearances only nick it,
+so it finds more pads short and spends manual spokes and inner spokes
+on them, and its routing guards keep more spoke corridors open. The
+exact verdicts take that margin away where the router's later repairs
+(the narrow-signal step's exchanges, the manual spokes) relied on it.
+The measurement keeps the exact model.
+
+The spoke debug (`PCB_ROUTER_SPOKE_DEBUG`) is not neutral: with it,
+Miniboard, ZSWatch and brickpico route differently on both sides
+(Miniboard 10 off, 5 on), while the tier without it repeats byte for
+byte.
 
 ### KiCad's connection width (necks)
 

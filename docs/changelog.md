@@ -11,6 +11,36 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-26 (the exact thermal model while routing)
+
+Branch exact-thermals-routing (docs/router.md, "The last miss, and the
+exact model while routing").
+
+- **The last miss, 0xCB's U3.23 on B.Cu**, two errors of the model that
+  cancelled on one panel copy and not on the other. A spoke's end in a
+  hatched zone's ring now keeps the clearances to a micron in the
+  measurement (`SPOKE_END_RING_TOLERANCE`; the end lay 0.5 microns
+  outside KiCad's fill, the model reached it at its 3 micron
+  tolerance, kept the spoke as blocked and counted the pin's track over
+  it). A spoke the clearances cut short of the fill's brush centres
+  still counts where its remnant joins the fill beside it
+  (`spoke_joins_fill`, a flood of brush centres; Board_2's diagonal
+  spoke, nicked by a VCC track's clearance). Measurement only
+  (`measured_thermals`). The model now matches KiCad on all four copies;
+  the prediction check (the model alone on 303 written boards of pour3,
+  pour4 and this A/B) changes no other prediction: 0 missed, 0 false.
+- **The exact model while routing, measured** (x1840 off, x14870 with
+  `PCB_ROUTER_MEASURED_THERMALS=1` on; route mode, fixed work rate):
+  the expansion tier 557 to 564 unconnected, passes 24 to 22, errors 0
+  and 0, vias 4263 to 4244 (Miniboard 6 to 10, facade 0 to 2, snaphat 0
+  to 1; a second run of each side repeated byte for byte); the
+  fingerprints identical; the dense set (task budgets) 1010 and 1010,
+  errors 115 and 115, vias 7429 to 7431, and 0xCB's U3.45 made solid by
+  KiCad's finding on one of its vias. **The routing default stays off**:
+  the inexact model's conservatism (reliefs and spokes on every thermal
+  via, spokes blocked where clearances only nick them) buys manual and
+  inner spokes and open corridors the later repairs rely on.
+
 ## Committed on 2026-10-26 (differential pairs: runs not routed; return vias)
 
 Branch differential-pairs-6 (rebased onto 5255222); snapshots x14810
