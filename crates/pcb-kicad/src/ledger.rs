@@ -1643,7 +1643,7 @@ mod tests {
                 } else {
                     reserved + wanted <= CAPACITY || !others.iter().any(|r| r.megabytes > 0.0)
                 };
-                let end = nightly.then(|| now + 1500.0);
+                let end = nightly.then_some(now + 1500.0);
                 // A binary's request is never the nightly's (order_allows
                 // and drained_for rank it after them); the harness's
                 // nightly boards rank by their priority: the first of them
