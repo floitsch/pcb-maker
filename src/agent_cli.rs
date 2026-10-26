@@ -1327,7 +1327,14 @@ fn fab(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         drc.unconnected_items,
         drc.warnings,
         drc.cosmetic
-    );
+    ) + &if drc.footprint_own.is_empty() {
+        String::new()
+    } else {
+        format!(
+            ", {} within one footprint each (not blocking)",
+            drc.footprint_own.values().sum::<usize>()
+        )
+    };
     let status = if manifest.released {
         KiCadRunStatus::Complete
     } else {
