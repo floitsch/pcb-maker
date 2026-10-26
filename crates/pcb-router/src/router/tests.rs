@@ -2453,15 +2453,9 @@ fn thermal_vias_inside_an_exposed_pad_have_their_own_rings_in_a_hatched_zone() {
     );
 }
 
-#[test]
-fn a_fill_probe_counts_its_queries_and_polygon_vertices() {
-    // The board of `thermal_vias_inside_an_exposed_pad_have_their_own_
-    // rings_in_a_hatched_zone`: a hatched pour around P.1, a 2 mm
-    // square (a polygon of 4 vertices) with two round thermal vias.
-    // A query costs the same whatever its items, and a polygon's test
-    // goes through its vertices (Batch_1's board cutouts of up to 134
-    // vertices, in every query near them): a probe charges both beside
-    // its items, and the analysis's work counts them.
+/// A hatched pour around P.1, a 2 mm square (a polygon of 4 vertices)
+/// with two round thermal vias, Q's pads beside it.
+fn hatched_probe_board() -> Board {
     let obstacles = vec![
         copper(rect([5.0, 5.0], [1.0, 1.0]), 0, "P.1"),
         copper(
@@ -2524,6 +2518,19 @@ fn a_fill_probe_counts_its_queries_and_polygon_vertices() {
             padstack: false,
         });
     }
+    board
+}
+
+#[test]
+fn a_fill_probe_counts_its_queries_and_polygon_vertices() {
+    // The board of `thermal_vias_inside_an_exposed_pad_have_their_own_
+    // rings_in_a_hatched_zone`: a hatched pour around P.1, a 2 mm
+    // square (a polygon of 4 vertices) with two round thermal vias.
+    // A query costs the same whatever its items, and a polygon's test
+    // goes through its vertices (Batch_1's board cutouts of up to 134
+    // vertices, in every query near them): a probe charges both beside
+    // its items, and the analysis's work counts them.
+    let board = hatched_probe_board();
     let router = Router::new(
         &board,
         &Config {
@@ -2569,6 +2576,61 @@ fn a_fill_probe_counts_its_queries_and_polygon_vertices() {
         (router.pour_work_seconds() - (own + router.probe_nanos()) as f64 / 1.0e9).abs() < 1.0e-12
     );
     assert!(router.probe_nanos() > load(&router.scratch.probe_ops) * PROBE_ITEM_NANOS);
+}
+
+#[test]
+fn a_fill_probe_counts_nothing_for_the_debug_output() {
+    // PCB_ROUTER_SPOKE_DEBUG's questions go through `quietly`: they leave
+    // the probe's counts, its hatch holes and the router's probe shapes as
+    // they were, and an index they build is charged where the probe first
+    // needs it outside, so a run with the debug output counts the work of
+    // a run without it (the work decides budgets: Miniboard, ZSWatch and
+    // brickpico routed differently with the flag until 2026-10-26).
+    let board = hatched_probe_board();
+    let config = Config {
+        pitches: vec![0.1],
+        ..Config::default()
+    };
+    let load =
+        |counter: &std::sync::atomic::AtomicU64| counter.load(std::sync::atomic::Ordering::Relaxed);
+    let counts = |router: &Router| {
+        (
+            load(&router.scratch.probe_ops),
+            load(&router.scratch.probe_queries),
+            load(&router.scratch.probe_vertices),
+        )
+    };
+    let questions = |probe: &fill::FillProbe| {
+        probe.fits(0, [7.0, 5.5], &[]);
+        probe.in_ring(0, [6.2, 5.0]);
+        probe.in_hatch_hole(0, [3.0, 3.0]);
+        probe.fill_at(0, [3.0, 3.0]);
+        probe.charge();
+    };
+    let plain = Router::new(&board, &config);
+    let rings = plain.thermal_ring_pads(0);
+    questions(&fill::FillProbe::new(&plain, 0, &rings));
+    // The same questions after debug questions first: one before anything
+    // was built (the index, the probe shapes), one in between.
+    let debugged = Router::new(&board, &config);
+    let probe = fill::FillProbe::new(&debugged, 0, &rings);
+    let debug = |probe: &fill::FillProbe| {
+        probe.quietly(|| {
+            assert!(probe.is_quiet());
+            probe.blocker(0, [7.0, 5.5], None);
+            probe.in_hatch_hole(0, [3.0, 3.0]);
+            probe.fill_at(0, [6.0, 3.0]);
+        });
+        assert!(!probe.is_quiet());
+    };
+    debug(&probe);
+    probe.charge();
+    assert_eq!(counts(&debugged), (0, 0, 0));
+    questions(&probe);
+    debug(&probe);
+    probe.charge();
+    assert_eq!(counts(&debugged), counts(&plain));
+    assert!(counts(&plain).1 > 0);
 }
 
 #[test]

@@ -91,6 +91,7 @@ fn binary(threads: usize) -> Command {
         "PCB_ROUTER_SEEDS",
         "PCB_ROUTER_NO_SHARED_STATICS",
         "PCB_KICAD_NO_NECK_REPAIR",
+        "PCB_ROUTER_SPOKE_DEBUG",
     ] {
         command.env_remove(variable);
     }
@@ -776,6 +777,74 @@ fn f1s_fingerprints_are_the_golden_ones_at_1_and_4_threads() {
     let four = fingerprints(4);
     assert_eq!(one, four, "F1's fingerprints at 1 and 4 threads differ");
     golden("f1-fingerprints.txt", &(one.join("\n") + "\n"));
+}
+
+#[test]
+fn debug_flags_change_neither_the_route_nor_its_work() {
+    // A debug flag only prints (docs/router.md, "Determinism and the wall
+    // clock"). PCB_ROUTER_SPOKE_DEBUG asked the fill probe questions of
+    // its own whose work counted, and the work decides budgets: on x1844
+    // it raised F1's pour work from 0.20 to 0.36 s and routed Miniboard,
+    // ZSWatch and brickpico differently; PCB_ROUTER_FINGERPRINT's pour
+    // analysis before stitching counted too (0.200 to 0.205 s). Each run
+    // here must write the board of the run without flags byte for byte and
+    // count the same work, and must have printed its lines (F1's QFN pins
+    // and thermal vias, its two pour nets).
+    let plain = route("debug-flags-off", ROUTER, 1, &[]);
+    assert!(!stderr(&plain.output).contains("no fill at spoke end"));
+    let written = |routed: &Routed| fs::read(routed.out.join("f1.kicad_pcb")).unwrap();
+    let attempts_work = |report: &Value| -> Vec<Value> {
+        report["attempts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|attempt| attempt["work_seconds"].clone())
+            .collect()
+    };
+    let report = plain.report();
+    assert!(report["pour_work_seconds"].as_f64().unwrap() > 0.0);
+    for (variable, lines) in [
+        (
+            "PCB_ROUTER_SPOKE_DEBUG",
+            &["no fill at spoke end", "track not a spoke"][..],
+        ),
+        (
+            "PCB_ROUTER_FINGERPRINT",
+            &["fingerprint before stitching GND"][..],
+        ),
+    ] {
+        let flagged = route(
+            &format!("debug-flags-{}", variable.to_lowercase()),
+            ROUTER,
+            1,
+            &[(variable, "1")],
+        );
+        let printed = stderr(&flagged.output);
+        for line in lines {
+            assert!(printed.contains(line), "{variable}: no {line:?} printed");
+        }
+        assert!(
+            written(&plain) == written(&flagged),
+            "{variable} changed F1's routed board"
+        );
+        let flagged = flagged.report();
+        for key in [
+            "pour_work_seconds",
+            "manual_spokes_work_seconds",
+            "work_seconds",
+        ] {
+            assert_eq!(report[key], flagged[key], "{variable}: {key}");
+        }
+        assert_eq!(
+            report["wall_accounting"]["charged"], flagged["wall_accounting"]["charged"],
+            "{variable}: the charged work"
+        );
+        assert_eq!(
+            attempts_work(&report),
+            attempts_work(&flagged),
+            "{variable}: the attempts' work"
+        );
+    }
 }
 
 /// A DRC report's findings as lines: each violation's severity, type and

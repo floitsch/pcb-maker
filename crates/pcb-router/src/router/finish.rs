@@ -52,6 +52,30 @@ impl Router {
         hash
     }
 
+    /// `f`, a debug output's work (the pour analysis `PCB_ROUTER_FINGERPRINT`
+    /// prints before stitching), left out of the router's work: a debug
+    /// flag only prints, and the work decides budgets (the analysis raised
+    /// F1's pour work by a fortieth). None, without running `f`, before the
+    /// router's probe shapes are built, whose build is charged where a
+    /// probe first needs them. Not while the router's own analyses run
+    /// beside it: the counters are put back as they were.
+    pub(super) fn uncharged<T>(&self, f: impl FnOnce() -> T) -> Option<T> {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.probe_shapes.get()?;
+        let counters = [
+            &self.scratch.pour_units,
+            &self.scratch.probe_ops,
+            &self.scratch.probe_queries,
+            &self.scratch.probe_vertices,
+        ];
+        let before = counters.map(|counter| counter.load(Relaxed));
+        let result = f();
+        for (counter, value) in counters.iter().zip(before) {
+            counter.store(value, Relaxed);
+        }
+        Some(result)
+    }
+
     pub(super) fn finish(&mut self, order: &[NetId]) -> RoutingResult {
         if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
             eprintln!("fingerprint before resolve: {:016x}", self.fingerprint());
@@ -173,14 +197,19 @@ impl Router {
             let mark = self.phase_mark();
             let trimmed = self.trim_skeleton(net);
             if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
-                let (pours, _, main, spoke_islands) = self.analyze_pours_full(net, &|_| false);
-                eprintln!(
-                    "fingerprint before stitching {}: {:016x}, {} pieces, main {main}, spoke islands {:?}",
-                    self.board.nets[net as usize].name,
-                    self.fingerprint(),
-                    pours.pieces,
-                    spoke_islands
-                );
+                let name = &self.board.nets[net as usize].name;
+                match self.uncharged(|| self.analyze_pours_full(net, &|_| false)) {
+                    Some((pours, _, main, spoke_islands)) => eprintln!(
+                        "fingerprint before stitching {name}: {:016x}, {} pieces, main {main}, spoke islands {:?}",
+                        self.fingerprint(),
+                        pours.pieces,
+                        spoke_islands
+                    ),
+                    None => eprintln!(
+                        "fingerprint before stitching {name}: {:016x}",
+                        self.fingerprint()
+                    ),
+                }
             }
             let stitches = self.stitch_pours(net, order);
             let tails = self.trim_dangling_plane_ends(net);
