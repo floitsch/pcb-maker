@@ -39,7 +39,7 @@ impl Router {
         let description = &self.board.nets[net as usize];
         let cells = self.grid.cells();
         let pitch = self.grid.pitch;
-        for layer in 0..layers {
+        for (layer, reclaimed) in result.iter_mut().enumerate() {
             if state.plane.get(layer).is_none_or(|mask| mask.is_empty()) {
                 continue;
             }
@@ -151,10 +151,10 @@ impl Router {
                                 && other_at(self.grid.index(ox as usize, oy as usize))
                         });
                         if !blocked {
-                            if result[layer].is_empty() {
-                                result[layer] = vec![false; cells];
+                            if reclaimed.is_empty() {
+                                *reclaimed = vec![false; cells];
                             }
-                            result[layer][cell] = true;
+                            reclaimed[cell] = true;
                         }
                     }
                 }

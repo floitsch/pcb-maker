@@ -308,11 +308,8 @@ fn solidify_predicted(
             "{changed} pads the pour model finds starved connected solid: {} left",
             starved.len()
         );
-        let mut solidified: Vec<String> = measured
-            .starved
-            .iter()
-            .map(|pad| pad.pad.clone())
-            .collect();
+        let mut solidified: Vec<String> =
+            measured.starved.iter().map(|pad| pad.pad.clone()).collect();
         solidified.sort();
         solidified.dedup();
         Ok(Some(MeasuredBoard {
@@ -331,4 +328,3 @@ fn solidify_predicted(
         Ok(None)
     }
 }
-

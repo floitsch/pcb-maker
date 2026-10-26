@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 95 | 79 | 16 | 95 | 38 |
+| [Router settings](#router-settings) | 96 | 80 | 16 | 96 | 38 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 1 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 1 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
@@ -33,7 +33,7 @@ The environment variables are indexed in the hand-over
 | [Router report: rules](#router-report-rules) | 5 | - | 0 | 5 | - |
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 10 | - | 2 | 10 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
-| [Router core](#router-core) | 70 | - | 0 | 70 | - |
+| [Router core](#router-core) | 71 | - | 0 | 71 | - |
 | [Placer settings](#placer-settings) | 49 | 45 | 4 | 49 | 22 |
 | [Layout settings](#layout-settings) | 20 | 20 | 0 | 20 | 9 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
@@ -131,6 +131,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `solder_mask_to_copper_mm` | `Option<f64>` | unset | router.md | The project's solder-mask-to-copper clearance (`rules. solder_mask_to_copper_clearance`, KiCad's default 0): KiCad's DRC finds a solder mask aperture bridging copper of another net within it plus the aperture's mask expansion (USB_Cable_Tester: a track 0.094 mm from a battery holder's F.Mask polygon over a GND fill, at 0.05 + 0.05 mm). |
 | `solder_mask_bridge_severity` | `Option<String>` | unset | router.md | The project's severity of solder_mask_bridge findings (`error`, `warning`, `ignore`; KiCad's default is an error). Below an error the designer accepted bridges, and the router keeps its looser mask rules of before 2026-10-15 (OpenESC 4in1-mini, warnings: the exact rule took its bridges 29 to 2 and cost 52 to 61 unconnected). |
 | `solid_starved_thermals` | `Option<bool>` | unset | router.md | Pads KiCad finds short of thermal spokes (where only one fits, as on fine-pitch pins, or whose spokes reach only an isolated island of fill) get a solid zone connection in the result, and the board is verified again (one more KiCad check, charged as work). On unless false (since 2026-10-21: four boards of the v18 sweep failed on starved thermals alone, which this passes; docs/changelog.md). False keeps the designer's thermal reliefs where KiCad finds them starved: reliefs are there for soldering. |
+| `min_resolved_spokes` | `Option<usize>` | unset | - | The thermal spokes KiCad's DRC wants a pad to have into each zone: the project's board setup (`min_resolved_spokes`, KiCad's default 2), 0 where the project ignores starved thermals (its `rule_severities`). The pour model's starved pads are those short of it (router `min_spokes`). |
 | `via_in_pad` | `Option<bool>` | unset | router.md | Allow vias inside SMD pads (default false): a board whose vias are filled and capped (via-in-pad plating) may put them there. Off, every via keeps its annular ring out of every SMD pad but an exposed pad (a QFN's thermal pad, which holds thermal vias as designers place them): another net's vias keep their clearance beyond the pad's copper, the pad's own net's may touch it from outside. Open vias in a reflowed pad take its solder down the hole (score-kicad-board's "vias in pads" counts them). Through-hole pads hold no via either way. |
 | `existing_tracks` | `KiCadExistingTracks` | `"keep"` | router.md | What route-kicad-board does with the board's own tracks and vias (`keep`, the default, or `strip`). Kept, they stay exactly as they are and other nets keep clear of them; pads they join count as connected, so the router routes only what they leave open and never rips one up (a designer's or an agent's pre-routed nets). `strip` (the command's `--strip`) removes them first: the board is routed from nothing. Copper zones stay either way. A layout strips them always (its placement moves the parts). |
 | `skip_native_verification` | `bool` | `false` | - | Skip the final native KiCad verification (for timing the router). |
@@ -285,6 +286,7 @@ One constraint of one rule of the project's `.kicad_dru`. Source: `KiCadCustomRu
 | `pour_whole_rip_up` | `bool` | `true` | - | Whether a pour net stuck in conflict is ripped up whole now and then like the other nets (`rip_up_whole`). |
 | `escape_stub_mm` | `f64` | `0.0` | `escape_stub_mm` | Fine-pitch pads (narrower than the track plus its clearance, on one layer, in a row of their kind) get a straight stub outward fixed before negotiation, up to this long in mm (0, the default, turns it off). The stubs keep every pad's only way out open: nothing else may run along the row inside the escape zone. Tried on Tiny Tapeout (82/108 either way) and ColdFire (205 vs 208 of 209): no gain yet. |
 | `exact_escape_stubs` | `bool` | `false` | `exact_escape_stubs` | Escape stubs (a pad too narrow for a lattice node leaves by a stub from its centre) stamp exactly: one along a lattice line as a run of lattice nodes, an oblique or bent one by its measured footprint (`escapes::stub_footprint`); and a pad leaves by straight stubs along a lattice line where it has any. Off: every stub stamps the lattice's discs grown by the snapping error (0.525 mm at a 0.1 mm lattice with 0.2 mm tracks and clearance), which in a 0.4 or 0.5 mm pitch row covers the neighbouring pads' stubs for good (jfedor2/hid-remapper's RP2040 rows, docs/router.md "Fine-pitch escapes"). Off by default: on the expansion tier it closes 32 connections and gains a pass but has four KiCad errors more (starved thermals at connector pads the pour model misses). |
+| `min_spokes` | `usize` | `2` | `min_resolved_spokes` | The thermal spokes KiCad's DRC wants a pad to have into each zone (the board setup's `min_resolved_spokes`, KiCad's default 2; 0 where the project ignores starved thermals): the spoke model's starved pads are those short of it (`Router::spokes_short`). |
 | `history_increment` | `f64` | `0.3` | - | History cost added to a lattice node (and its tile) for every net still in conflict there after an iteration; also the amplitude of the noise a `seed` puts into the history. |
 | `max_iterations` | `usize` | `80` | `maximum_iterations` | Negotiation iterations at most (each reroutes the conflicted nets). |
 | `window_margin` | `f64` | `10.0` | - | Minimum search window margin around a net's terminals. |
