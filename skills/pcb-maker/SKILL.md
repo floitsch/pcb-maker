@@ -32,6 +32,9 @@ their sources, the designer's route, the hot spots' pads and nets and the ladder
 `access` and `cause` stay `unknown`. Read it before any design change: where the designer's
 board routes the open nets (`reference.connected: true`), density is not the reason.
 
+Checking a result with `kicad-cli pcb drc` directly: add `--refill-zones` (the written
+zones are unfilled; without it pour pads count as unconnected).
+
 Other commands: `drc-kicad-board` (KiCad's DRC, cached), `score-kicad-board`
 (quality measures and price), `repair-kicad-silkscreen`, `swap-kicad-pins`,
 `export-kicad-fab` (fab files without the DRC gate), `strip-kicad-tracks`,

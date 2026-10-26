@@ -984,6 +984,13 @@ no schematic parity), zones refilled unless `--no-refill`, through the DRC
 cache (section 4), and writes KiCad's report (every severity) to
 `<report.json>`. One line on stdout counts errors by type, unconnected
 items, warnings and cosmetic findings, and the cache's calls and hits.
+The boards pcb-maker writes carry their zones unfilled (KiCad fills them
+when the board is opened and filled, `B` in pcbnew): checking one with
+`kicad-cli pcb drc` yourself, pass `--refill-zones` (and
+`--schematic-parity` for the parity check), as this command does.
+Without it the pads a pour joins count as unconnected: the schematic
+trial's board routed on the designer's placement, 0 unconnected with the
+refill, 24 without.
 Exit 0 when no error counts (warnings, excluded and cosmetic findings do
 not) and no item is unconnected, 1 otherwise, 2 for a missing project or
 board, 4 when KiCad fails. The benchmark runners (`run.py`'s designer
