@@ -666,10 +666,49 @@ impl Router {
                     };
                 for spoke in &kept {
                     let strip = strip_of(spoke);
-                    if segments
-                        .iter()
-                        .any(|(a, b, radius)| strip.distance_to_segment(*a, *b) <= *radius)
-                    {
+                    let meets = if record_attached[record_index][spoke.index] && hole > 0.0 {
+                        // KiCad's spoke runs from the pad's centre and the
+                        // plated hole is knocked out of it: what is left
+                        // beside the hole reaches nearer the centre than
+                        // the hole's radius along the spoke (k30's C16.1:
+                        // a 0.8 mm drill, its exit stub straight down meets
+                        // the diagonal spoke's corner beside the hole, and
+                        // KiCad joins it to the piece). A point of the
+                        // track's centreline outside the hole within its
+                        // half width of the whole strip.
+                        let whole = {
+                            let (d, w) = (spoke.direction, spoke.width / 2.0);
+                            let normal = [-d[1] * w, d[0] * w];
+                            let far = [
+                                spoke.anchor[0] + d[0] * spoke.tip,
+                                spoke.anchor[1] + d[1] * spoke.tip,
+                            ];
+                            let near = spoke.anchor;
+                            crate::geometry::Shape::Polygon {
+                                points: vec![
+                                    [near[0] + normal[0], near[1] + normal[1]],
+                                    [far[0] + normal[0], far[1] + normal[1]],
+                                    [far[0] - normal[0], far[1] - normal[1]],
+                                    [near[0] - normal[0], near[1] - normal[1]],
+                                ],
+                            }
+                        };
+                        segments.iter().any(|(a, b, radius)| {
+                            let length = crate::geometry::distance(*a, *b);
+                            let steps = ((length / 0.005).ceil() as usize).max(1);
+                            (0..=steps).any(|step| {
+                                let t = step as f64 / steps as f64;
+                                let point = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+                                crate::geometry::distance(point, spoke.anchor) >= hole - 1.0e-9
+                                    && whole.distance_to_point(point) <= *radius + 1.0e-9
+                            })
+                        })
+                    } else {
+                        segments
+                            .iter()
+                            .any(|(a, b, radius)| strip.distance_to_segment(*a, *b) <= *radius)
+                    };
+                    if meets {
                         touched[spoke.index] = true;
                     }
                 }
