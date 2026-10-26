@@ -1907,12 +1907,125 @@ anthracite-bottom's (on) too, both now passing; backplane keeps 2
 unconnected and loses its error; MSign (starved thermals ignored by its
 project) 19 to 20 off, 18 to 19 on; every other board routes as before.
 The fingerprints (x14703, both switch settings): the model's count equals
-KiCad's on all four (k30's J1.39). Left: on the dense boards the model
-predicts 4 starved thermal vias of exposed pads on inner layers that
-KiCad does not report (glasgow's U1.57, video's U15.59, U21.7, U21.8;
-"Fine-pitch escapes"); KiCad checks those boards, so nothing acts on
-them, but on an unchecked board the solid step would connect such an
-exposed pad solid for nothing.
+KiCad's on all four (k30's J1.39). Left then: on the dense boards the
+model predicted 4 starved pads KiCad does not report (glasgow's U1.57,
+video's U15.59, U21.7, U21.8); see the next section.
+
+### Thermal vias, custom pads and necks (2026-10-26)
+
+The four pads were taken for thermal vias of exposed pads that KiCad
+connects through their vias to an inner plane. KiCad's DRC has no such
+path: `testZoneLayer` (drc_test_provider_zone_connections.cpp, 10.0.7)
+checks every pad that flashes on the zone's layer and whose zone
+connection there is thermal, by the crossings of its ring with that
+zone's fill, the isolated islands apart, and its connected tracks; a
+via elsewhere on the pad's net is no spoke. What the four were
+(kicad-cli's fill and `pcbnew` on the written boards, the model's
+`dump-pour-map`):
+
+- **Glasgow's U1.57** is a thermal via, but one set to solid: the
+  exposed pad on F.Cu has no zone connection of its own (thermal), its
+  25 vias `(zone_connect 2)`. KiCad resolves the connection per pad
+  (`EvalZoneConnection`: the pad's own, else the footprint's, else the
+  zone's), so the vias are no thermal pads and are not checked. The
+  lowering already listed every pad's own setting
+  (`Board::solid_pad_obstacles`, `isolated_pad_obstacles`), but the
+  spoke model took a merged pad's connection from its label (the
+  exposed pad's) and gave every via a relief and spokes. Now a pad
+  merged into its terminal that is not the terminal's own copper has its
+  own zone connection (`Router::merged_pad_thermal`): set to solid or to
+  none it has no spokes and no relief; the label's solid connection
+  still joins the terminal (the vias' own layers included) as before.
+  The same holds after the solid step on a checked board, which writes
+  `(zone_connect 2)` on every pad of a label: 0xCB's U3.45 vias on F.Cu
+  were a false alarm on the board as left.
+- **Video's U15.59** (a SIMM socket's pin, +5V on In2.Cu): KiCad's four
+  spokes all land in islands, and two tracks of the pad (on In1.Cu) end
+  inside the pad over its spokes, which KiCad's DRC counts (its fill
+  test is a point in the zone's polygons on the layer, any layer's
+  track). The model had two of the spokes blocked (another net's track
+  cuts them beyond the ring) and so no fill over the pad there. KiCad
+  keeps a spoke whose end lands (its filler tests the end alone) and
+  cuts the clearances out of it afterwards, which reach no further in
+  than the pad's edge: a blocked spoke's part over its pad is fill to
+  the DRC's track rule now.
+- **Video's U21.7 and U21.8** (a DIP's VPP and VCC pins): each has one
+  spoke and one track that ends over a piece of fill KiCad keeps and the
+  model took for an island: the lattice cuts it from the piece holding
+  copper of the net. U21.7's piece (50 mm²) meets the one with a via
+  through a strip 0.26 mm wide between the zone's edge and a /DQ1 via's
+  clearance (the minimum width 0.25 mm: its brush centres lie on a line
+  10 microns from the nearest node); U21.8's sliver (0.4 mm²) touches the
+  pad's own track through a channel 0.08 mm wide between the two pins'
+  reliefs. A piece holding nothing is now kept for the track rule when
+  brush centres join it to a kept piece (`Router::neck_joined`): from
+  its rim, for each other piece with a node within ten pitches, the four
+  closest pairs of nodes are tried by a flood of brush centres
+  (`FillProbe::fits`) on a grid of a twelfth of the pitch, 8-connected,
+  in the pair's box grown by one and a half pitches, until a centre
+  comes within the minimum width of the other node (KiCad's pruning
+  deflates and inflates by half of it, so two sets of centres that close
+  are one outline, and a centre that close to the net's track touches
+  its copper); up to six pieces are chained.
+- **SNSP-CPU-01's P7.1** (a JST custom pad, circle anchor, polygon
+  primitive) came up on the 30 s routes: the lowering gave custom pads
+  no spoke frame, so their spokes ran along the axes of the copper's box
+  and one landed in an island, where KiCad's run at 45 degrees (the
+  anchor's default angle) and land nowhere (no connection, no finding).
+  A custom pad without spoke templates gets KiCad's frame now
+  (zone_filler.cpp, buildThermalSpokes: the dummy pad's bounding box at
+  orientation 0, from the box's centre, turned with the pad;
+  `custom_pad_local_geometry`, `PadSpokes::custom`). Pads whose custom
+  spoke templates KiCad follows are not modelled (none on the sets).
+
+**Routing keeps its model.** With the first three rules on in routing
+too (x14850), the in-route repairs (manual spokes, island vias, the pour
+connectivity's spoke islands) changed 7 of 61 routes (the fingerprints'
+four identical):
+on the dense boards protoesp, DSP-ADAU1452 and split72_left (unconnected
+unchanged; on DSP-ADAU1452 a reclaimed piece of GNDD fill inside VAA's
+zone, which KiCad's VAA fills, now counted P307.2's second track, so no
+island via was placed and KiCad's solid step took the pad instead), on
+the expansion tier ZSWatch, AUSIGN, Miniboard (6 to 10 unconnected) and
+brickpico (unconnected 557 to 561, vias 4263 to 4252, passes 24 and 24).
+So they hold for the measurement only (router `measured_thermals`, on
+in `measured_board` and dump-pour-map; `measure_pours`, which ranks the
+ladder's attempts by their pours, keeps routing's model), and
+`PCB_ROUTER_MEASURED_THERMALS=1` turns them on while routing for a
+trial.
+
+**Measured** (route mode, `PCB_WORK_RATE=3.15e6,150e6`, no wall guard;
+x1838, main, against x14853; the model's predicted starved pads on the
+final board against KiCad's starved_thermal findings, by pad label and
+layer; "same route" is the written board byte for byte):
+
+| set | boards | KiCad's starved | x1838 missed / false | x14853 missed / false | predictions changed | same route |
+| --- | --- | --- | --- | --- | --- | --- |
+| dense, 30 s, 3 x 2 | 11 | 1 (0xCB U3.23 B.Cu) | 1 / 3 (0xCB U3.45 F.Cu, glasgow U1.57 In1.Cu, SNSP-CPU-01 P7.1 F.Cu) | 1 / 0 | 3 | 11 of 11 |
+| expansion tier, 8 x 1 | 46 | 0 | 0 / 0 | 0 / 0 | 0 | 46 of 46 |
+| fingerprints, a quarter budget, 1 x 4 | 4 | 1 (k30 J1.39) | 0 / 0 | 0 / 0 | 0 | 4 of 4 |
+| pour3's dense routes (x14703, both escape settings; the model alone) | 22 | 0 | 0 / 8 (U1.57, U15.59, U21.7, U21.8 twice) | 0 / 0 | 4 | - |
+| pour3's tier and fingerprint routes (the model alone) | 100 | 2 (k30 J1.39 twice) | 0 / 0 | 0 / 0 | 0 | - |
+
+The act step (the model's starved pads made solid on a board KiCad does
+not check, `solid_by_model`) fires on the same four tier boards as
+before (BloopBox's J1.1, backplane's J4.A1, anthracite-bottom's J107.1
+and J107.4, LC_PAMV4b's J9.1: connector pins, no exposed pad). An
+exposed pad whose vias are set to solid is no longer predicted at all
+(glasgow, 0xCB on the dense boards), so on an unchecked board it would
+not be made solid for nothing.
+
+On the eleven boards of pour3's full-budget routes (x14703, both escape
+settings; the model alone on the written boards, `dump-pour-map` and the
+DRC's rule) the four false alarms go (4 to 0 on each). Left: 0xCB's
+U3.23 on B.Cu (a QFN pin with a 0.15 mm gap at 45 degrees, in two
+panel copies), which KiCad finds starved with one spoke and the model
+not: the model blocks a spoke KiCad keeps and counts a track over the
+pad KiCad does not (tight spots, "Starved thermals at scale"; on x1838
+too). Not modelled: the zone's `thru_hole_only` connection (SMD pads
+solid, the rest thermal; Castor and jetson have two such zones, whose
+SMD pads the model takes for thermal) and `no`; neither changes a
+thermal via.
 
 ### KiCad's connection width (necks)
 

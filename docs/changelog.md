@@ -11,6 +11,39 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-26 (thermal vias of exposed pads in the pour model)
+
+Branch thermal-vias (docs/router.md, "Thermal vias, custom pads and
+necks"). The four starved pads the model predicted on the dense boards
+and KiCad did not report were no via path: KiCad's DRC checks each
+thermal pad by its own ring and tracks only.
+
+- **Thermal vias by their own zone connection** (`merged_pad_thermal`):
+  glasgow's U1.57 vias are `(zone_connect 2)` in a thermal exposed pad,
+  no thermal pads to KiCad; such a merged pad has no spokes and no
+  relief now (0xCB's U3.45 vias after the solid step too).
+- **The DRC's track rule**: a blocked spoke's part over its pad is fill
+  (video's U15.59, two tracks ending there), and a piece the lattice
+  cuts from a kept one through a neck of brush centres between the
+  nodes is kept (`neck_joined`: video's U21.7, a 0.26 mm strip; U21.8, a
+  channel to its own track).
+- **Custom pads' spokes in KiCad's frame** (the copper's box at
+  orientation 0, the anchor's spoke angle): SNSP-CPU-01's P7.1.
+- **For the measurement only** (router `measured_thermals`, on in
+  `measured_board` and dump-pour-map, `PCB_ROUTER_MEASURED_THERMALS`):
+  in routing the first three moved 7 of 61 routes (x14850; Miniboard 6
+  to 10 unconnected), so routing keeps its model; `measure_pours` (the
+  ladder's ranking) too.
+- **Measured** (x1838 against x14853, route mode at a fixed work rate):
+  the eleven dense boards at 30 s (3 x 2) 4 mismatches to 1 (0xCB's
+  U3.23 on B.Cu, a tight spot on both), 11 of 11 routes byte-identical;
+  the expansion tier (8 x 1) 0 and 0, 46 of 46 identical, the act step
+  as before (BloopBox, backplane, anthracite-bottom, LC_PAMV4b; no
+  exposed pad among them); the fingerprints (1 x 4) 0 and 0 (k30's J1.39 predicted), 4 of 4
+  identical; pour3's full-budget
+  dense routes (the model alone) 4 false alarms to 0 on each escape
+  setting, its tier and fingerprint routes (100 boards) unchanged at 0.
+
 ## Committed on 2026-10-26 (the placer's legality against KiCad's)
 
 Branch placer-legality (docs/placer.md, "The legality model against
