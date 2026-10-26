@@ -494,6 +494,7 @@ Diagnostics (stderr unless said; the result does not change):
 - `PCB_ROUTER_DUMP`: `x0,y0,x1,y1`: prints that region of the lattice per layer (static blocks, own pads, occupancy, where vias may not go).
 - `PCB_ROUTER_FINGERPRINT`: a hash of the routing state at each phase (determinism and byte-identity checks; compare as a multiset when attempts run side by side).
 - `PCB_ROUTER_FINGERPRINT_ALL`: with `PCB_ROUTER_FINGERPRINT`, also hashes every occupancy map and pour mask into each fingerprint.
+- `PCB_ROUTER_MEM_PROFILE`: the memory profile: the resident size's highs every 10 ms, the live heap, the phases and every live router's parts, the peak at the end (`mem-profile:` lines; docs/profiling.md, "Memory").
 - `PCB_ROUTER_POUR_TRACE`: per pour analysis its counts, modelled work and wall time (calibrating the pour work constants).
 - `PCB_ROUTER_SEVER_TRACE`: per refresh of what a cut severs of the pours (`pour_integrity`) its nodes, wall time and marked nodes per layer (calibrating `SEVER_NODE_NANOS`).
 - `PCB_ROUTER_BUILD_TRACE`: per router build and per lowering their counts, modelled work and wall time (calibrating the build and lowering work constants).

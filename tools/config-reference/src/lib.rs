@@ -433,6 +433,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "with `PCB_ROUTER_FINGERPRINT`, also hashes every occupancy map and pour mask into each fingerprint.",
     ),
     (
+        "PCB_ROUTER_MEM_PROFILE",
+        Kind::Diagnostic,
+        "the memory profile: the resident size's highs every 10 ms, the live heap, the phases and every live router's parts, the peak at the end (`mem-profile:` lines; docs/profiling.md, \"Memory\").",
+    ),
+    (
         "PCB_ROUTER_POUR_TRACE",
         Kind::Diagnostic,
         "per pour analysis its counts, modelled work and wall time (calibrating the pour work constants).",
