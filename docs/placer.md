@@ -1793,7 +1793,8 @@ to 158, and on video, the 4in1 and protoesp our own wirelength-plus-
 crossings already scores them 26 to 51 % better than what the placer
 finds. The lever is moving whole groups to the orders the pair prefers
 (the anneal's crossing term, tried and off, below "Where the order is
-decided", and group moves of parts that share a bus). The upper bounds from the
+decided", and group moves of parts that share a bus; tried 2026-10-26 and off, below
+"Bus-group moves"). The upper bounds from the
 attribution are not measured and not additive: video's memory bank 40
 of 121 (the clean o side), the 4in1 34 to 78 per ESC copy (gap 144),
 and protoesp's connectors 41 and north-west 32 (gap 72). SNSP-CPU-01
@@ -3006,6 +3007,304 @@ seed-1 result is no direction.
   (protoesp, homebrew_486), and four are perturbations of a good v20
   draw that no single switch restores (video, split42_left, koeg,
   split72_right).
+
+## Bus-group moves (2026-10-26)
+
+`bus_groups` (placer option, off by default; `{}` for the defaults; code
+`crates/pcb-placer/src/groups.rs`, the anneal's `group_batch`, the
+refinement's `legal::refine_groups` and `legal::place_unit`). The
+ablations found that the placer's own pair (wirelength plus 3 mm per
+crossing) already prefers the designer's placement by 26 to 51 % on
+video, the 4in1 and protoesp, and that the placer does not reach the
+orders it prefers: the designer stacks video's eight memory modules in
+one column where ours scatters them, MegaDrive's QFPs are in the wrong
+order, the 4in1's copies and protoesp's connectors cost 30 to 80 open
+each. Single-part anneal moves with the crossings did not reorder them
+(above, "Where the order is decided"); the moves that reorder a bus
+move groups.
+
+**Detection** (`BusGroups::detect`, from the nets alone, once per
+placement):
+
+- A **bank**: movable parts of one footprint (pin count, body, side)
+  linked by at least `min_shared` (4) shared bus nets (nets of 2 to
+  `bus_net_pins`, 24, pins that the crossings count, so no pour net), the
+  linked parts' connected components of 2 to `max_bank` (16) parts.
+  Video's U12 to U19 (eight 116 x 8 mm memory modules) are one;
+  MegaDrive has two (U2 U3, U9 U10), SNSP-CPU-01 one (U15 U16), Glasgow
+  four pairs of resistor arrays, the other dense boards none.
+- A **cluster**: every other movable part that is not a passive (more
+  than `passive_pins`, 4, pins or a body over `passive_area_mm2`, 16 mm²),
+  with its passives: those a relation binds to it (a decoupling
+  capacitor's `near`/`near any` anchors: with the nearest anchor at any
+  distance) and those sharing a net within `reach_mm` (3 mm) of its body.
+  The passives are attached at the poses of the moment (`attach`), so a
+  connector's ESD parts go with it once they are next to it.
+- A bank moves with its members' passives. Swap partners (`peers`): groups
+  of the same kind on the same side whose chain bodies' area is within a
+  factor 2.5.
+
+**The moves.**
+
+- *Arrange* (`groups::arrange`, after the global placement, before the
+  anneal): each bank tries its members' order in their own places and
+  side by side along x and along y, each member with its passives, in
+  the order of the pins their own bus nets (those not on every member)
+  reach outside the bank, along the axis; the candidate that lowers the
+  moved parts' weighted wirelength plus 3 mm per crossing of their nets
+  plus their relations is taken, when it stays on the board. Overlap is
+  left to the anneal, as the global placement's is. In the
+  placement-only runs below it arranged MegaDrive's banks in 5 of 6
+  global placements and Glasgow's resistor-array pairs in 4 of 5, and
+  none of video's: side by side, the 116 mm modules leave the board or
+  cost more relations than their crossings save (seed 1, before the
+  board check: the column along x would cut the bank's crossings from
+  26178 by 9712).
+- *The anneal* (`group_batch`, after every stage): `anneal_moves` (2)
+  tries per group with more than one part, a bank's three per member,
+  each a shift (half the time towards the pull of the group's nets, a
+  random share of the way; else a step of the stage's radius), a turn
+  by 90, 180 or 270 degrees about the chain's centre, a swap with a
+  peer (centre to centre), or a bank's reorder (in place, along x, along
+  y). Each is judged as a single move is (wirelength of the moved parts'
+  nets, their relations each once, their overlap at the stage's
+  penalty) plus 3 mm per crossing of their nets of up to `bus_net_pins`
+  pins (a `CrossingState` of its own, brought to the poses before each
+  batch; the bound of `judge_with_crossings` skips the trees of moves
+  that cannot be taken), at the stage's temperature. A bank's members
+  move only with their bank (`rigid_banks`): the anneal undid the
+  arrangement otherwise (video's modules scattered again, crossings back
+  at the off side's).
+- *The refinement* (`refine_groups`, after the single moves and swaps of
+  every pass): each group with more than one part tries a shift towards
+  its pull (all, half, a quarter of the way), the three turns, a swap
+  with each of its four nearest peers and, a bank, the three reorders;
+  each candidate placed as a unit (`place_unit`: the largest part at the
+  nearest legal spot around its wanted pose within 3 mm, the unit shifted
+  with it, then each other part at its offset or at the nearest legal
+  spot within 1 mm of it; at most six spots of the largest part tried),
+  judged by the wirelength of the moved parts' nets, their relations and
+  3 mm per crossing of their nets (the refinement's `CrossingState`).
+  The best that lowers that cost is kept. Escape demand does not judge
+  these moves (the single moves after them do) and is kept up to date.
+
+With the switch off nothing of it runs: x14560 with `bus_groups` absent
+writes boards byte-identical to x1828's (main 991ad37) on video and
+MegaDrive (`place-kicad-board`, seed 1).
+
+### The objective, placement alone
+
+`place-kicad-board` on the dense tier's task inputs (seed 1 and 101,
+three placer seeds, the default work budget, pinned rates, 2 threads),
+off x1828, on the branch's binary of x14560 (the same moves; a debug
+line differs); the placed board's crossings and unweighted wirelength
+by `ablate-kicad-placement` (x1828), the objective their sum at 3 mm per
+crossing; placement work from board-placer.json:
+
+| board, seed | objective off / on | crossings off / on | wirelength mm off / on | work s off / on |
+| --- | ---: | ---: | ---: | ---: |
+| video 1 | 101714 / 74561 | 19728 / 13208 | 42530 / 34937 | 634 / 690 |
+| video 101 | 90678 / 67797 | 17002 / 11645 | 39672 / 32862 | 643 / 203 |
+| protoesp 1 | 9969 / 8144 | 1228 / 910 | 6285 / 5414 | 106 / 110 |
+| protoesp 101 | 9428 / 8309 | 1075 / 925 | 6202 / 5534 | 107 / 104 |
+| Glasgow 1 | 5596 / 5380 | 816 / 775 | 3148 / 3055 | 601 / 601 |
+| Glasgow 101 | 5825 / 5302 | 838 / 773 | 3311 / 2983 | 601 / 601 |
+| 4in1 1 | 2235 / 1840 | 284 / 199 | 1383 / 1243 | 601 / 600 |
+| 4in1 101 | 1845 / 2473 | 207 / 296 | 1224 / 1585 | 600 / 601 |
+| MegaDrive 1 | 54520 / 54821 | 8135 / 8111 | 30116 / 30488 | 303 / 468 |
+| MegaDrive 101 | 56200 / 56285 | 9043 / 8814 | 29071 / 29843 | 300 / 327 |
+| sum | 338009 / 284912 | | | |
+
+The objective falls on 7 of the 10 (video by 25 to 27 %, protoesp 12 to
+18 %, Glasgow 4 to 9 %), is flat on MegaDrive (+0.2 to +0.6 %) and
+mixed on the 4in1 (-18 % and +34 %). Video's designer placement scores
+57207: the moves close 61 to 68 % of the gap there. MegaDrive's QFP
+order does not change: on seed 101 both sides have U4 right of U8 (the
+designer's order), on seed 1 neither does. Video's modules do not come
+into one column: three or four of the eight end side by side, the
+others apart, as off.
+
+### Measurement
+
+The protocol of the crossings' measurements: the eleven dense boards in
+layout mode at the task budgets (tasks v7, pinned rates), three seed
+pairs (`--placer '{"seed": N}'`, N = 1, 101, 201, and on the on side
+`"bus_groups": {}`), off x1828 (main 991ad37), on x14560 (branch
+bus-groups 8225d79: main 991ad37 and the moves, the switch off by
+default), 3 x 2 with at most six layouts in flight, through the memory
+ledger with 10 GB kept free, beside other agents' runs and the nightly;
+no row cut by the wall clock. The off side is the placer-legality
+round's x1828 runs (`build/legal1-dense-s{1,101,201}-off`, seed 201's
+last nine boards in `legal1-dense-s201b-off`, the short tier
+`legal1-short-off`: the same binary, tasks, rates and placer settings;
+a layout is deterministic in them). The on side is
+`build/group1-dense-s{1,101,201}-on` (seed 201's last five boards in
+`group1-dense-s201-on-b`, restarted after the ledger fix of main
+5fe3980) and `build/group1-short-on`.
+
+**The groups** (board-placer.json's `bus_groups`, the verdict's too; seed
+1's kept placement: groups that moved more than one part, banks with
+their members and the parts they move, clusters, the six largest groups'
+parts):
+
+| board | groups | banks | bank members (parts moved) | clusters | largest groups |
+| --- | ---: | ---: | --- | ---: | --- |
+| OpenESC 4in1-mini | 36 | 0 |  | 36 | 21, 19, 19, 13, 8, 7 |
+| OpenESC 4in1 | 30 | 0 |  | 30 | 60, 14, 13, 11, 10, 10 |
+| DSP-ADAU1452 | 23 | 0 |  | 23 | 67, 13, 12, 12, 11, 11 |
+| split72_left | 67 | 0 |  | 67 | 8, 8, 7, 7, 7, 6 |
+| video | 23 | 1 | U12 U13 U14 U15 U16 U17 U18 U19 (27) | 22 | 27, 18, 9, 8, 7, 6 |
+| Glasgow | 35 | 4 | RN3 RN5 (2); RN4 RN6 (2); RN9 RN11 (2); RN10 RN12 (2) | 31 | 32, 17, 10, 9, 8, 7 |
+| SmartSpin2k | 88 | 0 |  | 88 | 11, 9, 9, 9, 8, 8 |
+| 0xCB panel | 20 | 0 |  | 20 | 4, 4, 4, 3, 3, 3 |
+| protoesp | 12 | 0 |  | 12 | 9, 8, 5, 4, 3, 2 |
+| MegaDrive | 34 | 2 | U2 U3 (9); U9 U10 (11) | 32 | 11, 9, 9, 9, 8, 7 |
+| SNSP-CPU-01 | 19 | 1 | U15 U16 (24) | 18 | 24, 17, 13, 13, 11, 11 |
+
+**KiCad unconnected** per board, off / on:
+
+| Board | seed 1 | seed 101 | seed 201 | median |
+| --- | ---: | ---: | ---: | ---: |
+| OpenESC 4in1-mini | 81 / 99 | 82 / 79 | 99 / 78 | 82 / 79 |
+| OpenESC 4in1 | 106 / 140 | 125 / 137 | 125 / 111 | 125 / 137 |
+| DSP-ADAU1452 | 17 / 11 | 7 / 10 | 28 / 25 | 17 / 11 |
+| split72_left | 23 / 28 | 21 / 26 | 33 / 5 | 23 / 26 |
+| video | 190 / 177 | 287 / 170 | 178 / 156 | 190 / 170 |
+| Glasgow | 143 / 159 | 149 / 186 | 173 / 165 | 149 / 165 |
+| SmartSpin2k | 34 / 69 | 59 / 61 | 52 / 21 | 52 / 61 |
+| 0xCB panel | 50 / 52 | 50 / 56 | 51 / 45 | 50 / 52 |
+| protoesp | 110 / 68 | 76 / 63 | 90 / 71 | 90 / 68 |
+| MegaDrive | 110 / 106 | 108 / 115 | 157 / 91 | 110 / 106 |
+| SNSP-CPU-01 | 53 / 77 | 95 / 85 | 79 / 103 | 79 / 85 |
+| sum | 917 / 986 | 1059 / 988 | 1065 / 871 | 967 / 960 |
+
+
+The summed medians fall 967 to 960 (-0.7 %). One pair rises (seed 1:
+917 to 986), two fall (seed 101: 1059 to 988, seed 201: 1065 to 871).
+By the median 5 boards are better (4in1-mini 82 to 79, DSP-ADAU1452 17
+to 11, video 190 to 170, protoesp 90 to 68, MegaDrive 110 to 106) and 6
+worse (the 4in1 125 to 137, split72_left 23 to 26, Glasgow 149 to 165,
+SmartSpin2k 52 to 61, the 0xCB panel 50 to 52, SNSP-CPU-01 79 to 85).
+Video is better on all three seeds (190, 287, 178 to 177, 170, 156),
+protoesp too (110, 76, 90 to 68, 63, 71); Glasgow is worse on two.
+
+**The objective falls; routing follows it only in part.** The placed
+boards' (`layout/placed`, counted by `ablate-kicad-placement`, x1828)
+ratsnest crossings, off / on, the designer's beside them:
+
+| Board | designer | seed 1 | seed 101 | seed 201 |
+| --- | ---: | ---: | ---: | ---: |
+| OpenESC 4in1-mini | 279 | 80 / 87 | 84 / 100 | 91 / 86 |
+| OpenESC 4in1 | 242 | 253 / 199 | 166 / 249 | 235 / 185 |
+| DSP-ADAU1452 | 170 | 744 / 620 | 710 / 659 | 719 / 696 |
+| split72_left | 3201 | 3639 / 3534 | 3745 / 3807 | 3853 / 3672 |
+| video | 8765 | 19726 / 13208 | 15592 / 12034 | 14018 / 9685 |
+| Glasgow | 815 | 829 / 665 | 843 / 767 | 1159 / 806 |
+| SmartSpin2k | 1410 | 3149 / 3178 | 3348 / 3373 | 3301 / 3436 |
+| 0xCB panel | 319 | 460 / 481 | 493 / 514 | 480 / 552 |
+| protoesp | 373 | 1262 / 884 | 875 / 793 | 1046 / 900 |
+| MegaDrive | 7931 | 8136 / 9970 | 9042 / 8820 | 10945 / 7510 |
+| SNSP-CPU-01 | 5076 | 4286 / 4455 | 4765 / 4469 | 4599 / 4447 |
+| sum | 28581 | 42564 / 37281 | 39663 / 35585 | 40446 / 31975 |
+
+The objective (unweighted wirelength plus 3 mm per crossing):
+
+| Board | designer | seed 1 | seed 101 | seed 201 |
+| --- | ---: | ---: | ---: | ---: |
+| OpenESC 4in1-mini | 1850 | 1025 / 1025 | 1056 / 1111 | 1079 / 1044 |
+| OpenESC 4in1 | 1916 | 2143 / 1840 | 1677 / 2144 | 2139 / 1807 |
+| DSP-ADAU1452 | 4125 | 6551 / 6011 | 6458 / 6041 | 6188 / 6055 |
+| split72_left | 22272 | 23910 / 23543 | 24181 / 24736 | 24386 / 24019 |
+| video | 57207 | 101709 / 74561 | 91256 / 68870 | 74284 / 59276 |
+| Glasgow | 6086 | 5636 / 5124 | 5832 / 5288 | 7087 / 5926 |
+| SmartSpin2k | 14866 | 27645 / 27477 | 28562 / 28604 | 28393 / 29417 |
+| 0xCB panel | 5261 | 6856 / 7047 | 7132 / 7334 | 6942 / 7306 |
+| protoesp | 4578 | 10395 / 8084 | 8150 / 7483 | 9345 / 8303 |
+| MegaDrive | 53183 | 54524 / 62796 | 56199 / 56324 | 64789 / 50945 |
+| SNSP-CPU-01 | 33872 | 32341 / 32105 | 32582 / 32122 | 32468 / 32256 |
+| sum | 205216 | 272736 / 249613 | 263085 / 240058 | 257100 / 226354 |
+
+The objective falls on every seed's sum (272736 to 249613, -8.5 %;
+263085 to 240058, -8.8 %; 257100 to 226354, -12.0 %) and on 22 of the
+33 pairs, the crossings on 21 (sums -12 %, -10 %, -21 %). Video's
+objective falls 20 to 27 % on every seed (101709 to 74561 at seed 1, the
+designer's 57207), protoesp's 8 to 22 %, Glasgow's 9 to 16 %. But of the
+22 pairs whose objective falls, 14 route better; the sign of the
+objective's change and of the open connections agree on 21 of 33. The
+objective rises on the 0xCB panel, SmartSpin2k (seeds 101, 201) and
+MegaDrive's seed 1 (54524 to 62796: crossings 8136 to 9970), and falls
+on Glasgow, whose open connections rise on two seeds anyway.
+
+**Placement work** (board-placer.json's `pool_work_seconds`, what the
+layout's clock counts), off / on:
+
+| Board | seed 1 | seed 101 | seed 201 |
+| --- | ---: | ---: | ---: |
+| OpenESC 4in1-mini | 365 / 382 | 421 / 341 | 253 / 395 |
+| OpenESC 4in1 | 601 / 600 | 601 / 601 | 601 / 600 |
+| DSP-ADAU1452 | 186 / 170 | 144 / 238 | 168 / 224 |
+| split72_left | 249 / 376 | 488 / 265 | 232 / 246 |
+| video | 635 / 693 | 647 / 818 | 651 / 326 |
+| Glasgow | 601 / 601 | 601 / 601 | 601 / 601 |
+| SmartSpin2k | 305 / 294 | 299 / 328 | 295 / 315 |
+| 0xCB panel | 126 / 178 | 170 / 131 | 125 / 124 |
+| protoesp | 214 / 214 | 221 / 209 | 296 / 219 |
+| MegaDrive | 304 / 469 | 301 / 314 | 308 / 323 |
+| SNSP-CPU-01 | 144 / 131 | 237 / 153 | 147 / 181 |
+| sum | 3730 / 4108 | 4130 / 4000 | 3677 / 3555 |
+
+The work moves by +10 %, -3 % and -3 % over the three seeds; Glasgow and
+the 4in1 stop at their 600 s either way.
+
+**Short tier** (one pair, the tier's seed, 3 x 2, the same binaries;
+on with `{"bus_groups": {}}`): KiCad unconnected 22 to 25, strict passes
+7 and 7 (none lost, none gained), first-route open terminals 42 to 48.
+
+| Board | KiCad unconnected off / on | strict pass off / on | first route open off / on |
+| --- | ---: | --- | ---: |
+| eternal-keypad | 0 / 0 | yes / yes | 0 / 0 |
+| WLED_Matrix | 8 / 9 | no / no | 15 / 13 |
+| MIDAS-MK1.1-revA | 6 / 8 | no / no | 14 / 15 |
+| USB_Keypad | 2 / 2 | no / no | 2 / 3 |
+| 1337-v4.0 | 0 / 0 | yes / yes | 0 / 1 |
+| OpenFC | 2 / 2 | no / no | 2 / 2 |
+| reCamera_S101_v1.1 | 4 / 4 | no / no | 6 / 8 |
+| spell_tome_bottom | 0 / 0 | yes / yes | 0 / 0 |
+| urchin | 0 / 0 | yes / yes | 0 / 0 |
+| Blue_Line | 0 / 0 | yes / yes | 0 / 0 |
+| framework_mobo_lefthalf | 0 / 0 | yes / yes | 3 / 6 |
+| USB_Cable_Tester | 0 / 0 | yes / yes | 0 / 0 |
+| sum | 22 / 25 | 7 / 7 | 42 / 48 |
+
+### Judgement
+
+By the rule set for this lever (the dense sum of medians falls, each
+pair's sum falls, the short tier loses no strict pass, and video's and
+MegaDrive's medians improve) the default stays off: the summed medians
+fall only 967 to 960 and seed 1's pair rises (917 to 986), though the
+short tier keeps its seven passes and video's (190 to 170) and
+MegaDrive's (110 to 106, within one route's noise there, sd 12.7)
+medians improve. `bus_groups` stays an option, `{}` turns it on.
+
+What the step showed: the group moves do what they were built for in
+the placer's own terms. The objective of the placed boards falls 8.5
+to 12 % on every seed's sum and the crossings 10 to 21 %, most on video
+(20 to 27 %), protoesp and Glasgow. Routing does not follow the
+objective closely: of the 22 pairs whose objective falls, 14 route
+better, and Glasgow routes worse on two seeds with its objective 9 to
+16 % lower. So the objective's preference for the designer's
+placements (26 to 51 % on video, the 4in1 and protoesp) is necessary
+for routing them, not sufficient: the moves cut the crossings the pair
+counts, not what costs the routes there (escape room, which these moves
+do not judge, is one candidate; the 4in1 and Glasgow stop at their
+placement budget either way). Two orders the finding named did not come
+out: video's eight modules do not stack into one column (no
+arrangement of the 116 mm modules both stays on the board and lowers
+the cost after the global placement; the anneal then moves the bank as
+a unit, not into a column), and MegaDrive's QFP order is as off on the
+placement-only seeds. Next, if the lever is taken up again: escape
+demand in the group moves' judgement, and a column move for banks of
+long parts that picks the members' turn before it stacks them.
 
 ## What went wrong on the way (kept as lessons)
 

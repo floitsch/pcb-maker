@@ -11,6 +11,45 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-26 (bus-group moves in placement)
+
+Branch bus-groups, snapshot x14560 (main 991ad37 and the moves). The
+ablations found that the placer's own objective (wirelength plus 3 mm
+per crossing) already prefers the designer's placement on video, the
+4in1 and protoesp, and that single-part moves do not reach the orders
+it prefers. `bus_groups` (placer option, off; `{}` turns it on; code
+`crates/pcb-placer/src/groups.rs`, the anneal's `group_batch`,
+`legal::refine_groups` and `legal::place_unit`; docs/placer.md
+"Bus-group moves (2026-10-26)") moves units: banks (parts of one
+footprint sharing 4 bus nets: video's eight memory modules, MegaDrive's
+U2 U3 and U9 U10) and clusters (a part with its relation-bound and
+nearby passives). After the global placement each bank takes its best
+order and arrangement; the anneal shifts, turns, swaps and reorders the
+groups each stage (a bank's members only with their bank); the
+refinement does so legally, each unit placed whole; all judged by
+wirelength plus their nets' crossings. The groups are reported in
+board-placer.json and the verdict (`bus_groups`). With the switch off,
+placements are byte-identical to x1828's (video, MegaDrive).
+
+**Measured** (the eleven dense boards in layout mode at the task
+budgets, seeds 1, 101, 201, off x1828 = the placer-legality round's
+runs `build/legal1-dense-*-off`, on x14560 `build/group1-dense-*-on`;
+the short tier one pair): the placed boards' objective falls on every
+seed's sum (-8.5, -8.8, -12.0 %) and on 22 of 33 pairs, the crossings
+10 to 21 %, video's objective 20 to 27 %. KiCad unconnected: summed
+medians 967 to 960, pairs 917 to 986, 1059 to 988, 1065 to 871; video's
+median 190 to 170, MegaDrive's 110 to 106; by the median 5 boards
+better, 6 worse (Glasgow 149 to 165, SmartSpin2k 52 to 61). Short tier:
+unconnected 22 to 25, strict passes 7 and 7. Placement work +10, -3,
+-3 %.
+
+**Judgement: off.** Seed 1's pair rises, so the rule (the dense sum of
+medians and each pair's sum fall, no short-tier pass lost, video's and
+MegaDrive's medians better) is not met. The finding: the objective
+falls and routing does not follow it closely (14 of the 22 pairs whose
+objective falls route better; Glasgow routes worse on two seeds with
+an objective 9 to 16 % lower). Video's modules still do not stack in
+one column and MegaDrive's QFP order is unchanged.
 ## Measured on 2026-10-26 (layout sweep v21, matched designer tier)
 
 The full measurement on x1832 (main 2087046) and the README's numbers
