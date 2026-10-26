@@ -226,11 +226,14 @@ pub struct Constraints {
 /// row it is in) lies on; `angles`, the orientations it may take.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Kept {
-    /// `back`, `front`, `rotation` or `opening_outwards`.
+    /// `back`, `front`, `rotation`, `opening_outwards` or `place` (a part
+    /// put at a pose, which it keeps: `position`).
     pub kind: &'static str,
     pub part: usize,
     pub side: Option<crate::problem::Side>,
     pub angles: Vec<f64>,
+    /// The part's origin, where the constraint fixed it.
+    pub position: Option<crate::problem::Point>,
 }
 
 /// A part whose pose is its leader's pose composed with `offset` (in the
@@ -1336,12 +1339,16 @@ pub fn report_kept(problem: &Problem, poses: &[Pose]) -> Vec<Status> {
                     let difference = (allowed.rem_euclid(360.0) - angle).abs();
                     difference < 1.0e-6 || (difference - 360.0).abs() < 1.0e-6
                 });
+            let moved = kept.position.map_or(0.0, |position| {
+                let at = poses[kept.part].position;
+                ((at[0] - position[0]).powi(2) + (at[1] - position[1]).powi(2)).sqrt()
+            });
             Status {
                 kind: kept.kind,
                 part: kept.part,
                 other: None,
-                satisfied: side && turned,
-                violation: 0.0,
+                satisfied: side && turned && moved <= 1.0e-3,
+                violation: if moved > 1.0e-3 { moved } else { 0.0 },
             }
         })
         .collect()

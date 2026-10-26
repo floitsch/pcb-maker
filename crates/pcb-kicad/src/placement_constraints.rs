@@ -2285,6 +2285,7 @@ pub(super) fn apply_constraints(
             part: index,
             side: None,
             angles,
+            position: None,
         });
         constrained.insert(index);
     }
@@ -2376,6 +2377,14 @@ pub(super) fn apply_constraints(
                     angle,
                 };
                 pinned.push(index);
+                // Kept by construction, and listed with the others.
+                problem.constraints.kept.push(core::constraints::Kept {
+                    kind: "place",
+                    part: index,
+                    side: None,
+                    angles: vec![angle],
+                    position: Some([offset[0] + x, offset[1] + y]),
+                });
             }
             _ => {
                 return Err(format!(
@@ -2496,6 +2505,7 @@ pub(super) fn apply_constraints(
                 part: index,
                 side: None,
                 angles,
+                position: None,
             });
         }
         constrained.insert(index);
@@ -2855,6 +2865,7 @@ pub(super) fn apply_constraints(
                 part: index,
                 side: Some(side),
                 angles: Vec::new(),
+                position: None,
             });
         }
     }
@@ -3503,6 +3514,20 @@ mod tests {
             }
         );
         assert!(problem.components[0].fixed);
+        // Listed as kept with every other constraint (board-layout.json),
+        // and missed where the part is not at its pose.
+        let references: Vec<String> = ["J1", "C1", "C2"].iter().map(|r| r.to_string()).collect();
+        let report = constraint_report(&problem, &problem.poses, &references);
+        let place = report
+            .iter()
+            .find(|status| status.kind == "place")
+            .expect("the place entry with x and y");
+        assert!(place.part == "J1" && place.satisfied, "{report:?}");
+        let mut moved = problem.poses.clone();
+        moved[0].position[0] += 1.0;
+        let report = constraint_report(&problem, &moved, &references);
+        let place = report.iter().find(|status| status.kind == "place").unwrap();
+        assert!(!place.satisfied && (place.violation_mm - 1.0).abs() < 1e-9);
         let (problem, _) = apply(r#"{"version": 1, "place": [{"part": "C1", "at": "center"}, {"part": "C2", "at": "top-half"}]}"#).unwrap();
         let expected = [
             (1, [10.0, 20.0 / 3.0, 20.0, 40.0 / 3.0]),

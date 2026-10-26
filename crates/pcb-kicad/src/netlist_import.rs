@@ -60,10 +60,14 @@ pub struct KiCadNetlistImport {
     /// looks like a key switch.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub starter: Option<crate::key_matrix::KiCadStarterReport>,
-    /// The starter constraints and layout config, when written (never over
-    /// existing files).
+    /// The starter constraints and layout config: written when new, never
+    /// over existing files (a second import keeps the agent's edits: then
+    /// listed in `kept`).
     pub constraints: Option<PathBuf>,
     pub layout: Option<PathBuf>,
+    /// The files of these two that existed and were kept as they are.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub kept: Vec<String>,
 }
 
 /// Connectors people plug something into from outside the device, by
@@ -1545,10 +1549,12 @@ pub fn import_kicad_netlist_from(
         edges.push(edge);
         edge_connectors.push(format!("{reference} ({name})"));
     }
-    let write_new = |name: &str, value: serde_json::Value| -> Result<Option<PathBuf>, String> {
+    let mut kept = Vec::new();
+    let mut write_new = |name: &str, value: serde_json::Value| -> Result<Option<PathBuf>, String> {
         let path = output.join(name);
         if path.exists() {
-            return Ok(None);
+            kept.push(name.to_string());
+            return Ok(Some(path));
         }
         fs::write(
             &path,
@@ -1640,6 +1646,7 @@ pub fn import_kicad_netlist_from(
         starter: starter_report,
         constraints,
         layout,
+        kept,
     })
 }
 
@@ -2447,6 +2454,13 @@ mod tests {
             .map(|pad| form_atom(pad, "net", 1))
             .collect();
         assert_eq!(pads, vec![None, Some("GND")]);
+        // A second import keeps constraints.json and layout.json and still
+        // names them.
+        assert!(report.kept.is_empty() && report.constraints.is_some());
+        let again = import_kicad_netlist(&netlist, &output, "test", 4).unwrap();
+        assert_eq!(again.constraints, report.constraints);
+        assert_eq!(again.layout, report.layout);
+        assert_eq!(again.kept, vec!["constraints.json", "layout.json"]);
         fs::remove_dir_all(&directory).unwrap();
     }
     #[test]

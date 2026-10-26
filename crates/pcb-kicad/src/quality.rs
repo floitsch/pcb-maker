@@ -159,8 +159,11 @@ pub struct KiCadManufacturing {
     /// Two-pad parts of 0603 or smaller whose pads take tracks more than
     /// twice as wide on one side (tombstoning).
     pub tombstone_risk: Vec<String>,
-    /// Counts by type in the directory's `drc.json`, if there is one.
-    pub drc: BTreeMap<String, usize>,
+    /// Counts by type in the directory's `drc.json`; `null` without one
+    /// (`drc_note` says so: no DRC run, which is not a clean board).
+    pub drc: Option<BTreeMap<String, usize>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub drc_note: Option<String>,
 }
 
 struct Pad {
@@ -995,10 +998,11 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
             tombstone_risk.push(part.reference.clone());
         }
     }
-    let mut drc = BTreeMap::new();
+    let mut drc = None;
     if let Ok(text) = fs::read_to_string(directory.join("drc.json"))
         && let Ok(report) = serde_json::from_str::<serde_json::Value>(&text)
     {
+        let drc = drc.insert(BTreeMap::new());
         for violation in report["violations"].as_array().into_iter().flatten() {
             if let Some(kind) = violation["type"].as_str() {
                 *drc.entry(kind.to_string()).or_default() += 1;
@@ -1012,6 +1016,13 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
     let manufacturing = KiCadManufacturing {
         vias_in_pads,
         tombstone_risk,
+        drc_note: drc.is_none().then(|| {
+            format!(
+                "no DRC run: no drc.json beside the board (pcb-maker drc-kicad-board {} {board_id} {}/drc.json writes one)",
+                directory.display(),
+                directory.display()
+            )
+        }),
         drc,
     };
     let mut switch_inductors = Vec::new();
@@ -1361,8 +1372,31 @@ mod tests {
         fs::create_dir_all(&directory).unwrap();
         fs::write(directory.join("b.kicad_pcb"), board).unwrap();
         let report = score_kicad_board(&directory, "b");
+        // A drc.json written later is read; none is no DRC run, not `{}`.
+        fs::write(
+            directory.join("drc.json"),
+            r#"{"violations": [{"type": "clearance"}], "unconnected_items": []}"#,
+        )
+        .unwrap();
+        let checked = score_kicad_board(&directory, "b").unwrap().manufacturing;
         fs::remove_dir_all(&directory).ok();
-        let decoupling = report.unwrap().decoupling;
+        let report = report.unwrap();
+        assert_eq!(report.manufacturing.drc, None);
+        assert!(
+            report
+                .manufacturing
+                .drc_note
+                .unwrap()
+                .starts_with("no DRC run")
+        );
+        assert_eq!(
+            checked.drc,
+            Some(BTreeMap::from([("clearance".to_string(), 1)]))
+        );
+        assert_eq!(checked.drc_note, None);
+        let decoupling = report.decoupling;
+        // The capacitors that count for each far pin.
+        assert_eq!(decoupling.worst.len(), decoupling.worst_capacitors.len());
         let pin = |name: &str| {
             decoupling
                 .worst
