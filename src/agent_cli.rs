@@ -633,8 +633,9 @@ fn print_layout(result: &pcb_kicad::KiCadBoardLayoutResult) -> Result<(), String
         let decoupling = &report["decoupling"];
         if decoupling["capacitors"].as_u64().unwrap_or(0) > 0 {
             println!(
-                "decoupling: capacitors a median {} mm from a supply pin, {} within 3 mm",
-                decoupling["capacitor_median_mm"], decoupling["capacitors_within_3mm"]
+                "decoupling: capacitors a median {} mm from a supply pin, {:.0} % of them within 3 mm",
+                decoupling["capacitor_median_mm"],
+                decoupling["capacitors_within_3mm"].as_f64().unwrap_or(0.0) * 100.0
             );
         }
         for (key, label) in [
