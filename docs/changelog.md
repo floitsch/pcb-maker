@@ -11,6 +11,34 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Reviewed on 2026-10-26 (a fresh agent's trial)
+
+Branch usability-trial, x1833 (main e935324).
+[reviews/2026-10-26-fresh-agent-trial.md](reviews/2026-10-26-fresh-agent-trial.md):
+an agent new to pcb-maker laid out two boards from the expansion intake
+(lpc1311-target-v1, 2 layers, 194 pads; rp2350-dual-usb, 4 layers, 247
+pads) from the user documentation alone, with a connector on an edge and
+a capacitor at its IC, and without constraints.
+
+- **Result.** Every layout and the designer's placements routed complete
+  under KiCad (0 unconnected, 0 errors, kicad-cli agrees); A 15 vias and
+  464 mm against the designer's 42 and 943, B 70 vias and 863 mm against
+  55 and 575 for the designer's placement routed. About 40 commands, 24
+  minutes, 7 of them in the memory ledger.
+- **Frictions that remain** (proposals in the review): the ledger drained
+  for a 26-hour-old request that its own room would admit and held every
+  run 3 to 7 minutes; the pour advice's `keep_whole` under the ICs opened 22
+  connections, and `add_pours` over a net's `F&B.Cu` zone wrote a second
+  zone (`zones_intersect`); B's layout is complete with its decoupling
+  capacitors a median 6.9 mm from their pins (designer 1.8 mm) and no next
+  action says so; no starter constraints for a board without a schematic.
+- **Fixed** (each its own commit): the skill's exit-1 paragraph (inspect
+  first, room is a hypothesis), the layout's decoupling share printed as a
+  percentage, the pour advice's warning about regions over other nets'
+  pads, constraints.md on `opening_outwards` without a clear mouth and on
+  `move_all` for a placed board (the start does not matter: the same poses
+  from the designer's positions and from one stack).
+
 ## Committed on 2026-10-26 (the thermal-pad model matches KiCad's islands)
 
 Branch thermal-islands (snapshots x14700 to x14703; x14703 measured). The fine-pitch escapes
