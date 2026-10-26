@@ -1400,6 +1400,66 @@ class MeasuredFloor(unittest.TestCase):
         self.assertEqual(h.measured_floor_mb(summary, 91, now)[1],
                          "measured: 2.0 GB to keep + 3.0 GB outside growth + 0.1 GB overshoot (360 samples)")
 
+    @staticmethod
+    def replay(knots, boards, floor_mb, horizon, poll=15, stress_mb=0.0):
+        """A harness's boards replayed against the machine as it was without
+        them (ledger.rs, `floor_replay`: the same). `knots`: (time, the
+        floor's view, MemAvailable less growth, and MemAvailable of the
+        machine without these boards, in MB), each holding until the next;
+        `boards`: (since, expected MB, seconds) in the harness's order. A
+        board looks every `poll` s from `since` and starts when the view
+        less the boards running less its own expected peak leaves
+        `floor_mb`; it holds its expected peak (the worst case: resident at
+        its reservation) for its seconds. Returns the starts, the seconds
+        waited in all, the last board's end and the least MemAvailable less
+        `stress_mb` (the outside memory's largest measured rise) once the
+        boards run."""
+        starts = [None] * len(boards)
+        lowest = float("inf")
+        knot = 0
+        for t in range(horizon):
+            while knot + 1 < len(knots) and knots[knot + 1][0] <= t:
+                knot += 1
+            _, view, available = knots[knot]
+            running = sum(mb for (since, mb, seconds), start in zip(boards, starts)
+                          if start is not None and start <= t < start + seconds)
+            for index, (since, mb, seconds) in enumerate(boards):
+                if starts[index] is None and t >= since and (t - since) % poll == 0 \
+                        and view - running - mb >= floor_mb:
+                    starts[index] = t
+                    running += mb
+            lowest = min(lowest, available - running - stress_mb)
+        waited = sum((start if start is not None else horizon) - since for (since, _, _), start in zip(boards, starts))
+        ends = [start + seconds for (_, _, seconds), start in zip(boards, starts) if start is not None]
+        return starts, waited, max(ends) if len(ends) == len(boards) else None, lowest
+
+    # The evening of 2026-10-26 (20:37, build/pour6-dense-off-x1844.err):
+    # run.py's four boards (protoesp, video, DSP-ADAU1452, SNSP-CPU-01:
+    # expected 587, 4389, 1717, 3004 MB, measured 1205, 1731, 1850, 1632 s;
+    # in the order they started) waited from 0 with --min-free-gb 10. The
+    # machine without them, from the log's lines (MemAvailable less
+    # growth, MemAvailable; the boards that ran added back at their
+    # expected peaks): 9.4 and 30.1 GB at 0, 14.0 and 34.5 at 2210 s,
+    # 15.4 and 32.7 at 3364 s, 16.1 and 36.7 at 4235 s, 19.1 and 37.4 at
+    # 4371 s; between two lines at most what kept the boards that still
+    # waited out under 10 GB (12 539 MB from 2210 s: 10 240 + 587 + 1717
+    # less 1). The outside memory's largest rise within 10 minutes
+    # measured on the night after: STRESS_MB.
+    EVENING_KNOTS = [(0, 9626, 30822), (2210, 12539, 35328), (3364, 15770, 33485), (4235, 16486, 37581),
+                     (4371, 19558, 38298)]
+    EVENING_BOARDS = [(0, 587, 1205), (0, 4389, 1731), (0, 1717, 1850), (0, 3004, 1632)]
+    STRESS_MB = 3800
+
+    def test_the_evening_replayed_with_the_measured_floor(self):
+        # With 10 GB the replay gives the evening's starts (2210, 3364,
+        # 4235, 4371 s, at the next look) and the run ends at 6090 s
+        # (22:18 was 6045 s after 20:37).
+        starts, waited, end, lowest = self.replay(self.EVENING_KNOTS, self.EVENING_BOARDS, 10240, 9000,
+                                                  stress_mb=self.STRESS_MB)
+        self.assertEqual(starts, [2220, 3375, 4245, 4380])
+        self.assertEqual((waited, end), (14220, 6095))
+        self.assertGreater(lowest, 2048)
+
     def test_a_sample_counts_the_holders_trees_and_what_they_hold_above_their_reservations(self):
         h = run.harness_common
         # pid 10 holds 3000 MB, resident 1000, its child kicad-cli 2500:
@@ -1438,6 +1498,16 @@ class MeasuredFloor(unittest.TestCase):
         self.assertEqual(run.MemoryGate(10, ledger=self.ledger).floor_mb("designer"), (10240, "--min-free-gb"))
         self.assertEqual(run.MemoryGate(None, ledger=run.harness_common.Ledger(self.root / "none.json"))
                          .floor_mb("designer")[0], 10240)
+        # A gate that samples writes the machine beside its ledger at once.
+        sampling = run.MemoryGate(None, ledger=run.harness_common.Ledger(self.root / "sampled.json"), sample=True)
+        sampled = h.headroom_path(self.root / "sampled.json")
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not (h.read_headroom(sampled) or {}).get("samples"):
+            time.sleep(0.05)
+        sampling.sampler.stop()
+        stored = h.read_headroom(sampled)
+        self.assertEqual(len(stored["samples"][0]), 6)
+        self.assertEqual(stored["summary"]["samples"], len(stored["samples"]))
 
 
 if __name__ == "__main__":
