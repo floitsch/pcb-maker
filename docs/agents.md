@@ -571,7 +571,9 @@ order (since 2026-10-24): a run that holds nothing yet does not pass the
 request that has waited longest, only takes what still leaves it its room
 (`behind an older request` on stderr; docs/benchmarks.md, "Memory ledger:
 who runs next"), and once that request has waited 10 minutes, only what
-leaves it the room it waits for (`the ledger drains for it`). The reservation is
+leaves it the room it waits for (`the ledger drains for it`), as long as
+the ledger could start it and for at most 2 hours of its wait (otherwise
+`not drained for: ...`). The reservation is
 also a limit of the process's own: a run that grows past it is given more
 while the ledger has room, and otherwise ends with exit 4 and a verdict
 whose error names the reservation (rerun when fewer runs share the

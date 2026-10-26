@@ -381,7 +381,9 @@ measurement). The discipline:
   starts. Admission is ordered (since 2026-10-24): a waiting board is in
   the ledger, and newer requests pass the one that has waited longest
   only with what still leaves it its room; once it has waited
-  `--ledger-drain-after` (600 s) the ledger drains for it, and the
+  `--ledger-drain-after` (600 s) the ledger drains for it (while it
+  could start it, for at most `--ledger-drain-max`, 7200 s, of its
+  wait), and the
   nightly's boards (`--ledger-priority nightly`) go first and are never
   passed
   ([docs/benchmarks.md](../../docs/benchmarks.md), "Memory ledger: who

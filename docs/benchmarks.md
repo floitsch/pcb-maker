@@ -57,7 +57,7 @@ boards that gained or lost the pass.
   expected first (layout sweep v20 below). run.py should admit smaller
   boards past a waiting large one (or hold memory for it in turn); a
   harness item, not done yet.
-## Memory ledger: who runs next (2026-10-24, the drain 2026-10-25, its feasibility cap 2026-10-26)
+## Memory ledger: who runs next (2026-10-24, the drain 2026-10-25, its feasibility cap and its end 2026-10-26)
 
 Benchmarks share the machine through the memory ledger
 (`$XDG_RUNTIME_DIR/pcb-maker-ledger.json`; how a run reserves and waits:
@@ -167,6 +167,74 @@ estimate was 1.8 times its measured peak. designer.json now carries the
 measured peaks and seconds (`benchmarks/agent-tasks/tier_estimates.py`),
 and scripts/nightly.sh runs the designer tier before the sweep, its
 largest boards first (`run.py --order peak-desc`).
+
+**The ledger drains only for a waiter it could start** (2026-10-26).
+From the evening of 2026-10-25 for more than 27 hours the 2026-10-25
+nightly's designer stage (pid 4134524, a harness copy of 356c8db, from
+before every drain change) waited for neotron-pico, ULK_sl_PG1316s and
+ULK (27.9, 24.7 and 23.2 GB expected) with its own `--min-free-gb 10`.
+Its entries were the oldest waiters, so every newer harness and binary
+drained for it: with the feasibility cap only requests of 4 GB or less
+went (katia 7 GB, video 8 GB, ducktop2 16 GB waited for hours), and a
+fresh agent's trial saw 3-7 minutes of waiting per run even for small
+boards (docs/reviews/2026-10-26-fresh-agent-trial.md, friction 1). By the
+ledger's room it fit (26 GB reserved of 58), but its floor and the
+other runs' growth kept it out, and the stream of the other runs that
+the drain does not hold back (runs that grow, the nightly's own
+binaries, the small requests) never let it in. Now a waiter counts for
+the drain (`drain_state` in ledger.rs and harness_common.py, the same
+rule) only
+
+- while, with every reservation that began holding since its wait began
+  removed, its room covers what it waits for: the capacity less the
+  older reservations, and the memory available less the reservations'
+  growth, with the removed ones' megabytes back, less its own floor
+  (`floor_mb`; an older writer's entry without one, recognisable by a
+  missing `refreshed`, is assumed run.py's 10 GB, `DEFAULT_FLOOR_MB`);
+  otherwise the ledger could not start it before older runs end
+  (`not drained for: ... too little to start it`);
+- while its wait is within its bound (`drain_max` in its entry, run.py's
+  `--ledger-drain-max`, default 7200 s, `DEFAULT_DRAIN_MAX_SECONDS`; the
+  nightly's as well);
+- while its writer rewrites its entry: new harnesses and binaries write
+  `refreshed` on every poll (15 s and 2 s), and an entry not rewritten
+  for more than 120 s (`STALE_AFTER_SECONDS`) is stale; an entry without
+  `refreshed` (an older writer's) is assumed live.
+
+A waiter that does not count keeps its place: newer requests pass it by
+ordered admission alone (room for it beside the runs since its wait
+began), and once it counts again (older runs ended, or room appears)
+the drain resumes, until the bound. There is no drain for the next
+waiter meanwhile. `pcb-maker ledger` ends with the first waiter and its
+state (`first waiter: pid ..., waiting ... s for ... MB: the ledger
+drains for it` or `not drained for: ...`; `--json`: `first_waiter`), and
+the waiting lines name it (`behind an older request, ... ; not drained
+for: it has waited past the drain's bound of 7200 s`). Tests
+`the_ledger_drains_only_for_a_waiter_it_could_start` (ledger.rs) and
+test_run.py's `test_the_ledger_drains_only_for_a_waiter_it_could_start`,
+the same numbers: a 58 066 MB ledger, the old harness's 24 724 MB waiter
+(no floor, no `refreshed`), 26 GB reserved by two runs (the smaller
+3 GB, holding another hour), 31 000 MB available less growth, a 7 GB
+request. With the runs older than its wait its room is 31 000 - 10 240
+= 20 760 MB: before, the drain held the 7 GB request back; now it is not
+drained for and the request goes by ordered admission (7168 + 24 724 of
+58 066). With the runs newer than its wait (24 GB, the live ledger's
+case) it could start once they end, and the ledger drains for it until
+7200 s; then the 7 GB request goes, a 16 GB one still waits for it
+(24 576 + 16 384 + 24 724 > 58 066). The simulations of the drain and
+the cap above give the same numbers as before. Smoke (a private ledger,
+`PCB_MAKER_LEDGER_TOTAL_MB` 8000; a holder of 4000 MB since before the
+wait; the 356c8db harness_common.py waiting for 4500 MB with a 10 GB
+floor, its clock 1000 s back): x1834's route of the fence board waited
+`behind an older request ... the ledger drains for it` until its 25 s
+timeout; the branch's reserved its 795 MB at once, and `pcb-maker
+ledger` named the waiter `not drained for: ... its room would be
+4000 MB ... too little to start it`. On the live ledger the same day
+(read only) the branch's `pcb-maker ledger` named pid 4134524's
+ULK_sl_PG1316s, waiting 97 967 s for 24 724 MB, `not drained for: it
+has waited past the drain's bound of 7200 s`. Harness copies and
+binaries before this change still drain for it until they are rebuilt
+or end.
 
 Older binaries and harness copies ignore the new fields (`floor_mb`,
 `drain_after`, `expected_end`, `priority`) and do not drain; an older

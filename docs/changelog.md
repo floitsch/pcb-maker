@@ -11,6 +11,46 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-26 (the ledger drains only for a waiter it could start)
+
+Branch ledger-startable. Since the evening of 2026-10-25 the
+2026-10-25 nightly's designer stage (pid 4134524, a harness copy of
+356c8db that predates every ledger change) waited for 24.7 GB with its
+own `--min-free-gb 10`. As the oldest waiter every newer request drained
+for it: with the feasibility cap only requests of 4 GB or less went
+(katia 7 GB, video 8 GB, ducktop2 16 GB waited for hours), and the
+fresh-agent trial waited 3-7 minutes per run. Its floor and the other
+runs' growth kept it from starting; the drain blocked everyone for a
+request the ledger could not start. The process is left alone (only
+Florian ends it); the rule is now immune to it. Routing is untouched:
+only who is admitted when changes.
+
+**The rule** (`drain_state` in ledger.rs and harness_common.py, the same
+rule; docs/benchmarks.md, "Memory ledger: who runs next"). A waiter
+counts for the drain only while, with every reservation that began
+holding since its wait began removed, it would fit under its own floor
+(`floor_mb`; 10 GB assumed for an older writer's entry without one) and
+the reservations' growth; while its wait is within `drain_max` (run.py
+`--ledger-drain-max`, default 7200 s); and while its entry is refreshed
+(`refreshed`, new in the entries of harnesses and binaries; stale after
+120 s; absent: assumed live). Otherwise newer requests pass it by
+ordered admission alone and it keeps its place. `pcb-maker ledger`
+names the first waiter and whether the ledger drains for it.
+
+**Tests**: ledger.rs and test_run.py
+`the_ledger_drains_only_for_a_waiter_it_could_start` (a 24.7 GB waiter
+without a floor, 26 GB reserved, the smallest run 3 GB for another hour:
+before, a 7 GB request was held; now it starts, at once when the waiter
+cannot start, after 2 hours of drain when it could), the try_admit test
+(stale, past the bound, an older holder), the earlier simulations
+unchanged. **Smoke** on a private ledger with the 356c8db harness as the
+waiter: x1834's route waited behind it ("the ledger drains for it"), the
+branch's reserved at once. **Live** (read only): the branch's `pcb-maker
+ledger` classifies pid 4134524's ULK_sl_PG1316s (waiting 97 967 s for
+24 724 MB) as `not drained for: it has waited past the drain's bound of
+7200 s`. Harnesses and binaries from before this change still drain for
+it.
+
 ## Reviewed on 2026-10-26 (a fresh agent's trial)
 
 Branch usability-trial, x1833 (main e935324).
@@ -87,7 +127,6 @@ docs/router.md, "The pour model against KiCad's islands (2026-10-26)".
   unconnected, errors 115 and 115; the model predicts 4 starved thermal
   vias of exposed pads on inner layers there that KiCad does not report
   (glasgow, video; KiCad checks those boards, nothing acts on them).
-
 
 ## Committed on 2026-10-26 (memory round 3: the stamp lists, the search arrays, the occupancy)
 
@@ -2434,7 +2473,6 @@ iorodeo (87 -> 93), node (32 -> 33), bms (0 -> 1); better: tuxkeychain
 | tjko__brickpico__brickpico | (0, 0, 0) -> (0, 0, 0) | 0 -> 0 | 0 -> 0 | 31 -> 32 | 8/0/7/1 x0 u177 |
 | electron271__tuxkeychain__tuxkeychain | (0, 0, 0) -> (0, 0, 0) | 0 -> 0 | 11 -> 9 | 73 -> 62 | 2/1/0/1 x0 u4 |
 
-
 **Verdict and default.** The switch stays off: on the tier six rows lose connections
 and one its pass, KiCad's errors do not move, and on the boards whose
 rules bound the gap coupling helps KiCad's gap and width findings but
@@ -4065,7 +4103,6 @@ probes (34 mm 20 unconnected, 36 mm 9 and two errors), their work
 is the closest run (36 mm with the 290 s left: 7 unconnected) and the
 result; wall 285 s against 213 s.
 
-
 **Short tier** (3 x 2, x1480 against build/short-fence-x1403.log, in
 build/short-dim2-x1480; outside the lock under the coordinator's relaxed
 rule, 18 GB available): 11 of 12
@@ -4466,7 +4503,6 @@ fill (the fingerprint lines carry the router's pieces; KiCad's count
 needs the refilled board), and order independence across two
 place-kicad-board processes.
 
-
 ## Committed on 2026-10-21 (fence report: placer side)
 
 The breadboard fence report (`~/tmp/fence-report.md`, finding 2): the
@@ -4582,7 +4618,6 @@ of R22's label over J3's pins without the keepouts before, two with them
 after), HPWL 2837 / 2913 mm, no next action. With the keepouts x1385
 still moved the four test pad names; x1417 moves none. The keepouts are
 no longer needed.
-
 
 **The short tier** (`--tier short`, 3 x 2, `--no-lock`; x1381's
 `build/short-charge-x1381.log`, which main's x1385, x1396 and x1422
@@ -8259,7 +8294,6 @@ build/short-x1170.log (7/12, unconnected 19), whose copper the thermals
 package changed. scripts/check.sh, the clippy gate and rustfmt pass on
 b306347.
 
-
 ## Committed on 2026-10-21 (starved thermals at scale)
 
 starved_thermal was the second largest finding type the router adds
@@ -8517,7 +8551,6 @@ x1225 predates the ladder's work bound (4in1 used 2427 s of work against
 the 1500 s budget), so the full tier should run on a binary with it.
 Both comparisons are across binaries (x1170 layout, x1225 route): for
 a decision, run the layout and the designer tier on one binary.
-
 
 ## Committed on 2026-10-21 (verdict integrity)
 
@@ -8857,7 +8890,6 @@ limit the smaller of setting and environment), cgroup paths of both
 versions, the maps from a real router's memory report, and the bound's
 rules (the bound, the probes' share, the negotiation, the rung shares,
 the step's share and its time). `bash scripts/check.sh` passes.
-
 
 ## Committed on 2026-10-21 (parser and writer robustness)
 
