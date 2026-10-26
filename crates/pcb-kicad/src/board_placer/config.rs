@@ -365,6 +365,13 @@ pub struct KiCadEscapeDemand {
     /// The share of a boundary's capacity above which its usage counts in
     /// the measured attribution.
     pub threshold: f64,
+    /// A guard (off by default, `null`): where at least this share of the
+    /// board's footprints is fixed, escape demand is not applied (the
+    /// placement is the one without it). The movable parts of such boards
+    /// are mostly passives among fixed parts, whose nets leave towards the
+    /// fixed parts they belong to (docs/placer.md, "Per-board losers of the
+    /// defaults (2026-10-25)").
+    pub fixed_share: Option<f64>,
 }
 
 impl Default for KiCadEscapeDemand {
@@ -376,6 +383,7 @@ impl Default for KiCadEscapeDemand {
             measured: true,
             measure_every: 20,
             threshold: 0.5,
+            fixed_share: None,
         }
     }
 }

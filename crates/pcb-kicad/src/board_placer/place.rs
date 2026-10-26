@@ -102,7 +102,23 @@ pub fn place_kicad_board(
     for warning in &lowered.constraint_warnings {
         eprintln!("warning: {warning}");
     }
-    if let Some(escape) = &config.escape_demand {
+    let fixed = lowered
+        .problem
+        .components
+        .iter()
+        .filter(|component| component.fixed)
+        .count();
+    let fixed_share = fixed as f64 / lowered.problem.components.len().max(1) as f64;
+    if let Some(escape) = &config.escape_demand
+        && let Some(guard) = escape.fixed_share
+        && fixed_share >= guard
+    {
+        eprintln!(
+            "placer: escape demand not applied: {fixed} of {} footprints fixed ({:.2}, the guard {guard})",
+            lowered.problem.components.len(),
+            fixed_share
+        );
+    } else if let Some(escape) = &config.escape_demand {
         // The measured version lowers the board as the layout routes it,
         // with the layout's router configuration (its rules): a placement
         // alone has none and runs on the estimate.
