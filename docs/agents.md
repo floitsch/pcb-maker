@@ -634,7 +634,16 @@ request that has waited longest, only takes what still leaves it its room
 who runs next"), and once that request has waited 10 minutes, only what
 leaves it the room it waits for (`the ledger drains for it`), as long as
 the ledger could start it and for at most 2 hours of its wait (otherwise
-`not drained for: ...`). The reservation is
+`not drained for: ...`). A short command never waits behind that order
+or a drain (since 2026-10-26): `drc-kicad-board`, `inspect-routing-run
+--native-check` and `place-kicad-board` (which reserves only for KiCad's
+check) hold their memory for seconds, and a request of theirs of at most
+2 GB beside one KiCad check goes as soon as the machine's memory is there
+(the ledger's capacity has its room and the memory available, less what
+the other runs still grow by, covers it); `pcb-maker ledger` marks it
+`[short]`. A route and a layout hold theirs for minutes and wait in
+order. `PCB_MAKER_LEDGER_SHORT=1` makes a command's requests short, `0`
+makes them wait in order. The reservation is
 also a limit of the process's own: a run that grows past it is given more
 while the ledger has room, and otherwise ends with exit 4 and a verdict
 whose error names the reservation (rerun when fewer runs share the

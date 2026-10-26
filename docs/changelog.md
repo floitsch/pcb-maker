@@ -11,6 +11,40 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-26 (short requests never wait behind a drain)
+
+Branch ledger-short (docs/benchmarks.md, "Memory ledger: who runs next",
+"Short requests never wait behind a drain").
+
+- **The case**: the schematic trial's `drc-kicad-board` (1.5 s, 2253 MB)
+  waited 657 s behind run.py pid 3598969 (`--min-free-gb 10`), whose four
+  boards of 0.6-4.3 GB waited 2210-4371 s: 9.4-13.1 GB available beside
+  the reservations' growth against 2.9 + 10 GB needed, with 25 GB of the
+  ledger unreserved and about 19 GB of the machine outside the ledger.
+- **The rule**: a new request of a short command (every command that
+  reserves but a route and a layout; `PCB_MAKER_LEDGER_SHORT` 0/1
+  overrides) of at most 2 GB of its own beside one KiCad check goes when
+  the capacity has its room and the memory available less growth covers
+  it, whatever the order and the drain say. Its reservation is marked
+  `short` and counts as gone in the order's and the drain's sums for the
+  others. ledger.rs (`short_request`, `short_allows`, `short_class`) and
+  harness_common.py (`try_admit(short=True)`), the same rule.
+- **Simulated** (ledger.rs and test_run.py, the same numbers): the
+  check's wait 600 s before, 0 s now; other agents' checks up to 592 s,
+  now 0; the waiting board starts at 608 s in both; a route arriving at
+  30 s starts at 606 s before, 600 s now.
+- **Smoke** (a private ledger of 8000 MB, a 4000 MB holder, a harness
+  waiting for 4500 MB that the ledger drains for): x1846's
+  `drc-kicad-board` waited until its 40 s timeout; the branch's held its
+  2253 MB within 0.8 s and ended in 1.7 s (`PCB_MAKER_LEDGER_SHORT=0`:
+  waited as x1846).
+- **The floor**: `--min-free-gb` does not stack over harnesses (one
+  MemAvailable, each harness's own floor), so sharing or scaling it by
+  the number of harnesses changes nothing or only lowers it; a 6 GB
+  floor would have started the board at once, with 6.5 GB left for the
+  memory outside the ledger. Not changed: how far that memory moves was
+  not measured.
+- Routing is untouched.
 ## Committed on 2026-10-26 (a neutral spoke debug flag; the solid step per pad)
 
 Branch spoke-debug-solidify (docs/router.md, "Determinism and the wall

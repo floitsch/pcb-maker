@@ -57,7 +57,7 @@ boards that gained or lost the pass.
   expected first (layout sweep v20 below). run.py should admit smaller
   boards past a waiting large one (or hold memory for it in turn); a
   harness item, not done yet.
-## Memory ledger: who runs next (2026-10-24, the drain 2026-10-25, its feasibility cap and its end 2026-10-26)
+## Memory ledger: who runs next (2026-10-24, the drain 2026-10-25, its feasibility cap, its end and short requests 2026-10-26)
 
 Benchmarks share the machine through the memory ledger
 (`$XDG_RUNTIME_DIR/pcb-maker-ledger.json`; how a run reserves and waits:
@@ -235,6 +235,85 @@ ULK_sl_PG1316s, waiting 97 967 s for 24 724 MB, `not drained for: it
 has waited past the drain's bound of 7200 s`. Harness copies and
 binaries before this change still drain for it until they are rebuilt
 or end.
+
+**Short requests never wait behind a drain** (2026-10-26). On the
+evening of 2026-10-26 a fresh agent's `drc-kicad-board` of a small board
+(1.5 s of work, 2253 MB: KiCad's check) waited 657 s
+(docs/reviews/2026-10-26-schematic-trial.md, friction 1) `behind an older
+request, run.py: stonedDiscord__nonSNES__SNSP-CPU-01 ... (waiting 4312 s
+for 3004 MB; the ledger drains for it)`: pid 3598969, `--min-free-gb 10`,
+four route boards of 0.6-4.3 GB that waited 2210-4371 s each. That
+waiter was held by real memory, not by the ledger: its log
+(build/pour6-dense-off-x1844.err) reads, when its boards began waiting
+(20:37), 34.5 GB reserved by 12 runs of 56.7 GB, 30 waiting, 30.1 GB
+available and 20.7 GB still to grow (9.4 GB beside the growth; the board
+needs 2.9 + 10 GB), and when stonedDiscord started (21:49) 30.6 GB
+reserved, 31.4 GB available, 18.3 GB to grow (13.1 GB). About 19 GB of
+the machine's 62.7 GB were outside the ledger at both ends (the desktop
+and its browser, the agents' own processes, builds). The drain held every
+new request for it (it could start once the runs since its wait began
+end, and no run of more than 4 GB held memory, so the feasibility cap did
+not apply). Now a short request goes whenever the memory for it is there,
+whatever the order and the drain say:
+
+- short: the command holds its memory for seconds (`arm`'s class: every
+  command that reserves but `route-kicad-board` and `layout-kicad-board`,
+  so `drc-kicad-board`, `inspect-routing-run --native-check` and
+  `place-kicad-board`, which reserves only for its check;
+  `PCB_MAKER_LEDGER_SHORT=1` makes a command short, `0` long), and the
+  request is new (the process holds nothing, nor a harness above it) and
+  at most `SHORT_OWN_MB` (2048) of its own beside at most one KiCad check
+  (`KICAD_CHECK_MB`, 2.2 GB);
+- the memory is there: the capacity has its room (as for any request)
+  and the memory available less what the reservations still grow by
+  covers it (`short_allows`; a binary keeps no floor of its own, the
+  waiter's floor does not count);
+- its reservation is marked `short` (`pcb-maker ledger`: `[short]`) and
+  counts as gone in the order's and the drain's sums for every other
+  request (`order_allows`, `drain_state`, `drain_allows`,
+  `blocked_by_large`): it never passes a waiter there, and a route that
+  arrives beside it is admitted as without it. The capacity counts it.
+
+A short request the memory does not cover waits as before (ordered, and
+drained for in turn). Everything else is unchanged. harness_common.py's
+`try_admit(..., short=True)` is the same rule for a harness's request (at
+most 2048 + 2253 MB in all, against its own `min_free_mb`); run.py's
+boards are not short. Tests `short_requests_never_wait_behind_a_drain`
+(ledger.rs, a simulation of the evening: 58 066 MB, 44 000 available
+beside the reservations, eight runs of 3875 MB since the waiter's wait
+began ending one every 120 s from 600 s, the 3004 MB board with its
+10 240 MB floor waiting since -4312 s, the check at 0 s, other agents'
+checks every 20 s, a 2000 MB route at 30 s): before, the check waited
+600 s, the other checks up to 592 s, the route started at 606 s and the
+board at 608 s; with the rule every check goes at once, the board still
+starts at 608 s and the route at 600 s.
+`a_short_request_needs_the_memory_and_never_passes_in_the_bookkeeping`
+and test_run.py's `MemoryLedger` (the same simulation and numbers, and
+`try_admit` on a file: a 500 MB request behind a drained-for waiter
+waits, declared short it goes, marked `short`). Smoke (a private ledger,
+`PCB_MAKER_LEDGER_TOTAL_MB` 8000, `PCB_MAKER_NO_CACHE=1`; a holder of
+4000 MB since after the wait began; harness_common.admit waiting for
+4500 MB with `drain_after` 0, `the ledger drains for it`; then
+`drc-kicad-board` of the trial's little_red_rover layout): x1846 waited
+`behind an older request, smoke waiter ... the ledger drains for it`
+until its 40 s timeout, as did the branch's binary with
+`PCB_MAKER_LEDGER_SHORT=0`; the branch's binary held its 2253 MB
+(`[short]` in `pcb-maker ledger`) 0.8 s after it was started and ended
+with exit 0 in 1.7 s, as long as the same check takes on an empty ledger.
+
+The waiter's floor: `--min-free-gb` does not add up over harnesses. Each
+harness compares the one MemAvailable of the machine, less the growth of
+every reservation, with its own floor, so five harnesses with 10 GB each
+keep 10 GB, not 50; a floor shared among them is what it is already, and
+one divided by their number would only be a lower floor. What held the
+board was the 19 GB outside the ledger together with the growth term,
+which counts every reservation at its expected peak while most runs are
+below theirs (18-21 GB still to grow beside 30-34 GB reserved): with the 10 GB floor the reservations could take about 34 GB
+of the 56.7. A floor of 6 GB would have started the board at once
+(9.4 - 2.9 = 6.5 GB) and left 6.5 GB for the memory outside the ledger to
+grow into while every run peaks. Whether that is safe depends on how far
+that memory moves (the browser, builds), which was not measured; the
+floor is left as it is (`--min-free-gb 10` beside other agents).
 
 Older binaries and harness copies ignore the new fields (`floor_mb`,
 `drain_after`, `expected_end`, `priority`) and do not drain; an older
