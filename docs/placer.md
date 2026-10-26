@@ -3337,7 +3337,7 @@ locked parts fixed, the movable parts' labels dropped, as the placer
 sees it) with the designer's poses, beside `drc-kicad-board` of the
 designer's own board (every severity, cached).
 
-**The census, 109 boards, 16 470 movable parts** (x14501's tool; the
+**The census, 109 boards, 16 470 movable parts** (x14501's tool, x14502's for `kicad`; the
 designer's DRC for 108; koeg-board's fails in kicad-cli, exit 3, and
 it counts without one): the
 designer's own board has placement errors on movable parts on 45 boards
@@ -3366,7 +3366,7 @@ cause it has; the model's two levels, then `legality: "kicad"`):
 | cause | no halos, least spacing | tightest | kicad: least spacing | kicad: tightest |
 | --- | ---: | ---: | ---: | ---: |
 | courtyards apart, closer than the spacing (the copper clearance between the courtyard boxes); pads keep their clearance | 5 622 | 0 | 0 | 0 |
-| the same at the touching level: closer than the copper's least inset allows | 0 | 754 | 111 | 106 |
+| the same at the touching level: closer than the copper's least inset allows (at `kicad`: the pads within the clearance as boxes, by their corners, not by their rounded shapes) | 0 | 754 | 111 | 106 |
 | bodies past their courtyards (pads, mask or copper graphics) closer than the spacing, courtyards keep it | 649 | 0 | 0 | 0 |
 | courtyards overlap (on boards whose project rates it ignore 690, warning 315; error 39: round and slanted courtyards' strips) | 1 044 | 421 | 1 024 | 335 |
 | bodies overlap, courtyards do not (the courtyard's box, pads or mask past it) | 385 | 290 | 317 | 273 |
@@ -3445,8 +3445,13 @@ level whose spacing is the rules' least (no halos left; the levels from
 - bodies on one side may touch (`body_spacing` 0, the hollow parts' boxes
   too), and two parts whose bodies come within the copper clearance keep
   it pad to pad (`pads_too_close`: their pad boxes grown by the largest
-  clearance, a little conservative at diagonal corners); the anneal
-  keeps the touching level's shares (`courtyard_spacing` on);
+  clearance, a little conservative at diagonal corners), or the mask's
+  web where that is more (`pad_mask_gap`: twice the board's
+  `pad_to_mask_clearance` plus `solder_mask_min_width`, 0.23 to 0.35 mm
+  on WLED_Matrix, USB_Keypad, USB_Cable_Tester, eternal-keypad and
+  protoesp, whose clearances are 0.1 to 0.2 mm: KiCad bridges openings
+  closer than that); the anneal keeps the touching level's shares
+  (`courtyard_spacing` on);
 - an unheld part whose copper lies inside its body (the inset levels)
   is on the board when its body is inside the outline and each pad
   keeps the level's edge margin (`pads_keep_edge`), not the body by its
@@ -3457,8 +3462,8 @@ level whose spacing is the rules' least (no halos left; the levels from
 
 Off, the placement is byte-identical to main's (x14500 against x1828,
 `place-kicad-board` at 60 s of placement work, seed 1: the 4in1-mini,
-protoesp and Glasgow; x14501 adds the edge rule, which acts only with
-the switch on). On, the 4in1-mini places at the same level with
+protoesp and Glasgow; x14501 and x14502 add the edge rule and the
+mask's web, which act only with the switch on). On, the 4in1-mini places at the same level with
 the placer's wirelength 680 -> 630 mm; protoesp (a half-halo level) is
 unchanged.
 

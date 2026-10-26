@@ -911,6 +911,8 @@ pub fn legality_kicad_board(
                 "shaped or hollow boxes within the spacing, courtyards apart".into()
             } else if courtyard.is_none() {
                 "a part without courtyard closer than the spacing, pads keep their clearance".into()
+            } else if relaxed.constraints.pad_clearance {
+                "pads within the clearance as boxes (their corners), not by their shapes".into()
             } else if relaxed.constraints.courtyard_spacing {
                 "courtyards apart but closer than their copper's least inset allows, pads keep their clearance"
                     .into()
