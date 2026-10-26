@@ -3335,7 +3335,9 @@ an error against something it meets, else *model stricter*.
 task's prepared board and constraints (v20's `source/`: netless and
 locked parts fixed, the movable parts' labels dropped, as the placer
 sees it) with the designer's poses, beside `drc-kicad-board` of the
-designer's own board (every severity, cached).
+designer's own board (every severity, cached). Reports in
+`build/legal1-census` (the model) and `build/legal1-census-kicad`
+(`legality: "kicad"`), each with `summary.json`.
 
 **The census, 109 boards, 16 470 movable parts** (x14501's tool, x14502's for `kicad`; the
 designer's DRC for 108; koeg-board's fails in kicad-cli, exit 3, and
