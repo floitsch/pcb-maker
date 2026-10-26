@@ -36,6 +36,7 @@ fn component(name: &str, size: [f64; 2], pins: Vec<Pin>, fixed: bool) -> Compone
         copper_only: false,
         cutout_outline: Vec::new(),
         tight_hollow: Vec::new(),
+        hole_rings: Vec::new(),
     }
 }
 

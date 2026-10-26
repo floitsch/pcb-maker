@@ -108,6 +108,13 @@ pub struct Component {
     /// `hollow` at the tight level: a channel's members by their tight
     /// bodies (own frame), used when the tight body is.
     pub tight_hollow: Vec<[f64; 4]>,
+    /// The non-plated holes with the clearance ring they keep from other
+    /// parts' copper beyond the copper clearance (own frame): another
+    /// part's pads keep the copper clearance from them at every level,
+    /// also where the bodies may come closer than the hole clearance (a
+    /// mouse bite's 0.5 mm holes in a 0.7 mm courtyard: OpenRX's pad came
+    /// 0.19 mm to a hole where the project asks 0.2).
+    pub hole_rings: Vec<[f64; 4]>,
 }
 
 /// Position of the component origin and its rotation in degrees. Following

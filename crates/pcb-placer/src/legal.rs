@@ -568,6 +568,9 @@ fn clear_of(
             {
                 return false;
             }
+            if pads_in_hole_rings(problem, index, pose, other, poses[other], work) {
+                return false;
+            }
         } else if side.opposite(other_side)
             && far_side_overlap(problem, index, pose, other, poses[other], work)
         {
@@ -601,6 +604,8 @@ pub fn conflict_kind(
     Some(if mine.side.collides(theirs.side) {
         if mine.copper_only || theirs.copper_only {
             "pads in a cutout or pad keepout"
+        } else if pads_in_hole_rings(problem, index, pose, other, poses[other], &mut work) {
+            "pads in a hole's clearance"
         } else if mine.hollow_for(theirs) || theirs.hollow_for(mine) {
             "shaped or hollow boxes"
         } else if overlaps(
@@ -934,6 +939,44 @@ fn pads_too_close(
         + (mine.len() * theirs.len()) as u64;
     mine.iter()
         .any(|pad| theirs.iter().any(|other| overlaps(*pad, *other, clearance)))
+}
+
+/// Whether one part's pads come into the other's non-plated holes'
+/// clearance rings (`Component::hole_rings`) closer than the copper
+/// clearance: the hole clearance, whatever the bodies' spacing at the
+/// level (a mouse bite's rings reach past its courtyard).
+fn pads_in_hole_rings(
+    problem: &Problem,
+    a: usize,
+    pose_a: Pose,
+    b: usize,
+    pose_b: Pose,
+    work: &mut u64,
+) -> bool {
+    let clearance = problem.min_spacing;
+    let mut meets = |ringed: usize, ring_pose: Pose, padded: usize, pad_pose: Pose| {
+        let (rings, pads) = (
+            &problem.components[ringed].hole_rings,
+            &problem.components[padded].pads,
+        );
+        if rings.is_empty() || pads.is_empty() {
+            return false;
+        }
+        let reach = rect(problem, padded, pad_pose);
+        let near: Vec<Rect> = turned_rects(rings, ring_pose, 0.0)
+            .into_iter()
+            .filter(|ring| overlaps(*ring, reach, clearance))
+            .collect();
+        *work += list_work(rings.len());
+        if near.is_empty() {
+            return false;
+        }
+        let pads = turned_rects(pads, pad_pose, 0.0);
+        *work += list_work(pads.len()) + (near.len() * pads.len()) as u64;
+        near.iter()
+            .any(|ring| pads.iter().any(|pad| overlaps(*ring, *pad, clearance)))
+    };
+    meets(a, pose_a, b, pose_b) || meets(b, pose_b, a, pose_a)
 }
 
 /// Whether two parts on the same side meet where one of them is hollow:
@@ -2712,6 +2755,7 @@ mod tests {
             copper_only: false,
             cutout_outline: Vec::new(),
             tight_hollow: Vec::new(),
+            hole_rings: Vec::new(),
         }
     }
 

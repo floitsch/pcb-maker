@@ -1664,7 +1664,7 @@ fn a_decoupling_capacitor_is_near_every_supply_pin_of_its_rail_with_decoupling_n
 }
 
 #[test]
-fn a_non_plated_holes_clearance_ring_is_part_of_the_body() {
+fn pads_keep_the_hole_clearance_from_a_non_plated_hole() {
     // A mouse bite (0.5 mm holes in a 0.7 mm courtyard) and a capacitor
     // whose courtyard may touch others (`tight_bodies`): OpenRX's panel,
     // where the hole clearance 0.2 less the copper clearance 0.09 left a
@@ -1692,9 +1692,10 @@ fn a_non_plated_holes_clearance_ring_is_part_of_the_body() {
         ..KiCadBoardPlacerConfig::default()
     };
     let lowered = lower_placement(&pcb, &config).unwrap();
-    // The bite's body holds its rings: 0.25 + 0.11 mm about each hole.
+    // The bite keeps its rings: 0.25 + 0.11 mm about each hole.
     let bite = &lowered.problem.components[0];
-    assert!((bite.body_size[1] - 0.72).abs() < 1.0e-9);
+    assert_eq!(bite.hole_rings.len(), 3);
+    assert!((bite.hole_rings[1][3] - 0.36).abs() < 1.0e-9);
     // At the last level (tight bodies, courtyards touching where the
     // copper keeps the clearance), a pad under the middle hole keeps the
     // hole clearance from it.

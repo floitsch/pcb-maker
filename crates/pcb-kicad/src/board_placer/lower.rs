@@ -206,6 +206,7 @@ fn rule_area_obstacle(
         copper_only: !bodies,
         cutout_outline: if bodies { Vec::new() } else { points },
         tight_hollow: Vec::new(),
+        hole_rings: Vec::new(),
     };
     let pose = core::Pose {
         position: [
@@ -569,7 +570,7 @@ pub(crate) fn lower_placement(
     {
         let at = form_at(footprint)?;
         let reference = footprint_reference(footprint).unwrap_or_default();
-        let (mut body_center, mut body_size, mut round) = local_body(footprint)?;
+        let (mut body_center, mut body_size, round) = local_body(footprint)?;
         // A footprint with a courtyard on each side (a hot-swap switch: the
         // socket's on the back, the switch's on the front; a reversible
         // part) takes its own side's courtyard as its body and the other's
@@ -887,46 +888,6 @@ pub(crate) fn lower_placement(
             }
             angles
         };
-        // A non-plated hole's clearance ring is part of the body: the
-        // spacing tests keep bodies apart and assume the copper inside
-        // them. A mouse bite's 0.5 mm holes in a 0.7 mm courtyard, rings of
-        // 0.11 mm (OpenRX's hole clearance 0.2 less its copper clearance
-        // 0.09), reached 0.01 mm past the courtyard, and a pad came 0.19
-        // mm to a hole where the project asks 0.2 (KiCad's
-        // hole_clearance).
-        if !hole_rings.is_empty() {
-            let half = [body_size[0] / 2.0, body_size[1] / 2.0];
-            let mut body = [
-                body_center[0] - half[0],
-                body_center[1] - half[1],
-                body_center[0] + half[0],
-                body_center[1] + half[1],
-            ];
-            let before = body;
-            for ring in &hole_rings {
-                body = [
-                    body[0].min(ring[0]),
-                    body[1].min(ring[1]),
-                    body[2].max(ring[2]),
-                    body[3].max(ring[3]),
-                ];
-            }
-            if body != before {
-                // A disc that a ring reaches past becomes the box of both.
-                round = false;
-                body_center = [(body[0] + body[2]) / 2.0, (body[1] + body[3]) / 2.0];
-                body_size = [body[2] - body[0], body[3] - body[1]];
-                if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
-                    eprintln!(
-                        "lowering: {reference}'s body grown to its holes' clearance rings: {:.3} x {:.3} to {:.3} x {:.3}",
-                        before[2] - before[0],
-                        before[3] - before[1],
-                        body_size[0],
-                        body_size[1]
-                    );
-                }
-            }
-        }
         // How far the copper stays inside the body: the body may come that
         // much closer to the board edge.
         let edge_inset = if own_pads.is_empty() {
@@ -1093,23 +1054,12 @@ pub(crate) fn lower_placement(
                 far_courtyard.into_iter().collect()
             },
             hollow: shaped,
-            // The tight body holds the holes' clearance rings too.
             tight: if config.tight_bodies == Some(true) {
                 tight_body(
                     footprint,
                     (courtyard_on(own_prefix) && courtyard_on(other_prefix))
                         .then_some(other_prefix),
                 )?
-                .map(|tight| {
-                    hole_rings.iter().fold(tight, |b, ring| {
-                        [
-                            b[0].min(ring[0]),
-                            b[1].min(ring[1]),
-                            b[2].max(ring[2]),
-                            b[3].max(ring[3]),
-                        ]
-                    })
-                })
             } else {
                 None
             },
@@ -1120,6 +1070,7 @@ pub(crate) fn lower_placement(
             copper_only: false,
             cutout_outline: Vec::new(),
             tight_hollow: Vec::new(),
+            hole_rings: hole_rings.clone(),
         });
         poses.push(core::Pose {
             position: [at[0], at[1]],
@@ -1243,6 +1194,7 @@ pub(crate) fn lower_placement(
             copper_only: false,
             cutout_outline: Vec::new(),
             tight_hollow: Vec::new(),
+            hole_rings: Vec::new(),
         });
         poses.push(core::Pose {
             position: [
@@ -1320,6 +1272,7 @@ pub(crate) fn lower_placement(
             copper_only: true,
             cutout_outline: cutout.clone(),
             tight_hollow: Vec::new(),
+            hole_rings: Vec::new(),
         });
         poses.push(core::Pose {
             position: [

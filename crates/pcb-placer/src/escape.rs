@@ -510,6 +510,7 @@ mod tests {
             copper_only: false,
             cutout_outline: Vec::new(),
             tight_hollow: Vec::new(),
+            hole_rings: Vec::new(),
         }
     }
 

@@ -559,6 +559,7 @@ pub(super) fn mark_obstacle(mark: &BoardMark) -> (core::Component, core::Pose) {
         copper_only: false,
         cutout_outline: Vec::new(),
         tight_hollow: Vec::new(),
+        hole_rings: Vec::new(),
     };
     let pose = core::Pose {
         position: center,

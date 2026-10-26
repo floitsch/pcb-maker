@@ -804,6 +804,7 @@ fn make_inert(component: &mut core::Component) {
     component.pads.clear();
     component.courtyards.clear();
     component.tight_hollow.clear();
+    component.hole_rings.clear();
     component.copper_only = false;
     component.cutout_outline.clear();
     component.halo = 0.0;
@@ -1333,6 +1334,7 @@ mod tests {
                 copper_only: false,
                 cutout_outline: Vec::new(),
                 tight_hollow: Vec::new(),
+                hole_rings: Vec::new(),
             },
             core::Pose {
                 position: at,
