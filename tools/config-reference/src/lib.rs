@@ -173,6 +173,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "what the ledger's reservations may take together, in place of MemTotal less the margin (tests).",
     ),
     (
+        "PCB_MAKER_LEDGER_SHORT",
+        Kind::User,
+        "`1`: the command's requests of at most 2 GB of its own beside one KiCad check are short: they go once the capacity has their room and the memory available less the reservations' growth covers them, never behind the ledger's order or a drain; `0`: none are (default: every command that reserves but a route and a layout; docs/benchmarks.md, \"Memory ledger\").",
+    ),
+    (
         "PCB_ROUTER_TROUBLE",
         Kind::Switch,
         "overrides the router's `trouble_repair` (`0` off, anything else on): the trouble-makers' repair after the hard repair (an open net routed through others at a price, the nets it displaces routed again hard, kept when the open terminals drop; docs/experiments/human-level-routing.md).",

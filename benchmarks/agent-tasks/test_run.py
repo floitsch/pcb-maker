@@ -1070,6 +1070,146 @@ class MemoryLedger(unittest.TestCase):
         self.assertEqual(h.drain_state(stale, others, now, capacity, available), ("stale", h.STALE_AFTER_SECONDS + 1))
         self.assertEqual(h.drain_state(waiter, others, 599.0, capacity, available)[0], "not yet")
 
+    @staticmethod
+    def evening(short_rule, horizon=1800):
+        """The evening of 2026-10-26 (21:39), second by second from the
+        fresh agent's check at 0 s (as ledger.rs's `evening`): a ledger of
+        58 066 MB, 44 000 MB available beside the reservations (each run
+        resident at its reservation; the logs: MemAvailable 30-31 GB less
+        18-21 GB of growth beside 30-34 GB reserved), eight agents' runs of
+        3875 MB that began holding during the waiter's wait and end one every
+        120 s from 600 s, run.py's board of 3004 MB (floor 10 240 MB)
+        waiting since -4312 s and looking every 15 s, the check (KiCad's
+        2.2 GB) at 0 s, other agents' checks every 20 s from 10 s (2 s each),
+        an agent's route of 2000 MB at 30 s (300 s); the binaries look every
+        2 s. `short_rule`: short requests pass. Returns the check's wait,
+        the longest wait of the other checks, and the starts of the board
+        and the route."""
+        h = run.harness_common
+        capacity, free, floor, check = 58066.0, 44000.0, 10240.0, h.KICAD_CHECK_MB
+        book = [[{"pid": 11 + i, "started": -1000.0, "megabytes": 3875.0, "label": "layout",
+                  "held_since": -1000.0}, 600 + 120 * i, False] for i in range(8)]
+        book.append([{"pid": 1, "started": -4312.0, "megabytes": 0.0, "waiting_mb": 3004.0,
+                      "waiting_since": -4312.0, "waits_on_floor": True, "floor_mb": floor, "drain_after": 600.0,
+                      "refreshed": -1.0, "label": "run.py: stonedDiscord__nonSNES__SNSP-CPU-01 (expected peak)"},
+                     None, False])
+        check_wait, longest, starts, next_pid = None, 0, {}, 100
+
+        def arrive(pid, megabytes, label, t):
+            return {"pid": pid, "started": t, "megabytes": 0.0, "label": label, "waiting_mb": megabytes,
+                    "waiting_since": t, "refreshed": t}
+        for t in range(horizon):
+            book = [entry for entry in book if entry[1] is None or entry[1] > t]
+            if t == 0:
+                book.append([arrive(50, check, "drc-kicad-board", t), None, True])
+            if t >= 10 and (t - 10) % 20 == 0:
+                next_pid += 1
+                book.append([arrive(next_pid, check, "drc-kicad-board", t), None, True])
+            if t == 30:
+                book.append([arrive(60, 2000.0, "route-kicad-board", t), None, False])
+            for entry in [e for e in book if e[0].get("waiting_mb") is not None]:
+                me, short = entry[0], entry[2]
+                if (t - me["waiting_since"]) % (15 if me["pid"] == 1 else 2):
+                    continue
+                me["refreshed"] = t
+                wanted, since = me["waiting_mb"], me["waiting_since"]
+                others = [r for r, _, _ in book if r is not me]
+                available = free - sum(r["megabytes"] for r in others)
+                held = {r["pid"]: r["megabytes"] for r in others}
+                if me["pid"] == 1:
+                    admitted = h.memory_room(others, wanted, floor, capacity, available, resident=held.get,
+                                             own_pid=1)[0]
+                else:
+                    drained = h.drained_for(others, since, t, own_pid=me["pid"], capacity_mb=capacity,
+                                            available_mb=available)
+                    ordered = (h.order_allows(others, wanted, since, capacity, own_pid=me["pid"])
+                               and (drained is None or h.drain_allows(drained, others, wanted, capacity, available)))
+                    # A binary keeps no floor of its own: memory_room with 0.
+                    passes = (short_rule and short and h.short_request(0.0, wanted)
+                              and h.memory_room(others, wanted, 0.0, capacity, available, resident=held.get,
+                                                own_pid=me["pid"])[0])
+                    admitted = h.memory_room(others, wanted, 0.0, capacity, None)[0] and (ordered or passes)
+                if admitted:
+                    me.update(megabytes=me.pop("waiting_mb"), held_since=t)
+                    if short_rule and short:
+                        me["short"] = True
+                    entry[1] = t + {1: 3600, 60: 300}.get(me["pid"], 2)
+                    if me["pid"] in (1, 60):
+                        starts[me["pid"]] = t
+                    elif me["pid"] == 50:
+                        check_wait = t - since
+                    else:
+                        longest = max(longest, t - since)
+        return check_wait, longest, starts[1], starts[60]
+
+    def test_short_requests_never_wait_behind_a_drain(self):
+        # As on the evening: the board waits for its floor (44 000 - 31 000
+        # - 3004 < 10 240) and the drain holds every new request for it
+        # until the first run ends at 600 s: the check waits 600 s, the
+        # other checks up to 592 s, the route goes at 606 s behind them,
+        # the board at its next look (608 s).
+        self.assertEqual(self.evening(False), (600, 592, 608, 606))
+        # Short requests pass: every check goes at once (13 000 MB
+        # available less growth), the board starts as before, the route at
+        # 600 s (no check queued ahead of it). ledger.rs: the same numbers.
+        self.assertEqual(self.evening(True), (0, 0, 608, 600))
+
+    def test_a_short_request_needs_the_memory_and_never_passes_in_the_bookkeeping(self):
+        h = run.harness_common
+        self.assertTrue(h.short_request(0.0, h.KICAD_CHECK_MB))
+        self.assertTrue(h.short_request(h.SHORT_OWN_MB, h.KICAD_CHECK_MB))
+        self.assertFalse(h.short_request(h.SHORT_OWN_MB + 1, 0.0))
+        self.assertFalse(h.short_request(0.0, h.KICAD_CHECK_MB + 1))
+        holder = {"pid": 11, "megabytes": 4000.0, "held_since": 20.0, "label": ""}
+        check = {"pid": 12, "megabytes": 2253.0, "held_since": 700.0, "short": True, "label": ""}
+        waiter = {"pid": 13, "started": 10.0, "megabytes": 0.0, "waiting_mb": 8000.0, "waiting_since": 10.0,
+                  "floor_mb": 2000.0, "waits_on_floor": True, "label": ""}
+        without, with_check = [holder, waiter], [holder, check, waiter]
+        capacity, now = 14500.0, 700.0
+        for wanted in (1000.0, 2000.0, 2500.0, 2600.0):
+            self.assertEqual(h.order_allows(with_check, wanted, now, capacity, own_pid=99),
+                             h.order_allows(without, wanted, now, capacity, own_pid=99), wanted)
+            drained = h.drained_for(with_check, now, now, own_pid=99, capacity_mb=capacity,
+                                    available_mb=12000.0 - 2253.0)
+            self.assertIs(drained, waiter)
+            self.assertEqual(h.drain_allows(waiter, with_check, wanted, capacity, 12000.0 - 2253.0),
+                             h.drain_allows(waiter, without, wanted, capacity, 12000.0), wanted)
+        self.assertTrue(h.order_allows(with_check, 2500.0, now, capacity, own_pid=99))
+        self.assertFalse(h.order_allows(with_check, 2501.0, now, capacity, own_pid=99))
+        counted = [holder, dict(check, short=False), waiter]
+        self.assertFalse(h.order_allows(counted, 1000.0, now, capacity, own_pid=99))
+
+    def test_a_short_request_passes_a_drained_for_waiter_when_the_memory_is_there(self):
+        # The ledger: a holder of 3000 of 4000 MB and an older waiter of
+        # 900 MB that the drain holds every new request for (its floor of
+        # 0, drained for at once by its priority). A request of 500 MB
+        # waits; declared short it goes, marked short; one of more than
+        # SHORT_OWN_MB + KICAD_CHECK_MB never passes.
+        h = run.harness_common
+        other, older = self.sleeper(), self.sleeper()
+        self.ledger.reserve(3000, "another run", pid=other.pid)
+        self.ledger.update(lambda reservations: reservations.append(
+            {"pid": older.pid, "started": time.time() - 30, "start_ticks": h.start_ticks(older.pid),
+             "megabytes": 0.0, "label": "the waiter", "waiting_mb": 900.0, "waiting_since": time.time() - 30,
+             "refreshed": time.time(), "priority": "nightly"}))
+        key, text = h.try_admit(self.ledger, 500, "a long one")
+        self.assertIsNone(key, text)
+        self.assertIn("behind an older request", text)
+        key, text = h.try_admit(self.ledger, 500, "a check", short=True)
+        self.assertIsNotNone(key, text)
+        mine = [r for r in self.ledger.live() if r["label"] == "a check"]
+        self.assertEqual([(r["megabytes"], r.get("short")) for r in mine], [(500.0, True)])
+        self.ledger.release(key)
+        saved = os.environ["PCB_MAKER_LEDGER_TOTAL_MB"]
+        os.environ["PCB_MAKER_LEDGER_TOTAL_MB"] = "100000"
+        try:
+            self.ledger.update(lambda reservations: [r.update(waiting_mb=99000.0) for r in reservations
+                                                     if r["label"] == "the waiter"])
+            key, text = h.try_admit(self.ledger, h.SHORT_OWN_MB + h.KICAD_CHECK_MB + 1, "too large", short=True)
+            self.assertIsNone(key, text)
+        finally:
+            os.environ["PCB_MAKER_LEDGER_TOTAL_MB"] = saved
+
     def test_waiting_entries_carry_what_the_drain_reads_and_newer_requests_wait(self):
         other = self.sleeper()
         self.ledger.reserve(3000, "another run", pid=other.pid)

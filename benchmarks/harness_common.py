@@ -228,6 +228,15 @@ DEFAULT_DRAIN_MAX_SECONDS = 7200.0
 STALE_AFTER_SECONDS = 120.0
 DEFAULT_FLOOR_MB = 10240.0
 
+# Short requests never wait behind a drain (ledger.rs, `short_request`,
+# `short_allows`, since 2026-10-26): a request of at most SHORT_OWN_MB of
+# its own beside at most one KiCad check (KICAD_CHECK_MB, kicad-cli's 2.2 GB
+# on any board) that is declared short goes once the memory for it is there,
+# whatever the order and the drain say; its reservation (`short`) counts as
+# gone in the order's and the drain's sums for the others.
+SHORT_OWN_MB = 2048.0
+KICAD_CHECK_MB = 2.2 * 1024
+
 
 def ledger_path(environ=None):
     """The ledger file PCB_MAKER_LEDGER names (default
@@ -508,7 +517,9 @@ def order_allows(others, megabytes, since, capacity_mb, own_pid=None, priority=N
     if oldest is None or _order_key(oldest) >= (_rank(priority), since, own_pid):
         return True
     wants = float(oldest["waiting_mb"])
-    rest = [r for r in others if r is not oldest]
+    # A short request's reservation counts as gone (it ends within seconds
+    # and has not passed the oldest; the capacity counts it, memory_room).
+    rest = [r for r in others if r is not oldest and not r.get("short")]
     reserved = sum(r.get("megabytes", 0.0) for r in rest)
     fits_now = reserved + wants <= capacity_mb or not any(r.get("megabytes", 0.0) > 0 for r in rest)
     if fits_now and not oldest.get("waits_on_floor"):
@@ -558,7 +569,7 @@ def drain_state(waiter, others, now, capacity_mb=None, available_mb=None):
         return "past bound", _drain_max(waiter)
     rest = [r for r in others if r is not waiter]
     newer = sum(r.get("megabytes", 0.0) for r in rest
-                if r.get("megabytes", 0.0) > 0 and _held_since(r) >= _waiting_since(waiter))
+                if r.get("megabytes", 0.0) > 0 and (r.get("short") or _held_since(r) >= _waiting_since(waiter)))
     room = min(_waiter_room(waiter, rest, capacity_mb, available_mb, freed_mb=newer,
                             floor_mb=assumed_floor_mb(waiter)))
     if room < float(waiter["waiting_mb"]):
@@ -599,16 +610,17 @@ def drain_allows(waiter, others, megabytes, capacity_mb, available_mb, expected_
     cannot fit before a larger run ends anyway (blocked_by_large): then
     holding it back gains the waiter nothing, and a waiter of 23-28 GB
     behind a 28 GB run held every other agent's request for hours.
-    `small_mb`: the bound (0: no cap, the rule of 2026-10-25)."""
+    `small_mb`: the bound (0: no cap, the rule of 2026-10-25). A short
+    request's reservation (`short`) counts as gone (it ends within seconds)."""
     wants = float(waiter["waiting_mb"])
     rest = [r for r in others if r is not waiter]
-    if min(_waiter_room(waiter, rest, capacity_mb, available_mb, megabytes)) >= wants:
+    if min(_waiter_room(waiter, rest, capacity_mb, available_mb, megabytes, freed_mb=_short_held_mb(rest))) >= wants:
         return True
     if megabytes <= small_mb and blocked_by_large(waiter, others, capacity_mb, available_mb, small_mb):
         return True
     if waiter.get("priority") == PRIORITY_NIGHTLY or expected_end is None:
         return False
-    holders = [r for r in rest if r.get("megabytes", 0.0) > 0]
+    holders = [r for r in rest if r.get("megabytes", 0.0) > 0 and not r.get("short")]
     return bool(holders) and all(isinstance(r.get("expected_end"), (int, float)) and expected_end <= r["expected_end"]
                                  for r in holders)
 
@@ -640,11 +652,24 @@ def blocked_by_large(waiter, others, capacity_mb, available_mb, small_mb=SMALL_R
     the large ones until that run ends; then it drains in full. `small_mb`:
     the bound."""
     rest = [r for r in others if r is not waiter]
-    holders = [r for r in rest if r.get("megabytes", 0.0) > 0]
+    holders = [r for r in rest if r.get("megabytes", 0.0) > 0 and not r.get("short")]
     if not any(r["megabytes"] > small_mb for r in holders):
         return False
-    small = sum(r["megabytes"] for r in holders if r["megabytes"] <= small_mb)
+    small = sum(r["megabytes"] for r in holders if r["megabytes"] <= small_mb) + _short_held_mb(rest)
     return min(_waiter_room(waiter, rest, capacity_mb, available_mb, freed_mb=small)) < float(waiter["waiting_mb"])
+
+
+def _short_held_mb(reservations):
+    """What the short requests' reservations (`short`) among
+    `reservations` hold: counted as gone in the drain's rooms."""
+    return sum(r.get("megabytes", 0.0) for r in reservations if r.get("short") and r.get("megabytes", 0.0) > 0)
+
+
+def short_request(own_mb, children_mb=0.0):
+    """Whether a request declared short of `own_mb` for its process and
+    `children_mb` for its children is short (ledger.rs, `short_request`):
+    at most SHORT_OWN_MB of its own beside at most one KiCad check."""
+    return own_mb <= SHORT_OWN_MB and children_mb <= KICAD_CHECK_MB
 
 
 def _is_waiting_entry(reservation, pid, label, since):
@@ -653,7 +678,7 @@ def _is_waiting_entry(reservation, pid, label, since):
 
 
 def try_admit(ledger, megabytes, label, min_free_mb=0.0, since=None, expected_seconds=None, drain_after=None,
-              priority=None, drain_max=None):
+              priority=None, drain_max=None, short=False):
     """Reserves `megabytes` under `label` for this process when they fit
     (memory_room against the ledger, its capacity and MemAvailable) and no
     older waiting request is passed (order_allows), atomically with the
@@ -667,7 +692,11 @@ def try_admit(ledger, megabytes, label, min_free_mb=0.0, since=None, expected_se
     reads: `expected_end` (now + `expected_seconds`, when known), the
     floor (`floor_mb`), `drain_after`, `drain_max` and when it was written
     (`refreshed`) while it waits, and `priority` (PRIORITY_NIGHTLY or
-    None)."""
+    None). `short` (since 2026-10-26; ledger.rs, `short_allows`): a request
+    that holds its memory for seconds; of at most SHORT_OWN_MB +
+    KICAD_CHECK_MB it goes whenever memory_room holds (the capacity, and MemAvailable
+    less growth leaving its own `min_free_mb`), whatever the order and the
+    drain say, and its reservation is marked `short`."""
     pid = os.getpid()
 
     def change(reservations):
@@ -686,12 +715,17 @@ def try_admit(ledger, megabytes, label, min_free_mb=0.0, since=None, expected_se
         drained = drained_for(reservations, begun, now, pid, priority, capacity, seen)
         if drained is not None and ordered:
             ordered = drain_allows(drained, reservations, megabytes, capacity, seen, expected_end)
+        # (A harness's request is one number: its process's and its
+        # children's together.)
+        is_short = bool(short) and megabytes <= SHORT_OWN_MB + KICAD_CHECK_MB
         ticks = start_ticks(pid)
-        if fits and ordered:
+        if fits and (ordered or is_short):
             entry = {"pid": pid, "started": now, "start_ticks": ticks, "megabytes": float(megabytes),
                      "label": label, "held_since": now}
             if ticks is None:
                 del entry["start_ticks"]
+            if is_short:
+                entry["short"] = True
             if expected_end is not None:
                 entry["expected_end"] = expected_end
             if priority:
@@ -735,13 +769,14 @@ def withdraw(ledger, label, since):
 
 
 def admit(ledger, megabytes, label, min_free_mb=0.0, poll_seconds=15.0, log=None, stop=None, expected_seconds=None,
-          drain_after=None, priority=None, drain_max=None):
+          drain_after=None, priority=None, drain_max=None, short=False):
     """Waits until `megabytes` fit and reserves them (try_admit), in the
     ledger as a waiting request meanwhile (newer requests do not pass it:
     order_allows; once it has waited `drain_after` seconds, default
     DEFAULT_DRAIN_AFTER_SECONDS, the ledger drains for it: drain_allows,
     while it could start and for at most `drain_max` seconds of its wait,
-    default DEFAULT_DRAIN_MAX_SECONDS: drain_state).
+    default DEFAULT_DRAIN_MAX_SECONDS: drain_state). `short`: a request
+    that holds its memory for seconds (try_admit).
     Returns the reservation's key, None when `stop()` said to give up.
     `log` gets the waiting lines."""
     started = time.monotonic()
@@ -752,7 +787,7 @@ def admit(ledger, megabytes, label, min_free_mb=0.0, poll_seconds=15.0, log=None
         while True:
             key, text = try_admit(ledger, megabytes, label, min_free_mb, since=since,
                                   expected_seconds=expected_seconds, drain_after=drain_after, priority=priority,
-                                  drain_max=drain_max)
+                                  drain_max=drain_max, short=short)
             waited = time.monotonic() - started
             if key is not None:
                 if said is not None and log:

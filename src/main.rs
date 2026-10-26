@@ -305,6 +305,10 @@ const ENVIRONMENT_HELP: &[(&str, &str)] = &[
         "PCB_MAKER_LEDGER_TOTAL_MB",
         "what the ledger's reservations may take together, in place of the machine's\nmemory less the margin (tests); default unset.",
     ),
+    (
+        "PCB_MAKER_LEDGER_SHORT",
+        "1: this command's requests of up to 2 GB beside a KiCad check are short (they\ngo once the memory is there, never behind a drain); 0: none are; default:\nevery armed command but a route or a layout.",
+    ),
 ];
 
 /// `pcb-maker ledger`: the memory ledger's live reservations, who holds
@@ -375,6 +379,8 @@ fn print_ledger(json: bool) -> Result<(), String> {
             reservation.label,
             if reservation.nightly() {
                 " [nightly]"
+            } else if reservation.short {
+                " [short]"
             } else {
                 ""
             }

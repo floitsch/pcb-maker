@@ -453,6 +453,7 @@ User-facing (`pcb-maker --help` lists them):
 - `PCB_MAKER_LEDGER`: the machine's memory ledger, where routes, layouts and KiCad's checks reserve their memory before they allocate and wait for room (default `$XDG_RUNTIME_DIR/pcb-maker-ledger.json`, else `/tmp/pcb-maker-ledger.json`; `off`: none; `pcb-maker ledger` lists it). Reservations do not change results.
 - `PCB_MAKER_LEDGER_MARGIN_MB`: the memory the ledger keeps free of reservations (default 6144): all reservations together take at most MemTotal less it.
 - `PCB_MAKER_LEDGER_TOTAL_MB`: what the ledger's reservations may take together, in place of MemTotal less the margin (tests).
+- `PCB_MAKER_LEDGER_SHORT`: `1`: the command's requests of at most 2 GB of its own beside one KiCad check are short: they go once the capacity has their room and the memory available less the reservations' growth covers them, never behind the ledger's order or a drain; `0`: none are (default: every command that reserves but a route and a layout; docs/benchmarks.md, "Memory ledger").
 
 Switches and experiment hooks (change the result):
 

@@ -75,6 +75,19 @@
 //! nor the drain could start, held every request of more than 4 GB back
 //! for hours and every other one for minutes.
 //!
+//! Short requests never wait behind a drain (since 2026-10-26,
+//! `short_request`, `short_allows`): a process of a short command (`arm`:
+//! every armed command but a route or a layout, which hold their memory
+//! for minutes; `PCB_MAKER_LEDGER_SHORT` 0 or 1 overrides) that asks for at
+//! most `SHORT_OWN_MB` of its own beside at most one KiCad check goes as
+//! soon as the capacity has its room and the memory available less what
+//! the reservations still grow by covers it, whatever the order and the
+//! drain say. Its reservation is marked `short` and counts as gone in the
+//! order's and the drain's sums for the others (it ends within seconds):
+//! it never passes a waiter there. Until then a 1.5 s check of a fresh
+//! agent's board waited 657 s behind a harness's 3 GB board that its floor
+//! of 10 GB held back for 4300 s.
+//!
 //! `PCB_MAKER_LEDGER` names the file (default
 //! `$XDG_RUNTIME_DIR/pcb-maker-ledger.json`, else
 //! `/tmp/pcb-maker-ledger.json`; `off`: no ledger),
@@ -129,6 +142,11 @@ pub const STALE_AFTER_SECONDS: f64 = 120.0;
 /// none and comes from an older writer (no `refreshed`): run.py's
 /// `--min-free-gb 10` beside other agents.
 pub const DEFAULT_FLOOR_MB: f64 = 10240.0;
+
+/// The most a short request (`short_request`, since 2026-10-26) holds for
+/// its own process; its children may hold one KiCad check
+/// (`KICAD_CHECK_MB`) beside it.
+pub const SHORT_OWN_MB: f64 = 2048.0;
 
 /// How often a waiting process looks again, and how often it says so.
 const WAIT_POLL: Duration = Duration::from_secs(2);
@@ -192,6 +210,12 @@ pub struct Reservation {
     /// passed; none where absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub priority: Option<String>,
+    /// A short request's (`short_request`): it ends within seconds and
+    /// counts as gone in the order's and the drain's sums for the others
+    /// (`order_allows`, `drain_state`, `drain_allows`); its megabytes count
+    /// for the capacity as any reservation's.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub short: bool,
     /// Fields of newer writers, kept as they are when this binary rewrites
     /// the ledger.
     #[serde(flatten)]
@@ -530,7 +554,10 @@ pub fn may_hold(
 /// (`held_since`) and this request: once the runs it waits on end, it
 /// fits. A waiter larger than the capacity runs alone: no newer request
 /// passes it. The first waiter is the nightly's where one waits
-/// (`first_waiter`); a binary's own request is never the nightly's.
+/// (`first_waiter`); a binary's own request is never the nightly's. A
+/// short request's reservation (`short`) counts as gone: it ends within
+/// seconds and has not passed the oldest (the capacity counts it,
+/// `may_hold`).
 pub fn order_allows(
     others: &[&Reservation],
     me: u32,
@@ -548,7 +575,11 @@ pub fn order_allows(
         return true;
     }
     let wants = oldest.waiting_mb.unwrap_or(0.0);
-    let rest = || others.iter().filter(|r| !std::ptr::eq(**r, oldest));
+    let rest = || {
+        others
+            .iter()
+            .filter(|r| !std::ptr::eq(**r, oldest) && !r.short)
+    };
     let reserved: f64 = rest().map(|r| r.megabytes).sum();
     let fits_now = reserved + wants <= capacity || !rest().any(|r| r.megabytes > 0.0);
     if fits_now && !oldest.waits_on_floor {
@@ -670,7 +701,7 @@ pub fn drain_state(
         .filter(|r| {
             !std::ptr::eq(**r, waiter)
                 && r.megabytes > 0.0
-                && r.held_since() >= waiter.waiting_since()
+                && (r.short || r.held_since() >= waiter.waiting_since())
         })
         .map(|r| r.megabytes)
         .sum();
@@ -705,7 +736,8 @@ pub fn drain_state(
 /// 2026-10-26) if it is small (at most `SMALL_REQUEST_MB`) and the waiter
 /// cannot fit before a larger run ends anyway (`blocked_by_large`):
 /// holding it back gains the waiter nothing (a waiter of 23-28 GB behind a
-/// 28 GB run held every other agent's request for hours).
+/// 28 GB run held every other agent's request for hours). A short
+/// request's reservation (`short`) counts as gone (it ends within seconds).
 pub fn drain_allows(
     waiter: &Reservation,
     others: &[&Reservation],
@@ -737,7 +769,11 @@ fn drain_allows_up_to(
     expected_end: Option<f64>,
 ) -> bool {
     let wants = waiter.waiting_mb.unwrap_or(0.0);
-    let rest = || others.iter().filter(|r| !std::ptr::eq(**r, waiter));
+    let rest = || {
+        others
+            .iter()
+            .filter(|r| !std::ptr::eq(**r, waiter) && !r.short)
+    };
     let floor = waiter.floor_mb.unwrap_or(0.0).max(0.0);
     if waiter_room(
         waiter,
@@ -745,7 +781,7 @@ fn drain_allows_up_to(
         capacity,
         available_mb,
         wanted_mb,
-        0.0,
+        short_held_mb(waiter, others),
         floor,
     ) >= wants
     {
@@ -809,7 +845,7 @@ pub fn blocked_by_large(
     let holders = || {
         others
             .iter()
-            .filter(|r| !std::ptr::eq(**r, waiter) && r.megabytes > 0.0)
+            .filter(|r| !std::ptr::eq(**r, waiter) && r.megabytes > 0.0 && !r.short)
     };
     if !holders().any(|r| r.megabytes > small_mb) {
         return false;
@@ -817,10 +853,62 @@ pub fn blocked_by_large(
     let small: f64 = holders()
         .filter(|r| r.megabytes <= small_mb)
         .map(|r| r.megabytes)
-        .sum();
+        .sum::<f64>()
+        + short_held_mb(waiter, others);
     let floor = waiter.floor_mb.unwrap_or(0.0).max(0.0);
     waiter_room(waiter, others, capacity, available_mb, 0.0, small, floor)
         < waiter.waiting_mb.unwrap_or(0.0)
+}
+
+/// What the short requests' reservations (`short`) in `others` but
+/// `waiter` hold: counted as gone in the drain's rooms.
+fn short_held_mb(waiter: &Reservation, others: &[&Reservation]) -> f64 {
+    others
+        .iter()
+        .filter(|r| !std::ptr::eq(**r, waiter) && r.short && r.megabytes > 0.0)
+        .map(|r| r.megabytes)
+        .sum()
+}
+
+/// Whether a process of a short command (`arm`) asking for `base_mb` of
+/// its own and `extra_mb` for its children makes a short request (since
+/// 2026-10-26): at most `SHORT_OWN_MB` of its own beside at most one
+/// KiCad check (`KICAD_CHECK_MB`; a check of any board, 1.5 s on a small
+/// one).
+pub fn short_request(base_mb: f64, extra_mb: f64) -> bool {
+    base_mb <= SHORT_OWN_MB && extra_mb <= KICAD_CHECK_MB
+}
+
+/// Whether a short request (`short_request`) of `wanted_mb` goes whatever
+/// the order and the drain say (since 2026-10-26): the memory for it is
+/// there, the memory available less what the reservations still grow by
+/// (`available_less_growth`; None: unknown, there) covers it (a binary
+/// keeps no floor of its own). The capacity must have its room as well
+/// (`may_hold`). Until then a 1.5 s check waited 657 s behind a drain for
+/// a harness's board that its own floor held back.
+/// benchmarks/harness_common.py, `try_admit` with `short`: the same rule.
+pub fn short_allows(wanted_mb: f64, available_mb: Option<f64>) -> bool {
+    available_mb.is_none_or(|available| available >= wanted_mb)
+}
+
+/// Whether the agent command of class `short` (route and layout: long,
+/// every other armed command: short) makes short requests:
+/// `PCB_MAKER_LEDGER_SHORT` 1 or 0 overrides.
+pub fn short_class(short: bool) -> bool {
+    short_override(
+        std::env::var("PCB_MAKER_LEDGER_SHORT").ok().as_deref(),
+        short,
+    )
+}
+
+/// `short_class` with the variable's value: `1` short, `0` long, anything
+/// else (or unset) the command's own class `short`.
+fn short_override(value: Option<&str>, short: bool) -> bool {
+    match value.map(str::trim) {
+        Some("1") => true,
+        Some("0") => false,
+        _ => short,
+    }
 }
 
 /// The memory available now (MemAvailable) less what the reservations in
@@ -864,6 +952,11 @@ struct Own {
     /// on without it).
     broken: bool,
     watching: bool,
+    /// Whether the command is short (`arm`, `short_class`): its new
+    /// requests within `short_request` go by `short_allows`.
+    short: bool,
+    /// Whether it holds as a short request (its entry's `short`).
+    held_short: bool,
 }
 
 static OWN: Mutex<Option<Own>> = Mutex::new(None);
@@ -889,8 +982,12 @@ fn now_seconds() -> f64 {
 
 /// Makes this process reserve through the ledger (`PCB_MAKER_LEDGER`, not
 /// `off`) under `label`; until then reserving does nothing (the library's
-/// callers and tests). Reserves nothing yet.
-pub fn arm(label: &str) {
+/// callers and tests). Reserves nothing yet. `short`: the command holds
+/// its memory for seconds (every armed agent command but a route and a
+/// layout; `PCB_MAKER_LEDGER_SHORT` overrides, `short_class`): its new
+/// requests within `short_request` never wait behind the order or a drain
+/// (`short_allows`).
+pub fn arm(label: &str, short: bool) {
     let Some(ledger) = Ledger::from_env() else {
         return;
     };
@@ -907,6 +1004,8 @@ pub fn arm(label: &str) {
         extra_mb: 0.0,
         broken: false,
         watching: false,
+        short: short_class(short),
+        held_short: false,
     });
 }
 
@@ -961,6 +1060,7 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
     let entry = |megabytes: f64,
                  waiting_mb: Option<f64>,
                  held_since: Option<f64>,
+                 short: bool,
                  inherited: Option<&Reservation>| Reservation {
         pid: me,
         started: own.started,
@@ -973,11 +1073,13 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
         refreshed: waiting_mb.map(|_| now),
         expected_end: inherited.and_then(|r| r.expected_end),
         priority: inherited.and_then(|r| r.priority.clone()),
+        short: short && megabytes > 0.0,
         other: inherited.map(|r| r.other.clone()).unwrap_or_default(),
         ..Default::default()
     };
     let ancestors = &own.ancestors;
     let held_since = own.held_since;
+    let (short_class, held_short) = (own.short, own.held_short);
     let outcome = own.ledger.update(|reservations| {
         // A harness's reservation for this process (re-pointed to its
         // pid), or one of a process above it: admitted already.
@@ -1017,6 +1119,13 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
                 && drained.is_none_or(|waiter| {
                     drain_allows(waiter, &others, wanted, capacity, available, None)
                 }));
+        // A short request goes whatever the order and the drain say once
+        // the memory for it is there (since 2026-10-26).
+        let short = new_request && short_class && short_request(base_mb, extra_mb);
+        // (Held back only by the order or the drain: a waiter waits, and
+        // the memory available was read.)
+        let ordered = ordered || (short && short_allows(wanted, available));
+        let short = short || (held_short && held > 0.0);
         let behind = (fits && !ordered)
             .then(|| first_waiter(&others))
             .flatten()
@@ -1040,28 +1149,36 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
         let inherited = reservations.iter().find(|r| r.pid == me).cloned();
         reservations.retain(|r| r.pid != me);
         if fits {
-            reservations.push(entry(wanted, None, Some(held_since), inherited.as_ref()));
+            reservations.push(entry(
+                wanted,
+                None,
+                Some(held_since),
+                short,
+                inherited.as_ref(),
+            ));
         } else if wait || held > 0.0 {
             reservations.push(entry(
                 held,
                 wait.then_some(wanted),
                 Some(held_since),
+                held_short,
                 inherited.as_ref(),
             ));
         }
-        (fits, reserved, count, behind, held_since)
+        (fits, reserved, count, behind, held_since, short)
     });
     match outcome {
-        Ok((true, _, _, _, held_since)) => {
+        Ok((true, _, _, _, held_since, short)) => {
             own.base_mb = base_mb;
             own.extra_mb = extra_mb;
             own.waiting_since = None;
+            own.held_short = short && wanted > 0.0;
             if wanted > 0.0 {
                 own.held_since.get_or_insert(held_since);
             }
             Try::Held
         }
-        Ok((false, reserved_mb, others, behind, _)) => {
+        Ok((false, reserved_mb, others, behind, _, _)) => {
             if wait {
                 own.waiting_since = Some(since);
             }
@@ -2274,5 +2391,261 @@ mod tests {
         {
             assert_eq!(capacity_mb(), Some((total - DEFAULT_MARGIN_MB).max(0.0)));
         }
+    }
+
+    /// The evening of 2026-10-26 (21:39), second by second from the
+    /// fresh agent's check (0 s): a ledger of 58 066 MB, 44 000 MB
+    /// available beside the reservations (each run resident at its
+    /// reservation; the logs: MemAvailable 30-31 GB less 18-21 GB of
+    /// growth beside 30-34 GB reserved, about 19 GB outside the ledger),
+    /// eight agents' runs of 3875 MB that began holding during the waiter's
+    /// wait and end one every 120 s from 600 s, and run.py's board of
+    /// 3004 MB (pid 3598969's stonedDiscord, `--min-free-gb 10`) waiting
+    /// since -4312 s and looking every 15 s. The check (2253 MB: KiCad's
+    /// 2.2 GB) arrives at 0 s, other agents' checks every 20 s from 10 s
+    /// (each 2 s), an agent's route of 2000 MB at 30 s (300 s); the
+    /// binaries look every 2 s. `short_rule`: short requests pass
+    /// (`short_allows`). Returns the check's wait, the longest wait of the
+    /// other checks, and the starts of the board and the route.
+    /// test_run.py's `evening`: the same.
+    fn evening(short_rule: bool) -> (u32, u32, u32, u32) {
+        const CAPACITY: f64 = 58_066.0;
+        const FREE: f64 = 44_000.0;
+        const FLOOR: f64 = 10_240.0;
+        const CHECK: f64 = KICAD_CHECK_MB;
+        const WAITER: u32 = 1;
+        const ROUTE: u32 = 60;
+        let horizon: i64 = 1800;
+        // (reservation, end once it holds, short)
+        let mut book: Vec<(Reservation, Option<i64>, bool)> = (0..8)
+            .map(|i| {
+                (
+                    Reservation {
+                        pid: 11 + i,
+                        megabytes: 3875.0,
+                        label: "layout".into(),
+                        held_since: Some(-1000.0),
+                        ..Default::default()
+                    },
+                    Some(600 + 120 * i64::from(i)),
+                    false,
+                )
+            })
+            .collect();
+        book.push((
+            Reservation {
+                pid: WAITER,
+                started: -4312.0,
+                label: "run.py: stonedDiscord__nonSNES__SNSP-CPU-01 (expected peak)".into(),
+                waiting_mb: Some(3004.0),
+                waiting_since: Some(-4312.0),
+                waits_on_floor: true,
+                floor_mb: Some(FLOOR),
+                drain_after: Some(600.0),
+                refreshed: Some(-1.0),
+                ..Default::default()
+            },
+            None,
+            false,
+        ));
+        let (mut check_wait, mut longest, mut waiter_start, mut route_start) =
+            (None, 0, None, None);
+        let mut next_pid = 100;
+        for t in 0..horizon {
+            let now = t as f64;
+            book.retain(|(_, end, _)| end.is_none_or(|end| end > t));
+            let arrive = |pid: u32, megabytes: f64, label: &str| Reservation {
+                pid,
+                started: now,
+                label: label.into(),
+                waiting_mb: Some(megabytes),
+                waiting_since: Some(now),
+                refreshed: Some(now),
+                ..Default::default()
+            };
+            if t == 0 {
+                book.push((arrive(50, CHECK, "drc-kicad-board"), None, true));
+            }
+            if t >= 10 && (t - 10) % 20 == 0 {
+                next_pid += 1;
+                book.push((arrive(next_pid, CHECK, "drc-kicad-board"), None, true));
+            }
+            if t == 30 {
+                book.push((arrive(ROUTE, 2000.0, "route-kicad-board"), None, false));
+            }
+            let lookers: Vec<u32> = book
+                .iter()
+                .filter(|(r, _, _)| r.waiting_mb.is_some())
+                .filter(|(r, _, _)| {
+                    let every = if r.pid == WAITER { 15 } else { 2 };
+                    ((now - r.waiting_since()) as i64) % every == 0
+                })
+                .map(|(r, _, _)| r.pid)
+                .collect();
+            for pid in lookers {
+                let index = book.iter().position(|(r, _, _)| r.pid == pid).unwrap();
+                book[index].0.refreshed = Some(now);
+                let (me, short) = (book[index].0.clone(), book[index].2);
+                let (wanted, since) = (me.waiting_mb.unwrap(), me.waiting_since());
+                let others: Vec<&Reservation> = book
+                    .iter()
+                    .map(|(r, _, _)| r)
+                    .filter(|r| r.pid != pid)
+                    .collect();
+                let reserved: f64 = others.iter().map(|r| r.megabytes).sum();
+                let available = FREE - reserved;
+                let admitted = if pid == WAITER {
+                    // The harness's rule (harness_common.memory_room).
+                    (reserved + wanted <= CAPACITY && available - wanted >= FLOOR)
+                        || !others.iter().any(|r| r.megabytes > 0.0)
+                } else {
+                    // A binary's (try_hold).
+                    let fits =
+                        reserved + wanted <= CAPACITY || !others.iter().any(|r| r.megabytes > 0.0);
+                    let ordered = order_allows(&others, pid, since, wanted, Some(CAPACITY))
+                        && drained_for(&others, pid, since, now, Some(CAPACITY), Some(available))
+                            .is_none_or(|waiter| {
+                                drain_allows(
+                                    waiter,
+                                    &others,
+                                    wanted,
+                                    Some(CAPACITY),
+                                    Some(available),
+                                    None,
+                                )
+                            });
+                    let passes = short_rule
+                        && short
+                        && short_request(0.0, wanted)
+                        && short_allows(wanted, Some(available));
+                    fits && (ordered || passes)
+                };
+                if admitted {
+                    let entry = &mut book[index];
+                    entry.0.megabytes = wanted;
+                    entry.0.waiting_mb = None;
+                    entry.0.waiting_since = None;
+                    entry.0.held_since = Some(now);
+                    entry.0.short = short_rule && short;
+                    let waited = (now - since) as u32;
+                    entry.1 = Some(
+                        t + match pid {
+                            WAITER => 3600,
+                            ROUTE => 300,
+                            _ => 2,
+                        },
+                    );
+                    match pid {
+                        WAITER => waiter_start = Some(t as u32),
+                        ROUTE => route_start = Some(t as u32),
+                        50 => check_wait = Some(waited),
+                        _ => longest = longest.max(waited),
+                    }
+                }
+            }
+        }
+        (
+            check_wait.unwrap(),
+            longest,
+            waiter_start.unwrap(),
+            route_start.unwrap(),
+        )
+    }
+
+    #[test]
+    fn short_requests_never_wait_behind_a_drain() {
+        // As on the evening: the board waits for its floor (44 000 - 31 000
+        // - 3004 < 10 240) and the drain holds every new request for it
+        // (with the runs since its wait began gone it could start; no run
+        // is larger than 4 GB) until the first run ends at 600 s: the check
+        // waits 600 s, the other checks up to 592 s, the route goes at
+        // 606 s behind them, the board at its next look (608 s).
+        assert_eq!(evening(false), (600, 592, 608, 606));
+        // Short requests pass: every check goes at once (13 000 MB
+        // available less growth), the board starts as before, the route at
+        // 600 s (no check queued ahead of it; the checks count as gone for
+        // its order and drain). test_run.py: the same numbers.
+        assert_eq!(evening(true), (0, 0, 608, 600));
+    }
+
+    #[test]
+    fn a_short_request_needs_the_memory_and_never_passes_in_the_bookkeeping() {
+        assert!(short_request(0.0, KICAD_CHECK_MB));
+        assert!(short_request(SHORT_OWN_MB, KICAD_CHECK_MB));
+        assert!(!short_request(SHORT_OWN_MB + 1.0, 0.0));
+        assert!(!short_request(0.0, KICAD_CHECK_MB + 1.0));
+        // The memory available less growth must cover it; unknown: there.
+        assert!(short_allows(2253.0, Some(2253.0)));
+        assert!(!short_allows(2253.0, Some(2252.0)));
+        assert!(short_allows(2253.0, None));
+        // The command's class and its override.
+        assert!(short_override(None, true));
+        assert!(!short_override(None, false));
+        assert!(short_override(Some(" 1"), false));
+        assert!(!short_override(Some("0"), true));
+        assert!(short_override(Some("yes"), true));
+        // A short run beside a waiter: the order and the drain for a route
+        // read the ledger as without it (its megabytes back), the
+        // capacity counts it.
+        let holder = Reservation {
+            pid: 11,
+            megabytes: 4000.0,
+            held_since: Some(20.0),
+            ..Default::default()
+        };
+        let check = Reservation {
+            pid: 12,
+            megabytes: 2253.0,
+            held_since: Some(700.0),
+            short: true,
+            ..Default::default()
+        };
+        let waiter = Reservation {
+            pid: 13,
+            started: 10.0,
+            waiting_mb: Some(8000.0),
+            waiting_since: Some(10.0),
+            floor_mb: Some(2000.0),
+            waits_on_floor: true,
+            ..Default::default()
+        };
+        let without = [holder.clone(), waiter.clone()];
+        let with = [holder.clone(), check.clone(), waiter.clone()];
+        let (capacity, now) = (Some(14_500.0), 700.0);
+        for wanted in [1000.0, 2000.0, 2500.0, 2600.0] {
+            assert_eq!(
+                order_allows(&refs(&with), 99, now, wanted, capacity),
+                order_allows(&refs(&without), 99, now, wanted, capacity),
+                "{wanted}"
+            );
+            // 12 000 available less growth without the check: 2000 leave
+            // the waiter 12 000 - 2000 - 2000 = 8000.
+            let w = refs(&with);
+            let drained = drained_for(&w, 99, now, now, capacity, Some(12_000.0 - 2253.0)).unwrap();
+            let o = refs(&without);
+            let drained_o = drained_for(&o, 99, now, now, capacity, Some(12_000.0)).unwrap();
+            assert_eq!(
+                drain_allows(drained, &w, wanted, capacity, Some(12_000.0 - 2253.0), None),
+                drain_allows(drained_o, &o, wanted, capacity, Some(12_000.0), None),
+                "{wanted}"
+            );
+        }
+        assert!(order_allows(&refs(&with), 99, now, 2500.0, capacity));
+        assert!(!order_allows(&refs(&with), 99, now, 2501.0, capacity));
+        // The same reservation not short counts: 4000 + 2253 + 1000 + 8000
+        // is more than 14 500.
+        let counted = [
+            holder,
+            Reservation {
+                short: false,
+                ..check
+            },
+            waiter,
+        ];
+        assert!(!order_allows(&refs(&counted), 99, now, 1000.0, capacity));
+        // The flag survives a rewrite and is left out where false.
+        let text = serde_json::to_string(&with[1]).unwrap();
+        assert!(text.contains("\"short\":true"), "{text}");
+        assert!(!serde_json::to_string(&with[0]).unwrap().contains("short"));
     }
 }

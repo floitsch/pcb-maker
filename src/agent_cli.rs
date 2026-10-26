@@ -1528,7 +1528,11 @@ pub fn removed(command: &str) -> Option<String> {
 
 pub fn run(command: &str, arguments: Vec<String>) -> Option<Result<KiCadRunStatus, Failure>> {
     // The commands that route or run KiCad's check reserve their memory in
-    // the machine's ledger (`pcb_kicad::ledger`).
+    // the machine's ledger (`pcb_kicad::ledger`). A route and a layout hold
+    // theirs for minutes; the others (a placement reserves only for its
+    // check, the checks themselves) for seconds: their requests are short
+    // and never wait behind a drain (`ledger::short_allows`;
+    // PCB_MAKER_LEDGER_SHORT overrides).
     if matches!(
         command,
         "route-kicad-board" | "layout-kicad-board" | "place-kicad-board" | "drc-kicad-board"
@@ -1537,7 +1541,10 @@ pub fn run(command: &str, arguments: Vec<String>) -> Option<Result<KiCadRunStatu
             .iter()
             .any(|argument| argument == "--native-check"))
     {
-        pcb_kicad::ledger::arm(&ledger_label(command, &arguments));
+        pcb_kicad::ledger::arm(
+            &ledger_label(command, &arguments),
+            !matches!(command, "route-kicad-board" | "layout-kicad-board"),
+        );
     }
     Some(match command {
         "route-kicad-board" => route(arguments),
