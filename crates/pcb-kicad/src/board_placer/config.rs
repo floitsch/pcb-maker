@@ -128,17 +128,17 @@ pub struct KiCadBoardPlacerConfig {
     /// of the capacitors ended within 3 mm of their pin where designers put
     /// 60 % there (quick tier). Bulk capacitors (4.7 uF and more) 5 mm.
     pub decoupling_mm: Option<f64>,
-    /// Decoupling at the pins (default on; docs/placer.md, "Decoupling by
-    /// default"): each decoupling capacitor is pulled to the nearest of
-    /// every supply pin of its rail on the ICs (an RP2350's ten +3V3 pins),
-    /// not only to each IC's first pin on the rail, at 1 mm
+    /// Decoupling at the pins (default off; docs/placer.md, "Decoupling at
+    /// the pins (2026-10-26)"): each decoupling capacitor is pulled to the
+    /// nearest of every supply pin of its rail on the ICs (an RP2350's ten
+    /// +3V3 pins), not only to each IC's first pin on the rail, at 1 mm
     /// (`decoupling_mm`); and near relations follow their anchors in the
     /// legaliser (`follow_anchors`: a part near another is legalised right
-    /// after it, from its annealed place moved as far as its anchor moved).
-    /// Off, the capacitors of a rail crowded around one pin and stayed
-    /// behind when the IC moved (the trial's rp2350-dual-usb, 2026-10-26:
-    /// 7 % of its capacitors within 3 mm of a supply pin, the designer's
-    /// 86 %).
+    /// after it, from its annealed place moved as far as its anchor moved,
+    /// and pays for the relation at each spot). The trial's rp2350-dual-usb
+    /// went from 14 % of its capacitors within 3 mm of a pin to 50 %; on
+    /// the eleven dense boards the capacitors came nearer on nine and KiCad's
+    /// unconnected rose (seed 1: 868 to 984), so it is a switch.
     pub decoupling_near: bool,
     /// On a board of several pieces (two boards side by side), the parts
     /// a net joins to fixed parts on one piece stay on that piece. On:
@@ -334,7 +334,7 @@ impl Default for KiCadBoardPlacerConfig {
             holes_in_courtyards_error: None,
             auto_decoupling: true,
             decoupling_mm: None,
-            decoupling_near: true,
+            decoupling_near: false,
             keep_on_pieces: true,
             keep_copies: true,
             solid_pin_rows: true,

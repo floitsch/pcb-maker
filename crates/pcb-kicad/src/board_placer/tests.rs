@@ -1653,12 +1653,12 @@ fn a_decoupling_capacitor_is_near_every_supply_pin_of_its_rail_with_decoupling_n
             other => panic!("{other:?}"),
         }
     };
-    let on = KiCadBoardPlacerConfig::default();
-    assert!(on.decoupling_near);
-    assert_eq!(relation(&on), (1, 2, 1.0));
-    let off = KiCadBoardPlacerConfig {
-        decoupling_near: false,
+    let off = KiCadBoardPlacerConfig::default();
+    assert!(!off.decoupling_near);
+    assert_eq!(relation(&off), (1, 1, 2.5));
+    let on = KiCadBoardPlacerConfig {
+        decoupling_near: true,
         ..KiCadBoardPlacerConfig::default()
     };
-    assert_eq!(relation(&off), (1, 1, 2.5));
+    assert_eq!(relation(&on), (1, 2, 1.0));
 }

@@ -311,7 +311,7 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
         }));
     }
     if !near.is_empty() {
-        comment.push("near: each decoupling capacitor (two pins, a supply rail and ground, the rail on an IC's supply pin) at that pin, 1.5 mm body to pin (3 mm for 4.7 uF and more). Without these entries the placer pulls them there anyway (decoupling_near, 1 mm, softer); written down, place-kicad-board checks them and the verdict reports a miss. Several capacitors at one pin, or more than fit around a fine-pitch IC: give them other pins of the rail or loosen max_mm.".into());
+        comment.push("near: each decoupling capacitor (two pins, a supply rail and ground, the rail on an IC's supply pin) at that pin, 1.5 mm body to pin (3 mm for 4.7 uF and more). Without these entries the placer pulls each to within 2.5 mm of its IC's first pin on the rail (1 mm of the nearest supply pin with the placer's decoupling_near), softer; written down, place-kicad-board checks them and the verdict reports a miss. Several capacitors at one pin, or more than fit around a fine-pitch IC: give them other pins of the rail or loosen max_mm.".into());
     }
     comment.push("To fill in: parts that must not move (fixed), keepouts (antennas, mounting hardware), regions, the outline if the board has none (docs/constraints.md).".into());
     let mut template = serde_json::json!({
