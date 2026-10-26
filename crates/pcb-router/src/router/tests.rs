@@ -4554,6 +4554,7 @@ fn a_straight_stub_is_a_lattice_run() {
         [13.9, 9.85],
         [13.8, 9.8]
     ]));
+}
 
 #[test]
 fn idle_search_arrays_are_shared_and_go_with_the_last_router_of_their_lattice() {
