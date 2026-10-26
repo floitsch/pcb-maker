@@ -26,6 +26,23 @@ pub struct PourLayerReport {
     pub inside_mm2: f64,
 }
 
+/// A pad the spoke model finds short of thermal spokes on one layer, as
+/// KiCad's DRC counts them (`Router::pour_report_with_starved`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct StarvedThermal {
+    pub net: NetId,
+    /// The pad's label (`REF.NUMBER`).
+    pub label: String,
+    pub layer: usize,
+    /// Spokes counted (into kept fill, or other pads' across its ring),
+    /// spokes into isolated islands, and its own tracks counted as spokes.
+    pub spokes: usize,
+    pub islands: usize,
+    pub tracks: usize,
+    /// How many spokes the worst zone of several on the layer is short.
+    pub seam_short: usize,
+}
+
 impl Router {
     /// Every pour net's pieces per layer, from the pour analysis of the
     /// copper this router holds (its routes, or a routed board's tracks
@@ -35,7 +52,16 @@ impl Router {
     /// fill reaches that far beyond the brush's centres. Not counted as
     /// work: it runs after routing.
     pub fn pour_report(&self) -> Vec<PourLayerReport> {
+        self.pour_report_with_starved().0
+    }
+
+    /// `pour_report`, with the pads the spoke model finds starved on the
+    /// same analyses: those KiCad's DRC would report a starved thermal on
+    /// (`spokes_short`; drc_test_provider_zone_connections.cpp's rule),
+    /// one per pad and layer.
+    pub fn pour_report_with_starved(&self) -> (Vec<PourLayerReport>, Vec<StarvedThermal>) {
         let mut reports = Vec::new();
+        let mut starved = Vec::new();
         let nx = self.grid.nx;
         let cell = self.grid.pitch * self.grid.pitch;
         for net in 0..self.nets.len() as NetId {
@@ -43,7 +69,42 @@ impl Router {
             if state.plane.iter().all(|mask| mask.is_empty()) {
                 continue;
             }
-            let (pours, mut parent, _, _) = self.analyze_pours_uncounted(net, &|_| false, None);
+            let mut records = Vec::new();
+            let (pours, mut parent, _, _) =
+                self.analyze_pours_uncounted(net, &|_| false, Some(&mut records));
+            for record in &records {
+                if Self::spokes_short(record) == 0 && record.seam_short == 0 {
+                    continue;
+                }
+                let terminal = &self.board.nets[net as usize].terminals[record.terminal];
+                let count = |good: bool| {
+                    record
+                        .outcomes
+                        .iter()
+                        .filter(|outcome| {
+                            if good {
+                                matches!(outcome, SpokeOutcome::Good(_) | SpokeOutcome::Pad(_))
+                            } else {
+                                matches!(outcome, SpokeOutcome::Island(_))
+                            }
+                        })
+                        .count()
+                };
+                let entry = StarvedThermal {
+                    net,
+                    label: terminal.label.clone(),
+                    layer: record.layer,
+                    spokes: count(true) + record.crossings,
+                    islands: count(false),
+                    tracks: record.tracks,
+                    seam_short: record.seam_short,
+                };
+                if !starved.iter().any(|other: &StarvedThermal| {
+                    other.label == entry.label && other.layer == entry.layer
+                }) {
+                    starved.push(entry);
+                }
+            }
             // Elements past the pieces are the net's terminals and
             // branches: a piece in their set holds copper of the net.
             let mut with_copper: HashSet<usize> = HashSet::new();
@@ -94,7 +155,7 @@ impl Router {
                 });
             }
         }
-        reports
+        (reports, starved)
     }
 
     /// The area of `net`'s pours on `layer` (`PourLayerReport::inside_mm2`).

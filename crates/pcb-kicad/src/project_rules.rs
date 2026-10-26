@@ -854,6 +854,17 @@ pub fn resolve_project_rules(
             project["board"]["design_settings"]["rule_severities"]["solder_mask_bridge"]
                 .as_str()
                 .map(str::to_owned),
+        // KiCad's starved-thermal check: the board setup's minimum spoke
+        // count, none where the project ignores the finding.
+        min_resolved_spokes: Some(
+            if project["board"]["design_settings"]["rule_severities"]["starved_thermal"].as_str()
+                == Some("ignore")
+            {
+                0
+            } else {
+                rules["min_resolved_spokes"].as_u64().unwrap_or(2) as usize
+            },
+        ),
         min_connection_mm: floor,
         connection_width_severity: (minimum("min_connection") > 0.0)
             .then(|| severity.unwrap_or_else(|| "warning".into())),
@@ -937,6 +948,9 @@ pub fn router_config_over_project(
     }
     if take("solder_mask_bridge_severity") {
         config.solder_mask_bridge_severity = project.solder_mask_bridge_severity;
+    }
+    if take("min_resolved_spokes") {
+        config.min_resolved_spokes = project.min_resolved_spokes;
     }
     if take("min_connection_mm") {
         config.min_connection_mm = project.min_connection_mm;

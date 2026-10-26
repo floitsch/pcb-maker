@@ -98,13 +98,38 @@ pub fn measure_pours(
     board_id: &str,
     config: &KiCadBoardRouterConfig,
 ) -> Result<Vec<KiCadPourQuality>, String> {
+    measure_board_pours(directory, board_id, config).map(|(pours, _)| pours)
+}
+
+/// A pad the pour model finds starved on the routed board: KiCad's DRC
+/// would report a starved thermal there (`Router::pour_report_with_starved`).
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct KiCadPredictedStarved {
+    /// `REF.NUMBER`.
+    pub pad: String,
+    pub net: String,
+    pub layer: String,
+    /// Spokes the DRC counts, spokes into isolated islands, and the pad's
+    /// tracks it counts as spokes.
+    pub spokes: usize,
+    pub islands: usize,
+    pub tracks: usize,
+}
+
+/// `measure_pours` and the pads the same analyses find starved
+/// (`KiCadPredictedStarved`), from one lowering and one router.
+pub fn measure_board_pours(
+    directory: &Path,
+    board_id: &str,
+    config: &KiCadBoardRouterConfig,
+) -> Result<(Vec<KiCadPourQuality>, Vec<KiCadPredictedStarved>), String> {
     let path = directory.join(format!("{board_id}.kicad_pcb"));
     let text = fs::read_to_string(&path)
         .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
     let pcb = crate::canonical_order::parse_board(&text)?;
     let layers = LayerTable::from_pcb(&pcb)?;
     if pours(&pcb, &layers)?.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
     let Lowered { board, .. } = lower(&pcb, config, true)?;
     // Other nets' tracks per layer (arcs by their chord).
@@ -129,8 +154,19 @@ pub fn measure_pours(
     drop(text);
     let mut router = core::router::Router::new(&board, &core_config(config));
     router.adopt_existing_copper();
-    let report = router.pour_report();
+    let (report, starved) = router.pour_report_with_starved();
     drop(router);
+    let starved: Vec<KiCadPredictedStarved> = starved
+        .into_iter()
+        .map(|pad| KiCadPredictedStarved {
+            pad: pad.label,
+            net: board.nets[pad.net as usize].name.clone(),
+            layer: layers.names[pad.layer].clone(),
+            spokes: pad.spokes,
+            islands: pad.islands,
+            tracks: pad.tracks,
+        })
+        .collect();
     let mut result = Vec::new();
     for entry in report {
         let net = board.nets[entry.net as usize].name.clone();
@@ -172,30 +208,127 @@ pub fn measure_pours(
             cut_mm: round(cut_mm, 1),
         });
     }
-    Ok(result)
+    Ok((result, starved))
 }
 
-/// `measure_pours`, its error in the log rather than the run's: the
-/// measure is a report, not a step that can fail a board.
-pub(crate) fn measured_pours(
+/// What the pour model measured on a board as written
+/// (`measured_board`).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct MeasuredBoard {
+    pub pours: Vec<KiCadPourQuality>,
+    /// The pads the model finds starved on the board as left.
+    pub starved: Vec<KiCadPredictedStarved>,
+    /// The pads it connected solid for them (`solidify`).
+    pub solidified: Vec<String>,
+}
+
+/// `measure_board_pours` on `directory/<board_id>.kicad_pcb`, its error
+/// in the log rather than the run's (the measure is a report, not a step
+/// that can fail a board). With `solidify` (a board KiCad does not check,
+/// whose project allows solid pads: `solid_starved_thermals`), the pads
+/// the model finds starved get KiCad's solid connection, as
+/// `solidify_starved_thermals` gives the pads KiCad finds starved, and
+/// the board is measured again: the change is kept when the model then
+/// finds fewer starved pads, else the board is restored. Counted as no
+/// work, as the measure.
+pub(crate) fn measured_board(
     directory: &Path,
     board_id: &str,
     config: &KiCadBoardRouterConfig,
-) -> Vec<KiCadPourQuality> {
+    solidify: bool,
+) -> MeasuredBoard {
     let started = std::time::Instant::now();
-    match measure_pours(directory, board_id, config) {
-        Ok(pours) => {
-            for pour in &pours {
-                eprintln!("pour: {}", pour.line());
-            }
-            if !pours.is_empty() {
-                eprintln!("pours measured in {:.1} s", started.elapsed().as_secs_f64());
-            }
-            pours
-        }
+    let mut measured = match measure_board_pours(directory, board_id, config) {
+        Ok((pours, starved)) => MeasuredBoard {
+            pours,
+            starved,
+            solidified: Vec::new(),
+        },
         Err(error) => {
             eprintln!("pours not measured: {error}");
-            Vec::new()
+            return MeasuredBoard::default();
+        }
+    };
+    if solidify && !measured.starved.is_empty() {
+        match solidify_predicted(directory, board_id, config, &measured) {
+            Ok(Some(better)) => measured = better,
+            Ok(None) => {}
+            Err(error) => eprintln!("predicted starved pads not connected solid: {error}"),
         }
     }
+    for pour in &measured.pours {
+        eprintln!("pour: {}", pour.line());
+    }
+    for pad in &measured.starved {
+        eprintln!(
+            "pour model: {} ({}) starved on {}: {} spokes, {} into islands, {} tracks",
+            pad.pad, pad.net, pad.layer, pad.spokes, pad.islands, pad.tracks
+        );
+    }
+    if !measured.pours.is_empty() {
+        eprintln!(
+            "pours measured in {:.1} s ({} pads the model finds starved)",
+            started.elapsed().as_secs_f64(),
+            measured.starved.len()
+        );
+    }
+    measured
 }
+
+/// The predicted starved pads of `measured` solid in the board file, the
+/// board measured again: the new measure when it has fewer starved pads
+/// (the board left solid), else None (the board restored).
+fn solidify_predicted(
+    directory: &Path,
+    board_id: &str,
+    config: &KiCadBoardRouterConfig,
+    measured: &MeasuredBoard,
+) -> Result<Option<MeasuredBoard>, String> {
+    let pads: Vec<(String, String)> = measured
+        .starved
+        .iter()
+        .filter_map(|pad| {
+            let (reference, number) = pad.pad.split_once('.')?;
+            Some((reference.to_string(), number.to_string()))
+        })
+        .collect();
+    let path = directory.join(format!("{board_id}.kicad_pcb"));
+    let text = fs::read_to_string(&path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    let mut pcb = parse(&text)?;
+    let changed = super::route::set_pads_solid(&mut pcb, &pads);
+    if changed == 0 {
+        return Ok(None);
+    }
+    fs::write(&path, format!("{}\n", encode(&pcb)))
+        .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+    let (pours, starved) = measure_board_pours(directory, board_id, config)?;
+    if starved.len() < measured.starved.len() {
+        eprintln!(
+            "{changed} pads the pour model finds starved connected solid: {} left",
+            starved.len()
+        );
+        let mut solidified: Vec<String> = measured
+            .starved
+            .iter()
+            .map(|pad| pad.pad.clone())
+            .collect();
+        solidified.sort();
+        solidified.dedup();
+        Ok(Some(MeasuredBoard {
+            pours,
+            starved,
+            solidified,
+        }))
+    } else {
+        fs::write(&path, text)
+            .map_err(|error| format!("failed to write {}: {error}", path.display()))?;
+        eprintln!(
+            "{changed} pads the pour model finds starved connected solid: not kept ({} starved after, {} before)",
+            starved.len(),
+            measured.starved.len()
+        );
+        Ok(None)
+    }
+}
+

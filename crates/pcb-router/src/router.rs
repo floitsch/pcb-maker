@@ -44,6 +44,7 @@ mod pour_dump;
 mod pour_refresh;
 mod pour_report;
 mod prepare;
+mod reclaim;
 mod profile;
 mod resolve;
 mod result;
@@ -64,7 +65,7 @@ pub use build::{
 };
 pub use config::Config;
 pub use escapes::exact_escapes_override;
-pub use pour_report::PourLayerReport;
+pub use pour_report::{PourLayerReport, StarvedThermal};
 pub use profile::{ProcessAccounting, build_totals, process_accounting};
 pub use result::{DeadPad, Diagnostics, HotSpot, NetStatus, RoutingResult};
 pub use trouble::{TROUBLE_REPAIR_DEFAULT, trouble_override};
@@ -307,6 +308,9 @@ pub struct SpokeRecord {
     /// Whether KiCad draws the pad's spokes at all (they are no narrower
     /// than the zone's minimum width).
     pub drawn: bool,
+    /// The spokes KiCad's DRC wants (`Config::min_spokes`: the board
+    /// setup's minimum, 0 where the project ignores starved thermals).
+    pub required: usize,
 }
 
 #[derive(Clone, Debug, Default)]

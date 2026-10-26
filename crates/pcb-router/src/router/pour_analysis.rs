@@ -187,6 +187,22 @@ impl Router {
                     .collect()
             })
             .collect();
+        // Fill this net reclaims inside other nets' zones of a higher
+        // priority, where their fill leaves room (`reclaimed_fill`).
+        let reclaimed = self.reclaimed_fill(net);
+        for (layer, mask) in reclaimed.iter().enumerate() {
+            if mask.is_empty() || free[layer].is_empty() {
+                continue;
+            }
+            let map = self.map_index(state.plane_class[layer], layer);
+            for (cell, reclaim) in mask.iter().enumerate() {
+                if *reclaim
+                    && self.occupancy.get(map, cell) as usize == own.contains(map, cell) as usize
+                {
+                    free[layer][cell] = true;
+                }
+            }
+        }
         let rings = self.thermal_ring_pads(net);
         self.cut_thermal_rings(&rings, &mut free);
         self.cut_thermal_rings(&self.isolated_knockouts(net), &mut free);
@@ -206,7 +222,8 @@ impl Router {
                 }
                 let cell = node.cell as usize;
                 let map = self.map_index(state.plane_class[layer], layer);
-                if state.plane[layer][cell]
+                if (state.plane[layer][cell]
+                    || reclaimed[layer].get(cell).copied().unwrap_or(false))
                     && self.occupancy.get(map, cell) as usize == own.contains(map, cell) as usize
                 {
                     free[layer][cell] = true;
@@ -304,7 +321,7 @@ impl Router {
         // U2's ground pads as joined to the rest; KiCad's fill keeps them
         // apart and reported them unconnected.
         let mut touched: Vec<usize> = Vec::new();
-        let probe = fill::FillProbe::new(self, net, &rings);
+        let probe = fill::FillProbe::new(self, net, &rings).with_reclaimed(reclaimed);
         for (terminal, nodes) in state.terminal_nodes.iter().enumerate() {
             if isolated(terminal) {
                 continue;
@@ -520,6 +537,7 @@ impl Router {
                             seam_short: 0,
                             seam_zone: None,
                             drawn: true,
+                            required: self.config.min_spokes,
                         });
                     }
                     if good < 2 {

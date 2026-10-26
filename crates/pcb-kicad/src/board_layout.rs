@@ -2928,11 +2928,17 @@ pub fn layout_kicad_board(
     }
     // How whole the pours stayed on the board kept (a report: after every
     // decision, counted as no work).
-    routed.pour_quality = crate::board_router::measured_pours(
+    let measured = crate::board_router::measured_board(
         &output_directory.join("result"),
         board_id,
         router_config,
+        router_config.skip_native_verification
+            && router_config.solid_starved_thermals != Some(false),
     );
+    routed.pour_quality = measured.pours;
+    routed.predicted_starved_thermals = measured.starved;
+    solidified |= !measured.solidified.is_empty();
+    routed.solid_by_model = measured.solidified;
     if solidified
         || !routed.pour_quality.is_empty()
         || routed

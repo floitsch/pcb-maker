@@ -219,6 +219,8 @@ fn report(open: usize, work: f64, pitch: f64) -> KiCadBoardRouterResult {
         warnings: Vec::new(),
         pour_quality: Vec::new(),
         pour_loss: None,
+        predicted_starved_thermals: Vec::new(),
+        solid_by_model: Vec::new(),
         negotiation_stop: String::new(),
         attempts: Vec::new(),
     }

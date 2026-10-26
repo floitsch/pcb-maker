@@ -159,6 +159,15 @@ pub struct KiCadBoardRouterResult {
     /// layout's own ladder attempts). The verdict's `pours`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pour_quality: Vec<KiCadPourQuality>,
+    /// The pads the pour model finds starved on the board as written
+    /// (`KiCadPredictedStarved`; what KiCad's DRC should report as
+    /// starved thermals), measured with `pour_quality`.
+    #[serde(default)]
+    pub predicted_starved_thermals: Vec<KiCadPredictedStarved>,
+    /// The pads connected solid because the pour model found them starved
+    /// on a board KiCad does not check (`measured_board`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub solid_by_model: Vec<String>,
     /// How much of its pours an attempt lost (`pour_loss`), as the
     /// ladder measured it to rank attempts (`pour_integrity`); none when
     /// it was not measured.

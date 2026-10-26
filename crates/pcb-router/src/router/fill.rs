@@ -121,6 +121,10 @@ pub(super) struct FillProbe<'a> {
     /// zone's, `Hatch::via_reliefs`): centre and radius.
     via_rings: Vec<Vec<(Point, f64)>>,
     index: OnceCell<Index>,
+    /// Per layer, the fill the net reclaims inside other nets' zones of a
+    /// higher priority (`Router::reclaimed_fill`), computed when first
+    /// asked.
+    reclaimed: OnceCell<Vec<Vec<bool>>>,
     /// Per hatch hole (layer and its place in the pattern), whether KiCad
     /// keeps it (`hole_kept`).
     holes: std::cell::RefCell<FastMap<(usize, i64, i64), bool>>,
@@ -267,6 +271,7 @@ impl<'a> FillProbe<'a> {
             rings,
             via_rings,
             index: OnceCell::new(),
+            reclaimed: OnceCell::new(),
             holes: std::cell::RefCell::new(FastMap::default()),
             tolerance: std::cell::Cell::new(EPSILON),
             track_end: std::cell::Cell::new(false),
@@ -274,6 +279,24 @@ impl<'a> FillProbe<'a> {
             queries: std::cell::Cell::new(0),
             vertices: std::cell::Cell::new(0),
         }
+    }
+
+    /// The probe with the net's reclaimed fill as its caller computed it
+    /// (`Router::reclaimed_fill`).
+    pub(super) fn with_reclaimed(self, reclaimed: Vec<Vec<bool>>) -> Self {
+        let _ = self.reclaimed.set(reclaimed);
+        self
+    }
+
+    /// Whether the net reclaims the node `cell` on `layer` inside another
+    /// net's zone of a higher priority.
+    fn reclaimed_at(&self, layer: usize, cell: usize) -> bool {
+        self.reclaimed
+            .get_or_init(|| self.router.reclaimed_fill(self.net))
+            .get(layer)
+            .and_then(|mask| mask.get(cell))
+            .copied()
+            .unwrap_or(false)
     }
 
     /// Per layer, the vias of `net` that KiCad gives a thermal relief: on
@@ -955,7 +978,7 @@ impl<'a> FillProbe<'a> {
         let state = &router.nets[self.net as usize];
         if let Some(node) = router.grid.nearest_node(point) {
             let center = router.grid.center_of(node);
-            if state.plane[layer][node]
+            if (state.plane[layer][node] || self.reclaimed_at(layer, node))
                 && !edges.iter().any(|(a, b)| {
                     segments_intersect(point, center, *a, *b)
                         || point_segment_distance(center, *a, *b) < 1.0e-9

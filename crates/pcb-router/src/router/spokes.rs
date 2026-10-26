@@ -48,6 +48,8 @@ impl Router {
         let state = &self.nets[net as usize];
         let description = &self.board.nets[net as usize];
         let pitch = self.grid.pitch;
+        // KiCad's DRC's minimum spoke count (the board setup's).
+        let required = self.config.min_spokes;
         let union = |parent: &mut Vec<usize>, a: usize, b: usize| {
             let (a, b) = (find(parent, a), find(parent, b));
             parent[a] = b;
@@ -309,6 +311,7 @@ impl Router {
                     seam_short: 0,
                     seam_zone: None,
                     drawn,
+                    required,
                 });
                 record_inner.push(inner.contains(&layer));
             }
@@ -1156,10 +1159,10 @@ impl Router {
                 }
             }
             let zone_needs_tracks = zone_tallies.iter().any(|[spokes, islands, crossings, _]| {
-                spokes + islands + crossings > 0 && spokes + crossings < 2
+                spokes + islands + crossings > 0 && spokes + crossings < record.required
             });
             let mut track_ends: Vec<crate::geometry::Point> = Vec::new();
-            if good < 2 || zone_needs_tracks {
+            if good < record.required || zone_needs_tracks {
                 // The pad's own tracks (KiCad's DRC: each track segment
                 // connected to the pad that starts within half a gap of it
                 // and ends in this layer's fill, on any layer; else, one
@@ -1426,14 +1429,14 @@ impl Router {
                     if counted == 0 {
                         counted = islands;
                     }
-                    let short = 2usize.saturating_sub(counted);
+                    let short = record.required.saturating_sub(counted);
                     if short > record.seam_short {
                         record.seam_short = short;
                         record.seam_zone = Some(zones[position]);
                     }
                 }
             }
-            if good + record.tracks < 2 {
+            if good + record.tracks < record.required {
                 for piece in islands {
                     if !spoke_islands.iter().any(|(island, _)| *island == piece) {
                         spoke_islands.push((piece, record.terminal));
@@ -1711,14 +1714,17 @@ impl Router {
             .iter()
             .filter(|outcome| matches!(outcome, SpokeOutcome::Island(_)))
             .count();
-        if good == 0 && islands == 0 && record.crossings == 0 {
+        if record.required == 0 || (good == 0 && islands == 0 && record.crossings == 0) {
             return 0;
         }
         let counted = good + record.crossings + record.tracks;
-        if counted == 0 && islands >= 2 {
+        if counted == 0 && islands >= record.required {
             return record.seam_short;
         }
-        2usize.saturating_sub(counted).max(record.seam_short)
+        record
+            .required
+            .saturating_sub(counted)
+            .max(record.seam_short)
     }
 
     /// Whether the model finds a pad on a layer with no spoke at all (none
@@ -1728,6 +1734,7 @@ impl Router {
     /// (`Config::spokeless_tracks`).
     pub(super) fn spokeless(record: &SpokeRecord) -> bool {
         record.drawn
+            && record.required > 0
             && record.crossings == 0
             && record.tracks == 0
             && record.seam_short == 0

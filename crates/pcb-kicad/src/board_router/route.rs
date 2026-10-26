@@ -335,7 +335,19 @@ pub fn route_kicad_board(
     drop(source);
     crate::mem_profile::phase("pour measure");
     if config.kicad_kept.is_none() {
-        result.pour_quality = measured_pours(output_directory, board_id, config);
+        // Where KiCad does not check the board, the pads the pour model
+        // finds starved are connected solid (the project allowing it,
+        // `solid_starved_thermals`), as KiCad's findings are on a checked
+        // board below the ladder.
+        let measured = measured_board(
+            output_directory,
+            board_id,
+            config,
+            config.skip_native_verification && config.solid_starved_thermals != Some(false),
+        );
+        result.pour_quality = measured.pours;
+        result.predicted_starved_thermals = measured.starved;
+        result.solid_by_model = measured.solidified;
     }
     let report_path = output_directory.join("board-router.json");
     crate::write_atomically(
@@ -746,6 +758,9 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     if let Some(fixed) = config.fixed_plane_stubs {
         router_config.fixed_plane_stubs = fixed;
     }
+    if let Some(minimum) = config.min_resolved_spokes {
+        router_config.min_spokes = minimum;
+    }
     if let Some(repair) = config.trouble_repair
         && core::router::trouble_override().is_none()
     {
@@ -945,6 +960,8 @@ pub(crate) fn finish_routed_board(
         warnings: input_warnings(pcb),
         pour_quality: Vec::new(),
         pour_loss: None,
+        predicted_starved_thermals: Vec::new(),
+        solid_by_model: Vec::new(),
         negotiation_stop: result.negotiation_stop.to_string(),
         attempts: Vec::new(),
     };
@@ -1016,6 +1033,48 @@ pub(crate) fn starved_thermals(directory: &Path) -> usize {
     })
 }
 
+/// Gives the pads named (reference, number) KiCad's solid zone connection
+/// (`(zone_connect 2)`, replacing their own); returns how many pads changed.
+pub(crate) fn set_pads_solid(pcb: &mut Expr, pads: &[(String, String)]) -> usize {
+    let mut changed = 0;
+    if let Expr::List(items) = pcb {
+        for footprint in items
+            .iter_mut()
+            .filter(|item| item.head() == Some("footprint"))
+        {
+            let reference = footprint_reference(footprint)
+                .unwrap_or_default()
+                .to_string();
+            let Expr::List(children) = footprint else {
+                continue;
+            };
+            for pad in children
+                .iter_mut()
+                .filter(|child| child.head() == Some("pad"))
+            {
+                let number = pad
+                    .children()
+                    .get(1)
+                    .and_then(Expr::atom)
+                    .unwrap_or("")
+                    .to_string();
+                if !pads.iter().any(|(r, n)| *r == reference && *n == number) {
+                    continue;
+                }
+                if let Expr::List(fields) = pad {
+                    fields.retain(|field| field.head() != Some("zone_connect"));
+                    fields.push(Expr::List(vec![
+                        Expr::Atom("zone_connect".into()),
+                        Expr::Atom("2".into()),
+                    ]));
+                    changed += 1;
+                }
+            }
+        }
+    }
+    changed
+}
+
 /// `solid_starved_thermals` on a checked board: the pads KiCad finds
 /// starved get `(zone_connect 2)`, the board is checked again and kept when
 /// `solid_kept`, else restored. Returns the KiCad checks it ran (0 or 1).
@@ -1043,42 +1102,7 @@ pub(crate) fn solidify_starved_thermals(
         let text = fs::read_to_string(&board_path)
             .map_err(|error| format!("failed to read {}: {error}", board_path.display()))?;
         let mut pcb = parse(&text)?;
-        let mut changed = 0;
-        if let Expr::List(items) = &mut pcb {
-            for footprint in items
-                .iter_mut()
-                .filter(|item| item.head() == Some("footprint"))
-            {
-                let reference = footprint_reference(footprint)
-                    .unwrap_or_default()
-                    .to_string();
-                let Expr::List(children) = footprint else {
-                    continue;
-                };
-                for pad in children
-                    .iter_mut()
-                    .filter(|child| child.head() == Some("pad"))
-                {
-                    let number = pad
-                        .children()
-                        .get(1)
-                        .and_then(Expr::atom)
-                        .unwrap_or("")
-                        .to_string();
-                    if !starved.iter().any(|(r, n)| *r == reference && *n == number) {
-                        continue;
-                    }
-                    if let Expr::List(fields) = pad {
-                        fields.retain(|field| field.head() != Some("zone_connect"));
-                        fields.push(Expr::List(vec![
-                            Expr::Atom("zone_connect".into()),
-                            Expr::Atom("2".into()),
-                        ]));
-                        changed += 1;
-                    }
-                }
-            }
-        }
+        let changed = set_pads_solid(&mut pcb, &starved);
         if changed > 0 {
             // The checked board and its reports, to go back to: a solid
             // pad changes the fill, which can cost more than it gains

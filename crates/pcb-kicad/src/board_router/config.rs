@@ -408,6 +408,13 @@ pub struct KiCadBoardRouterConfig {
     /// starved: reliefs are there for soldering.
     #[serde(default)]
     pub solid_starved_thermals: Option<bool>,
+    /// The thermal spokes KiCad's DRC wants a pad to have into each zone:
+    /// the project's board setup (`min_resolved_spokes`, KiCad's default
+    /// 2), 0 where the project ignores starved thermals (its
+    /// `rule_severities`). The pour model's starved pads are those short
+    /// of it (router `min_spokes`).
+    #[serde(default)]
+    pub min_resolved_spokes: Option<usize>,
     /// Allow vias inside SMD pads (default false): a board whose vias
     /// are filled and capped (via-in-pad plating) may put them there. Off,
     /// every via keeps its annular ring out of every SMD pad but an
