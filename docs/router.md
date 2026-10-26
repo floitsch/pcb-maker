@@ -2664,7 +2664,7 @@ designers' crossings) 2 mm took crossings 452 to 410 and 6 mm 437 to 365
 (of the ten run at 6), but SNSP-CPU-01 went 6 to 11 unconnected (22 at
 6 mm) and video 0 to 1.
 
-## Differential pairs (2026-10-23, phases 2 to 4 2026-10-24, polarity and skew 2026-10-25)
+## Differential pairs (2026-10-23, phases 2 to 4 2026-10-24, polarity and skew 2026-10-25, runs not routed and return vias 2026-10-26)
 
 `diff_pairs` in the router settings (route mode). **Default by need**
 (phase 3): on where the project's custom rules ask for pairs, that is
@@ -2859,11 +2859,14 @@ every board), and with the switch on `found`, `coupled` (every link), `partly_co
 `links`, `links_coupled`, `crossed`, `crossovers` (2026-10-25), `coupled_mm`, `uncoupled_mm`
 (after the route, per coupled pair the longer net's tracks less the
 coupled run: KiCad's measure), `skew_mm`, `meanders`, `skews` (2026-10-25,
-"Skew and length" below), `work_seconds` (the fallback's), and in
+"Skew and length" below), `not_routed` (2026-10-26: the links whose run
+was not routed, by cause; "Runs not routed at the task budget" below),
+`pair_vias`, `return_vias`, `return_net` (2026-10-26, "Return vias"
+below), `work_seconds` (the fallback's), and in
 board-router.json per pair its nets, width, gap, source and why links
 fell back (`fewer than two parts with the pair's pads side by side`,
 `the launches are too close for a coupled run` (under 1 mm),
-`the coupled run was not routed`, `a pad's stub does not reach the run`,
+`the coupled run was not routed (<cause>)`, `a pad's stub does not reach the run`,
 `its copper is ... from ...`).
 
 **Measured** (route mode, 30 s, 8 x 1; off x1753, main at 4d9965e; on
@@ -3111,6 +3114,156 @@ to x1820 with x14401, rows and routed boards byte for byte. Tables:
 docs/changelog.md, "Committed on 2026-10-25 (differential pairs: polarity
 and skew)".
 
+**Runs not routed at the task budget (2026-10-26).** At 30 s, 83 of the
+rule boards' links fell back as "run not routed", most of them on the
+ducktop2 boards, which are far from complete at that budget. The
+diagnosis ran at the task budget instead: the intake's deep run, 300 s
+of work (`--budget-scale 10` on the intake's 30 s task, wall guard 1200
+s), route mode, one thread per board. The verdict now says why each such
+link was not routed (`not_routed` in `diff_pairs`, and the pair's `why`
+in board-router.json), from a record the router keeps of its last hard
+repair (`Diagnostics::repair`: per net it took up, whether the
+negotiation had joined it, whether it was in conflict, and why the repair
+skipped it, if it did; `not_routed_cause`):
+
+- *a launch has no legal node*: a launch terminal is a dead pad
+  (`dead_pads`): the envelope does not fit there, between pads or in
+  another net's pour;
+- *no path in the negotiation*: incomplete without a conflict when the
+  negotiation ended: even through other nets' copper the link's envelope
+  or via disc found no way past the fixed copper, or its searches gave up;
+- *the hard repair found no room*: in conflict when the negotiation
+  ended, and the hard repair, which takes every other net's copper as
+  fixed, found no path (the negotiation ejected it);
+- *no hard repair: the attempt was judged hopeless*: the attempt the
+  ladder kept had been judged hopeless (a quarter of its nets without any
+  path), and such an attempt runs no hard repair: its nets in conflict are
+  ripped up and stay open;
+- *the hard repair's budget ran out before it* (its own budget or the
+  attempt's work deadline).
+
+On the four small rule boards at 300 s (x14810, which routes as main's
+x1835: rows identical) 9 links were not routed: 7 on oculink_port (6
+with no hard repair: the attempt the ladder kept, pours connect at 0.05
+mm, 6 open, had stopped as hopeless; 1 no room) and 2 on OpenAIO-Whoop
+(1 no path, 1 no room); oculink_m2 and m2_card had none. The envelope
+passing between pads, a launch in a pour and the repair's budget did
+not come up. At 1200 s (the three oculink boards, x14810) oculink_port
+still had 4 not routed (3 with no hard repair, 1 no room) and its ladder
+stopped after 399 s of work with no rung left: structure, not budget.
+The ducktop2 boards were not run at 300 s: each needs about 16 GB, which
+the shared machine did not have that afternoon (a first request waited
+2 h in the memory ledger); their 30 s rows are below, the 300 s rows
+pending.
+
+**The fix: links first in the hard repair, also on a hopeless attempt.**
+The hard repair (`resolve_remaining`) takes the pairs' links (a net whose
+terminals are pcb-kicad's "pair launch" ones) before every other net, and
+searches for them even on an attempt judged hopeless, within the budget a
+repair has otherwise (the negotiation's seconds, at least 60): a link left
+open costs its pair a fallback, which costs more than the link. The other
+nets keep the routing order and the hopeless attempt's no-repair rule;
+on a board without links nothing changes (the expansion tier below).
+
+| 300 s, 4 small rule boards | snapshot | links coupled | KiCad errors | unconnected | gap findings | dangling | vias | not routed |
+|---|---|---|---|---|---|---|---|---|
+| main (with the diagnosis) | x14810 | 14/32 | 106 | 163 | 55 | 37 | 165 | 9 |
+| links first, hopeless repaired (return vias off) | x14812, `PCB_ROUTER_DIFF_PAIRS_RETURN_VIAS=0` | 17/32 | 62 | 158 | 39 | 5 | 160 | 2 |
+| the branch (return vias on) | x14814 | 17/32 | 61 | 158 | 38 | 5 | 170 | 2 |
+
+Per board, x14810 -> x14814 (errors are KiCad's errors, gap its
+diff_pair_gap_out_of_range, dangling track_dangling and via_dangling):
+
+| board | links coupled | errors | unconnected | gap | dangling | vias | not routed |
+|---|---|---|---|---|---|---|---|
+| OpenAIO-Whoop | 0/4 -> 0/4 | 0 -> 0 | 148 -> 148 | 1 -> 1 | 0 -> 0 | 65 -> 65 | 2 -> 2 |
+| oculink m2_card | 9/9 -> 9/9 | 1 -> 1 | 1 -> 1 | 0 -> 0 | 2 -> 2 | 17 -> 17 | 0 -> 0 |
+| oculink_m2 | 4/10 -> 4/10 | 36 -> 43 | 3 -> 2 | 31 -> 37 | 1 -> 2 | 60 -> 70 | 0 -> 0 |
+| oculink_port | 1/9 -> 4/9 | 69 -> 17 | 11 -> 7 | 23 -> 0 | 34 -> 1 | 23 -> 18 | 7 -> 0 |
+
+On oculink_port the six links the hopeless attempt left ripped up are
+searched again and route; three more couple, its 23 gap findings and the
+34 dangling GND tracks on In1.Cu go (the attempt the ladder keeps is now a
+different one), track_width 44 -> 15. oculink_m2 has no link not routed,
+but the repair's order moves its other nets: 7 more gap findings (31 ->
+38 without the return vias), one connection fewer open. The remaining
+fallbacks on the four boards: a pad's stub does not reach the run 8,
+copper refused 3, no launch 2, fewer than two pair points 2, run not
+routed 2 (Whoop: no path 1, no room 1).
+
+**Return vias (2026-10-26; on with the pairs).** Beside each via of a
+kept link (both nets' at each layer change, a crossover's too) a via of
+the *reference net* where one fits (`place_return_vias`): the settings'
+`diff_pair_return_net` (a net by name), else the net named `GND` (past a
+sheet path), else of the poured nets whose name ends in `GND` the one with
+the most pads; a net with no pour gets none (`return_net`). The return
+via is the pair's via size. It is searched outward from the pair's via,
+first straight away from the via's partner (the other net's via of that
+layer change), then turned by 30° steps up to 120° either way, its ring
+from touching the pair via's ring to at most **0.5 mm** from it
+(`RETURN_GAP`, in 0.05 mm steps), the nearest first. A candidate is kept
+where (`joins_pour`) the reference net's pour reaches it on two layers
+(KiCad calls a via joined on one layer dangling): inside the pour's
+outline and outside the pours above it, with six of sixteen points
+around its ring, a fill's half minimum width out, clear of every other
+net's copper by the larger of the pour's and that net's class clearance
+(holes by the hole clearance) and of the reference net's own pads that
+join by a thermal relief by the pour's thermal gap (oculink_m2's 6 mm GND
+pad left a return via in its gap: KiCad's fill did not reach it); and
+where (`return_via_clear`) it keeps every clearance the router checks
+(`verify` with the project's rules: other nets' copper and holes, the
+edge), hole to hole and hole clearance from the kept links' vias and every
+hole (the reference net's too), and no overlap with the reference net's
+pads or vias or the other return vias. They join the reference net's
+route (written as its vias). Verdict and board-router.json: `pair_vias`,
+`return_vias`, `return_net`; per pair in board-router.json and in the
+verdict's `skews` `pair_vias` and `return_vias`.
+`diff_pair_return_vias: false` (or `PCB_ROUTER_DIFF_PAIRS_RETURN_VIAS=0`)
+turns them off. Measured (300 s, x14812 with them off against x14814):
+10 return vias beside 28 pair vias (oculink_m2 9 of 20, oculink_port 1 of
+8; m2_card's coupled runs change no layer, OpenAIO-Whoop couples none),
+errors 62 -> 61, unconnected 158 -> 158, gap findings 39 -> 38, dangling 5
+-> 5: not worse, so on. The checks came from the versions before: x14811
+took the pour by its outline alone and checked holes against routed vias
+only (six hole_to_hole findings at the rule's 0.5 mm against the pairs'
+vias, which the board holds as obstacles, and one via KiCad called
+dangling); x14812 and x14813 left one via in the GND pad's thermal gap
+(dangling and an unconnected item).
+
+**Measured at 30 s (2026-10-26, continuity).** The 7 rule boards as the
+tables before (route mode, 30 s of work, one thread, KiCad's DRC with
+`--refill-zones`, no setting, wall guard 1200 s; the ducktop2 boards one
+at a time at their measured 30 s peaks: center 14.2 GB, left_io 2.3,
+right_io 2.7), main's x1835 against the branch's x14814:
+
+| board | links coupled | errors | unconnected | gap | dangling | vias | return vias / pair vias | not routed |
+|---|---|---|---|---|---|---|---|---|
+| ducktop2-center | 2/54 -> pending | 18 -> | 499 -> | 16 -> | 0 -> | 686 -> | | 42 -> |
+| ducktop2 left_io | 0/41 -> 0/41 | 17 -> 17 | 337 -> 337 | 17 -> 17 | 1 -> 1 | 240 -> 240 | 0 / 0 | 26 -> 26 |
+| ducktop2 right_io | 1/23 -> 1/23 | 38 -> 38 | 159 -> 159 | 38 -> 38 | 2 -> 2 | 145 -> 145 | 0 / 0 | 11 -> 11 |
+| OpenAIO-Whoop | 0/4 -> 0/4 | 0 -> 0 | 185 -> 185 | 1 -> 1 | 0 -> 0 | 39 -> 39 | 0 / 0 | 2 -> 2 |
+| oculink m2_card | 9/9 -> 9/9 | 2 -> 2 | 2 -> 2 | 1 -> 1 | 0 -> 0 | 22 -> 22 | 0 / 0 | 0 -> 0 |
+| oculink_m2 | 4/10 -> 4/10 | 4 -> 4 | 9 -> 9 | 0 -> 0 | 2 -> 2 | 47 -> 54 | 7 / 12 | 1 -> 1 |
+| oculink_port | 3/9 -> 3/9 | 21 -> 21 | 12 -> 12 | 0 -> 0 | 34 -> 34 | 18 -> 20 | 2 / 6 | 0 -> 0 |
+
+Over the six boards with both sides: every row as main's but the vias
+(511 -> 520: 9 return vias beside 18 pair vias, on oculink_m2 and
+oculink_port): links coupled 17/96, errors 82, unconnected 704, gap
+findings 57, dangling 39 both ways. ducktop2-center's branch row is
+pending: at its 14.2 GB the ledger did not start it in over an hour on the
+shared machine (main's row is x1835's). At 30 s the links not routed are
+a matter of budget: on left_io (26), right_io (11) and OpenAIO-Whoop (2)
+the hard repair's budget ran out before them (the attempt's work deadline
+had passed), oculink_m2's one found no room; the links-first rule changes
+nothing where the repair does not run.
+
+The expansion tier's 46 boards (route mode, 8 x 1, 30 s; no board's rules
+ask for pairs, so no link and no return via) are identical with main's
+x1842 and the branch's x14815, rows and routed boards byte for byte
+(unconnected 557, passes 24 both ways). Tables: docs/changelog.md,
+"Committed on 2026-10-26 (differential pairs: runs not routed; return
+vias)".
+
 **Phase 2's remaining items, and what was learnt.**
 (1) A link must not cost the board: the gate failed on boards where the
 link nets lose or are refused. Candidates: a link net that stays in
@@ -3137,10 +3290,10 @@ the shorter net, a KiCad tuning pattern; left: a meander where the run has
 no straight track with room (right_io's GBE_REFCLK, 0.562 mm), and length
 matching across pairs (a bus's `length` rule over several pairs, which
 KiCad's `skew` without `within_diff_pairs` compares too). (5) GND return
-vias beside each pair via: the link's via disc already holds room for
-two vias; a return via each side needs the disc wider by a via and a
-clearance (`2 dv / 0.7 + 2 V + 2 c`) or a separate obstacle placed with
-the pair's vias. (6) Per-layer widths in one run (ducktop2's DIFF_85,
+vias beside each pair via: done 2026-10-26 (above, "Return vias"), placed
+after the route where room is left, not reserved in the link's via disc
+(`2 dv / 0.7 + 2 V + 2 c`), which would cost the links room in the
+negotiation. (6) Per-layer widths in one run (ducktop2's DIFF_85,
 0.183 mm outside, 0.114 on In2): the router has widths per layer for a
 net since 2026-10-24 (`NetRules::layer_widths`, "Project rules" above:
 classes split by their widths per layer, a stamp variant per layer

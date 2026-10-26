@@ -11,6 +11,84 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-26 (differential pairs: runs not routed; return vias)
+
+Branch differential-pairs-6 (rebased onto 5255222); snapshots x14810
+(the diagnosis only: routes as main's x1835), x14811 to x14813 (steps),
+x14814 (the branch as measured on the rule boards) and x14815 (x14814
+rebased: the expansion tier). docs/router.md, "Differential pairs", "Runs
+not routed at the task budget" and "Return vias", has the design and the
+tables.
+
+- **Why a run was not routed** (`not_routed` in the verdict's
+  `diff_pairs`, the pair's `why` in board-router.json): the router keeps a
+  record of its last hard repair (`Diagnostics::repair`: per net it took
+  up, joined or not, in conflict or not, and why it skipped the net:
+  hopeless attempt, work deadline, budget), from which each link not
+  routed gets a cause: a launch with no legal node, no path in the
+  negotiation, the hard repair found no room, no hard repair (the attempt
+  judged hopeless), the repair's budget ran out.
+- **The diagnosis at the task budget** (the intake's deep run: 300 s of
+  work, wall guard 1200 s, route mode, one thread a board; the four small
+  rule boards): 9 links not routed, 7 on oculink_port (6 because the
+  attempt the ladder kept was judged hopeless and so had no hard repair,
+  1 no room), 2 on OpenAIO-Whoop (1 no path, 1 no room). At 1200 s
+  oculink_port still had 4 (its ladder ran out of rungs at 399 s of
+  work): structure, not budget. The ducktop2 boards were not run at 300 s
+  (16 GB each; the shared machine did not have it: pending, commands
+  below).
+- **The fix** (`resolve_remaining`): the hard repair takes the pairs'
+  links (nets with "pair launch" terminals) first, and searches for them
+  even on an attempt judged hopeless, within a repair's usual budget; the
+  other nets as before, nothing changes on a board without links. At
+  300 s on the four boards (x14810 -> x14814): links coupled 14/32 ->
+  17/32, KiCad errors 106 -> 61, unconnected 163 -> 158, gap findings 55
+  -> 38, dangling 37 -> 5, not routed 9 -> 2; oculink_port 1/9 -> 4/9
+  coupled, errors 69 -> 17, unconnected 11 -> 7; worse: oculink_m2's gap
+  findings 31 -> 37 (the repair's order moves its other nets; one
+  connection fewer open).
+- **Return vias** (`place_return_vias`; on with the pairs,
+  `diff_pair_return_vias`, `diff_pair_return_net`,
+  `PCB_ROUTER_DIFF_PAIRS_RETURN_VIAS=0`): beside each via of a kept link a
+  via of the reference net (GND), its ring within 0.5 mm of the pair
+  via's, where that net's pour reaches it on two layers (the fill's
+  clearances and the thermal gap around its relieved pads) and every
+  clearance holds (verify with the project's rules, hole to hole and hole
+  clearance from the pairs' vias). Verdict: `pair_vias`, `return_vias`,
+  `return_net`, per pair in `skews`. At 300 s (off -> on, both with the
+  fix): 10 return vias beside 28 pair vias, errors 62 -> 61, unconnected
+  158 -> 158, gap 39 -> 38, dangling 5 -> 5. **Kept, on.**
+- **30 s, the 7 rule boards** (continuity with the tables before; x1835
+  -> x14814): on the six boards with both sides (ducktop2-center's
+  branch row pending: its 14.2 GB did not start in over an hour) every
+  row as main's but the vias, 511 -> 520 (9 return vias beside 18 pair
+  vias): links coupled 17/96, errors 82, unconnected 704, gap 57,
+  dangling 39 both ways. At 30 s the links not routed are a matter of
+  budget (left_io 26, right_io 11, Whoop 2: the attempt's work deadline
+  had passed before the hard repair; oculink_m2 1: no room).
+- **The expansion tier** (46 boards, route mode, 8 x 1, 30 s; main's
+  x1842 against x14815, neither with a setting): every row identical and
+  every routed board identical byte for byte (unconnected 557, passes 24
+  both ways).
+- Unit test `a_pair_via_gets_a_return_via_of_ground_beside_it` (a
+  crossover's two vias, GND poured on F.Cu and B.Cu: return vias within
+  the gap, clear of everything; without the pour none).
+- Logs: `build/dp6-rules/x14810-300-small` (the diagnosis),
+  `x1835-300-small`, `x14810-1200-oculink`, `x14811-300-small`,
+  `x14812-300-small`, `x14812r0-300-small` (return vias off),
+  `x14813-300-small`, `x14814-300-small`; 30 s: `x1835-30-{small,duck}`,
+  `x14810-30-{small,duck}` (the causes), `x14814-30-{small,duck}`; the
+  tier `build/dp6-exp-x1842`, `build/dp6-exp-x14815`. Pending, the
+  ducktop2 boards at 300 s (one at a time, about 16 GB each):
+  `benchmarks/agent-tasks/run.py build/dp6-rules/<snapshot>-300-duck
+  --tasks build/dp6-rules/dp6-rules-tasks.json --only EwoudVV__ducktop2__ducktop2-center
+  EwoudVV__ducktop2__left_io EwoudVV__ducktop2__right_io --binary
+  build/bin/pcb-maker-<snapshot> --jobs 1 --threads 1 --budget-scale 10
+  --timeout 600 --min-free-gb 10 --expected-gb 16`, with x14810 and
+  x14814 (that task list: the seven boards' intake directories as
+  route-mode tasks of 30 s, `designer_budget` false, router `seeds` 1,
+  `skip_native_verification`, `deadline_seconds` 1200).
+
 ## Committed on 2026-10-26 (escape demand's fixed-share guard: the 45 boards)
 
 Branch escape-guard-sweep. The 45 sweep boards `escape_demand.fixed_share`
