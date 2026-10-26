@@ -514,8 +514,8 @@ How the runner shares the machine:
   measure"): rows of runs at other `--threads` compare, CPU and wall
   seconds do not.
 - `--min-free-gb` is a floor beside the memory ledger: a board is
-  admitted when the ledger has room for its expected peak (`peak_rss_mb`
-  in `quick.json`; `--expected-gb`, 3, for a board without one) and the
+  admitted when the ledger has room for its expected peak (its estimate,
+  next item) and the
   memory available, less what the runs in the ledger are still expected
   to grow by (their reservation minus their resident size now), leaves
   that much after it (0: the ledger alone). Reservations other harnesses
@@ -526,6 +526,47 @@ How the runner shares the machine:
   and cold-route sweeps, 12 on a quiet machine. triage.py and
   import_pending.py admit by the same rule (`harness_common.memory_room`;
   triage fails closed when nothing is reserved).
+- **Per-board estimates** (since 2026-10-26, every tier and the sweep):
+  `estimates.json` here gives each board's expected peak (the gate's
+  reservation) and seconds (the order and the ledger's expected end) per
+  kind of run: `layout` (the sweep, the quick tier, `--route-from`),
+  `short`, `schematic`, `designer` and `expansion` (route-mode tasks).
+  `tier_estimates.py --refresh` writes it from run.py logs: per board and
+  kind the rows of the newest three sources that measured it, the
+  estimate their largest `peak_rss_mb` times 1.25 (the margin: the
+  matched designer tiers of x1832 and the 2026-10-25 nightly differ by at
+  most that on 86 % of their boards) and their largest seconds. A board
+  without a row of its kind takes its layout rows' estimate (short,
+  schematic, designer), else the tier file's own `peak_rss_mb`, else the
+  size model (per family, layout or route, a line over pads x copper
+  layers fitted to the measured peaks and raised to their 90th
+  percentile, times 1.25; read from the board's file for a board the
+  sidecar does not size), else 3 GB. `--expected-gb` on the command line
+  overrides every board's; `--estimates` names another sidecar;
+  `--dry-run` prints the boards in their start order with each one's
+  declaration and source and runs nothing; every run prints the
+  declarations' sources on stderr (`expected peaks (...): 109 from layout
+  rows; the largest 8.8 GB`). `--order peak-desc` (the largest first)
+  thus works for every tier and the task lists. Refresh after a sweep or
+  a tier run whose rows should count, and commit the file:
+
+  ```sh
+  benchmarks/agent-tasks/tier_estimates.py --refresh --layout build/github-layout-v22.log
+  benchmarks/agent-tasks/tier_estimates.py --refresh --designer build/designer-x1900-matched.log
+  benchmarks/agent-tasks/tier_estimates.py --refresh --night build/nightly/2026-10-27
+  ```
+
+  (also `--short`, `--schematic`, `--expansion`; without a log, the
+  newest night). The nightly refreshes its own copy every night
+  ("Nightly"). The first file (2026-10-26) covers the 155 boards of
+  tasks/v7 and the expansion list, every one with a measured row: layout
+  109 (v21, its `-ab` part and the sweeps of the nightlies of 2026-10-24
+  and 25), designer 109 (x1832 matched and the two nightlies), short 12
+  and expansion 46 (the two nightlies), schematic 12 (x1250); the size
+  model estimates none of them. Until 2026-10-26 only the tiers' files
+  carried estimates and the sweep declared one `--expected-gb` for every
+  board: v21 ran in three parts to keep each declaration above the
+  board's measured peak (docs/benchmarks.md, "Layout sweep v21").
 
 ### First run, 2026-10-09, x160
 
@@ -1014,7 +1055,9 @@ within the budget, `clean_slow`, `native_drc_failure`, `cut_wall_clock`,
 `incomplete_at_budget`, `incomplete_early`, ...; triage.py's rule). The
 run ends with an `outcomes:` line. `peak_rss_mb` is the larger of the
 route process and the DRC; the memory gate expects the board's
-`peak_rss_mb` from `expansion.json`. compare.py reads the rows unchanged
+estimate (estimates.json's `expansion` rows; "How to measure"; the
+route-mode lists outside the tier by the same kind or the route size
+model). compare.py reads the rows unchanged
 (route rows have no constraints digest).
 
 **First run, x1211, 2026-10-21** (8 jobs x 1 thread under the lock, load
@@ -1099,8 +1142,9 @@ findings less the designer's). Rows are route rows with `placement:
 "designer"`. Compare a designer run with a layout run of the same binary
 (or say which binaries) and the same list; the gap is only as sound as
 the rows are uncut (CUT rows are marked).
-`designer.json` gives the memory gate and the runner each board's peak
-and seconds: the largest of its rows in five designer runs (the
+The memory gate and the runner take each board's peak and seconds from
+estimates.json's `designer` rows since 2026-10-26 ("How to measure"); the
+fallback is `designer.json`'s: the largest of its rows in five designer runs (the
 nightlies of 2026-10-24 and 2026-10-25, x1725, x1539 and x1404 matched;
 `tier_estimates.py designer.json --placement designer <logs>` rewrites
 them). Until 2026-10-26 they were its v17 layout row's (x1170), 1.8 times
@@ -1235,7 +1279,7 @@ lock at `--min-free-gb 10`:
 | expansion | `--tier expansion`, 8 x 1 | 5-10 min |
 | short | `--tier short`, 3 x 2 | 15-20 min |
 | designer | `--tier designer --quality`, 8 x 1, `--order peak-desc`, `--budget-scale` the median `ladder_budget_share` of the newest earlier night's sweep (0.695 without one) | 1.5-2 h (the boards' measured seconds) |
-| sweep | `--tasks tasks/v7`, 10 x 2, `--quality` | 5-7 h |
+| sweep | `--tasks tasks/v7`, 10 x 2, `--quality`, `--order peak-desc` | 5-7 h |
 
 The designer tier runs before the sweep and its largest boards first
 (since 2026-10-26): it is the stage with the large boards and the
@@ -1244,6 +1288,17 @@ began at 06:27-10:29, and its large boards (then estimated at 17-28 GB
 from v17 layout rows) waited into the agents' day: on 2026-10-25 past
 midnight. Its budget scale comes from the previous night's sweep, not
 tonight's: the match is to the binary of the night before.
+
+**Estimates.** Every stage declares its boards' expected peaks from the
+nightly's own sidecar, `build/nightly/estimates.json`, else (the first
+night) from the committed `estimates.json` ("How to measure"). After the
+summary, `tier_estimates.py --refresh` adds the night's sweep, designer,
+short and expansion rows to it (with the committed file's rows merged,
+so that a refresh committed by hand counts too) and writes it back: the
+newest three sources per board count, so the estimates follow the binary
+within three nights. `build/nightly/<date>/estimates.log` says what
+changed. The sweep starts its largest boards first (`--order peak-desc`,
+since the sidecar), while the machine is quietest.
 
 The sweep and the matched designer tier run on the days of
 `--sweep-days` (`PCB_NIGHTLY_SWEEP_DAYS` in the service: `all`, the
@@ -1256,7 +1311,7 @@ deterministic binary would repeat). One night at a time
 
 **What a night leaves**, in `build/nightly/<date>/`: each stage's
 output directory, `<stage>.log` (the rows, for compare.py) and
-`<stage>.err`, `build.log`, `nightly.log`, `gap.txt` (`compare.py --gap
+`<stage>.err`, `build.log`, `nightly.log`, `estimates.log`, `gap.txt` (`compare.py --gap
 sweep.log designer.log --targets`), `diff-<stage>.txt` (compare.py
 against the previous nightly that ran the stage), `nightly.json` and
 `summary.md`: per stage the pass and strict counts, KiCad's unconnected

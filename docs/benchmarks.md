@@ -259,6 +259,66 @@ new fields (`started` stands in for both times). The expansion intake's
 triage runner (`benchmarks/expansion/triage.py`) admits by its own rule,
 not ordered.
 
+## Per-board estimates for every tier (2026-10-26)
+
+run.py's memory gate reserves each board's expected peak in the ledger,
+and `--order peak-desc` starts the largest first. Until 2026-10-26 only
+the tiers' files carried estimates (designer.json, quick.json, ...): the
+layout sweep's task list has none, so run.py declared one
+`--expected-gb` for every board and the v21 sweep ran in three parts to
+keep each declaration above the board's measured peak (5 boards at 4 GB,
+7 at 8 GB, 97 at 3.5 GB; "Layout sweep v21" below), and `--order
+peak-desc` did nothing there.
+
+Now `benchmarks/agent-tasks/estimates.json` (committed) gives every
+board of tasks/v7 and the expansion list its expected peak and seconds
+per kind of run (layout: the sweep, the quick tier, `--route-from`;
+short, schematic, designer, expansion), and run.py reads it by default
+(`--estimates` another; `--expected-gb` on the command line overrides
+every board's). `tier_estimates.py --refresh` writes it from run.py logs:
+per board and kind the rows of the newest three sources that measured
+it (spliced rows left out), the estimate their largest `peak_rss_mb`
+times 1.25 and their largest seconds. The margin: the matched designer
+tiers of x1832 and the 2026-10-25 nightly (x1817) differ by a factor of
+1.16 at the median and by at most 1.25 on 86 % of their 106 common
+boards. A board without a row of its kind takes, in order, its layout
+rows' estimate (short, schematic, designer), the tier file's own entry,
+the size model (per family, layout or route: a line over pads x copper
+layers fitted to the measured peaks, raised to their 90th percentile,
+times 1.25; for the first file 3223 MB + 0.054 MB a pad and layer for a
+layout, 1350 MB + 0.19 MB for a route), then 3 GB. `run.py --dry-run`
+prints the start order with each board's declaration and its source;
+every run prints the sources counted on stderr.
+
+The first file's sources: the v21 sweep and its `-ab` part, the sweeps,
+designer, short and expansion stages of the nightlies of 2026-10-24 and
+25, `build/designer-x1832-matched.log` and the schematic tier's
+`build/sch-x1250.log`. All 155 boards have a measured row of their
+kind (layout 109, designer 109, short 12, schematic 12, expansion 46);
+the size model estimates none of them (it covers boards outside these
+lists, e.g. tasks.json's). The sweep's declarations: median 1779 MB,
+16 boards above 3.5 GB, the largest ULK's 8982 MB (7185 MB measured by
+the 2026-10-24 nightly; v21's 4644 MB is the newest of its three rows);
+the designer tier's median 1073 MB, the largest link's 7564 MB.
+
+**The refresh.** After a sweep or a tier run whose rows should count:
+`tier_estimates.py --refresh --layout <log>` (`--designer`, `--short`,
+`--schematic`, `--expansion`, `--night build/nightly/<date>`; without a
+log, the newest night), then commit the file. scripts/nightly.sh keeps
+its own copy, `build/nightly/estimates.json`: every stage declares from
+it (the first night from the committed file), and at the end of the
+night the night's rows are added to it with the committed file's rows
+merged in, so the estimates follow the nightly binary within three
+nights (`build/nightly/<date>/estimates.log`). The nightly's sweep now
+starts its largest boards first (`--order peak-desc`). Tests:
+test_tier_estimates.py (the window, the margin, spliced rows, a source
+read again, the size model, the fallbacks, the committed file covering
+every tier's boards), test_run.py `Estimates` (a dry run: loading, the
+size model on a board's file, the default, `--expected-gb`; the
+estimates are not part of a task's digest) and test_nightly.py (the
+second night's stages read the first night's refresh). The ledger's
+rules and simulations are unchanged; routing is untouched.
+
 ## Fence (2026-10-21)
 
 Every breadboard-fence benchmark run once with x1404 (main at the fence

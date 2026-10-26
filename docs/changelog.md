@@ -11,6 +11,46 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-26 (per-board memory estimates for every tier)
+
+Branch tier-estimates. The layout sweep's task list carried no memory
+estimates, so run.py declared one `--expected-gb` for every board (v21
+ran in three parts to keep each declaration above the board's measured
+peak) and `--order peak-desc` did nothing there; the designer tier's came
+from older rows. Routing is untouched: only what run.py declares to the
+memory ledger and the order the boards start in change
+([benchmarks.md](benchmarks.md#per-board-estimates-for-every-tier-2026-10-26)).
+
+- **The sidecar** `benchmarks/agent-tasks/estimates.json`: per board of
+  tasks/v7 and the expansion list, its pads and copper layers and per
+  kind (layout, short, schematic, designer, expansion) the expected peak
+  (the largest `peak_rss_mb` of the rows of its newest three sources,
+  times 1.25), seconds and the rows with their sources and times; a size
+  model per family (pads x layers, at the 90th percentile of the measured
+  peaks) for boards without a row. `tier_estimates.py --refresh` writes
+  it from run.py logs; its older form (a tier file's own estimates)
+  stays.
+- **run.py** reads it by default (`--estimates`); a board falls back to
+  its layout rows, the tier file's entry, the size model, then 3 GB;
+  `--expected-gb` given overrides every board's; `--dry-run` prints the
+  start order with each declaration and its source; every run prints the
+  sources counted.
+- **Coverage of the first file**: all 155 boards have a measured row of
+  their kind (layout 109, designer 109, short 12, schematic 12, expansion
+  46); the size model covers none of them. Dry runs: the sweep declares
+  ULK 8982 MB (876 s) and spell_tome_bottom 644 MB (118 s), 109 boards
+  from layout rows; the designer tier 109 from designer rows, the
+  largest link's 7564 MB.
+- **The nightly** declares every stage from its own copy
+  (`build/nightly/estimates.json`, the committed file on the first
+  night), refreshes it at the end of each night from the night's rows
+  (`estimates.log`), and starts the sweep's largest boards first.
+- **Tests**: test_tier_estimates.py (refresh, size model, fallbacks, the
+  committed file covers every tier's boards), test_run.py `Estimates`
+  (dry runs: loading, the size model on a board's file, the default,
+  `--expected-gb`), test_nightly.py (the second night reads the first
+  night's refresh). The ledger's simulations are unchanged.
+
 ## Committed on 2026-10-26 (bus-group moves in placement)
 
 Branch bus-groups, snapshot x14560 (main 991ad37 and the moves). The
