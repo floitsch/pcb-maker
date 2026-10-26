@@ -55,10 +55,13 @@ order), `kicad_unconnected_items` and `new_findings_strict` (they decide),
 outline that fits), `outputs` (absolute paths), `cut`, `free_dimension`,
 `fab_release`.
 
-On exit 1: open connections mean too little room (`routed.diagnostics.hot_spots`
-in `board-layout.json`: enlarge the outline, move parts apart, add layers);
-unplaced parts mean a fuller board than fits (`room.suggested_outline_mm`);
-missed constraints give `violation_mm`: relax or fix the part.
+On exit 1: for open connections run `inspect-routing-run` first (above);
+too little room is a hypothesis, not a finding (`routed.diagnostics.hot_spots`
+in `board-layout.json` says where nets fought, not why), so enlarge the
+outline, move parts apart or add layers only where the reference does not
+route the same nets; unplaced parts mean a fuller board than fits
+(`room.suggested_outline_mm`); missed constraints give `violation_mm`:
+relax or fix the part.
 
 ## constraints.json
 
