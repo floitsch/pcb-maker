@@ -2921,7 +2921,6 @@ fn place_return_vias(
                             .filter(|other| close(other.at, other.at))
                             .cloned()
                             .collect(),
-                        ..core::NetRoute::default()
                     })
                     .chain(std::iter::repeat_with(core::NetRoute::default))
                     .take(board.nets.len())
