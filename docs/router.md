@@ -3664,6 +3664,37 @@ leaves every net still in conflict open). `PCB_ROUTER_NO_WALL_GUARD` drops
 the layout's wall-clock deadline too: the work alone decides, for checking
 that a run is deterministic on a machine too busy for its budget.
 
+**A debug flag only prints** (2026-10-26). A flag that prints
+(`PCB_ROUTER_SPOKE_DEBUG`, `PCB_ROUTER_FINGERPRINT`, `PCB_ROUTER_DEBUG`
+and the like) must not change what the router counts or caches, since
+the work decides the budgets: a question the debug output asks that is
+counted as work, or an answer it leaves in a cache that a later
+question then finds for free, moves the route. Until 2026-10-26 the
+spoke debug asked the fill probe questions of its own
+(`blocker`, `fill_at`, `in_ring`, `in_hatch_hole`, the necks' pieces)
+whose items, queries and vertices were charged as pour work and whose
+hatch holes and neck verdicts stayed cached: on F1 it raised the pour
+work from 0.20 to 0.36 s, and on the expansion tier (x1844, route mode,
+30 s) Miniboard routed to 6 unconnected without the flag and 10 with it
+(10 and 5 with the exact model on), and ZSWatch's and brickpico's boards
+moved too.
+Now those questions go through `FillProbe::quietly`: their counts are
+put back, the probe keeps no hole they decide (`hole_kept`) and the
+spokes no neck verdict (`is_quiet`), an index they build is charged
+where the probe first needs it outside (`unpaid_index`), and the
+router's probe shapes are not built for them (a polygon is measured
+without its index there; the answers are printed, never used).
+`PCB_ROUTER_FINGERPRINT`'s pour analysis before stitching was charged
+too (F1: 0.200 to 0.205 s of pour work); it runs under
+`Router::uncharged` now, which puts the router's pour and probe counters
+back (and prints the fingerprint alone before the probe shapes exist).
+`tests/fixtures.rs` (`debug_flags_change_neither_the_route_nor_its_work`)
+routes F1 without flags and with each of the two and compares the
+written board byte for byte and the work counted; the router's unit test
+`a_fill_probe_counts_nothing_for_the_debug_output` the probe's counts.
+A new debug output that asks the probe or the router anything goes
+through the same two scopes.
+
 Memory decides only how many routers run side by side (the placement
 race's probes, the probe ladder's rungs, the regular rungs, the seeds),
 never which count (a limit of the process's own, a fixed number, decides
