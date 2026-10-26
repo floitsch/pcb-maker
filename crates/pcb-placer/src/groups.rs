@@ -807,8 +807,8 @@ pub fn arrange(problem: &Problem, groups: &BusGroups, poses: &mut [Pose]) -> Arr
         nets.sort_unstable();
         nets.dedup();
         let length_before = wirelength(poses, &nets);
+        result.cost_before += length_before;
         let mut best: Option<(f64, Vec<(usize, Pose)>)> = None;
-        let mut first = true;
         for how in [Reorder::InPlace, Reorder::Along(0), Reorder::Along(1)] {
             let Some(moved) = reordered(problem, poses, group, parts, how, &margin) else {
                 continue;
@@ -844,10 +844,6 @@ pub fn arrange(problem: &Problem, groups: &BusGroups, poses: &mut [Pose]) -> Arr
             if let Some(state) = crossings.as_mut() {
                 // Counted, never kept: the best is kept below.
                 state.settle(poses, &list, false, 0);
-            }
-            if first {
-                result.cost_before += length_before;
-                first = false;
             }
             if cost < best.as_ref().map_or(-1.0e-9, |(least, _)| *least) {
                 best = Some((cost, moved));
