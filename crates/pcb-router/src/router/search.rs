@@ -335,6 +335,33 @@ impl Router {
                 other_layers &= other_layers - 1;
                 prefetch_index(&scratch.nodes, other * cells + cell);
             }
+            // The diagonal steps' clearance maps: both orientations at this
+            // cell (the steps towards +x start here) and at the cells the
+            // steps towards -x start from, a row below and above. Their
+            // loads were the search's costliest line (6 to 8 % of the
+            // route's CPU; the second round of 2026-10-27,
+            // docs/profiling.md).
+            if corridor_test != 2 {
+                let (rising, falling) = (
+                    self.diagonal_map(class, layer, 0),
+                    self.diagonal_map(class, layer, 1),
+                );
+                self.occupancy.prefetch_index(rising, cell);
+                self.occupancy
+                    .prefetch_index(rising, cell.wrapping_sub(nx + 1));
+                self.occupancy.prefetch_index(falling, cell);
+                self.occupancy.prefetch_index(falling, cell + nx - 1);
+            }
+            // What the via step reads of this cell, after the steps.
+            if layers > 1 {
+                self.occupancy.prefetch_index(via_map, cell);
+                statics.via_blocked.prefetch(cell);
+                statics.free_layers.prefetch(cell);
+                prefetch_index(&scratch.own_via_near, cell);
+                if let Some(history) = self.history.get(layers) {
+                    prefetch_index(history, cell);
+                }
+            }
             // The eight steps unrolled (one copy each, the step's direction
             // known: whether it is diagonal and its bend cost are no longer
             // decided per step at run time).

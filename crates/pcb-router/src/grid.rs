@@ -608,6 +608,20 @@ impl EdgeMap {
     }
 }
 
+/// Asks the cache for the line holding `pointer` (a hint, never
+/// dereferenced: any address is fine; nothing on other architectures).
+#[inline(always)]
+fn prefetch_at<T>(pointer: *const T) {
+    // SAFETY: a prefetch reads nothing and faults on no address; SSE is
+    // part of every x86_64 target.
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        std::arch::x86_64::_mm_prefetch::<{ std::arch::x86_64::_MM_HINT_T0 }>(pointer as *const i8)
+    };
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = pointer;
+}
+
 /// A bit per node (`StaticMaps::via_blocked`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NodeBits {
@@ -632,6 +646,13 @@ impl NodeBits {
     #[inline(always)]
     pub fn get(&self, index: usize) -> bool {
         self.words[index / 64] & (1 << (index % 64)) != 0
+    }
+
+    /// Asks the cache for the word of `index` early (a hint: an index
+    /// past the end faults on nothing).
+    #[inline(always)]
+    pub fn prefetch(&self, index: usize) {
+        prefetch_at(self.words.as_ptr().wrapping_add(index / 64));
     }
 
     pub fn len(&self) -> usize {
@@ -671,6 +692,12 @@ impl LayerBits {
             bytes.extend_from_slice(&value.to_le_bytes()[..width]);
         }
         Self { bytes, width }
+    }
+
+    /// Asks the cache for the bits of `index` early (a hint).
+    #[inline(always)]
+    pub fn prefetch(&self, index: usize) {
+        prefetch_at(self.bytes.as_ptr().wrapping_add(index * self.width));
     }
 
     #[inline(always)]
