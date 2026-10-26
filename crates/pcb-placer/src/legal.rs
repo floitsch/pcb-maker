@@ -2876,6 +2876,46 @@ mod tests {
     }
 
     #[test]
+    fn pads_of_one_net_may_come_closer_than_the_clearance() {
+        // Pads at the courtyards' ends, 0.1 mm apart: of two nets too
+        // close, of one net legal (mating connectors of two cells).
+        let (mut problem, poses) = pair(0.0, 0.1);
+        problem.constraints.pad_clearance = true;
+        problem.constraints.courtyard_spacing = true;
+        let pin = |x: f64, net: usize| crate::problem::Pin {
+            offset: [x, 0.0],
+            net,
+        };
+        problem.components[0].pins = vec![pin(-0.7, 0), pin(0.7, 1)];
+        problem.components[1].pins = vec![pin(-0.7, 2), pin(0.7, 3)];
+        assert!(!is_legal(&problem, &poses, 1, poses[1], 0..2));
+        problem.components[1].pins = vec![pin(-0.7, 1), pin(0.7, 3)];
+        assert!(is_legal(&problem, &poses, 1, poses[1], 0..2));
+    }
+
+    #[test]
+    fn at_kicads_legality_a_lead_keeps_the_copper_clearance_from_the_far_sides_pads() {
+        // A lead through the board (1 mm square) under the far part's
+        // courtyard, 0.3 mm from its pads: off the body elsewhere, legal at
+        // KiCad's legality where holes in courtyards are no error.
+        let (mut problem, mut poses) = pair(0.4, 0.0);
+        problem.components[1].side = Side::Back;
+        problem.components[0].far_side = vec![[1.7, -0.5, 2.7, 0.5]];
+        poses[1].position = [13.6, 10.0];
+        problem.poses = poses.clone();
+        // The lead (x 11.7 to 12.7) lies under the back part's body (12.6 to
+        // 14.6), 0.3 mm from its first pad (13.0 to 13.6).
+        assert!(!is_legal(&problem, &poses, 1, poses[1], 0..2));
+        problem.constraints.pad_clearance = true;
+        assert!(!is_legal(&problem, &poses, 1, poses[1], 0..2));
+        problem.constraints.leads_keep_copper = true;
+        assert!(is_legal(&problem, &poses, 1, poses[1], 0..2));
+        // Within the copper clearance of a pad: not legal.
+        poses[1].position = [13.4, 10.0];
+        assert!(!is_legal(&problem, &poses, 1, poses[1], 0..2));
+    }
+
+    #[test]
     fn the_direction_is_the_one_before_the_shortcut() {
         let before = |angle: f64| {
             let quarter = angle.rem_euclid(90.0);

@@ -732,12 +732,7 @@ fn cell_classes(
     regions: &[[f64; 4]],
 ) -> Vec<CellClass> {
     let reach = problem.edge_margin.max(problem.min_spacing);
-    let passable: BTreeSet<usize> = problem
-        .constraints
-        .passable_marks
-        .iter()
-        .copied()
-        .collect();
+    let passable: BTreeSet<usize> = problem.constraints.passable_marks.iter().copied().collect();
     type Signature = (Vec<Vec<i64>>, Vec<Vec<i64>>, Vec<Vec<i64>>);
     let signature = |copy: usize| -> Signature {
         let transform = transforms[copy];
@@ -754,7 +749,12 @@ fn cell_classes(
         let held = &problem.constraints;
         for (part, side, max) in &held.edges {
             if let Some(rank) = rank.get(part) {
-                constraints.push(vec![0, *rank as i64, edge(*side), (max * 100.0).round() as i64]);
+                constraints.push(vec![
+                    0,
+                    *rank as i64,
+                    edge(*side),
+                    (max * 100.0).round() as i64,
+                ]);
             }
         }
         for (part, side, local) in &held.overhangs {
@@ -896,7 +896,10 @@ fn holds_in(problem: &core::Problem, part: usize, region: [f64; 4]) -> bool {
         let mut centres = vec![[(low[0] + high[0]) / 2.0, (low[1] + high[1]) / 2.0]];
         for step in 0..9 {
             let t = step as f64 / 8.0;
-            let along = [low[0] + t * (high[0] - low[0]), low[1] + t * (high[1] - low[1])];
+            let along = [
+                low[0] + t * (high[0] - low[0]),
+                low[1] + t * (high[1] - low[1]),
+            ];
             centres.push([low[0], along[1]]);
             centres.push([high[0], along[1]]);
             centres.push([along[0], low[1]]);
@@ -925,6 +928,8 @@ fn holds_in(problem: &core::Problem, part: usize, region: [f64; 4]) -> bool {
 /// the held instances to the copies; the free instances fill the other
 /// copies in turn. Only instances whose pins are on the same nets trade
 /// places (the copies' nets map as before).
+// The ranks index every copy's members, not one list.
+#[allow(clippy::needless_range_loop)]
 fn assign_held(problem: &core::Problem, members: &mut [Vec<usize>], regions: &[[f64; 4]]) {
     let constraints = &problem.constraints;
     let held = |part: usize| {
@@ -950,7 +955,10 @@ fn assign_held(problem: &core::Problem, members: &mut [Vec<usize>], regions: &[[
                 .map(|pin| pin.net)
                 .collect()
         };
-        if instances.iter().any(|part| nets(*part) != nets(instances[0])) {
+        if instances
+            .iter()
+            .any(|part| nets(*part) != nets(instances[0]))
+        {
             continue;
         }
         // Kuhn's augmenting paths: held instance -> slot.
@@ -1471,7 +1479,8 @@ fn carried(
             }
             for &other in &others {
                 if other != part
-                    && let Some(kind) = core::legal::conflict_kind(&check, &poses, part, pose, other)
+                    && let Some(kind) =
+                        core::legal::conflict_kind(&check, &poses, part, pose, other)
                 {
                     met.push(format!("{} {kind}", check.components[other].name));
                 }
@@ -1960,6 +1969,33 @@ mod tests {
         let copies = detect(&problem, problem.components.len()).expect("copies");
         assert_eq!(copies.detected_by, "repeated references");
         assert_eq!(copies.members[0].len(), 5);
+    }
+
+    #[test]
+    fn a_held_instance_goes_to_a_copy_that_can_hold_it_and_classes_tell_the_copies_apart() {
+        // Alike, the two copies (the second turned half a turn) are one
+        // class.
+        let problem = panel(true);
+        let copies = detect(&problem, problem.components.len()).expect("copies");
+        assert_eq!(copies.classes.len(), 1);
+        assert_eq!(copies.classes[0].copies, vec![0, 1]);
+        // R1 held at the right edge: given in turn to the first copy (at
+        // the left), it goes to the second; the second copy is then a class
+        // of its own, the more constrained one, placed first.
+        let mut problem = panel(true);
+        let held = 1;
+        assert_eq!(problem.components[held].name, "R1");
+        problem
+            .constraints
+            .edges
+            .push((held, core::constraints::Edge::Right, 1.0));
+        let copies = detect(&problem, problem.components.len()).expect("copies");
+        assert!(copies.members[1].contains(&held));
+        assert!(!copies.members[0].contains(&held));
+        assert_eq!(copies.classes.len(), 2);
+        assert_eq!(copies.classes[0].copies, vec![1]);
+        assert_eq!(copies.classes[0].constraints, 1);
+        assert_eq!(copies.classes[1].copies, vec![0]);
     }
 
     #[test]
