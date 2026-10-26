@@ -829,6 +829,13 @@ pub fn resolve_project_rules(
         |name: &str| net_names.normalize(name).to_string(),
         minimum("min_track_width").max(floor.unwrap_or(0.0)),
     );
+    let length_rules = length_rules(
+        &pair_facts,
+        &pair_custom_rules,
+        &copper_layer_names(&pcb),
+        |name: &str| net_names.normalize(name).to_string(),
+        &severities,
+    );
     let mut config = KiCadBoardRouterConfig {
         narrow_signal_mm: narrow_signal,
         relaxed_clearance_mm:
@@ -871,6 +878,7 @@ pub fn resolve_project_rules(
         project_rules: Some(report),
         net_rules: (!net_rules.is_empty()).then(|| std::sync::Arc::new(net_rules)),
         diff_pair_rules,
+        length_rules,
         ..KiCadBoardRouterConfig::default()
     };
     // The narrow-signal and neck widths, too (the classes are floored
@@ -964,6 +972,7 @@ pub fn router_config_over_project(
     }
     config.net_rules = project.net_rules;
     config.diff_pair_rules = project.diff_pair_rules;
+    config.length_rules = project.length_rules;
     // The width floor holds for a file's own classes too.
     config.apply_width_floor();
     Ok(config)
@@ -1243,6 +1252,80 @@ fn diff_pair_rules(
     out
 }
 
+/// The custom rules' `length` and `skew` constraints with the nets they
+/// hold for (docs/router.md, "Length and skew rules"): per net and copper
+/// layer the rule KiCad applies to a track of the net there (the last
+/// whose condition surely holds, `inDiffPair()` known), grouped by the
+/// rule as KiCad's matched-length check groups them; a through via is
+/// the rule's where it holds on F.Cu (KiCad evaluates a via's rules on
+/// its first layer). A rule (or the project) that rates the findings
+/// below an error is passed over, as is a constraint without a bound in
+/// lengths (KiCad 10's time-domain `ps`).
+fn length_rules(
+    facts: &[dru::NetFacts],
+    rules: &[dru::Rule],
+    copper: &[String],
+    key: impl Fn(&str) -> String,
+    severities: &BTreeMap<String, String>,
+) -> Vec<crate::board_router::KiCadLengthRule> {
+    use crate::board_router::{KiCadLengthMember, KiCadLengthRule};
+    let names: BTreeSet<&str> = facts.iter().map(|net| net.name.as_str()).collect();
+    let mut groups: BTreeMap<(usize, &str), KiCadLengthRule> = BTreeMap::new();
+    for kind in ["length", "skew"] {
+        if dru::finding_severity(kind, severities) != "error" {
+            continue;
+        }
+        for fact in facts {
+            let mut known = fact.clone();
+            known.diff_pair = Some(
+                diff_pair_of(&fact.name)
+                    .filter(|(partner, ..)| names.contains(partner.as_str()))
+                    .map(|(_, base, _)| base),
+            );
+            for layer in copper {
+                let Some((index, picked)) = dru::track_rule(rules, &known, layer, copper, kind)
+                else {
+                    continue;
+                };
+                let rule = &rules[index];
+                if rule.severity.as_deref().is_some_and(|own| own != "error")
+                    || (picked.min.is_none() && picked.max.is_none())
+                {
+                    continue;
+                }
+                let group = groups.entry((index, kind)).or_insert_with(|| KiCadLengthRule {
+                    rule: picked.rule.clone(),
+                    constraint: kind.to_string(),
+                    min: picked.min,
+                    opt: picked.opt,
+                    max: picked.max,
+                    within_diff_pairs: rule
+                        .constraints
+                        .iter()
+                        .rev()
+                        .find(|constraint| constraint.kind == kind)
+                        .is_some_and(|constraint| {
+                            constraint.words.iter().any(|word| word == "within_diff_pairs")
+                        }),
+                    nets: Vec::new(),
+                });
+                let net = key(&fact.name);
+                if group.nets.last().is_none_or(|member| member.net != net) {
+                    group.nets.push(KiCadLengthMember {
+                        net,
+                        layers: Vec::new(),
+                        vias: false,
+                    });
+                }
+                let member = group.nets.last_mut().expect("a member");
+                member.layers.push(layer.clone());
+                member.vias |= layer == "F.Cu";
+            }
+        }
+    }
+    groups.into_values().collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1422,6 +1505,79 @@ mod tests {
         assert_eq!(pair("USB_DM"), None);
         assert_eq!(pair("+3V3"), None);
         assert_eq!(pair("GND"), None);
+    }
+
+    #[test]
+    fn length_and_skew_rules_group_their_nets_by_rule_and_layer() {
+        let pcb = r#"(kicad_pcb (layers (0 "F.Cu" signal) (1 "In1.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (footprint "a" (at 0 0)
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "/D0"))
+                (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net "/D1"))
+                (pad "3" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net "/CLK"))
+                (pad "4" smd rect (at 3 0) (size 1 1) (layers "F.Cu") (net "/TIME"))
+                (pad "5" smd rect (at 4 0) (size 1 1) (layers "F.Cu") (net "GND"))))"#;
+        let project = r#"{"net_settings": {"classes": [
+              {"name": "Default", "clearance": 0.15, "track_width": 0.25, "via_diameter": 0.6, "via_drill": 0.3},
+              {"name": "BUS", "clearance": 0.15, "track_width": 0.2}],
+              "netclass_patterns": [{"pattern": "/D*", "netclass": "BUS"}, {"pattern": "/CLK", "netclass": "BUS"}]}}"#;
+        let dru = r#"(version 1)
+            (rule "bus length" (condition "A.NetClass == 'BUS'")
+              (constraint length (min 25mm) (max 27mm)))
+            (rule "bus skew inner" (condition "A.NetClass == 'BUS' && A.Layer == 'In1.Cu'")
+              (constraint skew (max 0.5mm)))
+            (rule "time" (condition "A.NetName == '/TIME'")
+              (constraint length (min 450ps) (max 550ps)))"#;
+        let (directory, path) = project_directory("lengths", project, Some(dru));
+        let board = directory.join("board.kicad_pcb");
+        fs::write(&board, pcb).unwrap();
+        let config = resolve_project_rules(&path, &board).unwrap();
+        let rules = &config.length_rules;
+        assert_eq!(rules.len(), 2, "{rules:?}");
+        let length = rules.iter().find(|rule| rule.constraint == "length").unwrap();
+        assert_eq!(length.rule, "bus length");
+        assert_eq!((length.min, length.max), (Some(25.0), Some(27.0)));
+        assert_eq!(
+            length
+                .nets
+                .iter()
+                .map(|member| member.net.as_str())
+                .collect::<Vec<_>>(),
+            ["CLK", "D0", "D1"]
+        );
+        assert!(length.nets.iter().all(|member| member.vias && member.layers.len() == 3));
+        // The skew rule holds on In1.Cu only: its nets' tracks there, no
+        // via (KiCad evaluates a via's rules on F.Cu).
+        let skew = rules.iter().find(|rule| rule.constraint == "skew").unwrap();
+        assert_eq!(skew.max, Some(0.5));
+        assert!(
+            skew.nets
+                .iter()
+                .all(|member| member.layers == ["In1.Cu"] && !member.vias)
+        );
+        // A time-domain bound is no length: still unmodelled. The others
+        // are reported kept once length matching is on.
+        let report = config.project_rules.as_ref().unwrap();
+        assert!(report.unmodelled.iter().any(|line| line.contains("'time'")));
+        assert_eq!(report.unmodelled.len(), 3, "{:?}", report.unmodelled);
+        let kept = crate::board_router::with_lengths(&config);
+        let report = kept.project_rules.as_ref().unwrap();
+        let status = |rule: &str| {
+            report
+                .custom_rules
+                .iter()
+                .find(|entry| entry.rule == rule)
+                .map(|entry| entry.status.clone())
+        };
+        assert_eq!(status("bus length").as_deref(), Some("approximated"));
+        assert_eq!(status("bus skew inner").as_deref(), Some("applied"));
+        assert_eq!(status("time").as_deref(), Some("unmodelled"));
+        assert_eq!(report.unmodelled.len(), 1, "{:?}", report.unmodelled);
+        let off = crate::board_router::with_lengths(&KiCadBoardRouterConfig {
+            length_matching: Some(false),
+            ..config.clone()
+        });
+        assert_eq!(off.project_rules.as_ref().unwrap().unmodelled.len(), 3);
+        fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

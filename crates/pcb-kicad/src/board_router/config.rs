@@ -197,6 +197,22 @@ pub struct KiCadBoardRouterConfig {
     /// rules, not read from a file).
     #[serde(skip)]
     pub diff_pair_rules: BTreeMap<String, KiCadDiffPairRule>,
+    /// Length and skew rules (docs/router.md, "Length and skew rules"):
+    /// the custom rules' `length` and `skew` constraints over single nets
+    /// and groups of nets are kept after the route: a net shorter than a
+    /// `length` minimum, or further than a `skew` maximum below the
+    /// longest net of its rule, gets a meander (a KiCad tuning pattern) on
+    /// a straight track of its route; a `length` maximum is checked and
+    /// reported (`lengths` in the verdict), not kept by the search. Route
+    /// mode and layouts alike; on by default where the project has such a
+    /// rule. `PCB_ROUTER_LENGTH_MATCHING=0` (or `1`) decides where the
+    /// settings name none.
+    #[serde(default)]
+    pub length_matching: Option<bool>,
+    /// The project's `length` and `skew` rules with the nets they hold for
+    /// (set by the project's rules, not read from a file).
+    #[serde(skip)]
+    pub length_rules: Vec<KiCadLengthRule>,
     /// Router `via_reduction_rounds`: via reduction rounds after the board
     /// is complete (default 3).
     #[serde(default)]
@@ -634,6 +650,38 @@ pub struct KiCadDiffPairRule {
     pub asked: Option<String>,
 }
 
+/// One custom rule's `length` or `skew` constraint over the nets it holds
+/// for (`project_rules`, `length_rules`). KiCad evaluates the rule per
+/// track and via and groups what it holds for by the rule: a net's length
+/// is that of its items the rule applies to (`layers`, `vias`), and a
+/// `skew` compares every net of the group with the longest (within each
+/// differential pair only with `within_diff_pairs`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KiCadLengthRule {
+    /// The rule's name in the .kicad_dru.
+    pub rule: String,
+    /// `length` or `skew`.
+    pub constraint: String,
+    /// The bounds, millimetres.
+    pub min: Option<f64>,
+    pub opt: Option<f64>,
+    pub max: Option<f64>,
+    /// `(within_diff_pairs)`: a skew compares the two nets of each pair.
+    pub within_diff_pairs: bool,
+    pub nets: Vec<KiCadLengthMember>,
+}
+
+/// A net of a `KiCadLengthRule`: the copper layers (by name) on which the
+/// rule is the one KiCad applies to its tracks, and whether it applies to
+/// its vias (a through via is on F.Cu to KiCad's rules).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KiCadLengthMember {
+    /// The net, normalized like `connection_rules`' keys.
+    pub net: String,
+    pub layers: Vec<String>,
+    pub vias: bool,
+}
+
 /// Why differential pairs route coupled or not (`diff_pairs_choice`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct KiCadDiffPairsChoice {
@@ -646,6 +694,19 @@ pub struct KiCadDiffPairsChoice {
 }
 
 impl KiCadBoardRouterConfig {
+    /// Whether the length and skew rules are kept (`length_matching`):
+    /// the settings' value, else `PCB_ROUTER_LENGTH_MATCHING` (`0` off),
+    /// else on.
+    pub fn length_matching_on(&self) -> bool {
+        if let Some(on) = self.length_matching {
+            return on;
+        }
+        match std::env::var("PCB_ROUTER_LENGTH_MATCHING") {
+            Ok(value) if !value.is_empty() => value != "0",
+            _ => true,
+        }
+    }
+
     /// Whether differential pairs route coupled (`diff_pairs_choice`).
     pub fn diff_pairs_on(&self) -> bool {
         self.diff_pairs_choice().on

@@ -615,9 +615,10 @@ impl KiCadRepairs {
 /// Environment variables that change what a run does or reports (the
 /// router's seed and switches, KiCad's check and its repairs, the budgets'
 /// guards), echoed into the verdict when set.
-pub const RESULT_ENVIRONMENT: [&str; 17] = [
+pub const RESULT_ENVIRONMENT: [&str; 18] = [
     "PCB_ROUTER_SEED",
     "PCB_ROUTER_DIFF_PAIRS",
+    "PCB_ROUTER_LENGTH_MATCHING",
     "PCB_ROUTER_PIN_ROW_COST",
     "PCB_ROUTER_SEEDS",
     "PCB_ROUTER_ISLAND_STUBS",
@@ -704,6 +705,8 @@ pub struct KiCadRunFacts {
     /// Route mode with `diff_pairs`: the differential pairs found and what
     /// became of them (`KiCadDiffPairs`, less the per-pair list).
     pub diff_pairs: Option<crate::KiCadDiffPairs>,
+    /// The length and skew rules' nets after the route (`KiCadNetLength`).
+    pub lengths: Vec<crate::KiCadNetLength>,
     /// The project's routing rules the router does not keep
     /// (`KiCadProjectRulesReport::unmodelled`).
     pub unmodelled_rules: Vec<String>,
@@ -804,6 +807,7 @@ impl KiCadRunFacts {
             room: None,
             repairs: None,
             diff_pairs: None,
+            lengths: Vec::new(),
             unmodelled_rules: Vec::new(),
             input_warnings: Vec::new(),
             board_mark_overlaps: Vec::new(),
@@ -959,6 +963,14 @@ pub struct KiCadVerdict {
     /// per-pair list is in board-router.json).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub diff_pairs: Option<crate::KiCadDiffPairs>,
+    /// The project's length and skew rules (`length_matching`): per rule
+    /// and net its `length_mm` from the written board, the `target_mm`
+    /// the meander aims at, the bounds KiCad holds it to (`min_mm`,
+    /// `max_mm`; a skew rule's from its group's longest net), the
+    /// `meander_mm` added, whether it is `within` them and, if not, a
+    /// `note` why. Absent where the project has no such rule.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub lengths: Vec<crate::KiCadNetLength>,
     /// The result-changing environment variables that were set
     /// (`RESULT_ENVIRONMENT`), with their values, and the binary's build
     /// (`pcb_maker_version`: commit and build date).
@@ -1566,6 +1578,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         room: facts.room.clone(),
         repairs: facts.repairs.clone(),
         diff_pairs: facts.diff_pairs.clone(),
+        lengths: facts.lengths.clone(),
         environment: result_environment(),
         pours: facts.pours.clone(),
         moves: facts.moves.clone(),
@@ -1650,6 +1663,7 @@ pub fn route_facts(
         pairs.pairs.clear();
         pairs
     });
+    facts.lengths = result.lengths.clone();
     facts.routable_connections = result.routable_connections;
     facts.routed_connections = result.routed_connections;
     facts.unconnected_terminals = result.unconnected_terminals;

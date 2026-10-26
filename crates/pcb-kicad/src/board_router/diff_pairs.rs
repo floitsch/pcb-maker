@@ -23,6 +23,7 @@
 //! end) is routed for the pair's nets with everything else kept (the
 //! *fallback*).
 
+use super::meander::{Tuned, Tuning, bumps, copper_length, polyline_length, tuning_pattern_expr};
 use super::*;
 use pcb_router as core;
 
@@ -2207,56 +2208,18 @@ pub(crate) fn write_pair_copper(
             }
             items.push(segment);
         }
-        items.push(tuning_pattern_expr(meander, &layer, members));
+        let tuned = Tuned {
+            net: &meander.net,
+            width: meander.width,
+            points: &meander.points,
+            amplitude: meander.amplitude,
+            spacing: meander.spacing,
+            added: meander.added,
+            tuning: Tuning::PairSkew { gap: meander.gap },
+        };
+        items.push(tuning_pattern_expr(&tuned, &layer, members));
     }
     Ok(())
-}
-
-/// A KiCad tuning pattern (`generated`) over a meander's tracks.
-fn tuning_pattern_expr(meander: &Meander, layer: &str, members: Vec<Expr>) -> Expr {
-    let atom = |text: String| Expr::Atom(text);
-    let form = |head: &str, values: Vec<Expr>| {
-        let mut items = vec![atom(head.into())];
-        items.extend(values);
-        Expr::List(items)
-    };
-    let number = |value: f64| atom(format!("{value:.6}"));
-    let xy = |point: Point| form("xy", vec![number(point[0]), number(point[1])]);
-    let (first, last) = (meander.points[0], meander.points[meander.points.len() - 1]);
-    let identity = format!(
-        "pcb-maker:tuning-pattern:{}:{:.9}:{:.9}:{:.9}:{:.9}:{layer}",
-        meander.net, first[0], first[1], last[0], last[1]
-    );
-    let text = |value: &str| atom(quote(value));
-    let mut items = vec![
-        form("uuid", vec![text(&deterministic_uuid_for(&identity))]),
-        form("type", vec![atom("tuning_pattern".into())]),
-        form("name", vec![text("Tuning Pattern")]),
-        form("layer", vec![text(layer)]),
-        form("base_line", vec![form("pts", vec![xy(first), xy(last)])]),
-        form("corner_radius_percent", vec![atom("0".into())]),
-        form("end", vec![xy(last)]),
-        form("initial_side", vec![text("default")]),
-        form("is_time_domain", vec![atom("no".into())]),
-        form("last_diff_pair_gap", vec![number(meander.gap)]),
-        form("last_netname", vec![text(&written_net_name(&meander.net))]),
-        form("last_status", vec![text("tuned")]),
-        form("last_track_width", vec![number(meander.width)]),
-        form("last_tuning_length", vec![number(meander.added)]),
-        form("max_amplitude", vec![number(meander.amplitude)]),
-        form("min_amplitude", vec![number(meander.amplitude)]),
-        form("min_spacing", vec![number(meander.spacing)]),
-        form("origin", vec![xy(first)]),
-        form("override_custom_rules", vec![atom("no".into())]),
-        form("rounded", vec![atom("no".into())]),
-        form("single_sided", vec![atom("yes".into())]),
-        form("target_skew", vec![number(0.0)]),
-        form("target_skew_max", vec![number(meander.gap)]),
-        form("target_skew_min", vec![number(-meander.gap)]),
-        form("tuning_mode", vec![text("diff_pair_skew")]),
-    ];
-    items.push(form("members", members));
-    form("generated", items)
 }
 
 /// A routed board with its pairs' links as nets (`plan_pairs`) turned back
@@ -3164,43 +3127,6 @@ fn return_via_clear(
                 || violation.other == hole
                 || violation.other.starts_with(&format!("{own} "))
         })
-}
-
-/// A meander's polyline on the track from `a` to `b`: `count` bumps of
-/// `height` toward `outward`, each `spacing` wide and `spacing` apart,
-/// starting `from` along the track, their corners cut at 45 degrees.
-fn bumps(
-    (a, b): (Point, Point),
-    outward: Point,
-    from: f64,
-    count: usize,
-    height: f64,
-    spacing: f64,
-) -> Vec<Point> {
-    let u = unit(sub(b, a));
-    let at = |x: f64, y: f64| add(a, add(scale(u, x), scale(outward, y)));
-    let cut = (height / 2.0).min(spacing / 4.0);
-    let mut points = Vec::new();
-    let mut x = from;
-    for _ in 0..count {
-        points.extend([
-            at(x, 0.0),
-            at(x, height - cut),
-            at(x + cut, height),
-            at(x + spacing - cut, height),
-            at(x + spacing, height - cut),
-            at(x + spacing, 0.0),
-        ]);
-        x += 2.0 * spacing;
-    }
-    points
-}
-
-fn polyline_length(points: &[Point]) -> f64 {
-    points
-        .windows(2)
-        .map(|pair| core::geometry::distance(pair[0], pair[1]))
-        .sum()
 }
 
 /// Matches a pair's lengths (KiCad's `skew` and `length`): the two nets'
@@ -4385,37 +4311,6 @@ pub(crate) fn copper_heights(pcb: &Expr) -> BTreeMap<String, f64> {
         .enumerate()
         .map(|(index, name)| (name, thickness * index as f64 / last))
         .collect()
-}
-
-/// A net's length from its copper: its tracks (layer, start, end) and its
-/// vias, each via the height between the outermost layers of the tracks
-/// that end on it (`heights` per layer; a via joining no two layers counts
-/// nothing).
-fn copper_length(tracks: &[(usize, Point, Point)], vias: &[Point], heights: &[f64]) -> f64 {
-    let along: f64 = tracks
-        .iter()
-        .map(|&(_, start, end)| core::geometry::distance(start, end))
-        .sum();
-    let through: f64 = vias
-        .iter()
-        .map(|&via| {
-            let zs: Vec<f64> = tracks
-                .iter()
-                .filter(|&&(_, start, end)| {
-                    core::geometry::distance(start, via) < 1.0e-4
-                        || core::geometry::distance(end, via) < 1.0e-4
-                })
-                .filter_map(|&(layer, ..)| heights.get(layer).copied())
-                .collect();
-            let (low, high) = zs
-                .iter()
-                .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), &z| {
-                    (low.min(z), high.max(z))
-                });
-            if high > low { high - low } else { 0.0 }
-        })
-        .sum();
-    along + through
 }
 
 /// After the route: each coupled pair's uncoupled length (the longer net's

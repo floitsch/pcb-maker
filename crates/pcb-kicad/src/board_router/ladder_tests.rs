@@ -216,6 +216,7 @@ fn report(open: usize, work: f64, pitch: f64) -> KiCadBoardRouterResult {
         wall_accounting: None,
         kept_copper: None,
         diff_pairs: None,
+        lengths: Vec::new(),
         warnings: Vec::new(),
         pour_quality: Vec::new(),
         pour_loss: None,

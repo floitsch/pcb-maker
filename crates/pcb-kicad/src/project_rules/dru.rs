@@ -1146,6 +1146,8 @@ pub(crate) fn finding_severity(kind: &str, severities: &BTreeMap<String, String>
         "via_diameter" => ("via_diameter", "error"),
         "hole_size" => ("drill_out_of_range", "error"),
         "annular_width" => ("annular_width", "error"),
+        "length" => ("length_out_of_range", "error"),
+        "skew" => ("skew_out_of_range", "error"),
         _ => return "error".into(),
     };
     severities
@@ -2423,12 +2425,25 @@ pub(crate) fn track_constraint(
     copper: &[String],
     kind: &str,
 ) -> Option<Picked> {
+    track_rule(rules, net, layer, copper, kind).map(|(_, picked)| picked)
+}
+
+/// `track_constraint` with the rule's index in `rules`: KiCad groups the
+/// items of a `length` or `skew` constraint by the rule that applies to
+/// them (two rules of one name are two groups).
+pub(crate) fn track_rule(
+    rules: &[Rule],
+    net: &NetFacts,
+    layer: &str,
+    copper: &[String],
+    kind: &str,
+) -> Option<(usize, Picked)> {
     let item = Item {
         kind: Kind::Track,
         net: Some(net),
         layer,
     };
-    rules.iter().rev().find_map(|rule| {
+    rules.iter().enumerate().rev().find_map(|(index, rule)| {
         if rule.severity.as_deref() == Some("ignore") || !rule_layers(rule, copper).contains(&layer)
         {
             return None;
@@ -2450,11 +2465,16 @@ pub(crate) fn track_constraint(
                 .truth(&condition)
             }
         };
-        (holds == T3::True).then(|| Picked {
-            rule: rule.name.clone(),
-            min: constraint.min,
-            opt: constraint.opt,
-            max: constraint.max,
+        (holds == T3::True).then(|| {
+            (
+                index,
+                Picked {
+                    rule: rule.name.clone(),
+                    min: constraint.min,
+                    opt: constraint.opt,
+                    max: constraint.max,
+                },
+            )
         })
     })
 }

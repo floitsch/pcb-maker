@@ -153,6 +153,15 @@ pub fn route_kicad_board(
     } else {
         config
     };
+    // Length and skew rules (`length_matching`): meanders when each attempt
+    // is written (`match_lengths`), the rules reported kept.
+    let length_config;
+    let config = if !config.length_rules.is_empty() && config.length_matching_on() {
+        length_config = with_lengths(config);
+        &length_config
+    } else {
+        config
+    };
     // The topological engine makes one attempt, pour nets as tracks.
     if config.engine.as_deref() == Some("topological") {
         let mut report =
@@ -259,6 +268,22 @@ pub fn route_kicad_board(
             if report.on { "on" } else { "off" },
             report.default,
             report.reason
+        );
+    }
+    if !result.lengths.is_empty() {
+        let board = output_directory.join(format!("{board_id}.kicad_pcb"));
+        if let Ok(text) = fs::read_to_string(&board)
+            && let Ok(pcb) = parse(&text)
+        {
+            measure_lengths(&mut result.lengths, config, &pcb);
+        }
+        let within = result.lengths.iter().filter(|entry| entry.within).count();
+        let meanders: f64 = result.lengths.iter().map(|entry| entry.meander_mm).sum();
+        eprintln!(
+            "lengths: {} of {} nets of length and skew rules within their bounds, meanders {:.2} mm",
+            within,
+            result.lengths.len(),
+            meanders
         );
     }
     if let Some(report) = result.diff_pairs.as_mut().filter(|report| report.on) {
@@ -957,6 +982,7 @@ pub(crate) fn finish_routed_board(
         wall_accounting: None,
         kept_copper: None,
         diff_pairs: None,
+        lengths: Vec::new(),
         warnings: input_warnings(pcb),
         pour_quality: Vec::new(),
         pour_loss: None,

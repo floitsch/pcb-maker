@@ -62,6 +62,11 @@ pub struct KiCadBoardRouterResult {
     /// became of them; absent with the switch off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub diff_pairs: Option<super::KiCadDiffPairs>,
+    /// The length and skew rules' nets after the route (`length_matching`,
+    /// docs/router.md "Length and skew rules"): per rule and net its
+    /// length, target, bounds and meander; absent without such rules.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub lengths: Vec<super::KiCadNetLength>,
     /// The pin assignment chosen before routing, if pins were swappable.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pin_swaps: Option<KiCadPinSwapResult>,

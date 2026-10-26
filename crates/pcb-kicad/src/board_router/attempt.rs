@@ -332,7 +332,18 @@ pub(super) fn write_attempt(
     if let Some((_, copper, _)) = &paired {
         write_pair_copper(&mut pcb, copper, layer_names)?;
     }
+    // The length and skew rules: meanders on the routes of the nets that
+    // lack length (the pairs' coupled nets are the pairs' own).
+    let coupled: BTreeSet<String> = paired
+        .iter()
+        .flat_map(|(_, _, pairs)| pairs.pairs.iter())
+        .filter(|pair| pair.links_coupled > 0)
+        .flat_map(|pair| [pair.positive.clone(), pair.negative.clone()])
+        .collect();
+    let (patterns, lengths) =
+        match_lengths(board, &mut result, config, &heights, layer_names, &coupled);
     let nets = emit_routes(&mut pcb, board, &result, layer_names, true)?;
+    write_length_patterns(&mut pcb, board, &patterns, layer_names)?;
     let mut report = finish_routed_board(
         &pcb,
         board,
@@ -347,5 +358,6 @@ pub(super) fn write_attempt(
     )?;
     report.warnings = warnings;
     report.diff_pairs = paired.map(|(_, _, pairs)| pairs);
+    report.lengths = lengths;
     Ok(report)
 }
