@@ -290,6 +290,11 @@ pub struct PadSpokes {
     pub spoke_angle: f64,
     /// A circle, or an oval of equal sides.
     pub circular: bool,
+    /// A custom pad's frame (its copper's box at orientation 0, from the
+    /// box's centre): the router takes it only for the measurement
+    /// (`Config::measured_thermals`); routing gives a custom pad spokes
+    /// along the axes of its copper's box, as before.
+    pub custom: bool,
 }
 
 impl PadSpokes {

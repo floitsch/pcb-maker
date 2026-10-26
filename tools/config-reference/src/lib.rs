@@ -343,6 +343,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "turns off the router's `lost_spoke_repair` (other nets rerouted around a starved pad's cut spokes after the clean-up).",
     ),
     (
+        "PCB_ROUTER_MEASURED_THERMALS",
+        Kind::Switch,
+        "turns on the router's `measured_thermals` while routing too (the measurement's pour model in the in-route repairs: thermal vias by their own zone connection, custom pads' spokes in KiCad's frame, blocked spokes over the pad and necks the lattice misses in the DRC's track rule).",
+    ),
+    (
         "PCB_ROUTER_NO_RECLAIM",
         Kind::Switch,
         "turns off the pour model's reclaimed fill (a pour's fill inside another net's zone of a higher priority where that zone's fill leaves room, `Router::reclaimed_fill`).",

@@ -24,7 +24,10 @@ pub fn dump_kicad_pour_map(
     let pcb = crate::canonical_order::parse_board(&source)?;
     let Lowered { board, .. } = lower(&pcb, config, true)?;
     let layer_names = LayerTable::from_pcb(&pcb)?.names;
-    let mut router = core::router::Router::new(&board, &core_config(config));
+    // The pour model as the measurement takes it (`measured_thermals`).
+    let mut router_config = core_config(config);
+    router_config.measured_thermals = true;
+    let mut router = core::router::Router::new(&board, &router_config);
     router.adopt_existing_copper();
     if std::env::var_os("PCB_ROUTER_DUMP_MANUAL_SPOKES").is_some() {
         eprintln!("manual spokes: {} added", router.add_manual_spokes());

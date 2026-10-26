@@ -152,7 +152,10 @@ pub fn measure_board_pours(
     // parse is ten times its file).
     drop(pcb);
     drop(text);
-    let mut router = core::router::Router::new(&board, &core_config(config));
+    // The pour model as the measurement takes it (`measured_thermals`).
+    let mut router_config = core_config(config);
+    router_config.measured_thermals = true;
+    let mut router = core::router::Router::new(&board, &router_config);
     router.adopt_existing_copper();
     let (report, starved) = router.pour_report_with_starved();
     drop(router);

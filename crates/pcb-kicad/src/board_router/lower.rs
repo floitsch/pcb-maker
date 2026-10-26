@@ -2253,6 +2253,7 @@ fn pad_spokes_frame(pad: &Expr, center: [f64; 2]) -> Result<core::PadSpokes, Str
             90.0
         }),
         circular: shape == "circle" || (shape == "oval" && (size[0] - size[1]).abs() < 1.0e-9),
+        custom: shape == "custom",
     })
 }
 

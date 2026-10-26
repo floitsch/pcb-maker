@@ -163,6 +163,19 @@ pub struct Config {
     /// connections fewer open and three passes more than off, no new
     /// error either way.
     pub exact_escape_stubs: bool,
+    /// The pour model as the measurement of a written board takes it
+    /// (`measured_board`'s starved thermals, its solid step, and
+    /// dump-pour-map), closer to KiCad's DRC than routing's: a pad merged
+    /// into its terminal (an exposed pad's thermal via) by its own zone
+    /// connection (one set to solid has no spokes and no relief), a custom
+    /// pad's spokes in KiCad's frame (`PadSpokes::custom`), and in the
+    /// DRC's track rule a blocked spoke's part over its pad as fill and a
+    /// piece joined through a neck the lattice misses as kept
+    /// (`Router::neck_joined`). Off while routing (the default), so routes
+    /// stay as they were: on, the in-route repairs see it too and routes
+    /// move (docs/router.md, "Thermal vias, custom pads and necks").
+    /// `PCB_ROUTER_MEASURED_THERMALS=1` turns it on everywhere.
+    pub measured_thermals: bool,
     /// The thermal spokes KiCad's DRC wants a pad to have into each zone
     /// (the board setup's `min_resolved_spokes`, KiCad's default 2; 0
     /// where the project ignores starved thermals): the spoke model's
@@ -389,6 +402,7 @@ impl Default for Config {
             escape_stub_mm: 0.0,
             exact_escape_stubs: super::escapes::exact_escapes_override().unwrap_or(true),
             min_spokes: 2,
+            measured_thermals: std::env::var_os("PCB_ROUTER_MEASURED_THERMALS").is_some(),
             global_routing: false,
             neck_reach: 1.5,
             fixed_plane_stubs: false,

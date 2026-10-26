@@ -2246,6 +2246,7 @@ fn a_turned_pads_spokes_turn_with_it() {
         orientation: 45.0,
         spoke_angle: 90.0,
         circular: false,
+        custom: false,
     };
     let spokes = frame.spokes(0.6);
     let along_x = spokes.iter().find(|spoke| close(spoke.0, [d, -d])).unwrap();
@@ -4727,7 +4728,7 @@ fn a_thermal_via_set_to_solid_is_no_thermal_pad() {
     // exposed pad) is no thermal pad, so it has no spokes to count; the
     // exposed pad set to solid leaves its thermal via a thermal pad
     // (ray4477's U1.33).
-    let records_of_the_via = |solid: Vec<usize>| {
+    let records_of_the_via = |solid: Vec<usize>, measured: bool| {
         let mut obstacles = vec![
             copper(rect([5.0, 5.0], [0.8, 0.4]), 0, "P.1"),
             copper(
@@ -4771,6 +4772,7 @@ fn a_thermal_via_set_to_solid_is_no_thermal_pad() {
             &board,
             &Config {
                 pitches: vec![0.1],
+                measured_thermals: measured,
                 ..Config::default()
             },
         );
@@ -4782,14 +4784,19 @@ fn a_thermal_via_set_to_solid_is_no_thermal_pad() {
             .collect();
         (via, router.thermal_ring_pads(0))
     };
-    let (via, rings) = records_of_the_via(vec![1]);
+    let (via, rings) = records_of_the_via(vec![1], true);
     assert!(via.is_empty());
     assert!(
         rings
             .iter()
             .all(|pads| pads.iter().all(|(pad, _)| *pad != 1))
     );
-    let (via, rings) = records_of_the_via(vec![0]);
+    let (via, rings) = records_of_the_via(vec![0], true);
+    assert_eq!(via, vec![0, 1]);
+    assert!(rings[0].iter().any(|(pad, _)| *pad == 1));
+    // Routing keeps the zone's relief for every merged pad (the label's
+    // isolation aside): the measurement alone takes the pad's own.
+    let (via, rings) = records_of_the_via(vec![1], false);
     assert_eq!(via, vec![0, 1]);
     assert!(rings[0].iter().any(|(pad, _)| *pad == 1));
 }

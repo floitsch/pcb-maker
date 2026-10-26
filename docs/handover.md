@@ -489,6 +489,7 @@ Switches and experiment hooks (change the result):
 - `PCB_ROUTER_NO_SPOKELESS_TRACKS`: turns off the router's `spokeless_tracks` (a straight track into kept fill for a pad the spoke model sees without a spoke).
 - `PCB_ROUTER_NO_APART_TREES`: turns off the router's `apart_trees` (terminals no path reaches from their net's tree joined among themselves).
 - `PCB_ROUTER_NO_LOST_SPOKES`: turns off the router's `lost_spoke_repair` (other nets rerouted around a starved pad's cut spokes after the clean-up).
+- `PCB_ROUTER_MEASURED_THERMALS`: turns on the router's `measured_thermals` while routing too (the measurement's pour model in the in-route repairs: thermal vias by their own zone connection, custom pads' spokes in KiCad's frame, blocked spokes over the pad and necks the lattice misses in the DRC's track rule).
 - `PCB_ROUTER_NO_RECLAIM`: turns off the pour model's reclaimed fill (a pour's fill inside another net's zone of a higher priority where that zone's fill leaves room, `Router::reclaimed_fill`).
 - `PCB_ROUTER_SEED`: `N`: perturbs the net order and seeds the history with noise, so that one board routes many ways.
 - `PCB_NARROW_RESERVE`: `share`: the share of the ladder's first attempt's work kept back for the narrow-signal step (wins over the router setting `narrow_reserve_share`; default 0.75).

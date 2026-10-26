@@ -682,13 +682,16 @@ impl Router {
             {
                 // A solid connection of the label is the terminal's own
                 // (the largest pad, its padstack's shapes too); the pads
-                // merged into it have their own (`merged_pad_thermal`):
-                // KiCad cuts no relief around a via set to solid.
+                // merged into it keep the zone's thermal relief, and in the
+                // measurement have their own (`merged_pad_thermal`: KiCad
+                // cuts no relief around a via set to solid).
                 if description.terminals.get(merged.host).is_some_and(|host| {
                     if merged.padstack {
                         thermal(&host.label)
-                    } else {
+                    } else if self.config.measured_thermals {
                         self.merged_pad_thermal(merged)
+                    } else {
+                        self.board.isolated_pads.binary_search(&host.label).is_err()
                     }
                 }) {
                     pads.push((merged.pad, reach));

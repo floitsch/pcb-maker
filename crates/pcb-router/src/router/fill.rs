@@ -517,7 +517,7 @@ impl<'a> FillProbe<'a> {
         for (pad, reach) in &self.rings[layer] {
             let gap = reach - half;
             let shape = &board.obstacles[*pad].shape;
-            let minor = match board.pad_spokes.get(pad) {
+            let minor = match self.router.spoke_frame(*pad) {
                 Some(frame) => 2.0 * frame.half[0].min(frame.half[1]),
                 None => {
                     let bounds = shape.aabb();

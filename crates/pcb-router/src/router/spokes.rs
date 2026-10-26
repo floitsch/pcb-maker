@@ -213,7 +213,7 @@ impl Router {
             // own copper (an exposed pad's thermal via) has its own zone
             // connection, which KiCad's DRC checks by pad
             // (`merged_pad_thermal`: glasgow's U1.57, whose vias are set
-            // to solid inside a thermal exposed pad).
+            // to solid inside a thermal exposed pad), in the measurement.
             let merged = self.board.merged_pads.iter().find(|merged| {
                 merged.net == net
                     && !merged.padstack
@@ -221,8 +221,8 @@ impl Router {
                     && merged.host == terminal
             });
             let skipped = match merged {
-                Some(merged) => !self.merged_pad_thermal(merged),
-                None => {
+                Some(merged) if self.config.measured_thermals => !self.merged_pad_thermal(merged),
+                _ => {
                     isolated(terminal)
                         || (solid_pad(terminal)
                             && (pad_index == description.terminals[terminal].pad
@@ -1068,7 +1068,11 @@ impl Router {
                 return true;
             }
             // A piece holding nothing may be one outline of KiCad's with
-            // a kept piece the lattice cuts it from (`neck_joined`).
+            // a kept piece the lattice cuts it from (`neck_joined`; the
+            // measurement's).
+            if !self.config.measured_thermals {
+                return false;
+            }
             if let Some(known) = neck_kept.borrow().get(&(layer, piece)) {
                 return *known;
             }
@@ -1327,7 +1331,7 @@ impl Router {
                         // the part over the pad stays fill (video's
                         // U15.59, its tracks to the pad's edge end there).
                         let reach = if matches!(outcome, SpokeOutcome::Blocked) {
-                            if along > spoke.edge + 1.0e-6 {
+                            if !self.config.measured_thermals || along > spoke.edge + 1.0e-6 {
                                 return false;
                             }
                             spoke.edge
@@ -1731,7 +1735,7 @@ impl Router {
         let d = std::f64::consts::FRAC_1_SQRT_2;
         let diagonals = [[d, d], [d, -d], [-d, d], [-d, -d]];
         let axes = [[1.0, 0.0], [-1.0, 0.0], [0.0, 1.0], [0.0, -1.0]];
-        if let Some(frame) = self.board.pad_spokes.get(&pad).filter(|_| frames) {
+        if let Some(frame) = self.spoke_frame(pad).filter(|_| frames) {
             let spokes = frame.spokes(reach);
             let first = spokes[0].0;
             let round = first[0].abs() > 0.3 && first[1].abs() > 0.3;
@@ -2006,6 +2010,16 @@ impl Router {
             }
         }
         false
+    }
+
+    /// The frame of a pad's thermal spokes as KiCad builds them, where the
+    /// lowering gave one: a custom pad's only for the measurement
+    /// (`Config::measured_thermals`).
+    pub(super) fn spoke_frame(&self, pad: usize) -> Option<&crate::board::PadSpokes> {
+        self.board
+            .pad_spokes
+            .get(&pad)
+            .filter(|frame| !frame.custom || self.config.measured_thermals)
     }
 
     /// Whether a pad merged into its terminal's larger pad (an exposed
