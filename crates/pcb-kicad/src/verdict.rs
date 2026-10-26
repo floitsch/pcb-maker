@@ -1216,7 +1216,7 @@ fn next_actions(
     }
     for pour in facts.pours.iter().filter(|pour| pour.in_many_pieces()) {
         actions.push(format!(
-            "the {} pour is in many pieces ({}): \"keep_whole\" in its add_pours entry keeps other nets' tracks and vias out of it under named parts or a box, so its main piece stays whole there; more room or layers give it more",
+            "the {} pour is in many pieces ({}): \"keep_whole\" in its add_pours entry keeps other nets' tracks and vias out of it under named parts or a box, so its main piece stays whole there (a region over another net's pad on that layer leaves the pad unreachable there: name parts or a box clear of other nets' pads on that layer, not a signal IC on it); more room or layers give it more",
             pour.net,
             pour.line()
         ));
