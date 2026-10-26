@@ -838,6 +838,9 @@ pub(crate) struct Pour {
     pub(super) solid: bool,
     /// `(fill (mode hatch) ...)`.
     pub(crate) hatch: Option<core::Hatch>,
+    /// `(fill (island_removal_mode 0|1|2) (island_area_min A))`
+    /// (`core::Plane::island_min_area`).
+    pub(super) island_min_area: Option<f64>,
     pub(crate) polygon: Vec<[f64; 2]>,
 }
 
@@ -915,6 +918,18 @@ pub(crate) fn pours(pcb: &Expr, layers: &LayerTable) -> Result<Vec<Pour>, String
                         .and_then(Expr::atom)
                         .is_none(),
                 }),
+            island_min_area: match zone
+                .child("fill")
+                .and_then(|fill| form_atom(fill, "island_removal_mode", 1))
+            {
+                Some("1") => None,
+                Some("2") => Some(
+                    zone.child("fill")
+                        .and_then(|fill| form_f64(fill, "island_area_min", 1).ok())
+                        .unwrap_or(10.0),
+                ),
+                _ => Some(0.0),
+            },
             polygon: rule_area_polygon_points(zone)?,
         });
     }

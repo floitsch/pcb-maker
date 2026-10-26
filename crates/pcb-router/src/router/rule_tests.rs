@@ -571,6 +571,7 @@ fn a_pad_of_a_pour_net_gets_its_via_beside_the_pad() {
         exclusive: false,
         solid: true,
         hatch: None,
+        island_min_area: Some(0.0),
     });
     let result = route(&board, &config(None));
     assert_eq!(result.status[0], NetStatus::Routed);

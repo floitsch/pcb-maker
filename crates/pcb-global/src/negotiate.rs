@@ -1029,6 +1029,7 @@ mod tests {
             exclusive: false,
             solid: false,
             hatch: None,
+            island_min_area: Some(0.0),
         });
         let route = crate::route(&board, &config());
         assert_eq!(route.score.unrouted, 0);

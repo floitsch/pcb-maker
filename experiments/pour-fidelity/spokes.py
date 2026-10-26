@@ -238,13 +238,16 @@ def our_starved(row):
     # rule, KiCad's DRC checking each zone apart).
     if row.get("ours_seam_short", 0) > 0:
         return True
+    # The board's minimum spoke count (min_resolved_spokes; 0 where the
+    # project ignores starved thermals), as the dump gives it.
+    required = row.get("ours_required", 2)
     spokes, ignored = row["ours"], row.get("ours_island", 0)
-    if spokes == 0 and ignored == 0:
+    if required == 0 or (spokes == 0 and ignored == 0):
         return False
     spokes += row.get("ours_tracks", 0)
     if spokes == 0:
         spokes = ignored
-    return spokes < 2
+    return spokes < required
 
 
 def ours(dump):
@@ -260,7 +263,7 @@ def ours(dump):
             island = sum(1 for spoke in row["spokes"] if spoke.startswith("island"))
             # Other pads' spokes across the pad's ring count as its own.
             crossings = row.get("crossings", 0)
-            result[key] = {"ours": good + crossings, "ours_island": island, "ours_tracks": row.get("tracks", 0), "ours_crossings": crossings, "ours_seam_short": row.get("seam_short", 0), "our_spokes": row["spokes"], "round": row["round"]}
+            result[key] = {"ours": good + crossings, "ours_island": island, "ours_tracks": row.get("tracks", 0), "ours_crossings": crossings, "ours_seam_short": row.get("seam_short", 0), "ours_required": row.get("required", 2), "our_spokes": row["spokes"], "round": row["round"]}
     return result
 
 

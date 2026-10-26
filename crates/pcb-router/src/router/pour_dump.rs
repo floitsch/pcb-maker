@@ -69,7 +69,7 @@ impl Router {
                         .collect();
                     writeln!(
                         file,
-                        "{{\"net\": \"{}\", \"pad\": \"{}\", \"layer\": {}, \"anchor\": [{}, {}], \"round\": {}, \"spokes\": [{}], \"tracks\": {}, \"crossings\": {}, \"seam_short\": {}}}",
+                        "{{\"net\": \"{}\", \"pad\": \"{}\", \"layer\": {}, \"anchor\": [{}, {}], \"round\": {}, \"spokes\": [{}], \"tracks\": {}, \"crossings\": {}, \"seam_short\": {}, \"required\": {}}}",
                         name.replace('\\', "\\\\").replace('"', "\\\""),
                         terminal.label.replace('\\', "\\\\").replace('"', "\\\""),
                         record.layer,
@@ -80,6 +80,7 @@ impl Router {
                         record.tracks,
                         record.crossings,
                         record.seam_short,
+                        record.required,
                     )?;
                 }
             }

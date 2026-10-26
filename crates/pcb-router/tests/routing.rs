@@ -207,6 +207,7 @@ fn pour_connects_pads_with_stub_vias_only() {
         exclusive: false,
         solid: false,
         hatch: None,
+        island_min_area: Some(0.0),
     });
     let result = route(&builder.board, &config());
     assert_eq!(result.status, vec![NetStatus::Routed, NetStatus::Routed]);
@@ -251,6 +252,7 @@ fn plane_skeleton_is_trimmed_back_to_what_the_pour_cannot_provide() {
         exclusive: false,
         solid: false,
         hatch: None,
+        island_min_area: Some(0.0),
     });
     let config = Config {
         plane_skeleton: true,

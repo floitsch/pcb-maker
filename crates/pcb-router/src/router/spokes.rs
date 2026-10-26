@@ -933,6 +933,51 @@ impl Router {
                 }
             }
         }
+        // A piece holding a track or via of the net is kept too: KiCad's
+        // island removal deletes only pieces with no connection at all
+        // (anthracite's J107.4 on In2.Cu: its tracks end, on other layers,
+        // over a piece of In2's fill that holds a via of the net and no
+        // pad; KiCad counts them).
+        let copper_pieces: Vec<u32> = branch_pieces
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !skip(*index))
+            .flat_map(|(_, pieces)| pieces.iter().map(|(piece, _)| *piece))
+            .collect();
+        for piece in copper_pieces {
+            terminal_roots.insert(find(parent, piece as usize));
+        }
+        // What the zones' island removal keeps of a piece holding nothing
+        // (`Plane::island_min_area`): all of them (never), those of the
+        // area (by area), none (always).
+        let piece_nodes: std::cell::RefCell<HashMap<(usize, u32), usize>> = Default::default();
+        let counted_layers: std::cell::RefCell<Vec<usize>> = Default::default();
+        let kept_bare = |layer: usize, point: crate::geometry::Point, piece: u32| {
+            let Some(plane) = self.board.planes.iter().find(|plane| {
+                plane.net == net
+                    && plane.layer == layer
+                    && crate::geometry::point_in_polygon(point, &plane.polygon)
+            }) else {
+                return false;
+            };
+            match plane.island_min_area {
+                None => true,
+                Some(minimum) if minimum > 0.0 => {
+                    let mut nodes = piece_nodes.borrow_mut();
+                    if !counted_layers.borrow().contains(&layer) {
+                        counted_layers.borrow_mut().push(layer);
+                        for label in &pours.label[layer] {
+                            if *label != 0 {
+                                *nodes.entry((layer, *label)).or_default() += 1;
+                            }
+                        }
+                    }
+                    nodes.get(&(layer, piece)).copied().unwrap_or(0) as f64 * pitch * pitch
+                        >= minimum
+                }
+                Some(_) => false,
+            }
+        };
         let kept_piece = |parent: &mut Vec<usize>, layer: usize, point: crate::geometry::Point| {
             let radius = self.board.classes[state.plane_class[layer]].trace_width / 2.0 + pitch;
             let mut best: Option<(f64, u32)> = None;
@@ -956,7 +1001,10 @@ impl Router {
                     }
                 }
             }
-            best.is_some_and(|(_, piece)| terminal_roots.contains(&find(parent, piece as usize)))
+            best.is_some_and(|(_, piece)| {
+                terminal_roots.contains(&find(parent, piece as usize))
+                    || kept_bare(layer, point, piece)
+            })
         };
         // Per layer, the plated holes of the net's thermal pads there.
         let thermal_holes: Vec<Vec<usize>> = (0..layers)

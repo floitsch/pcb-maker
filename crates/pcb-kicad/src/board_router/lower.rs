@@ -1814,6 +1814,7 @@ fn lower_board(
                     && polygon_area(&pour.polygon) >= 0.9 * board_area,
                 solid: pour.solid,
                 hatch: pour.hatch,
+                island_min_area: pour.island_min_area,
             });
         }
     }

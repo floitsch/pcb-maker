@@ -5,6 +5,7 @@
 //! The fill a pour reclaims inside another net's zone of a higher priority.
 
 use super::*;
+use crate::board::Plane;
 
 impl Router {
     /// Per layer (empty where nothing is reclaimed), the lattice nodes
@@ -115,33 +116,16 @@ impl Router {
                         }
                     }
                     candidates.sort_unstable();
-                    // The higher zone's brush centres, as asked.
-                    let other_class = other.class;
-                    let other_map = self.map_index(other_class, layer);
-                    let other_own = OwnStamps::new(
-                        &self.nets[other.net as usize].stamped,
-                        &[other_map],
-                        cells,
-                    );
-                    let mut other_fill: FastMap<usize, bool> = FastMap::default();
-                    let mut other_at = |cell: usize| -> bool {
-                        *other_fill.entry(cell).or_insert_with(|| {
-                            let center = self.grid.center_of(cell);
-                            crate::geometry::point_in_polygon(center, &other.polygon)
-                                && !other
-                                    .excluded
-                                    .iter()
-                                    .any(|region| crate::geometry::point_in_polygon(center, region))
-                                && self.statics[other_class].fill_allowed(layer, cell, other.net)
-                                && self.occupancy.get(other_map, cell) as usize
-                                    == other_own.contains(other_map, cell) as usize
-                        })
-                    };
+                    // The higher zone's brush centres, as asked, less the
+                    // pieces its island removal deletes (KiCad's iterative
+                    // refill lets this zone reclaim them).
+                    let mut other_fill = OtherFill::new(self, other, layer);
+                    let mut other_at = |cell: usize| other_fill.at(cell);
                     // This net's brush centre keeps the clearance from that
                     // fill: the gap plus both brushes' halves from its
                     // centres.
                     let gap = self.board.excluded_clearance(plane, excluded);
-                    let radius = gap + half + self.board.classes[other_class].trace_width / 2.0;
+                    let radius = gap + half + self.board.classes[other.class].trace_width / 2.0;
                     let steps = (radius / pitch).ceil() as i64;
                     let mut offsets: Vec<(i64, i64)> = Vec::new();
                     for dy in -steps..=steps {
@@ -179,6 +163,138 @@ impl Router {
         result
     }
 }
+
+/// The brush centres of another net's zone on one layer (`reclaimed_fill`),
+/// asked node by node: inside its outline and outside its own excluded
+/// regions, where its static fill map and the other nets' routed copper
+/// leave its brush room, in a piece its island removal keeps
+/// (`Plane::island_min_area`): one holding copper of its net, one of the
+/// area asked for, or any where it removes none.
+struct OtherFill<'a> {
+    router: &'a Router,
+    plane: &'a Plane,
+    layer: usize,
+    map: usize,
+    own: OwnStamps,
+    /// The zone's net's copper on the layer: its pads' nodes, its
+    /// branches' nodes.
+    copper: HashSet<usize>,
+    free: FastMap<usize, bool>,
+    /// Per node asked, its piece; per piece whether it is kept.
+    piece: FastMap<usize, usize>,
+    kept: Vec<bool>,
+}
+
+impl<'a> OtherFill<'a> {
+    fn new(router: &'a Router, plane: &'a Plane, layer: usize) -> Self {
+        let map = router.map_index(plane.class, layer);
+        let state = &router.nets[plane.net as usize];
+        let own = OwnStamps::new(&state.stamped, &[map], router.grid.cells());
+        let mut copper: HashSet<usize> = HashSet::new();
+        if plane.island_min_area.is_some() {
+            for nodes in &state.terminal_nodes {
+                copper.extend(
+                    nodes
+                        .iter()
+                        .filter(|node| node.layer as usize == layer)
+                        .map(|node| node.cell as usize),
+                );
+            }
+            for branch in &state.branches {
+                copper.extend(
+                    branch
+                        .nodes
+                        .iter()
+                        .filter(|node| node.layer as usize == layer)
+                        .map(|node| node.cell as usize),
+                );
+            }
+        }
+        Self {
+            router,
+            plane,
+            layer,
+            map,
+            own,
+            copper,
+            free: FastMap::default(),
+            piece: FastMap::default(),
+            kept: Vec::new(),
+        }
+    }
+
+    /// Whether a brush centre of the zone's fill fits at `cell`, its piece
+    /// aside.
+    fn free_at(&mut self, cell: usize) -> bool {
+        if let Some(free) = self.free.get(&cell) {
+            return *free;
+        }
+        let router = self.router;
+        let plane = self.plane;
+        let center = router.grid.center_of(cell);
+        let free = crate::geometry::point_in_polygon(center, &plane.polygon)
+            && !plane
+                .excluded
+                .iter()
+                .any(|region| crate::geometry::point_in_polygon(center, region))
+            && router.statics[plane.class].fill_allowed(self.layer, cell, plane.net)
+            && router.occupancy.get(self.map, cell) as usize
+                == self.own.contains(self.map, cell) as usize;
+        self.free.insert(cell, free);
+        free
+    }
+
+    /// Whether the zone's fill holds a brush centre at `cell`.
+    fn at(&mut self, cell: usize) -> bool {
+        if !self.free_at(cell) {
+            return false;
+        }
+        let Some(minimum) = self.plane.island_min_area else {
+            return true;
+        };
+        if let Some(piece) = self.piece.get(&cell) {
+            return self.kept[*piece];
+        }
+        // The piece by a bounded flood over the free nodes: one larger
+        // than the bound is kept (it holds copper, or KiCad keeps it for
+        // its area, in practice).
+        let piece = self.kept.len();
+        let mut seen: Vec<usize> = vec![cell];
+        self.piece.insert(cell, piece);
+        let mut next = 0;
+        let mut copper = false;
+        let grid = &self.router.grid;
+        while next < seen.len() && seen.len() < ISLAND_FLOOD_LIMIT {
+            let at = seen[next];
+            next += 1;
+            copper |= self.copper.contains(&at);
+            // Diagonal steps too: a neck of the fill running diagonally to
+            // the lattice holds no two nodes side by side (the pour
+            // analysis's diagonal joins); a piece joined too readily is
+            // kept, which reclaims less.
+            for direction in 0..8 {
+                if let Some(neighbour) = grid.neighbor(at, direction)
+                    && !self.piece.contains_key(&neighbour)
+                    && self.free_at(neighbour)
+                {
+                    self.piece.insert(neighbour, piece);
+                    seen.push(neighbour);
+                }
+            }
+        }
+        let area = seen.len() as f64 * grid.pitch * grid.pitch;
+        let kept = copper
+            || seen.len() >= ISLAND_FLOOD_LIMIT
+            || (minimum > 0.0 && area >= minimum)
+            || seen[next..].iter().any(|at| self.copper.contains(at));
+        self.kept.push(kept);
+        kept
+    }
+}
+
+/// The nodes a flood over another zone's fill looks at before it takes
+/// the piece for kept (`OtherFill::at`): 20 mm² at a 0.1 mm lattice.
+const ISLAND_FLOOD_LIMIT: usize = 2000;
 
 /// How far around this net's pads and vias inside another net's zone of a
 /// higher priority its reclaimed fill is looked for (mm): past a pad's

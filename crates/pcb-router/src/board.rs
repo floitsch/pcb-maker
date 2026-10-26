@@ -116,6 +116,11 @@ pub struct Plane {
     /// KiCad's hatched fill: a web with square holes, a ring around each
     /// thermal pad (None: solid).
     pub hatch: Option<Hatch>,
+    /// KiCad's island removal (the zone's `island_removal_mode`): which
+    /// fill pieces holding no copper of the net the filler deletes.
+    /// `Some(0.0)` every one (always, KiCad's default), `Some(area)` those
+    /// under `area` mm², None none (never).
+    pub island_min_area: Option<f64>,
 }
 
 /// A hatched zone's pattern (KiCad 10, zone_filler.cpp addHatchFillTypeOnZone

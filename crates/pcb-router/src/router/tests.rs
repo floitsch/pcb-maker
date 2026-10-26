@@ -391,6 +391,7 @@ fn diagonal_channel(notch: bool) -> (Router, [f64; 2]) {
             exclusive: false,
             solid: false,
             hatch: None,
+            island_min_area: Some(0.0),
         }],
         solid_pads: Vec::new(),
         isolated_pads: Vec::new(),
@@ -909,6 +910,7 @@ fn plane(net: NetId, layer: usize, thermal: Option<(f64, f64)>) -> Plane {
         exclusive: false,
         solid: false,
         hatch: None,
+        island_min_area: Some(0.0),
     }
 }
 
