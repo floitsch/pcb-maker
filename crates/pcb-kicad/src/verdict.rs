@@ -734,6 +734,9 @@ pub struct KiCadRunFacts {
     pub rule_overrides: Vec<crate::run_diagnosis::KiCadOverrideOutcome>,
     /// The placement's bus groups (`bus_groups` on), when it had them.
     pub bus_groups: Option<crate::board_placer::KiCadBusGroupsReport>,
+    /// The panel's copies the placement replicated (`panel_copies` on),
+    /// when it found them.
+    pub panel_copies: Option<crate::board_placer::KiCadPanelCopiesReport>,
     /// A layout's decoupling (score-kicad-board's `decoupling` of the
     /// board written): below `DECOUPLING_SHARE` of the capacitors within
     /// 3 mm of a supply pin adds a next action.
@@ -825,6 +828,7 @@ impl KiCadRunFacts {
             race: None,
             rule_overrides: Vec::new(),
             bus_groups: None,
+            panel_copies: None,
             decoupling: None,
         }
     }
@@ -1027,6 +1031,17 @@ pub struct KiCadVerdict {
     /// parts per group (`KiCadBusGroupsReport`). Absent when off.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bus_groups: Option<crate::board_placer::KiCadBusGroupsReport>,
+    /// The panel's copies (`panel_copies` in the placer's configuration,
+    /// off by default) where the placement found them: how many, the parts
+    /// and movable parts per copy, how they were told apart (`net
+    /// islands`, `numbered references`, `repeated references`), where
+    /// their regions came from, the movable parts in no copy, how many
+    /// replicated parts moved after the replication, and per copy its
+    /// region, turn and offset from the first and its references in the
+    /// first copy's order (the mapping: the r-th reference of each copy is
+    /// the same part of the circuit). Absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub panel_copies: Option<crate::board_placer::KiCadPanelCopiesReport>,
 }
 
 fn counts(map: &BTreeMap<String, usize>) -> String {
@@ -1641,6 +1656,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         corridors: facts.corridors.clone(),
         race: facts.race.clone(),
         bus_groups: facts.bus_groups.clone(),
+        panel_copies: facts.panel_copies.clone(),
         rule_overrides: facts.rule_overrides.clone(),
     }
 }

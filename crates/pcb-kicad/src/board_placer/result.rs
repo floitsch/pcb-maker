@@ -207,4 +207,8 @@ pub struct KiCadBoardPlacerResult {
     /// The bus groups (`bus_groups` on): absent when off.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bus_groups: Option<KiCadBusGroupsReport>,
+    /// The panel's copies (`panel_copies` on and copies found): absent
+    /// otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub panel_copies: Option<KiCadPanelCopiesReport>,
 }

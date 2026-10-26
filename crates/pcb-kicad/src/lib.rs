@@ -67,8 +67,8 @@ pub use move_descent::{
 mod board_placer;
 mod canonical_order;
 pub use board_placer::{
-    KiCadBoardPlacerConfig, KiCadBoardPlacerResult, KiCadLegalityReport, KiCadPlacedFootprint,
-    legality_kicad_board, place_kicad_board,
+    KiCadBoardPlacerConfig, KiCadBoardPlacerResult, KiCadLegalityReport, KiCadPanelCopiesReport,
+    KiCadPanelCopy, KiCadPlacedFootprint, legality_kicad_board, place_kicad_board,
 };
 mod board_router;
 mod verdict;

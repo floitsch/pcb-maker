@@ -17,6 +17,7 @@ mod guidance;
 mod legality;
 mod lower;
 mod marks;
+mod panel;
 mod place;
 mod result;
 mod rules;
@@ -27,5 +28,12 @@ mod trace;
 
 pub(crate) use self::guidance::{attribution, reference_index};
 pub(crate) use self::{bodies::*, lower::*, marks::*, rules::*, seed_race::*};
-pub use self::{config::*, guidance::KiCadGlobalGuidance, legality::*, place::*, result::*};
+pub use self::{
+    config::*,
+    guidance::KiCadGlobalGuidance,
+    legality::*,
+    panel::{KiCadPanelCopiesReport, KiCadPanelCopy},
+    place::*,
+    result::*,
+};
 use self::{courtyards::*, decoupling::*, edges::*, trace::*};

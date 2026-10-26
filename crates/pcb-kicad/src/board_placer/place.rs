@@ -241,6 +241,45 @@ pub fn place_kicad_board(
     // the wall clock (SmartSpin2k: sixteen seeds took 1218 s of placement
     // on four cores and left the route no time).
     let minimum_seeds = seeds.min(3);
+    // Panel copies (`panel_copies`): each seed places the first copy and
+    // replicates it (`panel::place_copies`).
+    let copies = if config.panel_copies {
+        let footprint_count = pcb
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("footprint"))
+            .count();
+        match self::panel::detect(&lowered.problem, footprint_count) {
+            Ok(copies) => {
+                eprintln!(
+                    "placer: panel copies: {} copies of {} parts ({}, regions from {})",
+                    copies.members.len(),
+                    copies.members[0].len(),
+                    copies.detected_by,
+                    copies.regions_from
+                );
+                if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
+                    eprintln!(
+                        "placer: panel copies: regions {:?}",
+                        copies
+                            .regions
+                            .iter()
+                            .map(|r| r.map(|v| (v * 100.0).round() / 100.0))
+                            .collect::<Vec<_>>()
+                    );
+                }
+                Some(copies)
+            }
+            Err(why) => {
+                if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
+                    eprintln!("placer: panel copies: none ({why})");
+                }
+                None
+            }
+        }
+    } else {
+        None
+    };
     let threads = rayon::current_num_threads().max(1);
     // The kept seeds' work as the clock of the reference machine sees it
     // (`REFERENCE_THREADS` at once), and in all; the seeds run, the kept
@@ -259,7 +298,10 @@ pub fn place_kicad_board(
                 let mut seeded = placer_config.clone();
                 seeded.global.seed = config.seed + offset;
                 seeded.anneal.seed = seeded.anneal.seed.wrapping_add(offset);
-                core::place(problem, &seeded)
+                match &copies {
+                    Some(copies) => self::panel::place_copies(problem, copies, &seeded),
+                    None => core::place(problem, &seeded),
+                }
             },
         );
         pool_work.set(pool_work.get() + race.pool_work);
@@ -322,6 +364,9 @@ pub fn place_kicad_board(
         / core::work_per_second();
     let seeds_placed = placements.len();
     let placement = placements.remove(0);
+    let panel_copies = copies
+        .as_ref()
+        .map(|copies| KiCadPanelCopiesReport::of(&lowered.problem, copies, &placement));
     // The other legal placements, for layout to race when the best one by
     // wirelength does not route: wirelength is not routability.
     let alternatives = placements
@@ -590,6 +635,7 @@ pub fn place_kicad_board(
                 &lowered.references,
             )
         }),
+        panel_copies,
     };
     let report_path = output_directory.join("board-placer.json");
     fs::write(
