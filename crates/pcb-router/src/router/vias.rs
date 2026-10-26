@@ -255,6 +255,8 @@ impl Router {
         self.stamp_mark = stamp_mark;
         self.occupancy = occupancy;
         self.tile_claimed = tile_claimed;
+        // (A copy registers its original's parts with the memory profile.)
+        snapshot.mem_update();
         snapshot
     }
 
@@ -289,5 +291,6 @@ impl Router {
         self.occupancy = occupancy;
         self.tile_claimed = tile_claimed;
         self.build_hot();
+        self.mem_update();
     }
 }
