@@ -11,6 +11,45 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-26 (the defaults' per-board losers)
+
+Branch default-losers. The triage of v20 (x1725, both placement defaults
+off) against the nightly of 2026-10-25 (x1817, escape demand and ratsnest
+crossings on), the four-way attribution of the eight largest losers on
+x1825, the losers' traits, and one guard per default, both off by
+default; placer.md "Per-board losers of the defaults (2026-10-25)" has
+the tables.
+
+- **Triage.** Leaving out the 14 boards with a new input
+  (`.kicad_dru`), four boards are worse beyond their noise: katia
+  (refused), OpenRX-panel-rev2 (200 to 248), protoesp (76 to 105) and
+  homebrew_486 (its strict pass); video, poly_corne_split42_left, koeg
+  and split72_right lose within it.
+- **Attribution** (x1825, seed 1, defaults / escape off / crossings off /
+  both off): katia 155 / 38 / 152 / 37 is escape demand's; OpenRX 231 /
+  208 / 190 / 199 the pair's; video, split42_left and koeg lose to either
+  default alone about as much as to both (perturbations of a good v20
+  draw); protoesp (68) and homebrew_486 (strict pass) did not lose on
+  x1825. Both off reproduces v20's placement.
+- **Trait.** Escape demand does not help the boards whose footprints are
+  mostly fixed (katia 0.63, the 0xCB panel 0.77, protoesp 0.63) and helps
+  eight of the nine dense boards below half; channel overflow, layers,
+  size, pad density, fine pitch and panels do not separate. For crossings
+  no trait known before placement separates its losers.
+- **`escape_demand.fixed_share`** (off; measured at 0.5: no escape
+  demand where at least that share of the footprints is fixed), x14600
+  against x1829: protoesp 110 / 76 / 90 to 73 / 45 / 58 over seeds 1,
+  101, 201, the 0xCB panel 50 / 50 / 51 to 60 / 54 / 56, the dense summed
+  medians -26, koeg 11 to 12, homebrew_486 passes on both, the short
+  tier's four fixed-heavy boards pass on both. katia's row is pending (its
+  layouts were held behind the nightly designer stage's 24 GB waiter);
+  the guard fires on 45 of the 109 sweep boards. Not the default yet.
+- **`ratsnest_crossings.per_layer`** (off: the weight times two over the
+  routing layers), x14601 against x1829 at seed 1: loses
+  framework_mobo_lefthalf's strict pass, OpenRX 200 to 212, 4in1 106 to
+  129, video 190 to 162, DSP 17 to 7; not kept.
+- Config reference regenerated for the two keys.
+
 ## Committed on 2026-10-26 (the drain's feasibility cap; the nightly's order)
 
 Branch ledger-feasibility. On 2026-10-25 from about 22:30 to past 00:30

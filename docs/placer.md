@@ -2017,7 +2017,8 @@ see the crossings yet (they make the orders the legaliser and the
 refinement can only repair locally; MegaDrive's U4/U8 order is such a
 case; tried 2026-10-25, below: the anneal's term stays off), and a
 weight per board (by layers: a crossing costs less with more of them)
-is untried.
+was tried on 2026-10-25 and not kept (`per_layer`, "Per-board losers of
+the defaults (2026-10-25)").
 
 ### Where the order is decided: the anneal and the global placement (2026-10-25)
 
@@ -2756,6 +2757,255 @@ conflict, and the margin is what makes counting the probes safe. The
 margin is calibrated on these 31 races; four of its decisions are on
 seed 201 and three of them were measured only after it was chosen
 (-17 together), so it is not yet confirmed on other seeds.
+
+## Per-board losers of the defaults (2026-10-25)
+
+Escape demand (on since x1754) and ratsnest crossings (on since x1817)
+were made the defaults by the eleven dense boards' summed medians; both
+lost on some boards. This round asks which boards the two defaults cost,
+whether turning one off recovers them, and whether a trait of the losers
+justifies a guard. Scripts and outputs in `build/triage1/` (run-one.sh,
+queue.py, summarize.py, signals.py: `ablate-kicad-placement`'s signals of
+a placed board and of the designer's placement, traits.py, util.py).
+
+### Triage: v20 against the nightly of 2026-10-25
+
+`compare.py build/github-layout-v20.log build/nightly/2026-10-25/sweep.log`
+(x1725, both defaults off, against main 356c8db, the nightly's binary,
+both on; tasks v7 on both). 14 boards changed input on 2026-10-24 (the
+re-fetched `.kicad_dru`, INPUT) and are left out, among them 4in1-mini
+(37 to 81), 4in1 (79 to 139), the laptop's motherboard (3 to 38) and
+power board (refused), and MokyaLora (its strict pass). Of the 95 others:
+better 19, same 57, worse 11, the rest without a result on a side
+(unconnected 1651 to 1482 on the 95). The noise is the seed spread
+where the three-seed pairs of the escape-demand and crossings rounds
+give one (the dense boards), else 15 open or a lost strict pass.
+
+| Board | v20 | nightly | change | noise | beyond it |
+| --- | ---: | ---: | ---: | --- | --- |
+| katia | 37 | refused (10 parts) | no result | lost result | yes |
+| OpenRX-panel-rev2 | 200 | 248 | +48 | 15 | yes |
+| protoesp | 76 | 105 | +29 | seeds 74-83 off, 76-105 on | yes |
+| video | 165 | 190 | +25 | seeds 128-347 | no |
+| poly_corne_split42_left | 5 | 18 | +13 | 15 | no |
+| koeg-board-pcb | 7 | 13 | +6 | 15 | no |
+| poly_kybd_split72_right | 20 | 24 | +4 | 15 | no |
+| DSP-ADAU1452 | 15 | 17 | +2 | seeds 7-35 | no |
+| homebrew_486 | 0, strict pass | 1 | +1 | lost strict pass | yes |
+| woagboard, ULK_sl_PG1316s, Quanta75 BareRP2040 | 3, 2, 34 | 4, 3, 35 | +1 each | 15 | no |
+
+Without a result on both sides (not ranked): the five PolyKybd molecules
+(parts without a place 18, 35, 10, 2, 3 to 48, 60, 42, 21, 48), the
+OpenESC 4in1 panel (26 to 34) and the 0xCB pcb-panel (KiCad's check
+timed out on both); the panels package (x1825, "The sweep boards
+without a result" above) works on those. The eight largest losers (the
+four beyond the noise and the next four) were attributed.
+
+### Attribution: four ways at seed 1
+
+Layout mode at the task budget, seed 1, x1825 (main 80c0966, the panels
+package: katia's legaliser work fixed), 6 layouts in flight x 2 threads
+through the memory ledger with 10 GB kept free: the defaults,
+`{"escape_demand": null}`, `{"ratsnest_crossings": null}` and both null.
+KiCad unconnected (the first route's open terminals); strict passes only
+where named. Output `build/triage1/attr-{def,noesc,nocross,none}-s1`.
+
+| Board | v20 (x1725) | nightly (x1817) | defaults | escape off | crossings off | both off | which default costs it |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| katia | 37 | refused | 155 (348) | 38 (160) | 152 (345) | 37 (169) | escape demand; off alone recovers v20 |
+| OpenRX-panel-rev2 | 200 | 248 | 231 (285) | 208 (398) | 190 (399) | 199 (246) | the pair; either off recovers to within 10 |
+| protoesp | 76 | 105 | 68 (99) | 73 (90) | 77 (103) | 76 (124) | none (no loss on x1825) |
+| video | 165 | 190 | 190 (222) | 201 (253) | 182 (234) | 165 (228) | neither alone (perturbation) |
+| poly_corne_split42_left | 5 | 18 | 18 (21) | 15 (25) | 23 (39) | 5 (28) | neither alone (perturbation) |
+| koeg-board-pcb | 7 | 13 | 15 (112) | 12 (101) | 14 (102) | 7 (103) | neither alone (perturbation) |
+| poly_kybd_split72_right | 20 | 24 | 24 (33) | 19 (27) | 28 (42) | 20 (34) | within noise (escape off 19) |
+| homebrew_486 | 0, strict pass | 1 | 0 (0), pass | 0 (0), pass | 0 (0), pass | 0 (0), pass | none (no loss on x1825) |
+
+Both off reproduces v20 on every board where it can (katia 37, video
+165, split42_left 5, koeg 7, split72_right 20, protoesp 76, the
+placements' crossings equal to v20's: the same placement). Three kinds
+of row:
+
+- **Escape demand costs katia, and turning it off alone recovers it**
+  (155 to 38; crossings alone 38, escape alone 152). The escape terms
+  made its placement 46 % longer (the placer's wirelength 7.9 to 11.5 m;
+  the global placement's 18.2 to 23.8 m, not converged at the 1500
+  iterations either way) to clear 10 tracks of channel overflow in two
+  channels; the ratsnest crossings rose 1221 to 2143.
+- **The pair, not one default, costs OpenRX-panel-rev2** (231 with
+  both; 208 and 190 with one off, 199 with both off), and **video,
+  poly_corne_split42_left and koeg are perturbations**: every variant
+  other than both-off is worse than both-off, by about as much with one
+  default as with two (video 182-201 against 165, split42_left 15-23
+  against 5, koeg 12-15 against 7). v20's placement of them was a good
+  draw; neither default alone recovers it, and these boards' seed
+  spreads are larger than the losses (video 128-347).
+- **No loss on x1825**: protoesp 68 with both defaults (v20 76, the
+  nightly 105: the x1817 placement no longer comes out), homebrew_486
+  passes strict in all four, split72_right 24 against 20 (escape off 19)
+  is within 15.
+
+### The trait
+
+Traits from the designer's boards (traits.py: copper layers, the
+Edge.Cuts box, pads, the finest pad pitch inside a footprint; the fixed
+share from board-placer.json: footprints not movable over all), the
+ablation tool's signals of the off placements (channel overflow, ratsnest
+crossings) and the per-seed effects of the two default rounds (escape
+demand: x1751/x1752 pairs with crossings off; crossings: x1813/x14270
+pairs with escape demand on; KiCad unconnected on less off, seeds 1, 101,
+201). The 4in1 boards' areas are their parts' box (their outline is in
+a footprint).
+
+| Board | copper layers (routing) | area cm2 | pads/cm2 | finest pitch mm | fixed share | panel | escape on-off, 3 seeds (sum) | off channel overflow (mean) | crossings on-off (sum) | off crossings / designer's |
+| --- | ---: | ---: | ---: | ---: | ---: | --- | --- | ---: | --- | ---: |
+| 4in1-mini | 6 (4) | 7.9 | 138 | 0.4 | 0.15 | no | +20, -8, +24 (+36) | 25.8 | -11, +5, +4 (-2) | 0.7 |
+| 4in1 | 6 (4) | 11.3 | 93 | 0.4 | 0.12 | no | -6, -19, -1 (-26) | 28.1 | +3, +0, -8 (-5) | 1.5 |
+| poly_kybd_split72_left | 4 (3) | 235 | 10.3 | 0.4 | 0.38 | no | -18, -9, +10 (-17) | 2.5 | +3, -4, +4 (+3) | 1.5 |
+| video | 4 (3) | 333 | 6.4 | 0.5 | 0.12 | no | +23, +62, -150 (-65) | 178.9 | +2, -45, -38 (-81) | 2.1 |
+| DSP-ADAU1452 | 4 (3) | 100 | 9.5 | 0.5 | 0.18 | no | -6, -29, -2 (-37) | 0.0 | +9, -3, -10 (-4) | 6.1 |
+| 0xCB panel | 2 (2) | 207 | 6.3 | 0.5 | 0.77 | yes | +0, +9, +7 (+16) | 0.0 | -3, -7, -5 (-15) | 1.9 |
+| Glasgow | 4 (3) | 39 | 29.3 | 0.5 | 0.37 | no | +2, +1, -22 (-19) | 33.5 | -19, +0, +5 (-14) | 1.5 |
+| SmartSpin2k_Panelized | 2 (2) | 388 | 7.5 | 0.5 | 0.46 | yes | -37, +8, -4 (-33) | 3.0 | -9, -2, +6 (-5) | 2.9 |
+| SNSP-CPU-01 | 2 (2) | 343 | 4.6 | 0.65 | 0.29 | no | +16, +23, -47 (-8) | 5.5 | -54, -37, +2 (-89) | 1.2 |
+| protoesp | 2 (2) | 88 | 19.3 | 0.43 | 0.63 | no | +1, -12, +14 (+3) | 0.7 | +28, -7, +16 (+37) | 3.4 |
+| MegaDrive | 2 (2) | 457 | 3.0 | 0.65 | 0.25 | no | -65, -58, +58 (-65) | 21.7 | -16, +9, -6 (-13) | 1.4 |
+
+**Escape demand: boards whose footprints are mostly fixed.** katia (190
+of 301 fixed, 0.63: its switches and LEDs held, 111 passives and the MCU
+movable), the 0xCB panel (0.77) and protoesp (0.63) are the boards above
+half fixed, and escape demand does not help any of them (katia +117 at
+seed 1, the panel +16 and protoesp +3 over three seeds), while it helps
+eight of the nine dense boards below half (the exception is 4in1-mini,
+the densest board, +36). The movable parts of such boards are passives
+among fixed parts, and their nets leave towards the fixed parts they
+belong to; the escape terms (the inflated charges, the rotation choice,
+the channel cost against fixed bodies) push them away from those pads:
+katia's placement came out 46 % longer for 10 tracks of overflow. The
+other traits do not separate: the off placement's channel overflow is
+about 0 on the panel and protoesp, and also on DSP (-37) and
+SmartSpin2k (-33); two layers are shared with MegaDrive (-65); the
+panelised SmartSpin2k gains where the 0xCB panel loses; size, pad
+density and fine pitch order nothing.
+
+**Ratsnest crossings: no trait.** Its one consistent loser is protoesp
+(+37 over three seeds; DSP and SmartSpin2k lose by the median within
+their spread), and none of the eight sweep losers loses to crossings
+alone at seed 1 (OpenRX to the pair). By layers the crossings help the
+boards of three or more routing layers on the sum (-103, video -81) as
+much as those of two. The one quantity that separates the three median
+losers is our crossings over the designer's (DSP 6.1, protoesp 3.4,
+SmartSpin2k 2.9 against 2.1 and below on the other eight), which a
+placement of a board without the designer's placement cannot know. The
+guard measured for crossings is the one placer.md named as untried (the
+weight by layers), without a trait behind it.
+
+### The guards and their measurement
+
+Both guards are keys of the existing settings, off by default:
+
+- `escape_demand.fixed_share` (a share, `null` by default): where at
+  least that share of the board's footprints is fixed, escape demand is
+  not applied (`Problem::escape` stays `None`; stderr says `placer:
+  escape demand not applied: N of M footprints fixed`). Measured at 0.5.
+- `ratsnest_crossings.per_layer` (false by default): the weight times
+  two over the routing layers (two layers unchanged, 2 mm on three, 1.5
+  mm on four).
+
+Snapshots x14600 (the escape guard, commit "placer:
+escape_demand.fixed_share", on main 280c52a) and x14601 (both guards),
+against x1829 (main 280c52a: the race's margin of x1828 included, so
+the defaults' rows differ from the x1825 attribution on some boards:
+protoesp 68 to 110, OpenRX 231 to 200). Layout mode at the task budget
+(the short tier at its third), 6 in flight x 2 threads, the ledger with
+10 GB kept free; `--placer '{"escape_demand": {"fixed_share": 0.5}}'`
+and `--placer '{"ratsnest_crossings": {"per_layer": true}}'`. A guard
+that does not fire changes nothing: `place-kicad-board` writes the same
+MegaDrive byte for byte with x1829 and with x14601 with both guards set
+(fixed share 0.25, two layers), and katia with the escape guard the same
+as with `{"escape_demand": null}`. So only the boards where a guard
+fires were run; every other row equals the defaults. Output
+`build/triage1/g1-{def,gesc,gcross}-s{1,101,201}` and
+`build/triage1/gshort-{def,gesc,gcross}-s1`.
+
+**The escape guard** (fires on 45 of the 109 sweep boards; of the
+measured ones, these):
+
+| Board | fixed share | seed 1: defaults / guard | seed 101 | seed 201 | median |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| protoesp (dense, sweep loser) | 0.63 | 110 (169) / 73 (90) | 76 (99) / 45 (90) | 90 (150) / 58 (133) | 90 / 58 |
+| 0xCB panel (dense) | 0.77 | 50 (77) / 60 (269) | 50 (76) / 54 (91) | 51 (87) / 56 (94) | 50 / 56 |
+| koeg-board-pcb (sweep loser) | 0.52 | 11 (108) / 12 (101) | | | |
+| homebrew_486 (sweep loser) | 0.56 | 0, pass / 0, pass | | | |
+| katia (sweep loser) | 0.63 | pending | | | |
+| 1337-v4.0, USB_Cable_Tester, spell_tome_bottom, urchin (short tier) | 0.64-0.84 | 0, pass / 0, pass (all four) | | | |
+
+The dense boards' summed medians fall by 26 (the nine other
+dense boards are unchanged; each seed's pair falls by 27); on the short
+tier the four boards it touches pass on both sides (the other eight are
+unchanged), so no strict pass is lost.
+The panel loses 4 to 10 on every seed (its first route 77 to 269 at
+seed 1): with crossings on, escape demand helps it now, where in the
+escape round (crossings off) it lost. katia's row is pending: its two
+layouts (6.6 GB expected) were held behind the nightly designer stage's
+24.1 GB waiter for hours and were stopped; the x1825 attribution has
+escape demand off at 38 against 155, and the guard gives that placement
+byte for byte. The commands for the row:
+
+    python3 benchmarks/agent-tasks/run.py build/triage1/g1-def-s1/ikajdan__katia__katia --tasks benchmarks/agent-tasks/tasks/v7/tasks.json --only ikajdan__katia__katia --binary build/bin/pcb-maker-x1829 --jobs 1 --threads 2 --min-free-gb 10 --expected-gb 6.6
+    python3 benchmarks/agent-tasks/run.py build/triage1/g1-gesc-s1/ikajdan__katia__katia --tasks benchmarks/agent-tasks/tasks/v7/tasks.json --only ikajdan__katia__katia --binary build/bin/pcb-maker-x14600 --placer '{"escape_demand": {"fixed_share": 0.5}}' --jobs 1 --threads 2 --min-free-gb 10 --expected-gb 6.6
+
+**The crossings guard** (fires on every board of three or more routing
+layers), seed 1:
+
+| Board | routing layers | defaults | guard |
+| --- | ---: | ---: | ---: |
+| OpenRX-panel-rev2 (sweep loser) | 4 | 200 (254) | 212 (356) |
+| video (sweep loser, dense) | 3 | 190 (222) | 162 (237) |
+| poly_corne_split42_left (sweep loser) | 3 | 18 (21) | 14 (36) |
+| poly_kybd_split72_right (sweep loser) | 3 | 24 (33) | 28 (33) |
+| koeg-board-pcb (sweep loser) | 3 | 11 (108) | 14 (104) |
+| homebrew_486 (sweep loser) | 3 | 0 (0), pass | 0 (1), pass |
+| 4in1-mini (dense) | 4 | 81 (141) | 74 (145) |
+| 4in1 (dense) | 4 | 106 (153) | 129 (191) |
+| poly_kybd_split72_left (dense) | 3 | 23 (24) | 21 (22) |
+| DSP-ADAU1452 (dense) | 3 | 17 (62) | 7 (57) |
+| Glasgow (dense) | 3 | 143 (164) | 146 (207) |
+| MIDAS-MK1.1 (short tier) | 3 | 6 (14) | 7 (15) |
+| OpenFC (short tier) | 4 | 2 (2) | 1 (1) |
+| reCamera_S101_v1.1 (short tier) | 3 | 4 (6) | 5 (7) |
+| framework_mobo_lefthalf (short tier) | 4 | 0 (3), **strict pass** | 1 (5), no pass |
+
+The six dense rows sum 560 to 539 (video -28, DSP -10, 4in1 +23: the
+size of a seed change), the five other sweep losers 253 to 268 (OpenRX
++12, the one whose loss involved crossings), and the short tier loses framework_mobo's
+strict pass (one connection open). Seeds 101 and 201 were not run: the
+seed-1 result is no direction.
+
+### Decision
+
+- **The escape guard** (`escape_demand.fixed_share` 0.5) meets the rule
+  on every row measured: the sweep losers it touches recover or hold
+  (protoesp 110 to 73, koeg and homebrew_486 within one), the dense
+  boards' summed medians fall by 26 (each seed by 27) and the short tier
+  loses no strict pass. It is **not made the default here**: katia's row,
+  the loser it is for, is pending (above), and the guard changes 45 of
+  the 109 sweep boards, of which 8 were measured (37 not, mostly
+  keyboards that pass, with RP2040_base, ATAT1800, the Hub and the
+  molecules among them). With katia's row confirming, the default is one line
+  (`fixed_share: Some(0.5)` in `KiCadEscapeDemand::default`); a sweep of
+  the 45 fixed-heavy boards (the rest are identical by construction)
+  should run before or with it.
+- **The crossings guard** (`ratsnest_crossings.per_layer`) does not
+  ship: it loses framework_mobo's strict pass, the dense rows move by
+  seed-sized amounts both ways, and OpenRX, the one sweep loser crossings
+  were part of, gets worse. It stays off.
+- **Most per-board losses are not the defaults.** Of the eight largest
+  sweep losers, one is escape demand's (katia), one the pair's (OpenRX,
+  gone on x1828 with the race's margin: 200), two did not lose on x1825
+  (protoesp, homebrew_486), and four are perturbations of a good v20
+  draw that no single switch restores (video, split42_left, koeg,
+  split72_right).
 
 ## What went wrong on the way (kept as lessons)
 
