@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 98 | 82 | 16 | 98 | 42 |
+| [Router settings](#router-settings) | 100 | 83 | 17 | 100 | 43 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 1 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 1 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
@@ -93,6 +93,8 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `diff_pair_return_net` | `Option<String>` | unset | router.md | Differential pairs: the return vias' net by name. Unset: `GND` (past a sheet path), else the poured net ending in `GND` with the most pads; a net without a pour gets none. |
 | `diff_pairs_by_need` (internal) | `bool` | `false` (internal) | - | Route mode: `diff_pairs` defaults by need (`diff_pairs_choice`); set by route-kicad-board, not read from a file (a layout's routes keep the default off). |
 | `diff_pair_rules` (internal) | `BTreeMap<String, KiCadDiffPairRule>` | `{}` (internal) | - | The project's rules for the nets of differential pairs, keyed by normalized net name like `connection_rules` (set by the project's rules, not read from a file). |
+| `length_matching` | `Option<bool>` | unset | router.md | Length and skew rules (docs/router.md, "Length and skew rules"): the custom rules' `length` and `skew` constraints over single nets and groups of nets are kept after the route: a net shorter than a `length` minimum, or further than a `skew` maximum below the longest net of its rule, gets a meander (a KiCad tuning pattern) on a straight track of its route; a `length` maximum is checked and reported (`lengths` in the verdict), not kept by the search. Route mode and layouts alike; on by default where the project has such a rule. `PCB_ROUTER_LENGTH_MATCHING=0` (or `1`) decides where the settings name none. |
+| `length_rules` (internal) | `Vec<KiCadLengthRule>` | `[]` (internal) | - | The project's `length` and `skew` rules with the nets they hold for (set by the project's rules, not read from a file). |
 | `via_reduction_rounds` | `Option<usize>` | unset | - | Router `via_reduction_rounds`: via reduction rounds after the board is complete (default 3). |
 | `strict_via_budget` | `Option<bool>` | unset | - | Router `strict_via_budget` (default on): the via reduction keeps its budget within a round. |
 | `run_work` (internal) | `Option<(f64, f64)>` | unset (internal) | - | The run's work budget and what is left of it as the attempt starts (router `run_work`; set by the ladder, not read from a file). |
