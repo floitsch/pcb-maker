@@ -9,19 +9,25 @@
 //! - A **bank**: parts of one footprint that share a bus (at least
 //!   `min_shared` small nets between every two that are linked): a
 //!   memory bank, the copies of a driver on one bus.
-//! - A **cluster**: a part that is not a passive with the passives that
-//!   share a net with it and lie within `reach` of its body (its
-//!   decoupling, its filters, a connector's ESD parts).
+//! - A **cluster**: a part that is not a passive with its passives: those
+//!   a relation binds to it (its decoupling capacitors, at any distance)
+//!   and those that share a net with it within `reach` of its body (its
+//!   filters, a connector's ESD parts).
 //!
 //! A bank moves with its members' passives too. Which passives belong to
-//! which part is decided at the poses of the moment (`attach`): the
-//! passives within reach, each to the nearest part it shares a net with.
+//! which part is decided at the poses of the moment (`attach`), each with
+//! the nearest part it may belong to.
 //!
 //! The moves (`translated`, `rotated`, `reordered`) give the new poses of
 //! a group's parts: members keep their offsets (a turn turns the whole
 //! group about its centre), and a reorder puts a bank's members along
 //! their axis in the order of the pins they connect to outside the bank
-//! (for a chain of parts on a bus, the order at the source part).
+//! (for a chain of parts on a bus, the order at the source part). After
+//! the global placement `arrange` gives each bank its best order and
+//! arrangement by wirelength plus crossings, overlap left to the anneal;
+//! the anneal (`anneal::group_batch`) and the refinement
+//! (`legal::refine_groups`, the units placed by `legal::place_unit`)
+//! move the groups judged by the same objective.
 
 use crate::problem::{Point, Pose, Problem, Side, rotate};
 
