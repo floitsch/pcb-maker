@@ -1247,16 +1247,19 @@ class MemoryGate:
     reservations were this process's alone (other runs on the machine did
     not see them) and only MemAvailable counted. A board that has waited
     `drain_after` seconds has the ledger drain for it (harness_common.
-    drain_allows; --ledger-drain-after); `priority` "nightly" (--ledger-
+    drain_allows; --ledger-drain-after), while the ledger could start it
+    and for at most `drain_max` seconds of its wait (harness_common.
+    drain_state; --ledger-drain-max); `priority` "nightly" (--ledger-
     priority nightly) puts its boards first among the waiters and has the
     ledger drain for them at once. A board's reservation carries its
     expected end (the tier's seconds), which the drain reads."""
 
-    def __init__(self, minimum_gb, ledger=None, poll_seconds=15.0, drain_after=None, priority=None):
+    def __init__(self, minimum_gb, ledger=None, poll_seconds=15.0, drain_after=None, priority=None, drain_max=None):
         self.minimum_gb = max(0.0, minimum_gb)
         self.ledger = ledger if ledger is not None else harness_common.Ledger.from_env()
         self.poll_seconds = poll_seconds
         self.drain_after = harness_common.DEFAULT_DRAIN_AFTER_SECONDS if drain_after is None else drain_after
+        self.drain_max = harness_common.DEFAULT_DRAIN_MAX_SECONDS if drain_max is None else drain_max
         self.priority = priority
         self.lock = threading.Lock()
         # token -> the reservation's key in the ledger
@@ -1268,7 +1271,7 @@ class MemoryGate:
                                    self.minimum_gb * 1024, poll_seconds=self.poll_seconds,
                                    log=lambda text: print(text, file=sys.stderr, flush=True),
                                    expected_seconds=expected_seconds, drain_after=self.drain_after,
-                                   priority=self.priority)
+                                   priority=self.priority, drain_max=self.drain_max)
         with self.lock:
             token = self.next_token
             self.next_token += 1
@@ -2308,6 +2311,10 @@ def main():
                         help="seconds a board waits for memory before the ledger drains for it: newer requests "
                              "then go only if they leave it its room or end before every running board "
                              "(default %(default).0f; docs/benchmarks.md, \"Memory ledger\")")
+    parser.add_argument("--ledger-drain-max", type=float, default=harness_common.DEFAULT_DRAIN_MAX_SECONDS,
+                        help="seconds of a board's wait after which the ledger no longer drains for it: newer "
+                             "requests then pass it by ordered admission alone, and it keeps its place "
+                             "(default %(default).0f; docs/benchmarks.md, \"Memory ledger\")")
     parser.add_argument("--ledger-priority", choices=("normal", harness_common.PRIORITY_NIGHTLY), default="normal",
                         help="nightly: this run's boards go first among the waiters and are never passed once "
                              "waiting (the ledger drains for them at once); scripts/nightly.sh sets it")
@@ -2419,8 +2426,11 @@ def main():
     arguments.expected_mb = arguments.expected_gb * 1024
     if not 0 <= arguments.ledger_drain_after < float("inf"):
         parser.error("--ledger-drain-after must be a finite number of seconds, at least 0")
+    if not 0 <= arguments.ledger_drain_max < float("inf"):
+        parser.error("--ledger-drain-max must be a finite number of seconds, at least 0")
     arguments.gate = MemoryGate(arguments.min_free_gb, drain_after=arguments.ledger_drain_after,
-                                priority=None if arguments.ledger_priority == "normal" else arguments.ledger_priority)
+                                priority=None if arguments.ledger_priority == "normal" else arguments.ledger_priority,
+                                drain_max=arguments.ledger_drain_max)
     tasks = []
     # The boards of the tier (or task list) that --only leaves out: with
     # --splice-from their rows come from the earlier log.

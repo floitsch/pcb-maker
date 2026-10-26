@@ -320,12 +320,33 @@ fn print_ledger(json: bool) -> Result<(), String> {
         .map_err(|error| format!("{}: {error}", book.path().display()))?;
     let capacity = ledger::capacity_mb();
     let total = ledger::total_mb(&live);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0.0, |elapsed| elapsed.as_secs_f64());
+    // The first waiter and whether the ledger drains for it (a new
+    // request's view: every entry is another's).
+    let all: Vec<&ledger::Reservation> = live.iter().collect();
+    let first = ledger::first_waiter(&all).map(|waiter| {
+        let available = ledger::available_less_growth(&all);
+        (
+            waiter,
+            ledger::drain_state(waiter, &all, now, capacity, available),
+        )
+    });
     if json {
         let value = serde_json::json!({
             "path": book.path(),
             "capacity_mb": capacity,
             "reserved_mb": total,
             "reservations": live,
+            "first_waiter": first.map(|(waiter, state)| serde_json::json!({
+                "pid": waiter.pid,
+                "label": waiter.label,
+                "waiting_mb": waiter.waiting_mb,
+                "waited_seconds": (now - waiter.waiting_since()).max(0.0),
+                "drained_for": state == ledger::Drain::Drains,
+                "drain": state.describe(),
+            })),
         });
         println!(
             "{}",
@@ -333,9 +354,6 @@ fn print_ledger(json: bool) -> Result<(), String> {
         );
         return Ok(());
     }
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0.0, |elapsed| elapsed.as_secs_f64());
     println!(
         "memory ledger {}: {total:.0} MB reserved of {} by {} run{}",
         book.path().display(),
@@ -360,6 +378,16 @@ fn print_ledger(json: bool) -> Result<(), String> {
             } else {
                 ""
             }
+        );
+    }
+    if let Some((waiter, state)) = first {
+        println!(
+            "first waiter: pid {}, {}, waiting {:.0} s for {:.0} MB: {}",
+            waiter.pid,
+            waiter.label,
+            (now - waiter.waiting_since()).max(0.0),
+            waiter.waiting_mb.unwrap_or(0.0),
+            state.describe()
         );
     }
     Ok(())

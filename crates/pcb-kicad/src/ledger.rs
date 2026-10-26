@@ -60,6 +60,21 @@
 //! idle machine) ran one after the other, and each next one held every
 //! other request back while the one before it ran.
 //!
+//! The ledger drains only for a waiter it could start (since 2026-10-26,
+//! `drain_state`): a waiter counts for the drain only while, with every
+//! reservation that began holding since it began waiting gone, its room
+//! under its own floor (`floor_mb`; `DEFAULT_FLOOR_MB` for an entry of an
+//! older writer, which has no `refreshed`) and the reservations' growth
+//! covers what it waits for, while its wait is within its bound
+//! (`drain_max`, default `DEFAULT_DRAIN_MAX_SECONDS`), and while its
+//! writer rewrites its entry (`refreshed`, at most `STALE_AFTER_SECONDS`
+//! ago; none: unknown, live). Otherwise newer requests pass it by ordered
+//! admission alone; it keeps its place for when room appears. Until then
+//! an old nightly harness (356c8db, before the drain) waiting 27 hours for
+//! 24.7 GB with its own floor of 10 GB, which neither the ledger's room
+//! nor the drain could start, held every request of more than 4 GB back
+//! for hours and every other one for minutes.
+//!
 //! `PCB_MAKER_LEDGER` names the file (default
 //! `$XDG_RUNTIME_DIR/pcb-maker-ledger.json`, else
 //! `/tmp/pcb-maker-ledger.json`; `off`: no ledger),
@@ -99,6 +114,21 @@ pub const PRIORITY_NIGHTLY: &str = "nightly";
 /// requests of at most this many megabytes are not held back by the
 /// drain (`drain_allows`).
 pub const SMALL_REQUEST_MB: f64 = 4096.0;
+
+/// How long a waiter's wait may hold newer requests to a drain, unless its
+/// entry says otherwise (`drain_max`; run.py's `--ledger-drain-max`):
+/// past it the drain for it ends (`drain_state`).
+pub const DEFAULT_DRAIN_MAX_SECONDS: f64 = 7200.0;
+
+/// A waiting entry whose writer has not rewritten it (`refreshed`) for
+/// longer than this is stale: never drained for (harnesses rewrite theirs
+/// every 15 s, binaries every 2 s).
+pub const STALE_AFTER_SECONDS: f64 = 120.0;
+
+/// The floor of available memory assumed for a waiter whose entry names
+/// none and comes from an older writer (no `refreshed`): run.py's
+/// `--min-free-gb 10` beside other agents.
+pub const DEFAULT_FLOOR_MB: f64 = 10240.0;
 
 /// How often a waiting process looks again, and how often it says so.
 const WAIT_POLL: Duration = Duration::from_secs(2);
@@ -144,6 +174,15 @@ pub struct Reservation {
     /// a drain (seconds; `DEFAULT_DRAIN_AFTER_SECONDS` where absent).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub drain_after: Option<f64>,
+    /// While it waits: how long its wait may hold newer requests to a
+    /// drain (seconds; `DEFAULT_DRAIN_MAX_SECONDS` where absent).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drain_max: Option<f64>,
+    /// While it waits: when its writer last rewrote the entry (seconds
+    /// since the epoch); unknown where absent (an older writer's entry:
+    /// assumed live).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub refreshed: Option<f64>,
     /// When the run is expected to end (seconds since the epoch; run.py's
     /// boards of a tier, from the tier's seconds), for the drain's end
     /// exception; unknown where absent.
@@ -184,6 +223,26 @@ impl Reservation {
         self.drain_after
             .filter(|seconds| *seconds >= 0.0)
             .unwrap_or(DEFAULT_DRAIN_AFTER_SECONDS)
+    }
+
+    /// How long its wait may hold newer requests to a drain: `drain_max`
+    /// or the default.
+    pub fn drain_max(&self) -> f64 {
+        self.drain_max
+            .filter(|seconds| *seconds >= 0.0)
+            .unwrap_or(DEFAULT_DRAIN_MAX_SECONDS)
+    }
+
+    /// The floor of available memory its harness keeps beside it, for
+    /// whether the ledger could start it (`drain_state`): `floor_mb`; for
+    /// an entry of an older writer (no `refreshed`) without one,
+    /// `DEFAULT_FLOOR_MB`; else none.
+    pub fn assumed_floor_mb(&self) -> f64 {
+        match (self.floor_mb, self.refreshed) {
+            (Some(floor), _) => floor.max(0.0),
+            (None, None) => DEFAULT_FLOOR_MB,
+            (None, Some(_)) => 0.0,
+        }
     }
 
     /// Its place among the waiters: the nightly's first, then by when the
@@ -519,17 +578,116 @@ pub fn first_waiter<'a>(others: &[&'a Reservation]) -> Option<&'a Reservation> {
 
 /// The waiter a new request of process `me`, waiting since `since`, is
 /// held to a drain for at `now`: the first waiter (`first_waiter`), when it
-/// comes before the request and has waited its `drain_after` (the
-/// nightly's at once).
+/// comes before the request and the ledger drains for it (`drain_state`:
+/// it has waited its `drain_after`, the nightly's at once, and the ledger
+/// could start it). `capacity` and `available_mb` (the memory available
+/// less what the reservations still grow by, `available_less_growth`):
+/// None, unknown, unbounded.
 pub fn drained_for<'a>(
     others: &[&'a Reservation],
     me: u32,
     since: f64,
     now: f64,
+    capacity: Option<f64>,
+    available_mb: Option<f64>,
 ) -> Option<&'a Reservation> {
     let waiter = first_waiter(others)?;
-    (waiter.order_key() < (1, since, me) && now - waiter.waiting_since() >= waiter.drain_after())
+    (waiter.order_key() < (1, since, me)
+        && drain_state(waiter, others, now, capacity, available_mb) == Drain::Drains)
         .then_some(waiter)
+}
+
+/// Whether the ledger drains for a waiter (`drain_state`), and if not, why.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Drain {
+    /// It has not waited its `drain_after` yet.
+    NotYet,
+    /// Newer requests are held to the drain (`drain_allows`).
+    Drains,
+    /// Its writer has not rewritten its entry for this many seconds (more
+    /// than `STALE_AFTER_SECONDS`).
+    Stale(f64),
+    /// It has waited longer than its bound (`drain_max`, seconds).
+    PastBound(f64),
+    /// Even with every reservation since it began waiting gone, its room
+    /// (megabytes) under its floor falls short of what it waits for.
+    CannotStart(f64),
+}
+
+impl Drain {
+    /// What it means, for `pcb-maker ledger` and the waiting lines.
+    pub fn describe(&self) -> String {
+        match self {
+            Drain::NotYet => "not drained for yet".into(),
+            Drain::Drains => "the ledger drains for it".into(),
+            Drain::Stale(seconds) => {
+                format!("not drained for: its entry was last rewritten {seconds:.0} s ago (stale)")
+            }
+            Drain::PastBound(bound) => {
+                format!("not drained for: it has waited past the drain's bound of {bound:.0} s")
+            }
+            Drain::CannotStart(room) => format!(
+                "not drained for: with every run since its wait began gone its room would be {room:.0} MB (the capacity, and the memory available less its floor), too little to start it"
+            ),
+        }
+    }
+}
+
+/// Whether the ledger drains for `waiter` beside `others` at `now` (since
+/// 2026-10-26): once it has waited its `drain_after`, unless its entry is
+/// stale (`refreshed` more than `STALE_AFTER_SECONDS` ago; absent:
+/// unknown, live), its wait is past its `drain_max`, or the ledger could
+/// not start it even with every reservation that began holding since its
+/// wait began gone (`held_since`): its room (`waiter_room`: the capacity
+/// less the older reservations, and `available_mb` with the newer ones'
+/// megabytes back less its floor, `Reservation::assumed_floor_mb`) short
+/// of what it waits for. Then newer requests pass it by ordered admission
+/// alone (`order_allows`); it keeps its place. Until then a drain for an
+/// old harness's waiter of 24.7 GB with a floor of 10 GB that could not
+/// start held every request of more than 4 GB back for hours.
+/// benchmarks/harness_common.py, `drain_state`: the same rule.
+pub fn drain_state(
+    waiter: &Reservation,
+    others: &[&Reservation],
+    now: f64,
+    capacity: Option<f64>,
+    available_mb: Option<f64>,
+) -> Drain {
+    let waited = now - waiter.waiting_since();
+    if waited < waiter.drain_after() {
+        return Drain::NotYet;
+    }
+    if let Some(at) = waiter.refreshed
+        && now - at > STALE_AFTER_SECONDS
+    {
+        return Drain::Stale(now - at);
+    }
+    if waited > waiter.drain_max() {
+        return Drain::PastBound(waiter.drain_max());
+    }
+    let newer: f64 = others
+        .iter()
+        .filter(|r| {
+            !std::ptr::eq(**r, waiter)
+                && r.megabytes > 0.0
+                && r.held_since() >= waiter.waiting_since()
+        })
+        .map(|r| r.megabytes)
+        .sum();
+    let room = waiter_room(
+        waiter,
+        others,
+        capacity,
+        available_mb,
+        0.0,
+        newer,
+        waiter.assumed_floor_mb(),
+    );
+    if room < waiter.waiting_mb.unwrap_or(0.0) {
+        Drain::CannotStart(room)
+    } else {
+        Drain::Drains
+    }
 }
 
 /// The drain (since 2026-10-25): whether a new request of `wanted_mb`,
@@ -580,7 +738,17 @@ fn drain_allows_up_to(
 ) -> bool {
     let wants = waiter.waiting_mb.unwrap_or(0.0);
     let rest = || others.iter().filter(|r| !std::ptr::eq(**r, waiter));
-    if waiter_room(waiter, others, capacity, available_mb, wanted_mb, 0.0) >= wants {
+    let floor = waiter.floor_mb.unwrap_or(0.0).max(0.0);
+    if waiter_room(
+        waiter,
+        others,
+        capacity,
+        available_mb,
+        wanted_mb,
+        0.0,
+        floor,
+    ) >= wants
+    {
         return true;
     }
     if wanted_mb <= small_mb && blocked_by_large(small_mb, waiter, others, capacity, available_mb) {
@@ -599,8 +767,8 @@ fn drain_allows_up_to(
 /// The drain's room for `waiter` beside `others` (but the waiter) after a
 /// request of `wanted_mb`, with `freed_mb` of the reservations gone: the
 /// smaller of the capacity less the reservations (None: unbounded) and
-/// `available_mb` (None: unbounded) less the waiter's floor (what the
-/// waiter holds counts back).
+/// `available_mb` (None: unbounded) less the waiter's floor `floor_mb`
+/// (what the waiter holds counts back).
 fn waiter_room(
     waiter: &Reservation,
     others: &[&Reservation],
@@ -608,6 +776,7 @@ fn waiter_room(
     available_mb: Option<f64>,
     wanted_mb: f64,
     freed_mb: f64,
+    floor_mb: f64,
 ) -> f64 {
     let reserved: f64 = others
         .iter()
@@ -617,8 +786,7 @@ fn waiter_room(
         - freed_mb;
     let ledger_room = capacity.map_or(f64::INFINITY, |capacity| capacity - reserved - wanted_mb);
     let floor_room = available_mb.map_or(f64::INFINITY, |available| {
-        available + freed_mb - wanted_mb - waiter.floor_mb.unwrap_or(0.0).max(0.0)
-            + waiter.megabytes
+        available + freed_mb - wanted_mb - floor_mb + waiter.megabytes
     });
     ledger_room.min(floor_room)
 }
@@ -650,7 +818,8 @@ pub fn blocked_by_large(
         .filter(|r| r.megabytes <= small_mb)
         .map(|r| r.megabytes)
         .sum();
-    waiter_room(waiter, others, capacity, available_mb, 0.0, small)
+    let floor = waiter.floor_mb.unwrap_or(0.0).max(0.0);
+    waiter_room(waiter, others, capacity, available_mb, 0.0, small, floor)
         < waiter.waiting_mb.unwrap_or(0.0)
 }
 
@@ -801,6 +970,7 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
         waiting_mb,
         waiting_since: waiting_mb.map(|_| since),
         held_since: held_since.filter(|_| megabytes > 0.0),
+        refreshed: waiting_mb.map(|_| now),
         expected_end: inherited.and_then(|r| r.expected_end),
         priority: inherited.and_then(|r| r.priority.clone()),
         other: inherited.map(|r| r.other.clone()).unwrap_or_default(),
@@ -835,36 +1005,32 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
         // it to end). A binary does not know when it will end: in a drain
         // it goes by the waiter's room alone.
         let new_request = held <= 0.0 && harness.is_none();
+        // (The memory available is read only when a waiter may drain.)
+        let available = (new_request && first_waiter(&others).is_some())
+            .then(|| available_less_growth(&others))
+            .flatten();
         let drained = new_request
-            .then(|| drained_for(&others, me, since, now))
+            .then(|| drained_for(&others, me, since, now, capacity, available))
             .flatten();
         let ordered = !new_request
             || (order_allows(&others, me, since, wanted, capacity)
                 && drained.is_none_or(|waiter| {
-                    drain_allows(
-                        waiter,
-                        &others,
-                        wanted,
-                        capacity,
-                        available_less_growth(&others),
-                        None,
-                    )
+                    drain_allows(waiter, &others, wanted, capacity, available, None)
                 }));
         let behind = (fits && !ordered)
             .then(|| first_waiter(&others))
             .flatten()
             .map(|r| {
+                let drain = match drain_state(r, &others, now, capacity, available) {
+                    Drain::NotYet => String::new(),
+                    state => format!("; {}", state.describe()),
+                };
                 format!(
-                    "{} (pid {}, waiting {:.0} s for {:.0} MB{})",
+                    "{} (pid {}, waiting {:.0} s for {:.0} MB{drain})",
                     r.label,
                     r.pid,
                     (now - r.waiting_since()).max(0.0),
                     r.waiting_mb.unwrap_or(0.0),
-                    if drained.is_some() {
-                        "; the ledger drains for it"
-                    } else {
-                        ""
-                    }
                 )
             });
         let fits = fits && ordered;
@@ -1491,16 +1657,17 @@ mod tests {
                         Some(CAPACITY),
                         &[],
                     ) && order_allows(&others, pid, since, wanted, Some(CAPACITY))
-                        && drained_for(&others, pid, since, now).is_none_or(|waiter| {
-                            drain_allows(
-                                waiter,
-                                &others,
-                                wanted,
-                                Some(CAPACITY),
-                                Some(available),
-                                None,
-                            )
-                        })
+                        && drained_for(&others, pid, since, now, Some(CAPACITY), Some(available))
+                            .is_none_or(|waiter| {
+                                drain_allows(
+                                    waiter,
+                                    &others,
+                                    wanted,
+                                    Some(CAPACITY),
+                                    Some(available),
+                                    None,
+                                )
+                            })
                 };
                 if admitted {
                     let entry = &mut book[index];
@@ -1653,17 +1820,18 @@ mod tests {
                 let admitted = fits
                     && (first || order_allows(&others, pid, since, wanted, Some(CAPACITY)))
                     && (first
-                        || drained_for(&others, pid, since, now).is_none_or(|waiter| {
-                            drain_allows_up_to(
-                                small_mb,
-                                waiter,
-                                &others,
-                                wanted,
-                                Some(CAPACITY),
-                                Some(available),
-                                end,
-                            )
-                        }));
+                        || drained_for(&others, pid, since, now, Some(CAPACITY), Some(available))
+                            .is_none_or(|waiter| {
+                                drain_allows_up_to(
+                                    small_mb,
+                                    waiter,
+                                    &others,
+                                    wanted,
+                                    Some(CAPACITY),
+                                    Some(available),
+                                    end,
+                                )
+                            }));
                 if admitted {
                     let entry = &mut book[index];
                     entry.0.megabytes = wanted;
@@ -1796,9 +1964,9 @@ mod tests {
         let book = [holder(11, 4000.0, Some(900.0)), waiter.clone()];
         let others = refs(&book);
         // Not drained before its 600 s, nor for a request older than it.
-        assert!(drained_for(&others, 99, 30.0, 609.0).is_none());
-        assert!(drained_for(&others, 99, 5.0, 700.0).is_none());
-        let drained = drained_for(&others, 99, 30.0, 610.0).expect("drained");
+        assert!(drained_for(&others, 99, 30.0, 609.0, capacity, None).is_none());
+        assert!(drained_for(&others, 99, 5.0, 700.0, capacity, None).is_none());
+        let drained = drained_for(&others, 99, 30.0, 610.0, capacity, None).expect("drained");
         assert_eq!(drained.pid, 13);
         // Available 12 000 MB beside the reservations: a request of 2000
         // leaves 12 000 - 2000 - 2000 (floor) = 8000, the waiter's room.
@@ -1888,6 +2056,124 @@ mod tests {
         ));
     }
 
+    /// The ledger of 2026-10-26 (58 066 MB): the old nightly harness's
+    /// waiter (356c8db: no `floor_mb`, no `refreshed`, `waits_on_floor`) of
+    /// 24 724 MB waiting since 0 s, 26 GB reserved by two runs (the smaller
+    /// 3 GB, holding for another hour), 31 000 MB available less the
+    /// reservations' growth, and a request of 7 GB (katia).
+    #[test]
+    fn the_ledger_drains_only_for_a_waiter_it_could_start() {
+        let holder = |pid: u32, megabytes: f64, held_since: f64, end: f64| Reservation {
+            pid,
+            started: held_since,
+            megabytes,
+            held_since: Some(held_since),
+            expected_end: Some(end),
+            ..Default::default()
+        };
+        let waiter = Reservation {
+            pid: 4_134_524,
+            started: 0.0,
+            label: "run.py: Goga64__ULK__ULK_sl_PG1316s (expected peak)".into(),
+            waiting_mb: Some(24_724.0),
+            waiting_since: Some(0.0),
+            waits_on_floor: true,
+            ..Default::default()
+        };
+        let (capacity, available, katia, now) = (Some(58_066.0), Some(31_000.0), 7168.0, 1200.0);
+        // An old entry without a floor: run.py's 10 GB assumed.
+        assert_eq!(waiter.assumed_floor_mb(), DEFAULT_FLOOR_MB);
+        // The runs began holding before its wait began.
+        let book = [
+            holder(11, 3072.0, -600.0, now + 3600.0),
+            holder(12, 23_552.0, -600.0, now + 7200.0),
+            waiter.clone(),
+        ];
+        let others = refs(&book);
+        // The drain of 2026-10-25 held the 7 GB request back: after it the
+        // waiter's room (58 066 - 26 624 - 7168, 31 000 - 7168) falls short
+        // of 24 724; it is larger than the cap and ends after the 3 GB run.
+        assert!(!drain_allows(
+            &book[2],
+            &others,
+            katia,
+            capacity,
+            available,
+            Some(now + 4000.0)
+        ));
+        // Now: with every run since its wait began gone (none) its room
+        // under its floor is 31 000 - 10 240 = 20 760 MB: the ledger
+        // cannot start it, the drain ends, and the 7 GB request goes by
+        // ordered admission (no newer run: 7168 + 24 724 of 58 066).
+        assert_eq!(
+            drain_state(&book[2], &others, now, capacity, available),
+            Drain::CannotStart(20_760.0)
+        );
+        assert!(drained_for(&others, 99, now, now, capacity, available).is_none());
+        assert!(order_allows(&others, 99, now, katia, capacity));
+        // The live ledger's case: every run began after its wait (24 GB).
+        // With them gone it would start (31 000 + 24 576 - 10 240): the
+        // ledger drains for it and holds the 7 GB request back ...
+        let book = [
+            holder(11, 3072.0, 600.0, now + 3600.0),
+            holder(12, 21_504.0, 600.0, now + 7200.0),
+            waiter.clone(),
+        ];
+        let others = refs(&book);
+        assert_eq!(
+            drain_state(&book[2], &others, now, capacity, available),
+            Drain::Drains
+        );
+        let drained = drained_for(&others, 99, now, now, capacity, available).expect("drained");
+        assert!(!drain_allows(
+            drained, &others, katia, capacity, available, None
+        ));
+        // ... for at most 2 hours of its wait; then the 7 GB request goes
+        // by ordered admission (24 576 + 7168 + 24 724 of 58 066), and the
+        // waiter keeps its place: 16 GB (ducktop2) still waits.
+        let later = DEFAULT_DRAIN_MAX_SECONDS + 1.0;
+        assert_eq!(
+            drain_state(&book[2], &others, later, capacity, available),
+            Drain::PastBound(DEFAULT_DRAIN_MAX_SECONDS)
+        );
+        assert!(drained_for(&others, 99, later, later, capacity, available).is_none());
+        assert!(order_allows(&others, 99, later, katia, capacity));
+        assert!(!order_allows(&others, 99, later, 16_384.0, capacity));
+        // An entry's own bound.
+        let patient = Reservation {
+            drain_max: Some(10_000.0),
+            ..waiter.clone()
+        };
+        assert_eq!(
+            drain_state(&patient, &others, later, capacity, available),
+            Drain::Drains
+        );
+        // A new writer's entry (`refreshed`) names its floor or has none,
+        // and one not rewritten for more than 120 s is stale.
+        let fresh = Reservation {
+            refreshed: Some(now - STALE_AFTER_SECONDS),
+            ..waiter.clone()
+        };
+        assert_eq!(fresh.assumed_floor_mb(), 0.0);
+        assert_eq!(
+            drain_state(&fresh, &others, now, capacity, available),
+            Drain::Drains
+        );
+        let stale = Reservation {
+            refreshed: Some(now - STALE_AFTER_SECONDS - 1.0),
+            ..waiter.clone()
+        };
+        assert_eq!(
+            drain_state(&stale, &others, now, capacity, available),
+            Drain::Stale(STALE_AFTER_SECONDS + 1.0)
+        );
+        // Before its drain_after nothing drains.
+        assert_eq!(
+            drain_state(&book[2], &others, 599.0, capacity, available),
+            Drain::NotYet
+        );
+    }
+
     #[test]
     fn the_nightly_s_request_goes_first_and_is_never_passed() {
         let holder = Reservation {
@@ -1917,7 +2203,7 @@ mod tests {
         assert_eq!(first_waiter(&others).map(|r| r.pid), Some(13));
         // It drains at once (a second after it began waiting), and the end
         // exception does not hold for it.
-        let drained = drained_for(&others, 99, 21.0, 21.0).expect("drained at once");
+        let drained = drained_for(&others, 99, 21.0, 21.0, None, None).expect("drained at once");
         assert_eq!(drained.pid, 13);
         assert!(!drain_allows(
             drained,
@@ -1952,7 +2238,8 @@ mod tests {
         let text = serde_json::json!({"reservations": [{
             "pid": me, "started": 1.0, "start_ticks": start_ticks(me), "megabytes": 100.0,
             "label": "run.py: katia (expected peak)", "expected_end": 900.5, "priority": "nightly",
-            "floor_mb": 10240.0, "drain_after": 300.0, "a_later_field": [1, 2]
+            "floor_mb": 10240.0, "drain_after": 300.0, "drain_max": 900.0, "refreshed": 2.5,
+            "a_later_field": [1, 2]
         }]});
         fs::write(&path, text.to_string()).unwrap();
         let ledger = Ledger::at(&path);
@@ -1961,6 +2248,8 @@ mod tests {
         assert!(live[0].nightly());
         assert_eq!(live[0].floor_mb, Some(10240.0));
         assert_eq!(live[0].drain_after, Some(300.0));
+        assert_eq!(live[0].drain_max, Some(900.0));
+        assert_eq!(live[0].refreshed, Some(2.5));
         // A change elsewhere rewrites the file: every field stays.
         ledger
             .update(|reservations| reservations.push(reservation(me, 5.0, "another")))
@@ -1971,6 +2260,7 @@ mod tests {
         assert_eq!(first["a_later_field"], serde_json::json!([1, 2]));
         assert_eq!(first["priority"], "nightly");
         assert_eq!(first["expected_end"], 900.5);
+        assert_eq!(first["refreshed"], 2.5);
         fs::remove_dir_all(directory).unwrap();
     }
 

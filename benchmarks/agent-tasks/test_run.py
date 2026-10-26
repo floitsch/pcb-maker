@@ -806,7 +806,8 @@ class MemoryLedger(unittest.TestCase):
                                              own_pid=1)[0]
                 else:
                     since = me["waiting_since"]
-                    drained = h.drained_for(others, since, t, own_pid=me["pid"])
+                    drained = h.drained_for(others, since, t, own_pid=me["pid"], capacity_mb=capacity,
+                                            available_mb=available)
                     admitted = (h.memory_room(others, small, 0.0, capacity, None)[0]
                                 and h.order_allows(others, small, since, capacity, own_pid=me["pid"])
                                 and (drained is None
@@ -872,7 +873,8 @@ class MemoryLedger(unittest.TestCase):
                                       own_pid=me["pid"])[0] if nightly
                         else h.memory_room(others, wanted, 0.0, capacity, None)[0])
                 priority = me.get("priority")
-                drained = h.drained_for(others, since, t, own_pid=me["pid"], priority=priority)
+                drained = h.drained_for(others, since, t, own_pid=me["pid"], priority=priority, capacity_mb=capacity,
+                                        available_mb=available)
                 end = t + 1500.0 if nightly else None
                 if (fits and h.order_allows(others, wanted, since, capacity, own_pid=me["pid"], priority=priority)
                         and (drained is None or h.drain_allows(drained, others, wanted, capacity, available, end,
@@ -948,6 +950,54 @@ class MemoryLedger(unittest.TestCase):
         self.assertTrue(h.order_allows([holder, waiter], 9000.0, 30.0, 10000.0, own_pid=99, priority="nightly"))
         self.assertIsNone(h.drained_for([holder, waiter], 30.0, 9999.0, own_pid=99, priority="nightly"))
 
+    def test_the_ledger_drains_only_for_a_waiter_it_could_start(self):
+        # The ledger of 2026-10-26 (58 066 MB): the old nightly harness's
+        # waiter (356c8db: no floor_mb, no refreshed, waits_on_floor) of
+        # 24 724 MB waiting since 0 s, 26 GB reserved by two runs (the
+        # smaller 3 GB, holding for another hour), 31 000 MB available less
+        # growth, a request of 7 GB (katia). ledger.rs: the same test.
+        h = run.harness_common
+        holder = lambda pid, megabytes, since, end: {"pid": pid, "started": since, "megabytes": megabytes,  # noqa: E731
+                                                     "held_since": since, "expected_end": end, "label": ""}
+        waiter = {"pid": 4134524, "started": 0.0, "megabytes": 0.0, "waiting_mb": 24724.0, "waiting_since": 0.0,
+                  "waits_on_floor": True, "label": "run.py: Goga64__ULK__ULK_sl_PG1316s (expected peak)"}
+        capacity, available, katia, now = 58066.0, 31000.0, 7168.0, 1200.0
+        self.assertEqual(h.assumed_floor_mb(waiter), h.DEFAULT_FLOOR_MB)
+        # The runs began holding before its wait began.
+        others = [holder(11, 3072.0, -600.0, now + 3600), holder(12, 23552.0, -600.0, now + 7200), waiter]
+        # The drain of 2026-10-25 held the 7 GB request back.
+        self.assertFalse(h.drain_allows(waiter, others, katia, capacity, available, expected_end=now + 4000))
+        # Now: with no newer run to go its room is 31 000 - 10 240 = 20 760:
+        # the drain ends, and ordered admission lets the request go.
+        self.assertEqual(h.drain_state(waiter, others, now, capacity, available), ("cannot start", 20760.0))
+        self.assertIsNone(h.drained_for(others, now, now, own_pid=99, capacity_mb=capacity, available_mb=available))
+        self.assertTrue(h.order_allows(others, katia, now, capacity, own_pid=99))
+        # The live ledger's case: every run began after its wait (24 GB): it
+        # could start once they end, the ledger drains for it ...
+        others = [holder(11, 3072.0, 600.0, now + 3600), holder(12, 21504.0, 600.0, now + 7200), waiter]
+        self.assertEqual(h.drain_state(waiter, others, now, capacity, available), ("drains", None))
+        drained = h.drained_for(others, now, now, own_pid=99, capacity_mb=capacity, available_mb=available)
+        self.assertIs(drained, waiter)
+        self.assertFalse(h.drain_allows(drained, others, katia, capacity, available))
+        # ... for at most 2 hours of its wait; then ordered admission alone,
+        # and the waiter keeps its place (16 GB still waits).
+        later = h.DEFAULT_DRAIN_MAX_SECONDS + 1
+        self.assertEqual(h.drain_state(waiter, others, later, capacity, available),
+                         ("past bound", h.DEFAULT_DRAIN_MAX_SECONDS))
+        self.assertIsNone(h.drained_for(others, later, later, own_pid=99, capacity_mb=capacity,
+                                        available_mb=available))
+        self.assertTrue(h.order_allows(others, katia, later, capacity, own_pid=99))
+        self.assertFalse(h.order_allows(others, 16384.0, later, capacity, own_pid=99))
+        self.assertEqual(h.drain_state(dict(waiter, drain_max=10000.0), others, later, capacity, available)[0],
+                         "drains")
+        # A new writer's entry: its own floor or none; stale after 120 s.
+        fresh = dict(waiter, refreshed=now - h.STALE_AFTER_SECONDS)
+        self.assertEqual(h.assumed_floor_mb(fresh), 0.0)
+        self.assertEqual(h.drain_state(fresh, others, now, capacity, available)[0], "drains")
+        stale = dict(waiter, refreshed=now - h.STALE_AFTER_SECONDS - 1)
+        self.assertEqual(h.drain_state(stale, others, now, capacity, available), ("stale", h.STALE_AFTER_SECONDS + 1))
+        self.assertEqual(h.drain_state(waiter, others, 599.0, capacity, available)[0], "not yet")
+
     def test_waiting_entries_carry_what_the_drain_reads_and_newer_requests_wait(self):
         other = self.sleeper()
         self.ledger.reserve(3000, "another run", pid=other.pid)
@@ -955,23 +1005,46 @@ class MemoryLedger(unittest.TestCase):
         # A request that cannot fit (3000 + 3500 of 4000), waiting since 700 s ago.
         since = time.time() - 700
         key, _ = h.try_admit(self.ledger, 3500, "large", 1024, since=since, drain_after=600.0,
-                             priority="nightly")
+                             priority="nightly", drain_max=7200.0)
         self.assertIsNone(key)
         entry = next(r for r in self.ledger.live() if r["label"] == "large")
-        self.assertEqual((entry["floor_mb"], entry["drain_after"], entry["priority"]), (1024.0, 600.0, "nightly"))
-        # The holder held before the large one began waiting: the order lets
-        # 500 more go (the large one fits once the holder ends: 500 + 3500).
-        # In the drain they wait, and say so; under its bound they go.
-        self.ledger.update(lambda reservations: [r.update(held_since=since - 10) for r in reservations
-                                                  if r["label"] == "another run"])
+        self.assertEqual((entry["floor_mb"], entry["drain_after"], entry["priority"], entry["drain_max"]),
+                         (1024.0, 600.0, "nightly", 7200.0))
+        self.assertAlmostEqual(entry["refreshed"], time.time(), delta=5)
+
+        def large(**fields):
+            self.ledger.update(lambda reservations: [r.update(**fields) for r in reservations
+                                                      if r["label"] == "large"])
+
+        def holder_since(at):
+            self.ledger.update(lambda reservations: [r.update(held_since=at) for r in reservations
+                                                      if r["label"] == "another run"])
+        # The holder began after the large one began waiting: the ledger
+        # could start it once the holder ends and drains for it; 500 more
+        # wait (by the order as well: 3000 + 500 + 3500), and say so.
+        holder_since(since + 10)
         key, text = h.try_admit(self.ledger, 500, "small")
         self.assertIsNone(key)
         self.assertIn("the ledger drains for it", text)
-        self.ledger.update(lambda reservations: [r.update(drain_after=800.0, priority=None) for r in reservations
-                                                  if r["label"] == "large"])
+        # Stale (not rewritten for 200 s), or past its bound: not drained for.
+        large(refreshed=time.time() - 200)
+        self.assertIn("(stale)", h.try_admit(self.ledger, 500, "small")[1])
+        large(refreshed=time.time(), drain_max=100.0)
+        self.assertIn("past the drain's bound of 100 s", h.try_admit(self.ledger, 500, "small")[1])
+        large(drain_max=7200.0)
+        # The holder held before the large one began waiting: the ledger
+        # cannot start it before the holder ends (500 of 4000 beside the
+        # holder's 3000): no drain, and the order lets 500 more go (the
+        # large one fits once the holder ends: 500 + 3500).
+        holder_since(since - 10)
         key, text = h.try_admit(self.ledger, 500, "small")
         self.assertIsNotNone(key, text)
         self.ledger.release(key)
+        # Before its drain_after (and not the nightly's) it is not drained
+        # for either.
+        holder_since(since + 10)
+        large(drain_after=800.0, priority=None)
+        self.assertNotIn("drain", h.try_admit(self.ledger, 500, "small")[1])
         # Admitted, a reservation carries its expected end and priority.
         h.withdraw(self.ledger, "large", since)
         key, _ = h.try_admit(self.ledger, 500, "small", expected_seconds=60, priority="nightly")
