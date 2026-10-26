@@ -26,8 +26,9 @@
 use super::*;
 use crate::board_layout::footprint_items;
 use crate::board_placer::{
-    KiCadBoardPlacerConfig, attribution, courtyards_may_overlap, holes_in_courtyards_error, silk_over_parts_error,
-    largest_clearance, lower_placement, reference_index, write_footprint_pose,
+    KiCadBoardPlacerConfig, attribution, courtyards_may_overlap, holes_in_courtyards_error,
+    largest_clearance, lower_placement, reference_index, silk_over_parts_error,
+    write_footprint_pose,
 };
 use crate::placement_constraints::{KiCadConstraintsSource, resolve_constraints};
 use pcb_placer as placer;
