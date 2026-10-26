@@ -67,6 +67,14 @@ const END_TOLERANCE: f64 = 0.0;
 /// within a micron of the fill's rim.
 const TRACK_END_TOLERANCE: f64 = 0.0005;
 
+/// `EPSILON` for a spoke's end in a hatched zone's thermal ring, in the
+/// measurement (`Config::measured_thermals`): the micron KiCad's filler
+/// prunes with. 0xCB's U3.23 on B.Cu: its spoke towards the exposed pad
+/// ends 0.5 microns outside what the clearances and the pruning leave of
+/// its own ring, which brush centres 1 to 2 microns inside U3.22's
+/// clearance reach; at `EPSILON` the model kept the spoke.
+const SPOKE_END_RING_TOLERANCE: f64 = 0.001;
+
 #[derive(Clone, Copy)]
 enum Item {
     /// One of the board's obstacles.
@@ -481,7 +489,15 @@ impl<'a> FillProbe<'a> {
     /// centre 0.497 mm away fitting by the tolerance; KiCad drops the
     /// spoke).
     pub(super) fn spoke_end_lands(&self, layer: usize, end: Point, direction: Point) -> bool {
-        if self.in_ring(layer, end) {
+        let in_ring = if self.router.config.measured_thermals {
+            let before = self.tolerance.replace(SPOKE_END_RING_TOLERANCE);
+            let result = self.in_ring(layer, end);
+            self.tolerance.set(before);
+            result
+        } else {
+            self.in_ring(layer, end)
+        };
+        if in_ring {
             return true;
         }
         if self.slack(layer, end, &[]) + self.half(layer) < -END_TOLERANCE {
@@ -1309,5 +1325,107 @@ impl<'a> FillProbe<'a> {
                 self.blocker(layer, at, None).is_none()
             })
         })
+    }
+
+    /// Whether what the clearances leave of a spoke joins the fill beside
+    /// it, where `spoke_clear` finds no brush room along the spoke to `to`.
+    /// KiCad adds the spoke to the fill, cuts the clearances out of both
+    /// and prunes: the spoke counts where the fill crosses its ring and
+    /// holds more than the pad, also when another net's clearance cuts its
+    /// end off and its remnant meets the fill sideways (0xCB's U3.23 on
+    /// B.Cu, its diagonal spoke cut by a VCC track's clearance 0.06 mm short
+    /// of its end, the fill to its side kept: one spoke in KiCad's count).
+    /// A flood of brush centres on a grid of a quarter of the brush's
+    /// radius, 8-connected, in the spoke's frame: from the centres in the
+    /// spoke at `from` (where the ring begins) through centres in the spoke
+    /// (`side` of its axis, up to `to`; no relief stops them) and centres
+    /// of the fill (every relief kept), until one of the fill's is reached.
+    pub(super) fn spoke_joins_fill(
+        &self,
+        layer: usize,
+        anchor: Point,
+        direction: Point,
+        from: f64,
+        to: f64,
+        side: f64,
+    ) -> bool {
+        let half = self.half(layer);
+        let step = (half / 4.0).max(0.005);
+        let reach = side + 2.0 * half + (to - from);
+        let rows = (((to + half - from) / step).ceil() as i64).max(1);
+        let columns = (reach / step).ceil() as i64;
+        let width = (2 * columns + 1) as usize;
+        let position = |row: i64, column: i64| {
+            let along = from + row as f64 * step;
+            let offset = column as f64 * step;
+            (
+                along,
+                offset,
+                [
+                    anchor[0] + direction[0] * along - direction[1] * offset,
+                    anchor[1] + direction[1] * along + direction[0] * offset,
+                ],
+            )
+        };
+        // 0 unknown, 1 open (in the spoke), 2 fill, 3 shut.
+        let mut state = vec![0u8; (rows as usize + 1) * width];
+        let mut classify = |row: i64, column: i64| -> u8 {
+            let index = row as usize * width + (column + columns) as usize;
+            if state[index] == 0 {
+                let (along, offset, at) = position(row, column);
+                state[index] = if self.blocker(layer, at, Some(&[])).is_none() {
+                    2
+                } else if offset.abs() <= side + 1.0e-9
+                    && along <= to + 1.0e-9
+                    && self.blocker(layer, at, None).is_none()
+                {
+                    1
+                } else {
+                    3
+                };
+            }
+            state[index]
+        };
+        let mut queue: Vec<(i64, i64)> = Vec::new();
+        let mut seen = vec![false; (rows as usize + 1) * width];
+        let start = (side / step).floor() as i64;
+        for column in -start..=start {
+            match classify(0, column) {
+                2 => return true,
+                1 => {
+                    seen[(column + columns) as usize] = true;
+                    queue.push((0, column));
+                }
+                _ => {}
+            }
+        }
+        while let Some((row, column)) = queue.pop() {
+            for (dr, dc) in [
+                (-1, -1),
+                (-1, 0),
+                (-1, 1),
+                (0, -1),
+                (0, 1),
+                (1, -1),
+                (1, 0),
+                (1, 1),
+            ] {
+                let (r, c) = (row + dr, column + dc);
+                if r < 0 || r > rows || c < -columns || c > columns {
+                    continue;
+                }
+                let index = r as usize * width + (c + columns) as usize;
+                if seen[index] {
+                    continue;
+                }
+                seen[index] = true;
+                match classify(r, c) {
+                    2 => return true,
+                    1 => queue.push((r, c)),
+                    _ => {}
+                }
+            }
+        }
+        false
     }
 }

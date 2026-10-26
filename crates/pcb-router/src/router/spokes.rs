@@ -420,6 +420,9 @@ impl Router {
             // (Telemetry's D12.1: its spoke ends in a strip exactly the
             // minimum width between its relief and D12.2's clearance, whose
             // brush centres lie on one line).
+            // In the measurement, a spoke the clearances cut short of that
+            // still counts where what is left of it joins the fill beside
+            // it (`spoke_joins_fill`; 0xCB's U3.23 on B.Cu).
             let clear_to = (spoke.tip - fill::KICAD_MAX_ERROR).max(from);
             if self.config.spoke_clearance
                 && !probe.spoke_clear(
@@ -430,6 +433,15 @@ impl Router {
                     clear_to,
                     spoke.side,
                 )
+                && !(self.config.measured_thermals
+                    && probe.spoke_joins_fill(
+                        layer,
+                        spoke.anchor,
+                        spoke.direction,
+                        from,
+                        clear_to,
+                        spoke.side,
+                    ))
             {
                 if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() {
                     let steps = 8;
