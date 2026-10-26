@@ -3469,11 +3469,103 @@ unchanged.
 
 ### Measurement
 
-MEASUREMENT
+The dense pairs' protocol (above, "The race's route probe"): the
+eleven dense boards in layout mode at the task budgets (tasks v7, 1500 s
+of work, pinned rates 3.15e6 and 150e6), `--placer '{"seed": N}'`, 3 x 2
+a side with at most six layouts in flight, through the memory ledger
+with 10 GB kept free, beside the nightly and four other agents (load 15
+to 28); no row cut by the wall clock. Off: x1828 (main 991ad37). On:
+x14502 (branch placer-legality 7eeae37, on main 280c52a, whose layouts
+equal x1828's), `"legality": "kicad"`. Output
+`build/legal1-dense-s{1,101,201}-{off,on}` (seed 201's last nine and
+ten boards in `build/legal1-dense-s201b-*`, run again with the same
+binaries after the ledger's drain fix; the first runs had queued behind
+a stale request), `build/legal1-short-{off,on}`.
+
+KiCad unconnected per board, off / on:
+
+| Board | seed 1 | seed 101 | seed 201 | median | first route open (three seeds) | the kept placement's level on |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| OpenESC 4in1-mini | 81 / 85 | 82 / 99 | 99 / 89 | 82 / 89 | 141/147, 140/175, 163/157 | least spacing, kicad |
+| OpenESC 4in1 | 106 / 133 | 125 / 82 | 125 / 85 | 125 / 85 | 153/186, 167/118, 162/149 | least spacing, kicad |
+| split72_left | 23 / 23 | 21 / 21 | 33 / 33 | 23 / 23 | equal | full halos |
+| video | 190 / 197 | 287 / 275 | 178 / 182 | 190 / 197 | 222/236, 362/337, 225/253 | no halos, 0.5 mm spacing |
+| DSP-ADAU1452 | 17 / 17 | 7 / 7 | 28 / 28 | 17 / 17 | equal | full halos |
+| 0xCB panel | 50 / 50 | 50 / 50 | 51 / 51 | 50 / 50 | equal | half halos |
+| Glasgow | 143 / 142 | 149 / 276 | 173 / 137 | 149 / 142 | 164/156, 178/437, 202/160 | least spacing, kicad |
+| SmartSpin2k | 34 / 34 | 59 / 59 | 52 / 52 | 52 / 52 | equal | half halos |
+| SNSP-CPU-01 | 53 / 53 | 95 / 95 | 79 / 79 | 79 / 79 | equal | full halos |
+| protoesp | 110 / 110 | 76 / 76 | 90 / 90 | 90 / 90 | equal | half halos |
+| MegaDrive | 110 / 110 | 108 / 108 | 157 / 157 | 110 / 110 | equal | half halos |
+| sum | 917 / 954 | 1059 / 1148 | 1065 / 983 | 967 / 934 | | |
+
+- Seven boards give the same rows (unconnected and placement work equal
+  on all three seeds): they place at a halo level, which the switch
+  does not touch. The 4in1-mini, the 4in1 and
+  Glasgow place at the least-spacing level with `pad_clearance` on;
+  video's kept placement is the same seed at the same level and
+  wirelength (33 552 mm), but its seeds took less placement work (453
+  against 635 s on seed 1), which moves the route.
+- The sum of medians falls 967 -> 934 (-3.4 %), carried by the 4in1
+  (125 -> 85); seed 1 rises 917 -> 954 and seed 101 1059 -> 1148
+  (Glasgow 149 -> 276: its first route left 437 open against 178, its
+  layout ended at 1017 s of work), seed 201 falls 1065 -> 983. The
+  placer's own wirelength falls where the switch acts (the 4in1 seed 1
+  830 -> 786 mm) while the first route's open terminals rise on three
+  of the six rows of the two 4in1 boards (153 -> 186 on the 4in1's
+  seed 1): tighter packing, less room to route, as often as not.
+- No new KiCad error on any row (only protoesp has errors, 2, 1 and 8
+  clearance on both sides, identical boards); no row cut.
+- Placement work (the kept seeds' pool, summed over the seeds): the
+  4in1-mini 1040 -> 1318 s, Glasgow 1802 -> 1633 s, video 1933 ->
+  2035 s, the 4in1 equal (1802, its budget), the others equal.
+
+The short tier (3 x 2, the tier's budget scale, x1828 against x14502):
+
+| Board | unconnected off / on | strict pass off / on | placement work s off / on | level on |
+| --- | ---: | --- | ---: | --- |
+| 0xCB 1337-v4.0 | 0 / 0 | yes / yes | 16 / 16 | full halos |
+| USB_Cable_Tester | 0 / 0 | yes / yes | 6 / 6 | full halos |
+| USB_Keypad | 2 / 2 | no / no | 57 / 57 | no halos, 0.5 mm |
+| WLED_Matrix | 8 / 8 | no / no | 77 / 77 | full halos |
+| framework_mobo_lefthalf | 0 / 0 | yes / yes | 38 / 38 | least spacing, kicad |
+| MIDAS-MK1.1 | 6 / 8 | no / no | 201 / 122 | least spacing, kicad |
+| OpenFC | 2 / 2 | no / no | 57 / 57 | half halos |
+| reCamera | 4 / 4 | no / no | 102 / 124 | least spacing, kicad |
+| spell_tome_bottom | 0 / 0 | yes / yes | 5 / 5 | full halos |
+| eternal-keypad | 0 / 0 | yes / yes | 49 / 49 | full halos |
+| urchin | 0 / 0 | yes / yes | 14 / 14 | full halos |
+| Blue_Line | 0 / 0 | yes / yes | 2 / 2 | full halos |
+| sum | 22 / 24 | 7 / 7 | | |
+
+No strict pass lost, no new finding; MIDAS-MK1.1 6 -> 8.
 
 ### Judgement
 
-JUDGEMENT
+**Verdict: the default stays `"model"`.** The flip's conditions: the
+dense sum of medians falls (967 -> 934: yes), each pair's sum falls (seed
+1 +37, seed 101 +89: no), no new DRC errors (none: yes), the short tier
+loses no strict pass (7 -> 7: yes, unconnected 22 -> 24). Two of three
+pairs rise, so the switch stays as an override.
+
+- **The hypothesis is half right.** The model is stricter than KiCad:
+  97 % of the designers' parts it calls illegal at the least spacing
+  have no KiCad error, chiefly courtyards held the copper clearance
+  apart. But looser than needed is not what costs our dense layouts:
+  eight of the eleven place at halo levels, which are routing room by
+  design, and on the three that reach the least spacing, packing as
+  tightly as KiCad allows shortens the placer's wires and leaves the
+  router less room (first-route open up on three of six 4in1 rows);
+  what it does is the spread of a seed (4in1 -40, Glasgow seed 101
+  +127).
+- **SNSP-CPU-01** places at full halos on every seed; its wider spacing
+  than the designer's is the halos, untouched here (79 / 79).
+- **What would test it further**: the switch on the boards that place at
+  the least spacing in the sweep (the census's 4in1, Glasgow, MIDAS,
+  reCamera, framework_mobo kind), and the halo levels themselves, which
+  are where the designers' density and ours differ on the dense tier.
+  The census tool stays: it tells an agent which of a placement's parts
+  KiCad would flag and which only the placer's model does.
 
 ## What went wrong on the way (kept as lessons)
 

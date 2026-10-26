@@ -43,7 +43,14 @@ KiCad (2026-10-26)").
   unheld part's body may come to the edge where its pads keep the
   margin. The census at the tightest level: 2 766 -> 1 861.
 
-MEASUREMENT
+- **Measured** (eleven dense boards, seeds 1, 101, 201, x1828 against
+  x14502): KiCad unconnected, sum of medians 967 -> 934, but seed 1 917
+  -> 954 and seed 101 1059 -> 1148 (seed 201 1065 -> 983); seven boards
+  identical (halo levels), the 4in1 125 -> 85, the 4in1-mini 82 -> 89,
+  Glasgow 149 -> 142, video 190 -> 197 (medians); no new KiCad error, no
+  cut row. Short tier: unconnected 22 -> 24 (MIDAS-MK1.1 6 -> 8),
+  strict passes 7 -> 7. The default stays `"model"`: two of three pairs
+  rise.
 
 ## Committed on 2026-10-26 (per-board memory estimates for every tier)
 
