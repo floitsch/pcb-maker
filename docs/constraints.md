@@ -198,7 +198,9 @@ box), and the router routes within it.
 ```
 
 - **`polygon`**: the corners in millimetres, closed implicitly (a last
-  point repeating the first is dropped). The points are moved so that
+  point repeating the first is dropped). Another board's outline:
+  `describe-kicad-board`'s `outline.points` of that board, as they are
+  (with `x`, `y` its `outline.minimum` to keep its coordinates). The points are moved so that
   their bounding box's top-left corner lies at `x`, `y` (default as for
   the rectangle). Three corners at least, an area, no side crossing
   another: otherwise an input error (exit 2).
