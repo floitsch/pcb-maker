@@ -176,6 +176,17 @@ pub struct KiCadBoardRouterConfig {
     /// none. An explicit value always wins.
     #[serde(default)]
     pub diff_pairs: Option<bool>,
+    /// Differential pairs: a return via of the reference net beside each
+    /// via of a coupled run, where one fits (docs/router.md, "Return
+    /// vias"). Unset: `PCB_ROUTER_DIFF_PAIRS_RETURN_VIAS` (`0` or `1`),
+    /// else on.
+    #[serde(default)]
+    pub diff_pair_return_vias: Option<bool>,
+    /// Differential pairs: the return vias' net by name. Unset: `GND`
+    /// (past a sheet path), else the poured net ending in `GND` with the
+    /// most pads; a net without a pour gets none.
+    #[serde(default)]
+    pub diff_pair_return_net: Option<String>,
     /// Route mode: `diff_pairs` defaults by need (`diff_pairs_choice`);
     /// set by route-kicad-board, not read from a file (a layout's routes
     /// keep the default off).

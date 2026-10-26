@@ -85,6 +85,16 @@ pub struct KiCadDiffPairs {
     /// Meanders added to match the pairs' lengths (`KiCadPairSkew`).
     #[serde(default)]
     pub meanders: usize,
+    /// The kept links' vias (both nets' at each layer change) and the
+    /// return vias of the reference net placed beside them
+    /// (`place_return_vias`; docs/router.md, "Return vias").
+    #[serde(default)]
+    pub pair_vias: usize,
+    #[serde(default)]
+    pub return_vias: usize,
+    /// The reference net of the return vias, where they are on.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub return_net: String,
     /// Per pair with a coupled link: its lengths and skew (kept in the
     /// verdict, unlike `pairs`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -106,6 +116,11 @@ pub struct KiCadPairSkew {
     pub target_mm: f64,
     /// What the meander added to the shorter net (0: none).
     pub meander_mm: f64,
+    /// Its kept links' vias and the return vias beside them.
+    #[serde(default)]
+    pub pair_vias: usize,
+    #[serde(default)]
+    pub return_vias: usize,
 }
 
 /// Reports from before the switch's default by need were made with the
@@ -140,6 +155,12 @@ pub struct KiCadDiffPair {
     pub skew_target_mm: f64,
     #[serde(default)]
     pub meander_mm: f64,
+    /// Its kept links' vias and the return vias beside them
+    /// (`place_return_vias`).
+    #[serde(default)]
+    pub pair_vias: usize,
+    #[serde(default)]
+    pub return_vias: usize,
 }
 
 /// The largest distance between the centres of a pair's two pads on one
@@ -2715,6 +2736,29 @@ pub(crate) fn finish_pairs(
             report.meanders += (entry.meander_mm > 0.0) as usize;
         }
     }
+    // The return vias beside the kept links' vias.
+    if return_vias_on(config)
+        && let Some(reference) = return_net(&restored, config)
+    {
+        report.return_net = restored.nets[reference as usize].name.clone();
+        place_return_vias(
+            &restored,
+            result,
+            &plan.pairs,
+            &kept_runs,
+            &copper_out,
+            &mut entries,
+            reference,
+            config,
+        );
+    } else {
+        for &(index, items, ..) in &kept_runs {
+            entries[index].pair_vias += items
+                .iter()
+                .map(|&item| copper_out.items[item].5.len())
+                .sum::<usize>();
+        }
+    }
     // A pair's net whose pads the links joined all is routed, not trivial.
     for (net, original) in &plan.originals {
         let net = *net as usize;
@@ -2726,6 +2770,8 @@ pub(crate) fn finish_pairs(
         report.links += entry.links;
         report.links_coupled += entry.links_coupled;
         report.coupled_mm += entry.coupled_mm;
+        report.pair_vias += entry.pair_vias;
+        report.return_vias += entry.return_vias;
         if entry.links > 0 && entry.links_coupled == entry.links {
             report.coupled += 1;
         } else if entry.links_coupled > 0 {
@@ -2745,6 +2791,225 @@ pub(crate) fn finish_pairs(
         );
     }
     Some((restored, copper_out, report))
+}
+
+/// Return vias: the ring of a return via at most this far from the ring
+/// of the pair's via it stands beside (millimetres), searched outward in
+/// `RETURN_STEP`s from touching, at `RETURN_ANGLES` from the direction
+/// away from the via's partner (degrees).
+const RETURN_GAP: f64 = 0.5;
+const RETURN_STEP: f64 = 0.05;
+const RETURN_ANGLES: [f64; 9] = [0.0, 30.0, -30.0, 60.0, -60.0, 90.0, -90.0, 120.0, -120.0];
+
+/// Whether the kept links' vias get return vias (`place_return_vias`):
+/// the settings' `diff_pair_return_vias`, else
+/// `PCB_ROUTER_DIFF_PAIRS_RETURN_VIAS` (`0` or `1`), else on.
+fn return_vias_on(config: &KiCadBoardRouterConfig) -> bool {
+    config.diff_pair_return_vias.unwrap_or_else(|| {
+        std::env::var("PCB_ROUTER_DIFF_PAIRS_RETURN_VIAS").map_or(true, |value| value != "0")
+    })
+}
+
+/// The return vias' net: the settings' `diff_pair_return_net` (a net of
+/// the board by name), else the net named `GND` (past a sheet path), else
+/// of the nets whose name ends in `GND` the one with the most pads; only a
+/// net with a pour (`Board::planes`), which the vias join.
+fn return_net(board: &core::Board, config: &KiCadBoardRouterConfig) -> Option<core::NetId> {
+    let poured = |net: usize| board.planes.iter().any(|plane| plane.net as usize == net);
+    let short = |name: &str| name.rsplit('/').next().unwrap_or(name).to_ascii_uppercase();
+    if let Some(name) = &config.diff_pair_return_net {
+        let wanted = crate::kicad_nets::normalize_net(name);
+        return board
+            .nets
+            .iter()
+            .position(|net| crate::kicad_nets::normalize_net(&net.name) == wanted)
+            .filter(|&net| poured(net))
+            .map(|net| net as core::NetId);
+    }
+    if let Some(net) =
+        (0..board.nets.len()).find(|&net| short(&board.nets[net].name) == "GND" && poured(net))
+    {
+        return Some(net as core::NetId);
+    }
+    (0..board.nets.len())
+        .filter(|&net| short(&board.nets[net].name).ends_with("GND") && poured(net))
+        .max_by_key(|&net| (board.nets[net].terminals.len(), std::cmp::Reverse(net)))
+        .map(|net| net as core::NetId)
+}
+
+/// Beside each via of a kept link (`kept_runs`' copper), a via of the
+/// `reference` net (GND) where one fits: its ring within `RETURN_GAP` of
+/// the pair via's ring, first straight out from the via's partner, then
+/// turned by up to 120°; inside a pour of the reference net (on some
+/// layer, outside the pours above it there), and keeping every clearance
+/// the router checks (`verify` with the project's rules: other nets'
+/// copper and holes, the edge, the other return vias). The vias are the
+/// pair's size and join the routes of the reference net. Each pair's
+/// `pair_vias` and `return_vias` count them.
+#[allow(clippy::too_many_arguments)]
+fn place_return_vias(
+    board: &core::Board,
+    result: &mut core::RoutingResult,
+    pairs: &[Pair],
+    kept_runs: &[KeptRun],
+    copper: &PairCopper,
+    entries: &mut [KiCadDiffPair],
+    reference: core::NetId,
+    config: &KiCadBoardRouterConfig,
+) {
+    let split = config
+        .net_rules
+        .as_deref()
+        .map(|rules| core::rules::ClassRules::split(board, rules));
+    let (checked, rules) = match &split {
+        Some((board, rules)) => (board, Some(rules)),
+        None => (board, None),
+    };
+    let reference_name = &board.nets[reference as usize].name;
+    let in_pour = |at: Point, radius: f64| {
+        board.planes.iter().any(|plane| {
+            plane.net == reference
+                && core::geometry::point_in_polygon(at, &plane.polygon)
+                && core::geometry::polygon_edges(&plane.polygon)
+                    .all(|(a, b)| core::geometry::point_segment_distance(at, a, b) >= radius)
+                && !plane
+                    .excluded
+                    .iter()
+                    .chain(&plane.above)
+                    .any(|area| core::geometry::point_in_polygon(at, area))
+        })
+    };
+    let mut placed: Vec<core::Via> = Vec::new();
+    for &(index, items, ..) in kept_runs {
+        let pair = &pairs[index];
+        let vias = [&copper.items[items[0]].5, &copper.items[items[1]].5];
+        entries[index].pair_vias += vias[0].len() + vias[1].len();
+        for polarity in 0..2 {
+            for &at in vias[polarity] {
+                let partner = vias[1 - polarity].iter().copied().min_by(|a, b| {
+                    core::geometry::distance(*a, at).total_cmp(&core::geometry::distance(*b, at))
+                });
+                let away = partner
+                    .map(|partner| unit(sub(at, partner)))
+                    .filter(|direction| norm(*direction) > 0.5)
+                    .unwrap_or([1.0, 0.0]);
+                let touching = pair.via_diameter;
+                let steps = (RETURN_GAP / RETURN_STEP).round() as usize;
+                let found = (1..=steps).find_map(|step| {
+                    let distance = touching + step as f64 * RETURN_STEP;
+                    RETURN_ANGLES.iter().find_map(|&angle| {
+                        let candidate = add(at, scale(turned(away, angle), distance));
+                        let via = core::Via {
+                            at: candidate,
+                            diameter: pair.via_diameter,
+                            drill: pair.via_drill,
+                        };
+                        (in_pour(candidate, pair.via_diameter / 2.0)
+                            && return_via_clear(
+                                checked,
+                                rules,
+                                result,
+                                reference,
+                                reference_name,
+                                &placed,
+                                &via,
+                            ))
+                        .then_some(via)
+                    })
+                });
+                if let Some(via) = found {
+                    placed.push(via);
+                    entries[index].return_vias += 1;
+                }
+            }
+        }
+    }
+    if debug() {
+        eprintln!(
+            "diff pairs: {} return vias of {reference_name}",
+            placed.len()
+        );
+    }
+    result.routes[reference as usize].vias.extend(placed);
+}
+
+/// Whether a return via of `reference` at `via` keeps every clearance the
+/// router checks (`verify`, with the project's rules where given) from the
+/// routes near it, the board's obstacles and the return vias `placed`.
+fn return_via_clear(
+    board: &core::Board,
+    rules: Option<&core::rules::ClassRules>,
+    result: &core::RoutingResult,
+    reference: core::NetId,
+    reference_name: &str,
+    placed: &[core::Via],
+    via: &core::Via,
+) -> bool {
+    let reach = CHECK_REACH;
+    let near = |a: Point, b: Point| core::geometry::point_segment_distance(via.at, a, b) <= reach;
+    let mut routes = vec![core::NetRoute::default(); board.nets.len()];
+    for (net, route) in result.routes.iter().enumerate().take(board.nets.len()) {
+        if net == reference as usize {
+            continue;
+        }
+        routes[net].segments = route
+            .segments
+            .iter()
+            .filter(|segment| near(segment.start, segment.end))
+            .cloned()
+            .collect();
+        routes[net].vias = route
+            .vias
+            .iter()
+            .filter(|other| near(other.at, other.at))
+            .cloned()
+            .collect();
+    }
+    // Only the new via of the reference net: a finding of that net, or
+    // naming its via, is the new via's.
+    routes[reference as usize].vias.push(via.clone());
+    // What `verify` leaves out: hole to hole from every hole (the
+    // reference net's own too), the other return vias and the reference
+    // net's vias, and the reference net's own copper (no via in its pads).
+    let holes_apart = |at: Point, drill: f64| {
+        core::geometry::distance(at, via.at) - (drill + via.drill) / 2.0 >= board.hole_to_hole
+    };
+    if !placed
+        .iter()
+        .chain(&result.routes[reference as usize].vias)
+        .all(|other| {
+            holes_apart(other.at, other.drill)
+                && core::geometry::distance(other.at, via.at)
+                    >= (other.diameter + via.diameter) / 2.0
+        })
+    {
+        return false;
+    }
+    for index in obstacles_near(board, via.at, reach) {
+        let obstacle = &board.obstacles[index];
+        let distance = obstacle.shape.distance_to_point(via.at);
+        match obstacle.kind {
+            core::ObstacleKind::Hole if distance - via.drill / 2.0 < board.hole_to_hole => {
+                return false;
+            }
+            core::ObstacleKind::Copper
+                if obstacle.net == Some(reference) && distance < via.diameter / 2.0 =>
+            {
+                return false;
+            }
+            _ => {}
+        }
+    }
+    let own = format!("via of {reference_name}");
+    let hole = format!("via hole of {reference_name}");
+    !core::verify::verify_with_rules(board, &routes, rules)
+        .iter()
+        .any(|violation| {
+            violation.net == reference
+                || violation.other == own
+                || violation.other == hole
+                || violation.other.starts_with(&format!("{own} "))
+        })
 }
 
 /// A meander's polyline on the track from `a` to `b`: `count` bumps of
@@ -4057,6 +4322,8 @@ pub(crate) fn measure_uncoupled(report: &mut KiCadDiffPairs, pcb: &Expr) {
             skew_mm: skew,
             target_mm: pair.skew_target_mm,
             meander_mm: pair.meander_mm,
+            pair_vias: pair.pair_vias,
+            return_vias: pair.return_vias,
         });
     }
     report.uncoupled_mm = 0.0;
@@ -4453,6 +4720,85 @@ mod tests {
         let meander = &copper.patterns[0];
         assert!((meander.added - entry.meander_mm).abs() < 1.0e-9);
         assert!(meander.amplitude <= 3.0 * 0.2 + 1.0e-9);
+    }
+
+    /// A via of a coupled run gets a return via of GND beside it where GND
+    /// has a pour there, its ring within `RETURN_GAP` of the pair via's and
+    /// clear of the pair's copper; without a pour of GND, none.
+    #[test]
+    fn a_pair_via_gets_a_return_via_of_ground_beside_it() {
+        let crossed = BOARD.replace(
+            r#"(pad "1" smd rect (at 0 0) (size 1 0.3) (layers "F.Cu") (net "/D+"))
+    (pad "2" smd rect (at 0 0.5) (size 1 0.3) (layers "F.Cu") (net "/D-")))
+  (footprint "test" (layer "F.Cu") (at 18 4)"#,
+            r#"(pad "1" smd rect (at 0 0) (size 1 0.3) (layers "F.Cu") (net "/D-"))
+    (pad "2" smd rect (at 0 0.5) (size 1 0.3) (layers "F.Cu") (net "/D+")))
+  (footprint "test" (layer "F.Cu") (at 18 4)"#,
+        );
+        let poured = crossed.replace(
+            "(gr_rect (start 0 0)",
+            r#"(zone (net "/GND") (net_name "/GND") (layer "B.Cu") (hatch edge 0.5) (connect_pads (clearance 0.2)) (min_thickness 0.2) (fill yes (thermal_gap 0.2) (thermal_bridge_width 0.2)) (polygon (pts (xy 0.5 0.5) (xy 39.5 0.5) (xy 39.5 19.5) (xy 0.5 19.5))))
+  (gr_rect (start 0 0)"#,
+        );
+        assert_ne!(poured, crossed);
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        CROSSOVERS.with(|cell| cell.set(Some(true)));
+        let routed = |text: &str| {
+            let pcb = parse(text).unwrap();
+            let mut board = lower(&pcb, &config, true).unwrap().board;
+            plan_pairs(&mut board, &config);
+            let mut result = core::route(&board, &core_config(&config));
+            let (restored, _, report) =
+                finish_pairs(&board, &mut result, &config, &[0.0, 1.6]).unwrap();
+            (restored, result, report)
+        };
+        let (board, result, report) = routed(&poured);
+        CROSSOVERS.with(|cell| cell.set(None));
+        assert_eq!(report.links_coupled, 1, "{:?}", report.pairs);
+        // The crossover's two vias of the diving net.
+        assert_eq!(report.pair_vias, 2, "{report:?}");
+        assert!(report.return_vias >= 1, "{report:?}");
+        assert_eq!(report.return_net.trim_start_matches('/'), "GND");
+        let ground = board
+            .nets
+            .iter()
+            .position(|net| net.name == report.return_net)
+            .unwrap();
+        // They follow the router's own vias of GND (into its pour).
+        let all = &result.routes[ground].vias;
+        let returns = &all[all.len() - report.return_vias..];
+        let pair_vias: Vec<Point> = board
+            .obstacles
+            .iter()
+            .filter(|obstacle| obstacle.label == "existing via")
+            .filter_map(|obstacle| match obstacle.shape {
+                core::Shape::Circle { center, .. } => Some(center),
+                _ => None,
+            })
+            .collect();
+        for via in returns {
+            let nearest = pair_vias
+                .iter()
+                .map(|at| core::geometry::distance(*at, via.at))
+                .fold(f64::INFINITY, f64::min);
+            assert!(nearest - 0.6 <= RETURN_GAP + 1.0e-9, "{nearest}");
+            assert!(nearest - 0.6 >= 0.2 - 1.0e-9, "{nearest}");
+        }
+        assert!(core::verify(&board, &result.routes).is_empty());
+        // No pour of GND: no return via.
+        CROSSOVERS.with(|cell| cell.set(Some(true)));
+        let (_, _, report) = routed(&crossed);
+        CROSSOVERS.with(|cell| cell.set(None));
+        assert_eq!(report.return_vias, 0);
+        assert_eq!(report.pair_vias, 2);
     }
 
     /// The skew from the written copper: the tracks, and a via at the
