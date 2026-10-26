@@ -2981,9 +2981,11 @@ fn place_return_vias(
 /// it), the fill can reach the via's ring. Points around the ring, a fill's
 /// half minimum width out, are tested: one counts where it lies in the pour
 /// and every other net's copper on the layer (the board's and the routes')
-/// keeps the pour's clearance and that half width from it; four of sixteen
-/// must. KiCad joins a via to the fill it touches (no thermal relief on a
-/// solid zone's vias).
+/// keeps the larger of the pour's and its own class's clearance and that
+/// half width from it (holes the hole clearance); six of sixteen must, on
+/// two layers (KiCad calls a via joined on one layer dangling). KiCad joins
+/// a via to the fill it touches (no thermal relief on a solid zone's
+/// vias).
 fn joins_pour(
     board: &core::Board,
     local: &[core::NetRoute],
@@ -2991,7 +2993,15 @@ fn joins_pour(
     reference: core::NetId,
     via: &core::Via,
 ) -> bool {
-    board.planes.iter().any(|plane| {
+    // The clearance a pour keeps from another net's copper: the larger of
+    // its own and that net's class's (KiCad's fill takes the larger).
+    let clearance_of = |net: usize| {
+        board
+            .nets
+            .get(net)
+            .map_or(0.0, |net| board.classes[net.class].clearance)
+    };
+    let reaches = |plane: &core::Plane| {
         if plane.net != reference
             || !core::geometry::point_in_polygon(via.at, &plane.polygon)
             || plane
@@ -3010,12 +3020,17 @@ fn joins_pour(
             core::geometry::point_in_polygon(point, &plane.polygon)
                 && near.iter().all(|&index| {
                     let obstacle = &board.obstacles[index];
-                    obstacle.net == Some(reference)
+                    let theirs = match obstacle.kind {
+                        core::ObstacleKind::Hole => board.hole_clearance,
+                        _ => obstacle.net.map_or(0.0, |net| clearance_of(net as usize)),
+                    };
+                    (obstacle.net == Some(reference) && obstacle.kind != core::ObstacleKind::Hole)
                         || obstacle.layers & (1 << layer) == 0
                         || obstacle.shape.distance_to_point(point)
-                            >= keep.max(obstacle.clearance + half)
+                            >= keep.max(obstacle.clearance.max(theirs) + half)
                 })
                 && local.iter().enumerate().all(|(net, route)| {
+                    let keep = keep.max(clearance_of(net) + half);
                     net == reference as usize
                         || (route.segments.iter().all(|segment| {
                             segment.layer != layer
@@ -3039,8 +3054,18 @@ fn joins_pour(
                 ))
             })
             .count()
-            >= 4
-    })
+            >= 6
+    };
+    // KiCad calls a via joined on one layer only dangling: two layers.
+    let mut layers: Vec<usize> = board
+        .planes
+        .iter()
+        .filter(|plane| reaches(plane))
+        .map(|plane| plane.layer)
+        .collect();
+    layers.sort_unstable();
+    layers.dedup();
+    layers.len() >= 2
 }
 
 /// Whether a return via of `reference` at `via` keeps every clearance the
@@ -4829,7 +4854,7 @@ mod tests {
     }
 
     /// A via of a coupled run gets a return via of GND beside it where GND
-    /// has a pour there, its ring within `RETURN_GAP` of the pair via's and
+    /// has a pour there (on two layers), its ring within `RETURN_GAP` of the pair via's and
     /// clear of the pair's copper; without a pour of GND, none.
     #[test]
     fn a_pair_via_gets_a_return_via_of_ground_beside_it() {
@@ -4843,7 +4868,7 @@ mod tests {
         );
         let poured = crossed.replace(
             "(gr_rect (start 0 0)",
-            r#"(zone (net "/GND") (net_name "/GND") (layer "B.Cu") (hatch edge 0.5) (connect_pads (clearance 0.2)) (min_thickness 0.2) (fill yes (thermal_gap 0.2) (thermal_bridge_width 0.2)) (polygon (pts (xy 0.5 0.5) (xy 39.5 0.5) (xy 39.5 19.5) (xy 0.5 19.5))))
+            r#"(zone (net "/GND") (net_name "/GND") (layers "F.Cu" "B.Cu") (hatch edge 0.5) (connect_pads (clearance 0.2)) (min_thickness 0.2) (fill yes (thermal_gap 0.2) (thermal_bridge_width 0.2)) (polygon (pts (xy 0.5 0.5) (xy 39.5 0.5) (xy 39.5 19.5) (xy 0.5 19.5))))
   (gr_rect (start 0 0)"#,
         );
         assert_ne!(poured, crossed);
