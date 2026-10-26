@@ -2982,7 +2982,9 @@ fn place_return_vias(
 /// half minimum width out, are tested: one counts where it lies in the pour
 /// and every other net's copper on the layer (the board's and the routes')
 /// keeps the larger of the pour's and its own class's clearance and that
-/// half width from it (holes the hole clearance); six of sixteen must, on
+/// half width from it (holes the hole clearance, the net's own pads that
+/// join by a thermal relief the pour's thermal gap: m2_ground_hole's 6 mm
+/// GND pad on oculink_m2 left a return via in its gap); six of sixteen must, on
 /// two layers (KiCad calls a via joined on one layer dangling). KiCad joins
 /// a via to the fill it touches (no thermal relief on a solid zone's
 /// vias).
@@ -3001,6 +3003,23 @@ fn joins_pour(
             .get(net)
             .map_or(0.0, |net| board.classes[net.class].clearance)
     };
+    // The net's pads that join the pour by a thermal relief: its fill
+    // keeps the thermal gap from them (a solid pad it touches).
+    let mut own_pads: Vec<usize> = board.nets[reference as usize]
+        .terminals
+        .iter()
+        .map(|terminal| terminal.pad)
+        .chain(
+            board
+                .merged_pads
+                .iter()
+                .filter(|merged| merged.net == reference)
+                .map(|merged| merged.pad),
+        )
+        .filter(|pad| board.solid_pad_obstacles.binary_search(pad).is_err())
+        .collect();
+    own_pads.sort_unstable();
+    own_pads.dedup();
     let reaches = |plane: &core::Plane| {
         if plane.net != reference
             || !core::geometry::point_in_polygon(via.at, &plane.polygon)
@@ -3024,6 +3043,11 @@ fn joins_pour(
                         core::ObstacleKind::Hole => board.hole_clearance,
                         _ => obstacle.net.map_or(0.0, |net| clearance_of(net as usize)),
                     };
+                    if own_pads.binary_search(&index).is_ok() {
+                        // The fill's thermal gap around the net's own pads.
+                        return obstacle.layers & (1 << layer) == 0
+                            || obstacle.shape.distance_to_point(point) >= plane.thermal_gap + half;
+                    }
                     (obstacle.net == Some(reference) && obstacle.kind != core::ObstacleKind::Hole)
                         || obstacle.layers & (1 << layer) == 0
                         || obstacle.shape.distance_to_point(point)
