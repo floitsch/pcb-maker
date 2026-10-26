@@ -1282,6 +1282,25 @@ pub fn legalize_keeping(
         let wanted_crossings = crossings
             .as_mut()
             .map_or(0, |state| state.involving(poses, &[index]));
+        // A part near another (`follow_anchors`) pays for the near
+        // relations it misses at a spot: the closest spot that keeps them
+        // beats a closer one that does not.
+        let own_relations: Vec<&constraints::Relation> = if start.is_empty() {
+            Vec::new()
+        } else {
+            problem
+                .constraints
+                .relations
+                .iter()
+                .filter(|relation| {
+                    matches!(
+                        relation,
+                        constraints::Relation::Near { part, .. }
+                            | constraints::Relation::NearAny { part, .. } if *part == index
+                    )
+                })
+                .collect()
+        };
         for angle in &component.angle_options {
             // Rotating about the body centre keeps the part where global
             // placement wanted it; prefer the global angle on ties.
@@ -1353,6 +1372,24 @@ pub fn legalize_keeping(
                         if !is_legal(problem, poses, index, pose, near.iter().copied()) {
                             continue;
                         }
+                        let distance = if own_relations.is_empty() {
+                            distance
+                        } else {
+                            poses[index] = pose;
+                            let missed: f64 = own_relations
+                                .iter()
+                                .map(|relation| {
+                                    constraints::relation_violation(problem, poses, relation)
+                                })
+                                .sum();
+                            poses[index] = wanted;
+                            crate::add_work(constraints::relation_work(problem, index));
+                            let total = (distance.sqrt() + FOLLOW_WEIGHT * missed).powi(2);
+                            if best.is_some_and(|(best, _)| best <= total) {
+                                continue;
+                            }
+                            total
+                        };
                         let distance = match escape.as_mut() {
                             None => distance,
                             Some(state) => {
@@ -1417,6 +1454,10 @@ pub fn legalize_keeping(
     }
     failed
 }
+
+/// Millimetres of displacement a millimetre of a missed near relation
+/// costs a follower's spot in the legaliser (`Constraints::follow_anchors`).
+const FOLLOW_WEIGHT: f64 = 4.0;
 
 /// The legaliser's order with near relations followed
 /// (`Constraints::follow_anchors`): a part near another

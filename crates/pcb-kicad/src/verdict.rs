@@ -731,6 +731,48 @@ pub struct KiCadRunFacts {
     pub rule_overrides: Vec<crate::run_diagnosis::KiCadOverrideOutcome>,
     /// The placement's bus groups (`bus_groups` on), when it had them.
     pub bus_groups: Option<crate::board_placer::KiCadBusGroupsReport>,
+    /// A layout's decoupling (score-kicad-board's `decoupling` of the
+    /// board written): below `DECOUPLING_SHARE` of the capacitors within
+    /// 3 mm of a supply pin adds a next action.
+    pub decoupling: Option<crate::quality::KiCadDecoupling>,
+}
+
+/// The share of decoupling capacitors within 3 mm of a supply pin below
+/// which a layout's verdict says so: designers put 60 % or more there
+/// (the quick tier's designer boards; rp2350-dual-usb's designer 86 %).
+pub const DECOUPLING_SHARE: f64 = 0.6;
+
+/// The next action for a layout whose decoupling capacitors lie far from
+/// their supply pins (`DECOUPLING_SHARE`), naming the farthest pins.
+fn decoupling_action(decoupling: &crate::quality::KiCadDecoupling) -> Option<String> {
+    let share = decoupling.capacitors_within_3mm?;
+    if decoupling.capacitors < 3 || share >= DECOUPLING_SHARE {
+        return None;
+    }
+    let far: Vec<String> = decoupling
+        .worst
+        .iter()
+        .filter_map(|(pin, distance)| {
+            distance
+                .filter(|distance| *distance > 3.0)
+                .map(|distance| format!("{pin} {distance:.1} mm"))
+        })
+        .collect();
+    Some(format!(
+        "decoupling: {:.0} % of the decoupling capacitors lie within 3 mm of a supply pin (designers 60 % or more), a median {} mm{}: give the capacitors of those pins a near constraint ({{\"part\": \"C5\", \"pin_of\": \"U2:39\", \"max_mm\": 1.5}} in constraints.json; describe-kicad-board --constraints-template writes them for every capacitor), and keep the placer's decoupling_near on (the default)",
+        share * 100.0,
+        decoupling
+            .capacitor_median_mm
+            .map_or("?".to_string(), |median| format!("{median:.1}")),
+        if far.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "; supply pins farthest from a capacitor: {}",
+                far.join(", ")
+            )
+        }
+    ))
 }
 
 impl KiCadRunFacts {
@@ -772,6 +814,7 @@ impl KiCadRunFacts {
             race: None,
             rule_overrides: Vec::new(),
             bus_groups: None,
+            decoupling: None,
         }
     }
 
@@ -1226,6 +1269,7 @@ fn next_actions(
     for pour in facts.pours.iter().filter(|pour| pour.in_many_pieces()) {
         actions.push(pour_action(pour));
     }
+    actions.extend(facts.decoupling.as_ref().and_then(decoupling_action));
     if facts.routes && facts.native.is_none() {
         actions.push("KiCad's check did not run (PCB_SKIP_NATIVE or skip_native_verification): the router's own count is no verdict; run KiCad's DRC (pcb-maker drc-kicad-board) before using the board".into());
     }
@@ -2122,6 +2166,42 @@ mod tests {
         let verdict = judge(&facts);
         assert_eq!(verdict.exit_code, EXIT_INCOMPLETE);
         assert!(verdict.next_actions[0].contains("92 %"));
+    }
+
+    #[test]
+    fn a_layout_with_its_decoupling_far_from_the_pins_gets_a_next_action() {
+        let mut facts = routed(DrcTally::default());
+        let decoupling = |share: f64| crate::quality::KiCadDecoupling {
+            supply_pins: 21,
+            capacitors: 14,
+            median_mm: Some(7.75),
+            within_3mm: Some(0.048),
+            within_5mm: Some(0.333),
+            worst: vec![
+                ("U2:46".into(), None),
+                ("U4:5".into(), Some(29.83)),
+                ("U2:39".into(), Some(14.3)),
+            ],
+            capacitor_median_mm: Some(6.94),
+            capacitors_within_3mm: Some(share),
+        };
+        // The trial's rp2350-dual-usb: complete, with one action.
+        facts.decoupling = Some(decoupling(0.071));
+        let verdict = judge(&facts);
+        assert_eq!(verdict.exit_code, EXIT_COMPLETE);
+        assert_eq!(verdict.next_actions.len(), 1, "{:?}", verdict.next_actions);
+        let action = &verdict.next_actions[0];
+        assert!(
+            action.starts_with("decoupling: 7 % of the decoupling capacitors")
+                && action.contains("a median 6.9 mm")
+                && action.contains("U4:5 29.8 mm, U2:39 14.3 mm")
+                && !action.contains("U2:46")
+                && action.contains("decoupling_near"),
+            "{action}"
+        );
+        // As a designer places them: nothing to say.
+        facts.decoupling = Some(decoupling(0.857));
+        assert!(judge(&facts).next_actions.is_empty());
     }
 
     #[test]

@@ -934,6 +934,10 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         .map(pcb_kicad::KiCadMoveDescentReport::fact);
     facts.silkscreen = Some(result.labels.silkscreen.clone());
     facts.race = result.race.clone();
+    facts.decoupling = result
+        .quality
+        .as_ref()
+        .map(|quality| quality.decoupling.clone());
     // The placement's room (the parts and the outline the layout kept)
     // and what it warned of.
     let placed = fs::read_to_string(output.join("placed/board-placer.json"))
@@ -1020,10 +1024,21 @@ fn place(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     let started = Instant::now();
     let result = pcb_kicad::place_kicad_board(Path::new(source), board_id, output, &config)
         .map_err(classify)?;
+    // Parts are the board's footprints; the placer's other objects are the
+    // board's own marks (texts, graphics) and rule areas it keeps clear of
+    // (the trial's "placed 38 of 52 components" counted them, 2026-10-26).
+    let parts = result.footprints.len();
+    let others = result.components.saturating_sub(parts);
     println!(
-        "placed {} of {} components ({} nets): wirelength source {:.0} mm, global {:.0}, legal {:.0}, final {:.0}; {} global iterations, overflow {:.3}; unplaced {:?}, illegal {:?}; {:.2}s",
+        "placed {} of {} parts ({} kept where they are{}), {} nets: wirelength source {:.0} mm, global {:.0}, legal {:.0}, final {:.0}; {} global iterations, overflow {:.3}; unplaced {:?}, illegal {:?}; {:.2}s",
         result.movable,
-        result.components,
+        parts,
+        parts.saturating_sub(result.movable),
+        if others == 0 {
+            String::new()
+        } else {
+            format!("; {others} board marks and rule areas kept clear of")
+        },
         result.nets,
         result.wirelength_source_mm,
         result.wirelength_global_mm,
