@@ -106,7 +106,7 @@ class Resolution(unittest.TestCase):
         values = noise_values()
         table = placer_ab.resolution(values, [3, 9], alpha=0.1, reps=300, grid=[i / 50 for i in range(1, 26)])
         for k in (3, 9):
-            false_positive, smallest = table[k]["weighted"]
+            false_positive, smallest, _ = table[k]["weighted"]
             self.assertLessEqual(false_positive, 0.12)
             self.assertIsNotNone(smallest)
         self.assertLess(table[9]["weighted"][1], table[3]["weighted"][1])

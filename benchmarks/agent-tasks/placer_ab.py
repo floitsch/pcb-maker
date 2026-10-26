@@ -470,10 +470,10 @@ STAT_KEYS = {"sum_medians": "sum_medians_change", "pair_sums": "pair_sums_change
              "sign": "sign", "weighted": "weighted"}
 
 
-def resolution(values, ks, alpha=0.05, power=0.8, reps=2000, grid=None, cv_floor=CV_FLOOR, fire=None):
+def resolution(values, ks, alpha=0.05, power=0.8, reps=2000, grid=None, cv_floor=CV_FLOOR, fire=None, at=()):
     """{k: {statistic: (false positive rate, smallest delta with the power or
-    None)}}."""
-    grid = grid or [i / 200 for i in range(1, 81)]
+    None, {delta: power} for the deltas in `at`)}}."""
+    grid = sorted(set(grid or [i / 200 for i in range(1, 81)]) | set(at))
     out = {}
     for k in ks:
         samples = simulate(values, k, grid, reps=reps, cv_floor=cv_floor, fire=fire)
@@ -487,7 +487,8 @@ def resolution(values, ks, alpha=0.05, power=0.8, reps=2000, grid=None, cv_floor
                 if sum(called(row, key, limit) for row in samples[delta]) / reps >= power:
                     smallest = delta
                     break
-            result[name] = (false_positive, smallest)
+            powers = {delta: sum(called(row, key, limit) for row in samples[delta]) / reps for delta in at}
+            result[name] = (false_positive, smallest, powers)
         out[k] = result
     return out
 
@@ -615,6 +616,7 @@ def main():
     p.add_argument("--power", type=float, default=0.8)
     p.add_argument("--reps", type=int, default=2000)
     p.add_argument("--cv-floor", type=float, default=CV_FLOOR)
+    p.add_argument("--at", type=float, nargs="*", default=[], help="relative effects to print the power at")
     p = commands.add_parser("noise")
     p.add_argument("runs", nargs="+")
     p.add_argument("--out", type=Path, required=True)
@@ -631,15 +633,24 @@ def main():
     elif arguments.command == "resolution":
         values = board_values(load_noise(arguments.noise), arguments.metric)
         table = resolution(values, arguments.k, arguments.alpha, arguments.power, arguments.reps,
-                           cv_floor=arguments.cv_floor)
+                           cv_floor=arguments.cv_floor, at=arguments.at)
         print(f"{arguments.metric}: smallest relative improvement on every board detected with power "
               f"{arguments.power} at one-sided alpha {arguments.alpha} (false positive rate at the threshold); "
               f"{arguments.reps} simulated comparisons, {len(values)} boards")
         print("| k | " + " | ".join(STAT_KEYS) + " |")
         print("| ---: |" + " ---: |" * len(STAT_KEYS))
         for k, result in table.items():
-            cells = [f"{'-' if d is None else f'{100 * d:.1f} %'} ({fp:.2f})" for fp, d in result.values()]
+            cells = [f"{'-' if d is None else f'{100 * d:.1f} %'} ({fp:.2f})" for fp, d, _ in result.values()]
             print(f"| {k} | " + " | ".join(cells) + " |")
+        if arguments.at:
+            print()
+            print("power at a relative improvement of " + ", ".join(f"{100 * d:g} %" for d in arguments.at) +
+                  " on every board:")
+            print("| k | " + " | ".join(STAT_KEYS) + " |")
+            print("| ---: |" + " ---: |" * len(STAT_KEYS))
+            for k, result in table.items():
+                cells = [" / ".join(f"{powers[d]:.2f}" for d in arguments.at) for _, _, powers in result.values()]
+                print(f"| {k} | " + " | ".join(cells) + " |")
     else:
         tasks = tasks_by_name()
         pairs, missing = paired(side_of(arguments.off), side_of(arguments.on), arguments.metric,
