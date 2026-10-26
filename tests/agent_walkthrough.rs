@@ -19,7 +19,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     process::{Command, Output},
-    time::{Instant, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 use serde_json::{Value, json};
@@ -261,7 +261,6 @@ fn the_documented_flow_lays_out_a_keyboard_from_its_schematic() {
     )
     .unwrap();
     let small = root.join("small");
-    let started = Instant::now();
     let output = run(&[
         Path::new("place-kicad-board"),
         &project,
@@ -270,7 +269,14 @@ fn the_documented_flow_lays_out_a_keyboard_from_its_schematic() {
         &project.join("layout.json"),
     ]);
     assert_eq!(code(&output), 2, "a board without room");
-    assert!(started.elapsed().as_secs() < 60);
+    // At once: before the placer ran (it says what it does as `placer:`
+    // lines). Not timed: the wall clock follows the machine's load (3 s
+    // under a load of 50, most of it the rates' measurement).
+    assert!(
+        !String::from_utf8_lossy(&output.stderr).contains("placer:"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     assert!(
         String::from_utf8_lossy(&output.stderr)
             .contains("the row of SW1 (15 parts) cannot fit the outline")
@@ -316,7 +322,6 @@ fn the_documented_flow_lays_out_a_keyboard_from_its_schematic() {
         json!({"version": 1, "move_all": true, "outline": {"width": 60, "height": 40}}).to_string(),
     )
     .unwrap();
-    let started = Instant::now();
     let output = run(&[
         Path::new("place-kicad-board"),
         &project,
@@ -325,8 +330,16 @@ fn the_documented_flow_lays_out_a_keyboard_from_its_schematic() {
         &project.join("layout.json"),
     ]);
     assert_eq!(code(&output), 1, "parts without room");
-    assert!(started.elapsed().as_secs() < 60);
     let verdict = read(&small.join("verdict.json"));
+    // Soon, in work (8.6 s at the pinned rates), not in wall time: under a
+    // load of 50 the same run took 16 s of wall clock.
+    assert!(
+        verdict["work_seconds"]
+            .as_f64()
+            .is_some_and(|work| work < 30.0),
+        "{}",
+        verdict["work_seconds"]
+    );
     assert!(!verdict["unplaced"].as_array().unwrap().is_empty());
     let room = &verdict["room"];
     assert!(room["missing_mm2"][1].as_f64().unwrap() > 1000.0, "{room}");
