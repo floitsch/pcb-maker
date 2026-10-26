@@ -124,9 +124,13 @@ need more length than that edge has. With an outline sized from the parts
 
 Unless told otherwise (`"auto_decoupling": false` in the placer config),
 the placer also pulls:
-- every capacitor between a supply rail and ground to within 2.5 mm of a
-  supply pin of an IC on that rail (5 mm for 4.7 µF and more), whichever
-  pin suits;
+- every capacitor between a supply rail and ground to within 2.5 mm
+  (body to pin, `decoupling_mm`) of a supply pin of an IC on that rail
+  (5 mm for 4.7 µF and more): each IC's first supply pin on the rail,
+  whichever IC suits. With `"decoupling_near": true` (placer config, off
+  by default; [placer.md](placer.md#decoupling-at-the-pins-2026-10-26)):
+  within 1 mm of whichever of the rail's supply pins on the ICs is
+  nearest;
 - every crystal to within 3 mm of the IC pins it drives;
 - every inductor between a rail and an IC pin (a switcher's switch node)
   to within 3 mm of that pin;
@@ -137,6 +141,18 @@ These are soft, like `near`, and are not reported among the constraints.
 Parts a constraint already places keep to it; a `near` to a part's body
 still leaves room for its pin. Parts tied together by `near` (yours or
 these) may come closer than the routing halo of a big IC keeps others.
+With `decoupling_near` on, a part near another (yours or these) is legalised
+right after it, from where the anneal put it moved as far as that part
+moved, and pays for the relation at each spot it is offered: a capacitor
+the anneal put at its IC's pin stays at the pin when the IC moves.
+
+To check them, or to set them per capacitor, write them down:
+`describe-kicad-board <dir> <id> --constraints-template <file>` writes
+each decoupling capacitor's `near` to the closest supply pin of its IC
+(on a placed board; on a stacked one the rail's pins in turn) at 1.5 mm,
+with the plug-in connectors as `edge` entries ([agents.md](agents.md#1-look-at-the-board)).
+A layout under 60 % of its capacitors within 3 mm of a pin says so in its
+verdict's next_actions.
 
 One more rule is a placer config switch, on by default: on a board of
 several pieces (a board with a breakaway beside it), the parts a net

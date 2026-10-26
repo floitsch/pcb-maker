@@ -191,3 +191,37 @@ docs/reviews/2026-10-18-remapper-agent-diagnostic-trial.md:
 
 Inputs and outputs: build/trial1/ (A) and build/trial1/b/ (B) in the main
 checkout's build directory.
+
+## Still open (updated 2026-10-26, branch pours-decoupling)
+
+- **Friction 1, the ledger's drain**: fixed on main (x1835, the ledger
+  drains only for a waiter it could start).
+- **Friction 2, the pour advice**: fixed. `add_pours` counts a zone on a
+  layer set (`F&B.Cu`, `*.Cu`) as existing on each of its layers (no second
+  zone, no `zones_intersect`); a `keep_whole` region over other nets' pads
+  is warned of before the run, naming the pads; the verdict's pour action
+  names only parts whose regions hold no other net's pad on the layer
+  (`keep_whole_parts`), and says keep_whole under parts does not fit the
+  layer where none does (board A's F.Cu).
+- **Friction 3, decoupling**: partly. A layout under 60 % of its
+  capacitors within 3 mm of a pin gets a next action (B's layout now says
+  so), the template writes the near constraints, and `decoupling_near`
+  (each capacitor at the nearest of every supply pin of its rail at 1 mm,
+  near relations followed through the legaliser) brings them nearer (B:
+  14 % to 50 % within 3 mm; nine of the eleven dense boards' medians
+  fall, routing within the noise), but the median rises on the OpenESC
+  boards and two short-tier boards, so by the agreed rule it is a switch,
+  off by default (docs/placer.md, "Decoupling at the pins (2026-10-26)").
+  Open: decoupling as good as a designer's without the routing cost.
+- **Friction 4, starter constraints**: `describe-kicad-board
+  --constraints-template <file>` (docs/agents.md, "Starter constraints for
+  a board").
+- **Friction 5**: the message still does not name the angle that faces
+  each edge; the template's comment names the connector's angle on a
+  placed board.
+- **Friction 7, the count**: the placement line says "placed 51 of 53
+  parts (2 kept where they are; 5 board marks and rule areas kept clear
+  of)".
+- Still open: `access` and `cause` `unknown` in the run inspection; no
+  region overlay; U2:46 (VREG_AVDD) `null` in the decoupling score (the
+  score's rails are named rails, the placer's also power-in pins).

@@ -195,6 +195,33 @@ The file lists what constraints refer to:
   reassign (see pin swapping below), by their pad functions or, where
   the board names none, by their pins' electrical types.
 
+**Starter constraints for a board** (2026-10-26): `pcb-maker
+describe-kicad-board <project-dir> <board-id> --constraints-template
+constraints.json` also writes a `constraints.json` skeleton to a new file
+(an existing file is refused, exit 2), as `import-kicad-netlist` writes its
+starter for a schematic:
+
+- `edge`: the plug-in connectors (USB, jacks, coax, terminal blocks, by
+  footprint name), `flush`, with `opening_outwards` where the footprint
+  shows its mouth. On a board with a placement (most parts at positions of
+  their own) each gets the side of the outline its body lies within 3 mm
+  of (at a corner, the side its courtyard reaches farthest beyond its pads
+  towards, else the one its mouth faces); on a board without one (a fresh
+  import, the parts stacked) `any`.
+- `near`: each decoupling capacitor (two pins, a supply rail and ground,
+  the rail on an IC's supply pin) at the closest supply pin of its IC on a
+  placed board, else at the rail's pins in turn; `max_mm` 1.5 (3 for 4.7 uF
+  and more).
+- `move_all`, and a `comment` list saying what was inferred and what to
+  decide: connectors whose mouth the footprint does not show (give them a
+  `rotation`; the comment names their angle on the board), the other
+  connectors (headers), fixed parts, keepouts, regions.
+
+On the trial's rp2350-dual-usb the designer's board gives J2 and J4 left,
+J3 and J5 right, and 17 capacitor-pin pairs the designer's own (C13 at
+U2:38, C18 at U2:44); lpc1311-target-v1 gives J7 left facing out and C4 at
+U2:10, the constraints the trial wrote by hand.
+
 ## 2. Say what you want: `constraints.json`
 
 ```json
@@ -316,7 +343,9 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
   - `add_pours`: planes to add before routing, such as
     `[{"net": "GND", "layers": ["B.Cu"]}]`. Each covers the board outline;
     pads connect to it, and islands are stitched with vias. A layer where
-    that net already has a zone is skipped. With `"plane": true` no track
+    that net already has a zone is skipped, also when the zone covers a
+    layer set (`F&B.Cu`, `*.Cu`; until 2026-10-26 a second zone was
+    written over it, a `zones_intersect` error). With `"plane": true` no track
     of any net goes on those layers, only vias through them: a rule area
     keeping tracks off each layer is written beside the zone (also where
     the zone exists), so every rung of the ladder and KiCad's DRC keep
@@ -336,7 +365,16 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     region), which the router lowers by its name. The parts are taken
     where they are when the pours are added (in a layout, after
     placement). Another net's pad on that layer inside a region can
-    only be left on the other side: keep regions off them.
+    only be left on the other side: keep regions off them. The input
+    check warns of it before the run, naming the pads (in the log and
+    first in the verdict's next_actions: `keep_whole of the GND pour on
+    F.Cu covers 22 pads of other nets on that layer (U2:1, U2:2, ...)`):
+    in route mode every pad inside a region, in a layout (which places
+    first) a named part's own pads, which move with it. A region under a
+    signal IC on its own layer is the case (the trial's board A,
+    2026-10-26: 22 connections opened); under the IC on the other layer
+    of a two-layer board it is what the cookbook's "keep the bottom
+    ground solid under the MCU" means.
   - `via_in_pad` (default false): no via inside an SMD pad, but an exposed
     (thermal) pad; a pad's own net's vias sit beside it. A via in a
     reflowed pad takes its solder; set it true only for filled and capped
@@ -459,7 +497,11 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
      work per seed; urchin's 80 parts on 80 x 40 mm without rows: about
      seven minutes); `PCB_PLACER_WORK_SECONDS=60` gives a quicker answer.
      `<out>/board-placer.json` reports every constraint, `unplaced`,
-     `hints`, `utilization` and `room`. A directory holding only the
+     `hints`, `utilization` and `room`. Its first line counts parts:
+     `placed 37 of 38 parts (1 kept where they are; 14 board marks and
+     rule areas kept clear of), 29 nets` (lpc1311-target-v1; until
+     2026-10-26 "placed 38 of 52 components", the board's own texts and
+     graphics counted in). A directory holding only the
      verdict of such an input error is taken again by the retry.
   2. Make a draft: `{"moves": 0, "placer": {...}}` in `layout.json` places
      and routes once, skipping the router-driven part moves. Those moves
@@ -692,7 +734,7 @@ A finished run also carries it as `verdict` in its report:
 | `clean_without_subtraction` | KiCad checked the result and finds no unconnected item and no error that counts, with nothing subtracted. |
 | `diff_pairs` | Route mode (absent in a layout's verdict unless switched on; docs/router.md "Differential pairs"): `on`, `default` (`rules`: a custom `diff_pair_gap` or `diff_pair_uncoupled` rule holds for a paired net, so the pairs routed coupled by default; `off`: nothing asks, so they did not; `explicit`: the settings' `diff_pairs` or `PCB_ROUTER_DIFF_PAIRS` decided), `reason` (the rule and the net, or the setting); off, the counts are 0. With the pairs on: `found` (pairs KiCad names by `_P`/`_N`, `+`/`-` or `P`/`N`, both nets with pads), `coupled` (every link between the pair's parts a coupled run), `partly_coupled`, `fallen_back` (routed as two ordinary nets), `links`, `links_coupled`, `crossed` (coupled links whose pads lie in the other order at one end: the stubs cross there, uncoupled), `crossovers` (of those, links whose crossed end has a crossover in its lead: one net dives under the other with a via each side, so the stubs do not cross; off by default, `PCB_ROUTER_DIFF_PAIRS_CROSSOVER=1`), `coupled_mm`, `uncoupled_mm` (per coupled pair the longer net's tracks less its coupled run, KiCad's measure), `skew_mm` (the largest skew of a pair with a coupled link: its two nets' lengths apart in the written board, tracks and vias at the stackup's height), `meanders` (pairs whose shorter net got a meander, written as a KiCad tuning pattern, to match the custom rules' `skew` maximum, else the pair's gap, or a `length` minimum), `skews` (per pair with a coupled link: `positive`, `negative`, `lengths_mm`, `skew_mm`, `target_mm`, `meander_mm`), `work_seconds` (the fallback router's, which routes what the coupled runs left open, charged to the ladder). `board-router.json` also lists each pair: its nets, width, gap, where they came from, why links fell back. |
 | `repairs` | What the run added for KiCad's DRC that changes no connection: `neck_tracks` and `neck_track_mm` (the connection-width repair's tracks kept, docs/router.md "KiCad's connection width"), `island_stubs` (a pad's own track into its pour island; `null`: not counted yet), `pour_mode` (the kept board's `pours`: `connect`, `tracks`, `none`, ...) and `pours_as_tracks`. Routes and layouts; also at the top of `board-router.json` and `board-layout.json`. |
-| `pours` | How whole the pours stayed, per zone and layer, by the router's pour model on the board written (after the final route; not a decision): `pieces` (the fill's pieces holding copper of the net, slivers under 0.25 mm² left out; KiCad removes the others, `islands_removed`), `largest_share` (the largest piece over the pour's area inside the outline), `coverage` (the copper over that area), `largest_mm2`, `copper_mm2`, `area_mm2`, `cut_mm` (other nets' tracks on the layer). A pour in more than 5 pieces, or whose largest piece holds less than half its copper, adds a next action naming `keep_whole`. Against KiCad's own fill (`benchmarks/fence/pour-pieces.py`) on the fence: copper within 2 %, pieces within about 10 %. Also `pour_quality` in `board-router.json`; score-kicad-board's `pours`. |
+| `pours` | How whole the pours stayed, per zone and layer, by the router's pour model on the board written (after the final route; not a decision): `pieces` (the fill's pieces holding copper of the net, slivers under 0.25 mm² left out; KiCad removes the others, `islands_removed`), `largest_share` (the largest piece over the pour's area inside the outline), `coverage` (the copper over that area), `largest_mm2`, `copper_mm2`, `area_mm2`, `cut_mm` (other nets' tracks on the layer). A pour in more than 5 pieces, or whose largest piece holds less than half its copper, adds a next action: with `keep_whole_parts` (the parts of six pads or more under which a region on that layer would hold no other net's pad, at most four), the `add_pours` entry naming them, `{"net": "GND", "layers": ["B.Cu"], "keep_whole": [{"parts": ["U1"]}]}`; without, that a region under any such part would cut other nets' pads off on the layer, so `keep_whole` under parts does not fit it (a box clear of other nets' pads may; more room or layers). Until 2026-10-26 the action named `keep_whole` under parts in general, and an agent following it put one under the ICs on their own layer. Against KiCad's own fill (`benchmarks/fence/pour-pieces.py`) on the fence: copper within 2 %, pieces within about 10 %. Also `pour_quality` in `board-router.json`; score-kicad-board's `pours`. |
 | `environment` | The result-changing environment variables that were set, with their values: `PCB_ROUTER_SEED`, `PCB_ROUTER_SEEDS`, `PCB_ROUTER_ISLAND_STUBS`, `PCB_ROUTER_NO_WALL_GUARD`, `PCB_SKIP_NATIVE`, `PCB_MIN_CONNECTION_FLOOR`, `PCB_KICAD_NO_NECK_REPAIR`, `PCB_KICAD_TIMEOUT`, `PCB_MAKER_KICAD_USER_LIBS`, `PCB_PLACER_WORK_SECONDS`, `PCB_NARROW_RESERVE`, `PCB_PROBES_SIDE_BY_SIDE`, `PCB_LADDER_STATS`, `PCB_WORK_RATE`, `PCB_MAKER_TEST_PANIC_ATTEMPT`; and `pcb_maker_version`, the build that ran (`pcb-maker --version` without the name: the commit and the build date). |
 | `cosmetic_findings`, `warnings`, `schematic_parity_issues` | Counted, not judged. |
 | `silkscreen` | Layouts: the footprints' visible Reference and Value fields, placed after routing where KiCad's silkscreen checks find nothing (docs/placer.md, "The fields on the silkscreen"): `fields`, `moved`, `blocked` (fields no spot is clean for, kept at the spot with the fewest findings: the reference, the field and the findings predicted there; a next action lists them), `hidden` (with `"silkscreen": {"hide_when_blocked": true}` in layout.json, such fields are hidden instead) and `predicted` (KiCad's `silk_over_copper`, `silk_overlap` and `silk_edge_clearance` findings the fields will have, from our geometry). What `cosmetic_findings` has beyond them is the footprints' and the board's own graphics, which nothing moves. |
@@ -707,7 +749,7 @@ A finished run also carries it as `verdict` in its report:
 | `pour_work_seconds`, `lattice_work_seconds` | `route-kicad-board`: the parts of `work_seconds` that are the pour analyses and fill probes (every phase's: the negotiation's pour refresh, the clean-up's and the via reduction's pour checks, the manual spokes) and the routers' lattice builds with the board's lowerings, each modelled from what it counted, the same on every machine; the rest is search. Since 2026-10-21 route mode's budget counts all of them (a 30 s budget used to buy 30 s of search and leave the pour work, up to 47 s on a panel, on top). |
 | `skipped` | Steps of the router's attempt ladder that did not run while the board was incomplete, with why (`the narrow-signal step (signals at 0.15 mm) did not run: the ladder's budget was used (ladder_budget_seconds)`). |
 | `outputs` | Absolute paths: `project`, `board`, `drc`, `report`, `verdict`, `placement`. |
-| `next_actions` | What to do next, factual: the input check's and the placement's warnings first (keepouts over held parts, `constraint_warnings`, a missing kicad-cli where the run went on without it), then where nets fought, which pads no track enters and the nets KiCad finds unconnected, the new DRC errors by type (the largest four each with KiCad's rule, the nets or items, and the setting or step for that type), which budget ran out. |
+| `next_actions` | What to do next, factual: the input check's and the placement's warnings first (keepouts over held parts, `constraint_warnings`, a missing kicad-cli where the run went on without it), then where nets fought, which pads no track enters and the nets KiCad finds unconnected, the new DRC errors by type (the largest four each with KiCad's rule, the nets or items, and the setting or step for that type), which budget ran out. A layout whose decoupling capacitors lie far from their pins (under 60 % of them within 3 mm of a supply pin, the share designers reach; score-kicad-board's `capacitors_within_3mm`, three capacitors or more) gets one, complete or not: `decoupling: 14 % of the decoupling capacitors lie within 3 mm of a supply pin (designers 60 % or more), a median 6.3 mm; supply pins farthest from a capacitor: U3:5 21.7 mm, U4:5 16.1 mm, ...: give the capacitors of those pins a near constraint (...), or turn on the placer's decoupling_near (...)` (since 2026-10-26; the trial's rp2350-dual-usb was complete with 7 % and no word of it). `describe-kicad-board --constraints-template` writes the near constraints; `decoupling_near` (off by default) pulls every capacitor to the nearest supply pin of its rail (measured: nearer on most boards, routing within the noise, farther on a few boards with four capacitors) ([placer.md](placer.md#decoupling-at-the-pins-2026-10-26)). |
 | `drc_cache` | `{calls, hits}`: KiCad DRC runs the process asked for (its attempts, the reference) and how many the DRC cache answered (see below). |
 | `room` | Placement and layout (also an input error that a constraint needs more room than the outline has): the room as numbers, below. Absent for a route. |
 | `free_dimension` | A layout with `free_dimension`: `chosen` (the size in mm), `kind` (`probe`, `retry`, `confirm` or `closest`: which run the result is), `clean`, `probes` (layouts run), `reason` (the smaller sizes and how they failed, a price threshold exceeded, sizes left untried), `edge`, the search's `work_seconds` and `wall_seconds` (the verdict's own fields are the chosen layout's), `report` (`free-dimension.json`). |

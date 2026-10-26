@@ -137,8 +137,9 @@ pub struct KiCadBoardPlacerConfig {
     /// after it, from its annealed place moved as far as its anchor moved,
     /// and pays for the relation at each spot). The trial's rp2350-dual-usb
     /// went from 14 % of its capacitors within 3 mm of a pin to 50 %; on
-    /// the eleven dense boards the capacitors came nearer on nine and KiCad's
-    /// unconnected rose (seed 1: 868 to 984), so it is a switch.
+    /// the eleven dense boards the capacitors' median fell on nine and rose
+    /// on the two OpenESC boards, KiCad's unconnected within the noise
+    /// (summed medians 974 to 987), so by the agreed rule it is a switch.
     pub decoupling_near: bool,
     /// On a board of several pieces (two boards side by side), the parts
     /// a net joins to fixed parts on one piece stay on that piece. On:

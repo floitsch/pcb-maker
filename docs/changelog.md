@@ -257,6 +257,50 @@ ledger` classifies pid 4134524's ULK_sl_PG1316s (waiting 97 967 s for
 7200 s`. Harnesses and binaries from before this change still drain for
 it.
 
+## Committed on 2026-10-26 (pours: the second zone and the keep_whole check; decoupling by default; starter constraints)
+
+Branch pours-decoupling, snapshots x14740 to x14742 (x14741: the switch
+on, measured; x14742: the branch head's default, the placement x1835's).
+From the trial's frictions 2, 3, 4 and 7
+([reviews/2026-10-26-fresh-agent-trial.md](reviews/2026-10-26-fresh-agent-trial.md)).
+
+- **add_pours over a layer set.** A zone on `F&B.Cu`, `*.Cu` or a layer
+  list counts as existing on each of its layers (board A wrote a second
+  F.Cu GND zone over its F&B.Cu one: `zones_intersect`); test on a
+  multi-layer zone.
+- **The keep_whole check.** A `keep_whole` region over other nets' pads
+  on its layer is warned of before the run, naming the pads (route mode:
+  every pad inside; a layout: the named parts' own pads), and leads the
+  verdict's next_actions. The pour advice names only parts whose region
+  on the layer holds no other net's pad (`keep_whole_parts` in the pour
+  report), with the `add_pours` entry; where none does it says keep_whole
+  under parts does not fit the layer. Board A's trial step again: the
+  warning (41 pads), no zones_intersect, the advice "does not fit F.Cu".
+- **Decoupling.** `decoupling_near` (placer, off by default): each
+  decoupling capacitor near the nearest of every supply pin of its rail at
+  1 mm, and near relations followed through the legaliser (a follower
+  legalised right after its anchor, moved as it moved, paying for the
+  relation at each spot). Board B 14 % to 50 % of its capacitors within
+  3 mm, board A 40 % to 80 %, every connection made; on the eleven dense
+  boards (seeds 1, 101) the capacitor median falls on nine (summed
+  medians 56.8 to 50.6 mm) and rises on the two OpenESC boards, KiCad's
+  unconnected 974 to 987 summed medians (seed 1 +116, seed 101 -90: the
+  noise); short tier 8 strict passes both, unconnected 20 to 18, the
+  median rising on two of its six scored boards. Not every board's
+  median falls, so by the agreed rule a switch, off (docs/placer.md,
+  "Decoupling at the pins (2026-10-26)", the tables). A layout under 60 % of its capacitors
+  within 3 mm of a pin gets a next action naming the farthest pins, the
+  near constraint and the switch.
+- **Starter constraints.** `describe-kicad-board --constraints-template
+  <file>`: the plug-in connectors as `edge` entries (the side they lie at
+  or face on a placed board, else `any`; `opening_outwards` where the
+  footprint shows its mouth), each decoupling capacitor's `near` to the
+  closest supply pin of its IC, `move_all`, and comments on what to
+  decide. From the designer's boards it gives the trial's hand-written
+  constraints (A: J7 left facing out, C4 at U2:10).
+- **The placement line** counts parts: "placed 37 of 38 parts (1 kept
+  where they are; 14 board marks and rule areas kept clear of)".
+
 ## Reviewed on 2026-10-26 (a fresh agent's trial)
 
 Branch usability-trial, x1833 (main e935324).

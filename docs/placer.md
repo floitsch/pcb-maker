@@ -3569,6 +3569,120 @@ pairs rise, so the switch stays as an override.
   The census tool stays: it tells an agent which of a placement's parts
   KiCad would flag and which only the placer's model does.
 
+## Decoupling at the pins (2026-10-26)
+
+The fresh agent's trial (reviews/2026-10-26-fresh-agent-trial.md) laid
+out rp2350-dual-usb with its decoupling capacitors a median 6.9 mm from a
+supply pin, 7 % within 3 mm, against the designer's 1.8 mm and 86 %; the
+verdict said complete. The automatic relations (`decoupling_relations`,
+crates/pcb-kicad/src/board_placer/decoupling.rs) were there and acted as
+any `near` does, so the placement path was traced (`PCB_PLACER_DEBUG`,
+the relations' summed violation after each step): the anneal kept them
+(violation 0 to 1.7 mm summed), the legaliser broke them (78 to 228 mm),
+the refinement and the relation repair won back part. Two causes:
+
+- **One anchor per IC and rail.** Each capacitor was near any of the
+  ICs' *first* supply pin on its rail: the RP2350's nine 100 nF on +3V3
+  all chased U2:1.
+- **The legaliser does not know relations.** It takes the parts by area,
+  each to the legal spot nearest to where the anneal left it. The RP2350
+  moved (its annealed place was taken), its capacitors stayed behind at
+  the old place, 15 mm from any pin, and the resistors (the same area,
+  earlier by index) took the spots at the pins.
+
+`decoupling_near` (placer config, **off by default**) changes both, on
+the near-relation path only:
+
+- every supply pin of the rail on every IC is an anchor of the
+  capacitor's `NearAny` (the nearest counts), at 1 mm body to pin
+  (`decoupling_mm` unset: 1 mm with the switch, 2.5 mm without; bulk
+  capacitors 5 mm as before);
+- `Constraints::follow_anchors` in the legaliser (crates/pcb-placer/src/legal.rs,
+  `follow_order`, `constraints::anchor_shift`, `FOLLOW_WEIGHT`): a part
+  with a near relation (yours or these) is legalised right after the
+  part it is near (`anchor_leader`; after the `first` parts when that one
+  is held), starting from its annealed place moved as far as the anchor
+  moved, and each spot it is offered pays 4 mm a millimetre of near
+  relation it misses. The global placement's pull and the refinement
+  were already the relations' (a `NearAny` pulls its part only; an
+  explicit `near` also its anchor).
+
+Off, the placement is the one before (byte-identical placed boards on
+lpc1311-target-v1, rp2350-dual-usb and OpenESC 4in1-mini against x1835).
+
+**Placement only** (place-kicad-board, the trial's stacked boards, seeds
+1, 101, 201; capacitor to nearest supply pin, pad centres):
+
+| Board | x1835 median mm (within 3 mm) | first pins, follow | every pin, 2.5 mm, follow | every pin, 1 mm, no follow | every pin, 1 mm, follow (+ spot weight) |
+| --- | --- | --- | --- | --- | --- |
+| rp2350-dual-usb | 4.94, 4.26, 5.08 (2-5 of 17) | 4.75, 2.99, 3.2 | 3.41, 3.31, 5.77 | 5.66, 4.12, 6.64 | 2.69, 2.15, 2.48 (11 of 17 each) |
+| lpc1311-target-v1 | 3.5, 4.11, 3.2 (1 of 5) | | 3.01, 3.74, 3.2 | | 2.68, 3.61, 2.89 (2-3 of 5) |
+
+Following the anchors is what moves it (every pin at 1 mm without it:
+4.1-6.6 mm); 0.5 mm was no better than 1 mm.
+
+**Layouts of the trial's boards** (move_all only, x1835 against x14741,
+score-kicad-board's decoupling, KiCad's count):
+
+| Board | capacitor median, within 3 mm | KiCad unconnected | vias | track mm |
+| --- | --- | --- | --- | --- |
+| lpc1311-target-v1, off / on | 4.39 mm, 40 % / 2.65 mm, 80 % | 0 / 0 | 16 / 11 | 486 / 477 |
+| rp2350-dual-usb, off / on | 6.26 mm, 14 % / 3.29 mm, 50 % | 0 / 0 | 59 / 82 | 791 / 792 |
+
+**The eleven dense boards** in layout mode at the task budgets (tasks v7,
+3 x 2, `--placer '{"seed": N}'`), x1835 (off) against x14741 (on);
+decoupling by score-kicad-board on the result boards (`capacitor_median_mm`,
+`capacitors_within_3mm`):
+
+| Board | seeds | KiCad unconnected off / on (seed 1, seed 101) | vias off / on | capacitor median mm off / on | within 3 mm off / on | work s off / on |
+| --- | --- | --- | --- | --- | --- | --- |
+| panel | 2 | 50 / 55, 50 / 53 | 258 / 303, 245 / 311 | 6.63 / 3.86, 6.33 / 4.61 | 9 % / 12 %, 6 % / 16 % | 1196 / 1140, 1114 / 1019 |
+| protoesp | 2 | 70 / 87, 69 / 72 | 428 / 290, 330 / 300 | 4.2 / 3.52, 3.36 / 2.66 | 22 % / 33 %, 44 % / 67 % | 1204 / 1331, 1240 / 1277 |
+| revC3 | 2 | 143 / 120, 149 / 140 | 283 / 335, 303 / 297 | 1.87 / 1.39, 1.8 / 1.33 | 87 % / 96 %, 92 % / 98 % | 1500 / 1501, 1501 / 1422 |
+| video | 2 | 190 / 181, 287 / 219 | 1766 / 1600, 1399 / 1266 | 3.4 / 3.22, 3.25 / 2.85 | 21 % / 50 %, 38 % / 58 % | 1442 / 1512, 1509 / 1405 |
+| 4in1-mini | 2 | 81 / 97, 82 / 98 | 136 / 117, 134 / 117 | 2.83 / 12.18, 10.17 / 4.04 | 75 % / 0 %, 25 % / 50 % | 1106 / 1225, 1155 / 1038 |
+| 4in1 | 2 | 106 / 118, 125 / 119 | 142 / 171, 153 / 158 | 16.28 / 12.16, 1.65 / 8.87 | 0 % / 25 %, 75 % / 0 % | 1500 / 1466, 1500 / 1476 |
+| SmartSpin2k_Panelized | 2 | 33 / 44, 53 / 58 | 1646 / 1618, 1612 / 1590 | 5.45 / 4.25, 5.79 / 4.14 | 15 % / 24 %, 15 % / 25 % | 1532 / 1486, 1354 / 1312 |
+| DSP-ADAU1452 | 2 | 11 / 5, 8 / 18 | 277 / 255, 238 / 243 | 5.9 / 5.96, 7.06 / 6.21 | 12 % / 28 %, 9 % / 16 % | 1270 / 1143, 1326 / 1244 |
+| MegaDrive | 2 | 110 / 140, 108 / 103 | 2358 / 2371, 2278 / 2448 | 7.62 / 4.84, 7.62 / 6.02 | 16 % / 32 %, 18 % / 32 % | 1519 / 1547, 1520 / 1539 |
+| SNSP-CPU-01 | 2 | 53 / 112, 123 / 86 | 1929 / 1675, 1762 / 1922 | 3.63 / 1.95, 3.19 / 1.96 | 33 % / 79 %, 38 % / 83 % | 1310 / 1394, 1380 / 1316 |
+| poly_kybd_split72_left | 2 | 21 / 25, 26 / 24 | 1072 / 1104, 1011 / 1083 | 2.8 / 2.59, 2.79 / 2.53 | 55 % / 70 %, 57 % / 64 % | 1329 / 1327, 1166 / 1334 |
+
+Sums (KiCad unconnected, eleven boards): seed 1 868 against 984, seed 101
+1080 against 990; the sum of the boards' medians (the mean of the two
+seeds) 974 against 987 (+13, within the agreed noise of about 40). The
+decoupling medians fall on nine boards (sum of the boards' medians 56.8
+to 50.6 mm; within 3 mm up on ten); they rise on the two OpenESC boards,
+whose score counts four capacitors each and swings between seeds even off
+(4in1: 16.28 and 1.65 mm). No row cut. Runs: build/ux2-dense-s{1,101}-{off,on}.
+
+**Short tier** (12 boards, a third of the budget, 3 x 2, x1835 against
+x14741; build/ux2-short-{off,on}): strict passes 8 / 8 (none lost), KiCad
+unconnected 20 / 18, vias 1230 / 1228, track 21279 / 22468 mm, work
+2495 / 2382 s, no row cut. Decoupling on the six boards the score finds
+capacitors on, median mm off / on (within 3 mm): MIDAS-MK1.1 3.04 / 1.79
+(48 / 83 %), OpenFC 7.97 / 4.59 (17 / 17 %), WLED_Matrix 2.83 / 2.19
+(73 / 64 %), 1337-v4.0 6.69 / 6.43 (25 / 12 %), USB_Keypad 3.70 / 4.29
+(43 / 36 %), framework_mobo_lefthalf 2.40 / 3.48 (100 / 0 %).
+
+**Decision: a switch, off by default.** By the agreed rule (the
+decoupling medians fall on every board, the dense sum of medians does not
+rise beyond about 40, the short tier loses no strict pass) it does not
+ship: routing holds (dense +13 over the two seeds, the seeds' sums
+swinging +116 and -90; short tier no pass lost, 18 against 20
+unconnected, 5.6 % more track), the capacitors come nearer on nine of
+the eleven dense boards and four of the six scored short-tier boards,
+but not on all: the OpenESC boards (four scored capacitors each, which
+swing between seeds even off: 4in1 16.28 and 1.65 mm), USB_Keypad and
+framework_mobo_lefthalf (one seed). Where a rail has more capacitors than
+pins (DSP-ADAU1452's twelve on one regulator pin) the 1 mm pull cannot be
+met. Turn it on for a board whose decoupling matters
+(`{"placer": {"decoupling_near": true}}`), or write the pairs as `near`
+constraints (`describe-kicad-board --constraints-template`); the verdict
+of a layout under 60 % within 3 mm says both. Open: a pull that keeps the
+few-capacitor boards (a tolerance that grows with the capacitors a pin
+shares was tried in placement only on DSP-ADAU1452: no clear change).
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a

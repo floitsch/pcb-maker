@@ -759,7 +759,7 @@ fn decoupling_action(decoupling: &crate::quality::KiCadDecoupling) -> Option<Str
         })
         .collect();
     Some(format!(
-        "decoupling: {:.0} % of the decoupling capacitors lie within 3 mm of a supply pin (designers 60 % or more), a median {} mm{}: give the capacitors of those pins a near constraint ({{\"part\": \"C5\", \"pin_of\": \"U2:39\", \"max_mm\": 1.5}} in constraints.json; describe-kicad-board --constraints-template writes them for every capacitor), or turn on the placer's decoupling_near (layout.json {{\"placer\": {{\"decoupling_near\": true}}}}: every capacitor at the nearest supply pin of its rail; on dense boards it cost routing)",
+        "decoupling: {:.0} % of the decoupling capacitors lie within 3 mm of a supply pin (designers 60 % or more), a median {} mm{}: give the capacitors of those pins a near constraint ({{\"part\": \"C5\", \"pin_of\": \"U2:39\", \"max_mm\": 1.5}} in constraints.json; describe-kicad-board --constraints-template writes them for every capacitor), or turn on the placer's decoupling_near (layout.json {{\"placer\": {{\"decoupling_near\": true}}}}: every capacitor within 1 mm of the nearest supply pin of its rail, off by default)",
         share * 100.0,
         decoupling
             .capacitor_median_mm
