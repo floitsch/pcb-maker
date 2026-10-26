@@ -158,9 +158,10 @@ pub struct Config {
     /// lattice with 0.2 mm tracks and clearance), which in a 0.4 or 0.5 mm
     /// pitch row covers the neighbouring pads' stubs for good
     /// (jfedor2/hid-remapper's RP2040 rows, docs/router.md "Fine-pitch
-    /// escapes"). Off by default: on the expansion tier it closes 32
-    /// connections and gains a pass but has four KiCad errors more
-    /// (starved thermals at connector pads the pour model misses).
+    /// escapes"). On by default since 2026-10-26 (with the pour model
+    /// matching KiCad's starved thermals): on the expansion tier 32
+    /// connections fewer open and three passes more than off, no new
+    /// error either way.
     pub exact_escape_stubs: bool,
     /// The thermal spokes KiCad's DRC wants a pad to have into each zone
     /// (the board setup's `min_resolved_spokes`, KiCad's default 2; 0
@@ -386,7 +387,7 @@ impl Default for Config {
             pour_aware_via_reduction: true,
             pour_whole_rip_up: true,
             escape_stub_mm: 0.0,
-            exact_escape_stubs: super::escapes::exact_escapes_override().unwrap_or(false),
+            exact_escape_stubs: super::escapes::exact_escapes_override().unwrap_or(true),
             min_spokes: 2,
             global_routing: false,
             neck_reach: 1.5,

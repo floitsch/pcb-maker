@@ -343,7 +343,7 @@ pub struct KiCadBoardRouterConfig {
     pub escape_stub_mm: Option<f64>,
     /// Escape stubs stamped exactly, straight ones along a lattice line
     /// first (router `exact_escape_stubs`; docs/router.md, "Fine-pitch
-    /// escapes"): unset, the router's default (off);
+    /// escapes"): unset, the router's default (on since 2026-10-26);
     /// `PCB_ROUTER_EXACT_ESCAPES` overrides this.
     #[serde(default)]
     pub exact_escape_stubs: Option<bool>,

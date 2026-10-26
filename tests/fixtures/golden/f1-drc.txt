@@ -25,7 +25,6 @@ warning lib_footprint_issues: Footprint U1
 warning lib_footprint_issues: Footprint U2
 
 routed F1 (route mode, 2 s)
-unconnected: 1 of net +3V3
 warning lib_footprint_issues: Footprint C1
 warning lib_footprint_issues: Footprint D1
 warning lib_footprint_issues: Footprint H1
