@@ -3306,6 +3306,170 @@ placement-only seeds. Next, if the lever is taken up again: escape
 demand in the group moves' judgement, and a column move for banks of
 long parts that picks the members' turn before it stacks them.
 
+## The legality model against KiCad (2026-10-26)
+
+The second ablation found 107 of protoesp's 122 movable designer parts
+illegal "in the placer's tightest model", 128 on the 4x4 molecule, and
+our SNSP-CPU-01 placement spaced wider than the designer's. The
+hypothesis: the model is stricter than what KiCad accepts, so dense
+placements are looser than they need to be.
+
+**The tool.** `pcb-maker legality-kicad-board <project-dir> <board-id>
+<report.json> [--poses <board>] [--drc <drc.json>] [--placer <json>]`
+(agents.md, code `board_placer/legality.rs`) lowers a board exactly as
+`place-kicad-board` does (`prepare_board`, now shared), takes every
+footprint's pose from `--poses` (by uuid, then reference), and judges
+each movable part at every relaxation level the placer walks down
+(`pcb_placer::level_problems`, the same `relaxation_levels` and
+`relax_level` the placement uses). For an illegal part it lists what it
+meets (the placer's test) and why, measured on the footprints' own
+shapes: courtyards as KiCad draws them (`courtyard_slabs`, the strips of
+the courtyard polygon), pads as their copper (rounded rectangles, discs
+and ovals by their radius; non-plated holes left out; only pads on a
+shared copper layer and of different nets), the clearance of the two
+nets' classes, pads to the outline. With `--drc` each conflict carries
+KiCad's findings between the two footprints (by item uuid, a panel's
+shared uuids by reference): a part is *KiCad agrees* when KiCad reports
+an error against something it meets, else *model stricter*.
+`benchmarks/agent-tasks/legality_census.py` runs it on every task: the
+task's prepared board and constraints (v20's `source/`: netless and
+locked parts fixed, the movable parts' labels dropped, as the placer
+sees it) with the designer's poses, beside `drc-kicad-board` of the
+designer's own board (every severity, cached).
+
+**The census, 109 boards, 16 470 movable parts** (x14501's tool; the
+designer's DRC for 108; koeg-board's fails in kicad-cli, exit 3, and
+it counts without one): the
+designer's own board has placement errors on movable parts on 45 boards
+(courtyards_overlap, clearance, solder_mask_bridge, hole_clearance,
+pth_inside_courtyard, copper_edge_clearance and the like); it is not
+clean on most boards, but nearly all of what the model calls illegal is
+not where KiCad complains.
+
+| level | illegal designer parts | with a KiCad error (b) | without (a) |
+| --- | ---: | ---: | ---: |
+| the loosest (full halos, the placement's spacing) | 14 089 | - | - |
+| no halos, the rules' least spacing (the ablation's "tightest model") | 8 233 | 220 | 8 013 |
+| the tightest (fine grid, edge, tight bodies, courtyards touching) | 2 766 | 220 | 2 546 |
+| no halos, least spacing, `legality: "kicad"` | 2 847 | 220 | 2 627 |
+| the tightest, `legality: "kicad"` | 1 861 | 220 | 1 641 |
+
+The halo levels are routing room, not legality: their 14 089 say only
+that designers do not leave the placer's comfort margins. The 220 parts
+where KiCad agrees are real designer errors (protoesp 46 of its 107: 36
+courtyard overlaps KiCad flags, hole clearance and mask bridges; SNSP-CPU-01
+30 of 57; eurorack-pmod 30); the model is right there.
+
+**Causes of the parts without a KiCad error** (a part counts once per
+cause it has; the model's two levels, then `legality: "kicad"`):
+
+| cause | no halos, least spacing | tightest | kicad: least spacing | kicad: tightest |
+| --- | ---: | ---: | ---: | ---: |
+| courtyards apart, closer than the spacing (the copper clearance between the courtyard boxes); pads keep their clearance | 5 622 | 0 | 0 | 0 |
+| the same at the touching level: closer than the copper's least inset allows | 0 | 754 | 111 | 106 |
+| bodies past their courtyards (pads, mask or copper graphics) closer than the spacing, courtyards keep it | 649 | 0 | 0 | 0 |
+| courtyards overlap (on boards whose project rates it ignore 690, warning 315; error 39: round and slanted courtyards' strips) | 1 044 | 421 | 1 024 | 335 |
+| bodies overlap, courtyards do not (the courtyard's box, pads or mask past it) | 385 | 290 | 317 | 273 |
+| the board's silkscreen marks (texts, graphics: KiCad's silk findings are warnings) | 698 | 578 | 358 | 358 |
+| the edge margin, the copper keeping the copper-to-edge clearance (and 25 bodies over the edge) | 511 | 250 | 511 | 232 |
+| shaped or hollow boxes within the spacing | 214 | 166 | 108 | 104 |
+| far side: a lead, hole or courtyard under a part on the other side | 202 | 190 | 202 | 190 |
+| parts without courtyard (copper boxes) overlapping or within the spacing | 294 | 220 | 230 | 198 |
+| obstacles: copper graphics, rule-area keepouts, cutouts | 264 | 226 | 251 | 224 |
+| pads closer than their clearance, or to the edge, without a KiCad error (the boxes' approximation) | 44 | 44 | 44 | 44 |
+
+Classes:
+
+- **(b) the designer violates what KiCad checks: 220 parts** on 30
+  boards. The model is right.
+- **(a) the model is stricter, KiCad accepts it**, by size:
+  1. *Courtyards kept the copper clearance apart* (5 622 parts at the
+     least-spacing levels, 754 at the touching level, where the gap is
+     the copper's least inset on any side): KiCad forbids overlapping
+     courtyards, not touching ones, and checks the pads' clearance pad
+     to pad. Changed (below).
+  2. *Courtyard overlap where the project allows it* (ignore or
+     warning on 19 boards: the keyboards, the OpenESC boards, Glasgow,
+     MegaDrive): the model keeps courtyards apart until the tight
+     levels, and there the fabrication outlines (median overlap of the
+     designers' 543 such pairs 0.125 mm, a quarter over 0.65 mm: parts
+     under switches). Not changed: a fabrication outline is the part's
+     body; that KiCad does not check it does not make two bodies fit.
+  3. *Silkscreen marks*: designers place parts over the board's texts
+     and graphics; the placer keeps off them and lies on them only
+     without room (`seat_on_marks`). Not changed: a deliberate choice
+     for legible boards (2026-10-21), and KiCad's silk findings are
+     warnings, not acceptance of covered text.
+  4. *Bodies larger than the courtyard* (pads, mask openings, copper
+     graphics past it, or a courtyard's box where its shape is not a
+     rectangle): 649 + 385. At `legality: "kicad"` touching bodies are
+     legal, so the 649 go; the overlapping 385 (317 left) stay, as the
+     mask openings and the box are deliberate (2026-10-15, mask
+     openings block placement).
+  5. *The edge margin* (511 / 250): the body keeps the edge margin less
+     its copper's least inset on any side. Changed at the inset levels
+     (below): 250 -> 232 at the tightest; the rest keep the rules'
+     copper-to-edge clearance plus the levels' 0.05 mm.
+  6. *The far side* (202 / 190: SMD parts over a through-hole lead on
+     the other side), *shaped or hollow boxes* (214 / 166: halved at
+     `kicad`), *parts without courtyard* (294 / 220), obstacles (264):
+     the same body-versus-copper question per kind; not changed
+     except where the touching rule covers them.
+- **Mating connectors stacked** (the molecules): not a cause the census
+  finds. On the 4x4 the 128 at the tightest level are the silkscreen
+  marks (80), J1's body past its courtyard 0.04 mm from C2 (16, legal at
+  `kicad`), J3/J4's courtyard-less copper boxes within the spacing (24),
+  the edge margin (32) and leads under the other side (16); KiCad finds
+  no placement error on the molecules. At `kicad` 96 remain (marks 64,
+  edge 32 at the rules' copper-to-edge plus 0.05 mm: J2's pads 0.012 mm
+  from the edge).
+
+**Where the dense boards place.** The hypothesis needs the dense
+layouts to end at the levels the model governs. Of the eleven dense
+boards' layouts (x14343, three seeds, `board-placer.json`), eight place
+at a halo level (SNSP-CPU-01, DSP-ADAU1452 and split72_left at full
+halos and 0.5 mm spacing, protoesp, SmartSpin2k, the 0xCB panel and
+MegaDrive at half halos, video at no halos with the 0.5 mm spacing):
+there the legality model is not what spaces them, the halos and the
+placement's spacing are (SNSP-CPU-01's wider spacing is its full halos).
+Only the 4in1-mini, the 4in1 and Glasgow reach the least spacing and
+the tight bodies; there the census at `kicad` falls 148 -> 71, 186 ->
+175 and 181 -> 66 at the least-spacing level, 38 -> 26, 71 -> 64 and
+19 -> 14 at the tightest.
+
+**The change: `legality: "kicad"`** (placer setting, default `"model"`;
+core `Config::kicad_legality`, `Constraints::pad_clearance`). At every
+level whose spacing is the rules' least (no halos left; the levels from
+"spacing down to the copper clearance" on):
+
+- bodies on one side may touch (`body_spacing` 0, the hollow parts' boxes
+  too), and two parts whose bodies come within the copper clearance keep
+  it pad to pad (`pads_too_close`: their pad boxes grown by the largest
+  clearance, a little conservative at diagonal corners); the anneal
+  keeps the touching level's shares (`courtyard_spacing` on);
+- an unheld part whose copper lies inside its body (the inset levels)
+  is on the board when its body is inside the outline and each pad
+  keeps the level's edge margin (`pads_keep_edge`), not the body by its
+  copper's least inset on any side;
+- held parts, the far side, tight bodies, marks and obstacles are as
+  before. `board-placer.json` reports `pad_clearance` where the
+  placement's level had it, and the layout's moves keep to it.
+
+Off, the placement is byte-identical to main's (x14500 against x1828,
+`place-kicad-board` at 60 s of placement work, seed 1: the 4in1-mini,
+protoesp and Glasgow; x14501 adds the edge rule, which acts only with
+the switch on). On, the 4in1-mini places at the same level with
+the placer's wirelength 680 -> 630 mm; protoesp (a half-halo level) is
+unchanged.
+
+### Measurement
+
+MEASUREMENT
+
+### Judgement
+
+JUDGEMENT
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a
