@@ -2872,19 +2872,20 @@ fn place_return_vias(
         None => (board, None),
     };
     let reference_name = &board.nets[reference as usize].name;
-    let in_pour = |at: Point, radius: f64| {
-        board.planes.iter().any(|plane| {
-            plane.net == reference
-                && core::geometry::point_in_polygon(at, &plane.polygon)
-                && core::geometry::polygon_edges(&plane.polygon)
-                    .all(|(a, b)| core::geometry::point_segment_distance(at, a, b) >= radius)
-                && !plane
-                    .excluded
+    // Every kept link's vias (their holes: hole to hole and hole clearance,
+    // which `verify` does not check against the board's via obstacles).
+    let pair_holes: Vec<(Point, f64, f64)> = kept_runs
+        .iter()
+        .flat_map(|&(index, items, ..)| {
+            let pair = &pairs[index];
+            items.into_iter().flat_map(move |item| {
+                copper.items[item]
+                    .5
                     .iter()
-                    .chain(&plane.above)
-                    .any(|area| core::geometry::point_in_polygon(at, area))
+                    .map(move |&at| (at, pair.via_diameter, pair.via_drill))
+            })
         })
-    };
+        .collect();
     let mut placed: Vec<core::Via> = Vec::new();
     for &(index, items, ..) in kept_runs {
         let pair = &pairs[index];
@@ -2899,6 +2900,40 @@ fn place_return_vias(
                     .map(|partner| unit(sub(at, partner)))
                     .filter(|direction| norm(*direction) > 0.5)
                     .unwrap_or([1.0, 0.0]);
+                // The routes and obstacles near this via, for its candidates.
+                let window = CHECK_REACH + pair.via_diameter + RETURN_GAP;
+                let close =
+                    |a: Point, b: Point| core::geometry::point_segment_distance(at, a, b) <= window;
+                let local: Vec<core::NetRoute> = result
+                    .routes
+                    .iter()
+                    .take(board.nets.len())
+                    .map(|route| core::NetRoute {
+                        segments: route
+                            .segments
+                            .iter()
+                            .filter(|segment| close(segment.start, segment.end))
+                            .cloned()
+                            .collect(),
+                        vias: route
+                            .vias
+                            .iter()
+                            .filter(|other| close(other.at, other.at))
+                            .cloned()
+                            .collect(),
+                        ..core::NetRoute::default()
+                    })
+                    .chain(std::iter::repeat_with(core::NetRoute::default))
+                    .take(board.nets.len())
+                    .collect();
+                let mut local = local;
+                local[reference as usize].vias.extend(
+                    placed
+                        .iter()
+                        .filter(|other| close(other.at, other.at))
+                        .cloned(),
+                );
+                let near = obstacles_near(board, at, window);
                 let touching = pair.via_diameter;
                 let steps = (RETURN_GAP / RETURN_STEP).round() as usize;
                 let found = (1..=steps).find_map(|step| {
@@ -2910,14 +2945,16 @@ fn place_return_vias(
                             diameter: pair.via_diameter,
                             drill: pair.via_drill,
                         };
-                        (in_pour(candidate, pair.via_diameter / 2.0)
+                        (joins_pour(board, &local, &near, reference, &via)
                             && return_via_clear(
                                 checked,
                                 rules,
-                                result,
+                                &local,
+                                &near,
                                 reference,
                                 reference_name,
                                 &placed,
+                                &pair_holes,
                                 &via,
                             ))
                         .then_some(via)
@@ -2939,38 +2976,91 @@ fn place_return_vias(
     result.routes[reference as usize].vias.extend(placed);
 }
 
+/// Whether a via of `reference` joins one of its pours: on a layer where a
+/// pour of the net holds it (inside its outline, outside the pours above
+/// it), the fill can reach the via's ring. Points around the ring, a fill's
+/// half minimum width out, are tested: one counts where it lies in the pour
+/// and every other net's copper on the layer (the board's and the routes')
+/// keeps the pour's clearance and that half width from it; four of sixteen
+/// must. KiCad joins a via to the fill it touches (no thermal relief on a
+/// solid zone's vias).
+fn joins_pour(
+    board: &core::Board,
+    local: &[core::NetRoute],
+    near: &[usize],
+    reference: core::NetId,
+    via: &core::Via,
+) -> bool {
+    board.planes.iter().any(|plane| {
+        if plane.net != reference
+            || !core::geometry::point_in_polygon(via.at, &plane.polygon)
+            || plane
+                .excluded
+                .iter()
+                .chain(&plane.above)
+                .any(|area| core::geometry::point_in_polygon(via.at, area))
+        {
+            return false;
+        }
+        let class = board.classes[plane.class];
+        let half = class.trace_width / 2.0;
+        let keep = class.clearance + half;
+        let layer = plane.layer;
+        let fillable = |point: Point| {
+            core::geometry::point_in_polygon(point, &plane.polygon)
+                && near.iter().all(|&index| {
+                    let obstacle = &board.obstacles[index];
+                    obstacle.net == Some(reference)
+                        || obstacle.layers & (1 << layer) == 0
+                        || obstacle.shape.distance_to_point(point)
+                            >= keep.max(obstacle.clearance + half)
+                })
+                && local.iter().enumerate().all(|(net, route)| {
+                    net == reference as usize
+                        || (route.segments.iter().all(|segment| {
+                            segment.layer != layer
+                                || core::geometry::point_segment_distance(
+                                    point,
+                                    segment.start,
+                                    segment.end,
+                                ) - segment.width / 2.0
+                                    >= keep
+                        }) && route.vias.iter().all(|other| {
+                            core::geometry::distance(point, other.at) - other.diameter / 2.0 >= keep
+                        }))
+                })
+        };
+        (0..16)
+            .filter(|&step| {
+                let angle = step as f64 * 22.5;
+                fillable(add(
+                    via.at,
+                    scale(turned([1.0, 0.0], angle), via.diameter / 2.0 + half),
+                ))
+            })
+            .count()
+            >= 4
+    })
+}
+
 /// Whether a return via of `reference` at `via` keeps every clearance the
 /// router checks (`verify`, with the project's rules where given) from the
-/// routes near it, the board's obstacles and the return vias `placed`.
+/// routes near it (`local`, the obstacles `near`), the board's obstacles,
+/// the kept links' vias (`pair_holes`) and the return vias `placed`.
+#[allow(clippy::too_many_arguments)]
 fn return_via_clear(
     board: &core::Board,
     rules: Option<&core::rules::ClassRules>,
-    result: &core::RoutingResult,
+    local: &[core::NetRoute],
+    near: &[usize],
     reference: core::NetId,
     reference_name: &str,
     placed: &[core::Via],
+    pair_holes: &[(Point, f64, f64)],
     via: &core::Via,
 ) -> bool {
-    let reach = CHECK_REACH;
-    let near = |a: Point, b: Point| core::geometry::point_segment_distance(via.at, a, b) <= reach;
-    let mut routes = vec![core::NetRoute::default(); board.nets.len()];
-    for (net, route) in result.routes.iter().enumerate().take(board.nets.len()) {
-        if net == reference as usize {
-            continue;
-        }
-        routes[net].segments = route
-            .segments
-            .iter()
-            .filter(|segment| near(segment.start, segment.end))
-            .cloned()
-            .collect();
-        routes[net].vias = route
-            .vias
-            .iter()
-            .filter(|other| near(other.at, other.at))
-            .cloned()
-            .collect();
-    }
+    let mut routes = local.to_vec();
+    routes[reference as usize] = core::NetRoute::default();
     // Only the new via of the reference net: a finding of that net, or
     // naming its via, is the new via's.
     routes[reference as usize].vias.push(via.clone());
@@ -2982,7 +3072,7 @@ fn return_via_clear(
     };
     if !placed
         .iter()
-        .chain(&result.routes[reference as usize].vias)
+        .chain(&local[reference as usize].vias)
         .all(|other| {
             holes_apart(other.at, other.drill)
                 && core::geometry::distance(other.at, via.at)
@@ -2991,7 +3081,17 @@ fn return_via_clear(
     {
         return false;
     }
-    for index in obstacles_near(board, via.at, reach) {
+    // The kept links' vias: hole to hole, and each one's drill the hole
+    // clearance from the other's ring.
+    if !pair_holes.iter().all(|&(at, diameter, drill)| {
+        let distance = core::geometry::distance(at, via.at);
+        holes_apart(at, drill)
+            && distance - drill / 2.0 - via.diameter / 2.0 >= board.hole_clearance
+            && distance - via.drill / 2.0 - diameter / 2.0 >= board.hole_clearance
+    }) {
+        return false;
+    }
+    for &index in near {
         let obstacle = &board.obstacles[index];
         let distance = obstacle.shape.distance_to_point(via.at);
         match obstacle.kind {
