@@ -11,6 +11,53 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-26 (length and skew rules for single nets)
+
+Branch length-rules (docs/router.md, "Length and skew rules
+(2026-10-26)").
+
+- **Census**: of the 109 boards of tasks v7 and the 46 of the expansion
+  tier two have KiCad `length` or `skew` rules (oro-os link's
+  `ULPI_exact_length`, 12 nets at 31.4 to 31.6 mm; Sisu_SSE-9's USB
+  `skew` 0.5 mm on In1.Cu and In4.Cu over 11 nets); no project has a
+  KiCad 10 tuning profile, the board setup's `tuning_pattern_settings`
+  (106 projects) are the tuner's defaults, no rule. The designers' boards
+  meet them; the designer tier x1832 had 12 length and 3 skew findings
+  on them. The intake adds firestarter's compute board (10 nets, 25 to
+  27 mm) and KiCad's QA boards.
+- **Lowering** (`project_rules::length_rules`, `dru::track_rule`): per
+  net and layer the rule KiCad applies to its tracks there, grouped by
+  the rule; a via counts where the rule holds on F.Cu; rules rated below
+  an error and bounds in `ps` are passed over. Reported `applied`
+  (`skew`, a `length` minimum) or `approximated` (a `length` with a
+  maximum: checked, not kept by the search) with `length_matching` on.
+- **Meanders** (`lengths::match_lengths`, when each attempt is written,
+  after the pairs): a completely routed net below a `length` minimum, or
+  further than a `skew` maximum below its group's longest, gets bumps on
+  its straight tracks (the bisected height, up to `max(1 mm, 3 w)`, at
+  most 200 tracks, twelve places each, both sides), checked against
+  every obstacle and route near them; their tracks are the route's,
+  grouped as a KiCad tuning pattern (`tuning_mode "single"`). The bumps,
+  the heights and the pattern are in board_router/meander.rs, shared
+  with the pairs. Verdict and board-router.json: `lengths`.
+- **Lengths as KiCad 10 counts them** (`kicad_length`, fitted on KiCad's
+  QA board length_calculations): a via spans what it joins, its pads
+  included; the outer layers sit at the board's faces, an inner one at
+  its middle, a dielectric's sublayers summed (`copper_heights`, now
+  shared: the pairs' skew changes on boards with such stackups); a
+  track's way inside a pad it leaves once is the straight line from the
+  pad's position. oro's routes that met 31.5 mm by the old heights were
+  31.69 to 31.97 mm to KiCad (its F.Cu to In5.Cu via 1.215 mm, not
+  0.98); now eight of the nine lengths KiCad reports on the 30 s routes
+  agree to 0.1 µm (firestarter's Y9 by 0.024 mm).
+- **Measured**, route mode, off x1840 against on x14861. 30 s of work,
+  the five rule boards (the two of the census, firestarter, OpenAIO,
+  the QA skew group): length/skew findings 31 -> 19 (oro 12 -> 5, the
+  five left the unrouted ULPI nets; Sisu 4 -> 1; firestarter 10 -> 8),
+  errors 47 -> 35, unconnected 482 -> 482, vias 509 -> 509; Sisu's
+  diff_pair_gap 3 -> 4 (a meandered fallen-back pair). LEN1_DESIGNER_CL
+  The expansion tier (46 boards, 8 x 1): 46 of 46 routed boards
+  byte-identical to x1840's, rows identical. LEN1_DEFAULT_CL
 ## Committed on 2026-10-26 (the exact thermal model while routing)
 
 Branch exact-thermals-routing (docs/router.md, "The last miss, and the

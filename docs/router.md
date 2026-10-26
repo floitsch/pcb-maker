@@ -714,8 +714,8 @@ KiCad 10.0.7's DRC reads it:
   value for the board, a via rule on every layer), `no_effect` (the classes and board setup keep at least as much,
   or nothing routed matches), `not_routing` (silk, text, courtyards, pad
   holes, zone connections, assertions), `skipped` (severity, or a layer
-  the board lacks) or `unmodelled` (creepage, length, skew, diff pairs
-  without `diff_pairs`,
+  the board lacks) or `unmodelled` (creepage, length and skew without
+  `length_matching` or in time units, diff pairs without `diff_pairs`,
   physical clearances, disallows other than blind, buried and micro vias,
   rules on what is unknown). `rules.unmodelled` lists the last one line
   each; the verdict's next_actions name them when a route is incomplete,
@@ -3429,6 +3429,167 @@ pair point of two parts; "fewer than two pair points" 65 -> 22 on the
 rule boards). (8) Done in phase 3: the pairs' nets keep to the layers their rules
 allow (above, "Layers").
 (9) Coupled branches (a T at an ESD part) instead of one run per link.
+
+## Length and skew rules (2026-10-26)
+
+`length_matching` in the router settings (default on;
+`PCB_ROUTER_LENGTH_MATCHING=0` or `1` where the settings name none).
+KiCad's custom `length` and `skew` constraints over single nets and
+groups of nets (a memory bus, a camera bus, a USB group) were lowered as
+`unmodelled` until now, and KiCad reported `length_out_of_range` and
+`skew_out_of_range` on every routed board with such a rule. The pairs'
+pass ("Skew and length" above) matched only the two nets of a coupled
+pair. The code: crates/pcb-kicad/src/project_rules.rs (`length_rules`),
+board_router/lengths.rs (the pass), board_router/meander.rs (the bumps,
+the heights, the tuning pattern, shared with diff_pairs.rs).
+
+**Census.** Of the 109 boards of tasks v7 and the 46 of the expansion
+tier, two have such a rule in their `.kicad_dru`, both in v7, none in the
+expansion tier. The board setup has no length rule of its own: 106 of the
+155 projects carry `tuning_pattern_settings` (the interactive tuner's
+default amplitudes and spacings, no DRC check; 6 differ from KiCad's
+defaults), none has a KiCad 10 tuning profile (`tuning_profiles`, a net
+class's `tuning_profile`), and every project rates `length_out_of_range`
+and `skew_out_of_range` errors. The designer's own boards meet their
+rules (kicad-cli 10.0.7, zones refilled: no finding); the routes do not
+(the designer tier x1832 at 1143 s of work, the 30 s route below):
+
+| board | rule | nets | bounds | designer | x1832 designer tier | 30 s route, x1840 |
+|---|---|---|---|---|---|---|
+| oro-os link | `ULPI_exact_length`: `length` on class ULPI | 12 ULPI nets | 31.4 to 31.6 mm | 0 | 12 length | 12 length |
+| Sisu_SSE-9 | `USB 90 ohm differential geometry on L2 and L5`: `skew` on class USB on In1.Cu and In4.Cu (with track_width, diff_pair_gap, diff_pair_uncoupled) | 11 USB nets (5 pairs and a lone net) | 0.5 mm | 0 | 3 skew | 4 skew |
+
+Beyond the two tiers, the intake (benchmarks/expansion/data/boards) has
+seven more boards with such rules: hstarmans firestarter's compute board
+(`DVP_Bus_Length_Matching`: `length` 25 to 27 mm on 10 nets of class
+DVP_BUS), OpenAIO-Whoop (two USB `skew` rules, rated warnings by the
+project: not lowered), jorisplusplus pcdock's base board (`length` with an
+opt only: KiCad checks min and max, so no finding), KiCad's QA boards
+issue24772 (`skew` in picoseconds: unmodelled) and four length or skew QA
+boards (length_calculations twice, skew_group_matched_drc,
+skew_within_diff_pairs_drc). firestarter, OpenAIO and
+skew_group_matched_drc are measured with the two below.
+
+**Lowering** (`project_rules::length_rules`). Per net and copper layer,
+the rule KiCad applies to a track of the net there (`dru::track_rule`:
+the last whose condition surely holds, `inDiffPair()` known from the
+names), for `length` and `skew` separately; the nets are grouped by the
+rule (its index: two rules of one name are two groups), as KiCad's
+matched-length check groups items by the rule that matched them. Per
+member the layers the rule holds on and whether its vias count (KiCad
+evaluates a via's rules on its first layer, F.Cu for a through via:
+Sisu's rule on In1.Cu and In4.Cu counts those layers' tracks and no via).
+A rule rated below an error (its own `(severity ...)` or the project's
+`length_out_of_range` or `skew_out_of_range`) is passed over, as is one
+with no bound in lengths (KiCad 10's `ps`). `(within_diff_pairs)` makes
+a skew compare the two nets of each pair only. With the switch on
+(`with_lengths`) a `skew` and a `length` with only a minimum are reported
+`applied`, a `length` with a maximum `approximated` (the minimum is met,
+the maximum only checked), and leave `rules.unmodelled`.
+
+**Measuring as KiCad does** (`kicad_length`). A net's length for a rule
+is its tracks on the rule's layers, its vias at the stackup's height, and
+inside a pad that a net's tracks leave once, the straight line from the
+pad's position to where they leave instead of the tracks' way there. A
+via's height is between the outermost layers of what it joins: the
+tracks ending on it and the pads it lies in (a via in an SMD pad to a
+track on B.Cu counts the whole stack). The heights (`copper_heights`,
+now shared): the outer copper layers at the board's faces, an inner one
+at its middle, a dielectric's sublayers (`addsublayer`) summed. Fitted
+on KiCad's QA board length_calculations, whose cases KiCad holds within
+1 µm (the unit test reproduces four of them exactly and the pad case
+within 5 µm: KiCad's pad is rounded); until then the pairs' heights
+took each layer's middle and the first sublayer only, and oro's four
+routed ULPI nets that met 31.5 mm by that measure were 31.69 to 31.97 to
+KiCad (its F.Cu to In5.Cu via 1.215 mm, not 0.98). On the 30 s routes
+below, of the nine routed nets KiCad reports a length for, eight agree
+with the verdict's to 0.1 µm (firestarter's DVP_PCLK and Y2 to Y8, Sisu's
+MODEM_USB_PHY_N); firestarter's DVP_Y9 is 0.024 mm longer by the
+verdict's measure (30.856 against 30.832 mm; not meandered, it is over
+its maximum either way).
+
+**Meanders** (`match_lengths`, when each attempt is written, after the
+differential pairs, before the routes are emitted). The `length` rules
+first, then the `skew` rules on the lengths they made. A net below a
+`length` minimum is lengthened to the rule's opt (held inside the
+bounds), else to the middle of its bounds, else to its minimum; a net
+further than a `skew` maximum below the longest net of its group to the
+longest less half the maximum. Only a completely routed net that is not
+the net of a coupled pair (the pairs' pass matches those; a meander on
+one track of a coupled run would part the pair) gets one. A meander is
+`meander::bumps` on a straight track of the net on a layer the rule
+counts: bumps `max(w + c, 2 w)` wide and apart, at most `max(1 mm, 3 w)`
+high (KiCad's single-track default amplitude), then half and a quarter
+of that, their height bisected to add exactly what is missing, as many
+as hold it or fewer (the rest on other tracks), at the track's start,
+end, middle and up to twelve places between, either side; the first
+whose copper keeps every clearance (`core::verify` against the board's
+obstacles near the net and every route near the meander) and that parts
+no branch, via or pad of the net from the track. The longest tracks
+first; what is left of a split track is tried again. The meander's
+tracks are the route's (the internal checks see a connected net) and are
+grouped as a KiCad tuning pattern (`tuning_mode "single"`, the rule's
+target and bounds). A `length` maximum is not kept: the router's search
+has no per-net length bound (the A* cost is the path's; a bound would
+need the net's whole tree, its pads' order, in the search), so a net
+longer than its maximum is reported (`note`), and a group's longest net
+sets its skew target whatever it is. Verdict and board-router.json:
+`lengths` (per rule and net `length_mm`, `target_mm`, `min_mm`,
+`max_mm`, `meander_mm`, `within`, `note`; docs/agents.md).
+
+**Measured** (route mode, the designer's placement with its tracks
+stripped, one thread, KiCad's DRC with zones refilled; off x1840 (main),
+on x14861 (this branch). Length and skew are KiCad's length_out_of_range
+plus skew_out_of_range, errors all of KiCad's errors).
+
+*30 s of work* (the wall guard 1200 s):
+
+| board | length/skew | errors | unconnected | vias | meanders |
+|---|---|---|---|---|---|
+| oro-os link | 12 -> 5 | 22 -> 15 | 183 -> 183 | 146 -> 146 | 7 of 12 nets, 37.2 mm, 19 patterns |
+| Sisu_SSE-9 | 4 -> 1 | 10 -> 7 | 111 -> 111 | 160 -> 160 | 4 of 11, 34.4 mm |
+| firestarter compute | 10 -> 8 | 10 -> 8 | 3 -> 3 | 164 -> 164 | 9 of 10, 47.3 mm, 27 patterns |
+| OpenAIO-Whoop | 0 -> 0 | 0 -> 0 | 185 -> 185 | 39 -> 39 | none (its skew rules are warnings): board identical |
+| QA skew_group_matched_drc | 5 -> 5 | 5 -> 5 | 0 -> 0 | 0 -> 0 | none (the undefined class, below) |
+
+Totals: length/skew findings 31 -> 19, errors 47 -> 35, unconnected 482
+-> 482, vias 509 -> 509 (the routes are the same: the meanders add
+copper only). oro: the seven routed ULPI nets at 31.500 mm, 1.9 to 12.8
+mm of meander each; its five findings left are the five ULPI nets the
+route left open (KiCad: length 0). Sisu: MODEM_USB_N, RP_USB_P and
+RP_USB_N (fallen-back pairs) matched to MODEM_USB_P (39.29 mm), its
+finding left MODEM_USB_PHY_N (8.7 mm of In1.Cu, 36 mm short: 5.8 mm
+placed); its other findings: diff_pair_gap 3 -> 4 (one more on the RP_USB pair,
+both of whose nets got a meander), uncoupled 3 -> 2. firestarter: XCLK and Y8 to
+26.000 mm; PCLK, Y3, Y4 and Y6 lengthened by 6.7 to 11.1 mm and still
+short; Y2, Y5 and Y7 (inside the bus) got one 0.35 mm bump each; Y9 is
+over its maximum (30.8 mm). No KiCad clearance finding was added on any
+board (every type but length, skew and the pairs' is unchanged).
+
+*The expansion tier* (46 boards, 8 x 1, 30 s; no board has a length or
+skew rule): x1840 (build/pour5-exp-off-x1840) against x14861, 46 of 46
+routed boards byte-identical, rows identical (routed, vias, KiCad's
+findings, work).
+
+LEN1_DESIGNER
+
+**What is left.** (1) Room: on a dense bus the router lays the nets side
+by side at the clearance, and no bump fits beside a track with a
+neighbour at its clearance on both sides (firestarter's Y2, Y5 and Y7
+get one small bump each); the outermost nets take the length. Room needs
+the route to leave it (a bus's lanes spread, or the meander as a routing
+cost), not a pass after it. (2) A maximum: a net longer than its rule's
+maximum stays so (firestarter's DVP_Y9, 30.8 mm against 27). (3) Nets
+the route leaves open have no length to match (oro's five unrouted ULPI
+nets are its remaining findings). (4) A coupled pair in a skew group of
+several pairs: its nets are the pairs' pass's, which matches the pair to
+itself, not to the group (Sisu's pairs fell back, so the pass here
+matched them as single nets; on a pair net KiCad's gap check then finds
+the meander out of the pair's gap: Sisu's diff_pair_gap 3 to 4).
+(5) A net class named in `netclass_assignments` that the project does
+not define (KiCad's QA board skew_group_matched_drc: `DIFF_PAIR`) is not
+the net's class to the lowering, so the rule holds for no net there;
+KiCad's `hasNetclass()` sees it.
 
 ## CPU profile (2026-10-25)
 
