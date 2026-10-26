@@ -70,8 +70,9 @@ pub struct KiCadDiffPairs {
     pub uncoupled_mm: f64,
     /// The links whose run was not routed, by cause (`not_routed_cause`:
     /// "a launch has no legal node", "no path in the negotiation", "the
-    /// hard repair found no room", "the hard repair did not reach it",
-    /// "lost after the repair").
+    /// hard repair found no room", "no hard repair: the attempt was judged
+    /// hopeless", "the hard repair's budget ran out before it", "lost
+    /// after the repair").
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub not_routed: BTreeMap<String, usize>,
     /// The fallback router's work (seconds of an idle machine), charged
@@ -1803,14 +1804,19 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
 /// link's envelope or via disc finds no way past the fixed copper, or its
 /// searches gave up); in conflict then and the hard repair, which treats
 /// every other net's copper as fixed, found no room (the negotiation
-/// ejected it); or the hard repair's budget ran out before it (Diagnostics,
-/// `repair`). The verdict's `not_routed` counts them.
+/// ejected it); or the hard repair did not search for it (the attempt the
+/// ladder kept was judged hopeless, which runs no hard repair, or the
+/// repair's budget or the attempt's work deadline ran out before it;
+/// Diagnostics, `repair`). The verdict's `not_routed` counts them.
 fn not_routed_cause(diagnostics: &core::Diagnostics, net: core::NetId) -> &'static str {
     if diagnostics.dead_pads.iter().any(|dead| dead.net == net) {
         return "a launch has no legal node";
     }
     match diagnostics.repair.iter().find(|entry| entry.net == net) {
-        Some(entry) if entry.skipped => "the hard repair did not reach it",
+        Some(entry) if entry.skipped == "hopeless" => {
+            "no hard repair: the attempt was judged hopeless"
+        }
+        Some(entry) if !entry.skipped.is_empty() => "the hard repair's budget ran out before it",
         Some(entry) if !entry.complete && !entry.conflicted => "no path in the negotiation",
         Some(_) => "the hard repair found no room",
         None => "lost after the repair",

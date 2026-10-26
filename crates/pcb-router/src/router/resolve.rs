@@ -57,7 +57,23 @@ impl Router {
                 removed.push(*net);
             }
         }
-        removed.sort_by_key(|net| order.iter().position(|other| other == net));
+        // A differential pair's links (pcb-kicad's nets with "pair launch"
+        // terminals, route mode's `diff_pairs`) first, and searched even
+        // where the attempt is judged hopeless (within the budget a
+        // repair has otherwise): a link left open costs its pair a
+        // fallback. Without links the order is the routing order.
+        let links: Vec<bool> = self
+            .board
+            .nets
+            .iter()
+            .map(|net| {
+                net.terminals
+                    .first()
+                    .is_some_and(|terminal| terminal.label.starts_with("pair launch"))
+            })
+            .collect();
+        let link = |net: NetId| links[net as usize];
+        removed.sort_by_key(|net| (!link(*net), order.iter().position(|other| other == net)));
         let debug = std::env::var_os("PCB_ROUTER_DEBUG").is_some();
         // The hard reroute is a repair after negotiation: on a rung judged
         // hopeless it is not worth its time (the ladder moves on), and it
@@ -74,10 +90,19 @@ impl Router {
         let clock = self.clock();
         let mut skipped = 0;
         self.repair_skipped.clear();
+        let link_budget = self.negotiation_seconds.max(60.0);
         for net in &removed {
+            let budget = if link(*net) { link_budget } else { budget };
             if self.spent(&clock, budget) {
                 skipped += 1;
-                self.repair_skipped.push(*net);
+                let why = if self.past_work_deadline() {
+                    "work_deadline"
+                } else if self.hopeless && !link(*net) {
+                    "hopeless"
+                } else {
+                    "budget"
+                };
+                self.repair_skipped.push((*net, why));
                 continue;
             }
             self.route_net_seq(*net, 0.0, true, 4.0);

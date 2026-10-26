@@ -1571,7 +1571,7 @@ pub struct Router {
     /// (`Diagnostics::repair`), and those its budget left out
     /// (`resolve_remaining`'s last call).
     repair_entries: Vec<RepairEntry>,
-    repair_skipped: Vec<NetId>,
+    repair_skipped: Vec<(NetId, &'static str)>,
     /// Called after every negotiation iteration with the routing as it
     /// stands (animations, diagnostics).
     frame_hook: Option<FrameHook>,

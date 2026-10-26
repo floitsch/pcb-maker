@@ -68,7 +68,7 @@ impl Router {
                     net,
                     complete,
                     conflicted,
-                    skipped: false,
+                    skipped: "",
                 })
             })
             .collect();
@@ -78,7 +78,14 @@ impl Router {
         }
         self.repair_entries = entries;
         for entry in &mut self.repair_entries {
-            entry.skipped = self.skip_resolve || self.repair_skipped.contains(&entry.net);
+            entry.skipped = if self.skip_resolve {
+                "not_run"
+            } else {
+                self.repair_skipped
+                    .iter()
+                    .find(|(net, _)| *net == entry.net)
+                    .map_or("", |(_, why)| why)
+            };
         }
         // Not in a layout's move trial (`reroute` without the polish):
         // OpenFC's layout on the short tier, with the repair in every

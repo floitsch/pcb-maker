@@ -93,8 +93,12 @@ pub struct RepairEntry {
     pub complete: bool,
     /// Whether it was in conflict with other nets' copper.
     pub conflicted: bool,
-    /// Whether the repair's budget ran out before its hard search.
-    pub skipped: bool,
+    /// Why the repair did not search for it again, if it did not:
+    /// `hopeless` (the attempt was judged hopeless: no hard repair),
+    /// `work_deadline` (the attempt's work deadline had passed), `budget`
+    /// (the repair's own budget ran out), `not_run` (the router runs no
+    /// repair here); empty where it searched.
+    pub skipped: &'static str,
 }
 
 #[derive(Clone, Debug)]
