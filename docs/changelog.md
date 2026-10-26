@@ -27,7 +27,7 @@ exact model while routing").
   (`spoke_joins_fill`, a flood of brush centres; Board_2's diagonal
   spoke, nicked by a VCC track's clearance). Measurement only
   (`measured_thermals`). The model now matches KiCad on all four copies;
-  the prediction check (the model alone on 303 written boards of pour3,
+  the prediction check (the model alone on 294 written boards of pour3,
   pour4 and this A/B) changes no other prediction: 0 missed, 0 false.
 - **The exact model while routing, measured** (x1840 off, x14870 with
   `PCB_ROUTER_MEASURED_THERMALS=1` on; route mode, fixed work rate):
