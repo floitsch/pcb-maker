@@ -212,6 +212,14 @@ pub struct Constraints {
     /// ascending order: the board's silkscreen texts and graphics (tracks
     /// run under them; a halo is room for tracks).
     pub halo_free: Vec<usize>,
+    /// A part's near relations follow their anchors in the legaliser
+    /// (`anchor_shift`): a part with a `near` (or `near` any) relation to
+    /// a part legalised before it starts its search from its annealed
+    /// place moved as far as that anchor moved, so that a capacitor the
+    /// anneal put at its IC's pin stays at the pin when the IC moves (the
+    /// trial's rp2350-dual-usb, 2026-10-26: the RP2350 moved and its
+    /// capacitors stayed behind, 15 mm from any pin).
+    pub follow_anchors: bool,
 }
 
 /// A constraint kept by construction: `side`, the side the part (or the
@@ -1049,6 +1057,89 @@ pub fn relation_penalty(problem: &Problem, poses: &[Pose], index: Option<usize>)
         .map(|relation| relation_violation(problem, poses, relation))
         .sum::<f64>()
         * constraints.relation_weight
+}
+
+/// The part `index`'s first near relation measures from (a `NearAny`: the
+/// anchor nearest to it in `poses`), other than itself: the part it
+/// follows in the legaliser (`Constraints::follow_anchors`). Counts its
+/// work as `anchor_shift`.
+pub fn anchor_leader(problem: &Problem, poses: &[Pose], index: usize) -> Option<usize> {
+    let constraints = &problem.constraints;
+    let mut work = constraints.relations.len() as u64;
+    let mut leader = None;
+    for relation in &constraints.relations {
+        let anchor = match relation {
+            Relation::Near { part, anchor, .. } if *part == index => *anchor,
+            Relation::NearAny { part, anchors, .. } if *part == index => {
+                work += 4 * anchors.len() as u64;
+                let own = body(problem, index, poses[index]);
+                let Some(nearest) = anchors.iter().min_by(|a, b| {
+                    box_gap(own, anchor_point(problem, poses, **a))
+                        .total_cmp(&box_gap(own, anchor_point(problem, poses, **b)))
+                }) else {
+                    continue;
+                };
+                *nearest
+            }
+            _ => continue,
+        };
+        if anchor.part() != index {
+            leader = Some(anchor.part());
+            break;
+        }
+    }
+    crate::add_work(work);
+    leader
+}
+
+/// How far the anchors of `index`'s near relations moved from `from` to
+/// `to`, averaged over the relations whose anchor part `moved` says has
+/// moved (a `NearAny`: the anchor nearest to the part in `from`), or
+/// `None` when no such relation exists (`Constraints::follow_anchors`).
+/// Counts its work: a unit per relation looked at, four per anchor
+/// measured.
+pub fn anchor_shift(
+    problem: &Problem,
+    from: &[Pose],
+    to: &[Pose],
+    index: usize,
+    moved: impl Fn(usize) -> bool,
+) -> Option<Point> {
+    let constraints = &problem.constraints;
+    if !constraints.follow_anchors || constraints.relations.is_empty() {
+        return None;
+    }
+    let mut work = constraints.relations.len() as u64;
+    let mut sum = [0.0, 0.0];
+    let mut count = 0usize;
+    for relation in &constraints.relations {
+        let anchor = match relation {
+            Relation::Near { part, anchor, .. } if *part == index => *anchor,
+            Relation::NearAny { part, anchors, .. } if *part == index => {
+                work += 4 * anchors.len() as u64;
+                let own = body(problem, index, from[index]);
+                let Some(nearest) = anchors.iter().min_by(|a, b| {
+                    box_gap(own, anchor_point(problem, from, **a))
+                        .total_cmp(&box_gap(own, anchor_point(problem, from, **b)))
+                }) else {
+                    continue;
+                };
+                *nearest
+            }
+            _ => continue,
+        };
+        if anchor.part() == index || !moved(anchor.part()) {
+            continue;
+        }
+        work += 4;
+        let (before, _) = anchor_point(problem, from, anchor);
+        let (after, _) = anchor_point(problem, to, anchor);
+        sum[0] += after[0] - before[0];
+        sum[1] += after[1] - before[1];
+        count += 1;
+    }
+    crate::add_work(work);
+    (count > 0).then(|| [sum[0] / count as f64, sum[1] / count as f64])
 }
 
 /// Adds the relation forces (gradient of the penalty with respect to body

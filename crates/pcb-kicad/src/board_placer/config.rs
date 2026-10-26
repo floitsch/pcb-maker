@@ -122,12 +122,24 @@ pub struct KiCadBoardPlacerConfig {
     /// ground) are pulled to the supply pins of the ICs on their rail,
     /// unless a constraint already names them.
     pub auto_decoupling: bool,
-    /// How close (body to pin) a decoupling capacitor up to 4.7 uF is
-    /// pulled to its IC's supply pin (2.5 mm). At 2.5 mm a third of the
-    /// capacitors ended within 3 mm of their pin where designers put 60 %
-    /// there (quick tier); 1 mm gave 25-78 % on five boards with the same
-    /// routes (not measured on the tier).
-    pub decoupling_mm: f64,
+    /// How close (body to pin) a decoupling capacitor below 4.7 uF is
+    /// pulled to its IC's supply pin; `None` (the default): 1 mm with
+    /// `decoupling_near`, else 2.5 mm. At 2.5 mm (first pins only) a third
+    /// of the capacitors ended within 3 mm of their pin where designers put
+    /// 60 % there (quick tier). Bulk capacitors (4.7 uF and more) 5 mm.
+    pub decoupling_mm: Option<f64>,
+    /// Decoupling at the pins (default on; docs/placer.md, "Decoupling by
+    /// default"): each decoupling capacitor is pulled to the nearest of
+    /// every supply pin of its rail on the ICs (an RP2350's ten +3V3 pins),
+    /// not only to each IC's first pin on the rail, at 1 mm
+    /// (`decoupling_mm`); and near relations follow their anchors in the
+    /// legaliser (`follow_anchors`: a part near another is legalised right
+    /// after it, from its annealed place moved as far as its anchor moved).
+    /// Off, the capacitors of a rail crowded around one pin and stayed
+    /// behind when the IC moved (the trial's rp2350-dual-usb, 2026-10-26:
+    /// 7 % of its capacitors within 3 mm of a supply pin, the designer's
+    /// 86 %).
+    pub decoupling_near: bool,
     /// On a board of several pieces (two boards side by side), the parts
     /// a net joins to fixed parts on one piece stay on that piece. On:
     /// zpn_devboard passes (its parts had spread over an empty breakaway,
@@ -282,6 +294,15 @@ pub struct KiCadBoardPlacerConfig {
     pub guidance_router: Option<KiCadBoardRouterConfig>,
 }
 
+impl KiCadBoardPlacerConfig {
+    /// The decoupling capacitors' tolerance (`decoupling_mm`): 1 mm with
+    /// `decoupling_near`, 2.5 mm without, unless set.
+    pub fn decoupling_tolerance(&self) -> f64 {
+        self.decoupling_mm
+            .unwrap_or(if self.decoupling_near { 1.0 } else { 2.5 })
+    }
+}
+
 impl Default for KiCadBoardPlacerConfig {
     fn default() -> Self {
         Self {
@@ -312,7 +333,8 @@ impl Default for KiCadBoardPlacerConfig {
             tight_bodies: None,
             holes_in_courtyards_error: None,
             auto_decoupling: true,
-            decoupling_mm: 2.5,
+            decoupling_mm: None,
+            decoupling_near: true,
             keep_on_pieces: true,
             keep_copies: true,
             solid_pin_rows: true,

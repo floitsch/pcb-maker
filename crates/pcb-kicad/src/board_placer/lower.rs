@@ -1549,8 +1549,17 @@ pub(crate) fn lower_placement(
             }
         }
     }
+    // Decoupling at the pins (`decoupling_near`): near relations follow
+    // their anchors in the legaliser, and each capacitor is near the
+    // nearest of every supply pin of its rail, at the tighter tolerance.
+    problem.constraints.follow_anchors = config.decoupling_near;
     if config.auto_decoupling {
-        let automatic = decoupling_relations(pcb, &problem, config.decoupling_mm)?;
+        let automatic = decoupling_relations(
+            pcb,
+            &problem,
+            config.decoupling_tolerance(),
+            config.decoupling_near,
+        )?;
         if !automatic.is_empty() {
             if problem.constraints.relation_weight == 0.0 {
                 problem.constraints.relation_weight = config.constraint_weight;

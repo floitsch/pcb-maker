@@ -1683,3 +1683,51 @@ fn eviction_finds_a_held_part_s_narrow_window_in_a_tab() {
         std::iter::empty()
     ));
 }
+
+#[test]
+fn a_part_near_another_follows_it_through_the_legaliser() {
+    use pcb_placer::constraints::{Anchor, Relation};
+    // R2 (index 4) lies on J1 where the anneal left it: the legaliser
+    // moves it out to the right. R0 (index 2) is near R2's pin and lay
+    // above it. With follow_anchors, R0 is legalised after R2 and moved
+    // as R2 moved; without, it is legalised first and stays.
+    let mut problem = chain(3);
+    problem.poses[4].position = [4.0, 25.0];
+    problem.poses[2].position = [4.0, 15.0];
+    problem.poses[3].position = [40.0, 40.0];
+    for component in &mut problem.components[2..] {
+        component.angle_options = vec![0.0];
+    }
+    problem.constraints.relations.push(Relation::NearAny {
+        part: 2,
+        anchors: vec![Anchor::Point(4, [2.0, 0.0])],
+        max: 1.0,
+    });
+    problem.constraints.relation_weight = 50.0;
+    let legalised = |follow: bool| {
+        let mut problem = problem.clone();
+        problem.constraints.follow_anchors = follow;
+        problem.constraints.link_pairs();
+        let mut poses = problem.poses.clone();
+        let failed = pcb_placer::legal::legalize(&problem, &mut poses);
+        assert!(failed.is_empty(), "{failed:?}");
+        poses
+    };
+    let off = legalised(false);
+    let on = legalised(true);
+    // R2 moved the same way both times.
+    assert_eq!(off[4], on[4]);
+    let shift = on[4].position[0] - 4.0;
+    assert!(shift > 4.0, "R2 at {:?}", on[4]);
+    assert!(
+        (off[2].position[0] - 4.0).abs() < 1.0e-9,
+        "R0 at {:?}",
+        off[2]
+    );
+    assert!(
+        (on[2].position[0] - (4.0 + shift)).abs() <= 0.5 + 1.0e-9,
+        "R0 at {:?}, R2 at {:?}",
+        on[2],
+        on[4]
+    );
+}

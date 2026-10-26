@@ -1621,3 +1621,44 @@ fn a_printed_antennas_copper_is_its_body() {
     assert!(body.body_center[0] - body.body_size[0] / 2.0 <= 6.98 + 1.0e-6);
     assert!(body.body_center[1] - body.body_size[1] / 2.0 <= 1.0 + 1.0e-6);
 }
+
+#[test]
+fn a_decoupling_capacitor_is_near_every_supply_pin_of_its_rail_with_decoupling_near() {
+    // U1 with two +3V3 pins and a GND pin; C1 between +3V3 and GND.
+    let pcb = parse(
+        r#"(kicad_pcb
+        (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+        (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+        (footprint "QFN" (layer "F.Cu") (at 10 10) (property "Reference" "U1")
+            (fp_rect (start -2 -2) (end 2 2) (layer "F.CrtYd"))
+            (pad "1" smd rect (at -1.5 0) (size 0.3 0.8) (layers "F.Cu") (net 1 "+3V3") (pintype "power_in"))
+            (pad "2" smd rect (at 1.5 0) (size 0.3 0.8) (layers "F.Cu") (net 1 "+3V3") (pintype "power_in"))
+            (pad "3" smd rect (at 0 1.5) (size 0.8 0.3) (layers "F.Cu") (net 2 "GND"))
+            (pad "4" smd rect (at 0 -1.5) (size 0.8 0.3) (layers "F.Cu") (net 3 "A")))
+        (footprint "C_0402" (layer "F.Cu") (at 30 10) (property "Reference" "C1")
+            (property "Value" "100nF")
+            (fp_rect (start -0.9 -0.5) (end 0.9 0.5) (layer "F.CrtYd"))
+            (pad "1" smd rect (at -0.5 0) (size 0.5 0.5) (layers "F.Cu") (net 1 "+3V3"))
+            (pad "2" smd rect (at 0.5 0) (size 0.5 0.5) (layers "F.Cu") (net 2 "GND"))))"#,
+    )
+    .unwrap();
+    let relation = |config: &KiCadBoardPlacerConfig| {
+        let lowered = lower_placement(&pcb, config).unwrap();
+        let constraints = &lowered.problem.constraints;
+        assert_eq!(constraints.follow_anchors, config.decoupling_near);
+        match constraints.relations.last().unwrap() {
+            core::constraints::Relation::NearAny { part, anchors, max } => {
+                (*part, anchors.len(), *max)
+            }
+            other => panic!("{other:?}"),
+        }
+    };
+    let on = KiCadBoardPlacerConfig::default();
+    assert!(on.decoupling_near);
+    assert_eq!(relation(&on), (1, 2, 1.0));
+    let off = KiCadBoardPlacerConfig {
+        decoupling_near: false,
+        ..KiCadBoardPlacerConfig::default()
+    };
+    assert_eq!(relation(&off), (1, 1, 2.5));
+}

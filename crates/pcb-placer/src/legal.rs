@@ -1209,6 +1209,9 @@ pub fn legalize_keeping(
             .then(area(b).total_cmp(&area(a)))
             .then(a.cmp(b))
     });
+    if problem.constraints.follow_anchors && !problem.constraints.relations.is_empty() {
+        order = follow_order(problem, poses, &order, first);
+    }
     let bounds = problem.bounds();
     let step = if problem.grid > 0.0 {
         problem.grid
@@ -1247,8 +1250,27 @@ pub fn legalize_keeping(
         .map(|crossings| crate::crossings::CrossingState::new(problem, crossings, poses));
     let mut near = Vec::new();
     let mut failed = Vec::new();
+    // Near relations follow their anchors (`Constraints::follow_anchors`):
+    // the poses wanted, and which parts are legalised so far.
+    let start: Vec<Pose> = if problem.constraints.follow_anchors {
+        poses.to_vec()
+    } else {
+        Vec::new()
+    };
+    let mut done = vec![false; count];
+    for &index in &placed {
+        done[index] = true;
+    }
     for index in order {
         let component = &problem.components[index];
+        let annealed = poses[index];
+        if !start.is_empty()
+            && let Some(shift) =
+                constraints::anchor_shift(problem, &start, poses, index, |part| done[part])
+        {
+            poses[index].position[0] += shift[0];
+            poses[index].position[1] += shift[1];
+        }
         let wanted = poses[index];
         let wanted_center = component.center(wanted);
         let mut best: Option<(f64, Pose)> = None;
@@ -1375,8 +1397,12 @@ pub fn legalize_keeping(
         }
         match best {
             Some((_, pose)) => poses[index] = pose,
-            None => failed.push(index),
+            None => {
+                poses[index] = annealed;
+                failed.push(index);
+            }
         }
+        done[index] = true;
         placed.push(index);
         buckets.insert(problem, index, poses[index]);
         if let Some(state) = escape.as_mut() {
@@ -1384,12 +1410,75 @@ pub fn legalize_keeping(
             state.refresh(poses, index);
         }
         if let Some(state) = crossings.as_mut()
-            && poses[index] != wanted
+            && poses[index] != annealed
         {
             state.kept(poses, &[index]);
         }
     }
     failed
+}
+
+/// The legaliser's order with near relations followed
+/// (`Constraints::follow_anchors`): a part near another
+/// (`constraints::anchor_leader`) goes right after it, its followers by
+/// `order`'s order (larger first), so that an IC's decoupling capacitors
+/// take the spots at its pins before the parts that merely connect to it;
+/// one near a part placed already (fixed, kept) goes after the parts of
+/// `first`. Parts of `first` keep their place.
+fn follow_order(problem: &Problem, poses: &[Pose], order: &[usize], first: &[usize]) -> Vec<usize> {
+    let count = problem.components.len();
+    let mut pending = vec![false; count];
+    for &index in order {
+        pending[index] = true;
+    }
+    let mut followers: Vec<Vec<usize>> = vec![Vec::new(); count];
+    let mut early = Vec::new();
+    let mut follows = vec![false; count];
+    for &index in order {
+        if first.contains(&index) {
+            continue;
+        }
+        let Some(leader) = constraints::anchor_leader(problem, poses, index) else {
+            continue;
+        };
+        follows[index] = true;
+        if pending[leader] {
+            followers[leader].push(index);
+        } else {
+            early.push(index);
+        }
+    }
+    let mut result = Vec::with_capacity(order.len());
+    let mut emitted = vec![false; count];
+    let emit = |index: usize, result: &mut Vec<usize>, emitted: &mut Vec<bool>| {
+        // The part, then its followers and theirs, depth first.
+        let mut stack = vec![index];
+        while let Some(part) = stack.pop() {
+            if emitted[part] {
+                continue;
+            }
+            emitted[part] = true;
+            result.push(part);
+            stack.extend(followers[part].iter().rev().copied());
+        }
+    };
+    let ranked = order.iter().take_while(|index| first.contains(index));
+    for &index in ranked {
+        emit(index, &mut result, &mut emitted);
+    }
+    for &index in &early {
+        emit(index, &mut result, &mut emitted);
+    }
+    for &index in order {
+        if !follows[index] {
+            emit(index, &mut result, &mut emitted);
+        }
+    }
+    // Followers of a cycle of followers.
+    for &index in order {
+        emit(index, &mut result, &mut emitted);
+    }
+    result
 }
 
 /// Legalizes `annealed` with the parts of `failed` first; a part placed

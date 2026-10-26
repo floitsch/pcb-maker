@@ -8,13 +8,17 @@ use pcb_placer as core;
 
 /// Decoupling capacitors pulled to IC supply pins: every capacitor between
 /// a rail and ground goes near a supply pin of an IC on that rail, whichever
-/// suits; up to 4.7 µF within `decoupling_mm` (2.5 mm) of the pin, bulk capacitors within
-/// 5 mm. Crystals go within 3 mm of the IC pins they drive. Capacitors that a user
-/// constraint names, fixed ones and ones a row carries keep to those.
+/// suits; below 4.7 µF within `near_mm` (`decoupling_mm`: 1 mm with
+/// `decoupling_near`, else 2.5 mm) of the pin, bulk capacitors within 5 mm.
+/// With `every_pin` (`decoupling_near`) the anchors are every supply pin of
+/// the rail on every IC, else each IC's first pin on it. Crystals go within
+/// 3 mm of the IC pins they drive. Capacitors that a user constraint names,
+/// fixed ones and ones a row carries keep to those.
 pub(super) fn decoupling_relations(
     pcb: &Expr,
     problem: &core::Problem,
     near_mm: f64,
+    every_pin: bool,
 ) -> Result<Vec<core::constraints::Relation>, String> {
     use crate::quality::{capacitance, ground, rail_name};
     use core::constraints::{Anchor, Relation};
@@ -159,8 +163,12 @@ pub(super) fn decoupling_relations(
                             .or_default()
                             .push((index, *offset));
                     }
-                    // One anchor per rail and IC: its first supply pin.
-                    if !ground(net) && (*power || rail_name(net)) && seen.insert(net.clone()) {
+                    // Every supply pin (`decoupling_near`), else one anchor
+                    // per rail and IC: its first supply pin.
+                    if !ground(net)
+                        && (*power || rail_name(net))
+                        && (seen.insert(net.clone()) || every_pin)
+                    {
                         supplies.push(Supply {
                             part: index,
                             offset: *offset,
