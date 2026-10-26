@@ -1204,6 +1204,10 @@ struct GroupTally {
 /// would be `moves_per_part` each.
 const BANK_SHARE: usize = 3;
 
+/// A group move's work per part beyond its single move's: its new pose
+/// (turned, snapped) and the lists the move builds.
+const GROUP_PART_WORK: u64 = 16;
+
 /// The stage's move radius, temperature and overlap penalty.
 #[derive(Clone, Copy)]
 struct GroupStep {
@@ -1358,8 +1362,9 @@ fn group_batch(
             .collect();
         nets.sort_unstable();
         nets.dedup();
+        // Each part's move as a single move books it, and the poses built.
         for part in &list {
-            work += move_work[*part];
+            work += move_work[*part] + GROUP_PART_WORK;
         }
         let mut sorted = list.clone();
         sorted.sort_unstable();
@@ -1383,30 +1388,6 @@ fn group_batch(
             state.set_rect(*part, rect);
         }
         let delta = cost(state) - before;
-        if which == 3 && std::env::var_os("PCB_GROUPS_TRACE").is_some() {
-            let overlap = |state: &State| {
-                list.iter()
-                    .map(|part| state.overlap(*part, state.rects[*part]))
-                    .sum::<f64>()
-            };
-            let after_overlap = overlap(state);
-            let after_length = state.wirelength(&nets);
-            for (part, pose, rect) in &saved {
-                state.poses[*part] = *pose;
-                state.set_rect(*part, *rect);
-            }
-            let (before_overlap, before_length) = (overlap(state), state.wirelength(&nets));
-            for (part, pose) in &moved {
-                state.poses[*part] = *pose;
-                let rect = state.rect(*part, *pose);
-                state.set_rect(*part, rect);
-            }
-            eprintln!(
-                "groups trace: reorder of {} parts: length {before_length:.0} -> {after_length:.0}, overlap {before_overlap:.0} -> {after_overlap:.0} at {:.2}, delta {delta:.0}",
-                list.len(),
-                step.penalty
-            );
-        }
         let taken = match group_crossings.as_mut() {
             Some(group_crossings) => judge_with_crossings(
                 group_crossings,

@@ -2173,7 +2173,22 @@ fn refine_groups(
                 candidates.push(moved);
             }
         }
-        for &other in &group.peers {
+        // Swaps with the nearest few peers.
+        let mut peers: Vec<(f64, usize)> = group
+            .peers
+            .iter()
+            .map(|other| {
+                let at = chain_center(problem, poses, &groups.groups[*other].chain);
+                (
+                    (at[0] - center[0]).powi(2) + (at[1] - center[1]).powi(2),
+                    *other,
+                )
+            })
+            .collect();
+        peers.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));
+        peers.truncate(REFINE_PEERS);
+        crate::add_work(4 * group.peers.len() as u64);
+        for &(_, other) in &peers {
             let theirs = &parts[other];
             if unit.iter().any(|part| theirs.binary_search(part).is_ok()) {
                 continue;
@@ -2257,6 +2272,10 @@ fn refine_groups(
     }
     kept
 }
+
+/// The refinement's group pass tries swaps with this many of a group's
+/// peers, the nearest.
+const REFINE_PEERS: usize = 4;
 
 /// Places a group of parts as a unit (the bus-group moves,
 /// `crate::groups`): `wanted` gives each part's pose; the largest part

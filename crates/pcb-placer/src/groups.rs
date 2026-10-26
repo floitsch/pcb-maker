@@ -835,12 +835,6 @@ pub fn arrange(problem: &Problem, groups: &BusGroups, poses: &mut [Pose]) -> Arr
             let cost =
                 wirelength(poses, &nets) - length_before + weight * change as f64 + held_after
                     - held_before;
-            if std::env::var_os("PCB_GROUPS_TRACE").is_some() {
-                eprintln!(
-                    "groups trace: arrange {how:?}: {} parts, held {held_before:.1} -> {held_after:.1}, crossings {crossings_before} {change:+}, cost {cost:.0}",
-                    list.len()
-                );
-            }
             if let Some(state) = crossings.as_mut() {
                 // Counted, never kept: the best is kept below.
                 state.settle(poses, &list, false, 0);
