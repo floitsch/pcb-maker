@@ -1821,6 +1821,48 @@ fn a_track_leaving_a_through_hole_pad_between_its_spokes_does_not_join_their_isl
 }
 
 #[test]
+fn a_track_meets_a_spoke_beside_a_large_plated_hole() {
+    // KiCad's diagonal spoke runs from the pad's centre and the hole is
+    // knocked out of it: beside a drill of 0.7 mm in a 0.8 mm pad what is
+    // left of the spoke reaches within 0.35 mm of the centre only off its
+    // axis, where a track leaving along +x to the pad's edge touches it,
+    // and the island its spokes land in holds two items (k30-SBC's
+    // C16.1). The strip begun at the hole's radius along the spoke missed
+    // it.
+    let mut board = island_board(false);
+    board.obstacles[6].shape = Shape::Circle {
+        center: [5.0, 5.0],
+        radius: 0.35,
+    };
+    let mut router = Router::new(
+        &board,
+        &Config {
+            pitches: vec![0.1],
+            ..Config::default()
+        },
+    );
+    let grid = router.grid().clone();
+    router.nets[0].branches = vec![Branch {
+        nodes: (0..=4)
+            .map(|step| Node {
+                layer: 0,
+                cell: grid.nearest_node([5.0 + 0.1 * step as f64, 5.0]).unwrap() as u32,
+            })
+            .collect(),
+        start_terminal: 0,
+        end_terminal: FREE_END,
+    }];
+    router.stamp(0);
+    let outcomes = island_record(&router).outcomes;
+    assert!(
+        outcomes
+            .iter()
+            .all(|outcome| matches!(outcome, SpokeOutcome::Good(_))),
+        "{outcomes:?}"
+    );
+}
+
+#[test]
 fn a_pad_in_an_island_gets_a_track_into_it_with_island_stubs() {
     // Layer 0's island holds only P.1, and its track on layer 1 counts
     // as a spoke, so the island's spokes do not: a starved thermal. No
