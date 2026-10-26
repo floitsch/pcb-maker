@@ -11,6 +11,41 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-26 (the free-dimension fixture under load)
+
+Branch free-dimension-fixture (docs/benchmarks.md, "Measurement
+discipline in the tests"). Tests only; the router and the placer are
+unchanged.
+
+- **The cause**: `f2s_free_dimension_stops_at_the_first_clean_size`
+  removed `PCB_WORK_RATE` so that the parent measured its rates and pinned
+  them for the children. Under a load of 30 to 60 the measured search
+  rate was 0.4e6 to 0.97e6 (the reference 3.15e6), and F2's 6 s probes
+  counted 14 to 31 s of work (4.2 and 6.4 s at the reference: their work
+  does not stop at so small a budget), so the retry of 20 mm left less
+  than a probe of the search's 60 s and 22 mm was not confirmed (the
+  tables of 15 failed runs left in /tmp; the wall guard was off already).
+  Pinned at 0.8e6 it fails every time, at the reference it passes.
+- **The change**: the clean path runs at the fixtures' pinned rates (20
+  and 22 probed, 20 retried, 22 confirmed, as before); a new test,
+  `f2s_free_dimension_children_run_at_the_parents_rates`, runs a 3 s
+  search without `PCB_WORK_RATE` and KiCad's check and asserts only that
+  the parent measured (not the fixtures' rates) and that every child ran
+  at its rates (`work_rate_source` PCB_WORK_RATE). The walkthrough's two
+  60 s wall bounds became checks of what ran (no `placer:` line before the
+  input error) and of work (under 30 s; 8.6 s, 16 s of wall under a load
+  of 50); the hostile inputs' routes turn the wall guard off.
+- **Audit** (`env_remove("PCB_WORK_RATE")`, `Instant`, `timeout`,
+  `probe_seconds`): cli_exit_codes.rs measures its rates in every test
+  but routes only the three-pad board (8 ms of work, no outcome a rate
+  changes) and pins them for its free-dimension test; its 600 s ledger
+  wait is a hang guard. router_fingerprint.rs and the fixtures pin rates
+  and the guard; the crates' tests count work, not wall.
+- **Proof**: the whole fixture suite (11 tests) 10 times beside
+  `stress-ng --cpu 16`, load 36 to 62: 10 passed; 10 times without it
+  (the other agents' load, 39 to 54; the machine was not idle): 10
+  passed.
+
 ## Committed on 2026-10-26 (short requests never wait behind a drain)
 
 Branch ledger-short (docs/benchmarks.md, "Memory ledger: who runs next",

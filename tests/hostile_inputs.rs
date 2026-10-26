@@ -44,7 +44,8 @@ fn project(root: &Path, board: &str, rules: Option<&str>) -> PathBuf {
     project
 }
 
-/// `route-kicad-board` without KiCad's check, the work rates pinned, the
+/// `route-kicad-board` without KiCad's check, the work rates pinned and
+/// the wall guard off (the load must not turn exit 1 into exit 3), the
 /// address space capped (so that a gate that let a huge lattice through
 /// fails this test rather than the machine).
 fn route(project: &Path, board_id: &str, out: &Path, environment: &[(&str, &str)]) -> Output {
@@ -66,6 +67,7 @@ fn route(project: &Path, board_id: &str, out: &Path, environment: &[(&str, &str)
         .env("RAYON_NUM_THREADS", "2")
         .env("PCB_SKIP_NATIVE", "1")
         .env("PCB_WORK_RATE", "3.15e6,150e6")
+        .env("PCB_ROUTER_NO_WALL_GUARD", "1")
         .env_remove("PCB_MAKER_TEST_PANIC")
         .env_remove("PCB_MAKER_MEMORY_MB");
     for (name, value) in environment {

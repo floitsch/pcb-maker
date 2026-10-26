@@ -57,6 +57,34 @@ boards that gained or lost the pass.
   expected first (layout sweep v20 below). run.py should admit smaller
   boards past a waiting large one (or hold memory for it in turn); a
   harness item, not done yet.
+
+## Measurement discipline in the tests (2026-10-26)
+
+A test's outcome is decided by work, never by the wall clock or by a
+measured rate: the tests run on a shared machine at loads of 30 to 60.
+
+- **Tests pin the rates.** Every run of the fixtures, the walkthrough,
+  the fingerprints and the hostile inputs sets
+  `PCB_WORK_RATE=3.15e6,150e6` (the reference) and
+  `PCB_ROUTER_NO_WALL_GUARD=1` (it turns off the layout's `wall_guard`
+  deadline too), and the fixtures `PCB_MAKER_MEMORY_MB`. A rate measured under load is a third of the reference
+  or less, and work that does not stop at a budget counts that much more
+  seconds: the free dimension's probes of F2 (6 s budgets) counted 14 to
+  31 s of work at measured rates of 0.4e6 to 0.97e6 and 4.2 and 6.4 s at
+  the reference, so under load the confirmation did not fit the search's
+  60 s and `f2s_free_dimension_stops_at_the_first_clean_size` failed (in
+  four merge gates on 2026-10-26; at a pinned 0.8e6 it fails every time).
+- **A test of the measurement asserts the measurement only.** Where a
+  test removes `PCB_WORK_RATE` to check the measured path (the free
+  dimension's children at the parent's rates; cli_exit_codes.rs, whose
+  routes of the three-pad board take 8 ms of work), it checks the rates
+  and their source, no outcome that the rate could change.
+- **No wall-clock bound decides a test.** "At once" is checked by what
+  ran (no `placer:` line before an input error) or by the verdict's
+  `work_seconds`, not by `Instant`: the walkthrough's 60 s bound on a run
+  of 8.6 s of work took 16 s of wall under a load of 50. A wall bound is
+  only a hang guard far above any load (the ledger test's 600 s wait).
+
 ## Memory ledger: who runs next (2026-10-24, the drain 2026-10-25, its feasibility cap, its end and short requests 2026-10-26)
 
 Benchmarks share the machine through the memory ledger
