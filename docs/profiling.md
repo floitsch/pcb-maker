@@ -5,6 +5,9 @@ the profile round of 2026-10-25 changed (branch router-profile, snapshots
 x14380 and x14381 against main's x1820, 23f629e). The layout round of the
 same day ("The layout round" below: branch layout-profile, snapshot x14490
 against main's x1824, 09299b6) profiled everything else a layout does.
+The memory round of 2026-10-26 ("Memory" at the end: branch
+memory-round-3, snapshot x14553 against main's x1830, a905905) profiled
+where a route's peak resident size goes.
 
 ## How to profile
 
@@ -498,4 +501,222 @@ indicative): Glasgow 379 to 307 CPU s with the first two changes and 299
 with the third, MegaDrive 318 to 293 and 254; 1337-v4.0 and OpenFC with
 the first change (200 s of work) 17.0 to 13.3 and 95.5 to 85.7 CPU s;
 every placement identical.
+
+
+## Memory (2026-10-26)
+
+Where a route's peak resident size goes, and three structures shrunk
+with the same routes (branch memory-round-3; snapshots x14550 and x14552:
+main's code at 280c52a with the profile below; x14553: the changes on
+main a905905, measured against main's x1830; x14551: the changes on
+280c52a, against x1829). The earlier rounds: router.md, "Memory (2026-10-03)" to
+"Memory (2026-10-23)".
+
+### How
+
+heaptrack is not installed; valgrind is, but massif runs a program many
+times slower and a route's budget is work, so a quarter-budget route of
+these boards would take hours (not tried). Instead the binary profiles
+itself: `PCB_ROUTER_MEM_PROFILE=1` (crates/pcb-router/src/mem_profile.rs)
+prints `mem-profile:` lines between the run's own log lines:
+
+- `rss high`: a sampler thread reads /proc/self/statm every 10 ms and
+  prints each new high of the resident size (every 2 % or 32 MB), with
+  the phase, the live heap and the routers alive with their parts;
+- the live heap comes from the binary's global allocator
+  (`CountingAllocator`: the system's, counting while the profile is on;
+  one relaxed load an allocation otherwise);
+- each router registers its parts (`Router::memory_parts`: capacities of
+  its maps and lists, the static maps once for the routers that share
+  them) when it is built, after each negotiation iteration and when it
+  finishes, and drops them with it (`mem_profile::Token`); a router's
+  parts during an iteration are those of its last report;
+- `phase`: parse, parsed, probes, rungs, write-back, check, seeds,
+  steps, pour measure (the ladder's stages; a write-back and a check
+  run beside other rungs, so the label is the last one set);
+- `peak rss` at the end: when the peak came (seconds, phase), the heap
+  then and the routers' parts then.
+
+Route mode on the designer's placement (`run.py --tier designer`),
+a quarter of the task budget (`--budget-scale 0.25`: 375 s of work), two
+search threads, pinned rates, `PCB_ROUTER_FINGERPRINT=1
+PCB_ROUTER_NO_WALL_GUARD=1`, one board at a time beside other agents'
+runs (the memory ledger, `--min-free-gb 10`).
+
+### Where the peak goes (main's code)
+
+The peak of each board came while several routers were alive: the rung
+probes side by side (four routers, each with its own maps, beside the
+shared static maps), or a rung and its via reduction's snapshot. The
+cells are MB at the peak and the share of the peak resident size
+(`rss`; the heap is within a few percent of it).
+
+| | video | katia | 0xCB-1337 panel | SmartSpin2k_Panelized |
+| --- | ---: | ---: | ---: | ---: |
+| lattice (nodes, layers, classes / searched) | 2498 x 856, 4, 5 / 3 | 2774 x 1077, 4, 10 / 8 | 1081 x 1113, 4, 3 / 1 | 1897 x 2051, 2, 2 / 2 |
+| a router's maps (`memory:` line) | 572 MB | 1403 MB | 251 MB | 323 MB |
+| peak resident size | 3396 MB | 5933 MB | 1452 MB | 734 MB |
+| when | 118 s of 402, probes | 100 s of 321, probes | 73 s of 446, probes | 89 s of 105, a rung's via reduction |
+| routers alive | 4 probes | 4 probes | 4 probes | the rung and its snapshot |
+| search scratches (own and spares) | 878 (26 %) | 1256 (21 %) | 492 (34 %) | 210 (29 %) |
+| occupancy | 530 (16 %) | 1482 (25 %) | 179 (12 %) | 52 (7 %) |
+| search records (`hot`) | 522 (15 %) | 1459 (25 %) | 147 (10 %) | 59 (8 %) |
+| stamp lists | 843 (25 %) | 523 (9 %) | 69 (5 %) | 81 (11 %) |
+| history | 163 (5 %) | 228 (4 %) | 92 (6 %) | 89 (12 %) |
+| static maps (shared) | 116 (3 %) | 342 (6 %) | 40 (3 %) | 59 (8 %) |
+| stamp marks | 66 (2 %) | 185 (3 %) | 22 (2 %) | 6 (1 %) |
+| guard, cover, via cover | 107 (3 %) | 239 (4 %) | 97 (7 %) | 7 (1 %) |
+| pour masks (`plane`, `plane_target`) | 24 (1 %) | 68 (1 %) | 110 (8 %) | 0 |
+| tiles, nets, branches, footprints, lowered board | 42 (1 %) | 47 (1 %) | 16 (1 %) | 14 (2 %) |
+| beside the routers (parse, the ladder's holds, allocator) | 104 (3 %) | 103 (2 %) | 187 (13 %) | 155 (21 %) |
+
+Main's code with the profile: x14550 (fd39b3c; video, katia, the panel)
+and x14552 (the same with the via reduction's snapshot reporting its
+own parts; SmartSpin2k). The routers' parts are their last reports
+(after a negotiation iteration), so a part that grew during the
+iteration counts as it was; "beside the routers" is the peak less the
+parts. The four probes of a board each hold their own occupancy, search
+records, history, guard and cover, stamp lists and scratches; only the
+static maps are shared.
+
+The KiCad parse is small beside the routers (10 to 44 MB of heap on
+these boards), the lowered boards (`board`: obstacles, nets, pours'
+polygons) 2 to 6 MB a router, the corridor instrumentation (atomics) none
+to speak of. After the probes, with no router alive, the resident size
+stays at 230 to 810 MB while the heap falls to 5 to 400 MB: glibc keeps
+the small blocks' arenas; the peak is not there.
+
+### The changes (bit-identical)
+
+1. **The stamp lists as differences** (`Stamped`, router.rs). A net's
+   stamps, the (map, cell) pairs its copper covers in order, were a
+   32-bit word each (since 2026-10-22). They are read only in order (the
+   rip-up, the restamp's two passes, the own-stamp masks, the
+   fingerprint), and consecutive stamps lie a row or a column apart on
+   one map or on the next of a node's maps: each is now the zigzag
+   LEB128 varint of its key's difference from the one before (`map << 32
+   | cell`), 1.5 bytes a stamp instead of 4 on Castor and Sisu, and a
+   restamp gives back the room the list's doubling left (`trim`). The
+   restamp's prefetch reads the list 32 entries ahead with a second
+   iterator. The same pairs in the same order by construction (a test
+   round-trips the extremes and a random walk).
+2. **The search arrays are the process's** (`SearchArrays`,
+   `IDLE_ARRAYS`, router.rs; route_net.rs). A search's per-state arrays
+   (the search nodes, 12 bytes a state, the via marks and the heap) were
+   a router's for its life: its own scratch and a spare per thread of
+   its parallel batches, so four probes on two threads held eight sets
+   while at most six searches ran at once (four probe threads, two batch
+   threads). A net's search now takes idle arrays of its lattice from the
+   process (any router's) and gives them back after the net; they go
+   with the last router of their lattice (`LatticeUser`). Any search may
+   use any arrays of its lattice: it reads only marks of its own
+   generation, and the generation travels with the arrays (a batch's
+   jobs took any of the batch's scratches before). The per-net masks
+   (`own_mark`, the lane) stay with the scratch.
+3. **The occupancy in four bits** (`Occupancy`, occupancy.rs). A count
+   (how many nets' stamps cover a cell of a class's map) was a byte
+   (since 2026-10-23), counts of 255 and more keeping the rest in a side
+   map. Two cells now share a byte, counts of 15 and more keep the rest
+   in the side map: every count is exact (a test counts two neighbouring
+   cells past the saturation and back). No board measured had a count
+   above 15. The router's maps (`memory: N MB in maps`, which the ladder
+   sizes its routers side by side by) shrink by half the occupancy.
+
+### Measured (2026-10-26)
+
+Main's snapshot x1830 (a905905) against x14553 (the branch rebased on
+it), route mode as above, and the
+fingerprint boards as the nightly runs them (v16 placements, 1 x 4, a
+quarter budget). Peak: `layout_rss_mb`, the route process's own (the
+process tree's `peak_rss_mb` adds kicad-cli's checks); maps: the router's
+`memory:` line.
+
+| board | x1830 peak MB | x14553 peak MB | saving | maps MB | probes side by side | identical |
+| --- | ---: | ---: | ---: | --- | --- | --- |
+| katia | blocked | blocked | | 1403 (x14550) | 4 of 4 (x14550) | |
+| video | blocked | blocked | | 572 (x14550) | 4 of 4 (x14550) | |
+| 0xCB-1337 panel | 1452 | 1120 | -22.9 % | 251 -> 229 | 4 of 4 both | yes |
+| SmartSpin2k_Panelized | 745 | 650 | -12.8 % | 323 -> 297 | none (rungs) | yes |
+| Castor (fingerprint) | 1073 | 661 | -38.4 % | | 4 of 4 both | yes |
+| k30-SBC (fingerprint) | 1630 | 1000 | -38.7 % | | 4 of 4 both | yes |
+| jetson (fingerprint) | 1500 | 1017 | -32.2 % | | 4 of 4 both | yes |
+| Sisu (fingerprint) | 2114 | 1508 | -28.7 % | | 4 of 4 both | yes |
+
+**Identical** on every board: the routed board's SHA-256, every
+fingerprint line (as a multiset), and verdict.json and board-router.json
+apart from the work, wall, rate, memory (`maps_mb`, the resident sizes),
+DRC-cache and path fields. The same pairs on the branch's first base
+(x1829 against x14551, 280c52a) were identical as well, with the same
+peaks within 1 to 3 % (the panel 1448 to 1123, SmartSpin2k 746 to 647,
+Castor 1084 to 658, k30-SBC 1643 to 981, jetson 1457 to 1018, Sisu 2081
+to 1458).
+
+**The composition after** (x14553, the profile on):
+
+| | 0xCB-1337 panel | SmartSpin2k_Panelized |
+| --- | ---: | ---: |
+| peak resident size | 1120 MB (41 s of 174, probes) | 653 MB (58 s of 85, a rung's via reduction) |
+| search arrays (all of the process's) | 297 (were 492 in scratches) | 195 (were 210) |
+| occupancy | 89 (were 179) | 26 (were 52) |
+| stamp lists | 29 (were 69) | 33 (were 81) |
+| search records, history, statics, pour masks | as before | as before |
+
+**katia and video are not measured after.** Their routes were blocked
+on 2026-10-26 from 04:40 to past 07:10 by the memory ledger: a stale
+harness (the nightly of 2026-10-25, built before the drain's fields)
+waited for 24 GB, and while it waits the ledger admits only requests of
+4 GB or less (katia 6550 MB expected, video 5720). Their composition
+before is in the table above (x14550: main 280c52a with the profile; the
+parts the three changes shrink were 3261 MB of katia's 5933 and 2251 MB
+of video's 3396). The pairs to run once the waiter is gone (one board at
+a time, from the branch's worktree):
+
+```sh
+for board in ikajdan__katia__katia Huaqiu-Electronics__ecad-viewer__video; do
+  for binary in x1830 x14553; do
+    PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1 PCB_ROUTER_MEM_PROFILE=1 \
+      python3 benchmarks/agent-tasks/run.py build/mem3-$binary/$board --tier designer --only $board \
+      --budget-scale 0.25 --jobs 1 --threads 2 --min-free-gb 10 --binary build/bin/pcb-maker-$binary
+  done
+done
+```
+
+(the profile changes nothing a route computes; x1830 has none and
+ignores it).
+
+**CPU** (indicative): k30-SBC at 60 s of work, two threads, pinned rates,
+`PCB_SKIP_NATIVE`, x1829 against x14551 on SMT siblings (8,9 / 24,25,
+10,11 / 26,27, 12,13 / 28,29), each pair in both orientations: the
+router's CPU seconds 131.5 / 138.5, 142.1 / 143.2, 102.3 / 101.7, 83.3 /
+92.0, 92.8 / 89.4, 96.1 / 99.1 (the machine's load 18 to 25 from other
+agents): +2.5 % as the geometric mean, from -3.7 % to +10.4 %; peak
+resident 1109-1127 MB against 795-813 MB (-28 %); identical
+fingerprints and boards. The stamping's share beside the search's time
+(the iteration lines' `stamp` over `search`) rose from 3.7-4.0 % to
+5.2-5.4 %: decoding the stamp lists in the restamp's two passes, the
+rip-up and the own-stamp masks. The search's own time did not change
+measurably.
+
+### Not taken, and what is next
+
+- **The search records** (`hot`, 10 to 25 % of the peaks): a record
+  holds the layer's history beside the class's static map value, so a
+  board of S record sets keeps the history S + 1 times. Packing it
+  differently changes how the search reads a step (search.rs, another
+  package's file at the time).
+- **The occupancy of the pour brushes** (classes no net searches with):
+  of their maps the pour model reads only the trace and diagonal maps of
+  the layers they pour on (video: 2 of 5 classes; about 115 MB of the
+  four probes' 530). Their stamps are in the stamp lists the
+  fingerprint hashes, and the tiles' claims count them.
+- **The pour masks** (`plane`, `plane_target`: a byte a node per pour
+  net and layer, 8 % of the panel's peak) as bitsets.
+- **Fewer probes side by side than threads allow**: the four probes run
+  side by side on two search threads; each probe's own maps are most of
+  the peak. Fewer at once would lower the peak further at the price of
+  wall time (the outcome is the same by construction; not tried).
+- **The idle search arrays** are at most as many as searches ran at once
+  (four probe threads and the batch threads): the panel's four probes
+  still held five sets (297 MB). A cap at the threads would block a
+  probe thread.
 

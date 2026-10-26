@@ -1052,6 +1052,19 @@ jetson 223 -> 165, Castor 193 -> 134. Katia's largest now: occupancy 370,
 the records 365, the static maps 347, a scratch 147, the pour analysis's
 transient maps 137, the stamp lists 124.
 
+### Memory (2026-10-26)
+
+The third round (docs/profiling.md, "Memory"; docs/changelog.md, "memory
+round 3"), every route and fingerprint the same: the stamp lists as
+varint differences (1.5 bytes a stamp, were 4), the search arrays shared
+by the process's routers (a net's search takes idle arrays of its lattice
+and gives them back; a router held its own and a spare per batch thread
+for its life), the occupancy in four bits a count (was a byte). The
+profile (`PCB_ROUTER_MEM_PROFILE=1`) prints the resident size's highs,
+the phases and every live router's parts. The router's `memory: N MB in
+maps` keeps counting a scratch per router (`Scratch::bytes_for`), now an
+upper bound.
+
 ### Memory limits (2026-10-21)
 
 How many routers the ladder runs side by side (the rung probes, the rungs

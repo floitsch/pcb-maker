@@ -11,6 +11,51 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-26 (memory round 3: the stamp lists, the search arrays, the occupancy)
+
+Branch memory-round-3, snapshot x14553 against main's x1830 (a905905);
+docs/profiling.md, "Memory", has the tables. Every route the same: the
+routed boards' SHA-256, every fingerprint line and the verdicts apart from
+work, wall and memory fields, on the four fingerprint boards, the
+0xCB-1337 panel and SmartSpin2k_Panelized.
+
+- **The profile** (`PCB_ROUTER_MEM_PROFILE=1`, mem_profile.rs): a
+  sampler of the resident size every 10 ms, the live heap from a
+  counting global allocator (the system's; one relaxed load an allocation
+  while off), every live router's parts (`Router::memory_parts`) and the
+  ladder's phases, as `mem-profile:` lines in the log, the peak at the
+  end. Route mode, a quarter of the task budget, main's code: the peak of
+  video (3396 MB), katia (5933), the 0xCB-1337 panel (1452) came in the
+  rung probes, four routers side by side, SmartSpin2k_Panelized's (734)
+  in a rung's via reduction (the router and its snapshot). The largest
+  parts: the search scratches (21 to 34 %: each router's own and a spare
+  per batch thread), the occupancy (7 to 25 %), the search records (8 to
+  25 %), the stamp lists (5 to 25 %; video 843 MB). The KiCad parse is
+  10 to 44 MB, the lowered boards 2 to 6 MB a router.
+- **The stamp lists as differences** (`Stamped`): zigzag LEB128 varints
+  of each stamp's difference from the one before, 1.5 bytes a stamp
+  instead of 4, trimmed after a restamp; read in order only.
+- **The search arrays shared by the process** (`SearchArrays`,
+  `IDLE_ARRAYS`, `LatticeUser`): a net's search takes idle arrays of its
+  lattice and gives them back after the net; until now a router held its
+  own and a spare per batch thread for its life.
+- **The occupancy in four bits a count** (`Occupancy`): two cells a
+  byte, counts of 15 and more keep the rest in the side map (as 255 did);
+  the router's maps shrink by half the occupancy.
+- **Peaks** (route process, x1830 to x14553): the 0xCB-1337 panel 1452
+  to 1120 MB (-22.9 %), SmartSpin2k_Panelized 745 to 650 (-12.8 %),
+  Castor 1073 to 661 (-38.4 %), k30-SBC 1630 to 1000 (-38.7 %), jetson
+  1500 to 1017 (-32.2 %), Sisu 2114 to 1508 (-28.7 %); every pair
+  identical. katia and video are not measured after: the ledger held
+  every request above 4 GB behind a stale 24 GB waiter (the commands are
+  in profiling.md).
+- **CPU** (indicative, k30-SBC at 60 s, six sibling-CPU pairs of x1829
+  and x14551): +2.5 % (from -3.7 to +10.4 %), the stamping's share beside
+  the search 3.7-4.0 % to 5.2-5.4 %.
+- **Tier estimates** unchanged: the rows here are a quarter budget on two
+  threads, the designer tier's estimates the nightly's budget on one
+  (`tier_estimates.py` takes the largest row and its seconds as they
+  are); the next nightly's designer.log with this binary gives them.
 ## Committed on 2026-10-26 (the defaults' per-board losers)
 
 Branch default-losers. The triage of v20 (x1725, both placement defaults
