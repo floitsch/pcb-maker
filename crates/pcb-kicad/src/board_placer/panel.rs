@@ -658,6 +658,13 @@ fn copies_from(
         .iter()
         .flatten()
         .any(|part| problem.components[*part].fixed);
+    // Copies that share nets and hold no fixed part need not lie apart:
+    // an LED matrix numbered D101-D199 and D201-D299 is one circuit, not a
+    // panel (PixelWave). Without fixed parts only copies no net joins
+    // (KiKit's) are taken to be a panel.
+    if !fixed_anywhere && detected_by != "net islands" {
+        return Err("no fixed parts say where the copies lie".into());
+    }
     let bounds = problem.bounds();
     let (transforms, regions, regions_from) = if fixed_anywhere {
         let mut transforms = vec![CopyTransform::IDENTITY];
