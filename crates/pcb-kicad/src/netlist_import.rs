@@ -17,9 +17,16 @@ pub struct KiCadNetlistImport {
     /// found in the libraries (left out of the board).
     pub missing: Vec<String>,
     /// Footprints not in the library the schematic names, taken from
-    /// another library or under KiCad 9's name: `C1: <asked> -> <used>`.
+    /// another library, under KiCad 9's name, under KiCad 10's (a vendor
+    /// prefix: `Texas_DSG0008A_WSON-8-...`) or from an add-on library under
+    /// its PCM nickname: `C1: <asked> -> <used> (<why>)`.
     /// The board and the copied schematic use the new name.
     pub substituted: Vec<String>,
+    /// Footprints taken from KiCad's add-on libraries (its Plugin and
+    /// Content Manager's 3rdparty folder): `U10: Espressif:ESP32-S3-MINI-1
+    /// (<folder>)`. Used, not copied into the project.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub add_on_libraries: Vec<String>,
     /// Symbol pins on a net that the footprint has no pad for (`J1: M1
     /// (GND)`): the footprint does not match the symbol. A pin on no net
     /// (KiCad's `unconnected-(...)`) loses no connection, but KiCad's
@@ -195,6 +202,16 @@ fn expand(uri: &str, project: &Path, system: &str) -> String {
             path.push_str(&project.display().to_string());
         } else if variable.starts_with("KICAD") && variable.ends_with("_FOOTPRINT_DIR") {
             path.push_str(system);
+        } else if variable.starts_with("KICAD")
+            && variable.ends_with("_3RD_PARTY")
+            && std::env::var(variable).is_err()
+            && let Some(directory) = third_party_directories(&|name: &str| {
+                std::env::var(name).ok().filter(|value| !value.is_empty())
+            })
+            .into_iter()
+            .find(|directory| directory.is_dir())
+        {
+            path.push_str(&directory.display().to_string());
         } else if let Ok(value) = std::env::var(variable) {
             path.push_str(&value);
         } else {
@@ -241,6 +258,58 @@ fn stock_footprint_directories(variable: &dyn Fn(&str) -> Option<String>) -> Vec
     }
     directories
 }
+
+/// Where KiCad's Plugin and Content Manager installs add-on libraries
+/// (`<3rdparty>/footprints/<package>/<library>.pretty`), in order:
+/// `KICAD10_3RD_PARTY` (KiCad's own variable, 9's after it), then the
+/// default places on Linux (`~/.local/share/kicad/<version>/3rdparty`),
+/// macOS and Windows (`Documents/KiCad/<version>/3rdparty`).
+fn third_party_directories(variable: &dyn Fn(&str) -> Option<String>) -> Vec<PathBuf> {
+    let mut directories: Vec<PathBuf> = ["KICAD10_3RD_PARTY", "KICAD9_3RD_PARTY"]
+        .iter()
+        .filter_map(|name| variable(name).map(PathBuf::from))
+        .collect();
+    for version in ["10.0", "9.0"] {
+        if let Some(data) = variable("XDG_DATA_HOME") {
+            directories.push(
+                Path::new(&data)
+                    .join("kicad")
+                    .join(version)
+                    .join("3rdparty"),
+            );
+        }
+        if let Some(home) = variable("HOME") {
+            directories.push(
+                Path::new(&home)
+                    .join(".local/share/kicad")
+                    .join(version)
+                    .join("3rdparty"),
+            );
+            directories.push(
+                Path::new(&home)
+                    .join("Documents/KiCad")
+                    .join(version)
+                    .join("3rdparty"),
+            );
+        }
+        if let Some(profile) = variable("USERPROFILE") {
+            directories.push(
+                Path::new(&profile)
+                    .join("Documents\\KiCad")
+                    .join(version)
+                    .join("3rdparty"),
+            );
+        }
+    }
+    directories
+}
+
+/// Add-on libraries a schematic may name that KiCad does not ship, with
+/// where to get them (docs/agents.md, "From a schematic").
+const ADD_ON_LIBRARIES: [(&str, &str); 1] = [(
+    "Espressif",
+    "Espressif's library: KiCad's Plugin and Content Manager, \"Espressif KiCad Library\" (installed as PCM_Espressif), or github.com/espressif/kicad-libraries",
+)];
 
 /// The user's global footprint tables, KiCad 10's before 9's: under
 /// `KICAD_CONFIG_HOME`, else `$XDG_CONFIG_HOME/kicad` or `~/.config/kicad`
@@ -348,12 +417,52 @@ fn footprint_libraries(project: &Path) -> BTreeMap<String, PathBuf> {
             }
         }
     }
+    // KiCad's add-on libraries (its Plugin and Content Manager's), without
+    // a table entry too: under their folder's name and PCM's nickname.
+    for directory in third_party_directories(&variable) {
+        let Ok(packages) = fs::read_dir(directory.join("footprints")) else {
+            continue;
+        };
+        let mut found: Vec<PathBuf> = packages
+            .flatten()
+            .filter_map(|package| fs::read_dir(package.path()).ok())
+            .flat_map(|entries| entries.flatten().map(|entry| entry.path()))
+            .filter(|path| path.is_dir())
+            .collect();
+        found.sort();
+        for path in found {
+            if let Some(name) = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .and_then(|name| name.strip_suffix(".pretty"))
+            {
+                let plain = name.strip_prefix("PCM_").unwrap_or(name);
+                libraries.entry(plain.to_string()).or_insert(path.clone());
+                libraries.entry(format!("PCM_{plain}")).or_insert(path);
+            }
+        }
+    }
     libraries
+}
+
+/// Whether a library folder is one of KiCad's add-on libraries (under a
+/// `third_party_directories` folder).
+fn add_on_folder(path: &Path) -> bool {
+    let variable = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
+    third_party_directories(&variable)
+        .iter()
+        .any(|directory| path.starts_with(directory.join("footprints")))
 }
 
 /// A footprint's file: in its library, else the same name in any library
 /// (projects often carry copies), also under KiCad 9's names for
-/// connectors (Female and Male became Socket and Plug).
+/// connectors (Female and Male became Socket and Plug); else in KiCad's
+/// add-on library of PCM's nickname (`PCM_Espressif` for `Espressif`, and
+/// the other way round); else, in its library, the one footprint whose
+/// name ends in `_<name>` (KiCad 10 put a vendor prefix on some:
+/// `WSON-8-1EP_2x2mm_P0.5mm_EP0.9x1.6mm` is now
+/// `Texas_DSG0008A_WSON-8-1EP_2x2mm_P0.5mm_EP0.9x1.6mm`). The id found
+/// names the library and footprint used.
 fn find_footprint(libraries: &BTreeMap<String, PathBuf>, id: &str) -> Option<(PathBuf, String)> {
     let (library, name) = id.split_once(':')?;
     // A name that is no file name (`lib:../../../tmp/evil`) reads no file
@@ -370,9 +479,52 @@ fn find_footprint(libraries: &BTreeMap<String, PathBuf>, id: &str) -> Option<(Pa
         let file = libraries.get(library)?.join(format!("{name}.kicad_mod"));
         file.exists().then(|| (file, format!("{library}:{name}")))
     };
-    names.iter().find_map(|name| {
-        file_in(library, name).or_else(|| libraries.keys().find_map(|other| file_in(other, name)))
-    })
+    let nickname = match library.strip_prefix("PCM_") {
+        Some(plain) => plain.to_string(),
+        None => format!("PCM_{library}"),
+    };
+    names
+        .iter()
+        .find_map(|name| {
+            file_in(library, name)
+                .or_else(|| libraries.keys().find_map(|other| file_in(other, name)))
+        })
+        .or_else(|| names.iter().find_map(|name| file_in(&nickname, name)))
+        .or_else(|| {
+            let folder = libraries.get(library)?;
+            let suffix = format!("_{name}.kicad_mod");
+            let mut matches = fs::read_dir(folder)
+                .ok()?
+                .flatten()
+                .filter_map(|entry| entry.file_name().to_str().map(str::to_string))
+                .filter(|file| file.ends_with(&suffix));
+            let only = matches.next()?;
+            if matches.next().is_some() {
+                return None;
+            }
+            let found = only.strip_suffix(".kicad_mod")?.to_string();
+            Some((folder.join(&only), format!("{library}:{found}")))
+        })
+}
+
+/// Why a footprint was found under another id, for the import's
+/// `substituted` (empty when it says nothing more than the ids).
+fn substitution_reason(asked: &str, found: &str) -> &'static str {
+    let (Some((asked_library, asked_name)), Some((found_library, found_name))) =
+        (asked.split_once(':'), found.split_once(':'))
+    else {
+        return "";
+    };
+    if asked_name == found_name
+        && (found_library.strip_prefix("PCM_") == Some(asked_library)
+            || asked_library.strip_prefix("PCM_") == Some(found_library))
+    {
+        " (KiCad's add-on library under its Plugin and Content Manager nickname)"
+    } else if found_name.ends_with(&format!("_{asked_name}")) {
+        " (KiCad 10's name: a vendor prefix)"
+    } else {
+        ""
+    }
 }
 
 /// Turns a KiCad 6 library footprint's `(fp_text reference ...)` and
@@ -810,6 +962,7 @@ pub fn import_kicad_netlist_from(
     )?;
     let mut missing = Vec::new();
     let mut substituted = Vec::new();
+    let mut add_on = Vec::new();
     let mut unmatched_pins = Vec::new();
     // Footprint ids the libraries know under another name, old to new.
     // (Old, new): how many symbols; the copied schematic names a footprint
@@ -926,6 +1079,10 @@ pub fn import_kicad_netlist_from(
         let mut kept = None;
         let (mut footprint, found) = match (library, theirs) {
             (library, Some((theirs, how))) => {
+                // A library footprint under another id (KiCad 10's name, an
+                // add-on's nickname) is no library version of this one: the
+                // board's goes into the project's libraries.
+                let library = library.filter(|(_, found)| *found == footprint_id);
                 // The board's footprint, under the board's name where it
                 // differs from the schematic's (the board was changed
                 // after the schematic, or the other way round).
@@ -1013,8 +1170,18 @@ pub fn import_kicad_netlist_from(
                 (form, id)
             }
             (Some((file, found)), None) => {
+                if file.parent().is_some_and(add_on_folder) {
+                    add_on.push(format!(
+                        "{reference}: {found} ({})",
+                        file.parent()
+                            .map_or(String::new(), |folder| folder.display().to_string())
+                    ));
+                }
                 if found != footprint_id {
-                    substituted.push(format!("{reference}: {footprint_id} -> {found}"));
+                    substituted.push(format!(
+                        "{reference}: {footprint_id} -> {found}{}",
+                        substitution_reason(&footprint_id, &found)
+                    ));
                     *renamed
                         .entry((footprint_id.clone(), found.clone()))
                         .or_default() += 1;
@@ -1042,7 +1209,12 @@ pub fn import_kicad_netlist_from(
                         folder.display()
                     ),
                     None => format!(
-                        "{reference} ({footprint_id} not found: no library {library:?} in the fp-lib-table files, the project's .pretty folders or KiCad's own"
+                        "{reference} ({footprint_id} not found: no library {library:?} in the fp-lib-table files, the project's .pretty folders, KiCad's own or its add-on libraries{}",
+                        ADD_ON_LIBRARIES
+                            .iter()
+                            .find(|(name, _)| *name
+                                == library.strip_prefix("PCM_").unwrap_or(library))
+                            .map_or(String::new(), |(_, source)| format!("; it is {source}"))
                     ),
                 };
                 if let Some(designer) = &designer {
@@ -1440,6 +1612,7 @@ pub fn import_kicad_netlist_from(
         nets,
         missing,
         substituted,
+        add_on_libraries: add_on,
         unmatched_pins,
         clearances,
         edge_connectors,
@@ -2021,6 +2194,56 @@ mod tests {
     }
 
     #[test]
+    fn kicad_10_names_and_add_on_nicknames_are_found() {
+        // The schematic trial's three: two WSON-8 that KiCad 10 renamed with
+        // a vendor prefix, one ESP32 module of Espressif's add-on library.
+        let dir = std::env::temp_dir().join(format!("ux3-kicad10-names-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let son = dir.join("Package_SON.pretty");
+        let espressif = dir.join("3rdparty/footprints/com_github_espressif/PCM_Espressif.pretty");
+        fs::create_dir_all(&son).unwrap();
+        fs::create_dir_all(&espressif).unwrap();
+        for name in [
+            "Texas_DSG0008A_WSON-8-1EP_2x2mm_P0.5mm_EP0.9x1.6mm",
+            "Texas_DSG0008A_WSON-8-1EP_2x2mm_P0.5mm_EP0.9x1.6mm_ThermalVias",
+            "A_SOIC-8",
+            "B_SOIC-8",
+        ] {
+            fs::write(son.join(format!("{name}.kicad_mod")), "(footprint)").unwrap();
+        }
+        fs::write(espressif.join("ESP32-S3-MINI-1.kicad_mod"), "(footprint)").unwrap();
+        let libraries = BTreeMap::from([
+            ("Package_SON".to_string(), son.clone()),
+            ("PCM_Espressif".to_string(), espressif.clone()),
+        ]);
+        let found = |id: &str| find_footprint(&libraries, id).map(|(_, found)| found);
+        let wson = "Package_SON:WSON-8-1EP_2x2mm_P0.5mm_EP0.9x1.6mm_ThermalVias";
+        let renamed = "Package_SON:Texas_DSG0008A_WSON-8-1EP_2x2mm_P0.5mm_EP0.9x1.6mm_ThermalVias";
+        assert_eq!(found(wson).as_deref(), Some(renamed));
+        assert_eq!(
+            found("Package_SON:WSON-8-1EP_2x2mm_P0.5mm_EP0.9x1.6mm").as_deref(),
+            Some("Package_SON:Texas_DSG0008A_WSON-8-1EP_2x2mm_P0.5mm_EP0.9x1.6mm")
+        );
+        assert!(substitution_reason(wson, renamed).contains("KiCad 10's name"));
+        // Two footprints end in the name: neither is taken.
+        assert_eq!(found("Package_SON:SOIC-8"), None);
+        // The add-on under its Plugin and Content Manager nickname.
+        let esp = found("Espressif:ESP32-S3-MINI-1").unwrap();
+        assert_eq!(esp, "PCM_Espressif:ESP32-S3-MINI-1");
+        assert!(substitution_reason("Espressif:ESP32-S3-MINI-1", &esp).contains("add-on"));
+        // KiCad's add-on folder, by its variable and by default.
+        let environment = |name: &str| match name {
+            "KICAD10_3RD_PARTY" => Some("/opt/3rdparty".to_string()),
+            "HOME" => Some("/home/a".to_string()),
+            _ => None,
+        };
+        let folders = third_party_directories(&environment);
+        assert_eq!(folders[0], Path::new("/opt/3rdparty"));
+        assert!(folders.contains(&PathBuf::from("/home/a/.local/share/kicad/10.0/3rdparty")));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn plug_in_connectors_are_told_by_their_footprint_names() {
         for name in [
             "Connector_USB:USB_C_Receptacle_GCT_USB4105",
@@ -2161,7 +2384,7 @@ mod tests {
         let report = import_kicad_netlist(&netlist, &output, "test", 4).unwrap();
         assert_eq!(report.footprints, 2);
         assert_eq!(report.nets, 2);
-        assert_eq!(report.missing, vec!["R2 (Missing:R_Nowhere not found: no library \"Missing\" in the fp-lib-table files, the project's .pretty folders or KiCad's own)".to_string()]);
+        assert_eq!(report.missing, vec!["R2 (Missing:R_Nowhere not found: no library \"Missing\" in the fp-lib-table files, the project's .pretty folders, KiCad's own or its add-on libraries)".to_string()]);
         assert_eq!(
             report.substituted,
             vec!["R3: other:R_Test -> parts:R_Test".to_string()]
