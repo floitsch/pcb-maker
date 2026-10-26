@@ -62,7 +62,7 @@ pub struct KiCadNetlistImport {
 /// Connectors people plug something into from outside the device, by
 /// footprint name: designers put 90 % of USB and RF connectors and all
 /// audio jacks and card edges of 616 open-source boards at an edge.
-fn edge_connector(footprint_name: &str) -> bool {
+pub(crate) fn edge_connector(footprint_name: &str) -> bool {
     let name = footprint_name.to_ascii_lowercase();
     let name = name.rsplit(':').next().unwrap_or(&name);
     if name.contains("u.fl") {

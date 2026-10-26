@@ -672,14 +672,36 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             Ok(())
         }
         "describe-kicad-board" => {
-            let usage = "usage: pcb-maker describe-kicad-board <project-dir> <board-id>";
-            let directory = arguments.next().ok_or_else(|| usage.to_string())?;
-            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
-            pcb_kicad::check_board_id(&board_id)?;
-            if arguments.next().is_some() {
-                return Err(usage.into());
+            let usage = "usage: pcb-maker describe-kicad-board <project-dir> <board-id> [--constraints-template <file>]";
+            let mut positional = Vec::new();
+            let mut template = None;
+            while let Some(argument) = arguments.next() {
+                if argument == "--constraints-template" {
+                    template = Some(arguments.next().ok_or_else(|| usage.to_string())?);
+                } else {
+                    positional.push(argument);
+                }
             }
+            let [directory, board_id] =
+                <[String; 2]>::try_from(positional).map_err(|_| usage.to_string())?;
+            pcb_kicad::check_board_id(&board_id)?;
             let description = pcb_kicad::describe_kicad_board(Path::new(&directory), &board_id)?;
+            if let Some(file) = template {
+                let constraints =
+                    pcb_kicad::constraints_template(Path::new(&directory), &board_id)?;
+                fs::write(
+                    &file,
+                    serde_json::to_string_pretty(&constraints)
+                        .map_err(|error| error.to_string())?
+                        + "\n",
+                )
+                .map_err(|error| format!("failed to write {file}: {error}"))?;
+                eprintln!(
+                    "constraints template: {file} ({} edge, {} near entries; read its comments)",
+                    constraints["edge"].as_array().map_or(0, Vec::len),
+                    constraints["near"].as_array().map_or(0, Vec::len)
+                );
+            }
             println!(
                 "{}",
                 serde_json::to_string_pretty(&description).map_err(|error| error.to_string())?

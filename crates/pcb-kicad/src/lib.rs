@@ -84,6 +84,7 @@ pub use work_rate::{
     KiCadMeasuredRate, KiCadWorkRate, WORK_RATE_VARIABLE, calibrate as calibrate_work_rate,
     measure as measure_work_rate, parse_work_rate, work_rate,
 };
+mod constraints_template;
 mod describe;
 mod flip;
 mod net_classes;
@@ -108,6 +109,7 @@ mod board_footprints;
 mod key_matrix;
 pub use key_matrix::{KiCadStarterHalf, KiCadStarterReport};
 mod netlist_import;
+pub use constraints_template::constraints_template;
 pub use describe::{KiCadBoardDescription, KiCadSwapCandidate, describe_kicad_board};
 pub use netlist_import::{KiCadNetlistImport, import_kicad_netlist, import_kicad_netlist_from};
 mod placement_ablation;

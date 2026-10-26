@@ -1409,7 +1409,37 @@ fn checked_simple(command: &str, arguments: &[String]) -> Result<(), Failure> {
         }
     };
     match command {
-        "describe-kicad-board" | "score-kicad-board" => {
+        "describe-kicad-board" => {
+            // --constraints-template <file>: a new file, never one that
+            // exists (it would be an agent's own constraints).
+            let template = arguments
+                .iter()
+                .position(|argument| argument == "--constraints-template");
+            let positional: Vec<&String> = match template {
+                Some(at) => {
+                    let Some(file) = arguments.get(at + 1) else {
+                        return Err(usage());
+                    };
+                    if Path::new(file).exists() {
+                        return Err(Failure::Usage(format!(
+                            "--constraints-template {file}: the file exists (the template is written to a new file; an agent's constraints are never overwritten)"
+                        )));
+                    }
+                    arguments
+                        .iter()
+                        .enumerate()
+                        .filter(|(index, _)| *index != at && *index != at + 1)
+                        .map(|(_, argument)| argument)
+                        .collect()
+                }
+                None => arguments.iter().collect(),
+            };
+            if positional.len() != 2 {
+                return Err(usage());
+            }
+            check_project(positional[0], positional[1])
+        }
+        "score-kicad-board" => {
             count(2..=2)?;
             check_project(&arguments[0], &arguments[1])
         }
@@ -1751,7 +1781,7 @@ pub const AGENT_COMMANDS: [(&str, &str, &str); 14] = [
     (
         "describe-kicad-board",
         "prints the board's parts, pads, nets and swap candidates as JSON",
-        "usage: pcb-maker describe-kicad-board <project-dir> <board-id>\n\n  <project-dir>  the KiCad project directory holding <board-id>.kicad_pcb.\n  <board-id>     the board's file stem.\n\nPrints JSON on stdout: outline, layers, footprints with pads and nets, nets, swap_candidates.",
+        "usage: pcb-maker describe-kicad-board <project-dir> <board-id> [--constraints-template <file>]\n\n  <project-dir>  the KiCad project directory holding <board-id>.kicad_pcb.\n  <board-id>     the board's file stem.\n  --constraints-template <file>\n                 also write starter constraints to <file> (a new file): the plug-in connectors\n                 as edge entries (the side they lie at or face on a placed board, else any;\n                 opening_outwards where the footprint shows its mouth), each decoupling\n                 capacitor near the closest supply pin of its IC, and comments saying what to\n                 decide (docs/agents.md, \"Starter constraints for a board\").\n\nPrints JSON on stdout: outline, layers, footprints with pads and nets, nets, swap_candidates.",
     ),
     (
         "place-kicad-board",

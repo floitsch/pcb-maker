@@ -422,6 +422,17 @@ pub(crate) fn on_back(footprint: &Expr) -> bool {
 /// courtyard reaches farthest beyond the pads (a USB receptacle's shell, a
 /// barrel jack's body), if one side clearly does.
 pub(crate) fn connector_mouth(footprint: &Expr) -> Result<Option<[f64; 2]>, String> {
+    let Some(mut sides) = connector_sides(footprint)? else {
+        return Ok(None);
+    };
+    sides.sort_by(|a, b| b.0.total_cmp(&a.0));
+    Ok((sides[0].0 >= 1.0 && sides[0].0 >= 1.5 * sides[1].0.max(0.0)).then_some(sides[0].1))
+}
+
+/// How far a footprint's courtyard reaches beyond its pads on each side, in
+/// its own frame, with each side's direction (`connector_mouth` takes the
+/// side that clearly reaches farthest); `None` without a courtyard or pads.
+pub(crate) fn connector_sides(footprint: &Expr) -> Result<Option<[(f64, [f64; 2]); 4]>, String> {
     let footprint_angle = form_at(footprint)?[2];
     let mut courtyard = [
         f64::INFINITY,
@@ -469,14 +480,12 @@ pub(crate) fn connector_mouth(footprint: &Expr) -> Result<Option<[f64; 2]>, Stri
     if !courtyard[0].is_finite() || !pads[0].is_finite() {
         return Ok(None);
     }
-    let mut sides = [
+    Ok(Some([
         (pads[0] - courtyard[0], [-1.0, 0.0]),
         (pads[1] - courtyard[1], [0.0, -1.0]),
         (courtyard[2] - pads[2], [1.0, 0.0]),
         (courtyard[3] - pads[3], [0.0, 1.0]),
-    ];
-    sides.sort_by(|a, b| b.0.total_cmp(&a.0));
-    Ok((sides[0].0 >= 1.0 && sides[0].0 >= 1.5 * sides[1].0.max(0.0)).then_some(sides[0].1))
+    ]))
 }
 
 /// Bounding box, in the footprint's own frame, of its keepout zones.
