@@ -150,6 +150,13 @@ pub(super) struct FillProbe<'a> {
     /// the items.
     queries: std::cell::Cell<u64>,
     vertices: std::cell::Cell<u64>,
+    /// Inside `quietly`: the debug output's questions, which must leave
+    /// the probe's work and caches as they were.
+    quiet: std::cell::Cell<bool>,
+    /// The index's build when a quiet question built it: charged with the
+    /// first question outside `quietly` that needs the index, where a run
+    /// without the debug output builds it.
+    unpaid_index: std::cell::Cell<u64>,
 }
 
 /// The polygon vertices a distance test of `shape` goes through (none for
@@ -286,6 +293,8 @@ impl<'a> FillProbe<'a> {
             ops: std::cell::Cell::new(0),
             queries: std::cell::Cell::new(0),
             vertices: std::cell::Cell::new(0),
+            quiet: std::cell::Cell::new(false),
+            unpaid_index: std::cell::Cell::new(0),
         }
     }
 
@@ -375,6 +384,41 @@ impl<'a> FillProbe<'a> {
         );
     }
 
+    /// `f`, the questions of a debug output (`PCB_ROUTER_SPOKE_DEBUG`),
+    /// leaving the probe as it was: the work they count is dropped, the
+    /// hatch holes they decide are not kept, an index they build is
+    /// charged where the probe first needs it outside, and the router's
+    /// probe shapes are not built for them. A debug flag only prints:
+    /// the work decides budgets, so a question it counts would change the
+    /// route. `f`'s answers may differ from the probe's own only by a
+    /// polygon's distance measured without its index.
+    pub(super) fn quietly<T>(&self, f: impl FnOnce() -> T) -> T {
+        let was_quiet = self.quiet.replace(true);
+        let counts = (self.ops.get(), self.queries.get(), self.vertices.get());
+        let result = f();
+        self.ops.set(counts.0);
+        self.queries.set(counts.1);
+        self.vertices.set(counts.2);
+        self.quiet.set(was_quiet);
+        result
+    }
+
+    /// Whether the probe answers a debug output's questions (`quietly`):
+    /// what its callers cache must not keep those answers either.
+    pub(super) fn is_quiet(&self) -> bool {
+        self.quiet.get()
+    }
+
+    /// Obstacle `obstacle`'s parts as the probe measures them
+    /// (`Router::probe_shape`), but none inside `quietly` before the
+    /// router has built them (their build is charged to the router).
+    fn shape_parts(&self, obstacle: usize) -> Option<&'a [ProbePart]> {
+        if self.quiet.get() && self.router.probe_shapes.get().is_none() {
+            return None;
+        }
+        self.router.probe_shape(obstacle)
+    }
+
     /// `f` with brush centres allowed `TRACK_END_TOLERANCE` closer than
     /// the clearance to other nets' copper rather than `EPSILON`.
     pub(super) fn for_track_end<T>(&self, f: impl FnOnce() -> T) -> T {
@@ -392,7 +436,7 @@ impl<'a> FillProbe<'a> {
     /// (`Router::probe_shape`), the answer of `distance_to_point` all
     /// the same.
     fn obstacle_below(&self, obstacle: usize, point: Point, threshold: f64) -> bool {
-        let (below, tests) = match self.router.probe_shape(obstacle) {
+        let (below, tests) = match self.shape_parts(obstacle) {
             Some(parts) => {
                 let mut tests = 0;
                 let below = parts.iter().any(|part| {
@@ -421,7 +465,7 @@ impl<'a> FillProbe<'a> {
     /// is not negative, a ring's width): beyond it the answer is theirs
     /// whatever the distance.
     fn obstacle_distance(&self, obstacle: usize, point: Point, cap: f64) -> f64 {
-        let (distance, tests) = match self.router.probe_shape(obstacle) {
+        let (distance, tests) = match self.shape_parts(obstacle) {
             Some(parts) => parts
                 .iter()
                 .fold((f64::INFINITY, 0), |(least, tests), part| {
@@ -750,11 +794,23 @@ impl<'a> FillProbe<'a> {
             }
             total > 0 && (inside as f64) >= hatch.min_hole_area * total as f64
         };
-        self.holes.borrow_mut().insert((layer, k, m), kept);
+        if !self.quiet.get() {
+            self.holes.borrow_mut().insert((layer, k, m), kept);
+        }
         kept
     }
 
     fn index(&self) -> &Index {
+        let index = self.built_index();
+        if !self.quiet.get() {
+            self.ops.set(self.ops.get() + self.unpaid_index.replace(0));
+        }
+        index
+    }
+
+    /// The index, built on the first question; its build's items are
+    /// `unpaid_index` until `index` charges them.
+    fn built_index(&self) -> &Index {
         self.index.get_or_init(|| {
             let router = self.router;
             let board = &router.board;
@@ -975,8 +1031,8 @@ impl<'a> FillProbe<'a> {
                     );
                 }
             }
-            self.ops
-                .set(self.ops.get() + buckets.values().map(Vec::len).sum::<usize>() as u64);
+            self.unpaid_index
+                .set(buckets.values().map(Vec::len).sum::<usize>() as u64);
             Index {
                 buckets,
                 span: reach + extent + half_most + board.edge_clearance + 1.0e-3,

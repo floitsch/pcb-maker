@@ -372,7 +372,7 @@ impl Router {
                         "no fill at spoke end {} layer {layer} dir {:?} end {end:?}: {:?}",
                         description.terminals[records[spoke.record].terminal].label,
                         spoke.direction,
-                        probe.blocker(layer, end, Some(&[]))
+                        probe.quietly(|| probe.blocker(layer, end, Some(&[])))
                     );
                 }
                 // Spokes of pads apart, whatever their directions (KiCad
@@ -451,7 +451,7 @@ impl Router {
                             spoke.anchor[0] + spoke.direction[0] * along,
                             spoke.anchor[1] + spoke.direction[1] * along,
                         ];
-                        if let Some(why) = probe.blocker(layer, at, None) {
+                        if let Some(why) = probe.quietly(|| probe.blocker(layer, at, None)) {
                             eprintln!(
                                 "blocked spoke {} layer {layer} dir {:?} width {:.3} side {:.3} at {along:.3} ({:.3}..{:.3}): {why}",
                                 description.terminals[records[spoke.record].terminal].label,
@@ -567,7 +567,7 @@ impl Router {
                         spoke.edge,
                         from,
                         spoke.side,
-                        probe.blocker(layer, at, None)
+                        probe.quietly(|| probe.blocker(layer, at, None))
                     );
                 }
             }
@@ -1095,7 +1095,11 @@ impl Router {
                 piece,
                 &mut |other, at| kept(parent, other, at),
             );
-            neck_kept.borrow_mut().insert((layer, piece), joined);
+            // A debug output's question (`FillProbe::quietly`) leaves the
+            // cache as it was.
+            if !probe.is_quiet() {
+                neck_kept.borrow_mut().insert((layer, piece), joined);
+            }
             joined
         };
         // Per layer, the plated holes of the net's thermal pads there.
@@ -1506,21 +1510,24 @@ impl Router {
                                 near_pad(b) && in_fill(parent, a)
                             };
                         if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() && !counted {
-                            eprintln!(
-                                "track not a spoke {} layer {}: {a:?}..{b:?} near {} {} fill {} {} hole {} {} ring {} {} kept {} {}",
-                                terminal.label,
-                                record.layer,
-                                near_pad(a),
-                                near_pad(b),
-                                probe.fill_at(record.layer, a),
-                                probe.fill_at(record.layer, b),
-                                probe.in_hatch_hole(record.layer, a),
-                                probe.in_hatch_hole(record.layer, b),
-                                probe.in_ring(record.layer, a),
-                                probe.in_ring(record.layer, b),
-                                kept_piece(parent, record.layer, a),
-                                kept_piece(parent, record.layer, b)
-                            );
+                            let line = probe.quietly(|| {
+                                format!(
+                                    "track not a spoke {} layer {}: {a:?}..{b:?} near {} {} fill {} {} hole {} {} ring {} {} kept {} {}",
+                                    terminal.label,
+                                    record.layer,
+                                    near_pad(a),
+                                    near_pad(b),
+                                    probe.fill_at(record.layer, a),
+                                    probe.fill_at(record.layer, b),
+                                    probe.in_hatch_hole(record.layer, a),
+                                    probe.in_hatch_hole(record.layer, b),
+                                    probe.in_ring(record.layer, a),
+                                    probe.in_ring(record.layer, b),
+                                    kept_piece(parent, record.layer, a),
+                                    kept_piece(parent, record.layer, b)
+                                )
+                            });
+                            eprintln!("{line}");
                         }
                         if counted {
                             record.tracks += 1;
