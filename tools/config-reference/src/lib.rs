@@ -288,6 +288,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "differential pairs: `0` turns off the meanders that match a coupled pair's two lengths to the rules' skew (else the pair's gap) or length (the skew is still measured and reported; docs/router.md, \"Skew and length\").",
     ),
     (
+        "PCB_ROUTER_DIFF_PAIRS_RETURN_VIAS",
+        Kind::Switch,
+        "differential pairs: `0` turns off the return vias of the reference net (GND) beside a coupled run's vias, `1` turns them on (default on; the settings' `diff_pair_return_vias` wins; docs/router.md, \"Return vias\").",
+    ),
+    (
         "PCB_ROUTER_DIFF_PAIRS_DEBUG",
         Kind::Diagnostic,
         "differential pairs: prints each launch, each link's path, the copper refused with the reason, each stub straightened or not, and the fallback's work.",

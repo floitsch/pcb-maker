@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 96 | 80 | 16 | 96 | 40 |
+| [Router settings](#router-settings) | 98 | 82 | 16 | 98 | 40 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 1 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 1 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
@@ -89,6 +89,8 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `bend_cost_mm` | `Option<f64>` | unset | - | Router `bend_cost`: the cost per 45 degrees of direction change, in millimetres (default 0.1). |
 | `pin_row_cost_mm` | `Option<f64>` | unset | router.md | Router `pin_row_cost`: the cost of another net's step between two adjacent SMD pads of a part's pin row, in millimetres (default `PCB_ROUTER_PIN_ROW_COST`, else 2; 0: off). |
 | `diff_pairs` | `Option<bool>` | unset | router.md | Differential pairs (docs/router.md, "Differential pairs"): nets KiCad pairs by name (`_P`/`_N`, `+`/`-`, `P`/`N`) route coupled at the pair's width and gap: each link between the pair's parts is a net of the route at the pair's envelope, negotiated with the other nets and offset into the two nets' tracks when written; the pads' stubs and what the coupled runs leave open are ordinary routing. Route mode only. Default by need: on where the project's custom rules ask for pairs (a `diff_pair_gap` or `diff_pair_uncoupled` constraint that holds for a net KiCad pairs), else off; `PCB_ROUTER_DIFF_PAIRS=1` (or `0`) decides where the settings name none. An explicit value always wins. |
+| `diff_pair_return_vias` | `Option<bool>` | unset | - | Differential pairs: a return via of the reference net beside each via of a coupled run, where one fits (docs/router.md, "Return vias"). Unset: `PCB_ROUTER_DIFF_PAIRS_RETURN_VIAS` (`0` or `1`), else on. |
+| `diff_pair_return_net` | `Option<String>` | unset | - | Differential pairs: the return vias' net by name. Unset: `GND` (past a sheet path), else the poured net ending in `GND` with the most pads; a net without a pour gets none. |
 | `diff_pairs_by_need` (internal) | `bool` | `false` (internal) | - | Route mode: `diff_pairs` defaults by need (`diff_pairs_choice`); set by route-kicad-board, not read from a file (a layout's routes keep the default off). |
 | `diff_pair_rules` (internal) | `BTreeMap<String, KiCadDiffPairRule>` | `{}` (internal) | - | The project's rules for the nets of differential pairs, keyed by normalized net name like `connection_rules` (set by the project's rules, not read from a file). |
 | `via_reduction_rounds` | `Option<usize>` | unset | - | Router `via_reduction_rounds`: via reduction rounds after the board is complete (default 3). |
