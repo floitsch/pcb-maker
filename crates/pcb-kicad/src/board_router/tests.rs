@@ -953,6 +953,54 @@ mod pour_request_tests {
     }
 
     #[test]
+    fn a_custom_pad_spokes_from_its_copper_box_at_its_anchor_angle() {
+        // SNSP-CPU-01's P7.1: a custom pad with a circle anchor and a
+        // polygon primitive (KiCad's default spoke angle 45 degrees by
+        // its anchor). KiCad builds its spokes over the box of its copper
+        // at orientation 0 from that box's centre, turned with the pad:
+        // here the polygon reaches 1 mm right of the anchor, so the box is
+        // 2 x 1 mm around (0.5, 0) in the pad's frame, (5, 4.5) on the
+        // board for a pad at (5, 5) turned by 90 degrees (Y down).
+        let pcb = parse(
+            r#"(kicad_pcb
+          (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+          (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+          (footprint "jst" (at 5 5) (property "Reference" "P7")
+            (pad "1" thru_hole custom (at 0 0 90) (size 1 1) (drill 0.6) (layers "*.Cu") (net "GND")
+              (options (clearance outline) (anchor circle))
+              (primitives (gr_poly (pts (xy -0.5 -0.5) (xy 1.5 -0.5) (xy 1.5 0.5) (xy -0.5 0.5)) (width 0) (fill yes))))
+            (pad "2" thru_hole circle (at 4 0) (size 1 1) (drill 0.6) (layers "*.Cu") (net "GND"))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        let pad = board
+            .obstacles
+            .iter()
+            .position(|obstacle| {
+                obstacle.label == "P7.1" && obstacle.kind == core::ObstacleKind::Copper
+            })
+            .unwrap();
+        let frame = board.pad_spokes[&pad];
+        assert!((frame.spoke_angle - 45.0).abs() < 1e-9);
+        assert!(!frame.circular);
+        assert!((frame.half[0] - 1.0).abs() < 1e-6 && (frame.half[1] - 0.5).abs() < 1e-6);
+        assert!(
+            (frame.center[0] - 5.0).abs() < 1e-6 && (frame.center[1] - 4.5).abs() < 1e-6,
+            "{:?}",
+            frame.center
+        );
+    }
+
+    #[test]
     fn overlapping_pads_of_one_number_are_one_terminal() {
         let pcb = parse(
             r#"(kicad_pcb

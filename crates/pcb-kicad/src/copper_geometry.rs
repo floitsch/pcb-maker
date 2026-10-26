@@ -467,6 +467,22 @@ pub(crate) fn lower_pad(pad: &Expr, footprint_at: [f64; 3]) -> Result<LoweredPad
     Ok(LoweredPad { center, geometry })
 }
 
+/// A custom pad's copper at orientation 0 around its shape position: its
+/// anchor (as `lower_pad` takes it, a rectangle of the pad's size) and its
+/// primitives. KiCad's filler builds the spokes of a custom pad without
+/// spoke templates over this copper's bounding box (zone_filler.cpp,
+/// buildThermalSpokes: a dummy pad at the origin, orientation 0, no
+/// offset).
+pub(crate) fn custom_pad_local_geometry(pad: &Expr) -> Result<ObstacleGeometry, String> {
+    let size = form_xy(pad, "size")?;
+    let anchor = ObstacleGeometry::Rectangle {
+        center: [0.0, 0.0],
+        half_size: [size[0] / 2.0, size[1] / 2.0],
+        angle_degrees: 0.0,
+    };
+    custom_pad_geometry(pad, [0.0, 0.0], 0.0, anchor)
+}
+
 fn custom_pad_geometry(
     pad: &Expr,
     center: [f64; 2],

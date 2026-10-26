@@ -848,11 +848,7 @@ fn lower_board(
                         Some("2") => solid_pad_obstacles.push(pad_obstacle),
                         _ => {}
                     }
-                    // A custom pad's box holds its primitives: its
-                    // spokes stay along the axes of its copper's box.
-                    if pad.children().get(3).and_then(Expr::atom) != Some("custom")
-                        && let Ok(frame) = pad_spokes_frame(pad, lowered.center)
-                    {
+                    if let Ok(frame) = pad_spokes_frame(pad, lowered.center) {
                         pad_spokes.insert(pad_obstacle, frame);
                     }
                     // A KiCad 9 padstack draws the pad in another shape or
@@ -918,9 +914,7 @@ fn lower_board(
                                 Some("2") => solid_pad_obstacles.push(variant_obstacle),
                                 _ => {}
                             }
-                            if variant.children().get(3).and_then(Expr::atom) != Some("custom")
-                                && let Ok(frame) = pad_spokes_frame(&variant, lowered.center)
-                            {
+                            if let Ok(frame) = pad_spokes_frame(&variant, lowered.center) {
                                 pad_spokes.insert(variant_obstacle, frame);
                             }
                             if net.is_some() {
@@ -2202,10 +2196,17 @@ fn carve_net_tie(shape: core::Shape, carves: &[([f64; 2], f64)]) -> Option<core:
 /// KiCad's frame for a pad's thermal spokes (`core::PadSpokes`): its shape
 /// position, size at orientation 0, absolute orientation and spoke angle
 /// (the pad's `thermal_bridge_angle`, else 45 degrees for a circle and 90
-/// for any other shape, a custom pad's by its anchor).
+/// for any other shape, a custom pad's by its anchor). A custom pad's
+/// spokes run from the centre of its copper's box at orientation 0 (its
+/// anchor and primitives, `custom_pad_local_geometry`) to that box grown
+/// by the gap, at its spoke angle, turned with the pad: KiCad's filler
+/// takes the dummy pad's bounding box (SNSP-CPU-01's P7.1, a JST pad with
+/// a circle anchor in a polygon: diagonal spokes, none landing, no
+/// finding; the model's along the box's axes landed one into an island,
+/// a starved pad KiCad does not report).
 fn pad_spokes_frame(pad: &Expr, center: [f64; 2]) -> Result<core::PadSpokes, String> {
     let pad_at = form_at(pad)?;
-    let size = form_xy(pad, "size")?;
+    let mut size = form_xy(pad, "size")?;
     let shape = pad.children().get(3).and_then(Expr::atom).unwrap_or("rect");
     let anchor = if shape == "custom" {
         pad.child("options")
@@ -2228,6 +2229,20 @@ fn pad_spokes_frame(pad: &Expr, center: [f64; 2]) -> Result<core::PadSpokes, Str
         }
         None => [0.0, 0.0],
     };
+    let mut offset = offset;
+    if shape == "custom" {
+        let bounds = self::shape(&custom_pad_local_geometry(pad)?).aabb();
+        let middle = [
+            (bounds.minimum[0] + bounds.maximum[0]) / 2.0,
+            (bounds.minimum[1] + bounds.maximum[1]) / 2.0,
+        ];
+        size = [
+            bounds.maximum[0] - bounds.minimum[0],
+            bounds.maximum[1] - bounds.minimum[1],
+        ];
+        let turned = rotate_vector(middle, -pad_at[2]);
+        offset = [offset[0] + turned[0], offset[1] + turned[1]];
+    }
     Ok(core::PadSpokes {
         center: [center[0] + offset[0], center[1] + offset[1]],
         half: [size[0] / 2.0, size[1] / 2.0],
