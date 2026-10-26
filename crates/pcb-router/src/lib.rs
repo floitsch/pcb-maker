@@ -25,6 +25,8 @@ pub use board::{
     ObstacleKind, PadSpokes, PinRowGap, Plane, RuleClass, Segment, Terminal, TerminalCopper, Via,
 };
 pub use geometry::{Point, Shape};
-pub use router::{Config, DeadPad, Diagnostics, HotSpot, NetStatus, RoutingResult, route};
+pub use router::{
+    Config, DeadPad, Diagnostics, HotSpot, NetStatus, RepairEntry, RoutingResult, route,
+};
 pub use rules::{ClearanceRule, LayerWidth, NetRules};
 pub use verify::{Violation, verify};

@@ -68,6 +68,12 @@ pub struct KiCadDiffPairs {
     /// per pair the longer net's track length less its coupled length
     /// (KiCad's uncoupled length), summed.
     pub uncoupled_mm: f64,
+    /// The links whose run was not routed, by cause (`not_routed_cause`:
+    /// "a launch has no legal node", "no path in the negotiation", "the
+    /// hard repair found no room", "the hard repair did not reach it",
+    /// "lost after the repair").
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub not_routed: BTreeMap<String, usize>,
     /// The fallback router's work (seconds of an idle machine), charged
     /// to the ladder.
     pub work_seconds: f64,
@@ -1769,6 +1775,27 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
     board.attachment = core::Attachment(Some(std::sync::Arc::new(plan)));
 }
 
+/// Why a link's net was not routed, from the router's diagnostics: a
+/// launch with no legal node of the link's class (`dead_pads`: the
+/// envelope does not fit there, between pads or in another net's pour); no
+/// path even through other nets' copper when the negotiation ended (the
+/// link's envelope or via disc finds no way past the fixed copper, or its
+/// searches gave up); in conflict then and the hard repair, which treats
+/// every other net's copper as fixed, found no room (the negotiation
+/// ejected it); or the hard repair's budget ran out before it (Diagnostics,
+/// `repair`). The verdict's `not_routed` counts them.
+fn not_routed_cause(diagnostics: &core::Diagnostics, net: core::NetId) -> &'static str {
+    if diagnostics.dead_pads.iter().any(|dead| dead.net == net) {
+        return "a launch has no legal node";
+    }
+    match diagnostics.repair.iter().find(|entry| entry.net == net) {
+        Some(entry) if entry.skipped => "the hard repair did not reach it",
+        Some(entry) if !entry.complete && !entry.conflicted => "no path in the negotiation",
+        Some(_) => "the hard repair found no room",
+        None => "lost after the repair",
+    }
+}
+
 /// A link's path from its net's route: (point, layer) from the launch at
 /// `start` to the one at `end`, through its segments and vias.
 fn link_path(route: &core::NetRoute, start: Point, end: Point) -> Option<Vec<(Point, usize)>> {
@@ -2257,8 +2284,21 @@ pub(crate) fn finish_pairs(
                 .map_or(0, |link| plan.pairs[link.pair].positive)
         }
     };
+    // Why each link not routed was not (`not_routed_cause`), before the
+    // diagnostics name the pairs' nets for the links'.
+    let causes: BTreeMap<core::NetId, &'static str> = plan
+        .links
+        .iter()
+        .filter(|link| {
+            link_status.get(link.net as usize - plan.nets) != Some(&core::NetStatus::Routed)
+        })
+        .map(|link| (link.net, not_routed_cause(&result.diagnostics, link.net)))
+        .collect();
     for dead in &mut result.diagnostics.dead_pads {
         dead.net = pair_net(dead.net);
+    }
+    for entry in &mut result.diagnostics.repair {
+        entry.net = pair_net(entry.net);
     }
     for net in &mut result.diagnostics.conflicted {
         *net = pair_net(*net);
@@ -2284,9 +2324,12 @@ pub(crate) fn finish_pairs(
                     plan_link.launches
                 );
             }
-            entries[index]
-                .why
-                .push(format!("link {}: the coupled run was not routed", link + 1));
+            let cause = causes.get(&plan_link.net).copied().unwrap_or("");
+            *report.not_routed.entry(cause.to_string()).or_default() += 1;
+            entries[index].why.push(format!(
+                "link {}: the coupled run was not routed ({cause})",
+                link + 1
+            ));
             open_pairs.insert(index);
             continue;
         }

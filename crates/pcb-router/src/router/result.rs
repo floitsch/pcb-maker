@@ -78,6 +78,23 @@ pub struct Diagnostics {
     pub conflicted: Vec<NetId>,
     /// The tiles where nets fought longest, most contested first.
     pub hot_spots: Vec<HotSpot>,
+    /// The nets the last hard repair (`Router::finish`) took up: those
+    /// incomplete or in conflict when the negotiation ended, with what the
+    /// repair did with them. A record, not an input.
+    pub repair: Vec<RepairEntry>,
+}
+
+/// A net as the hard repair found it (`Diagnostics::repair`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct RepairEntry {
+    pub net: NetId,
+    /// Whether the negotiation had joined all its terminals (through other
+    /// nets' copper where it was in conflict).
+    pub complete: bool,
+    /// Whether it was in conflict with other nets' copper.
+    pub conflicted: bool,
+    /// Whether the repair's budget ran out before its hard search.
+    pub skipped: bool,
 }
 
 #[derive(Clone, Debug)]

@@ -58,8 +58,27 @@ impl Router {
         }
         let resolve_started = std::time::Instant::now();
         let mark = self.phase_mark();
+        // What the repair takes up, for the diagnostics.
+        let entries: Vec<RepairEntry> = order
+            .iter()
+            .filter_map(|&net| {
+                let complete = self.nets[net as usize].complete;
+                let conflicted = !self.conflicts(net).is_empty();
+                (!complete || conflicted).then_some(RepairEntry {
+                    net,
+                    complete,
+                    conflicted,
+                    skipped: false,
+                })
+            })
+            .collect();
+        self.repair_skipped.clear();
         if !self.skip_resolve {
             self.resolve_remaining(order);
+        }
+        self.repair_entries = entries;
+        for entry in &mut self.repair_entries {
+            entry.skipped = self.skip_resolve || self.repair_skipped.contains(&entry.net);
         }
         // Not in a layout's move trial (`reroute` without the polish):
         // OpenFC's layout on the short tier, with the repair in every

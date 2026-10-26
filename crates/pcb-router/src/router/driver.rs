@@ -478,6 +478,7 @@ impl Router {
             dead_pads,
             conflicted: self.last_conflicted.clone(),
             hot_spots,
+            repair: self.repair_entries.clone(),
         }
     }
 

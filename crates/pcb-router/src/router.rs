@@ -67,7 +67,7 @@ pub use config::Config;
 pub use escapes::exact_escapes_override;
 pub use pour_report::{PourLayerReport, StarvedThermal};
 pub use profile::{ProcessAccounting, build_totals, process_accounting};
-pub use result::{DeadPad, Diagnostics, HotSpot, NetStatus, RoutingResult};
+pub use result::{DeadPad, Diagnostics, HotSpot, NetStatus, RepairEntry, RoutingResult};
 pub use trouble::{TROUBLE_REPAIR_DEFAULT, trouble_override};
 pub use wall::{WALL_CUTS, note_wall_cut, wall_cuts, wall_guard};
 
@@ -1567,6 +1567,11 @@ pub struct Router {
     iterations: usize,
     /// Nets in conflict after the last negotiation iteration.
     last_conflicted: Vec<NetId>,
+    /// The nets the last `finish`'s hard repair took up
+    /// (`Diagnostics::repair`), and those its budget left out
+    /// (`resolve_remaining`'s last call).
+    repair_entries: Vec<RepairEntry>,
+    repair_skipped: Vec<NetId>,
     /// Called after every negotiation iteration with the routing as it
     /// stands (animations, diagnostics).
     frame_hook: Option<FrameHook>,

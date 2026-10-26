@@ -73,9 +73,11 @@ impl Router {
         let started = std::time::Instant::now();
         let clock = self.clock();
         let mut skipped = 0;
+        self.repair_skipped.clear();
         for net in &removed {
             if self.spent(&clock, budget) {
                 skipped += 1;
+                self.repair_skipped.push(*net);
                 continue;
             }
             self.route_net_seq(*net, 0.0, true, 4.0);
