@@ -104,7 +104,9 @@ A layout always strips (it moves parts).
 `fab-kicad-board <project-dir> <id> <release-dir>` runs KiCad's DRC (and
 ERC with a schematic) and refuses (exit 1, the findings in `next_actions`)
 while copper errors or unconnected items remain; cosmetic findings do not
-block, `--allow-findings` overrides. Released (exit 0): `gerbers/` and
+block, nor errors within one footprint each (a library footprint's pads at
+its own holes: `footprint_note` gives the custom rule for the board's
+`.kicad_dru` that makes KiCad accept them), `--allow-findings` overrides. Released (exit 0): `gerbers/` and
 `<id>-gerbers.zip` (upload this), `assembly/` (position file, BOM),
 `netlist/`, `<id>.step`, and `fab-manifest.json` (every file's sha256, the
 DRC and ERC counts, KiCad's version). `--profile jlcpcb` adds JLCPCB's BOM

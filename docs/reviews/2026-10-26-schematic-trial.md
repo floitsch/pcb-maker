@@ -160,6 +160,43 @@ mechanical one is not the designer's.
 - docs/agents.md, skills/pcb-maker/SKILL.md: a result checked with
   `kicad-cli pcb drc` directly needs `--refill-zones`.
 
+## What remains (after branch schematic-path-items, 2026-10-26)
+
+The frictions' proposals, as the branch left them (x14950; the trial's
+layout rerun from the schematic with it: the same board byte for byte,
+64/64 routed, KiCad 0 unconnected, 65 vias, 2468 mm, every constraint
+kept, and `fab-kicad-board` released it, exit 0, with no `.kicad_dru`):
+
+- Friction 1 (the ledger's drain): short requests no longer wait behind
+  a drain (main, x1848, branch ledger-short).
+- Friction 2 (a footprint's own findings): **done**. Without a reference
+  they are the footprint's (`footprint_findings`; no short), the layout
+  is complete, the fab release goes ahead, and the next action gives the
+  exact rule: `(rule "J1 own hole_clearance" (constraint hole_clearance
+  (min 0.19mm)) (condition "A.memberOfFootprint('J1') &&
+  B.memberOfFootprint('J1')"))`, with which KiCad's DRC of the result
+  finds 0 errors.
+- Friction 3 (the decoupling action): **done** for the repeat: the
+  action names only pins a free capacitor could serve and offers
+  `decoupling_near` only when off; on the trial it now says that U10:3 and
+  U5:1 have no capacitor of their own. **Remains**: the score does not
+  count a constrained bulk capacitor beside a driver's supply pin (C8 at
+  U5:1), so the share stays 40 %.
+- Friction 4 (missing footprints): **done** for the WSON-8 (KiCad 10's
+  `Texas_DSG0008A_` name, in `substituted`); the Espressif module is found
+  in KiCad's add-on folder or under `PCM_Espressif` when installed, and
+  `missing` says where to get it when not (this machine has no add-on:
+  without `--footprints-from` the import still misses U10).
+- Frictions 5 and 6: docs (fixed with the review).
+- Friction 7 (the template's EN pin): **done**: supply pins by function,
+  type, then name; without a placement the schematic's nearest IC. C7 at
+  U6:1, C8 at U5:1, C9 at U6:8, C10 at U5:8 (the designer's).
+- Frictions 8 to 10: **done** (`drc` null with "no DRC run"; `place`
+  with x/y listed as kept; a second import names both files and `kept`).
+- **Remains**: intent the schematic does not carry (the battery clips'
+  distance, the GND pour, the edge keepout); decoupling as good as a
+  designer's.
+
 ## Against the previous trial
 
 - **Gone**: the starter constraints for a board (`--constraints-template`

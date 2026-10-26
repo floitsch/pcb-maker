@@ -11,6 +11,63 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-26 (the schematic path: a footprint's own findings, the decoupling action, KiCad 10 names, the template)
+
+Branch schematic-path-items, snapshot x14950: the schematic trial's
+frictions 2, 3, 4, 7 to 10 ([the review](reviews/2026-10-26-schematic-trial.md),
+"What remains"; docs/agents.md).
+
+- **A footprint's own findings** (verdict.rs, fab_release.rs): without a
+  reference board, a DRC error whose every item lies within one footprint
+  (no short) does not count (`footprint_findings`; the fab manifest's
+  `footprint_own`, `footprint_note`; drc-kicad-board's `footprint:` line),
+  and the next action gives the custom rule for the board's `.kicad_dru`
+  at the smallest value KiCad measured, rounded down (J1's `hole_clearance
+  (min 0.19mm)`, `memberOfFootprint('J1')` on both sides), or a KiCad
+  exclusion. Unit tests `a_footprints_own_findings_do_not_fail_a_layout_without_a_reference`,
+  `a_footprints_own_findings_do_not_block_the_release`.
+- **The decoupling action** (quality.rs, verdict.rs): a far supply pin is
+  named only where a capacitor that counts for it is free of a near
+  constraint (the example is that capacitor at that pin); decoupling_near
+  is offered only when off and a free capacitor exists; otherwise it says
+  that a capacitor at those pins is a schematic change. Unit test
+  `a_layout_with_its_decoupling_far_from_the_pins_gets_a_next_action`.
+- **KiCad 10 names and add-on libraries** (netlist_import.rs): a library's
+  one footprint whose name ends in `_<name>` (`Texas_DSG0008A_WSON-8-...`),
+  KiCad's add-on folder (`KICAD10_3RD_PARTY`, `~/.local/share/kicad/10.0/3rdparty`)
+  and PCM's nickname (`PCM_Espressif` for `Espressif`); `substituted` says
+  why, `add_on_libraries` lists add-on footprints, a missing Espressif
+  library says where to get it. The trial's import without
+  `--footprints-from`: U5 and U6 substituted, U10 missing (no add-on on
+  this machine) with the hint; with the trial's ESP32 footprint in a
+  stand-in add-on folder, complete (65 footprints, exit 0). With
+  `--footprints-from` the import is byte-identical to the trial's. Unit
+  test `kicad_10_names_and_add_on_nicknames_are_found`.
+- **The template** (constraints_template.rs): supply pins by function
+  (never EN, SHDN, CE, SLEEP, CS), then electrical type, then net name;
+  without a placement, the IC the schematic draws a capacitor nearest to.
+  The trial: C7 at U6:1 (was the LDO's EN, U3:3), C8 at U5:1, C9 at U6:8,
+  C10 at U5:8, the designer's pairs. Unit tests
+  `a_decoupling_capacitor_goes_to_a_supply_pin_of_the_ic_the_schematic_draws_it_at`,
+  `supply_pins_are_told_by_function_type_and_net`.
+- **Small items**: score-kicad-board's `manufacturing.drc` is `null` with
+  `drc_note` ("no DRC run") without a drc.json; `place` with x/y is listed
+  in board-layout.json's constraints (kept, checked against the final
+  pose); a second import names constraints.json and layout.json and lists
+  them in `kept`. Unit tests in quality.rs, placement_constraints.rs
+  (`place_takes_words_and_exact_poses`), netlist_import.rs.
+- **The trial's layout rerun from the schematic** (x14950, the trial's
+  import with `--footprints-from`, constraints.json and layout.json):
+  the board byte-identical to the trial's, 64/64, KiCad 0 unconnected, 65
+  vias, 2468 mm, 19 of 19 constraints kept (the trial's 16 and MH1 to MH3's
+  `place`), exit 0 (was 1: hole_clearance 4); `fab-kicad-board` released
+  it (exit 0, 21 files) without a `.kicad_dru`; the offered rule in a
+  `.kicad_dru` makes KiCad's DRC find 0 errors. build/ux3-trial2.
+- **The expansion tier** (46 boards, route mode, 8 x 1, x1848 against
+  x14950): 46 of 46 routed boards byte-identical, every row the same
+  (unconnected 557, passes 24 both ways). build/ux3-expansion-x1848,
+  build/ux3-expansion-x14950.
+
 ## Committed on 2026-10-26 (the free-dimension fixture under load)
 
 Branch free-dimension-fixture (docs/benchmarks.md, "Measurement

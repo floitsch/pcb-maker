@@ -107,9 +107,28 @@ The report lists what needs a look:
   folder in the project), or the library without that footprint; or give
   a board that has them (`--footprints-from`, below). Then
   import again into the same directory: the board is written anew,
-  `constraints.json` and `layout.json` are kept;
-- `substituted`: footprints found in another library or under KiCad 9's
-  name (`DSUB-25_Female` is now `DSUB-25_Socket`);
+  `constraints.json` and `layout.json` are kept (the report still names
+  both, and lists them in `kept`);
+- `substituted`: footprints found in another library, under KiCad 9's
+  name (`DSUB-25_Female` is now `DSUB-25_Socket`), under KiCad 10's (a
+  vendor prefix: where the library lacks the name, its one footprint
+  whose name ends in `_<name>`, so
+  `Package_SON:WSON-8-1EP_2x2mm_P0.5mm_EP0.9x1.6mm_ThermalVias` becomes
+  `Package_SON:Texas_DSG0008A_WSON-8-1EP_2x2mm_P0.5mm_EP0.9x1.6mm_ThermalVias`,
+  "(KiCad 10's name: a vendor prefix)") or in an add-on library under
+  its Plugin and Content Manager nickname (`Espressif:` as
+  `PCM_Espressif:`); the board and the copied schematic use the name
+  found;
+- `add_on_libraries`: footprints taken from KiCad's add-on libraries,
+  which the import reads from the Plugin and Content Manager's folder
+  (`KICAD10_3RD_PARTY`, else `~/.local/share/kicad/10.0/3rdparty` on
+  Linux, `~/Documents/KiCad/10.0/3rdparty` on macOS and Windows; 9.0
+  after 10.0) also without a table entry, under the folder's name and
+  `PCM_<name>`. Used, not copied into the project. Add-on libraries
+  schematics name that KiCad does not ship, and where `missing` says to
+  get them: `Espressif` (the ESP32 modules: the Plugin and Content
+  Manager's "Espressif KiCad Library", or
+  github.com/espressif/kicad-libraries);
 - `unmatched_pins`: symbol pins on a net that the footprint has no pad
   for (a library that changed since the schematic was drawn). A pin on
   KiCad's own `unconnected-(...)` net (a no-connect pin, a module's pads
@@ -215,8 +234,20 @@ starter for a schematic:
   import, the parts stacked) `any`.
 - `near`: each decoupling capacitor (two pins, a supply rail and ground,
   the rail on an IC's supply pin) at the closest supply pin of its IC on a
-  placed board, else at the rail's pins in turn; `max_mm` 1.5 (3 for 4.7 uF
-  and more).
+  placed board; on a board without a placement at a supply pin of the IC
+  the project's schematic draws it nearest to (an IC of the rail drawn
+  without a capacitor takes the extra of one with more capacitors than
+  supply pins on the rail; at an IC its supply pins in turn), else at the
+  rail's supply pins in turn; `max_mm` 1.5 (3 for 4.7 uF and more). A
+  supply pin is told by the pin's function where the board names it
+  (`VDD`, `VCC`, `AVDD`, `VIN`, `VM`, `3V3`, ...; never an enable or
+  control input tied to the rail: `EN`, `SHDN`, `CE`, `SLEEP`, `CS`), else
+  by its electrical type (power in or out; an input, output or
+  bidirectional pin tied to a rail is none), else by the net's name
+  (VDD/VCC/AVDD/+xVx). The schematic trial's little-red-rover (stacked,
+  2026-10-26): C7 and C8 (22 uF) at the motor drivers' VM pins U6:1 and
+  U5:1, C9 and C10 at U6:8 and U5:8, the designer's pairs (before: C7 at
+  the LDO's EN pin U3:3).
 - `move_all`, and a `comment` list saying what was inferred and what to
   decide: connectors whose mouth the footprint does not show (give them a
   `rotation`; the comment names their angle on the board), the other
@@ -701,7 +732,24 @@ own): the same uuid alone no longer matches (since 2026-10-22; until then
 a narrow neck of ours on a pour matched any of the designer's on that
 pour). A finding between items of one footprint only (its pads and
 graphics, whose geometry and nets no placement or route changes: a
-mounting hole's ring of overlapping pads) is the reference's. A
+mounting hole's ring of overlapping pads) is the reference's. **Without
+a reference** (a layout from a schematic: there is no designer's board)
+such a finding is the footprint's own and does not count either
+(`footprint_findings`), except a short (`shorting_items`: the
+schematic's nets on its pads, which stays judged): a library footprint
+whose pads lie closer to its own holes than the project's rule (the
+schematic trial's USB4105 receptacle: GND pads 0.19 mm from its locating
+holes against a 0.25 mm hole clearance) failed every layout and refused
+the fab release. `next_actions` names them and the exact custom rule
+that makes KiCad's own DRC accept them, for the board's `.kicad_dru`, at
+the smallest value KiCad measured rounded down to 0.01 mm: `(rule "J1 own
+hole_clearance" (constraint hole_clearance (min 0.19mm)) (condition
+"A.memberOfFootprint('J1') && B.memberOfFootprint('J1')"))` (a new file
+starts with `(version 1)`), or a KiCad exclusion for a type no custom
+rule sets. `fab-kicad-board` releases with them (`footprint_own` and
+`footprint_note` in fab-manifest.json, the note first in the verdict's
+next_actions), and `drc-kicad-board` prints them on a `footprint:` line
+and does not fail on them. A
 `copper_edge_clearance` is the reference's where its copper item is
 (KiCad names whichever piece of the outline is nearest beside it). A type the
 reference has 199 times or more (KiCad's report stops at a cap: 199 and
@@ -758,6 +806,7 @@ A finished run also carries it as `verdict` in its report:
 | `new_findings_strict` | KiCad errors per type that the reference does not have at the same place: the run's own. They decide. |
 | `new_findings` | The old rule: errors per type beyond the reference's count of that type anywhere on the board. For comparisons only. |
 | `preexisting_findings`, `preexisting_from` | Errors per type the reference board has at the same place, and its project. |
+| `footprint_findings` | Without a reference: errors per type that lie within one footprint each (no short), which do not count; absent when there are none. next_actions has the custom rule that accepts them. |
 | `preexisting_unknown` | Types the reference has at KiCad's cap (199 or more): only the findings at the same place are subtracted. |
 | `clean_without_subtraction` | KiCad checked the result and finds no unconnected item and no error that counts, with nothing subtracted. |
 | `diff_pairs` | Route mode (absent in a layout's verdict unless switched on; docs/router.md "Differential pairs"): `on`, `default` (`rules`: a custom `diff_pair_gap` or `diff_pair_uncoupled` rule holds for a paired net, so the pairs routed coupled by default; `off`: nothing asks, so they did not; `explicit`: the settings' `diff_pairs` or `PCB_ROUTER_DIFF_PAIRS` decided), `reason` (the rule and the net, or the setting); off, the counts are 0. With the pairs on: `found` (pairs KiCad names by `_P`/`_N`, `+`/`-` or `P`/`N`, both nets with pads), `coupled` (every link between the pair's parts a coupled run), `partly_coupled`, `fallen_back` (routed as two ordinary nets), `links`, `links_coupled`, `crossed` (coupled links whose pads lie in the other order at one end: the stubs cross there, uncoupled), `crossovers` (of those, links whose crossed end has a crossover in its lead: one net dives under the other with a via each side, so the stubs do not cross; off by default, `PCB_ROUTER_DIFF_PAIRS_CROSSOVER=1`), `coupled_mm`, `uncoupled_mm` (per coupled pair the longer net's tracks less its coupled run, KiCad's measure), `skew_mm` (the largest skew of a pair with a coupled link: its two nets' lengths apart in the written board, tracks and vias at the stackup's height), `meanders` (pairs whose shorter net got a meander, written as a KiCad tuning pattern, to match the custom rules' `skew` maximum, else the pair's gap, or a `length` minimum), `skews` (per pair with a coupled link: `positive`, `negative`, `lengths_mm`, `skew_mm`, `target_mm`, `meander_mm`, `pair_vias`, `return_vias`), `not_routed` (the links whose coupled run was not routed, by cause: `a launch has no legal node`, `no path in the negotiation`, `the hard repair found no room`, `no hard repair: the attempt was judged hopeless`, `the hard repair's budget ran out before it`, `lost after the repair`; absent when none), `pair_vias` and `return_vias` (the kept links' vias, and the vias of the reference net placed beside them, each within 0.5 mm ring to ring where a pour of that net reaches it on two layers and every clearance holds; `diff_pair_return_vias: false` turns them off), `return_net` (their net: `diff_pair_return_net`, else `GND`), `work_seconds` (the fallback router's, which routes what the coupled runs left open, charged to the ladder). `board-router.json` also lists each pair: its nets, width, gap, where they came from, why links fell back. |
@@ -770,7 +819,7 @@ A finished run also carries it as `verdict` in its report:
 | `silkscreen` | Layouts: the footprints' visible Reference and Value fields, placed after routing where KiCad's silkscreen checks find nothing (docs/placer.md, "The fields on the silkscreen"): `fields`, `moved`, `blocked` (fields no spot is clean for, kept at the spot with the fewest findings: the reference, the field and the findings predicted there; a next action lists them), `hidden` (with `"silkscreen": {"hide_when_blocked": true}` in layout.json, such fields are hidden instead) and `predicted` (KiCad's `silk_over_copper`, `silk_overlap` and `silk_edge_clearance` findings the fields will have, from our geometry). What `cosmetic_findings` has beyond them is the footprints' and the board's own graphics, which nothing moves. |
 | `schematic_parity_by_type` | `schematic_parity_issues` by KiCad's type (`net_conflict`, `missing_footprint`, ...). When every one is a pin the footprint has no pad for (`net_conflict` "No pad found for pin", a no-connect pin), `next_actions` says there is nothing to do. |
 | `starved_thermals`, `internal_violations` | Pads short of thermal spokes; the router's own clearance check. |
-| `constraints_missed`, `unplaced` | Placement constraints not kept (with mm), parts without a legal place. |
+| `constraints_missed`, `unplaced` | Placement constraints not kept (with mm), parts without a legal place. board-layout.json's `constraints` lists every one kept or not, also those kept by construction (`back`, `front`, `rotation`, `opening_outwards`, and `place` with `x` and `y`, checked against the part's final pose). |
 | `cut` | What the wall clock cut short (`deadline`, `negotiation guard`, `budget guard`, `ladder`, `placement`, `layout`). |
 | `work_seconds`, `wall_seconds`, `work_wall_ratio` | The work done (what budgets count: seconds at the work rates), the wall clock, and the one over the other (about 1 where the rates fit the machine; lower where the wall clock ran ahead: load, KiCad's checks beyond their model, a pinned rate faster than the machine; above 1 where routers ran side by side, the rung probes or the rungs of a pitch, whose work adds up). |
 | `work_rate`, `placer_work_rate`, `work_rate_source` | The search expansions and placement units a second of work stood for, and where they came from: `measured` (the start-up calibration), `PCB_WORK_RATE`, `config` (the router settings `work_rate`, `placer_work_rate`) or `reference`. |
@@ -779,7 +828,7 @@ A finished run also carries it as `verdict` in its report:
 | `pour_work_seconds`, `lattice_work_seconds` | `route-kicad-board`: the parts of `work_seconds` that are the pour analyses and fill probes (every phase's: the negotiation's pour refresh, the clean-up's and the via reduction's pour checks, the manual spokes) and the routers' lattice builds with the board's lowerings, each modelled from what it counted, the same on every machine; the rest is search. Since 2026-10-21 route mode's budget counts all of them (a 30 s budget used to buy 30 s of search and leave the pour work, up to 47 s on a panel, on top). |
 | `skipped` | Steps of the router's attempt ladder that did not run while the board was incomplete, with why (`the narrow-signal step (signals at 0.15 mm) did not run: the ladder's budget was used (ladder_budget_seconds)`). |
 | `outputs` | Absolute paths: `project`, `board`, `drc`, `report`, `verdict`, `placement`. |
-| `next_actions` | What to do next, factual: the input check's and the placement's warnings first (keepouts over held parts, `constraint_warnings`, a missing kicad-cli where the run went on without it), then where nets fought, which pads no track enters and the nets KiCad finds unconnected, the new DRC errors by type (the largest four each with KiCad's rule, the nets or items, and the setting or step for that type), which budget ran out. A layout whose decoupling capacitors lie far from their pins (under 60 % of them within 3 mm of a supply pin, the share designers reach; score-kicad-board's `capacitors_within_3mm`, three capacitors or more) gets one, complete or not: `decoupling: 14 % of the decoupling capacitors lie within 3 mm of a supply pin (designers 60 % or more), a median 6.3 mm; supply pins farthest from a capacitor: U3:5 21.7 mm, U4:5 16.1 mm, ...: give the capacitors of those pins a near constraint (...), or turn on the placer's decoupling_near (...)` (since 2026-10-26; the trial's rp2350-dual-usb was complete with 7 % and no word of it). `describe-kicad-board --constraints-template` writes the near constraints; `decoupling_near` (off by default) pulls every capacitor to the nearest supply pin of its rail (measured: nearer on most boards, routing within the noise, farther on a few boards with four capacitors) ([placer.md](placer.md#decoupling-at-the-pins-2026-10-26)). |
+| `next_actions` | What to do next, factual: the input check's and the placement's warnings first (keepouts over held parts, `constraint_warnings`, a missing kicad-cli where the run went on without it), then where nets fought, which pads no track enters and the nets KiCad finds unconnected, the new DRC errors by type (the largest four each with KiCad's rule, the nets or items, and the setting or step for that type), which budget ran out. A layout whose decoupling capacitors lie far from their pins (under 60 % of them within 3 mm of a supply pin, the share designers reach; score-kicad-board's `capacitors_within_3mm`, three capacitors or more) gets one, complete or not: `decoupling: 14 % of the decoupling capacitors lie within 3 mm of a supply pin (designers 60 % or more), a median 6.3 mm; supply pins farthest from a capacitor: U3:5 21.7 mm, U4:5 16.1 mm, ...: give the capacitors of those pins a near constraint (...), or turn on the placer's decoupling_near (...)` (since 2026-10-26; the trial's rp2350-dual-usb was complete with 7 % and no word of it). It names a pin only where a capacitor that counts for it (1 uF or less on its rail; at a regulator's pin its rail's bulk ones too) is free of a near constraint, its example is such a capacitor at that pin, and it offers `decoupling_near` only when that is off and a free capacitor exists; where every capacitor of those rails is held at another pin it says so ("no placement brings one nearer, and one at them is a schematic change": the schematic trial followed `decoupling_near` on such a board and got the same board). `describe-kicad-board --constraints-template` writes the near constraints; `decoupling_near` (off by default) pulls every capacitor to the nearest supply pin of its rail (measured: nearer on most boards, routing within the noise, farther on a few boards with four capacitors) ([placer.md](placer.md#decoupling-at-the-pins-2026-10-26)). |
 | `drc_cache` | `{calls, hits}`: KiCad DRC runs the process asked for (its attempts, the reference) and how many the DRC cache answered (see below). |
 | `room` | Placement and layout (also an input error that a constraint needs more room than the outline has): the room as numbers, below. Absent for a route. |
 | `panel_copies` | Placement and layout with the placer's `panel_copies` on (the default; `false` turns it off) where the board holds copies of one circuit (docs/placer.md, "Panel copies (2026-10-26)"): `count`, `parts_per_copy`, `movable_per_copy`, `detected_by` (`net islands`, `numbered references`, `repeated references`), `regions_from` (`fixed parts`, `outline pieces`, `slices`), `replicated` (false: the seed kept placed the board as a whole, the copies' surroundings differing), `shared_parts` (movable parts in no copy, placed after the copies), `moved_after_replication`, and per copy its `region`, `rotation` and `offset` from the first and its `references` in the first copy's order: the mapping (the r-th reference of every copy is the same part of the circuit; where references repeat, the region tells the instances apart). Absent otherwise; also in `placed/board-placer.json`. |
@@ -948,7 +997,9 @@ is a fab release gated by KiCad's DRC:
   `skipped`, `--no-step` skips it).
 - **`fab-manifest.json`**: `released`, `profile`, `kicad_version`, `drc`
   (errors by type, unconnected items, warnings, cosmetic, `clean`,
-  `findings_allowed`), `erc` (errors, warnings, library warnings),
+  `findings_allowed`; `footprint_own`, errors within one footprint each,
+  which do not block, and `footprint_note` with the custom rule that
+  accepts them, as in the verdict's rule above), `erc` (errors, warnings, library warnings),
   `layers`, `bom_source`, `lcsc_field`, `without_lcsc` (parts without an
   LCSC part number), `zip`, `skipped`, `findings`, and `files`: every file
   with its `kind`, `bytes` and `sha256`. `verdict.json` adds
@@ -1158,6 +1209,10 @@ pcb-maker score-kicad-board <project-dir> <board-id>
 
 reports objective measures ([quality.md](quality.md)); `layout-kicad-board`
 puts the same report into `board-layout.json` as `quality`. It covers:
+- `manufacturing.drc`: KiCad's findings by type from a `drc.json`
+  beside the board; `null` with `drc_note` ("no DRC run") without one (a
+  designer's project has none: `{}` read as clean on the schematic
+  trial's designer board with 21 errors);
 - decoupling capacitor distance to every IC supply pin, and each
   capacitor's distance to its nearest supply pin. Decoupling capacitors
   are those of at most 1 uF between a rail and ground; a regulator's
