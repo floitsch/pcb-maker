@@ -3571,7 +3571,16 @@ skew rule): x1840 (build/pour5-exp-off-x1840) against x14861, 46 of 46
 routed boards byte-identical, rows identical (routed, vias, KiCad's
 findings, work).
 
-LEN1_DESIGNER
+*At the task budget* (the designer tier, `--tier designer`, 1500 s of
+work, 2 x 1; the two census boards, both in tasks v7):
+
+| board | length/skew | errors | unconnected | vias | meanders |
+|---|---|---|---|---|---|
+| oro-os link | 12 -> 1 | 12 -> 1 | 1 -> 1 | 370 -> 370 | 11 of 12 nets at 31.500 mm (0.35 to 11.2 mm each); ULPI_D4 32.94 mm, over the maximum |
+| Sisu_SSE-9 | 4 -> 1 | 14 -> 11 | 17 -> 17 | 281 -> 281 | RP_USB_N, RP_USB_P (33.0 and 37.2 mm) and MODEM_USB_P to MODEM_USB_N's 58.31 mm; RP_USB_PHY_P 9.6 of 53.8 mm placed (its finding) |
+
+Sisu's other findings are unchanged at this budget (diff_pair_gap 7,
+uncoupled 3). LEN1_SISU43
 
 **What is left.** (1) Room: on a dense bus the router lays the nets side
 by side at the clearance, and no bump fits beside a track with a
