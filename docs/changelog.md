@@ -11,6 +11,40 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-26 (the placer's legality against KiCad's)
+
+Branch placer-legality (docs/placer.md, "The legality model against
+KiCad (2026-10-26)").
+
+- **`legality-kicad-board`** (a research command, agents.md): a
+  placement judged by the placer's legality at every relaxation level,
+  each illegal part's conflicts with their causes measured on the
+  footprints' courtyards and pad copper, beside KiCad's DRC report of
+  the same board. `place-kicad-board`'s preparation is now one function
+  (`prepare_board`) both use, the levels one (`relaxation_levels`,
+  `relax_level`, `pcb_placer::level_problems`); placements are
+  byte-identical. `benchmarks/agent-tasks/legality_census.py` runs it
+  on every task's designer placement.
+- **The census** (109 boards, 16 470 movable parts at the designer's
+  poses): 8 233 illegal at the least-spacing level without halos (the
+  ablation's "tightest model"), 2 766 at the tightest; KiCad reports an
+  error against what they meet for 220 (on 30 boards, 45 of whose
+  designer boards have placement errors at all). The rest is the model
+  being stricter: courtyards kept the copper clearance apart (5 622),
+  courtyard overlap the project allows (1 044, kept: fabrication
+  outlines), the board's silkscreen marks (698, kept), bodies past their
+  courtyards (649 + 385), the edge margin by the copper's least inset
+  (511), the far side, hollow boxes, parts without courtyard, obstacles.
+  Eight of the eleven dense boards place at halo levels, which this does
+  not touch (SNSP-CPU-01's wider spacing is its full halos).
+- **`legality: "kicad"`** (placer setting, default `"model"`): at the
+  levels of the rules' least spacing, courtyards may touch where the
+  pads keep the copper clearance (or the mask's web) pad to pad, and an
+  unheld part's body may come to the edge where its pads keep the
+  margin. The census at the tightest level: 2 766 -> 1 861.
+
+MEASUREMENT
+
 ## Committed on 2026-10-26 (per-board memory estimates for every tier)
 
 Branch tier-estimates. The layout sweep's task list carried no memory
