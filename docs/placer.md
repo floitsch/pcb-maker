@@ -4282,7 +4282,7 @@ byte for byte (its reference only judges errors, and there are none).
 | --- | ---: | ---: | ---: | ---: | --- | --- | ---: | ---: |
 | off (x1853, x1856) | 1 | 499 (KiCad's cap) | | 499 | 0 | 43/184 | 160 | 1009 |
 | on, the task as it is (x15028) | 1 | 394 | 41 | 353 | 0 | 96/213 | 348 | 560 |
-| on, `--reference` (x15025, judged by x15026's rule) | 1 | 392 | 130 | 262 | 0 | 166/300 | 258 | 338 |
+| on, `--reference` (x15028) | 1 | 366 | 130 | 236 | 0 | 153/300 | 232 | 331 |
 | off | 101 | 4 parts without a place: no route | | | | | | |
 | on, the task as it is (x15025) | 101 | the same placement, the same 4 parts | | | | | | |
 | on, `--reference` (x15026) | 101 | 370 | 130 | 240 | 0 | 148/300 | 240 | 358 |
@@ -4297,9 +4297,10 @@ names) (the other designed nets have their parts on one board in this
 placement, or are left open within one). With the reference every part
 is held in its board and each board placed alone: seed 101, whose whole
 panel left 4 parts without a place on both sides, places and routes; at
-seed 1 KiCad's own count is about the same (392 against 394), but 130
-items of it are the boards' 130 shared nets (exactly the designer's
-own), and 262 are left within the boards against 353.
+seed 1 KiCad's own count falls to 366 (394 without the reference), 130
+items of it the boards' 130 shared nets (exactly the designer's own),
+236 left within the boards against 353 (x15025, before the rebase on
+x1856's legality: 392 in KiCad, 262 counted).
 
 The x15024 snapshot (before the padstack fix below) had 16 clearance
 errors at seed 1 where x15025 has none: OpenESC's motor pads (U4's PTH

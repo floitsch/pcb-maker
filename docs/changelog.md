@@ -55,7 +55,7 @@ boards in a panel (2026-10-27)", docs/router.md "Nets split by sub-board
 - **Measured** (layout, task budget, seed 1 unless said; off x1853 =
   x1856 on the panel): the 4in1 panel 499 (KiCad's cap) to 353 counted
   (394 in KiCad, 41 across), no error, as the task is; with the
-  designer's places 262 counted (392 in KiCad, 130 across) at seed 1 and
+  designer's places 236 counted (366 in KiCad, 130 across) at seed 1 and
   240 (370) at seed 101, where both sides' whole-panel placement leaves 4
   parts without a place. Molecules: 4x4 499 to at least 244, 4x5 499 to
   at least 239, 5x2_shifted 427 to 219, 5x4 wave 499 to at least 204 (x15029); first-route
