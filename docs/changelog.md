@@ -33,6 +33,65 @@ cause, the rules, the tests and the reproduction.
 - Measured: the reproduction (before: exit 4 and a retry that passed;
   after: no exit 4) gives byte-identical result boards; the short tier
   (12 boards) is byte identical to x1861.
+## Committed on 2026-10-27 (edge clearance and mask bridges: two placement gaps)
+
+Branch edge-mask, binary build/bin/pcb-maker-edge1-a (off side x1861 and
+x1863, which lay out alike). The question: the nightly of 2026-10-27's
+per-board verdict.json listed 51 `copper_edge_clearance` (12 boards) and
+20 `solder_mask_bridge` (5 boards) in `new_findings_strict`. Was the
+router's edge or mask model short?
+
+- **Almost all were the designer's.** Those verdicts had no reference
+  (`preexisting_from` null; layout mode defaults to none). run.py's strict
+  rule, which subtracts the designer's findings at the same place, leaves
+  6 of the two types in the whole sweep: osprey's 1 edge finding and
+  vaio_re's 5 bridges. framework_mobo_lefthalf, zpn_devboard, urchin,
+  0xcb-static and Explorer were strict passes already.
+- **No routed copper.** The 113 `copper_edge_clearance` errors in the
+  sweep's 109 KiCad reports are 96 pads, 1 footprint polygon and 16
+  board graphics of the designer's (Batch_1's GND ring); no track, via
+  or zone. Of the 740 `solder_mask_bridge`, 720 lie within one
+  footprint and the other 20 are pads, holes and the input's zones.
+  108 of the 113 edge findings and 13 of those 20 bridges are on parts
+  the constraints fix.
+- **osprey (placement).** AE1, a PCB antenna on the back, has its
+  meander as a B.Cu polygon past its feed pad; the placer's cutout test
+  knew only pads, so the meander lay on the battery cutout's edge (0.0
+  mm against 0.25). Copper graphics now keep the edge margin from
+  cutouts (and the copper-to-edge clearance from the outline) as pads do.
+- **vaio_re (placement).** J1's mounting holes (a Pi Zero socket on the
+  front) open the mask 1.625 mm around on both sides; a TSOT-23 and an
+  0805 on the back sat inside that opening. A pad that opens the mask on
+  its part's far side with a margin of its own now keeps other parts'
+  pads out of its opening there. docs/placer.md, "Far-side mask openings
+  and copper graphics at cutouts".
+- **Measured** (layout mode, tasks v7, the sweep's settings, one run a
+  side): osprey 1 edge finding -> 0, 1 open -> 1 (vias 212 -> 312, length
+  5288 -> 5796 mm: another placement); vaio_re 5 bridges -> 0, 10 open ->
+  7. Neither passes (open connections). The short tier (3 x 2, x1863
+  against edge1-a): every row matches in result, vias and length,
+  including USB_Cable_Tester (whose holes grew), urchin, reCamera,
+  1337-v4.0, WLED_Matrix and eternal-keypad (parts with copper
+  graphics). The lowered problem differs only on 5 of the 109 sweep
+  boards by the holes and on 33 that have a movable part with copper
+  graphics. Route mode never runs the placer: the expansion tier is
+  unchanged by construction.
+- **Tests**: the router's edge model on curves
+  (`an_inner_cutouts_edge_and_an_outline_arc_keep_the_edge_clearance`:
+  tracks and vias 0.48 mm from a convex outline arc or a round cutout
+  are flagged under 0.5, 0.52 mm pass); the placer's two rules
+  (`a_holes_own_mask_margin_keeps_far_side_pads_out_of_its_opening`,
+  `a_parts_copper_graphics_keep_the_edge_margin_from_a_cutout`). The via
+  beside another net's pad within the web was covered already
+  (`a_pads_mask_aperture_keeps_the_mask_to_copper_clearance_and_an_untented_via_the_web`).
+- **Left:** the verdict without a reference still counts the designer's
+  edge findings and bridges on fixed parts (framework_mobo_lefthalf's 8,
+  0xcb-static's 2, Explorer's fiducials in the pours): an agent's run
+  fails on them. A rule like `pad_own` could set apart a finding whose
+  footprint items are all parts the run kept where the input had them
+  and whose other items are board edge, board graphics or the input's
+  zones.
+
 ## Committed on 2026-10-27 (a pad's own ring, hole or padstack is its footprint's)
 
 Branch annular-width, binary build/bin/pcb-maker-ann1-padown (off side
