@@ -295,10 +295,7 @@ impl Pieces {
         let mut merged: Vec<[f64; 4]> = Vec::new();
         for tab in tabs {
             let mut tab = tab;
-            loop {
-                let Some(index) = merged.iter().position(|other| near(other, &tab)) else {
-                    break;
-                };
+            while let Some(index) = merged.iter().position(|other| near(other, &tab)) {
                 let other = merged.remove(index);
                 tab = [
                     tab[0].min(other[0]),
@@ -1135,12 +1132,12 @@ pub(crate) fn detect_for_placer(
     let mut part_piece: Vec<Option<usize>> = vec![None; footprints];
     let mut from: BTreeSet<&'static str> = BTreeSet::new();
     let with_pins = |part: usize| !problem.components[part].pins.is_empty();
-    for part in 0..footprints {
+    for (part, place) in part_piece.iter_mut().enumerate() {
         let component = &problem.components[part];
         if component.fixed
             && let Some(Some(piece)) = pieces.piece_of_box(body_box(component, problem.poses[part]))
         {
-            part_piece[part] = Some(piece);
+            *place = Some(piece);
             if with_pins(part) {
                 from.insert("fixed parts");
             }
@@ -1158,13 +1155,13 @@ pub(crate) fn detect_for_placer(
                 ))
             })
             .collect();
-        for part in 0..footprints {
-            if part_piece[part].is_none()
+        for (part, place) in part_piece.iter_mut().enumerate() {
+            if place.is_none()
                 && let Some(Some(uuid)) = uuids.get(part)
                 && let Some(at) = places.get(uuid)
                 && let Some(piece) = pieces.piece_at([at[0], at[1]])
             {
-                part_piece[part] = Some(piece);
+                *place = Some(piece);
                 from.insert("reference board");
             }
         }
@@ -1211,8 +1208,8 @@ pub(crate) fn detect_for_placer(
     // The nets: on two pieces by the parts placed so far, split.
     let net_count = problem.net_weights.len();
     let mut on: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); net_count];
-    for part in 0..footprints {
-        if let Some(piece) = part_piece[part] {
+    for (part, place) in part_piece.iter().enumerate() {
+        if let Some(piece) = *place {
             for pin in &problem.components[part].pins {
                 on[pin.net].insert(piece);
             }
@@ -1247,8 +1244,8 @@ pub(crate) fn detect_for_placer(
         }
     }
     let mut group_pieces: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
-    for part in 0..footprints {
-        if let Some(piece) = part_piece[part] {
+    for (part, place) in part_piece.iter().enumerate() {
+        if let Some(piece) = *place {
             let group = root(&mut parent, part);
             group_pieces.entry(group).or_default().insert(piece);
         }
@@ -1258,13 +1255,13 @@ pub(crate) fn detect_for_placer(
         .filter(|pieces| pieces.len() > 1)
         .count();
     let mut by_nets = false;
-    for part in 0..footprints {
-        if part_piece[part].is_none() && with_pins(part) {
+    for (part, place) in part_piece.iter_mut().enumerate() {
+        if place.is_none() && with_pins(part) {
             let group = root(&mut parent, part);
             if let Some(pieces) = group_pieces.get(&group)
                 && pieces.len() == 1
             {
-                part_piece[part] = pieces.iter().next().copied();
+                *place = pieces.iter().next().copied();
                 by_nets = true;
             }
         }
