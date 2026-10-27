@@ -321,21 +321,15 @@ impl LineGrid {
     }
 
     fn column(&self, x: f64) -> usize {
-        let at = ((x - self.origin[0]) / self.cell).floor();
-        if at.is_nan() || at < 0.0 {
-            0
-        } else {
-            (at as usize).min(self.columns - 1)
-        }
+        // `floor`, a NaN and below the grid 0, without libm's call
+        // (`buckets::cell_index`).
+        crate::buckets::cell_index((x - self.origin[0]) / self.cell).min(self.columns - 1)
     }
 
     fn row(&self, y: f64) -> usize {
-        let at = ((y - self.origin[1]) / self.cell).floor();
-        if at.is_nan() || at < 0.0 {
-            0
-        } else {
-            (at as usize).min(self.rows - 1)
-        }
+        // `floor`, a NaN and below the grid 0, without libm's call
+        // (`buckets::cell_index`).
+        crate::buckets::cell_index((y - self.origin[1]) / self.cell).min(self.rows - 1)
     }
 
     /// Calls `visit` with every cell the line from `a` to `b` passes

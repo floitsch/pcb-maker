@@ -35,13 +35,7 @@ impl Grid {
     }
 
     fn range(&self, center: Point, half: Point) -> (usize, usize, usize, usize) {
-        let clamp = |value: f64, count: usize| {
-            if value.is_nan() {
-                0
-            } else {
-                (value.floor().max(0.0) as usize).min(count - 1)
-            }
-        };
+        let clamp = |value: f64, count: usize| cell_index(value).min(count - 1);
         (
             clamp(
                 (center[0] - half[0] - self.origin[0]) / self.cell,
@@ -103,26 +97,89 @@ impl Grid {
                 // load were most of the query's samples on MegaDrive): the
                 // item goes into the free slot past the end and counts only
                 // when new. The same items in the same order as a `push` of
-                // the new ones.
+                // the new ones. The length stays in a register for the
+                // cell (the vector's own `spare_capacity_mut` and `set_len`
+                // per item were a third of the query's instructions).
                 out.reserve(cell.len());
+                let slots = out.as_mut_ptr();
+                let mut length = out.len();
                 for &item in cell {
                     let new = seen[item] != stamp;
                     seen[item] = stamp;
-                    let length = out.len();
-                    out.spare_capacity_mut()[0].write(item);
-                    // SAFETY: `reserve` left room for the cell's items, and
-                    // the slot at `length` was just written.
-                    unsafe { out.set_len(length + new as usize) };
+                    // SAFETY: `reserve` left room for the cell's items past
+                    // `length`, which grows by at most one an item.
+                    unsafe { slots.add(length).write(item) };
+                    length += new as usize;
                 }
+                // SAFETY: the slots below `length` were written (above, or
+                // before this cell).
+                unsafe { out.set_len(length) };
             }
         }
         (x1 - x0 + 1) * (y1 - y0 + 1)
     }
 }
 
+/// The cell a coordinate in cell units falls into, before the clamp to the
+/// grid's last cell: `value.floor().max(0.0) as usize` (0 for NaN), the
+/// same for every input without the call into libm that `floor` is on
+/// x86-64's baseline (1 to 2.6 % of a placement's instructions,
+/// 2026-10-28): a cast truncates towards zero and takes negatives and NaN
+/// to 0, which is the floor's answer after the `max` for every value.
+pub(crate) fn cell_index(value: f64) -> usize {
+    value as usize
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cell_index_is_the_floor_clamped_at_zero() {
+        let before = |value: f64| {
+            if value.is_nan() {
+                0
+            } else {
+                value.floor().max(0.0) as usize
+            }
+        };
+        let mut values = vec![
+            0.0,
+            -0.0,
+            0.5,
+            -0.5,
+            1.0,
+            -1.0,
+            0.999_999_999_999_999_9,
+            -1.0e-300,
+            1.0e-300,
+            f64::MIN_POSITIVE,
+            f64::EPSILON,
+            1.0 - f64::EPSILON,
+            4_503_599_627_370_495.5,
+            9.0e15,
+            1.0e19,
+            1.0e300,
+            -1.0e300,
+            f64::MAX,
+            f64::MIN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+            -f64::NAN,
+        ];
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        for _ in 0..100_000 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            values.push((state >> 11) as f64 / (1u64 << 53) as f64 * 2000.0 - 1000.0);
+            values.push(f64::from_bits(state));
+        }
+        for value in values {
+            assert_eq!(cell_index(value), before(value), "{value:e}");
+        }
+    }
 
     #[test]
     fn finds_what_is_near_once_and_forgets_what_left() {
