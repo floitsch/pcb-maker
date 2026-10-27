@@ -85,6 +85,219 @@ measured rate: the tests run on a shared machine at loads of 30 to 60.
   of 8.6 s of work took 16 s of wall under a load of 50. A wall bound is
   only a hang guard far above any load (the ledger test's 600 s wait).
 
+## Measurement discipline: placer defaults (2026-10-26)
+
+**The rule for a placer default** (since 2026-10-26; replaces "the dense
+sum of medians falls and every pair's sum falls"). On the eleven dense
+boards in layout mode at the task budgets (tasks v7, pinned rates, 3 x 2,
+at most six layouts in flight, through the ledger):
+
+1. Run **five seed pairs**, placer seeds 1, 101, 201, 301, 401 on both
+   sides (`--placer '{"seed": N, ...}'`). Seeds must lie at least 16
+   apart: the race places seeds N to N + 15 (`board_placer/place.rs`,
+   `config.seed + offset`), so seeds 2, 3, 5 ... share 15 of seed 1's
+   16 candidates and are not independent draws.
+2. Judge with `benchmarks/agent-tasks/placer_ab.py compare --off DIR...
+   --on DIR...` (each directory's seed from its `-s<N>`, or `DIR@N`).
+   The statistic is the **weighted relative change**: each board's mean
+   change over its seeds divided by its noise mean, weighted by
+   1 / max(cv, 0.10)^2 from the noise file
+   (`benchmarks/agent-tasks/dense-noise.json`). Its one-sided p is the
+   larger of a paired sign-flip randomisation test (this comparison's
+   own spread) and the noise file's null (the tier's spread over nine
+   seeds).
+3. **Better** when p <= 0.03. When 0.03 < p <= 0.25, run seeds 501, 601,
+   701, 801 too and judge the nine pairs again at p <= 0.03. Otherwise
+   not better. Worse when the smaller p is at least 0.97.
+4. The other conditions stay as each lever sets them (the short tier
+   loses no strict pass, no new DRC error).
+
+Simulated from the noise file (`placer_ab.py protocol --flip-rounds 400`,
+600 comparisons, the same relative effect on every board): the rule
+calls a lever with no effect better 3.5 % of the time and extends 21 %
+of such comparisons (5.8 seed pairs on average); it finds a 5 % effect
+67 % of the time, 6.5 % 90 %, 8 % 97 %, 10 % 99.8 %. With the noise
+file's p alone (`protocol`, 2000 comparisons): 5.2 %, 70 %, 89 %, 98 %,
+100 %. The off side's rows can be reused while main's layouts of the
+boards stay the same (a layout is deterministic in binary, tasks, rates
+and placer settings); when main changes a board's layouts the off rows
+and the noise file's rows of that board need running again (on x1842 and
+x1849 the escape guard and the panel copies changed protoesp and the
+0xCB panel; the noise file is x1828's).
+
+**Why.** The weekend's levers (crossings in the anneal, bus-group moves,
+`legality: "kicad"`, and `decoupling_near`) moved the dense summed
+medians by 1 to 33 and single pairs' sums by 37 to 194, against
+per-board seed spreads of 11 to 193; the old rule rejected
+all of them, and on the noise below it could not have done otherwise:
+with three pairs it calls a lever with no effect better 12 % of the
+time and finds a true 5 % gain 32 % of the time.
+
+### Seed noise of the off binary (x1828, nine seeds)
+
+The eleven dense boards on x1828 (main 991ad37) at nine placer seeds:
+1, 101, 201 from the legality and bus-group rounds
+(`build/legal1-dense-s{1,101,201,201b}-off`), 301 to 801 new
+(`build/eval1-dense-s{301,...,801}-off`, 3 x 2 per seed, two seeds side by
+side, `--min-free-gb 10 --expected-gb 3.5`, 2026-10-26 15:00 to 2026-10-27
+00:50 beside the nightly and four agents; no row cut, killed or in
+error; the same tasks, project files and constraints on every row).
+KiCad unconnected; the first route's open terminals
+(`first_unconnected_terminals`); the placement objective (the placed
+board's unweighted wirelength plus 3 mm per ratsnest crossing, counted
+by `ablate-kicad-placement` of x1828) and the crossings:
+
+| Board | KiCad unconnected, seeds 1, 101, ..., 801 | mean / sd / spread | first-route open: mean / sd / spread | objective (mm): mean / sd (cv) | crossings: mean / sd (cv) |
+| --- | --- | ---: | ---: | ---: | ---: |
+| OpenESC 4in1-mini | 81, 82, 99, 100, 83, 105, 102, 94, 76 | 91 / 10.8 / 29 | 143 / 14.4 / 47 | 1058 / 41 (0.04) | 86 / 10 (0.12) |
+| OpenESC 4in1 | 106, 125, 125, 109, 155, 125, 126, 141, 106 | 124 / 16.3 / 49 | 180 / 26.0 / 80 | 2110 / 269 (0.13) | 246 / 60 (0.24) |
+| split72_left | 23, 21, 33, 35, 26, 29, 31, 30, 38 | 30 / 5.5 / 17 | 40 / 9.4 / 31 | 24440 / 823 (0.03) | 3745 / 154 (0.04) |
+| video | 190, 287, 178, 134, 327, 263, 265, 256, 262 | 240 / 60.5 / 193 | 311 / 88.5 / 254 | 87537 / 12575 (0.14) | 15988 / 2839 (0.18) |
+| DSP-ADAU1452 | 17, 7, 28, 21, 9, 11, 14, 8, 11 | 14 / 6.9 / 21 | 66 / 12.3 / 37 | 6516 / 447 (0.07) | 737 / 95 (0.13) |
+| 0xCB panel | 50, 50, 51, 51, 51, 45, 54, 56, 53 | 51 / 3.1 / 11 | 105 / 60.7 / 190 | 7036 / 172 (0.02) | 472 / 25 (0.05) |
+| Glasgow | 143, 149, 173, 134, 153, 158, 145, 124, 127 | 145 / 15.5 / 49 | 169 / 20.3 / 73 | 5997 / 511 (0.09) | 888 / 127 (0.14) |
+| SmartSpin2k | 34, 59, 52, 49, 52, 59, 51, 78, 67 | 56 / 12.3 / 44 | 60 / 12.1 / 42 | 28195 / 585 (0.02) | 3281 / 121 (0.04) |
+| SNSP-CPU-01 | 53, 95, 79, 43, 104, 59, 108, 111, 94 | 83 / 25.5 / 68 | 105 / 51.7 / 175 | 32379 / 930 (0.03) | 4485 / 247 (0.06) |
+| protoesp | 110, 76, 90, 64, 53, 77, 49, 72, 83 | 75 / 18.7 / 61 | 108 / 34.4 / 100 | 8380 / 1318 (0.16) | 899 / 209 (0.23) |
+| MegaDrive | 110, 108, 157, 103, 146, 169, 143, 86, 121 | 127 / 27.9 / 83 | 156 / 34.5 / 98 | 60526 / 6768 (0.11) | 9694 / 1476 (0.15) |
+| sum | 917, 1059, 1065, 843, 1159, 1100, 1088, 1056, 1038 | 1036 / 96.9 / 316 | 1444 / 160.5 / 472 | 264174 / 14178 (0.05) | 40522 / 3230 (0.08) |
+
+The tier's sum over the boards spreads 843 to 1159 between seeds (sd 97):
+one seed pair's summed change has an sd of about 137, three pairs'
+mean about 79 (8 % of the sum). Video alone spreads 134 to 327.
+
+**Proxies.** Correlation across the nine seeds within each board,
+against the final unconnected count (Pearson / Spearman; pooled: each
+board's values standardised):
+
+| Board | first-route open | objective | crossings |
+| --- | ---: | ---: | ---: |
+| OpenESC 4in1 | +0.72 / +0.63 | +0.43 / +0.60 | +0.47 / +0.51 |
+| OpenESC 4in1-mini | +0.60 / +0.48 | +0.28 / +0.12 | +0.19 / +0.12 |
+| DSP-ADAU1452 | +0.85 / +0.80 | +0.07 / +0.28 | +0.22 / +0.36 |
+| MegaDrive | +0.89 / +0.92 | +0.62 / +0.45 | +0.68 / +0.48 |
+| 0xCB panel | +0.63 / +0.86 | +0.72 / +0.63 | +0.27 / +0.19 |
+| split72_left | -0.01 / -0.14 | +0.43 / +0.52 | +0.38 / +0.37 |
+| protoesp | +0.97 / +0.98 | +0.78 / +0.77 | +0.81 / +0.73 |
+| Glasgow | +0.86 / +0.85 | +0.91 / +0.93 | +0.93 / +0.95 |
+| SmartSpin2k | +0.96 / +0.82 | -0.04 / -0.21 | -0.21 / -0.28 |
+| SNSP-CPU-01 | +0.63 / +0.83 | +0.38 / +0.30 | +0.50 / +0.43 |
+| video | +0.96 / +0.92 | +0.64 / +0.53 | +0.47 / +0.42 |
+| within boards, pooled | +0.73 (99) | +0.47 (99) | +0.43 (99) |
+
+- **The first route's open terminals are not a lower-noise proxy**: they
+  follow the final count closely (pooled r 0.73; 0.85 to 0.97 on six
+  boards) because they are the same thing measured earlier, with the
+  same or more relative spread (the 0xCB panel's first route spreads 76
+  to 266 where the final stays 45 to 56). They resolve a relative effect
+  no better than the final count (`resolution --metric first_open`: 8.5
+  % at five pairs against 7 %) and are not what the rule judges.
+- **The objective is low-noise and weakly tied to routing**: its spread
+  is 2 to 16 % of its mean (the sum's 5 %) and the weighted statistic
+  resolves 3.5 % of it with five pairs, but within a board it explains
+  about a fifth of the unconnected count's spread (pooled r 0.47; 0.91
+  on Glasgow, 0.78 on protoesp, about 0 on SmartSpin2k and DSP-ADAU1452).
+  A lever that lowers the objective is a placement change, not yet a
+  routing gain (the bus-group row below).
+
+### Resolution per k and statistic
+
+`placer_ab.py resolution` (2000 simulated comparisons per k): each board's
+values drawn from its nine seeds (a smoothed bootstrap that keeps their
+mean and variance), the on side times 1 - delta on every board; each
+statistic's threshold set at a 5 % one-sided false positive rate under
+no effect (the old rule has a fixed threshold: its false positive rate in
+brackets). The smallest relative improvement found with power 0.8:
+
+| k pairs | sum of medians | mean of pair sums | old rule (medians and every pair) | sign test (boards better) | weighted relative |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 3 | 18.5 % | 16.0 % | 15.0 % (fp 0.12) | 16.0 % | 9.5 % |
+| 5 | 15.0 % | 12.0 % | 17.5 % (fp 0.03) | 12.5 % | 7.0 % |
+| 9 | 12.0 % | 9.0 % | 19.5 % (fp 0.00) | 9.5 % | 5.5 % |
+
+Power at a 3 %, 5 % and 10 % improvement:
+
+| k pairs | sum of medians | mean of pair sums | old rule | sign test | weighted relative |
+| ---: | --- | --- | --- | --- | --- |
+| 3 | 0.10 / 0.15 / 0.36 | 0.12 / 0.18 / 0.45 | 0.23 / 0.32 / 0.58 | 0.11 / 0.20 / 0.51 | 0.20 / 0.40 / 0.87 |
+| 5 | 0.13 / 0.21 / 0.53 | 0.15 / 0.26 / 0.66 | 0.09 / 0.15 / 0.41 | 0.15 / 0.29 / 0.66 | 0.28 / 0.55 / 0.98 |
+| 9 | 0.15 / 0.27 / 0.69 | 0.20 / 0.39 / 0.89 | 0.01 / 0.04 / 0.20 | 0.21 / 0.40 / 0.84 | 0.40 / 0.78 / 1.00 |
+
+- **The summed medians cannot resolve a 3 to 5 % effect at any k we can
+  afford**: video, MegaDrive and SNSP-CPU-01 carry the sum and are the
+  noisiest boards (cv 0.22 to 0.31). The old rule's every-pair condition
+  makes it weaker with more seeds (at nine pairs one of nine falling by
+  chance the other way is likely).
+- **The weighted relative change resolves about twice as small an
+  effect** for the same seeds, because it listens to the steady boards:
+  the 0xCB panel 23 % of the weight, Glasgow 20 %, the 4in1-mini 16 %,
+  the 4in1 13 %, video 4 %. It answers "does the typical board route
+  better", not "does the tier's count fall"; a lever that helps only
+  video will not pass it (nor would it pass any statistic on this
+  noise). The cv floor matters: 0.05 gives 6.5 / 4.5 % at five / nine
+  pairs (the panel then carries the tier), 0.20 gives 8.5 / 6.5 %;
+  0.10 keeps the panel at most a quarter.
+- **k**: five pairs resolve about 7 %, nine about 5.5 %; the two-stage
+  rule spends nine only where five leave it open (a fifth of the null
+  comparisons, two fifths at a 3-5 % effect).
+
+### The weekend's levers re-judged (no new runs)
+
+Each lever's own rows (KiCad unconnected; on the boards a switch did not
+change, off and on are the same layout), judged by `placer_ab.py
+compare` with the x1828 noise file; the objective by `--metric
+objective --tool build/bin/pcb-maker-x1828`:
+
+| Lever (off / on, rows) | pairs | sum of medians | old rule | weighted change (90 % from the noise file) | p sign-flip / noise | verdict | pairs to resolve the observed size | objective: sum of medians, weighted, verdict |
+| --- | ---: | ---: | --- | ---: | ---: | --- | ---: | --- |
+| crossings in the anneal (x1817 / x14312, `build/cross2-dense-*`) | 3 | 926 -> 927 | no | -8.1 % (-14.0 to -2.0) | 0.047 / 0.013 | extend to 5 (seeds 301, 401) | 5 | -4.3 %, -1.2 %, not better |
+| bus groups (x1828 / x14560, `build/group1-dense-*`, off `legal1`) | 3 | 967 -> 960 | no | -0.5 % (-6.5 to +5.5) | 0.453 / 0.440 | not better | more than 40 | -9.4 %, -3.9 %, **better** (p 0.012) |
+| `legality: "kicad"` (x1828 / x14502, `build/legal1-dense-*`) | 3 | 967 -> 934 | no | +2.8 % (-1.9 to +7.5; on the 4 boards it moves +5.3 %) | 0.585 / 0.837 | not better | 24 | -0.2 %, -1.7 %, extend |
+| `decoupling_near` (x1835 / x14741, `build/ux2-dense-*`) | 2 | 974 -> 987 | no | +4.5 % (-2.9 to +11.7) | 0.897 / 0.840 | not better | 14 | -2.3 %, +5.4 %, worse |
+| escape demand, for reference (x1751 / x1752, `build/escape{1,2}-dense-*`) | 3 | 968 -> 933 | yes | -1.5 % (-7.4 to +4.6) | 0.359 / 0.339 | not better | more than 40 | (seed 1 partly without placed boards) |
+| ratsnest crossings, for reference (x1813 / x14270, `build/cross1-dense-*`) | 3 | 1027 -> 966 | yes | -4.1 % (-10.0 to +2.0) | 0.029 / 0.134 | extend to 5 | 18 | -7.1 %, -14.0 %, **better** (p 0.000) |
+
+- **Crossings in the anneal** is the one with a likely real routing
+  effect: -8.1 % weighted, 8 of 11 boards better by the mean (Glasgow,
+  the 4in1, MegaDrive, SNSP-CPU-01 by 16 to 21 %), its sum of medians
+  flat only because video rose by 63 on the mean (its widest swing,
+  +26 %, on a board that carries 4 % of the weight). The rule's first
+  stage is not complete: two more pairs (seeds 301 and 401 on both
+  x1817 and x14312, or the switch on today's main against its off rows)
+  settle it; at -8.1 % five pairs find it with power 0.8.
+- **Bus groups** lowers the objective with confidence (the only lever
+  that does: -9.4 % on the summed medians, p 0.012) and leaves routing
+  where it was (-0.5 %): no number of seeds would confirm the observed
+  size. The objective's weak tie to routing (above) is the reading.
+- **`legality: "kicad"`** moves four boards and is, if anything, worse on
+  them (+5.3 %); confirming even that would take about 24 pairs.
+- **`decoupling_near`** has two pairs (x1835 off: a later binary than the
+  noise file's, so its p is approximate); +4.5 %, not better; 14 pairs
+  would resolve its size either way.
+- Of the two defaults shipped under the old rule, escape demand has no
+  resolved routing effect (-1.5 %) and ratsnest crossings an
+  unresolved -4.1 % that would take about 18 pairs to confirm; both
+  passed the old rule, as a lever with no effect does 12 % of the time.
+- The levers' objective changes are mostly smaller than "5 to 12 %": the
+  bus groups' -9.4 % and the crossings' -7.1 % on the summed medians;
+  crossings in the anneal -4.3 %, `legality: "kicad"` -0.2 %.
+
+**Usage.**
+
+    python3 benchmarks/agent-tasks/placer_ab.py compare \
+      --off build/X-dense-s{1,101,201,301,401}-off --on build/X-dense-s{1,101,201,301,401}-on
+    python3 benchmarks/agent-tasks/placer_ab.py resolution --k 3 5 9 --at 0.03 0.05 0.10
+    python3 benchmarks/agent-tasks/placer_ab.py protocol
+    python3 benchmarks/agent-tasks/placer_ab.py noise build/Y-dense-s{1,...,801}-off \
+      --out benchmarks/agent-tasks/dense-noise.json --tool build/bin/pcb-maker-xNNNN
+
+`compare` prints the per-board table, every statistic (the sum of
+medians, the pair sums, the old rule, the sign test, the weighted
+change with its p values and interval), the verdict and the pairs a
+change of the observed size needs; `--metric first_open|objective|crossings`
+judges a proxy instead (`--tool` counts the objective and the crossings
+of each placed board, cached by its sha256 in `build/placer-ab-signals`).
+
 ## Memory ledger: who runs next (2026-10-24, the drain 2026-10-25, its feasibility cap, its end and short requests 2026-10-26)
 
 Benchmarks share the machine through the memory ledger

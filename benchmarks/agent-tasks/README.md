@@ -319,6 +319,12 @@ measurement). The discipline:
   A placement default change still needs several placer seeds per side
   (`--placer '{"seed": N}'`): it reshuffles crowded boards at random
   ([docs/changelog.md](../../docs/changelog.md#committed-on-2026-10-14-the-legaliser-agent-x701--x711-the-premise-was-wrong)).
+  The rule since 2026-10-26: five seed pairs (1, 101, 201, 301, 401;
+  seeds closer than 16 share race candidates) on the eleven dense
+  boards, judged by `placer_ab.py compare` (the weighted relative change
+  against the noise file `dense-noise.json`; better at p <= 0.03,
+  extended to nine pairs at p <= 0.25)
+  ([docs/benchmarks.md](../../docs/benchmarks.md#measurement-discipline-placer-defaults-2026-10-26)).
 - **Lesson: one task list per comparison.** Pass `--tasks` on both sides
   or rely on the tier's default on both, never mix: v5 and v6 differ in
   the constraints of 12 of the 30 quick-tier boards (v6 fixes more parts),

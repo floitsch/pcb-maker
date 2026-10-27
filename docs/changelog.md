@@ -11,6 +11,56 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-10-26 (placement evaluation: seed noise and the protocol)
+
+Branch placement-eval. Nothing in the placer or the router changed. The
+weekend's placement levers lowered the objective and the crossings, yet
+the old ship rule (three seed pairs on the eleven dense boards: the sum
+of medians falls and every pair's sum falls) rejected each of them on
+sums that moved by less than the boards' seed spreads. This round
+measured that noise and set a rule of known resolution
+([benchmarks.md](benchmarks.md#measurement-discipline-placer-defaults-2026-10-26)).
+
+- **Noise**: the eleven dense boards on x1828 at nine placer seeds (1,
+  101, 201 from the legality round; 301 to 801 new, `build/eval1-dense-s*-off`;
+  seeds 2, 3, 5 ... would share 15 of seed 1's 16 race candidates). KiCad
+  unconnected per board: sd 3 (the 0xCB panel) to 61 (video), spread 11 to
+  193; the tier's sum 843 to 1159 (sd 97). The first route's open
+  terminals follow the final count (pooled within-board r 0.73) with as
+  much spread: not a cheaper proxy. The objective (wirelength plus 3 mm
+  per crossing) spreads 2 to 16 % and explains about a fifth of the
+  unconnected count's spread within a board (r 0.47). Noise file
+  `benchmarks/agent-tasks/dense-noise.json`.
+- **Resolution** (`placer_ab.py resolution`, power 0.8 at 5 % false
+  positives): the sum of medians 18.5 / 15 / 12 % at 3 / 5 / 9 pairs; the
+  old rule 15 % at three pairs with 12 % false positives (it finds a
+  true 5 % gain a third of the time); the weighted relative change
+  (each board's mean change over its noise mean, weight 1 / max(cv,
+  0.10)^2) 9.5 / 7 / 5.5 %.
+- **The rule** (benchmarks.md; `placer_ab.py compare` prints the
+  verdict): five pairs (seeds 1 to 401); better when the weighted
+  change's p (the larger of a paired sign-flip test and the noise
+  file's null) is at most 0.03; at 0.03 to 0.25 four more pairs and the
+  same test over nine. Simulated: 3.5 % false positives, power 0.67 at a
+  5 % effect, 0.90 at 6.5 %, 0.97 at 8 %; 5.8 pairs on average under no
+  effect.
+- **Re-judged** (existing rows only): crossings in the anneal -8.1 %
+  weighted (p 0.047 / 0.013; 8 of 11 boards better, video +26 %): extend
+  to five pairs, which at that size find it with power 0.8; bus groups
+  -0.5 % (p 0.45), while its objective falls 9.4 % with confidence:
+  not better, no seed count would confirm it; `legality: "kicad"` +2.8 %
+  (+5.3 % on the four boards it moves): not better; `decoupling_near`
+  +4.5 % over two pairs: not better. For reference, the shipped defaults:
+  escape demand -1.5 % (p 0.36), ratsnest crossings -4.1 % (p 0.03 /
+  0.13: extend; 18 pairs to confirm its size).
+- **Tool**: `benchmarks/agent-tasks/placer_ab.py` (compare, resolution,
+  protocol, noise, report) and its tests; the agent-tasks README points
+  to the rule.
+- **Open**: the noise file is x1828's; main's later layouts of protoesp
+  and the 0xCB panel (the escape guard of x1842, the panel copies of
+  x1849) need those boards' nine seeds again before the next lever is
+  judged on them.
+
 ## Measured on 2026-10-26 (the trouble-maker probe as a placement ranker)
 
 Branch trouble-probe; snapshot x14900 (main 99b6259 and the branch's
