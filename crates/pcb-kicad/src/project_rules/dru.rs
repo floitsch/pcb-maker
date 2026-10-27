@@ -1045,6 +1045,82 @@ pub(crate) struct BoardFacts {
     /// `connection_width` rule is lowered where its findings are errors,
     /// and where they are warnings only with this.
     pub connection_floor_warnings: bool,
+    /// The board's named zones and rule areas (the footprints' too), which
+    /// `intersectsArea()`, `insideArea()` and `enclosedByArea()` name.
+    pub areas: Vec<NamedArea>,
+}
+
+/// A zone or rule area a condition can name (`BoardFacts::areas`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct NamedArea {
+    pub name: String,
+    pub uuid: String,
+    /// Its copper layers, by name.
+    pub layers: Vec<String>,
+}
+
+/// The atom an area test leaves for the geometry (`resolve_areas`):
+/// unknown to the lowering, and the only unknown a clearance rule may
+/// keep wherever it can hold.
+const AREA_ATOM: &str = "area ";
+
+/// KiCad's area tests on an item (`intersectsArea('X')`, `insideArea`,
+/// `enclosedByArea`; pcbexpr_functions.cpp) hold only on the area's own
+/// layers: an item on another layer never meets it (MokyaLora's
+/// TFT_ZONE on In3.Cu: kicad-cli finds tracks 0.13 mm apart inside the
+/// outline on F.Cu, In1.Cu and B.Cu under its 0.25 mm rule, and flags
+/// only In3.Cu's). An area test becomes "the item is on one of the
+/// areas' layers, and (unknown) where it lies": false off those layers,
+/// false where no area has the name, unknown elsewhere.
+fn resolve_areas(ex: Ex, areas: &[NamedArea]) -> Ex {
+    let again = |ex: Box<Ex>| Box::new(resolve_areas(*ex, areas));
+    match ex {
+        Ex::Or(a, b) => Ex::Or(again(a), again(b)),
+        Ex::And(a, b) => Ex::And(again(a), again(b)),
+        Ex::Not(a) => Ex::Not(again(a)),
+        Ex::Compare(operator, a, b) => Ex::Compare(operator, again(a), again(b)),
+        Ex::Call(side, name, arguments)
+            if matches!(
+                name.as_str(),
+                "intersectsarea" | "insidearea" | "enclosedbyarea"
+            ) && matches!(arguments.as_slice(), [Ex::Text(_)])
+                && side != Side::Both =>
+        {
+            let Some(Ex::Text(pattern)) = arguments.first() else {
+                unreachable!()
+            };
+            let mut layers: Vec<&str> = areas
+                .iter()
+                .filter(|area| area.uuid == *pattern || super::wildcard_match(pattern, &area.name))
+                .flat_map(|area| area.layers.iter().map(String::as_str))
+                .collect();
+            layers.sort_unstable();
+            layers.dedup();
+            let on_layers = layers
+                .into_iter()
+                .map(|layer| Ex::Call(side, "existsonlayer".into(), vec![Ex::Text(layer.into())]))
+                .reduce(|a, b| Ex::Or(Box::new(a), Box::new(b)));
+            match on_layers {
+                None => Ex::Number(0.0),
+                Some(on_layers) => Ex::And(
+                    Box::new(on_layers),
+                    Box::new(Ex::Opaque(format!(
+                        "{AREA_ATOM}{}.{name}('{pattern}')",
+                        side_name(side)
+                    ))),
+                ),
+            }
+        }
+        other => other,
+    }
+}
+
+/// Whether every atom the lowering cannot evaluate is an area's geometry
+/// (`resolve_areas`).
+fn unknown_only_by_area(ex: &Ex) -> bool {
+    let mut atoms = BTreeSet::new();
+    opaque_atoms(ex, &mut atoms);
+    !atoms.is_empty() && atoms.iter().all(|atom| atom.starts_with(AREA_ATOM))
 }
 
 /// What a rule did, for `board-router.json`'s `rules`.
@@ -1127,6 +1203,9 @@ pub(crate) struct Lowered {
     /// layers only (router `ClearanceRule`s).
     pub pair_clearances: Vec<PairClearance>,
     pub report: Vec<KiCadCustomRuleReport>,
+    /// Set by a clearance kept wherever an area may hold (`lower`'s
+    /// report says so).
+    by_area: bool,
     /// Routing rules the router does not keep, one line each, for the
     /// verdict.
     pub unmodelled: Vec<String>,
@@ -1315,6 +1394,15 @@ pub(crate) fn lower(
                 &no_net,
                 &later,
             );
+            if std::mem::take(&mut lowered.by_area)
+                && let Some(note) = lowered.report.last_mut()
+                && matches!(note.status.as_str(), "applied" | "approximated")
+            {
+                note.status = "approximated".into();
+                note.detail.push_str(
+                    " (where a rule area may hold: on the area's layers wherever the area lies)",
+                );
+            }
         }
     }
     lowered
@@ -1433,7 +1521,7 @@ fn lower_constraint(
         return;
     }
     let condition = match rule.condition.as_deref().map(parse_condition).transpose() {
-        Ok(condition) => condition.unwrap_or(Ex::Number(1.0)),
+        Ok(condition) => resolve_areas(condition.unwrap_or(Ex::Number(1.0)), &board.areas),
         Err(error) => {
             lowered.note(
                 rule,
@@ -1714,6 +1802,7 @@ fn lower_constraint(
             let eligible = |i: usize, j: usize| i != j || groups[i].len() >= 2;
             let mut truth = BTreeMap::new();
             let mut matched = BTreeSet::new();
+            let mut maybe = BTreeSet::new();
             for (i, gi) in groups.iter().enumerate() {
                 for (j, gj) in groups.iter().enumerate().skip(i) {
                     let value =
@@ -1726,10 +1815,24 @@ fn lower_constraint(
                         T3::True => {
                             matched.insert((i, j));
                         }
-                        T3::Unknown => unknown = true,
+                        T3::Unknown => {
+                            unknown = true;
+                            maybe.insert((i, j));
+                        }
                         T3::False => {}
                     }
                 }
+            }
+            // A minimum that is unknown only by where an area lies is
+            // kept wherever it can hold (the pairs and, below, the kinds
+            // and the area's layers it may match): never less than KiCad
+            // asks, as for every other value (MokyaLora's
+            // "TFT_ZONE_2W_Clearance", 0.25 mm between tracks that meet a
+            // rule area on In3.Cu: kept between every two tracks there).
+            if unknown && unknown_only_by_area(&condition) {
+                matched.extend(maybe);
+                unknown = false;
+                lowered.by_area = true;
             }
             // Pads against pads, which the router never lays but the
             // placer puts side by side: a rule that holds between the pads
@@ -2569,6 +2672,7 @@ mod tests {
             board_clearances: [0.0; 3],
             neck_width: 0.0,
             connection_floor_warnings: false,
+            areas: Vec::new(),
         }
     }
 
@@ -2870,6 +2974,70 @@ mod tests {
         assert_eq!(pair.clearance, 0.3);
         assert_eq!(pair.first, Some(vec![0, 1]));
         assert_eq!(pair.second, Some(vec![0, 1]));
+    }
+
+    #[test]
+    fn a_clearance_inside_a_rule_area_holds_on_the_areas_layers() {
+        // MokyaLora: 0.25 mm between tracks that both meet the rule area
+        // TFT_ZONE (In3.Cu only) over classes of 0.1. Not lowered, the
+        // router laid tracks 0.13 mm apart there (kicad-cli: four
+        // clearance errors on In3.Cu, none on the other layers inside the
+        // outline). Kept between every two tracks on the area's layer; a
+        // missing area matches nothing; a rule that lowers the clearance
+        // in an area changes nothing; an area beside an unknown of
+        // another kind stays unmodelled.
+        let mut board = board(&[("KEY_R5", &["Default"]), ("GPIO11", &["Default"])]);
+        board.copper_layers = vec!["F.Cu".into(), "In3.Cu".into(), "B.Cu".into()];
+        board.areas = vec![
+            NamedArea {
+                name: "TFT_ZONE".into(),
+                uuid: "ae3cb847".into(),
+                layers: vec!["In3.Cu".into()],
+            },
+            NamedArea {
+                name: "MCU_ZONE".into(),
+                uuid: "4a298381".into(),
+                layers: vec!["B.Cu".into()],
+            },
+        ];
+        let rules = lowered(
+            "(rule Shrink_Clearance_In_MCU (constraint clearance (min 0.085mm))
+               (condition \"A.intersectsArea('MCU_ZONE')\"))
+             (rule TFT_ZONE_2W_Clearance (constraint clearance (min 0.25mm))
+               (condition \"A.Type == 'Track' && B.Type == 'Track' && A.intersectsArea('TFT_ZONE') && B.intersectsArea('TFT_ZONE')\"))
+             (rule gone (constraint clearance (min 1mm)) (condition \"A.intersectsArea('NOWHERE')\"))
+             (rule mixed (constraint clearance (min 1mm))
+               (condition \"A.intersectsArea('TFT_ZONE') && A.insideCourtyard('U1')\"))",
+            &board,
+        );
+        let statuses: Vec<&str> = rules.report.iter().map(|r| r.status.as_str()).collect();
+        assert_eq!(
+            statuses,
+            ["no_effect", "approximated", "no_effect", "unmodelled"]
+        );
+        assert_eq!(rules.clearance, [0.0, 0.0]);
+        assert_eq!(rules.clearance_all, 0.0);
+        assert_eq!(rules.pair_clearances.len(), 1);
+        let pair = &rules.pair_clearances[0];
+        assert_eq!(pair.clearance, 0.25);
+        // Tracks against tracks (bit 0), on In3.Cu (index 1) alone.
+        assert_eq!(pair.kinds, 1);
+        assert_eq!(pair.layers, 0b010);
+        assert!(
+            rules.report[1].detail.contains("In3.Cu"),
+            "{}",
+            rules.report[1].detail
+        );
+        // By uuid, and an area on every copper layer.
+        board.areas[0].layers = board.copper_layers.clone();
+        let rules = lowered(
+            "(rule tft (constraint clearance (min 0.25mm))
+               (condition \"A.Type == 'Track' && B.Type == 'Track' && A.intersectsArea('ae3cb847') && B.intersectsArea('ae3cb847')\"))",
+            &board,
+        );
+        assert_eq!(rules.pair_clearances.len(), 1);
+        assert_eq!(rules.pair_clearances[0].layers, 0b111);
+        assert_eq!(rules.report[0].status, "approximated");
     }
 
     #[test]

@@ -370,6 +370,55 @@ struct ClassSpec {
 /// The copper layer names of a board's `(layers ...)`, in the router's
 /// order (F.Cu, In1.Cu, In2.Cu, ..., B.Cu: the lowering's `LayerTable`),
 /// so that a layer's index is the router's.
+/// The board's zones and rule areas with a name or uuid, the footprints'
+/// too, with their copper layers (`dru::NamedArea`): what KiCad's area
+/// tests in rule conditions search (`searchAreas`).
+fn named_areas(pcb: &Expr) -> Vec<dru::NamedArea> {
+    let copper = copper_layer_names(pcb);
+    let zones = pcb.children().iter().flat_map(|item| match item.head() {
+        Some("zone") => vec![item],
+        Some("footprint") => item
+            .children()
+            .iter()
+            .filter(|child| child.head() == Some("zone"))
+            .collect(),
+        _ => Vec::new(),
+    });
+    zones
+        .map(|zone| {
+            let names: Vec<&str> = match form_atom(zone, "layer", 1) {
+                Some(layer) => vec![layer],
+                None => zone
+                    .child("layers")
+                    .map(Expr::children)
+                    .unwrap_or_default()
+                    .iter()
+                    .skip(1)
+                    .filter_map(Expr::atom)
+                    .collect(),
+            };
+            let layers = copper
+                .iter()
+                .filter(|layer| {
+                    names.iter().any(|name| match *name {
+                        "*.Cu" => true,
+                        "F&B.Cu" => matches!(layer.as_str(), "F.Cu" | "B.Cu"),
+                        "*.In.Cu" | "In*.Cu" => layer.starts_with("In"),
+                        name => name == layer.as_str(),
+                    })
+                })
+                .cloned()
+                .collect();
+            dru::NamedArea {
+                name: form_atom(zone, "name", 1).unwrap_or_default().to_string(),
+                uuid: form_atom(zone, "uuid", 1).unwrap_or_default().to_string(),
+                layers,
+            }
+        })
+        .filter(|area| !area.name.is_empty() || !area.uuid.is_empty())
+        .collect()
+}
+
 fn copper_layer_names(pcb: &Expr) -> Vec<String> {
     let mut names: Vec<String> = pcb
         .child("layers")
@@ -746,6 +795,7 @@ pub fn resolve_project_rules(
                     board_clearances: [edge_clearance, hole_clearance, hole_to_hole],
                     neck_width: neck,
                     connection_floor_warnings: floor_mode() == FloorMode::ErrorsAndWarnings,
+                    areas: named_areas(&pcb),
                 };
                 let lowered = dru::lower(&rules, &board, &severities);
                 for (index, net) in board.nets.iter().enumerate() {
