@@ -1345,6 +1345,9 @@ pub struct KiCadRunFacts {
     /// The project's routing rules the router does not keep
     /// (`KiCadProjectRulesReport::unmodelled`).
     pub unmodelled_rules: Vec<String>,
+    /// Every constraint of the project's custom rules (.kicad_dru) and
+    /// what the router made of it (`KiCadProjectRulesReport::custom_rules`).
+    pub custom_rules: Vec<crate::project_rules::KiCadCustomRuleReport>,
     /// What the input check found before the run (a keepout over a fixed
     /// part: `keepout_warnings`; fixed parts on top of each other:
     /// `overlap_warnings`); next_actions repeat them.
@@ -1522,6 +1525,7 @@ impl KiCadRunFacts {
             diff_pairs: None,
             lengths: Vec::new(),
             unmodelled_rules: Vec::new(),
+            custom_rules: Vec::new(),
             input_warnings: Vec::new(),
             board_mark_overlaps: Vec::new(),
             silkscreen: None,
@@ -1747,6 +1751,13 @@ pub struct KiCadVerdict {
     /// such values.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub rule_overrides: Vec<crate::run_diagnosis::KiCadOverrideOutcome>,
+    /// Route and layout: every constraint of the project's custom rules
+    /// (.kicad_dru) with what the router made of it: `rule`, `constraint`,
+    /// `status` (`applied`, `approximated`, `no_effect`, `not_routing`,
+    /// `unmodelled`, `skipped`) and `detail`; as board-router.json's
+    /// `rules.custom_rules`. Absent without such rules.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub custom_rules: Vec<crate::project_rules::KiCadCustomRuleReport>,
     /// The placement's bus groups (`bus_groups` in the placer's
     /// configuration, off by default): how many groups moved more than
     /// one part, the banks (members, parts moved), the clusters, and the
@@ -2324,9 +2335,65 @@ fn footprint_of(item: &str) -> Option<&str> {
 /// The next action for a project with rules the router does not keep.
 fn unmodelled_rules_action(rules: &[String]) -> String {
     format!(
-        "the project has rules the router does not keep, which KiCad checks: their findings are for the designer to resolve by hand or by moving parts: {}",
+        "the project has rules the router does not keep, which KiCad checks: their findings are for the designer to resolve by hand or by moving parts (KiCad names the rule in each finding's description in drc.json, \"rule 'NAME' ...\"; a rule that only allows less than the router keeps costs nothing): {}",
         rules.join("; ")
     )
+}
+
+/// One line on the project's custom rules (`KiCadVerdict::custom_rules`):
+/// how many constraints the router applied, approximated, found without
+/// effect, left to KiCad (`not_routing`, `skipped`) or could not keep
+/// (`unmodelled`), naming the approximated and unmodelled ones; `None`
+/// without custom rules. MokyaLora (2026-10-27): its two area rules were
+/// in board-router.json only, and no output a run prints said a word of
+/// them.
+pub fn custom_rules_line(rules: &[crate::project_rules::KiCadCustomRuleReport]) -> Option<String> {
+    if rules.is_empty() {
+        return None;
+    }
+    let order = [
+        "applied",
+        "approximated",
+        "no_effect",
+        "not_routing",
+        "skipped",
+        "unmodelled",
+    ];
+    let mut counts: Vec<String> = Vec::new();
+    for status in order.iter().copied().chain(
+        rules
+            .iter()
+            .map(|rule| rule.status.as_str())
+            .filter(|status| !order.contains(status)),
+    ) {
+        let matching: Vec<&crate::project_rules::KiCadCustomRuleReport> =
+            rules.iter().filter(|rule| rule.status == status).collect();
+        if matching.is_empty()
+            || counts
+                .iter()
+                .any(|count| count.starts_with(&format!("{status} ")))
+        {
+            continue;
+        }
+        let named = if matches!(status, "approximated" | "unmodelled") {
+            format!(
+                " ({})",
+                matching
+                    .iter()
+                    .map(|rule| format!("{} {}", rule.rule, rule.constraint))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        } else {
+            String::new()
+        };
+        counts.push(format!("{status} {}{named}", matching.len()));
+    }
+    Some(format!(
+        "custom rules (.kicad_dru): {} constraints: {}; custom_rules in verdict.json says what each became (approximated: kept more widely than KiCad asks; unmodelled: KiCad checks it, the router does not keep it)",
+        rules.len(),
+        counts.join(", ")
+    ))
 }
 
 /// The next action an outline suggestion makes: the size to try, and why.
@@ -2533,6 +2600,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         panel_copies: facts.panel_copies.clone(),
         sub_boards: facts.sub_boards.clone(),
         rule_overrides: facts.rule_overrides.clone(),
+        custom_rules: facts.custom_rules.clone(),
     }
 }
 
@@ -2621,6 +2689,7 @@ pub fn route_facts(
     facts.cut = result.cut.clone();
     facts.skipped = result.skipped.clone();
     facts.unmodelled_rules = result.rules.project.unmodelled.clone();
+    facts.custom_rules = result.rules.project.custom_rules.clone();
     facts.attempts_failed = result.attempts_failed.clone();
     // What the board's reading left out (copper on a layer the stack
     // lacks): the next_actions lead with it.
@@ -2777,6 +2846,32 @@ mod tests {
             errors: tally.errors,
             findings: tally.findings,
         }
+    }
+
+    #[test]
+    fn the_custom_rules_are_said_in_one_line() {
+        use crate::project_rules::KiCadCustomRuleReport;
+        let rule = |name: &str, status: &str| KiCadCustomRuleReport {
+            rule: name.into(),
+            constraint: "clearance".into(),
+            status: status.into(),
+            detail: String::new(),
+        };
+        assert_eq!(custom_rules_line(&[]), None);
+        let line = custom_rules_line(&[
+            rule("Shrink_Clearance_In_MCU", "no_effect"),
+            rule("TFT_ZONE_2W_Clearance", "approximated"),
+            rule("Creepage", "unmodelled"),
+        ])
+        .unwrap();
+        assert!(
+            line.starts_with("custom rules (.kicad_dru): 3 constraints: approximated 1 (TFT_ZONE_2W_Clearance clearance), no_effect 1, unmodelled 1 (Creepage clearance); "),
+            "{line}"
+        );
+        let mut facts = routed(DrcTally::default());
+        facts.custom_rules = vec![rule("TFT_ZONE_2W_Clearance", "approximated")];
+        let verdict = serde_json::to_value(judge(&facts)).unwrap();
+        assert_eq!(verdict["custom_rules"][0]["status"], "approximated");
     }
 
     #[test]

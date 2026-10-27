@@ -167,6 +167,9 @@ fn announce(verdict: &KiCadVerdict, report: &Path) {
         i32::from(verdict.exit_code),
         std::sync::atomic::Ordering::Relaxed,
     );
+    if let Some(line) = pcb_kicad::custom_rules_line(&verdict.custom_rules) {
+        println!("{line}");
+    }
     println!(
         "verdict: {} (exit {}): {}",
         serde_json::to_value(verdict.status)
