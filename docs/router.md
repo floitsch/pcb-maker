@@ -4400,6 +4400,69 @@ take their sine and cosine exact for quarter turns
 sorted (KiCad's save sorts those too, by uuid; nothing measured here
 followed them).
 
+## Nets split by sub-board (2026-10-27)
+
+A panel of different boards (the OpenESC 4in1 panel: the 30 x 30 4in1
+and the 20 x 20 4in1-mini, joined by two tabs with rows of mouse bites)
+shares net names between its boards: GND, +BATT, the ESC sheets' nets,
+`Net-(Q6-G)` of two different Q6. No copper joins the boards on the
+designer's own board: KiCad's DRC reports 130 unconnected items there, each
+between the two boards, one per net present on both (130 nets; 0 errors).
+After the tabs are broken they are different nets. Routed as one net, the
+router tried to join them over the tabs (a track over a tab is cut when
+the panel is broken, and the mouse bites leave 0.3 mm of board).
+
+**The pieces** (`sub_boards::Pieces`, crates/pcb-kicad/src/sub_boards.rs):
+the board's area (its outline loops less its cutouts, even-odd) on a
+raster of about 1500 cells along the longer side (0.05 to 0.25 mm),
+opened by `NECK_RADIUS_MM` = 1 mm (a chamfer distance to the outside,
+eroded, the cores grown back by the same radius): necks narrower than
+2 mm fall away. A core of 20 mm² or more and a twentieth of the largest
+core is a piece; the board area on no piece that touches two pieces is a
+tab. On the 109 sweep boards: the 4in1 panel 2 pieces (2 tabs), the two
+boards drawn as separate loops 2 and 3 (zpn_devboard, the Modular Hub),
+every other board 1, the four panels of copies included (their tabs are
+wider; the copies are `panel_copies`'). SNSP-CPU-01 has a 15 x 16 mm
+strip a row of slots sets off (1.8 mm bridges): a core under a twentieth
+of the board's, so no piece.
+
+**The rule** (`split_router_nets`, at the end of the lowering, so every
+lowering of a board agrees: the ladder's attempts, the moves' trials, the
+placer's guidance): a net whose terminals lie on two pieces or more
+becomes one net per piece, unless
+
+- a terminal lies on a tab (KiCad's net may run over it), or
+- other copper of the net (a kept track or via, a merged pad, a copper
+  graphic) lies on a tab or over two pieces (the designer joined them), or
+- a pour of the net spans two pieces whose boxes overlap (it cannot be
+  cut to one).
+
+The piece of the net's first terminal keeps the net; each other piece
+gets a new net of the same name and class. Terminals, their pads'
+obstacles, merged pads, the net's other copper and the pin-row gaps go to
+their piece's net; a pour on one piece goes to that piece's net, one over
+several (the 4in1 panel's GND on the inner layers covers both boards) is
+cut to each piece's box. The writer names copper by the net's name, so
+the board KiCad checks has one net of that name again. Pours do not join:
+where KiCad's fill does join two pieces (a solid tab), KiCad reports
+nothing across them and nothing needs excusing. `sub_board_nets: false`
+in the router config keeps every net whole. `PCB_ROUTER_SUB_BOARD_DEBUG`
+prints the nets split and those kept whole.
+
+**KiCad's check, per sub-board** (`excuse_across`, applied to every
+kicad-cli DRC report the binary reads, drc-kicad-board's too): KiCad
+still sees one net, so it reports an unconnected item between the
+pieces for each such net. The same rule on the checked board's own pads,
+tracks, arcs and vias (`board_split_nets`) names the nets split; per net,
+as many items between two pieces as the net's pieces less one are moved
+from `unconnected_items` to `unconnected_across_sub_boards` in drc.json
+(the report keeps every other field of KiCad's). Further items across
+pieces stay counted: KiCad's ratsnest may join an island left open within
+one piece to the other piece. An item's place off every piece (a zone's
+corner beyond the edge) takes the nearest piece within 1 mm. The
+designer's own 4in1 panel: 130 items, all moved, 0 counted; the Modular
+Hub's designer board: its 2 items (GND zones of the three boards) moved.
+
 ## Known limits / next steps
 
 - Through vias only: inner layers are routed (and take the automatic

@@ -236,9 +236,11 @@ impl Pieces {
             }
             let mut touching: BTreeSet<u16> = BTreeSet::new();
             let mut b = [usize::MAX, usize::MAX, 0, 0];
+            let mut members = Vec::new();
             seen[start] = true;
             stack.push(start);
             while let Some(at) = stack.pop() {
+                members.push(at);
                 let (row, column) = (at / columns, at % columns);
                 b = [
                     b[0].min(column),
@@ -268,7 +270,14 @@ impl Pieces {
                     }
                 }
             }
-            if touching.len() >= 2 {
+            // What the opening took from one piece alone (a corner, a
+            // strip a row of slots sets off) stays that piece's.
+            if touching.len() == 1 {
+                let piece = *touching.iter().next().expect("one piece");
+                for at in members {
+                    labels[at] = piece;
+                }
+            } else if touching.len() >= 2 {
                 tabs.push([
                     origin[0] + b[0] as f64 * cell,
                     origin[1] + b[1] as f64 * cell,
@@ -363,7 +372,7 @@ impl Pieces {
         best.map(|(_, piece)| piece)
     }
 
-    /// Whether `point` lies on the board but on no piece (a tab, a neck).
+    /// Whether `point` lies on the board but on no piece (a tab).
     pub(crate) fn between(&self, point: [f64; 2]) -> bool {
         self.cell_of(point)
             .is_some_and(|cell| self.inside[cell] && self.labels[cell] == NONE)
@@ -850,8 +859,40 @@ pub(crate) fn board_split_nets(pcb: &Expr, pieces: &Pieces) -> BTreeMap<String, 
     }
     on.into_iter()
         .filter(|(net, pieces)| pieces.len() >= 2 && !joined.contains(net))
-        .map(|(net, pieces)| (net, pieces.len()))
+        .map(|(net, pieces)| (unescaped(&net), pieces.len()))
         .collect()
+}
+
+/// How far beyond the board an unconnected item's place may lie and still
+/// count on the nearest piece (mm): KiCad places a zone's item at a corner
+/// of its outline, which designers draw past the edge (5 mm on the 4in1
+/// panel).
+const ZONE_REACH_MM: f64 = 10.0;
+
+/// A net's name as KiCad's reports write it: the board file escapes `/`
+/// as `{slash}` and so on (KiCad's EscapeString), the DRC report does not.
+fn unescaped(name: &str) -> String {
+    if !name.contains('{') {
+        return name.to_string();
+    }
+    [
+        ("{slash}", "/"),
+        ("{backslash}", "\\"),
+        ("{lt}", "<"),
+        ("{gt}", ">"),
+        ("{colon}", ":"),
+        ("{dblquote}", "\""),
+        ("{quote}", "'"),
+        ("{space}", " "),
+        ("{tab}", "\t"),
+        ("{bar}", "|"),
+        ("{dollar}", "$"),
+        ("{comma}", ","),
+    ]
+    .iter()
+    .fold(name.to_string(), |name, (escaped, plain)| {
+        name.replace(escaped, plain)
+    })
 }
 
 /// The key of a DRC report's unconnected items that KiCad's check judged
@@ -893,7 +934,7 @@ pub(crate) fn excuse_across(report: &mut serde_json::Value, pcb: &Expr, pieces: 
                 let net = end["description"].as_str().and_then(described_net);
                 let at = [end["pos"]["x"].as_f64(), end["pos"]["y"].as_f64()];
                 let piece = match at {
-                    [Some(x), Some(y)] => pieces.piece_near([x, y], NECK_RADIUS_MM),
+                    [Some(x), Some(y)] => pieces.piece_near([x, y], ZONE_REACH_MM),
                     _ => None,
                 };
                 (net, piece)
