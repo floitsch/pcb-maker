@@ -11,6 +11,57 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-27 (panels of different boards)
+
+Branch multi-board-panels, snapshots x15020-x15029 (docs/placer.md "Sub-
+boards in a panel (2026-10-27)", docs/router.md "Nets split by sub-board
+(2026-10-27)", docs/agents.md `sub_boards`). New module
+`crates/pcb-kicad/src/sub_boards.rs`.
+
+- **Pieces without the tabs**: the outline rasterised and opened by 1 mm
+  (necks under 2 mm, rows of mouse bites, fall away); only pieces tabs
+  join count. On the 109 sweep boards: the OpenESC 4in1 panel (2 pieces,
+  2 tabs, 130 nets on both by its pads); no other board, the four panels
+  of copies, zpn_devboard and the Modular Hub (separate loops) included.
+  `pcb-maker sub-boards-kicad-board <board>` (research) prints them.
+- **The router's net split** (`sub_board_nets`, router, on): a net with
+  pads on two pieces, none on a tab and no copper of its own on a tab or
+  over two pieces, is one net per piece (pours cut to each piece's box).
+- **KiCad's check per sub-board**: KiCad still sees one net name and
+  reports one item between the boards per such net (130 on the
+  designer's own panel); as many items across as the net's pieces less
+  one, of nets on several boards by design (split by parts whose board
+  is known, or holding two parts of one reference), go to
+  `unconnected_across_sub_boards` in drc.json and are not counted; at
+  KiCad's cap of 499 the rest is a lower bound
+  (`unconnected_items_capped`).
+- **The placement** (`sub_boards`, placer, on): which board each part is
+  on, from fixed parts, `--reference <project-dir>` (now on
+  place-kicad-board too; the layout's reference also gives the boards)
+  and the nets; with at most a tenth of the movable parts unknown, every
+  part is held in its board, each board placed alone in its region, its
+  nets split, the tabs kept clear; else nothing changes and a next action
+  asks for `--reference` or region constraints (the task's 4in1 panel:
+  392 of 398 parts unknown: the unplace step stacks them; the net graph
+  cannot tell the boards apart). run.py `--reference-designer` passes the
+  designer's project.
+- **The molecules' cells**: copies told apart by repeated references
+  whose nets share names: their regions are cells, those nets split per
+  cell and judged per cell.
+- **Fixes on the way**: a padstack layer's `offset` is its drill offset
+  (OpenESC's motor pads' back copper sat 0.1 mm off: 16 clearance errors
+  at x15024); a layout move into another sub-board is no trial (the
+  router refused the update: the 5x4 wave's internal error at x15028).
+- **Measured** (layout, task budget, seed 1 unless said; off x1853 =
+  x1856 on the panel): the 4in1 panel 499 (KiCad's cap) to 357 counted
+  (394 in KiCad, 37 across), no error, as the task is; with the
+  designer's places 262 counted (392 in KiCad, 130 across) at seed 1 and
+  240 (370) at seed 101, where both sides' whole-panel placement leaves 4
+  parts without a place. Molecules: 4x4 499 to at least 244, 4x5 499 to
+  at least 239, 5x2_shifted 427 to 219, 5x4 wave MOL54CL; first-route
+  open terminals three- to fivefold fewer; 1 starved thermal on the 4x4
+  (0 off), 1 on the 4x5 (8 off). The short tier, the single 4in1 and
+  4in1-mini and the copy panels' placements byte for byte.
 ## Measured on 2026-10-27 (nightly: layout sweep v22, matched designer tier)
 
 Written by the nightly from `build/nightly/2026-10-27/` (main e7a12a8;
