@@ -1889,7 +1889,7 @@ fn lower_board(
         let split = crate::sub_boards::split_router_nets(&mut lowered.board, &pieces);
         if std::env::var_os("PCB_ROUTER_SUB_BOARD_DEBUG").is_some() {
             eprintln!(
-                "sub-boards: {} pieces, {} nets split ({} more nets), {} kept whole",
+                "sub-boards: {} pieces, {} nets split ({} more nets), kept whole: {:?}",
                 pieces.count(),
                 split.nets.len(),
                 split.nets.iter().map(|(_, count)| count - 1).sum::<usize>(),

@@ -1610,6 +1610,11 @@ def run_admitted(task, arguments, token):
     started = time.monotonic()
     command = [str(arguments.binary), "layout-kicad-board", str(source), task["board_id"],
                str(work / "layout"), router_argument, str(work / "layout.json")]
+    if arguments.reference_designer:
+        # The designer's project as the layout's reference: its errors
+        # count as pre-existing, and on a panel of different boards its
+        # places say which board each part belongs to (sub_boards).
+        command += ["--reference", str(task_directory(task))]
     load_before = os.getloadavg()[0]
     timeout = scaled_timeout(arguments, layout.get("total_seconds", LAYOUT_BUDGETS["total_seconds"]),
                              layout.get("wall_guard"))
@@ -2441,6 +2446,9 @@ def main():
                         help="only the boards of a tier (quick: quick.json, many small boards side by side)")
     parser.add_argument("--placer", type=json.loads, default={},
                         help="placer settings for every board, as JSON (e.g. '{\"halo_scale\": 0.75}')")
+    parser.add_argument("--reference-designer", action="store_true",
+                        help="layout mode: pass the designer's project as --reference (its errors "
+                             "count as pre-existing; a panel's sub-boards from its places)")
     parser.add_argument("--layout", type=json.loads, default={},
                         help="layout settings for every board, as JSON, over the task's "
                              "(e.g. '{\"congestion_score\": \"global\"}')")

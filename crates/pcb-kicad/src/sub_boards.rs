@@ -272,6 +272,30 @@ impl Pieces {
                 ]);
             }
         }
+        // The pieces of a row of mouse bites (between the holes, at its
+        // ends) are one tab: boxes within the neck radius merge.
+        let near = |a: &[f64; 4], b: &[f64; 4]| {
+            let gap = NECK_RADIUS_MM;
+            a[0] <= b[2] + gap && b[0] <= a[2] + gap && a[1] <= b[3] + gap && b[1] <= a[3] + gap
+        };
+        let mut merged: Vec<[f64; 4]> = Vec::new();
+        for tab in tabs {
+            let mut tab = tab;
+            loop {
+                let Some(index) = merged.iter().position(|other| near(other, &tab)) else {
+                    break;
+                };
+                let other = merged.remove(index);
+                tab = [
+                    tab[0].min(other[0]),
+                    tab[1].min(other[1]),
+                    tab[2].max(other[2]),
+                    tab[3].max(other[3]),
+                ];
+            }
+            merged.push(tab);
+        }
+        let tabs = merged;
         Some(Pieces {
             origin,
             cell,
@@ -524,7 +548,7 @@ pub(crate) struct NetSplit {
     /// Nets with pads on two pieces that stay one net, by why: a pad on a
     /// tab, copper of theirs on a tab or over two pieces, a pour over two
     /// pieces whose boxes overlap.
-    pub joined: usize,
+    pub joined: Vec<String>,
 }
 
 /// The router's net split (module comment): on a board of two pieces or
@@ -581,7 +605,7 @@ pub(crate) fn split_router_nets(board: &mut core::Board, pieces: &Pieces) -> Net
                     .filter_map(|terminal| pieces.piece_at(terminal.anchor))
                     .collect();
                 if some.len() >= 2 {
-                    split.joined += 1;
+                    split.joined.push(board.nets[net].name.clone());
                 }
                 continue;
             }
@@ -595,7 +619,7 @@ pub(crate) fn split_router_nets(board: &mut core::Board, pieces: &Pieces) -> Net
             .map(|index| pieces.piece_of_box(aabb_box(&board.obstacles[*index].shape)))
             .collect();
         let Some(copper_places) = copper_places else {
-            split.joined += 1;
+            split.joined.push(board.nets[net].name.clone());
             continue;
         };
         let pour_places: Vec<Option<usize>> = pours[net]
@@ -607,7 +631,7 @@ pub(crate) fn split_router_nets(board: &mut core::Board, pieces: &Pieces) -> Net
             })
             .collect();
         if overlapping && pour_places.iter().any(Option::is_none) {
-            split.joined += 1;
+            split.joined.push(board.nets[net].name.clone());
             continue;
         }
         // The pieces in the order of the net's terminals: the first keeps
@@ -1435,5 +1459,133 @@ impl KiCadSubBoardsReport {
             tabs: sub.pieces.tabs.iter().map(round).collect(),
             sub_boards,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two 20 x 20 boards one above the other, joined by a 4 mm tab (with
+    /// a row of mouse bites when `bites`); two parts on each, on GND and
+    /// SIG; `extra` more items.
+    fn panel(bites: bool, extra: &str) -> Expr {
+        let outline = "(gr_poly (pts (xy 0 0) (xy 20 0) (xy 20 20) (xy 12 20) (xy 12 25) (xy 20 25) (xy 20 45) (xy 0 45) (xy 0 25) (xy 8 25) (xy 8 20) (xy 0 20)) (layer \"Edge.Cuts\"))";
+        let holes: String = if bites {
+            (0..5)
+                .map(|index| {
+                    let x = 8.4 + 0.8 * index as f64;
+                    format!(
+                        "(gr_circle (center {x} 22.5) (end {} 22.5) (layer \"Edge.Cuts\"))",
+                        x + 0.25
+                    )
+                })
+                .collect()
+        } else {
+            String::new()
+        };
+        let part = |name: &str, x: f64, y: f64| {
+            format!(
+                r#"(footprint "{name}" (at {x} {y}) (property "Reference" "{name}") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "GND")) (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net "SIG")))"#
+            )
+        };
+        let parts = [
+            part("R1", 3.0, 5.0),
+            part("R2", 13.0, 5.0),
+            part("R1", 3.0, 35.0),
+            part("R2", 13.0, 35.0),
+        ]
+        .join(" ");
+        crate::kicad_sexpr::parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user)) {outline} {holes} {parts} {extra})"#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn mouse_bites_cut_the_outline_into_pieces() {
+        let pieces = Pieces::of_board(&panel(true, "")).unwrap().expect("pieces");
+        assert_eq!(pieces.count(), 2);
+        assert_eq!(pieces.tabs.len(), 1, "{:?} {:?}", pieces.tabs, pieces.boxes);
+        let top = pieces.piece_at([10.0, 10.0]).unwrap();
+        let bottom = pieces.piece_at([10.0, 35.0]).unwrap();
+        assert_ne!(top, bottom);
+        assert!(pieces.between([9.6, 22.5]));
+        assert!(!pieces.between([30.0, 22.5]));
+        // A solid 4 mm tab is part of the board: one piece.
+        assert!(Pieces::of_board(&panel(false, "")).unwrap().is_none());
+    }
+
+    #[test]
+    fn nets_of_one_name_on_two_pieces_are_split_unless_copper_joins_them() {
+        let pcb = panel(true, "");
+        let pieces = Pieces::of_board(&pcb).unwrap().unwrap();
+        assert_eq!(
+            board_split_nets(&pcb, &pieces),
+            BTreeMap::from([("GND".to_string(), 2), ("SIG".to_string(), 2)])
+        );
+        let config = crate::board_router::KiCadBoardRouterConfig {
+            default_rules: Some(crate::KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..Default::default()
+        };
+        let board = crate::board_router::lower(&pcb, &config, true).unwrap().board;
+        let names: Vec<&str> = board.nets.iter().map(|net| net.name.as_str()).collect();
+        assert_eq!(names.iter().filter(|name| **name == "GND").count(), 2);
+        assert_eq!(names.iter().filter(|name| **name == "SIG").count(), 2);
+        for (index, net) in board.nets.iter().enumerate() {
+            assert_eq!(net.terminals.len(), 2, "{}", net.name);
+            let ends: BTreeSet<Option<usize>> = net
+                .terminals
+                .iter()
+                .map(|terminal| pieces.piece_at(terminal.anchor))
+                .collect();
+            assert_eq!(ends.len(), 1, "{}", net.name);
+            for terminal in &net.terminals {
+                assert_eq!(board.obstacles[terminal.pad].net, Some(index as core::NetId));
+            }
+        }
+        // A track of SIG over the tab joins it: SIG stays one net.
+        let joined = panel(
+            true,
+            r#"(segment (start 10 10) (end 10 40) (width 0.2) (layer "B.Cu") (net "SIG"))"#,
+        );
+        assert_eq!(
+            board_split_nets(&joined, &pieces),
+            BTreeMap::from([("GND".to_string(), 2)])
+        );
+        let board = crate::board_router::lower(&joined, &config, true).unwrap().board;
+        assert_eq!(board.nets.iter().filter(|net| net.name == "SIG").count(), 1);
+        // Switched off: one net each.
+        let off = crate::board_router::KiCadBoardRouterConfig {
+            sub_board_nets: Some(false),
+            ..config.clone()
+        };
+        let board = crate::board_router::lower(&pcb, &off, true).unwrap().board;
+        assert_eq!(board.nets.iter().filter(|net| net.name == "GND").count(), 1);
+    }
+
+    #[test]
+    fn kicad_items_across_two_sub_boards_are_not_counted() {
+        let pcb = panel(true, "");
+        let pieces = Pieces::of_board(&pcb).unwrap().unwrap();
+        let item = |net: &str, a: [f64; 2], b: [f64; 2]| {
+            serde_json::json!({"type": "unconnected_items", "items": [
+                {"description": format!("Pad 1 [{net}] of R1 on F.Cu"), "pos": {"x": a[0], "y": a[1]}},
+                {"description": format!("Pad 1 [{net}] of R2 on F.Cu"), "pos": {"x": b[0], "y": b[1]}}]})
+        };
+        let mut report = serde_json::json!({"unconnected_items": [
+            item("GND", [3.0, 5.0], [3.0, 35.0]),
+            // A second GND edge across: an island within a piece left open.
+            item("GND", [13.0, 5.0], [13.0, 35.0]),
+            item("SIG", [5.0, 5.0], [15.0, 5.0]),
+        ]});
+        assert_eq!(excuse_across(&mut report, &pcb, &pieces), 1);
+        assert_eq!(report["unconnected_items"].as_array().unwrap().len(), 2);
+        assert_eq!(report[ACROSS_KEY].as_array().unwrap().len(), 1);
     }
 }

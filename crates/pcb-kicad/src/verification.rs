@@ -450,6 +450,7 @@ pub fn kicad_verifier_implementation_sha256() -> String {
     hash.update(include_bytes!("verification.rs"));
     hash.update(include_bytes!("fs_util.rs"));
     hash.update(include_bytes!("native_report.rs"));
+    hash.update(include_bytes!("sub_boards.rs"));
     hash.update(include_bytes!("../../../Cargo.lock"));
     format!("{:x}", hash.finalize())
 }

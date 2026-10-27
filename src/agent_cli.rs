@@ -439,7 +439,7 @@ const LAYOUT_USAGE: &str = "usage: pcb-maker layout-kicad-board <project-dir> <b
 const PLACE_WORK_SECONDS: f64 = 600.0;
 
 const PLACE_USAGE: &str =
-    "usage: pcb-maker place-kicad-board <project-dir> <board-id> <out-dir> [placer-config.json]";
+    "usage: pcb-maker place-kicad-board <project-dir> <board-id> <out-dir> [placer-config.json] [--reference <project-dir>]";
 
 fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     let command = "route-kicad-board";
@@ -763,6 +763,7 @@ fn placement_facts(command: &str, report: &serde_json::Value) -> KiCadRunFacts {
     facts.routes = false;
     facts.bus_groups = serde_json::from_value(report["bus_groups"].clone()).ok();
     facts.panel_copies = serde_json::from_value(report["panel_copies"].clone()).ok();
+    facts.sub_boards = serde_json::from_value(report["sub_boards"].clone()).ok();
     // The movable parts without a legal place, each once, a repeated
     // reference with its uuid (`unplaced_parts`); without them (an older
     // report) by name, with the illegal parts' names not yet there (a
@@ -821,10 +822,15 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     let router =
         crate::board_router_config(positional.get(3).map(String::as_str), source, board_id)
             .map_err(Failure::Usage)?;
-    let config: pcb_kicad::KiCadBoardLayoutConfig = match positional.get(4) {
+    let mut config: pcb_kicad::KiCadBoardLayoutConfig = match positional.get(4) {
         Some(path) => read_json(path)?,
         None => Default::default(),
     };
+    // The reference board's places say which sub-board of a panel each
+    // part belongs to (`sub_boards`).
+    config.placer.sub_board_reference = reference
+        .as_ref()
+        .map(|project| project.join(format!("{board_id}.kicad_pcb")));
     let mut input_warnings = check_constraints(source, board_id, &config.placer)?;
     set_target(
         command,
@@ -955,6 +961,7 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     facts.room = serde_json::from_value(placed["room"].clone()).ok();
     facts.bus_groups = serde_json::from_value(placed["bus_groups"].clone()).ok();
     facts.panel_copies = serde_json::from_value(placed["panel_copies"].clone()).ok();
+    facts.sub_boards = serde_json::from_value(placed["sub_boards"].clone()).ok();
     facts.input_warnings = constraint_warnings(input_warnings, &placed);
     facts.cut = result.cut.clone();
     facts.work_seconds = Some(result.work_seconds + result.routed.work_seconds);
@@ -975,10 +982,11 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
 
 fn place(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     let command = "place-kicad-board";
-    let (positional, _) = split_flags(arguments, &[], PLACE_USAGE)?;
+    let (positional, values) = split_flags(arguments, &["--reference"], PLACE_USAGE)?;
     positional_count(&positional, 3..=4, PLACE_USAGE)?;
     let (source, board_id, output) = (&positional[0], &positional[1], &positional[2]);
     check_project(source, board_id)?;
+    let reference = reference_option(&values, None, board_id)?;
     check_fresh_output(output)?;
     let mut config: pcb_kicad::KiCadBoardPlacerConfig = match positional.get(3) {
         // A layout config (import-kicad-netlist's layout.json) works too:
@@ -994,6 +1002,11 @@ fn place(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         },
         None => Default::default(),
     };
+    // The reference board's places say which sub-board of a panel each
+    // part belongs to (`sub_boards`).
+    config.sub_board_reference = reference
+        .as_ref()
+        .map(|project| project.join(format!("{board_id}.kicad_pcb")));
     let mut input_warnings = check_constraints(source, board_id, &config)?;
     // A placement needs no KiCad, but what comes after it does.
     input_warnings.extend(check_kicad(true)?);
@@ -1741,7 +1754,8 @@ usage: pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> [router-c
                        total_seconds is then the whole search's). docs/agents.md, docs/constraints.md.
   --reference <dir>    the project whose board's DRC errors count as pre-existing (the same type at
                        the same place); default none (the input of a layout is not a placed board):
-                       every error counts.
+                       every error counts. On a panel of different boards sharing net names, where
+                       its footprints lie also says which board each part belongs to (sub_boards).
 
 <out-dir>/result is the finished project (with drc.json and erc.json), <out-dir>/placed the placement
 (placement.html animates it, board-placer.json reports constraints, hints and utilization), and
@@ -1757,7 +1771,7 @@ free_dimension (chosen, probes, reason).";
 const PLACE_HELP: &str = "\
 Places a KiCad board's movable parts (no routing): for checking constraints in seconds.
 
-usage: pcb-maker place-kicad-board <project-dir> <board-id> <out-dir> [placer-config.json]
+usage: pcb-maker place-kicad-board <project-dir> <board-id> <out-dir> [placer-config.json] [--reference <project-dir>]
 
   <project-dir>        the KiCad project directory holding <board-id>.kicad_pcb (and .kicad_pro).
   <board-id>           the board's file stem: myboard for myboard.kicad_pcb.
@@ -1768,6 +1782,9 @@ usage: pcb-maker place-kicad-board <project-dir> <board-id> <out-dir> [placer-co
                        tight_bodies (default: as the project's DRC allows). docs/constraints.md.
                        A layout config (the layout.json import-kicad-netlist writes) works as well:
                        its placer object is used.
+  --reference <dir>    the designer's placed project: on a panel of different boards sharing net
+                       names, where its footprints lie says which board each part belongs to
+                       (verdict.sub_boards); default none: the fixed parts and the nets tell.
 
 A board with room places in seconds. What cannot fit is an input error at once (exit 2): a region
 smaller than its part, a row longer than the outline, parts held at one edge that need more length

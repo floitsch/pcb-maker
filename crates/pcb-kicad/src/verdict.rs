@@ -841,6 +841,9 @@ pub struct KiCadRunFacts {
     /// The panel's copies the placement replicated (`panel_copies` on),
     /// when it found them.
     pub panel_copies: Option<crate::board_placer::KiCadPanelCopiesReport>,
+    /// The placement's sub-boards (a panel of different boards), when it
+    /// found two or more.
+    pub sub_boards: Option<crate::sub_boards::KiCadSubBoardsReport>,
     /// A layout's decoupling (score-kicad-board's `decoupling` of the
     /// board written): below `DECOUPLING_SHARE` of the capacitors within
     /// 3 mm of a supply pin adds a next action.
@@ -997,6 +1000,7 @@ impl KiCadRunFacts {
             rule_overrides: Vec::new(),
             bus_groups: None,
             panel_copies: None,
+            sub_boards: None,
             decoupling: None,
             decoupling_near: false,
             decoupling_constrained: BTreeSet::new(),
@@ -1219,6 +1223,18 @@ pub struct KiCadVerdict {
     /// the same part of the circuit). Absent otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub panel_copies: Option<crate::board_placer::KiCadPanelCopiesReport>,
+    /// The sub-boards of a panel of different boards (`sub_boards` in the
+    /// placer's configuration, on by default) where the outline falls into
+    /// two pieces or more once its tabs are taken out and parts lie on two
+    /// of them: how many, what told the parts' sub-boards, the nets of one
+    /// name on several (one net per sub-board to the placer and the
+    /// router), the movable parts without a sub-board, whether the
+    /// placement held the parts in their regions, the tabs, and per
+    /// sub-board its region and parts. KiCad's unconnected items across
+    /// two sub-boards are not counted (`unconnected_across_sub_boards` in
+    /// drc.json). Absent otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sub_boards: Option<crate::sub_boards::KiCadSubBoardsReport>,
 }
 
 fn counts(map: &BTreeMap<String, usize>) -> String {
@@ -1322,6 +1338,17 @@ fn next_actions(
     footprint: &[&DrcFinding],
 ) -> Vec<String> {
     let mut actions = facts.input_warnings.clone();
+    if let Some(sub) = &facts.sub_boards
+        && sub.unassigned > 0
+        && !sub.held
+    {
+        actions.push(format!(
+            "the board is a panel of {} different boards sharing net names, and {} movable parts belong to no sub-board that the fixed parts or the nets tell ({}): the placement put them where it would; give the designer's placed board with --reference <project-dir> (its places say each part's board), or hold each part in its board with region constraints",
+            sub.count,
+            sub.unassigned,
+            sub.unassigned_parts.join(", ")
+        ));
+    }
     if !facts.attempts_failed.is_empty() {
         actions.push(format!(
             "{} attempts of the router's ladder failed (a panic; attempts_failed in board-router.json has each message): the board is the best of the other attempts; report the panic ({})",
@@ -1887,6 +1914,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         race: facts.race.clone(),
         bus_groups: facts.bus_groups.clone(),
         panel_copies: facts.panel_copies.clone(),
+        sub_boards: facts.sub_boards.clone(),
         rule_overrides: facts.rule_overrides.clone(),
     }
 }
