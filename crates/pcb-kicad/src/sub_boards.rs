@@ -1131,13 +1131,31 @@ pub(crate) fn excuse_across(
             kept.push(item.clone());
         }
     }
+    // KiCad lists at most `KICAD_REPORT_CAP` unconnected items: at the cap
+    // the items left are a lower bound, and none left would be a pass
+    // KiCad's list cannot show; then nothing moves.
+    let capped = items.len() >= KICAD_REPORT_CAP;
+    if capped && kept.is_empty() {
+        return 0;
+    }
     let moved = across.len();
     if moved > 0 {
         report["unconnected_items"] = serde_json::Value::Array(kept);
         report[ACROSS_KEY] = serde_json::Value::Array(across);
+        if capped {
+            report[CAPPED_KEY] = serde_json::Value::Bool(true);
+        }
     }
     moved
 }
+
+/// KiCad's DRC lists at most this many items of a kind (KiCad 10; as
+/// `run_diagnosis`'s).
+const KICAD_REPORT_CAP: usize = 499;
+
+/// Set in a DRC report whose unconnected items reached KiCad's cap before
+/// `excuse_across` moved some: the items left are at least that many.
+pub(crate) const CAPPED_KEY: &str = "unconnected_items_capped";
 
 /// The net a DRC item's description names (`Pad 2 [GND] of C1 on F.Cu`).
 fn described_net(description: &str) -> Option<String> {

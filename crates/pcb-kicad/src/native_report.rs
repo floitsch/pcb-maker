@@ -378,8 +378,15 @@ fn run_kicad_report_untimed(arguments: &[&str], output: &Path, input: &Path) -> 
         let moved = crate::sub_boards::excuse_across_file(output, input)?;
         if moved > 0 {
             eprintln!(
-                "kicad check: {moved} unconnected items join two sub-boards of a panel (nets of the same name no copper joins): not counted ({})",
-                crate::sub_boards::ACROSS_KEY
+                "kicad check: {moved} unconnected items join two sub-boards of a panel (nets of the same name no copper joins): not counted ({}){}",
+                crate::sub_boards::ACROSS_KEY,
+                if crate::read_json(output).is_ok_and(|report: serde_json::Value| {
+                    report[crate::sub_boards::CAPPED_KEY].as_bool() == Some(true)
+                }) {
+                    "; KiCad's list stopped at its cap of 499, so those left are at least as many"
+                } else {
+                    ""
+                }
             );
         }
     }
