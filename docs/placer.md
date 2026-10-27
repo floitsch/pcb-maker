@@ -4190,12 +4190,15 @@ in [router.md](router.md), "Nets split by sub-board (2026-10-27)".
 by 1 mm, so that necks under 2 mm (a row of mouse bites leaves 0.3 mm
 between its holes) fall away; each part of the opened area of 20 mm² and
 a twentieth of the largest is a piece, the board area between two pieces
-a tab. Census on the 109 sweep boards (the designers' boards; the tasks
-keep their outlines): 2 pieces on the 4in1 panel (2 tabs), 2 and 3 on the
-two boards drawn as separate loops (zpn_devboard, the Modular Hub), 1 on
-every other board, the four panels of copies included (their tabs are
-wider than 2 mm), SNSP-CPU-01's strip behind a row of slots included (a
-fortieth of the board).
+a tab; only pieces that tabs join count (boards drawn as separate loops
+are `keep_on_pieces`'). Census on the 109 sweep boards (the designers'
+boards, `pcb-maker sub-boards-kicad-board`): 2 pieces on the 4in1 panel
+(2 tabs, 130 nets on both boards by its pads), none on every other board:
+the four panels of copies (their tabs are wider than 2 mm),
+SNSP-CPU-01's strip behind a row of slots (a fortieth of the board), and
+the two boards of separate loops (zpn_devboard, the Modular Hub: with
+the Hub's GND split three ways it went from 19 to 22 KiCad unconnected at
+seed 1, so they are left as they were).
 
 **Which sub-board a part belongs to** (`detect_for_placer`, on the lowered
 problem):
@@ -4250,8 +4253,7 @@ asks for `--reference` or region constraints):
   seed, the 4in1 324-327 s).
 
 Panels of copies are placed as copies (`panel_copies` is tried first);
-boards of one piece, and boards whose pieces share no net (zpn_devboard),
-are untouched: the report says so (`sub_boards` with `split_nets: 0`).
+boards of one piece are untouched.
 
 **Report**: `sub_boards` in `board-placer.json` and the verdict: `count`,
 `from`, `split_nets`, `unassigned` and the first 20 `unassigned_parts`,

@@ -4419,12 +4419,15 @@ opened by `NECK_RADIUS_MM` = 1 mm (a chamfer distance to the outside,
 eroded, the cores grown back by the same radius): necks narrower than
 2 mm fall away. A core of 20 mm² or more and a twentieth of the largest
 core is a piece; the board area on no piece that touches two pieces is a
-tab. On the 109 sweep boards: the 4in1 panel 2 pieces (2 tabs), the two
-boards drawn as separate loops 2 and 3 (zpn_devboard, the Modular Hub),
-every other board 1, the four panels of copies included (their tabs are
-wider; the copies are `panel_copies`'). SNSP-CPU-01 has a 15 x 16 mm
-strip a row of slots sets off (1.8 mm bridges): a core under a twentieth
-of the board's, so no piece.
+tab. Only pieces tabs join count: boards drawn as separate loops
+(zpn_devboard, the Modular Hub's three boards) are `keep_on_pieces`'
+(placer.md) and stay as they were (the Hub with its GND split three ways:
+19 to 22 KiCad unconnected at seed 1, the measured escape correction's
+route moving its placement). On the 109 sweep boards: the 4in1 panel 2
+pieces (2 tabs), every other board none, the four panels of copies
+included (their tabs are wider; the copies are `panel_copies`').
+SNSP-CPU-01 has a 15 x 16 mm strip a row of slots sets off (1.8 mm
+bridges): a core under a twentieth of the board's, so no piece.
 
 **The rule** (`split_router_nets`, at the end of the lowering, so every
 lowering of a board agrees: the ladder's attempts, the moves' trials, the
@@ -4460,8 +4463,17 @@ from `unconnected_items` to `unconnected_across_sub_boards` in drc.json
 pieces stay counted: KiCad's ratsnest may join an island left open within
 one piece to the other piece. An item's place off every piece (a zone's
 corner beyond the edge) takes the nearest piece within 1 mm. The
-designer's own 4in1 panel: 130 items, all moved, 0 counted; the Modular
-Hub's designer board: its 2 items (GND zones of the three boards) moved.
+designer's own 4in1 panel: 130 items, all moved, 0 counted.
+
+Inside a layout or a placement, the nets whose items may be excused are
+those on several sub-boards by design (`designed_nets`, noted for the
+process): the nets the placement split (pins of parts whose board is
+known on two) and the nets with pads of two footprints of one reference
+(two parts of one reference are two boards' parts). Where the placement
+did not know the parts' boards, it may have put a net's parts on both:
+its items across then count (a net the tool spread over two boards is
+not the design). Without a placement (route-kicad-board, drc-kicad-board)
+the checked board's own places decide.
 
 ## Known limits / next steps
 
