@@ -1372,6 +1372,15 @@ impl StaticMaps {
         self.edges[layer].at(index)
     }
 
+    /// Asks the cache for `edges_at`'s bit of `index` on `layer` early (a
+    /// hint: any layer and index are fine).
+    #[inline(always)]
+    pub fn prefetch_edges(&self, layer: usize, index: usize) {
+        if let Some(edges) = self.edges.get(layer) {
+            prefetch_at(edges.marked.as_ptr().wrapping_add(index / 64));
+        }
+    }
+
     /// Bytes held by the per-node maps.
     pub fn bytes(&self) -> usize {
         fn of<T>(maps: &[Vec<T>]) -> usize {

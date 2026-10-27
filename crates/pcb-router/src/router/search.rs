@@ -237,7 +237,11 @@ impl Router {
             // the route's CPU; the second round, docs/profiling.md).
             let next = heap.next_hint();
             if next != NO_KEY {
-                prefetch_index(&scratch.nodes, (next & u32::MAX as u64) as usize);
+                let next = (next & u32::MAX as u64) as usize;
+                prefetch_index(&scratch.nodes, next);
+                // And its blocked steps' bits, the expansion's first map.
+                let next_layer = next / cells;
+                statics.prefetch_edges(next_layer, next - next_layer * cells);
             }
             if scratch.nodes[state].closed == generation {
                 continue;
