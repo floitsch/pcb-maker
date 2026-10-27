@@ -875,10 +875,18 @@ fn cell_classes(
 }
 
 /// Whether part `part` can keep its hard constraints (edge, overhang,
-/// region) somewhere in `region`: flush with one of the region's sides
-/// (at nine places along it) or at its centre, at any turn it may take.
+/// region) somewhere in `region` (`hold_violation`).
 fn holds_in(problem: &core::Problem, part: usize, region: [f64; 4]) -> bool {
+    hold_violation(problem, part, region) <= 1.0e-6
+}
+
+/// How far (mm) part `part` misses its hard constraints at best in
+/// `region`: flush with one of the region's sides (at nine places along
+/// it) or at its centre, at any turn it may take; infinite where it does
+/// not fit the region.
+fn hold_violation(problem: &core::Problem, part: usize, region: [f64; 4]) -> f64 {
     let component = &problem.components[part];
+    let mut best = f64::INFINITY;
     let angles: Vec<f64> = if component.angle_options.is_empty() {
         vec![problem.poses[part].angle]
     } else {
@@ -911,12 +919,13 @@ fn holds_in(problem: &core::Problem, part: usize, region: [f64; 4]) -> bool {
                 position: [centre[0] - offset[0], centre[1] - offset[1]],
                 angle,
             };
-            if core::constraints::hard_ok(problem, part, pose) {
-                return true;
+            best = best.min(core::constraints::hard_violation(problem, part, pose));
+            if best <= 1.0e-6 {
+                return best;
             }
         }
     }
-    false
+    best
 }
 
 /// Where references repeat, the movable instances of a reference were
@@ -993,15 +1002,27 @@ fn assign_held(problem: &core::Problem, members: &mut [Vec<usize>], regions: &[[
             let mut seen = vec![false; slots.len()];
             augment(instance, &fits, &mut owner, &mut seen);
         }
-        let matched: BTreeSet<usize> = owner.iter().flatten().copied().collect();
-        // The held instances without a fitting copy and the free ones, in
-        // turn, fill the other slots.
-        let mut rest = held_instances
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| !matched.contains(index))
-            .map(|(_, part)| *part)
-            .chain(instances.iter().copied().filter(|part| !held(*part)));
+        // A held instance without a fitting copy goes to the free copy
+        // whose region comes nearest to holding it (a wave board's outer
+        // cell, whose region stops short of the edge); the free instances
+        // fill the other slots in turn.
+        for instance in 0..held_instances.len() {
+            if owner.contains(&Some(instance)) {
+                continue;
+            }
+            let nearest = (0..slots.len())
+                .filter(|slot| owner[*slot].is_none())
+                .map(|slot| {
+                    let miss =
+                        hold_violation(problem, held_instances[instance], regions[slots[slot]]);
+                    (slot, miss)
+                })
+                .min_by(|a, b| a.1.total_cmp(&b.1));
+            if let Some((slot, _)) = nearest {
+                owner[slot] = Some(instance);
+            }
+        }
+        let mut rest = instances.iter().copied().filter(|part| !held(*part));
         for (slot, copy) in slots.iter().enumerate() {
             members[*copy][rank] = match owner[slot] {
                 Some(instance) => held_instances[instance],
@@ -1646,7 +1667,12 @@ pub(crate) fn place_copies(
                 .retain(|(part, _)| !illegal_set.contains(part));
             for &part in &illegal {
                 let (copy, _) = copy_of[&part];
-                rest.constraints.regions.push((part, copies.regions[copy]));
+                // Held in its copy's region where that lets it keep its
+                // constraints; else free (a part held at an edge its
+                // copy's region stops short of).
+                if holds_in(problem, part, copies.regions[copy]) {
+                    rest.constraints.regions.push((part, copies.regions[copy]));
+                }
                 let centre = rest.components[part].center(replicated[part]);
                 rest.constraints.starts.push((part, centre));
             }
