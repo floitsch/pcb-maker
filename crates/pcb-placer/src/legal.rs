@@ -303,7 +303,9 @@ fn on_board(problem: &Problem, index: usize, pose: Pose) -> bool {
             // pads 0.2 mm from the edge against the project's 0.3 mm; the
             // router cannot move a pad).
             let margins = touching.map(|touch| {
-                if touch {
+                // At KiCad's legality every side keeps the copper-to-edge
+                // clearance, as KiCad checks it.
+                if touch || problem.constraints.pad_clearance {
                     problem.constraints.copper_edge - 1.0e-6
                 } else {
                     problem
@@ -337,9 +339,9 @@ fn on_board(problem: &Problem, index: usize, pose: Pose) -> bool {
         .iter()
         .any(|(part, _, _)| *part == index)
         || problem.constraints.overhang(index).is_some();
-    // At KiCad's legality an unheld part's pads keep the margin, its body
-    // only the outline (where its copper lies inside its body).
-    if problem.constraints.pad_clearance && !held && component.edge_inset > 0.0 {
+    // At KiCad's legality an unheld part's pads keep the copper-to-edge
+    // clearance, its body only the outline.
+    if problem.constraints.pad_clearance && !held && !component.pads.is_empty() {
         return pads_keep_edge(problem, index, pose);
     }
     if problem.constraints.is_empty() || (!held && turn_of(pose.angle, [0.0, 0.0]).is_some()) {
@@ -384,17 +386,20 @@ fn on_board(problem: &Problem, index: usize, pose: Pose) -> bool {
 
 /// At KiCad's legality, for a part whose copper lies inside its body at
 /// the levels that let bodies near the edge (`edge_inset`): the body inside
-/// the outline, each pad the edge margin from it, as KiCad checks copper
-/// against the edge (not the body by its copper's least inset).
+/// the outline, each pad the project's copper-to-edge clearance from it,
+/// as KiCad checks copper against the edge (not the body by its copper's
+/// least inset, nor the level's margin for routing).
 fn pads_keep_edge(problem: &Problem, index: usize, pose: Pose) -> bool {
     let component = &problem.components[index];
     if !inside_outline(problem, bare(problem, index, pose, 0.0)) {
         return false;
     }
     // Pads near no side of the body cannot be nearer the edge than the
-    // body's own margin allows.
+    // body's own margin allows. KiCad checks the copper against the
+    // project's copper-to-edge clearance (the level's edge margin where
+    // that is less).
     let body = bare(problem, index, pose, 0.0);
-    let reach = problem.edge_margin;
+    let reach = problem.edge_margin.min(problem.constraints.copper_edge);
     if inside_outline(problem, body.grown(reach)) {
         return true;
     }
