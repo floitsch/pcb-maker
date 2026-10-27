@@ -74,6 +74,15 @@ and the box would have counted some of them (board_router/tests.rs).
 | fingerprints (1 x 4, a quarter of the budget, v16 placements) | 42 unconnected, 20 new errors, 1562 vias | the same | all 4 boards byte-identical |
 | short tier (3 x 2, viapad1-b) against the nightly of 2026-10-27 (e7a12a80) | 20 unconnected, 8 passes, 1245 vias | the same | every row equal; our vias in pads 0 on all 12 |
 
+The designers' boards of the sweep's tasks (v7) count differently where
+their pads are chamfered, trapezoids or custom (x1857 against viapad1-b,
+the first 31 of 109 boards; the rest not measured): 8 moved, OpenRX
+panel 218 to 215, the OpenESC 4in1 panel 623 to 601, MokyaLora 46 to 45,
+4in1-mini 220 to 199, OpenFC 127 to 125, the Hub 212 to 208, reCamera 0
+to 1 and RP2040_base 58 to 59. reCamera's is KiCad's: pcbnew finds 2 of
+its designer's vias with the drill in an SMD pad's polygon (U2.2, 0.075
+mm from the centre, and MIC1.1), the old box none.
+
 ## Committed on 2026-10-27 (every ladder rung keeps the disallowed layers closed; the narrow step keeps rule widths)
 
 Branch ladder-rules; snapshots x15090 (both fixes) and x15091 (x15090
