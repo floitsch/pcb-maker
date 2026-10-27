@@ -4281,7 +4281,7 @@ byte for byte (its reference only judges errors, and there are none).
 | 4in1 panel | seed | KiCad | across | counted | new errors | nets routed | vias | first-route open |
 | --- | ---: | ---: | ---: | ---: | --- | --- | ---: | ---: |
 | off (x1853, x1856) | 1 | 499 (KiCad's cap) | | 499 | 0 | 43/184 | 160 | 1009 |
-| on, the task as it is (x15025) | 1 | 394 | 37 | 357 | 0 | 96/213 | 348 | 560 |
+| on, the task as it is (x15028) | 1 | 394 | 41 | 353 | 0 | 96/213 | 348 | 560 |
 | on, `--reference` (x15025, judged by x15026's rule) | 1 | 392 | 130 | 262 | 0 | 166/300 | 258 | 338 |
 | off | 101 | 4 parts without a place: no route | | | | | | |
 | on, the task as it is (x15025) | 101 | the same placement, the same 4 parts | | | | | | |
@@ -4291,14 +4291,15 @@ Without a reference the placement is the off side's byte for byte (392
 of 398 parts without a board: nothing held, no tab keepouts) and the
 change is the router's: the nets on both boards by design (the 33 the
 fixed parts split, and those that hold two parts of one reference) are
-routed per board and their items across are not counted; 37 such items
-at seed 1 (the other designed nets have their parts on one board in this
+routed per board and their items across are not counted; 41 such items
+at seed 1 (37 by x15025's rule, which missed the ESC sheets' hierarchical
+names) (the other designed nets have their parts on one board in this
 placement, or are left open within one). With the reference every part
 is held in its board and each board placed alone: seed 101, whose whole
 panel left 4 parts without a place on both sides, places and routes; at
 seed 1 KiCad's own count is about the same (392 against 394), but 130
 items of it are the boards' 130 shared nets (exactly the designer's
-own), and 262 are left within the boards against 357.
+own), and 262 are left within the boards against 353.
 
 The x15024 snapshot (before the padstack fix below) had 16 clearance
 errors at seed 1 where x15025 has none: OpenESC's motor pads (U4's PTH
@@ -4335,7 +4336,7 @@ excused where that would leave none.
 | 4x4 | 499 (cap) | 499 (cap) | 255 | at least 244 | 0 / 1 starved_thermal | 3/28 / 296/423 | 828 / 271 |
 | 4x5 | 499 (cap) | 499 (cap) | 260 | at least 239 | 8 / 1 starved_thermal | 2/28 / 390/528 | 1083 / 224 |
 | 5x2_shifted | 427 | 423 | 204 | 219 | 0 / 0 | 2/28 / 160/270 | 571 / 203 |
-| 5x4_wave | 499 (cap) | MOL54 | | | | | |
+| 5x4_wave (on: x15029) | 499 (cap) | 499 (cap) | 295 | at least 204 | 0 / 0 | 3/28 / 324/330 | 686 / 13 |
 
 The placements differ from the off side's on three of the four (4x5 byte
 for byte): the measured escape correction routes the board while it
@@ -4345,6 +4346,9 @@ x15028's 5x4 wave ended in an internal error: a layout move took a part
 into another cell, the lowering split its nets otherwise, and the
 router refused the incremental update ("needs the same nets"); since
 x15029 such a move is no trial (the layout's moves, the move descent).
+x15029's placement of the 5x4 wave is not x15028's (seed 1 both): the
+placement's wall-clock deadline under load, not the change (which acts
+after the placement).
 
 **Identity**: the short tier (3 x 2, its budget scale): every placed and
 result board byte for byte, x1853 against x15022 and against x15027, and
