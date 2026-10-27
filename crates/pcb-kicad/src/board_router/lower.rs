@@ -94,6 +94,20 @@ impl LayerTable {
         Ok(mask)
     }
 
+    /// The copper layers of a pad. A plated through-hole pad is copper
+    /// on every layer to KiCad 10.0.7 whatever its `layers` list names:
+    /// pcbnew loads koeg's `(layers "*.Mask" "F.Cu" "B.Cu" "In1.Cu")`
+    /// pin headers, `("F.Cu" "*.Mask")` and `("In1.Cu")` on all four
+    /// copper layers, and kicad-cli's DRC measures In2.Cu tracks against
+    /// the pad's ring there (koeg's J5.3: clearance 0.01 mm, a short).
+    /// Any other pad is copper on the layers it lists.
+    pub fn pad_mask(&self, pad: &Expr) -> Result<core::LayerMask, String> {
+        if pad.children().get(2).and_then(Expr::atom) == Some("thru_hole") {
+            return Ok(self.all());
+        }
+        self.mask_of_item(pad)
+    }
+
     /// Mask of an item with either a `layer` or a `layers` form.
     pub fn mask_of_item(&self, item: &Expr) -> Result<core::LayerMask, String> {
         if let Some(layer) = form_atom(item, "layer", 1) {
@@ -750,16 +764,15 @@ fn lower_board(
                             },
                         });
                     }
-                    // A plated hole is copper: a through-hole pad that
-                    // lists no copper layer (`(layers "*.Mask")`, aaronds's
-                    // ESP32 DevKitC mounting pins) is copper on every layer
-                    // to KiCad 10.0.7 (kicad-cli: shorting_items on F.Cu,
-                    // an inner layer and B.Cu), one listing some only on
-                    // those.
-                    let mut pad_layers = layers.mask_of_item(pad)?;
-                    if pad_type == "thru_hole" && pad_layers == 0 {
-                        pad_layers = layers.all();
-                    }
+                    // A plated hole is copper: a through-hole pad is
+                    // copper on every layer to KiCad 10.0.7 whatever it
+                    // lists (`LayerTable::pad_mask`): one that lists no
+                    // copper layer (`(layers "*.Mask")`, aaronds's ESP32
+                    // DevKitC mounting pins; kicad-cli: shorting_items on
+                    // F.Cu, an inner layer and B.Cu) and one that lists
+                    // some (koeg's pin headers without In2.Cu: a track
+                    // there shorted J5.3).
+                    let pad_layers = layers.pad_mask(pad)?;
                     if pad_layers == 0 {
                         // A pad with a mask opening and no copper (hackrf's
                         // mask-only test points over a track) bares the

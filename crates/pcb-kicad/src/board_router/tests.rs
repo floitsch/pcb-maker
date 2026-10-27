@@ -1350,6 +1350,62 @@ mod pour_request_tests {
     }
 
     #[test]
+    fn a_plated_through_hole_pad_is_copper_on_every_layer_whatever_it_lists() {
+        // koeg's SWD header J5 (1 mm pitch): `(layers "*.Mask" "F.Cu"
+        // "B.Cu" "In1.Cu")` on a four-layer board. KiCad 10.0.7 loads the
+        // pad on all four copper layers (pcbnew: In2.Cu too, flashed) and
+        // its DRC found an /right/XC1 track on In2.Cu 0.365 mm from J5.3's
+        // centre shorting the 0.85 mm pad (the router saw only the hole
+        // there) and a /right/DEC3 track 0.01 mm from its ring. A pad
+        // listing only F.Cu, or an inner layer alone, is the same; an SMD
+        // pad keeps its list.
+        let pcb = parse(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (4 "In1.Cu" signal) (6 "In2.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (gr_rect (start 0 0) (end 10 10) (layer "Edge.Cuts"))
+              (footprint "hdr" (layer "B.Cu") (at 5 5) (property "Reference" "J5")
+                (pad "1" thru_hole oval (at 0 0) (size 0.85 0.85) (drill 0.5) (layers "*.Mask" "F.Cu" "B.Cu" "In1.Cu") (net "SWDIO"))
+                (pad "2" thru_hole oval (at 0 1) (size 0.85 0.85) (drill 0.5) (layers "F.Cu" "*.Mask") (net "SWDCLK"))
+                (pad "3" thru_hole oval (at 0 2) (size 0.85 0.85) (drill 0.5) (layers "In1.Cu") (net "XC1"))
+                (pad "4" smd rect (at 2 0) (size 0.5 0.5) (layers "B.Cu" "B.Mask") (net "SWDIO"))
+                (pad "5" smd rect (at 2 1) (size 0.5 0.5) (layers "B.Cu" "B.Mask") (net "SWDCLK"))
+                (pad "6" smd rect (at 2 2) (size 0.5 0.5) (layers "B.Cu" "B.Mask") (net "XC1"))))"#,
+        )
+        .unwrap();
+        let layers = LayerTable::from_pcb(&pcb).unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.09,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        for label in ["J5.1", "J5.2", "J5.3"] {
+            let index = board
+                .obstacles
+                .iter()
+                .position(|obstacle| obstacle.label == label)
+                .unwrap();
+            assert_eq!(board.obstacles[index].layers, layers.all(), "{label}");
+            let terminal = board
+                .nets
+                .iter()
+                .flat_map(|net| &net.terminals)
+                .find(|terminal| terminal.pad == index)
+                .unwrap();
+            assert_eq!(terminal.layers, layers.all(), "{label}");
+        }
+        let smd = board
+            .obstacles
+            .iter()
+            .find(|obstacle| obstacle.label == "J5.4")
+            .unwrap();
+        assert_eq!(smd.layers, 1 << layers.index("B.Cu").unwrap());
+    }
+
+    #[test]
     fn other_nets_vias_keep_the_hole_clearance_from_a_plated_hole() {
         // jetson-nano-baseboard's J2 pad 1: a 0.55 drill in 0.75 copper,
         // clearance 0.125 and hole clearance 0.25. A 0.5 via of another

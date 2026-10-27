@@ -385,7 +385,7 @@ pub(crate) fn region_pads(pcb: &Expr, layers: &LayerTable) -> Result<Vec<RegionP
             let Ok(position) = form_xy(pad, "at") else {
                 continue;
             };
-            let mask = layers.mask_of_item(pad)?;
+            let mask = layers.pad_mask(pad)?;
             if mask == 0 {
                 continue;
             }
