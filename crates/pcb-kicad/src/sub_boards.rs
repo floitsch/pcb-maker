@@ -974,7 +974,12 @@ pub(crate) const ACROSS_KEY: &str = "unconnected_across_sub_boards";
 /// KiCad's ratsnest put across the pieces (an island within a piece left
 /// open: its edge may end on the other piece), stay. Returns how many
 /// moved.
-pub(crate) fn excuse_across(report: &mut serde_json::Value, pcb: &Expr, pieces: &Pieces) -> usize {
+pub(crate) fn excuse_across(
+    report: &mut serde_json::Value,
+    pcb: &Expr,
+    pieces: &Pieces,
+    designed: Option<&BTreeSet<String>>,
+) -> usize {
     let Some(items) = report["unconnected_items"].as_array() else {
         return 0;
     };
@@ -982,9 +987,7 @@ pub(crate) fn excuse_across(report: &mut serde_json::Value, pcb: &Expr, pieces: 
         return 0;
     }
     let mut split = board_split_nets(pcb, pieces);
-    if let Ok(designed) = DESIGNED.lock()
-        && let Some(designed) = designed.as_ref()
-    {
+    if let Some(designed) = designed {
         split.retain(|net, _| designed.contains(net));
     }
     if split.is_empty() {
@@ -1066,7 +1069,8 @@ pub(crate) fn excuse_across_file(report: &Path, board: &Path) -> Result<usize, S
     let Some(pieces) = Pieces::of_board(&pcb)? else {
         return Ok(0);
     };
-    let moved = excuse_across(&mut value, &pcb, &pieces);
+    let designed = DESIGNED.lock().ok().and_then(|designed| designed.clone());
+    let moved = excuse_across(&mut value, &pcb, &pieces, designed.as_ref());
     if moved > 0 {
         let text = serde_json::to_string_pretty(&value).map_err(|error| error.to_string())?;
         crate::drc_cache::write_atomically(report, text.as_bytes())
@@ -1635,141 +1639,6 @@ impl KiCadSubBoardsReport {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Two 20 x 20 boards one above the other, joined by a 4 mm tab (with
-    /// a row of mouse bites when `bites`); two parts on each, on GND and
-    /// SIG; `extra` more items.
-    fn panel(bites: bool, extra: &str) -> Expr {
-        let outline = "(gr_poly (pts (xy 0 0) (xy 20 0) (xy 20 20) (xy 12 20) (xy 12 25) (xy 20 25) (xy 20 45) (xy 0 45) (xy 0 25) (xy 8 25) (xy 8 20) (xy 0 20)) (layer \"Edge.Cuts\"))";
-        let holes: String = if bites {
-            (0..5)
-                .map(|index| {
-                    let x = 8.4 + 0.8 * index as f64;
-                    format!(
-                        "(gr_circle (center {x} 22.5) (end {} 22.5) (layer \"Edge.Cuts\"))",
-                        x + 0.25
-                    )
-                })
-                .collect()
-        } else {
-            String::new()
-        };
-        let part = |name: &str, x: f64, y: f64| {
-            format!(
-                r#"(footprint "{name}" (at {x} {y}) (property "Reference" "{name}") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "GND")) (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net "SIG")))"#
-            )
-        };
-        let parts = [
-            part("R1", 3.0, 5.0),
-            part("R2", 13.0, 5.0),
-            part("R1", 3.0, 35.0),
-            part("R2", 13.0, 35.0),
-        ]
-        .join(" ");
-        crate::kicad_sexpr::parse(&format!(
-            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user)) {outline} {holes} {parts} {extra})"#
-        ))
-        .unwrap()
-    }
-
-    #[test]
-    fn mouse_bites_cut_the_outline_into_pieces() {
-        let pieces = Pieces::of_board(&panel(true, "")).unwrap().expect("pieces");
-        assert_eq!(pieces.count(), 2);
-        assert_eq!(pieces.tabs.len(), 1, "{:?} {:?}", pieces.tabs, pieces.boxes);
-        let top = pieces.piece_at([10.0, 10.0]).unwrap();
-        let bottom = pieces.piece_at([10.0, 35.0]).unwrap();
-        assert_ne!(top, bottom);
-        assert!(pieces.between([9.6, 22.5]));
-        assert!(!pieces.between([30.0, 22.5]));
-        // A solid 4 mm tab is part of the board: one piece.
-        assert!(Pieces::of_board(&panel(false, "")).unwrap().is_none());
-    }
-
-    #[test]
-    fn nets_of_one_name_on_two_pieces_are_split_unless_copper_joins_them() {
-        let pcb = panel(true, "");
-        let pieces = Pieces::of_board(&pcb).unwrap().unwrap();
-        assert_eq!(
-            board_split_nets(&pcb, &pieces),
-            BTreeMap::from([("GND".to_string(), 2), ("SIG".to_string(), 2)])
-        );
-        let config = crate::board_router::KiCadBoardRouterConfig {
-            default_rules: Some(crate::KiCadConnectionRoutingRules {
-                trace_width_mm: 0.2,
-                clearance_mm: 0.2,
-                via_size_mm: 0.6,
-                via_drill_mm: 0.3,
-            }),
-            ..Default::default()
-        };
-        let board = crate::board_router::lower(&pcb, &config, true)
-            .unwrap()
-            .board;
-        let names: Vec<&str> = board.nets.iter().map(|net| net.name.as_str()).collect();
-        assert_eq!(names.iter().filter(|name| **name == "GND").count(), 2);
-        assert_eq!(names.iter().filter(|name| **name == "SIG").count(), 2);
-        for (index, net) in board.nets.iter().enumerate() {
-            assert_eq!(net.terminals.len(), 2, "{}", net.name);
-            let ends: BTreeSet<Option<usize>> = net
-                .terminals
-                .iter()
-                .map(|terminal| pieces.piece_at(terminal.anchor))
-                .collect();
-            assert_eq!(ends.len(), 1, "{}", net.name);
-            for terminal in &net.terminals {
-                assert_eq!(
-                    board.obstacles[terminal.pad].net,
-                    Some(index as core::NetId)
-                );
-            }
-        }
-        // A track of SIG over the tab joins it: SIG stays one net.
-        let joined = panel(
-            true,
-            r#"(segment (start 10 10) (end 10 40) (width 0.2) (layer "B.Cu") (net "SIG"))"#,
-        );
-        assert_eq!(
-            board_split_nets(&joined, &pieces),
-            BTreeMap::from([("GND".to_string(), 2)])
-        );
-        let board = crate::board_router::lower(&joined, &config, true)
-            .unwrap()
-            .board;
-        assert_eq!(board.nets.iter().filter(|net| net.name == "SIG").count(), 1);
-        // Switched off: one net each.
-        let off = crate::board_router::KiCadBoardRouterConfig {
-            sub_board_nets: Some(false),
-            ..config.clone()
-        };
-        let board = crate::board_router::lower(&pcb, &off, true).unwrap().board;
-        assert_eq!(board.nets.iter().filter(|net| net.name == "GND").count(), 1);
-    }
-
-    #[test]
-    fn kicad_items_across_two_sub_boards_are_not_counted() {
-        let pcb = panel(true, "");
-        let pieces = Pieces::of_board(&pcb).unwrap().unwrap();
-        let item = |net: &str, a: [f64; 2], b: [f64; 2]| {
-            serde_json::json!({"type": "unconnected_items", "items": [
-                {"description": format!("Pad 1 [{net}] of R1 on F.Cu"), "pos": {"x": a[0], "y": a[1]}},
-                {"description": format!("Pad 1 [{net}] of R2 on F.Cu"), "pos": {"x": b[0], "y": b[1]}}]})
-        };
-        let mut report = serde_json::json!({"unconnected_items": [
-            item("GND", [3.0, 5.0], [3.0, 35.0]),
-            // A second GND edge across: an island within a piece left open.
-            item("GND", [13.0, 5.0], [13.0, 35.0]),
-            item("SIG", [5.0, 5.0], [15.0, 5.0]),
-        ]});
-        assert_eq!(excuse_across(&mut report, &pcb, &pieces), 1);
-        assert_eq!(report["unconnected_items"].as_array().unwrap().len(), 2);
-        assert_eq!(report[ACROSS_KEY].as_array().unwrap().len(), 1);
-    }
-}
-
 /// The looser of two relaxations, field by field (as `panel::loosest`).
 fn loosest(a: &pcb_placer::Relaxation, b: &pcb_placer::Relaxation) -> pcb_placer::Relaxation {
     let mut on_marks: Vec<usize> = a.on_marks.iter().chain(&b.on_marks).copied().collect();
@@ -2030,5 +1899,198 @@ pub(crate) fn place_sub_boards(
         routing_room_failed,
         overfull,
         poses,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two 20 x 20 boards one above the other, joined by a 4 mm tab (with
+    /// a row of mouse bites when `bites`); two parts on each, on GND and
+    /// SIG; `extra` more items.
+    fn panel(bites: bool, extra: &str) -> Expr {
+        let outline = "(gr_poly (pts (xy 0 0) (xy 20 0) (xy 20 20) (xy 12 20) (xy 12 25) (xy 20 25) (xy 20 45) (xy 0 45) (xy 0 25) (xy 8 25) (xy 8 20) (xy 0 20)) (layer \"Edge.Cuts\"))";
+        let holes: String = if bites {
+            (0..5)
+                .map(|index| {
+                    let x = 8.4 + 0.8 * index as f64;
+                    format!(
+                        "(gr_circle (center {x} 22.5) (end {} 22.5) (layer \"Edge.Cuts\"))",
+                        x + 0.25
+                    )
+                })
+                .collect()
+        } else {
+            String::new()
+        };
+        let part = |name: &str, x: f64, y: f64| {
+            format!(
+                r#"(footprint "{name}" (at {x} {y}) (property "Reference" "{name}") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "GND")) (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net "SIG")))"#
+            )
+        };
+        let parts = [
+            part("R1", 3.0, 5.0),
+            part("R2", 13.0, 5.0),
+            part("R1", 3.0, 35.0),
+            part("R2", 13.0, 35.0),
+        ]
+        .join(" ");
+        crate::kicad_sexpr::parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user)) {outline} {holes} {parts} {extra})"#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn mouse_bites_cut_the_outline_into_pieces() {
+        let pieces = Pieces::of_board(&panel(true, "")).unwrap().expect("pieces");
+        assert_eq!(pieces.count(), 2);
+        assert_eq!(pieces.tabs.len(), 1, "{:?} {:?}", pieces.tabs, pieces.boxes);
+        let top = pieces.piece_at([10.0, 10.0]).unwrap();
+        let bottom = pieces.piece_at([10.0, 35.0]).unwrap();
+        assert_ne!(top, bottom);
+        assert!(pieces.between([9.6, 22.5]));
+        assert!(!pieces.between([30.0, 22.5]));
+        // A solid 4 mm tab is part of the board: one piece.
+        assert!(Pieces::of_board(&panel(false, "")).unwrap().is_none());
+    }
+
+    #[test]
+    fn nets_of_one_name_on_two_pieces_are_split_unless_copper_joins_them() {
+        let pcb = panel(true, "");
+        let pieces = Pieces::of_board(&pcb).unwrap().unwrap();
+        assert_eq!(
+            board_split_nets(&pcb, &pieces),
+            BTreeMap::from([("GND".to_string(), 2), ("SIG".to_string(), 2)])
+        );
+        let config = crate::board_router::KiCadBoardRouterConfig {
+            default_rules: Some(crate::KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..Default::default()
+        };
+        let board = crate::board_router::lower(&pcb, &config, true)
+            .unwrap()
+            .board;
+        let names: Vec<&str> = board.nets.iter().map(|net| net.name.as_str()).collect();
+        assert_eq!(names.iter().filter(|name| **name == "GND").count(), 2);
+        assert_eq!(names.iter().filter(|name| **name == "SIG").count(), 2);
+        for (index, net) in board.nets.iter().enumerate() {
+            assert_eq!(net.terminals.len(), 2, "{}", net.name);
+            let ends: BTreeSet<Option<usize>> = net
+                .terminals
+                .iter()
+                .map(|terminal| pieces.piece_at(terminal.anchor))
+                .collect();
+            assert_eq!(ends.len(), 1, "{}", net.name);
+            for terminal in &net.terminals {
+                assert_eq!(
+                    board.obstacles[terminal.pad].net,
+                    Some(index as core::NetId)
+                );
+            }
+        }
+        // A track of SIG over the tab joins it: SIG stays one net.
+        let joined = panel(
+            true,
+            r#"(segment (start 10 10) (end 10 40) (width 0.2) (layer "B.Cu") (net "SIG"))"#,
+        );
+        assert_eq!(
+            board_split_nets(&joined, &pieces),
+            BTreeMap::from([("GND".to_string(), 2)])
+        );
+        let board = crate::board_router::lower(&joined, &config, true)
+            .unwrap()
+            .board;
+        assert_eq!(board.nets.iter().filter(|net| net.name == "SIG").count(), 1);
+        // Switched off: one net each.
+        let off = crate::board_router::KiCadBoardRouterConfig {
+            sub_board_nets: Some(false),
+            ..config.clone()
+        };
+        let board = crate::board_router::lower(&pcb, &off, true).unwrap().board;
+        assert_eq!(board.nets.iter().filter(|net| net.name == "GND").count(), 1);
+    }
+
+    #[test]
+    fn kicad_items_across_two_sub_boards_are_not_counted() {
+        let pcb = panel(true, "");
+        let pieces = Pieces::of_board(&pcb).unwrap().unwrap();
+        let item = |net: &str, a: [f64; 2], b: [f64; 2]| {
+            serde_json::json!({"type": "unconnected_items", "items": [
+                {"description": format!("Pad 1 [{net}] of R1 on F.Cu"), "pos": {"x": a[0], "y": a[1]}},
+                {"description": format!("Pad 1 [{net}] of R2 on F.Cu"), "pos": {"x": b[0], "y": b[1]}}]})
+        };
+        let mut report = serde_json::json!({"unconnected_items": [
+            item("GND", [3.0, 5.0], [3.0, 35.0]),
+            // A second GND edge across: an island within a piece left open.
+            item("GND", [13.0, 5.0], [13.0, 35.0]),
+            item("SIG", [5.0, 5.0], [15.0, 5.0]),
+        ]});
+        let mut only_sig = report.clone();
+        assert_eq!(excuse_across(&mut report, &pcb, &pieces, None), 1);
+        assert_eq!(report["unconnected_items"].as_array().unwrap().len(), 2);
+        assert_eq!(report[ACROSS_KEY].as_array().unwrap().len(), 1);
+        // A placement that knew GND not to be on both boards by design:
+        // its items across count.
+        let designed = BTreeSet::from(["SIG".to_string()]);
+        assert_eq!(
+            excuse_across(&mut only_sig, &pcb, &pieces, Some(&designed)),
+            0
+        );
+    }
+
+    #[test]
+    fn a_placed_panel_holds_each_part_on_its_board() {
+        let pcb = panel(true, "");
+        let config = crate::board_placer::KiCadBoardPlacerConfig::default();
+        let mut lowered = crate::board_placer::lower_placement(&pcb, &config).unwrap();
+        let sub = detect_for_placer(&pcb, &lowered.problem, 4, None)
+            .unwrap()
+            .expect("pieces");
+        assert_eq!(sub.count(&lowered.problem), 2);
+        assert_eq!(sub.from, vec!["placed input"]);
+        assert_eq!(sub.split.len(), 2, "GND and SIG on both boards");
+        assert_ne!(sub.part_piece[0], sub.part_piece[2], "the two R1 apart");
+        let designed = designed_nets(&pcb, &sub, &lowered.net_names);
+        assert_eq!(
+            designed,
+            BTreeSet::from(["GND".to_string(), "SIG".to_string()])
+        );
+        let applied = apply_to_placer(
+            &sub,
+            &mut lowered.problem,
+            &mut lowered.references,
+            &mut lowered.source_at,
+            &mut lowered.poured,
+        );
+        assert_eq!((applied.held, applied.nets_split, applied.tabs), (4, 2, 1));
+        // The two boards' R1 no longer share a net.
+        let nets = |part: usize| -> Vec<usize> {
+            lowered.problem.components[part]
+                .pins
+                .iter()
+                .map(|pin| pin.net)
+                .collect()
+        };
+        assert!(nets(0).iter().all(|net| !nets(2).contains(net)));
+        let mut placer = pcb_placer::Config::new();
+        placer.global.seed = 1;
+        placer.work_limit = Some((2.0 * pcb_placer::work_per_second()) as u64);
+        let placement = place_sub_boards(&lowered.problem, &sub, &placer);
+        assert!(placement.unplaced.is_empty() && placement.illegal.is_empty());
+        for part in 0..4 {
+            let piece = sub.part_piece[part].unwrap();
+            let at = placement.poses[part].position;
+            assert_eq!(
+                sub.pieces.piece_at(at),
+                Some(piece),
+                "part {part} at {at:?}"
+            );
+        }
     }
 }
