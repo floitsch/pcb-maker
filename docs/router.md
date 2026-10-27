@@ -446,7 +446,34 @@ pads under an opening routed OpenRX-Mono's U.FL from 12 to 23.
 `via_in_pad: true` in the router config restores the rule of before for
 boards whose vias are filled and capped. score-kicad-board's "vias in
 pads" (SMD pads under 2 mm but an exposed pad, the drill over the pad's
-copper box) stays the check.
+copper as the router lowers it, `lower_pad`; until 2026-10-27 the pad's
+box with rounded corners) stays the check.
+
+**Which vias the rule covers** (2026-10-27). Every via the router writes
+is a layer change of a branch the search took (`Router::emit`, output.rs),
+and the search takes a via step only where `StaticMaps::via_allowed`
+says so, the map built from `no_via_pads` above; a branch kept from an
+earlier round is tested against it again (`branch_is_legal`). The
+negotiation, the hard repair, the lost-spoke reroute, a pad's pour stub
+(the search from the pad to the pour) and the escape stubs' branches
+(the search starts at the stub's node; a stub itself is a track) all
+search, so all ask the map. The island stitches ask it directly
+(stitch.rs). A differential pair's link is a net of its own in the
+search (its pads are another net's to it, so its via keeps the
+clearance beyond them), its return and crossover vias keep out of every
+pad's copper, their own net's too (`return_via_clear`, `clear_layers`).
+Length-matching meanders, the solid step and the neck tracks move or
+add tracks and zone connections, no via. The map measures the pad's
+lowered copper (a chamfered corner cut, a trapezoid's slanted sides),
+as KiCad draws it: the nightly of 2026-10-26 counted 3 of our vias in
+pads on koeg and bumwings_v001_core that were the pads' own net's vias
+in a chamfer's cut (D23.4, D83.4: 0.3465 and 0.3005 mm from the via's
+centre to KiCad's pad polygon, ring 0.3) and beside a trapezoid's slant
+(SW32.1: 0.4337 mm, ring 0.4); the score's rounded box counted them.
+Unit tests: `a_pads_own_via_keeps_its_ring_out_of_a_chamfered_or_trapezoid_pads_copper`
+(board_router/tests.rs: every node the pad's net may hold a via on keeps
+the ring out) and `a_via_in_a_chamfered_corner_or_beside_a_trapezoids_slant_is_not_in_the_pad`
+(quality.rs).
 
 A path no longer hops: a via within the hole-to-hole spacing (the drill
 plus `hole_to_hole`) of the previous via of the path being searched is

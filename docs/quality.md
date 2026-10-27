@@ -151,9 +151,12 @@ and crystals at their pins:
 | Copper (sum) | 33.4 m | 26.6 m | 27.5 m | 92/110 |
 
 Vias in pads counts a via whose drill reaches into an SMD pad's copper
-box (pads under 2 mm, paste-only apertures and a part's exposed pad left
+(pads under 2 mm, paste-only apertures and a part's exposed pad left
 out; until 2026-10-21 the drill's box against the pad's, which counted
-vias beside a pad's corner). Since 2026-10-21 the router keeps vias out
+vias beside a pad's corner; until 2026-10-27 the pad's box with its
+corners rounded, which counted a via in a chamfered corner's cut or
+beside a trapezoid's slant: since then the pad's copper as the router
+lowers it, `lower_pad`). Since 2026-10-21 the router keeps vias out
 of SMD pads unless `via_in_pad` (docs/router.md, "Vias in pads").
 
 Better decoupling and crystals cost some vias and copper, still well under
