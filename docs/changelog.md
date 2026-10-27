@@ -11,6 +11,69 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-27 (vias in small SMD pads: the regression and the fix)
+
+Branch vias-in-pads, snapshot x1858 (6dbe3508, the chamfer and trapezoid
+fix) and build/bin/pcb-maker-viapad1-b (65231466, with the custom pads)
+against main's x1857 (docs/router.md, "Vias in pads": which vias the
+rule covers).
+
+**What the nightly saw.** The nightly of 2026-10-26 (x1842) counted 3
+of our vias in small SMD pads, where v21 (x1832) and every sweep since
+the fence fix had 0: koeg 2, bumwings_v001_core 1. None is in a pad.
+Measured with KiCad's own pad polygons (pcbnew 10.0.7,
+`PAD::TransformShapeToPolygon`, the via's centre to the copper):
+
+| Board | Via | Pad | Net, layer | Centre to copper | Ring | Placed by |
+| --- | --- | --- | --- | --- | --- | --- |
+| koeg | (232.92, 133.25) | D23.4, chamfer 0.5 bottom_left | GND, B.Cu | 0.3465 mm | 0.3 | the search: the pad's escape stub, three diagonal steps on B.Cu, the via step (on to In2.Cu) |
+| koeg | (117.92, 76.55) | D83.4, the same footprint | GND, B.Cu | 0.3005 mm | 0.3 | the search: the escape stub, three steps on B.Cu, the via step |
+| bumwings_v001_core | (257.937, 89.789) | SW32.1, trapezoid, rect_delta 0.8 | col_Ri2 | 0.4337 mm | 0.4 | the search's via step |
+
+The router lowers both shapes exactly (`roundrect_pad`'s chamfers,
+`lower_pad`'s trapezoid) and let each pad's own net's via touch the pad
+from outside, as the rule says. score-kicad-board measured the drill
+against the pad's nominal box with its corners rounded: the chamfer's
+cut and the trapezoid's slanted side were copper to it (0.124, 0.140
+and 0.195 mm from the drill's centre, under the drill's radius). The
+koeg board of x1849 has 19 such GND vias beside the LEDs' chamfered
+pads (0.3005 to 0.38 mm); two happened to lie within the box.
+
+**The bisect** (layout mode, task budget, seed 1, both boards; vias in
+pads by the old score / routed / KiCad unconnected): koeg x1832 0 /
+164/175 / 11 (500 vias), x1833, x1840, x1842, x1845, x1847, x1849 2 /
+160/175 / 15 (419 vias, the same board as the nightly's, byte for
+byte); bumwings x1832 0, x1833 0, x1840 0, x1841 0, x1842 1 (the nightly's
+board), x1845, x1847, x1849 1, 98/98 throughout. Koeg's came with the
+exact escape stubs and the pour model (x1833; the placement differs
+too, the placer's probes route); bumwings' with the placer's
+fixed_share 0.6 (x1842, 29508083; x1841 routes as x1840): other routes put a via beside
+a cut corner, no via placer changed.
+
+**The fix** (quality.rs): the vias-in-pads count measures the drill
+against the pad's copper as the router lowers it (`lower_pad`, then
+`ObstacleGeometry::router_shape`, the conversion the lowering uses, now
+beside the geometry): chamfered corners, trapezoids and custom shapes;
+the rounded box remains where the lowering fails. A custom pad is small
+by its copper's extent, not its anchor (with the exact shape alone
+d20_pcb's touch electrode, a die's face on a 1.5 mm anchor, counted the
+via the router puts there by design; x1858 had it, viapad1-b not).
+Unit tests: the four vias of the nightly's two shapes (cut corner 0,
+uncut corner 1, beside the slant 0, in the wide end outside the box 1)
+and a custom pad (quality.rs); every node near D23.4 and SW32.1 where
+the pad's net may hold a via keeps the ring out of the pad's copper,
+and the box would have counted some of them (board_router/tests.rs).
+
+**Measured** (routes unchanged by construction; checked):
+
+| | x1857 | fix | moved |
+| --- | --- | --- | --- |
+| nightly 2026-10-26's result boards, our vias in pads (104 boards) | 3 | **0** | koeg 2 to 0, bumwings_v001_core 1 to 0 |
+| expansion tier (46 x 8 x 1), routed boards | | | all 46 byte-identical, rows equal (557 unconnected, 0 new errors, 4263 vias, work 1143 s) |
+| expansion tier, vias in pads, ours and the designer's (92) | 133 | 133 | none (x1858 without the custom pads: backplane's designer 0 to 1, MSign's 7 to 19) |
+| fingerprints (1 x 4, a quarter of the budget, v16 placements) | 42 unconnected, 20 new errors, 1562 vias | the same | all 4 boards byte-identical |
+| short tier (3 x 2, viapad1-b) against the nightly of 2026-10-27 (e7a12a80) | 20 unconnected, 8 passes, 1245 vias | the same | every row equal; our vias in pads 0 on all 12 |
+
 ## Committed on 2026-10-27 (every ladder rung keeps the disallowed layers closed; the narrow step keeps rule widths)
 
 Branch ladder-rules; snapshots x15090 (both fixes) and x15091 (x15090
