@@ -891,7 +891,13 @@ fiducial near a hole, a rule the designer tightened later): `--reference
 board as given); layout mode to none, since its input is not a placed
 board. `--reference none` counts every error. The reference is checked
 (one more KiCad DRC, kept as `reference-drc.json`) only when the result has
-errors that count. A reference with its tracks stripped (a board as handed
+errors that count. The reference's findings do not count in the run's
+verdict, but `fab-kicad-board` judges the board on its own: where some of
+them are between two nets (a clearance, a hole clearance, a short; not
+within one footprint), a next action says that the release refuses them
+(since 2026-10-27; framework_mobo_lefthalf with `--reference` said only
+"2 unconnected", and the release then refused its fixed parts' 2
+clearance and 4 hole clearance findings). A reference with its tracks stripped (a board as handed
 to the router) says what the fixed geometry brings on its own; the
 benchmarks' strict rule uses the designer's board stripped so
 (`strip-kicad-tracks`: tracks, vias and small zones), and since its rule 2

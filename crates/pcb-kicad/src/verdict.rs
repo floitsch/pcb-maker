@@ -2525,6 +2525,53 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
     let footprint_findings = by_kind(&footprint);
     let input_findings = by_kind(&input);
     let (status, reason) = decide(facts, &strict.new);
+    let mut actions = next_actions(
+        facts,
+        status,
+        &strict.new,
+        &own,
+        &strict.unknown,
+        &footprint,
+        &input,
+    );
+    // With a reference its findings do not count here, but the release
+    // judges the board on its own: say which of them it refuses (an
+    // electrical finding not within one footprint). framework_mobo_lefthalf
+    // with --reference: "2 unconnected" and no word of the 2 clearance and
+    // 4 hole clearance findings of its fixed parts that refused the
+    // release.
+    if matches!(facts.reference, KiCadReference::Findings { .. }) {
+        let new: BTreeSet<usize> = strict.new_indices.iter().copied().collect();
+        let blocking: Vec<&DrcFinding> = findings
+            .iter()
+            .enumerate()
+            .filter(|(index, finding)| {
+                !new.contains(index)
+                    && ELECTRICAL_KINDS.contains(&finding.kind.as_str())
+                    && !footprint_own(finding)
+            })
+            .map(|(_, finding)| finding)
+            .collect();
+        if !blocking.is_empty() {
+            let parts: BTreeSet<&str> = blocking
+                .iter()
+                .flat_map(|finding| finding.item_descriptions.iter())
+                .filter_map(|description| named_footprint(description))
+                .collect();
+            let mut parts: Vec<&str> = parts.into_iter().collect();
+            parts.sort_by(|a, b| crate::canonical_order::natural_cmp(a, b));
+            actions.push(format!(
+                "{} of the findings the reference has at the same place are between two nets ({}{}): not judged here, but fab-kicad-board, which judges the board on its own, refuses them: fix them in the input, or release with --allow-findings knowingly",
+                blocking.len(),
+                counts(&by_kind(&blocking)),
+                if parts.is_empty() {
+                    String::new()
+                } else {
+                    format!("; parts {}", parts.join(", "))
+                }
+            ));
+        }
+    }
     KiCadVerdict {
         status,
         exit_code: status.exit_code(),
@@ -2537,15 +2584,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         unconnected_terminals: facts.unconnected_terminals,
         kicad_checked: facts.native.is_some(),
         kicad_unconnected_items: facts.native.as_ref().map(|native| native.unconnected),
-        next_actions: next_actions(
-            facts,
-            status,
-            &strict.new,
-            &own,
-            &strict.unknown,
-            &footprint,
-            &input,
-        ),
+        next_actions: actions,
         footprint_findings,
         input_findings,
         clean_without_subtraction: facts
@@ -2853,6 +2892,38 @@ mod tests {
             errors: tally.errors,
             findings: tally.findings,
         }
+    }
+
+    #[test]
+    fn the_references_electrical_findings_are_said_to_refuse_the_release() {
+        let clearance = json!({"type": "clearance", "severity": "error",
+               "description": "Clearance violation (footprint J1 clearance 0.1000 mm; actual 0.0867 mm)",
+               "items": [{"description": "Pad 1 [A] of R31 on B.Cu", "uuid": "r31", "pos": {"x": 1.0, "y": 1.0}},
+                         {"description": "PTH pad B6 [B] of J1", "uuid": "b6", "pos": {"x": 1.5, "y": 1.0}}]});
+        let own = json!({"type": "hole_clearance", "severity": "error",
+               "description": "Hole clearance violation (board minimum hole clearance 0.2500 mm; actual 0.1030 mm)",
+               "items": [{"description": "PTH pad B1 [GND] of J1", "uuid": "b1", "pos": {"x": 2.0, "y": 1.0}},
+                         {"description": "NPTH pad of J1", "uuid": "h", "pos": {"x": 2.0, "y": 2.0}}]});
+        let mut facts = routed(tally_drc(&report(vec![clearance.clone(), own.clone()])));
+        facts.reference = reference(vec![clearance, own]);
+        let verdict = judge(&facts);
+        assert_eq!(verdict.status, KiCadRunStatus::Complete);
+        let action = verdict
+            .next_actions
+            .iter()
+            .find(|action| {
+                action.contains("fab-kicad-board, which judges the board on its own, refuses them")
+            })
+            .unwrap();
+        assert!(action.starts_with("1 of the findings the reference has at the same place are between two nets (clearance 1; parts J1, R31)"), "{action}");
+        // Without a reference: no such line.
+        facts.reference = KiCadReference::None;
+        assert!(
+            !judge(&facts)
+                .next_actions
+                .iter()
+                .any(|action| action.contains("the reference has at the same place"))
+        );
     }
 
     #[test]
