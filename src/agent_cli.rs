@@ -830,7 +830,12 @@ fn constraint_warnings(mut warnings: Vec<String>, placed: &serde_json::Value) ->
         .flatten()
         .filter_map(serde_json::Value::as_str)
     {
-        if !warnings.iter().any(|known| known == warning) {
+        // The placer's own "fixed parts C1 and C2 overlap" is the input
+        // check's warning without its detail when that one is there.
+        if !warnings
+            .iter()
+            .any(|known| known == warning || known.starts_with(&format!("{warning} (")))
+        {
             warnings.push(warning.to_string());
         }
     }
@@ -2017,6 +2022,24 @@ pub fn help(command: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_placers_overlap_warning_is_not_repeated_after_the_input_checks() {
+        let input = vec![
+            "fixed parts J1 and R31 overlap (pads on *.Cu): the placer keeps both ...".to_string(),
+        ];
+        let placed = serde_json::json!({"constraint_warnings": [
+            "fixed parts J1 and R31 overlap",
+            "fixed parts J1 and M1 overlap"
+        ]});
+        assert_eq!(
+            constraint_warnings(input.clone(), &placed),
+            [
+                input[0].clone(),
+                "fixed parts J1 and M1 overlap".to_string()
+            ]
+        );
+    }
 
     #[test]
     fn every_agent_command_has_a_usage_line() {

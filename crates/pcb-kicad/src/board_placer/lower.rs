@@ -98,6 +98,27 @@ pub(crate) fn glob_matches(pattern: &str, text: &str) -> bool {
 /// on the sides of its layers; one that allows footprints but forbids pads
 /// keeps copper out only, as a cutout does (bodies may reach over it).
 /// `None` for other zones.
+/// The warning for a fixed part on marks of the input (`marks`: each
+/// "text \"+\" (F.SilkS at 62.13, 66.20)"), the first three named.
+pub(crate) fn fixed_on_marks_warning(reference: &str, marks: &[String]) -> String {
+    let shown = 3;
+    match marks {
+        [mark] => format!(
+            "fixed part {reference} lies on the board's {mark}: both stay where the input put them"
+        ),
+        _ => format!(
+            "fixed part {reference} lies on {} of the board's texts and silkscreen graphics ({}{}): all stay where the input put them",
+            marks.len(),
+            marks[..marks.len().min(shown)].join("; "),
+            if marks.len() > shown {
+                format!("; {} more", marks.len() - shown)
+            } else {
+                String::new()
+            }
+        ),
+    }
+}
+
 fn rule_area_obstacle(
     item: &Expr,
 ) -> Result<
@@ -1479,7 +1500,10 @@ pub(crate) fn lower_placement(
         for (a, first) in fixed.iter().enumerate() {
             for second in &fixed[a + 1..] {
                 let (ca, cb) = (&problem.components[*first], &problem.components[*second]);
-                if !ca.side.collides(cb.side) {
+                // A hollow part's body admits other parts (`hollow`:
+                // framework_mobo_lefthalf's J1 around M1's pads); the
+                // input check judges their pads (`held_parts_overlapping`).
+                if !ca.side.collides(cb.side) || !ca.hollow.is_empty() || !cb.hollow.is_empty() {
                     continue;
                 }
                 let (pa, pb) = (problem.poses[*first], problem.poses[*second]);
@@ -1518,9 +1542,13 @@ pub(crate) fn lower_placement(
     // A fixed part on a mark of the input (a header's pin names inside its
     // courtyard, a test pad under its name): both stay as the input put
     // them; said, not refused.
+    // One warning per fixed part, however many marks it lies on (the
+    // OpenESC panel's two frames lay on 20 texts and graphics: twenty
+    // lines ahead of the one that mattered).
+    let mut on_marks: Vec<(usize, Vec<String>)> = Vec::new();
     for &(index, ref mark) in &marks {
         let mark_side = problem.components[index].side;
-        for (part, reference) in references.iter().enumerate().take(footprint_count) {
+        for (part, _) in references.iter().enumerate().take(footprint_count) {
             let component = &problem.components[part];
             if !component.fixed || !component.side.collides(mark_side) {
                 continue;
@@ -1538,12 +1566,19 @@ pub(crate) fn lower_placement(
                 .iter()
                 .any(|b| b[0] < body[2] && body[0] < b[2] && b[1] < body[3] && body[1] < b[3])
             {
-                stacked_warnings.push(format!(
-                    "fixed part {} lies on the board's {} ({} at {:.2}, {:.2}): both stay where the input put them",
-                    reference, mark.what, mark.layer, mark.at[0], mark.at[1]
-                ));
+                let what = format!(
+                    "{} ({} at {:.2}, {:.2})",
+                    mark.what, mark.layer, mark.at[0], mark.at[1]
+                );
+                match on_marks.iter_mut().find(|(other, _)| *other == part) {
+                    Some((_, marks)) => marks.push(what),
+                    None => on_marks.push((part, vec![what])),
+                }
             }
         }
+    }
+    for (part, marks) in on_marks {
+        stacked_warnings.push(fixed_on_marks_warning(&references[part], &marks));
     }
     // A fixed footprint's own rule areas (an antenna module's keepout, in
     // board coordinates) are obstacles like the board's: PixelWave's

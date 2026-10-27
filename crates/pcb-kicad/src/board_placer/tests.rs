@@ -1820,3 +1820,26 @@ fn a_parts_copper_graphics_keep_the_edge_margin_from_a_cutout() {
     // The meander 4 mm before it.
     assert!(legal_at(20.0));
 }
+
+#[test]
+fn a_fixed_part_on_many_marks_is_one_warning() {
+    let one = super::lower::fixed_on_marks_warning(
+        "J5",
+        &["text \"Framework kVm shim v2\" (F.SilkS at 113.00, 83.42)".to_string()],
+    );
+    assert_eq!(
+        one,
+        "fixed part J5 lies on the board's text \"Framework kVm shim v2\" (F.SilkS at 113.00, 83.42): both stay where the input put them"
+    );
+    let marks: Vec<String> = (1..=5)
+        .map(|n| format!("text \"{n}\" (F.SilkS at {n}.00, 1.00)"))
+        .collect();
+    let many = super::lower::fixed_on_marks_warning("U3", &marks);
+    assert!(
+        many.starts_with(
+            "fixed part U3 lies on 5 of the board's texts and silkscreen graphics (text \"1\""
+        ),
+        "{many}"
+    );
+    assert!(many.contains("; 2 more): all stay"), "{many}");
+}
