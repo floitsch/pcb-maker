@@ -2156,27 +2156,7 @@ pub fn refine_with(
             crate::PIN_WORK * nets.iter().map(|net| members[*net].len()).sum::<usize>() as u64,
         );
         nets.iter()
-            .map(|net| {
-                let mut bounds = [
-                    f64::INFINITY,
-                    f64::INFINITY,
-                    f64::NEG_INFINITY,
-                    f64::NEG_INFINITY,
-                ];
-                for (other, pin) in &members[*net] {
-                    let at = problem.components[*other]
-                        .pin_position(&problem.components[*other].pins[*pin], poses[*other]);
-                    bounds[0] = bounds[0].min(at[0]);
-                    bounds[1] = bounds[1].min(at[1]);
-                    bounds[2] = bounds[2].max(at[0]);
-                    bounds[3] = bounds[3].max(at[1]);
-                }
-                if members[*net].len() < 2 {
-                    0.0
-                } else {
-                    problem.net_weights[*net] * ((bounds[2] - bounds[0]) + (bounds[3] - bounds[1]))
-                }
-            })
+            .map(|net| net_cost(problem, &members, *net, poses))
             .sum()
     };
 
@@ -2228,8 +2208,11 @@ pub fn refine_with(
             }
             target = [target[0] / weight, target[1] / weight];
             let original = poses[index];
+            // Only this part moves among its candidates: its nets' other
+            // pins are folded once (`MovingNets`), `cost` of its nets.
+            let moving = MovingNets::new(problem, &members, &incident[index], index, poses);
             let score = |poses: &[Pose]| {
-                cost(poses, &incident[index]) + counted_penalty(problem, poses, index)
+                moving.cost(problem, &members, poses) + counted_penalty(problem, poses, index)
             };
             let mut best = (score(poses), original);
             if let Some(state) = escape.as_mut() {
@@ -2430,6 +2413,135 @@ pub fn refine_with(
         }
     }
     improvements
+}
+
+/// A net's weighted half perimeter at `poses` (0 below two pins): the
+/// refinement's wirelength term of one net.
+fn net_cost(problem: &Problem, members: &[Vec<(usize, usize)>], net: usize, poses: &[Pose]) -> f64 {
+    let mut bounds = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
+    for (other, pin) in &members[net] {
+        let at = problem.components[*other]
+            .pin_position(&problem.components[*other].pins[*pin], poses[*other]);
+        bounds[0] = bounds[0].min(at[0]);
+        bounds[1] = bounds[1].min(at[1]);
+        bounds[2] = bounds[2].max(at[0]);
+        bounds[3] = bounds[3].max(at[1]);
+    }
+    if members[net].len() < 2 {
+        0.0
+    } else {
+        problem.net_weights[net] * ((bounds[2] - bounds[0]) + (bounds[3] - bounds[1]))
+    }
+}
+
+/// The refinement's wirelength of one part's nets while only that part
+/// moves (its candidate spots and turns): per net, the box of the pins on
+/// other parts folded once, so that a candidate turns only the part's own
+/// pins (a candidate turned every pin of its nets, a power net's hundreds
+/// among them: the refinement's cost was 3 to 5 % of a placement's
+/// instructions, 2026-10-28). The same value bit for bit as `net_cost`
+/// of each net summed in order: a minimum or maximum of numbers that are
+/// neither NaN nor zero is the same whatever the order they are folded in
+/// (equal ones have the same bits), and a net with a coordinate of either
+/// zero (whose sign the fold's order could pick) is folded directly.
+struct MovingNets {
+    part: usize,
+    nets: Vec<MovingNet>,
+    /// The work `cost` books: as many pins as the nets have.
+    work: u64,
+}
+
+struct MovingNet {
+    net: usize,
+    /// The other pins' box (min x, min y, max x, max y).
+    bounds: [f64; 4],
+    /// The part's own pins on the net.
+    own: Vec<usize>,
+    /// Folded directly (a zero among the other pins' coordinates).
+    direct: bool,
+}
+
+impl MovingNets {
+    fn new(
+        problem: &Problem,
+        members: &[Vec<(usize, usize)>],
+        nets: &[usize],
+        part: usize,
+        poses: &[Pose],
+    ) -> Self {
+        let nets = nets
+            .iter()
+            .map(|&net| {
+                let mut bounds = [
+                    f64::INFINITY,
+                    f64::INFINITY,
+                    f64::NEG_INFINITY,
+                    f64::NEG_INFINITY,
+                ];
+                let mut own = Vec::new();
+                let mut direct = false;
+                for &(other, pin) in &members[net] {
+                    if other == part {
+                        own.push(pin);
+                        continue;
+                    }
+                    let at = problem.components[other]
+                        .pin_position(&problem.components[other].pins[pin], poses[other]);
+                    direct |= at[0] == 0.0 || at[1] == 0.0;
+                    bounds[0] = bounds[0].min(at[0]);
+                    bounds[1] = bounds[1].min(at[1]);
+                    bounds[2] = bounds[2].max(at[0]);
+                    bounds[3] = bounds[3].max(at[1]);
+                }
+                MovingNet {
+                    net,
+                    bounds,
+                    own,
+                    direct,
+                }
+            })
+            .collect::<Vec<_>>();
+        let work =
+            crate::PIN_WORK * nets.iter().map(|net| members[net.net].len()).sum::<usize>() as u64;
+        MovingNets { part, nets, work }
+    }
+
+    /// The refinement's `cost` of the nets at `poses` (the other parts
+    /// where `new` found them), counting the same work.
+    fn cost(&self, problem: &Problem, members: &[Vec<(usize, usize)>], poses: &[Pose]) -> f64 {
+        crate::add_work(self.work);
+        let component = &problem.components[self.part];
+        let pose = poses[self.part];
+        self.nets
+            .iter()
+            .map(|moving| {
+                let net = moving.net;
+                if members[net].len() < 2 {
+                    return 0.0;
+                }
+                if moving.direct {
+                    return net_cost(problem, members, net, poses);
+                }
+                let mut bounds = moving.bounds;
+                for &pin in &moving.own {
+                    let at = component.pin_position(&component.pins[pin], pose);
+                    if at[0] == 0.0 || at[1] == 0.0 {
+                        return net_cost(problem, members, net, poses);
+                    }
+                    bounds[0] = bounds[0].min(at[0]);
+                    bounds[1] = bounds[1].min(at[1]);
+                    bounds[2] = bounds[2].max(at[0]);
+                    bounds[3] = bounds[3].max(at[1]);
+                }
+                problem.net_weights[net] * ((bounds[2] - bounds[0]) + (bounds[3] - bounds[1]))
+            })
+            .sum()
+    }
 }
 
 /// The refinement's bus-group pass (`crate::groups`): each group with more
@@ -2857,6 +2969,94 @@ mod tests {
             crossings: None,
         };
         (problem, poses)
+    }
+
+    #[test]
+    fn moving_nets_cost_the_direct_sum_bit_for_bit() {
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        for round in 0..20 {
+            let parts = 8 + round;
+            let nets = 3 + round / 2;
+            let mut components = Vec::new();
+            let mut poses = Vec::new();
+            for _ in 0..parts {
+                let mut component = resistor(0.0);
+                component.angle_options = vec![0.0, 90.0, 180.0, 270.0];
+                for _ in 0..1 + (next() * 6.0) as usize {
+                    // Some pins at whole millimetres, some on an axis of
+                    // the frame: coordinates of either zero occur.
+                    let coordinate = |value: f64| {
+                        if value < 0.2 {
+                            0.0
+                        } else {
+                            (value * 8.0).round() / 4.0 - 1.0
+                        }
+                    };
+                    component.pins.push(crate::problem::Pin {
+                        offset: [coordinate(next()), coordinate(next())],
+                        net: (next() * nets as f64) as usize,
+                    });
+                }
+                components.push(component);
+                poses.push(Pose {
+                    position: [
+                        if next() < 0.1 { 0.0 } else { next() * 40.0 },
+                        if next() < 0.1 { -0.0 } else { next() * 40.0 },
+                    ],
+                    angle: [0.0, 90.0, 180.0, 270.0][(next() * 4.0) as usize],
+                });
+            }
+            let (mut problem, _) = pair(0.0, 0.0);
+            problem.components = components;
+            problem.poses = poses.clone();
+            problem.net_weights = (0..nets).map(|_| 0.5 + next()).collect();
+            let mut members: Vec<Vec<(usize, usize)>> = vec![Vec::new(); nets];
+            for (index, component) in problem.components.iter().enumerate() {
+                for (pin, description) in component.pins.iter().enumerate() {
+                    members[description.net].push((index, pin));
+                }
+            }
+            for part in 0..parts {
+                let mut incident: Vec<usize> = problem.components[part]
+                    .pins
+                    .iter()
+                    .map(|pin| pin.net)
+                    .collect();
+                incident.sort_unstable();
+                incident.dedup();
+                let moving = MovingNets::new(&problem, &members, &incident, part, &poses);
+                let mut candidate = poses.clone();
+                for _ in 0..50 {
+                    candidate[part] = Pose {
+                        position: [
+                            if next() < 0.1 {
+                                0.0
+                            } else {
+                                next() * 50.0 - 5.0
+                            },
+                            next() * 50.0 - 5.0,
+                        ],
+                        angle: [0.0, 90.0, 180.0, 270.0][(next() * 4.0) as usize],
+                    };
+                    let before = crate::work();
+                    let fast = moving.cost(&problem, &members, &candidate);
+                    let booked = crate::work() - before;
+                    let direct: f64 = incident
+                        .iter()
+                        .map(|net| net_cost(&problem, &members, *net, &candidate))
+                        .sum();
+                    assert_eq!(fast.to_bits(), direct.to_bits(), "{fast} {direct}");
+                    let pins: usize = incident.iter().map(|net| members[*net].len()).sum();
+                    assert_eq!(booked, crate::PIN_WORK * pins as u64);
+                }
+            }
+        }
     }
 
     #[test]
