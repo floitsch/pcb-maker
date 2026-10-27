@@ -61,6 +61,10 @@ findings", has the rule.
   stay 1. osprey's antenna and vaio_re's bridges stay the run's with
   `--input`. With a reference nothing changes (run.py's strict rule
   untouched); the fixture goldens pass unchanged.
+- **End to end** (run.py, tasks/v7, verd1-c, build/verd1-layout-1): the
+  layouts of 0xcb-static and Explorer now exit 0 (`complete`, 0
+  unconnected, `input_findings` solder_mask_bridge 2 and 3), and run.py's
+  rows pass and pass strict, as they did in the night's sweep.
 
 ## Committed on 2026-10-27 (a board's reservation is its binary's; a run past its reservation waits; run.py retries a row the ledger ended)
 
