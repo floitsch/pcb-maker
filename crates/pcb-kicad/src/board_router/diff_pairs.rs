@@ -253,16 +253,19 @@ fn skew_matching() -> bool {
 
 /// Whether crossed ends get a crossover in their lead (`crossover`), the
 /// links' paths lose their hairpins (`despiked`) and the kept links' vias
-/// keep their holes' clearance in the fallback: off by default (measured
-/// 2026-10-25: more links coupled, but more errors and gap findings on the
-/// rule boards; docs/router.md, "Polarity"), on with
-/// `PCB_ROUTER_DIFF_PAIRS_CROSSOVER=1` (an experiment's switch). Off, a
-/// crossed end's stubs are the router's, as before.
+/// keep their holes' clearance in the fallback: `CROSSOVERS_BY_DEFAULT`,
+/// else `PCB_ROUTER_DIFF_PAIRS_CROSSOVER` (`1` or `0`). Off, a crossed
+/// end's stubs are the router's, as before 2026-10-25 (docs/router.md,
+/// "Polarity").
 fn crossovers() -> bool {
     CROSSOVERS.with(|cell| cell.get()).unwrap_or_else(|| {
-        std::env::var("PCB_ROUTER_DIFF_PAIRS_CROSSOVER").is_ok_and(|value| value == "1")
+        std::env::var("PCB_ROUTER_DIFF_PAIRS_CROSSOVER")
+            .map_or(CROSSOVERS_BY_DEFAULT, |value| value == "1")
     })
 }
+
+/// The crossovers' default (`crossovers`).
+const CROSSOVERS_BY_DEFAULT: bool = true;
 
 thread_local! {
     /// A test's override of `crossovers` (this thread only).
