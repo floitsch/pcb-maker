@@ -2199,10 +2199,38 @@ fn offset_line(points: &[Point], side: f64, offset: f64) -> Vec<Point> {
     out
 }
 
+/// The spreads `finish_pairs` tries for a link's vias where those of
+/// `Pair::via_offset` come too close to the other net (`own_vias_clear`).
+const VIA_SPREADS: [f64; 3] = [1.5, 2.0, 3.0];
+
+/// Whether each via of a link's copper keeps from the other net's tracks
+/// and vias what the copper check asks between the pair's two nets (the
+/// via's copper the gap, below the clearance; its hole the hole clearance;
+/// hole to hole).
+fn own_vias_clear(copper: &LinkCopper, pair: &Pair) -> bool {
+    let near = pair.gap.min(pair.clearance) - EPSILON;
+    let (radius, drill) = (pair.via_diameter / 2.0, pair.via_drill / 2.0);
+    (0..2).all(|polarity| {
+        copper.vias[polarity].iter().all(|&via| {
+            copper.segments[1 - polarity].iter().all(|&(_, from, to)| {
+                let distance =
+                    core::geometry::point_segment_distance(via, from, to) - pair.width / 2.0;
+                distance - radius >= near && distance - drill >= pair.hole_clearance - EPSILON
+            }) && copper.vias[1 - polarity].iter().all(|&other| {
+                let distance = core::geometry::distance(via, other);
+                distance - 2.0 * radius >= near
+                    && distance - radius - drill >= pair.hole_clearance - EPSILON
+                    && distance - 2.0 * drill >= pair.hole_to_hole - EPSILON
+            })
+        })
+    })
+}
+
 /// The copper of a link from its path: the two offset tracks per layer
 /// run and a via of each net side by side at each layer change; the
-/// positive net on `side` of the run (1 left, -1 right).
-fn link_copper(path: &[(Point, usize)], pair: &Pair, side: f64) -> Option<LinkCopper> {
+/// positive net on `side` of the run (1 left, -1 right), the vias
+/// `spread` times as far from the centreline as `Pair::via_offset`.
+fn link_copper(path: &[(Point, usize)], pair: &Pair, side: f64, spread: f64) -> Option<LinkCopper> {
     // Runs on one layer, split at the layer changes (the vias).
     let mut runs: Vec<(usize, Vec<Point>)> = Vec::new();
     for &(point, layer) in path {
@@ -2229,7 +2257,7 @@ fn link_copper(path: &[(Point, usize)], pair: &Pair, side: f64) -> Option<LinkCo
     directions.iter().flatten().next()?;
     let mut copper = LinkCopper::default();
     let d = pair.offset();
-    let dv = pair.via_offset();
+    let dv = pair.via_offset() * spread;
     for (polarity, sign) in [(0, side), (1, -side)] {
         let mut previous_end: Option<(Point, usize)> = None;
         let mut incoming: Option<Point> = None;
@@ -2529,8 +2557,8 @@ pub(crate) fn finish_pairs(
         if debug() {
             eprintln!("diff pair link {} path {:?}", plan_link.net, path);
         }
-        let build = |path: &Vec<(Point, usize)>| {
-            link_copper(path, pair, plan_link.side).map(|mut copper| {
+        let build_at = |path: &Vec<(Point, usize)>, spread: f64| {
+            link_copper(path, pair, plan_link.side, spread).map(|mut copper| {
                 copper.crossed = plan_link.crossed;
                 // The jogs from the stubs' ends to the run's tracks.
                 for (polarity, segments) in copper.segments.iter_mut().enumerate() {
@@ -2582,6 +2610,23 @@ pub(crate) fn finish_pairs(
                 }
                 copper
             })
+        };
+        // Where a via of one net comes too close to the other net's copper
+        // (a layer change in a sharp turn), the vias further out.
+        let build = |path: &Vec<(Point, usize)>| {
+            let first = build_at(path, 1.0);
+            if !crossovers()
+                || first
+                    .as_ref()
+                    .is_none_or(|copper| own_vias_clear(copper, pair))
+            {
+                return first;
+            }
+            VIA_SPREADS
+                .iter()
+                .filter_map(|&spread| build_at(path, spread))
+                .find(|copper| own_vias_clear(copper, pair))
+                .or(first)
         };
         // The run without its hairpins (the route turning back by more
         // than a right angle, which the offset tracks cannot follow apart),
