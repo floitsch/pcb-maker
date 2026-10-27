@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 101 | 84 | 17 | 101 | 44 |
+| [Router settings](#router-settings) | 103 | 84 | 19 | 103 | 44 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 1 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 1 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
@@ -94,6 +94,8 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `diff_pair_return_net` | `Option<String>` | unset | router.md | Differential pairs: the return vias' net by name. Unset: `GND` (past a sheet path), else the poured net ending in `GND` with the most pads; a net without a pour gets none. |
 | `diff_pairs_by_need` (internal) | `bool` | `false` (internal) | - | Route mode: `diff_pairs` defaults by need (`diff_pairs_choice`); set by route-kicad-board, not read from a file (a layout's routes keep the default off). |
 | `diff_pair_rules` (internal) | `BTreeMap<String, KiCadDiffPairRule>` | `{}` (internal) | - | The project's rules for the nets of differential pairs, keyed by normalized net name like `connection_rules` (set by the project's rules, not read from a file). |
+| `track_disallowed` (internal) | `BTreeMap<String, pcb_router::LayerMask>` | `{}` (internal) | - | Per net (normalized like `connection_rules`): the copper layers (bits in the router's order) where a custom rule surely disallows its tracks (`disallow track`: ducktop2's solid ground layers, no track but GND's on In1, In3 and In6). Every lowering keeps the net's class off them (`RuleClass::layers`), on every rung of the ladder whatever it does with the pours (set by the project's rules, not read from a file). |
+| `ruled_widths` (internal) | `std::collections::BTreeSet<String>` | `{}` (internal) | - | The nets whose track width a custom rule gives (a `track_width` opt that holds for the net on every layer; a differential pair's width from a rule on `inDiffPair()`, `with_pairs`): the narrow-signal step keeps their width and narrows only nets at their class's (set by the project's rules, not read from a file). |
 | `length_matching` | `Option<bool>` | unset | router.md | Length and skew rules (docs/router.md, "Length and skew rules"): the custom rules' `length` and `skew` constraints over single nets and groups of nets are kept after the route: a net shorter than a `length` minimum, or further than a `skew` maximum below the longest net of its rule, gets a meander (a KiCad tuning pattern) on a straight track of its route; a `length` maximum is checked and reported (`lengths` in the verdict), not kept by the search. Route mode and layouts alike; on by default where the project has such a rule. `PCB_ROUTER_LENGTH_MATCHING=0` (or `1`) decides where the settings name none. |
 | `length_rules` (internal) | `Vec<KiCadLengthRule>` | `[]` (internal) | - | The project's `length` and `skew` rules with the nets they hold for (set by the project's rules, not read from a file). |
 | `via_reduction_rounds` | `Option<usize>` | unset | - | Router `via_reduction_rounds`: via reduction rounds after the board is complete (default 3). |
