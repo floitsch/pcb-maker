@@ -55,6 +55,7 @@ mod spokes;
 mod stamping;
 mod stitch;
 mod straighten;
+mod subset;
 mod trouble;
 mod update;
 mod vias;
@@ -68,6 +69,7 @@ pub use escapes::exact_escapes_override;
 pub use pour_report::{PourLayerReport, StarvedThermal};
 pub use profile::{ProcessAccounting, build_totals, process_accounting};
 pub use result::{DeadPad, Diagnostics, HotSpot, NetStatus, RepairEntry, RoutingResult};
+pub use subset::{SubsetNet, SubsetStanding};
 pub use trouble::{TROUBLE_REPAIR_DEFAULT, trouble_override};
 pub use wall::{WALL_CUTS, note_wall_cut, wall_cuts, wall_guard};
 
@@ -347,6 +349,9 @@ struct NetState {
     /// How often negotiation had to reroute this net; stubborn nets get
     /// wider corridors and finally none.
     reroutes: usize,
+    /// Search expansions spent routing it (`route_net`), for the
+    /// trouble-maker probe's work per net (`probe_subset`).
+    expansions: u64,
     /// Consecutive iterations in conflict. A net stuck this long is ripped
     /// up whole now and then: the branches it kept may be what boxes the
     /// other net in.

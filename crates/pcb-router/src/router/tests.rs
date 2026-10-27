@@ -5033,3 +5033,38 @@ fn a_spoke_cut_short_of_its_end_joins_the_fill_beside_it() {
         "{measured:?} {routing:?}"
     );
 }
+
+#[test]
+fn a_subset_probe_routes_only_its_nets() {
+    let mut router = crossed_net();
+    let standing = router.probe_subset(&[1], 1.0);
+    assert_eq!(standing.nets.len(), 1);
+    assert_eq!(standing.nets[0].net, 1);
+    assert!(standing.nets[0].complete && standing.nets[0].expansions > 0);
+    assert_eq!((standing.unfinished, standing.open_terminals), (0, 0));
+    // The nets outside the set have no copper.
+    assert!(router.nets[0].branches.is_empty() && router.nets[2].branches.is_empty());
+}
+
+#[test]
+fn background_stubs_leave_every_pad_of_the_other_nets() {
+    let mut router = crossed_net();
+    // A's three pads and C's two, B left to the probe.
+    assert_eq!(router.stamp_background_stubs(&[1], 1.0), 5);
+    assert_eq!(router.nets[0].fixed, 3);
+    assert!(router.nets[1].branches.is_empty());
+    // A stub is fixed: the net routed beside them keeps out of their way.
+    let standing = router.probe_subset(&[1], 1.0);
+    assert!(standing.nets[0].complete);
+    assert_eq!(standing.conflicted, 0);
+}
+
+#[test]
+fn a_background_cost_raises_the_history_where_it_is() {
+    let mut router = crossed_net();
+    router.add_background_cost(&|_, point| if point[0] < 10.0 { 2.0 } else { 0.0 });
+    let left = router.grid.index(10, 50);
+    let right = router.grid.index(250, 50);
+    assert_eq!(router.history[0][left], 2.0);
+    assert_eq!(router.history[0][right], 0.0);
+}

@@ -112,8 +112,10 @@ impl Router {
         hard: bool,
         window_growth: f64,
     ) {
+        let before = scratch.expansions;
         self.route_net_with_arrays(scratch, net, net_state, present, hard, window_growth);
         scratch.release();
+        net_state.expansions += scratch.expansions.saturating_sub(before);
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -50,6 +50,7 @@ mod congestion_rank;
 mod congestion_samples;
 mod global_route;
 mod move_descent;
+mod trouble_probe;
 pub use board_layout::{
     KiCadBoardLayoutConfig, KiCadBoardLayoutMove, KiCadBoardLayoutResult, KiCadOutlineTrial,
     KiCadRaceProbe, KiCadRaceProbeScore, KiCadRaceReport, KiCadSilkscreenConfig, KiCadSwappable,
@@ -63,6 +64,10 @@ pub use congestion_samples::{
 pub use global_route::{KiCadGlobalRouteReport, KiCadProbeReport, global_route_kicad_board};
 pub use move_descent::{
     KiCadDescentMove, KiCadMoveDescent, KiCadMoveDescentReport, KiCadMovesFact,
+};
+pub use trouble_probe::{
+    KiCadTroubleBackground, KiCadTroubleNet, KiCadTroubleProbeConfig, KiCadTroubleProbeReport,
+    KiCadTroubleSource, probe_trouble_placement,
 };
 mod board_placer;
 mod canonical_order;
