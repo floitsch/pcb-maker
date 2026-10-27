@@ -179,11 +179,13 @@ struct Pad {
     size: [f64; 2],
     corner: f64,
     angle: f64,
-    /// A small SMD pad's copper as the router lowers it (chamfered corners,
-    /// a trapezoid's slanted sides, a custom shape), for the vias in pads;
-    /// `None` for other pads and where the lowering fails (the rounded box
-    /// above stands in).
+    /// An SMD pad's copper as the router lowers it (chamfered corners, a
+    /// trapezoid's slanted sides, a custom shape's primitives), for the
+    /// vias in pads; `None` for other pads and where the lowering fails
+    /// (the rounded box above stands in).
     copper_shape: Option<pcb_router::geometry::Shape>,
+    /// A custom pad (its size is its anchor's, not its copper's).
+    custom: bool,
     power_pin: bool,
     /// Pin function without KiCad's appended pin number (`AIN0`, `SW`).
     function: String,
@@ -391,7 +393,8 @@ fn parts_of(pcb: &Expr, names: &NetNames) -> Result<Vec<Part>, String> {
                     }
                 },
                 angle: pad_at[2],
-                copper_shape: (kind == "smd" && size[0].max(size[1]) < 2.0)
+                custom: pad.children().get(3).and_then(Expr::atom) == Some("custom"),
+                copper_shape: (kind == "smd")
                     .then(|| lower_pad(pad, at).ok())
                     .flatten()
                     .map(|lowered| lowered.geometry.router_shape()),
@@ -982,10 +985,20 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
                         outside[0].hypot(outside[1]) - pad.corner
                     }
                 };
-                pad.smd
-                    && pad.copper
-                    && pad.half[0].max(pad.half[1]) < 1.0
-                    && distance < drill / 2.0
+                // Small by the nominal size; a custom pad by its copper's
+                // extent, its anchor not being its copper (d20_pcb's touch
+                // electrode, a die's face on a 1.5 mm anchor, holds its
+                // net's via by design).
+                let small = match (&pad.copper_shape, pad.custom) {
+                    (Some(shape), true) => {
+                        let bounds = shape.aabb();
+                        (bounds.maximum[0] - bounds.minimum[0])
+                            .max(bounds.maximum[1] - bounds.minimum[1])
+                            < 2.0
+                    }
+                    _ => pad.half[0].max(pad.half[1]) < 1.0,
+                };
+                pad.smd && pad.copper && small && distance < drill / 2.0
             });
         vias_in_pads += inside as usize;
     }
@@ -1510,7 +1523,8 @@ mod tests {
         // clear of the copper (KiCad's own polygons: 0.3465 and 0.4337 mm
         // from the via's centre); the rounded box counted them. A via at
         // the LED pad's uncut corner and one in the trapezoid's wide end,
-        // outside its nominal box, are in the pads.
+        // outside its nominal box, are in the pads. A custom pad is as
+        // small as its copper, not its anchor.
         let board = |via: &str| {
             format!(
                 r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
@@ -1520,6 +1534,10 @@ mod tests {
                 (roundrect_rratio 0.1) (chamfer_ratio 0.5) (chamfer bottom_left) (net 1 "GND")))
             (footprint "hotswap" (layer "F.Cu") (at 30 10) (property "Reference" "SW32") (property "Value" "SW")
               (pad "1" smd trapezoid (at 0 0) (size 0.6 1.4) (rect_delta 0.8 0) (layers "B.Cu" "B.Paste" "B.Mask") (net 2 "COL")))
+            (footprint "electrode" (layer "F.Cu") (at 20 10) (property "Reference" "J2") (property "Value" "PAD")
+              (pad "1" smd custom (at 0 0) (size 0.5 0.5) (layers "F.Cu" "F.Mask") (net 3 "PAD")
+                (options (clearance outline) (anchor rect))
+                (primitives (gr_poly (pts (xy -2 -2) (xy 2 -2) (xy 2 2) (xy -2 2)) (width 0) (fill yes)))))
             {via})"#
             )
         };
@@ -1543,6 +1561,12 @@ mod tests {
             (
                 "(via (at 29.75 10.9) (size 0.6) (drill 0.3) (layers \"F.Cu\" \"B.Cu\") (net 2))",
                 1,
+            ),
+            // A custom pad of 4 mm copper on a 0.5 mm anchor (d20_pcb's
+            // touch electrode) is no small pad.
+            (
+                "(via (at 21.5 11.5) (size 0.6) (drill 0.3) (layers \"F.Cu\" \"B.Cu\") (net 3))",
+                0,
             ),
         ];
         for (index, (via, expected)) in cases.into_iter().enumerate() {
