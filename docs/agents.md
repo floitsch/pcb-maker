@@ -1114,7 +1114,14 @@ is a fab release gated by KiCad's DRC:
   blocking). While copper errors or unconnected items remain, the release
   is **refused**: exit 1, nothing exported, `verdict.json` with the counts
   in `reason` and the first findings in `next_actions` (`clearance: Track
-  [GND] on F.Cu at (12.30, 4.10); Pad 2 [VBUS] of J1 ...`). Warnings,
+  [GND] on F.Cu at (12.30, 4.10); Pad 2 [VBUS] of J1 ...`). With
+  `--input <project-dir>` (since 2026-10-27) the clearances, hole
+  clearances, holes too close and shorts between parts the layout kept
+  where the input has them (framework_mobo_lefthalf's fixed R31 and R32
+  under J1's pads) are named per type first, as the layout's verdict
+  names them: the input's, not the layout's to move, with what to do;
+  the rest are the layout's ("move what the layout put too close").
+  Warnings,
   excluded and cosmetic findings (silkscreen, text, library) do not block.
   `--allow-findings` releases anyway and lists the findings it allowed.
 - **The files**, all through kicad-cli: `gerbers/` (every copper layer,

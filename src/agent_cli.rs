@@ -1517,10 +1517,25 @@ fn fab(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         );
     } else {
         verdict.reason = format!("refused: {counts}; nothing was exported");
-        verdict.next_actions.push(
-            "fix the findings (route the open connections, move what is too close) and release again; --allow-findings exports anyway"
-                .into(),
-        );
+        // With the board it was laid out from: the findings between parts
+        // the layout kept where the input has them are not the layout's
+        // to move (as its verdict says).
+        let (kept, kept_count) = if input_project.is_some() {
+            pcb_kicad::kept_parts_actions(&facts)
+        } else {
+            (Vec::new(), 0)
+        };
+        if kept.is_empty() {
+            verdict.next_actions.push(
+                "fix the findings (route the open connections, move what is too close) and release again; --allow-findings exports anyway"
+                    .into(),
+            );
+        } else {
+            verdict.next_actions.push(format!(
+                "{kept_count} of the errors lie between parts the layout kept where the input has them (below): they are the input's, not the layout's to move; fix the others (route the open connections, move what the layout put too close) and release again; --allow-findings exports anyway"
+            ));
+            verdict.next_actions.extend(kept);
+        }
         verdict
             .next_actions
             .extend(manifest.findings.iter().cloned());

@@ -85,9 +85,10 @@ pub use verdict::{
     EXIT_USAGE, INPUT_KINDS, KiCadInputItems, KiCadReference, KiCadRunFacts, KiCadRunStatus,
     KiCadVerdict, board_items, custom_rules_line, decide, drc_finding, error_verdict,
     footprint_findings_note, footprint_own_unreferenced, input_error, input_findings_note,
-    input_items, input_own, is_cosmetic, is_input_error, judge, kicad_drc_report, load_drc_tally,
-    noted_input_actions, read_drc_tally, reference_findings, room_action, route_facts,
-    set_build_version, split_findings, tally_drc, unreferenced_apart, wall_cuts,
+    input_items, input_own, is_cosmetic, is_input_error, judge, kept_parts_actions,
+    kicad_drc_report, load_drc_tally, noted_input_actions, read_drc_tally, reference_findings,
+    room_action, route_facts, set_build_version, split_findings, tally_drc, unreferenced_apart,
+    wall_cuts,
 };
 mod work_rate;
 pub use work_rate::{

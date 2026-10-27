@@ -2313,6 +2313,36 @@ fn footprint_mask_graphics(findings: &[&DrcFinding]) -> Vec<String> {
     graphics
 }
 
+/// The electrical findings that count between parts kept where the input
+/// has them (`ELECTRICAL_KINDS`, every item a pad of such a part:
+/// `kept_parts_of`), one action per type as the layout's verdict words it,
+/// and how many findings they are. `fab-kicad-board --input` says them
+/// instead of "move what is too close" (framework_mobo_lefthalf's fixed
+/// R31 and R32 under J1's pads, the designer's places).
+pub fn kept_parts_actions(facts: &KiCadRunFacts) -> (Vec<String>, usize) {
+    let Some(native) = &facts.native else {
+        return (Vec::new(), 0);
+    };
+    let mut actions = Vec::new();
+    let mut total = 0;
+    for kind in ELECTRICAL_KINDS {
+        let findings: Vec<&DrcFinding> = native
+            .findings
+            .iter()
+            .filter(|finding| {
+                finding.kind == kind && unreferenced_apart(finding, facts.input.as_ref()).is_none()
+            })
+            .collect();
+        if let Some(mut parts) = kept_parts_of(&findings, facts.input.as_ref()) {
+            parts.sort_by(|a, b| crate::canonical_order::natural_cmp(a, b));
+            let kept = format!("{}: unchanged from the input", parts.join(", "));
+            actions.push(finding_action(kind, findings.len(), &findings, Some(&kept)));
+            total += findings.len();
+        }
+    }
+    (actions, total)
+}
+
 /// The finding types between two nets' copper that `kept_parts_of` speaks
 /// of: never the input's to excuse (`INPUT_KINDS`).
 const ELECTRICAL_KINDS: [&str; 4] = [
@@ -3078,6 +3108,20 @@ mod tests {
             .find(|action| action.starts_with("clearance 2"))
             .unwrap();
         assert!(action.contains("move those nets' parts apart"), "{action}");
+        // The fab gate with --input: the same findings, said per type.
+        facts.command = "fab-kicad-board".into();
+        facts.input = Some(kept(&["J1", "R31", "R32"]));
+        let (actions, count) = kept_parts_actions(&facts);
+        assert_eq!(count, 2);
+        assert_eq!(actions.len(), 1);
+        assert!(
+            actions[0].starts_with("clearance 2")
+                && actions[0].contains("(J1, R31, R32: unchanged from the input)")
+                && !actions[0].contains("move those nets' parts apart"),
+            "{actions:?}"
+        );
+        facts.input = Some(kept(&["J1", "R31"]));
+        assert_eq!(kept_parts_actions(&facts), (Vec::new(), 0));
     }
 
     #[test]
