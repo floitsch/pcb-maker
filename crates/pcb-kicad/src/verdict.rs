@@ -1994,7 +1994,15 @@ fn next_actions(
                 .copied()
                 .filter(|finding| &finding.kind == kind)
                 .collect();
-            let kept = kept_parts_of(&findings, facts.input.as_ref());
+            let kept = kept_parts_of(&findings, facts.input.as_ref()).map(|mut parts| {
+                parts.sort_by(|a, b| crate::canonical_order::natural_cmp(a, b));
+                let how = if facts.command == "route-kicad-board" {
+                    "route mode keeps every part"
+                } else {
+                    "fixed"
+                };
+                format!("{}: {how}", parts.join(", "))
+            });
             actions.push(finding_action(kind, *count, &findings, kept.as_deref()));
         }
     }
@@ -2152,7 +2160,7 @@ fn finding_action(
     kind: &str,
     count: usize,
     findings: &[&DrcFinding],
-    kept: Option<&[String]>,
+    kept: Option<&str>,
 ) -> String {
     // The rule as KiCad states it: the first parenthesis of the first
     // finding's description ("Clearance violation (netclass 'Default'
@@ -2238,8 +2246,7 @@ fn finding_action(
         // the designer put them): "move the parts apart" is not the
         // run's to do.
         (None, Some(parts)) if ELECTRICAL_KINDS.contains(&kind) => format!(
-            "every finding lies between parts kept where the input has them ({}: fixed, or every part in route mode), copper this run neither placed nor routed, but between two nets, so it counts and fab-kicad-board refuses it; move one of the parts in the input (or free it from fixed so the placer does), or accept it knowingly (a KiCad exclusion, fab-kicad-board --allow-findings); the designer's board as --reference makes it pre-existing where that board has it, which the release still refuses",
-            parts.join(", ")
+            "every finding lies between parts kept where the input has them ({parts}), copper this run neither placed nor routed, but between two nets, so it counts and fab-kicad-board refuses it; move one of the parts in the input (or free it from fixed so the placer does), or accept it knowingly (a KiCad exclusion, fab-kicad-board --allow-findings); the designer's board as --reference makes it pre-existing where that board has it, which the release still refuses"
         ),
         (None, _) => step.to_string(),
     };
@@ -2902,7 +2909,7 @@ mod tests {
             .find(|action| action.starts_with("clearance 2"))
             .unwrap();
         assert!(
-            action.contains("kept where the input has them (R31, J1, R32: fixed")
+            action.contains("kept where the input has them (J1, R31, R32: fixed)")
                 && action.contains("fab-kicad-board refuses it")
                 && !action.contains("move those nets' parts apart"),
             "{action}"
