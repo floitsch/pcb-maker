@@ -696,6 +696,51 @@ struct Launch {
     /// A crossover in the lead (`crossover`; asked for at a crossed end):
     /// the run past it has the nets on the other sides.
     crossover: Option<Crossover>,
+    /// With a crossover: how far its copper keeps beyond the clearance from
+    /// the neighbouring pairs' launches (`neighbour_room`; infinite where
+    /// none is near, and without a crossover).
+    room: f64,
+}
+
+/// Where a neighbouring pair's link end launches (`launch` on the board
+/// before any link's copper): its straight stubs from the pads to the
+/// stubs' ends and its run's lead. A crossover keeps its clearance from
+/// them (`neighbour_room`): else it pushes that pair's stubs out of their
+/// gap, or its launch away from the pads (oculink_port's TX pairs beside
+/// the RX crossovers, 2026-10-25).
+#[derive(Clone, Debug)]
+struct Neighbour {
+    pair: usize,
+    layers: core::LayerMask,
+    /// Capsules (start, end, radius): the two stubs and the lead.
+    copper: [(Point, Point, f64); 3],
+    clearance: f64,
+}
+
+/// How far the copper of a crossover (`found`) keeps beyond its clearance
+/// from the launches of the `neighbours` (the least margin; infinite
+/// where none is near; below zero where it reaches into one).
+fn neighbour_room(found: &Crossover, pair: &Pair, neighbours: &[&Neighbour]) -> f64 {
+    let mut room = f64::INFINITY;
+    for neighbour in neighbours {
+        let keep = pair.clearance.max(neighbour.clearance);
+        for &(start, end, radius) in &neighbour.copper {
+            for &(layer, from, to) in found.segments.iter().flatten() {
+                if neighbour.layers & (1 << layer) == 0 {
+                    continue;
+                }
+                let distance = core::geometry::segment_segment_distance(from, to, start, end);
+                room = room.min(distance - pair.width / 2.0 - radius - keep);
+            }
+            for &via in found.vias.iter().flatten() {
+                let distance = core::geometry::point_segment_distance(via, start, end);
+                let need = (pair.via_diameter / 2.0 + keep)
+                    .max(pair.via_drill / 2.0 + pair.hole_clearance);
+                room = room.min(distance - radius - need);
+            }
+        }
+    }
+    room
 }
 
 /// The straight lead of a run from its start to its launch, at least, in
@@ -703,6 +748,13 @@ struct Launch {
 /// offset tracks room up to the miter limit (`offset_line`), away from the
 /// pads' stubs.
 const LEAD: f64 = 2.5;
+
+/// The room a crossover leaves the neighbouring pairs' launches beyond its
+/// clearance, wanted: this many of its pair's gap plus clearance
+/// (`neighbour_room`); a crossover with less costs up to `ROOM_COST` (mm,
+/// more than the launch search's reach: the room comes first).
+const ROOM: f64 = 1.0;
+const ROOM_COST: f64 = 5.0;
 
 /// Where the part of a terminal (`REF.pad`) sits: the middle of its pads'
 /// copper, when it has more than the two given.
@@ -963,6 +1015,10 @@ fn crossover(
 /// at the lead's end are clear; of those the one closest to the pads (a
 /// turn costs `ANGLE_COST` a right angle). The stubs themselves are the
 /// route's: the pair's nets' ordinary routing from the pads to the ends.
+/// With `cross`, a start with a crossover in its lead, which keeps its
+/// clearance from the `neighbours`' launches (`neighbour_room`); where it
+/// leaves them less than `ROOM` (the pair's gap plus its clearance) the
+/// search goes on along the direction, and the room costs (`ROOM_COST`).
 #[allow(clippy::too_many_arguments)]
 fn launch(
     board: &core::Board,
@@ -973,6 +1029,7 @@ fn launch(
     toward: Point,
     want_fixed: bool,
     cross: bool,
+    neighbours: &[Neighbour],
 ) -> Option<Launch> {
     let middle = scale(add(p.anchor, n.anchor), 0.5);
     let mut normal = left(unit(sub(n.anchor, p.anchor)));
@@ -1008,6 +1065,16 @@ fn launch(
             + 2.0,
     );
     let steps = (LAUNCH_REACH / LAUNCH_STEP) as usize;
+    // The neighbours' launches a crossover here may reach.
+    let neighbours: Vec<&Neighbour> = neighbours
+        .iter()
+        .filter(|neighbour| {
+            neighbour.copper.iter().any(|&(start, end, radius)| {
+                core::geometry::point_segment_distance(middle, start, end)
+                    <= LAUNCH_REACH + 2.0 * lead + radius + 2.0
+            })
+        })
+        .collect();
     // The best launch, and the best whose stubs the link carries
     // (`stubs_clear`), which wins where there is one.
     let mut best: Option<(f64, Launch)> = None;
@@ -1035,6 +1102,10 @@ fn launch(
                 (ends, e),
                 layers,
             )?;
+            let room = neighbour_room(&found, pair, &neighbours);
+            if room < 0.0 {
+                return None;
+            }
             let run_start = found.run_start;
             let lead = LEAD * d;
             let at = add(run_start, scale(outward, lead));
@@ -1095,6 +1166,7 @@ fn launch(
                 stubs,
                 stub_ends: ends,
                 crossover: Some(found),
+                room,
             })
         };
         let crossed_at = |start: Point| -> Option<Launch> {
@@ -1175,13 +1247,23 @@ fn launch(
                 stubs,
                 stub_ends: ends,
                 crossover: None,
+                room: f64::INFINITY,
             })
         };
+        let room_wanted = ROOM * (pair.gap + pair.clearance);
         let cost_of = |found: &Launch| {
-            core::geometry::distance(middle, found.start) + ANGLE_COST * angle.abs() / 90.0
+            let crowded = if cross {
+                ROOM_COST * (1.0 - found.room.min(room_wanted) / room_wanted)
+            } else {
+                0.0
+            };
+            core::geometry::distance(middle, found.start)
+                + ANGLE_COST * angle.abs() / 90.0
+                + crowded
         };
         // The first clear start along the direction, then the first whose
-        // stubs the link carries.
+        // stubs the link carries; a crossover that leaves its neighbours
+        // less than the room wanted looks further along.
         let mut step = 0;
         while step <= steps {
             let Some(found) = clear_at(step) else {
@@ -1191,6 +1273,18 @@ fn launch(
             let cost = cost_of(&found);
             if best.as_ref().is_none_or(|(known, _)| cost < known - 1.0e-9) {
                 best = Some((cost, found.clone()));
+            }
+            if cross && found.room < room_wanted {
+                if want_fixed
+                    && found.fixed
+                    && best_fixed
+                        .as_ref()
+                        .is_none_or(|(known, _)| cost < known - 1.0e-9)
+                {
+                    best_fixed = Some((cost, found));
+                }
+                step += 1;
+                continue;
             }
             if !want_fixed || best_fixed.as_ref().is_some_and(|(known, _)| *known <= cost) {
                 break;
@@ -1423,6 +1517,51 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
         });
         class_of.insert(pair.layers, board.classes.len() - 1);
     }
+    // With crossovers: every link end's launch on the board as lowered (no
+    // link's copper yet), the room a crossover leaves its neighbours
+    // (`neighbour_room`).
+    let mut launches_before: Vec<Neighbour> = Vec::new();
+    if crossovers() {
+        for (index, pair) in pairs.iter().enumerate() {
+            let Some(&class) = class_of.get(&pair.layers) else {
+                continue;
+            };
+            if !entries[index].why.is_empty() {
+                continue;
+            }
+            let envelope = board.classes[class];
+            for &(a, b) in &pair.links {
+                let points = [pair.points[a], pair.points[b]];
+                let pads = points.map(|(p, n)| {
+                    (
+                        &board.nets[pair.positive as usize].terminals[p],
+                        &board.nets[pair.negative as usize].terminals[n],
+                    )
+                });
+                for end in 0..2 {
+                    let (p, n) = pads[end];
+                    let (q, m) = pads[1 - end];
+                    let toward = scale(add(q.anchor, m.anchor), 0.5);
+                    let Some(found) =
+                        launch(board, pair, &envelope, p, n, toward, true, false, &[])
+                    else {
+                        continue;
+                    };
+                    let half = pair.width / 2.0;
+                    launches_before.push(Neighbour {
+                        pair: index,
+                        layers: found.layers,
+                        copper: [
+                            (found.stubs[0], found.stub_ends[0], half),
+                            (found.stubs[1], found.stub_ends[1], half),
+                            (found.start, found.at, envelope.trace_width / 2.0),
+                        ],
+                        clearance: pair.clearance,
+                    });
+                }
+            }
+        }
+    }
     // Per pair net: its terminals joined by the links (union-find), the
     // stubs' ends added.
     let mut parents: BTreeMap<core::NetId, Vec<usize>> = BTreeMap::new();
@@ -1434,6 +1573,11 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
             continue;
         }
         let envelope = board.classes[class];
+        let neighbours: Vec<Neighbour> = launches_before
+            .iter()
+            .filter(|neighbour| neighbour.pair != index)
+            .cloned()
+            .collect();
         for (link, &(a, b)) in pair.links.iter().enumerate() {
             let (point_a, point_b) = (pair.points[a], pair.points[b]);
             let terminal = |net: core::NetId, terminal: usize| {
@@ -1460,6 +1604,7 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
                     middle(1 - end),
                     want_fixed,
                     cross,
+                    &neighbours,
                 )
             };
             // Launches whose stubs the link carries where there are such,
@@ -4716,6 +4861,144 @@ mod tests {
         let meander = &copper.patterns[0];
         assert!((meander.added - entry.meander_mm).abs() < 1.0e-9);
         assert!(meander.amplitude <= 3.0 * 0.2 + 1.0e-9);
+    }
+
+    /// A crossed pair whose link falls back (its run not routed, or its
+    /// copper refused) leaves no crossover copper: no via or track of the
+    /// crossover in the pairs' nets' routes or in the written pair copper,
+    /// nothing of the pair's nets dangling, and the fallback joins the pads.
+    #[test]
+    fn a_crossed_pair_that_falls_back_leaves_no_crossover_copper() {
+        let crossed = BOARD.replace(
+            r#"(pad "1" smd rect (at 0 0) (size 1 0.3) (layers "F.Cu") (net "/D+"))
+    (pad "2" smd rect (at 0 0.5) (size 1 0.3) (layers "F.Cu") (net "/D-")))
+  (footprint "test" (layer "F.Cu") (at 18 4)"#,
+            r#"(pad "1" smd rect (at 0 0) (size 1 0.3) (layers "F.Cu") (net "/D-"))
+    (pad "2" smd rect (at 0 0.5) (size 1 0.3) (layers "F.Cu") (net "/D+")))
+  (footprint "test" (layer "F.Cu") (at 18 4)"#,
+        );
+        let pcb = parse(&crossed).unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        CROSSOVERS.with(|cell| cell.set(Some(true)));
+        for how in ["not routed", "refused"] {
+            let mut board = lower(&pcb, &config, true).unwrap().board;
+            plan_pairs(&mut board, &config);
+            let plan = board
+                .attachment
+                .0
+                .clone()
+                .unwrap()
+                .downcast::<PairPlan>()
+                .unwrap();
+            let link_plan = plan.links[0].clone();
+            let pair = plan.pairs[link_plan.pair].clone();
+            let crossing = link_plan
+                .crossovers
+                .iter()
+                .flatten()
+                .next()
+                .expect("a crossover")
+                .clone();
+            let mut result = core::route(&board, &core_config(&config));
+            let link = link_plan.net as usize;
+            assert_eq!(result.status[link], core::NetStatus::Routed);
+            match how {
+                "not routed" => {
+                    result.routes[link] = core::NetRoute::default();
+                    result.status[link] = core::NetStatus::Partial {
+                        unconnected_terminals: 1,
+                    };
+                }
+                _ => {
+                    // Another net's track across the middle of the run, on
+                    // both layers: the copper check refuses the link.
+                    let segments = &result.routes[link].segments;
+                    let longest = segments
+                        .iter()
+                        .max_by(|a, b| {
+                            core::geometry::distance(a.start, a.end)
+                                .total_cmp(&core::geometry::distance(b.start, b.end))
+                        })
+                        .unwrap()
+                        .clone();
+                    let middle = scale(add(longest.start, longest.end), 0.5);
+                    let across = left(unit(sub(longest.end, longest.start)));
+                    let ground = board
+                        .nets
+                        .iter()
+                        .position(|net| net.name.trim_start_matches('/') == "GND")
+                        .unwrap();
+                    for layer in 0..2 {
+                        result.routes[ground].segments.push(core::Segment {
+                            layer,
+                            start: add(middle, scale(across, -1.0)),
+                            end: add(middle, scale(across, 1.0)),
+                            width: 0.2,
+                        });
+                    }
+                }
+            }
+            let (restored, copper, report) =
+                finish_pairs(&board, &mut result, &config, &[0.0, 1.6]).unwrap();
+            assert_eq!(report.links_coupled, 0, "{how}: {:?}", report.pairs);
+            assert_eq!(report.crossovers, 0, "{how}");
+            assert!(copper.items.is_empty(), "{how}: pair copper written");
+            assert!(
+                !restored
+                    .obstacles
+                    .iter()
+                    .any(|obstacle| obstacle.label.starts_with("pair ")),
+                "{how}: the plan's copper stayed on the board"
+            );
+            let same = |a: Point, b: Point| core::geometry::distance(a, b) < 1.0e-6;
+            for net in [pair.positive, pair.negative] {
+                let route = &result.routes[net as usize];
+                for via in &route.vias {
+                    assert!(
+                        !crossing.vias.iter().flatten().any(|&at| same(at, via.at)),
+                        "{how}: a crossover via stayed"
+                    );
+                }
+                for segment in &route.segments {
+                    assert!(
+                        !crossing
+                            .segments
+                            .iter()
+                            .flatten()
+                            .any(|&(layer, from, to)| {
+                                layer == segment.layer
+                                    && ((same(from, segment.start) && same(to, segment.end))
+                                        || (same(to, segment.start) && same(from, segment.end)))
+                            }),
+                        "{how}: a crossover track stayed"
+                    );
+                }
+                // Nothing of the pair's nets joins nothing.
+                let mut pruned = route.clone();
+                prune_dangling(&restored, &mut pruned, net);
+                assert_eq!(
+                    (pruned.segments.len(), pruned.vias.len()),
+                    (route.segments.len(), route.vias.len()),
+                    "{how}: copper of {} dangles",
+                    restored.nets[net as usize].name
+                );
+                assert_eq!(
+                    result.status[net as usize],
+                    core::NetStatus::Routed,
+                    "{how}: the fallback left {} open",
+                    restored.nets[net as usize].name
+                );
+            }
+        }
+        CROSSOVERS.with(|cell| cell.set(None));
     }
 
     /// A via of a coupled run gets a return via of GND beside it where GND
