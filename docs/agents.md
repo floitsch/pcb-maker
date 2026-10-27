@@ -1306,6 +1306,33 @@ Score the designer's board and yours side by side.
   setting would. `benchmarks/agent-tasks/legality_census.py` runs it on
   every task's designer placement.
 
+- `pcb-maker probe-trouble-placement <placed.kicad_pcb> [router-config.json|auto] (--trouble-from <run-dir|board-router.json|probe.json> | --trouble <names.txt> | --auto)... [--nets N] [--background none|stubs|global|full] [--share 0.05] [--total-seconds 1500] [--work-seconds S] [--stub-mm 1.0] [--global-weight 2.0] [--out report.json]`
+  (a research measure, [placer.md](placer.md) "The trouble-maker probe
+  (2026-10-26)"): judges a placed board (a layout's `placed/<board>.kicad_pcb`;
+  tracks stripped, planned pours added, the project's rules) by routing
+  only its trouble-makers, first and alone, for `--share` of
+  `--total-seconds` of work (or `--work-seconds`). The set: from a
+  previous run (`--trouble-from` a layout or route directory or its
+  board-router.json: the nets it left open, most open terminals first,
+  then the nets in conflict when its negotiation ended; or a previous
+  probe's report, its `new_trouble`), from a file of net names, or cold
+  (`--auto`: the most pins times the largest box); `--nets` from each
+  source (15 % of the board's nets of two or more pads, at least 8);
+  several sources are joined; pour nets are left out. The other nets:
+  `none`, `stubs` (a fixed straight stub of `--stub-mm` out of each of
+  their pads towards the nearest pad of the net) or `global` (the global
+  route's use of each tile by them, `--global-weight` times their tracks
+  over its capacity, as a standing price); `full` is the race's
+  whole-board probe for comparison. The report: the set's open terminals
+  (plus one per complete net in conflict), nets unfinished and in
+  conflict, conflict cells, the negotiation's work per connection and per
+  mm of the set's rectilinear spanning trees, corridor misses and wider
+  searches, the work (search, build, global route) and wall clock, and
+  `new_trouble` (the set's nets still open or in conflict first, then by
+  work per mm: the next set). Deterministic at pinned work rates. It
+  reserves its memory in the ledger. `experiments/trouble-probe/study.py`
+  runs it over the dense boards' seeds and ranks them.
+
 `pcb-maker <command> --help` gives every command's arguments and
 defaults.
 

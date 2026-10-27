@@ -11,6 +11,46 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-10-26 (the trouble-maker probe as a placement ranker)
+
+Branch trouble-probe; snapshot x14900 (main 99b6259 and the branch's
+code). docs/placer.md, "The trouble-maker probe (2026-10-26)", has the
+design, the tables and the verdict. Nothing in the placer or the layout
+changed.
+
+- **`pcb-maker probe-trouble-placement`** (a research command,
+  docs/agents.md): a placed board's trouble-makers (from a previous
+  run's board-router.json, a previous probe's `new_trouble`, a list of
+  names, or cold: pins times box; 15 % of the nets, pour nets out)
+  negotiated alone with a work budget (`Router::probe_subset`), the other
+  nets as no background, fixed stubs out of their pads
+  (`stamp_background_stubs`) or the global route's tile usage as a cost
+  (`add_background_cost`); reports the set's standing, work per
+  connection and per mm, corridor misses and the next set. A per-net
+  expansion counter (`NetState::expansions`) is the only change to the
+  router's state; routes are unchanged.
+- **The study** (`experiments/trouble-probe/study.py`; 75 placements of
+  the eleven dense boards, x1828's seeds 1, 101, 201, 301, 401, 501 and
+  601; 614 probes and 22 whole-board 75 s probes): with seed 1's set and
+  no background the probe orders the other seeds at a mean Spearman of
+  +0.24 (the race's 75 s probe +0.08, the first route's open terminals
+  +0.63), picks the best on 4 of 11 boards (6, 6), regret 69 (62, 40; a
+  random pick 275). 2 % of the budget is the same as 5 % (most probes
+  stall first); `stubs` and `global` are worse than none with every set;
+  seed 101's set gives the same mean (+0.19) but other boards. The cold
+  set does not rank (regret 223; in a race of six no better than random).
+  The iteration (seed 1's set and the picked placement's trouble-makers)
+  orders the rest better (+0.07 to +0.22, best picks 1 to 4 of 11) at
+  twice the work.
+- **Cost**: 3.6 to 4.5 times less search work than the 75 s probe (190
+  against 688 s, the per-board medians summed; 153 against 686 on seed
+  301's boards), 2 to 3 times less wall clock; 3 to 9 s on half the
+  boards, 24 to 39 s on protoesp, split72_left, video and MegaDrive.
+- **Verdict**: representative at the 75 s probe's level where an earlier
+  run of the board names the set, not cold (the race's usual case);
+  proposed for the next package only as an option with an earlier run
+  (nine placer seeds pre-ranked by it, the best three raced as now).
+
 ## Committed on 2026-10-26 (the schematic path: a footprint's own findings, the decoupling action, KiCad 10 names, the template)
 
 Branch schematic-path-items, snapshot x14950: the schematic trial's

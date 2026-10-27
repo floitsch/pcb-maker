@@ -4012,6 +4012,298 @@ molecules (placed as a whole) and every board without copies are
 unchanged, the short tier byte for byte. **`panel_copies` is on by
 default.**
 
+## The trouble-maker probe (2026-10-26)
+
+Florian's idea: keep the nets whose routing made trouble (in conflict
+when the negotiation ended, left open, the repair's victims, the most
+work per connection), route them first and alone on a candidate
+placement with a small budget, and take how far they get as the
+placement's difficulty. A probe of seconds instead of the race's 75 s
+would let the race rank 30 to 100 placements instead of 3; where the
+full route still fails, its new trouble-makers join the set. The risks
+named up front: the set alone underestimates congestion (the easy nets
+take room too), and the set depends on the placement. This step is the
+representativeness study only; nothing in the placer or the layout
+changed.
+
+**The command** (`pcb-maker probe-trouble-placement`, docs/agents.md;
+code `crates/pcb-kicad/src/trouble_probe.rs`,
+`crates/pcb-router/src/router/subset.rs`): a placed board lowered as
+`global-route-kicad-board` lowers it, one router with the race's
+settings (`race_core_config`), and `Router::probe_subset`: the set
+negotiated alone in the routing order (its fine-pitch escapes, skeletons
+and plane stubs first, as `probe` does) for `--share` of the task budget
+(5 % of 1500 s: 75 s of work, 2 %: 30 s), ending earlier where the
+negotiation stalls or is conflict-free. The set: from a previous run's
+board-router.json (the nets left open, most open terminals first, then
+those in conflict when its negotiation ended or named at a hot spot;
+board-router.json records no trouble-repair victims per net, so they
+are not in it), from a previous probe (`new_trouble`), or cold (`--auto`:
+pins times the terminals' box). 15 % of the board's nets of two pads or
+more from each source (at least 8); pour nets are left out (protoesp's
+GND, in a first trial, ended with 24, 1 and 38 pads off the pour in the
+three backgrounds of one placement: their trouble is the pour, which the
+set alone does not show). The other nets, three ways: `none`; `stubs`
+(`Router::stamp_background_stubs`: a fixed straight stub of 1 mm out of
+every pad of the other nets towards the nearest pad of the net, as fixed
+copper the set negotiates against); `global` (`Router::add_background_cost`:
+pcb-global's route of the whole board, the other nets' tracks over each
+tile's boundaries against their capacity, twice that as a standing
+history on the tile's nodes and the corridor planner's tiles). The
+report: the set's open terminals (plus one per complete net in
+conflict), nets unfinished and in conflict, conflict cells, the
+negotiation's work per connection and per mm of the set's rectilinear
+spanning trees (`NetState::expansions`, a counter added in `route_net`),
+corridor misses, the work and the wall clock, and `new_trouble`.
+The score the study ranks by was fixed before any run: the standing
+(open terminals, then unfinished nets, then work per mm, compared in
+that order).
+
+### Method
+
+`experiments/trouble-probe/study.py` (`run`, `iterate`, `analyse`; run
+with `python3 -I`; output `build/trouble1-study/`). The placements: the
+eleven dense boards at the task budgets (tasks v7, pinned rates) of one
+binary, x1828, the default layouts: `build/legal1-dense-s{1,101}-off`,
+`build/legal1-dense-s201b-off` (9 boards, no 4in1-mini or 4in1) and the
+evaluation agent's `build/eval1-dense-s{301,401,501,601}-off` (s801 was
+not complete); 75 placements, `project_sha256` equal per board on every
+row. Each placement is its run's `layout/placed` board (the poses the
+final route had), its final result the run's KiCad unconnected, beside
+it what the run recorded: the race's 75 s probe of the kept placement
+(`race.probe`, its unfinished nets; missing on video seed 1 and
+4in1-mini seed 601, which raced nothing) and the first route's open
+terminals. Probes with snapshot x14900 (main 99b6259 and this branch's
+code), `PCB_WORK_RATE=3.15e6,150e6`, one thread, four at a time through
+the memory ledger with 10 GB kept free, beside the nightly and four
+other agents (load 20 to 48): six 2 % probes cut by the wall guard at
+that load were run again with `PCB_ROUTER_NO_WALL_GUARD=1`, which every
+later probe had; every reported probe ended by its work, a stall or no
+conflicts. 614 probes ran; 284 2 % reports are their 5 % probe's (the
+5 % probe ended before 30 s of search work, so the 2 % one is the same
+probe), plus 22 whole-board 75 s probes (`--background full`, seeds 1
+and 301) for the cost.
+
+Three trouble sets, each the same names for every placement of a board:
+
+- `run1`: seed 1's final run (its board-router.json), applied to the
+  other seeds (5 or 6 a board): the "seed A's set on seed B's
+  placement" of the plan, and the race's case (a set from an earlier
+  run of the board).
+- `auto`: the cold start, computed on seed 1's placement and kept for
+  all seeds (6 or 7 a board).
+- `run101`: seed 101's run, `stubs` at 5 % only (how much the pick of
+  seed A matters).
+
+Per board the Spearman of the score against the final unconnected over
+the seeds, the top-1 (the score's best seed is the best final; ties to
+the lower seed) and the regret (its final less the best), as the race's
+ceiling table; a score that ties every seed counts as 0. Each row is
+compared with the 75 s probe and the first route on the same seeds. A
+random pick has about 1.9 of 11 top-1 and a regret of 275 here.
+
+### Representativeness
+
+Seed 1's set on the other seeds (Spearman per board; mean, top-1, regret
+summed):
+
+| ranker | 4in1-mini | 4in1 | DSP | split72 | video | Glasgow | SmartSpin | 0xCB | protoesp | MegaDrive | SNSP | mean | top-1 | regret |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 75 s probe (race) | -0.80 | -0.46 | +0.83 | -0.26 | -0.14 | +0.37 | -0.09 | +0.34 | +0.49 | +0.26 | +0.37 | +0.08 | 6/11 | 62 |
+| first-route open | +0.60 | +0.36 | +0.94 | -0.77 | +0.94 | +0.83 | +0.38 | +0.76 | +0.94 | +0.94 | +1.00 | +0.63 | 6/11 | 40 |
+| none, 5 % | -0.70 | -0.41 | +0.20 | +0.26 | +0.26 | +0.66 | +0.15 | +0.33 | +0.66 | +0.89 | +0.31 | +0.24 | 4/11 | 69 |
+| none, 2 % | -0.70 | -0.41 | +0.20 | +0.26 | +0.20 | +0.66 | +0.15 | +0.33 | +0.60 | +0.77 | +0.31 | +0.22 | 4/11 | 69 |
+| stubs, 5 % | +0.10 | -0.10 | -0.31 | +0.14 | +0.89 | +0.60 | +0.18 | +0.33 | +1.00 | -0.20 | -0.60 | +0.18 | 3/11 | 150 |
+| stubs, 2 % | +0.10 | -0.10 | -0.31 | -0.26 | +0.60 | +0.60 | +0.18 | +0.33 | +0.94 | -0.20 | -0.60 | +0.12 | 2/11 | 164 |
+| global, 5 % | -0.10 | -0.10 | -0.89 | -0.09 | +0.94 | +0.71 | -0.15 | +0.33 | +0.49 | +0.77 | -0.09 | +0.17 | 2/11 | 134 |
+| global, 2 % | -0.10 | -0.10 | -0.89 | -0.26 | +0.60 | +0.71 | -0.15 | +0.33 | +0.49 | +0.77 | -0.09 | +0.12 | 2/11 | 134 |
+
+The cold set (`auto`, all seeds):
+
+| ranker | 4in1-mini | 4in1 | DSP | split72 | video | Glasgow | SmartSpin | 0xCB | protoesp | MegaDrive | SNSP | mean | top-1 | regret |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 75 s probe (race) | -0.30 | -0.06 | +0.46 | -0.36 | -0.14 | +0.50 | -0.31 | +0.41 | +0.68 | +0.21 | +0.50 | +0.15 | 5/11 | 90 |
+| first-route open | +0.43 | +0.64 | +0.75 | -0.29 | +0.93 | +0.89 | +0.62 | +0.77 | +0.96 | +0.96 | +1.00 | +0.70 | 7/11 | 13 |
+| none, 5 % | +0.20 | +0.35 | +0.32 | +0.29 | -0.43 | +0.36 | -0.04 | +0.36 | +0.71 | +0.29 | +0.54 | +0.27 | 4/11 | 223 |
+| none, 2 % | +0.20 | +0.35 | +0.32 | -0.21 | -0.54 | +0.36 | -0.71 | +0.36 | +0.36 | +0.43 | +0.54 | +0.13 | 3/11 | 252 |
+| stubs, 5 % | -0.14 | +0.52 | -0.07 | -0.18 | -0.29 | +0.00 | +0.09 | +0.36 | +0.79 | -0.50 | -0.36 | +0.02 | 2/11 | 352 |
+| stubs, 2 % | -0.14 | +0.52 | -0.07 | -0.04 | -0.54 | +0.00 | -0.53 | +0.36 | +0.54 | +0.00 | -0.36 | -0.02 | 1/11 | 384 |
+| global, 5 % | -0.03 | +0.20 | -0.50 | -0.50 | -0.39 | +0.25 | -0.58 | +0.36 | +0.64 | +0.07 | -0.29 | -0.07 | 1/11 | 314 |
+| global, 2 % | -0.03 | +0.20 | -0.50 | -0.36 | -0.46 | +0.25 | -0.65 | +0.36 | +0.64 | +0.39 | -0.29 | -0.04 | 2/11 | 278 |
+
+Seed 101's set (`stubs`, 5 %, the seeds but 101): +0.19 mean, 3/11, regret
+102, against the 75 s probe's +0.17, 5/11, 86 and the first route's
++0.74, 7/11, 19 on the same seeds; seed 1's `stubs` set gave +0.18 on
+its seeds, but board by board the two sets disagree (protoesp +1.00
+against +0.10, SNSP-CPU-01 -0.60 against 0.00, the 0xCB panel +0.33
+against -0.45). The two sets share 11 % (DSP-ADAU1452) to 64 % (0xCB
+panel) of their nets, a third on most boards (Jaccard on one placement).
+
+The other measures of seed 1's `none` probe at 5 % (post hoc, not the
+score fixed before): unfinished nets alone +0.31 mean but 2/11, regret
+257 (on video and SNSP-CPU-01 every seed ties at 0); work per mm alone
++0.26, 5/11, regret 56.
+
+- **The probe orders placements about as well as the 75 s probe, and
+  no better.** With seed 1's set and no background it has the higher
+  mean Spearman (+0.24 against +0.08) but fewer best picks (4 against 6
+  of 11) and the larger regret (69 against 62); with 5 or 6 seeds a
+  board the per-board Spearman's noise is about 0.4 and the mean's about
+  0.13, so neither difference is beyond it. The cold set without
+  background: +0.27 against +0.15, 4 against 5 picks, but a regret of
+  223 against 90 (video's 153 alone: the cold set picks seed 101, 287
+  open, where the best is 134).
+- **Neither is near the first route** (+0.63 to +0.74, 6 or 7 of 11,
+  regret 13 to 40), which is several hundred seconds of work with its
+  repair: what decides the final open count is mostly decided after a
+  probe's negotiation.
+- **The backgrounds do not help.** `none` is the best of the three with
+  every set; with seed 1's set `stubs` and `global` lose on DSP-ADAU1452
+  and SNSP-CPU-01 (`stubs` on MegaDrive too) what they gain on video.
+  The stubs leave the set in more conflict (more conflict cells than
+  without on 32 of the 64 placements, fewer on 12): they stand where the
+  set's nets leave their pads, which is not where the other nets' copper
+  ends up costing them. Neither background sees what the easy nets will
+  take.
+- **2 % is 5 %.** Most probes end on a stall well before 30 s of search
+  (284 of the 2 % reports are the 5 % probe); where the 2 % budget cuts,
+  the ranking gets slightly worse.
+- **The set depends on the placement and on the seed it came from**:
+  a third of the nets in common between two seeds' sets, and the per-board
+  verdicts of two sets differ by up to 0.9.
+
+### Cost
+
+Search work and wall clock (s) of the 75 s probe and the trouble probe
+(seed 1's set, `none`) on the eleven boards of seed 301, the same
+machine and hour (`full-75` and `run1-none-*` reports; the work at the
+pinned rate, the wall clock under a load of 20 to 48):
+
+| | search work | all work (build, global route) | wall | CPU |
+| --- | ---: | ---: | ---: | ---: |
+| 75 s probe, whole board (11) | 686 | 718 | 1298 | 1228 |
+| trouble probe, 5 % (11) | 153 | 167 | 427 | 322 |
+| trouble probe, 2 % (11; 10 of them the 5 % probe) | 149 | 162 | 377 | |
+| 75 s probe, seeds 1 and 301 (22) | 1381 | 1446 | 2572 | 2450 |
+| cold set, `none`, 5 %, seeds 1 and 301 (22) | 594 | 622 | 1201 | 970 |
+
+Per board the median search work of the 5 % probe over the seeds runs
+from 3 s (DSP-ADAU1452, 29 nets) to 39 s (protoesp, 16 nets) and 35 s
+(split72_left); the race's recorded 75 s probes 20 to 75 s (sum of the
+per-board medians 688 s against 190 s). So the trouble probe is 3.6 to
+4.5 times cheaper in search work and 2 to 3 times in wall clock (the
+board's parsing, lowering and the router's build stay: 5 to 30 s of wall
+a placement under this load), not the order of magnitude the idea needs:
+the trouble-makers are the slow nets (protoesp's 16 take as long as half
+the board). The whole-board probe of the command gives the race's count
+on 13 of the 21 placements where the run recorded one; on the others
+(protoesp, video, SmartSpin2k, DSP-ADAU1452, split72_left's seed 301)
+it differs by 4 to 103 nets, and on the 0xCB panel (two nets) and
+split72_left's seed 1 the run kept moves after the race. Not traced;
+every probe of the study is the command's, so the comparison of the
+trouble probes among themselves is like for like, and the 75 s probe's
+column is the run's own record.
+
+### Iteration
+
+The plan's loop, with the data at hand (`study.py iterate`): the race
+picks by seed 1's set (`none`, 5 %), the picked placement's full route
+(its run's board-router.json) names its trouble-makers, and the union of
+both sets probes the other placements again (`iter-none-0.05`). Ranked
+over the seeds but 1 and the pick (4 or 5 a board), with the first set,
+the 75 s probe and the first route on the same seeds:
+
+| ranker (same seeds) | 4in1-mini | 4in1 | DSP | split72 | video | Glasgow | SmartSpin | 0xCB | protoesp | MegaDrive | SNSP | mean | top-1 | regret |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 75 s probe (race) | -0.50 | -0.40 | +1.00 | -0.30 | -1.00 | +0.50 | -0.15 | +0.13 | +0.10 | -0.30 | -0.10 | -0.09 | 2/11 | 331 |
+| first-route open | +0.60 | +0.40 | +0.90 | -0.90 | +0.90 | +0.70 | +0.36 | +0.87 | +1.00 | +0.90 | +1.00 | +0.61 | 7/11 | 36 |
+| seed 1's set | -1.00 | -0.80 | +0.30 | +0.20 | -0.30 | +0.60 | +0.15 | +0.56 | +0.40 | +0.80 | -0.20 | +0.07 | 1/11 | 326 |
+| seed 1's set and the pick's | -0.40 | +0.60 | +0.00 | -0.60 | -0.30 | +0.70 | +0.31 | +0.67 | +0.90 | +0.70 | -0.10 | +0.22 | 4/11 | 193 |
+
+- On the seeds the first pick passed over (where every ranker has less
+  to go by: the 75 s probe drops to -0.09), the second set orders better
+  than the first (+0.22 against +0.07, 4 against 1 best picks, regret
+  193 against 326) and better than the 75 s probe there; the first route
+  still far ahead.
+- It costs: the sets grow 1.2 to 2 times (SmartSpin2k 66 to 133 nets),
+  the search work doubles (sum of the per-board medians 205 to 423 s;
+  SmartSpin2k 12 to 75 s), so the iterated probe is 1.6 times cheaper
+  than the 75 s probe instead of 3.6.
+
+**A race of k placements** (post hoc, from the same reports): per board
+the mean final of the placement each ranker picks among every subset of
+k of the seeds (seeds but 1 that have a race probe, 4 to 6 a board; k
+capped there), summed over the eleven boards; a random pick 1050, the
+best of all 757 to 816 (all seeds or these):
+
+| ranker | k = 2 | 3 | 4 | 5 | 6 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 75 s probe (race) | 1040 | 1004 | 952 | 897 | 838 |
+| first-route open | 948 | 893 | 850 | 827 | 816 |
+| seed 1's set, `none`, 5 % | 1013 | 975 | 935 | 894 | 845 |
+| seed 1's set, `global`, 5 % | 999 | 970 | 950 | 929 | 910 |
+| seed 1's set, `stubs`, 5 % | 1022 | 1004 | 986 | 957 | 926 |
+| the cold set, `none`, 5 % (all seeds) | 1027 | 1023 | 1020 | 1015 | 993 |
+
+At equal k the trouble probe without background picks as well as the
+75 s probe (975 against 1004 at three, 845 against 838 at six); at a
+quarter of the work it could rank about four times as many placements in
+the race's work (six of it, 845, against three 75 s probes, 1004). The
+cold set gains almost nothing over a random pick (993 at six against the
+75 s probe's 838 on its seeds and 1050 random).
+
+### Verdict
+
+- **Representative where it has a set from an earlier run of the
+  board, at the 75 s probe's level and no better.** Seed 1's set without
+  background: mean Spearman +0.24 against +0.08, best picks 4 against 6
+  of 11, regret 69 against 62; in a race of k it picks as well as the
+  75 s probe at equal k. With the pick's trouble-makers added it orders
+  the rest better than either (+0.22, 4/11 against -0.09, 2/11).
+- **Not representative cold**, which is the race's case (a layout has no
+  earlier run of its board): the cold set (pins times box) ranks at
+  +0.27 mean but with a regret of 223 against 90 and no gain over a
+  random pick in a race (993 against 1050 at six; the 75 s probe 838).
+  The background mode that came closest is `none` with every set;
+  `stubs` and `global` are worse everywhere: a fixed stub out of every
+  other pad stands where the set's own nets must leave their pads, and
+  the global route's usage is a price, not a capacity, so neither
+  models what the easy nets take; and the cold set names the supply and
+  bus nets with the largest boxes, which are mostly not the nets that end
+  in trouble (Jaccard with seed 1's run set 0.18 to 0.38 on nine boards,
+  0.57 on SNSP-CPU-01, 0.88 on protoesp).
+- **Cheaper, but by 3.6 to 4.5 times, not 10 to 25**: the trouble-makers
+  are the board's slowest nets (protoesp's 16 take 39 s of search), the
+  fixed costs (lowering, the router's build) stay, and an iteration
+  doubles the set's work. Seconds instead of 75 s holds on half the
+  boards (3 to 9 s on DSP-ADAU1452, the ESCs, Glasgow and the 0xCB
+  panel), not on protoesp, split72_left, video or MegaDrive (24 to 39 s).
+- **What orders the seeds is decided after the negotiation**: the first
+  route's open terminals (negotiation and repair) are at +0.61 to +0.74
+  and 6 or 7 of 11 on every set of seeds; neither probe comes near.
+
+**The wiring proposed for the next package**, conditional on an earlier
+run (`race_trouble`, a layout option, off by default; nothing changes
+without it): given a previous run of the board (its directory, as the
+command's `--trouble-from`), the placer keeps 9 seeds; each is probed by
+the trouble probe (that run's open and conflicted nets, 15 % of the
+nets, pour nets out, no background, 5 % of the budget, ranked by the
+standing); the best 3 go on to the race as now (75 s probes, the 5 %
+margin, the kept one's probe the first part of its first route); the
+probed placements' `new_trouble` and the kept one's final route's open
+nets are written for the next run (the iteration). Budget: nine probes
+at this study's medians are 27 s (DSP-ADAU1452) to 351 s (protoesp) of
+search, against the 150 s of the race's two other probes; they are
+charged to the work clock and shortened by the race's rule
+(`race_probes_that_fit`) where the 45 % floor binds. Judge it as the
+race's steps were judged (the dense pairs, three seeds, the summed
+medians against off and the noise of about 40, the short tier's strict
+passes), each layout seed given the run of the seed before. Without an
+earlier run (the default flow) it should not be wired: the cold probe
+does not rank. A cheaper whole first route (the negotiation and the
+repair, which rank at +0.6 to +0.7) is the more promising probe for
+the race's cold case.
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a
