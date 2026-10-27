@@ -11,6 +11,59 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-27 (router profile round 3: the open list with a decrease-key; the restamp decodes each stamp list once)
+
+Branch router-profile-3, snapshot x15185 (d975ffae) against main's x1856
+(edc1d286); the candidates x15180 to x15184 against x1855 (630799ab)
+(docs/profiling.md, "The third router round").
+
+- **The open list with a decrease-key** (`SearchHeap`, heap.rs;
+  search.rs): the 4-ary heap of `KeyHeap` (the empty root, the
+  prefetches) keeping each queued node's slot in its `SearchNode`; a
+  cheaper path to a queued node moves its key up instead of queueing a
+  second one. No pop is stale (39 to 41 % were; 1.63 to 1.70 pops an
+  expansion). The nodes expand in the same order: a node's heuristic is a
+  function of its state, so its keys only fall, and the heap holds the
+  least, which the lazy heap popped first. The node stays 12 bytes: the
+  slot took the closed and target marks' bytes (`SLOT_CLOSED`,
+  `SLOT_UNQUEUED` for a target not reached; the target mark is
+  `since_via`'s high bit, its step count stopping at 127, a lower bound
+  as before). `KeyHeap` stays for the tile planner and the bundles.
+- **The restamp decodes each stamp list once** (`Stamped::iter_ahead`):
+  each of its two passes decoded its list twice, in order and 32 entries
+  ahead for the occupancy prefetch (decoding was 3.0 % of Castor's route,
+  2.1 % of Sisu's); one decode now feeds both through a ring of 32 pairs.
+- **Measured**, x1856 against x15185, two pairs a board on SMT siblings in
+  both orientations, each pair inside one reservation of the memory
+  ledger, pinned rates (the router's CPU seconds): Castor -3.0 %, jetson
+  -1.3 %, k30-SBC -2.7 %, Sisu -3.9 %, SmartSpin2k -5.6 %, protoesp
+  -6.8 % (geometric mean -3.9 %; instructions -5 to -9 %); every routed
+  board, fingerprint line, expansion and search count identical, and the
+  verdict apart from its work, wall, rate, memory and path fields. The
+  expansion tier (46 boards, 8 x 1): 46 of 46 routed boards byte-identical
+  to x1856's, the rows identical apart from their timing fields and the
+  speed class of four boards, 557 unconnected, 0 new errors, 4263 vias
+  both. Peak resident size (memory profile): Castor 602 / 606 MB against
+  602 / 617 MB, k30-SBC 904 / 892 MB against 885 / 910 MB.
+- **Tried and not taken** (k30-SBC at 60 s, both orientations): an 8-ary
+  heap on whole cache lines (+1.9 and +1.4 % CPU; without its
+  grandchildren's prefetch +1.8 and +5.0 %; branch
+  router-profile-3-arity8-trial); the decrease-key with the slots in an
+  array of their own (-2.8 and +1.8 %, 4 bytes a state more). Each kept
+  change alone: the decrease-key -4.7 and -3.2 % (k30-SBC), the single
+  decode -1.6 and -2.9 % (Castor at 60 s, on the decrease-key).
+- **The work clock**: the canned search of an unpinned rate got about 2 %
+  faster (six paired calibrations: medians 2.226 M and 2.273 M expansions
+  a second): an unpinned run measures a rate that much higher.
+- **Measuring under a full ledger**: a pair whose one side waits in the
+  memory ledger while the other runs alone is void; the pairs now reserve
+  for both binaries at once and start both inside that reservation
+  (`PCB_MAKER_LEDGER_INSIDE`).
+- Tests (pcb-router): `search_heap_pops_as_a_lazy_heap`,
+  `search_heap_hints_the_next_pop`,
+  `stamps_ahead_pair_each_stamp_with_the_one_ahead`;
+  `key_heap_hints_the_next_pop` went with `KeyHeap::next_hint`.
+
 ## Committed on 2026-10-27 (differential pairs: the crossover kept only when its link couples)
 
 Branch differential-pairs-7 (on main e7a12a80); snapshots x15070 (the

@@ -10,7 +10,10 @@ memory-round-3, snapshot x14553 against main's x1830, a905905) profiled
 where a route's peak resident size goes. The second router round of
 2026-10-27 ("The second router round" below: branch router-profile-2,
 snapshot x14967 against main's x1851, 71953b0) profiled the search again
-after both.
+after both. The third router round of 2026-10-27 ("The third router
+round" below: branch router-profile-3, snapshot x15185 against main's
+x1856, edc1d286) gave the open list a decrease-key and the restamp one
+decode a list.
 
 ## How to profile
 
@@ -574,6 +577,188 @@ binary started too, ranged 0.83 to 1.04; single runs under load.)
   expansion.
 - `Router::stamp` (3 to 10 %), outside the search: the varint stamp
   lists' decoding.
+
+## The third router round (2026-10-27)
+
+The two structural costs the second round left: the heap (16 to 21 % of
+a route through the inline chain, 39 to 41 % of its pops stale) and the
+stamp lists' decoding (`Router::stamp` 2.6 to 9.4 %, up from 1.4 to
+5.2 % since the memory round's varint lists). Branch router-profile-3;
+snapshots x15180 to x15185 (x15185: the two changes kept, d975ffae on
+main edc1d286), against main's x1855 (630799ab) and x1856 (edc1d286; a
+placer change, the same routes).
+
+### How
+
+Each candidate as one change against the binary without it: k30-SBC
+(the heap) or Castor (the stamps) at 60 s of work, two search threads,
+pinned rates, `PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`,
+two pairs on SMT siblings in both orientations (the router's CPU
+seconds, `perf stat` cycles and instructions). The machine's load was 20
+to 40 and its memory ledger full (the nightly's 4 to 7 GB requests
+drained it): a binary that waits in the ledger while the other side of
+its pair runs alone gets a whole core and the pair is void (the first
+decrease-key pairs: one side waited several minutes; discarded, and the
+8-ary heap without prefetch had waits of a minute or two on one side). Each pair now reserves
+memory for both binaries at once (`harness_common.admit`, 3 to 4.5 GB)
+and starts both inside that reservation (`PCB_MAKER_LEDGER_INSIDE`), so
+the ledger delays a pair, never one side of it.
+
+The stamps' profile: the profiling binary (as in "How to profile") on
+Castor and Sisu at 60 s of work, the samples of `Router::stamp`
+attributed through the inline chain (`perf script -F ip,sym,symoff
+--no-inline`, `addr2line -a -i -f` per address; a sample counts as
+decoding when a frame is `StampIter::next` or the look-ahead's `Skip`):
+
+| part of `Router::stamp` (% of the route's samples) | Castor | Sisu |
+| --- | ---: | ---: |
+| all | 10.4 | 8.3 |
+| decoding the lists (`StampIter::next`, the look-ahead `skip`) | 3.0 | 2.1 |
+| marking the footprints, encoding the new list (`mark_footprint`, `Stamped::push`) | 2.4 | 2.0 |
+| the occupancy counts | 1.9 | 1.4 |
+| the passes' marks and tile claims | 1.6 | 1.3 |
+| the rest (spills, the footprint loops) | 1.5 | 1.5 |
+
+The restamp's two passes each read their list twice: once in order and
+once 32 entries ahead (a second iterator, `skip(32)`) for the occupancy
+prefetch, so every stamp was decoded twice per pass.
+
+### Candidates measured
+
+| candidate | snapshot | against | board, work | CPU (both orientations) | instructions | identical |
+| --- | --- | --- | --- | --- | ---: | --- |
+| 8-ary heap (a group of 8 keys a cache line, root slot 7; the 8 grandchild lines prefetched a level) | x15180 | x1855 | k30-SBC 60 s | +1.9 %, +1.4 % | +3.6 % | yes |
+| 8-ary heap without the grandchildren's prefetch | x15182 | x1855 | k30-SBC 60 s | +1.8 %, +5.0 % | -0.4 % | yes |
+| decrease-key, slots in a separate `Vec<u32>` (4 bytes a state more) | x15181 | x1855 | k30-SBC 60 s | -2.8 %, +1.8 % | -4.1 % | yes |
+| decrease-key, the slot in the 12-byte search node (kept) | x15183 | x1855 | k30-SBC 60 s | -4.7 %, -3.2 % | -4.0 % | yes |
+| the restamp decodes each list once (kept) | x15184 | x15183 | Castor 60 s | -1.6 %, -2.9 % | -2.9 % | yes |
+
+The 8-ary heap loses either way: a level is a whole cache line and seven
+comparisons, the heap a level shallower (log8 against log4 of up to
+245 k keys), but the search's pushes fill the root a pop leaves and stop
+a level or two down (the first round), where the 4-ary heap's half-line
+groups cost less. The radix heap of the second round (+5 %) was not
+retried.
+
+The decrease-key with its slots in an array of their own gains less and
+less steadily than with the slot in the node: every move of a key in the
+heap writes its state's slot, and in the node the new key's own slot is
+on the line the step has just written (its cost, parent and marks).
+
+### The changes (bit-identical)
+
+1. **The search's open list with a decrease-key** (`SearchHeap`,
+   heap.rs; search.rs). The heap is the 4-ary `KeyHeap` with the empty
+   root a pop leaves and the same prefetches, and every move of a key
+   writes its slot into its state's `SearchNode::slot`. A step that finds
+   a cheaper path to a node already queued moves its key up from that
+   slot (`decrease`) instead of queueing a second key, so no pop is stale
+   and a pop is an expansion (1.63 to 1.70 pops an expansion before).
+   The pops are the lazy heap's without its stale ones: a node's
+   heuristic is a function of its state, so a lower cost gives a key no
+   greater (`heap_key`: the estimate's bits above the state; float
+   addition is monotone), the heap holds each queued node's least key,
+   which the lazy heap popped first, and a closed node is never queued
+   again (the search does not reopen nodes). Ties resolve as before: a
+   key holds its state, equal keys are one entry. The node stays 12
+   bytes: the slot (4 bytes) took the closed mark's and the target
+   mark's bytes. A node of the search's generation (`seen`) is queued at
+   its slot, closed (`SLOT_CLOSED`) or a target not reached yet
+   (`SLOT_UNQUEUED`: the targets are marked seen with an infinite cost
+   before the search starts, and the first step to one queues it); the
+   target mark is the high bit of `since_via` (`TARGET_MARK`), whose
+   step count stops at 127 instead of 255 (a lower bound either way:
+   where it stops, the hop test walks as before). The `memory:` line,
+   which sizes the ladder's routers side by side, counts 12 bytes a node
+   as before. Tests: `search_heap_pops_as_a_lazy_heap` (a search's
+   rhythm of pops, pushes and decreases, some below the last pop, against
+   a `BinaryHeap` that queues every key and skips the expanded states;
+   the slots checked), `search_heap_hints_the_next_pop`.
+2. **The restamp's passes decode each list once** (`Stamped::iter_ahead`,
+   router.rs; stamping.rs): one iterator decodes the list into a ring of
+   the 32 pairs ahead, yielding each pair with the one 32 entries on for
+   the occupancy prefetch, as the two iterators did. No memory changes
+   (256 bytes of ring on the stack). Test:
+   `stamps_ahead_pair_each_stamp_with_the_one_ahead`.
+
+Not taken for the stamps: a per-router cache of decoded lists (8 bytes
+a stamp against the varints' 1.5: the memory round's saving), group or
+fixed-width deltas (the lists' bytes and the decode change; with one
+decode a pass left, 1 to 1.5 % of a route is all there is to gain).
+
+### Measured (2026-10-27)
+
+Snapshots x1856 (main edc1d286) and x15185 (d975ffae, the two changes
+on it), side by side on SMT siblings (one binary on two of the CPUs 4 to
+15, the other on their siblings 16 higher; the second pair with the
+binaries' CPUs swapped, on the next two cores), each pair inside one
+reservation of the ledger, two search threads, pinned rates,
+`PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1` (and
+`PCB_ROUTER_MEM_PROFILE=1` on Castor and k30-SBC), the four fingerprint
+boards at a quarter budget (v16 placements), SmartSpin2k and protoesp
+at the task budget (v19), the machine's load 20 to 40. Cells: the two
+pairs' CPU seconds of the router process (x1856's first orientation
+first); the change, the geometric mean of the two pairs' ratios;
+cycles and instructions (`perf stat`, the same mean); million
+expansions per CPU second; the route's expansions and searches.
+
+| board | budget | x1856 CPU s | x15185 CPU s | CPU | cycles | instructions | x1856 M exp. / CPU s | x15185 | expansions | searches | identical |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Castor | 300 | 425 / 433 | 416 / 417 | -3.0 % | -3.0 % | -6.9 % | 1.02 / 1.00 | 1.04 / 1.04 | 434 M | 8267 | yes (2 pairs) |
+| jetson | 300 | 596 / 616 | 588 / 608 | -1.3 % | -1.7 % | -5.7 % | 1.01 / 0.98 | 1.03 / 0.99 | 604 M | 10416 | yes (2 pairs) |
+| k30-SBC | 300 | 589 / 551 | 573 / 537 | -2.7 % | -2.9 % | -5.4 % | 0.84 / 0.90 | 0.87 / 0.93 | 497 M | 8758 | yes (2 pairs) |
+| Sisu | 300 | 702 / 699 | 669 / 677 | -3.9 % | -4.1 % | -7.2 % | 0.87 / 0.88 | 0.92 / 0.91 | 613 M | 10012 | yes (2 pairs) |
+| SmartSpin2k | 1200 | 1219 / 1146 | 1153 / 1080 | -5.6 % | -5.8 % | -9.4 % | 1.78 / 1.89 | 1.88 / 2.01 | 2166 M | 32073 | yes (2 pairs) |
+| protoesp | 1200 | 1298 / 1273 | 1191 / 1206 | -6.8 % | -6.7 % | -9.3 % | 0.62 / 0.64 | 0.68 / 0.67 | 810 M | 11491 | yes (2 pairs) |
+
+The CPU falls on every board, 1.3 to 6.8 % (-3.9 % as the geometric
+mean of the six; the single pairs -1.3 to -8.2 %), most on the dense
+boards at the task budget, whose searches are long and whose heaps are
+large; instructions fall 5 to 9 %.
+
+**Identical** in every pair: the routed board's SHA-256, every
+fingerprint line, the expansions and searches, and verdict.json apart
+from its work, wall, rate, memory and path fields. The expansions and
+searches are the second round's on every board, and Castor's board is
+still the first round's (SHA-256 prefix dad3a6cb3787b575). The
+expansion tier (46 boards, 8 x 1, 30 s): 46 of 46 routed boards
+byte-identical to x1856's (another package's run of the tier, on the
+same day), the rows identical apart from their timing fields and the
+intake's speed class (`outcome`, from the route's seconds: three
+clean_medium to clean_slow, one clean_slow to clean_medium), 557
+unconnected, 0 new errors, 4263 vias both. The tests
+(`scripts/check.sh --fast`, clippy with warnings as errors) pass.
+
+**Peak resident size** (`PCB_ROUTER_MEM_PROFILE=1`, `peak rss`, both
+pairs): Castor 602 and 606 MB (x1856) against 602 and 617 MB (x15185),
+k30-SBC 904 and 892 MB against 885 and 910 MB; at the peak (the probes)
+the search arrays 123 to 126 MB on Castor either way. The memory round's
+saving (Castor 1073 to 661 MB, k30-SBC 1630 to 1000 MB at the time) stands:
+the node stays 12 bytes and the open list holds no stale keys.
+
+**The work clock.** Pinned rates (every tier, run.py) do the same
+expansions in less CPU. The canned search of an unpinned rate
+(crates/pcb-kicad/src/work_rate.rs) got faster too: six calibrations side
+by side on one CPU and its sibling (`calibrate-work-rate 1`, alternating)
+gave medians of 2.226 M (x1856) and 2.273 M (x15185) expansions a
+second, the pairs' ratios 1.009 to 1.034: an unpinned run measures a rate
+about 2 % higher and spends that much more search in the same budget,
+so its results differ from x1856's as with any change of the measured
+rate.
+
+### What is next
+
+- The heap is still the search's largest part beside the steps: each
+  move of a key writes its state's slot (a store to another node's
+  line). A push into the empty root that ends a level or two down moves
+  one or two keys; whether a lazier fill of the root (taking the least
+  child only at the next pop) saves stores is untried.
+- The stamps: one decode a pass is left (1 to 1.5 % of a route on the
+  pour boards), and the marking of the footprints with its varint
+  encoding (2 to 2.4 %). Encoding into a reserved buffer without
+  `Vec::push`'s capacity test a byte would be the next small step.
+- The steps' counts and the prefetch of the next pop's rows (the second
+  round's list) remain.
 
 ## The layout round (2026-10-25)
 

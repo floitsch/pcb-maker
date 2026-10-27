@@ -3803,7 +3803,11 @@ nodes and occupancy bytes (18 to 26 %) and the hop test (3 to 9 %). The
 profile round made the hop test walk only where a via can lie within its
 reach (`SearchNode::since_via`), the heap's root wait for the next push
 (`KeyHeap`), and the expansion prefetch its neighbourhood: identical
-routes, 9 to 12 % less CPU.
+routes, 9 to 12 % less CPU. The second round (2026-10-27) prefetched the
+rest of an expansion's maps and the next pop's node; the third gave the
+search's open list a decrease-key (`SearchHeap`, the slot in the node:
+no stale pops) and the restamp one decode a stamp list: identical
+routes, 1.3 to 6.8 % less CPU.
 
 ## Determinism and the wall clock (2026-10-14)
 
