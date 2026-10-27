@@ -101,6 +101,18 @@ class Statistics(unittest.TestCase):
         self.assertEqual(placer_ab.statistics_of(same, self.reference)["weighted"], 0.0)
         self.assertEqual(placer_ab.sign_flip(same, self.reference, "weighted", rounds=200), 1.0)
 
+    def test_a_board_that_always_routes_weighs_nothing(self):
+        values = dict(noise_values(boards=3), zero=[0.0] * 9)
+        pairs = {b: {s: (xs[i], xs[i] * 0.9) for i, s in enumerate((1, 101, 201, 301, 401))}
+                 for b, xs in values.items()}
+        reference = placer_ab.weights_of(values)
+        self.assertEqual(reference["zero"][1], 0.0)
+        lines = placer_ab.compare_lines(pairs, [], values, rounds=200)
+        self.assertTrue(any(line.startswith("| zero |") and "weight 0" in line for line in lines))
+        without = {b: v for b, v in pairs.items() if b != "zero"}
+        self.assertAlmostEqual(placer_ab.statistics_of(pairs, reference)["weighted"],
+                               placer_ab.statistics_of(without, reference)["weighted"])
+
     def test_a_large_effect_on_every_board_is_resolved_and_its_reverse_is_worse(self):
         values = noise_values()
         reference = placer_ab.weights_of(values)

@@ -653,9 +653,11 @@ def compare_lines(pairs, missing, noise_values, alpha=ALPHA, power=0.8, rounds=2
         offs = [p[0] for p in pairs[b].values()]
         ons = [p[1] for p in pairs[b].values()]
         change = statistics.fmean(ons) - statistics.fmean(offs)
-        if b in reference:
+        if b in reference and reference[b][0] > 0:
             mean, weight = reference[b]
             relative = f"{100 * change / mean:+.1f} % ({weight:.0f})"
+        elif b in reference:
+            relative = "- (noise mean 0, weight 0)"
         else:
             relative = "- (no noise)"
         lines.append(f"| {short(b)} | " + " | ".join(cells) +
