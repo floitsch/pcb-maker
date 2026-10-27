@@ -47,6 +47,10 @@ pub(super) struct TroubleSettings {
     /// counted as the pads off their pour's main piece (the pour
     /// analysed again after the exchange).
     pub pours: bool,
+    /// Pour nets may be victims (their pour reconnects what a victim's
+    /// reroute leaves; their open measure is their pads off the pour's
+    /// main piece): with `pours`, and in the last connections.
+    pub pour_victims: bool,
     /// The victims are routed again on their corridors first
     /// (`PCB_ROUTER_TROUBLE_LOCAL`, on), and a victim left with more open
     /// terminals than it had then in its window (the terminals' box and
@@ -123,6 +127,7 @@ impl TroubleSettings {
             },
             depth: read("PCB_ROUTER_TROUBLE_DEPTH", 1),
             pours: read("PCB_ROUTER_TROUBLE_POURS", 0) != 0,
+            pour_victims: read("PCB_ROUTER_TROUBLE_POURS", 0) != 0,
             local: read("PCB_ROUTER_TROUBLE_LOCAL", 1) != 0,
             early: read("PCB_ROUTER_TROUBLE_EARLY", 1) != 0,
         }
@@ -242,21 +247,33 @@ impl Router {
         if last == 0 || self.spent(&clock, budget) {
             return closed;
         }
+        // Open terminals of the nets not complete: a signal net's
+        // unconnected ones, a pour net's pads off its pour's main piece (a
+        // stranded ground pad is as open as a signal's: the OpenAirScope's
+        // last item). A complete board analyses no pour here.
         let open: usize = order
             .iter()
             .copied()
             .filter(|net| {
                 let state = &self.nets[*net as usize];
-                state.routable && state.plane.is_empty() && !state.complete
+                state.routable && !state.complete
             })
             .map(|net| self.open_measure(net))
             .sum();
         if open == 0 || open > last {
             return closed;
         }
+        // The chain may close what a victim leaves open: no early undo
+        // (it counts the victims' terminals before the chain runs); a pour
+        // net with pads off its main piece is a trouble-maker too, and a
+        // pour net may give way (GND and the supplies are the victims of
+        // most refusals on four-layer boards: jetson-nano's CSI nets).
         let escalated = TroubleSettings {
             depth: settings.depth.max(LAST_CONNECTIONS_DEPTH),
             local: false,
+            early: false,
+            pours: true,
+            pour_victims: true,
             ..settings
         };
         closed += self.trouble_pass(order, escalated, &clock, budget, "last connections");
@@ -458,7 +475,9 @@ impl Router {
         } else {
             victims
                 .iter()
-                .find(|victim| !settings.pours && !self.nets[**victim as usize].plane.is_empty())
+                .find(|victim| {
+                    !settings.pour_victims && !self.nets[**victim as usize].plane.is_empty()
+                })
                 .map(|pour| {
                     format!(
                         "a pour net among the victims ({})",
@@ -500,6 +519,23 @@ impl Router {
                 work,
             );
         }
+        // A conflict one side of a pair of classes sees and the other does
+        // not (a neck-width stub of the trouble-maker, a victim of a wider
+        // clearance routed hard around it in its own map): the nets still in
+        // conflict lose the conflicted branches and are routed again hard,
+        // once, in their own maps (jetson-nano's TMDS_D0_C_N against
+        // HDMI_SHIELD at J1's 0.4 mm row: "1 open to 1, clean false").
+        let conflicted: Vec<NetId> = saved
+            .iter()
+            .map(|entry| entry.0)
+            .filter(|other| !self.conflicts(*other).is_empty())
+            .collect();
+        for other in conflicted {
+            self.rip_up_conflicted(other);
+            self.nets[other as usize].hopeless_searches = 0;
+            self.route_net_seq(other, 0.0, true, 4.0);
+            self.stamp(other);
+        }
         let before = open_saved(&saved);
         let after = open_now(self, &saved);
         let clean = clean(self, &saved);
@@ -526,11 +562,36 @@ impl Router {
                 ),
             )
         } else {
+            // The nets left in conflict, and what their conflicts name
+            // (for the log).
+            let logged = std::env::var_os("PCB_ROUTER_DEBUG").is_some()
+                || std::env::var_os("PCB_ROUTER_TROUBLE_WHY").is_some();
+            let conflicted: Vec<String> = saved
+                .iter()
+                .filter(|entry| logged && !self.conflicts(entry.0).is_empty())
+                .map(|entry| {
+                    let others: Vec<String> = self
+                        .blockers(entry.0)
+                        .iter()
+                        .map(|other| self.board.nets[*other as usize].name.clone())
+                        .collect();
+                    format!(
+                        "{} against [{}]",
+                        self.board.nets[entry.0 as usize].name,
+                        others.join(", ")
+                    )
+                })
+                .collect();
             self.restore_nets(saved);
             (
                 Exchange::default(),
                 format!(
-                    "refused: {before} open to {after}, {nets_before} nets open to {nets_after} ({involved} displaced, {nested} pushed on), clean {clean}"
+                    "refused: {before} open to {after}, {nets_before} nets open to {nets_after} ({involved} displaced, {nested} pushed on), clean {clean}{}",
+                    if conflicted.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" ({})", conflicted.join("; "))
+                    }
                 ),
             )
         }
@@ -643,7 +704,9 @@ impl Router {
         } else {
             victims
                 .iter()
-                .find(|victim| !settings.pours && !self.nets[**victim as usize].plane.is_empty())
+                .find(|victim| {
+                    !settings.pour_victims && !self.nets[**victim as usize].plane.is_empty()
+                })
                 .map(|pour| {
                     format!(
                         "a pour net among the victims ({})",
@@ -681,7 +744,9 @@ impl Router {
             } else {
                 others
                     .iter()
-                    .find(|other| !settings.pours && !self.nets[**other as usize].plane.is_empty())
+                    .find(|other| {
+                        !settings.pour_victims && !self.nets[**other as usize].plane.is_empty()
+                    })
                     .map(|pour| {
                         format!(
                             "a pour net in its way ({})",
@@ -751,7 +816,7 @@ impl Router {
             before.saturating_sub(1)
         };
         // The open measure of a pour net moves with other nets' copper.
-        let early = settings.early && !settings.pours;
+        let early = settings.early && !settings.pour_victims;
         let before_of = |victim: NetId| {
             saved
                 .iter()
