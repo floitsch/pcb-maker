@@ -795,7 +795,20 @@ per knot):
 None of the replays' admissions takes MemAvailable below 2 GB, and the
 capacity adds no wait beyond the floor's. The night's samples (and their
 three-hour replay of 123 boards) were not kept, so the three-hour replay
-was not rerun; replay.py takes `--capacity` now. FRESH_SAMPLES
+was not rerun; replay.py takes `--capacity` now.
+Instead a fresh read-only sampler (sampler.py, every 10 s, 2026-10-27
+03:17-03:56, 237 samples; four agents and the nightly's sweep): outside
+the ledger 16.2-23.4 GB (median 17.3: a capacity of 45.4 GB), reserved
+at most 43.4 GB (p50 35.3), MemAvailable at least 29.1 GB.
+`replay.py --capacity` of its 21 run.py boards that only the floor held
+back at some sample: with the capacity the same starts, waits (0.89
+board-hours with 10 GB, 0.49 with 8.8 GB; at their expected peaks 0.95
+and 0.71) and least MemAvailable (28.8 GB measured floor; 16.5 GB with
+every board at its expected peak) as without it; no sample had more
+reserved than the capacity. Of the 97 binaries that began holding then,
+18 (all `probe-coarse-placement` of one agent's experiment, 1.0-1.2 GB
+each, started with the floor's view at 2.6-9.7 GB) began below the floor
+a binary keeps now: those would have waited.
 
 **kicad-cli under a reservation** (2026-10-27). Every kicad-cli that
 loads a board or a schematic runs inside its process's reservation

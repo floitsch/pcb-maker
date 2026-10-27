@@ -38,7 +38,10 @@ unchanged.
   measured floor): no added wait, no admission below 2 GB. The bound
   behind it: a board the floor admits fits the capacity whenever the
   outside memory is at least its median less the floor (9.3 GB; the
-  night's least was above 16 GB). FRESH_CHANGELOG
+  night's least was above 16 GB). A fresh 39-minute sample (237
+  samples, replay.py `--capacity`): 21 boards, the same starts and waits
+  with the capacity of 45.4 GB; 18 of 97 direct binaries (one agent's
+  probes) began below the floor they would now keep.
 - **kicad-cli under a reservation**: every kicad-cli that loads a board
   runs inside its process's reservation (`ledger::kicad_check`): the
   check-only commands reserve the 2253 MB up front, every other command
