@@ -4460,6 +4460,231 @@ does not rank. A cheaper whole first route (the negotiation and the
 repair, which rank at +0.6 to +0.7) is the more promising probe for
 the race's cold case.
 
+## A coarse whole first route as the race probe (2026-10-27)
+
+The trouble study's verdict pointed here: the race's 75 s probe ranks
+the placer's seeds at Spearman +0.08 to +0.15 against the final KiCad
+unconnected, the first route's open terminals at +0.63 to +0.70, and
+the first route is several hundred seconds of work (its negotiation and
+its repairs). The hypothesis: the probe is weak because it is a partial
+negotiation; a whole first route at a reduced fidelity (a coarser
+lattice, fewer negotiation iterations, no hard repair, no trouble
+repair) might rank nearly as well as the real first route at a fraction
+of its cost. This step tests that with the study's method; nothing in
+the placer or the layout changed.
+
+**The command** (`pcb-maker probe-coarse-placement`, docs/agents.md;
+code `crates/pcb-kicad/src/coarse_probe.rs`,
+`crates/pcb-router/src/router/coarse.rs`): the placed board lowered as
+the trouble probe lowers it, one router with the race's and the first
+route's settings (`race_core_config`), its candidate pitches (0.127,
+0.125, 0.1 mm) times `--pitch-factor`, at most `--iterations`
+negotiation iterations, the whole probe's search within `--share` of
+the task budget (1500 s) as the router's work deadline. Without
+`--hard-repair` the negotiation gets the whole budget; then the nets
+still in conflict lose their conflicted branches, the most conflicted
+first and the others judged again after each (`Router::rip_up_standing`:
+`resolve_remaining`'s rip-up without its hard searches), and the board's
+open terminals are counted (with the pour pads off their pour, as the
+standing counts them). With `--hard-repair` the negotiation gets half
+the budget and the first route's finish (`Router::finish_probe`: the
+hard repair, the trouble repair only with `--trouble-repair`, no
+polish) the rest, and the open terminals are counted as the layout
+counts its first route's. The report carries all three counts: the
+standing when the negotiation ended (`negotiated_open_terminals`,
+`unfinished`, `conflicted`: what the race ranks by), after the rip-up,
+after the repair. The ranked measure was fixed before any run:
+`open_terminals` (the repaired count where the repair ran, else the
+ripped one), ties by the standing.
+
+### Method
+
+`experiments/coarse-probe/study.py` (`run`, `analyse`; output
+`build/coarse1-study/`, its `analysis.md` the full tables): the trouble
+study's 75 placements (`build/trouble1-study/rows.json`: the eleven
+dense boards at the task budgets of x1828, seeds 1 to 601, 6 or 7 a
+board; final KiCad unconnected, the run's recorded race probe of the
+kept placement, missing on video seed 1 and 4in1-mini seed 601, and the
+first route's open terminals). Snapshot x14982 (branch coarse-probe on
+main 947ee550), `PCB_WORK_RATE=3.15e6,150e6`, one thread,
+`PCB_ROUTER_NO_WALL_GUARD=1`, four at a time with 10 GB kept free and
+through the memory ledger (which made probes wait up to 36 minutes for
+their reservation beside the nightly and four other agents; the wall
+clock below is the command's own, after the wait). Settings, fixed
+before the runs: pitch 2x with at most 25 iterations (`p2-i25`), 1.5x
+with 40 (`p1.5-i40`), 1x with 25 (`p1-i25`, the race's own probe but
+for the cap and the count), no repair, at 5 % (75 s) and 10 % (150 s);
+a 10 % probe whose 5 % probe ended before its budget (a stall, the cap,
+no conflicts left, the hopeless rule) is that probe and was copied (52,
+34 and 24 of 75). Chosen after the 5 % rows (the cost was the
+question, and whether the repair closes the gap): 2 % (30 s) for 2x and
+1x, and the hard repair at 10 % for 2x and 1x (its negotiation the 5 %
+probe's: the standing rows are identical; 19 and 13 of the 2 % probes
+are their 5 % probe, which ended before 30 s). 608 probes ran, none
+failed.
+Per board the Spearman of the score against the final unconnected over
+the seeds, the top-1 (ties to the lower seed) and the regret, as the
+trouble study; the race of k on the 73 placements with a race probe;
+with 6 or 7 seeds a board the per-board Spearman's noise is about 0.4
+and the mean's about 0.13.
+
+### Ranking
+
+All seeds (the 75 s probe on the 73 it has); the rows without a mark
+are the fixed measure, `(standing)` ranks the same probe by the race's
+standing:
+
+| ranker | 4in1-mini | 4in1 | DSP | split72 | video | Glasgow | SmartSpin | 0xCB | protoesp | MegaDrive | SNSP | mean | top-1 | regret |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| 75 s probe (race) | -0.30 | -0.06 | +0.46 | -0.36 | -0.14 | +0.50 | -0.31 | +0.41 | +0.68 | +0.21 | +0.50 | +0.15 | 5/11 | 90 |
+| first-route open | +0.43 | +0.64 | +0.75 | -0.29 | +0.93 | +0.89 | +0.62 | +0.77 | +0.96 | +0.96 | +1.00 | +0.70 | 7/11 | 13 |
+| p2-i25, 5 % | -0.94 | -0.14 | +0.79 | +0.43 | +0.89 | +0.54 | +0.76 | +0.62 | +0.61 | +0.64 | +0.68 | +0.44 | 5/11 | 110 |
+| p2-i25, 5 % (standing) | +0.37 | +0.49 | +0.46 | +0.57 | +0.32 | +0.21 | +0.05 | +0.52 | +0.54 | +0.54 | -0.18 | +0.36 | 2/11 | 163 |
+| p1.5-i40, 5 % | +0.37 | -0.14 | +0.57 | +0.39 | +0.86 | +0.36 | +0.33 | +0.69 | +0.82 | +0.64 | +0.50 | +0.49 | 5/11 | 92 |
+| p1.5-i40, 5 % (standing) | +0.83 | +0.09 | +0.32 | -0.21 | +0.36 | +0.21 | +0.20 | +0.69 | +0.43 | +0.82 | +0.75 | +0.41 | 4/11 | 137 |
+| p1-i25, 5 % | +0.09 | +0.35 | +0.71 | -0.32 | +0.96 | +0.61 | -0.31 | +0.37 | +0.93 | +0.68 | +0.54 | +0.42 | 6/11 | 94 |
+| p1-i25, 5 % (standing) | -0.77 | +0.26 | +0.68 | +0.32 | -0.75 | +0.57 | -0.31 | +0.17 | +0.39 | +0.21 | +0.46 | +0.11 | 7/11 | 239 |
+| p2-i25, 10 % | -0.94 | -0.14 | +0.79 | +0.43 | +0.64 | +0.54 | +0.76 | +0.62 | +0.61 | +0.64 | +0.46 | +0.40 | 5/11 | 110 |
+| p1.5-i40, 10 % | +0.37 | -0.14 | +0.57 | -0.57 | +0.89 | +0.36 | +0.62 | +0.69 | +0.61 | +0.50 | +0.50 | +0.40 | 5/11 | 65 |
+| p1-i25, 10 % | +0.09 | -0.23 | +0.71 | +0.96 | +0.96 | +0.43 | -0.58 | +0.37 | +0.39 | +0.75 | +0.75 | +0.42 | 6/11 | 96 |
+| p1-i25, 10 % (standing) | -0.77 | +0.81 | +0.68 | -0.43 | +0.50 | +0.75 | -0.15 | +0.17 | +0.46 | +0.46 | +0.75 | +0.29 | 5/11 | 127 |
+| p2-i25, 2 % | -0.94 | -0.20 | +0.43 | -0.71 | +1.00 | +0.43 | +0.33 | +0.62 | +0.39 | +0.61 | +0.54 | +0.23 | 4/11 | 145 |
+| p2-i25, 2 % (standing) | +0.37 | +0.35 | +0.50 | -0.54 | +0.07 | +0.43 | +0.09 | +0.52 | +0.04 | +0.86 | +0.04 | +0.25 | 2/11 | 268 |
+| p1-i25, 2 % | +0.03 | +0.64 | +0.68 | +0.18 | +0.57 | +0.54 | -0.15 | +0.37 | +0.21 | -0.79 | +0.46 | +0.25 | 5/11 | 122 |
+| p1-i25, 2 % (standing) | -0.54 | +0.35 | +0.43 | +0.36 | -0.36 | +0.39 | -0.05 | +0.17 | +0.32 | +0.68 | +0.61 | +0.21 | 3/11 | 231 |
+| p2-i25, hard repair, 10 % | +0.37 | +0.49 | +0.86 | +0.61 | +0.89 | +0.75 | +0.09 | +0.69 | +0.50 | +0.61 | +0.46 | +0.58 | 5/11 | 106 |
+| p1-i25, hard repair, 10 % | +0.66 | +0.55 | +0.93 | -0.32 | +0.79 | +0.82 | -0.36 | +0.77 | +0.86 | +0.96 | +0.50 | +0.56 | 5/11 | 132 |
+
+**A race of k placements** (the 73 placements with a race probe: per
+board the mean final of the placement each ranker picks among every
+subset of k seeds, k capped at the board's seeds, summed over the
+eleven boards):
+
+| ranker | k = 2 | 3 | 4 | 5 | 6 |
+|---|---:|---:|---:|---:|---:|
+| random | 1037 | 1037 | 1037 | 1037 | 1037 |
+| 75 s probe (race) | 1020 | 989 | 952 | 914 | 868 |
+| first-route open | 929 | 871 | 829 | 797 | 778 |
+| p2-i25, 5 % | 962 | 912 | 885 | 872 | 866 |
+| p2-i25, 5 % (standing) | 993 | 973 | 961 | 945 | 912 |
+| p1.5-i40, 5 % | 959 | 918 | 894 | 874 | 859 |
+| p1-i25, 5 % | 953 | 910 | 883 | 864 | 855 |
+| p1-i25, 5 % (standing) | 1054 | 1060 | 1056 | 1042 | 1022 |
+| p2-i25, 10 % | 972 | 929 | 904 | 888 | 866 |
+| p1.5-i40, 10 % | 965 | 921 | 888 | 860 | 839 |
+| p1-i25, 10 % | 960 | 918 | 889 | 866 | 857 |
+| p2-i25, 2 % | 970 | 939 | 922 | 912 | 902 |
+| p1-i25, 2 % | 993 | 956 | 923 | 896 | 882 |
+| p2-i25, hard repair, 10 % | 956 | 914 | 889 | 875 | 867 |
+| p1-i25, hard repair, 10 % | 951 | 907 | 880 | 858 | 833 |
+| best of all | 757 | | | | |
+
+### Cost
+
+Per board the median over the seeds: the work (s at the pinned rates:
+the search, the repair, the router's build and the pour analyses) and
+the command's wall clock under a load of 20 to 50; beside them the
+first route's wall clock and the race probe's work as the runs recorded
+them (the first route's work is not recorded apart):
+
+| board | first route wall | race probe work | p2-i25 5 % work | wall | p1-i25 5 % work | wall | p2-i25 10 % work | p1-i25 10 % work | p2-i25 2 % work | wall | p1-i25 2 % work | p2 hard 10 % work | wall | p1 hard 10 % work |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4in1-mini | 121 | 17 | 16 | 34 | 20 | 65 | 16 | 20 | 16 | 34 | 20 | 30 | 78 | 40 |
+| 4in1 | 264 | 72 | 36 | 58 | 73 | 193 | 36 | 74 | 30 | 33 | 31 | 59 | 130 | 114 |
+| DSP-ADAU1452 | 321 | 51 | 40 | 143 | 61 | 314 | 40 | 61 | 33 | 48 | 34 | 67 | 112 | 107 |
+| split72_left | 598 | 75 | 73 | 239 | 80 | 430 | 73 | 109 | 32 | 58 | 33 | 118 | 401 | 128 |
+| video | 1096 | 75 | 76 | 152 | 77 | 287 | 152 | 153 | 31 | 49 | 32 | 153 | 230 | 156 |
+| Glasgow | 459 | 75 | 55 | 135 | 76 | 252 | 55 | 90 | 30 | 46 | 31 | 93 | 124 | 136 |
+| SmartSpin2k | 604 | 75 | 50 | 98 | 76 | 248 | 50 | 151 | 30 | 45 | 31 | 87 | 132 | 153 |
+| 0xCB panel | 95 | 20 | 9 | 26 | 27 | 128 | 9 | 27 | 9 | 26 | 27 | 12 | 41 | 37 |
+| protoesp | 271 | 75 | 40 | 75 | 76 | 261 | 40 | 151 | 31 | 34 | 31 | 49 | 105 | 117 |
+| MegaDrive | 847 | 75 | 77 | 193 | 78 | 298 | 137 | 155 | 31 | 45 | 33 | 109 | 245 | 160 |
+| SNSP-CPU-01 | 625 | 75 | 77 | 206 | 79 | 209 | 84 | 155 | 31 | 61 | 33 | 93 | 191 | 125 |
+| sum | 5301 | 686 | 549 | 1358 | 724 | 2686 | 691 | 1146 | 304 | 476 | 336 | 871 | 1789 | 1272 |
+
+The 2x lattice (a quarter of the nodes) is not a quarter of the work:
+the whole route at 2x still uses its 75 s on video, MegaDrive,
+SNSP-CPU-01 and split72_left (cut by the work limit, 8 to 12 iterations
+on video), and where it ends earlier it ends on a stall at 11 to 25
+iterations or at the cap. Its 5 % probe is 20 % cheaper in work than the race's
+recorded probe (549 against 686 summed) and half the 1x probe's wall
+clock (1358 against 2686 s). Only the 2 % probes are a few times
+cheaper (304 to 336 s summed, 30 s a board but the 0xCB panel's 9 and
+the 4in1-mini's 16).
+
+### Judgement
+
+- **The count after the rip-up ranks where the standing does not.** On
+  the same negotiation, the open terminals once the conflicted branches
+  are ripped rank at +0.42 to +0.49 (5 %) against the standing's +0.11
+  to +0.41, with smaller regrets (92 to 110 against 137 to 239) and
+  better picks in a race (k = 3: 910 to 918 against 921 to 1060). The
+  plainest case is `p1-i25` at 5 %, the race's own probe but for the
+  iteration cap and the count: +0.42, 6/11, regret 94, k = 3 910, where
+  its standing gives +0.11 and 1060 and the run's recorded probe +0.15
+  and 989. A net in conflict counts once in the standing; ripped, it
+  counts the terminals its conflicted branches held.
+- **No setting reaches the first route.** The best mean is the hard
+  repair's (+0.58 at 2x, +0.56 at 1x) against the first route's +0.70,
+  and no setting comes near its regret (65 to 145 against 13) or its
+  picks (k = 3: 907 to 956 against 871). The criterion (about +0.6 and
+  a regret under 50) is not met by any.
+- **What loses the ranking first is the budget.** At 2 % (30 s) both
+  pitches fall to +0.23 and +0.25 (regret 145 and 122, k = 3 939 and
+  956). From 5 % to 10 % nothing gains (+0.40 to +0.42): the extra
+  budget extends negotiations that are stalling. The iteration cap (25
+  or 40) shows no effect.
+- **The coarse lattice changes which placements look hard on a third
+  of the boards, not how well they rank in sum.** 2x, 1.5x and 1x at
+  5 % are at +0.44, +0.49 and +0.42. Board by board the 2x and 1x
+  probes agree at +0.82 to +0.96 on seven boards and disagree on
+  4in1-mini (-0.03), split72_left (-0.68), SmartSpin2k (+0.04) and
+  4in1 (+0.37) (Spearman between their scores over the seeds, mean
+  +0.53): the errors move to other boards (4in1-mini -0.94 at 2x
+  against +0.09 at 1x; split72_left +0.43 against -0.32).
+- **The hard repair adds rank correlation, not picks**: +0.44 to +0.58
+  at 2x, +0.42 to +0.56 at 1x, on the same negotiation, for 60 % more
+  work (871 against 549 s summed at 2x); regret 106 and 132, k = 3 914
+  and 907 against 912 and 910 without it.
+- **Within the race's current probe work** (three 75 s probes, the
+  kept one's the first part of its first route: 3 x 686 s summed over
+  the boards' medians) the options are six 2x probes at 2 % (6 x 304 s,
+  k = 6: 902) or the race's three probes at 1x ranked by the rip-up
+  count (k = 3: 910); nine probes at 2 % do not fit (9 x 304). Both are
+  about 80 connections summed below the race's pick in this
+  simulation (989), where the noise of a race-of-k sum is not known;
+  the first route's own ranking at k = 3 (871) stays out of reach.
+
+### Verdict
+
+The hypothesis does not hold as stated: a coarse whole first route is
+not nearly the first route as a ranker (+0.40 to +0.58 against +0.70,
+regret 65 to 145 against 13), and coarseness buys little work (the 2x
+probe at 5 % is 20 % cheaper than the race's probe), so 6 to 9 of them
+fit the race's probe work only at 2 %, where the ranking falls to
++0.23. What the study found instead is the measure: the race's probe
+ranked by the open terminals after the hard repair's rip-up (no
+searches) is at +0.42, 6/11, regret 94 against its standing's +0.11
+(the recorded probe's +0.15, 5/11, 90).
+
+**The wiring proposed for the next package** (a layout option, off by
+default, judged as the race's steps were: the dense pairs, three seeds,
+the summed medians against off and the noise of about 40, the short
+tier's strict passes): `race_probe.count = "ripped"`: the race keeps
+its three probes at 1x and 75 s and its pre-ranking, and ranks them by
+the open terminals after the rip-up (ties by the standing), with the
+race's margin recalibrated on that count. The kept placement's probe
+goes on as its first route; the rip-up must then not touch it (the
+count taken on a copy of its router, or the kept one's rip-up left to
+the first route's own resume, which reroutes the ripped nets), which
+the package has to measure first. A second arm worth the same
+measurement: six 2x probes at 2 % ranked by the same count, the kept
+placement's first route started afresh at the normal pitch (k = 6:
+902, its first route 75 s longer for losing the probe's start). The
+first route itself remains the only ranker at +0.7; a cheaper probe
+that ranks as well would have to reproduce what its long negotiation
+and repairs decide.
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a

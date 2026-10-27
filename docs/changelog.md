@@ -11,6 +11,50 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-10-27 (a coarse first route as a placement ranker)
+
+Branch coarse-probe, snapshot x14982 (on main 947ee550); docs/placer.md,
+"A coarse whole first route as the race probe (2026-10-27)". Nothing in
+the placer or the layout changed.
+
+- **`pcb-maker probe-coarse-placement`** (a research command,
+  docs/agents.md; `crates/pcb-kicad/src/coarse_probe.rs`,
+  `Router::rip_up_standing`, `Router::finish_probe`,
+  `Router::negotiation_progress` in `crates/pcb-router/src/router/coarse.rs`):
+  a placed board routed whole with the race's settings at a reduced
+  fidelity (the pitches times `--pitch-factor`, `--iterations`,
+  `--hard-repair`, `--trouble-repair`) within a share of the task budget;
+  it reports the standing when the negotiation ended, the open terminals
+  once the conflicted branches are ripped (the hard repair's rip-up
+  without its searches) and, with the repair, after it.
+  `experiments/coarse-probe/study.py` runs and ranks it.
+- **The study** (the trouble study's 75 placements of the eleven dense
+  boards, x1828's seeds 1 to 601; 608 probes): pitch 2x, 1.5x and 1x at
+  5 % of the budget rank the seeds at +0.44, +0.49 and +0.42 mean
+  Spearman (5, 5 and 6 of 11 best picks, regret 110, 92, 94), 10 % no
+  better (+0.40 to +0.42), 2 % worse (+0.23, +0.25); the hard repair at
+  10 % +0.58 and +0.56 (regret 106, 132). The race's recorded 75 s probe
+  +0.15 (5/11, 90), the first route +0.70 (7/11, 13). In a race of three
+  (summed mean finals): the 75 s probe 989, the first route 871, the
+  coarse settings 907 to 956.
+- **The verdict: no.** No setting reaches the first route (about +0.6
+  and a regret under 50), and the 2x lattice saves only 20 % of the
+  race probe's work (549 against 686 s summed over the boards' medians),
+  so six to nine probes fit the race's probe work only at 2 %, where the
+  ranking falls. The budget loses the ranking first; the pitch changes
+  which placements look hard on four of eleven boards but not the
+  summed quality; the iteration cap shows no effect; the hard repair
+  adds correlation, not picks.
+- **The finding: the count.** On the same negotiation the open terminals
+  after the rip-up rank at +0.42 to +0.49 where the race's standing
+  ranks at +0.11 to +0.41; the race's own probe (1x, 75 s, the cap at
+  25) ranked by it: +0.42, 6/11, regret 94, a race of three 910 against
+  the standing's 1060 and the recorded probe's 989. Proposed for the
+  next package: `race_probe.count = "ripped"` (off by default; the
+  kept placement's count without ripping its router, which goes on as
+  the first route), judged by the dense pairs; a second arm, six 2x
+  probes at 2 % by the same count (902 in the simulation).
+
 ## Committed on 2026-10-27 (router profile round 3: the open list with a decrease-key; the restamp decodes each stamp list once)
 
 Branch router-profile-3, snapshot x15185 (d975ffae) against main's x1856
