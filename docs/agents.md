@@ -533,8 +533,26 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
 - **Iterate quickly.** Work in three steps:
   1. Check the constraints alone, which takes seconds:
      `pcb-maker place-kicad-board <dir> <id> <out> <dir>/layout.json`
-     (the `placer` object of a layout config is used; a file holding only
-     that object works too). What cannot fit is said at once, with exit
+     places as the layout of that layout config does (since 2026-10-27):
+     its `placer` object, the placement's 40 % of `total_seconds` (600 s
+     of work by default), the race's 16 seeds and the escape demand
+     measured with the router config the layout will take (`--router
+     <router.json>`, default `auto`: the project's rules); a file holding
+     only the placer object works too. It pins the reference's work rates
+     (`3.15e6,150e6`, `work_rate_source` `pinned reference`) unless
+     `PCB_WORK_RATE` or `--measure-work-rate` says otherwise, so that its
+     answer repeats on a loaded machine; at the same rates its placement
+     is the layout's byte for byte (the OpenESC 4in1 panel,
+     framework_mobo_lefthalf and MokyaLora at the reference's rates; the
+     panel at the trial's measured rates gave the trial layout's 8 parts
+     without a place). Until then it placed three seeds on the escape
+     demand's estimate at measured rates: the panel's check placed every
+     part where the layout left 8 without a place, and framework's C1
+     missed by 1.60 mm on one run and 4.33 mm on another. A layout
+     measures its rates: when its parts find no place, its verdict names
+     the rates it placed at and the `PCB_WORK_RATE` that repeats its
+     placement. The check takes what the layout's placement takes (the
+     seeds' pool), about a minute to several on a large board. What cannot fit is said at once, with exit
      2: a `region` smaller than its part, a `row` longer than the outline
      (as it may turn), parts held at one edge that need more length than
      the edge has. Parts that need more area than a side has even with
@@ -544,8 +562,9 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
      missing, and an outline to try. A board that is merely crowded is
      the slow case: the placer tries looser levels before it reports
      parts as unplaced, up to the layout's placement budget (600 s of
-     work per seed; urchin's 80 parts on 80 x 40 mm without rows: about
-     seven minutes); `PCB_PLACER_WORK_SECONDS=60` gives a quicker answer.
+     work per seed by default; urchin's 80 parts on 80 x 40 mm without
+     rows: about seven minutes); `PCB_PLACER_WORK_SECONDS=60` gives a
+     quicker answer.
      `<out>/board-placer.json` reports every constraint, `unplaced`,
      `hints`, `utilization` and `room`. Its first line counts parts:
      `placed 37 of 38 parts (1 kept where they are; 14 board marks and
@@ -576,7 +595,9 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     exactly, here or on another machine, pin the rates it recorded:
     `PCB_WORK_RATE=<work_rate>,<placer_work_rate>` (the reference's:
     `3.15e6,150e6`, which the benchmark tiers use), or the router
-    settings `work_rate` and `placer_work_rate`.
+    settings `work_rate` and `placer_work_rate`. `place-kicad-board`
+    pins the reference's by default (a check should not depend on the
+    load; `--measure-work-rate` measures as a layout does).
 
 ### Pre-routed nets: keep what is routed
 

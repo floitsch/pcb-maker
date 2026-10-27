@@ -1949,6 +1949,11 @@ fn next_actions(
             actions.push(room_action(room, size));
         }
     }
+    if !facts.unplaced.is_empty()
+        && let Some(action) = placement_rates_action(&facts.command, &crate::work_rate::work_rate())
+    {
+        actions.push(action);
+    }
     if !facts.cut.is_empty() && status != KiCadRunStatus::Complete {
         actions.push(format!(
             "the wall clock cut the run ({}): rerun on a less loaded machine, or with a larger budget (total_seconds in the layout config, ladder_budget_seconds in the router config)",
@@ -2428,6 +2433,28 @@ pub fn custom_rules_line(rules: &[crate::project_rules::KiCadCustomRuleReport]) 
 }
 
 /// The next action an outline suggestion makes: the size to try, and why.
+/// A layout whose placement left parts without a place at the rates it
+/// measured: what the place check differs in. `place-kicad-board` places
+/// as the layout does (`placement_check_config`) at the reference's rates
+/// unless told otherwise; at the layout's rates it repeats the layout's
+/// placement (the OpenESC panel: the check placed every part, the layout,
+/// at 0.84 of the reference's placer rate and with the escape demand
+/// measured, left 8 without a place).
+fn placement_rates_action(command: &str, rate: &crate::work_rate::KiCadWorkRate) -> Option<String> {
+    if !command.starts_with("layout") || rate.source != "measured" {
+        return None;
+    }
+    Some(format!(
+        "this layout placed at the work rates measured at its start ({:.4e} expansions/s, {:.4e} placer units/s; {:.2} and {:.2} of the reference's): on a board this full the rates decide which parts find a place; place-kicad-board places as the layout does but at the reference's rates by default, and PCB_WORK_RATE={:.4e},{:.4e} repeats this placement, with place-kicad-board (the same layout config) or with the layout",
+        rate.expansions_per_second,
+        rate.placer_work_per_second,
+        rate.expansions_per_second / pcb_router::router::REFERENCE_EXPANSIONS_PER_SECOND,
+        rate.placer_work_per_second / pcb_placer::REFERENCE_WORK_PER_SECOND,
+        rate.expansions_per_second,
+        rate.placer_work_per_second,
+    ))
+}
+
 pub fn room_action(room: &crate::placement_room::KiCadRoom, size: [f64; 2]) -> String {
     let full: Vec<String> = ["front", "back"]
         .iter()
@@ -3930,6 +3957,32 @@ mod tests {
                 .iter()
                 .any(|action| action.contains("try an outline of 43.0 x 83.0"))
         );
+    }
+
+    #[test]
+    fn a_layout_without_a_place_for_its_parts_says_the_rates_it_placed_at() {
+        let measured = crate::work_rate::KiCadWorkRate {
+            expansions_per_second: 2.4041e6,
+            placer_work_per_second: 1.2539e8,
+            source: "measured".into(),
+            measured: None,
+        };
+        let action = placement_rates_action("layout-kicad-board", &measured).unwrap();
+        assert!(
+            action.contains("PCB_WORK_RATE=2.4041e6,1.2539e8 repeats this placement"),
+            "{action}"
+        );
+        assert!(
+            action.contains("0.76 and 0.84 of the reference's"),
+            "{action}"
+        );
+        // Pinned rates repeat by themselves, and a placement is the check.
+        let pinned = crate::work_rate::KiCadWorkRate {
+            source: "PCB_WORK_RATE".into(),
+            ..measured.clone()
+        };
+        assert_eq!(placement_rates_action("layout-kicad-board", &pinned), None);
+        assert_eq!(placement_rates_action("place-kicad-board", &measured), None);
     }
 
     #[test]

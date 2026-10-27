@@ -292,6 +292,45 @@ pub fn calibrate(config: Option<(f64, Option<f64>)>) -> Result<KiCadWorkRate, St
     Ok(applied.clone())
 }
 
+/// The `source` of the reference's rates pinned by default
+/// (`calibrate_reference_by_default`).
+pub const PINNED_REFERENCE: &str = "pinned reference";
+
+/// As `calibrate`, but where nothing pins the rates (`PCB_WORK_RATE`, the
+/// router settings) the reference's are applied instead of the
+/// measurement (`source` `pinned reference`; the measurement is still
+/// taken, for the log and the verdict): `place-kicad-board`, a check whose
+/// answer should not depend on the machine's load (framework's C1 missed
+/// its near constraint by 1.60 mm on one run and 4.33 mm on another, the
+/// placer's rate measured at 2.23e6 and 1.36e6 expansions a second).
+pub fn calibrate_reference_by_default(
+    config: Option<(f64, Option<f64>)>,
+) -> Result<KiCadWorkRate, String> {
+    if let Some(applied) = APPLIED.get() {
+        return Ok(applied.clone());
+    }
+    let variable = std::env::var(WORK_RATE_VARIABLE).ok();
+    if variable.is_some() || config.is_some() {
+        return calibrate(config);
+    }
+    let mut rate = resolve(
+        None,
+        Some((
+            core::router::REFERENCE_EXPANSIONS_PER_SECOND,
+            Some(placer::REFERENCE_WORK_PER_SECOND),
+        )),
+        Some(measure()),
+    )
+    .map_err(crate::verdict::input_error)?;
+    rate.source = PINNED_REFERENCE.into();
+    core::router::set_expansions_per_second(rate.expansions_per_second);
+    placer::set_work_per_second(rate.placer_work_per_second);
+    core::router::set_wall_stretch(rate.wall_stretch(false));
+    let applied = APPLIED.get_or_init(|| rate);
+    eprintln!("{}", applied.line());
+    Ok(applied.clone())
+}
+
 /// The rates this process applies (the reference's when nothing was
 /// calibrated).
 pub fn work_rate() -> KiCadWorkRate {

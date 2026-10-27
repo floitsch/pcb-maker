@@ -1042,6 +1042,110 @@ impl<F: Fn() -> bool> WallStop<F> {
     }
 }
 
+/// The placement's share of a layout's budget: 40 % of `total_seconds`
+/// (the race after it leaves the final route `RACE_MIN_FINAL_SHARE` at
+/// least).
+pub fn placement_budget(config: &KiCadBoardLayoutConfig) -> f64 {
+    0.4 * config.total_seconds.max(0.0)
+}
+
+/// The placer's configuration as a layout gives it, before the outline is
+/// sized: the layout config's `placer` with its constraints resolved, the
+/// router's clearances, edge margin and wall-clock deadline, the
+/// placement's share of the budget and the router configuration the
+/// escape demand's measurements and the global guidance lower with.
+/// `place-kicad-board` places with the same (`placement_check_config`),
+/// so that its yes is the layout's (the OpenESC panel: the check placed
+/// every part on the escape demand's estimate where the layout, which
+/// measured it, left 8 without a place).
+pub fn layout_placer_config(
+    config: &KiCadBoardLayoutConfig,
+    router_config: &KiCadBoardRouterConfig,
+    source_directory: &Path,
+) -> Result<KiCadBoardPlacerConfig, String> {
+    let mut placer_config = resolve_constraints(&config.placer, source_directory)
+        .map_err(crate::verdict::input_error)?;
+    // Bodies keep at least the largest copper clearance apart.
+    if placer_config.copper_clearance_mm.is_none() {
+        placer_config.copper_clearance_mm = Some(largest_clearance(router_config));
+    }
+    if placer_config.hole_clearance_mm.is_none() {
+        placer_config.hole_clearance_mm = Some(router_config.hole_clearance_mm);
+    }
+    if placer_config.solder_mask_to_copper_mm.is_none() {
+        placer_config.solder_mask_to_copper_mm = router_config.solder_mask_to_copper_mm;
+    }
+    placer_config.edge_margin_mm = placer_config
+        .edge_margin_mm
+        .max(router_config.edge_clearance_mm);
+    if placer_config.copper_edge_clearance_mm.is_none() {
+        placer_config.copper_edge_clearance_mm = Some(router_config.edge_clearance_mm);
+    }
+    // The placement's budget is its work; its wall-clock guard is the
+    // layout's own deadline (at the placement's share of it, the placement
+    // stopped on a busy machine where the work would have gone on, and the
+    // layout depended on the load).
+    placer_config.deadline = router_config.deadline;
+    placer_config.work_seconds = Some(placement_budget(config));
+    if placer_config.global_guidance.is_some() || placer_config.escape_demand.is_some() {
+        placer_config.guidance_router = Some(router_config.clone());
+    }
+    Ok(placer_config)
+}
+
+/// Whether the layout's race pre-ranks the placer's seeds (by RUDY, the
+/// global route or a congestion model): only with one router seed and no
+/// pin swaps.
+fn pre_ranks(config: &KiCadBoardLayoutConfig, router_config: &KiCadBoardRouterConfig) -> bool {
+    config.congestion_score != "none"
+        && (config.congestion_score == "rudy"
+            || config.congestion_score == "global"
+            || config.congestion_model.is_some())
+        && router_config.seeds.unwrap_or(1) <= 1
+        && config.pin_swaps.is_none()
+        && config.swappable.is_empty()
+}
+
+/// The placer's seeds where the race pre-ranks them: as many as it ranks
+/// (`congestion_candidates`) when that is more.
+fn race_placement_seeds(
+    config: &KiCadBoardLayoutConfig,
+    placer_config: &KiCadBoardPlacerConfig,
+) -> usize {
+    placer_config
+        .placement_seeds
+        .max(config.congestion_candidates)
+}
+
+/// The placer's configuration of `place-kicad-board`: what the layout of
+/// that layout config and router configuration places with
+/// (`layout_placer_config`, the net classes' rules, the race's seeds),
+/// for a board whose outline is given (a layout sizing an automatic
+/// outline places within each size it tries).
+pub fn placement_check_config(
+    source_directory: &Path,
+    board_id: &str,
+    config: &KiCadBoardLayoutConfig,
+    router_config: &KiCadBoardRouterConfig,
+) -> Result<KiCadBoardPlacerConfig, String> {
+    let with_classes;
+    let router_config = if router_config.net_classes.is_empty() {
+        router_config
+    } else {
+        let board = source_directory.join(format!("{board_id}.kicad_pcb"));
+        let text = fs::read_to_string(&board)
+            .map_err(|error| format!("failed to read {}: {error}", board.display()))?;
+        with_classes = crate::net_classes::with_net_classes(router_config, &parse(&text)?)
+            .map_err(crate::verdict::input_error)?;
+        &with_classes
+    };
+    let mut placer_config = layout_placer_config(config, router_config, source_directory)?;
+    if pre_ranks(config, router_config) {
+        placer_config.placement_seeds = race_placement_seeds(config, &placer_config);
+    }
+    Ok(placer_config)
+}
+
 pub fn layout_kicad_board(
     source_directory: &Path,
     board_id: &str,
@@ -1153,36 +1257,8 @@ pub fn layout_kicad_board(
             .is_some_and(|deadline| std::time::Instant::now() >= deadline)
     };
     let stop = WallStop::new(wall_passed);
-    let mut placer_config = resolve_constraints(&config.placer, source_directory)
-        .map_err(crate::verdict::input_error)?;
-    // Bodies keep at least the largest copper clearance apart.
-    if placer_config.copper_clearance_mm.is_none() {
-        placer_config.copper_clearance_mm = Some(largest_clearance(router_config));
-    }
-    if placer_config.hole_clearance_mm.is_none() {
-        placer_config.hole_clearance_mm = Some(router_config.hole_clearance_mm);
-    }
-    if placer_config.solder_mask_to_copper_mm.is_none() {
-        placer_config.solder_mask_to_copper_mm = router_config.solder_mask_to_copper_mm;
-    }
-    placer_config.edge_margin_mm = placer_config
-        .edge_margin_mm
-        .max(router_config.edge_clearance_mm);
-    if placer_config.copper_edge_clearance_mm.is_none() {
-        placer_config.copper_edge_clearance_mm = Some(router_config.edge_clearance_mm);
-    }
-    // Placement gets 40 % of the budget (the race after it leaves the
-    // final route `RACE_MIN_FINAL_SHARE` at least).
-    let placement_budget = 0.4 * config.total_seconds.max(0.0);
-    // The placement's budget is its work; its wall-clock guard is the
-    // layout's own deadline (at the placement's share of it, the placement
-    // stopped on a busy machine where the work would have gone on, and the
-    // layout depended on the load).
-    placer_config.deadline = router_config.deadline;
-    placer_config.work_seconds = Some(placement_budget);
-    if placer_config.global_guidance.is_some() || placer_config.escape_demand.is_some() {
-        placer_config.guidance_router = Some(router_config.clone());
-    }
+    let mut placer_config = layout_placer_config(config, router_config, source_directory)?;
+    let placement_budget = placement_budget(config);
     eprintln!("layout: sizing the outline");
     let outline_sizing = size_outline(
         source_directory,
@@ -1208,13 +1284,9 @@ pub fn layout_kicad_board(
         None => None,
     };
     // Only where the race runs: one router seed, no pin swaps.
-    let pre_ranking = config.congestion_score != "none"
-        && (config.congestion_score == "rudy"
-            || config.congestion_score == "global"
-            || congestion_model.is_some())
-        && router_config.seeds.unwrap_or(1) <= 1
-        && config.pin_swaps.is_none()
-        && config.swappable.is_empty();
+    // (the model loaded: `congestion_model` is set exactly when the
+    // config names one)
+    let pre_ranking = pre_ranks(config, router_config);
     if config.congestion_score != "none"
         && config.congestion_score != "rudy"
         && config.congestion_score != "global"
@@ -1226,9 +1298,7 @@ pub fn layout_kicad_board(
         )));
     }
     if pre_ranking {
-        placer_config.placement_seeds = placer_config
-            .placement_seeds
-            .max(config.congestion_candidates);
+        placer_config.placement_seeds = race_placement_seeds(config, &placer_config);
     }
     let placement = place_kicad_board(
         source_directory,
@@ -3287,5 +3357,40 @@ mod budget_tests {
         // Off, the config serializes as before.
         let text = serde_json::to_string(&KiCadBoardLayoutConfig::default()).unwrap();
         assert!(!text.contains("race_probe"), "{text}");
+    }
+
+    #[test]
+    fn the_place_check_places_with_the_layouts_placer_config() {
+        // The OpenESC panel's place check placed every part on the escape
+        // demand's estimate and three seeds where the layout measured it
+        // with its router and ranked sixteen.
+        let f1 = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/f1");
+        let router = crate::project_rules::resolve_project_rules(
+            &f1.join("f1.kicad_pro"),
+            &f1.join("f1.kicad_pcb"),
+        )
+        .unwrap();
+        let layout = KiCadBoardLayoutConfig {
+            total_seconds: 30.0,
+            ..Default::default()
+        };
+        let check = placement_check_config(&f1, "f1", &layout, &router).unwrap();
+        assert_eq!(check.work_seconds, Some(12.0));
+        assert_eq!(check.placement_seeds, layout.congestion_candidates);
+        assert!(check.guidance_router.is_some());
+        assert_eq!(check.copper_clearance_mm, Some(largest_clearance(&router)));
+        assert_eq!(
+            check.copper_edge_clearance_mm,
+            Some(router.edge_clearance_mm)
+        );
+        let own = layout_placer_config(&layout, &router, &f1).unwrap();
+        assert_eq!(own.work_seconds, check.work_seconds);
+        // The plain race places the placer's own seeds.
+        let plain = KiCadBoardLayoutConfig {
+            congestion_score: "none".into(),
+            ..layout.clone()
+        };
+        let check = placement_check_config(&f1, "f1", &plain, &router).unwrap();
+        assert_eq!(check.placement_seeds, plain.placer.placement_seeds);
     }
 }

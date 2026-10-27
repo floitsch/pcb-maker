@@ -463,11 +463,7 @@ fn override_warnings(config: &pcb_kicad::KiCadBoardRouterConfig) -> Vec<String> 
 
 const ROUTE_USAGE: &str = "usage: pcb-maker route-kicad-board <project-dir> <board-id> <out-dir> [router-config.json|auto] [--reference <project-dir>|none] [--strip]";
 const LAYOUT_USAGE: &str = "usage: pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> [router-config.json|auto] [layout-config.json] [--reference <project-dir>|none]";
-/// place-kicad-board's default work budget: the layout's placement share
-/// of its default budget.
-const PLACE_WORK_SECONDS: f64 = 600.0;
-
-const PLACE_USAGE: &str = "usage: pcb-maker place-kicad-board <project-dir> <board-id> <out-dir> [placer-config.json] [--reference <project-dir>]";
+const PLACE_USAGE: &str = "usage: pcb-maker place-kicad-board <project-dir> <board-id> <out-dir> [layout-config.json|placer-config.json] [--reference <project-dir>] [--router <router-config.json|auto>] [--measure-work-rate]";
 
 fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     let command = "route-kicad-board";
@@ -1017,44 +1013,82 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
 
 fn place(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     let command = "place-kicad-board";
-    let (positional, values) = split_flags(arguments, &["--reference"], PLACE_USAGE)?;
+    // --measure-work-rate: the rates measured at the start, as a layout
+    // takes them (default: the reference's, pinned).
+    let measure = arguments
+        .iter()
+        .any(|argument| argument == "--measure-work-rate");
+    let arguments = arguments
+        .into_iter()
+        .filter(|argument| argument != "--measure-work-rate")
+        .collect();
+    let (positional, values) = split_flags(arguments, &["--reference", "--router"], PLACE_USAGE)?;
     positional_count(&positional, 3..=4, PLACE_USAGE)?;
     let (source, board_id, output) = (&positional[0], &positional[1], &positional[2]);
     check_project(source, board_id)?;
     let reference = reference_option(&values, None, board_id)?;
     check_fresh_output(output)?;
-    let mut config: pcb_kicad::KiCadBoardPlacerConfig = match positional.get(3) {
-        // A layout config (import-kicad-netlist's layout.json) works too:
-        // its placer object is the placement's config.
+    // A layout config (import-kicad-netlist's layout.json) is the
+    // layout's: its placer object, budget and race settings; a file
+    // holding only the placer object works too.
+    let mut layout: pcb_kicad::KiCadBoardLayoutConfig = match positional.get(3) {
         Some(path) => match read_json::<serde_json::Value>(path)? {
-            serde_json::Value::Object(mut layout) if layout.contains_key("placer") => {
-                serde_json::from_value(layout.remove("placer").unwrap_or_default()).map_err(
-                    |error| Failure::Usage(format!("failed to parse {path}: placer: {error}")),
-                )?
+            serde_json::Value::Object(layout) if layout.contains_key("placer") => {
+                serde_json::from_value(serde_json::Value::Object(layout))
+                    .map_err(|error| Failure::Usage(format!("failed to parse {path}: {error}")))?
             }
-            value => serde_json::from_value(value)
-                .map_err(|error| Failure::Usage(format!("failed to parse {path}: {error}")))?,
+            value => pcb_kicad::KiCadBoardLayoutConfig {
+                placer: serde_json::from_value(value)
+                    .map_err(|error| Failure::Usage(format!("failed to parse {path}: {error}")))?,
+                ..Default::default()
+            },
         },
         None => Default::default(),
     };
     // The reference board's places say which sub-board of a panel each
     // part belongs to (`sub_boards`).
-    config.sub_board_reference = reference
+    layout.placer.sub_board_reference = reference
         .as_ref()
         .map(|project| project.join(format!("{board_id}.kicad_pcb")));
-    let mut input_warnings = check_constraints(source, board_id, &config)?;
+    // The router configuration the layout would take (--router, default
+    // auto: the project's rules): its clearances, and the escape demand's
+    // measurements route with it.
+    let router =
+        crate::board_router_config(values.get("--router").map(String::as_str), source, board_id)
+            .map_err(Failure::Usage)?;
+    let mut input_warnings = check_constraints(source, board_id, &layout.placer)?;
     // A placement needs no KiCad, but what comes after it does.
     input_warnings.extend(check_kicad(true)?);
-    // The layout's placement budget by default (40 % of its 1500 s of
-    // work), so that the check places as the layout would and ends: a
-    // board without room ran the placer's relaxation levels for over 12
-    // minutes without one. PCB_PLACER_WORK_SECONDS sets another.
-    config.work_seconds = Some(
-        std::env::var("PCB_PLACER_WORK_SECONDS")
-            .ok()
-            .and_then(|value| value.parse().ok())
-            .unwrap_or(PLACE_WORK_SECONDS),
-    );
+    // The rates first: the escape demand's measurements and the
+    // placement's budget count work.
+    if measure {
+        calibrate_work_rate(Some(&router))?;
+    } else {
+        let pinned = match (router.work_rate, router.placer_work_rate) {
+            (Some(expansions), placer) => Some((expansions, placer)),
+            (None, Some(_)) => {
+                return Err(Failure::Usage(
+                    "the router setting placer_work_rate needs work_rate beside it".into(),
+                ));
+            }
+            (None, None) => None,
+        };
+        pcb_kicad::calibrate_reference_by_default(pinned).map_err(Failure::Usage)?;
+    }
+    // What the layout of this config places with (the layout's share of
+    // its budget, 600 s of work by default; the race's seeds; the escape
+    // demand measured with the router's rules), so that the check's yes is
+    // the layout's at the same work rates. PCB_PLACER_WORK_SECONDS sets
+    // another budget.
+    let mut config =
+        pcb_kicad::placement_check_config(Path::new(source), board_id, &layout, &router)
+            .map_err(classify)?;
+    if let Some(seconds) = std::env::var("PCB_PLACER_WORK_SECONDS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+    {
+        config.work_seconds = Some(seconds);
+    }
     let output = Path::new(output);
     let outputs = BTreeMap::from([
         ("project".to_string(), path_text(output)),
@@ -1075,7 +1109,6 @@ fn place(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
             path_text(&output.join("verdict.json")),
         ),
     ]);
-    calibrate_work_rate(None)?;
     let report = output.join("board-placer.json");
     set_target(command, report.clone(), outputs.clone());
     let started = Instant::now();
@@ -1862,20 +1895,26 @@ free_dimension (chosen, probes, reason).";
 const PLACE_HELP: &str = "\
 Places a KiCad board's movable parts (no routing): for checking constraints in seconds.
 
-usage: pcb-maker place-kicad-board <project-dir> <board-id> <out-dir> [placer-config.json] [--reference <project-dir>]
+usage: pcb-maker place-kicad-board <project-dir> <board-id> <out-dir> [layout-config.json|placer-config.json] [--reference <project-dir>] [--router <router-config.json|auto>] [--measure-work-rate]
 
   <project-dir>        the KiCad project directory holding <board-id>.kicad_pcb (and .kicad_pro).
   <board-id>           the board's file stem: myboard for myboard.kicad_pcb.
   <out-dir>            where the placed project goes; must not exist yet.
-  placer-config.json   the placer options (the placer object of a layout config); default none: all
-                       defaults, no constraints. Keys: constraints (a constraints.json path relative
-                       to <project-dir>, or inline; default none), placement_seeds (default 3),
-                       tight_bodies (default: as the project's DRC allows). docs/constraints.md.
-                       A layout config (the layout.json import-kicad-netlist writes) works as well:
-                       its placer object is used.
+  layout-config.json   the layout config the board will be laid out with (the layout.json
+                       import-kicad-netlist writes): the check places as that layout's placement
+                       does (its placer object, the placement's 40 % of total_seconds, the race's
+                       seeds). A file holding only the placer object works too (placer-config.json:
+                       constraints, a constraints.json path relative to <project-dir> or inline;
+                       tight_bodies; docs/constraints.md); default none: all defaults.
   --reference <dir>    the designer's placed project: on a panel of different boards sharing net
                        names, where its footprints lie says which board each part belongs to
                        (verdict.sub_boards); default none: the fixed parts and the nets tell.
+  --router <file|auto> the router config the layout will take (default auto: the project's rules):
+                       its clearances, and the escape demand's measurements route with it.
+  --measure-work-rate  measure the work rates at the start, as a layout does (default: the
+                       reference's 3.15e6,150e6 pinned, so that the check repeats on a loaded
+                       machine; PCB_WORK_RATE pins others). A layout's verdict gives the rates it
+                       ran at: PCB_WORK_RATE=<work_rate>,<placer_work_rate> repeats its placement.
 
 A board with room places in seconds. What cannot fit is an input error at once (exit 2): a region
 smaller than its part, a row longer than the outline, parts held at one edge that need more length
@@ -1886,7 +1925,7 @@ parts. verdict.json's room gives the numbers: utilization per side, the area mis
 outline and, when parts did not fit, an outline to try (suggested_outline_mm).
 
 Environment: PCB_PLACER_WORK_SECONDS sets the placement's work budget in seconds of work (default
-600, the layout's placement share of its default budget; 60 gives a quicker no).
+the layout's placement share of its budget: 600 of the default 1500; 60 gives a quicker no).
 
 <out-dir> receives the placed board, placement.html and board-placer.json: every constraint kept or
 missed, unplaced, illegal, hints, utilization, and verdict.";

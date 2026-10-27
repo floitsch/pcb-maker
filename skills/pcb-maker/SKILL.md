@@ -19,7 +19,8 @@ docs/agents.md in the pcb-maker repository.
 2. Look at the board: `pcb-maker describe-kicad-board <project-dir> <id>`
    (parts, pads, nets, `REF:PAD` names for constraints).
 3. Say what the user wants in `<project-dir>/constraints.json` (below).
-4. Check the constraints in seconds:
+4. Check the constraints: the layout's placement alone (its budget, seeds and
+   router rules, at the reference's work rates; a no where parts cannot fit in seconds):
    `pcb-maker place-kicad-board <project-dir> <id> <out> <project-dir>/layout.json`.
 5. Lay out: `pcb-maker layout-kicad-board <project-dir> <id> <out> auto <project-dir>/layout.json`;
    the finished project is `<out>/result`.

@@ -1392,6 +1392,44 @@ fn a_plane_pour_and_a_keepout_over_a_fixed_part() {
 }
 
 #[test]
+fn the_place_check_pins_the_reference_rates_unless_told_to_measure() {
+    // place-kicad-board is a check: its answer should not depend on the
+    // machine's load (the trial's framework C1 missed by 1.60 mm on one run
+    // and 4.33 mm on another, the rates measured under load). It takes a
+    // layout config (the layout's placement budget and race) as well.
+    let root = scratch("place-rates");
+    let source = project("f1", &root);
+    let layout = root.join("layout.json");
+    fs::write(
+        &layout,
+        json!({"total_seconds": 30, "placer": {"fixed_patterns": ["*"]}}).to_string(),
+    )
+    .unwrap();
+    let place = |name: &str, extra: &[&str]| {
+        let out = root.join(name);
+        let mut command = binary(2);
+        command.env_remove("PCB_WORK_RATE").args([
+            "place-kicad-board",
+            &source.display().to_string(),
+            "f1",
+            &out.display().to_string(),
+            &layout.display().to_string(),
+        ]);
+        let output = command.args(extra).output().unwrap();
+        assert!(matches!(code(&output), 0 | 1), "{}", stderr(&output));
+        read_json(&out.join("verdict.json"))
+    };
+    let pinned = place("pinned", &[]);
+    assert_eq!(pinned["work_rate_source"], "pinned reference", "{pinned}");
+    assert_eq!(pinned["work_rate"], 3.15e6);
+    assert_eq!(pinned["placer_work_rate"], 150e6);
+    assert!(pinned["work_rate_measured"].as_f64().is_some());
+    let measured = place("measured", &["--measure-work-rate"]);
+    assert_eq!(measured["work_rate_source"], "measured", "{measured}");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 #[ignore = "fails on main at 20956b3: placement_constraints::HeldParts reads the placer config's fixed lists only, not constraints.json's fixed"]
 fn a_keepout_over_a_part_fixed_by_the_constraints_file_is_warned_of() {
     // The same keepout as above, with the parts fixed by the constraints'

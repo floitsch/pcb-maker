@@ -243,7 +243,7 @@ and the agent picks it up when a task is about a KiCad board.
 ### Placement only
 
 ```sh
-pcb-maker place-kicad-board <project-dir> <board-id> <out-dir> [placer.json]
+pcb-maker place-kicad-board <project-dir> <board-id> <out-dir> [layout.json] [--router <router.json>]
 ```
 
 ## How it works

@@ -35,8 +35,8 @@ The environment variables are indexed in the hand-over
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 72 | - | 0 | 72 | - |
 | [Placer settings](#placer-settings) | 56 | 51 | 5 | 56 | 29 |
-| [Layout settings](#layout-settings) | 20 | 20 | 0 | 20 | 9 |
-| [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
+| [Layout settings](#layout-settings) | 20 | 20 | 0 | 20 | 10 |
+| [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 1 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 4 |
 | [Layout settings: silkscreen](#layout-settings-silkscreen) | 1 | 1 | 0 | 1 | 1 |
 | [Layout settings: race_probe](#layout-settings-race_probe) | 3 | 3 | 0 | 3 | 3 |
@@ -418,7 +418,7 @@ The layout config file of `layout-kicad-board`. Unknown keys are rejected; a mis
 | `swappable` | `Vec<KiCadSwappable>` | `[]` | - | Interchangeable pins, the short way: per part, the pins (pad functions such as `GPIO*` or pad numbers, globs) whose nets may be permuted. Used when `pin_swaps` is not given. |
 | `pin_swap` | `KiCadPinSwapConfig` | its own table | - | The pin-swap estimate's settings, for `pin_swaps` and `swappable`. |
 | `congestion_model` | `Option<PathBuf>` | unset | placer.md | The placement race's pre-ranking (`docs/congestion-model.md`): the placer makes `congestion_candidates` placements (seeds), they are ranked by `congestion_score`, and the race probes only the best `congestion_probes`. `congestion_score`: - `rudy` (default): RUDY routing demand above the tiles' free   capacity; no model needed (quick tier: KiCad unconnected 98 -> 64   against the plain race of three seeds); - `none`: the plain race (the placer's `placement_seeds`, all   probed); - `global`: the coarse global route's usage above half the tile   boundaries' capacity (`pcb-global`, docs/global-route.md; an   experiment); - with `congestion_model` (an ONNX file, an experiment): `open`   (its predicted unfinished nets), `overflow` (its predicted   overflow summed over the board), or `open+rudy` (the sum of a   placement's ranks by `open` and by RUDY). |
-| `congestion_candidates` | `usize` | `16` | - | With a pre-ranking score, the placer makes at least this many placements to rank (its `placement_seeds` when that is more). |
+| `congestion_candidates` | `usize` | `16` | placer.md | With a pre-ranking score, the placer makes at least this many placements to rank (its `placement_seeds` when that is more). |
 | `congestion_probes` | `usize` | `3` | - | With a pre-ranking score, how many of the best-ranked placements the race routes (at least one). |
 | `congestion_score` | `String` | `"rudy"` | placer.md | How the race ranks the placements before probing them (the values above, at `congestion_model`). |
 | `free_dimension` | `Option<crate::free_dimension::KiCadFreeDimension>` | unset | - | One edge of a rectangular outline the layout may move, to find the smallest board that comes out clean (docs/constraints.md, "A free dimension"): `layout-kicad-board` then lays the board out at several sizes, `total_seconds` being the whole search's budget. |
@@ -434,7 +434,7 @@ One entry of `swappable`. Source: `KiCadSwappable` in [crates/pcb-kicad/src/boar
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
 | `swappable[].part` | `String` | required | - | The part's reference (`U1`). |
-| `swappable[].pins` | `Vec<String>` | required | - | Pad functions (`GPIO*`, `IO?`) or pad numbers, as globs. |
+| `swappable[].pins` | `Vec<String>` | required | placer.md | Pad functions (`GPIO*`, `IO?`) or pad numbers, as globs. |
 | `swappable[].except` | `Vec<String>` | optional | - | Pads to leave alone (strapping pins, a UART the bootloader uses). |
 
 ## Layout settings: free_dimension

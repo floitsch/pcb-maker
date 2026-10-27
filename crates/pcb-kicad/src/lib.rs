@@ -55,7 +55,7 @@ mod trouble_probe;
 pub use board_layout::{
     KiCadBoardLayoutConfig, KiCadBoardLayoutMove, KiCadBoardLayoutResult, KiCadOutlineTrial,
     KiCadRaceProbe, KiCadRaceProbeScore, KiCadRaceReport, KiCadSilkscreenConfig, KiCadSwappable,
-    layout_kicad_board,
+    layout_kicad_board, placement_check_config,
 };
 pub use coarse_probe::{KiCadCoarseProbeConfig, KiCadCoarseProbeReport, probe_coarse_placement};
 pub use congestion_rank::{KiCadCongestionScore, score_congestion_sample, score_kicad_congestion};
@@ -92,7 +92,7 @@ pub use verdict::{
 mod work_rate;
 pub use work_rate::{
     KiCadMeasuredRate, KiCadWorkRate, WORK_RATE_VARIABLE, calibrate as calibrate_work_rate,
-    measure as measure_work_rate, parse_work_rate, work_rate,
+    calibrate_reference_by_default, measure as measure_work_rate, parse_work_rate, work_rate,
 };
 mod constraints_template;
 mod describe;

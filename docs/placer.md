@@ -6,7 +6,7 @@
 
 ```sh
 # Placement only (writes the project plus placement.html, an animated playback)
-cargo run --release -- place-kicad-board <source-dir> <board-id> <out-dir> [placer.json]
+cargo run --release -- place-kicad-board <source-dir> <board-id> <out-dir> [layout.json|placer.json]
 
 # Coupled placement and routing
 cargo run --release -- layout-kicad-board <source-dir> <board-id> <out-dir> <router.json> [layout.json]
@@ -4402,6 +4402,70 @@ x1853 against x15022 and x15027): none has pieces, so nothing of this
 applies to them. zpn_devboard and the Modular Hub (separate loops) have
 no pieces since x15027: as main.
 
+
+## The place check is the layout's placement (2026-10-27)
+
+The third fresh-agent trial's OpenESC 4in1 panel (no reference): the
+place check (`place-kicad-board ... layout.json`) placed all 404 parts
+and exited 0; the layout of the same layout.json then left 8 without a
+legal place (Q17, CL35, CL36 unplaced, C107, CL40, CL42, CL47, Q20
+illegal) and routed nothing. The two differed in three ways:
+
+- **The escape demand's measurements.** The layout gives the placer its
+  router configuration (`guidance_router`), and the escape demand's
+  measured correction routes with it (`placer: escape demand: 29
+  measurements` per seed on the panel); the place check had none and
+  ran on the estimate (`0 measurements`).
+- **The seeds.** The layout's race pre-ranks 16 seeds
+  (`congestion_candidates`); the check placed the placer's 3.
+- **The work rates.** Each process measures its rates at the start: the
+  check's placer rate was 1.49e8 units a second, the layout's 1.25e8
+  (0.84 of the reference) a minute later, so the same 600 s of work
+  bought the layout a sixth less placement.
+
+On the panel the rates decided: the old check at the trial layout's
+measured rates (`PCB_WORK_RATE`, x1868) left the same 8 parts without a
+place (its board not the layout's byte for byte: no measurements), and
+at the reference's rates both place every part. On
+framework_mobo_lefthalf the configuration did: at the reference's rates
+the old check's placement is not the layout's (C1 4.33 mm past its near
+constraint of 2 mm, the layout's 3.60 mm).
+
+Now `placement_check_config` (board_layout.rs) gives the check what the
+layout's placement gets (`layout_placer_config`: the layout config's
+placer object, the router's clearances and edge margin, 40 % of
+`total_seconds`, the guidance router; the race's seeds where the race
+pre-ranks; the net classes of the router file), from the layout config
+it is given (a bare placer object still works: the default layout
+around it) and the router config the layout will take (`--router`,
+default `auto`), and the layout takes the same functions, so the two
+cannot drift apart. The check pins the reference's rates by default
+(`calibrate_reference_by_default`, `work_rate_source` `pinned
+reference`; `--measure-work-rate` measures, `PCB_WORK_RATE` pins
+others): its answer repeats whatever the load, as a check's should
+(framework's C1 missed its near constraint by 1.60 mm on one run and
+4.33 mm on another, at 2.23e6 and 1.36e6 expansions a second measured).
+A layout still measures; where its parts find no place its verdict
+names the rates it placed at, `PCB_WORK_RATE=<a>,<b>` repeating its
+placement in the check or in the layout.
+
+Measured (1 job x 2 threads beside the day's work; `build/ux5/`):
+
+| Board | layout's placement (x1868, reference rates) | the check (this branch, default) | the check at the trial layout's measured rates |
+| --- | --- | --- | --- |
+| OpenESC 4in1 panel | 398 of 398 placed, seed 1 | byte for byte the layout's | byte for byte the trial layout's: the same 8 parts without a place |
+| framework_mobo_lefthalf | seed 7 of 16 | byte for byte the layout's | |
+| MokyaLora | seed 4 of 16 | byte for byte the layout's | |
+
+The layout's own placement is unchanged by the refactor: this branch's
+layout placements of the three boards are x1868's byte for byte at the
+reference's rates. On a board this full (the panel's front 107 % at the
+last level) the rates decide which parts find a place: at the
+reference's every part, at 0.84 of it eight short. The check now costs
+what the layout's placement costs (16 seeds in the pool, the escape
+measurements' routes): framework 31 s, MokyaLora 219 s, the panel 423 s
+of wall clock at two threads (the trial's checks: 60, 46 and 214 s at 32
+threads, measured rates).
 
 ## The trouble-maker probe (2026-10-26)
 
