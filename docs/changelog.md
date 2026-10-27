@@ -11,6 +11,55 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-27 (the third trial's open points)
+
+Branch trial3-followups (main 19bf4569, x1868), binaries
+`build/bin/pcb-maker-ux5-base` (main), `-place1`, `-place2` (the
+branch); outputs in `build/ux5/`. The "Left open" list of
+[reviews/2026-10-27-fresh-agent-trial-3.md](reviews/2026-10-27-fresh-agent-trial-3.md):
+
+- **A panel's boards' parts mixed is `incomplete`** (verdict.rs,
+  `boards_mixed`): with more than a tenth of the movable parts on no
+  sub-board, the placement and the layout exit 1, the mixed boards the
+  first problem of the reason; no `suggested_outline_mm` and no room
+  advice then. The panel's place check: exit 0 before, exit 1 now.
+- **The place check is the layout's placement** (board_layout.rs,
+  `layout_placer_config`, `placement_check_config`; docs/placer.md, "The
+  place check is the layout's placement (2026-10-27)"): the check now
+  takes the layout config's budget share, the race's 16 seeds and the
+  router's rules for the escape demand's measurements (`--router`,
+  default auto), and pins the reference's work rates by default
+  (`--measure-work-rate`). At the reference's rates its placement is the
+  layout's byte for byte on the panel, framework_mobo_lefthalf and
+  MokyaLora; at the trial layout's measured rates the panel's check gives
+  the trial layout's placement byte for byte (the same 8 parts without a
+  place). The panel's disagreement was the rates (the old check at the
+  layout's rates left the same 8); framework's the configuration. The
+  layout's own placements of the three boards are x1868's byte for byte.
+  A layout whose parts find no place at measured rates names them and the
+  `PCB_WORK_RATE` that repeats it. The check costs what the layout's
+  placement costs (MokyaLora 219 s of wall clock at two threads).
+- **MokyaLora's mask bridge is a zone's fill, not a track** (docs/router.md,
+  "A zone's fill under a footprint's mask graphic"): the router already
+  lowers footprint mask graphics as openings; KiCad names the opening and
+  the first copper it found (our GND track), and the second net is the
+  designer's VSYS zone filling under J6's rectangle, where the placement put
+  J6. With pcbnew 10.0.7: every track in the rectangle removed, the bridge
+  stays; the VSYS zone removed, it goes. No router change; the verdict's
+  action for a bridge at a footprint's mask graphic says so (it said "the
+  router keeps them"). Not built: the placer keeping mask graphics off
+  other nets' zones, or a rule area without pours over the opening.
+- **The fab gate with `--input`** names the errors between parts the
+  layout kept per type (framework: clearance 2 and hole_clearance 4 at
+  J1, R31, R32 "unchanged from the input"), not "move what is too close".
+- **The template's near distances** on a placed board are at least the
+  board's own (courtyard to pin, rounded up to 0.5 mm, beyond the
+  placer's 0.05 mm tolerance), listed in the comment: framework's C1 6 mm
+  (5.85), 26 of MokyaLora's 53 widened (2 to 6 mm); its place check missed
+  11 entries with the old template and 2 with the new (C75 0.29 mm, C62
+  1.16 mm), same binary and rates. A board without a placement keeps 1.5
+  and 3 mm.
+
 ## Reviewed on 2026-10-27 (a fresh agent's third trial)
 
 Branch fresh-agent-trial-3 (main ff120a4c, x1867).

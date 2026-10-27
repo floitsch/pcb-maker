@@ -269,7 +269,7 @@ const ENVIRONMENT_HELP: &[(&str, &str)] = &[
     ),
     (
         "PCB_PLACER_WORK_SECONDS",
-        "place-kicad-board's work budget in seconds of work; default 600.",
+        "place-kicad-board's work budget in seconds of work; default the layout's share, 40 % of total_seconds (600).",
     ),
     (
         "PCB_KICAD_TIMEOUT",

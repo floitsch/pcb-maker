@@ -75,7 +75,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_WORK_RATE",
         Kind::User,
-        "`<expansions/s>[,<placer units/s>]`: the work rates pinned instead of measured at the start (a verdict's `work_rate` and `placer_work_rate` repeat its run; `3.15e6,150e6` is the reference's, run.py's default); wins over the router settings `work_rate` and `placer_work_rate`. `pcb-maker calibrate-work-rate [rounds]` prints the measurement alone.",
+        "`<expansions/s>[,<placer units/s>]`: the work rates pinned instead of measured at the start (a verdict's `work_rate` and `placer_work_rate` repeat its run; `3.15e6,150e6` is the reference's, run.py's default); wins over the router settings `work_rate` and `placer_work_rate`. `place-kicad-board` pins the reference's unless this or `--measure-work-rate` says otherwise. `pcb-maker calibrate-work-rate [rounds]` prints the measurement alone.",
     ),
     (
         "PCB_ROUTER_SEEDS",
@@ -105,7 +105,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_PLACER_WORK_SECONDS",
         Kind::User,
-        "place-kicad-board's placement work budget in seconds of work (default 600, the layout's share).",
+        "place-kicad-board's placement work budget in seconds of work (default the layout's share: 40 % of the layout config's total_seconds, 600 by default).",
     ),
     (
         "PCB_KICAD_TIMEOUT",

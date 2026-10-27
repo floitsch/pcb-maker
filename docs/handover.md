@@ -452,13 +452,13 @@ fails until the index is regenerated); the config keys are in
 User-facing (`pcb-maker --help` lists them):
 
 - `RAYON_NUM_THREADS`: threads of the router's searches and of the placer's seed pool (default: every core); results do not depend on it.
-- `PCB_WORK_RATE`: `<expansions/s>[,<placer units/s>]`: the work rates pinned instead of measured at the start (a verdict's `work_rate` and `placer_work_rate` repeat its run; `3.15e6,150e6` is the reference's, run.py's default); wins over the router settings `work_rate` and `placer_work_rate`. `pcb-maker calibrate-work-rate [rounds]` prints the measurement alone.
+- `PCB_WORK_RATE`: `<expansions/s>[,<placer units/s>]`: the work rates pinned instead of measured at the start (a verdict's `work_rate` and `placer_work_rate` repeat its run; `3.15e6,150e6` is the reference's, run.py's default); wins over the router settings `work_rate` and `placer_work_rate`. `place-kicad-board` pins the reference's unless this or `--measure-work-rate` says otherwise. `pcb-maker calibrate-work-rate [rounds]` prints the measurement alone.
 - `PCB_ROUTER_SEEDS`: `N`: with the `auto` router config, N seeds routed side by side and the best kept (the router setting `seeds`).
 - `PCB_SKIP_NATIVE`: with any router config (a file too, since 2026-10-21), no KiCad checks (`skip_native_verification`; machines without kicad-cli): the verdict is `router_complete_unverified` at best, exit 1.
 - `PCB_KICAD_CLI`: the kicad-cli program to run (default `kicad-cli` on the PATH; on macOS `/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli`). The agent commands ask its version before any work: missing, failing or older than KiCad 10 is an input error, exit 2 (a warning where the run needs no KiCad).
 - `KICAD10_FOOTPRINT_DIR`: KiCad's own variable (`KICAD9_FOOTPRINT_DIR`, `KICAD8_FOOTPRINT_DIR` after it): import-kicad-netlist's folder of KiCad's footprint libraries, before the standard install folders (Linux, macOS, Windows).
 - `PCB_ROUTER_NO_WALL_GUARD`: no wall-clock guard in the router, and the layout sets no wall-clock deadline: work alone ends runs (determinism checks, the walkthrough test).
-- `PCB_PLACER_WORK_SECONDS`: place-kicad-board's placement work budget in seconds of work (default 600, the layout's share).
+- `PCB_PLACER_WORK_SECONDS`: place-kicad-board's placement work budget in seconds of work (default the layout's share: 40 % of the layout config's total_seconds, 600 by default).
 - `PCB_KICAD_TIMEOUT`: seconds one kicad-cli report may take before it is killed (default 900).
 - `PCB_MIN_CONNECTION_FLOOR`: `errors`: floor the router's track widths at the board's minimum connection width (and a custom `connection_width` rule's) only when KiCad rates connection_width an error; `off`: never (default since 2026-10-24: at error and warning severity).
 - `PCB_KICAD_NO_NECK_REPAIR`: no connection-width neck repair after the final DRC.
