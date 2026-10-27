@@ -46,6 +46,7 @@ pub use native_report::{
 use native_report::{ReportKind, remove_if_present, run_kicad_report, validate_report};
 pub use silkscreen::repair_kicad_silkscreen;
 mod board_layout;
+mod coarse_probe;
 mod congestion_rank;
 mod congestion_samples;
 mod global_route;
@@ -60,6 +61,9 @@ pub use congestion_rank::{KiCadCongestionScore, score_congestion_sample, score_k
 pub use congestion_samples::{
     KiCadCongestionJob, KiCadCongestionSampleReport, KiCadCongestionVariant, KiCadPerturbation,
     export_congestion_samples,
+};
+pub use coarse_probe::{
+    KiCadCoarseProbeConfig, KiCadCoarseProbeReport, probe_coarse_placement,
 };
 pub use global_route::{KiCadGlobalRouteReport, KiCadProbeReport, global_route_kicad_board};
 pub use move_descent::{

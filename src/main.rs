@@ -474,6 +474,7 @@ const RESEARCH_USAGE: &[&str] = &[
     "ablate-kicad-placement <designer.kicad_pcb> <placed-directory> <board-id> <output-directory> [ablation.json] [router-config.json|auto]",
     "global-route-kicad-board <source-directory> <board-id> [router-config.json|auto] [--global <global.json>] [--probe <work-seconds>] [--corridors <out.json>]",
     "probe-trouble-placement <placed.kicad_pcb> [router-config.json|auto] (--trouble-from <run-dir|board-router.json|probe.json> | --trouble <names.txt> | --auto)... [--nets <n>] [--background none|stubs|global|full] [--share <0.05>] [--total-seconds <1500>] [--work-seconds <s>] [--stub-mm <1.0>] [--global-weight <2.0>] [--out <report.json>]",
+    "probe-coarse-placement <placed.kicad_pcb> [router-config.json|auto] [--pitch-factor <1.0>] [--iterations <n>] [--hard-repair] [--trouble-repair] [--negotiation-share <0.5>] [--share <0.05>] [--total-seconds <1500>] [--work-seconds <s>] [--out <report.json>]",
     "dump-pour-map <source-directory> <board-id> <output-directory> [config.json|auto]",
     "bench-search <source-directory> <board-id> <iterations> [config.json|auto]",
     "calibrate-work-rate [rounds]",
@@ -1014,6 +1015,73 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             // watchdog raises it while the ledger has room.
             pcb_kicad::ledger::reserve_at_least(1024.0, "the trouble-maker probe's router");
             let report = pcb_kicad::probe_trouble_placement(board, &router, &config)?;
+            let text = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
+            match out {
+                Some(path) => std::fs::write(&path, format!("{text}\n"))
+                    .map_err(|error| format!("failed to write {path}: {error}"))?,
+                None => println!("{text}"),
+            }
+            Ok(())
+        }
+        "probe-coarse-placement" => {
+            let usage = research_usage("probe-coarse-placement").unwrap_or_default();
+            let board = arguments.next().ok_or_else(|| usage.clone())?;
+            let mut router_path = None;
+            let mut config = pcb_kicad::KiCadCoarseProbeConfig::default();
+            let mut out = None;
+            let number = |name: &str, value: Option<String>| -> Result<f64, String> {
+                let value = value.ok_or_else(|| format!("{name}: a value"))?;
+                value
+                    .parse::<f64>()
+                    .map_err(|_| format!("{name}: not a number: {value}"))
+            };
+            while let Some(argument) = arguments.next() {
+                match argument.as_str() {
+                    "--pitch-factor" => {
+                        config.pitch_factor = number("--pitch-factor", arguments.next())?
+                    }
+                    "--iterations" => {
+                        config.iterations = Some(number("--iterations", arguments.next())? as usize)
+                    }
+                    "--hard-repair" => config.hard_repair = true,
+                    "--trouble-repair" => config.trouble_repair = true,
+                    "--negotiation-share" => {
+                        config.negotiation_share = number("--negotiation-share", arguments.next())?
+                    }
+                    "--share" => config.share = number("--share", arguments.next())?,
+                    "--total-seconds" => {
+                        config.total_seconds = number("--total-seconds", arguments.next())?
+                    }
+                    "--work-seconds" => {
+                        config.work_seconds = Some(number("--work-seconds", arguments.next())?)
+                    }
+                    "--out" => out = Some(arguments.next().ok_or_else(|| usage.clone())?),
+                    _ if router_path.is_none() && !argument.starts_with("--") => {
+                        router_path = Some(argument)
+                    }
+                    _ => return Err(usage),
+                }
+            }
+            if config.trouble_repair && !config.hard_repair {
+                return Err("--trouble-repair follows the hard repair: give --hard-repair".into());
+            }
+            let board = Path::new(&board);
+            let directory = board
+                .parent()
+                .map(|parent| parent.to_string_lossy().into_owned())
+                .unwrap_or_else(|| ".".into());
+            let board_id = board
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().into_owned())
+                .ok_or_else(|| usage.clone())?;
+            let router = board_router_config(router_path.as_deref(), &directory, &board_id)?;
+            // A probe holds its router for up to minutes: not a short command.
+            pcb_kicad::ledger::arm(
+                &format!("probe-coarse-placement {}", board.display()),
+                false,
+            );
+            pcb_kicad::ledger::reserve_at_least(1024.0, "the coarse probe's router");
+            let report = pcb_kicad::probe_coarse_placement(board, &router, &config)?;
             let text = serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?;
             match out {
                 Some(path) => std::fs::write(&path, format!("{text}\n"))

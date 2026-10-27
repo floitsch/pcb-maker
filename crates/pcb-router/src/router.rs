@@ -22,6 +22,7 @@ mod build;
 mod bundles;
 mod capacitated;
 mod cleanup;
+mod coarse;
 mod config;
 /// Read-only tile views of the negotiation, for the congestion model.
 pub mod congestion;
