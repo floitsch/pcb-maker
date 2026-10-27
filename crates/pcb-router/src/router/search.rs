@@ -231,6 +231,14 @@ impl Router {
         let mut found = None;
         while let Some(key) = heap.pop() {
             let state = (key & u32::MAX as u64) as usize;
+            // The search node the next pop most likely takes (unless this
+            // expansion pushes a lesser key), asked for an expansion ahead:
+            // the popped node's own record was a cache miss (2 to 4 % of
+            // the route's CPU; the second round, docs/profiling.md).
+            let next = heap.next_hint();
+            if next != NO_KEY {
+                prefetch_index(&scratch.nodes, (next & u32::MAX as u64) as usize);
+            }
             if scratch.nodes[state].closed == generation {
                 continue;
             }

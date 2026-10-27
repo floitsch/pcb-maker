@@ -116,6 +116,21 @@ impl KeyHeap {
         Some(top)
     }
 
+    /// The key the next pop takes unless a lesser one is pushed first
+    /// (`NO_KEY` when the heap is empty): the root, or the least of its
+    /// children while it is empty. A hint for prefetching what the next
+    /// expansion reads.
+    #[inline(always)]
+    pub(super) fn next_hint(&self) -> u64 {
+        if !self.hole {
+            return self.groups.first().map_or(NO_KEY, |group| group.0[3]);
+        }
+        let Some(&KeyGroup([a, b, c, d])) = self.groups.get(1) else {
+            return NO_KEY;
+        };
+        a.min(b).min(c.min(d))
+    }
+
     /// Puts `key` into the empty root and sifts it down among the slots
     /// before `end`.
     #[inline(always)]
