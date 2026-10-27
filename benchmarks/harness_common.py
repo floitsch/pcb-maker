@@ -164,6 +164,34 @@ def end_group(group, wait_seconds=60.0, poll_seconds=0.2):
     return left
 
 
+# The binaries a harness starts for a board run inside the board's
+# reservation (since 2026-10-27; ledger.rs, PCB_MAKER_LEDGER_INSIDE): run.py's
+# MemoryGate sets, per board thread, what gives the environment for that
+# (inside_environment), and run_group adds it to every child it starts.
+import threading as _threading
+_BOARD = _threading.local()
+
+
+def set_board_ledger(provider):
+    """Sets this thread's provider of the environment that puts the binaries
+    it starts inside a reservation (a function returning a dict, or None:
+    none)."""
+    _BOARD.provider = provider
+
+
+def board_ledger_environment():
+    """This thread's environment for its binaries (set_board_ledger), {}
+    without one."""
+    provider = getattr(_BOARD, "provider", None)
+    return (provider() or {}) if provider else {}
+
+
+def inside_value(key):
+    """PCB_MAKER_LEDGER_INSIDE for the reservation `key` ((pid, started,
+    label)): `<pid> <started>`."""
+    return f"{key[0]} {key[1]!r}"
+
+
 def run_group(command, timeout=None, **options):
     """subprocess.run for a child that may start children of its own (the
     binary's kicad-cli): the child gets a process group of its own; on a
@@ -172,6 +200,9 @@ def run_group(command, timeout=None, **options):
     running when it ended is killed too. `options` are subprocess.Popen's
     (capture_output, text, cwd, stdout, stderr, env, check)."""
     check = options.pop("check", False)
+    inside = board_ledger_environment()
+    if inside:
+        options["env"] = dict(options.get("env") or os.environ, **inside)
     if options.pop("capture_output", False):
         options["stdout"] = subprocess.PIPE
         options["stderr"] = subprocess.PIPE
@@ -275,17 +306,60 @@ def memory_total_mb():
     return None
 
 
-def ledger_capacity_mb(environ=None):
-    """What the reservations may take together: PCB_MAKER_LEDGER_TOTAL_MB,
-    else MemTotal less PCB_MAKER_LEDGER_MARGIN_MB (default 6144). None when
-    unknown (no waiting on the ledger then)."""
+# The capacity from the machine (since 2026-10-27; ledger.rs,
+# `machine_capacity_mb`: the same rule): MemTotal less the memory outside the
+# ledger, the median of the headroom samples (`outside_mb`) when they are
+# fresh, else DEFAULT_OUTSIDE_SHARE of MemTotal; at most MemTotal less the
+# margin. Until then it was MemTotal less the margin alone, 56.7 GB here,
+# 11-21 GB more than the machine could give beside the 16.7-27.5 GB outside.
+DEFAULT_OUTSIDE_SHARE = 0.25
+
+
+def machine_capacity_mb(total_mb, margin_mb, summary, now=None):
+    """What the reservations may take together on a machine of `total_mb`
+    beside the samples' `summary` (headroom_summary; None: none): (megabytes,
+    what it is made of)."""
+    now = time.time() if now is None else now
+    bound = max(0.0, total_mb - margin_mb)
+    summary = summary or {}
+    outside = summary.get("outside_mb")
+    if headroom_fresh(summary, now) and outside is not None:
+        outside, how = max(0.0, float(outside)), f"the median of {summary['samples']} headroom samples"
+    else:
+        outside, how = total_mb * DEFAULT_OUTSIDE_SHARE, \
+            f"{DEFAULT_OUTSIDE_SHARE * 100:.0f} % of MemTotal without fresh headroom samples"
+    capacity = min(bound, max(0.0, total_mb - outside))
+    return capacity, (f"MemTotal {total_mb / 1024:.1f} GB less {outside / 1024:.1f} GB outside the ledger ({how}); "
+                      f"at most {bound / 1024:.1f} GB, MemTotal less the margin")
+
+
+def ledger_capacity_described(environ=None, summary=None):
+    """What the reservations may take together and what it is made of:
+    PCB_MAKER_LEDGER_TOTAL_MB, else machine_capacity_mb of MemTotal, the
+    margin (PCB_MAKER_LEDGER_MARGIN_MB, default 6144) and the headroom
+    samples beside the ledger (`summary` given: those). None when unknown
+    (no waiting on the ledger then)."""
     environ = os.environ if environ is None else environ
     total = _positive_mb(environ, "PCB_MAKER_LEDGER_TOTAL_MB")
     if total is not None:
-        return total
+        return total, "PCB_MAKER_LEDGER_TOTAL_MB"
     margin = _positive_mb(environ, "PCB_MAKER_LEDGER_MARGIN_MB", allow_zero=True)
     machine = memory_total_mb()
-    return None if machine is None else max(0.0, machine - (LEDGER_MARGIN_MB if margin is None else margin))
+    if machine is None:
+        return None
+    if summary is None:
+        summary = (read_headroom(headroom_path(ledger_path(environ))) or {}).get("summary")
+    return machine_capacity_mb(machine, LEDGER_MARGIN_MB if margin is None else margin, summary)
+
+
+def ledger_capacity_mb(environ=None, ledger=None):
+    """What the reservations may take together (ledger_capacity_described;
+    `ledger`, a Ledger: with the samples beside it), None when unknown."""
+    summary = None
+    if ledger is not None:
+        summary = (read_headroom(headroom_path(ledger.path)) or {}).get("summary") or {}
+    described = ledger_capacity_described(environ, summary)
+    return None if described is None else described[0]
 
 
 def _stat_fields(pid):
@@ -433,7 +507,7 @@ def memory_room(reservations, megabytes, min_free_mb=0.0, capacity_mb=None, avai
     own_pid = own_pid or os.getpid()
     # Waiting requests (megabytes 0, waiting_mb set) hold nothing.
     holders = [r for r in reservations if r.get("megabytes", 0.0) > 0]
-    waiting = len(reservations) - len(holders)
+    waiting = sum(1 for r in reservations if r.get("waiting_mb") is not None)
     reserved = sum(r.get("megabytes", 0.0) for r in reservations)
     growth = growth_mb(reservations, resident, own_pid)
     ledger_ok = capacity_mb is None or reserved + megabytes <= capacity_mb
@@ -705,7 +779,7 @@ def try_admit(ledger, megabytes, label, min_free_mb=0.0, since=None, expected_se
         reservations[:] = [r for r in reservations if not _is_waiting_entry(r, pid, label, since)]
         available = memory_available_bytes()
         available_mb = None if available is None else available / (1024 * 1024)
-        capacity = ledger_capacity_mb()
+        capacity = ledger_capacity_mb(ledger=ledger)
         fits, text = memory_room(reservations, megabytes, min_free_mb, capacity, available_mb)
         begun = now if since is None else since
         ordered = order_allows(reservations, megabytes, begun, capacity, pid, priority)
@@ -898,12 +972,22 @@ def measured_floor_mb(summary, overshoot_mb=0.0, now=None):
     summary = summary or {}
     count = summary.get("samples") or 0
     growth = summary.get("outside_growth_mb")
-    if count < HEADROOM_MIN_SAMPLES or growth is None or now - (summary.get("updated") or 0) > HEADROOM_MAX_AGE_SECONDS:
+    if not headroom_fresh(summary, now) or growth is None:
         return DEFAULT_FLOOR_MB, f"the default {DEFAULT_FLOOR_MB / 1024:.0f} GB ({count} samples)"
     overshoot = max(0.0, float(overshoot_mb or 0.0))
     floor = FLOOR_KEEP_MB + max(0.0, growth) + overshoot
     return floor, (f"measured: {FLOOR_KEEP_MB / 1024:.1f} GB to keep + {max(0.0, growth) / 1024:.1f} GB outside "
                    f"growth + {overshoot / 1024:.1f} GB overshoot ({count} samples)")
+
+
+def headroom_fresh(summary, now=None):
+    """Whether the samples' `summary` is fresh: at least HEADROOM_MIN_SAMPLES
+    samples whose newest is at most HEADROOM_MAX_AGE_SECONDS old (the floor
+    and the capacity read only such). ledger.rs, `headroom_fresh`."""
+    now = time.time() if now is None else now
+    summary = summary or {}
+    return (summary.get("samples") or 0) >= HEADROOM_MIN_SAMPLES and \
+        now - (summary.get("updated") or 0) <= HEADROOM_MAX_AGE_SECONDS
 
 
 def read_headroom(path):

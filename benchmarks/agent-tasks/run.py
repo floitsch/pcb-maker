@@ -1261,7 +1261,25 @@ class MemoryGate:
     the overshoot of the board's kind from `sidecar`, estimates.json; 10
     GB without samples), read again on every poll of a wait. `sample`: the
     gate samples the machine beside the ledger every 10 s while the run
-    goes (harness_common.HeadroomSampler)."""
+    goes (harness_common.HeadroomSampler).
+
+    Every binary of a board runs inside the board's reservation (since
+    2026-10-27): the board's own binary takes it over (`started`), the
+    others (the designer's DRC and the strict baseline's, the route's
+    check of its result, strip-kicad-tracks) get PCB_MAKER_LEDGER_INSIDE
+    naming it (`inside_environment`, through harness_common.run_group on
+    the board's thread), so that they reserve only what they need beyond
+    it. Once the board's binary has ended, the binaries after it run
+    inside a reservation of one short request (AFTER_RUN_MB: a binary's
+    own 2 GB beside one KiCad check) that the gate admits for them, short,
+    at the first one. Until then they ran outside the board's reservation:
+    the nightly's binaries 1.3-2.1 GB outside any holder in the headroom
+    samples of 2026-10-26/27."""
+
+    # What the binaries after a board's run take at most (a strict
+    # baseline's or the route's check: harness_common.SHORT_OWN_MB of the
+    # binary beside one KiCad check).
+    AFTER_RUN_MB = harness_common.SHORT_OWN_MB + harness_common.KICAD_CHECK_MB
 
     def __init__(self, minimum_gb, ledger=None, poll_seconds=15.0, drain_after=None, priority=None, drain_max=None,
                  sidecar=None, sample=False):
@@ -1277,6 +1295,10 @@ class MemoryGate:
         self.lock = threading.Lock()
         # token -> the reservation's key in the ledger
         self.keys = {}
+        # token -> the key of the board's binary that took it over; the
+        # board's name
+        self.moved = {}
+        self.names = {}
         self.next_token = 0
 
     def floor_mb(self, kind=None):
@@ -1302,6 +1324,10 @@ class MemoryGate:
             token = self.next_token
             self.next_token += 1
             self.keys[token] = key
+            self.names[token] = what
+        # The binaries this thread starts for the board run inside its
+        # reservation (harness_common.run_group).
+        harness_common.set_board_ledger(lambda: self.inside_environment(token))
         return token
 
     def started(self, token, pid):
@@ -1312,12 +1338,40 @@ class MemoryGate:
                 moved = self.ledger.move(key, pid)
                 with self.lock:
                     self.keys[token] = moved
+                    self.moved[token] = pid
+
+    def inside_environment(self, token):
+        """PCB_MAKER_LEDGER_INSIDE for a binary of the board `token` (a dict;
+        {} when the gate holds nothing for it): its reservation while this
+        process holds it; once the board's binary that took it over has
+        ended, a reservation of AFTER_RUN_MB for the binaries after it,
+        admitted (short, with FLOOR_KEEP_MB to keep) at the first of them."""
+        with self.lock:
+            key = self.keys.get(token)
+            moved = self.moved.get(token)
+            what = self.names.get(token, "?")
+        if moved is None:
+            return {} if key is None else {"PCB_MAKER_LEDGER_INSIDE": harness_common.inside_value(key)}
+        if harness_common.reservation_alive({"pid": moved}):
+            # (Its binary runs: nothing else of the board runs beside it.)
+            return {}
+        after = harness_common.admit(self.ledger, self.AFTER_RUN_MB, f"run.py: {what} (after the run)",
+                                     harness_common.FLOOR_KEEP_MB, poll_seconds=self.poll_seconds,
+                                     log=lambda text: print(text, file=sys.stderr, flush=True),
+                                     priority=self.priority, short=True)
+        with self.lock:
+            self.keys[token] = after
+            self.moved.pop(token, None)
+        return {} if after is None else {"PCB_MAKER_LEDGER_INSIDE": harness_common.inside_value(after)}
 
     def done(self, token):
         if token is not None:
             with self.lock:
                 key = self.keys.pop(token, None)
+                self.moved.pop(token, None)
+                self.names.pop(token, None)
             self.ledger.release(key)
+        harness_common.set_board_ledger(None)
 
 
 def order_tasks(tasks, order, tier, expected_mb):
@@ -1397,7 +1451,9 @@ def floor_line(tasks, arguments):
     (MemoryGate.floor_mb)."""
     kinds = sorted({estimate_kind(task, arguments) for task in tasks})
     floors = [(kind, *arguments.gate.floor_mb(kind)) for kind in kinds]
-    return "memory floor: " + "; ".join(f"{kind} {floor / 1024:.1f} GB ({text})" for kind, floor, text in floors)
+    capacity = harness_common.ledger_capacity_described()
+    return ("memory floor: " + "; ".join(f"{kind} {floor / 1024:.1f} GB ({text})" for kind, floor, text in floors)
+            + ("" if capacity is None else f"; ledger capacity {capacity[0] / 1024:.1f} GB ({capacity[1]})"))
 
 
 def task_directory(task):
@@ -2253,7 +2309,7 @@ def route_task_admitted(task, arguments, token):
         drc_started = time.monotonic()
         drc_code, drc_output, drc_peak, _, drc_cpu = run_measured(
             [str(arguments.binary), "drc-kicad-board", str(work / "route"), board_id, str(work / "route/drc.json")],
-            FIXED_TIMEOUT_SECONDS)
+            FIXED_TIMEOUT_SECONDS, dict(os.environ, **harness_common.board_ledger_environment()))
         (work / "drc.log").write_text(drc_output)
         row.update(drc_seconds=round(time.monotonic() - drc_started, 1), peak_rss_mb=max(peak_mb, drc_peak),
                    cpu_seconds=round(cpu_seconds + drc_cpu, 1))

@@ -709,6 +709,76 @@ class MemoryLedger(unittest.TestCase):
         self.assertEqual([r["megabytes"] for r in self.ledger.live()], [700])
         gate.done(token)
 
+    def test_every_binary_of_a_board_runs_inside_its_reservation(self):
+        # Since 2026-10-27: before the board's binary, its other binaries get
+        # PCB_MAKER_LEDGER_INSIDE naming the board's reservation (through
+        # run_group on the board's thread); while the board's binary runs,
+        # nothing; after it, a short reservation of AFTER_RUN_MB (2048 +
+        # 2253) admitted for the binaries after the run.
+        h = run.harness_common
+        gate = run.MemoryGate(0, ledger=self.ledger, poll_seconds=0.05)
+        token = gate.admit("board", 1000)
+        (key,) = [(r["pid"], r["started"], r["label"]) for r in self.ledger.live()]
+        self.assertEqual(key[0], os.getpid())
+        expected = f"{os.getpid()} {key[1]!r}"
+        self.assertEqual(gate.inside_environment(token), {"PCB_MAKER_LEDGER_INSIDE": expected})
+        seen = h.run_group([sys.executable, "-c", "import os; print(os.environ.get('PCB_MAKER_LEDGER_INSIDE'))"],
+                           capture_output=True, text=True).stdout.strip()
+        self.assertEqual(seen, expected)
+        self.assertEqual(float(seen.split()[1]), key[1])
+        binary = self.sleeper()
+        gate.started(token, binary.pid)
+        self.assertEqual(gate.inside_environment(token), {})
+        binary.kill()
+        binary.wait()
+        after = gate.inside_environment(token)
+        live = self.ledger.live()
+        self.assertEqual([(r["pid"], r["megabytes"], r["label"], r.get("short")) for r in live],
+                         [(os.getpid(), 2048 + 2.2 * 1024, "run.py: board (after the run)", True)])
+        self.assertEqual(after, {"PCB_MAKER_LEDGER_INSIDE": f"{os.getpid()} {live[0]['started']!r}"})
+        # The same reservation for every binary after the run.
+        self.assertEqual(gate.inside_environment(token), after)
+        gate.done(token)
+        self.assertEqual(self.ledger.live(), [])
+        self.assertEqual(h.board_ledger_environment(), {})
+        # Another thread's binaries are not the board's.
+        token = gate.admit("other", 500)
+        elsewhere = []
+        thread = run.threading.Thread(target=lambda: elsewhere.append(h.board_ledger_environment()))
+        thread.start()
+        thread.join(10)
+        self.assertEqual(elsewhere, [{}])
+        gate.done(token)
+
+    def test_the_capacity_is_the_machines_memory_less_what_is_outside_the_ledger(self):
+        # ledger.rs's test of the same name: the same numbers.
+        h = run.harness_common
+        now = 1_793_000_000.0
+        total, p50 = 64_210.0, 18.1 * 1024
+        summary = {"samples": 1091, "updated": now - 60, "outside_mb": p50, "outside_growth_mb": 6886}
+        capacity, how = h.machine_capacity_mb(total, 6144, summary, now)
+        self.assertEqual(round(capacity), 45_676)
+        self.assertEqual(how, "MemTotal 62.7 GB less 18.1 GB outside the ledger (the median of 1091 headroom "
+                              "samples); at most 56.7 GB, MemTotal less the margin")
+        for stale in (dict(summary, samples=359), dict(summary, updated=now - 86_401), dict(summary, outside_mb=None),
+                      None):
+            self.assertEqual(round(h.machine_capacity_mb(total, 6144, stale, now)[0]), round(total * 0.75))
+        self.assertIn("25 % of MemTotal without fresh headroom samples", h.machine_capacity_mb(total, 6144, None, now)[1])
+        for machine, expected in ((16_384, 10_240), (24_576, 18_432), (32_768, 24_576), (131_072, 98_304)):
+            self.assertEqual(h.machine_capacity_mb(machine, 6144, None, now)[0], expected)
+        self.assertEqual(h.machine_capacity_mb(total, 6144, dict(summary, outside_mb=2000), now)[0], total - 6144)
+        self.assertEqual(h.machine_capacity_mb(total, 6144, dict(summary, outside_mb=70_000), now)[0], 0)
+        # The ledger's capacity reads the samples beside it; the variable
+        # still replaces it.
+        environ = {"PCB_MAKER_LEDGER": str(self.ledger.path)}
+        h.atomic_json(h.headroom_path(self.ledger.path), {"summary": dict(summary, updated=time.time())})
+        machine = h.memory_total_mb()
+        described = h.ledger_capacity_described(environ)
+        self.assertEqual(described[0], min(machine - 6144, machine - p50))
+        self.assertIn("the median of 1091 headroom samples", described[1])
+        self.assertEqual(h.ledger_capacity_described(dict(environ, PCB_MAKER_LEDGER_TOTAL_MB="4000")),
+                         (4000, "PCB_MAKER_LEDGER_TOTAL_MB"))
+
     def test_the_floor_counts_what_the_reservations_still_grow_by(self):
         room = run.harness_common.memory_room
         reservations = [{"pid": 11, "megabytes": 3000.0}, {"pid": 12, "megabytes": 2000.0}]
@@ -1401,7 +1471,7 @@ class MeasuredFloor(unittest.TestCase):
                          "measured: 2.0 GB to keep + 3.0 GB outside growth + 0.1 GB overshoot (360 samples)")
 
     @staticmethod
-    def replay(knots, boards, floor_mb, horizon, poll=15):
+    def replay(knots, boards, floor_mb, horizon, poll=15, capacity=None):
         """A harness's boards replayed against the machine as it was without
         them (ledger.rs, `floor_replay`: the same). `knots`: (time, the
         floor's view, MemAvailable less growth, and MemAvailable of the
@@ -1412,7 +1482,9 @@ class MeasuredFloor(unittest.TestCase):
         leaves `floor_mb`; it then holds its expected peak in the view and
         its measured peak resident for its seconds. Returns the starts (None:
         not within `horizon`), the seconds waited in all, how many started
-        and the least MemAvailable."""
+        and the least MemAvailable. `capacity` (since 2026-10-27): the
+        ledger's capacity and, per knot, what the other runs reserved; a board
+        then starts only when those, the boards running and its own fit it."""
         starts = [None] * len(boards)
         lowest = float("inf")
         knot = 0
@@ -1420,11 +1492,12 @@ class MeasuredFloor(unittest.TestCase):
             while knot + 1 < len(knots) and knots[knot + 1][0] <= t:
                 knot += 1
             _, view, available = knots[knot]
+            room = float("inf") if capacity is None else capacity[0] - capacity[1][knot]
             running = [board for board, start in zip(boards, starts) if start is not None and start <= t < start + board[2]]
             reserved, resident = sum(b[1] for b in running), sum(b[3] for b in running)
             for index, (since, mb, _, peak) in enumerate(boards):
                 if starts[index] is None and t >= since and (t - since) % poll == 0 \
-                        and view - reserved - mb >= floor_mb:
+                        and view - reserved - mb >= floor_mb and reserved + mb <= room:
                     starts[index] = t
                     reserved, resident = reserved + mb, resident + peak
             lowest = min(lowest, available - resident)
@@ -1504,6 +1577,36 @@ class MeasuredFloor(unittest.TestCase):
                                                  self.MEASURED_FLOOR_MB, 3600)
         self.assertEqual((started, waited, round(lowest)), (10, 18376, 17957))
         self.assertGreater(lowest, 2048)
+
+    # This machine: MemTotal 64 210 MB; the outside memory's median and 5th
+    # percentile the night of 2026-10-26/27, 18.1 and 16.7 GB. What the
+    # other runs reserved at the evening's knots (the log's lines less the
+    # four boards' reservations that ran then). ledger.rs: the same.
+    MEM_TOTAL_MB = 64_210.0
+    EVENING_OTHERS_MB = [35_328, 30_515, 28_570, 28_365, 25_190]
+
+    def test_the_evening_and_tonight_replayed_with_the_capacity_from_the_machine(self):
+        # The capacity from the machine (45 676 MB) beside the other runs:
+        # the same starts, waits and least MemAvailable as the floor alone.
+        capacity = self.MEM_TOTAL_MB - 18.1 * 1024
+        for floor in (10240, self.MEASURED_FLOOR_MB):
+            alone = self.replay(self.EVENING_KNOTS, self.EVENING_BOARDS, floor, 9000)
+            self.assertEqual(self.replay(self.EVENING_KNOTS, self.EVENING_BOARDS, floor, 9000,
+                                         capacity=(capacity, self.EVENING_OTHERS_MB)), alone)
+        # Tonight's others: at most MemTotal less the outside memory (its 5th
+        # percentile, 16.7 GB) less the floor's view.
+        others = [self.MEM_TOTAL_MB - 16.7 * 1024 - view for _, view, _ in self.TONIGHT_KNOTS]
+        for floor in (10240, self.MEASURED_FLOOR_MB):
+            alone = self.replay(self.TONIGHT_KNOTS, self.TONIGHT_BOARDS, floor, 3600)
+            replayed = self.replay(self.TONIGHT_KNOTS, self.TONIGHT_BOARDS, floor, 3600, capacity=(capacity, others))
+            self.assertEqual(replayed, alone)
+            self.assertGreater(replayed[3], 2048)
+        # Only with the outside memory below its median less the floor
+        # (9 GB) would the capacity hold back a board the floor admits.
+        low = [self.MEM_TOTAL_MB - 9 * 1024 - view for _, view, _ in self.TONIGHT_KNOTS]
+        self.assertNotEqual(self.replay(self.TONIGHT_KNOTS, self.TONIGHT_BOARDS, self.MEASURED_FLOOR_MB, 3600,
+                                        capacity=(capacity, low)),
+                            self.replay(self.TONIGHT_KNOTS, self.TONIGHT_BOARDS, self.MEASURED_FLOOR_MB, 3600))
 
 
     def test_a_sample_counts_the_holders_trees_and_what_they_hold_above_their_reservations(self):
