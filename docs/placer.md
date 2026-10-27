@@ -4167,6 +4167,97 @@ the bottom edge J9 needed (moved by hand to the designer's spot, both
 are legal: the search, not the model). The placement's pool work falls
 from 404-670 s (the whole board, refused) to 123-469 s.
 
+## Sub-boards in a panel (2026-10-27)
+
+The OpenESC 4in1 panel is a panel of two different boards: the 30 x 30
+4in1 (215 movable parts) above the 20 x 20 4in1-mini (183), joined by two
+7 mm tabs with two rows of mouse bites each. Their schematics share net
+names (GND, +BATT, the four ESC sheets' `/ESCn/...` nets, `Net-(Q6-G)`
+of two different Q6), and 146 references repeat (Q6 is a PDFN-8 on one
+board and a PowerDI3333 on the other). `panel_copies` finds no copies
+(the nets do not map one to one), so the panel was placed as one board
+and its parts interleaved; the router then joined the same-named nets
+over the tabs. Layout at the task budget: 499 KiCad unconnected, 43 of
+184 nets routed (x1842 and x1853 alike). The designer's own board:
+KiCad reports 130 unconnected items, each between the two boards, one
+per net on both (no copper joins them), and no error.
+
+Code: `crates/pcb-kicad/src/sub_boards.rs`; `sub_boards` (placer, on by
+default), `sub_board_nets` (router, on by default). The router's side is
+in [router.md](router.md), "Nets split by sub-board (2026-10-27)".
+
+**Pieces without the tabs** (`Pieces`): the outline rasterised and opened
+by 1 mm, so that necks under 2 mm (a row of mouse bites leaves 0.3 mm
+between its holes) fall away; each part of the opened area of 20 mm² and
+a twentieth of the largest is a piece, the board area between two pieces
+a tab. Census on the 109 sweep boards (the designers' boards; the tasks
+keep their outlines): 2 pieces on the 4in1 panel (2 tabs), 2 and 3 on the
+two boards drawn as separate loops (zpn_devboard, the Modular Hub), 1 on
+every other board, the four panels of copies included (their tabs are
+wider than 2 mm), SNSP-CPU-01's strip behind a row of slots included (a
+fortieth of the board).
+
+**Which sub-board a part belongs to** (`detect_for_placer`, on the lowered
+problem):
+
+1. a part that stays where it is (fixed, locked) lies on its piece;
+2. with a reference board (`--reference <project-dir>` of
+   `place-kicad-board` and `layout-kicad-board`, the designer's placed
+   board), each footprint whose uuid it holds lies on the piece of its
+   place there;
+3. an input that looks placed (nine in ten movable parts on a piece and
+   at a place of their own, not a stack) gives each movable part its
+   piece;
+4. a net with pins of such parts on two pieces is split; the other nets
+   join their parts, and a group so joined takes its parts' piece where
+   they agree (a group on two pieces is a conflict, left without).
+
+On the 4in1 panel's task board only the six fixed parts (the two frame
+footprints, two QFNs, two connectors) say anything: 33 nets have pins on
+both boards, and the other nets join only 6 more parts to a board; 392
+of the 398 movable parts stay without one. That is the input, not the
+rule: on the designer's board every part's sub-board is known by its
+place, but the task's unplace step stacks every movable part at one point
+between the boards, and the net graph cannot tell the boards apart (on
+the designer's board, with the 34 nets that fixed pads put on both
+boards split, 274 parts of both boards stay in one group; with the nets
+that hold two parts of one reference split too, 109 nets, 290 groups,
+most of them one part between two split nets: a capacitor between +BATT
+and GND could be either board's). Guessing would make an electrically different
+board that KiCad's check judged per sub-board passes: the placement does
+not guess.
+
+**Placement** (`apply_to_placer`, `place_sub_boards`), where at most a
+tenth of the movable parts are without a sub-board (with more, the
+placement is the ordinary one, unchanged, and the verdict's next action
+asks for `--reference` or region constraints):
+
+- each tab is a keepout (no body on it);
+- each movable part with a sub-board is held in its piece's box and
+  started at its centre;
+- each net with pins on two sub-boards is one net per sub-board (its
+  weight as the lowering gives a net of that many pins);
+- each seed places the sub-boards one by one with the ordinary placer,
+  each alone in its region (the outline cut to its box, the other boards'
+  movable parts taking no room, the constraints of its own parts), with a
+  share of the seed's budget by its movable parts, then the parts without
+  a sub-board with the whole board. Each board's own fullness then
+  decides its levels: held in their regions but placed as one panel,
+  the levels (the panel's area as a whole not overfull) ran out of the
+  600 s of work with 4 parts left (seed 1, three seeds; CL44, CL49,
+  CL50, CL54);
+  each board alone, every part placed (the mini 102-139 s of work per
+  seed, the 4in1 324-327 s).
+
+Panels of copies are placed as copies (`panel_copies` is tried first);
+boards of one piece, and boards whose pieces share no net (zpn_devboard),
+are untouched: the report says so (`sub_boards` with `split_nets: 0`).
+
+**Report**: `sub_boards` in `board-placer.json` and the verdict: `count`,
+`from`, `split_nets`, `unassigned` and the first 20 `unassigned_parts`,
+`conflicts`, `held`, `tabs`, and per sub-board its `region`, `parts` and
+`movable` (docs/agents.md).
+
 
 ## The trouble-maker probe (2026-10-26)
 
