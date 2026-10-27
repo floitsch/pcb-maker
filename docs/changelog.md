@@ -140,10 +140,12 @@ layout, inspect and the fab gate with README.md and docs/agents.md alone.
   layout cannot place; a mixed panel placement exiting 0; the template's
   near distance below the designer's; the place check's dependence on the
   measured work rates.
+
 ## Measured on 2026-10-27 (crossings in the anneal under the new protocol)
 
 Branch anneal-crossings-protocol; both sides on x1851 (main 71953b0);
-no new snapshot (the default did not change). The first lever judged by
+the short tier again on the rebased head (`build/bin/pcb-maker-cross3-h`,
+main ff120a4c); the default did not change. The first lever judged by
 the placer-default rule (benchmarks.md, "Measurement discipline:
 placer defaults"). docs/placer.md, "Under the placer-default protocol
 (2026-10-27)", has the tables.
