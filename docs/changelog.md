@@ -11,6 +11,40 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Reviewed on 2026-10-27 (a fresh agent's third trial)
+
+Branch fresh-agent-trial-3 (main ff120a4c, x1867).
+[reviews/2026-10-27-fresh-agent-trial-3.md](reviews/2026-10-27-fresh-agent-trial-3.md):
+an agent new to pcb-maker took framework_mobo_lefthalf (the designer's
+findings between fixed parts), MokyaLora (area rules in its `.kicad_dru`)
+and the OpenESC 4in1 panel (sub-boards unknown) through describe, place,
+layout, inspect and the fab gate with README.md and docs/agents.md alone.
+
+- **Result.** framework: the same board with and without `--reference`
+  (pinned rates), 2 KiCad unconnected; without a reference 2 clearance and
+  4 hole clearance findings of the fixed R31 and R32 under J1 counted, the
+  8 edge clearances set apart with a rule that works; the fab gate
+  refused with every finding named. MokyaLora: 0 unconnected, one mask
+  bridge. The panel: no placement without a reference (8 parts without a
+  place), every part placed and 266 counted unconnected with the
+  designer's board as `--reference`.
+- **Fixed** (each its own commit, with a test): a footprint's findings
+  under the board minimum (`board minimum hole clearance`) get an
+  exclusion, not a custom rule that does not take; a clearance between
+  parts kept where the input has them says so, not "move the parts
+  apart"; with a reference, a next action names the reference's
+  electrical findings that the release refuses; `custom_rules` in the
+  verdict and a stdout line by status (MokyaLora's rules were in
+  board-router.json only); the input check's overlap of fixed parts by
+  their pads' copper, and pads of one net on each other joined; one line
+  per fixed part on the board's marks, the placer's body warning not for
+  hollow parts nor repeated; a panel's sub-board action first; the
+  clearance action's pointer to `rules.unmodelled`.
+- **Open** (designs in the review): the place check passing a panel the
+  layout cannot place; a mixed panel placement exiting 0; the template's
+  near distance below the designer's; the place check's dependence on the
+  measured work rates.
+
 ## Committed on 2026-10-27 (koeg's short and MokyaLora's clearances: a plated pad on every layer; area rules)
 
 Branch koeg-regression, binary build/bin/pcb-maker-koeg1-a (off side
