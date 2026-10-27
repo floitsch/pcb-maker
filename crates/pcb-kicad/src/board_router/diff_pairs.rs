@@ -264,8 +264,11 @@ fn crossovers() -> bool {
     })
 }
 
-/// The crossovers' default (`crossovers`).
-const CROSSOVERS_BY_DEFAULT: bool = true;
+/// The crossovers' default (`crossovers`): off. Measured 2026-10-27 with
+/// the safe crossover (docs/router.md, "The safe crossover"): at 300 s
+/// better on the four small rule boards, at 30 s worse on ducktop2's
+/// left_io and right_io (errors and gap findings), so not the default.
+const CROSSOVERS_BY_DEFAULT: bool = false;
 
 thread_local! {
     /// A test's override of `crossovers` (this thread only).
