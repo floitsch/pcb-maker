@@ -148,7 +148,6 @@ pub struct KiCadBoardLayoutConfig {
     /// one routes on unripped), ties by the standing. Without
     /// `race_probe` the pick then needs `RACE_RIPPED_MARGIN` over the
     /// first-ranked placement's count. Not with `race_probe.repair`.
-    #[serde(skip_serializing_if = "KiCadRaceCount::is_default")]
     pub race_count: KiCadRaceCount,
 }
 
@@ -163,12 +162,6 @@ pub enum KiCadRaceCount {
     /// The open terminals after the rip-up of the conflicted branches,
     /// ties by the standing.
     Ripped,
-}
-
-impl KiCadRaceCount {
-    fn is_default(&self) -> bool {
-        *self == Self::default()
-    }
 }
 
 /// The race's route probe (`KiCadBoardLayoutConfig::race_probe`).
@@ -3712,7 +3705,7 @@ mod budget_tests {
         // Off, the config serializes as before.
         let text = serde_json::to_string(&KiCadBoardLayoutConfig::default()).unwrap();
         assert!(!text.contains("race_probe"), "{text}");
-        assert!(!text.contains("race_count"), "{text}");
+        assert!(text.contains(r#""race_count":"unfinished""#), "{text}");
     }
 
     #[test]
