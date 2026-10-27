@@ -193,6 +193,7 @@ pub fn place_kicad_board(
     // The sub-boards when the placement holds their parts in them: each
     // seed places them one by one (`sub_boards::place_sub_boards`).
     let mut held_sub_boards = None;
+    crate::sub_boards::note_designed(None);
     if copies.is_none() && config.sub_boards {
         let footprint_count = pcb
             .children()
@@ -221,6 +222,11 @@ pub fn place_kicad_board(
             reference.as_ref(),
         )? && sub.count(&lowered.problem) >= 2
         {
+            crate::sub_boards::note_designed(Some(crate::sub_boards::designed_nets(
+                &pcb,
+                &sub,
+                &lowered.net_names,
+            )));
             let names = lowered.references.clone();
             let applied = crate::sub_boards::apply_to_placer(
                 &sub,

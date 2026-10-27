@@ -38,6 +38,8 @@ pub(super) fn placer_net(raw: &str) -> bool {
 
 pub(crate) struct LoweredPlacement {
     pub problem: core::Problem,
+    /// The problem's nets' names, by id (as the board names them).
+    pub net_names: Vec<String>,
     pub references: Vec<String>,
     pub source_at: Vec<[f64; 3]>,
     pub constraint_warnings: Vec<String>,
@@ -1604,8 +1606,13 @@ pub(crate) fn lower_placement(
             poured[*id] = true;
         }
     }
+    let mut net_names_by_id = vec![String::new(); net_ids.len()];
+    for (name, id) in &net_ids {
+        net_names_by_id[*id] = name.clone();
+    }
     Ok(LoweredPlacement {
         problem,
+        net_names: net_names_by_id,
         references,
         source_at,
         constraint_warnings,

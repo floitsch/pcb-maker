@@ -896,6 +896,71 @@ fn unescaped(name: &str) -> String {
     })
 }
 
+/// The nets the placement found on several sub-boards by design
+/// (`designed_nets`), for KiCad's check judged per sub-board in this
+/// process: None outside a layout or placement of a panel (the checked
+/// board's own places decide, `board_split_nets`).
+static DESIGNED: std::sync::Mutex<Option<BTreeSet<String>>> = std::sync::Mutex::new(None);
+
+/// Notes the nets of one name that lie on several sub-boards by design
+/// (None: no panel of different boards): `excuse_across` excuses the
+/// items of these nets alone. A placement whose parts' boards are unknown
+/// puts the parts of other nets where it would: that a net lies on two
+/// boards in the result says nothing of the design, and its items across
+/// them count.
+pub(crate) fn note_designed(nets: Option<BTreeSet<String>>) {
+    if let Ok(mut designed) = DESIGNED.lock() {
+        *designed = nets;
+    }
+}
+
+/// The nets on several sub-boards by design: those the placement split
+/// (pins of parts whose board is known on two), and those with pads of
+/// two footprints of one reference (a reference names one part per
+/// board: two are two boards' parts, the 4in1 panel's two Q6 on
+/// `Net-(Q6-G)`), by KiCad's report names.
+pub(crate) fn designed_nets(
+    pcb: &Expr,
+    sub: &PlacerSubBoards,
+    net_names: &[String],
+) -> BTreeSet<String> {
+    let mut nets: BTreeSet<String> = sub
+        .split
+        .iter()
+        .filter_map(|net| net_names.get(*net))
+        .map(|name| unescaped(name))
+        .collect();
+    let codes = crate::kicad_nets::net_codes(pcb);
+    let mut on: BTreeMap<String, BTreeMap<String, BTreeSet<usize>>> = BTreeMap::new();
+    for (index, footprint) in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+        .enumerate()
+    {
+        let reference = crate::kicad_nets::footprint_reference(footprint).unwrap_or_default();
+        for pad in footprint
+            .children()
+            .iter()
+            .filter(|child| child.head() == Some("pad"))
+        {
+            if let Some(net) = crate::kicad_nets::item_net(pad, &codes) {
+                on.entry(unescaped(net))
+                    .or_default()
+                    .entry(reference.clone())
+                    .or_default()
+                    .insert(index);
+            }
+        }
+    }
+    for (net, references) in on {
+        if references.values().any(|parts| parts.len() >= 2) {
+            nets.insert(net);
+        }
+    }
+    nets
+}
+
 /// The key of a DRC report's unconnected items that KiCad's check judged
 /// per sub-board does not count (`excuse_across`).
 pub(crate) const ACROSS_KEY: &str = "unconnected_across_sub_boards";
@@ -916,7 +981,12 @@ pub(crate) fn excuse_across(report: &mut serde_json::Value, pcb: &Expr, pieces: 
     if items.is_empty() {
         return 0;
     }
-    let split = board_split_nets(pcb, pieces);
+    let mut split = board_split_nets(pcb, pieces);
+    if let Ok(designed) = DESIGNED.lock()
+        && let Some(designed) = designed.as_ref()
+    {
+        split.retain(|net, _| designed.contains(net));
+    }
     if split.is_empty() {
         return 0;
     }
