@@ -543,6 +543,7 @@ Diagnostics (stderr unless said; the result does not change):
 - `PCB_ROUTER_POUR_DUMP`: `<dir>`: writes the pour maps at each finish.
 - `PCB_ROUTER_SEARCH_RATE`: the search times itself for the `profile rate:` line (calibrating `REFERENCE_EXPANSIONS_PER_SECOND`).
 - `PCB_ROUTER_TIMING`: where a reroute's time goes (layout moves).
+- `PCB_ROUTER_SUB_BOARD_DEBUG`: each lowering prints the nets split by sub-board and those kept whole.
 - `PCB_ROUTER_SPOKE_DEBUG`: the spoke model's decisions per pad.
 - `PCB_ROUTER_DUMP_MANUAL_SPOKES`: dump-pour-map also adds the manual spokes and says how many.
 - `PCB_PLACER_DEBUG`: the placer's progress lines.

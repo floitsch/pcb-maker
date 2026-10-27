@@ -1697,3 +1697,266 @@ mod tests {
         assert_eq!(report[ACROSS_KEY].as_array().unwrap().len(), 1);
     }
 }
+
+/// The looser of two relaxations, field by field (as `panel::loosest`).
+fn loosest(a: &pcb_placer::Relaxation, b: &pcb_placer::Relaxation) -> pcb_placer::Relaxation {
+    let mut on_marks: Vec<usize> = a.on_marks.iter().chain(&b.on_marks).copied().collect();
+    on_marks.sort_unstable();
+    on_marks.dedup();
+    pcb_placer::Relaxation {
+        spacing: a.spacing.min(b.spacing),
+        grid: a.grid.min(b.grid),
+        halo_scale: a.halo_scale.min(b.halo_scale),
+        small_halo_scale: a.small_halo_scale.min(b.small_halo_scale),
+        edge_inset: a.edge_inset || b.edge_inset,
+        tight: a.tight || b.tight,
+        edge_copper: a.edge_copper || b.edge_copper,
+        edge_rule: a.edge_rule.min(b.edge_rule),
+        courtyard_spacing: a.courtyard_spacing || b.courtyard_spacing,
+        pad_clearance: a.pad_clearance || b.pad_clearance,
+        halos: a.halos.clone().or_else(|| b.halos.clone()),
+        on_marks,
+    }
+}
+
+/// A part that takes no room and pulls no net (as `panel::make_inert`).
+fn make_inert(component: &mut pcb_placer::Component) {
+    component.fixed = true;
+    component.side = pcb_placer::Side::Neither;
+    component.pins.clear();
+    component.far_side.clear();
+    component.far_copper.clear();
+    component.far_courtyard.clear();
+    component.hollow.clear();
+    component.pads.clear();
+    component.courtyards.clear();
+    component.tight_hollow.clear();
+    component.hole_rings.clear();
+    component.copper_only = false;
+    component.cutout_outline.clear();
+    component.halo = 0.0;
+}
+
+/// One sub-board's problem: the outline cut to its region, its movable
+/// parts (`active`) the only ones placed; the other movable parts take
+/// no room and pull no net; fixed parts away from the region keep their
+/// bodies but pull no net; the constraints of the active parts only.
+fn region_problem(
+    problem: &pcb_placer::Problem,
+    poses: &[pcb_placer::Pose],
+    active: &BTreeSet<usize>,
+    region: [f64; 4],
+) -> pcb_placer::Problem {
+    let mut sub = problem.clone();
+    sub.poses = poses.to_vec();
+    for (index, component) in sub.components.iter_mut().enumerate() {
+        if active.contains(&index) {
+            continue;
+        }
+        if !component.fixed {
+            make_inert(component);
+            continue;
+        }
+        if !component.pins.is_empty() {
+            let b = body_box(component, poses[index]);
+            if b[0] > region[2] || b[2] < region[0] || b[1] > region[3] || b[3] < region[1] {
+                component.pins.clear();
+            }
+        }
+    }
+    let pulling: Vec<bool> = (0..sub.components.len())
+        .map(|part| active.contains(&part) || !sub.components[part].pins.is_empty())
+        .collect();
+    sub.outline = clip(&problem.outline, region);
+    sub.pieces.clear();
+    let constraints = &mut sub.constraints;
+    constraints
+        .regions
+        .retain(|(part, _)| active.contains(part));
+    constraints.starts.retain(|(part, _)| active.contains(part));
+    constraints
+        .edges
+        .retain(|(part, _, _)| active.contains(part));
+    constraints
+        .overhangs
+        .retain(|(part, _, _)| active.contains(part));
+    constraints.kept.retain(|kept| active.contains(&kept.part));
+    constraints
+        .followers
+        .retain(|follower| active.contains(&follower.leader));
+    let user = constraints.relations.len() - constraints.automatic;
+    let mut relations = Vec::new();
+    let mut automatic = 0;
+    for (index, relation) in constraints.relations.drain(..).enumerate() {
+        let relation = match relation {
+            pcb_placer::constraints::Relation::NearAny { part, anchors, max } => {
+                let anchors: Vec<_> = anchors
+                    .into_iter()
+                    .filter(|anchor| pulling[anchor.part()])
+                    .collect();
+                if anchors.is_empty() || !active.contains(&part) {
+                    continue;
+                }
+                pcb_placer::constraints::Relation::NearAny { part, anchors, max }
+            }
+            other => {
+                let parts = other.parts();
+                if !parts.iter().flatten().all(|part| pulling[*part])
+                    || !parts.iter().flatten().any(|part| active.contains(part))
+                {
+                    continue;
+                }
+                other
+            }
+        };
+        if index >= user {
+            automatic += 1;
+        }
+        relations.push(relation);
+    }
+    constraints.relations = relations;
+    constraints.automatic = automatic;
+    constraints.linked.clear();
+    constraints.linked_partners.clear();
+    constraints.link_pairs();
+    // The measured escape correction routes the whole board.
+    if let Some(escape) = &sub.escape
+        && escape.measured.is_some()
+    {
+        let mut estimate = (**escape).clone();
+        estimate.measured = None;
+        sub.escape = Some(std::sync::Arc::new(estimate));
+    }
+    sub
+}
+
+/// One seed's placement of a panel whose parts the placement holds in
+/// their sub-boards (`PlacerApplied::held`): each sub-board with the
+/// ordinary placer in turn, alone in its region (the outline cut to it,
+/// so that its own fullness decides its levels: the 20 x 20 4in1-mini is
+/// 107 % full at the full spacing and places at the tight bodies, which
+/// the whole panel's levels, its area not overfull, reached too late),
+/// with a share of the seed's budget by its movable parts; then the
+/// movable parts without a sub-board with the whole board, the placed
+/// ones fixed (the budget left, a tenth at least). The placement reports
+/// the loosest level of the sub-boards', field by field.
+pub(crate) fn place_sub_boards(
+    problem: &pcb_placer::Problem,
+    sub: &PlacerSubBoards,
+    config: &pcb_placer::Config,
+) -> pcb_placer::Placement {
+    let started = pcb_placer::work();
+    let debug = std::env::var_os("PCB_PLACER_DEBUG").is_some();
+    let mut boards: BTreeMap<usize, BTreeSet<usize>> = BTreeMap::new();
+    for (part, piece) in sub.part_piece.iter().enumerate() {
+        let component = &problem.components[part];
+        if let Some(piece) = piece
+            && !component.fixed
+        {
+            boards.entry(*piece).or_default().insert(part);
+        }
+    }
+    let total: usize = boards.values().map(BTreeSet::len).sum::<usize>().max(1);
+    let mut poses = problem.poses.clone();
+    let mut relaxation: Option<pcb_placer::Relaxation> = None;
+    let mut unplaced: Vec<usize> = Vec::new();
+    let mut overfull = false;
+    let mut routing_room_failed = false;
+    let mut frames = Vec::new();
+    let mut global_iterations = 0;
+    let mut global_overflow: f64 = 0.0;
+    let count = boards.len();
+    for (index, (piece, active)) in boards.iter().enumerate() {
+        let region_problem = region_problem(problem, &poses, active, sub.pieces.boxes[*piece]);
+        let mut board_config = config.clone();
+        board_config.work_limit = config.work_limit.map(|limit| {
+            if index + 1 == count {
+                limit
+                    .saturating_sub(pcb_placer::work() - started)
+                    .max(limit / 10)
+            } else {
+                (limit as f64 * active.len() as f64 / total as f64) as u64
+            }
+        });
+        let placed = pcb_placer::place(&region_problem, &board_config);
+        if debug {
+            eprintln!(
+                "sub-boards: board {piece} placed: {} movable, {} unplaced, {:.1} s of work",
+                active.len(),
+                placed.unplaced.len(),
+                placed.work as f64 / pcb_placer::work_per_second()
+            );
+        }
+        for part in active {
+            poses[*part] = placed.poses[*part];
+        }
+        unplaced.extend(placed.unplaced.iter().copied());
+        overfull |= placed.overfull;
+        routing_room_failed |= placed.routing_room_failed;
+        global_iterations += placed.global_iterations;
+        global_overflow = global_overflow.max(placed.global_overflow);
+        frames.extend(placed.frames.iter().cloned());
+        relaxation = Some(match relaxation {
+            Some(before) => loosest(&before, &placed.relaxation),
+            None => placed.relaxation.clone(),
+        });
+    }
+    let held = poses.clone();
+    let (_, unassigned) = sub.unassigned(problem);
+    let relaxation = relaxation.unwrap_or_else(|| pcb_placer::place(problem, config).relaxation);
+    let (poses, relaxation, overfull) = if unassigned.is_empty() {
+        (poses, relaxation, overfull)
+    } else {
+        // The parts without a sub-board, with the whole board.
+        let mut rest = problem.clone();
+        rest.poses = poses.clone();
+        for active in boards.values() {
+            for part in active {
+                rest.components[*part].fixed = true;
+            }
+        }
+        let mut rest_config = config.clone();
+        rest_config.work_limit = config.work_limit.map(|limit| {
+            limit
+                .saturating_sub(pcb_placer::work() - started)
+                .max(limit / 10)
+        });
+        let placed = pcb_placer::place(&rest, &rest_config);
+        unplaced.extend(placed.unplaced.iter().copied());
+        let relaxation = loosest(&relaxation, &placed.relaxation);
+        (placed.poses, relaxation, overfull || placed.overfull)
+    };
+    let mut poses = poses;
+    problem.sync_followers(&mut poses);
+    unplaced.sort_unstable();
+    unplaced.dedup();
+    let mut fin = problem.clone();
+    relaxation.apply(&mut fin);
+    let illegal = pcb_placer::legal::illegal_components(&fin, &poses);
+    let constraints = pcb_placer::constraints::report(&fin, &poses);
+    let wirelength_final = problem.wirelength(&poses);
+    frames.push(pcb_placer::global::Frame {
+        iteration: global_iterations + 1,
+        overflow: global_overflow,
+        wirelength: wirelength_final,
+        poses: poses.clone(),
+    });
+    pcb_placer::Placement {
+        frames,
+        global_iterations,
+        global_overflow,
+        wirelength_initial: problem.wirelength(&problem.poses),
+        wirelength_global: problem.wirelength(&held),
+        wirelength_legal: problem.wirelength(&held),
+        wirelength_final,
+        unplaced,
+        illegal,
+        constraints,
+        relaxation,
+        work: pcb_placer::work() - started,
+        stage_poses: vec![("sub-boards", held), ("final", poses.clone())],
+        routing_room_failed,
+        overfull,
+        poses,
+    }
+}

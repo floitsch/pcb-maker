@@ -190,6 +190,9 @@ pub fn place_kicad_board(
     // copies were found (`sub_boards::detect_for_placer`), before the
     // escape demand and the crossings read the problem's nets.
     let mut sub_boards_report = None;
+    // The sub-boards when the placement holds their parts in them: each
+    // seed places them one by one (`sub_boards::place_sub_boards`).
+    let mut held_sub_boards = None;
     if copies.is_none() && config.sub_boards {
         let footprint_count = pcb
             .children()
@@ -243,6 +246,9 @@ pub fn place_kicad_board(
                 applied.tabs
             );
             sub_boards_report = Some(report);
+            if applied.held > 0 {
+                held_sub_boards = Some(sub);
+            }
         }
     }
     let fixed = lowered
@@ -363,9 +369,10 @@ pub fn place_kicad_board(
                 let mut seeded = placer_config.clone();
                 seeded.global.seed = config.seed + offset;
                 seeded.anneal.seed = seeded.anneal.seed.wrapping_add(offset);
-                match &copies {
-                    Some(copies) => self::panel::place_copies(problem, copies, &seeded),
-                    None => core::place(problem, &seeded),
+                match (&copies, &held_sub_boards) {
+                    (Some(copies), _) => self::panel::place_copies(problem, copies, &seeded),
+                    (None, Some(sub)) => crate::sub_boards::place_sub_boards(problem, sub, &seeded),
+                    (None, None) => core::place(problem, &seeded),
                 }
             },
         );

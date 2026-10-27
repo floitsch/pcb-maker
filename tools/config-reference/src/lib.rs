@@ -498,6 +498,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "where a reroute's time goes (layout moves).",
     ),
     (
+        "PCB_ROUTER_SUB_BOARD_DEBUG",
+        Kind::Diagnostic,
+        "each lowering prints the nets split by sub-board and those kept whole.",
+    ),
+    (
         "PCB_ROUTER_SPOKE_DEBUG",
         Kind::Diagnostic,
         "the spoke model's decisions per pad.",
