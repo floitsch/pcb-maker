@@ -3,6 +3,7 @@
 """Publication must never retain stale or unvalidated training eligibility."""
 import importlib.util
 import json
+import time
 from pathlib import Path
 import tempfile
 import os
@@ -116,12 +117,22 @@ class PendingConversionTests(unittest.TestCase):
         MODULE.STOP = False
         outcome = MODULE.convert_job(self.row, self.data, 'converter', '10.0.7', args)
         self.assertEqual(outcome['status'], 'wall_timeout')
-        self.assertLess(outcome['wall_seconds'], 3)
+        # The timeout fires after 1 s of wall; under a loaded machine the
+        # interpreter's start-up and the kill take longer, so the bound is
+        # loose. Wall must not decide a test (docs/benchmarks.md).
+        self.assertLess(outcome['wall_seconds'], 10)
         self.assertTrue(marker.exists())
         for pid in json.loads(marker.read_text()):
             state = Path(f'/proc/{pid}/stat')
-            # A killed orphan can briefly remain a zombie until PID 1 reaps it.
-            self.assertTrue(not state.exists() or state.read_text().split()[2] == 'Z')
+            # A killed orphan can briefly remain a zombie until PID 1 reaps
+            # it, and under load the kill itself takes a moment: poll.
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline:
+                if not state.exists() or state.read_text().split()[2] == 'Z':
+                    break
+                time.sleep(0.05)
+            self.assertTrue(not state.exists() or state.read_text().split()[2] == 'Z',
+                            f'pid {pid} still alive after the job timeout')
 
     def test_manual_sources_include_pinned_original_without_native_overwrite(self):
         p = self.data / 'non-kicad' / 'example'
