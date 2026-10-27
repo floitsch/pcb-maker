@@ -2454,6 +2454,23 @@ fn padstack_variants(pad: &Expr, layers: &LayerTable) -> Vec<(core::LayerMask, E
                             *slot = atom.clone();
                         }
                     }
+                    // A layer's shape offset (KiCad 9's padstack: OpenESC's
+                    // motor pads, 1.8 x 0.6 mm at -0.4 mm inside and on the
+                    // back, the front's 1.8 x 3 mm at the drill's -0.5 mm) is
+                    // the drill's offset of that layer's copper, which the
+                    // pad's shape reads: as a form of its own it was not read,
+                    // and the back copper sat 0.1 mm off (KiCad: clearance
+                    // 0.107-0.153 mm where the rule asks 0.16).
+                    Some("offset") if parts.iter().any(|part| part.head() == Some("drill")) => {
+                        if let Some(Expr::List(drill)) =
+                            parts.iter_mut().find(|part| part.head() == Some("drill"))
+                        {
+                            match drill.iter_mut().find(|part| part.head() == Some("offset")) {
+                                Some(offset) => *offset = form.clone(),
+                                None => drill.push(form.clone()),
+                            }
+                        }
+                    }
                     Some(head) => match parts.iter_mut().find(|part| part.head() == Some(head)) {
                         Some(part) => *part = form.clone(),
                         None => parts.push(form.clone()),

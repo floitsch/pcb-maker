@@ -2926,6 +2926,38 @@ mod lowering_gap_tests {
     }
 
     #[test]
+    fn a_padstack_layers_offset_moves_that_layers_copper() {
+        // OpenESC's motor pads: 1.8 x 3 mm on F.Cu at the drill's offset
+        // -0.5 mm, 1.8 x 0.6 mm on B.Cu at -0.4 mm (the pad turned a
+        // quarter): the back's copper lies 0.1 mm from where the front's
+        // offset puts it.
+        let pcb = parse(
+            r#"(kicad_pcb (version 20241229) (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+              (gr_rect (start 0 0) (end 40 40) (stroke (width 0.05) (type default)) (layer "Edge.Cuts"))
+              (footprint "h" (at 10 10) (property "Reference" "A1")
+                (pad "1" thru_hole roundrect (at 0 0) (size 1.8 3) (drill 0.4 (offset -0.5 0)) (layers "*.Cu" "*.Mask") (roundrect_rratio 0.1) (net "P")
+                  (padstack (mode front_inner_back) (layer "B.Cu" (shape roundrect) (size 1.8 0.6) (offset -0.4 0) (roundrect_rratio 0.1)))))
+              (footprint "h" (at 30 10) (property "Reference" "A2")
+                (pad "1" thru_hole circle (at 0 0) (size 1.2 1.2) (drill 1) (layers "*.Cu" "*.Mask") (net "P"))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(rules(0.2)),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        let back = board
+            .obstacles
+            .iter()
+            .find(|obstacle| obstacle.label == "A1.1 padstack")
+            .expect("the back's copper");
+        let b = back.shape.aabb();
+        let centre = (b.minimum[0] + b.maximum[0]) / 2.0;
+        assert!((centre - 9.6).abs() < 1.0e-6, "{centre}");
+        assert!((b.maximum[0] - b.minimum[0] - 1.8).abs() < 1.0e-6);
+    }
+
+    #[test]
     fn a_padstacks_front_shape_is_copper_only_where_the_stack_names_no_other() {
         // dennisss's lens mounts: 4 mm on F.Cu over 3 mm on B.Cu. The
         // front shape is F.Cu's alone; B.Cu has the 3 mm one, merged into
