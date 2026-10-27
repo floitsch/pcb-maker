@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 104 | 85 | 19 | 104 | 44 |
+| [Router settings](#router-settings) | 104 | 85 | 19 | 104 | 45 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 1 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 1 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
@@ -130,7 +130,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `exact_escape_stubs` | `Option<bool>` | unset | router.md | Escape stubs stamped exactly, straight ones along a lattice line first (router `exact_escape_stubs`; docs/router.md, "Fine-pitch escapes"): unset, the router's default (on since 2026-10-26); `PCB_ROUTER_EXACT_ESCAPES` overrides this. |
 | `fixed_plane_stubs` | `Option<bool>` | unset | router.md | Connect every pour-net pad to its plane by a fixed stub and via before the signals route (router `fixed_plane_stubs`). |
 | `trouble_repair` | `Option<bool>` | unset | router.md | The trouble-makers' repair after the hard repair (router `trouble_repair`; docs/experiments/human-level-routing.md): unset, the router's default; `PCB_ROUTER_TROUBLE` overrides this. |
-| `last_connections` | `Option<usize>` | unset | - | The trouble repair's last pass (router `last_connections`; docs/router.md, "The last connections"): once its rounds leave at most this many open terminals, ejection chains and board-wide victims; unset, the router's default (0, off); `PCB_ROUTER_LAST_CONNECTIONS` overrides this. |
+| `last_connections` | `Option<usize>` | unset | router.md | The trouble repair's last pass (router `last_connections`; docs/router.md, "The last connections"): once its rounds leave at most this many open terminals, ejection chains and board-wide victims; unset, the router's default (0, off); `PCB_ROUTER_LAST_CONNECTIONS` overrides this. |
 | `capacitated_corridors` | `Option<bool>` | unset | router.md | The negotiation's corridors from the global route with hard capacities, learning from the searches that miss them (router `capacitated_corridors`, an experiment; docs/router.md, "Capacitated corridors (2026-10-24)"): unset, the router's default; `PCB_ROUTER_CAPACITATED_CORRIDORS` overrides this. |
 | `thermal_guard_cost` | `Option<f64>` | unset | router.md | Router `thermal_guard_cost`. |
 | `narrow_signal_mm` | `Option<f64>` | unset | - | The project's smallest predefined track width (its width menu), which designers use for signals where the class width is a power width (ohdsp's DSP board: class 0.5 mm, 0.135 mm in the menu and on most tracks). |
