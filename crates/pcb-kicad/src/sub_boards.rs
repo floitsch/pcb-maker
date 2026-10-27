@@ -1327,10 +1327,12 @@ pub(crate) struct PlacerApplied {
 /// The sub-boards in the placement problem (on a panel of different
 /// boards: two sub-boards or more, nets on several of them):
 ///
+/// where at most `MOST_UNASSIGNED_SHARE` of the movable parts have no
+/// sub-board (else nothing changes):
+///
 /// - no part's body on a tab: each tab a keepout (an obstacle of the
 ///   board, as a rule area's);
-/// - where at most `MOST_UNASSIGNED_SHARE` of the movable parts have no
-///   sub-board: each other movable part held in its sub-board's region
+/// - each other movable part held in its sub-board's region
 ///   (unless a constraint holds it in one already) and started at its
 ///   centre, and each split net one net per sub-board (the parts without
 ///   one stay on the first's), its weight as the lowering gives a net of
@@ -1344,6 +1346,13 @@ pub(crate) fn apply_to_placer(
 ) -> PlacerApplied {
     let mut applied = PlacerApplied::default();
     if sub.split.is_empty() || sub.count(problem) < 2 {
+        return applied;
+    }
+    // Most parts' boards unknown: the placement stays as it was (tab
+    // keepouts alone cost the crowded 4in1 panel's front 70 mm², and 8
+    // parts found no place where 0 to 4 had not).
+    let (movable, unassigned) = sub.unassigned(problem);
+    if unassigned.len() as f64 > MOST_UNASSIGNED_SHARE * movable as f64 {
         return applied;
     }
     for tab in &sub.pieces.tabs {
@@ -1379,10 +1388,6 @@ pub(crate) fn apply_to_placer(
         references.push("tab".into());
         source_at.push([0.0; 3]);
         applied.tabs += 1;
-    }
-    let (movable, unassigned) = sub.unassigned(problem);
-    if unassigned.len() as f64 > MOST_UNASSIGNED_SHARE * movable as f64 {
-        return applied;
     }
     let held: BTreeSet<usize> = problem
         .constraints
