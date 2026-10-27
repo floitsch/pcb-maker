@@ -11,6 +11,30 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-10-27 (nightly: layout sweep v22, matched designer tier)
+
+Written by the nightly from `build/nightly/2026-10-27/` (main e7a12a8;
+[benchmarks.md](benchmarks.md#layout-sweep-v22-2026-10-27)). The guard
+held: every stage ran, no row was cut or killed, the sweep has at least
+100 rows with a result.
+
+- **Layout sweep v22**: **57 of 109 pass the strict rule** (57 per
+  type), 2140 unconnected in all, strict errors 53, 6 without a result.
+  Against the nightly of 2026-10-26: better 4, same 99, worse 0, strict
+  passes 57 -> 57 (gained 0xCB-1337 panel; lost
+  Quanta75_RP2040Stamp_JLCPCBAoptimized); against v21: better 21, same
+  76, worse 6, strict passes 56 -> 57 (gained 0xCB-1337 panel, Explorer;
+  lost Quanta75_RP2040Stamp_JLCPCBAoptimized).
+- **Medians against the designer's**: vias x0.73, length x1.07, open
+  0.000 (mean 0.110), bends x1.15, stair-steps +60, crossings +1.
+- **Matched designer tier** (budget scale 0.69): 63 strict passes (67
+  per type); over the 99 target boards placement 52 %, routing 48 % of
+  the open connections (placement 69 %, routing 31 % without Batch_1).
+- **Placement costs most** on video (+189: 190 / 1), OpenESC-30x30 4in1
+  (+91: 106 / 15), glasgow revC3 (+88: 143 / 55), protoesp (+72: 73 /
+  1), 4in1-mini (+44: 81 / 37).
+- **Worse beyond noise**: none.
+
 ## Committed on 2026-10-27 (the nightly writes its sweep section, README and hand-over itself)
 
 Branch nightly-docs. The write-ups of v19, v20 and v21 were done by hand

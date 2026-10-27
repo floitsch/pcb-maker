@@ -1,4 +1,4 @@
-# Hand-over (state as of 2026-10-26; measured by layout sweep v21 on x1832 = main 2087046; x1833, exact escape stubs and the pour model, since)
+# Hand-over (state as of 2026-10-27; measured by layout sweep v22, the nightly of 2026-10-27 on main e7a12a8)
 
 What the tool does today, which benchmarks count, what is known to be
 wrong, where everything is and how to work on it. What each round of work
@@ -53,7 +53,7 @@ The newest nightly measurement of main (scripts/nightly.sh; the table of
 the last 14 nights is in [benchmarks.md](benchmarks.md#nightly)):
 
 <!-- nightly-state:begin -->
-**Nightly**: none yet (`bash scripts/nightly.sh --install` installs the timer; `scripts/nightly-report.py` writes this line).
+**Nightly** 2026-10-27 (main e7a12a80e4fe, `build/nightly/2026-10-27/summary.md`): fingerprints identical; expansion 24/46 (strict 24), 557 open; short 8/12 (strict 8), 20 open; sweep 57/109 (strict 57), 2140 open; designer 67/109 (strict 63), 3335 open at 0.69; gap placement 52%, routing 48%.
 <!-- nightly-state:end -->
 
 **Layout sweep v16** (x862, tasks v6, 109 boards harvested from GitHub,
@@ -130,6 +130,23 @@ Batch_1). x1833 (exact escape stubs on, the pour model matching KiCad)
 post-dates it. `build/github-layout-v21.log`; table, gap split, the
 costliest placements and the boards worse than the nightly in
 [benchmarks.md](benchmarks.md#layout-sweep-v21-2026-10-26).
+
+**Layout sweep v22** (the nightly of 2026-10-27, main e7a12a8, written
+by the nightly): **57 of 109 pass the strict rule** (57 the per-type
+rule), 2140 unconnected in all, strict errors 53, no row cut or killed,
+6 without a result; medians against the designer's board: vias x0.73,
+length x1.07, open 0.000 (mean 0.110), bends x1.15, stair-steps +60,
+crossings +1. Against the nightly of 2026-10-26: better 4, same 99,
+worse 0, strict passes 57 -> 57 (gained 0xCB-1337 panel; lost
+Quanta75_RP2040Stamp_JLCPCBAoptimized); against v21: better 21, same 76,
+worse 6, strict passes 56 -> 57 (gained 0xCB-1337 panel, Explorer; lost
+Quanta75_RP2040Stamp_JLCPCBAoptimized). The matched designer tier on the
+same binary (budget scale 0.69): 63 strict passes (67 per type); over
+the 99 target boards placement 52 %, routing 48 % of the open
+connections (placement 69 %, routing 31 % without Batch_1).
+`build/nightly/2026-10-27/`; table, gap split, the costliest placements
+and the losers in
+[benchmarks.md](benchmarks.md#layout-sweep-v22-2026-10-27).
 
 **Quick tier** (30 boards, full budget, the merge gate):
 `build/quick30-x1152.log` (x1152 = main 015676c, tasks v6): **24 of 30
