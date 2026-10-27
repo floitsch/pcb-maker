@@ -83,9 +83,11 @@ class Statistics(unittest.TestCase):
         worse = {b: {s: (on, off) for s, (off, on) in by_seed.items()} for b, by_seed in better.items()}
         self.assertGreater(placer_ab.sign_flip(worse, reference, "weighted", rounds=2000), 0.99)
         observed = placer_ab.statistics_of(better, reference)["weighted"]
-        lo, hi = placer_ab.noise_interval(values, 5, observed, reps=500)
+        null = placer_ab.noise_null(values, 5, reps=500)
+        lo, hi = placer_ab.noise_interval(null, observed)
         self.assertLess(lo, observed)
         self.assertLess(hi, 0.0)
+        self.assertLess(placer_ab.noise_p(null, observed), 0.01)
 
     def test_the_weight_floors_the_coefficient_of_variation(self):
         reference = placer_ab.weights_of({"flat": [50.0, 50.0, 51.0], "wide": [10.0, 30.0, 20.0]})
@@ -130,6 +132,10 @@ class Rule(unittest.TestCase):
         self.assertTrue(placer_ab.verdict(0.10, 9).startswith("NOT BETTER"))
         self.assertTrue(placer_ab.verdict(0.40, 5).startswith("NOT BETTER"))
         self.assertTrue(placer_ab.verdict(0.99, 3).startswith("WORSE"))
+        self.assertIn("EXTEND to 5 seed pairs (p 0.100 is within 0.25; seeds 301, 401)", placer_ab.verdict(0.10, 3))
+        # The larger p decides for better, the smaller for worse.
+        self.assertTrue(placer_ab.verdict(0.02, 5, p_model=0.13).startswith("EXTEND"))
+        self.assertTrue(placer_ab.verdict(0.99, 5, p_model=0.9).startswith("NOT BETTER"))
 
     def test_the_rule_keeps_its_false_positive_rate_and_finds_a_large_effect(self):
         table = placer_ab.protocol(noise_values(), [0.0, 0.3], reps=300)

@@ -395,14 +395,26 @@ def sign_flip(pairs, reference, key, rounds=20000, rng=None):
     return (at_most + 1) / (rounds + 1)
 
 
-def noise_interval(values, k, observed, fire=None, level=0.90, reps=2000, cv_floor=CV_FLOOR):
+def noise_null(values, k, fire=None, reps=4000, cv_floor=CV_FLOOR):
+    """The weighted statistic's sorted null distribution for a k-seed
+    comparison from the noise file, on the boards in `fire` (the others
+    alike on both sides)."""
+    return sorted(row["weighted"] for row in simulate(values, k, [], reps=reps, cv_floor=cv_floor, fire=fire)[0.0])
+
+
+def noise_p(null, observed):
+    """One-sided p of an observed weighted change against `noise_null`."""
+    import bisect
+    return (bisect.bisect_right(null, observed + 1e-12) + 1) / (len(null) + 1)
+
+
+def noise_interval(null, observed, level=0.90):
     """The weighted statistic's interval from the noise file: the observed
-    value less the null distribution's quantiles of a k-seed comparison on
-    the boards in `fire` (the others alike on both sides). A bootstrap
-    over two or three seeds of the comparison itself is far too narrow."""
-    null = sorted(row["weighted"] for row in simulate(values, k, [], reps=reps, cv_floor=cv_floor, fire=fire)[0.0])
-    lo = null[int((1 - level) / 2 * reps)]
-    hi = null[min(reps - 1, int((1 + level) / 2 * reps))]
+    value less the null's quantiles. A bootstrap over two or three seeds of
+    the comparison itself is far too narrow."""
+    n = len(null)
+    lo = null[int((1 - level) / 2 * n)]
+    hi = null[min(n - 1, int((1 + level) / 2 * n))]
     return observed - hi, observed - lo
 
 
@@ -525,25 +537,16 @@ def seeds_needed(values, delta, alpha=0.05, power=0.8, reps=1000, cv_floor=CV_FL
 
 
 def protocol(values, deltas, first=FIRST, second=SECOND, alpha=ALPHA, extend=EXTEND, reps=2000, cv_floor=CV_FLOOR,
-             seed=5):
+             seed=5, flip_rounds=0):
     """The two-stage rule simulated: {delta: (better after `first`, extended,
-    better after `second`, better in all)}, p taken against the weighted
-    statistic's simulated null of each stage."""
+    better after `second`, better in all)}. A comparison's p is the noise
+    file's (`noise_p` against each stage's null) or, with `flip_rounds`,
+    the larger of it and the sign-flip test's at that many rounds, as
+    `compare` judges."""
     reference = weights_of(values, cv_floor)
     boards = sorted(values)
     draw = {b: smoothed(values[b]) for b in boards}
-
-    def null(k):
-        rng = random.Random(seed + k)
-        return sorted(statistics_of({b: {s: (draw[b](rng), draw[b](rng)) for s in range(k)} for b in boards},
-                                    reference)["weighted"] for _ in range(2 * reps))
-
-    nulls = {first: null(first), second: null(second)}
-
-    def p_of(k, x):
-        import bisect
-        return (bisect.bisect_right(nulls[k], x + 1e-12) + 1) / (len(nulls[k]) + 1)
-
+    nulls = {k: noise_null(values, k, reps=2 * reps, cv_floor=cv_floor) for k in (first, second)}
     out = {}
     for delta in deltas:
         rng = random.Random(seed)
@@ -553,8 +556,11 @@ def protocol(values, deltas, first=FIRST, second=SECOND, alpha=ALPHA, extend=EXT
             on = {b: [draw[b](rng) * (1 - delta) for _ in range(second)] for b in boards}
 
             def p_at(k):
-                return p_of(k, statistics_of({b: {s: (off[b][s], on[b][s]) for s in range(k)} for b in boards},
-                                             reference)["weighted"])
+                pairs = {b: {s: (off[b][s], on[b][s]) for s in range(k)} for b in boards}
+                p = noise_p(nulls[k], statistics_of(pairs, reference)["weighted"])
+                if flip_rounds:
+                    p = max(p, sign_flip(pairs, reference, "weighted", flip_rounds, random.Random(rng.random())))
+                return p
             p = p_at(first)
             if p <= alpha:
                 better_first += 1
@@ -588,15 +594,22 @@ def paired(off, on, metric="unconnected", tool=None, tasks=None):
     return pairs, missing
 
 
-def verdict(p, k, alpha=ALPHA, extend=EXTEND, second=SECOND):
-    """The rule's verdict on a weighted sign-flip p after k seed pairs."""
+def verdict(p, k, alpha=ALPHA, extend=EXTEND, second=SECOND, p_model=None, first=FIRST):
+    """The rule's verdict after k seed pairs on the weighted change's one-sided
+    p: the larger of the sign-flip test's (`p`, this comparison's own
+    spread) and the noise file's (`p_model`, the tier's spread over nine
+    seeds); either alone can be lucky with two or three pairs."""
+    better = p if p_model is None else max(p, p_model)
+    worse = p if p_model is None else min(p, p_model)
+    if 1 - worse <= alpha:
+        return f"WORSE (confidence {100 * worse:.1f} %)"
+    p = better
     if p <= alpha:
         return f"BETTER (confidence {100 * (1 - p):.1f} %, the rule asks {100 * (1 - alpha):.0f} %)"
-    if 1 - p <= alpha:
-        return f"WORSE (confidence {100 * p:.1f} %)"
     if k < second and p <= extend:
-        return (f"EXTEND to {second} seed pairs (p {p:.3f} is within {extend}; seeds "
-                f"{', '.join(map(str, RULE_SEEDS[k:second]))})")
+        to = first if k < first else second
+        return (f"EXTEND to {to} seed pairs (p {p:.3f} is within {extend}; seeds "
+                f"{', '.join(map(str, RULE_SEEDS[k:to]))})")
     return f"NOT BETTER (confidence on better {100 * (1 - p):.1f} %, the rule asks {100 * (1 - alpha):.0f} %)"
 
 
@@ -641,13 +654,18 @@ def compare_lines(pairs, missing, noise_values, alpha=ALPHA, power=0.8, rounds=2
     lines.append(f"sign-flip p (on better): sum of medians {p_medians:.3f}, pair sums {p_sums:.3f}, "
                  f"weighted {p_weighted:.3f}")
     interval = ""
+    p_model = None
     if values and fire and k >= 1:
-        lo, hi = noise_interval(values, k, s["weighted"], fire=fire)
-        interval = f" (90 % interval from the noise file {100 * lo:+.1f} to {100 * hi:+.1f} %)"
+        null = noise_null(values, k, fire=fire)
+        p_model = noise_p(null, s["weighted"])
+        lo, hi = noise_interval(null, s["weighted"])
+        interval = (f" (90 % interval from the noise file {100 * lo:+.1f} to {100 * hi:+.1f} %; "
+                    f"its p {p_model:.3f})")
     lines.append(f"weighted relative change {100 * s['weighted']:+.1f} %{interval}")
     lines.append("")
-    lines.append(f"verdict ({k} seed pairs, weighted, sign-flip p {p_weighted:.3f}): "
-                 + verdict(p_weighted, k, alpha, extend, second))
+    lines.append(f"verdict ({k} seed pairs, weighted, sign-flip p {p_weighted:.3f}"
+                 + (f", noise-file p {p_model:.3f}" if p_model is not None else "") + "): "
+                 + verdict(p_weighted, k, alpha, extend, second, p_model))
     if values and fire and s["weighted"] != 0:
         # The observed change as a relative effect on the boards it moved:
         # the weighted statistic over those boards alone.
@@ -685,6 +703,8 @@ def main():
     p.add_argument("--noise", type=Path, default=DEFAULT_NOISE)
     p.add_argument("--at", type=float, nargs="+", default=[0.0, 0.03, 0.05, 0.065, 0.08, 0.10])
     p.add_argument("--reps", type=int, default=2000)
+    p.add_argument("--flip-rounds", type=int, default=0,
+                   help="judge as compare does, with the sign-flip test at this many rounds (slow)")
     p = commands.add_parser("noise")
     p.add_argument("runs", nargs="+")
     p.add_argument("--out", type=Path, required=True)
@@ -704,7 +724,8 @@ def main():
               f"{arguments.reps} simulated comparisons, the effect on every board")
         print("| effect | better at 5 | extended | better at 9 | better in all |")
         print("| ---: | ---: | ---: | ---: | ---: |")
-        for delta, (a, b, c, d) in protocol(values, arguments.at, reps=arguments.reps).items():
+        for delta, (a, b, c, d) in protocol(values, arguments.at, reps=arguments.reps,
+                                            flip_rounds=arguments.flip_rounds).items():
             print(f"| {100 * delta:g} % | {a:.3f} | {b:.3f} | {c:.3f} | {d:.3f} |")
     elif arguments.command == "resolution":
         values = board_values(load_noise(arguments.noise), arguments.metric)
