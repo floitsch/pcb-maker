@@ -2189,7 +2189,7 @@ fn finding_action(
     }
     let step = match kind {
         "clearance" | "shorting_items" => {
-            "move those nets' parts apart, or check whether the rule is one the router does not keep (rules.project.unmodelled in the report)"
+            "move those nets' parts apart, or check whether the rule is one the router does not keep (rules.unmodelled and rules.custom_rules in board-router.json)"
         }
         "hole_clearance" | "hole_to_hole" => {
             "move the parts apart; the project's min_hole_clearance and min_hole_to_hole (Board Setup) set the rule"
