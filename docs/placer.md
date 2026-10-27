@@ -4310,6 +4310,42 @@ drill offset) changes no other sweep board's lowering (the padstack
 offsets census: the three OpenESC boards), and the single 4in1 and
 4in1-mini route byte for byte as before (seed 1, x1853 against x15025).
 
+**The molecules** (seed 1, x1856 against x15028; the 5x4 wave against
+x15029, below). The PolyKybd molecules are panels of copies told apart
+by repeated references (`panel_copies`, cell classes since x1856): their
+cells side by side, one outline piece, no neck between them, and every
+cell has the same 27 net names (28 on the 4x5), no copper between cells.
+The designer's own 4x4 leaves 208 unconnected items in KiCad (15 for
+most nets: 16 cells less one). Where copies are told
+apart by repeated references and nets with pads of two footprints of one
+reference exist, the placement notes the copies' regions as cells
+(`note_cells`) and those nets as designed: the router splits them per
+cell (a part outside every cell, an outer row's test point, belongs to
+the nearest), and KiCad's items between two cells of such a net, as many
+as the net's cells less one, are not counted. KiCad's own count still
+sees one net name: drc.json keeps every item (the excused ones under
+`unconnected_across_sub_boards`), and a check without a placement
+(drc-kicad-board, route-kicad-board) finds no cells and counts them all
+(the designer's 208). Where KiCad's list stops at its cap of 499, the
+items left are a lower bound (`unconnected_items_capped`), and nothing is
+excused where that would leave none.
+
+| Molecule | off: KiCad (counted) | on: KiCad | across | counted | new errors off / on | nets routed off / on | first-route open off / on |
+| --- | ---: | ---: | ---: | ---: | --- | --- | ---: |
+| 4x4 | 499 (cap) | 499 (cap) | 255 | at least 244 | 0 / 1 starved_thermal | 3/28 / 296/423 | 828 / 271 |
+| 4x5 | 499 (cap) | 499 (cap) | 260 | at least 239 | 8 / 1 starved_thermal | 2/28 / 390/528 | 1083 / 224 |
+| 5x2_shifted | 427 | 423 | 204 | 219 | 0 / 0 | 2/28 / 160/270 | 571 / 203 |
+| 5x4_wave | 499 (cap) | MOL54 | | | | | |
+
+The placements differ from the off side's on three of the four (4x5 byte
+for byte): the measured escape correction routes the board while it
+places, and its route now splits the cells' nets. The router's own count
+of open terminals after the first route falls three- to fivefold.
+x15028's 5x4 wave ended in an internal error: a layout move took a part
+into another cell, the lowering split its nets otherwise, and the
+router refused the incremental update ("needs the same nets"); since
+x15029 such a move is no trial (the layout's moves, the move descent).
+
 **Identity**: the short tier (3 x 2, its budget scale): every placed and
 result board byte for byte, x1853 against x15022 and against x15027, and
 x1856 against x15028 (`build/panel4/short-*`). The four panels of copies:
