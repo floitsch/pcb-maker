@@ -38,8 +38,14 @@ SETTINGS = {
     'p1-i25': ['--pitch-factor', '1', '--iterations', '25'],
 }
 SHARES = {'5': 0.05, '10': 0.10}
-# Follow-ups with the hard repair (half the budget negotiating).
+# Follow-ups (chosen after the 5 % rows: the rip-up count ranks at every
+# pitch, the cost is the question): the 2 % budget (30 s; a probe whose
+# 5 % probe ended before 30 s of search is that probe and is copied), and
+# the hard repair (half the budget negotiating).
+SHORTER = {'p2-i25-2': 'p2-i25-5', 'p1-i25-2': 'p1-i25-5'}
 EXTRA = {
+    'p2-i25-2': ['--pitch-factor', '2', '--iterations', '25', '--share', '0.02'],
+    'p1-i25-2': ['--pitch-factor', '1', '--iterations', '25', '--share', '0.02'],
     'p2-i25-hard-10': ['--pitch-factor', '2', '--iterations', '25', '--hard-repair', '--share', '0.1'],
     'p1-i25-hard-10': ['--pitch-factor', '1', '--iterations', '25', '--hard-repair', '--share', '0.1'],
 }
@@ -111,7 +117,8 @@ def target_of(out, name, seed, variant):
 
 def ended_early(report):
     """A probe that ended before its budget (the 10 % probe is the same)."""
-    return report['stop'] != 'probe_work_limit' and report['search_work_seconds'] < 0.98 * report['budget_seconds']
+    return (report['stop'] not in ('probe_work_limit', 'negotiation_work_limit')
+            and report['search_work_seconds'] < 0.98 * report['budget_seconds'])
 
 
 def command_run(arguments):
@@ -130,6 +137,14 @@ def command_run(arguments):
                     path = target_of(out, name, seed, variant)
                     if os.path.exists(path):
                         continue
+                    if variant in SHORTER:
+                        five = target_of(out, name, seed, SHORTER[variant])
+                        if not os.path.exists(five):
+                            continue
+                        report = json.load(open(five))
+                        if ended_early(report) and report['search_work_seconds'] < 0.98 * 0.02 * TOTAL:
+                            json.dump(dict(report, budget_seconds=0.02 * TOTAL, copied_from=five), open(path, 'w'), indent=1)
+                            continue
                     if phase == '10':
                         five = target_of(out, name, seed, variant[:-len('10')] + '5')
                         if not os.path.exists(five):
@@ -304,7 +319,7 @@ def command_analyse(arguments):
     lines.append('| best of all | %d |' % best_row)
     # The cost per board: median over the seeds.
     lines.append('')
-    lines.append('### Cost (median over the seeds; work s at the pinned rates, wall s under load)')
+    lines.append('### Cost (median over the seeds; work s at the pinned rates, the command\'s wall s under load)')
     lines.append('')
     header = ['race 75 s probe work'] + ['%s %s' % (v, m) for v in names for m in ('work', 'wall')]
     lines.append('| board | first-route wall | ' + ' | '.join(header) + ' |')
@@ -334,7 +349,9 @@ def command_analyse(arguments):
             # A copied report (the 10 % probe that is the 5 % one) costs its
             # probe's work and wall.
             cells.append(statistics.median(r['work_seconds'] for r in reports) if reports else None)
-            cells.append(statistics.median(r['outer']['wall'] for r in reports) if reports else None)
+            # The command's own wall clock (the outer one holds the wait for
+            # the memory ledger).
+            cells.append(statistics.median(r['wall_seconds'] for r in reports) if reports else None)
         for i, c in enumerate(cells):
             if c is not None:
                 sums[i] += c

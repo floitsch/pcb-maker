@@ -1347,6 +1347,31 @@ Score the designer's board and yours side by side.
   reserves its memory in the ledger. `experiments/trouble-probe/study.py`
   runs it over the dense boards' seeds and ranks them.
 
+- `pcb-maker probe-coarse-placement <placed.kicad_pcb> [router-config.json|auto] [--pitch-factor 1.0] [--iterations N] [--hard-repair] [--trouble-repair] [--negotiation-share 0.5] [--share 0.05] [--total-seconds 1500] [--work-seconds S] [--out report.json]`
+  (a research measure, [placer.md](placer.md) "A coarse whole first
+  route as the race probe (2026-10-27)"): routes a placed board (a
+  layout's `placed/<board>.kicad_pcb`, lowered as the trouble probe
+  lowers it) whole, with the race's and the first route's router
+  settings at a reduced fidelity: the router's candidate lattice pitches
+  (0.127, 0.125, 0.1 mm) times `--pitch-factor`, at most `--iterations`
+  negotiation iterations (the router's 80 without it), all of it within
+  `--share` of `--total-seconds` of search work (or `--work-seconds`).
+  Without `--hard-repair` the negotiation gets the whole budget and the
+  nets still in conflict then lose their conflicted branches (the hard
+  repair's rip-up without its searches); with it the negotiation gets
+  `--negotiation-share` of the budget and the first route's hard repair
+  (and with `--trouble-repair` the trouble repair) the rest. The report:
+  the pitch chosen and the lattice's nodes a layer, the iterations and
+  the negotiation's stop, its standing (`negotiated_open_terminals`:
+  open terminals plus one per complete net in conflict and per pour pad
+  off its pour; `unfinished`; `conflicted`), the nets ripped and the
+  open terminals after the rip-up, after the repair where it ran,
+  `open_terminals` (the repaired count where the repair ran, else the
+  ripped one), the work (negotiation, repair, build, pour) and the wall
+  clock. Deterministic at pinned work rates. It reserves its memory in
+  the ledger. `experiments/coarse-probe/study.py` runs it over the
+  trouble study's placements and ranks them.
+
 `pcb-maker <command> --help` gives every command's arguments and
 defaults.
 
