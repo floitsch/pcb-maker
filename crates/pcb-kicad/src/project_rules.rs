@@ -2110,12 +2110,13 @@ mod tests {
                 ("Edge", "approximated"),
                 ("PTH to track", "approximated"),
                 ("Creepage", "unmodelled"),
-                ("Keepout", "unmodelled"),
+                // No area named ANT on the board: KiCad's area test is
+                // false (dru::resolve_areas).
+                ("Keepout", "no_effect"),
                 ("Silk", "not_routing"),
             ]
         );
-        assert_eq!(report.unmodelled.len(), 2);
-        assert!(report.unmodelled[1].contains("A.insidearea()"));
+        assert_eq!(report.unmodelled.len(), 1);
         // USB_DP's minimum floors its neck-downs (the others keep the
         // board's 0.15); hole to hole is a warning by KiCad's default.
         let net_rules = config.net_rules.unwrap();
