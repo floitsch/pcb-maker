@@ -1893,6 +1893,83 @@ mod pour_request_tests {
     }
 }
 
+mod rule_layer_tests {
+    use super::*;
+
+    /// A four-layer board: GND poured on In1.Cu, /A between two parts
+    /// across a band where rule areas keep tracks off F.Cu, In2.Cu and
+    /// B.Cu: In1.Cu is the only way across.
+    const BOARD: &str = r#"(kicad_pcb
+      (layers (0 "F.Cu" signal) (4 "In1.Cu" signal) (6 "In2.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+      (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+      (footprint "a" (at 4 5) (pad "1" smd rect (at 0 -2) (size 1 1) (layers "F.Cu") (net "GND"))
+        (pad "2" smd rect (at 0 2) (size 1 1) (layers "F.Cu") (net "/A")))
+      (footprint "b" (at 16 5) (pad "1" smd rect (at 0 -2) (size 1 1) (layers "F.Cu") (net "GND"))
+        (pad "2" smd rect (at 0 2) (size 1 1) (layers "F.Cu") (net "/A")))
+      (zone (net "GND") (layer "In1.Cu") (polygon (pts (xy 0 0) (xy 20 0) (xy 20 10) (xy 0 10))))
+      (zone (net 0) (net_name "") (layers "F.Cu" "In2.Cu" "B.Cu") (name "band")
+        (keepout (tracks not_allowed) (vias allowed) (pads allowed) (copperpour allowed) (footprints allowed))
+        (polygon (pts (xy 8 0) (xy 12 0) (xy 12 10) (xy 8 10)))))"#;
+
+    fn config() -> KiCadBoardRouterConfig {
+        KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        }
+    }
+
+    /// The layers /A's routed tracks use (bits) on the board one rung of
+    /// the ladder lowers, as its attempt sets the planes.
+    fn a_layers(config: &KiCadBoardRouterConfig, rung: Rung) -> core::LayerMask {
+        let pcb = parse(BOARD).unwrap();
+        let (connect, skeleton, exclusive, stubs) = rung;
+        let attempt = KiCadBoardRouterConfig {
+            plane_skeleton: Some(skeleton),
+            exclusive_planes: Some(exclusive),
+            fixed_plane_stubs: Some(stubs),
+            ..config.clone()
+        };
+        let board = lower(&pcb, &attempt, connect).unwrap().board;
+        let net = board.nets.iter().position(|net| net.name == "A").unwrap();
+        let routed = core::route(&board, &core_config(&attempt));
+        routed.routes[net]
+            .segments
+            .iter()
+            .fold(0, |mask, segment| mask | (1 << segment.layer))
+    }
+
+    #[test]
+    fn every_rung_keeps_a_nets_tracks_off_the_layers_a_rule_disallows() {
+        // Every rung of a four-layer board's ladder, the pours as tracks
+        // last (`(false, false, false, false)`).
+        let rungs = ladder_rungs(&config(), true, false);
+        assert!(rungs.contains(&(false, false, false, false)), "{rungs:?}");
+        // Without the rule the pours-as-tracks rung routes /A across on
+        // In1.Cu (bit 1), the ground layer.
+        assert_ne!(a_layers(&config(), (false, false, false, false)) & 0b10, 0);
+        // ducktop2's "solid ground layers": no track but GND's on In1.Cu.
+        let mut ruled = config();
+        ruled.track_disallowed.insert("A".into(), 0b10);
+        for rung in rungs {
+            assert_eq!(a_layers(&ruled, rung) & 0b10, 0, "rung {rung:?}");
+        }
+        // GND keeps every layer; /A's class is kept to the others.
+        let pcb = parse(BOARD).unwrap();
+        let board = lower(&pcb, &ruled, false).unwrap().board;
+        let class = |name: &str| {
+            let net = board.nets.iter().find(|net| net.name == name).unwrap();
+            board.classes[net.class].layers
+        };
+        assert_eq!(class("GND"), 0);
+        assert_eq!(class("A"), 0b1101);
+    }
+}
+
 mod narrow_step_tests {
     use super::*;
 
@@ -1947,6 +2024,44 @@ mod narrow_step_tests {
             .insert("/PWR".into(), rules(0.5, 0.2));
         classes.narrow_signal_mm = Some(0.125);
         assert!(narrow_step_applies(&classes));
+        // A wide net whose width a rule gives (oculink_port's pairs, at
+        // the `inDiffPair()` rule's 0.1712 mm) is not narrowed: alone it
+        // gives the step nothing to do.
+        classes.ruled_widths.insert("/PWR".into());
+        assert!(!narrow_step_applies(&classes));
+    }
+
+    #[test]
+    fn the_narrow_step_keeps_the_widths_a_rule_gives() {
+        // Two nets at 0.2 mm, one of them at a rule's width (a pair's
+        // track_width on `inDiffPair()`): the step narrows the other only.
+        let pcb = parse(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+              (footprint "a" (at 5 5) (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net "/SIG"))
+                (pad "2" smd rect (at 0 2) (size 0.5 0.5) (layers "F.Cu") (net "/TX_P")))
+              (footprint "b" (at 15 5) (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net "/SIG"))
+                (pad "2" smd rect (at 0 2) (size 0.5 0.5) (layers "F.Cu") (net "/TX_P"))))"#,
+        )
+        .unwrap();
+        let mut config = KiCadBoardRouterConfig {
+            default_rules: Some(rules(0.2, 0.2)),
+            narrow_signal_mm: Some(0.15),
+            use_narrow_signals: Some(true),
+            ..KiCadBoardRouterConfig::default()
+        };
+        config.connection_rules.insert("SIG".into(), rules(0.2, 0.2));
+        config.connection_rules.insert("TX_P".into(), rules(0.2, 0.2));
+        let width = |config: &KiCadBoardRouterConfig, name: &str| {
+            let board = lower(&pcb, config, true).unwrap().board;
+            let net = board.nets.iter().find(|net| net.name == name).unwrap();
+            board.classes[net.class].trace_width
+        };
+        assert_eq!(width(&config, "SIG"), 0.15);
+        assert_eq!(width(&config, "TX_P"), 0.15);
+        config.ruled_widths.insert("TX_P".into());
+        assert_eq!(width(&config, "SIG"), 0.15);
+        assert_eq!(width(&config, "TX_P"), 0.2);
     }
 
     #[test]

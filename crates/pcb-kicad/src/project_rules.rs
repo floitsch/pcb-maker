@@ -1686,6 +1686,67 @@ mod tests {
     }
 
     #[test]
+    fn a_disallow_track_rule_closes_its_layers_for_the_nets_it_holds_for() {
+        // ducktop2's "solid ground layers" and "controlled-impedance signal
+        // layers": no track but GND's on In1.Cu, and the DIFF class's off
+        // In1.Cu and In2.Cu (bits 1 and 2).
+        let pcb = r#"(kicad_pcb (layers (0 "F.Cu" signal) (1 "In1.Cu" signal) (2 "In2.Cu" signal) (3 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (footprint "a" (at 0 0)
+                (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "GND"))
+                (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net "/SIG"))
+                (pad "3" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net "/TX_P"))
+                (pad "4" smd rect (at 3 0) (size 1 1) (layers "F.Cu") (net "/TX_N"))
+                (pad "5" smd rect (at 4 0) (size 1 1) (layers "F.Cu") (net "/AREA"))))"#;
+        let project = r#"{"net_settings": {"classes": [
+              {"name": "Default", "clearance": 0.15, "track_width": 0.25, "via_diameter": 0.6, "via_drill": 0.3},
+              {"name": "DIFF", "clearance": 0.15, "track_width": 0.2}],
+              "netclass_patterns": [{"pattern": "/TX_*", "netclass": "DIFF"}]}}"#;
+        let dru = r#"(version 1)
+            (rule "solid ground layers" (condition "A.Layer == 'In1.Cu' && A.NetName != 'GND'")
+              (constraint disallow track))
+            (rule "impedance layers" (condition "A.hasNetclass('DIFF') && A.Layer != 'F.Cu' && A.Layer != 'B.Cu'")
+              (constraint disallow track))
+            (rule "inside an area" (condition "A.insideArea('X') && A.NetName == '/AREA'")
+              (constraint disallow track))"#;
+        let (directory, path) = project_directory("disallow", project, Some(dru));
+        let board = directory.join("board.kicad_pcb");
+        fs::write(&board, pcb).unwrap();
+        let config = resolve_project_rules(&path, &board).unwrap();
+        let closed = &config.track_disallowed;
+        assert_eq!(closed.get("GND"), None);
+        assert_eq!(closed.get("SIG"), Some(&0b10));
+        assert_eq!(closed.get("TX_P"), Some(&0b110));
+        assert_eq!(closed.get("TX_N"), Some(&0b110));
+        // A condition the lowering cannot decide closes nothing more: /AREA
+        // keeps only the ground rule's In1.Cu.
+        assert_eq!(closed.get("AREA"), Some(&0b10));
+        let report = config.project_rules.as_ref().unwrap();
+        let status = |rule: &str| {
+            report
+                .custom_rules
+                .iter()
+                .find(|entry| entry.rule == rule)
+                .map(|entry| entry.status.clone())
+        };
+        assert_eq!(status("solid ground layers").as_deref(), Some("applied"));
+        assert_eq!(status("impedance layers").as_deref(), Some("applied"));
+        assert_eq!(status("inside an area").as_deref(), Some("unmodelled"));
+        assert!(
+            report
+                .unmodelled
+                .iter()
+                .all(|line| !line.contains("ground layers") && !line.contains("impedance")),
+            "{:?}",
+            report.unmodelled
+        );
+        // Read again under a router config file.
+        let over =
+            router_config_over_project(serde_json::json!({"seeds": 2}), Ok(config.clone())).unwrap();
+        assert_eq!(&over.track_disallowed, closed);
+        fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
     fn a_pairs_width_and_gap_come_from_the_rules_else_its_class() {
         let pcb = r#"(kicad_pcb (layers (0 "F.Cu" signal) (1 "In1.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
               (footprint "a" (at 0 0)

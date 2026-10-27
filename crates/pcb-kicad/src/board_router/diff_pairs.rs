@@ -4464,6 +4464,8 @@ pub(crate) fn with_pairs(config: &KiCadBoardRouterConfig) -> KiCadBoardRouterCon
             first.is_some_and(|layer| rule.width_ruled.get(layer).copied().unwrap_or(false)),
         ) {
             rules.trace_width_mm = *width;
+            // The narrow-signal step keeps it (KiCad checks it).
+            copy.ruled_widths.insert(net.clone());
         }
         used.extend(rule.rules.iter().cloned());
     }
