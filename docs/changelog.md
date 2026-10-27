@@ -11,6 +11,77 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-27 (differential pairs: the crossover kept only when its link couples)
+
+Branch differential-pairs-7 (on main e7a12a80); snapshots x15070 (the
+room beside the neighbours, crossovers still off), x15071 (on by
+default), x15072 and x15073 (the room counting the lead past the
+crossover, then as the neighbours' launches check it), x15074 (the
+vias spread; on by default: the measured on side) and x15075 (the
+branch: x15074 with the crossovers off by default). Off side x1854
+(main). docs/router.md, "Differential pairs", "The safe crossover", has
+the design and the tables.
+
+- **A fallen-back pair leaves no crossover copper**: the crossover is
+  part of its link's copper, written only for a link that couples end to
+  end (both stubs reach the run, the run routed, the copper check
+  passed); the plan's obstacles go with the board as lowered, the
+  router's stubs of a failed link as before. The code did this already;
+  unit test `a_crossed_pair_that_falls_back_leaves_no_crossover_copper`
+  (run not routed, copper refused). The gap findings of 2026-10-25 on
+  fallen-back pairs are the fallback's own routes of the two nets (the
+  off side has them too: 54 of left_io's and right_io's 55 at 30 s).
+- **Room beside the neighbours' launches** (`Neighbour`,
+  `neighbour_room`, `ROOM`, `ROOM_COST`): each link end's launch on the
+  board as lowered (its stubs, their ends' leads, the run's lead with the
+  launch's margin); a crossover (tracks, vias, the run's lead past it)
+  that reaches into another pair's is not taken, one with less than the
+  gap plus clearance to spare costs, the search goes on along the
+  direction. oculink_port's four TX pairs carry their stubs at J2 again
+  (none did with the 2026-10-25 crossovers); unit test
+  `a_crossover_keeps_room_beside_a_neighbours_launch`.
+- **A link's vias spread** where one comes within the gap of the other
+  net's copper or its hole within the hole clearance (`own_vias_clear`,
+  `VIA_SPREADS` 1.5, 2, 3; with the crossovers).
+- **Measured** (route mode, one thread, KiCad's DRC with
+  `--refill-zones`, no setting, wall guard 1200 s; off x1854, on x15074;
+  errors KiCad's errors, gap diff_pair_gap_out_of_range, dangling
+  track_dangling and via_dangling):
+
+  | 30 s | links coupled | errors | unconnected | gap | dangling | vias | return vias / pair vias |
+  |---|---|---|---|---|---|---|---|
+  | ducktop2-center | 2/54 -> 2/54 | 18 -> 14 | 499 -> 499 | 16 -> 12 | 0 -> 0 | 689 -> 690 | 3/4 -> 7/10 |
+  | ducktop2 left_io | 0/41 -> 1/41 | 17 -> 24 | 337 -> 346 | 17 -> 24 | 1 -> 0 | 240 -> 248 | 0/0 -> 0/2 |
+  | ducktop2 right_io | 1/23 -> 4/23 | 38 -> 95 | 159 -> 151 | 38 -> 36 | 2 -> 3 | 145 -> 94 | 0/0 -> 3/6 |
+  | OpenAIO-Whoop | 0/4 -> 0/4 | 0 -> 0 | 185 -> 185 | 1 -> 1 | 0 -> 0 | 39 -> 39 | 0/0 -> 0/0 |
+  | oculink m2_card | 9/9 -> 9/9 | 2 -> 2 | 2 -> 2 | 1 -> 1 | 0 -> 0 | 22 -> 22 | 0/0 -> 0/0 |
+  | oculink_m2 | 4/10 -> 6/10 | 4 -> 3 | 9 -> 6 | 0 -> 0 | 2 -> 0 | 54 -> 57 | 7/12 -> 23/36 |
+  | oculink_port | 3/9 -> 7/9 | 21 -> 3 | 12 -> 12 | 0 -> 1 | 34 -> 34 | 20 -> 18 | 2/6 -> 13/26 |
+
+  Totals at 30 s: coupled 19/150 -> 29/150 (11 through a crossover),
+  errors 100 -> 141, unconnected 1 203 -> 1 201, gap 73 -> 75, dangling
+  39 -> 37, vias 1 209 -> 1 168. At 300 s on the four small boards
+  (oculink_m2 4/10 -> 10/10, errors 43 -> 2, gap 37 -> 0; oculink_port
+  4/9 -> 5/9, errors 17 -> 36, dangling 1 -> 34): coupled 17/32 -> 24/32,
+  errors 61 -> 39, unconnected 158 -> 155, gap 38 -> 10, dangling 5 ->
+  36. **Not the default**: at 30 s errors and gap findings rise in total;
+  ducktop2 right_io blocks it (errors 38 -> 95: 58 items_not_allowed, the
+  ladder's probe ranking pours=tracks, a rung without exclusive planes,
+  one net ahead of the plane stubs) and left_io (gap 17 -> 24,
+  unconnected 337 -> 346). The switch stays:
+  `PCB_ROUTER_DIFF_PAIRS_CROSSOVER=1` (`CROSSOVERS_BY_DEFAULT` false).
+  The branch with it off (x15075) routes the four small rule boards at
+  30 s as x1854, rows and routed boards identical.
+- **The expansion tier** (46 boards, route mode, 8 x 1, 30 s; x1854
+  against x15071 and x15075, no setting): every row and every routed board identical
+  to x1854 with both (unconnected 557, passes 24).
+- Logs: `build/dp7-rules/x1854-30-{small,lr,center}`,
+  `x15074-30-{small,lr,center}`, `x1854-300-small`, `x15074-300-small`,
+  `x15075-30-small` (the branch: as x1854), the steps `x15070c-30-*`,
+  `x15071-30-*`, `x15073-30-*`, `x15073-300-small`, the crossovers of
+  2026-10-25 on x1853 `x1853c-30-*`, debug runs `dbg-*`; the tier
+  `build/dp7-exp-x1854`, `dp7-exp-x15071`, `dp7-exp-x15075`.
+
 ## Committed on 2026-10-27 (the ledger's capacity from the machine; kicad-cli under a reservation)
 
 Branch ledger-capacity (docs/benchmarks.md, "Memory ledger", "The

@@ -3138,7 +3138,7 @@ expansion tier's 46 boards (no board's rules ask) are identical to x1798,
 rows and routed boards byte for byte. Tables: docs/changelog.md,
 "Committed on 2026-10-24 (differential pairs: the coupled share)".
 
-**Polarity (2026-10-25; off by default).** A link is *crossed* where the
+**Polarity (2026-10-25; off by default; made safe 2026-10-27, still off: "The safe crossover" below).** A link is *crossed* where the
 pads' order at one end is against the run's (the positive pad on the side
 the run gives the negative net). Two remedies exist. *A swap at the part*
 (P and N exchanged on the part's pins where the schematic allows it) needs
@@ -3435,6 +3435,143 @@ x1842 and the branch's x14815, rows and routed boards byte for byte
 "Committed on 2026-10-26 (differential pairs: runs not routed; return
 vias)".
 
+**The safe crossover (2026-10-27).** Three changes to the crossover of
+"Polarity" above, each measured on the rule boards below.
+
+- *A fallen-back pair leaves no crossover copper.* The crossover's tracks
+  and vias are part of its link's copper (`LinkCopper`, built only for a
+  routed link), written only where the link couples end to end: both
+  stubs reach the run (`stub_joined`), the run is routed, the copper
+  check passes (`refused_groups`); the plan's own copper of the link (the
+  lead, the stubs' ends, the carried stubs, the crossover, "pair ..."
+  obstacles) goes with the board as lowered (`finish_pairs` truncates
+  the obstacles), and the router's stubs of a failed link go as before
+  (`stub_path`, `prune_stub`, `prune_dangling`). The code did this
+  already; the unit test
+  `a_crossed_pair_that_falls_back_leaves_no_crossover_copper` holds it
+  (a crossed pair with a crossover whose run is not routed, and one whose
+  copper is refused: no pair copper written, no crossover via or track in
+  the pairs' routes, no "pair" obstacle on the board, nothing of the
+  pair's nets dangling, the fallback joins the pads). On the boards the
+  refused crossover of oculink_m2's CLOCK pair (x15070) left no via
+  where it was planned. The gap findings of 2026-10-25 on pairs that
+  fell back are the fallback's own routes: it routes the two nets as
+  ordinary nets, and KiCad pairs any of their segments with overlapping
+  projections and nothing between; the off side has them too (x1854 at
+  30 s: 54 of left_io's and right_io's 55 gap findings are on pairs that
+  fell back), and their number moves with what the fallback routes of
+  the pairs that fell back.
+- *Room beside the neighbours' launches* (`Neighbour`,
+  `neighbour_room`). With crossovers on, every link end's launch is
+  found once on the board as lowered (before any link's copper): its
+  straight stubs, the leads from their ends (the pair's width and
+  clearance) and its run's lead (the envelope with the launch's lattice
+  margin, the link class's clearance), as `launch` checks them. A
+  crossover keeps its clearance from those of the other pairs within its
+  reach, with its tracks, its vias (copper and hole) and the run's lead
+  past it (whose centreline lies beside the straight net, off the pads'
+  middle): one that reaches into a neighbour's is not taken; one that
+  leaves less than `ROOM` (the pair's gap plus its clearance) costs up
+  to `ROOM_COST` (5 mm, more than the search's reach), and the search
+  goes on along the direction, so the crossover with the most room wins,
+  at the launch or further along; where none fits, the crossed end's
+  stubs are the router's as without crossovers. On oculink_port (x15071
+  without the leads, x15073 with them, both against x1854 off): the
+  four TX pairs' launches at J2 carry their stubs at both ends again
+  (with the crossovers of 2026-10-25, x1853, none of the four did at J2;
+  x15071 one), and at 30 s 7 of its 9 links couple (3 off), errors 21 ->
+  3.
+- *A link's vias spread where they crowd the other net* (`own_vias_clear`,
+  `VIA_SPREADS`, with the crossovers): where a via of one net comes
+  within the gap of the other net's copper, or its hole within the hole
+  clearance (oculink_m2's CLOCK pair with x15070: a via of its run 0.299
+  mm from the other net's copper, its hole clearance 0.330), the link's
+  copper is built again with the vias 1.5, 2 and 3 times as far out, the
+  first that clears kept; the copper check still judges it, so it only
+  stands in for copper that check would refuse. Its effect is not
+  separable from the ladder's choice of attempt: at 30 s oculink_m2
+  coupled 9/10 without it (x15073) and 6/10 with it (x15074, another
+  attempt kept: four links refused, against their own or a neighbour's
+  via holes; errors 10 -> 3, gap findings 8 -> 0, unconnected 2 -> 6), at
+  300 s 10/10 both ways, where oculink_port went 4/9 ->
+  5/9 coupled, errors 53 -> 36, gap findings 18 -> 9 with it; the other
+  rows at 30 s (ducktop2-center not run with x15073) are the same both
+  ways.
+
+*Measured* (route mode, one thread, the board's own tracks kept,
+KiCad's DRC with `--refill-zones`, no setting: the default by rules
+fires on all 7; wall guard 1200 s; the ducktop2 boards one at a time;
+gap is KiCad's diff_pair_gap_out_of_range, errors KiCad's errors,
+dangling track_dangling and via_dangling). Off side x1854 (main),
+crossovers off; on side x15074, the branch with the crossovers on by
+default (the code of the final branch x15075 but for that default):
+
+| 30 s | links coupled | errors | unconnected | gap | dangling | vias | return vias / pair vias | crossovers |
+|---|---|---|---|---|---|---|---|---|
+| ducktop2-center | 2/54 -> 2/54 | 18 -> 14 | 499 -> 499 | 16 -> 12 | 0 -> 0 | 689 -> 690 | 3/4 -> 7/10 | 0 -> 2 |
+| ducktop2 left_io | 0/41 -> 1/41 | 17 -> 24 | 337 -> 346 | 17 -> 24 | 1 -> 0 | 240 -> 248 | 0/0 -> 0/2 | 0 -> 1 |
+| ducktop2 right_io | 1/23 -> 4/23 | 38 -> 95 | 159 -> 151 | 38 -> 36 | 2 -> 3 | 145 -> 94 | 0/0 -> 3/6 | 0 -> 1 |
+| OpenAIO-Whoop | 0/4 -> 0/4 | 0 -> 0 | 185 -> 185 | 1 -> 1 | 0 -> 0 | 39 -> 39 | 0/0 -> 0/0 | 0 -> 0 |
+| oculink m2_card | 9/9 -> 9/9 | 2 -> 2 | 2 -> 2 | 1 -> 1 | 0 -> 0 | 22 -> 22 | 0/0 -> 0/0 | 0 -> 0 |
+| oculink_m2 | 4/10 -> 6/10 | 4 -> 3 | 9 -> 6 | 0 -> 0 | 2 -> 0 | 54 -> 57 | 7/12 -> 23/36 | 0 -> 3 |
+| oculink_port | 3/9 -> 7/9 | 21 -> 3 | 12 -> 12 | 0 -> 1 | 34 -> 34 | 20 -> 18 | 2/6 -> 13/26 | 0 -> 4 |
+
+Totals at 30 s: links coupled 19/150 -> 29/150 (11 through a
+crossover), errors 100 -> 141, unconnected 1 203 -> 1 201, gap findings
+73 -> 75, dangling 39 -> 37, vias 1 209 -> 1 168, return vias 12 beside
+22 pair vias -> 46 beside 80. The fallbacks: a pad's stub does not reach
+the run 26 -> 13, copper refused 5 -> 8, run not routed 82 -> 82, the
+rest as before. Where the crossover works it works: oculink_port 3/9 ->
+7/9 coupled, errors 21 -> 3; oculink_m2 4/10 -> 6/10, unconnected 9 -> 6;
+ducktop2-center's errors 18 -> 14. What blocks the default is ducktop2's
+two io boards: right_io's errors 38 -> 95 are 58 items_not_allowed (other
+nets' tracks, ETH_CT, MCU_3V3, on the "right solid ground layers"): the
+ladder's probes ranked another rung first (pours=tracks with 122 nets
+unfinished against pours=connect with plane stubs at 123; off 125
+against 123, so off continues the plane stubs), a rung without exclusive
+planes, so the one attempt it kept routes over the solid ground layers:
+a ladder matter the crossover tips by one net; and
+left_io's gap findings 17 -> 24 and unconnected 337 -> 346 (one link more
+coupled, the fallback's routes of the pairs that fell back elsewhere;
+all its 41 links but one fall back either way at 30 s).
+
+| 300 s, 4 small rule boards | links coupled | errors | unconnected | gap | dangling | vias | return vias / pair vias | crossovers |
+|---|---|---|---|---|---|---|---|---|
+| OpenAIO-Whoop | 0/4 -> 0/4 | 0 -> 0 | 148 -> 148 | 1 -> 1 | 0 -> 0 | 65 -> 65 | 0/0 -> 0/0 | 0 -> 0 |
+| oculink m2_card | 9/9 -> 9/9 | 1 -> 1 | 1 -> 1 | 0 -> 0 | 2 -> 2 | 17 -> 17 | 0/0 -> 0/0 | 0 -> 0 |
+| oculink_m2 | 4/10 -> 10/10 | 43 -> 2 | 2 -> 0 | 37 -> 0 | 2 -> 0 | 70 -> 63 | 9/20 -> 23/50 | 0 -> 6 |
+| oculink_port | 4/9 -> 5/9 | 17 -> 36 | 7 -> 6 | 0 -> 9 | 1 -> 34 | 18 -> 26 | 1/8 -> 8/14 | 0 -> 2 |
+
+At 300 s (the intake's deep run: `--budget-scale 10`) links coupled 17/32
+-> 24/32, errors 61 -> 39, unconnected 158 -> 155, gap findings 38 ->
+10, dangling 5 -> 36, vias 170 -> 171: oculink_m2 couples all ten links
+(six through a crossover) and its 37 gap findings go; oculink_port's 34
+dangling GND tracks on In1.Cu come back (the attempt the ladder keeps is
+another one, as before x14814), track_width 15 -> 25 (necks at 0.127 mm
+at the pads of more routed pair nets) and 9 gap findings on its pairs
+that fell back. An earlier candidate (x15071, the room without the lead)
+showed what else moves at 30 s: on oculink_port the ladder had work left
+for the narrow-signal step, whose attempt (signals at 0.15 mm, kept)
+narrowed the pairs' nets below their `inDiffPair()` width rule (70 of
+their tracks at 0.15 mm, track_width 19 -> 89): the narrow-signal step
+does not know the pairs' width rule, crossovers or not.
+
+**Not the default.** Coupled links rise at both budgets, and at 300 s
+errors, unconnected and gap findings fall too, but at 30 s errors (+41,
+right_io +57) and gap findings (+2, left_io +7) rise in total: the switch
+stays (`PCB_ROUTER_DIFF_PAIRS_CROSSOVER=1`, `CROSSOVERS_BY_DEFAULT`),
+off. The branch (x15075) with the switch off routes the four small rule
+boards at 30 s as x1854 (rows and routed boards identical), and the
+expansion tier's 46 boards (route mode, 8 x 1, 30 s; no board's rules ask
+for pairs) are identical to x1854 with x15071 (crossovers on by default)
+and with x15075, rows and routed boards byte for byte (unconnected 557,
+passes 24). Left: the ladder keeping exclusive planes in every rung where
+the rules disallow items on a layer (right_io), the narrow-signal step
+keeping the pairs' width rule, and the U-turn at a run's layer change (a
+crossover in its staggered vias). Tables: docs/changelog.md, "Committed on
+2026-10-27 (differential pairs: the crossover kept only when its link
+couples)".
+
 **Phase 2's remaining items, and what was learnt.**
 (1) A link must not cost the board: the gate failed on boards where the
 link nets lose or are refused. Candidates: a link net that stays in
@@ -3451,9 +3588,11 @@ then counts the crossed stubs as uncoupled and, where they run parallel,
 out of the gap's range (the fixture's LVDS pair). 2026-10-25: a crossover
 in the lead is built and measured, not the default (above, "Polarity");
 left: a crossover where the run changes layers anyway (its two vias
-staggered, no via added: a U-turn at a layer change needs one), a
-crossover that leaves a dense connector's neighbours their stubs, and the
-swap at a part, which needs swap data no rule board has. (4) Length and
+staggered, no via added: a U-turn at a layer change needs one) and the
+swap at a part, which needs swap data no rule board has; 2026-10-27 a
+crossover leaves the neighbours their stubs and a fallen-back pair keeps
+none of its copper (above, "The safe crossover"), measured, still not
+the default. (4) Length and
 skew (KiCad's `length`, `skew`): the coupled run's offset makes the outer
 track of each bend longer by `2 d tan(θ/2)`. Done 2026-10-25 (above, "Skew
 and length"): measured from the written copper, matched by a meander on
