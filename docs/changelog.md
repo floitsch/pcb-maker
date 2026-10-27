@@ -11,6 +11,57 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-27 (verdict: the input's own findings without a reference)
+
+Branch verdict-input-findings; binaries build/bin/pcb-maker-verd1-a, -b
+and -c (on 7ce9f465, x1865). docs/agents.md section 4, "The input's own
+findings", has the rule.
+
+- **The problem.** Without a reference (layout mode's default) every
+  KiCad finding but a footprint's own counted, and complete, clean boards
+  ended `incomplete`: over the nightly's 109 layouts, 113
+  `copper_edge_clearance` findings, 96 of them fixed parts' pads and 16
+  Batch_1's own GND ring, none a track, via or zone of ours; of the 20
+  `solder_mask_bridge` findings not within one footprint, 13 between fixed
+  parts and the input's zones. 0xcb-static (2 bridges between stacked
+  switch footprints) and Explorer (3 fiducials over the input's zones)
+  had nothing open and exited 1.
+- **The rule.** Without a reference, a finding is the input's and does
+  not count (`input_findings`) when it is an edge clearance, a solder
+  mask bridge or a courtyard finding (`INPUT_KINDS`) and every item of it
+  is the input's by uuid: a part the run kept where the input has it
+  (position, rotation and side), the board edge, the input's board
+  graphics or its zones unchanged but for their fill (`input_items`
+  compares the input board with the result). A track, a via, a pour of
+  ours, a moved part, a changed outline: the run's. Never excused:
+  shorts, clearances, hole clearances, hole to hole, keepouts, widths.
+  `next_actions` gives the `.kicad_dru` rules that accept them, each
+  checked with kicad-cli 10.0.7 on the sweep's boards (they took away
+  framework_mobo_lefthalf's 8 edge findings, Batch_1's 16, koeg's 15 and
+  protoesp's 6 courtyards): `(constraint edge_clearance (min 0mm))
+  (severity ignore)` by footprint or by the graphics' net,
+  `(constraint courtyard_clearance (min 0mm)) (severity ignore)` by pair;
+  for a mask bridge, which no custom rule changes, an exclusion.
+- **drc-kicad-board and fab-kicad-board** judge a board on its own (every
+  part kept, every zone and graphic the board's, tracks and vias never),
+  or with the new `--input <project-dir>` against the board it was laid
+  out from. On its own a layout's vaio_re keeps its 5 bridges of a moved
+  part excused, which `--input` (and the layout's verdict) counts. The
+  fab manifest gains `input_own` and `input_note`; a short or a clearance
+  between two nets still refuses the release.
+- **Re-judged** (the night's results, drc-kicad-board; before x1865,
+  after verd1-b on its own and with `--input` the task's source; equal on
+  every board): 0xcb-static 1 -> 0 (2 bridges set apart), Explorer
+  1 -> 0 (3), framework_mobo_lefthalf 1 -> 1 (8 edge set apart; clearance
+  2 and hole_clearance 4 between the fixed R31, R32 and J1 remain), urchin
+  1 -> 1 (2 edge, 8 bridges set apart; clearance 8 remain), Batch_1
+  1 -> 1 (16 edge set apart; 268 unconnected), krishveercard 1 -> 1 (4
+  edge, 1 courtyard set apart; clearance 199), and koeg (15 courtyards
+  set apart), protoesp (6 courtyards), MokyaLora, Sisu_SSE-9, oro link
+  stay 1. osprey's antenna and vaio_re's bridges stay the run's with
+  `--input`. With a reference nothing changes (run.py's strict rule
+  untouched); the fixture goldens pass unchanged.
+
 ## Committed on 2026-10-27 (a board's reservation is its binary's; a run past its reservation waits; run.py retries a row the ledger ended)
 
 Branch ledger-growth; binaries build/bin/pcb-maker-ledger1-a (on

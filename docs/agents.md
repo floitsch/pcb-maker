@@ -785,7 +785,68 @@ them names `A` alone: `(rule "U3 own annular_width" (constraint
 annular_width (min 0.1mm)) (condition "A.memberOfFootprint('U3')"))` (a
 condition on `B` never holds there); a hole over a maximum, and a
 padstack, get an exclusion. A via's finding names no footprint and stays
-judged. A
+judged.
+
+**The input's own findings** (since 2026-10-27, without a reference
+only; `input_findings`). A finding is the input's, and does not count,
+when it is of a type that is not electrical between two nets and every
+item of it is the input's: a pad, graphic or courtyard of a part the run
+kept where the input has it (its position, rotation and side unchanged:
+the fixed parts, and in route mode every part), the board edge, the
+input's own board graphics (`gr_*` on any layer: Edge.Cuts, Margin, a
+copper ring) or the input's zones, unchanged but for their fill. One item
+the run wrote (a track, a via, a pour it added, a part it placed, an
+outline it changed) and the finding is the run's. The verdict tells them
+by uuid: before it judges, it compares the input board with the result
+(`input_items`). The types it may excuse (`INPUT_KINDS`):
+`copper_edge_clearance` (a connector's pads over the outline, a card's
+GND ring at its edge), `solder_mask_bridge` (a mask opening over copper
+of another net: a fiducial's over the designer's zone, two stacked switch
+footprints), `courtyards_overlap`, `pth_inside_courtyard`,
+`npth_inside_courtyard` and `malformed_courtyard`; with the footprint's
+own (`annular_width`, `drill_out_of_range`, `padstack` above) and the
+cosmetic types (silkscreen) that do not count anyway. Never excused this
+way, even with both items the input's: `shorting_items`, `clearance`,
+`hole_clearance`, `hole_to_hole`, `items_not_allowed`,
+`connection_width`, `track_width`, unconnected items and every other
+type: two fixed parts of two nets too close still fail the run and
+refuse the release (framework_mobo_lefthalf's R31 and R32 at J1). The
+nightly of 2026-10-27 (109 layouts without a reference): 113
+`copper_edge_clearance` findings, 96 of them fixed parts' pads, 16
+Batch_1's own GND ring of `gr_line`/`gr_arc`, none a track, via or zone
+of ours; 0xcb-static's 2 bridges (switch footprints stacked by the
+designer) and Explorer's 3 (fiducials over the input's zones) made boards
+with nothing open exit 1. The two the sweep's reference rows found ours
+stay ours: osprey's antenna at the edge (a part the layout placed) and
+vaio_re's 5 bridges (a moved part's pads). `next_actions` names them and
+how KiCad's own DRC accepts them, for the board's `.kicad_dru` (checked
+with kicad-cli 10.0.7 on the sweep's boards): an edge clearance of
+footprints, `(rule "input edge_clearance" (constraint edge_clearance (min
+0mm)) (severity ignore) (condition "A.memberOfFootprint('J2') ||
+A.memberOfFootprint('M1')"))`; of the board's own copper graphics, by
+their net, `(rule "input GND graphics edge_clearance" (constraint
+edge_clearance (min 0mm)) (severity ignore) (condition "A.Type ==
+'Graphic' && A.NetName == 'GND' && !A.memberOfFootprint('*')"))`;
+courtyards, by their pairs (either order), `(rule "input courtyards"
+(constraint courtyard_clearance (min 0mm)) (severity ignore) (condition
+"(A.Reference == 'H4' && B.Reference == 'J2')"))`. A copper finding
+crossing the outline is reported whatever the minimum, so the rule needs
+`(severity ignore)` (`(min 0mm)` alone left J2's two on
+framework_mobo_lefthalf).
+No custom rule changes a solder mask bridge (`bridged_mask`,
+`solder_mask_expansion` and `clearance` with `(severity ignore)` left
+Explorer's 3 as they were): those, and a reference no rule can name (a
+blank one, a `*`), get an exclusion in KiCad's DRC dialog. With a
+reference nothing changes: the reference decides by place (run.py's
+strict rule too). **`drc-kicad-board` and `fab-kicad-board`** judge a
+board on its own: every part is kept and every zone and board graphic is
+the board's, tracks and vias never are. On a layout's result that also
+excuses a mask bridge or an edge clearance of a part the layout placed,
+or of a pour it added (vaio_re's 5 bridges and osprey's antenna), which
+the layout's verdict counts; `--input <project-dir>` (the project the
+board was laid out or routed from) gives both the layout's rule. Neither
+excuses a short or a clearance between two nets: the release gate still
+refuses a board on the designer's own shorts. A
 `copper_edge_clearance` is the reference's where its copper item is
 (KiCad names whichever piece of the outline is nearest beside it). A type the
 reference has 199 times or more (KiCad's report stops at a cap: 199 and
@@ -843,6 +904,7 @@ A finished run also carries it as `verdict` in its report:
 | `new_findings` | The old rule: errors per type beyond the reference's count of that type anywhere on the board. For comparisons only. |
 | `preexisting_findings`, `preexisting_from` | Errors per type the reference board has at the same place, and its project. |
 | `footprint_findings` | Without a reference: errors per type that lie within one footprint each (no short), or are one pad's own ring, hole or padstack, which do not count; absent when there are none. next_actions has the custom rule that accepts them. |
+| `input_findings` | Without a reference: errors per type that are the input's (edge clearance, solder mask bridges, courtyards; every item a part kept where the input has it, the board edge, the input's board graphics or zones; never a short or a clearance), which do not count; absent when there are none. next_actions has the custom rule or the exclusion that accepts them. |
 | `preexisting_unknown` | Types the reference has at KiCad's cap (199 or more): only the findings at the same place are subtracted. |
 | `clean_without_subtraction` | KiCad checked the result and finds no unconnected item and no error that counts, with nothing subtracted. |
 | `diff_pairs` | Route mode (absent in a layout's verdict unless switched on; docs/router.md "Differential pairs"): `on`, `default` (`rules`: a custom `diff_pair_gap` or `diff_pair_uncoupled` rule holds for a paired net, so the pairs routed coupled by default; `off`: nothing asks, so they did not; `explicit`: the settings' `diff_pairs` or `PCB_ROUTER_DIFF_PAIRS` decided), `reason` (the rule and the net, or the setting); off, the counts are 0. With the pairs on: `found` (pairs KiCad names by `_P`/`_N`, `+`/`-` or `P`/`N`, both nets with pads), `coupled` (every link between the pair's parts a coupled run), `partly_coupled`, `fallen_back` (routed as two ordinary nets), `links`, `links_coupled`, `crossed` (coupled links whose pads lie in the other order at one end: the stubs cross there, uncoupled), `crossovers` (of those, links whose crossed end has a crossover in its lead: one net dives under the other with a via each side, so the stubs do not cross; off by default, `PCB_ROUTER_DIFF_PAIRS_CROSSOVER=1`), `coupled_mm`, `uncoupled_mm` (per coupled pair the longer net's tracks less its coupled run, KiCad's measure), `skew_mm` (the largest skew of a pair with a coupled link: its two nets' lengths apart in the written board, tracks and vias at the stackup's height), `meanders` (pairs whose shorter net got a meander, written as a KiCad tuning pattern, to match the custom rules' `skew` maximum, else the pair's gap, or a `length` minimum), `skews` (per pair with a coupled link: `positive`, `negative`, `lengths_mm`, `skew_mm`, `target_mm`, `meander_mm`, `pair_vias`, `return_vias`), `not_routed` (the links whose coupled run was not routed, by cause: `a launch has no legal node`, `no path in the negotiation`, `the hard repair found no room`, `no hard repair: the attempt was judged hopeless`, `the hard repair's budget ran out before it`, `lost after the repair`; absent when none), `pair_vias` and `return_vias` (the kept links' vias, and the vias of the reference net placed beside them, each within 0.5 mm ring to ring where a pour of that net reaches it on two layers and every clearance holds; `diff_pair_return_vias: false` turns them off), `return_net` (their net: `diff_pair_return_net`, else `GND`), `work_seconds` (the fallback router's, which routes what the coupled runs left open, charged to the ladder). `board-router.json` also lists each pair: its nets, width, gap, where they came from, why links fell back. |
@@ -1036,7 +1098,12 @@ is a fab release gated by KiCad's DRC:
   (errors by type, unconnected items, warnings, cosmetic, `clean`,
   `findings_allowed`; `footprint_own`, errors within one footprint each,
   which do not block, and `footprint_note` with the custom rule that
-  accepts them, as in the verdict's rule above), `erc` (errors, warnings, library warnings),
+  accepts them, as in the verdict's rule above; `input_own`, the board's
+  own edge clearances, mask bridges and courtyards with no track or via in
+  them, which do not block either, and `input_note`; section 4, "The
+  input's own findings": the board judged on its own, or with `--input
+  <project-dir>` against the board it was laid out from; a short or a
+  clearance between two nets always blocks), `erc` (errors, warnings, library warnings),
   `layers`, `bom_source`, `lcsc_field`, `without_lcsc` (parts without an
   LCSC part number), `zip`, `skipped`, `findings`, and `files`: every file
   with its `kind`, `bytes` and `sha256`. `verdict.json` adds
@@ -1074,7 +1141,7 @@ differ between KiCad and assemblers.
 ## Check a board with KiCad
 
 ```sh
-pcb-maker drc-kicad-board <project-dir> <board-id> <report.json> [--no-refill]
+pcb-maker drc-kicad-board <project-dir> <board-id> <report.json> [--no-refill] [--input <project-dir>]
 ```
 
 runs KiCad's DRC on the board and its rules (`.kicad_pro`, `.kicad_dru`;
@@ -1090,7 +1157,12 @@ Without it the pads a pour joins count as unconnected: the schematic
 trial's board routed on the designer's placement, 0 unconnected with the
 refill, 24 without.
 Exit 0 when no error counts (warnings, excluded and cosmetic findings do
-not) and no item is unconnected, 1 otherwise, 2 for a missing project or
+not, nor a footprint's own findings, on a `footprint:` line, and the
+board's own edge clearances, mask bridges and courtyards with no track or
+via in them, on an `input:` line with the rules that accept them: section
+4, "The input's own findings"; `--input <project-dir>`: the input is that
+project's board, and only the parts still where it has them, and its zones
+and graphics, are the input's) and no item is unconnected, 1 otherwise, 2 for a missing project or
 board, 4 when KiCad fails. The benchmark runners (`run.py`'s designer
 check, `freerouting.py`) use it when the binary has it.
 
