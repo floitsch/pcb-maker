@@ -357,7 +357,7 @@ change of the observed size needs; `--metric first_open|objective|crossings`
 judges a proxy instead (`--tool` counts the objective and the crossings
 of each placed board, cached by its sha256 in `build/placer-ab-signals`).
 
-## Memory ledger: who runs next (2026-10-24, the drain 2026-10-25, its feasibility cap, its end and short requests 2026-10-26, the measured floor, the capacity from the machine and kicad-cli under a reservation 2026-10-27)
+## Memory ledger: who runs next (2026-10-24, the drain 2026-10-25, its feasibility cap, its end and short requests 2026-10-26, the measured floor, the capacity from the machine, kicad-cli under a reservation, the hand-over and the wait past a reservation 2026-10-27)
 
 Benchmarks share the machine through the memory ledger
 (`$XDG_RUNTIME_DIR/pcb-maker-ledger.json`; how a run reserves and waits:
@@ -929,6 +929,109 @@ outside the ledger (25 % of MemTotal without fresh headroom samples); at
 most 56.7 GB ...) by 26 runs` and `drc-kicad-board f1 ... [short]
 [KiCad's check: 2253 MB, running]` 0.6 s into the check. Routing and
 placement are unchanged.
+
+**A board's reservation is its binary's, and a run past it waits**
+(2026-10-27). In the nightly of 2026-10-27 the sweep's Quanta75
+(`obsilab__Quanta75__Quanta75_RP2040Stamp_JLCPCBAoptimized`) lost its
+strict pass with exit 4: `the process grew to 1474 MB resident, past its
+reservation of 1415 MB ... and the ledger had no room for more`. run.py
+had admitted it with 2.4 GB (sweep.err: `2.4 GB expected`; estimates.json,
+its peaks 1582-1968 MB). The cause: run.py's gate hands the board's
+reservation to the board's binary (`harness_common.Ledger.move`
+re-points it to the binary's pid), and the binary's first reservation
+replaced that entry with its own estimate (`try_hold`: "a harness's
+reservation for this process gives way to the process's own"). Measured
+(x1860, a private ledger of 100 000 MB, run.py `--expected-gb 2.4`, the
+ledger read every 0.2 s): 2458 MB until 58 s, then the binary's own
+1331 MB, 1405 MB when it began routing (385 s), raised by the watchdog to
+1686 and 2245 MB as it grew (its own peak 1523 MB). In the night 21 runs
+waited (`33.8 GB reserved by 21 run(s) of 45.2 GB, 21 waiting`): the
+room it gave back was taken, and its raise past 1415 MB found none.
+Neither the KiCad check's share (a check is reserved on top of the
+process's own limit) nor the drain (it never holds back a run that holds
+memory) took part.
+
+- *The hand-over is the least of the binary's own* (`granted_mb`,
+  `granted_of` in ledger.rs). `Ledger.move` writes the reservation's
+  megabytes as `granted_mb` on the moved entry, and the binary's own limit
+  is at least that: its entry keeps the row's reservation while its own
+  estimate is smaller, and grows past it as before (the ladder, the
+  watchdog); a KiCad check comes on top, as on top of its own estimate
+  before. A hand-over of a harness before this change (no `granted_mb`)
+  is recognised as an entry under the binary's pid that the binary did not
+  write (another label or `started`). Where the binary had reserved before
+  the move, the move used to drop the harness's reservation; now the
+  binary's entry gets the larger of the two and the grant. `pcb-maker
+  ledger` notes `[at least the 2458 MB its harness reserved]`.
+- *A run past its reservation waits* (`start_watchdog`, `overgrown_ends`).
+  A run whose resident size passes its reservation while the ledger has
+  no room for the raise (1.2 times its resident size) no longer ends at
+  once: it runs on, and its entry waits for the raise (`waiting_mb`) as
+  of when it began holding (`waiting_since` its `held_since`: its request
+  is as old as its admission), so it comes before the waiters that began
+  waiting after it was admitted; newer requests leave it its room
+  (`order_allows`), and since its wait is older than `drain_after` the
+  ledger drains for it while it could start it (`drain_state`). It asks
+  again every 2 s, as a holder by the capacity alone (`may_hold`: runs
+  that hold memory are not held back by the order or the drain), and goes
+  on as soon as a run ends. It ends with exit 4 only when the machine's
+  memory available falls below `FLOOR_KEEP_MB` (2 GB, at once: the kernel
+  would otherwise end a process, maybe another one), or once it has waited
+  `GROWTH_WAIT_SECONDS` (600 s, the drain's `drain_after`) and the memory
+  available less what the other runs still grow by is below 2 GB or
+  unknown. Otherwise it goes on past its reservation: every other
+  admission sees its memory in MemAvailable. stderr says `memory ledger:
+  the process grew to ... it runs on and waits for the room`, then
+  `reserved ... after ... s past the reservation` or `back within the
+  reservation`; the verdict's error of a run that still ends adds `it
+  waited ... s for room and ended because ...`.
+- *run.py retries a row the ledger ended* (`ledger_ended`, `run_task`):
+  exit 4 with `past its reservation of <n> MB in the memory ledger` in its
+  error (binaries before this change, or a run that the rule above still
+  ends) runs once more, admitted again by the gate (it waits for the
+  ledger's room as any board) with its expected peak or 1.25 times what
+  it reached, whichever is more. The row carries `ledger_retry` (the
+  first run's error, seconds, CPU seconds, peak and the new reservation);
+  `summary.json` counts `ledger_retries` and `ledger_killed`, and run.py
+  prints them. A row the ledger ends twice is `killed` (`cut:
+  ["killed"]`): no result, the machine's doing, so compare.py leaves it
+  out of better and worse. nightly-report.py lists the retried rows under
+  "Cut and killed rows" (`ended by the memory ledger and retried once`)
+  and in the stage's cell; a row ended again counts as killed there (the
+  night is not published).
+
+Tests: ledger.rs `a_harness_s_hand_over_is_the_least_the_process_holds`,
+`a_run_past_its_reservation_waits_for_room_and_ends_only_short_of_memory`,
+`a_run_past_its_reservation_waits_in_order_as_of_its_admission` (the
+night in small: a 45 200 MB ledger, the grower holding 1415 MB and waiting
+for 1769 is the first waiter before a board that began waiting after its
+admission, a 2000 MB request goes beside 33 800 MB reserved and waits
+beside 43 300, the ledger drains for it); cli_exit_codes.rs
+`a_harness_s_reservation_handed_to_the_binary_is_its_own` (a route
+handed 3000 MB holds at least 3000 with `granted_mb`); test_run.py
+`test_the_reservation_goes_with_the_binary_it_was_made_for` (the grant,
+the merge) and `test_a_row_the_ledger_ended_is_retried_once_when_it_has_room`
+(the night's message; admitted with 1000 MB, retried with 1841; ended
+twice: killed); test_nightly.py (the retried row in the summary).
+
+*Reproduction* (Quanta75 and the 0xCB 1337 v4.0 through run.py, `--jobs
+2 --threads 2`, a private ledger of 6000 MB, `PCB_MAKER_LEDGER_TOTAL_MB`;
+the night's other runs as a filler, a sleep process whose entry takes
+every megabyte the others leave free once Quanta75's binary holds its own
+entry, and gives its room back for 10 s whenever a run has waited 60 s):
+
+| | binary, `--expected-gb` | Quanta75 | its result |
+| --- | --- | --- | --- |
+| before | x1860, 2.4 | its entry fell from 2458 to 1331 MB, the filler took the rest; exit 4 at 901 s, `grew to 1378 MB resident, past its reservation of 1376 MB`; run.py retried it with 2458 MB: strict pass | 162/162, strict pass |
+| the hand-over | branch, 2.4 | its entry 2458 MB (`granted_mb`) throughout, never past it; its KiCad check waited 4 s for room | 162/162, strict pass |
+| the wait | branch, 1.0 (the grant below its own estimate) | `grew to 1407 MB resident, past its reservation of 1373 MB ... it runs on and waits for the room`, back within it after 28 s; its raises waited 62 s each for a run to end | 162/162, strict pass |
+
+The result boards of every row (Quanta75's and the 1337's) are byte
+identical to each other and to x1860's on a roomy ledger. The short tier
+(12 boards) with x1861 (main 58e31c0b) and the branch on it: 12 of 12
+result boards byte identical, the same objectives (unconnected 20,
+vias 1245, length 21 565 mm, work 2489 s). Routing and placement are
+unchanged.
 
 Older binaries and harness copies ignore the new fields (`floor_mb`,
 `drain_after`, `expected_end`, `priority`) and do not drain; an older

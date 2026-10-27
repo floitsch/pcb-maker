@@ -11,6 +11,28 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-27 (a board's reservation is its binary's; a run past its reservation waits; run.py retries a row the ledger ended)
+
+Branch ledger-growth; binaries build/bin/pcb-maker-ledger1-a (on
+cfdf9f01) and -b (on 58e31c0b). docs/benchmarks.md, "Memory ledger",
+"A board's reservation is its binary's, and a run past it waits", has the
+cause, the rules, the tests and the reproduction.
+
+- **The nightly's lost Quanta75** (exit 4, 1474 MB past 1415, while run.py
+  had reserved 2.4 GB for it): the binary's first reservation replaced the
+  reservation run.py handed it with its own estimate (1331 MB), and the
+  room it gave back was taken by the 21 runs waiting. Now the hand-over
+  (`granted_mb`) is the least of the binary's own limit.
+- **A run past its reservation waits** for the room in the ledger, as old
+  as its admission (ordered admission and the drain keep its room), and
+  ends with exit 4 only when the memory available falls below 2 GB, or
+  after 600 s when it would with the other runs' growth.
+- **run.py retries a row the ledger ended** once, admitted again
+  (`ledger_retry`; `ledger_retries` and `ledger_killed` in the summary;
+  ended twice: killed); nightly-report.py lists the retries.
+- Measured: the reproduction (before: exit 4 and a retry that passed;
+  after: no exit 4) gives byte-identical result boards; the short tier
+  (12 boards) is byte identical to x1861.
 ## Committed on 2026-10-27 (a pad's own ring, hole or padstack is its footprint's)
 
 Branch annular-width, binary build/bin/pcb-maker-ann1-padown (off side
