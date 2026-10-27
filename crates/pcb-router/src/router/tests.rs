@@ -5317,3 +5317,115 @@ fn the_coarse_probe_rips_the_conflicted_branches_and_counts_what_is_open() {
     assert_eq!(after.open_terminals, router.board_open_terminals());
     assert!(after.open_terminals > 0);
 }
+
+/// One layer, a wall of no net across the board at x = 15 with a gap at
+/// its middle that holds one track and two wide ones near the edges: nets
+/// A (y = 9) and B (y = 11) both want the middle gap, each the same
+/// detour through the gap on its own side otherwise.
+fn walled_pair(bounded: &str) -> RoutingResult {
+    let class = RuleClass {
+        trace_width: 0.25,
+        clearance: 0.2,
+        via_diameter: 0.6,
+        via_drill: 0.3,
+        layers: 0,
+    };
+    let mut obstacles = Vec::new();
+    for (low, high) in [(2.5, 9.5), (10.5, 17.5)] {
+        obstacles.push(Obstacle {
+            shape: rect([15.0, (low + high) / 2.0], [0.5, (high - low) / 2.0]),
+            layers: 1,
+            kind: ObstacleKind::Copper,
+            net: None,
+            clearance: 0.0,
+            clearance_override: None,
+            blocks_tracks: true,
+            blocks_vias: true,
+            label: "wall".into(),
+        });
+    }
+    let mut board_nets = Vec::new();
+    for (id, (name, y)) in [("A", 9.0), ("B", 11.0)].into_iter().enumerate() {
+        let mut terminals = Vec::new();
+        for x in [3.0, 27.0] {
+            let label = format!("{name}.{x}");
+            obstacles.push(copper(
+                Shape::Circle {
+                    center: [x, y],
+                    radius: 0.3,
+                },
+                id as NetId,
+                &label,
+            ));
+            terminals.push(terminal(obstacles.len() - 1, [x, y], &label));
+        }
+        board_nets.push(Net {
+            name: name.into(),
+            class: 0,
+            terminals,
+        });
+    }
+    let board = Board {
+        layer_count: 1,
+        outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],
+        edge_clearance: 0.1,
+        hole_clearance: 0.25,
+        hole_to_hole: 0.25,
+        classes: vec![class],
+        neck_width: 0.25,
+        obstacles,
+        nets: board_nets,
+        planes: Vec::new(),
+        solid_pads: Vec::new(),
+        isolated_pads: Vec::new(),
+        solid_pad_obstacles: Vec::new(),
+        isolated_pad_obstacles: Vec::new(),
+        pad_spokes: Default::default(),
+        merged_pads: Vec::new(),
+        no_via_pads: Vec::new(),
+        fill_passes: Vec::new(),
+        pin_row_gaps: Vec::new(),
+        terminal_copper: Vec::new(),
+        attachment: Default::default(),
+    };
+    let config = Config {
+        pitches: vec![0.1],
+        parallel: false,
+        length_bounded: Some(std::sync::Arc::new([bounded.to_string()].into())),
+        ..Config::default()
+    };
+    route(&board, &config)
+}
+
+/// A net whose length a rule bounds (`Config::length_bounded`) keeps
+/// the short way where two nets want it, the other one yields; which of
+/// the two is bounded decides, not the order.
+#[test]
+fn a_length_bounded_net_keeps_the_short_way_and_the_other_yields() {
+    let length = |result: &RoutingResult, net: usize| -> f64 {
+        result.routes[net]
+            .segments
+            .iter()
+            .map(|segment| crate::geometry::distance(segment.start, segment.end))
+            .sum()
+    };
+    for (bounded, short, long) in [("A", 0, 1), ("B", 1, 0)] {
+        let result = walled_pair(bounded);
+        assert!(
+            result
+                .status
+                .iter()
+                .all(|status| *status == NetStatus::Routed),
+            "{bounded}: {:?}",
+            result.status
+        );
+        // The way through the middle gap is about 24.3 mm, the detour
+        // through a gap near the edge about 28.4 mm.
+        assert!(
+            length(&result, short) < 25.5 && length(&result, long) > 27.0,
+            "{bounded} bounded: A {:.2} mm, B {:.2} mm",
+            length(&result, 0),
+            length(&result, 1)
+        );
+    }
+}

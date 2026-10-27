@@ -25,7 +25,13 @@ pub(crate) fn emit_routes(
     let mut nets = Vec::new();
     for (net, route) in result.routes.iter().enumerate() {
         let description = &board.nets[net];
-        for segment in &route.segments {
+        let dropped = graphic_stubs(board, net, route);
+        for (_, segment) in route
+            .segments
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !dropped.contains(index))
+        {
             items.push(supplemental_segment_expr(&SupplementalSegment {
                 connection: description.name.clone(),
                 start: nanometres(segment.start),
@@ -68,6 +74,59 @@ pub(crate) fn emit_routes(
     }
     canonicalize_copper_net_names(pcb, &copper_net_names);
     Ok(nets)
+}
+
+/// The router's stubs into a copper graphic of their net that KiCad's
+/// dangling check flags: a track from the graphic's anchor (the terminal
+/// the search reached) to a node inside it, nothing else at the anchor.
+/// KiCad 10 passes over tracks inside a pad (`track_dangling` ignores
+/// them) but not inside a graphic: such a track is copper of the graphic
+/// that ends on nothing (kicad-cli 10.0.7 on WLED_Matrix's
+/// `Net-(AE1-A)` rectangle, 2026-10-27: the stub flagged, the track that
+/// reaches the node from outside not). The graphic stays joined through
+/// the node's own track, which ends inside it. Indices into the route's
+/// segments.
+pub(crate) fn graphic_stubs(board: &core::Board, net: usize, route: &core::NetRoute) -> Vec<usize> {
+    let mut dropped = Vec::new();
+    let near = |a: core::Point, b: core::Point| distance_squared(a, b) < 1.0e-12;
+    for terminal in &board.nets[net].terminals {
+        let Some(graphic) = board.obstacles.get(terminal.pad) else {
+            continue;
+        };
+        if graphic.net != Some(net as core::NetId) || !graphic.label.starts_with("copper ") {
+            continue;
+        }
+        let anchor = terminal.anchor;
+        for (index, segment) in route.segments.iter().enumerate() {
+            if graphic.layers & (1 << segment.layer) == 0 {
+                continue;
+            }
+            let other = if near(segment.start, anchor) {
+                segment.end
+            } else if near(segment.end, anchor) {
+                segment.start
+            } else {
+                continue;
+            };
+            if !graphic.shape.contains(anchor) || !graphic.shape.contains(other) {
+                continue;
+            }
+            let alone = route.vias.iter().all(|via| !near(via.at, anchor))
+                && route
+                    .segments
+                    .iter()
+                    .enumerate()
+                    .all(|(other_index, track)| {
+                        other_index == index
+                            || track.layer != segment.layer
+                            || (!near(track.start, anchor) && !near(track.end, anchor))
+                    });
+            if alone {
+                dropped.push(index);
+            }
+        }
+    }
+    dropped
 }
 
 /// A fresh numbered subdirectory of `root` for one routing attempt's frames.

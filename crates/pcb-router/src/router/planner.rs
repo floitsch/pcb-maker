@@ -7,6 +7,25 @@
 use super::*;
 
 impl Router {
+    /// Whether a rule bounds the length of `net` (`Config::length_bounded`).
+    pub(super) fn length_bounded(&self, net: NetId) -> bool {
+        self.config
+            .length_bounded
+            .as_ref()
+            .is_some_and(|nets| nets.contains(&self.board.nets[net as usize].name))
+    }
+
+    /// The share of the congestion price `net` pays: `bounded_congestion`
+    /// for a net whose length a rule bounds (`Config::length_bounded`), 1
+    /// for every other net (which keeps their prices exactly as they were).
+    pub(super) fn bounded_congestion(&self, net: NetId) -> f32 {
+        if self.length_bounded(net) {
+            self.config.bounded_congestion as f32
+        } else {
+            1.0
+        }
+    }
+
     /// Plans a connection on the tile graph: Dijkstra over (layer, tile)
     /// from the source tiles to any target tile, where a tile costs more the
     /// fuller it is. Returns the tiles on the path, grown by `margin` tiles.
@@ -40,6 +59,9 @@ impl Router {
             endpoint[tile_of(node.cell)] = true;
         }
         let tile_mm = (TILE as f64 * self.grid.pitch) as f32;
+        // A net whose length a rule bounds pays a share of the congestion
+        // here too (`Config::length_bounded`, as in `search`).
+        let congestion = self.bounded_congestion(net);
         let mut cost = vec![f32::INFINITY; tiles * layers];
         let mut from = vec![u32::MAX; tiles * layers];
         // Keys (cost bits, state) as one word, popped in the order of
@@ -77,8 +99,8 @@ impl Router {
                 0.0
             };
             Some(
-                (1.0 + 12.0 * fill * fill * fill)
-                    * (1.0 + self.tile_history[layer][tile])
+                (1.0 + 12.0 * fill * fill * fill * congestion)
+                    * (1.0 + self.tile_history[layer][tile] * congestion)
                     * (1.0 + (self.layer_cut[layer] - 1.0) * covered),
             )
         };

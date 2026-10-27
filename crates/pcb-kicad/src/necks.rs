@@ -113,6 +113,26 @@ pub(crate) struct Neck {
     pub width: f64,
     pub start: core::Point,
     pub end: core::Point,
+    /// Where the track bends between `start` and `end` (a curved passage,
+    /// a slot of empty space): none for a straight track.
+    pub bends: Vec<core::Point>,
+    /// A slot's repair: tracks across it from wall to wall, each laid
+    /// where it keeps its clearances (`slots`); none for a passage of
+    /// copper, whose repair is the track `start` to `end`.
+    pub bridges: Vec<Vec<core::Point>>,
+    /// A hole the copper closes all round (a slot's): its bridges are
+    /// tried after the other repairs, holes being many and seldom KiCad's.
+    pub hole: bool,
+}
+
+impl Neck {
+    /// The repair track's points, `start` to `end`.
+    fn path(&self) -> Vec<core::Point> {
+        let mut path = vec![self.start];
+        path.extend(self.bends.iter().copied());
+        path.push(self.end);
+        path
+    }
 }
 
 /// The copper of one net on one layer: filled outlines (each a simple
@@ -296,6 +316,7 @@ fn rasterize(copper: &Copper, origin: core::Point, width: usize, height: usize) 
 /// as well a narrow gap between two parts of the net's copper (a slot
 /// between two lobes of a fill, a track of the net beside its fill), not
 /// repaired.
+#[allow(clippy::too_many_arguments)]
 fn tile_necks(
     filled: &[bool],
     width: usize,
@@ -303,12 +324,310 @@ fn tile_necks(
     origin: core::Point,
     limit: f64,
     margin: usize,
+    anchors: &[core::Point],
 ) -> Vec<Neck> {
-    // The gaps would be the saddles of the space between the copper; they
-    // are left alone: tried, the space's saddles were mostly gaps KiCad
-    // does not report (USB_Keypad: 20 candidates for 3 gaps, 7 to 6
-    // necks against 7 to 3 without them).
-    saddles(filled, width, height, origin, limit, margin)
+    // The gaps as the saddles of the space between the copper were tried
+    // and left: mostly gaps KiCad does not report (USB_Keypad: 20
+    // candidates for 3 gaps, 7 to 6 necks against 7 to 3 without them).
+    // The slots below are those of one piece of copper only.
+    let mut necks = saddles(filled, width, height, origin, limit, margin);
+    necks.extend(slots(filled, width, height, origin, limit, margin, anchors));
+    necks
+}
+
+/// The slots of a net's copper: empty space narrower than `limit` between
+/// two parts of one piece of copper (two lobes of a thermal ring at a
+/// track, a sliver of a hatch hole, a teardrop's border), the gaps of
+/// KiCad's check (`necks.py`'s "gap": a pair of vertices of one outline
+/// across empty space; USB_Keypad's and WLED_Matrix's last necks,
+/// 2026-10-27), which the saddles of the copper do not see. KiCad's pairs
+/// hang on vertices a few nanometres apart where its union joins arcs, so
+/// the raster cannot say which slot KiCad flags; it finds those that can
+/// be, the empty pixels a closing by a disc of the limit's diameter fills,
+/// each connected piece that is one of:
+/// - a passage between two parts of the empty space (a pinch);
+/// - a slit (twice the limit long, three times as long as wide);
+/// - a bay or a hole as long and as wide as the limit (KiCad's outline
+///   bulges past the limit in x and in y on the slot's side);
+///
+/// between two parts of one piece of copper (KiCad pairs vertices of one
+/// outline only) that holds an item of the net (a piece without one is an
+/// island of the fill, which KiCad leaves out of its connections until a
+/// track touches it: USB_Keypad's trial, 2026-10-27, 2 to 11
+/// unconnected). The round of a concave corner and the tip of a hatch hole
+/// (one stretch of shore, narrower than the limit) are none. Each comes
+/// with bridges across it, wall to wall (KiCad joins a track to a fill by
+/// its ends), until every pixel lies under one.
+#[allow(clippy::too_many_arguments)]
+fn slots(
+    filled: &[bool],
+    width: usize,
+    height: usize,
+    origin: core::Point,
+    limit: f64,
+    margin: usize,
+    anchors: &[core::Point],
+) -> Vec<Neck> {
+    let radius = limit / 2.0 / PIXEL;
+    let reach = radius * radius;
+    // The copper grown by the radius, then shrunk by it again.
+    let mut to_copper: Vec<f64> = filled
+        .iter()
+        .map(|&copper| if copper { 0.0 } else { FAR })
+        .collect();
+    distance_transform(&mut to_copper, width, height);
+    let grown: Vec<bool> = to_copper.iter().map(|&squared| squared <= reach).collect();
+    let mut to_outside: Vec<f64> = grown
+        .iter()
+        .map(|&inside| if inside { FAR } else { 0.0 })
+        .collect();
+    distance_transform(&mut to_outside, width, height);
+    let slot: Vec<bool> = (0..filled.len())
+        .map(|index| !filled[index] && grown[index] && to_outside[index] > reach)
+        .collect();
+    let neighbours = |index: usize| {
+        let (x, y) = ((index % width) as i64, (index / width) as i64);
+        (-1..=1i64)
+            .flat_map(move |dy| (-1..=1i64).map(move |dx| (dx, dy)))
+            .filter(|&step| step != (0, 0))
+            .filter_map(move |(dx, dy)| {
+                let (nx, ny) = (x + dx, y + dy);
+                (nx >= 0 && ny >= 0 && nx < width as i64 && ny < height as i64)
+                    .then(|| ny as usize * width + nx as usize)
+            })
+    };
+    // Numbers the 8-connected parts of the pixels `member` holds.
+    const NONE: u32 = u32::MAX;
+    let label = |member: &dyn Fn(usize) -> bool| -> (Vec<u32>, u32) {
+        let mut labels = vec![NONE; filled.len()];
+        let mut count = 0u32;
+        for first in 0..filled.len() {
+            if !member(first) || labels[first] != NONE {
+                continue;
+            }
+            labels[first] = count;
+            let mut stack = vec![first];
+            while let Some(index) = stack.pop() {
+                for neighbour in neighbours(index) {
+                    if member(neighbour) && labels[neighbour] == NONE {
+                        labels[neighbour] = count;
+                        stack.push(neighbour);
+                    }
+                }
+            }
+            count += 1;
+        }
+        (labels, count)
+    };
+    // The empty regions beside the slots, and the pieces of copper.
+    let (region, _) = label(&|index| !filled[index] && !slot[index]);
+    let (piece_of, pieces) = label(&|index| filled[index]);
+    let pixel_at = |point: core::Point| -> Option<usize> {
+        let (x, y) = (
+            ((point[0] - origin[0]) / PIXEL).round(),
+            ((point[1] - origin[1]) / PIXEL).round(),
+        );
+        (x >= 0.0 && y >= 0.0 && (x as usize) < width && (y as usize) < height)
+            .then(|| y as usize * width + x as usize)
+    };
+    let mut anchored = vec![false; pieces as usize];
+    for &point in anchors {
+        if let Some(index) = pixel_at(point)
+            && piece_of[index] != NONE
+        {
+            anchored[piece_of[index] as usize] = true;
+        }
+    }
+    let point_of = |index: usize| {
+        [
+            origin[0] + (index % width) as f64 * PIXEL,
+            origin[1] + (index / width) as f64 * PIXEL,
+        ]
+    };
+    // A bridge covers a pixel within this of its line (half the minimum
+    // width the repair lays, which exceeds half the limit).
+    let cover = limit / 2.0 + 0.001;
+    const MAX_BRIDGES: usize = 16;
+    let mut seen = vec![false; filled.len()];
+    let mut necks = Vec::new();
+    for first in 0..slot.len() {
+        if !slot[first] || seen[first] {
+            continue;
+        }
+        let mut piece = vec![first];
+        seen[first] = true;
+        let (mut regions, mut walls, mut shore) = (Vec::new(), Vec::new(), Vec::new());
+        let mut next = 0;
+        while next < piece.len() {
+            let index = piece[next];
+            next += 1;
+            for neighbour in neighbours(index) {
+                if slot[neighbour] {
+                    if !seen[neighbour] {
+                        seen[neighbour] = true;
+                        piece.push(neighbour);
+                    }
+                } else if region[neighbour] != NONE {
+                    if !regions.contains(&region[neighbour]) {
+                        regions.push(region[neighbour]);
+                    }
+                    shore.push(neighbour);
+                } else if piece_of[neighbour] != NONE && !walls.contains(&piece_of[neighbour]) {
+                    walls.push(piece_of[neighbour]);
+                }
+            }
+        }
+        let [wall] = walls[..] else {
+            continue;
+        };
+        if !anchored[wall as usize] {
+            continue;
+        }
+        let points: Vec<core::Point> = piece.iter().map(|&index| point_of(index)).collect();
+        let count = points.len() as f64;
+        let centre = [
+            points.iter().map(|point| point[0]).sum::<f64>() / count,
+            points.iter().map(|point| point[1]).sum::<f64>() / count,
+        ];
+        let (cx, cy) = (
+            ((centre[0] - origin[0]) / PIXEL).round() as i64,
+            ((centre[1] - origin[1]) / PIXEL).round() as i64,
+        );
+        if cx < margin as i64
+            || cy < margin as i64
+            || cx >= (width - margin) as i64
+            || cy >= (height - margin) as i64
+        {
+            continue;
+        }
+        // The stretches of shore (where the slot meets the space beyond).
+        shore.sort_unstable();
+        shore.dedup();
+        let mut done = vec![false; shore.len()];
+        let mut stretches = 0;
+        for start in 0..shore.len() {
+            if done[start] {
+                continue;
+            }
+            stretches += 1;
+            done[start] = true;
+            let mut stack = vec![shore[start]];
+            while let Some(index) = stack.pop() {
+                for neighbour in neighbours(index) {
+                    if let Ok(position) = shore.binary_search(&neighbour)
+                        && !done[position]
+                    {
+                        done[position] = true;
+                        stack.push(neighbour);
+                    }
+                }
+            }
+        }
+        // The piece's length and breadth along its principal axis.
+        let (mut sxx, mut sxy, mut syy) = (0.0, 0.0, 0.0);
+        for point in &points {
+            let (dx, dy) = (point[0] - centre[0], point[1] - centre[1]);
+            sxx += dx * dx;
+            sxy += dx * dy;
+            syy += dy * dy;
+        }
+        let angle = 0.5 * (2.0 * sxy).atan2(sxx - syy);
+        let axis = [angle.cos(), angle.sin()];
+        let extent = |direction: [f64; 2]| {
+            let (low, high) =
+                points
+                    .iter()
+                    .fold((f64::INFINITY, f64::NEG_INFINITY), |(low, high), point| {
+                        let t = (point[0] - centre[0]) * direction[0]
+                            + (point[1] - centre[1]) * direction[1];
+                        (low.min(t), high.max(t))
+                    });
+            high - low
+        };
+        let (length, breadth) = (extent(axis), extent([-axis[1], axis[0]]));
+        let passage = regions.len() >= 2 || stretches >= 2;
+        let slit = length >= 2.0 * limit && length >= 3.0 * breadth.max(PIXEL);
+        let wide = length >= limit && breadth >= limit;
+        if !passage && !slit && !wide {
+            continue;
+        }
+        // Bridges: through the first pixel not yet under one, along the
+        // way the space there widens (from its nearer wall to the other).
+        let in_wall =
+            |point: core::Point| pixel_at(point).is_some_and(|index| piece_of[index] == wall);
+        let half_width = |index: usize| to_copper[index].sqrt();
+        let mut bridges: Vec<Vec<core::Point>> = Vec::new();
+        let mut covered = vec![false; piece.len()];
+        for position in 0..piece.len() {
+            if covered[position] || bridges.len() >= MAX_BRIDGES {
+                continue;
+            }
+            covered[position] = true;
+            let index = piece[position];
+            let (x, y) = (index % width, index / width);
+            let at = |dx: i64, dy: i64| {
+                let (nx, ny) = (x as i64 + dx, y as i64 + dy);
+                if nx < 0 || ny < 0 || nx >= width as i64 || ny >= height as i64 {
+                    half_width(index)
+                } else {
+                    half_width(ny as usize * width + nx as usize)
+                }
+            };
+            let gradient = [at(1, 0) - at(-1, 0), at(0, 1) - at(0, -1)];
+            let norm = gradient[0].hypot(gradient[1]);
+            let direction = if norm > 1.0e-9 {
+                [gradient[0] / norm, gradient[1] / norm]
+            } else {
+                [-axis[1], axis[0]]
+            };
+            let from = point_of(index);
+            let mut ends = Vec::new();
+            for sign in [-1.0, 1.0] {
+                let mut travelled = 0.0;
+                while travelled < 1.5 * limit {
+                    travelled += PIXEL;
+                    let point = [
+                        from[0] + sign * direction[0] * travelled,
+                        from[1] + sign * direction[1] * travelled,
+                    ];
+                    if in_wall(point) {
+                        ends.push([
+                            point[0] + sign * direction[0] * OVERLAP,
+                            point[1] + sign * direction[1] * OVERLAP,
+                        ]);
+                        break;
+                    }
+                }
+            }
+            let [a, b] = ends[..] else {
+                continue;
+            };
+            for (other, point) in points.iter().enumerate() {
+                if !covered[other] && core::geometry::point_segment_distance(*point, a, b) <= cover
+                {
+                    covered[other] = true;
+                }
+            }
+            bridges.push(vec![a, b]);
+        }
+        let Some(first_bridge) = bridges.first().cloned() else {
+            continue;
+        };
+        let narrowest = piece
+            .iter()
+            .map(|&index| half_width(index))
+            .fold(0.0f64, f64::max);
+        necks.push(Neck {
+            at: centre,
+            width: 2.0 * narrowest * PIXEL,
+            start: first_bridge[0],
+            end: first_bridge[1],
+            bends: Vec::new(),
+            bridges,
+            hole: regions.is_empty(),
+        });
+    }
+    necks
 }
 
 /// The saddles of `filled`'s distance map: pixels of a passage narrower
@@ -460,20 +779,107 @@ fn saddles(
             }
             None
         };
-        let (Some(back), Some(forth)) = (reach(-1.0), reach(1.0)) else {
+        if let (Some(back), Some(forth)) = (reach(-1.0), reach(1.0)) {
+            necks.push(Neck {
+                at: here,
+                width: 2.0 * (room[index] + 0.5) * PIXEL,
+                start: [
+                    here[0] - direction[0] * (back + OVERLAP),
+                    here[1] - direction[1] * (back + OVERLAP),
+                ],
+                end: [
+                    here[0] + direction[0] * (forth + OVERLAP),
+                    here[1] + direction[1] * (forth + OVERLAP),
+                ],
+                bends: Vec::new(),
+                bridges: Vec::new(),
+                hole: false,
+            });
+            continue;
+        }
+        // A passage of a few pixels is the raster's, the straight test's
+        // `room[index] < 1.0` above (copper meeting at a corner).
+        if room[index] < 2.0 {
+            continue;
+        }
+        // A passage that bends (a web between a hatch hole and a sliver of
+        // one, C1.1's on USB_Keypad): a straight line leaves it, so each
+        // way the walk follows its ridge, the widest neighbour onwards,
+        // to the wide copper; the track bends at the narrowest pixel.
+        let ridge = |heading: [f64; 2]| -> Option<core::Point> {
+            let mut current = index;
+            let mut travelled = 0.0;
+            let mut visited = vec![index];
+            while travelled < 0.5 {
+                let (cx, cy) = ((current % width) as i64, (current / width) as i64);
+                let from = point_of(current);
+                let mut best: Option<(usize, f64)> = None;
+                for &(dx, dy) in &RING {
+                    let (nx, ny) = (cx + dx, cy + dy);
+                    if nx < 0 || ny < 0 || nx >= width as i64 || ny >= height as i64 {
+                        continue;
+                    }
+                    let neighbour = ny as usize * width + nx as usize;
+                    if !filled[neighbour] || visited.contains(&neighbour) {
+                        continue;
+                    }
+                    // Onwards: away from the narrowest pixel, along the
+                    // heading the passage leaves it by.
+                    let to = point_of(neighbour);
+                    let outward = [to[0] - here[0], to[1] - here[1]];
+                    if outward[0] * heading[0] + outward[1] * heading[1] <= 0.0
+                        || (to[0] - here[0]).hypot(to[1] - here[1])
+                            <= (from[0] - here[0]).hypot(from[1] - here[1])
+                    {
+                        continue;
+                    }
+                    if best.is_none_or(|(_, room_there)| room[neighbour] > room_there) {
+                        best = Some((neighbour, room[neighbour]));
+                    }
+                }
+                let (neighbour, room_there) = best?;
+                travelled += if neighbour % width != current % width
+                    && neighbour / width != current / width
+                {
+                    PIXEL * std::f64::consts::SQRT_2
+                } else {
+                    PIXEL
+                };
+                visited.push(neighbour);
+                current = neighbour;
+                if room_there >= radius {
+                    let to = point_of(current);
+                    let (dx, dy) = (to[0] - here[0], to[1] - here[1]);
+                    let length = dx.hypot(dy).max(1.0e-9);
+                    return Some([to[0] + dx / length * OVERLAP, to[1] + dy / length * OVERLAP]);
+                }
+            }
+            None
+        };
+        let heading = |arc: &[usize]| {
+            let m = mean(arc);
+            let length = m[0].hypot(m[1]).max(1.0e-9);
+            [m[0] / length, m[1] / length]
+        };
+        // A passage leaves its narrowest pixel two opposite ways; the round
+        // of a corner has two arcs of wider neighbours too, raster ties,
+        // both inwards.
+        let (first_way, second_way) = (heading(&arcs[0]), heading(&arcs[1]));
+        if first_way[0] * second_way[0] + first_way[1] * second_way[1] > -0.5 {
+            continue;
+        }
+        let (Some(start), Some(end)) = (ridge(first_way), ridge(second_way)) else {
             continue;
         };
+
         necks.push(Neck {
             at: here,
             width: 2.0 * (room[index] + 0.5) * PIXEL,
-            start: [
-                here[0] - direction[0] * (back + OVERLAP),
-                here[1] - direction[1] * (back + OVERLAP),
-            ],
-            end: [
-                here[0] + direction[0] * (forth + OVERLAP),
-                here[1] + direction[1] * (forth + OVERLAP),
-            ],
+            start,
+            end,
+            bends: vec![here],
+            bridges: Vec::new(),
+            hole: false,
         });
     }
     necks
@@ -503,8 +909,20 @@ pub(crate) fn find_necks(copper: &Copper, limit: f64) -> Vec<Neck> {
                 bounds.minimum[1] + (ty * core_pixels) as f64 * PIXEL - MARGIN as f64 * PIXEL,
             ];
             let filled = rasterize(copper, origin, TILE, TILE);
+            let anchors: Vec<core::Point> = copper
+                .shapes
+                .iter()
+                .filter_map(|shape| {
+                    let bounds = shape.aabb();
+                    let centre = [
+                        (bounds.minimum[0] + bounds.maximum[0]) / 2.0,
+                        (bounds.minimum[1] + bounds.maximum[1]) / 2.0,
+                    ];
+                    shape.contains(centre).then_some(centre)
+                })
+                .collect();
             if filled.iter().any(|&copper| copper) {
-                tile_necks(&filled, TILE, TILE, origin, limit, MARGIN)
+                tile_necks(&filled, TILE, TILE, origin, limit, MARGIN, &anchors)
             } else {
                 Vec::new()
             }
@@ -603,33 +1021,43 @@ impl Clearances<'_> {
 
 /// The repair's candidates for a neck: the track across it, then shifted
 /// sideways a little either way, then shortened towards its middle.
-fn candidates(neck: &Neck) -> Vec<(core::Point, core::Point)> {
-    let length = core::geometry::distance(neck.start, neck.end);
+fn candidates(neck: &Neck) -> Vec<Vec<core::Point>> {
+    let length = core::geometry::distance(neck.start, neck.end).max(1.0e-9);
     let along = [
         (neck.end[0] - neck.start[0]) / length,
         (neck.end[1] - neck.start[1]) / length,
     ];
     let side = [-along[1], along[0]];
-    let mut result = vec![(neck.start, neck.end)];
+    let path = neck.path();
+    let mut result = vec![path.clone()];
     for shift in [0.01, -0.01, 0.02, -0.02, 0.03, -0.03] {
-        result.push((
-            [
-                neck.start[0] + side[0] * shift,
-                neck.start[1] + side[1] * shift,
-            ],
-            [neck.end[0] + side[0] * shift, neck.end[1] + side[1] * shift],
-        ));
+        result.push(
+            path.iter()
+                .map(|point| [point[0] + side[0] * shift, point[1] + side[1] * shift])
+                .collect(),
+        );
     }
     for keep in [0.75, 0.5] {
-        let middle = [
-            (neck.start[0] + neck.end[0]) / 2.0,
-            (neck.start[1] + neck.end[1]) / 2.0,
-        ];
-        let half = length * keep / 2.0;
-        result.push((
-            [middle[0] - along[0] * half, middle[1] - along[1] * half],
-            [middle[0] + along[0] * half, middle[1] + along[1] * half],
-        ));
+        if neck.bends.is_empty() {
+            let middle = [
+                (neck.start[0] + neck.end[0]) / 2.0,
+                (neck.start[1] + neck.end[1]) / 2.0,
+            ];
+            let half = length * keep / 2.0;
+            result.push(vec![
+                [middle[0] - along[0] * half, middle[1] - along[1] * half],
+                [middle[0] + along[0] * half, middle[1] + along[1] * half],
+            ]);
+        } else {
+            // The ends drawn in towards the bends next to them.
+            let mut shorter = path.clone();
+            let last = shorter.len() - 1;
+            for (end, inner) in [(0, 1), (last, last - 1)] {
+                let (a, b) = (shorter[end], path[inner]);
+                shorter[end] = [b[0] + (a[0] - b[0]) * keep, b[1] + (a[1] - b[1]) * keep];
+            }
+            result.push(shorter);
+        }
     }
     result
 }
@@ -749,9 +1177,11 @@ pub(crate) fn repair_connection_width(
     };
     // Within a work bound (a layout's work left, in checks): the fill, at
     // least one trial and the board as chosen.
-    let trials = match max_checks {
-        None => NECK_TRIALS,
-        Some(checks) if checks >= NECK_MIN_CHECKS => (checks - 2).min(NECK_TRIALS),
+    // The checks the trials and the pruning of the slots' bridges may
+    // take together; the trials at most `NECK_TRIALS` of them.
+    let budget = match max_checks {
+        None => NECK_TRIALS + NECK_PRUNE_TRIALS,
+        Some(checks) if checks >= NECK_MIN_CHECKS => checks - 2,
         Some(checks) => {
             repair.note = Some(format!(
                 "not run: the work left pays for {checks} KiCad checks, the repair needs {NECK_MIN_CHECKS} (a fill, a trial, the board as chosen)"
@@ -770,7 +1200,7 @@ pub(crate) fn repair_connection_width(
         config,
         &report,
         &before,
-        trials,
+        budget,
         &mut repair,
     );
     if let Err(error) = outcome {
@@ -879,6 +1309,10 @@ fn error_counts(report: &serde_json::Value) -> (BTreeMap<String, usize>, usize) 
 /// repair makes at most.
 pub(crate) const NECK_TRIALS: usize = 6;
 
+/// The checks that prune the slots' bridges at most (after the trials,
+/// within the work left).
+pub(crate) const NECK_PRUNE_TRIALS: usize = 8;
+
 /// The KiCad checks a repair needs at least: the fill, one trial and the
 /// board as chosen (`repair_connection_width`'s `max_checks`).
 pub(crate) const NECK_MIN_CHECKS: usize = 3;
@@ -889,9 +1323,11 @@ fn repair_with(
     config: &KiCadBoardRouterConfig,
     report: &serde_json::Value,
     before: &[Finding],
-    trials: usize,
+    budget: usize,
     repair: &mut NeckRepair,
 ) -> Result<(), String> {
+    let trials = budget.min(NECK_TRIALS);
+    let prune_trials = NECK_PRUNE_TRIALS;
     let board_path = directory.join(format!("{board_id}.kicad_pcb"));
     let original = fs::read_to_string(&board_path)
         .map_err(|error| format!("failed to read {}: {error}", board_path.display()))?;
@@ -937,7 +1373,11 @@ fn repair_with(
         .collect();
     targets.sort();
     targets.dedup();
-    let mut tracks: Vec<SupplementalSegment> = Vec::new();
+    // Per neck its repair: a track, or a few where it bends, or a slot's
+    // bridges (`slot` marks those).
+    let mut tracks: Vec<Vec<SupplementalSegment>> = Vec::new();
+    let mut slot: Vec<bool> = Vec::new();
+    let mut hole: Vec<bool> = Vec::new();
     for (net_name, layer_name) in targets {
         let Some(layer) = layers.index(&layer_name) else {
             continue;
@@ -1024,17 +1464,35 @@ fn repair_with(
                     neck.end[1]
                 );
             }
-            if let Some((start, end)) = candidates(neck)
-                .into_iter()
-                .find(|&(start, end)| clearances.track_fits(start, end, width))
-            {
-                tracks.push(SupplementalSegment {
-                    connection: board.nets[net as usize].name.clone(),
-                    start: start.map(|value| (value * 1.0e6).round() / 1.0e6),
-                    end: end.map(|value| (value * 1.0e6).round() / 1.0e6),
-                    width,
-                    layer: layer_name.clone(),
-                });
+            let round = |point: core::Point| point.map(|value| (value * 1.0e6).round() / 1.0e6);
+            let segment = |pair: &[core::Point]| SupplementalSegment {
+                connection: board.nets[net as usize].name.clone(),
+                start: round(pair[0]),
+                end: round(pair[1]),
+                width,
+                layer: layer_name.clone(),
+            };
+            if !neck.bridges.is_empty() {
+                let fitting: Vec<SupplementalSegment> = neck
+                    .bridges
+                    .iter()
+                    .filter(|bridge| clearances.track_fits(bridge[0], bridge[1], width))
+                    .map(|bridge| segment(bridge))
+                    .collect();
+                if !fitting.is_empty() {
+                    tracks.push(fitting);
+                    slot.push(true);
+                    hole.push(neck.hole);
+                }
+                continue;
+            }
+            if let Some(path) = candidates(neck).into_iter().find(|path| {
+                path.windows(2)
+                    .all(|pair| clearances.track_fits(pair[0], pair[1], width))
+            }) {
+                tracks.push(path.windows(2).map(segment).collect::<Vec<_>>());
+                slot.push(false);
+                hole.push(false);
             }
         }
     }
@@ -1050,7 +1508,9 @@ fn repair_with(
         let mut repaired = pcb.clone();
         if let Expr::List(items) = &mut repaired {
             for &index in chosen {
-                items.push(supplemental_segment_expr(&tracks[index]));
+                for segment in &tracks[index] {
+                    items.push(supplemental_segment_expr(segment));
+                }
             }
         }
         canonicalize_copper_net_names(&mut repaired, &names);
@@ -1091,8 +1551,12 @@ fn repair_with(
     let mut kept: Vec<usize> = Vec::new();
     let mut best = before.len();
     let mut last_checked: Option<Vec<usize>> = None;
-    let mut queue: std::collections::VecDeque<Vec<usize>> =
-        std::collections::VecDeque::from([(0..tracks.len()).collect::<Vec<_>>()]);
+    // The holes' bridges after the rest, where the rest leaves necks.
+    let (holes, rest): (Vec<usize>, Vec<usize>) = (0..tracks.len()).partition(|&index| hole[index]);
+    let mut queue: std::collections::VecDeque<Vec<usize>> = [rest, holes]
+        .into_iter()
+        .filter(|group| !group.is_empty())
+        .collect();
     let mut checks = 0;
     while let Some(group) = queue.pop_front() {
         if checks >= trials {
@@ -1107,6 +1571,9 @@ fn repair_with(
             Ok(Some(after)) if after < best => {
                 kept = chosen;
                 best = after;
+                if best == 0 {
+                    break;
+                }
             }
             Ok(_) if group.len() > 1 => {
                 let (left, right) = group.split_at(group.len() / 2);
@@ -1120,13 +1587,62 @@ fn repair_with(
             }
         }
     }
-    repair.tracks = kept.len();
+    // The slots' bridges are many (every slot that can be KiCad's gap is
+    // bridged, not only the few that are): with the checks left, halves
+    // of them go again while the necks stay as few (USB_Keypad: 434 repair
+    // tracks for its 4 necks before).
+    // Holes first: they are many and seldom KiCad's.
+    let bridged: Vec<usize> = kept
+        .iter()
+        .copied()
+        .filter(|&index| slot[index] && hole[index])
+        .chain(
+            kept.iter()
+                .copied()
+                .filter(|&index| slot[index] && !hole[index]),
+        )
+        .collect();
+    let pruning = prune_trials.min(budget.saturating_sub(checks));
+    let mut pruned = 0;
+    if bridged.len() > 1 && repair.note.is_none() {
+        let (left, right) = bridged.split_at(bridged.len() / 2);
+        let mut queue: std::collections::VecDeque<Vec<usize>> =
+            std::collections::VecDeque::from([left.to_vec(), right.to_vec()]);
+        while let Some(group) = queue.pop_front() {
+            if pruned >= pruning {
+                break;
+            }
+            pruned += 1;
+            let chosen: Vec<usize> = kept
+                .iter()
+                .copied()
+                .filter(|index| !group.contains(index))
+                .collect();
+            let result = check(&chosen);
+            last_checked = Some(chosen.clone());
+            match result {
+                Ok(Some(after)) if after <= best => {
+                    kept = chosen;
+                    best = after;
+                }
+                Ok(_) if group.len() > 1 => {
+                    let (left, right) = group.split_at(group.len() / 2);
+                    queue.push_back(left.to_vec());
+                    queue.push_back(right.to_vec());
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    repair.note = Some(error);
+                    break;
+                }
+            }
+        }
+    }
+    repair.tracks = kept.iter().map(|&index| tracks[index].len()).sum();
     repair.track_mm = kept
         .iter()
-        .map(|&index| {
-            let track = &tracks[index];
-            (track.end[0] - track.start[0]).hypot(track.end[1] - track.start[1])
-        })
+        .flat_map(|&index| &tracks[index])
+        .map(|track| (track.end[0] - track.start[0]).hypot(track.end[1] - track.start[1]))
         .sum();
     repair.after = best;
     repair.kept = !kept.is_empty();
@@ -1212,6 +1728,143 @@ mod tests {
             }],
         };
         assert_eq!(find_necks(&pad, limit).len(), 1);
+    }
+
+    #[test]
+    fn a_bent_passage_is_followed_along_its_ridge() {
+        let limit = 0.115;
+        // Two 1 mm squares joined by a passage 0.06 wide that bends by
+        // 60 degrees half way: a straight line from its narrowest point
+        // leaves it (USB_Keypad's web between a hatch hole and a sliver of
+        // one at C1.1), the repair follows it into both squares.
+        let (bend, end) = ([1.2, 0.5], [1.45, 0.5 + 0.25 * 3.0f64.sqrt()]);
+        let bent = Copper {
+            polygons: vec![
+                rectangle(0.0, 0.0, 1.0, 1.0),
+                rectangle(1.3, 0.85, 2.3, 1.85),
+            ],
+            shapes: vec![
+                core::Shape::Capsule {
+                    start: [0.95, 0.5],
+                    end: bend,
+                    radius: 0.03,
+                },
+                core::Shape::Capsule {
+                    start: bend,
+                    end,
+                    radius: 0.03,
+                },
+            ],
+        };
+        let necks = find_necks(&bent, limit);
+        let inside = |point: core::Point, square: [f64; 4]| {
+            point[0] > square[0]
+                && point[0] < square[2]
+                && point[1] > square[1]
+                && point[1] < square[3]
+        };
+        let (left, right) = ([0.0, 0.0, 1.0, 1.0], [1.3, 0.85, 2.3, 1.85]);
+        assert!(
+            necks.iter().any(|neck| {
+                (inside(neck.start, left) && inside(neck.end, right))
+                    || (inside(neck.end, left) && inside(neck.start, right))
+            }),
+            "{necks:?}"
+        );
+    }
+
+    /// A U of copper whose arms leave a slit 0.06 wide and 0.6 long
+    /// between them, `anchored` where a pad of the net lies in it.
+    fn slit(anchored: bool) -> Copper {
+        Copper {
+            polygons: vec![
+                rectangle(0.0, 0.0, 0.4, 1.0),
+                rectangle(0.46, 0.0, 0.86, 1.0),
+                rectangle(0.0, 0.6, 0.86, 1.0),
+            ],
+            shapes: if anchored {
+                vec![core::Shape::Circle {
+                    center: [0.43, 0.8],
+                    radius: 0.1,
+                }]
+            } else {
+                Vec::new()
+            },
+        }
+    }
+
+    #[test]
+    fn a_slit_in_one_piece_of_copper_is_bridged_wall_to_wall() {
+        let limit = 0.115;
+        let necks = find_necks(&slit(true), limit);
+        let bridged: Vec<&Neck> = necks
+            .iter()
+            .filter(|neck| !neck.bridges.is_empty())
+            .collect();
+        assert_eq!(bridged.len(), 1, "{necks:?}");
+        let neck = bridged[0];
+        // The bridges run across the slit from arm to arm, both ends in
+        // copper (KiCad joins a track to a fill by its ends), and lie
+        // over every part of it.
+        for bridge in &neck.bridges {
+            let (a, b) = (bridge[0], bridge[1]);
+            assert!(a[0].min(b[0]) < 0.4 && a[0].max(b[0]) > 0.46, "{bridge:?}");
+        }
+        for step in 0..=10 {
+            let y = 0.02 + 0.056 * step as f64;
+            let point = [0.43, y];
+            assert!(
+                neck.bridges
+                    .iter()
+                    .any(|bridge| core::geometry::point_segment_distance(
+                        point, bridge[0], bridge[1]
+                    ) <= 0.127 / 2.0),
+                "{point:?} not under a bridge: {:?}",
+                neck.bridges
+            );
+        }
+        // An island of the fill (no item of the net on it) is left alone:
+        // a track on it would make KiCad want it joined.
+        assert!(
+            find_necks(&slit(false), limit)
+                .iter()
+                .all(|neck| neck.bridges.is_empty())
+        );
+    }
+
+    #[test]
+    fn the_tip_of_a_hatch_hole_is_no_slot() {
+        let limit = 0.115;
+        // A square of copper with a pad on it and a triangular hole whose
+        // tips are 45 degrees (a hatch hole cut by a strand): the closing
+        // fills the tips, each one stretch of shore and narrower than the
+        // limit, which KiCad's check does not pair across.
+        let mut outline = rectangle(0.0, 0.0, 3.0, 3.0);
+        // The hole joined to the outline by a slit of no width, as KiCad
+        // fractures a fill.
+        outline.splice(
+            1..1,
+            [
+                [0.5, 0.0],
+                [0.5, 0.5],
+                [1.5, 0.5],
+                [0.5, 1.5],
+                [0.5, 0.5],
+                [0.5, 0.0],
+            ],
+        );
+        let copper = Copper {
+            polygons: vec![outline],
+            shapes: vec![core::Shape::Circle {
+                center: [2.8, 0.3],
+                radius: 0.1,
+            }],
+        };
+        let necks = find_necks(&copper, limit);
+        assert!(
+            necks.iter().all(|neck| neck.bridges.is_empty()),
+            "{necks:?}"
+        );
     }
 
     #[test]

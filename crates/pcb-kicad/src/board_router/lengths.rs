@@ -17,13 +17,17 @@
 //! first placement whose copper keeps every clearance (`core::verify`
 //! against everything routed and every obstacle). The meander's tracks are
 //! the route's and are written as a KiCad tuning pattern
-//! (`write_length_patterns`). A `length` maximum is not kept by the search:
-//! a net longer than it is reported. The verdict's `lengths` lists per rule
+//! (`write_length_patterns`). A `length` maximum is no hard bound: its nets
+//! are length-critical to the search (`route::length_bounded_nets`, the
+//! core's `Config::length_bounded`), and a net longer than it is reported.
+//! A layout's own routes get the same (`finish_lengths`). The verdict's
+//! `lengths` lists per rule
 //! and net the length as the attempt writes it, the target, the bounds and
 //! what the meander added.
 
 use super::meander::{
-    Point, Tuned, Tuning, bump_adds, bump_height, bumps, polyline_length, tuning_pattern_expr,
+    Point, Tuned, Tuning, bump_adds, bump_height, bumps, copper_heights, polyline_length,
+    tuning_pattern_expr,
 };
 use super::*;
 use pcb_router as core;
@@ -91,7 +95,8 @@ const ON_BOUND: f64 = 1.0e-6;
 /// The settings with the length and skew rules the project has reported
 /// as kept (`board-router.json`'s `rules.custom_rules`): a `skew` and a
 /// `length` minimum `applied`, a `length` with a maximum `approximated`
-/// (the maximum is checked, not kept by the search). Unchanged where the
+/// (the maximum is checked: its nets are length-critical to the search, no
+/// hard bound). Unchanged where the
 /// project has no such rule or `length_matching` is off.
 pub(crate) fn with_lengths(config: &KiCadBoardRouterConfig) -> KiCadBoardRouterConfig {
     let mut copy = config.clone();
@@ -121,7 +126,7 @@ pub(crate) fn with_lengths(config: &KiCadBoardRouterConfig) -> KiCadBoardRouterC
                 entry.detail = "length matching (length_matching): the nets matched to the longest of the rule by meanders after the route".into();
             } else if bounded {
                 entry.status = "approximated".into();
-                entry.detail = "length matching (length_matching): a net below the minimum gets a meander after the route; the maximum is checked (the verdict's lengths), not kept by the search".into();
+                entry.detail = "length matching (length_matching): a net below the minimum gets a meander after the route; a net under the maximum is length-critical to the search (a share of the congestion price, rerouted after the others), the maximum checked (the verdict's lengths), no hard bound".into();
             } else {
                 entry.status = "applied".into();
                 entry.detail = "length matching (length_matching): a net below the minimum gets a meander after the route".into();
@@ -736,6 +741,34 @@ fn refused(
     })
 }
 
+/// `match_lengths` for a board written outside an attempt (the layout's
+/// own routes): the stackup's heights from `pcb`, no coupled pairs (the
+/// layout routes no pair as coupled runs).
+pub(crate) fn finish_lengths(
+    pcb: &Expr,
+    board: &core::Board,
+    result: &mut core::RoutingResult,
+    config: &KiCadBoardRouterConfig,
+    layer_names: &[String],
+) -> (Vec<LengthPattern>, Vec<KiCadNetLength>) {
+    if config.length_rules.is_empty() || !config.length_matching_on() {
+        return (Vec::new(), Vec::new());
+    }
+    let heights = copper_heights(pcb);
+    let heights: Vec<f64> = layer_names
+        .iter()
+        .map(|name| heights.get(name).copied().unwrap_or(0.0))
+        .collect();
+    match_lengths(
+        board,
+        result,
+        config,
+        &heights,
+        layer_names,
+        &BTreeSet::new(),
+    )
+}
+
 /// Writes the meanders' tuning patterns into `pcb` (after the routes: the
 /// patterns' members are the route's tracks of the meanders, named by the
 /// uuids their written segments have).
@@ -875,6 +908,72 @@ mod tests {
         // A rule on some layers only counts their tracks.
         let inner = kicad_length(&path(0), &[], &[], &heights, |layer| layer == 1);
         assert!((inner - 3.0).abs() < 1.0e-9);
+    }
+
+    /// The layout writes its own routes outside an attempt: the same
+    /// meanders as an attempt's (`finish_lengths`), the heights from the
+    /// board; and the nets a maximum bounds search near their shortest way
+    /// (`length_bounded_nets`), with `length_matching` only.
+    #[test]
+    fn the_layouts_routes_get_the_attempts_meanders_and_bounded_nets_their_price() {
+        let pcb = parse(BOARD).unwrap();
+        let rule = |constraint: &str, max: Option<f64>, net: &str| KiCadLengthRule {
+            rule: format!("{constraint} {net}"),
+            constraint: constraint.into(),
+            min: (constraint == "length").then_some(33.0),
+            max,
+            nets: vec![member(net)],
+            ..KiCadLengthRule::default()
+        };
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            length_rules: vec![
+                rule("length", Some(34.0), "A"),
+                rule("skew", Some(0.5), "B"),
+            ],
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, true).unwrap().board;
+        let names: Vec<String> = vec!["F.Cu".into(), "B.Cu".into()];
+        let mut written = core::route(&board, &core_config(&config));
+        let mut attempt = written.clone();
+        let (patterns, lengths) = finish_lengths(&pcb, &board, &mut written, &config, &names);
+        let heights = copper_heights(&pcb);
+        let heights: Vec<f64> = names
+            .iter()
+            .map(|name| heights.get(name).copied().unwrap_or(0.0))
+            .collect();
+        let (expected, expected_lengths) = match_lengths(
+            &board,
+            &mut attempt,
+            &config,
+            &heights,
+            &names,
+            &BTreeSet::new(),
+        );
+        assert_eq!(lengths, expected_lengths);
+        assert_eq!(patterns.len(), expected.len());
+        let a = lengths.iter().find(|entry| entry.net == "A").unwrap();
+        assert!(a.within && a.meander_mm > 2.0, "{a:?}");
+        // Only a `length` rule with a maximum bounds its nets.
+        let bounded = crate::board_router::length_bounded_nets(&config).unwrap();
+        assert_eq!(bounded.iter().collect::<Vec<_>>(), vec!["A"]);
+        assert_eq!(
+            core_config(&config).length_bounded.as_deref(),
+            Some(&*bounded)
+        );
+        let off = KiCadBoardRouterConfig {
+            length_matching: Some(false),
+            ..config.clone()
+        };
+        assert!(crate::board_router::length_bounded_nets(&off).is_none());
+        let (patterns, lengths) = finish_lengths(&pcb, &board, &mut written, &off, &names);
+        assert!(patterns.is_empty() && lengths.is_empty());
     }
 
     #[test]

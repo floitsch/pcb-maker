@@ -38,6 +38,11 @@ impl Router {
         } as f32;
         let bend_cost = self.config.bend_cost as f32;
         let pin_row_cost = self.config.pin_row_cost as f32;
+        // A net whose length a rule bounds pays a share of the congestion
+        // (`Config::length_bounded`): 1 for every other net, which keeps
+        // their costs exactly what they were.
+        let congestion = self.bounded_congestion(net);
+        let present = present * congestion;
         // Cleanup and hard reinsertion decide final geometry: search exactly.
         let weight = if self.cleanup || hard {
             0.999
@@ -467,7 +472,11 @@ impl Router {
                         if hard && occupied > 0.0 {
                             break 'step;
                         }
-                        let history = if cleanup { 0.0 } else { hot.history };
+                        let history = if cleanup {
+                            0.0
+                        } else {
+                            hot.history * congestion
+                        };
                         let mut step =
                             layer_costs[direction] * (1.0 + history) * (1.0 + present * occupied);
                         let mut pin_row = 0.0;
@@ -558,7 +567,7 @@ impl Router {
                 let history = if self.cleanup {
                     0.0
                 } else {
-                    self.history[layers][cell]
+                    self.history[layers][cell] * congestion
                 };
                 let mut cut = 1.0f32;
                 let marks = self.via_marks.get(cell).copied().unwrap_or(3);

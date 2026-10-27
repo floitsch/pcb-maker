@@ -372,6 +372,16 @@ pub struct Config {
     /// it where it has no proportion of search to go by (its first
     /// attempt, the rung probes).
     pub limits_count_all: bool,
+    /// Nets whose length a rule bounds from above (KiCad's custom `length`
+    /// rule with a maximum), by name. Their search and their corridors
+    /// price congestion (the present sharing and the history) at
+    /// `bounded_congestion` of the others', and they are rerouted after
+    /// the others in each iteration, so that where two nets want one way
+    /// the bounded one keeps it and the other yields (the criticality of
+    /// timing-driven negotiated routing). `None`: no net.
+    pub length_bounded: Option<std::sync::Arc<std::collections::BTreeSet<String>>>,
+    /// The share of the congestion price a `length_bounded` net pays.
+    pub bounded_congestion: f64,
 }
 
 impl Default for Config {
@@ -470,6 +480,11 @@ impl Default for Config {
             net_rules: None,
             share_static_maps: true,
             limits_count_all: false,
+            length_bounded: None,
+            bounded_congestion: std::env::var("PCB_ROUTER_BOUNDED_CONGESTION")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0.5),
         }
     }
 }

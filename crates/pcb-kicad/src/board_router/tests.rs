@@ -902,6 +902,88 @@ mod pour_request_tests {
     }
 
     #[test]
+    fn a_stub_wholly_inside_a_graphic_of_its_net_is_not_written() {
+        // WLED_Matrix's Net-(AE1-A) rectangle (2026-10-27): the route ends
+        // at a node inside the rectangle and the stub from there to its
+        // anchor lies wholly inside; KiCad 10 passes over tracks inside a
+        // pad, not inside a graphic, and flagged the stub track_dangling.
+        let mut pcb = parse(
+            r#"(kicad_pcb
+          (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+          (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+          (gr_rect (start 12 4) (end 14 6) (stroke (width 0) (type default)) (fill yes) (layer "F.Cu") (net "/A"))
+          (footprint "a" (at 4 5)
+            (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "/A"))
+            (pad "2" smd rect (at 0 3) (size 1 1) (layers "F.Cu") (net "/A"))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        let net = board.nets.iter().position(|net| net.name == "A").unwrap();
+        let anchor = board.nets[net]
+            .terminals
+            .iter()
+            .find(|terminal| board.obstacles[terminal.pad].label == "copper gr_rect")
+            .unwrap()
+            .anchor;
+        assert_eq!(anchor, [13.0, 5.0]);
+        let segment = |start: [f64; 2], end: [f64; 2]| core::Segment {
+            layer: 0,
+            start,
+            end,
+            width: 0.2,
+        };
+        // From the pad to a node inside the rectangle, and the stub on to
+        // its anchor.
+        let mut route = core::NetRoute {
+            segments: vec![
+                segment([4.0, 5.0], [12.3, 5.2]),
+                segment(anchor, [12.3, 5.2]),
+            ],
+            vias: Vec::new(),
+        };
+        assert_eq!(graphic_stubs(&board, net, &route), vec![1]);
+        let mut result = core::route(&board, &core_config(&config));
+        result.routes[net] = route.clone();
+        let names: Vec<String> = vec!["F.Cu".into(), "B.Cu".into()];
+        let _ = emit_routes(&mut pcb, &board, &result, &names, false).unwrap();
+        let segments = pcb
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("segment"))
+            .count();
+        assert_eq!(segments, 1);
+        // A stub whose anchor joins other copper (a via there, a track
+        // going on) is copper of the route: kept.
+        route.vias.push(core::Via {
+            at: anchor,
+            diameter: 0.6,
+            drill: 0.3,
+        });
+        assert!(graphic_stubs(&board, net, &route).is_empty());
+        // A pad's stub is KiCad's to pass over: kept.
+        let pad = board.nets[net]
+            .terminals
+            .iter()
+            .find(|terminal| board.obstacles[terminal.pad].label != "copper gr_rect")
+            .unwrap()
+            .anchor;
+        let pad_route = core::NetRoute {
+            segments: vec![segment(pad, [4.2, 5.1]), segment([4.2, 5.1], [9.0, 5.1])],
+            vias: Vec::new(),
+        };
+        assert!(graphic_stubs(&board, net, &pad_route).is_empty());
+    }
+
+    #[test]
     fn each_pad_keeps_its_own_zone_connection_beside_its_labels() {
         // 74th's J3.S1: one label, SMD shield pads without a zone
         // connection, through-hole ones with the zone's (thermal); J4 is

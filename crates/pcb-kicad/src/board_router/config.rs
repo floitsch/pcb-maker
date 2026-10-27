@@ -224,9 +224,12 @@ pub struct KiCadBoardRouterConfig {
     /// and groups of nets are kept after the route: a net shorter than a
     /// `length` minimum, or further than a `skew` maximum below the
     /// longest net of its rule, gets a meander (a KiCad tuning pattern) on
-    /// a straight track of its route; a `length` maximum is checked and
-    /// reported (`lengths` in the verdict), not kept by the search. Route
-    /// mode and layouts alike; on by default where the project has such a
+    /// a straight track of its route; a net under a `length` maximum is
+    /// length-critical to the search (it pays a share of the congestion
+    /// price and is rerouted after the others, `PCB_ROUTER_BOUNDED_CONGESTION`),
+    /// and its length is checked and reported (`lengths` in the verdict),
+    /// no hard bound. Route mode and layouts alike (a layout's own routes
+    /// too, since 2026-10-27); on by default where the project has such a
     /// rule. `PCB_ROUTER_LENGTH_MATCHING=0` (or `1`) decides where the
     /// settings name none.
     #[serde(default)]

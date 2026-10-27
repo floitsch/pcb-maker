@@ -698,6 +698,24 @@ pub(super) fn route_seeds(
 }
 
 /// The core router configuration for a KiCad configuration.
+/// The nets of the project's `length` rules with a maximum
+/// (`KiCadBoardRouterConfig::length_rules`, with `length_matching`):
+/// `None` without one.
+pub(crate) fn length_bounded_nets(
+    config: &KiCadBoardRouterConfig,
+) -> Option<std::sync::Arc<BTreeSet<String>>> {
+    if !config.length_matching_on() {
+        return None;
+    }
+    let nets: BTreeSet<String> = config
+        .length_rules
+        .iter()
+        .filter(|rule| rule.constraint == "length" && rule.max.is_some())
+        .flat_map(|rule| rule.nets.iter().map(|member| member.net.clone()))
+        .collect();
+    (!nets.is_empty()).then(|| std::sync::Arc::new(nets))
+}
+
 pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     // The global route the capacitated corridors come from (a router
     // with the switch off never asks for it).
@@ -769,6 +787,10 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     if let Some(length) = config.escape_stub_mm {
         router_config.escape_stub_mm = length;
     }
+    // The nets a `length` rule bounds from above search near their
+    // shortest way (`Config::length_bounded`; docs/router.md, "Length and
+    // skew rules"): the meanders lengthen a net, nothing shortens one.
+    router_config.length_bounded = length_bounded_nets(config);
     if let Some(exact) = config.exact_escape_stubs
         && core::router::exact_escapes_override().is_none()
     {

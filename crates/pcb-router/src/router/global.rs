@@ -165,9 +165,14 @@ impl Router {
             Some((bus, position)) => (0, bus, position),
             None => (1, 0, 0),
         };
+        // The nets a length rule bounds (`Config::length_bounded`) after
+        // the others: where two nets keep one way past every price, the
+        // first rerouted yields (a corridor that widens lets both out in
+        // one iteration), and theirs is the one to keep.
         order.sort_by_key(|net| {
             (
                 self.nets[*net as usize].plane.is_empty(),
+                self.length_bounded(*net),
                 bus_rank(*net),
                 self.board.nets[*net as usize].terminals.len() > 8,
                 (span(self, *net) as f64 * jitter[*net as usize]) as u64,

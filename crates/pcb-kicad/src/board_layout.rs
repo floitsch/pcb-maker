@@ -2506,10 +2506,30 @@ pub fn layout_kicad_board(
             copper_texts.stuck.len()
         );
     }
+    // The length and skew rules (`length_matching`): the meanders the
+    // ladder's attempts get (`match_lengths`), on the layout's own routes
+    // too, which it keeps when no ladder runs (link: the route took the
+    // whole budget, its rule reported unmodelled and two nets short).
+    // The meanders join the routes, so that the final route from the
+    // router's state keeps them with the nets' copper.
+    let length_config = crate::board_router::with_lengths(router_config);
+    let (patterns, lengths) =
+        crate::board_router::finish_lengths(&pcb, &board, &mut result, router_config, &layer_names);
     let nets = emit_routes(&mut pcb, &board, &result, &layer_names, false)?;
+    // The tuning patterns go into the board written only: `pcb` is the
+    // placement the ladder routes again, without copper.
+    let written;
+    let written_pcb = if patterns.is_empty() {
+        &pcb
+    } else {
+        let mut copy = pcb.clone();
+        crate::board_router::write_length_patterns(&mut copy, &board, &patterns, &layer_names)?;
+        written = copy;
+        &written
+    };
     let result_directory = output_directory.join("result");
     let mut routed = finish_routed_board(
-        &pcb,
+        written_pcb,
         &board,
         &result,
         nets,
@@ -2517,12 +2537,13 @@ pub fn layout_kicad_board(
         &placed_directory,
         board_id,
         &result_directory,
-        router_config,
+        &length_config,
         [
             0.0,
             first_route_seconds + move_started.elapsed().as_secs_f64(),
         ],
     )?;
+    routed.lengths = lengths;
     routed.pours = if !has_pours {
         "none"
     } else if connect {
