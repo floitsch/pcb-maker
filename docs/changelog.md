@@ -11,6 +11,50 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-27 (router profile round 2: the expansion's remaining maps, the next pop's node and its blocked-step bits prefetched)
+
+Branch router-profile-2, snapshot x14967 against main's x1851
+(docs/profiling.md, "The second router round").
+
+- **The profile again** (main a4e5de2, the six boards of the first
+  round): the search 70 to 89 % of a route, with its heuristic 77 to
+  94 %. Through the inline chain (a new attribution: each sample at its
+  outermost search line): the neighbour steps 17-22 %, the heap 16-21 %,
+  the occupancy lookups 11-18 %, the heuristic 5-8 %, the via steps 5-8 %.
+  The costliest lines: a step's push and the pop (7-10 % each), a
+  diagonal step's clearance count (6-10 %, not prefetched), the popped
+  node's own record and blocked-step bits (2-4 % each).
+- **Three prefetches** (search.rs; `KeyHeap::next_hint`,
+  `StaticMaps::prefetch_edges`, `NodeBits::prefetch`,
+  `LayerBits::prefetch`): the diagonal steps' clearance counts and the via
+  step's maps of the cell at the expansion's start; the search node of
+  the key the next pop most likely takes (the least child of the empty
+  root) and its blocked-step bits, an expansion ahead. Hints only: every
+  route is the same by construction.
+- **Measured**, x1851 against x14967, two pairs a board on SMT siblings
+  in both orientations, pinned rates (the router's CPU seconds): Castor
+  -5.4 %, jetson -9.0 %, k30-SBC -4.4 %, Sisu -10.5 %, SmartSpin2k
+  -6.0 %, protoesp unchanged (+0.0 %); every routed board, fingerprint
+  line, expansion and search count identical, and the verdict apart from
+  its work, wall, rate, memory and path fields. The expansion tier (46
+  boards, 8 x 1): 46 of 46 routed boards byte-identical to x1850's (main
+  ccb9504f, which routes as x1851), the rows identical apart from their timing
+  fields and the intake's speed class (`outcome`, from the route's
+  seconds: five clean_slow to clean_medium, one incomplete_at_budget to
+  incomplete_early), 557 unconnected, 0 new errors, 4263 vias both.
+- **Tried and not taken** (measured, k30-SBC at 60 s, both orientations):
+  a radix heap for the open list (+4.9 and +5.0 % CPU; branch
+  router-profile-2-radix-trial), the heuristic inlined as a struct (+1.9
+  and +0.9 %; router-profile-2-heuristic-trial), a summary bit per 16
+  cells of the occupancy (-3.3 and -1.0 % on k30-SBC, -0.9 and +3.8 % on
+  SmartSpin2k; router-profile-2-summary-trial).
+- **The work clock**: the canned search of an unpinned rate fits the
+  caches and did not get faster (six paired calibrations: medians 2.074 M
+  and 2.065 M expansions a second): an unpinned run measures the rate it
+  did and spends the saving as wall time.
+- Tests: `key_heap_hints_the_next_pop` (pcb-router): without a push in
+  between, the hint is the key the next pop takes.
+
 ## Measured on 2026-10-26 (placement evaluation: seed noise and the protocol)
 
 Branch placement-eval. Nothing in the placer or the router changed. The

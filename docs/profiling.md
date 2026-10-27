@@ -7,7 +7,10 @@ same day ("The layout round" below: branch layout-profile, snapshot x14490
 against main's x1824, 09299b6) profiled everything else a layout does.
 The memory round of 2026-10-26 ("Memory" at the end: branch
 memory-round-3, snapshot x14553 against main's x1830, a905905) profiled
-where a route's peak resident size goes.
+where a route's peak resident size goes. The second router round of
+2026-10-27 ("The second router round" below: branch router-profile-2,
+snapshot x14967 against main's x1851, 71953b0) profiled the search again
+after both.
 
 ## How to profile
 
@@ -273,6 +276,304 @@ of work is about a second of this machine's wall clock"); recalibrating
 `REFERENCE_CANNED_EXPANSIONS_PER_SECOND` (which would keep the measured
 rate where it was and hand the saving back as wall time instead of more
 search) is left to a separate package.
+
+## The second router round (2026-10-27)
+
+The search again, after the first round and the memory round (whose
+four-bit occupancy and stamp lists changed what a step and a restamp
+read): branch router-profile-2, snapshots x14960 to x14967 (x14967 the
+three changes on main 71953b0), against main's x1849 (a4e5de2) and
+x1851 (71953b0; nothing between them changed the routing).
+
+### How
+
+As above ("How to profile"): the profiling binary of main's a4e5de2 (and
+of the branch with the first two changes, 24fb127f, for the profile
+after), one route per board under `perf
+record -F 499 -m 16 -g`, two search threads on two CPUs, pinned rates,
+`PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`; the four
+fingerprint boards at a quarter budget (300 s of work, v16 placements),
+SmartSpin2k and protoesp at the task budget (1200 s, v19), the machine's
+load 26 to 37 from other agents and the nightly.
+
+`--sort srcline` names only a sample's innermost inlined frame, so the
+first round's "inlined std" (indexing, pointer arithmetic: 12 to 14 %)
+and part of its "heap" were lines of std whose caller it did not show.
+This round also attributes each sample of the search to its outermost
+line of search.rs through the inline chain: `perf script -F ip,sym,symoff
+--no-inline -G` for the addresses (seconds), `addr2line -a -i` on the
+profiled binary for each address's chain; a sample counts for the heap
+when its innermost frame is heap.rs or its search line is a push or a pop,
+for the occupancy when it is occupancy.rs or stamping.rs
+(`occupancy_seen`), for the static maps when it is grid.rs, else by its
+search line's range. The scripts are not committed (scratch); the method
+is these two commands.
+
+Two counts came from a throwaway build (counters in the search, not
+committed), k30-SBC at 60 s and protoesp at 200 s of work:
+
+| | k30-SBC | protoesp |
+| --- | ---: | ---: |
+| pops per expansion | 1.63 | 1.70 |
+| of the pops, of a node already closed (stale) | 39 % | 41 % |
+| pushes per expansion | 2.43 | 1.82 |
+| pops whose key is below the previous pop's | 0.20 % | 0.41 % |
+| the open list's largest size | 245 k | 135 k |
+| expansions guided by the coarse map / at most 4 points / 5 to 12 | 12 / 85 / 4 % | 34 / 62 / 4 % |
+| step lookups of the occupancy that find no net (trace map, diagonal map, via map) | 89, 93, 68 % | |
+| SmartSpin2k (200 s): the same | 68, 80, 40 % | |
+| of those lookups, the 16 cells of the word all free (k30-SBC; SmartSpin2k) | 79, 81, 51 %; 47, 52, 23 % | |
+
+### Where the route's CPU goes now (main a4e5de2)
+
+**The top symbols by self time** (% of the route's samples; in brackets
+where not among the board's top 15):
+
+| symbol (self) | Castor | k30-SBC | jetson | Sisu | SmartSpin2k | protoesp |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `Router::search` | 70.23 | 76.05 | 78.77 | 74.32 | 88.79 | 87.68 |
+| `Router::search::{closure#2}` (the heuristic) | 7.16 | 7.75 | 6.24 | 5.03 | 5.08 | 5.61 |
+| `Router::stamp` | 7.53 | 5.26 | 3.24 | 9.41 | 2.59 | 3.31 |
+| `Router::plan_corridor` | 1.05 | 2.26 | 2.24 | 1.61 | 0.56 | 0.34 |
+| `Router::plan_corridor::{closure#2}` | 1.00 | 2.24 | 2.12 | 1.49 | 0.54 | 0.30 |
+| `Router::plan_corridor::{closure#3}` | 0.67 | 1.51 | 1.54 | 1.09 | 0.32 | 0.18 |
+| `PourMap::build` | 2.97 | 0.74 | (0.09) | 0.55 | - | 0.12 |
+| `StateMap insert (hashbrown)` | 0.31 | 0.30 | 0.92 | 0.60 | 0.11 | 0.14 |
+| `Shape::distance_to_point` | 1.14 | 0.25 | 0.16 | 0.53 | 0.03 | 0.11 |
+| `Router::analyze_pours_uncounted` (an iterator closure) | 1.07 | 0.24 | (0.03) | 0.17 | - | 0.05 |
+| `geometry::point_in_polygon` | 0.46 | 0.12 | 0.20 | 0.49 | (0.02) | 0.18 |
+| `Router::mask_own` | (0.18) | 0.10 | 0.11 | 0.51 | 0.17 | 0.21 |
+| `geometry::segment_segment_distance` | (0.04) | (0.01) | 0.14 | 0.60 | (0.02) | (0.02) |
+| `Router::branch_conflicts` | (0.03) | (0.06) | (0.09) | (0.07) | 0.42 | 0.06 |
+| `fill::Index init (OnceCell)` | 0.37 | 0.22 | (0.03) | (0.06) | - | (0.04) |
+| `Router::unstamp` | (0.10) | (0.07) | (0.06) | (0.10) | 0.09 | 0.28 |
+| `Router::kicad_spokes` | 0.49 | (0.08) | (0.01) | (0.01) | - | (0.02) |
+| `FillProbe::blocker` | 0.49 | (0.04) | (0.00) | (0.00) | - | (0.02) |
+| `Router::route_net_with_arrays` | (0.07) | 0.09 | 0.14 | (0.12) | (0.03) | 0.04 |
+| `PourMap::pieces_near` | - | (0.00) | - | 0.43 | - | (0.02) |
+| `verify::verify_with_rules` | (0.01) | (0.00) | 0.32 | (0.01) | (0.01) | (0.00) |
+| `HashSet<usize> insert (SipHash)` | 0.24 | (0.07) | (0.01) | (0.01) | - | (0.01) |
+| `Shape::aabb` | (0.08) | (0.01) | (0.03) | (0.06) | 0.14 | (0.01) |
+| `PourMap::piece_near` | - | - | - | 0.26 | - | (0.02) |
+| `Router::node_class` | (0.06) | (0.03) | (0.02) | (0.03) | 0.06 | (0.02) |
+| `kicad_sexpr::parse`, `Parser::atom` | (0.02) | (0.02) | 0.25 | (0.01) | (0.02) | (0.02) |
+| `Router::stitching_vias` | (0.03) | 0.13 | - | - | - | (0.01) |
+| `Router::route_net_seq`, `Router::stub_is_clear` | (0.01) | (0.02) | (0.04) | (0.10) | 0.09 | (0.04) |
+
+The search is 70 to 89 % of every route, with its heuristic 77 to 94 %.
+`Router::stamp` rose from 1.4-5.2 % to 2.6-9.4 % (the memory round's
+stamp lists as varints, decoded in the restamp's two passes).
+
+**The hot spots by the first round's method** (innermost line, lines
+below 0.3 % of the samples lumped, the lines grouped by our reading of
+its categories; the first round's x1820 in brackets):
+
+| hot spot | Castor | k30-SBC | jetson | Sisu | SmartSpin2k | protoesp |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| inlined std (indexing, iterators) | 12.9 (9.6) | 12.4 (9.7) | 12.6 (9.1) | 12.9 (10.0) | 13.4 (9.0) | 14.4 (10.6) |
+| occupancy lookups | 10.9 (6.7) | 12.2 (8.1) | 12.7 (8.6) | 11.4 (8.1) | 16.8 (11.4) | 14.4 (10.4) |
+| search, lines below 0.3 % | 10.1 (12.0) | 10.2 (10.4) | 10.1 (9.9) | 10.2 (10.3) | 10.6 (10.1) | 11.0 (10.4) |
+| neighbour steps (node, clearance, cost) | 9.4 (10.8) | 9.9 (12.8) | 10.6 (13.9) | 10.9 (12.9) | 11.3 (13.1) | 12.9 (14.8) |
+| heap (push, pop) | 8.6 (14.8) | 9.8 (16.2) | 10.3 (17.4) | 9.0 (16.0) | 11.9 (18.2) | 11.9 (17.9) |
+| heuristic (search closure 2) | 7.2 (5.7) | 7.8 (6.6) | 6.2 (5.1) | 5.0 (4.7) | 5.1 (3.9) | 5.6 (4.6) |
+| stamping (Router::stamp) | 7.5 (4.4) | 5.3 (3.1) | 3.2 (2.2) | 9.4 (5.2) | 2.6 (1.4) | 3.3 (1.8) |
+| unattributed (search.rs:0, spills) | 5.3 (7.5) | 5.3 (6.6) | 6.1 (8.7) | 5.8 (8.0) | 7.0 (8.7) | 6.9 (8.4) |
+| static maps (edges, vias, layers) | 4.6 (3.0) | 4.7 (2.8) | 5.0 (3.2) | 4.3 (2.9) | 6.8 (4.4) | 5.0 (3.4) |
+| prefetches (the first round's) | 3.4 (-) | 3.7 (-) | 5.0 (-) | 3.5 (-) | 3.3 (-) | 3.3 (-) |
+| via steps | 2.6 (3.9) | 4.5 (6.2) | 3.3 (5.3) | 3.7 (4.8) | 2.6 (3.3) | 3.3 (3.0) |
+| pop and expansion set-up | 2.4 (1.3) | 3.3 (1.5) | 3.0 (1.9) | 2.6 (1.7) | 4.5 (2.5) | 4.3 (2.4) |
+| tile planner (plan_corridor) | 2.7 (2.5) | 6.0 (5.6) | 5.9 (5.8) | 4.2 (4.8) | 1.4 (1.2) | 0.8 (0.8) |
+| pours (maps, analyses, spokes) | 7.5 (6.5) | 1.8 (1.4) | 0.6 (0.5) | 2.7 (3.3) | 0.1 (0.0) | 0.6 (0.3) |
+| hop test (hops_from_a_via) | 0.0 (6.5) | 0.0 (5.8) | 0.0 (3.8) | 0.0 (3.3) | 0.6 (8.3) | 0.4 (8.9) |
+| hashing (hash maps) | 1.0 (0.5) | 0.5 (0.2) | 1.0 (0.7) | 0.8 (0.6) | 0.1 (0.1) | 0.2 (0.1) |
+
+The first round's changes show: the hop test is gone (since_via), the
+heap's own lines fell from 15-18 % to 9-12 % (the empty root); the
+occupancy rose from 7-11 % to 11-17 % (the four-bit counts are a shift
+and a mask more, and the other parts got faster); the rest moved by
+their shares.
+
+**The hot spots through the inline chain** (each sample at its outermost
+search line; the cells: main a4e5de2 / the branch with the first two
+changes below, 24fb127f on a4e5de2; shares of each route's own samples, so a
+part that did not change grows as the route shrinks):
+
+| hot spot | Castor | k30-SBC | jetson | Sisu | SmartSpin2k | protoesp |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| neighbour steps (node, clearance, cost) | 17.4 / 20.6 | 17.2 / 20.5 | 17.4 / 19.0 | 18.9 / 21.0 | 18.3 / 20.7 | 22.0 / 24.2 |
+| heap (push, pop, `next_hint`) | 15.9 / 17.1 | 17.8 / 19.0 | 18.7 / 19.3 | 16.1 / 16.5 | 20.8 / 22.7 | 20.3 / 21.2 |
+| occupancy lookups | 11.3 / 5.6 | 12.7 / 6.4 | 13.3 / 6.0 | 12.1 / 5.7 | 17.7 / 12.3 | 15.6 / 10.3 |
+| heuristic (search closure 2) | 7.2 / 7.8 | 7.8 / 8.7 | 6.2 / 7.1 | 5.0 / 5.8 | 5.1 / 6.4 | 5.6 / 6.5 |
+| via steps | 5.7 / 6.1 | 7.5 / 8.1 | 6.1 / 6.4 | 6.3 / 6.0 | 4.6 / 3.4 | 5.7 / 5.3 |
+| stamping (Router::stamp) | 7.5 / 7.7 | 5.3 / 5.4 | 3.2 / 3.2 | 9.4 / 10.0 | 2.6 / 2.8 | 3.3 / 3.5 |
+| pop and expansion set-up | 5.2 / 4.1 | 5.8 / 4.1 | 6.1 / 4.1 | 6.3 / 4.6 | 8.0 / 5.4 | 7.2 / 4.8 |
+| unattributed (search.rs:?, spills) | 5.3 / 4.8 | 5.3 / 4.9 | 6.1 / 5.8 | 5.7 / 5.4 | 6.9 / 6.0 | 6.9 / 6.5 |
+| static maps (edges, vias, layers) | 4.8 / 3.9 | 4.9 / 4.1 | 5.2 / 5.3 | 4.5 / 4.3 | 7.2 / 6.2 | 5.3 / 5.0 |
+| prefetches | 3.3 / 5.3 | 3.8 / 6.2 | 5.0 / 9.6 | 3.5 / 6.8 | 3.2 / 8.1 | 3.1 / 7.5 |
+| tile planner (plan_corridor) | 2.7 / 2.9 | 6.0 / 6.5 | 5.9 / 6.6 | 4.2 / 4.5 | 1.4 / 1.4 | 0.8 / 0.8 |
+| pours (maps, analyses, spokes) | 7.5 / 8.0 | 1.8 / 2.0 | 0.6 / 0.7 | 2.7 / 3.4 | 0.1 / 0.1 | 0.6 / 0.8 |
+| hashing (hash maps) | 1.0 / 1.0 | 0.5 / 0.5 | 1.0 / 1.0 | 0.8 / 0.8 | 0.1 / 0.1 | 0.2 / 0.2 |
+| hop test (hops_from_a_via) | 0.3 / 0.4 | 0.3 / 0.3 | 0.2 / 0.2 | 0.3 / 0.3 | 1.1 / 1.3 | 0.9 / 1.0 |
+| search set-up and path | 0.3 / 0.3 | 0.4 / 0.3 | 0.5 / 0.5 | 0.5 / 0.4 | 0.8 / 0.9 | 0.4 / 0.4 |
+
+**The costliest lines** (same cells; main's search.rs line in brackets):
+
+| line | Castor | k30-SBC | jetson | Sisu | SmartSpin2k | protoesp |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| a step's push (456) | 8.2 / 8.8 | 8.4 / 8.9 | 9.2 / 9.5 | 8.0 / 8.2 | 9.7 / 10.5 | 9.4 / 9.8 |
+| the pop (232) | 6.6 / 7.0 | 7.8 / 8.2 | 8.2 / 8.1 | 7.1 / 7.1 | 10.2 / 11.0 | 9.8 / 10.2 |
+| a diagonal step's clearance count (402) | 6.3 / 1.7 | 7.8 / 2.2 | 8.8 / 2.1 | 7.8 / 2.1 | 9.7 / 4.3 | 8.1 / 3.6 |
+| a step's count (391) | 2.9 / 3.0 | 3.3 / 4.2 | 3.5 / 3.5 | 3.1 / 3.2 | 5.4 / 6.6 | 5.5 / 5.9 |
+| a step's neighbour closed (369) | 3.0 / 3.0 | 3.4 / 3.3 | 3.5 / 3.6 | 3.0 / 3.1 | 3.9 / 4.1 | 4.1 / 4.4 |
+| the node's blocked steps, `edges_at` (272) | 2.7 / 3.4 | 3.3 / 4.0 | 3.8 / 4.4 | 3.1 / 3.5 | 4.3 / 5.7 | 2.9 / 3.9 |
+| the popped node closed (234) | 2.0 / 0.3 | 2.6 / 0.4 | 2.6 / 0.4 | 2.3 / 0.3 | 4.0 / 0.6 | 3.5 / 0.6 |
+| the via's count (485) | 2.6 / 1.2 | 2.6 / 1.5 | 2.2 / 1.3 | 2.2 / 1.3 | 4.1 / 3.1 | 3.7 / 2.7 |
+| `via_allowed` (487) | 1.4 / 1.4 | 1.2 / 1.0 | 1.7 / 2.0 | 1.6 / 1.9 | 2.4 / 1.9 | 2.2 / 2.2 |
+| the via's `free_layers` (537) | 1.5 / 0.5 | 1.2 / 0.3 | 0.7 / 0.2 | 0.8 / 0.2 | 1.6 / 0.4 | 1.1 / 0.2 |
+
+The search waits on memory: the costliest lines are loads of maps a
+row or a map away from the node (the diagonal steps' clearance maps were
+not among the first round's prefetches), the heap's levels and the
+popped node itself, whose record is known only when it is popped.
+
+### Candidates checked
+
+Each measured as one change against the binary without it, k30-SBC at
+60 s of work, two pairs on SMT siblings in both orientations (the
+router's CPU seconds; cells: the two orientations' change):
+
+- **A radix heap** (`RadixHeap`, x14960; branch
+  router-profile-2-radix-trial, 8190db4b): the keys are not small
+  integers (the estimate's float bits above the state), but they are
+  almost monotone (0.2 to 0.4 % of the pops below the previous pop), so
+  a radix heap over the 64-bit keys with a 4-ary heap for the keys below
+  the last pop pops the same keys (the heap tests pass for it). **+4.9 %
+  and +5.0 %** (instructions +3.8 %): its pushes are appends, but a key
+  moves through several buckets on its way down, and the 4-ary heap's
+  push into the empty root (the first round) already stops near the
+  root. Not taken. A lazier decrease-key would remove the 39-41 % stale
+  pops but needs a heap position per state (the 12-byte node has no
+  room). Not tried.
+- **The heuristic inlined** (a struct whose `at` inlines into every
+  step, the same arithmetic; x14963, branch
+  router-profile-2-heuristic-trial, 29113532): **+1.9 % and +0.9 %**,
+  instructions the same. The closure's call is cheap beside its loads;
+  inlining nine copies costs registers (the search spills already). Its
+  loop over up to 12 points is vectorised by LLVM, and 85 % of the
+  expansions (k30-SBC) have at most 4 points. Not taken.
+- **A summary bit per word of the occupancy** (16 cells, set while any
+  counts a net; a clear bit answers a lookup from a map a 64th the size;
+  x14965, branch router-profile-2-summary-trial, e74df3ed): **-3.3 % and
+  -1.0 %** on k30-SBC, **-0.9 % and +3.8 %** on SmartSpin2k at 200 s
+  (fewer free words: 47 % against 79 %), instructions +2 to 4 %. Not
+  taken: a gain only on the sparse boards, and the prefetches below took
+  most of the same loads.
+- **The steps' bounds checks and branches**: the window test is per
+  expansion already (`interior`), the edge, corridor and closed tests
+  are branches on loaded values; the samples sit on the loads, not the
+  tests. Not changed.
+- **The via steps' layers**: `free_layers` decides most layers in one
+  word; their cost was the loads of the cell's maps, which change 1
+  prefetches.
+
+### The changes (bit-identical)
+
+Three prefetches (hints only: they change no value, so every route is
+the same by construction):
+
+1. **The rest of the expansion's maps** (search.rs, after the first
+   round's prefetches): the diagonal steps' clearance counts (both
+   orientations at the node's cell, where the steps towards +x start, and
+   at the cells a row below and above, where the steps towards -x start),
+   and what the via step reads of the cell: its via count, `via_blocked`,
+   `free_layers` (`NodeBits::prefetch`, `LayerBits::prefetch`),
+   `own_via_near` and the via history. Line 402 fell from 6-10 % to
+   2-4 %, the via's count by a quarter to a half, `free_layers` by two
+   thirds or more.
+   Alone (x1849 against x14962): **-3.1 % and -0.8 %**; on the radix heap
+   (x14960 against x14961) -2.2 % and -2.8 %.
+2. **The next pop's search node, an expansion ahead**
+   (`KeyHeap::next_hint`): after a pop the root is empty (the first
+   round) and the least of its four children is the key the next pop
+   takes unless the expansion pushes a lesser one; its search node is
+   prefetched before the expansion starts. The popped node's closed test
+   (line 234) fell from 2-4 % to 0.3-0.6 %. (x14963 against x14964, both
+   with the heuristic trial above): **-3.2 % and -4.5 %**.
+3. **The next pop's blocked-step bits** (`StaticMaps::prefetch_edges`,
+   with change 2: the node's layer from its state, one division off the
+   path): `edges_at`, the expansion's first map read (3 to 6 % after
+   change 2). (x14964 against x14966): **-2.5 % and -2.6 %**; SmartSpin2k
+   at 200 s -2.7 % and -2.0 %.
+
+Each prefetch is an instruction: instructions rise, cycles fall.
+
+### Measured (2026-10-27)
+
+Snapshots x1851 (main 71953b0) and x14967 (c181d7d, the three changes
+rebased on it), side by side on SMT siblings (one binary on two of the CPUs 0 to 15,
+the other on their siblings 16 higher; the second pair with the
+binaries' CPUs swapped, run at the same time on the next two cores), two search threads, pinned rates,
+`PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`, the machine's
+load 30 to 38 (other agents, the nightly from 02:00). Cells: the two
+pairs' CPU seconds of the router process (x1851's first orientation
+first); the change, the geometric mean of the two pairs' ratios;
+million expansions per CPU second; the route's expansions.
+
+| board | budget | x1851 CPU s | x14967 CPU s | CPU | cycles | x1851 M expansions / CPU s | x14967 | expansions | searches | identical |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Castor | 300 | 465 / 465 | 429 / 452 | -5.4 % | -5.4 % | 0.93 / 0.93 | 1.01 / 0.96 | 434 M | 8267 | yes (2 pairs) |
+| jetson | 300 | 578 / 579 | 564 / 492 | -9.0 % | -9.5 % | 1.05 / 1.04 | 1.07 / 1.23 | 604 M | 10416 | yes (2 pairs) |
+| k30-SBC | 300 | 616 / 612 | 590 / 583 | -4.4 % | -4.7 % | 0.81 / 0.81 | 0.84 / 0.85 | 497 M | 8758 | yes (2 pairs) |
+| Sisu | 300 | 751 / 752 | 658 / 687 | -10.5 % | -11.5 % | 0.82 / 0.81 | 0.93 / 0.89 | 613 M | 10012 | yes (2 pairs) |
+| SmartSpin2k | 1200 | 1342 / 1331 | 1223 / 1290 | -6.0 % | -5.7 % | 1.61 / 1.63 | 1.77 / 1.68 | 2166 M | 32073 | yes (2 pairs) |
+| protoesp | 1200 | 1327 / 1302 | 1331 / 1299 | +0.0 % | -0.3 % | 0.61 / 0.62 | 0.61 / 0.62 | 810 M | 11491 | yes (2 pairs) |
+
+The CPU falls 4 to 11 % on five boards; protoesp did not change (+0.3
+and -0.3 % in the two orientations). Instructions rose 3.6 to 5.6 % (the
+prefetches). x1851's two runs of a board agree within 2 %, x14967's
+differ by up to 13 % (jetson 564 and 492 s): the prefetches' gain depends
+on what the sibling CPU and the other cores load at the time.
+
+**Identical** in every pair: the routed board's SHA-256, every
+fingerprint line, the expansions and searches, and verdict.json apart
+from its work, wall, rate, memory and path fields. Castor's board is the
+first round's (SHA-256 prefix dad3a6cb3787b575, 434 M expansions), as
+are k30-SBC's expansions (497 M). The expansion tier (46 boards, 8 x 1,
+30 s): 46 of 46 routed boards byte-identical to x1850's (main ccb9504f,
+which routes as x1851), the rows identical apart from their timing
+fields and the intake's speed class (`outcome`, from the route's
+seconds: five clean_slow to clean_medium, one incomplete_at_budget to
+incomplete_early), 557 unconnected, 0 new errors, 4263 vias both. The tests (`scripts/check.sh --fast`, clippy with
+warnings as errors) pass.
+
+The pairs vary more than the first round's (jetson's two orientations,
+run at once on two core pairs: -2.4 and -15.1 %).
+
+**The work clock.** As after the first round, pinned rates (every tier,
+run.py) do the same expansions in less CPU. The canned search that
+measures an unpinned rate (crates/pcb-kicad/src/work_rate.rs) fits the
+caches, where a prefetch saves nothing: six calibrations side by side on
+one CPU and its sibling (`calibrate-work-rate 1`, alternating) gave
+medians of 2.074 M (x1851) and 2.065 M (x14967) expansions a second, the
+pairs' ratios 0.96 to 1.02. An unpinned run measures about the rate it
+measured before and spends the saving as wall time, not as more search.
+(The routes' own start-up calibrations, taken while the pair's other
+binary started too, ranged 0.83 to 1.04; single runs under load.)
+
+### Not taken, and what is next
+
+- The heap is now the largest part (16 to 23 % through the inline chain):
+  a 4-ary heap of 8-byte keys, 1.6 to 1.7 pops an expansion, 40 % of
+  them stale. A position per state for a decrease-key (4 bytes a state
+  more: the memory round's budget) or an 8-ary layout on whole cache
+  lines are the candidates left.
+- The steps' counts (line 391, 3 to 7 %) are prefetched since the first
+  round but still wait: the rows' prefetches are issued only an
+  expansion's set-up ahead. Prefetching the next pop's rows with its node
+  (change 2) would give them an expansion ahead, at 13 more prefetches an
+  expansion.
+- `Router::stamp` (3 to 10 %), outside the search: the varint stamp
+  lists' decoding.
 
 ## The layout round (2026-10-25)
 
