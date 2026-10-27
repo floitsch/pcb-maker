@@ -5028,6 +5028,48 @@ mod tests {
         CROSSOVERS.with(|cell| cell.set(None));
     }
 
+    /// The room a crossover leaves a neighbouring pair's launch: its
+    /// tracks, vias and the run's lead past it against the neighbour's
+    /// stubs and lead, each with its clearance; negative where it reaches
+    /// in (`launch` then skips that crossover), infinite with no neighbour.
+    #[test]
+    fn a_crossover_keeps_room_beside_a_neighbours_launch() {
+        let (board, config) = lowered();
+        let pair = find_pairs(&board, &config)
+            .into_iter()
+            .find(|pair| !pair.links.is_empty())
+            .unwrap();
+        let (w, c) = (pair.width, pair.clearance);
+        // A crossover along x at y = 0: a track on F.Cu, a via at (1, 0.4).
+        let found = Crossover {
+            run_start: [2.0, 0.0],
+            segments: [vec![(0, [0.0, 0.0], [2.0, 0.0])], Vec::new()],
+            vias: [Vec::new(), vec![[1.0, 0.4]]],
+        };
+        let lead = ([2.0, 0.0], [3.0, 0.0], w);
+        let neighbour_at = |y: f64| Neighbour {
+            pair: 1,
+            layers: 1,
+            copper: [([0.0, y], [3.0, y], w / 2.0, c); 5],
+        };
+        assert_eq!(neighbour_room(&found, lead, 1, &pair, &[]), f64::INFINITY);
+        // Far: the via's side at y = 0.4 plus its radius and the clearance.
+        let need = (pair.via_diameter / 2.0 + c).max(pair.via_drill / 2.0 + pair.hole_clearance);
+        let far = neighbour_at(0.4 + need + w / 2.0 + 0.1);
+        let room = neighbour_room(&found, lead, 1, &pair, &[&far]);
+        assert!((room - 0.1).abs() < 1.0e-9, "{room}");
+        // Close: the neighbour's stub inside the via's clearance.
+        let close = neighbour_at(0.4 + need + w / 2.0 - 0.05);
+        assert!(neighbour_room(&found, lead, 1, &pair, &[&close]) < 0.0);
+        // On another layer the tracks and the lead do not count, the via
+        // (on every layer) does.
+        let other = Neighbour {
+            layers: 2,
+            ..neighbour_at(-(w + c + 0.01))
+        };
+        assert!(neighbour_room(&found, lead, 1, &pair, &[&other]) > 0.0);
+    }
+
     /// A via of a coupled run gets a return via of GND beside it where GND
     /// has a pour there (on two layers), its ring within `RETURN_GAP` of the pair via's and
     /// clear of the pair's copper; without a pour of GND, none.
