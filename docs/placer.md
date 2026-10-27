@@ -3741,7 +3741,27 @@ with `--drc`, x1849 against x14981):
 | molecule 5x4_wave | 152 | 87 | 6 | 5 |
 | molecule 7x5_wave_left | 235 | 148 | 7 | 7 |
 
-LEGALITY_MEASURED
+**Measured** (layout, task budgets, seed 1, x1849 against x14981 for
+the boards without copies, whose code paths x14985 does not change, and
+x14985 for the panels; `build/panel3/{dense,short,panels}-{on,off}-s1`,
+`build/panel3/openrx-{on,off}-s101`):
+
+- **The short tier** (3 x 2, its budget scale): all 12 boards' placed
+  and result boards byte for byte x1849's (8 strict passes, 20
+  unconnected on both). None reaches the last level.
+- **The eleven dense boards**: the boards that do not reach the last
+  level give byte-identical placed and result boards (ten of the
+  eleven: all but SmartSpin2k);
+  the 4in1-mini's placement and result are the same, its pool work
+  365 -> 290 s (a seed the race did not keep reaches the last level).
+  SmartSpin2k_Panelized places at the last level now: 21 / 21
+  unconnected, vias 745 -> 531, tracks 14.1 -> 12.4 m, the placer's
+  wirelength 7527 -> 6390 mm, pool work 356 -> 179 s, no error.
+- **The panels with copies**: the 0xCB panel (0, strict pass) and
+  pcb-panel (43) byte for byte; OpenRX, at the last level now, 191 -> 197
+  at seed 1 and 211 -> 200 at seed 101 (397 against 402 over the two),
+  no error on either side; SmartSpin2k as above.
+
 
 ## Decoupling at the pins (2026-10-26)
 
@@ -4113,7 +4133,40 @@ classes (`cell_classes`: per class its copies, the representative
 first, and its counts of constraints, outline pieces and obstacles) and
 `by_cell_classes` (whether the classes were placed on their own).
 
-CLASSES_TABLE
+**Measured** (layout mode at the task budgets, tasks v7, pinned rates
+3.15e6 and 150e6, `--placer '{"seed": N}'`, 3 (molecules 3 and 2) x 2
+through the memory ledger with 10 GB kept free, beside the nightly and
+other agents; no row cut; x1849, main a4e5de23, against x14985; output
+`build/panel3/mol-{on,off}-s{1,101}`). Parts without a place; else
+KiCad's unconnected count (KiCad's report stops at 499 items: a floor)
+with the first route's open terminals, new strict errors:
+
+| molecule | cells (copies x parts) | cell classes | seed 1, x1849 | seed 1, x14985 | seed 101, x1849 | seed 101, x14985 |
+| --- | --- | ---: | --- | --- | --- | --- |
+| 4x4 | 16 x 16 | 9 | 31 without a place | 499 (828), no error | 27 without a place | 499 (832), no error |
+| 4x5 | 20 x 16 | 9 | 42 without a place | 499 (1083), 8 starved_thermal | 43 without a place | 499 (1140), no error |
+| 5x2_shifted | 10 x 20 | 6 (placed by class) | 22 without a place | 427 (571), no error | 10 without a place | 369 (612), no error |
+| 5x4_wave | 20 x 13 | 13 | 5 without a place | 499 (686), no error | 5 without a place | 499 (690), 1 starved_thermal |
+| 7x5_wave_left | 28 x 13 | 13 | 6 without a place | 1 without a place | 6 without a place | 3 without a place |
+
+Four of the five molecules have a result at both seeds (none passes
+strict: the cells share their nets, the 4x4's 1128 parts are on 27,
+each reaching every cell, and the router completes 2 to 5 of the 28;
+the designer's own board, tracks and all, leaves 208 open in KiCad). The 5x2_shifted is the one whose
+classes are placed on their own (17 of 130 parts replicated from the
+first cell were not legal; by the classes none). On the others the
+held instances in the right copies leave 4 to 9 replicated parts not
+legal, placed after. The 4x5's eight and the 5x4_wave's one
+`starved_thermal` are C3's ground pad on the back pour, packed at the
+last level beside its neighbours: with that many connections open the
+layout does not make starved pads solid ("Only thermals starved"). The
+7x5_wave_left still leaves 1 and 3 parts without a place (from 6): its
+J3, J4 and J6 sit in only 9 of the 28 cells, so they are in no copy and
+placed after the copies; at seed 1 test point J7 took the one spot at
+the bottom edge J9 needed (moved by hand to the designer's spot, both
+are legal: the search, not the model). The placement's pool work falls
+from 404-670 s (the whole board, refused) to 123-469 s.
+
 
 ## The trouble-maker probe (2026-10-26)
 

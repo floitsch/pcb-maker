@@ -356,6 +356,48 @@ frictions 2, 3, 4, 7 to 10 ([the review](reviews/2026-10-26-schematic-trial.md),
   (unconnected 557, passes 24 both ways). build/ux3-expansion-x1848,
   build/ux3-expansion-x14950.
 
+## Committed on 2026-10-27 (panel copies: cell classes; legality against KiCad on the molecules)
+
+Branch molecule-panels, snapshots x14980 (first version), x14981 (pads
+keep the project's copper-to-edge clearance at KiCad's legality),
+x14985 (held instances without a fitting copy; free re-placement where
+a copy's region cannot hold a part). placer.md "Cell classes
+(2026-10-27)" and "The molecules against KiCad: the last level is
+KiCad's legality (2026-10-27)" have the method and the tables.
+
+- **Cell classes** (`panel.rs`): where references repeat, an instance
+  an edge, overhang or region constraint holds goes to a copy whose
+  region lets it keep the constraint (a matching; the nearest copy where
+  none can); the copies are grouped by their surroundings (constraints
+  on their parts, outline pieces and obstacles within reach, each in its
+  own frame), and where more than a tenth of the replicated parts are
+  not legal each class's representative is placed in its region (the
+  most constrained first) and replicated within its class. A replicated
+  part its copy's region cannot hold is placed free afterwards.
+  `panel_copies` reports `cell_classes` and `by_cell_classes`.
+- **The last level is KiCad's legality** (`legality: "model"`, the
+  default; `"strict"` the model before): courtyards touch where pads of
+  two nets keep the copper clearance (pads of one net may come closer),
+  pads keep the project's copper-to-edge clearance (floor 0.01 mm, at
+  every level, was 0.02), the board's silkscreen marks the project does
+  not rate an error over a part (`silk_over_parts_error`, read from the
+  project) are no obstacle, and leads keep the copper clearance from the
+  far side's pads where holes in courtyards are no error. Each cause was
+  checked against KiCad's DRC of the designer's molecules; the designer
+  placements' illegal parts at the last level 128/156/101/87/148 ->
+  0/0/1/6/7 (12 of the 14 left are where KiCad finds an error too: the
+  wave boards' J5 by a non-plated hole).
+- **Measured** (layout, task budgets, x1849 against x14985 / x14981):
+  the molecules seed 1 and 101: 4x4 31/27 parts without a place -> 499
+  (KiCad's cap) unconnected, no error; 4x5 42/43 -> 499, 8 starved
+  thermals at seed 1; 5x2_shifted 22/10 -> 427/369 (placed by cell
+  class), no error; 5x4_wave 5/5 -> 499, 1 starved thermal at seed 101;
+  7x5_wave_left 6/6 -> 1/3 parts without a place (still refused: its
+  J3/J4/J6 are in no copy). The short tier byte for byte; the dense
+  boards byte for byte except SmartSpin2k (21/21 unconnected, vias 745
+  -> 531) and the 4in1-mini's pool work (365 -> 290 s, the same board);
+  OpenRX 191 -> 197 (seed 1), 211 -> 200 (seed 101).
+
 ## Committed on 2026-10-26 (the free-dimension fixture under load)
 
 Branch free-dimension-fixture (docs/benchmarks.md, "Measurement
