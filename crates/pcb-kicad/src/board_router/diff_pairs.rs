@@ -720,14 +720,25 @@ struct Neighbour {
     clearance: f64,
 }
 
-/// How far the copper of a crossover (`found`) keeps beyond its clearance
-/// from the launches of the `neighbours` (the least margin; infinite
-/// where none is near; below zero where it reaches into one).
-fn neighbour_room(found: &Crossover, pair: &Pair, neighbours: &[&Neighbour]) -> f64 {
+/// How far the copper of a crossover (`found`) and the run's lead past it
+/// (`lead`: a capsule on `layers`, the link's envelope) keep beyond their
+/// clearance from the launches of the `neighbours` (the least margin;
+/// infinite where none is near; below zero where they reach into one).
+fn neighbour_room(
+    found: &Crossover,
+    lead: (Point, Point, f64),
+    layers: core::LayerMask,
+    pair: &Pair,
+    neighbours: &[&Neighbour],
+) -> f64 {
     let mut room = f64::INFINITY;
     for neighbour in neighbours {
         let keep = pair.clearance.max(neighbour.clearance);
         for &(start, end, radius) in &neighbour.copper {
+            if neighbour.layers & layers != 0 {
+                let distance = core::geometry::segment_segment_distance(lead.0, lead.1, start, end);
+                room = room.min(distance - lead.2 - radius - keep);
+            }
             for &(layer, from, to) in found.segments.iter().flatten() {
                 if neighbour.layers & (1 << layer) == 0 {
                     continue;
@@ -1105,13 +1116,16 @@ fn launch(
                 (ends, e),
                 layers,
             )?;
-            let room = neighbour_room(&found, pair, &neighbours);
-            if room < 0.0 {
-                return None;
-            }
             let run_start = found.run_start;
             let lead = LEAD * d;
             let at = add(run_start, scale(outward, lead));
+            // Past the crossover the run's centreline lies beside the
+            // straight net, off the pads' middle: its lead keeps the room
+            // too.
+            let room = neighbour_room(&found, (run_start, at, half), layers, pair, &neighbours);
+            if room < 0.0 {
+                return None;
+            }
             if clear_layers(
                 board,
                 &near,
