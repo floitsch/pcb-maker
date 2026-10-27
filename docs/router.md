@@ -181,6 +181,10 @@ model) and `tests`.
    end at 653 unconnected instead of 702 (docs/changelog.md, "trouble
    repair: cheaper exchanges"). Corridors alone were cheaper still but
    lost MegaDrive's designer route, whose victims need the detour.
+   Since 2026-10-27 a refusal's blockers are looked up in the map that
+   counts each conflict, nets left in a one-sided conflict after the
+   victims' reroute are routed again once, and a last pass with
+   ejection chains exists, off ("The last connections" below).
 8. **Cleanup.** Each net is rerouted alone with pure geometric cost and a high
    via cost; the result is kept only if strictly cheaper.
    After the via reduction and the spoke repairs, the straightening
@@ -4615,6 +4619,161 @@ did not know the parts' boards, it may have put a net's parts on both:
 its items across then count (a net the tool spread over two boards is
 not the design). Without a placement (route-kicad-board, drc-kicad-board)
 the checked board's own places decide.
+
+## The last connections (2026-10-27)
+
+The nightly's layout sweep of 2026-10-27 (main e7a12a8, tasks v7) left
+12 boards within five connections of a strict pass and with no new DRC
+finding. Each was diagnosed from the night's artifacts (the result
+board, its drc.json, `inspect-routing-run --reference`, the layout log),
+the designer's own board under KiCad's DRC, the designer tier's route of
+the designer's placement, and layouts again with
+`PCB_ROUTER_TROUBLE_WHY` (which names why each trouble exchange was
+refused). KiCad's open items, by cause:
+
+| Board | Open | Net(s) | What keeps it open | Whose |
+| --- | --- | --- | --- | --- |
+| jiran-ble-lite | 1 | GND | the two halves' GND, joined only by the frame's mouse-bite tabs; the designer's own board has the same item | input |
+| jetson-nano-baseboard | 1 | TMDS_D0_C_N | J1.11 in the HDMI connector's 0.4 mm row to R8.2, which other nets' tracks box in on F.Cu; every exchange either refused as "fixed copper in its way ()" (a bug, below) or a trade (1 open to 1 or 2) | routing |
+| OpenAirScope | 1 | GND | one ground pad stranded off the pour's main piece (an island on F.Cu); the SD-card nets beside it trade places (27 exchanges "1 open to 1") | routing |
+| BAGEL-MK1.1-Avocado | 1 | Net-(U504-ILM) | U504 (VQFN-HR on B.Cu) placed with pin 9's only exit facing another net's large THT pad: no path even through other copper from the first iteration ("the priced search closes nothing"); the designer tier fails the sibling U704.2 alike | placement |
+| ULK_sl_PG1316s | 2 | +1V5, GND | SW43 and U3 placed on the panel's frame below the half, across a mouse-bite tab no track crosses (the designer's: on the half) | placement |
+| laptop keyboard | 2 | RESET, VSS_PA | RESET: SW1 to U2's AC pads, no path at the class's 0.2/0.127 from the first iteration, on the designer's placement too (designer tier: the same item); VSS_PA: U2.F23 (aQFN inner pad, the designer's 0.127 mm neck) to C12, refused trades and GND among the victims | RESET: lattice/rules; VSS_PA: routing |
+| woagboard | 4 | Switch8, Switch15, Switch28, GND | SW8 and SW15 placed on the right half with their nets on U9 on the left, SW28 the other way; the halves are joined only by mouse-bite bridges. GND: a zone island between the halves, the designer's own | placement (3), input (1) |
+| ULK | 4 | reset_r, Net-(U5-+), GNDA | RSW2 placed on the panel's top rail, U5 on its bottom frame, across mouse-bite tabs (the designer's: on the right half) | placement |
+| Quanta75_BareRP2040_JLCPCBAoptimized | 4 | +3V3 (U1.10, U1.22), USB4+ (J7.A6), ~RESET (U1.26) | RP2040 QFN-56 (0.4 mm) and USB-C (0.5 mm) pads boxed in by the neighbours' exits; exchanges refused as trades (1 to 1, 2 to 2, 1 to 2) | routing |
+| reCamera_S101_v1.1 | 4 | GND | MIC1's four pads walled by the footprint's own copper ring (dead pads); the designer's own board leaves 3 | footprint (input) |
+| SUMEC_MK_IV | 5 | GND, MCU/SHLD, +12V | R12 and C19 (GND and SHLD, 4 items): the designer's own board leaves the same 4; IC2.11: a 0.45 mm pad no track of the class "High Power" (2.0 mm) enters (a dead pad; "Not targets" in handover.md) | input (4), rule (1) |
+| MIDAS-MK1.1-revA | 5 | MEM_CMD, MEM_DAT3, U106-CLK, U106-VDDIM, GND | U106, a TFBGA-153 at 0.5 mm: four inner balls only a via in the pad reaches (the designer's board has them; the router puts no via in an SMD pad by default, and the class via is 0.8 mm); the designer tier fails the same four. GND: a zone island, as on the designer tier | rule (4), routing (1) |
+
+Grouped: of the 34 open items, 10 are the input's (the designer's own
+board has them, or the footprint walls its pads), 5 a rule (a class
+wider than a pad, no via in a BGA's pad), 10 placement (9 items of 7
+parts put across a panel's mouse-bite tabs, which `sub_boards` does not
+take for a cut: only necks under 2 mm of board are; one pad the placer
+faced into another net's pad), 1 the lattice and the class's width (the
+keyboard's RESET, on the designer's placement too), and 8 routing:
+fine-pitch rows (jetson 1, keyboard 1, Quanta75 4) and two ground pads
+off their pour's main piece (OpenAirScope, MIDAS). On none of the
+routing ones did the budget run out while a repair converged: the
+trouble repair spent 0.0 to 5.7 s of work on them and refused every
+exchange.
+
+**Two faults of the trouble repair** (on by default).
+
+- *Blockers by the conflict's own map* (`Router::conflict_maps`,
+  stamping.rs; `blockers`, trouble.rs). A conflict of an escape stub is
+  counted in its stub's class map, the neck class where the stub is
+  narrower than the track; `blockers` looked the cell up in the node
+  class's map at that cell, found no net stamping it there, and refused
+  the exchange as "fixed copper in its way ()" with an empty list
+  (jetson's TMDS_D0_C_N and USB/C_USBSS_TX6_P, the OpenAirScope's
+  Display-RTC/CMD and DAT0, in the first route and the ladder alike).
+  The conflicts are now listed with the map that counts each, and the
+  blockers are the nets stamping that map there.
+- *A one-sided conflict after the victims' reroute.* With the blockers
+  named, TMDS_D0_C_N's exchange ended "clean false (TMDS_D0_C_N against
+  [HDMI_SHIELD])": the victim, of a wider clearance, routed hard around
+  the trouble-maker in its own map, and the trouble-maker's neck-width
+  map still saw the victim within its clearance. The nets still in
+  conflict after the victims are routed now lose the conflicted
+  branches and are routed again hard, once, in their own maps, before
+  the exchange is judged.
+
+`PCB_ROUTER_TROUBLE_WHY` now also names, for an exchange refused as not
+clean, the nets left in conflict and what their conflicts name.
+
+**The last pass** (`Config::last_connections`, router config
+`last_connections`, `PCB_ROUTER_LAST_CONNECTIONS`; off by default).
+Once the trouble repair's rounds leave at most that many open terminals
+(a signal net's unconnected ones, a pour net's pads off its main piece;
+only nets not complete are counted, so a complete board analyses no
+pour), a last pass runs within the same work (the repair's budget,
+half the negotiation's, and the router's deadline): ejection chains
+three deep (`push_on`: a victim left open is routed through others in
+turn, the nets of the chain protected, each step kept when it leaves
+the nets it changed with fewer open terminals and none in conflict),
+the victims routed board-wide (no corridor or window first), no early
+undo (it counts the victims' terminals before a chain can close them),
+and pour nets as trouble-makers and as victims. The rounds' refusals on
+these boards are mostly pure trades, "1 open to 1, 1 nets open to 1 (1
+displaced)": two nets for one place at a fine-pitch row, where the chain
+finds the displaced net's only way through the trouble-maker itself
+(refused: "it would displace the net the exchange is for").
+
+**Measured** (layout mode, tasks v7, the sweep's budgets and seeds;
+off x1863 = main 60395783; the fixes build/bin/pcb-maker-last1-g, the
+fixes and the last pass pcb-maker-last1-f, both on x1866's main; KiCad
+unconnected / strict pass / new strict findings / vias / work s / CPU
+s):
+
+| Board | off (x1863) | the fixes (the default) | the fixes and the last pass at 8 |
+| --- | --- | --- | --- |
+| reCamera_S101_v1.1 | 4 / no / 0 / 69 / 395 / 1163 | 4 / no / 0 / 69 / 394 / 1038 | 4 / no / 0 / 69 / 397 / 818 |
+| BAGEL-MK1.1-Avocado | 1 / no / 0 / 364 / 1460 / 3104 | 1 / no / 0 / 364 / 1460 / 2837 | 1 / no / 0 / 367 / 1394 / 2993 |
+| SUMEC_MK_IV | 5 / no / 0 / 123 / 924 / 3010 | 5 / no / 0 / 123 / 924 / 2170 | 5 / no / 0 / 123 / 931 / 2102 |
+| jetson-nano-baseboard | 1 / no / 0 / 607 / 1326 / 3230 | 1 / no / 0 / 607 / 1325 / 3083 | 1 / no / 0 / 607 / 1324 / 3180 |
+| OpenAirScope | 1 / no / 0 / 344 / 1425 / 3242 | 1 / no / 0 / 344 / 1425 / 3012 | 1 / no / 0 / 344 / 1422 / 3289 |
+| keyboard | 2 / no / 0 / 271 / 1178 / 2595 | 2 / no / 0 / 271 / 1178 / 2090 | 2 / no / 0 / 271 / 1208 / 2746 |
+| MIDAS-MK1.1-revA | 5 / no / 0 / 258 / 1326 / 2909 | 5 / no / 0 / 258 / 1326 / 2251 | 5 / no / 0 / 258 / 1326 / 3026 |
+| jiran-ble-lite | 1 / no / 0 / 79 / 605 / 1006 | 1 / no / 0 / 79 / 605 / 944 | 1 / no / 0 / 79 / 605 / 921 |
+| ULK_sl_PG1316s | 2 / no / 0 / 144 / 1143 / 1609 | 2 / no / 0 / 144 / 1143 / 1511 | 2 / no / 0 / 144 / 1146 / 1469 |
+| woagboard | 4 / no / 0 / 134 / 1420 / 3286 | 1 / no / 0 / 205 / 1423 / 1908 (WOAG) | 4 / no / 0 / 134 / 1420 / 2290 |
+| Quanta75_BareRP2040_JLCPCBAoptimized | 4 / no / 0 / 243 / 1212 / 3252 | 4 / no / 0 / 243 / 1212 / 2378 | 4 / no / 0 / 243 / 1317 / 2976 |
+| ULK | 4 / no / 0 / 108 / 1454 / 2894 | 4 / no / 0 / 108 / 1454 / 2156 | 4 / no / 0 / 108 / 1462 / 2334 |
+
+Sums: off 34 unconnected; the fixes 31 (woagboard's three, the
+placement's, below); with the last pass 34. No pass gained or lost, no
+new finding, work within a few seconds of off except Quanta75 with the
+last pass (1212 to 1317 s: the narrow-signal step's work went to the
+pass and a regular rung; still inside the layout's budget). CPU seconds
+are from a loaded, shared machine (load 20 to 45), not pairs: not a
+claim.
+
+WOAG: the fixes' binary was built on main 7adb78e (x1866), whose placer
+change of the day (copper graphics keep the edge margin from cutouts, a
+hole's mask margin to the far side) moved woagboard's placement (the
+other eleven placements are byte-identical to x1863's): SW8 and SW15 now
+sit on the left half with U9, SW28 on the right with U5, and all three
+connect; KiCad's one item left is the designer's own GND island. The
+routing on x1866's placement is the same with and without the fixes:
+x1866 alone gives the same row (90/91, 1 unconnected, 205 vias, work
+1422.6 s) on a byte-identical placement. It confirms the diagnosis
+above (those three were placement) and is not the router's gain.
+
+The expansion tier (route mode, 8 x 1, 30 s): the faults' fixes alone
+(the last pass off, the default) route all 46 boards identically (558
+unconnected, 24 passes, 1 new error, 4256 vias, work 1139 to 1140 s).
+With the last pass on at 8: 558 to 555 unconnected, passes 24 and 24,
+new strict errors 0 to 1, vias 4256 and 4256, work 1139 to 1147 s;
+moved: Miniboard 6 to 5 (an exchange kept), nervous-ecg 2 to 0
+unconnected with 1 clearance error (the last pass kept nothing there;
+its work moved the ladder's projection so the 0.075 mm rung ran, and
+that rung's board, with one violation of the router's own check between
+a GND track and Net-(U3-BIN), ranks before two open), AUSIGN 86 to 78
+vias, magnetorquer and rpi_cm5_dronecarrier the same counts, other
+vias.
+
+The eleven dense boards (layout mode, seed 1, 3 x 2; off x1863, on the
+fixes' binary): 10 of 11 identical in every count (unconnected, vias,
+work: 4in1-mini 81, 4in1 106, split72_left 21, DSP-ADAU1452 11, video
+190, SmartSpin2k 21, Glasgow 143, the 0xCB panel 0 and a pass,
+SNSP-CPU-01 53, MegaDrive 110). protoesp's placement differs (73 to 79
+unconnected, 1 to 7 new strict errors): the binary's base, x1866, places
+it differently (its placer change of the day), and x1866 itself on that
+placement gives the same row (79 unconnected, 7 new strict errors, 429
+vias, work 1455.4 s): the move is the placer's, not the router's.
+
+**Default: off.** The last pass closed no connection on the 12 boards
+it was built for, and on the expansion tier it moved three connections
+and one router-check violation, mostly through the ladder's timing; it
+stays a switch for experiments. The two faults' fixes are on. What
+would close these boards is not a deeper rip-up: the placement's mouse-
+bite tabs as cuts (`sub_boards` taking a row of NPTH holes across a neck
+as one), a via in a BGA's pad where the project's designer used one
+(`via_in_pad`), and, for the fine-pitch rows, the exit order decided
+before negotiation (open problem 2 in handover.md).
+
 
 ## Known limits / next steps
 

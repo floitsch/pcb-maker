@@ -11,6 +11,53 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-27 (the last connections: why the near-misses stay open)
+
+Branch last-connections; binaries build/bin/pcb-maker-last1-a to -g (off
+side x1863 = main 60395783). docs/router.md, "The last connections
+(2026-10-27)", has the diagnosis table, the design and the tables.
+
+- **The question.** The nightly's sweep left 12 boards within five
+  connections of a strict pass with no new finding. Why, and can a
+  bounded last-connections phase of the router close them?
+- **The diagnosis** (34 open items): 10 the input's (the designer's own
+  board has them: jiran's halves, woagboard's GND island, SUMEC's R12 and
+  C19; reCamera's MIC1 pads walled by its footprint's copper ring), 5 a
+  rule (SUMEC's 2.0 mm class at a 0.45 mm pad; MIDAS's TFBGA inner balls
+  that only a via in the pad reaches), 10 placement (ULK, ULK_sl and
+  woagboard: 7 parts placed across a panel's mouse-bite tabs, which
+  `sub_boards` does not take for a cut; BAGEL's U504 pin 9 faced into
+  another net's THT pad), 1 the lattice at the class's width (the
+  keyboard's RESET, failing on the designer's placement too), 8 routing
+  (fine-pitch rows on jetson, the keyboard, Quanta75; ground pads off
+  their pour on OpenAirScope and MIDAS). No routing item was a budget
+  that ran out: the trouble repair refused every exchange in 0 to 6 s of
+  work, mostly as pure trades ("1 open to 1").
+- **Two faults of the trouble repair, fixed (on):** its blockers looked
+  a neck-width stub's conflict up in the wrong class map and refused the
+  exchange as "fixed copper in its way ()" (jetson's TMDS_D0_C_N, the
+  OpenAirScope's SD nets); and a one-sided conflict left after the
+  victims' hard reroute (the trouble-maker's neck map against a victim of
+  a wider clearance) made exchanges "not clean": those nets are now
+  routed again hard once before the exchange is judged.
+  `PCB_ROUTER_TROUBLE_WHY` names the nets a refusal leaves in conflict.
+- **The last pass** (`last_connections`, off): ejection chains three
+  deep, victims board-wide, no early undo, pour nets taking part, within
+  the repair's own work. At 8 it closed no connection on the 12 boards;
+  on the expansion tier 558 to 555 unconnected with one router-check
+  violation more (nervous-ecg, by the ladder's timing). Off by default.
+- **Measured** (layout mode, tasks v7, the sweep's budgets and seeds;
+  off x1863): the 12 boards 34 to 31 KiCad unconnected with the fixes,
+  the three all woagboard's, from its placement on the binary's base
+  x1866 (SW8, SW15 and SW28 back on their halves), not from the router
+  (x1866 alone gives the same row); with the last pass at 8, 34 to 34. No pass gained or lost,
+  no new finding, work within the budget. The dense boards: 10 of 11
+  identical; protoesp's placement moved with x1866 (x1866 alone gives the same row). The
+  expansion tier: the fixes identical on all 46 rows.
+- **Next** (not the router's): mouse-bite tabs as cuts in `sub_boards`
+  (9 items on 3 boards), `via_in_pad` where the designer put vias in a
+  BGA's pads (MIDAS, 4), the fine-pitch exit order before negotiation
+  (open problem 2).
 ## Committed on 2026-10-27 (the third trial's open points)
 
 Branch trial3-followups (main 19bf4569, x1868), binaries
