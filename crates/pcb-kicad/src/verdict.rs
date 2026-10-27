@@ -1842,18 +1842,23 @@ fn next_actions(
     footprint: &[&DrcFinding],
     input: &[&DrcFinding],
 ) -> Vec<String> {
-    let mut actions = facts.input_warnings.clone();
+    let mut actions = Vec::new();
+    // First, ahead of the input's warnings: on a panel whose parts' boards
+    // are unknown nothing after it is about the boards as designed (the
+    // OpenESC panel's line came 21st, after its frames' marks, and before
+    // an outline suggestion for a panel whose frame is fixed).
     if let Some(sub) = &facts.sub_boards
         && sub.unassigned > 0
         && !sub.held
     {
         actions.push(format!(
-            "the board is a panel of {} different boards sharing net names, and {} movable parts belong to no sub-board that the fixed parts or the nets tell ({}): the placement put them where it would; give the designer's placed board with --reference <project-dir> (its places say each part's board), or hold each part in its board with region constraints",
+            "the board is a panel of {} different boards sharing net names, and {} movable parts belong to no sub-board that the fixed parts or the nets tell ({}): the placement put them where it would, the boards' parts mixed; give the designer's placed board with --reference <project-dir> (its places say each part's board), or hold each part in its board with region constraints, before acting on the room or the connections below",
             sub.count,
             sub.unassigned,
             sub.unassigned_parts.join(", ")
         ));
     }
+    actions.extend(facts.input_warnings.iter().cloned());
     if !facts.attempts_failed.is_empty() {
         actions.push(format!(
             "{} attempts of the router's ladder failed (a panic; attempts_failed in board-router.json has each message): the board is the best of the other attempts; report the panic ({})",
@@ -3472,6 +3477,27 @@ mod tests {
                 .iter()
                 .any(|action| action.contains("narrow-signal"))
         );
+    }
+
+    #[test]
+    fn a_panel_without_its_parts_boards_says_so_first() {
+        let mut facts = KiCadRunFacts::new("place-kicad-board");
+        facts.routes = false;
+        facts.input_warnings = vec!["fixed part U3 lies on 13 of the board's texts".into()];
+        facts.sub_boards = Some(crate::sub_boards::KiCadSubBoardsReport {
+            count: 2,
+            unassigned: 392,
+            unassigned_parts: vec!["C1".into(), "C2".into()],
+            ..Default::default()
+        });
+        let verdict = judge(&facts);
+        assert!(
+            verdict.next_actions[0].starts_with("the board is a panel of 2 different boards"),
+            "{:?}",
+            verdict.next_actions
+        );
+        assert!(verdict.next_actions[0].contains("--reference <project-dir>"));
+        assert!(verdict.next_actions[1].starts_with("fixed part U3"));
     }
 
     #[test]
