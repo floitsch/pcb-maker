@@ -2855,21 +2855,20 @@ mod tests {
     /// them (since 2026-10-27; test_run.py's `MeasuredFloor.replay`: the
     /// same). `knots`: (time, the floor's view, MemAvailable less growth,
     /// and MemAvailable of the machine without these boards, in MB), each
-    /// holding until the next; `boards`: (since, expected MB, seconds) in
-    /// the harness's order. A board looks every `poll` s from `since` and
-    /// starts when the view less the boards running less its own expected
-    /// peak leaves `floor_mb`; it holds its expected peak (the worst case:
-    /// resident at its reservation) for its seconds. Returns the starts, the
-    /// seconds waited in all, the last board's end (None: one never
-    /// started) and the least MemAvailable less `stress_mb`.
+    /// holding until the next; `boards`: (since, expected MB, seconds,
+    /// resident MB: its measured peak). A board looks every `poll` s from
+    /// `since` and starts when the view less the expected peaks of the
+    /// boards running less its own leaves `floor_mb`; it then holds its
+    /// expected peak in the view and its measured peak resident for its
+    /// seconds. Returns the starts (None: not within `horizon`), the seconds
+    /// waited in all, how many started and the least MemAvailable.
     fn floor_replay(
         knots: &[(u32, f64, f64)],
-        boards: &[(u32, f64, u32)],
+        boards: &[(u32, f64, u32, f64)],
         floor_mb: f64,
         horizon: u32,
         poll: u32,
-        stress_mb: f64,
-    ) -> (Vec<Option<u32>>, u32, Option<u32>, f64) {
+    ) -> (Vec<Option<u32>>, u32, usize, f64) {
         let mut starts: Vec<Option<u32>> = vec![None; boards.len()];
         let mut lowest = f64::INFINITY;
         let mut knot = 0;
@@ -2878,83 +2877,170 @@ mod tests {
                 knot += 1;
             }
             let (_, view, available) = knots[knot];
-            let mut running: f64 = boards
-                .iter()
-                .zip(&starts)
-                .filter(|((_, _, seconds), start)| {
-                    start.is_some_and(|start| start <= t && t < start + seconds)
-                })
-                .map(|((_, mb, _), _)| mb)
-                .sum();
-            for (index, &(since, mb, _)) in boards.iter().enumerate() {
+            let (mut reserved, mut resident) = (0.0, 0.0);
+            for (&(_, mb, seconds, peak), start) in boards.iter().zip(&starts) {
+                if start.is_some_and(|start| start <= t && t < start + seconds) {
+                    reserved += mb;
+                    resident += peak;
+                }
+            }
+            for (index, &(since, mb, _, peak)) in boards.iter().enumerate() {
                 if starts[index].is_none()
                     && t >= since
                     && (t - since) % poll == 0
-                    && view - running - mb >= floor_mb
+                    && view - reserved - mb >= floor_mb
                 {
                     starts[index] = Some(t);
-                    running += mb;
+                    reserved += mb;
+                    resident += peak;
                 }
             }
-            lowest = lowest.min(available - running - stress_mb);
+            lowest = lowest.min(available - resident);
         }
         let waited = boards
             .iter()
             .zip(&starts)
-            .map(|((since, _, _), start)| start.unwrap_or(horizon) - since)
+            .map(|(board, start)| start.unwrap_or(horizon) - board.0)
             .sum();
-        let end = boards
-            .iter()
-            .zip(&starts)
-            .map(|((_, _, seconds), start)| start.map(|start| start + seconds))
-            .collect::<Option<Vec<u32>>>()
-            .and_then(|ends| ends.into_iter().max());
-        (starts, waited, end, lowest)
+        let started = starts.iter().filter(|start| start.is_some()).count();
+        (starts, waited, started, lowest)
     }
+
+    /// The measured floor of a layout board (2026-10-27: `FLOOR_KEEP_MB` +
+    /// 6886, the 0.95 quantile of the outside memory's rises within 10
+    /// minutes over three hours of samples, + 56, the layout kind's
+    /// overshoot in estimates.json).
+    const MEASURED_FLOOR_MB: f64 = FLOOR_KEEP_MB + 6886.0 + 56.0;
 
     /// The evening of 2026-10-26 (20:37, build/pour6-dense-off-x1844.err):
     /// run.py's four boards (protoesp, video, DSP-ADAU1452, SNSP-CPU-01:
-    /// expected 587, 4389, 1717, 3004 MB, measured 1205, 1731, 1850,
-    /// 1632 s; in the order they started) waited from 0 with
-    /// `--min-free-gb 10`. The machine without them, from the log's lines
-    /// (MemAvailable less growth, MemAvailable; the boards that ran added
-    /// back at their expected peaks): 9.4 and 30.1 GB at 0, 14.0 and 34.5
-    /// at 2210 s, 15.4 and 32.7 at 3364 s, 16.1 and 36.7 at 4235 s, 19.1
-    /// and 37.4 at 4371 s; between two lines at most what kept the boards
-    /// that still waited out under 10 GB (12 539 MB from 2210 s: 10 240 +
-    /// 587 + 1717 less 1). The stress: the outside memory's largest rise
-    /// within 10 minutes measured on the night after. test_run.py's
+    /// expected 587, 4389, 1717, 3004 MB; measured 1205, 1731, 1850,
+    /// 1632 s and peaks of 232, 2439, 1033, 1108 MB; in the order they
+    /// started) waited from 0 with `--min-free-gb 10`. The machine without
+    /// them, from the log's lines (MemAvailable less growth with the boards
+    /// that ran added back at their expected peaks, MemAvailable with their
+    /// measured peaks); between two lines at most what kept the boards that
+    /// still waited out under 10 GB. test_run.py's
     /// `test_the_evening_replayed_with_the_measured_floor`: the same.
     const EVENING_KNOTS: [(u32, f64, f64); 5] = [
         (0, 9626.0, 30822.0),
         (2210, 12539.0, 35328.0),
-        (3364, 15770.0, 33485.0),
-        (4235, 16486.0, 37581.0),
-        (4371, 19558.0, 38298.0),
+        (3364, 15770.0, 33102.0),
+        (4235, 16486.0, 35617.0),
+        (4371, 19558.0, 35626.0),
     ];
-    const EVENING_BOARDS: [(u32, f64, u32); 4] = [
-        (0, 587.0, 1205),
-        (0, 4389.0, 1731),
-        (0, 1717.0, 1850),
-        (0, 3004.0, 1632),
+    const EVENING_BOARDS: [(u32, f64, u32, f64); 4] = [
+        (0, 587.0, 1205, 232.0),
+        (0, 4389.0, 1731, 2439.0),
+        (0, 1717.0, 1850, 1033.0),
+        (0, 3004.0, 1632, 1108.0),
     ];
-    const STRESS_MB: f64 = 3800.0;
+
+    fn last_end(starts: &[Option<u32>], boards: &[(u32, f64, u32, f64)]) -> Option<u32> {
+        starts
+            .iter()
+            .zip(boards)
+            .map(|(start, board)| start.map(|start| start + board.2))
+            .max()
+            .flatten()
+    }
 
     #[test]
     fn the_evening_replayed_with_the_measured_floor() {
         // With 10 GB the replay gives the evening's starts (2210, 3364,
-        // 4235, 4371 s, at the next look) and the run ends at 6095 s
-        // (22:18 was 6045 s after 20:37).
-        let (starts, waited, end, lowest) = floor_replay(
-            &EVENING_KNOTS,
-            &EVENING_BOARDS,
-            10_240.0,
-            9000,
-            15,
-            STRESS_MB,
-        );
+        // 4235, 4371 s, at the next look): 14 220 s waited, the last board
+        // ends at 6095 s (22:18 was 6045 s after 20:37).
+        let (starts, waited, _, lowest) =
+            floor_replay(&EVENING_KNOTS, &EVENING_BOARDS, 10_240.0, 9000, 15);
         assert_eq!(starts, [Some(2220), Some(3375), Some(4245), Some(4380)]);
-        assert_eq!((waited, end), (14_220, Some(6095)));
-        assert!(lowest > FLOOR_KEEP_MB, "{lowest}");
+        assert_eq!(
+            (waited, last_end(&starts, &EVENING_BOARDS)),
+            (14_220, Some(6095))
+        );
+        // The measured floor: protoesp at once, DSP at 2220, SNSP-CPU-01 at
+        // 4245: 9840 s waited, the last ends at 5877 s; the least
+        // MemAvailable 28.9 GB (29.7 with 10 GB), above 2 GB.
+        let (measured, measured_waited, _, measured_lowest) =
+            floor_replay(&EVENING_KNOTS, &EVENING_BOARDS, MEASURED_FLOOR_MB, 9000, 15);
+        assert_eq!(measured, [Some(0), Some(3375), Some(2220), Some(4245)]);
+        assert_eq!(
+            (measured_waited, last_end(&measured, &EVENING_BOARDS)),
+            (9840, Some(5877))
+        );
+        assert_eq!(
+            (lowest.round(), measured_lowest.round()),
+            (30_431.0, 29_630.0)
+        );
+        assert!(measured_lowest > FLOOR_KEEP_MB);
+    }
+
+    /// The night of 2026-10-26/27 (23:39 from 0; the samples of
+    /// experiments/ledger-floor/sampler.py, replay.py): the first hour's
+    /// fourteen boards of more than 3 GB that only the floor of 10 GB held
+    /// back (since, expected MB, measured seconds, measured peak of the
+    /// process tree); the machine without them in steps of 120 s, each the
+    /// least view and MemAvailable within it. test_run.py's
+    /// `test_tonight_replayed_with_the_measured_floor`: the same.
+    const TONIGHT_KNOTS: [(u32, f64, f64); 30] = [
+        (0, 11162.0, 38620.0),
+        (120, 22621.0, 38300.0),
+        (240, 29525.0, 37852.0),
+        (360, 33072.0, 40831.0),
+        (480, 30588.0, 39844.0),
+        (600, 28889.0, 39164.0),
+        (720, 28736.0, 38054.0),
+        (840, 24076.0, 39841.0),
+        (960, 31215.0, 38906.0),
+        (1080, 38250.0, 43455.0),
+        (1200, 33154.0, 38319.0),
+        (1320, 31957.0, 37410.0),
+        (1440, 34188.0, 39803.0),
+        (1560, 37543.0, 43173.0),
+        (1680, 33445.0, 38991.0),
+        (1800, 34963.0, 39539.0),
+        (1920, 34827.0, 39380.0),
+        (2040, 37082.0, 40980.0),
+        (2160, 30387.0, 40701.0),
+        (2280, 29594.0, 38188.0),
+        (2400, 27644.0, 34748.0),
+        (2520, 25104.0, 32919.0),
+        (2640, 21239.0, 33207.0),
+        (2760, 15488.0, 33819.0),
+        (2880, 19348.0, 33042.0),
+        (3000, 15891.0, 32708.0),
+        (3120, 16819.0, 33132.0),
+        (3240, 16410.0, 30462.0),
+        (3360, 11184.0, 30540.0),
+        (3480, 13777.0, 31384.0),
+    ];
+    const TONIGHT_BOARDS: [(u32, f64, u32, f64); 14] = [
+        (81, 8982.0, 914, 4388.0),
+        (81, 8285.0, 729, 4412.0),
+        (81, 7733.0, 1789, 2988.0),
+        (81, 7202.0, 654, 4010.0),
+        (81, 6729.0, 3039, 4293.0),
+        (81, 6359.0, 1944, 3955.0),
+        (81, 5650.0, 2799, 2513.0),
+        (860, 3584.0, 2780, 2364.0),
+        (81, 4308.0, 1039, 2558.0),
+        (81, 4262.0, 1584, 2559.0),
+        (837, 4063.0, 683, 832.0),
+        (877, 4002.0, 2148, 3096.0),
+        (1044, 3888.0, 411, 4590.0),
+        (1028, 3584.0, 2241, 1417.0),
+    ];
+
+    #[test]
+    fn tonight_replayed_with_the_measured_floor() {
+        // 10 GB: 9 of the 14 start within the hour, 20 766 s waited; the
+        // measured floor: 10, 18 376 s; the least MemAvailable 20.0 and
+        // 17.5 GB, above 2 GB.
+        let (_, waited, started, lowest) =
+            floor_replay(&TONIGHT_KNOTS, &TONIGHT_BOARDS, 10_240.0, 3600, 15);
+        assert_eq!((started, waited, lowest.round()), (9, 20_766, 20_495.0));
+        let (_, waited, started, lowest) =
+            floor_replay(&TONIGHT_KNOTS, &TONIGHT_BOARDS, MEASURED_FLOOR_MB, 3600, 15);
+        assert_eq!((started, waited, lowest.round()), (10, 18_376, 17_957.0));
+        assert!(lowest > FLOOR_KEEP_MB);
     }
 }

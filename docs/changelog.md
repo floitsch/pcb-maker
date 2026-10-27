@@ -11,6 +11,46 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-27 (the ledger's floor from measured headroom)
+
+Branch ledger-floor (docs/benchmarks.md, "Memory ledger", "The floor from
+measured headroom"). The harness's admission only; routing and placement
+are unchanged.
+
+- **The measurement**: a read-only sampler every 10 s for three hours of
+  a busy night (1091 samples; experiments/ledger-floor). Outside the
+  ledger 16.7-27.5 GB (p50 18.1: the browser 8 GB, the agents' builds up
+  to 7.5 GB, kicad-cli and the nightly's binary outside any holder); its
+  rise within 10 minutes p50 2.5, p95 6.7, max 8.9 GB (builds, 26
+  episodes). No binary above its reservation at any sample; the holders
+  resident at 13.4 GB beside 33.7 reserved (medians); MemAvailable never
+  below 17.3 GB. The overshoot of the estimates (a time-ordered replay,
+  788 rows): p95 at or below 0 but for layout (+52 MB); two watchdog
+  ends in the week; two global OOMs (2026-10-24, -25) with the old 16 GB
+  swap full killed browser processes, no pcb-maker run. The 10 GB floor
+  alone held 3095 of 3893 waits in the logs since 2026-10-22 (2.89 of 3.27
+  million board-seconds), with a median slack of 8.6 GB.
+- **The floor**: `FLOOR_KEEP_MB` (2 GB) + the 0.95 quantile of the
+  outside memory's 10-minute rise (samples of the last six hours beside
+  the ledger, `<ledger>.headroom.json`, written by run.py's gate every
+  10 s and by `benchmarks/ledger_headroom.py --sample`) + the board's
+  kind's overshoot (estimates.json `overshoot`, from
+  `tier_estimates.py --refresh`); 10 GB without an hour of samples;
+  `--min-free-gb` overrides. `measured_floor_mb` in ledger.rs and
+  harness_common.py; `pcb-maker ledger` prints it. Measured: 8.8 GB
+  (layout 8990 MB). scripts/nightly.sh drops its `--min-free-gb 10`.
+- **The replays** (both languages): the evening of 2026-10-26, four
+  boards: 14 220 s waited, the last end at 6095 s with 10 GB (the
+  evening's starts), 9840 s and 5877 s with the measured floor, the least
+  MemAvailable 28.9 GB. Tonight's first hour, 14 boards: 9 started and
+  20 766 s waited with 10 GB, 10 and 18 376 s measured, 17.5 GB least.
+  Three hours, 123 boards (replay.py): 10.1 to 8.5 board-hours waited,
+  the least MemAvailable 9.2 GB; with every board resident at its
+  expected peak 4.1 GB (10 GB: 7.5; 6 GB: 1.4, below the 2 GB to keep).
+- **Not changed**: the capacity (56.7 GB) is 11-21 GB more than the
+  machine has beside the memory outside the ledger, and binaries admit by
+  it alone.
+
 ## Committed on 2026-10-27 (router profile round 2: the expansion's remaining maps, the next pop's node and its blocked-step bits prefetched)
 
 Branch router-profile-2, snapshot x14967 against main's x1851

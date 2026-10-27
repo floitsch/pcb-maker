@@ -298,15 +298,17 @@ change of the observed size needs; `--metric first_open|objective|crossings`
 judges a proxy instead (`--tool` counts the objective and the crossings
 of each placed board, cached by its sha256 in `build/placer-ab-signals`).
 
-## Memory ledger: who runs next (2026-10-24, the drain 2026-10-25, its feasibility cap, its end and short requests 2026-10-26)
+## Memory ledger: who runs next (2026-10-24, the drain 2026-10-25, its feasibility cap, its end and short requests 2026-10-26, the measured floor 2026-10-27)
 
 Benchmarks share the machine through the memory ledger
 (`$XDG_RUNTIME_DIR/pcb-maker-ledger.json`; how a run reserves and waits:
 [benchmarks/agent-tasks/README.md](../benchmarks/agent-tasks/README.md),
 "Runs side by side, kept apart by the memory ledger", and
-[agents.md](agents.md), "Memory: the machine's ledger"). Pass
-`--min-free-gb 10` to run.py beside other agents; `--lock` still takes
-the tier lock for wall or CPU measurements and works as before.
+[agents.md](agents.md), "Memory: the machine's ledger"). run.py's floor
+of available memory is measured (since 2026-10-27, "The floor from
+measured headroom" below; 10 GB without samples); `--min-free-gb`
+overrides it. `--lock` still takes the tier lock for wall or CPU
+measurements and works as before.
 
 **Admission is ordered.** A request that waits is in the ledger (megabytes
 0, `waiting_mb`, `waiting_since`; `pcb-maker ledger` lists it): run.py's
@@ -553,8 +555,170 @@ below theirs (18-21 GB still to grow beside 30-34 GB reserved): with the 10 GB f
 of the 56.7. A floor of 6 GB would have started the board at once
 (9.4 - 2.9 = 6.5 GB) and left 6.5 GB for the memory outside the ledger to
 grow into while every run peaks. Whether that is safe depends on how far
-that memory moves (the browser, builds), which was not measured; the
-floor is left as it is (`--min-free-gb 10` beside other agents).
+that memory moves (the browser, builds), which was not measured then; it
+is now (next paragraphs): 6 GB is not enough, 8.8 GB is.
+
+**The floor from measured headroom** (2026-10-27). run.py's floor of
+available memory is no longer a number by opinion: unless
+`--min-free-gb` is given (an explicit override, as before) it is, per
+board,
+
+- `FLOOR_KEEP_MB`, 2 GB: the MemAvailable never to go below (the
+  kernel then reclaims and swaps hard);
+- plus the memory outside the ledger's growth: the 0.95 quantile of how
+  far it rose within 10 minutes of a sample (`HEADROOM_QUANTILE`,
+  `HEADROOM_WINDOW_SECONDS`), over the samples of the last six hours;
+- plus the board's tier's overshoot: the 0.95 quantile of measured peak
+  less what the estimates declared, at least 0, per kind
+  (estimates.json's `overshoot`; a kind without one falls back as the
+  estimates do, short and schematic to layout; else 0);
+
+and 10 GB (`DEFAULT_FLOOR_MB`) without an hour of samples
+(`HEADROOM_MIN_SAMPLES`, 360) whose newest is at most a day old. The
+waiting entries carry it (`floor_mb`), so the drain reads it as before.
+`measured_floor_mb` in ledger.rs and harness_common.py (the same rule);
+run.py prints it at the start (`memory floor: layout 8.8 GB (measured:
+2.0 GB to keep + 6.7 GB outside growth + 0.1 GB overshoot (1091
+samples))`) and reads it again on every poll of a wait.
+
+*The sampler.* The samples live beside the ledger,
+`<ledger>.headroom.json` (`$XDG_RUNTIME_DIR/pcb-maker-ledger.json.headroom.json`):
+one every 10 s at most, whoever writes it, each `[time, MemAvailable, the
+memory outside the ledger, reserved, still to grow, the holders' memory
+above their reservations]` in MB (outside: MemTotal less MemAvailable less
+the resident memory of every holder's process tree, a tree stopping at
+another holder), and a `summary` the floor reads. run.py's MemoryGate
+samples on a thread while it runs (so the nightly's stages and every
+agent's run.py keep it fresh, and the window is the busy hours);
+`python3 benchmarks/ledger_headroom.py --sample [--for S]` samples for
+anyone else and `python3 benchmarks/ledger_headroom.py` prints the
+summary and the floor per kind. One sample reads /proc once (about 30 ms
+of CPU). `pcb-maker ledger` ends with run.py's floor before a tier's
+overshoot. `tier_estimates.py --refresh` computes the overshoot: each
+new source's rows against what the sidecar declared for them before it
+(the newest three sources per kind); the committed sidecar's section is
+the replay of its own twelve sources
+(`experiments/ledger-floor/overshoot.py --sidecar`), its rows unchanged.
+scripts/nightly.sh no longer passes `--min-free-gb 10`; ablation.py
+passes it only when given.
+
+*The measurement* (experiments/ledger-floor: sampler.py, samples.py,
+overshoot.py, waits.py, replay.py). A read-only sampler every 10 s from
+2026-10-26 23:39 to 02:41 (1091 samples, four agents and the nightly's
+designer stage; MemTotal 62.7 GB, 32.5-33.4 GB of the 48 GB of swap in
+use throughout):
+
+| | p5 | p50 | p95 | p99 | max |
+| --- | --- | --- | --- | --- | --- |
+| outside the ledger (GB) | 16.7 | 18.1 | 23.1 | 25.5 | 27.5 |
+| its rise within 1 min | 0.0 | 0.5 | 2.9 | 3.8 | 5.2 |
+| its rise within 10 min | 0.1 | 2.5 | **6.7** | 8.1 | 8.9 |
+| its rise within 30 / 60 min | 0.5 / 0.7 | 4.6 / 5.9 | 9.4 / 9.6 | 10.5 / 10.6 | 11.2 |
+| MemAvailable | 24.6 | 30.4 | 36.3 | 38.6 | 40.4 (least 17.3) |
+| MemAvailable less growth (the floor's view) | -1.4 | 10.3 | 18.3 | 22.5 | 26.2 |
+| reserved / the holders' trees resident | 25.6 / 9.1 | 33.7 / 13.4 | 45.2 / 18.5 | 50.6 / 26.8 | 55.0 / 28.5 |
+
+Outside the ledger: the browser 8.0-8.4 GB, the agents' builds (rustc
+up to 7.5 GB, clippy-driver 1.9; 26 episodes in three hours; rustc grew
+most in 333 of the 380 ten-minute rises above 4 GB, addr2line, up to
+4.9 GB, in the other 47), kicad-cli 2.1-2.2 GB and the nightly's binary
+1.3-2.1 GB not under any holder, the agents' own processes (claude 1.9-2.1,
+codex 1.2), perf up to 2.0. Without the windows of this work's own two
+builds the 10-minute p95 is 7.1 GB. The floor's view went below 0 at about
+5 % of the samples (binaries keep no floor and admit by the capacity
+alone) while MemAvailable never went below 17.3 GB: the growth term counts
+every reservation at its expected peak, and the holders' trees held
+13.4 GB beside 33.7 GB reserved at the median. No binary's process tree was above
+its reservation at any sample (a harness's own reservation is left out:
+its tree holds its boards' binaries, which hold their own). In the logs
+of the week two routes were ended by the watchdog for growing past their
+reservation with no room (ducktop2 in dp5-rules: 5398 past 5310 MB, 4618
+past 4425).
+
+The overshoot, a time-ordered replay of the committed estimates rule over
+the sidecar's sources and the 2026-10-26 night (each source against the
+estimates of the sources before it; peak less declared, MB):
+
+| kind | rows | over | p50 | p95 | p99 | max |
+| --- | --- | --- | --- | --- | --- | --- |
+| designer | 333 | 16 | -385 | -27 | 973 | 2158 |
+| expansion | 92 | 0 | -79 | -15 | -14 | -14 |
+| layout | 327 | 18 | -855 | 52 | 1969 | 3110 (ULK, from the size model) |
+| short | 36 | 0 | -195 | -67 | 0 | 0 |
+
+The committed sidecar's section (its twelve sources, the newest three per
+kind): layout 56 MB, designer 91, short and expansion 0. The 1.25 margin of
+the estimates covers 95 % of the rows; the overshoot is the small part of
+the floor. The floor from these: layout 8990 MB (8.8 GB), designer 9025,
+short and expansion 8934.
+
+OOM kills in the week (`journalctl -k`): on 2026-10-21 four pcb-maker
+routes (before the ledger); on 2026-10-24 15:06 and 2026-10-25 18:10 the
+kernel killed browser processes and two coredump helpers, no pcb-maker
+run, with the swap (then 16 GB) full: an agent's copied binary
+(dp4-exp-via: 21 GB in all; dp5-dev-bin5: 11.8 GB), the browser (12.1 and
+8.8 GB), codex (7.3, 5.5) and 8.6 and 12.3 GB of shared memory (tmpfs)
+outside the ledger. Whether those binaries kept to their reservations the
+kernel's log does not say. Given the admissions that happened tonight a
+floor lower by D lets the harnesses commit at most D more (each checks the
+one MemAvailable less growth, and an admission lowers it at once), so with
+the least MemAvailable of 17.3 GB any floor kept 2 GB.
+
+*What the 10 GB floor cost.* The harnesses' waiting lines since
+2026-10-22 (experiments/ledger-floor/waits.py over the 520 logs with
+them): 3893 waits of run.py's boards, 3.27 million board-seconds; at the
+wait's beginning the ledger had room in all but one, and the floor alone
+held 3095 of them (2.89 million board-seconds; ordered admission and the
+drain 797, 0.37 million). The slack then (MemAvailable less growth less
+the board): p5 2.2, p50 8.6, p95 9.8 GB. A floor of 8.8 GB would have
+started 1381 of them at once (0.54 million board-seconds of their
+waiting), 6 GB 2597 (1.51 million). In tonight's samples run.py's boards
+waited 18.9 board-hours, 13.1 of them held by the floor alone; at
+8.8 GB 3.8 board-hours of that had room (1.2 at 10 GB: the 15 s look).
+
+*The replays* (in both languages: ledger.rs `floor_replay`, test_run.py
+`MeasuredFloor.replay`; the night's in full in replay.py). A harness's
+boards against the machine as it was without them (the floor's view and
+MemAvailable with their reservations and resident memory added back), a
+look every 15 s, a board starting when the view less the boards running
+less its expected peak leaves the floor, then holding its measured
+memory:
+
+| | floor | boards started | waited | last end | least MemAvailable |
+| --- | --- | --- | --- | --- | --- |
+| the evening (4 boards, from 20:37) | 10 GB | 4 | 14 220 s | 6095 s | 29.7 GB |
+| | measured, 8.8 GB | 4 | 9 840 s | 5877 s | 28.9 GB |
+| tonight's first hour (14 boards over 3 GB, 120 s steps) | 10 GB | 9 | 20 766 s | | 20.0 GB |
+| | measured | 10 | 18 376 s | | 17.5 GB |
+| tonight, three hours (123 boards, 10 s, their measured memory) | 10 GB | 123 | 10.1 board-hours | | 12.6 GB |
+| | measured | 123 | 8.5 board-hours | | 9.2 GB |
+| | 6 GB | 123 | 5.8 board-hours | | 9.4 GB |
+| the same, each board resident at its expected peak | 10 GB | 114 | 37.4 board-hours | | 7.5 GB |
+| | measured | 118 | 29.4 board-hours | | 4.1 GB |
+| | 6 GB | 120 | 27.4 board-hours | | **1.4 GB** |
+
+With 10 GB the evening's replay gives the evening's starts (2220, 3375,
+4245, 4380 s against the log's 2210, 3364, 4235, 4371). The measured
+floor keeps 2 GB in every replay, in the worst case too; 6 GB does not
+(the finding's "6 GB would have started the board at once" holds for that
+board alone; beside the night's other boards at their expected peaks the
+machine would have come within 1.4 GB). With the outside memory's 10-minute
+p95 subtracted once more at every second (a build beyond the night's own)
+the measured floor's three-hour replay keeps 2.5 GB. The other runs are
+replayed as they happened: boards that start sooner would have let the
+drain end sooner too, not counted. Tests
+`the_floor_is_measured_from_the_headroom_samples`,
+`the_evening_replayed_with_the_measured_floor`,
+`tonight_replayed_with_the_measured_floor` (ledger.rs) and test_run.py's
+`MeasuredFloor` (the same numbers; and the sample of a process tree,
+the samples' bookkeeping, the gate's floor and its sampler);
+test_tier_estimates.py's overshoot. Routing and placement are unchanged.
+
+What the measurement also says: the ledger's capacity (MemTotal less the
+6 GB margin, 56.7 GB) is 11-21 GB more than the machine can give beside
+the 16.7-27.5 GB outside it, and binaries admit by the capacity alone;
+what kept MemAvailable high is that runs stay far below their
+reservations. Not changed here.
 
 Older binaries and harness copies ignore the new fields (`floor_mb`,
 `drain_after`, `expected_end`, `priority`) and do not drain; an older

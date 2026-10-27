@@ -76,8 +76,12 @@ def boards_held_by_the_floor(samples):
             for s in samples:
                 if s["t"] < board["start"] - 1:
                     continue
-                entry = next((e for e in s["entries"] if e["pid"] == board["holder"]
-                              and (e.get("megabytes") or 0) > 0), None)
+                # run.py's entry, then the binary's it was moved to (the
+                # same holding time; the binary's label names the board).
+                entry = next((e for e in s["entries"] if (e.get("megabytes") or 0) > 0 and (
+                    e["pid"] == board["holder"] or (board["name"] in e["label"]
+                                                    and abs((e.get("held_since") or 0) - board["start"]) < 3))),
+                             None)
                 if entry is None and s["t"] > board["start"] + 30:
                     break
                 if entry is not None:

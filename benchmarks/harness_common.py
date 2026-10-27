@@ -950,16 +950,19 @@ def memory_sample(reservations, now=None, table=None, available_mb=None, total_m
     children = {}
     for pid, (parent, _) in table.items():
         children.setdefault(parent, []).append(pid)
+    # A holder's tree stops at another holder (a harness's reservation and
+    # the binaries below it that hold their own): each counts its own.
+    holders = {r["pid"] for r in reservations if r.get("megabytes", 0.0) > 0 and r.get("pid") in table}
     counted = set()
     trees = 0.0
     over = 0.0
-    for r in sorted(reservations, key=lambda r: -r.get("megabytes", 0.0)):
-        if r.get("megabytes", 0.0) <= 0 or r.get("pid") not in table:
+    for r in reservations:
+        if r.get("pid") not in holders or r["pid"] in counted:
             continue
         tree, stack = 0.0, [r["pid"]]
         while stack:
             pid = stack.pop()
-            if pid in counted:
+            if pid in counted or (pid in holders and pid != r["pid"]):
                 continue
             counted.add(pid)
             tree += table.get(pid, (0, 0.0))[1]

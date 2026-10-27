@@ -528,8 +528,14 @@ How the runner shares the machine:
   or agents hold count, so jobs started together, here or elsewhere, do
   not overcommit; the floor covers what is not in the ledger (other
   projects, older binaries' growth). Admission comes before the
-  designer's DRC (kicad-cli, 2.2 GB). Use 20 GB beside the Freerouting
-  and cold-route sweeps, 12 on a quiet machine. triage.py and
+  designer's DRC (kicad-cli, 2.2 GB). Without `--min-free-gb` (since
+  2026-10-27) the floor is measured per board: 2 GB, plus the 0.95
+  quantile of the memory outside the ledger's rise within 10 minutes (the
+  samples run.py's gate writes beside the ledger every 10 s), plus the
+  board's kind's overshoot (estimates.json); 10 GB without an hour of
+  samples (8.8 GB on the night it was measured; docs/benchmarks.md,
+  "The floor from measured headroom"; `python3
+  benchmarks/ledger_headroom.py` prints it). Give it to override. triage.py and
   import_pending.py admit by the same rule (`harness_common.memory_room`;
   triage fails closed when nothing is reserved).
 - **Per-board estimates** (since 2026-10-26, every tier and the sweep):

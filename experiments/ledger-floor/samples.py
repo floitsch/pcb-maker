@@ -61,7 +61,10 @@ def main():
     compact = [[s["t"], s["available"], s["outside"]] for s in samples]
     for window in (60, 600, 1800, 3600):
         print(f"  its rises within {window // 60:2} min (GB): {quantiles(harness_common.outside_rises(compact, window))}")
-    over = [sum(max(0.0, e["tree"] - e["megabytes"]) for e in s["entries"] if (e.get("megabytes") or 0) > 0)
+    # (a harness's own reservation, run.py: ..., is left out: its tree holds
+    # its boards' binaries, which hold their own)
+    over = [sum(max(0.0, e["tree"] - e["megabytes"]) for e in s["entries"]
+                if (e.get("megabytes") or 0) > 0 and not e["label"].startswith("run.py:"))
             for s in samples]
     print(f"the runs above their reservations, summed (GB): {quantiles(over)}")
     view = [s["available"] - growth(s) for s in samples]

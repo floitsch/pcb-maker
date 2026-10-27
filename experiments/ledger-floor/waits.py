@@ -93,7 +93,7 @@ def main():
     floors = sorted({w["begun"]["floor"] for w in floor})
     print(f"held by the floor alone (floors {floors} GB): the slack, MemAvailable less growth less the board, "
           f"at the wait's beginning")
-    for limit in (8, 6, 4, 3, 2):
+    for limit in (8.8, 8, 6, 4, 2):
         started = [w for w in floor
                    if w["begun"]["available"] - w["begun"]["growth"] - w["begun"]["expected"] >= limit]
         print(f"  a floor of {limit} GB starts {len(started):4} of {len(floor)} at once "
