@@ -11,6 +11,92 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-27 (every ladder rung keeps the disallowed layers closed; the narrow step keeps rule widths)
+
+Branch ladder-rules; snapshots x15090 (both fixes) and x15091 (x15090
+with a `disallow track` rule honoured only where its findings are errors:
+the measured on side but for the dense layouts). Off side x1856 (main;
+x1855 and x1856 route as x1854: the small rule boards, right_io and
+left_io give x1854's rows of build/dp7-rules; ducktop2-center's off row
+is x1854's, build/dp7-rules/x1854-30-center, not rerun: 15 GB on a full
+machine). docs/router.md, "Project
+rules", "Disallowed layers and rule widths on every rung", has the design.
+
+- **Every rung keeps the disallowed layers closed.** The project gives the
+  router, per net, the layers where a `disallow track` rule surely holds
+  for its tracks (`track_disallowed`; KiCad's `inDiffPair()` known; only
+  rules whose findings are errors), and every lowering keeps the net's
+  class off them (`RuleClass::layers`, with a pair's layers). Before, only
+  the pairs' nets were kept off, and the exclusive planes kept the rest
+  off on the rungs that have them: on right_io with the crossovers (x15074)
+  the probes ranked pours-as-tracks first, a rung without planes, and 58
+  items_not_allowed followed. The probes, seed retries, the continuation
+  in the other pour mode and the steps all lower through the same path.
+  Such a rule is now reported `applied`. Unit tests
+  `every_rung_keeps_a_nets_tracks_off_the_layers_a_rule_disallows` (two
+  nets, GND poured on In1.Cu, In1.Cu the only way across: without the rule
+  the pours-as-tracks rung routes /A over it, with it no rung does) and
+  `a_disallow_track_rule_closes_its_layers_for_the_nets_it_holds_for`.
+- **The narrow step keeps rule widths** (`ruled_widths`): a net whose
+  width a rule gives (a per-net `track_width` opt; a pair's `inDiffPair()`
+  width, set by `with_pairs`) is not narrowed, and the step runs only
+  where a net at its class's width is wider than the narrow width. Unit
+  test `the_narrow_step_keeps_the_widths_a_rule_gives`.
+- **Measured** (route mode, 30 s, one thread, the task list of
+  dp7-rules30 (`rung1-rules30-tasks.json`), the ducktop2 boards one at a
+  time; KiCad's errors by type, unconnected, links coupled/links):
+
+  | 30 s | errors by type | unconnected | links coupled | vias | rung kept |
+  |---|---|---|---|---|---|
+  | ducktop2 right_io | gap 38 -> gap 49 | 159 -> 158 | 1/23 -> 4/23 | 145 -> 77 | plane stubs -> pours as tracks |
+  | ducktop2 left_io | gap 17 -> 17 | 337 -> 337 | 0/41 -> 0/41 | 240 -> 240 | identical board |
+  | ducktop2-center (off: x1854) | gap 16, clearance 2 -> same | 499 -> 499 | 2/54 -> 2/54 | 689 -> 689 | identical board |
+  | OpenAIO-Whoop | none -> none | 185 -> 185 | 0/4 -> 0/4 | 39 -> 39 | identical board |
+  | oculink m2_card | gap 1 -> 1 | 2 -> 2 | 9/9 -> 9/9 | 22 -> 22 | identical board |
+  | oculink_m2 | hole_clearance 4 -> 4 | 9 -> 9 | 4/10 -> 4/10 | 54 -> 54 | identical board |
+  | oculink_port | track_width 19 -> 19 | 12 -> 12 | 3/9 -> 3/9 | 20 -> 20 | identical board |
+
+  right_io's probes on the on side: plane stubs 126 nets unfinished
+  (123 before: other nets no longer cross In1, In3, In6 there), pours as
+  tracks 125, so the pours-as-tracks rung continues, now without a track
+  on the ground layers (items_not_allowed 0 either way). Where the
+  defects showed (the crossovers' candidate, `PCB_ROUTER_DIFF_PAIRS_CROSSOVER=1`,
+  and the narrow step forced from the start, `use_narrow_signals` true in
+  the task's router settings; same binaries):
+
+  | 30 s | errors by type | unconnected | links coupled | vias |
+  |---|---|---|---|---|
+  | right_io, crossovers on | gap 36, items_not_allowed 58, starved 1 -> gap 30 | 151 -> 162 | 4/23 -> 2/23 | 94 -> 148 |
+  | oculink_port, crossovers on | gap 1 -> 1 | 12 -> 12 | 7/9 -> 7/9 | 18 -> 18 |
+  | oculink_port, narrow signals | gap 23, track_width 105 -> track_width 24 | 9 -> 8 | 3/9 -> 3/9 | 21 -> 22 |
+
+  With the crossovers right_io's probes tie at 122 (plane stubs, pours as
+  tracks), the earlier rung, plane stubs, continues: the 58 tracks of
+  other nets (ETH_CT, MCU_3V3, ...) on the solid ground layers go. On
+  oculink_port with narrow signals the pairs' tracks at 0.15 mm (72: 66
+  outer, 6 inner) are gone: every pair track is at the rule's 0.1712 mm
+  but the neck-downs at 0.127 (24, as off's 19 track_width at 30 s); the
+  crossover run at 30 s does not reach the narrow step either way.
+
+- **Identity.** The expansion tier (46 boards, route mode, 8 x 1, 30 s):
+  every row and every routed board byte-identical (unconnected 557, 24
+  passes both ways; the tier has no error-severity `disallow track` rule;
+  the power manifold's opt widths matter only where the narrow step runs,
+  and it does not). The fingerprints (Castor, k30-SBC, jetson, Sisu; route
+  mode from github-layout-v16, budget scale 0.25, 1 x 4,
+  PCB_ROUTER_FINGERPRINT=1): identical rows and boards. k30 has no
+  .kicad_dru; Sisu's "Keep USB off L3 and L4" does not reach the
+  fingerprint: github-layout-v16's placed projects carry no .kicad_dru
+  (its route reports no custom rule, pairs off), so nothing changes there.
+- **Dense layouts** (the eleven dense boards, layout mode, tasks v7,
+  placer seed 1, 3 x 2; off x1856, on x15090: the dense boards have no
+  `disallow track` rule, so x15090 and x15091 lower them alike): all 11
+  rows and result boards byte-identical (unconnected 809, vias 9148). The
+  narrow step ran on DSP-ADAU1452 and Glasgow on both sides; no net there
+  has a rule width.
+- Logs: build/rung1 (`rules30-*`, `expansion-*`, `fingerprints-*`,
+  `dense-s1-*`).
+
 ## Committed on 2026-10-27 (panels of different boards)
 
 Branch multi-board-panels, snapshots x15020-x15029 (docs/placer.md "Sub-
