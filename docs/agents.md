@@ -653,10 +653,24 @@ their memory in one ledger file per machine (`PCB_MAKER_LEDGER`, default
 `/tmp/pcb-maker-ledger.json`; `off`: none) before they allocate: what the
 process holds and its routers' estimated peak (their lattice maps and
 600 MB, with a 1.25 margin; 1.2 times and 540 until 2026-10-23, 1.7 and
-460 until 2026-10-22), 2.2 GB more while kicad-cli runs. A
-run waits while the reservations of every run on the machine and its
-request exceed the machine's memory less 6 GB
-(`PCB_MAKER_LEDGER_MARGIN_MB`) and says so on stderr (`memory ledger:
+460 until 2026-10-22), 2.2 GB more while kicad-cli runs. Every kicad-cli
+that loads a board runs inside a reservation (since 2026-10-27):
+`drc-kicad-board`, `place-kicad-board` and `inspect-routing-run
+--native-check` reserve KiCad's 2.2 GB up front, every other command
+that runs kicad-cli (`export-kicad-fab`, `fab-kicad-board`,
+`import-kicad-netlist`) reserves it at its first check, and `pcb-maker
+ledger` marks a reservation's check `[KiCad's check: 2253 MB, reserved]`
+or `running`. A run waits while the reservations of every run on the
+machine and its request exceed the ledger's capacity: the machine's
+memory less what runs outside the ledger (the median of the headroom
+samples run.py records beside the ledger; without an hour of them 25 %
+of the machine's memory), at most the machine's memory less 6 GB
+(`PCB_MAKER_LEDGER_MARGIN_MB`); `pcb-maker ledger` says what it is made
+of. A new request also keeps the harnesses' floor of available memory
+beside it (the memory available less what the other runs still grow by,
+less the request: 2 GB for a short command, the measured floor, about
+9 GB, else 10 GB, for a route or a layout), unless no other run holds
+memory. It says so on stderr (`memory ledger:
 waiting to reserve ...`); routers that would run side by side run fewer
 at a time instead, which does not change the result. Waiting is in
 order (since 2026-10-24): a run that holds nothing yet does not pass the

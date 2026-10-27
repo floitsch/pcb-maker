@@ -19,6 +19,16 @@ happened (a board started earlier would have let them go earlier too:
 not counted).
 
     python3 experiments/ledger-floor/replay.py build/ledger6-work/samples.jsonl --floor 5300 [--knots 300]
+    python3 experiments/ledger-floor/replay.py SAMPLES --capacity [MB]
+
+`--capacity` (ledger7, 2026-10-27): the replays again with the ledger's
+capacity from the machine (MemTotal less the samples' median outside memory,
+or the megabytes given): a board then starts only when the other runs'
+reservations at that sample, the boards running and its own fit it too; and
+how the runs that held memory in the samples sat against it (the samples
+with more reserved than it, the binaries admitted by the capacity alone
+that the floor would have held: a new holder without an expected end whose
+first sample's view less its megabytes was below the floor).
 
 `--knots S` prints the machine without the boards as steps of S seconds
 (each the least view and MemAvailable within it) and the boards, for the
@@ -116,7 +126,22 @@ def machine_without(samples, boards):
     return series
 
 
-def replay(series, boards, floor_mb, t0, poll=15, worst=False):
+def others_reserved(samples, boards):
+    """Per sample, what the runs other than the replayed boards reserved."""
+    series = []
+    for s in samples:
+        reserved = sum(e.get("megabytes") or 0 for e in s["entries"])
+        for board in boards:
+            if board["start"] is None or s["t"] < board["start"]:
+                continue
+            held = at(board["profile"], s["t"] - board["start"])
+            if held:
+                reserved -= held[0]
+        series.append(reserved)
+    return series
+
+
+def replay(series, boards, floor_mb, t0, poll=15, worst=False, capacity=None, others=None):
     """Second by second, each board looking every `poll` s from when it
     began waiting against the newest sample; `worst`: every board holds
     its expected peak (reserved and resident) for its measured seconds (to
@@ -141,10 +166,11 @@ def replay(series, boards, floor_mb, t0, poll=15, worst=False):
             elif t - start < (board.get("seconds") or float("inf")):
                 running.append((board["mb"], board["mb"]))
         reserved = sum(r[0] for r in running)
+        room = float("inf") if capacity is None else capacity - others[index]
         for board in boards:
             if id(board) in starts or t < board["since"] or int(t - board["since"]) % poll:
                 continue
-            if view - reserved - board["mb"] >= floor_mb:
+            if view - reserved - board["mb"] >= floor_mb and reserved + board["mb"] <= room:
                 starts[id(board)] = t
                 reserved += board["mb"]
                 running.append((board["mb"], board["mb"]))
@@ -159,6 +185,8 @@ def main():
     parser.add_argument("--floor", type=float, action="append", default=[])
     parser.add_argument("--stress", type=float, default=0.0, help="MB less at every sample (the outside's rise)")
     parser.add_argument("--knots", type=float, default=None)
+    parser.add_argument("--capacity", type=float, nargs="?", const=-1.0, default=None,
+                        help="also with the ledger's capacity (MB; none given: MemTotal less the median outside)")
     arguments = parser.parse_args()
     samples = [json.loads(line) for line in arguments.samples.read_text().splitlines() if line.strip()]
     samples.sort(key=lambda s: s["t"])
@@ -179,6 +207,47 @@ def main():
                   f"{starts}, {waited / 3600:.2f} board-hours waited, {sum(s is not None for s in starts)} of "
                   f"{len(boards)} started; the least MemAvailable {lowest / 1024:.1f} GB, "
                   f"less {arguments.stress / 1024:.1f} GB of stress {(lowest - arguments.stress) / 1024:.1f} GB")
+    if arguments.capacity is not None:
+        outside = sorted(s["outside"] for s in samples)
+        capacity = arguments.capacity if arguments.capacity >= 0 else \
+            samples[0]["total"] - harness_common.nearest_rank(outside, 0.5)
+        others = others_reserved(samples, boards)
+        print(f"capacity {capacity / 1024:.1f} GB (MemTotal {samples[0]['total'] / 1024:.1f} GB, the outside memory's "
+              f"median {harness_common.nearest_rank(outside, 0.5) / 1024:.1f} GB, least {outside[0] / 1024:.1f})")
+        for floor in [10240.0] + arguments.floor:
+            for worst in (False, True):
+                plain = replay(series, boards, floor, t0, worst=worst)
+                starts, waited, lowest = replay(series, boards, floor, t0, worst=worst, capacity=capacity,
+                                                others=others)
+                print(f"floor {floor / 1024:.2f} GB{' (each board at its expected peak)' if worst else ''} with the "
+                      f"capacity: {sum(s is not None for s in starts)} of {len(boards)} started, "
+                      f"{waited / 3600:.2f} board-hours waited (without it {plain[1] / 3600:.2f}), the least "
+                      f"MemAvailable {lowest / 1024:.1f} GB; the same starts: {starts == plain[0]}")
+        over = [s for s in samples if s["reserved"] > capacity]
+        print(f"samples with more reserved than the capacity: {len(over)} of {len(samples)}"
+              + (f" (most {max(s['reserved'] for s in over) / 1024:.1f} GB)" if over else ""))
+        # New holders: their first sample holding, and the floor's view
+        # without them then.
+        first = {}
+        for s in samples:
+            for e in s["entries"]:
+                key = (e["pid"], e.get("held_since"))
+                if (e.get("megabytes") or 0) > 0 and key not in first:
+                    first[key] = (s, e)
+        known = {(e["pid"], e.get("held_since")) for e in samples[0]["entries"]}
+        floor = arguments.floor[0] if arguments.floor else 10240.0
+        held = []
+        for key, (s, e) in first.items():
+            if key in known or e.get("expected_end") is not None or e["label"].startswith("run.py:"):
+                continue
+            view = s["available"] - growth(s) + max(0.0, e["megabytes"] - e["rss"])
+            if view - e["megabytes"] < (2048 if e.get("short") else floor):
+                held.append((s["t"] - t0, e["megabytes"], e["label"][:60], view))
+        print(f"binaries that began holding within the samples: {sum(1 for k in first if k not in known)}; "
+              f"admitted below the floor ({floor / 1024:.1f} GB, a short one 2 GB) a binary keeps since ledger7: "
+              f"{len(held)}")
+        for t, mb, label, view in held[:20]:
+            print(f"  +{t:.0f} s {mb:.0f} MB, the view {view / 1024:.1f} GB: {label}")
     if arguments.knots:
         knots = []
         for t, view, available in series:

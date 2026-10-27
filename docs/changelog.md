@@ -11,6 +11,46 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-27 (the ledger's capacity from the machine; kicad-cli under a reservation)
+
+Branch ledger-capacity (docs/benchmarks.md, "Memory ledger", "The
+capacity from the machine" and "kicad-cli under a reservation"). The
+ledger and the harness's admission only; routing and placement are
+unchanged.
+
+- **The capacity**: MemTotal less the memory outside the ledger, the
+  median of the fresh headroom samples (the floor's freshness: 360
+  samples, a day), else 25 % of MemTotal; at most MemTotal less the 6 GB
+  margin (the static 56.7 GB). Here 44.6 GB from the night's samples,
+  47.0 GB without samples; another machine without samples: 10 GB of 16,
+  18 of 24, 24 of 32, 96 of 128. `machine_capacity_mb` in ledger.rs and
+  harness_common.py; `pcb-maker ledger` and run.py's start line say what
+  it is made of.
+- **Binaries keep the floor**: a binary's new request keeps the measured
+  floor (8.8 GB here, 10 GB without samples) beside it, a short one the
+  2 GB to keep, unless no other run holds memory; it waits in the ledger
+  with `floor_mb` and `waits_on_floor`. Growth of a run that holds memory
+  keeps none.
+- **The replays** (both languages, with the capacity and the other runs'
+  reservations per knot): the evening and tonight's first hour start the
+  same boards at the same times as with the floor alone (10 GB and
+  measured), the least MemAvailable unchanged (28.9 and 17.5 GB with the
+  measured floor): no added wait, no admission below 2 GB. The bound
+  behind it: a board the floor admits fits the capacity whenever the
+  outside memory is at least its median less the floor (9.3 GB; the
+  night's least was above 16 GB). FRESH_CHANGELOG
+- **kicad-cli under a reservation**: every kicad-cli that loads a board
+  runs inside its process's reservation (`ledger::kicad_check`): the
+  check-only commands reserve the 2253 MB up front, every other command
+  (fab exports, netlist import, research commands) arms at its first
+  check; a route's and a layout's checks raise their reservation while
+  they run, as before. `pcb-maker ledger` shows `[KiCad's check: 2253 MB,
+  reserved|running]`. run.py's binaries of a board run inside the board's
+  reservation (`PCB_MAKER_LEDGER_INSIDE`; after the board's binary, a
+  short reservation of 4301 MB for the strict baseline and the route's
+  check). Smoke on a private ledger and a read of the live ledger during
+  a check: as documented.
+
 ## Committed on 2026-10-27 (the ledger's floor from measured headroom)
 
 Branch ledger-floor (docs/benchmarks.md, "Memory ledger", "The floor from

@@ -451,8 +451,9 @@ User-facing (`pcb-maker --help` lists them):
 - `PCB_MAKER_KICAD_USER_LIBS`: anything but `0`: kicad-cli's DRC and ERC run with the user's KiCad configuration (global libraries) instead of empty library tables.
 - `PCB_MAKER_MEMORY_MB`: a resident memory limit in megabytes beside the router setting `memory_mb` and the limits the process reads itself (RLIMIT_AS, the cgroup's): the ladder runs as many routers side by side as fit the tightest.
 - `PCB_MAKER_LEDGER`: the machine's memory ledger, where routes, layouts and KiCad's checks reserve their memory before they allocate and wait for room (default `$XDG_RUNTIME_DIR/pcb-maker-ledger.json`, else `/tmp/pcb-maker-ledger.json`; `off`: none; `pcb-maker ledger` lists it). Reservations do not change results.
-- `PCB_MAKER_LEDGER_MARGIN_MB`: the memory the ledger keeps free of reservations (default 6144): all reservations together take at most MemTotal less it.
-- `PCB_MAKER_LEDGER_TOTAL_MB`: what the ledger's reservations may take together, in place of MemTotal less the margin (tests).
+- `PCB_MAKER_LEDGER_MARGIN_MB`: the least memory the ledger keeps free of reservations (default 6144): all reservations together take at most MemTotal less the memory outside the ledger (the median of the headroom samples beside it, else 25 % of MemTotal; since 2026-10-27), and never more than MemTotal less this margin.
+- `PCB_MAKER_LEDGER_TOTAL_MB`: what the ledger's reservations may take together, in place of the capacity from the machine's memory (tests).
+- `PCB_MAKER_LEDGER_INSIDE`: `<pid> <started>`: the reservation in the memory ledger this process runs inside (run.py sets it for the binaries of a board whose memory it holds; since 2026-10-27): the process reserves only what it needs beyond it.
 - `PCB_MAKER_LEDGER_SHORT`: `1`: the command's requests of at most 2 GB of its own beside one KiCad check are short: they go once the capacity has their room and the memory available less the reservations' growth covers them, never behind the ledger's order or a drain; `0`: none are (default: every command that reserves but a route and a layout; docs/benchmarks.md, "Memory ledger").
 
 Switches and experiment hooks (change the result):

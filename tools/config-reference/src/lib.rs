@@ -165,12 +165,17 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_MAKER_LEDGER_MARGIN_MB",
         Kind::User,
-        "the memory the ledger keeps free of reservations (default 6144): all reservations together take at most MemTotal less it.",
+        "the least memory the ledger keeps free of reservations (default 6144): all reservations together take at most MemTotal less the memory outside the ledger (the median of the headroom samples beside it, else 25 % of MemTotal; since 2026-10-27), and never more than MemTotal less this margin.",
     ),
     (
         "PCB_MAKER_LEDGER_TOTAL_MB",
         Kind::User,
-        "what the ledger's reservations may take together, in place of MemTotal less the margin (tests).",
+        "what the ledger's reservations may take together, in place of the capacity from the machine's memory (tests).",
+    ),
+    (
+        "PCB_MAKER_LEDGER_INSIDE",
+        Kind::User,
+        "`<pid> <started>`: the reservation in the memory ledger this process runs inside (run.py sets it for the binaries of a board whose memory it holds; since 2026-10-27): the process reserves only what it needs beyond it.",
     ),
     (
         "PCB_MAKER_LEDGER_SHORT",

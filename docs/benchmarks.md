@@ -298,7 +298,7 @@ change of the observed size needs; `--metric first_open|objective|crossings`
 judges a proxy instead (`--tool` counts the objective and the crossings
 of each placed board, cached by its sha256 in `build/placer-ab-signals`).
 
-## Memory ledger: who runs next (2026-10-24, the drain 2026-10-25, its feasibility cap, its end and short requests 2026-10-26, the measured floor 2026-10-27)
+## Memory ledger: who runs next (2026-10-24, the drain 2026-10-25, its feasibility cap, its end and short requests 2026-10-26, the measured floor, the capacity from the machine and kicad-cli under a reservation 2026-10-27)
 
 Benchmarks share the machine through the memory ledger
 (`$XDG_RUNTIME_DIR/pcb-maker-ledger.json`; how a run reserves and waits:
@@ -714,11 +714,149 @@ drain end sooner too, not counted. Tests
 the samples' bookkeeping, the gate's floor and its sampler);
 test_tier_estimates.py's overshoot. Routing and placement are unchanged.
 
-What the measurement also says: the ledger's capacity (MemTotal less the
-6 GB margin, 56.7 GB) is 11-21 GB more than the machine can give beside
-the 16.7-27.5 GB outside it, and binaries admit by the capacity alone;
-what kept MemAvailable high is that runs stay far below their
-reservations. Not changed here.
+What the measurement also said: the ledger's capacity (MemTotal less the
+6 GB margin, 56.7 GB) was 11-21 GB more than the machine can give beside
+the 16.7-27.5 GB outside it, binaries admitted by the capacity alone, and
+kicad-cli (2.1-2.2 GB) and the nightly's binary (1.3-2.1 GB) ran outside
+any holder; what kept MemAvailable high is that runs stay far below their
+reservations. Changed the same day (next paragraphs).
+
+**The capacity from the machine** (2026-10-27). The capacity is MemTotal
+less the memory outside the ledger: the median of the headroom samples
+(`summary`'s `outside_mb`, the samples of the last six hours) when they
+are fresh (at least 360, the newest at most a day old: the floor's rule,
+`headroom_fresh`), else 25 % of MemTotal (`DEFAULT_OUTSIDE_SHARE`); at
+most MemTotal less the margin (`PCB_MAKER_LEDGER_MARGIN_MB`, 6 GB), the
+static bound it was. Here: 64 210 - 18 534 = 45 676 MB (44.6 GB) from the
+night's samples, 48 157 MB (47.0 GB) without samples. Every process
+reads it from the samples beside the ledger (a binary every 30 s, a
+harness on every poll); `PCB_MAKER_LEDGER_TOTAL_MB` still replaces it.
+`machine_capacity_mb` and `capacity_described` in ledger.rs,
+`machine_capacity_mb` and `ledger_capacity_described` in
+harness_common.py (the same rule); `pcb-maker ledger` says what it is
+made of (`48157 MB (MemTotal 62.7 GB less 15.7 GB outside the ledger (25 %
+of MemTotal without fresh headroom samples); at most 56.7 GB, MemTotal
+less the margin)`), run.py's start line too (`ledger capacity ...`).
+
+*Another machine.* Without samples the capacity is the smaller of
+MemTotal less 6 GB and three quarters of MemTotal: 10 GB of a 16 GB
+machine, 18 of 24, 24 of 32, 96 of 128 (test
+`the_capacity_is_the_machines_memory_less_what_is_outside_the_ledger`).
+The quarter is below what this machine measured outside the ledger
+(15.7 GB of 62.7 against the night's 16.7 GB p5 and 18.1 GB median), a
+desktop with a browser and an editor beside the runs. The samples
+replace it once run.py has run for an hour (its gate samples every 10 s),
+or after `python3 benchmarks/ledger_headroom.py --sample --for 3600`; a
+machine that runs only binaries keeps the quarter. A dedicated machine
+with nothing beside the runs gets the static bound from its samples (its
+outside memory is small).
+
+*Binaries keep the floor.* A binary's new request (it holds nothing, and
+no harness above it holds memory or names the reservation it runs
+inside) now keeps the harnesses' floor beside it: the memory available
+less what the reservations still grow by, less its request, must leave
+the measured floor (`measured_floor_mb` of the samples without a tier's
+overshoot: 8.8 GB here, 10 GB without samples), a short request
+(`drc-kicad-board`, `place-kicad-board`, `inspect-routing-run
+--native-check`, a check of a command armed on demand) the 2 GB to keep
+(`FLOOR_KEEP_MB`): it holds its memory for seconds, and the 10-minute
+rise of the outside memory is the long runs' term (with the measured
+floor the 2026-10-26 evening's 1.5 s check, 7.4 GB beside the growth,
+would have waited again). Alone (no other run holds memory) it goes, as a
+harness's board. A binary held back by the floor waits in the ledger with
+`floor_mb` and `waits_on_floor`, as a harness's board, and says so
+(`memory ledger: waiting to reserve ...; the memory available less what
+the runs still grow by, <X> GB, would leave less than the floor of
+<Y> GB (...)`). A run that holds memory and grows (the
+ladder, the watchdog's raise, a route's check) keeps no floor: held back
+it would end with exit 4. `binary_floor_allows` in ledger.rs; the
+harnesses' rule is `memory_room`, as before.
+
+*Why the capacity changes no harness's wait.* A holder's growth counts
+its own resident memory, which its process tree holds and the outside
+memory does not, so at any time the other runs' reservations plus the
+floor's view (MemAvailable less growth) are at most MemTotal less the
+outside memory. A board the floor admits (the view less the boards
+running less its own at least the floor) therefore fits a capacity of
+MemTotal less the median outside memory whenever the outside memory is
+at least its median less the floor: 18.1 - 8.8 = 9.3 GB. The night's
+least was above 16 GB (p5 16.7; the browser alone 8 GB). The replays
+(ledger.rs `the_evening_and_tonight_replayed_with_the_capacity_from_the_machine`,
+test_run.py's test of the same name; `floor_replay` and
+`MeasuredFloor.replay` with a capacity and the other runs' reservations
+per knot):
+
+| replay | floor | with the capacity of 44.6 GB |
+| --- | --- | --- |
+| the evening (the others' reservations from the log's lines: 35.3, 30.5, 28.6, 28.4, 25.2 GB) | 10 GB, measured 8.8 GB | the same starts (2220, 3375, 4245, 4380 s; 0, 3375, 2220, 4245 s), waits (14 220 s, 9840 s) and least MemAvailable (29.7, 28.9 GB) |
+| tonight's first hour (the others' reservations at most MemTotal less 16.7 GB, the outside memory's p5, less the view) | 10 GB, measured | the same: 9 and 10 boards, 20 766 and 18 376 s, the least MemAvailable 20.0 and 17.5 GB |
+| the same with the outside memory at 9 GB | measured | a board held back (the bound's case) |
+
+None of the replays' admissions takes MemAvailable below 2 GB, and the
+capacity adds no wait beyond the floor's. The night's samples (and their
+three-hour replay of 123 boards) were not kept, so the three-hour replay
+was not rerun; replay.py takes `--capacity` now. FRESH_SAMPLES
+
+**kicad-cli under a reservation** (2026-10-27). Every kicad-cli that
+loads a board or a schematic runs inside its process's reservation
+(`ledger::kicad_check`): DRC and zone fill (native_report.rs), the fab
+exports (gerbers, drill, positions, BOM: fab_export.rs, fab_release.rs),
+the verification preview's SVG, the netlist import's schematic export
+and pad check, the research renderer. `kicad-cli version` (64 MB) is not
+reserved.
+
+- A command whose memory is its checks (`drc-kicad-board`,
+  `place-kicad-board`, `inspect-routing-run --native-check`) reserves one
+  check (`KICAD_CHECK_MB`, 2253 MB: the short rule's figure) up front,
+  when it arms, and holds it until it ends; its checks run inside it
+  (`reserve_check_up_front`). Until then it reserved when the check
+  came: its own memory before (a designer board's 1-2 GB) ran outside.
+- Any other command that runs kicad-cli (`export-kicad-fab`,
+  `fab-kicad-board`, `import-kicad-netlist`, the research commands) arms
+  on demand, as a short command, at its first check, with the check
+  reserved (`arm_on_demand`, set by the executable for every command;
+  the library's callers and tests reserve nothing). Until then these ran
+  kicad-cli outside any reservation.
+- A route and a layout raise their reservation by the check while it
+  runs, as before (reserving 2.2 GB up front for an hour's route would
+  take it from the other runs all that time).
+- The entry says so: `check_mb` (the part held for checks) and `checking`
+  (one runs); `pcb-maker ledger` prints `[KiCad's check: 2253 MB,
+  reserved]` or `running`. `while_reserved` takes a check inside what the
+  process holds for its children before it raises.
+
+*The binaries of a run.py board inside its reservation.* run.py's gate
+admits a board and hands its reservation to the board's binary when it
+starts, as before; every other binary of the board now runs inside it:
+the designer's DRC and strip before the run get `PCB_MAKER_LEDGER_INSIDE`
+(`<pid> <started>` of the board's reservation; harness_common.run_group
+adds it on the board's thread) and reserve only what they need beyond
+it (a check of 2253 MB inside a board's 3000: an entry of 0 MB, `[inside
+pid ...'s reservation]`). Once the board's binary has ended, the
+binaries after it (the strict baseline's strip and DRC, a route's check
+of its result) run inside a short reservation of 4301 MB (2048 + 2253:
+`AFTER_RUN_MB`, `run.py: <board> (after the run)`) that the gate admits
+at the first of them. Until then they ran outside the board's
+reservation (the drc child reserved its check alone, strip-kicad-tracks
+nothing). `MemoryGate.inside_environment`; test_run.py's
+`test_every_binary_of_a_board_runs_inside_its_reservation`.
+
+*Smoke* (a private ledger, the debug binary, `PCB_MAKER_NO_CACHE=1`, the
+f1 fixture; the ledger read every 0.2 s by a second process): a harness
+holding 3000 MB for the board started `drc-kicad-board` through
+run_group; the binary's entry was `0 MB ... [KiCad's check: 2253 MB,
+reserved] [inside pid ...'s reservation]` 0.3 s in, `running` from 0.5 s
+to 1.6 s, gone at 1.9 s (exit 1, the board's own findings, in 1.9 s).
+The same binary alone: `2253 MB ... [short] [KiCad's check: 2253 MB,
+reserved]` at 0.1 s, `running` from 0.6 s, the ledger empty after.
+`export-kicad-fab` of f1: `2253 MB export-kicad-fab f1 ... [short]
+[KiCad's check: 2253 MB, running]` for its 5 s, exit 0. On the live
+ledger (read only by `pcb-maker ledger`, a check of f1 by the branch's
+binary): `39101 MB reserved of 48157 MB (MemTotal 62.7 GB less 15.7 GB
+outside the ledger (25 % of MemTotal without fresh headroom samples); at
+most 56.7 GB ...) by 26 runs` and `drc-kicad-board f1 ... [short]
+[KiCad's check: 2253 MB, running]` 0.6 s into the check. Routing and
+placement are unchanged.
 
 Older binaries and harness copies ignore the new fields (`floor_mb`,
 `drain_after`, `expected_end`, `priority`) and do not drain; an older
