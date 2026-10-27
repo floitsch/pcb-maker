@@ -784,7 +784,15 @@ KiCad checks a pad's ring and hole with no second item, so the rule for
 them names `A` alone: `(rule "U3 own annular_width" (constraint
 annular_width (min 0.1mm)) (condition "A.memberOfFootprint('U3')"))` (a
 condition on `B` never holds there); a hole over a maximum, and a
-padstack, get an exclusion. A via's finding names no footprint and stays
+padstack, get an exclusion. So does a finding KiCad reports against the
+board minimum (`(board minimum hole clearance 0.2500 mm; ...)`, since
+2026-10-27): KiCad says so where the rule that holds (a footprint's own
+clearance) is below the board setup's minimum, and applies the minimum,
+which no custom rule goes below (framework_mobo_lefthalf's J1, kicad-cli
+10.0.7: a rule at 0.1 mm, also with `(severity ignore)`, left its 8
+findings; `min_hole_clearance` at 0.1 mm took them away, for the whole
+board). Until 2026-10-27 such findings were offered a rule that did not
+take. A via's finding names no footprint and stays
 judged.
 
 **The input's own findings** (since 2026-10-27, without a reference

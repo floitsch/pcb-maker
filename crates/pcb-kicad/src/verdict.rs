@@ -1033,6 +1033,21 @@ struct OwnGroup {
     single: bool,
     /// Whether one is over a maximum (a hole too large).
     over_max: bool,
+    /// Whether KiCad held one to the board's minimum ("board minimum hole
+    /// clearance 0.2500 mm"): a custom rule below it does not take.
+    board_minimum: bool,
+}
+
+/// The board setup minimum (`board.design_settings.rules` in the
+/// .kicad_pro) KiCad names "board minimum" for a finding type.
+fn board_minimum_setting(kind: &str) -> &'static str {
+    match kind {
+        "hole_clearance" => "min_hole_clearance",
+        "clearance" => "min_clearance",
+        "hole_to_hole" => "min_hole_to_hole",
+        "copper_edge_clearance" => "min_copper_edge_clearance",
+        _ => "the board setup's minimum",
+    }
 }
 
 /// What a result's footprint findings (`footprint_own_unreferenced`) are and
@@ -1057,6 +1072,7 @@ pub fn footprint_findings_note(findings: &[&DrcFinding], dru: &str) -> Option<St
                 smallest: None,
                 single: true,
                 over_max: false,
+                board_minimum: false,
             });
         entry.count += 1;
         if let Some(actual) = actual_mm(&finding.description) {
@@ -1068,6 +1084,7 @@ pub fn footprint_findings_note(findings: &[&DrcFinding], dru: &str) -> Option<St
         }
         entry.single &= finding.items.len() == 1;
         entry.over_max |= finding.description.contains(" max ");
+        entry.board_minimum |= finding.description.contains("(board minimum ");
     }
     if groups.is_empty() {
         return None;
@@ -1078,7 +1095,21 @@ pub fn footprint_findings_note(findings: &[&DrcFinding], dru: &str) -> Option<St
         .collect();
     let mut rules = Vec::new();
     let mut excluded = Vec::new();
+    let mut minimums: BTreeMap<&str, Vec<String>> = BTreeMap::new();
     for ((owner, kind), group) in &groups {
+        if group.board_minimum {
+            // KiCad reports "board minimum" where the rule that holds
+            // (here J1's own 0.1 mm clearance) is below the board setup's
+            // minimum, which it applies instead: framework_mobo_lefthalf's
+            // J1 (kicad-cli 10.0.7, 2026-10-27) kept its 8 findings under
+            // a custom rule at 0.1 mm, also with (severity ignore), and
+            // lost them with min_hole_clearance at 0.1 mm.
+            minimums
+                .entry(board_minimum_setting(kind))
+                .or_default()
+                .push(format!("{owner}'s {kind}"));
+            continue;
+        }
         match (custom_rule_constraint(kind), group.smallest) {
             (Some(constraint), Some(smallest)) if !group.over_max => {
                 let min = ((smallest * 100.0 + 1.0e-9).floor() / 100.0).max(0.0);
@@ -1108,6 +1139,12 @@ pub fn footprint_findings_note(findings: &[&DrcFinding], dru: &str) -> Option<St
         accept.push(format!(
             "exclude {} in KiCad's DRC dialog (Exclude this violation)",
             excluded.join(", ")
+        ));
+    }
+    for (setting, which) in &minimums {
+        accept.push(format!(
+            "exclude {} in KiCad's DRC dialog (Exclude this violation): KiCad holds them to the board minimum ({setting} in the .kicad_pro, Board Setup > Constraints), which no custom rule goes below, or lower {setting}, which then holds for the whole board",
+            which.join(", ")
         ));
     }
     Some(format!(
@@ -2683,6 +2720,26 @@ mod tests {
             errors: tally.errors,
             findings: tally.findings,
         }
+    }
+
+    #[test]
+    fn a_footprints_own_findings_under_the_board_minimum_get_no_custom_rule() {
+        // framework_mobo_lefthalf's J1: a footprint clearance of 0.1 mm
+        // below the board's 0.25 mm hole clearance, so KiCad reports the
+        // board minimum, which a custom rule does not lower.
+        let own = |pad: &str| {
+            drc_finding(&json!({"type": "hole_clearance", "severity": "error",
+                   "description": "Hole clearance violation (board minimum hole clearance 0.2500 mm; actual 0.1030 mm)",
+                   "items": [{"description": format!("PTH pad {pad} [GND] of J1"), "uuid": pad, "pos": {"x": 1.0, "y": 1.0}},
+                             {"description": "NPTH pad of J1", "uuid": "hole", "pos": {"x": 1.0, "y": 2.0}}]}))
+        };
+        let (a, b) = (own("B1"), own("B12"));
+        let note = footprint_findings_note(&[&a, &b], "board.kicad_dru").unwrap();
+        assert!(!note.contains("(rule "), "{note}");
+        assert!(
+            note.contains("exclude J1's hole_clearance in KiCad's DRC dialog (Exclude this violation): KiCad holds them to the board minimum (min_hole_clearance in the .kicad_pro"),
+            "{note}"
+        );
     }
 
     #[test]
