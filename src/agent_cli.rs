@@ -1575,10 +1575,14 @@ pub fn run(command: &str, arguments: Vec<String>) -> Option<Result<KiCadRunStatu
             .iter()
             .any(|argument| argument == "--native-check"))
     {
-        pcb_kicad::ledger::arm(
-            &ledger_label(command, &arguments),
-            !matches!(command, "route-kicad-board" | "layout-kicad-board"),
-        );
+        let checks_only = !matches!(command, "route-kicad-board" | "layout-kicad-board");
+        pcb_kicad::ledger::arm(&ledger_label(command, &arguments), checks_only);
+        // A command whose memory is its KiCad checks holds one from before
+        // its work (since 2026-10-27); a route's and a layout's checks raise
+        // their reservation when they come.
+        if checks_only {
+            pcb_kicad::ledger::reserve_check_up_front();
+        }
     }
     Some(match command {
         "route-kicad-board" => route(arguments),
@@ -1615,7 +1619,7 @@ pub fn run(command: &str, arguments: Vec<String>) -> Option<Result<KiCadRunStatu
 
 /// The label of this run's reservation: the command, the board and where
 /// its output goes.
-fn ledger_label(command: &str, arguments: &[String]) -> String {
+pub(crate) fn ledger_label(command: &str, arguments: &[String]) -> String {
     let mut words = vec![command.to_string()];
     words.extend(
         arguments

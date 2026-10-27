@@ -61,22 +61,21 @@ pub(super) fn render(board: &Path, directory: &Path) -> Result<(), String> {
         .as_nanos();
     let temporary = directory.join(format!(".preview-{}-{nonce}.svg", std::process::id()));
     let result = (|| {
-        let output = Command::new(crate::native_report::kicad_cli())
-            .args([
-                "pcb",
-                "export",
-                "svg",
-                "--mode-single",
-                "--layers",
-                "F.Cu,B.Cu,Edge.Cuts",
-                "--page-size-mode",
-                if annotation.is_some() { "0" } else { "2" },
-                "--exclude-drawing-sheet",
-                "--output",
-            ])
-            .arg(&temporary)
-            .arg(board)
-            .output()
+        let mut command = Command::new(crate::native_report::kicad_cli());
+        command.args([
+            "pcb",
+            "export",
+            "svg",
+            "--mode-single",
+            "--layers",
+            "F.Cu,B.Cu,Edge.Cuts",
+            "--page-size-mode",
+            if annotation.is_some() { "0" } else { "2" },
+            "--exclude-drawing-sheet",
+            "--output",
+        ]);
+        command.arg(&temporary).arg(board);
+        let output = crate::ledger::kicad_check(|| command.output())
             .map_err(|error| format!("failed to start SVG export: {error}"))?;
         if !output.status.success() {
             return Err(format!(

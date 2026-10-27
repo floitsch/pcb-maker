@@ -328,25 +328,25 @@ fn run_kicad_render(
     side: &str,
     config: &KiCadLayerRenderConfig,
 ) -> Result<(), String> {
-    let result = Command::new(crate::native_report::kicad_cli())
-        .args([
-            "pcb",
-            "render",
-            "--output",
-            &output_path.to_string_lossy(),
-            "--width",
-            &config.width.to_string(),
-            "--height",
-            &config.height.to_string(),
-            "--side",
-            side,
-            "--background",
-            &config.background,
-            "--quality",
-            &config.quality,
-            &pcb_path.to_string_lossy(),
-        ])
-        .output()
+    let mut command = Command::new(crate::native_report::kicad_cli());
+    command.args([
+        "pcb",
+        "render",
+        "--output",
+        &output_path.to_string_lossy(),
+        "--width",
+        &config.width.to_string(),
+        "--height",
+        &config.height.to_string(),
+        "--side",
+        side,
+        "--background",
+        &config.background,
+        "--quality",
+        &config.quality,
+        &pcb_path.to_string_lossy(),
+    ]);
+    let result = crate::ledger::kicad_check(|| command.output())
         .map_err(|error| format!("failed to run kicad-cli PCB renderer: {error}"))?;
     if !result.status.success() || !output_path.is_file() {
         return Err(format!(

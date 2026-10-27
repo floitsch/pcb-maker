@@ -56,6 +56,12 @@ fn main() -> ExitCode {
         agent_cli::report_failure(pcb_kicad::KiCadRunStatus::InternalError, message);
     });
     let arguments: Vec<String> = env::args().skip(1).collect();
+    // Every command that runs kicad-cli does so inside a reservation in the
+    // memory ledger: one that is not armed (a route, a layout, a check
+    // arm themselves) arms when its first check comes (since 2026-10-27).
+    if let Some((command, rest)) = arguments.split_first() {
+        pcb_kicad::ledger::arm_on_demand(&agent_cli::ledger_label(command, rest));
+    }
     let outcome = std::panic::catch_unwind(|| dispatch(arguments));
     // The reservation goes with the run (a panic included; a signal's
     // death by the ledger's pid rule).
@@ -299,17 +305,41 @@ const ENVIRONMENT_HELP: &[(&str, &str)] = &[
     ),
     (
         "PCB_MAKER_LEDGER_MARGIN_MB",
-        "the memory the ledger keeps free of reservations; default 6144.",
+        "the least memory the ledger keeps free of reservations: its capacity is MemTotal\nless the memory outside it (the headroom samples' median, else 25 % of\nMemTotal), at most MemTotal less this margin; default 6144.",
     ),
     (
         "PCB_MAKER_LEDGER_TOTAL_MB",
-        "what the ledger's reservations may take together, in place of the machine's\nmemory less the margin (tests); default unset.",
+        "what the ledger's reservations may take together, in place of the capacity\nfrom the machine's memory (tests); default unset.",
+    ),
+    (
+        "PCB_MAKER_LEDGER_INSIDE",
+        "`<pid> <started>`: the reservation this process runs inside (run.py sets it for\nthe binaries of a board it holds the memory of); only what the process needs\nbeyond it is its own; default unset.",
     ),
     (
         "PCB_MAKER_LEDGER_SHORT",
         "1: this command's requests of up to 2 GB beside a KiCad check are short (they\ngo once the memory is there, never behind a drain); 0: none are; default:\nevery armed command but a route or a layout.",
     ),
 ];
+
+/// What `pcb-maker ledger` says of a reservation's KiCad checks and of the
+/// harness's reservation it runs inside.
+fn ledger_notes(reservation: &pcb_kicad::ledger::Reservation) -> String {
+    let mut notes = String::new();
+    if let Some(check) = reservation.check_mb {
+        notes.push_str(&format!(
+            " [KiCad's check: {check:.0} MB, {}]",
+            if reservation.checking {
+                "running"
+            } else {
+                "reserved"
+            }
+        ));
+    }
+    if let Some(pid) = reservation.inside {
+        notes.push_str(&format!(" [inside pid {pid}'s reservation]"));
+    }
+    notes
+}
 
 /// `pcb-maker ledger`: the memory ledger's live reservations, who holds
 /// what, as text or JSON.
@@ -322,7 +352,8 @@ fn print_ledger(json: bool) -> Result<(), String> {
     let live = book
         .live()
         .map_err(|error| format!("{}: {error}", book.path().display()))?;
-    let capacity = ledger::capacity_mb();
+    let capacity_described = ledger::capacity_described();
+    let capacity = capacity_described.as_ref().map(|(capacity, _)| *capacity);
     let total = ledger::total_mb(&live);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -345,6 +376,8 @@ fn print_ledger(json: bool) -> Result<(), String> {
         let value = serde_json::json!({
             "path": book.path(),
             "capacity_mb": capacity,
+            "capacity": capacity_described.as_ref().map(|(_, how)| how),
+            "checks_mb": live.iter().filter_map(|r| r.check_mb).sum::<f64>(),
             "reserved_mb": total,
             "headroom": headroom,
             "floor_mb": floor,
@@ -367,13 +400,17 @@ fn print_ledger(json: bool) -> Result<(), String> {
     println!(
         "memory ledger {}: {total:.0} MB reserved of {} by {} run{}",
         book.path().display(),
-        capacity.map_or("an unknown capacity".to_string(), |c| format!("{c:.0} MB")),
+        capacity_described
+            .as_ref()
+            .map_or("an unknown capacity".to_string(), |(c, how)| format!(
+                "{c:.0} MB ({how})"
+            )),
         live.len(),
         if live.len() == 1 { "" } else { "s" }
     );
     for reservation in &live {
         println!(
-            "  pid {:>7}  {:>6.0} MB{}  {:>6.0} s  {}{}",
+            "  pid {:>7}  {:>6.0} MB{}  {:>6.0} s  {}{}{}",
             reservation.pid,
             reservation.megabytes,
             reservation
@@ -389,7 +426,8 @@ fn print_ledger(json: bool) -> Result<(), String> {
                 " [short]"
             } else {
                 ""
-            }
+            },
+            ledger_notes(reservation)
         );
     }
     println!(

@@ -766,17 +766,17 @@ pub fn import_kicad_netlist_from(
         .is_some_and(|extension| extension == "kicad_sch");
     let netlist_path = if is_schematic {
         let path = output.join(format!("{board_id}.net"));
-        let result = Command::new(crate::native_report::kicad_cli())
+        let mut command = Command::new(crate::native_report::kicad_cli());
+        command
             .args(["sch", "export", "netlist", "--format", "kicadsexpr", "-o"])
             .arg(&path)
-            .arg(input)
-            .output()
-            .map_err(|error| {
-                crate::verdict::input_error(format!(
-                    "kicad-cli did not run ({error}): {}",
-                    crate::KICAD_REQUIREMENT
-                ))
-            })?;
+            .arg(input);
+        let result = crate::ledger::kicad_check(|| command.output()).map_err(|error| {
+            crate::verdict::input_error(format!(
+                "kicad-cli did not run ({error}): {}",
+                crate::KICAD_REQUIREMENT
+            ))
+        })?;
         // The schematic KiCad cannot read is the input's fault (exit 2).
         if !result.status.success() {
             return Err(crate::verdict::input_error(format!(
@@ -2109,7 +2109,7 @@ fn own_pad_gaps(
         .arg(&report)
         .arg(&board);
     crate::kicad_config::configure_drc(&mut command, &crate::native_report::kicad_cli(), &board);
-    let Ok(output) = command.output() else {
+    let Ok(output) = crate::ledger::kicad_check(|| command.output()) else {
         let _ = fs::remove_dir_all(&directory);
         return Ok(BTreeMap::new());
     };

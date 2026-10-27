@@ -538,10 +538,9 @@ fn run_bounded(
     command: &mut Command,
     scratch: &Path,
 ) -> Result<(std::process::ExitStatus, String), String> {
-    // kicad-cli's 2.2 GB, reserved in the memory ledger while it runs.
-    crate::ledger::while_reserved(crate::ledger::KICAD_CHECK_MB, "KiCad's check", || {
-        run_bounded_unreserved(command, scratch)
-    })
+    // kicad-cli's 2.2 GB, inside the process's reservation in the memory
+    // ledger while it runs.
+    crate::ledger::kicad_check(|| run_bounded_unreserved(command, scratch))
 }
 
 fn run_bounded_unreserved(

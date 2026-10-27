@@ -225,6 +225,19 @@ pub struct Reservation {
     /// for the capacity as any reservation's.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub short: bool,
+    /// The part of the megabytes held for KiCad's checks (kicad-cli, the
+    /// process's children; since 2026-10-27): reserved up front by a
+    /// command that checks, or while a check runs. None where absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub check_mb: Option<f64>,
+    /// Whether a KiCad check runs now (`pcb-maker ledger`: `running`).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub checking: bool,
+    /// The harness's process whose reservation this one runs inside
+    /// (`PCB_MAKER_LEDGER_INSIDE`, since 2026-10-27): the megabytes are only
+    /// what the process needs beyond it. None where absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inside: Option<u32>,
     /// Fields of newer writers, kept as they are when this binary rewrites
     /// the ledger.
     #[serde(flatten)]
@@ -501,20 +514,105 @@ fn environment_mb(name: &str) -> Option<f64> {
         .filter(|megabytes| megabytes.is_finite() && *megabytes > 0.0)
 }
 
-/// What the reservations may take together, in megabytes:
-/// `PCB_MAKER_LEDGER_TOTAL_MB`, else the machine's memory less the margin
-/// (`PCB_MAKER_LEDGER_MARGIN_MB`, default `DEFAULT_MARGIN_MB`). None when
-/// the machine's memory is unknown (no waiting then).
-pub fn capacity_mb() -> Option<f64> {
+/// Without fresh headroom samples, the share of the machine's memory the
+/// capacity assumes outside the ledger (since 2026-10-27,
+/// `machine_capacity_mb`): on a machine of 62.7 GB 15.7 GB, below the
+/// 16.7 GB the night of 2026-10-26/27 measured at its 5th percentile; on
+/// one of 16 or 24 GB the margin (`DEFAULT_MARGIN_MB`) is the smaller
+/// bound.
+pub const DEFAULT_OUTSIDE_SHARE: f64 = 0.25;
+
+/// What the reservations may take together on a machine of `total_mb`
+/// (since 2026-10-27): MemTotal less the memory outside the ledger, the
+/// median of the headroom samples (`summary`'s `outside_mb`) when they are
+/// fresh (`headroom_fresh`), else `DEFAULT_OUTSIDE_SHARE` of MemTotal; at
+/// most MemTotal less `margin_mb` (the static bound, 56.7 GB here). With
+/// what it is made of. Until then it was the static bound alone, 11-21 GB
+/// more than the machine could give beside the 16.7-27.5 GB outside the
+/// ledger. benchmarks/harness_common.py, `machine_capacity_mb`: the same.
+pub fn machine_capacity_mb(
+    total_mb: f64,
+    margin_mb: f64,
+    summary: Option<&HeadroomSummary>,
+    now: f64,
+) -> (f64, String) {
+    let bound = (total_mb - margin_mb).max(0.0);
+    let measured = summary
+        .filter(|summary| headroom_fresh(summary, now))
+        .and_then(|summary| summary.outside_mb.map(|outside| (outside, summary.samples)));
+    let (outside, how) = match measured {
+        Some((outside, count)) => (
+            outside.max(0.0),
+            format!("the median of {count} headroom samples"),
+        ),
+        None => (
+            total_mb * DEFAULT_OUTSIDE_SHARE,
+            format!(
+                "{:.0} % of MemTotal without fresh headroom samples",
+                DEFAULT_OUTSIDE_SHARE * 100.0
+            ),
+        ),
+    };
+    let capacity = (total_mb - outside).max(0.0).min(bound);
+    (
+        capacity,
+        format!(
+            "MemTotal {:.1} GB less {:.1} GB outside the ledger ({how}); at most {:.1} GB, MemTotal less the margin",
+            total_mb / 1024.0,
+            outside / 1024.0,
+            bound / 1024.0
+        ),
+    )
+}
+
+/// How long a process keeps the headroom summary it read for the capacity
+/// and its floor before it reads the file again.
+const HEADROOM_REREAD: Duration = Duration::from_secs(30);
+
+/// The headroom samples' summary beside the ledger `PCB_MAKER_LEDGER`
+/// names, read at most every `HEADROOM_REREAD`.
+fn headroom_now() -> Option<HeadroomSummary> {
+    static READ: Mutex<Option<(Instant, PathBuf, Option<HeadroomSummary>)>> = Mutex::new(None);
+    let ledger = Ledger::from_env()?;
+    let mut read = READ.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some((at, path, summary)) = read.as_ref()
+        && path == ledger.path()
+        && at.elapsed() < HEADROOM_REREAD
+    {
+        return summary.clone();
+    }
+    let summary = ledger.headroom();
+    *read = Some((Instant::now(), ledger.path().to_path_buf(), summary.clone()));
+    summary
+}
+
+/// What the reservations may take together, in megabytes, and what it is
+/// made of: `PCB_MAKER_LEDGER_TOTAL_MB`, else `machine_capacity_mb` of the
+/// machine's memory, its margin (`PCB_MAKER_LEDGER_MARGIN_MB`, default
+/// `DEFAULT_MARGIN_MB`) and the headroom samples beside the ledger. None
+/// when the machine's memory is unknown (no waiting then).
+pub fn capacity_described() -> Option<(f64, String)> {
     if let Some(total) = environment_mb("PCB_MAKER_LEDGER_TOTAL_MB") {
-        return Some(total);
+        return Some((total, "PCB_MAKER_LEDGER_TOTAL_MB".into()));
     }
     let margin = std::env::var("PCB_MAKER_LEDGER_MARGIN_MB")
         .ok()
         .and_then(|value| value.trim().parse::<f64>().ok())
         .filter(|megabytes| megabytes.is_finite() && *megabytes >= 0.0)
         .unwrap_or(DEFAULT_MARGIN_MB);
-    crate::board_router::memory_total_mb().map(|total| (total - margin).max(0.0))
+    let total = crate::board_router::memory_total_mb()?;
+    Some(machine_capacity_mb(
+        total,
+        margin,
+        headroom_now().as_ref(),
+        now_seconds(),
+    ))
+}
+
+/// What the reservations may take together, in megabytes
+/// (`capacity_described`).
+pub fn capacity_mb() -> Option<f64> {
+    capacity_described().map(|(capacity, _)| capacity)
 }
 
 /// Whether process `me` (holding `held_mb`, started at `started`) may hold
@@ -966,6 +1064,11 @@ struct Own {
     short: bool,
     /// Whether it holds as a short request (its entry's `short`).
     held_short: bool,
+    /// What the KiCad checks running now take of `extra_mb`.
+    checks_mb: f64,
+    /// The harness's reservation it runs inside (`PCB_MAKER_LEDGER_INSIDE`:
+    /// its pid and `started`).
+    inside: Option<(u32, f64)>,
 }
 
 static OWN: Mutex<Option<Own>> = Mutex::new(None);
@@ -1015,7 +1118,80 @@ pub fn arm(label: &str, short: bool) {
         watching: false,
         short: short_class(short),
         held_short: false,
+        checks_mb: 0.0,
+        inside: inside_key(std::env::var("PCB_MAKER_LEDGER_INSIDE").ok().as_deref()),
     });
+}
+
+/// The reservation `PCB_MAKER_LEDGER_INSIDE` names (`<pid> <started>`, as
+/// run.py's MemoryGate writes it for the binaries of a board it holds the
+/// memory of): its pid and `started`.
+fn inside_key(value: Option<&str>) -> Option<(u32, f64)> {
+    let mut words = value?.split_whitespace();
+    let pid = words.next()?.parse().ok()?;
+    let started = words
+        .next()?
+        .parse::<f64>()
+        .ok()
+        .filter(|t| t.is_finite())?;
+    words.next().is_none().then_some((pid, started))
+}
+
+/// Whether two `started` times are the same (a millisecond apart at most:
+/// the harness writes them as JSON and in `PCB_MAKER_LEDGER_INSIDE`).
+fn same_start(a: f64, b: f64) -> bool {
+    (a - b).abs() < 1e-3
+}
+
+/// The label a process arms under when its first KiCad check comes
+/// (`arm_on_demand`, `kicad_check`).
+static ON_DEMAND: Mutex<Option<String>> = Mutex::new(None);
+
+/// Makes this process arm under `label` as a short command when it first
+/// runs a KiCad check (`kicad_check`; since 2026-10-27): the executable
+/// says so for every command, so that no kicad-cli it starts runs outside
+/// a reservation (a fab export, a netlist import, a research command). The
+/// library's callers and tests do not: their checks reserve nothing.
+pub fn arm_on_demand(label: &str) {
+    *ON_DEMAND
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(label.to_string());
+}
+
+/// Reserves one KiCad check (`KICAD_CHECK_MB`) for this process's
+/// children up front (since 2026-10-27): a command whose memory is its
+/// checks (`drc-kicad-board`, `place-kicad-board`, `inspect-routing-run
+/// --native-check`, a command armed on demand) holds it from before its
+/// work until it ends, and its checks run inside it (`while_reserved`).
+/// Nothing when not armed or when held already.
+pub fn reserve_check_up_front() {
+    let Some((base, extra)) = reserved_mb() else {
+        return;
+    };
+    if extra < KICAD_CHECK_MB {
+        hold(base, KICAD_CHECK_MB, "KiCad's check (reserved up front)");
+    }
+}
+
+/// Runs `work`, a kicad-cli process that loads a board or a schematic
+/// (DRC, zone fill, an export, a netlist), inside this process's
+/// reservation (`while_reserved` of `KICAD_CHECK_MB`); a process armed on
+/// demand (`arm_on_demand`) arms first and reserves the check up front.
+/// Until 2026-10-27 the fab exports, the netlist import and the research
+/// commands ran kicad-cli outside any reservation (2.1-2.2 GB each in the
+/// headroom samples). `kicad-cli version` (64 MB) needs none.
+pub fn kicad_check<T>(work: impl FnOnce() -> T) -> T {
+    if !armed() {
+        let label = ON_DEMAND
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone();
+        if let Some(label) = label {
+            arm(&label, true);
+            reserve_check_up_front();
+        }
+    }
+    while_reserved(KICAD_CHECK_MB, "KiCad's check", work)
 }
 
 /// Whether this process reserves through the ledger.
@@ -1038,6 +1214,9 @@ enum Try {
         /// The older request it lets go first (`order_allows`), for the
         /// log.
         behind: Option<String>,
+        /// What of the floor holds it back (`binary_floor_allows`), for
+        /// the log.
+        floor: Option<String>,
     },
     Unarmed,
 }
@@ -1064,12 +1243,16 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
     let held = own.base_mb + own.extra_mb;
     let now = now_seconds();
     let since = own.waiting_since.unwrap_or(now);
+    let checking = own.checks_mb > 0.0;
+    let inside_key = own.inside;
     // What the entry it replaces (a harness's reservation for this process,
     // or its own) says of the run beyond the memory: kept.
     let entry = |megabytes: f64,
+                 check_mb: f64,
                  waiting_mb: Option<f64>,
                  held_since: Option<f64>,
                  short: bool,
+                 inside: Option<u32>,
                  inherited: Option<&Reservation>| Reservation {
         pid: me,
         started: own.started,
@@ -1083,19 +1266,37 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
         expected_end: inherited.and_then(|r| r.expected_end),
         priority: inherited.and_then(|r| r.priority.clone()),
         short: short && megabytes > 0.0,
+        check_mb: (check_mb > 0.0).then_some(check_mb),
+        checking,
+        inside,
         other: inherited.map(|r| r.other.clone()).unwrap_or_default(),
         ..Default::default()
     };
     let ancestors = &own.ancestors;
     let held_since = own.held_since;
     let (short_class, held_short) = (own.short, own.held_short);
+    let held_check = own.extra_mb;
     let outcome = own.ledger.update(|reservations| {
+        // The harness's reservation this process runs inside
+        // (`PCB_MAKER_LEDGER_INSIDE`): only what it needs beyond it is its
+        // own entry's.
+        let inside = inside_key.and_then(|(pid, started)| {
+            reservations
+                .iter()
+                .find(|r| r.pid == pid && r.pid != me && same_start(r.started, started) && r.megabytes > 0.0)
+                .map(|r| (r.pid, r.megabytes, r.held_since()))
+        });
+        let inside_mb = inside.map_or(0.0, |(_, megabytes, _)| megabytes);
+        let own_wanted = (wanted - inside_mb).max(0.0);
+        let own_held = (held - inside_mb).max(0.0);
         // A harness's reservation for this process (re-pointed to its
-        // pid), or one of a process above it: admitted already.
+        // pid), or one of a process above it, or the one it runs inside:
+        // admitted already.
         let harness = reservations
             .iter()
             .filter(|r| (r.pid == me || ancestors.contains(&r.pid)) && r.megabytes > 0.0)
             .map(Reservation::held_since)
+            .chain(inside.map(|(_, _, at)| at))
             .fold(None, |first: Option<f64>, at| {
                 Some(first.map_or(at, |first| first.min(at)))
             });
@@ -1104,22 +1305,22 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
             me,
             held,
             own.started,
-            wanted,
+            own_wanted,
             capacity,
             ancestors,
         );
+        // Less than it holds always goes (a check's memory given back).
+        let fits = fits || (held > 0.0 && wanted <= held);
         let others: Vec<&Reservation> = reservations.iter().filter(|r| r.pid != me).collect();
         let reserved: f64 = others.iter().map(|r| r.megabytes).sum();
         let count = others.len();
-        // Ordered admission and the drain for a new request only: a run
-        // that holds memory grows as before (the oldest waiter may wait for
-        // it to end). A binary does not know when it will end: in a drain
-        // it goes by the waiter's room alone.
+        // Ordered admission, the drain and the floor for a new request
+        // only: a run that holds memory grows as before (the oldest waiter
+        // may wait for it to end). A binary does not know when it will end:
+        // in a drain it goes by the waiter's room alone.
         let new_request = held <= 0.0 && harness.is_none();
-        // (The memory available is read only when a waiter may drain.)
-        let available = (new_request && first_waiter(&others).is_some())
-            .then(|| available_less_growth(&others))
-            .flatten();
+        // (The memory available is read for a new request only.)
+        let available = new_request.then(|| available_less_growth(&others)).flatten();
         let drained = new_request
             .then(|| drained_for(&others, me, since, now, capacity, available))
             .flatten();
@@ -1134,6 +1335,28 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
         // (Held back only by the order or the drain: a waiter waits, and
         // the memory available was read.)
         let ordered = ordered || (short && short_allows(wanted, available));
+        // A new request keeps the harnesses' floor beside it (since
+        // 2026-10-27): the measured one, a short request `FLOOR_KEEP_MB`.
+        // Alone (no other run holds memory) it goes, as a harness's.
+        let floor = new_request.then(|| {
+            if short {
+                (FLOOR_KEEP_MB, "the 2.0 GB to keep".to_string())
+            } else {
+                measured_floor_mb(headroom_now().as_ref(), 0.0, now)
+            }
+        });
+        let alone = !others
+            .iter()
+            .any(|r| r.megabytes > 0.0 && !ancestors.contains(&r.pid));
+        let floor_ok = alone || binary_floor_allows(wanted, available, floor.as_ref().map(|f| f.0));
+        let floor_text = (!floor_ok).then(|| {
+            let (floor, how) = floor.clone().unwrap_or_default();
+            format!(
+                "the memory available less what the runs still grow by, {:.1} GB, would leave less than the floor of {:.1} GB ({how})",
+                available.unwrap_or(0.0) / 1024.0,
+                floor / 1024.0
+            )
+        });
         let short = short || (held_short && held > 0.0);
         let behind = (fits && !ordered)
             .then(|| first_waiter(&others))
@@ -1151,33 +1374,44 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
                     r.waiting_mb.unwrap_or(0.0),
                 )
             });
-        let fits = fits && ordered;
+        let waits_on_floor = fits && ordered && !floor_ok;
+        let fits = fits && ordered && floor_ok;
         let held_since = held_since.or(harness).unwrap_or(now);
         // A harness's reservation for this process gives way to the
         // process's own.
         let inherited = reservations.iter().find(|r| r.pid == me).cloned();
         reservations.retain(|r| r.pid != me);
+        let inside_pid = inside.map(|(pid, _, _)| pid);
         if fits {
             reservations.push(entry(
-                wanted,
+                own_wanted,
+                extra_mb,
                 None,
                 Some(held_since),
                 short,
+                inside_pid,
                 inherited.as_ref(),
             ));
         } else if wait || held > 0.0 {
-            reservations.push(entry(
-                held,
+            let mut waiting = entry(
+                own_held,
+                held_check,
                 wait.then_some(wanted),
                 Some(held_since),
                 held_short,
+                inside_pid,
                 inherited.as_ref(),
-            ));
+            );
+            if wait && new_request {
+                waiting.floor_mb = floor.as_ref().map(|f| f.0);
+                waiting.waits_on_floor = waits_on_floor;
+            }
+            reservations.push(waiting);
         }
-        (fits, reserved, count, behind, held_since, short)
+        (fits, reserved, count, behind, held_since, short, floor_text)
     });
     match outcome {
-        Ok((true, _, _, _, held_since, short)) => {
+        Ok((true, _, _, _, held_since, short, _)) => {
             own.base_mb = base_mb;
             own.extra_mb = extra_mb;
             own.waiting_since = None;
@@ -1187,7 +1421,7 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
             }
             Try::Held
         }
-        Ok((false, reserved_mb, others, behind, _, _)) => {
+        Ok((false, reserved_mb, others, behind, _, _, floor)) => {
             if wait {
                 own.waiting_since = Some(since);
             }
@@ -1195,6 +1429,7 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
                 reserved_mb,
                 others,
                 behind,
+                floor,
             }
         }
         Err(error) => {
@@ -1210,6 +1445,23 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
     }
 }
 
+/// Whether a binary's new request of `wanted_mb` keeps `floor_mb` (since
+/// 2026-10-27; None: none) of the memory available less what the
+/// reservations still grow by (`available_mb`; None: unknown, kept) beside
+/// it: the harnesses' rule (harness_common.memory_room), which binaries
+/// before it did not keep, so that a burst of direct calls could take the
+/// machine below the floor the harnesses kept.
+pub fn binary_floor_allows(
+    wanted_mb: f64,
+    available_mb: Option<f64>,
+    floor_mb: Option<f64>,
+) -> bool {
+    match (available_mb, floor_mb) {
+        (Some(available), Some(floor)) => available - wanted_mb >= floor,
+        _ => true,
+    }
+}
+
 /// Holds `base_mb` and `extra_mb`, waiting while the ledger has no room,
 /// and says so in the log (`why`: what the memory is for).
 fn hold(base_mb: f64, extra_mb: f64, why: &str) {
@@ -1222,16 +1474,18 @@ fn hold(base_mb: f64, extra_mb: f64, why: &str) {
                 reserved_mb,
                 others,
                 behind,
+                floor,
             } => {
                 if reported.is_none_or(|at| at.elapsed() >= WAIT_REPORT) {
                     let capacity = capacity_mb().unwrap_or(f64::INFINITY);
                     eprintln!(
-                        "memory ledger: waiting to reserve {:.0} MB for {why}: {reserved_mb:.0} MB of {capacity:.0} MB reserved by {others} other run{}{} (pcb-maker ledger lists them; waited {:.0} s)",
+                        "memory ledger: waiting to reserve {:.0} MB for {why}: {reserved_mb:.0} MB of {capacity:.0} MB reserved by {others} other run{}{}{} (pcb-maker ledger lists them; waited {:.0} s)",
                         base_mb + extra_mb,
                         if others == 1 { "" } else { "s" },
                         behind.map_or(String::new(), |behind| format!(
                             "; behind an older request, {behind}"
                         )),
+                        floor.map_or(String::new(), |floor| format!("; {floor}")),
                         started.elapsed().as_secs_f64()
                     );
                     reported = Some(Instant::now());
@@ -1294,29 +1548,61 @@ fn room_mb() -> Option<f64> {
     }
     let capacity = capacity_mb()?;
     let me = std::process::id();
-    let others = own
-        .ledger
-        .live()
-        .ok()?
+    let live = own.ledger.live().ok()?;
+    let others = live
         .iter()
         .filter(|r| r.pid != me)
         .map(|r| r.megabytes)
         .sum::<f64>();
-    Some(capacity - others)
+    // The reservation it runs inside is its own room too.
+    let inside = own.inside.map_or(0.0, |(pid, started)| {
+        live.iter()
+            .filter(|r| r.pid == pid && r.pid != me && same_start(r.started, started))
+            .map(|r| r.megabytes)
+            .sum()
+    });
+    Some(capacity - others + inside)
 }
 
-/// Runs `work` with `megabytes` more reserved for a child process (a
-/// kicad-cli check), waiting for the room first; released afterwards.
+/// Runs `work` with `megabytes` reserved for a child process (a kicad-cli
+/// check): inside what the process holds for its children already (a
+/// check reserved up front, `reserve_check_up_front`) where that has room
+/// beside the checks running, else with the rest raised first (waiting for
+/// the room) and released afterwards. The entry says a check runs
+/// (`checking`; `pcb-maker ledger`).
 pub fn while_reserved<T>(megabytes: f64, why: &str, work: impl FnOnce() -> T) -> T {
     let Some((base, extra)) = reserved_mb() else {
         return work();
     };
-    hold(base, extra + megabytes, why);
+    let running = own().as_ref().map_or(0.0, |own| own.checks_mb);
+    let raise = (megabytes - (extra - running).max(0.0)).max(0.0);
+    if raise > 0.0 {
+        hold(base, extra + raise, why);
+    }
+    set_checking(megabytes);
     let outcome = work();
+    set_checking(-megabytes);
     if let Some((base, extra)) = reserved_mb() {
-        let _ = try_hold(base, (extra - megabytes).max(0.0), false);
+        let _ = try_hold(base, (extra - raise).max(0.0), false);
     }
     outcome
+}
+
+/// Adds `megabytes` to the checks running now and rewrites the entry when
+/// whether one runs changed (a check's start without a raise).
+fn set_checking(megabytes: f64) {
+    let changed = {
+        let mut guard = own();
+        let Some(own) = guard.as_mut() else {
+            return;
+        };
+        let before = own.checks_mb > 0.0;
+        own.checks_mb = (own.checks_mb + megabytes).max(0.0);
+        before != (own.checks_mb > 0.0) && megabytes > 0.0
+    };
+    if changed && let Some((base, extra)) = reserved_mb() {
+        let _ = try_hold(base, extra, false);
+    }
 }
 
 /// Removes this process's reservation (at exit; a process that dies
@@ -1463,6 +1749,14 @@ pub fn outside_rises(samples: &[(f64, f64)], window_seconds: f64) -> Vec<f64> {
     rises
 }
 
+/// Whether the samples' `summary` is fresh: at least `HEADROOM_MIN_SAMPLES`
+/// samples whose newest is at most `HEADROOM_MAX_AGE_SECONDS` old (the
+/// floor and the capacity read only such).
+pub fn headroom_fresh(summary: &HeadroomSummary, now: f64) -> bool {
+    summary.samples >= HEADROOM_MIN_SAMPLES
+        && now - summary.updated.unwrap_or(0.0) <= HEADROOM_MAX_AGE_SECONDS
+}
+
 /// A harness's floor of available memory from measured headroom (since
 /// 2026-10-27): `FLOOR_KEEP_MB` + the outside memory's growth (`summary`'s
 /// `outside_growth_mb`) + `overshoot_mb`, the board's tier's 0.95 quantile
@@ -1480,12 +1774,11 @@ pub fn measured_floor_mb(
     now: f64,
 ) -> (f64, String) {
     let count = summary.map_or(0, |summary| summary.samples);
-    let growth = summary.and_then(|summary| summary.outside_growth_mb);
-    let updated = summary.and_then(|summary| summary.updated).unwrap_or(0.0);
+    let growth = summary
+        .filter(|summary| headroom_fresh(summary, now))
+        .and_then(|summary| summary.outside_growth_mb);
     match growth {
-        Some(growth)
-            if count >= HEADROOM_MIN_SAMPLES && now - updated <= HEADROOM_MAX_AGE_SECONDS =>
-        {
+        Some(growth) => {
             let (growth, overshoot) = (growth.max(0.0), overshoot_mb.max(0.0));
             (
                 FLOOR_KEEP_MB + growth + overshoot,
@@ -2522,14 +2815,16 @@ mod tests {
     }
 
     #[test]
-    fn the_capacity_is_the_machines_memory_less_the_margin() {
+    fn the_capacity_is_at_most_the_machines_memory_less_the_margin() {
         // Read without the variables set (cargo runs tests side by side:
-        // only read here).
+        // only read here): the machine's rule with the live ledger's
+        // samples, bounded by MemTotal less the margin.
         if std::env::var_os("PCB_MAKER_LEDGER_TOTAL_MB").is_none()
             && std::env::var_os("PCB_MAKER_LEDGER_MARGIN_MB").is_none()
             && let Some(total) = crate::board_router::memory_total_mb()
         {
-            assert_eq!(capacity_mb(), Some((total - DEFAULT_MARGIN_MB).max(0.0)));
+            let capacity = capacity_mb().unwrap();
+            assert!((0.0..=(total - DEFAULT_MARGIN_MB).max(0.0)).contains(&capacity));
         }
     }
 
@@ -2862,12 +3157,16 @@ mod tests {
     /// expected peak in the view and its measured peak resident for its
     /// seconds. Returns the starts (None: not within `horizon`), the seconds
     /// waited in all, how many started and the least MemAvailable.
+    /// `capacity` (since 2026-10-27): the ledger's capacity and, per knot,
+    /// what the other runs reserved; a board then starts only when those,
+    /// the boards running and its own fit it as well.
     fn floor_replay(
         knots: &[(u32, f64, f64)],
         boards: &[(u32, f64, u32, f64)],
         floor_mb: f64,
         horizon: u32,
         poll: u32,
+        capacity: Option<(f64, &[f64])>,
     ) -> (Vec<Option<u32>>, u32, usize, f64) {
         let mut starts: Vec<Option<u32>> = vec![None; boards.len()];
         let mut lowest = f64::INFINITY;
@@ -2877,6 +3176,7 @@ mod tests {
                 knot += 1;
             }
             let (_, view, available) = knots[knot];
+            let room = capacity.map_or(f64::INFINITY, |(capacity, others)| capacity - others[knot]);
             let (mut reserved, mut resident) = (0.0, 0.0);
             for (&(_, mb, seconds, peak), start) in boards.iter().zip(&starts) {
                 if start.is_some_and(|start| start <= t && t < start + seconds) {
@@ -2889,6 +3189,7 @@ mod tests {
                     && t >= since
                     && (t - since) % poll == 0
                     && view - reserved - mb >= floor_mb
+                    && reserved + mb <= room
                 {
                     starts[index] = Some(t);
                     reserved += mb;
@@ -2951,7 +3252,7 @@ mod tests {
         // 4235, 4371 s, at the next look): 14 220 s waited, the last board
         // ends at 6095 s (22:18 was 6045 s after 20:37).
         let (starts, waited, _, lowest) =
-            floor_replay(&EVENING_KNOTS, &EVENING_BOARDS, 10_240.0, 9000, 15);
+            floor_replay(&EVENING_KNOTS, &EVENING_BOARDS, 10_240.0, 9000, 15, None);
         assert_eq!(starts, [Some(2220), Some(3375), Some(4245), Some(4380)]);
         assert_eq!(
             (waited, last_end(&starts, &EVENING_BOARDS)),
@@ -2960,8 +3261,14 @@ mod tests {
         // The measured floor: protoesp at once, DSP at 2220, SNSP-CPU-01 at
         // 4245: 9840 s waited, the last ends at 5877 s; the least
         // MemAvailable 28.9 GB (29.7 with 10 GB), above 2 GB.
-        let (measured, measured_waited, _, measured_lowest) =
-            floor_replay(&EVENING_KNOTS, &EVENING_BOARDS, MEASURED_FLOOR_MB, 9000, 15);
+        let (measured, measured_waited, _, measured_lowest) = floor_replay(
+            &EVENING_KNOTS,
+            &EVENING_BOARDS,
+            MEASURED_FLOOR_MB,
+            9000,
+            15,
+            None,
+        );
         assert_eq!(measured, [Some(0), Some(3375), Some(2220), Some(4245)]);
         assert_eq!(
             (measured_waited, last_end(&measured, &EVENING_BOARDS)),
@@ -3036,11 +3343,233 @@ mod tests {
         // measured floor: 10, 18 376 s; the least MemAvailable 20.0 and
         // 17.5 GB, above 2 GB.
         let (_, waited, started, lowest) =
-            floor_replay(&TONIGHT_KNOTS, &TONIGHT_BOARDS, 10_240.0, 3600, 15);
+            floor_replay(&TONIGHT_KNOTS, &TONIGHT_BOARDS, 10_240.0, 3600, 15, None);
         assert_eq!((started, waited, lowest.round()), (9, 20_766, 20_495.0));
-        let (_, waited, started, lowest) =
-            floor_replay(&TONIGHT_KNOTS, &TONIGHT_BOARDS, MEASURED_FLOOR_MB, 3600, 15);
+        let (_, waited, started, lowest) = floor_replay(
+            &TONIGHT_KNOTS,
+            &TONIGHT_BOARDS,
+            MEASURED_FLOOR_MB,
+            3600,
+            15,
+            None,
+        );
         assert_eq!((started, waited, lowest.round()), (10, 18_376, 17_957.0));
         assert!(lowest > FLOOR_KEEP_MB);
+    }
+
+    /// This machine (2026-10-27): MemTotal 64 210 MB (62.7 GB), and the
+    /// median memory outside the ledger the night of 2026-10-26/27
+    /// measured, 18.1 GB (`outside_mb`), and its 5th percentile, 16.7 GB.
+    const MEM_TOTAL_MB: f64 = 64_210.0;
+    const OUTSIDE_P50_MB: f64 = 18.1 * 1024.0;
+    const OUTSIDE_P5_MB: f64 = 16.7 * 1024.0;
+
+    #[test]
+    fn the_capacity_is_the_machines_memory_less_what_is_outside_the_ledger() {
+        let now = 1_793_000_000.0;
+        let summary = HeadroomSummary {
+            samples: 1091,
+            updated: Some(now - 60.0),
+            outside_mb: Some(OUTSIDE_P50_MB),
+            outside_growth_mb: Some(6886.0),
+            ..Default::default()
+        };
+        // Measured: 64 210 - 18 534 = 45 676 MB (44.6 GB), not the static
+        // bound's 58 066 (56.7 GB).
+        let (capacity, how) =
+            machine_capacity_mb(MEM_TOTAL_MB, DEFAULT_MARGIN_MB, Some(&summary), now);
+        assert_eq!(capacity.round(), 45_676.0);
+        assert_eq!(
+            how,
+            "MemTotal 62.7 GB less 18.1 GB outside the ledger (the median of 1091 headroom samples); at most 56.7 GB, MemTotal less the margin"
+        );
+        // Without fresh samples (too few, a day old, none): 25 % of
+        // MemTotal outside, 48 158 MB (47.0 GB).
+        let default = (MEM_TOTAL_MB * 0.75).round();
+        for stale in [
+            HeadroomSummary {
+                samples: 359,
+                ..summary.clone()
+            },
+            HeadroomSummary {
+                updated: Some(now - 86_401.0),
+                ..summary.clone()
+            },
+            HeadroomSummary {
+                outside_mb: None,
+                ..summary.clone()
+            },
+        ] {
+            assert_eq!(
+                machine_capacity_mb(MEM_TOTAL_MB, DEFAULT_MARGIN_MB, Some(&stale), now)
+                    .0
+                    .round(),
+                default
+            );
+        }
+        let (capacity, how) = machine_capacity_mb(MEM_TOTAL_MB, DEFAULT_MARGIN_MB, None, now);
+        assert_eq!(capacity.round(), default);
+        assert!(how.contains("25 % of MemTotal without fresh headroom samples"));
+        // Another machine without samples: 16 GB and 24 GB keep the margin
+        // (10 and 18 GB), 32 GB a quarter (24 GB), 128 GB a quarter (96 GB).
+        for (total, expected) in [
+            (16_384.0, 10_240.0),
+            (24_576.0, 18_432.0),
+            (32_768.0, 24_576.0),
+            (131_072.0, 98_304.0),
+        ] {
+            assert_eq!(
+                machine_capacity_mb(total, DEFAULT_MARGIN_MB, None, now).0,
+                expected
+            );
+        }
+        // Little outside (an idle machine): the static bound.
+        let idle = HeadroomSummary {
+            outside_mb: Some(2000.0),
+            ..summary.clone()
+        };
+        assert_eq!(
+            machine_capacity_mb(MEM_TOTAL_MB, DEFAULT_MARGIN_MB, Some(&idle), now).0,
+            MEM_TOTAL_MB - DEFAULT_MARGIN_MB
+        );
+        // More outside than the machine: nothing.
+        let full = HeadroomSummary {
+            outside_mb: Some(70_000.0),
+            ..summary
+        };
+        assert_eq!(
+            machine_capacity_mb(MEM_TOTAL_MB, DEFAULT_MARGIN_MB, Some(&full), now).0,
+            0.0
+        );
+    }
+
+    #[test]
+    fn a_binary_keeps_the_floor_and_runs_inside_a_harness_s_reservation() {
+        // A new request of 3000 MB with 11 000 available beside the growth
+        // keeps a floor of 8000, not one of 8990 (the measured one); a
+        // short one keeps 2048; unknown memory or no floor: it goes.
+        assert!(binary_floor_allows(3000.0, Some(11_000.0), Some(8000.0)));
+        assert!(!binary_floor_allows(3000.0, Some(11_000.0), Some(8990.0)));
+        assert!(binary_floor_allows(
+            2253.0,
+            Some(4301.0),
+            Some(FLOOR_KEEP_MB)
+        ));
+        assert!(!binary_floor_allows(
+            2253.0,
+            Some(4300.0),
+            Some(FLOOR_KEEP_MB)
+        ));
+        assert!(binary_floor_allows(3000.0, None, Some(8990.0)));
+        assert!(binary_floor_allows(3000.0, Some(0.0), None));
+        // The harness's reservation named by PCB_MAKER_LEDGER_INSIDE.
+        assert_eq!(
+            inside_key(Some("4134524 1793000000.123456")),
+            Some((4_134_524, 1_793_000_000.123_456))
+        );
+        for bad in [
+            None,
+            Some(""),
+            Some("12"),
+            Some("x 1.0"),
+            Some("12 inf"),
+            Some("12 1.0 3"),
+        ] {
+            assert_eq!(inside_key(bad), None);
+        }
+        assert!(same_start(1_793_000_000.123_456, 1_793_000_000.123_457));
+        assert!(!same_start(1_793_000_000.0, 1_793_000_000.01));
+        // A check's entry as pcb-maker ledger and older binaries read it.
+        let entry = Reservation {
+            pid: 7,
+            megabytes: 0.0,
+            check_mb: Some(KICAD_CHECK_MB),
+            checking: true,
+            inside: Some(5),
+            ..Default::default()
+        };
+        let text = serde_json::to_value(&entry).unwrap();
+        assert_eq!(text["check_mb"], KICAD_CHECK_MB);
+        assert_eq!(text["checking"], true);
+        assert_eq!(text["inside"], 5);
+        let back: Reservation = serde_json::from_value(text).unwrap();
+        assert_eq!(back, entry);
+        let plain = serde_json::to_value(Reservation::default()).unwrap();
+        assert!(plain.get("check_mb").is_none() && plain.get("checking").is_none());
+    }
+
+    /// What the other runs reserved at the evening's knots (the log's
+    /// lines: 34.5, 29.8, 28.5, 32.0 and 30.6 GB, less the four boards'
+    /// reservations that ran then: protoesp 0.6 at 3364 s, video 4.3 at 4235
+    /// and with DSP 1.7 at 4371).
+    const EVENING_OTHERS_MB: [f64; 5] = [35_328.0, 30_515.0, 28_570.0, 28_365.0, 25_190.0];
+
+    #[test]
+    fn the_evening_and_tonight_replayed_with_the_capacity_from_the_machine() {
+        // The capacity from the machine, 45 676 MB, beside the other runs'
+        // reservations: the replays start the same boards at the same
+        // times as with the floor alone, for both floors; the least
+        // MemAvailable is the same (above 2 GB).
+        let capacity = MEM_TOTAL_MB - OUTSIDE_P50_MB;
+        for floor in [10_240.0, MEASURED_FLOOR_MB] {
+            let alone = floor_replay(&EVENING_KNOTS, &EVENING_BOARDS, floor, 9000, 15, None);
+            let with = floor_replay(
+                &EVENING_KNOTS,
+                &EVENING_BOARDS,
+                floor,
+                9000,
+                15,
+                Some((capacity, &EVENING_OTHERS_MB)),
+            );
+            assert_eq!(with, alone);
+            assert!(with.3 > FLOOR_KEEP_MB);
+        }
+        // Tonight's knots do not carry what the others reserved: at most
+        // MemTotal less the outside memory less the floor's view (a holder's
+        // growth counts its own resident memory, its tree is outside the
+        // outside memory), here with the outside memory at its 5th
+        // percentile, 16.7 GB (more reserved: the capacity is the tighter).
+        let others: Vec<f64> = TONIGHT_KNOTS
+            .iter()
+            .map(|&(_, view, _)| MEM_TOTAL_MB - OUTSIDE_P5_MB - view)
+            .collect();
+        for floor in [10_240.0, MEASURED_FLOOR_MB] {
+            let alone = floor_replay(&TONIGHT_KNOTS, &TONIGHT_BOARDS, floor, 3600, 15, None);
+            let with = floor_replay(
+                &TONIGHT_KNOTS,
+                &TONIGHT_BOARDS,
+                floor,
+                3600,
+                15,
+                Some((capacity, &others)),
+            );
+            assert_eq!(with, alone);
+            assert!(with.3 > FLOOR_KEEP_MB);
+        }
+        // The capacity holds a board the floor admits back only with the
+        // outside memory below its median less the floor (18.1 - 8.8 =
+        // 9.3 GB): at 9 GB the measured floor's night changes.
+        let low: Vec<f64> = TONIGHT_KNOTS
+            .iter()
+            .map(|&(_, view, _)| MEM_TOTAL_MB - 9.0 * 1024.0 - view)
+            .collect();
+        assert_ne!(
+            floor_replay(
+                &TONIGHT_KNOTS,
+                &TONIGHT_BOARDS,
+                MEASURED_FLOOR_MB,
+                3600,
+                15,
+                Some((capacity, &low)),
+            ),
+            floor_replay(
+                &TONIGHT_KNOTS,
+                &TONIGHT_BOARDS,
+                MEASURED_FLOOR_MB,
+                3600,
+                15,
+                None
+            )
+        );
     }
 }

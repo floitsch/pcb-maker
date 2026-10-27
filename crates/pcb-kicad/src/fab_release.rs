@@ -127,6 +127,12 @@ fn export_timeout() -> std::time::Duration {
 /// Runs kicad-cli with `arguments`, its output captured, killed after the
 /// export timeout.
 fn kicad_cli(arguments: &[&std::ffi::OsStr], what: &str) -> Result<(), String> {
+    // Inside the process's reservation in the memory ledger
+    // (`ledger::kicad_check`): an export loads the board.
+    crate::ledger::kicad_check(|| kicad_cli_unreserved(arguments, what))
+}
+
+fn kicad_cli_unreserved(arguments: &[&std::ffi::OsStr], what: &str) -> Result<(), String> {
     let mut command = Command::new(crate::native_report::kicad_cli());
     command
         .args(arguments)

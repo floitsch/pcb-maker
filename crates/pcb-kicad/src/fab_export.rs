@@ -22,9 +22,14 @@ pub struct KiCadFabExport {
 }
 
 fn run(command: &mut Command, what: &str) -> Result<(), String> {
-    let output = command
-        .output()
-        .map_err(|error| format!("{what}: {error}"))?;
+    // kicad-cli's exports load the board: inside the process's reservation
+    // in the memory ledger (`ledger::kicad_check`).
+    let output = if command.get_program() == crate::native_report::kicad_cli().as_os_str() {
+        crate::ledger::kicad_check(|| command.output())
+    } else {
+        command.output()
+    }
+    .map_err(|error| format!("{what}: {error}"))?;
     if !output.status.success() {
         return Err(format!(
             "{what} failed: {}{}",
