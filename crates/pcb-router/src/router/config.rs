@@ -373,15 +373,16 @@ pub struct Config {
     /// attempt, the rung probes).
     pub limits_count_all: bool,
     /// Nets whose length a rule bounds from above (KiCad's custom `length`
-    /// rule with a maximum), by name. Their search and their corridors
-    /// price congestion (the present sharing and the history) at
-    /// `bounded_congestion` of the others', and they are rerouted after
-    /// the others in each iteration, so that where two nets want one way
-    /// the bounded one keeps it and the other yields (the criticality of
-    /// timing-driven negotiated routing). `None`: no net.
-    pub length_bounded: Option<std::sync::Arc<std::collections::BTreeSet<String>>>,
-    /// The share of the congestion price a `length_bounded` net pays.
-    pub bounded_congestion: f64,
+    /// rule with a maximum), by name, with that maximum in millimetres
+    /// (tracks and vias, a via at the board's 1.6 mm over its layers).
+    /// After the clean-up each one longer than its maximum is routed again
+    /// through the copper in its way at `length_repair_present`, and the
+    /// nets it then overlaps are routed again around it, hard; the
+    /// exchange is kept when the net comes out shorter and no terminal of
+    /// any of them more open (`repair_lengths`). `None`: no net.
+    pub length_bounded: Option<std::sync::Arc<std::collections::BTreeMap<String, f64>>>,
+    /// The price of sharing a node for the length repair's search.
+    pub length_repair_present: f64,
 }
 
 impl Default for Config {
@@ -481,10 +482,10 @@ impl Default for Config {
             share_static_maps: true,
             limits_count_all: false,
             length_bounded: None,
-            bounded_congestion: std::env::var("PCB_ROUTER_BOUNDED_CONGESTION")
+            length_repair_present: std::env::var("PCB_ROUTER_LENGTH_REPAIR_PRESENT")
                 .ok()
                 .and_then(|value| value.parse().ok())
-                .unwrap_or(0.5),
+                .unwrap_or(2.0),
         }
     }
 }

@@ -5391,17 +5391,17 @@ fn walled_pair(bounded: &str) -> RoutingResult {
     let config = Config {
         pitches: vec![0.1],
         parallel: false,
-        length_bounded: Some(std::sync::Arc::new([bounded.to_string()].into())),
+        length_bounded: Some(std::sync::Arc::new([(bounded.to_string(), 25.5)].into())),
         ..Config::default()
     };
     route(&board, &config)
 }
 
-/// A net whose length a rule bounds (`Config::length_bounded`) keeps
-/// the short way where two nets want it, the other one yields; which of
-/// the two is bounded decides, not the order.
+/// A net longer than its rule's maximum (`Config::length_bounded`) takes
+/// the short way from the net in it, which goes round (`repair_lengths`);
+/// which of the two is bounded decides, not the order.
 #[test]
-fn a_length_bounded_net_keeps_the_short_way_and_the_other_yields() {
+fn a_net_over_its_length_maximum_takes_the_short_way_from_the_net_in_it() {
     let length = |result: &RoutingResult, net: usize| -> f64 {
         result.routes[net]
             .segments

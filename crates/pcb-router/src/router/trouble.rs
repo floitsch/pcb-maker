@@ -971,3 +971,136 @@ fn clean(router: &Router, saved: &[Saved]) -> bool {
         .iter()
         .all(|entry| router.conflicts(entry.0).is_empty())
 }
+
+/// The most nets one length exchange may displace.
+const LENGTH_VICTIMS: usize = 8;
+
+/// A length exchange is kept when the net comes out at least this much
+/// shorter, mm.
+const LENGTH_GAIN: f64 = 0.5;
+
+impl Router {
+    /// A net's length on the lattice: its branches' steps and, per via, the
+    /// height between the layers it joins (the board's 1.6 mm spread over
+    /// its copper layers), mm.
+    pub(super) fn net_length(&self, net: NetId) -> f64 {
+        let nx = self.grid.nx as i64;
+        let layer_step = 1.6 / (self.board.layer_count.max(2) - 1) as f64;
+        let mut length = 0.0;
+        for branch in &self.nets[net as usize].branches {
+            for pair in branch.nodes.windows(2) {
+                if pair[0].cell == pair[1].cell {
+                    length += layer_step * (pair[0].layer as f64 - pair[1].layer as f64).abs();
+                } else {
+                    let dx = (pair[0].cell as i64 % nx - pair[1].cell as i64 % nx).abs();
+                    let dy = (pair[0].cell as i64 / nx - pair[1].cell as i64 / nx).abs();
+                    length += self.grid.pitch * ((dx * dx + dy * dy) as f64).sqrt();
+                }
+            }
+        }
+        length
+    }
+
+    /// The length repair (`Config::length_bounded`): each complete net
+    /// longer than its rule's maximum, longest over it first, is routed
+    /// again by geometry (the clean-up's search: no history, no preferred
+    /// axes) through the copper in its way at `length_repair_present`; the
+    /// nets it then overlaps lose the branches it crosses and are routed
+    /// again around it, hard. Kept when the net comes out shorter by
+    /// `LENGTH_GAIN` and none of them has a terminal more open or a
+    /// conflict; else restored. Returns the nets shortened.
+    pub(super) fn repair_lengths(&mut self, order: &[NetId]) -> usize {
+        let Some(bounds) = self.config.length_bounded.clone() else {
+            return 0;
+        };
+        let budget = (self.negotiation_seconds * 0.05).max(10.0);
+        let clock = self.clock();
+        let present = self.config.length_repair_present as f32;
+        let mut over: Vec<(NetId, f64)> = order
+            .iter()
+            .copied()
+            .filter(|net| {
+                let state = &self.nets[*net as usize];
+                state.routable && state.complete && state.plane.is_empty()
+            })
+            .filter_map(|net| {
+                let max = *bounds.get(&self.board.nets[net as usize].name)?;
+                let excess = self.net_length(net) - max;
+                (excess > 0.0).then_some((net, excess))
+            })
+            .collect();
+        over.sort_by(|a, b| b.1.total_cmp(&a.1));
+        let (mut tried, mut shortened, mut gained) = (0, 0, 0.0);
+        for (net, _) in over {
+            if self.spent(&clock, budget) {
+                break;
+            }
+            tried += 1;
+            let before = self.net_length(net);
+            let mut saved = vec![self.save_net(net)];
+            self.rip_up(net);
+            self.nets[net as usize].hopeless_searches = 0;
+            self.cleanup = true;
+            self.route_net_seq(net, present, false, 4.0);
+            self.cleanup = false;
+            self.stamp(net);
+            let after = self.net_length(net);
+            if !self.nets[net as usize].complete || after > before - LENGTH_GAIN {
+                self.restore_nets(saved);
+                continue;
+            }
+            let mut victims: Vec<NetId> = order
+                .iter()
+                .copied()
+                .filter(|other| *other != net && !self.conflicts(*other).is_empty())
+                .collect();
+            for other in self.blockers(net) {
+                if !victims.contains(&other) {
+                    victims.push(other);
+                }
+            }
+            if victims.len() > LENGTH_VICTIMS
+                || victims
+                    .iter()
+                    .any(|victim| !self.nets[*victim as usize].plane.is_empty())
+            {
+                self.restore_nets(saved);
+                continue;
+            }
+            for victim in &victims {
+                saved.push(self.save_net(*victim));
+                self.rip_up_conflicted(*victim);
+            }
+            if !self.conflicts(net).is_empty() {
+                // Copper its own conflicts do not show (another class's
+                // wider clearance): those nets go whole.
+                for victim in &victims {
+                    if !self.conflicts(net).is_empty() {
+                        self.rip_up(*victim);
+                    }
+                }
+            }
+            for victim in &victims {
+                self.nets[*victim as usize].hopeless_searches = 0;
+                self.route_net_seq(*victim, 0.0, true, 4.0);
+                self.stamp(*victim);
+            }
+            let kept = open_now(self, &saved) <= open_saved(&saved)
+                && clean(self, &saved)
+                && self.net_length(net) <= before - LENGTH_GAIN;
+            if kept {
+                shortened += 1;
+                gained += before - self.net_length(net);
+            } else {
+                self.restore_nets(saved);
+            }
+        }
+        if self.config.verbose && tried > 0 {
+            eprintln!(
+                "length repair: {shortened} of {tried} nets over their maximum shortened by {gained:.1} mm, {:.1} s of work",
+                self.budget_work() - clock.0
+            );
+        }
+        shortened
+    }
+}

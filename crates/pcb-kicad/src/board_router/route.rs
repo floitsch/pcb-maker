@@ -698,21 +698,25 @@ pub(super) fn route_seeds(
 }
 
 /// The core router configuration for a KiCad configuration.
-/// The nets of the project's `length` rules with a maximum
-/// (`KiCadBoardRouterConfig::length_rules`, with `length_matching`):
-/// `None` without one.
+/// The nets of the project's `length` rules with a maximum, each with the
+/// least maximum of its rules (`KiCadBoardRouterConfig::length_rules`, with
+/// `length_matching`): `None` without one.
 pub(crate) fn length_bounded_nets(
     config: &KiCadBoardRouterConfig,
-) -> Option<std::sync::Arc<BTreeSet<String>>> {
+) -> Option<std::sync::Arc<BTreeMap<String, f64>>> {
     if !config.length_matching_on() {
         return None;
     }
-    let nets: BTreeSet<String> = config
-        .length_rules
-        .iter()
-        .filter(|rule| rule.constraint == "length" && rule.max.is_some())
-        .flat_map(|rule| rule.nets.iter().map(|member| member.net.clone()))
-        .collect();
+    let mut nets: BTreeMap<String, f64> = BTreeMap::new();
+    for rule in &config.length_rules {
+        let (true, Some(max)) = (rule.constraint == "length", rule.max) else {
+            continue;
+        };
+        for member in &rule.nets {
+            let bound = nets.entry(member.net.clone()).or_insert(max);
+            *bound = bound.min(max);
+        }
+    }
     (!nets.is_empty()).then(|| std::sync::Arc::new(nets))
 }
 
@@ -787,9 +791,9 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     if let Some(length) = config.escape_stub_mm {
         router_config.escape_stub_mm = length;
     }
-    // The nets a `length` rule bounds from above search near their
-    // shortest way (`Config::length_bounded`; docs/router.md, "Length and
-    // skew rules"): the meanders lengthen a net, nothing shortens one.
+    // The nets a `length` rule bounds from above are shortened where they
+    // come out over it (`Config::length_bounded`; docs/router.md, "Length
+    // and skew rules"): the meanders lengthen a net, this shortens one.
     router_config.length_bounded = length_bounded_nets(config);
     if let Some(exact) = config.exact_escape_stubs
         && core::router::exact_escapes_override().is_none()

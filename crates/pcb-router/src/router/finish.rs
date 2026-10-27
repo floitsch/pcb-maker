@@ -129,6 +129,11 @@ impl Router {
         } else {
             self.clean_up(order)
         };
+        // The nets a rule bounds the length of, shortened where they came
+        // out over it (`Config::length_bounded`, with the polish only).
+        if !self.hopeless && self.config.cleanup_passes > 0 {
+            self.repair_lengths(order);
+        }
         self.phase_charge(2, mark);
         let cleaned = cleanup_started.elapsed().as_secs_f64();
         self.profile.cleanup += cleaned;

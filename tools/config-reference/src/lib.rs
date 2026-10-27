@@ -310,12 +310,12 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_ROUTER_LENGTH_MATCHING",
         Kind::Switch,
-        "turns the length and skew rules' meanders off (0) or on (1) where the settings name none (`length_matching`; unset, on): a net shorter than a custom rule's `length` minimum, or further than a `skew` maximum below the longest net of its rule, gets a meander on a straight track of its route, written as a KiCad tuning pattern (in route mode and on a layout's own routes), and the verdict's `lengths` reports each such net; a net under a `length` maximum pays a share of the congestion price (`PCB_ROUTER_BOUNDED_CONGESTION`) and is rerouted after the others (off: none of it; docs/router.md, \"Length and skew rules\").",
+        "turns the length and skew rules' meanders off (0) or on (1) where the settings name none (`length_matching`; unset, on): a net shorter than a custom rule's `length` minimum, or further than a `skew` maximum below the longest net of its rule, gets a meander on a straight track of its route, written as a KiCad tuning pattern (in route mode and on a layout's own routes), and the verdict's `lengths` reports each such net; a net over a `length` maximum is routed again the short way where the nets in its way can go round (`PCB_ROUTER_LENGTH_REPAIR_PRESENT`) (off: none of it; docs/router.md, \"Length and skew rules\").",
     ),
     (
-        "PCB_ROUTER_BOUNDED_CONGESTION",
+        "PCB_ROUTER_LENGTH_REPAIR_PRESENT",
         Kind::Switch,
-        "the share of the congestion price (the present sharing and the history, in the search and the corridor planner) a net pays whose length a custom `length` rule bounds from above, with `length_matching` on (default 0.5; 1: the others' price; docs/router.md, \"Length and skew rules\").",
+        "the price of sharing a node for the length repair's search (default 2): a net longer than its custom `length` rule's maximum is routed again through the nets in its way, which then go round (docs/router.md, \"Length and skew rules\").",
     ),
     (
         "PCB_ROUTER_DIFF_PAIRS_DEBUG",

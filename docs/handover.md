@@ -235,7 +235,9 @@ Numbers are kept from earlier hand-overs (other docs cite "open problem
    relief, per-zone fill settings and islands a zone seam alone makes,
    fine-pitch clearance within a few microns. KiCad's teardrops and its
    hatched iterative refill are not modelled; connection-width necks are
-   repaired after the fact with KiCad's fill (gaps are not).
+   repaired after the fact with KiCad's fill, gaps too since 2026-10-27
+   (bridges over every slot that can be one, pruned by KiCad's checks:
+   docs/router.md, "KiCad's connection width (necks)").
 2. **One-spoke pads on fine-pitch rows** (k30's U10 pad 8, 1.77 x 0.50 mm:
    the two corridors along the row are closed by the neighbours, and the
    neighbours' exit tracks run through the two left). A hard block failed;
@@ -330,8 +332,8 @@ Numbers are kept from earlier hand-overs (other docs cite "open problem
     the cold route's walled-in pads could be joined among themselves; the
     narrow step stalls at the price cap on DSP-ADAU1452 (try the other pour
     mode or the runner-up attempt); OpenESC's 700-1000 connection-width
-    warnings from our own 0.09 mm tracks; the neck repair's gaps and its
-    Keypad unconnected item; a pad's own mask expansion in the placer's
+    warnings from our own 0.09 mm tracks; the neck repair's Keypad
+    unconnected item; a pad's own mask expansion in the placer's
     opening rule; the molecule panels' back connectors need the designer's
     0.03 mm gaps; the board's top-level graphics, zones and tracks still
     follow the file's order; the import's netlist export, preview SVG and
@@ -501,8 +503,8 @@ Switches and experiment hooks (change the result):
 - `PCB_ROUTER_DIFF_PAIRS_CROSSOVER`: differential pairs: `1` gives a crossed link end a crossover in its lead (one net dives under the other, a via each side), with the links' hairpins removed and the kept links' via holes kept clear in the fallback (default off: more links coupled, more errors on the rule boards; docs/router.md, "Polarity"); since 2026-10-27 the crossover keeps room beside the neighbouring pairs' launches and a link's vias spread where they crowd the other net, measured again and still off (ducktop2's io boards worse at 30 s; "The safe crossover").
 - `PCB_ROUTER_DIFF_PAIRS_SKEW`: differential pairs: `0` turns off the meanders that match a coupled pair's two lengths to the rules' skew (else the pair's gap) or length (the skew is still measured and reported; docs/router.md, "Skew and length").
 - `PCB_ROUTER_DIFF_PAIRS_RETURN_VIAS`: differential pairs: `0` turns off the return vias of the reference net (GND) beside a coupled run's vias, `1` turns them on (default on; the settings' `diff_pair_return_vias` wins; docs/router.md, "Return vias").
-- `PCB_ROUTER_LENGTH_MATCHING`: turns the length and skew rules' meanders off (0) or on (1) where the settings name none (`length_matching`; unset, on): a net shorter than a custom rule's `length` minimum, or further than a `skew` maximum below the longest net of its rule, gets a meander on a straight track of its route, written as a KiCad tuning pattern (in route mode and on a layout's own routes), and the verdict's `lengths` reports each such net; a net under a `length` maximum pays a share of the congestion price (`PCB_ROUTER_BOUNDED_CONGESTION`) and is rerouted after the others (off: none of it; docs/router.md, "Length and skew rules").
-- `PCB_ROUTER_BOUNDED_CONGESTION`: the share of the congestion price (the present sharing and the history, in the search and the corridor planner) a net pays whose length a custom `length` rule bounds from above, with `length_matching` on (default 0.5; 1: the others' price; docs/router.md, "Length and skew rules").
+- `PCB_ROUTER_LENGTH_MATCHING`: turns the length and skew rules' meanders off (0) or on (1) where the settings name none (`length_matching`; unset, on): a net shorter than a custom rule's `length` minimum, or further than a `skew` maximum below the longest net of its rule, gets a meander on a straight track of its route, written as a KiCad tuning pattern (in route mode and on a layout's own routes), and the verdict's `lengths` reports each such net; a net over a `length` maximum is routed again the short way where the nets in its way can go round (`PCB_ROUTER_LENGTH_REPAIR_PRESENT`) (off: none of it; docs/router.md, "Length and skew rules").
+- `PCB_ROUTER_LENGTH_REPAIR_PRESENT`: the price of sharing a node for the length repair's search (default 2): a net longer than its custom `length` rule's maximum is routed again through the nets in its way, which then go round (docs/router.md, "Length and skew rules").
 - `PCB_ROUTER_BUS_BUNDLES`: sets the router's `bus_bundles` (an experiment, off): buses of four or more nets joining the same footprints route first, in pad order, inside one corridor, side by side (docs/experiments/bus-bundles.md).
 - `PCB_ROUTER_BUS_LANE`: the router's `bus_lane_cost`: the factor on a bus member's step off the lane beside its neighbours (default 1.5).
 - `PCB_ROUTER_BUS_MARGIN`: bus bundles: tiles a bus's corridor is grown by beyond half its width (default 4).

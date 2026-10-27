@@ -490,11 +490,10 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     net shorter than a `length` minimum, or further than a `skew` maximum
     below the longest net of its rule, gets a meander on a straight track
     of its route (a KiCad tuning pattern), in route mode and on a
-    layout's own routes alike. A net under a `length` maximum is
-    length-critical to the search: where it and another net want one way,
-    it keeps it (it pays half the congestion price, and the others yield
-    first); the maximum is checked, no hard bound, and a placement that
-    puts the net's pads further apart than the maximum stays over it. The
+    layout's own routes alike. A net over a `length` maximum after the
+    route is routed again the short way, pushing the nets in its way
+    aside, where that opens nothing (no hard bound: a placement that puts
+    the net's pads further apart than the maximum leaves it over). The
     verdict's `lengths` says per net what came of it. Only where the
     project has such a rule; elsewhere nothing changes.
 - **Router options in layout mode.** The same file goes in the router

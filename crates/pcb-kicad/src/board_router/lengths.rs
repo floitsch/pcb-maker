@@ -17,9 +17,10 @@
 //! first placement whose copper keeps every clearance (`core::verify`
 //! against everything routed and every obstacle). The meander's tracks are
 //! the route's and are written as a KiCad tuning pattern
-//! (`write_length_patterns`). A `length` maximum is no hard bound: its nets
-//! are length-critical to the search (`route::length_bounded_nets`, the
-//! core's `Config::length_bounded`), and a net longer than it is reported.
+//! (`write_length_patterns`). A `length` maximum is no hard bound: a net
+//! over it is routed again the short way where the nets in its way can go
+//! round (`route::length_bounded_nets`, the core's `repair_lengths`), and
+//! a net longer than it is reported.
 //! A layout's own routes get the same (`finish_lengths`). The verdict's
 //! `lengths` lists per rule
 //! and net the length as the attempt writes it, the target, the bounds and
@@ -95,8 +96,7 @@ const ON_BOUND: f64 = 1.0e-6;
 /// The settings with the length and skew rules the project has reported
 /// as kept (`board-router.json`'s `rules.custom_rules`): a `skew` and a
 /// `length` minimum `applied`, a `length` with a maximum `approximated`
-/// (the maximum is checked: its nets are length-critical to the search, no
-/// hard bound). Unchanged where the
+/// (the maximum is checked, and repaired where it can be: no hard bound). Unchanged where the
 /// project has no such rule or `length_matching` is off.
 pub(crate) fn with_lengths(config: &KiCadBoardRouterConfig) -> KiCadBoardRouterConfig {
     let mut copy = config.clone();
@@ -126,7 +126,7 @@ pub(crate) fn with_lengths(config: &KiCadBoardRouterConfig) -> KiCadBoardRouterC
                 entry.detail = "length matching (length_matching): the nets matched to the longest of the rule by meanders after the route".into();
             } else if bounded {
                 entry.status = "approximated".into();
-                entry.detail = "length matching (length_matching): a net below the minimum gets a meander after the route; a net under the maximum is length-critical to the search (a share of the congestion price, rerouted after the others), the maximum checked (the verdict's lengths), no hard bound".into();
+                entry.detail = "length matching (length_matching): a net below the minimum gets a meander after the route; a net over the maximum is routed again the short way where the nets in its way can go round, the maximum checked (the verdict's lengths), no hard bound".into();
             } else {
                 entry.status = "applied".into();
                 entry.detail = "length matching (length_matching): a net below the minimum gets a meander after the route".into();
@@ -962,7 +962,10 @@ mod tests {
         assert!(a.within && a.meander_mm > 2.0, "{a:?}");
         // Only a `length` rule with a maximum bounds its nets.
         let bounded = crate::board_router::length_bounded_nets(&config).unwrap();
-        assert_eq!(bounded.iter().collect::<Vec<_>>(), vec!["A"]);
+        assert_eq!(
+            bounded.iter().collect::<Vec<_>>(),
+            vec![(&"A".to_string(), &34.0)]
+        );
         assert_eq!(
             core_config(&config).length_bounded.as_deref(),
             Some(&*bounded)
