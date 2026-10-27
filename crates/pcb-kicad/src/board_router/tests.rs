@@ -2050,8 +2050,12 @@ mod narrow_step_tests {
             use_narrow_signals: Some(true),
             ..KiCadBoardRouterConfig::default()
         };
-        config.connection_rules.insert("SIG".into(), rules(0.2, 0.2));
-        config.connection_rules.insert("TX_P".into(), rules(0.2, 0.2));
+        config
+            .connection_rules
+            .insert("SIG".into(), rules(0.2, 0.2));
+        config
+            .connection_rules
+            .insert("TX_P".into(), rules(0.2, 0.2));
         let width = |config: &KiCadBoardRouterConfig, name: &str| {
             let board = lower(&pcb, config, true).unwrap().board;
             let net = board.nets.iter().find(|net| net.name == name).unwrap();

@@ -1330,7 +1330,9 @@ fn track_disallowed(
         let rule = &rules[index];
         let prefix = format!("disallow ('{}'", rule.name);
         for entry in &mut report.custom_rules {
-            if entry.rule == rule.name && entry.constraint == "disallow" && entry.status == "unmodelled"
+            if entry.rule == rule.name
+                && entry.constraint == "disallow"
+                && entry.status == "unmodelled"
             {
                 entry.status = "applied".into();
                 entry.detail = format!(
@@ -1740,8 +1742,8 @@ mod tests {
             report.unmodelled
         );
         // Read again under a router config file.
-        let over =
-            router_config_over_project(serde_json::json!({"seeds": 2}), Ok(config.clone())).unwrap();
+        let over = router_config_over_project(serde_json::json!({"seeds": 2}), Ok(config.clone()))
+            .unwrap();
         assert_eq!(&over.track_disallowed, closed);
         fs::remove_dir_all(directory).unwrap();
     }
