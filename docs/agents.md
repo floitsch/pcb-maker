@@ -690,9 +690,17 @@ the other runs still grow by, covers it); `pcb-maker ledger` marks it
 order. `PCB_MAKER_LEDGER_SHORT=1` makes a command's requests short, `0`
 makes them wait in order. The reservation is
 also a limit of the process's own: a run that grows past it is given more
-while the ledger has room, and otherwise ends with exit 4 and a verdict
-whose error names the reservation (rerun when fewer runs share the
-machine), rather than being killed by the kernel. A run's reservation
+while the ledger has room; otherwise (since 2026-10-27) it runs on and
+waits in the ledger for the room (`memory ledger: the process grew to
+... it runs on and waits for the room` on stderr; its request counts as
+old as its admission, so newer requests leave it its room), and ends
+with exit 4 and a verdict whose error names the reservation (rerun when
+fewer runs share the machine), rather than being killed by the kernel,
+only when the machine's memory available falls below 2 GB, or after
+600 s without room when the memory available less what the other runs
+still grow by does. A harness that reserved for the process and handed
+it the reservation (run.py) sets the least of the process's own
+(`granted_mb`). A run's reservation
 goes with the process, also when it panics or is killed (the ledger drops
 the reservations of dead pids). `pcb-maker ledger` (`--json`) lists the
 live reservations: pid, megabytes, what a waiting run waits for, age and

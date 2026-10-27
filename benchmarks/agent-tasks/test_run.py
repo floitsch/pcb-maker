@@ -696,18 +696,82 @@ class MemoryLedger(unittest.TestCase):
         live = self.ledger.live()
         self.assertEqual([(r["pid"], r["megabytes"]) for r in live], [(binary.pid, 1000)])
         self.assertEqual(live[0]["start_ticks"], run.harness_common.start_ticks(binary.pid))
+        # The binary's own limit is at least what was admitted for it
+        # (ledger.rs, granted_of; since 2026-10-27).
+        self.assertEqual(live[0]["granted_mb"], 1000)
         # The binary's death releases it (the pid rule), done() then finds nothing.
         binary.kill()
         binary.wait()
         self.assertEqual(self.ledger.live(), [])
         gate.done(token)
-        # A binary that reserved for itself first: the harness's goes.
+        # A binary that reserved for itself first: one entry, its own, with
+        # the larger of the two and the grant (until 2026-10-27 the
+        # harness's went and the binary kept its 700).
         token = gate.admit("board", 1000)
         binary = self.sleeper()
         self.ledger.reserve(700, "route-kicad-board board", pid=binary.pid)
         gate.started(token, binary.pid)
-        self.assertEqual([r["megabytes"] for r in self.ledger.live()], [700])
+        self.assertEqual([(r["label"], r["megabytes"], r["granted_mb"]) for r in self.ledger.live()],
+                         [("route-kicad-board board", 1000, 1000)])
         gate.done(token)
+
+    def test_a_row_the_ledger_ended_is_retried_once_when_it_has_room(self):
+        # Since 2026-10-27: a row whose binary the memory ledger ended (exit
+        # 4, "past its reservation") runs once more, admitted again with
+        # room for what it reached; ended again, it is killed (no result).
+        # The night's message (sweep.log of 2026-10-27, Quanta75):
+        ended = {"name": "board", "exit": 4, "pass": False, "peak_rss_mb": 1473, "layout_rss_mb": 1387,
+                 "seconds": 392.1, "cpu_seconds": 697.8,
+                 "error": "internal error: memory: the process grew to 1474 MB resident, past its reservation of "
+                          "1415 MB in the memory ledger (/run/user/1000/pcb-maker-ledger.json), and the ledger had "
+                          "no room for more (46134 MB for every run; pcb-maker ledger lists them); rerun when "
+                          "fewer runs share the machine"}
+        self.assertTrue(run.ledger_ended(ended))
+        self.assertFalse(run.ledger_ended(dict(ended, exit=1)))
+        self.assertFalse(run.ledger_ended({"name": "board", "exit": 4, "error": "internal error: a panic"}))
+        self.assertTrue(run.ledger_ended({"error": ended["error"]}))
+        self.assertEqual(run.retry_mb(ended, 2458), 2458)
+        self.assertEqual(run.retry_mb(ended, 1000), 1841)
+        gate = run.MemoryGate(0, ledger=self.ledger, poll_seconds=0.05)
+        arguments = run.argparse.Namespace(gate=gate, expected_mb=3072, quality=False, designer=False,
+                                           schematic=False, tier=None, route_from=None)
+        task = {"name": "board", "peak_rss_mb": 1000}
+        admitted = []
+        saved = run.run_admitted
+
+        def runs(*outcomes):
+            outcomes = list(outcomes)
+
+            def fake(task, arguments, token):
+                admitted.append(sum(r["megabytes"] for r in self.ledger.live()))
+                return dict(outcomes.pop(0))
+            return fake
+        try:
+            passed = {"name": "board", "exit": 0, "pass": True, "peak_rss_mb": 1500}
+            run.run_admitted = runs(ended, passed)
+            row = run.run_task(task, arguments)
+            self.assertEqual(admitted, [1000, 1841])
+            self.assertTrue(row["pass"])
+            self.assertEqual(row["ledger_retry"], {"error": ended["error"], "seconds": 392.1,
+                                                   "cpu_seconds": 697.8, "peak_rss_mb": 1473,
+                                                   "expected_mb": 1841})
+            self.assertFalse(row.get("killed"))
+            # Ended again: killed, never a third run.
+            admitted.clear()
+            run.run_admitted = runs(ended, ended)
+            row = run.run_task(task, arguments)
+            self.assertEqual(len(admitted), 2)
+            self.assertEqual((row["killed"], row["cut"], row["pass"]), (True, ["killed"], False))
+            self.assertTrue(compare.killed(row))
+            # Any other row runs once.
+            admitted.clear()
+            run.run_admitted = runs(dict(ended, exit=1, error="parts without a legal place"))
+            row = run.run_task(task, arguments)
+            self.assertEqual(len(admitted), 1)
+            self.assertNotIn("ledger_retry", row)
+        finally:
+            run.run_admitted = saved
+        self.assertEqual(self.ledger.live(), [])
 
     def test_every_binary_of_a_board_runs_inside_its_reservation(self):
         # Since 2026-10-27: before the board's binary, its other binaries get

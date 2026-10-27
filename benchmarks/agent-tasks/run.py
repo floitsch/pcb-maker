@@ -1244,7 +1244,8 @@ class MemoryGate:
     reservation is handed to the board's binary when it starts (`started`:
     it then lives as long as that process; a binary since x1590 replaces
     it with its own, which grows with the router's maps and KiCad's
-    check) and released when the board is done. Until 2026-10-22 the
+    check, and since 2026-10-27 is at least the handed one, `granted_mb`)
+    and released when the board is done. Until 2026-10-22 the
     reservations were this process's alone (other runs on the machine did
     not see them) and only MemAvailable counted. A board that has waited
     `drain_after` seconds has the ledger drain for it (harness_common.
@@ -1475,15 +1476,57 @@ def task_directory(task):
     return directory
 
 
-def run_task(task, arguments):
+# What a binary the memory ledger ended says (ledger.rs, `exceeded`, exit
+# 4): it grew past its reservation and the ledger had no room for more.
+LEDGER_ENDED = re.compile(r"past its reservation of \d+ MB in the memory ledger")
+
+
+def ledger_ended(row):
+    """Whether the memory ledger, not the binary, ended the row's run
+    (exit 4 with `LEDGER_ENDED` in its error): the machine was full."""
+    return row.get("exit") in (4, None) and bool(LEDGER_ENDED.search(row.get("error") or ""))
+
+
+def retry_mb(row, expected_mb):
+    """What a board the ledger ended is admitted with again: its expected
+    peak, or 1.25 times the most it reached (the process tree's peak or
+    its own) when that is more."""
+    reached = max(row.get("peak_rss_mb") or 0, row.get("layout_rss_mb") or 0)
+    return max(expected_mb, round(reached * 1.25))
+
+
+def run_once(task, arguments, expected_mb):
+    """The board's run, admitted by the memory gate with `expected_mb`."""
     # Admitted before the designer's DRC: kicad-cli takes 2.2 GB on any
     # board, and twelve jobs start with it at once.
-    token = arguments.gate.admit(task["name"], task.get("peak_rss_mb", arguments.expected_mb),
-                                 task.get("expected_seconds"), estimate_kind(task, arguments))
+    token = arguments.gate.admit(task["name"], expected_mb, task.get("expected_seconds"),
+                                 estimate_kind(task, arguments))
     try:
-        row = run_admitted(task, arguments, token)
+        return run_admitted(task, arguments, token)
     finally:
         arguments.gate.done(token)
+
+
+def run_task(task, arguments):
+    expected = task.get("peak_rss_mb", arguments.expected_mb)
+    row = run_once(task, arguments, expected)
+    if ledger_ended(row):
+        # The memory ledger ended it (since 2026-10-27): the machine was
+        # full, the board is not at fault. It runs once more, admitted
+        # again (the gate waits until the ledger has room for it) with room
+        # for what it reached. The row says so (`ledger_retry`, the first
+        # run's error, seconds and peak); the summary counts the retries.
+        first = row
+        again = retry_mb(first, expected)
+        print(f"run.py: {task['name']}: the memory ledger ended it (exit 4); retrying once with "
+              f"{again / 1024:.1f} GB once the ledger has room", file=sys.stderr, flush=True)
+        row = run_once(task, arguments, again)
+        row["ledger_retry"] = {key: first.get(key) for key in ("error", "seconds", "cpu_seconds", "peak_rss_mb")}
+        row["ledger_retry"]["expected_mb"] = again
+    if ledger_ended(row):
+        # Ended by the ledger twice: no result, the machine's doing
+        # (compare.killed; nightly-report.py lists it as killed).
+        row.update(killed=True, cut=["killed"], **{"pass": False})
     if arguments.quality:
         add_quality(row, task, arguments)
     return row
@@ -2761,6 +2804,15 @@ def main():
         # `wall_seconds`, `jobs` and `threads` above are this run's own.
         summary["parts"] = run_parts(ordered, ran, arguments, wall)
         summary["this_run_rates"] = measured_rates(ran)
+    retried = [row["name"] for row in ran if row.get("ledger_retry")]
+    # Rows the memory ledger ended and run.py ran once more (run_task), and
+    # those it ended again.
+    summary["ledger_retries"] = len(retried)
+    summary["ledger_killed"] = sum(1 for row in ran if ledger_ended(row))
+    if retried:
+        print(f"memory ledger: {len(retried)} rows ended by the ledger and retried once ("
+              + ", ".join(retried[:10]) + (", ..." if len(retried) > 10 else "")
+              + f"); {summary['ledger_killed']} ended by it again (killed)", file=sys.stderr)
     if any("labels_dropped" in row for row in ordered):
         summary.update(labels=LABELS, labels_dropped=sum(row.get("labels_dropped", 0) for row in ordered))
     if arguments.designer:

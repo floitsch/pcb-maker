@@ -272,7 +272,10 @@ def summarize(directory, nights, sha, binary, harness, planned, statuses, second
                  "cut": sorted(n for n, r in rows.items() if compare.cut(r) and not compare.killed(r)),
                  "killed": sorted(n for n, r in rows.items() if compare.killed(r)),
                  "errors": sorted(n for n, r in rows.items() if r.get("error") and not compare.killed(r)
-                                  and not compare.cut(r))}
+                                  and not compare.cut(r)),
+                 # Rows the memory ledger ended and run.py ran once more
+                 # (since 2026-10-27; ended again: killed above).
+                 "retried": sorted(n for n, r in rows.items() if r.get("ledger_retry"))}
         if entry["status"] == "ran":
             name, _ = previous_night(nights, night, stage)
             if name:
@@ -337,10 +340,11 @@ def summary_markdown(record):
     listed = False
     for stage in ran + failed:
         entry = stages[stage]
-        for kind in ("killed", "cut", "errors"):
+        for kind in ("killed", "cut", "errors", "retried"):
             if entry.get(kind):
                 listed = True
-                label = {"killed": "killed", "cut": "cut by the wall clock", "errors": "without a result"}[kind]
+                label = {"killed": "killed", "cut": "cut by the wall clock", "errors": "without a result",
+                         "retried": "ended by the memory ledger and retried once"}[kind]
                 lines.append(f"- {stage}, {label}: " + ", ".join(entry[kind]))
     if not listed:
         lines.append("None.")
@@ -380,6 +384,8 @@ def run_cell(entry):
         text += f", {len(entry['cut'])} cut"
     if entry["killed"]:
         text += f", {len(entry['killed'])} KILLED"
+    if entry.get("retried"):
+        text += f", {len(entry['retried'])} retried after the memory ledger ended them"
     return text
 
 

@@ -51,7 +51,8 @@ fn main() -> ExitCode {
     }));
     pcb_kicad::set_build_version(VERSION);
     // A run that grows past its reservation in the memory ledger and finds
-    // no room for more ends with exit 4 and the verdict saying so.
+    // no room for more waits for it, and when the memory runs short ends
+    // with exit 4 and the verdict saying so (ledger::overgrown_ends).
     pcb_kicad::ledger::set_exceeded_handler(|message| {
         agent_cli::report_failure(pcb_kicad::KiCadRunStatus::InternalError, message);
     });
@@ -337,6 +338,11 @@ fn ledger_notes(reservation: &pcb_kicad::ledger::Reservation) -> String {
     }
     if let Some(pid) = reservation.inside {
         notes.push_str(&format!(" [inside pid {pid}'s reservation]"));
+    }
+    if let Some(granted) = reservation.granted_mb {
+        notes.push_str(&format!(
+            " [at least the {granted:.0} MB its harness reserved]"
+        ));
     }
     notes
 }

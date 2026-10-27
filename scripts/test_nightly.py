@@ -61,6 +61,10 @@ STUB = textwrap.dedent('''\
         for r in rows:
             r["placement"] = "designer"
             r["native"]["unconnected"] = max(0, r["native"]["unconnected"] - 2)
+    if stage == "short" and night == 2:
+        # Ended by the memory ledger and retried once by run.py (a result).
+        rows[1]["ledger_retry"] = {"error": "internal error: memory: ... past its reservation of 1415 MB in the "
+                                            "memory ledger ...", "expected_mb": 1841}
     if stage == "expansion" and night == 2:
         rows[2] = {"name": "repo__Gamma", "mode": "route", "pass": False, "error": "killed by signal 9 (SIGKILL)",
                    "killed": True, "cut": ["killed"], "exit": -9}
@@ -187,6 +191,7 @@ def test_the_summary(two_nights):
     # The gap: layout open 5 (Gamma), designer route 3.
     assert "share of the layout's open connections: placement 40%, routing 60%" in summary
     assert "- expansion, killed: repo__Gamma" in summary
+    assert "- short, ended by the memory ledger and retried once: repo__Beta" in summary
     assert "- sweep, cut by the wall clock: repo__Gamma" in summary
     assert ("- short against 2026-10-22 (diff-short.txt): 3 boards in both: better 1, same 2, worse 0; "
             "unconnected 7 -> 5; passes 1 -> 2 (strict 1 -> 2); gained the pass: Beta; gained the strict pass: Beta"

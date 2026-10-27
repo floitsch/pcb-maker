@@ -613,8 +613,10 @@ pcb-router") and the layout's, ladder's and placer's
   for room (MemTotal less 6 GB for all reservations together); run.py
   admits a board when the ledger has room for its expected peak, with
   `--min-free-gb` a floor on MemAvailable beside it; a run that grows
-  past its reservation with no room left ends with exit 4, not the OOM
-  killer.
+  past its reservation with no room left waits in the ledger for the
+  room and ends with exit 4 (not the OOM killer) only when the memory
+  available falls below 2 GB, or after 600 s when the others' growth
+  would take it there; run.py retries such a row once (since 2026-10-27).
 - KiCad 10: pinfunction is `NAME_NUMBER`; pad and text angles are absolute;
   copper items reference nets by name, and an unknown name becomes a new net
   unless a touching pad supplies one; DRC caps a violation type at 499 (199

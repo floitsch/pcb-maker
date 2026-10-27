@@ -379,12 +379,19 @@ measurement). The discipline:
   more while kicad-cli runs. It waits while the reservations of every run
   on the machine and its request exceed MemTotal less 6 GB
   (`PCB_MAKER_LEDGER_MARGIN_MB`), and its reservation is a limit of its
-  own: past it, with no room left to raise it, it ends with exit 4 and a
-  verdict naming the reservation instead of being killed. run.py admits a
+  own: past it, with no room left to raise it, it runs on and waits in the
+  ledger for the room (since 2026-10-27), and ends with exit 4 and a
+  verdict naming the reservation, instead of being killed, only when the
+  memory available falls below 2 GB, or after 600 s when the memory
+  available less the other runs' growth does. run.py admits a
   board by the same ledger (`harness_common.admit`): the live
   reservations and the board's expected peak against the machine, the
   expected peak reserved at once and handed to the board's binary when it
-  starts. Admission is ordered (since 2026-10-24): a waiting board is in
+  starts, whose own reservation is then at least that (`granted_mb`,
+  since 2026-10-27); a row the ledger ended (exit 4, "past its
+  reservation") runs once more when the ledger has room (`ledger_retry`
+  in the row, `ledger_retries` in the summary; ended again: killed).
+  Admission is ordered (since 2026-10-24): a waiting board is in
   the ledger, and newer requests pass the one that has waited longest
   only with what still leaves it its room; once it has waited
   `--ledger-drain-after` (600 s) the ledger drains for it (while it

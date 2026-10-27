@@ -455,15 +455,26 @@ class Ledger:
 
     def move(self, key, pid):
         """Hands reservation `key` to process `pid` (the binary it was made
-        for): it lives as long as that process. A binary that reserved for
-        itself already makes it superfluous. Returns the new key."""
+        for): it lives as long as that process, and its megabytes are the
+        binary's `granted_mb`, the least its own limit is (ledger.rs,
+        granted_of; since 2026-10-27: until then the binary's first
+        reservation replaced it with its own estimate: Quanta75's layout,
+        admitted with 2.4 GB, held 1331 MB of its own and ended with exit 4
+        at 1474 MB). A
+        binary that reserved for itself already gets the larger of the two
+        and the grant on its entry. Returns the new key."""
         def change(reservations):
             mine = [r for r in reservations if (r["pid"], r["started"], r["label"]) == key]
             if not mine:
                 return None
-            if any(r["pid"] == pid for r in reservations):
+            granted = mine[0]["megabytes"]
+            theirs = [r for r in reservations if r["pid"] == pid]
+            if theirs:
                 reservations.remove(mine[0])
+                theirs[0]["megabytes"] = max(theirs[0]["megabytes"], granted)
+                theirs[0]["granted_mb"] = max(theirs[0].get("granted_mb") or 0.0, granted)
                 return None
+            mine[0]["granted_mb"] = granted
             mine[0]["pid"] = pid
             ticks = start_ticks(pid)
             if ticks is None:

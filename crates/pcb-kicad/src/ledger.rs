@@ -19,9 +19,13 @@
 //! `while_reserved`) and waits while the ledger's total and its request
 //! exceed the machine's memory less a margin (`capacity_mb`). Its
 //! reservation is a limit on itself too: a watchdog thread compares its
-//! resident size with it, raises the reservation while the ledger has room
-//! and otherwise ends the run with exit 4 and a verdict naming the
-//! reservation, rather than leaving it to the OOM killer.
+//! resident size with it and raises the reservation while the ledger has
+//! room; past it without room, it waits in the ledger for the room as of
+//! its admission (since 2026-10-27) and ends the run with exit 4 and a
+//! verdict naming the reservation, rather than leaving it to the OOM
+//! killer, only when the memory runs short (`overgrown_ends`). A harness's
+//! reservation handed to the process (`granted_mb`) is the least of its
+//! own (since 2026-10-27, `granted_of`).
 //!
 //! Admission is ordered (since 2026-10-24, `order_allows`): a request
 //! that waits is in the ledger with what it waits for and since when, and
@@ -252,6 +256,14 @@ pub struct Reservation {
     /// what the process needs beyond it. None where absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inside: Option<u32>,
+    /// What a harness reserved for this process and handed to it (run.py's
+    /// gate moves a board's reservation to the board's binary; since
+    /// 2026-10-27): the process's own limit is at least this, so that its
+    /// reservation is the one the harness admitted, not only its own
+    /// estimate. None where absent (an older harness's hand-over is
+    /// recognised by its label: `granted_of`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub granted_mb: Option<f64>,
     /// Fields of newer writers, kept as they are when this binary rewrites
     /// the ledger.
     #[serde(flatten)]
@@ -310,6 +322,21 @@ impl Reservation {
     pub fn order_key(&self) -> (u8, f64, u32) {
         (u8::from(!self.nightly()), self.waiting_since(), self.pid)
     }
+}
+
+/// What a harness reserved for the process of `entry` and handed to it
+/// (since 2026-10-27): the entry's `granted_mb`, else, for the hand-over of
+/// a harness before it (an entry under the process's pid that the process
+/// did not write: another `label` or `started` than its own), the entry's
+/// megabytes; 0 for the process's own entry without one.
+pub fn granted_of(entry: &Reservation, label: &str, started: f64) -> f64 {
+    if let Some(granted) = entry.granted_mb {
+        return granted.max(0.0);
+    }
+    if entry.label != label || !same_start(entry.started, started) {
+        return entry.megabytes.max(0.0);
+    }
+    0.0
 }
 
 #[derive(Serialize)]
@@ -1083,6 +1110,9 @@ struct Own {
     /// The harness's reservation it runs inside (`PCB_MAKER_LEDGER_INSIDE`:
     /// its pid and `started`).
     inside: Option<(u32, f64)>,
+    /// What a harness reserved for it and handed to it (`granted_of`): its
+    /// own limit is at least this.
+    granted_mb: f64,
 }
 
 static OWN: Mutex<Option<Own>> = Mutex::new(None);
@@ -1134,6 +1164,7 @@ pub fn arm(label: &str, short: bool) {
         held_short: false,
         checks_mb: 0.0,
         inside: inside_key(std::env::var("PCB_MAKER_LEDGER_INSIDE").ok().as_deref()),
+        granted_mb: 0.0,
     });
 }
 
@@ -1252,21 +1283,21 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
         return Try::Held;
     }
     let me = std::process::id();
-    let wanted = base_mb + extra_mb;
     let capacity = capacity_mb();
-    let held = own.base_mb + own.extra_mb;
     let now = now_seconds();
     let since = own.waiting_since.unwrap_or(now);
     let checking = own.checks_mb > 0.0;
     let inside_key = own.inside;
     // What the entry it replaces (a harness's reservation for this process,
     // or its own) says of the run beyond the memory: kept.
+    #[allow(clippy::too_many_arguments)]
     let entry = |megabytes: f64,
                  check_mb: f64,
                  waiting_mb: Option<f64>,
                  held_since: Option<f64>,
                  short: bool,
                  inside: Option<u32>,
+                 granted: f64,
                  inherited: Option<&Reservation>| Reservation {
         pid: me,
         started: own.started,
@@ -1283,6 +1314,7 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
         check_mb: (check_mb > 0.0).then_some(check_mb),
         checking,
         inside,
+        granted_mb: (granted > 0.0).then_some(granted),
         other: inherited.map(|r| r.other.clone()).unwrap_or_default(),
         ..Default::default()
     };
@@ -1290,7 +1322,26 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
     let held_since = own.held_since;
     let (short_class, held_short) = (own.short, own.held_short);
     let held_check = own.extra_mb;
+    let (held_base, own_granted) = (own.base_mb, own.granted_mb);
+    let (label, started) = (own.label.as_str(), own.started);
     let outcome = own.ledger.update(|reservations| {
+        // What a harness reserved for this process and handed to it (run.py's
+        // gate moves the board's reservation to its binary; `granted_of`):
+        // the process's own limit is at least that (since 2026-10-27). Until
+        // then the process's first reservation replaced it with its own
+        // estimate: run.py admitted Quanta75 with 2.4 GB, its layout
+        // replaced that with 1331 MB of its own (1405 when it began
+        // routing; the night's held 1415), and ended with exit 4 at 1474 MB
+        // resident while the room it had given back was taken.
+        let granted = reservations
+            .iter()
+            .find(|r| r.pid == me)
+            .map_or(0.0, |r| granted_of(r, label, started))
+            .max(own_granted);
+        let base_mb = base_mb.max(granted);
+        let wanted = base_mb + extra_mb;
+        // What it holds: the hand-over counts as its own.
+        let held = held_base.max(granted) + held_check;
         // The harness's reservation this process runs inside
         // (`PCB_MAKER_LEDGER_INSIDE`): only what it needs beyond it is its
         // own entry's.
@@ -1392,7 +1443,7 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
         let fits = fits && ordered && floor_ok;
         let held_since = held_since.or(harness).unwrap_or(now);
         // A harness's reservation for this process gives way to the
-        // process's own.
+        // process's own, at least as large (`granted`).
         let inherited = reservations.iter().find(|r| r.pid == me).cloned();
         reservations.retain(|r| r.pid != me);
         let inside_pid = inside.map(|(pid, _, _)| pid);
@@ -1404,6 +1455,7 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
                 Some(held_since),
                 short,
                 inside_pid,
+                granted,
                 inherited.as_ref(),
             ));
         } else if wait || held > 0.0 {
@@ -1414,6 +1466,7 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
                 Some(held_since),
                 held_short,
                 inside_pid,
+                granted,
                 inherited.as_ref(),
             );
             if wait && new_request {
@@ -1422,20 +1475,28 @@ fn try_hold(base_mb: f64, extra_mb: f64, wait: bool) -> Try {
             }
             reservations.push(waiting);
         }
-        (fits, reserved, count, behind, held_since, short, floor_text)
+        let outcome = (fits, reserved, count, behind, held_since, short, floor_text);
+        (outcome, granted, base_mb)
     });
     match outcome {
-        Ok((true, _, _, _, held_since, short, _)) => {
+        Ok(((true, _, _, _, held_since, short, _), granted, base_mb)) => {
+            own.granted_mb = granted;
             own.base_mb = base_mb;
             own.extra_mb = extra_mb;
             own.waiting_since = None;
-            own.held_short = short && wanted > 0.0;
-            if wanted > 0.0 {
+            own.held_short = short && base_mb + extra_mb > 0.0;
+            if base_mb + extra_mb > 0.0 {
                 own.held_since.get_or_insert(held_since);
             }
             Try::Held
         }
-        Ok((false, reserved_mb, others, behind, _, _, floor)) => {
+        Ok(((false, reserved_mb, others, behind, held_since, _, floor), granted, _)) => {
+            // The hand-over is held as its own (the waiting entry keeps it).
+            own.granted_mb = granted;
+            if granted > own.base_mb {
+                own.base_mb = granted;
+                own.held_since.get_or_insert(held_since);
+            }
             if wait {
                 own.waiting_since = Some(since);
             }
@@ -1631,7 +1692,74 @@ pub fn release() {
     }
 }
 
+/// How long a run that grew past its reservation waits in the ledger for
+/// the room to raise it before it ends with exit 4, unless the memory
+/// available less what the other runs still grow by leaves the 2 GB to
+/// keep (`FLOOR_KEEP_MB`; `overgrown_ends`, since 2026-10-27): the drain's
+/// bound before it begins (`DEFAULT_DRAIN_AFTER_SECONDS`).
+pub const GROWTH_WAIT_SECONDS: f64 = DEFAULT_DRAIN_AFTER_SECONDS;
+
+/// Whether a run past its reservation that has waited `waited` seconds for
+/// the room to raise it ends now (since 2026-10-27), and why: when the
+/// memory available (`available_mb`, MemAvailable) is below
+/// `FLOOR_KEEP_MB` (the kernel reclaims hard and its OOM killer would end
+/// a process, perhaps another one), at once; when it has waited
+/// `bound` seconds and the memory available less what the other runs
+/// still grow by (`available_less_growth_mb`) is below `FLOOR_KEEP_MB` or
+/// unknown (the others growing into their reservations would bring the
+/// kernel there). Otherwise it goes on past its reservation, waiting in
+/// the ledger: the others' admissions see its memory in MemAvailable.
+/// None: it goes on.
+pub fn overgrown_ends(
+    waited: f64,
+    available_mb: Option<f64>,
+    available_less_growth_mb: Option<f64>,
+    bound: f64,
+) -> Option<String> {
+    if let Some(available) = available_mb.filter(|available| *available < FLOOR_KEEP_MB) {
+        return Some(format!(
+            "the memory available fell to {available:.0} MB, below the {FLOOR_KEEP_MB:.0} MB to keep (the kernel would otherwise end a process)"
+        ));
+    }
+    if waited < bound {
+        return None;
+    }
+    match available_less_growth_mb {
+        Some(view) if view >= FLOOR_KEEP_MB => None,
+        Some(view) => Some(format!(
+            "no room came in {waited:.0} s, and the memory available less what the other runs still grow by, {view:.0} MB, is below the {FLOOR_KEEP_MB:.0} MB to keep"
+        )),
+        None => Some(format!(
+            "no room came in {waited:.0} s (the memory available is unknown)"
+        )),
+    }
+}
+
+/// The memory available less what the other runs in the ledger still grow
+/// by (`available_less_growth`), for the watchdog; None when unknown.
+fn others_available_less_growth() -> Option<f64> {
+    let live = {
+        let guard = own();
+        let own = guard.as_ref()?;
+        own.ledger.live().ok()?
+    };
+    let me = std::process::id();
+    let others: Vec<&Reservation> = live.iter().filter(|r| r.pid != me).collect();
+    available_less_growth(&others)
+}
+
 /// Starts the thread that holds the process to its reservation (once).
+///
+/// A run that grows to nine tenths of its reservation asks for more (1.2
+/// times its resident size); one that has grown past it and finds no room
+/// waits for the room in the ledger (since 2026-10-27): its entry waits for
+/// the raise as of when it began holding (`waiting_since`: its request is
+/// as old as its admission, so newer requests leave it its room and the
+/// ledger drains for it, `order_allows`, `drain_state`), it asks again
+/// every `WAIT_POLL` and runs on meanwhile; it ends with exit 4 only when
+/// `overgrown_ends` says so. Until then it ended at once: Quanta75 in the
+/// nightly of 2026-10-27, 59 MB past its 1415 MB, with 21 runs in the
+/// ledger that ended within minutes.
 fn start_watchdog() {
     {
         let mut guard = own();
@@ -1643,6 +1771,10 @@ fn start_watchdog() {
     let _ = std::thread::Builder::new()
         .name("memory-ledger".into())
         .spawn(|| {
+            // Since when the process is past its reservation without room,
+            // and when it last asked.
+            let mut over: Option<Instant> = None;
+            let mut asked = Instant::now();
             loop {
                 std::thread::sleep(WATCH_POLL);
                 let Some((base, extra)) = reserved_mb() else {
@@ -1650,30 +1782,103 @@ fn start_watchdog() {
                 };
                 let resident = crate::board_router::resident_mb();
                 if base <= 0.0 || resident < base * 0.9 {
+                    if let Some(at) = over.take() {
+                        // Back within its reservation: the entry no longer
+                        // waits.
+                        let _ = try_hold(base, extra, false);
+                        eprintln!(
+                            "memory ledger: back within the reservation of {base:.0} MB after {:.0} s past it",
+                            at.elapsed().as_secs_f64()
+                        );
+                    }
                     continue;
                 }
+                let past = resident > base;
+                if let Some(at) = over.filter(|_| past) {
+                    // Waiting: the kernel's margin every poll, the ledger
+                    // every `WAIT_POLL`.
+                    let available = crate::board_router::memory_available_mb();
+                    if available.is_some_and(|available| available < FLOOR_KEEP_MB) {
+                        let reason = overgrown_ends(at.elapsed().as_secs_f64(), available, None, f64::INFINITY);
+                        exceeded(resident, base, Some((at, reason.unwrap_or_default())));
+                    }
+                    if asked.elapsed() < WAIT_POLL {
+                        continue;
+                    }
+                }
+                asked = Instant::now();
                 // Growth the estimate did not foresee: more while the
-                // ledger has room, the end of the run when it has none.
+                // ledger has room; past the reservation, waiting for it.
                 let raised = (resident * 1.2).max(base * 1.2).ceil();
-                if matches!(try_hold(raised, extra, false), Try::Held) || resident <= base {
+                if past {
+                    // Its request is as old as its admission.
+                    if let Some(own) = own().as_mut()
+                        && own.waiting_since.is_none()
+                    {
+                        own.waiting_since = own.held_since;
+                    }
+                }
+                if matches!(try_hold(raised, extra, past), Try::Held) {
+                    if let Some(at) = over.take() {
+                        eprintln!(
+                            "memory ledger: reserved {:.0} MB after {:.0} s past the reservation of {base:.0} MB",
+                            raised + extra,
+                            at.elapsed().as_secs_f64()
+                        );
+                    }
                     continue;
                 }
-                let capacity = capacity_mb().unwrap_or(f64::INFINITY);
-                let path = own()
-                    .as_ref()
-                    .map(|own| own.ledger.path.display().to_string())
-                    .unwrap_or_default();
-                let message = format!(
-                    "memory: the process grew to {resident:.0} MB resident, past its reservation of {base:.0} MB in the memory ledger ({path}), and the ledger had no room for more ({capacity:.0} MB for every run; pcb-maker ledger lists them); rerun when fewer runs share the machine"
-                );
-                if let Some(handler) = EXCEEDED.get() {
-                    handler(&message);
+                if !past {
+                    continue;
                 }
-                eprintln!("error: {message}");
-                release();
-                std::process::exit(crate::EXIT_INTERNAL as i32);
+                let at = *over.get_or_insert_with(|| {
+                    let capacity = capacity_mb().unwrap_or(f64::INFINITY);
+                    eprintln!(
+                        "memory ledger: the process grew to {resident:.0} MB resident, past its reservation of {base:.0} MB, and the ledger has no room for more now ({capacity:.0} MB for every run; pcb-maker ledger lists them): it runs on and waits for the room (ending only when the memory available falls below {:.1} GB, or after {GROWTH_WAIT_SECONDS:.0} s when the memory available less what the other runs still grow by does)",
+                        FLOOR_KEEP_MB / 1024.0
+                    );
+                    Instant::now()
+                });
+                let waited = at.elapsed().as_secs_f64();
+                if waited < GROWTH_WAIT_SECONDS {
+                    continue;
+                }
+                if let Some(reason) = overgrown_ends(
+                    waited,
+                    crate::board_router::memory_available_mb(),
+                    others_available_less_growth(),
+                    GROWTH_WAIT_SECONDS,
+                ) {
+                    exceeded(resident, base, Some((at, reason)));
+                }
             }
         });
+}
+
+/// Ends the run that grew to `resident` MB past its reservation of `base`
+/// MB (exit 4, the verdict saying so); `waited`: since when it waited for
+/// room and why it ends.
+fn exceeded(resident: f64, base: f64, waited: Option<(Instant, String)>) -> ! {
+    let capacity = capacity_mb().unwrap_or(f64::INFINITY);
+    let path = own()
+        .as_ref()
+        .map(|own| own.ledger.path.display().to_string())
+        .unwrap_or_default();
+    let waited = waited.map_or(String::new(), |(at, reason)| {
+        format!(
+            "; it waited {:.0} s for room and ended because {reason}",
+            at.elapsed().as_secs_f64()
+        )
+    });
+    let message = format!(
+        "memory: the process grew to {resident:.0} MB resident, past its reservation of {base:.0} MB in the memory ledger ({path}), and the ledger had no room for more ({capacity:.0} MB for every run; pcb-maker ledger lists them){waited}; rerun when fewer runs share the machine"
+    );
+    if let Some(handler) = EXCEEDED.get() {
+        handler(&message);
+    }
+    eprintln!("error: {message}");
+    release();
+    std::process::exit(crate::EXIT_INTERNAL as i32);
 }
 
 /// The memory available a harness's measured floor keeps beside every
@@ -3585,5 +3790,178 @@ mod tests {
                 None
             )
         );
+    }
+
+    #[test]
+    fn a_harness_s_hand_over_is_the_least_the_process_holds() {
+        // run.py's gate hands the board's reservation to its binary
+        // (harness_common.Ledger.move): `granted_mb` says what it reserved.
+        let mut moved = Reservation {
+            pid: 7,
+            started: 100.0,
+            megabytes: 2458.0,
+            label: "run.py: Quanta75 (expected peak)".into(),
+            granted_mb: Some(2458.0),
+            ..Default::default()
+        };
+        assert_eq!(
+            granted_of(&moved, "layout-kicad-board Quanta75", 200.0),
+            2458.0
+        );
+        // A harness before it: no field; the entry is not the process's
+        // own (another label or another start), so its megabytes.
+        moved.granted_mb = None;
+        assert_eq!(
+            granted_of(&moved, "layout-kicad-board Quanta75", 200.0),
+            2458.0
+        );
+        assert_eq!(
+            granted_of(&moved, "run.py: Quanta75 (expected peak)", 200.0),
+            2458.0
+        );
+        // The process's own entry without a grant: none.
+        let own = Reservation {
+            label: "layout-kicad-board Quanta75".into(),
+            started: 200.0,
+            megabytes: 1331.0,
+            ..moved.clone()
+        };
+        assert_eq!(granted_of(&own, "layout-kicad-board Quanta75", 200.0), 0.0);
+        // Its own entry after the hand-over keeps the grant.
+        let kept = Reservation {
+            granted_mb: Some(2458.0),
+            megabytes: 2458.0,
+            ..own.clone()
+        };
+        assert_eq!(
+            granted_of(&kept, "layout-kicad-board Quanta75", 200.0),
+            2458.0
+        );
+        let text = serde_json::to_value(&kept).unwrap();
+        assert_eq!(text["granted_mb"], 2458.0);
+        assert_eq!(serde_json::from_value::<Reservation>(text).unwrap(), kept);
+        assert!(
+            serde_json::to_value(&own)
+                .unwrap()
+                .get("granted_mb")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_run_past_its_reservation_waits_for_room_and_ends_only_short_of_memory() {
+        // Within the bound it goes on, whatever the others still grow by,
+        // as long as the kernel has its 2 GB.
+        assert_eq!(
+            overgrown_ends(10.0, Some(26_700.0), Some(7_600.0), 600.0),
+            None
+        );
+        assert_eq!(
+            overgrown_ends(599.0, Some(2_048.0), Some(-5_000.0), 600.0),
+            None
+        );
+        assert_eq!(overgrown_ends(599.0, None, None, 600.0), None);
+        // Below the 2 GB to keep it ends at once.
+        let ends = overgrown_ends(1.0, Some(2_047.0), Some(30_000.0), 600.0).unwrap();
+        assert!(
+            ends.contains("fell to 2047 MB, below the 2048 MB to keep"),
+            "{ends}"
+        );
+        // Past the bound it ends when the others' growth would take the
+        // machine there (or nothing is known), else it goes on.
+        assert_eq!(
+            overgrown_ends(600.0, Some(26_700.0), Some(2_048.0), 600.0),
+            None
+        );
+        let ends = overgrown_ends(600.0, Some(26_700.0), Some(2_047.0), 600.0).unwrap();
+        assert!(ends.contains("no room came in 600 s"), "{ends}");
+        assert!(overgrown_ends(601.0, None, None, 600.0).is_some());
+        assert_eq!(GROWTH_WAIT_SECONDS, DEFAULT_DRAIN_AFTER_SECONDS);
+    }
+
+    #[test]
+    fn a_run_past_its_reservation_waits_in_order_as_of_its_admission() {
+        // The nightly of 2026-10-27 in small: a 45 200 MB ledger, 33 800
+        // reserved by the runs; the layout (pid 30) admitted at 1000 s
+        // holds 1415 MB and, past it, waits for 1769 MB (its entry as the
+        // watchdog writes it: `waiting_since` its `held_since`); a board
+        // of the harness (pid 40) has waited since 1100 s for 2458 MB, and
+        // a new request (pid 50) of 2000 MB arrives at 1200 s.
+        let capacity = Some(45_200.0);
+        let holder = |pid: u32, megabytes: f64, since: f64| Reservation {
+            pid,
+            started: since,
+            held_since: Some(since),
+            megabytes,
+            label: format!("run {pid}"),
+            ..Default::default()
+        };
+        let grower = Reservation {
+            waiting_mb: Some(1769.0),
+            waiting_since: Some(1000.0),
+            refreshed: Some(1690.0),
+            ..holder(30, 1415.0, 1000.0)
+        };
+        let board = Reservation {
+            pid: 40,
+            started: 1100.0,
+            megabytes: 0.0,
+            label: "run.py: board (expected peak)".into(),
+            waiting_mb: Some(2458.0),
+            waiting_since: Some(1100.0),
+            refreshed: Some(1200.0),
+            floor_mb: Some(6_450.0),
+            ..Default::default()
+        };
+        let older = holder(11, 30_000.0, 10.0);
+        let newer = holder(12, 2_385.0, 1050.0);
+        let all = [older.clone(), newer.clone(), grower.clone(), board.clone()];
+        let others = refs(&all);
+        // It comes first among the waiters: its request is as old as its
+        // admission, older than the board's wait.
+        assert_eq!(first_waiter(&others).map(|r| r.pid), Some(30));
+        // 33 800 reserved: the new request of 2000 MB fits the capacity
+        // (35 800), and the grower's 1769 beside it too (37 569): it goes.
+        assert!(order_allows(&others, 50, 1200.0, 2000.0, capacity));
+        // With 43 300 reserved it would take the grower's room (41 885 and
+        // its 1769 leave 1546 MB): it waits.
+        let full = [
+            Reservation {
+                megabytes: 39_500.0,
+                ..older.clone()
+            },
+            newer.clone(),
+            grower.clone(),
+            board.clone(),
+        ];
+        assert!(!order_allows(&refs(&full), 50, 1200.0, 2000.0, capacity));
+        // It has waited past the drain's `drain_after` (since 1000 s): the
+        // ledger drains for it while it could start once the runs since
+        // its admission end.
+        assert_eq!(
+            drain_state(&grower, &refs(&full), 1700.0, capacity, Some(20_000.0)),
+            Drain::Drains
+        );
+        // The grower itself goes by the capacity alone (may_hold): 1769
+        // beside 41 885 fit, beside 44 000 not until a run ends.
+        assert!(may_hold(&full, 30, 1415.0, 1000.0, 1769.0, capacity, &[]));
+        let fuller = [
+            Reservation {
+                megabytes: 41_615.0,
+                ..older.clone()
+            },
+            newer,
+            grower,
+            board,
+        ];
+        assert!(!may_hold(
+            &fuller,
+            30,
+            1415.0,
+            1000.0,
+            1769.0,
+            capacity,
+            &[]
+        ));
     }
 }
