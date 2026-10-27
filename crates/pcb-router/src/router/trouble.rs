@@ -1031,8 +1031,10 @@ impl Router {
             .collect();
         over.sort_by(|a, b| b.1.total_cmp(&a.1));
         let (mut tried, mut shortened, mut gained) = (0, 0, 0.0);
+        // Its own budget whatever the negotiation's left (a rule's
+        // violation, like the manual spokes' starved pads).
         for (net, _) in over {
-            if self.spent(&clock, budget) {
+            if self.manual_spokes_spent(&clock, budget) {
                 break;
             }
             tried += 1;

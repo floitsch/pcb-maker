@@ -470,7 +470,25 @@ pub(crate) fn match_lengths(
                     && max.is_some_and(|max| length > max + ON_BOUND)
                 {
                     entry.note = if rule.constraint == "length" {
-                        "longer than the maximum: the search does not bound a net's length".into()
+                        // A net's copper spans its pads: no route is
+                        // shorter than its two farthest pads lie apart.
+                        let pads: Vec<Point> = ids
+                            .get(rule.nets[position].net.as_str())
+                            .map(|&id| pads_of(id).iter().map(|pad| pad.at).collect())
+                            .unwrap_or_default();
+                        let span = pads
+                            .iter()
+                            .flat_map(|a| {
+                                pads.iter().map(move |b| core::geometry::distance(*a, *b))
+                            })
+                            .fold(0.0, f64::max);
+                        if max.is_some_and(|max| span > max) {
+                            format!(
+                                "longer than the maximum: its pads lie {span:.2} mm apart in a straight line, more than the maximum (the placement decides)"
+                            )
+                        } else {
+                            "longer than the maximum: no shorter way was found around the other nets (the length repair)".into()
+                        }
                     } else {
                         "longer than the group's longest less the skew".into()
                     };

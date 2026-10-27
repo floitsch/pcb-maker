@@ -269,7 +269,16 @@ holds:
   nets unrouted. A copper graphic with a net that is only strokes (a line,
   an arc, a circle's ring) is an item of KiCad's connectivity like a pad:
   a terminal at the middle of its first piece, unless it lies on copper
-  of a terminal of its net already.
+  of a terminal of its net already. A filled graphic with a net is a
+  terminal at its centre, and the router's stub from the node the
+  search reached inside it to that centre is not written
+  (`graphic_stubs`, 2026-10-27): KiCad 10 passes over a track inside a
+  pad in its dangling check, not one inside a graphic, and flagged the
+  stub (WLED_Matrix's `Net-(AE1-A)` rectangle, left on the board by the
+  designer's antenna feed when the layout moved the antenna: kicad-cli
+  10.0.7 found the stub `track_dangling` and the track from outside
+  ending inside the rectangle connected). A stub whose anchor joins
+  other copper of the route (a via, another track) stays.
 - **The pour model connects only what KiCad's fill connects.** A solidly
   connected pad (`connect_pads yes`, `zone_connect 2`) joins a fill piece
   only where the fill reaches its copper: a free node of the piece within
@@ -2396,6 +2405,57 @@ failing that, by halves (at most six checks). The raster finds the same
 necks KiCad reports on WLED_Matrix and USB_Keypad (7 of 7, 12 of 13, 3 of
 3, 4 of 4). `pcb-maker repair-kicad-necks <dir> <id>` runs it on a routed
 directory; the result's `board-router.json` has `neck_repair`.
+
+**Bent passages and gaps (2026-10-27).** The nightly of 2026-10-27 left
+connection_width errors (rated errors by the project) on USB_Keypad (4)
+and WLED_Matrix (3) after the repair, the strict rule's only new findings
+there besides WLED_Matrix's dangling stub (above, "KiCad's
+connectivity"): KiCad's findings on a zone carry no place, so the strict
+rule never matches them to the designer's. `necks.py` named them, all
+in the hatched GND pour on F.Cu, none in a track (the connection-width
+floor on track widths holds; it cannot reach the fill): two webs between
+a hatch hole and a sliver of one at C1.1's thermal ring (0.053 and 0.080
+mm, curved: the straight walk from the narrowest pixel left the copper,
+so the raster found 4 of the 8 necks), and five gaps (pairs of KiCad's
+vertices across empty space): two bays with a mouth of 0.109 mm between
+the lobes of SW5's rings under /Vol+, a sliver of a hatch hole at C1.2's
+spoke, a slit between a hatch strand and a fill border at a via, a pinch
+at R15's teardrop. What changed (`necks.rs`):
+
+- A saddle whose straight walk leaves the copper walks the ridge of the
+  distance map each way (the widest neighbour onwards) to the wide
+  copper, and the track bends at the narrowest pixel; only where the two
+  ways leave the pixel in opposite directions (more than 120 degrees
+  apart: the round of a corner has two arcs of wider neighbours too,
+  both inwards) and the passage is two pixels wide at least.
+- **Slots**: the empty pixels a closing of the net's copper by a disc of
+  the limit's diameter fills, each connected piece that is a pinch (it
+  meets the empty space beyond in two stretches or more, or two
+  regions), a slit (twice the limit long, three times as long as wide),
+  or a bay or a hole as long and as wide as the limit, lying between two
+  parts of one piece of copper (KiCad pairs vertices of one outline) that
+  holds an item of the net (an island of the fill is left out of KiCad's
+  connections until a track touches it; bridged, it wanted joining: 2 to
+  11 unconnected in a trial). The tip of a hatch hole and the round of a
+  concave corner are none. Each slot gets bridges, tracks of the minimum
+  width from wall to wall across it, each through the first pixel no
+  bridge covers yet, along the way the space widens there, until every
+  pixel lies under one; the bridges that keep their clearances are the
+  slot's repair. KiCad's gap pairs hang on vertices nanometres apart
+  where its union joins arcs (the raster's outlines, simplified, do not
+  reproduce them: a port of POLYGON_TEST on them found none of the five),
+  so every slot that can be a gap is bridged.
+- The trials try the holes' bridges after the rest (holes are many and
+  seldom KiCad's: WLED_Matrix 74 of 131 slots), stop at the first board
+  without necks, and then prune: with up to `NECK_PRUNE_TRIALS` (8) more
+  checks, halves of the slots' bridges, holes first, go again while the
+  necks stay as few. `NeckRepair::tracks` counts segments now.
+
+Measured on the night's result boards (`pcb-maker repair-kicad-necks` on a
+copy): USB_Keypad 4 to 0 (14 tracks, 2.5 mm), WLED_Matrix 3 to 0 (260
+tracks, 42 mm). In the layouts (tasks v7, the sweep's budget), see
+docs/changelog.md, "Committed on 2026-10-27 (length rules in layouts,
+connection-width gaps)".
 
 The board setup's minimum connection width is also a floor on every track
 width the router chooses (2026-10-15): when the project rates
