@@ -1494,6 +1494,15 @@ fn decoupling_action(
 }
 
 impl KiCadRunFacts {
+    /// The panel's sub-boards when their parts were placed mixed: more
+    /// than a tenth of the movable parts belong to no sub-board, so the
+    /// placement held none in its board (`sub_boards.held` false).
+    pub fn boards_mixed(&self) -> Option<&crate::sub_boards::KiCadSubBoardsReport> {
+        self.sub_boards
+            .as_ref()
+            .filter(|sub| sub.unassigned > 0 && !sub.held)
+    }
+
     pub fn new(command: &str) -> Self {
         Self {
             command: command.into(),
@@ -1802,6 +1811,15 @@ pub fn decide(
     new_findings: &BTreeMap<String, usize>,
 ) -> (KiCadRunStatus, String) {
     let mut problems = Vec::new();
+    // First: a panel whose boards' parts were placed mixed is not the
+    // board as designed, whatever else holds (the OpenESC panel's place
+    // check placed all 404 parts and exited 0).
+    if let Some(sub) = facts.boards_mixed() {
+        problems.push(format!(
+            "the panel's {} boards' parts are mixed: {} movable parts belong to no sub-board (give --reference <the designer's project> or region constraints)",
+            sub.count, sub.unassigned
+        ));
+    }
     if !facts.unplaced.is_empty() {
         problems.push(format!(
             "{} parts without a legal place ({})",
@@ -1895,10 +1913,7 @@ fn next_actions(
     // are unknown nothing after it is about the boards as designed (the
     // OpenESC panel's line came 21st, after its frames' marks, and before
     // an outline suggestion for a panel whose frame is fixed).
-    if let Some(sub) = &facts.sub_boards
-        && sub.unassigned > 0
-        && !sub.held
-    {
+    if let Some(sub) = facts.boards_mixed() {
         actions.push(format!(
             "the board is a panel of {} different boards sharing net names, and {} movable parts belong to no sub-board that the fixed parts or the nets tell ({}): the placement put them where it would, the boards' parts mixed; give the designer's placed board with --reference <project-dir> (its places say each part's board), or hold each part in its board with region constraints, before acting on the room or the connections below",
             sub.count,
@@ -1914,7 +1929,16 @@ fn next_actions(
             facts.attempts_failed.join("; ")
         ));
     }
-    if !facts.unplaced.is_empty() {
+    if !facts.unplaced.is_empty() && facts.boards_mixed().is_some() {
+        // The parts are short of room because two boards' parts share
+        // one: an outline or room suggestion is no advice for a panel
+        // whose frame is fixed (the OpenESC panel's layout suggested
+        // 43.0 x 83.0 mm).
+        actions.push(format!(
+            "{} parts found no legal place with the panel's boards' parts mixed: the sub-board action above comes first; no outline or room is suggested while the parts' boards are unknown",
+            facts.unplaced.len()
+        ));
+    } else if !facts.unplaced.is_empty() {
         actions.push(format!(
             "give the unplaced parts room: a larger outline, a looser region or edge constraint, or the other side ({})",
             if facts.placement_hints.is_empty() { "see hints in board-placer.json".to_string() } else { facts.placement_hints.join("; ") }
@@ -2633,7 +2657,13 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         wall_stretch: rate.wall_stretch(!facts.command.starts_with("route")),
         outputs: facts.outputs.clone(),
         skipped: facts.skipped.clone(),
-        room: facts.room.clone(),
+        // No outline to try while a panel's parts' boards are unknown.
+        room: facts.room.clone().map(|mut room| {
+            if facts.boards_mixed().is_some() {
+                room.suggested_outline_mm = None;
+            }
+            room
+        }),
         repairs: facts.repairs.clone(),
         diff_pairs: facts.diff_pairs.clone(),
         lengths: facts.lengths.clone(),
@@ -3829,6 +3859,77 @@ mod tests {
         );
         assert!(verdict.next_actions[0].contains("--reference <project-dir>"));
         assert!(verdict.next_actions[1].starts_with("fixed part U3"));
+    }
+
+    #[test]
+    fn a_placement_with_the_panels_boards_mixed_is_incomplete_without_room_advice() {
+        // The OpenESC panel without a reference: every part placed, exit 0
+        // until 2026-10-27; its layout then left 8 parts without a place
+        // and suggested an outline for a panel whose frame is fixed.
+        let mut facts = KiCadRunFacts::new("place-kicad-board");
+        facts.routes = false;
+        facts.sub_boards = Some(crate::sub_boards::KiCadSubBoardsReport {
+            count: 2,
+            unassigned: 392,
+            unassigned_parts: vec!["C1".into()],
+            ..Default::default()
+        });
+        let verdict = judge(&facts);
+        assert_eq!(verdict.exit_code, EXIT_INCOMPLETE);
+        assert!(
+            verdict.reason.starts_with(
+                "incomplete: the panel's 2 boards' parts are mixed: 392 movable parts"
+            ),
+            "{}",
+            verdict.reason
+        );
+        assert!(verdict.next_actions[0].contains("--reference <project-dir>"));
+        // With parts unplaced: the sub-board line leads the reason, and
+        // no outline is suggested.
+        facts.unplaced = vec!["Q17".into(), "CL35".into()];
+        facts.placement_hints = vec!["the front side is 107 % full: enlarge the outline".into()];
+        facts.room = Some(crate::placement_room::KiCadRoom {
+            outline_mm: [41.6, 80.4],
+            suggested_outline_mm: Some([43.0, 83.0]),
+            ..Default::default()
+        });
+        let verdict = judge(&facts);
+        assert!(
+            verdict
+                .reason
+                .starts_with("incomplete: the panel's 2 boards"),
+            "{}",
+            verdict.reason
+        );
+        assert!(verdict.reason.contains("2 parts without a legal place"));
+        assert!(
+            !verdict
+                .next_actions
+                .iter()
+                .any(|action| action.contains("try an outline") || action.contains("enlarge")),
+            "{:?}",
+            verdict.next_actions
+        );
+        assert!(
+            verdict.next_actions[1]
+                .starts_with("2 parts found no legal place with the panel's boards' parts mixed"),
+            "{:?}",
+            verdict.next_actions
+        );
+        assert_eq!(verdict.room.as_ref().unwrap().suggested_outline_mm, None);
+        // Held in their boards (a tenth or fewer unknown): as before.
+        if let Some(sub) = &mut facts.sub_boards {
+            sub.unassigned = 6;
+            sub.held = true;
+        }
+        let verdict = judge(&facts);
+        assert!(verdict.reason.starts_with("incomplete: 2 parts without"));
+        assert!(
+            verdict
+                .next_actions
+                .iter()
+                .any(|action| action.contains("try an outline of 43.0 x 83.0"))
+        );
     }
 
     #[test]

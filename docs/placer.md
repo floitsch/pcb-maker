@@ -4272,8 +4272,10 @@ not guess.
 
 **Placement** (`apply_to_placer`, `place_sub_boards`), where at most a
 tenth of the movable parts are without a sub-board (with more, the
-placement is the ordinary one, unchanged, and the verdict's next action
-asks for `--reference` or region constraints):
+placement is the ordinary one, unchanged, the verdict is `incomplete`
+(exit 1, the boards' parts mixed first in its reason, since 2026-10-27)
+and its first next action asks for `--reference` or region constraints,
+with no outline suggested):
 
 - each tab is a keepout (no body on it);
 - each movable part with a sub-board is held in its piece's box and
