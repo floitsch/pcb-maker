@@ -377,6 +377,32 @@ fn check_reference(
     };
 }
 
+/// Without a reference (or with one KiCad could not check), what of the
+/// result is the input's (`pcb_kicad::input_items`: the parts kept where
+/// the input has them, its zones and board graphics unchanged), for the
+/// verdict's `input_findings`; only when the result has errors that count.
+fn check_input(facts: &mut KiCadRunFacts, source: &Path, result: &Path, board_id: &str) {
+    if matches!(facts.reference, KiCadReference::Findings { .. }) || !facts.needs_reference() {
+        return;
+    }
+    let board = format!("{board_id}.kicad_pcb");
+    let read = |directory: &Path| {
+        let path = directory.join(&board);
+        fs::read_to_string(&path)
+            .map_err(|error| format!("failed to read {}: {error}", path.display()))
+    };
+    match read(source)
+        .and_then(|input| Ok((input, read(result)?)))
+        .and_then(|(input, result)| pcb_kicad::input_items(&input, &result))
+    {
+        Ok(items) => facts.input = Some(items),
+        Err(error) => eprintln!(
+            "warning: the input's own findings are not told apart ({}): every finding counts",
+            error.lines().next().unwrap_or("")
+        ),
+    }
+}
+
 fn missed_constraints(constraints: &[pcb_kicad::KiCadConstraintStatus]) -> Vec<String> {
     constraints
         .iter()
@@ -546,6 +572,7 @@ fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         board_id,
         &output.join("reference-drc.json"),
     );
+    check_input(&mut facts, Path::new(source), output, board_id);
     facts.wall_seconds = started.elapsed().as_secs_f64();
     let verdict = pcb_kicad::judge(&facts);
     write_verdict(output, Some(&report), &verdict).map_err(Failure::Internal)?;
@@ -972,6 +999,7 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         board_id,
         &output.join("reference-drc.json"),
     );
+    check_input(&mut facts, Path::new(source), &result_directory, board_id);
     facts.wall_seconds = started.elapsed().as_secs_f64();
     let verdict = pcb_kicad::judge(&facts);
     write_verdict(output, Some(&report), &verdict).map_err(Failure::Internal)?;
@@ -1083,8 +1111,7 @@ fn place(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     Ok(verdict.status)
 }
 
-const DRC_USAGE: &str =
-    "usage: pcb-maker drc-kicad-board <project-dir> <board-id> <report.json> [--no-refill]";
+const DRC_USAGE: &str = "usage: pcb-maker drc-kicad-board <project-dir> <board-id> <report.json> [--no-refill] [--input <project-dir>]";
 
 /// KiCad's DRC of a board, through the DRC cache: complete when KiCad
 /// finds no error that counts and no unconnected item.
@@ -1094,10 +1121,14 @@ fn drc(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         .into_iter()
         .filter(|argument| argument != "--no-refill")
         .collect();
-    let (positional, _) = split_flags(arguments, &[], DRC_USAGE)?;
+    let (positional, values) = split_flags(arguments, &["--input"], DRC_USAGE)?;
     positional_count(&positional, 3..=3, DRC_USAGE)?;
     let (source, board_id, report) = (&positional[0], &positional[1], Path::new(&positional[2]));
     check_project(source, board_id)?;
+    let input_project = values.get("--input");
+    if let Some(input) = input_project {
+        check_project(input, board_id)?;
+    }
     check_kicad(false)?;
     if let Some(parent) = report
         .parent()
@@ -1130,21 +1161,48 @@ fn drc(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     // The project's rules the router does not keep: KiCad checks them, so
     // their findings are for the designer (board-router.json's rules has
     // every rule read).
-    // A footprint's own findings (its pads at its own holes) are said
-    // apart and do not fail the check, as in a layout's verdict and the
-    // fab release.
-    let own: Vec<&pcb_kicad::DrcFinding> = tally
-        .findings
-        .iter()
-        .filter(|finding| pcb_kicad::footprint_own_unreferenced(finding))
-        .collect();
-    if let Some(note) = pcb_kicad::footprint_findings_note(
-        &own,
-        &path_text(&Path::new(source).join(format!("{board_id}.kicad_dru"))),
-    ) {
+    // A footprint's own findings (its pads at its own holes) and the
+    // input's that are not electrical (`input_own`; without --input the
+    // board judged on its own, every footprint, zone and board graphic its
+    // own, never a track or a via; with it, only the parts kept where that
+    // board has them and its zones and graphics left unchanged) are said
+    // apart and do not fail the check, as in a layout's verdict and the fab
+    // release.
+    let read = |directory: &str| {
+        let path = Path::new(directory).join(format!("{board_id}.kicad_pcb"));
+        fs::read_to_string(&path)
+            .map_err(|error| format!("failed to read {}: {error}", path.display()))
+    };
+    let input = read(source).and_then(|board| match input_project {
+        None => pcb_kicad::board_items(&board),
+        Some(input) => pcb_kicad::input_items(&read(input)?, &board),
+    });
+    if let Err(error) = &input {
+        eprintln!(
+            "warning: the board's own findings are not told apart ({}): every finding counts",
+            error.lines().next().unwrap_or("")
+        );
+    }
+    let apart = |which: pcb_kicad::Apart| -> Vec<&pcb_kicad::DrcFinding> {
+        tally
+            .findings
+            .iter()
+            .filter(|finding| {
+                pcb_kicad::unreferenced_apart(finding, input.as_ref().ok()) == Some(which)
+            })
+            .collect()
+    };
+    let own = apart(pcb_kicad::Apart::Footprint);
+    let board_own = apart(pcb_kicad::Apart::Input);
+    let dru = path_text(&Path::new(source).join(format!("{board_id}.kicad_dru")));
+    if let Some(note) = pcb_kicad::footprint_findings_note(&own, &dru) {
         println!("footprint: {note}");
     }
-    let failed = tally.errors.values().sum::<usize>() > own.len() || tally.unconnected > 0;
+    if let Some(note) = pcb_kicad::input_findings_note(&board_own, &dru) {
+        println!("input: {note}");
+    }
+    let failed =
+        tally.errors.values().sum::<usize>() > own.len() + board_own.len() || tally.unconnected > 0;
     if failed
         && let Ok(config) = pcb_kicad::resolve_project_rules(
             &Path::new(source).join(format!("{board_id}.kicad_pro")),
@@ -1233,7 +1291,7 @@ fn inspect_run(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     Ok(KiCadRunStatus::Complete)
 }
 
-const FAB_USAGE: &str = "usage: pcb-maker fab-kicad-board <project-dir> <board-id> <out-dir> [--allow-findings] [--layers <L1,L2,...>] [--profile kicad|jlcpcb] [--no-step]";
+const FAB_USAGE: &str = "usage: pcb-maker fab-kicad-board <project-dir> <board-id> <out-dir> [--allow-findings] [--layers <L1,L2,...>] [--profile kicad|jlcpcb] [--no-step] [--input <project-dir>]";
 
 /// A DRC-gated fab release (`pcb_kicad::fab_kicad_board`): complete when
 /// the fab files were written, incomplete (nothing exported) when KiCad's
@@ -1247,10 +1305,15 @@ fn fab(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         .into_iter()
         .filter(|argument| argument != "--allow-findings" && argument != "--no-step")
         .collect();
-    let (positional, values) = split_flags(arguments, &["--layers", "--profile"], FAB_USAGE)?;
+    let (positional, values) =
+        split_flags(arguments, &["--layers", "--profile", "--input"], FAB_USAGE)?;
     positional_count(&positional, 3..=3, FAB_USAGE)?;
     let (source, board_id, output) = (&positional[0], &positional[1], &positional[2]);
     check_project(source, board_id)?;
+    let input_project = values.get("--input").map(PathBuf::from);
+    if let Some(input) = &input_project {
+        check_project(&path_text(input), board_id)?;
+    }
     check_fresh_output(output)?;
     let profile = match values.get("--profile").map(String::as_str) {
         None | Some("kicad") => pcb_kicad::KiCadFabProfile::Kicad,
@@ -1283,6 +1346,7 @@ fn fab(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         layers,
         profile,
         no_step,
+        input: input_project.clone(),
     };
     let output = Path::new(output);
     let outputs = BTreeMap::from([
@@ -1317,6 +1381,18 @@ fn fab(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     let tally = pcb_kicad::load_drc_tally(&output.join("drc.json")).map_err(Failure::Internal)?;
     let mut facts = KiCadRunFacts::new(command);
     facts.native = Some(tally);
+    // The input's items as the release gate takes them (--input, else the
+    // board judged on its own).
+    let read = |directory: &Path| {
+        fs::read_to_string(directory.join(format!("{board_id}.kicad_pcb")))
+            .map_err(|error| error.to_string())
+    };
+    facts.input = read(Path::new(source))
+        .and_then(|board| match &input_project {
+            None => pcb_kicad::board_items(&board),
+            Some(input) => pcb_kicad::input_items(&read(input)?, &board),
+        })
+        .ok();
     facts.outputs = existing(&outputs);
     facts.wall_seconds = started.elapsed().as_secs_f64();
     let mut verdict = pcb_kicad::judge(&facts);
@@ -1346,6 +1422,13 @@ fn fab(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
             ", {} within one footprint each (not blocking)",
             drc.footprint_own.values().sum::<usize>()
         )
+    } + &if drc.input_own.is_empty() {
+        String::new()
+    } else {
+        format!(
+            ", {} the board's own, not electrical (not blocking)",
+            drc.input_own.values().sum::<usize>()
+        )
     };
     let status = if manifest.released {
         KiCadRunStatus::Complete
@@ -1359,6 +1442,7 @@ fn fab(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     verdict
         .next_actions
         .extend(drc.footprint_note.iter().cloned());
+    verdict.next_actions.extend(drc.input_note.iter().cloned());
     if manifest.released {
         verdict.reason = format!(
             "released{}: {} files, {}; {counts}",
@@ -1803,7 +1887,7 @@ const FAB_HELP: &str = "\
 Releases a board to a fab, gated by KiCad's DRC: exports only when no copper error and no
 unconnected item remains.
 
-usage: pcb-maker fab-kicad-board <project-dir> <board-id> <out-dir> [--allow-findings] [--layers <L1,L2,...>] [--profile kicad|jlcpcb] [--no-step]
+usage: pcb-maker fab-kicad-board <project-dir> <board-id> <out-dir> [--allow-findings] [--layers <L1,L2,...>] [--profile kicad|jlcpcb] [--no-step] [--input <project-dir>]
 
   <project-dir>     the KiCad project directory holding <board-id>.kicad_pcb (and .kicad_sch for the
                     ERC, the BOM and the schematic netlist).
@@ -1817,11 +1901,16 @@ usage: pcb-maker fab-kicad-board <project-dir> <board-id> <out-dir> [--allow-fin
                     JLCPCB Part # and assembly/<id>-cpl-jlcpcb.csv in Designator,Mid X,Mid Y,Layer,
                     Rotation).
   --no-step         skip the 3D model.
+  --input <dir>     the project the board was laid out or routed from: only the parts still where
+                    its board has them, and its zones and board graphics, are the input's; default:
+                    every part, zone and board graphic is the board's own.
 
 The DRC is drc-kicad-board's (cached, zones refilled, without the global libraries); warnings,
 excluded and cosmetic findings (silkscreen, text, library) do not block, nor errors that lie
 within one footprint each (its pads at its own holes: the manifest's footprint_own, with the
-custom rule that accepts them in footprint_note). The ERC (with a schematic)
+custom rule that accepts them in footprint_note), nor the board's own edge clearances, solder mask
+bridges and courtyards with no track or via in them (input_own, input_note; never a short or a
+clearance between two nets: docs/agents.md section 4). The ERC (with a schematic)
 is counted, never blocking. Released, <out-dir> holds gerbers/ (Gerbers, Excellon drill files PTH
 and NPTH, their Gerber maps), <board-id>-gerbers.zip (what the fab's upload takes), assembly/
 (<board-id>-pos.csv: kicad-cli's position file, both sides, mm, KiCad's rotations, DNP parts out;
@@ -1889,7 +1978,7 @@ pub const AGENT_COMMANDS: [(&str, &str, &str); 14] = [
     (
         "drc-kicad-board",
         "runs KiCad's DRC on a board (cached) and writes its JSON report",
-        "usage: pcb-maker drc-kicad-board <project-dir> <board-id> <report.json> [--no-refill]\n\n  <project-dir>  the KiCad project directory holding <board-id>.kicad_pcb.\n  <board-id>     the board's file stem.\n  <report.json>  where KiCad's DRC report (JSON, every severity) goes; its directory is created.\n  --no-refill    check the zones as stored; default: refilled first, as KiCad's fab outputs do.\n\nThe board and its rules (.kicad_pro, .kicad_dru) are checked without the schematic, as the\nreference board is. The DRC cache answers a board it has seen (docs/agents.md). Exits 0 when\nKiCad finds no error that counts (warnings, excluded and cosmetic findings do not, nor errors\nthat lie within one footprint each: a line \"footprint: ...\" names them with the custom rule\nthat accepts them) and no unconnected item, 1 when it does; one line on stdout counts them, and\nwhen it does and the project has rules the router does not keep (creepage, lengths, rules on\nareas), a line \"next: ...\" names them.",
+        "usage: pcb-maker drc-kicad-board <project-dir> <board-id> <report.json> [--no-refill] [--input <project-dir>]\n\n  <project-dir>  the KiCad project directory holding <board-id>.kicad_pcb.\n  <board-id>     the board's file stem.\n  <report.json>  where KiCad's DRC report (JSON, every severity) goes; its directory is created.\n  --no-refill    check the zones as stored; default: refilled first, as KiCad's fab outputs do.\n  --input <dir>  the project the board was laid out or routed from: only the parts still where\n                 its board has them, and its zones and board graphics, are the input's;\n                 default: every part, zone and board graphic is the board's own.\n\nThe board and its rules (.kicad_pro, .kicad_dru) are checked without the schematic, as the\nreference board is. The DRC cache answers a board it has seen (docs/agents.md). Exits 0 when\nKiCad finds no error that counts (warnings, excluded and cosmetic findings do not, nor errors\nthat lie within one footprint each: a line \"footprint: ...\" names them with the custom rule\nthat accepts them, nor the input's own edge clearances, solder mask bridges and courtyards,\nwith no track or via in them: a line \"input: ...\" names them, docs/agents.md section 4) and\nno unconnected item, 1 when it does; one line on stdout counts them, and\nwhen it does and the project has rules the router does not keep (creepage, lengths, rules on\nareas), a line \"next: ...\" names them.",
     ),
     (
         "inspect-routing-run",

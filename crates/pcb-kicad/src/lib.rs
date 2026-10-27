@@ -81,12 +81,13 @@ pub use board_placer::{
 mod board_router;
 mod verdict;
 pub use verdict::{
-    DrcFinding, DrcTally, EXIT_COMPLETE, EXIT_CUT, EXIT_INCOMPLETE, EXIT_INTERNAL, EXIT_USAGE,
-    KiCadReference, KiCadRunFacts, KiCadRunStatus, KiCadVerdict, decide, drc_finding,
-    error_verdict, footprint_findings_note, footprint_own_unreferenced, input_error, is_cosmetic,
-    is_input_error, judge, kicad_drc_report, load_drc_tally, noted_input_actions, read_drc_tally,
-    reference_findings, room_action, route_facts, set_build_version, split_findings, tally_drc,
-    wall_cuts,
+    Apart, DrcFinding, DrcTally, EXIT_COMPLETE, EXIT_CUT, EXIT_INCOMPLETE, EXIT_INTERNAL,
+    EXIT_USAGE, INPUT_KINDS, KiCadInputItems, KiCadReference, KiCadRunFacts, KiCadRunStatus,
+    KiCadVerdict, board_items, decide, drc_finding, error_verdict, footprint_findings_note,
+    footprint_own_unreferenced, input_error, input_findings_note, input_items, input_own,
+    is_cosmetic, is_input_error, judge, kicad_drc_report, load_drc_tally, noted_input_actions,
+    read_drc_tally, reference_findings, room_action, route_facts, set_build_version,
+    split_findings, tally_drc, unreferenced_apart, wall_cuts,
 };
 mod work_rate;
 pub use work_rate::{

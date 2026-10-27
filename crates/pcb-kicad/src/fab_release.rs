@@ -34,6 +34,11 @@ pub struct KiCadFabOptions {
     pub profile: KiCadFabProfile,
     /// Skip the 3D model.
     pub no_step: bool,
+    /// The project the board was laid out or routed from (`--input`): only
+    /// the parts still where its board has them, and its zones and board
+    /// graphics unchanged, are the input's (`input_own`); `None`: the
+    /// board's every footprint, zone and board graphic is its own.
+    pub input: Option<PathBuf>,
 }
 
 /// KiCad's DRC as the release gate saw it.
@@ -52,6 +57,17 @@ pub struct KiCadFabDrc {
     /// for the board's .kicad_dru, an exclusion).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub footprint_note: Option<String>,
+    /// Error-severity findings by type that are the board's own and not
+    /// electrical (`input_own` with every footprint, zone and board graphic
+    /// the board's: a pad at the board edge, a fiducial's mask opening over
+    /// a zone, two parts' courtyards), which do not block: the verdict's
+    /// `input_findings`. A track or a via in a finding, and a short or a
+    /// clearance between two nets, still block.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub input_own: BTreeMap<String, usize>,
+    /// What those are and how KiCad's own DRC accepts them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub input_note: Option<String>,
     pub unconnected_items: usize,
     pub warnings: usize,
     pub cosmetic: usize,
@@ -419,7 +435,11 @@ fn sha256_of(path: &Path) -> Result<(u64, String), String> {
 
 /// The findings of a DRC report that count, one line each: errors
 /// (neither excluded nor cosmetic), then unconnected items.
-fn finding_lines(report: &serde_json::Value, limit: usize) -> Vec<String> {
+fn finding_lines(
+    report: &serde_json::Value,
+    limit: usize,
+    input: Option<&crate::verdict::KiCadInputItems>,
+) -> Vec<String> {
     let describe = |finding: &serde_json::Value| {
         let items: Vec<String> = finding["items"]
             .as_array()
@@ -449,7 +469,7 @@ fn finding_lines(report: &serde_json::Value, limit: usize) -> Vec<String> {
             finding["excluded"].as_bool() != Some(true)
                 && finding["severity"].as_str() == Some("error")
                 && !is_cosmetic(finding["type"].as_str().unwrap_or(""))
-                && !footprint_own_unreferenced(&drc_finding(finding))
+                && crate::verdict::unreferenced_apart(&drc_finding(finding), input).is_none()
         })
         .map(describe)
         .collect();
@@ -466,22 +486,36 @@ fn finding_lines(report: &serde_json::Value, limit: usize) -> Vec<String> {
 
 /// KiCad's DRC as the release gate judges it: the errors that block, and
 /// apart from them a footprint's own findings (a receptacle's pads at its
-/// own locating holes), which no layout changes and which do not block,
-/// with the custom rule for `dru` that accepts them.
-fn release_gate(tally: &crate::verdict::DrcTally, dru: &str) -> KiCadFabDrc {
-    let own: Vec<&crate::verdict::DrcFinding> = tally
-        .findings
-        .iter()
-        .filter(|finding| footprint_own_unreferenced(finding))
-        .collect();
+/// own locating holes), which no layout changes, and the board's own
+/// findings that are not electrical (`input_own`, the board's items in
+/// `input`: a connector's pads at the edge), which do not block, with the
+/// custom rules for `dru` that accept them.
+fn release_gate(
+    tally: &crate::verdict::DrcTally,
+    dru: &str,
+    input: Option<&crate::verdict::KiCadInputItems>,
+) -> KiCadFabDrc {
+    use crate::verdict::{Apart, unreferenced_apart};
+    let apart = |which: Apart| -> Vec<&crate::verdict::DrcFinding> {
+        tally
+            .findings
+            .iter()
+            .filter(|finding| unreferenced_apart(finding, input) == Some(which))
+            .collect()
+    };
+    let own = apart(Apart::Footprint);
+    let board = apart(Apart::Input);
     let mut errors = tally.errors.clone();
     let mut footprint_own = BTreeMap::new();
-    for finding in &own {
-        *footprint_own.entry(finding.kind.clone()).or_insert(0) += 1;
-        if let Some(count) = errors.get_mut(&finding.kind) {
-            *count -= 1;
-            if *count == 0 {
-                errors.remove(&finding.kind);
+    let mut input_own = BTreeMap::new();
+    for (findings, kinds) in [(&own, &mut footprint_own), (&board, &mut input_own)] {
+        for finding in findings.iter() {
+            *kinds.entry(finding.kind.clone()).or_insert(0) += 1;
+            if let Some(count) = errors.get_mut(&finding.kind) {
+                *count -= 1;
+                if *count == 0 {
+                    errors.remove(&finding.kind);
+                }
             }
         }
     }
@@ -490,6 +524,8 @@ fn release_gate(tally: &crate::verdict::DrcTally, dru: &str) -> KiCadFabDrc {
         errors,
         footprint_note: footprint_findings_note(&own, dru),
         footprint_own,
+        input_note: crate::verdict::input_findings_note(&board, dru),
+        input_own,
         unconnected_items: tally.unconnected,
         warnings: tally.warnings,
         cosmetic: tally.cosmetic,
@@ -557,7 +593,21 @@ pub fn fab_kicad_board(
     let drc_path = output.join("drc.json");
     let drc = kicad_drc_report(directory, board_id, &drc_path, true)?;
     let dru = directory.join(format!("{board_id}.kicad_dru"));
-    manifest.drc = release_gate(&tally_drc(&drc), &dru.display().to_string());
+    // The input's items: with --input, the parts still where its board has
+    // them and its zones and graphics unchanged; else the board judged on
+    // its own, every footprint, zone and board graphic its own (tracks and
+    // vias never are).
+    let input = match &options.input {
+        None => crate::verdict::input_items_of(&pcb, &pcb),
+        Some(project) => {
+            let path = project.join(format!("{board_id}.kicad_pcb"));
+            let text = fs::read_to_string(&path).map_err(|error| {
+                input_error(format!("failed to read {}: {error}", path.display()))
+            })?;
+            crate::verdict::input_items_of(&parse(&text).map_err(input_error)?, &pcb)
+        }
+    };
+    manifest.drc = release_gate(&tally_drc(&drc), &dru.display().to_string(), Some(&input));
     let schematic = directory.join(format!("{board_id}.kicad_sch"));
     if schematic.is_file() {
         let erc_path = output.join("erc.json");
@@ -598,7 +648,7 @@ pub fn fab_kicad_board(
             .skipped
             .push("ERC, schematic netlist: no schematic beside the board".into());
     }
-    manifest.findings = finding_lines(&drc, 20);
+    manifest.findings = finding_lines(&drc, 20, Some(&input));
     if !manifest.drc.clean && !options.allow_findings {
         write_manifest(output, &mut manifest)?;
         return Ok(manifest);
@@ -926,7 +976,11 @@ mod tests {
             "items": [{"description": "Pad A1 [GND] of J1 on F.Cu", "pos": {"x": 1.0, "y": 1.0}},
                       {"description": "NPTH pad of J1", "pos": {"x": 1.0, "y": 2.0}}]});
         let report = |violations: Vec<serde_json::Value>| serde_json::json!({"violations": violations, "unconnected_items": []});
-        let gate = release_gate(&tally_drc(&report(vec![own.clone()])), "p/b.kicad_dru");
+        let gate = release_gate(
+            &tally_drc(&report(vec![own.clone()])),
+            "p/b.kicad_dru",
+            None,
+        );
         assert!(gate.clean && gate.errors.is_empty());
         assert_eq!(
             gate.footprint_own,
@@ -937,13 +991,95 @@ mod tests {
             note.contains("p/b.kicad_dru") && note.contains("min 0.19mm"),
             "{note}"
         );
-        assert!(finding_lines(&report(vec![own.clone()]), 20).is_empty());
+        assert!(finding_lines(&report(vec![own.clone()]), 20, None).is_empty());
         // Between two parts, it blocks.
         let mut apart = own;
         apart["items"][1]["description"] = "NPTH pad of H1".into();
-        let gate = release_gate(&tally_drc(&report(vec![apart.clone()])), "p/b.kicad_dru");
+        let gate = release_gate(
+            &tally_drc(&report(vec![apart.clone()])),
+            "p/b.kicad_dru",
+            None,
+        );
         assert!(!gate.clean && gate.footprint_note.is_none());
-        assert_eq!(finding_lines(&report(vec![apart]), 20).len(), 1);
+        assert_eq!(finding_lines(&report(vec![apart]), 20, None).len(), 1);
+    }
+
+    #[test]
+    fn the_boards_own_findings_block_only_when_electrical() {
+        let board = r#"(kicad_pcb (version 20240108)
+            (footprint "lib:A" (layer "F.Cu") (uuid "fa") (at 10 10)
+              (property "Reference" "J1") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (uuid "pa1")))
+            (footprint "lib:B" (layer "F.Cu") (uuid "fb") (at 20 10)
+              (property "Reference" "J2") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (uuid "pb1")))
+            (gr_line (start 0 0) (end 30 0) (layer "Edge.Cuts") (uuid "e1"))
+            (segment (start 1 1) (end 2 2) (width 0.2) (layer "F.Cu") (net 1) (uuid "s1")))"#;
+        let input = crate::verdict::board_items(board).unwrap();
+        let finding = |kind: &str, items: &[(&str, &str)]| {
+            serde_json::json!({"type": kind, "severity": "error", "description": kind,
+                "items": items.iter().map(|(description, uuid)| serde_json::json!({"description": description, "uuid": uuid, "pos": {"x": 0.0, "y": 0.0}})).collect::<Vec<_>>()})
+        };
+        let report = |violations: Vec<serde_json::Value>| serde_json::json!({"violations": violations, "unconnected_items": []});
+        let edge = finding(
+            "copper_edge_clearance",
+            &[
+                ("Segment on Edge.Cuts", "e1"),
+                ("Pad 1 [GND] of J1 on F.Cu", "pa1"),
+            ],
+        );
+        let gate = release_gate(
+            &tally_drc(&report(vec![edge.clone()])),
+            "p/b.kicad_dru",
+            Some(&input),
+        );
+        assert!(gate.clean, "{:?}", gate.errors);
+        assert_eq!(
+            gate.input_own,
+            BTreeMap::from([("copper_edge_clearance".to_string(), 1)])
+        );
+        assert!(
+            gate.input_note
+                .unwrap()
+                .contains("A.memberOfFootprint('J1')")
+        );
+        assert!(finding_lines(&report(vec![edge.clone()]), 20, Some(&input)).is_empty());
+        // The designer's own short, or a track at the edge, blocks.
+        for blocking in [
+            finding(
+                "shorting_items",
+                &[
+                    ("Pad 1 [GND] of J1 on F.Cu", "pa1"),
+                    ("Pad 1 [VCC] of J2 on F.Cu", "pb1"),
+                ],
+            ),
+            finding(
+                "clearance",
+                &[
+                    ("Pad 1 [GND] of J1 on F.Cu", "pa1"),
+                    ("Pad 1 [VCC] of J2 on F.Cu", "pb1"),
+                ],
+            ),
+            finding(
+                "copper_edge_clearance",
+                &[
+                    ("Segment on Edge.Cuts", "e1"),
+                    ("Track [VCC] on F.Cu, length 1.0000 mm", "s1"),
+                ],
+            ),
+        ] {
+            let gate = release_gate(
+                &tally_drc(&report(vec![edge.clone(), blocking.clone()])),
+                "p/b.kicad_dru",
+                Some(&input),
+            );
+            assert!(
+                !gate.clean && gate.errors.values().sum::<usize>() == 1,
+                "{blocking}"
+            );
+            assert_eq!(
+                finding_lines(&report(vec![blocking.clone()]), 20, Some(&input)).len(),
+                1
+            );
+        }
     }
 
     #[test]

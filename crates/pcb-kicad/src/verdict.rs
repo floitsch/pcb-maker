@@ -541,6 +541,28 @@ pub fn footprint_own_unreferenced(finding: &DrcFinding) -> bool {
     (finding.kind != "shorting_items" && footprint_own(finding)) || pad_own(finding)
 }
 
+/// Why a finding of a result judged without a reference does not count.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Apart {
+    /// The footprint's own (`footprint_own_unreferenced`).
+    Footprint,
+    /// The input's (`input_own`).
+    Input,
+}
+
+/// Whether a finding of a result judged without a reference is set apart,
+/// and why: the footprint's own first, then the input's where the input is
+/// known; `None`: it counts.
+pub fn unreferenced_apart(finding: &DrcFinding, input: Option<&KiCadInputItems>) -> Option<Apart> {
+    if footprint_own_unreferenced(finding) {
+        Some(Apart::Footprint)
+    } else if input.is_some_and(|input| input_own(finding, input)) {
+        Some(Apart::Input)
+    } else {
+        None
+    }
+}
+
 /// The finding types KiCad reports on one pad alone that are the pad's own
 /// geometry against a board-wide minimum: its annular ring
 /// (`annular_width`), its hole (`drill_out_of_range`) and its padstack
@@ -590,6 +612,394 @@ fn pad_footprint(description: &str) -> Option<&str> {
             .strip_suffix(" on all copper layers")
             .and_then(item_footprint)
     })
+}
+
+/// What of a result board is the input's, for judging a result without a
+/// reference board (`input_own`): the items the run kept as the input had
+/// them, by their uuids, which KiCad's report names.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KiCadInputItems {
+    /// Every footprint the run left where the input had it (its position,
+    /// rotation and side), with everything in it (pads, graphics, its own
+    /// zones), and the input's zones and board graphics (`gr_*`, on any
+    /// layer: Edge.Cuts, Margin, copper) that the result holds unchanged
+    /// (zone fills aside). Never a track or a via, nor a zone the run added.
+    pub uuids: BTreeSet<String>,
+    /// The references whose every footprint was kept (not blank): an item
+    /// KiCad names by its footprint ("Pad 2 [GND] of J2 on F.Cu") where its
+    /// uuid is not the board's (a pad of a board that stores none).
+    pub kept_references: BTreeSet<String>,
+    /// Footprints kept, and footprints on the result.
+    pub kept_parts: usize,
+    pub parts: usize,
+}
+
+/// `input_items` of a board judged on its own (`drc-kicad-board`,
+/// `fab-kicad-board`): every footprint, zone and board graphic is the
+/// board's.
+pub fn board_items(board: &str) -> Result<KiCadInputItems, String> {
+    let board = crate::parse(board)?;
+    Ok(input_items_of(&board, &board))
+}
+
+/// What of `result` (a board's text) is the input's (`input`'s text):
+/// `KiCadInputItems`.
+pub fn input_items(input: &str, result: &str) -> Result<KiCadInputItems, String> {
+    Ok(input_items_of(
+        &crate::parse(input)?,
+        &crate::parse(result)?,
+    ))
+}
+
+/// The board graphics' heads (`gr_line`, `gr_arc`, ...): a board's own
+/// drawn items, on any layer.
+fn is_board_graphic(head: &str) -> bool {
+    head.starts_with("gr_")
+}
+
+/// A footprint's identity across the input and the result: its uuid, else
+/// its reference.
+fn footprint_key(footprint: &crate::Expr) -> Option<String> {
+    crate::footprint_uuid(footprint)
+        .map(|uuid| format!("uuid {uuid}"))
+        .or_else(|| crate::footprint_reference(footprint).map(|name| format!("reference {name}")))
+}
+
+/// A footprint's pose: position, rotation (degrees, in [0, 360)) and side.
+fn footprint_pose(footprint: &crate::Expr) -> Option<([f64; 3], String)> {
+    let at = crate::form_at(footprint).ok()?;
+    let layer = crate::form_atom(footprint, "layer", 1)?.to_string();
+    Some(([at[0], at[1], at[2].rem_euclid(360.0)], layer))
+}
+
+fn same_pose(a: &([f64; 3], String), b: &([f64; 3], String)) -> bool {
+    let turn = (a.0[2] - b.0[2]).abs();
+    a.1 == b.1
+        && (a.0[0] - b.0[0]).abs() <= 1.0e-4
+        && (a.0[1] - b.0[1]).abs() <= 1.0e-4
+        && turn.min(360.0 - turn) <= 1.0e-3
+}
+
+/// An item's own uuid (`uuid`, or KiCad 5's `tstamp`).
+fn item_uuid(item: &crate::Expr) -> Option<String> {
+    item.children()
+        .iter()
+        .find_map(|child| match child.head()? {
+            "uuid" | "tstamp" => Some(child.children().get(1)?.atom()?.to_string()),
+            _ => None,
+        })
+}
+
+/// A zone or board graphic as compared between the input and the result:
+/// its text without its fill, which KiCad's check refills.
+fn unfilled_text(item: &crate::Expr) -> String {
+    let crate::Expr::List(children) = item else {
+        return crate::encode_canonical(item);
+    };
+    crate::encode_canonical(&crate::Expr::List(
+        children
+            .iter()
+            .filter(|child| {
+                !matches!(
+                    child.head(),
+                    Some("filled_polygon" | "fill_segments" | "filled_areas_thickness")
+                )
+            })
+            .cloned()
+            .collect(),
+    ))
+}
+
+/// Every uuid in `item`, its own and its children's at any depth.
+fn uuids_within(item: &crate::Expr, uuids: &mut BTreeSet<String>) {
+    let mut stack = vec![item];
+    while let Some(node) = stack.pop() {
+        if matches!(node.head(), Some("uuid" | "tstamp"))
+            && let Some(uuid) = node.children().get(1).and_then(crate::Expr::atom)
+        {
+            uuids.insert(uuid.to_string());
+        }
+        stack.extend(
+            node.children()
+                .iter()
+                .filter(|child| matches!(child, crate::Expr::List(_))),
+        );
+    }
+}
+
+pub(crate) fn input_items_of(input: &crate::Expr, result: &crate::Expr) -> KiCadInputItems {
+    let mut poses: BTreeMap<String, Vec<([f64; 3], String)>> = BTreeMap::new();
+    let mut texts: BTreeMap<String, String> = BTreeMap::new();
+    for item in input.children() {
+        match item.head() {
+            Some("footprint" | "module") => {
+                if let (Some(key), Some(pose)) = (footprint_key(item), footprint_pose(item)) {
+                    poses.entry(key).or_default().push(pose);
+                }
+            }
+            Some(head) if head == "zone" || is_board_graphic(head) => {
+                if let Some(uuid) = item_uuid(item) {
+                    texts.insert(uuid, unfilled_text(item));
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut items = KiCadInputItems::default();
+    // Per reference, whether every footprint of it was kept.
+    let mut references: BTreeMap<String, bool> = BTreeMap::new();
+    for item in result.children() {
+        match item.head() {
+            Some("footprint" | "module") => {
+                items.parts += 1;
+                let kept = footprint_key(item)
+                    .and_then(|key| poses.get(&key))
+                    .zip(footprint_pose(item))
+                    .is_some_and(|(inputs, pose)| {
+                        inputs.iter().any(|input| same_pose(input, &pose))
+                    });
+                if kept {
+                    items.kept_parts += 1;
+                    uuids_within(item, &mut items.uuids);
+                }
+                if let Some(reference) = crate::footprint_reference(item)
+                    .filter(|reference| !reference.trim().is_empty())
+                {
+                    *references.entry(reference).or_insert(true) &= kept;
+                }
+            }
+            Some(head) if head == "zone" || is_board_graphic(head) => {
+                if let Some(uuid) = item_uuid(item)
+                    && texts.get(&uuid) == Some(&unfilled_text(item))
+                {
+                    items.uuids.insert(uuid);
+                }
+            }
+            _ => {}
+        }
+    }
+    items.kept_references = references
+        .into_iter()
+        .filter_map(|(reference, kept)| kept.then_some(reference))
+        .collect();
+    items
+}
+
+/// The finding types a result judged without a reference may leave to the
+/// input (`input_own`): none of them is electrical between two nets. A
+/// board edge too close to copper (`copper_edge_clearance`), a solder mask
+/// opening over copper of another net (`solder_mask_bridge`: solder may
+/// bridge there, the copper does not touch), and courtyards and holes in
+/// them (`courtyards_overlap`, `pth_inside_courtyard`,
+/// `npth_inside_courtyard`, `malformed_courtyard`). Never excused this way:
+/// `shorting_items`, `clearance`, `hole_clearance`, `hole_to_hole`,
+/// `items_not_allowed`, `connection_width`, `track_width`, unconnected
+/// items, or any other type: a short or a clearance between two nets'
+/// copper refuses a release whoever drew it.
+pub const INPUT_KINDS: [&str; 6] = [
+    "copper_edge_clearance",
+    "solder_mask_bridge",
+    "courtyards_overlap",
+    "pth_inside_courtyard",
+    "npth_inside_courtyard",
+    "malformed_courtyard",
+];
+
+/// The footprint an item of KiCad's report names: a pad's or graphic's
+/// (`pad_footprint`) or a footprint itself ("Footprint H4", a courtyard's
+/// item).
+fn named_footprint(description: &str) -> Option<&str> {
+    pad_footprint(description).or_else(|| {
+        description
+            .strip_prefix("Footprint ")
+            .filter(|reference| !reference.is_empty() && !reference.contains(char::is_whitespace))
+    })
+}
+
+/// Whether a finding of a result judged without a reference board is the
+/// input's: of a type in `INPUT_KINDS`, and every item of it the input's
+/// (`KiCadInputItems`): a pad, graphic or courtyard of a footprint the run
+/// kept where the input had it, the board edge, the input's board graphics
+/// or its zones. One item the run wrote (a track, a via, a pour it added,
+/// a part it placed, an outline it changed) and the finding is the run's.
+/// The nightly sweep of 2026-10-27: of 113 copper edge findings on 109
+/// layouts, 96 were fixed parts' pads and 16 Batch_1's own GND ring at
+/// its edge; of the solder mask bridges not within one footprint, the
+/// fiducials of Explorer against its own zones and the stacked switch
+/// footprints of 0xcb-static. A finding of osprey's antenna (a part the
+/// layout placed) at the edge and vaio_re's five bridges (a moved part's
+/// pads) stay the run's: the sweep's reference rows found them the run's.
+pub fn input_own(finding: &DrcFinding, input: &KiCadInputItems) -> bool {
+    if !INPUT_KINDS.contains(&finding.kind.as_str()) || finding.items.is_empty() {
+        return false;
+    }
+    let aligned = finding.item_descriptions.len() == finding.items.len();
+    finding.items.iter().enumerate().all(|(index, item)| {
+        item.uuid
+            .as_ref()
+            .is_some_and(|uuid| input.uuids.contains(uuid))
+            || (aligned
+                && named_footprint(&finding.item_descriptions[index])
+                    .is_some_and(|reference| input.kept_references.contains(reference)))
+    })
+}
+
+/// Whether an item of KiCad's report belongs to a footprint, also one
+/// whose reference is blank ("PTH pad S3 [GND] of   "): its description
+/// goes on past its net with " of ", or it is a pad.
+fn of_a_footprint(description: &str) -> bool {
+    let tail = description
+        .rfind(']')
+        .map_or(description, |end| &description[end + 1..]);
+    is_pad_item(description) || tail.starts_with(" of ") || tail.contains(" of ")
+}
+
+/// A footprint reference a custom rule can name as it is: no quote,
+/// wildcard or space (`memberOfFootprint` reads `*` and `?` as wildcards).
+fn rule_name_fits(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '+' | '/'))
+}
+
+/// What a result's input findings (`input_own`) are and how KiCad's own DRC
+/// accepts them, for `dru` (the board's `.kicad_dru`): per type, a custom
+/// rule that sets their severity to ignore where one does (KiCad 10.0.7,
+/// checked on the sweep's boards 2026-10-27: an edge clearance by its
+/// footprints, or by the net of the board's own graphics; courtyards by
+/// their pairs of footprints, either order), else an exclusion (no custom
+/// rule of KiCad's changes a solder mask bridge: `bridged_mask`,
+/// `solder_mask_expansion` and `clearance` with `(severity ignore)` left
+/// Explorer's three as they were). `None` without such findings.
+pub fn input_findings_note(findings: &[&DrcFinding], dru: &str) -> Option<String> {
+    if findings.is_empty() {
+        return None;
+    }
+    let mut kinds: BTreeMap<&str, usize> = BTreeMap::new();
+    // Edge clearance: the footprints of the copper, and the nets of the
+    // board's own copper graphics.
+    let mut edge_parts: BTreeSet<String> = BTreeSet::new();
+    let mut edge_nets: BTreeSet<String> = BTreeSet::new();
+    let mut courtyard_pairs: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut excluded: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for finding in findings {
+        *kinds.entry(finding.kind.as_str()).or_default() += 1;
+        let parts: Vec<&str> = finding
+            .item_descriptions
+            .iter()
+            .filter_map(|description| named_footprint(description))
+            .collect();
+        let mut exclude = || {
+            let what = finding
+                .item_descriptions
+                .iter()
+                .take(2)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(" and ");
+            excluded.entry(finding.kind.clone()).or_default().push(what);
+        };
+        match finding.kind.as_str() {
+            "copper_edge_clearance" => {
+                // The copper item: the one not on the outline.
+                let copper: Vec<&String> = finding
+                    .item_descriptions
+                    .iter()
+                    .filter(|description| {
+                        !description.ends_with(" on Edge.Cuts")
+                            && !description.ends_with(" on Margin")
+                    })
+                    .collect();
+                match copper.as_slice() {
+                    [description] => match named_footprint(description) {
+                        Some(part) if rule_name_fits(part) => {
+                            edge_parts.insert(part.to_string());
+                        }
+                        // A footprint's item whose reference is blank.
+                        _ if of_a_footprint(description) => exclude(),
+                        Some(_) => exclude(),
+                        None => match item_net(description) {
+                            Some(net) if !net.contains('\'') && !net.contains('"') => {
+                                edge_nets.insert(net);
+                            }
+                            _ => exclude(),
+                        },
+                    },
+                    _ => exclude(),
+                }
+            }
+            "courtyards_overlap" => match parts.as_slice() {
+                [a, b] if rule_name_fits(a) && rule_name_fits(b) => {
+                    let (a, b) = if a <= b { (a, b) } else { (b, a) };
+                    courtyard_pairs.insert((a.to_string(), b.to_string()));
+                }
+                _ => exclude(),
+            },
+            _ => exclude(),
+        }
+    }
+    let mut rules = Vec::new();
+    if !edge_parts.is_empty() {
+        rules.push(format!(
+            "(rule \"input edge_clearance\" (constraint edge_clearance (min 0mm)) (severity ignore) (condition \"{}\"))",
+            edge_parts
+                .iter()
+                .map(|part| format!("A.memberOfFootprint('{part}')"))
+                .collect::<Vec<_>>()
+                .join(" || ")
+        ));
+    }
+    for net in &edge_nets {
+        rules.push(format!(
+            "(rule \"input {net} graphics edge_clearance\" (constraint edge_clearance (min 0mm)) (severity ignore) (condition \"A.Type == 'Graphic' && A.NetName == '{net}' && !A.memberOfFootprint('*')\"))"
+        ));
+    }
+    if !courtyard_pairs.is_empty() {
+        rules.push(format!(
+            "(rule \"input courtyards\" (constraint courtyard_clearance (min 0mm)) (severity ignore) (condition \"{}\"))",
+            courtyard_pairs
+                .iter()
+                .map(|(a, b)| format!("(A.Reference == '{a}' && B.Reference == '{b}')"))
+                .collect::<Vec<_>>()
+                .join(" || ")
+        ));
+    }
+    let mut accept = Vec::new();
+    if !rules.is_empty() {
+        accept.push(format!(
+            "add to {dru} (a new file starts with (version 1)): {}",
+            rules.join(" ")
+        ));
+    }
+    if !excluded.is_empty() {
+        let shown = 6;
+        let listed: Vec<String> = excluded
+            .iter()
+            .map(|(kind, items)| {
+                let mut named: Vec<String> = items.iter().take(shown).cloned().collect();
+                if items.len() > shown {
+                    named.push(format!("{} more", items.len() - shown));
+                }
+                format!("{kind} {} ({})", items.len(), named.join("; "))
+            })
+            .collect();
+        accept.push(format!(
+            "exclude in KiCad's DRC dialog (Exclude this violation: no custom rule changes a solder mask bridge or names a part without a plain reference): {}",
+            listed.join(", ")
+        ));
+    }
+    Some(format!(
+        "{} DRC findings are the input's ({}): every item of each is a part kept where the input has it, the board edge, the input's own board graphics or zones, none a track, via, pour or part of this run, and none is electrical between two nets (input_findings), so they are not judged and fab-kicad-board releases with them; the designer's board as --reference judges them by place instead. KiCad's own DRC still reports them; to accept them there, {}",
+        findings.len(),
+        counts(
+            &kinds
+                .iter()
+                .map(|(kind, count)| (kind.to_string(), *count))
+                .collect()
+        ),
+        accept.join("; and ")
+    ))
 }
 
 /// The constraint of KiCad's custom rules that a finding type is checked
@@ -856,6 +1266,10 @@ pub struct KiCadRunFacts {
     /// KiCad's DRC on the result; `None` when it did not run.
     pub native: Option<DrcTally>,
     pub reference: KiCadReference,
+    /// What of the result is the input's (`input_items`), for judging it
+    /// without a reference (`input_own`); `None`: not known, nothing is
+    /// left to the input.
+    pub input: Option<KiCadInputItems>,
     pub routable_connections: usize,
     pub routed_connections: usize,
     pub unconnected_terminals: usize,
@@ -1045,6 +1459,7 @@ impl KiCadRunFacts {
             command: command.into(),
             native: None,
             reference: KiCadReference::None,
+            input: None,
             routable_connections: 0,
             routed_connections: 0,
             unconnected_terminals: 0,
@@ -1141,6 +1556,14 @@ pub struct KiCadVerdict {
     /// how KiCad's own DRC accepts them (a custom rule, an exclusion).
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub footprint_findings: BTreeMap<String, usize>,
+    /// Without a reference board: KiCad errors per type that are the
+    /// input's (`input_own`): of a type that is not electrical between two
+    /// nets (`INPUT_KINDS`: edge clearance, solder mask bridges,
+    /// courtyards), every item a part the run kept where the input had it,
+    /// the board edge, the input's board graphics or zones. They do not
+    /// count; next_actions says how KiCad's own DRC accepts them.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub input_findings: BTreeMap<String, usize>,
     /// KiCad checked the result and finds no unconnected item and no error
     /// that counts, with nothing subtracted.
     pub clean_without_subtraction: bool,
@@ -1417,6 +1840,7 @@ fn next_actions(
     own: &[&DrcFinding],
     unknown: &[String],
     footprint: &[&DrcFinding],
+    input: &[&DrcFinding],
 ) -> Vec<String> {
     let mut actions = facts.input_warnings.clone();
     if let Some(sub) = &facts.sub_boards
@@ -1529,6 +1953,7 @@ fn next_actions(
         },
     );
     actions.extend(footprint_findings_note(footprint, &dru));
+    actions.extend(input_findings_note(input, &dru));
     if !facts.board_mark_overlaps.is_empty() {
         let shown = 6;
         let mut listed: Vec<String> = facts
@@ -1872,13 +2297,14 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
             split_findings_strict(&findings, reference_findings),
             Some(from.display().to_string()),
         ),
-        // Without a reference, a footprint's own findings are set apart
-        // (`footprint_own_unreferenced`); every other error counts.
+        // Without a reference, a footprint's own findings
+        // (`footprint_own_unreferenced`) and the input's (`input_own`) are
+        // set apart; every other error counts.
         KiCadReference::None | KiCadReference::Failed { .. } => {
             let mut new = errors.clone();
             let mut new_indices = Vec::new();
             for (index, finding) in findings.iter().enumerate() {
-                if footprint_own_unreferenced(finding) {
+                if unreferenced_apart(finding, facts.input.as_ref()).is_some() {
                     if let Some(count) = new.get_mut(&finding.kind) {
                         *count -= 1;
                         if *count == 0 {
@@ -1905,17 +2331,26 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         .iter()
         .filter_map(|&index| findings.get(index))
         .collect();
-    let footprint: Vec<&DrcFinding> = match &facts.reference {
-        KiCadReference::Findings { .. } => Vec::new(),
-        KiCadReference::None | KiCadReference::Failed { .. } => findings
-            .iter()
-            .filter(|finding| footprint_own_unreferenced(finding))
-            .collect(),
+    let apart = |which: Apart| -> Vec<&DrcFinding> {
+        match &facts.reference {
+            KiCadReference::Findings { .. } => Vec::new(),
+            KiCadReference::None | KiCadReference::Failed { .. } => findings
+                .iter()
+                .filter(|finding| unreferenced_apart(finding, facts.input.as_ref()) == Some(which))
+                .collect(),
+        }
     };
-    let mut footprint_findings: BTreeMap<String, usize> = BTreeMap::new();
-    for finding in &footprint {
-        *footprint_findings.entry(finding.kind.clone()).or_default() += 1;
-    }
+    let footprint = apart(Apart::Footprint);
+    let input = apart(Apart::Input);
+    let by_kind = |findings: &[&DrcFinding]| {
+        let mut kinds: BTreeMap<String, usize> = BTreeMap::new();
+        for finding in findings {
+            *kinds.entry(finding.kind.clone()).or_default() += 1;
+        }
+        kinds
+    };
+    let footprint_findings = by_kind(&footprint);
+    let input_findings = by_kind(&input);
     let (status, reason) = decide(facts, &strict.new);
     KiCadVerdict {
         status,
@@ -1936,8 +2371,10 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
             &own,
             &strict.unknown,
             &footprint,
+            &input,
         ),
         footprint_findings,
+        input_findings,
         clean_without_subtraction: facts
             .native
             .as_ref()
@@ -2433,6 +2870,274 @@ mod tests {
         let verdict = judge(&facts);
         assert_eq!(verdict.new_findings_strict, map(&[("annular_width", 1)]));
         assert!(verdict.footprint_findings.is_empty());
+    }
+
+    #[test]
+    fn the_inputs_items_are_the_parts_kept_and_its_zones_and_graphics_unchanged() {
+        let input = r#"(kicad_pcb (version 20240108)
+            (footprint "lib:A" (layer "F.Cu") (uuid "fa") (at 10 10)
+              (property "Reference" "J1") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (uuid "pa1")))
+            (footprint "lib:B" (layer "F.Cu") (uuid "fb") (at 20 10 90)
+              (property "Reference" "R1") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (uuid "pb1")))
+            (footprint "lib:C" (layer "F.Cu") (uuid "fc") (at 5 5)
+              (property "Reference" "R2") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (uuid "pc1")))
+            (gr_line (start 0 0) (end 30 0) (layer "Edge.Cuts") (uuid "e1"))
+            (gr_line (start 0 0) (end 0 30) (layer "Edge.Cuts") (uuid "e2"))
+            (zone (net 1) (net_name "GND") (layer "F.Cu") (uuid "z1") (polygon (pts (xy 0 0) (xy 30 0) (xy 30 30)))))"#;
+        // J1 where it was (its rotation written out), R1 moved, R2 flipped,
+        // e2 changed (a new outline), z1 filled, a pour and a track added.
+        let result = r#"(kicad_pcb (version 20240108)
+            (footprint "lib:A" (layer "F.Cu") (uuid "fa") (at 10.0 10 360)
+              (property "Reference" "J1") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (uuid "pa1")))
+            (footprint "lib:B" (layer "F.Cu") (uuid "fb") (at 25 10 90)
+              (property "Reference" "R1") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (uuid "pb1")))
+            (footprint "lib:C" (layer "B.Cu") (uuid "fc") (at 5 5)
+              (property "Reference" "R2") (pad "1" smd rect (at 0 0) (size 1 1) (layers "B.Cu") (uuid "pc1")))
+            (gr_line (start 0 0) (end 30 0) (layer "Edge.Cuts") (uuid "e1"))
+            (gr_line (start 0 0) (end 0 40) (layer "Edge.Cuts") (uuid "e2"))
+            (zone (net 1) (net_name "GND") (layer "F.Cu") (uuid "z1") (polygon (pts (xy 0 0) (xy 30 0) (xy 30 30)))
+              (filled_polygon (layer "F.Cu") (pts (xy 1 1) (xy 29 1) (xy 29 29))))
+            (zone (net 1) (net_name "GND") (layer "B.Cu") (uuid "z2") (polygon (pts (xy 0 0) (xy 30 0) (xy 30 30))))
+            (segment (start 1 1) (end 2 2) (width 0.2) (layer "F.Cu") (net 1) (uuid "s1")))"#;
+        let items = input_items(input, result).unwrap();
+        let set = |uuids: &[&str]| {
+            uuids
+                .iter()
+                .map(|uuid| uuid.to_string())
+                .collect::<BTreeSet<_>>()
+        };
+        assert_eq!(items.uuids, set(&["fa", "pa1", "e1", "z1"]));
+        assert_eq!(items.kept_references, set(&["J1"]));
+        assert_eq!((items.kept_parts, items.parts), (1, 3));
+        // A board judged on its own: every part, zone and graphic, never a
+        // track.
+        let alone = board_items(result).unwrap();
+        assert!(
+            ["fa", "pb1", "pc1", "e2", "z2"]
+                .iter()
+                .all(|uuid| alone.uuids.contains(*uuid))
+                && !alone.uuids.contains("s1")
+        );
+    }
+
+    /// A finding with KiCad's item descriptions and uuids.
+    fn input_finding(kind: &str, items: &[(&str, &str)]) -> serde_json::Value {
+        json!({"type": kind, "severity": "error", "description": kind,
+               "items": items.iter().enumerate().map(|(index, (description, uuid))| json!({"description": description, "uuid": uuid, "pos": {"x": index as f64, "y": 0.0}})).collect::<Vec<_>>()})
+    }
+
+    /// A layout's input: J1, J2 and FID1 kept, R1 moved; the edge e1, the
+    /// board's copper ring g1 and the zone z1 the input's.
+    fn kept_input() -> KiCadInputItems {
+        KiCadInputItems {
+            uuids: ["fj1", "j1", "j2", "fid", "e1", "g1", "z1"]
+                .iter()
+                .map(|uuid| uuid.to_string())
+                .collect(),
+            kept_references: ["J1", "J2", "FID1"]
+                .iter()
+                .map(|reference| reference.to_string())
+                .collect(),
+            kept_parts: 3,
+            parts: 4,
+        }
+    }
+
+    fn laid_out(findings: Vec<serde_json::Value>) -> KiCadRunFacts {
+        let mut facts = routed(tally_drc(&report(findings)));
+        facts.command = "layout-kicad-board".into();
+        facts.input = Some(kept_input());
+        facts
+            .outputs
+            .insert("board".into(), "out/result/board.kicad_pcb".into());
+        facts
+    }
+
+    #[test]
+    fn the_inputs_own_findings_do_not_fail_a_layout_without_a_reference() {
+        let fixed_edge = input_finding(
+            "copper_edge_clearance",
+            &[
+                ("Segment on Edge.Cuts", "e1"),
+                ("Pad MP [GND] of J1 on F.Cu", "j1"),
+            ],
+        );
+        let ring_edge = input_finding(
+            "copper_edge_clearance",
+            &[("Arc on Edge.Cuts", "e1"), ("Segment [GND] on F.Cu", "g1")],
+        );
+        let fiducial = input_finding(
+            "solder_mask_bridge",
+            &[
+                ("Pad [<no net>] of FID1 on F.Cu", "fid"),
+                ("Zone [GNDD] on F.Cu and B.Cu, priority 0", "z1"),
+            ],
+        );
+        let courtyards = input_finding(
+            "courtyards_overlap",
+            &[("Footprint J2", "fj2"), ("Footprint J1", "fj1")],
+        );
+        let verdict = judge(&laid_out(vec![
+            fixed_edge.clone(),
+            ring_edge,
+            fiducial,
+            courtyards,
+        ]));
+        assert_eq!(
+            verdict.status,
+            KiCadRunStatus::Complete,
+            "{}",
+            verdict.reason
+        );
+        assert_eq!(
+            verdict.input_findings,
+            map(&[
+                ("copper_edge_clearance", 2),
+                ("courtyards_overlap", 1),
+                ("solder_mask_bridge", 1)
+            ])
+        );
+        assert!(verdict.footprint_findings.is_empty() && verdict.new_findings_strict.is_empty());
+        let note = verdict
+            .next_actions
+            .iter()
+            .find(|action| action.contains("the input's"))
+            .expect("a line for the input's findings");
+        assert!(
+            note.contains("out/result/board.kicad_dru")
+                && note.contains("(rule \"input edge_clearance\" (constraint edge_clearance (min 0mm)) (severity ignore) (condition \"A.memberOfFootprint('J1')\"))")
+                && note.contains("(rule \"input GND graphics edge_clearance\" (constraint edge_clearance (min 0mm)) (severity ignore) (condition \"A.Type == 'Graphic' && A.NetName == 'GND' && !A.memberOfFootprint('*')\"))")
+                && note.contains("(rule \"input courtyards\" (constraint courtyard_clearance (min 0mm)) (severity ignore) (condition \"(A.Reference == 'J1' && B.Reference == 'J2')\"))")
+                && note.contains("exclude in KiCad's DRC dialog")
+                && note.contains("solder_mask_bridge 1 (Pad [<no net>] of FID1 on F.Cu and Zone [GNDD]"),
+            "{note}"
+        );
+        // A kept pad of a blank reference: no rule names it, an exclusion.
+        let blank = input_finding(
+            "copper_edge_clearance",
+            &[
+                ("Rectangle on Margin", "e1"),
+                ("PTH pad S3 [GND] of   ", "j2"),
+            ],
+        );
+        let verdict = judge(&laid_out(vec![blank]));
+        assert_eq!(
+            verdict.status,
+            KiCadRunStatus::Complete,
+            "{}",
+            verdict.reason
+        );
+        let note = verdict
+            .next_actions
+            .iter()
+            .find(|action| action.contains("the input's"))
+            .unwrap();
+        assert!(
+            !note.contains("(rule")
+                && note.contains("copper_edge_clearance 1 (Rectangle on Margin and PTH pad S3"),
+            "{note}"
+        );
+        // A pad KiCad gives a uuid the board does not store: its part,
+        // kept, tells.
+        let mut unstored = fixed_edge;
+        unstored["items"][1]["uuid"] = "random".into();
+        assert_eq!(
+            judge(&laid_out(vec![unstored])).status,
+            KiCadRunStatus::Complete
+        );
+    }
+
+    #[test]
+    fn a_finding_with_anything_the_run_wrote_or_between_two_nets_counts() {
+        let cases = [
+            // A part the layout moved, at the edge.
+            input_finding(
+                "copper_edge_clearance",
+                &[
+                    ("Segment on Edge.Cuts", "e1"),
+                    ("Pad 1 [VCC] of R1 on F.Cu", "r1"),
+                ],
+            ),
+            // A kept pad and our track.
+            input_finding(
+                "solder_mask_bridge",
+                &[
+                    ("Pad 1 [GND] of J1 on F.Cu", "j1"),
+                    ("Track [VCC] on F.Cu, length 1.0000 mm", "t1"),
+                ],
+            ),
+            // A kept pad and a pour of ours.
+            input_finding(
+                "solder_mask_bridge",
+                &[
+                    ("Pad 1 [GND] of J1 on F.Cu", "j1"),
+                    ("Zone [VCC] on B.Cu, priority 0", "ours"),
+                ],
+            ),
+            // Two kept parts' pads shorting, and too close: electrical.
+            input_finding(
+                "shorting_items",
+                &[
+                    ("Pad 1 [GND] of J1 on F.Cu", "j1"),
+                    ("Pad 1 [VCC] of J2 on F.Cu", "j2"),
+                ],
+            ),
+            input_finding(
+                "clearance",
+                &[
+                    ("Pad 1 [GND] of J1 on F.Cu", "j1"),
+                    ("Pad 1 [VCC] of J2 on F.Cu", "j2"),
+                ],
+            ),
+            input_finding(
+                "hole_clearance",
+                &[
+                    ("Pad 1 [GND] of J1 on F.Cu", "j1"),
+                    ("PTH pad 1 [VCC] of J2", "j2"),
+                ],
+            ),
+        ];
+        for case in cases {
+            let verdict = judge(&laid_out(vec![case.clone()]));
+            assert_eq!(verdict.status, KiCadRunStatus::Incomplete, "{case}");
+            assert!(verdict.input_findings.is_empty(), "{case}");
+            assert!(
+                !verdict
+                    .next_actions
+                    .iter()
+                    .any(|action| action.contains("the input's"))
+            );
+        }
+        // Without the input's items (not known), nothing is the input's.
+        let fixed_edge = input_finding(
+            "copper_edge_clearance",
+            &[
+                ("Segment on Edge.Cuts", "e1"),
+                ("Pad MP [GND] of J1 on F.Cu", "j1"),
+            ],
+        );
+        let mut facts = laid_out(vec![fixed_edge.clone()]);
+        facts.input = None;
+        assert_eq!(judge(&facts).status, KiCadRunStatus::Incomplete);
+        // With a reference nothing changes: the reference decides by place.
+        let mut facts = laid_out(vec![fixed_edge.clone()]);
+        facts.reference = reference(Vec::new());
+        let verdict = judge(&facts);
+        assert_eq!(verdict.status, KiCadRunStatus::Incomplete);
+        assert!(verdict.input_findings.is_empty());
+        assert_eq!(
+            verdict.new_findings_strict,
+            map(&[("copper_edge_clearance", 1)])
+        );
+        let mut facts = laid_out(vec![fixed_edge.clone()]);
+        facts.reference = reference(vec![fixed_edge]);
+        let verdict = judge(&facts);
+        assert_eq!(verdict.status, KiCadRunStatus::Complete);
+        assert!(verdict.input_findings.is_empty());
+        assert_eq!(
+            verdict.preexisting_findings,
+            map(&[("copper_edge_clearance", 1)])
+        );
     }
 
     #[test]
