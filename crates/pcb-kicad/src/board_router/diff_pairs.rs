@@ -715,9 +715,11 @@ struct Launch {
 struct Neighbour {
     pair: usize,
     layers: core::LayerMask,
-    /// Capsules (start, end, radius): the two stubs and the lead.
-    copper: [(Point, Point, f64); 3],
-    clearance: f64,
+    /// Capsules (start, end, radius, clearance): the two stubs and the
+    /// leads from their ends (the pair's width and clearance) and the lead
+    /// (the link's envelope with the launch's margin for lattice nodes, the
+    /// link class's clearance), as `launch` checks them.
+    copper: [(Point, Point, f64, f64); 5],
 }
 
 /// How far the copper of a crossover (`found`) and the run's lead past it
@@ -733,8 +735,8 @@ fn neighbour_room(
 ) -> f64 {
     let mut room = f64::INFINITY;
     for neighbour in neighbours {
-        let keep = pair.clearance.max(neighbour.clearance);
-        for &(start, end, radius) in &neighbour.copper {
+        for &(start, end, radius, clearance) in &neighbour.copper {
+            let keep = pair.clearance.max(clearance);
             if neighbour.layers & layers != 0 {
                 let distance = core::geometry::segment_segment_distance(lead.0, lead.1, start, end);
                 room = room.min(distance - lead.2 - radius - keep);
@@ -1083,7 +1085,7 @@ fn launch(
     let neighbours: Vec<&Neighbour> = neighbours
         .iter()
         .filter(|neighbour| {
-            neighbour.copper.iter().any(|&(start, end, radius)| {
+            neighbour.copper.iter().any(|&(start, end, radius, _)| {
                 core::geometry::point_segment_distance(middle, start, end)
                     <= LAUNCH_REACH + 2.0 * lead + radius + 2.0
             })
@@ -1565,15 +1567,23 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
                         continue;
                     };
                     let half = pair.width / 2.0;
+                    let along = sub(found.reserved, found.start);
+                    let lead_of = |end: Point| (end, add(end, along), half, pair.clearance);
                     launches_before.push(Neighbour {
                         pair: index,
                         layers: found.layers,
                         copper: [
-                            (found.stubs[0], found.stub_ends[0], half),
-                            (found.stubs[1], found.stub_ends[1], half),
-                            (found.start, found.at, envelope.trace_width / 2.0),
+                            (found.stubs[0], found.stub_ends[0], half, pair.clearance),
+                            (found.stubs[1], found.stub_ends[1], half, pair.clearance),
+                            lead_of(found.stub_ends[0]),
+                            lead_of(found.stub_ends[1]),
+                            (
+                                found.start,
+                                found.at,
+                                envelope.trace_width / 2.0 + LAUNCH_MARGIN,
+                                envelope.clearance,
+                            ),
                         ],
-                        clearance: pair.clearance,
                     });
                 }
             }
