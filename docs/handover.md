@@ -534,6 +534,7 @@ Switches and experiment hooks (change the result):
 Diagnostics (stderr unless said; the result does not change):
 
 - `PCB_ROUTER_TROUBLE_WHY`: the trouble-makers' repair prints every exchange's outcome (kept, or why refused; a refusal names the nets left in conflict and what their conflicts name).
+- `PCB_ROUTER_LENGTH_DEBUG`: the length repair: prints per net over its maximum what the priced search found, the victims and why the exchange was kept or undone.
 - `PCB_ROUTER_DIFF_PAIRS_DEBUG`: differential pairs: prints each launch, each link's path, the copper refused with the reason, each stub straightened or not, and the fallback's work.
 - `PCB_ROUTER_BUS_WHY`: bus bundles: prints every bus found and every member broken out of its bundle.
 - `PCB_ROUTER_DEBUG`: the router's verbose lines (failed searches, the resolution, what blocks a stub, lattice details).

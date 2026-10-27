@@ -313,6 +313,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "turns the length and skew rules' meanders off (0) or on (1) where the settings name none (`length_matching`; unset, on): a net shorter than a custom rule's `length` minimum, or further than a `skew` maximum below the longest net of its rule, gets a meander on a straight track of its route, written as a KiCad tuning pattern (in route mode and on a layout's own routes), and the verdict's `lengths` reports each such net; a net over a `length` maximum is routed again the short way where the nets in its way can go round (`PCB_ROUTER_LENGTH_REPAIR_PRESENT`) (off: none of it; docs/router.md, \"Length and skew rules\").",
     ),
     (
+        "PCB_ROUTER_LENGTH_DEBUG",
+        Kind::Diagnostic,
+        "the length repair: prints per net over its maximum what the priced search found, the victims and why the exchange was kept or undone.",
+    ),
+    (
         "PCB_ROUTER_LENGTH_REPAIR_PRESENT",
         Kind::Switch,
         "the price of sharing a node for the length repair's search (default 2): a net longer than its custom `length` rule's maximum is routed again through the nets in its way, which then go round (docs/router.md, \"Length and skew rules\").",
