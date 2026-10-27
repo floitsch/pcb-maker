@@ -307,6 +307,15 @@ impl Pieces {
             merged.push(tab);
         }
         let tabs = merged;
+        // Pieces only tabs join: a board drawn as separate loops (a module
+        // beside its main board, zpn_devboard; the Modular Hub's three
+        // boards) is left to `keep_on_pieces` (the Hub with its GND split
+        // three ways and its two items across them excused: 19 to 22
+        // KiCad unconnected at seed 1, its placement moved by the measured
+        // escape correction's route).
+        if tabs.is_empty() {
+            return None;
+        }
         Some(Pieces {
             origin,
             cell,
