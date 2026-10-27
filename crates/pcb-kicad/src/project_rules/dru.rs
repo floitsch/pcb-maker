@@ -1148,6 +1148,7 @@ pub(crate) fn finding_severity(kind: &str, severities: &BTreeMap<String, String>
         "annular_width" => ("annular_width", "error"),
         "length" => ("length_out_of_range", "error"),
         "skew" => ("skew_out_of_range", "error"),
+        "disallow" => ("items_not_allowed", "error"),
         _ => return "error".into(),
     };
     severities

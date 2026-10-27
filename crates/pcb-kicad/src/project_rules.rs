@@ -849,6 +849,7 @@ pub fn resolve_project_rules(
         &pair_custom_rules,
         &copper_layer_names(&pcb),
         |name: &str| net_names.normalize(name).to_string(),
+        &severities,
         &mut report,
     );
     let mut config = KiCadBoardRouterConfig {
@@ -1284,6 +1285,7 @@ fn track_disallowed(
     rules: &[dru::Rule],
     copper: &[String],
     key: impl Fn(&str) -> String,
+    severities: &BTreeMap<String, String>,
     report: &mut KiCadProjectRulesReport,
 ) -> BTreeMap<String, pcb_router::LayerMask> {
     let mut out = BTreeMap::new();
@@ -1294,6 +1296,16 @@ fn track_disallowed(
             rule.constraints.iter().any(|constraint| {
                 constraint.kind == "disallow" && constraint.words.iter().any(|word| word == "track")
             })
+        })
+        // KiCad's items_not_allowed: only a rule whose findings are errors
+        // (its own severity, else the project's) closes a layer, as the
+        // other rules' lowering skips those below (OpenAIO-Whoop's "In1
+        // and In6: GND planes, no tracks" is a warning).
+        .filter(|(_, rule)| {
+            rule.severity
+                .clone()
+                .unwrap_or_else(|| dru::finding_severity("disallow", severities))
+                == "error"
         })
         .collect();
     if track_rules.is_empty() {
@@ -1709,6 +1721,8 @@ mod tests {
             (rule "impedance layers" (condition "A.hasNetclass('DIFF') && A.Layer != 'F.Cu' && A.Layer != 'B.Cu'")
               (constraint disallow track))
             (rule "inside an area" (condition "A.insideArea('X') && A.NetName == '/AREA'")
+              (constraint disallow track))
+            (rule "a warning" (severity warning) (condition "A.Layer == 'In2.Cu' && A.NetName == '/SIG'")
               (constraint disallow track))"#;
         let (directory, path) = project_directory("disallow", project, Some(dru));
         let board = directory.join("board.kicad_pcb");
@@ -1716,6 +1730,7 @@ mod tests {
         let config = resolve_project_rules(&path, &board).unwrap();
         let closed = &config.track_disallowed;
         assert_eq!(closed.get("GND"), None);
+        // A rule below an error closes nothing (In2.Cu stays open to /SIG).
         assert_eq!(closed.get("SIG"), Some(&0b10));
         assert_eq!(closed.get("TX_P"), Some(&0b110));
         assert_eq!(closed.get("TX_N"), Some(&0b110));
