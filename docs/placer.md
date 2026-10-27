@@ -3696,6 +3696,53 @@ pairs rise, so the switch stays as an override.
   The census tool stays: it tells an agent which of a placement's parts
   KiCad would flag and which only the placer's model does.
 
+### The molecules against KiCad: the last level is KiCad's legality (2026-10-27)
+
+The census left the molecules' designer placements "illegal" in the
+model at the tightest level (128 of the 4x4's 160 movable parts, 156 of
+the 4x5's 196, 101, 87 and 148 on the others) with no KiCad error
+against what they meet. Checked against KiCad 10's DRC of the designer's
+five boards (`kicad-cli pcb drc --severity-all`, every finding read):
+
+| cause (the census's) | what KiCad says on the designer's molecules | verdict |
+| --- | --- | --- |
+| the board's silkscreen marks (the back connectors J6 under the back artwork, J3/J4 under the cells' labels) | `silk_overlap` warnings only (192 on the 4x4, the project rates them `warning`; none names a movable connector, which has no silkscreen of its own); `silk_over_copper` none | contradicted: a mark is no obstacle unless the project rates `silk_overlap` or `silk_over_copper` an error |
+| the edge margin (the held connectors' and test points' copper 0.012 to 0.016 mm from the edge; the model floored the copper-to-edge clearance at 0.02 mm and kept 0.05 mm more on the sides the constraint does not name) | no `copper_edge_clearance` against any footprint (the project asks 0.01 mm; the 7x5's three are board texts) | contradicted: the copper keeps the project's clearance, floored at 0.01 mm (KiCad flags copper on the edge even at a zero clearance; 0.01 mm off it, nothing) |
+| a body past its courtyard (J1's pads 0.04 mm from C2's body, the courtyards 0.81 mm apart; the courtyard-less AtomConnect rows 0.03 mm from their neighbours' copper boxes) | no `courtyards_overlap`, no `clearance` between the footprints: the copper of two nets is at least 0.5 mm apart, the closest copper is one net's (mating connectors of two cells) | contradicted: courtyards may touch where the pads of two nets keep the copper clearance pad to pad; pads of one net may come closer |
+| far side: C2 (back) over SW1's through-hole leads, its pads 0.3 mm from them | nothing (`pth_inside_courtyard` is `ignore` in the project; the clearance 0.13 mm holds) | contradicted: where the project does not rate a hole inside a courtyard an error, a lead keeps the copper clearance from the far side's pads, not off their bodies |
+| far side: the wave boards' J5 by a non-plated hole | `hole_clearance` errors (5 on the 5x4_wave, 7 on the 7x5) | KiCad agrees: unchanged |
+
+**The change** (`legality: "model"`, the default, now judges the
+placer's last level, where courtyards may touch, by KiCad's legality;
+`"strict"` keeps the model before; `"kicad"` as before at every level
+whose spacing is the rules' least): at that level (`core::Config::kicad_last_level`,
+`Constraints::pad_clearance`) courtyards may touch where the pads keep the copper
+clearance pad to pad, and two pads of one net may come closer
+(`pads_too_close` by the pads' nets); a part's pads keep the project's
+copper-to-edge clearance from the edge and its body only the outline
+(`pads_keep_edge`, every unheld part with pads; a held part on every
+side); the board's silkscreen marks the project does not rate an error
+over a part (`Constraints::passable_marks`, from
+`silk_over_parts_error`, read from the project) take no side; and where
+holes in courtyards are no error (`Constraints::leads_keep_copper`) a
+lead through the board keeps the copper clearance from the far side's
+pads (`far_side_overlap`). The copper-to-edge floor is 0.01 mm at every
+level. The other levels are as before: the marks stay obstacles there
+(legible boards, 2026-10-21), the spacing stays the bodies'.
+
+The designer's placements at the last level (`legality-kicad-board`
+with `--drc`, x1849 against x14981):
+
+| board | movable | illegal before | illegal now | of them KiCad agrees |
+| --- | ---: | ---: | ---: | ---: |
+| molecule 4x4 | 160 | 128 | 0 | 0 |
+| molecule 4x5 | 196 | 156 | 0 | 0 |
+| molecule 5x2_shifted | 130 | 101 | 1 | 0 |
+| molecule 5x4_wave | 152 | 87 | 6 | 5 |
+| molecule 7x5_wave_left | 235 | 148 | 7 | 7 |
+
+LEGALITY_MEASURED
+
 ## Decoupling at the pins (2026-10-26)
 
 The fresh agent's trial (reviews/2026-10-26-fresh-agent-trial.md) laid
@@ -4011,6 +4058,62 @@ strict at both seeds, where it left 54-60 open. No new errors (the
 molecules (placed as a whole) and every board without copies are
 unchanged, the short tier byte for byte. **`panel_copies` is on by
 default.**
+
+### Cell classes (2026-10-27)
+
+The molecules' cells are copies, but not alike: an outer cell's
+connectors are held at the board's edge (`edge` constraints the task
+took from the designer's placement), a corner cell's at two, and the
+inner cells' at none. Replicated from one cell, 26 to 32 % of the parts
+were not legal where they landed, and the board was placed as a whole
+(and refused, as before). Two things were wrong, the second the larger:
+
+- **The held instances were in the wrong copies.** Where references
+  repeat, the movable instances of a reference go to the copies in turn
+  (a task stacks them: their places say nothing). The instance of J3 held
+  at the left edge went to whichever copy came next, often an inner
+  cell. Now (`assign_held`, for copies told apart by repeated references)
+  an instance an edge, overhang or region constraint holds goes to a
+  copy whose region lets it keep that constraint (`holds_in`: the part
+  flush with one of the region's sides, at nine places along it, or at
+  its centre, at any turn it may take), by a matching of the held
+  instances to the copies (augmenting paths); an instance no copy can
+  hold (the 7x5 wave's left cells, whose regions, the first copy's
+  region carried over, stop short of the wavy edge) goes to the free
+  copy that comes nearest (`hold_violation`, the least miss); the free
+  instances fill the other copies in turn. Where the replicated parts
+  not legal are placed after the copies, a part its copy's region cannot
+  hold is placed free rather than held in that region (where it never
+  had a place). Only instances whose pins are on the same
+  nets trade places, so the copies' nets map as before. On the 4x4 the
+  replicated parts not legal fell from 37 to 7 of 144 with this alone.
+- **Cell classes** (`cell_classes`, in `detect`): the copies grouped by
+  their surroundings, each seen from its own frame (mapped back to the
+  first copy's by its transform, on a 0.05 mm grid): the edge, overhang
+  and region constraints on its parts and the turns they may take, the
+  pieces of the board outline within reach of its region (the edge
+  margin), and the obstacles there (fixed parts not of the copy,
+  keepouts, cutouts, the board's marks that still block at the last
+  level). The most constrained class comes first (constraints, then
+  outline pieces, then obstacles). Where more than a tenth of the parts
+  replicated from the first copy are not legal and there are several
+  classes, each other class's first copy (its representative) is placed
+  with the ordinary placer in its region, the most constrained first
+  (each a share of the three quarters of the seed's budget left), and
+  replicated within its class; the first copy's class keeps the first
+  copy's placement. Then, as before, the replicated parts not legal and
+  the parts in no copy are placed by the ordinary placer, and more than
+  a tenth not legal still places the board as a whole.
+
+The first copy is the first of `detect`'s (the order is unchanged, so
+that the panels whose copies replicate place as before); on the
+molecules it is a corner cell, the most constrained class.
+`panel_copies` in `board-placer.json` and the verdict reports the
+classes (`cell_classes`: per class its copies, the representative
+first, and its counts of constraints, outline pieces and obstacles) and
+`by_cell_classes` (whether the classes were placed on their own).
+
+CLASSES_TABLE
 
 ## The trouble-maker probe (2026-10-26)
 
