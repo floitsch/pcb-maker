@@ -1,6 +1,7 @@
 {
  "binaries": [
-  "build/bin/pcb-maker-x1828"
+  "build/bin/pcb-maker-x1828",
+  "build/bin/pcb-maker-x1851"
  ],
  "seeds": [
   1,
@@ -23,53 +24,78 @@
   "build/eval1-dense-s501-off",
   "build/eval1-dense-s601-off",
   "build/eval1-dense-s701-off",
-  "build/eval1-dense-s801-off"
+  "build/eval1-dense-s801-off",
+  "build/cross3-dense-s1-off",
+  "build/cross3-u/dense-s101-off-protoesp",
+  "build/cross3-u/dense-s101-off-panel",
+  "build/cross3-u/dense-s201-off-protoesp",
+  "build/cross3-u/dense-s201-off-panel",
+  "build/cross3-u/dense-s301-off-protoesp",
+  "build/cross3-u/dense-s301-off-panel",
+  "build/cross3-u/dense-s401-off-protoesp",
+  "build/cross3-u/dense-s401-off-panel",
+  "build/cross3-u/noise-s501-off-protoesp",
+  "build/cross3-u/noise-s501-off-panel",
+  "build/cross3-u/noise-s601-off-protoesp",
+  "build/cross3-u/noise-s601-off-panel",
+  "build/cross3-u/noise-s701-off-protoesp",
+  "build/cross3-u/noise-s701-off-panel",
+  "build/cross3-u/noise-s801-off-protoesp",
+  "build/cross3-u/noise-s801-off-panel",
+  "build/cross3-u/dense-s101-off-SmartSpin2k_Panelized",
+  "build/cross3-u/dense-s201-off-SmartSpin2k_Panelized",
+  "build/cross3-u/dense-s301-off-SmartSpin2k_Panelized",
+  "build/cross3-u/dense-s401-off-SmartSpin2k_Panelized",
+  "build/cross3-u/noise-s501-off-SmartSpin2k_Panelized",
+  "build/cross3-u/noise-s601-off-SmartSpin2k_Panelized",
+  "build/cross3-u/noise-s701-off-SmartSpin2k_Panelized",
+  "build/cross3-u/noise-s801-off-SmartSpin2k_Panelized"
  ],
  "boards": {
   "0xCB-dev__0xCB-1337__panel": {
    "unconnected": [
-    50,
-    50,
-    51,
-    51,
-    51,
-    45,
-    54,
-    56,
-    53
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0
    ],
    "first_open": [
-    77,
-    76,
-    87,
-    85,
-    89,
-    81,
-    88,
-    266,
-    95
+    1,
+    0,
+    0,
+    0,
+    0,
+    1,
+    0,
+    0,
+    2
    ],
    "objective": [
-    6856.081878328715,
-    7132.334722972065,
-    6942.488731356552,
-    7156.172210225645,
-    6943.456961580292,
-    6758.501406646915,
-    7303.539078238737,
-    7087.979702105838,
-    7146.497060342642
+    6945.254900176994,
+    6928.7843078432625,
+    6881.981376449753,
+    6634.1740094379575,
+    6468.2179028613145,
+    6922.484761068215,
+    6579.920713691885,
+    5917.921037390919,
+    6375.701217773773
    ],
    "crossings": [
-    460,
-    493,
-    480,
-    489,
-    457,
-    439,
-    515,
-    441,
-    473
+    471,
+    476,
+    464,
+    424,
+    440,
+    467,
+    366,
+    429,
+    396
    ],
    "seeds": [
     1,
@@ -81,52 +107,55 @@
     601,
     701,
     801
+   ],
+   "binaries": [
+    "build/bin/pcb-maker-x1851"
    ]
   },
   "CRImier__MyKiCad__protoesp": {
    "unconnected": [
-    110,
-    76,
-    90,
-    64,
-    53,
-    77,
-    49,
+    73,
+    75,
+    59,
+    70,
+    65,
     72,
-    83
+    56,
+    89,
+    78
    ],
    "first_open": [
-    169,
-    99,
-    150,
-    88,
-    69,
-    117,
-    70,
-    92,
-    122
+    90,
+    135,
+    82,
+    109,
+    138,
+    129,
+    94,
+    107,
+    111
    ],
    "objective": [
-    10394.666500000003,
-    8150.264999999999,
-    9345.314751442129,
-    7610.8544999999995,
-    8940.295251442127,
-    7731.493499999999,
-    5717.201999999999,
-    8510.785000000002,
-    9022.626999999997
+    8786.00425144213,
+    8345.569751442126,
+    7929.1195,
+    8398.815748557874,
+    8225.662251442129,
+    7945.080000000002,
+    7180.001751442126,
+    8652.294999999998,
+    7941.870251442128
    ],
    "crossings": [
-    1262,
-    875,
-    1046,
-    801,
-    953,
-    756,
-    514,
-    870,
-    1018
+    1018,
+    872,
+    874,
+    963,
+    894,
+    836,
+    694,
+    926,
+    877
    ],
    "seeds": [
     1,
@@ -138,6 +167,9 @@
     601,
     701,
     801
+   ],
+   "binaries": [
+    "build/bin/pcb-maker-x1851"
    ]
   },
   "GlasgowEmbedded__glasgow__glasgow__revC3": {
@@ -195,6 +227,9 @@
     601,
     701,
     801
+   ],
+   "binaries": [
+    "build/bin/pcb-maker-x1828"
    ]
   },
   "Huaqiu-Electronics__ecad-viewer__video": {
@@ -252,6 +287,9 @@
     601,
     701,
     801
+   ],
+   "binaries": [
+    "build/bin/pcb-maker-x1828"
    ]
   },
   "OpenDrone-hw__OpenESC-20x20__4in1-mini": {
@@ -309,6 +347,9 @@
     601,
     701,
     801
+   ],
+   "binaries": [
+    "build/bin/pcb-maker-x1828"
    ]
   },
   "OpenDrone-hw__OpenESC-30x30__4in1": {
@@ -366,52 +407,55 @@
     601,
     701,
     801
+   ],
+   "binaries": [
+    "build/bin/pcb-maker-x1828"
    ]
   },
   "doudar__SmartSpin2k__SmartSpin2k_Panelized": {
    "unconnected": [
-    34,
-    59,
-    52,
+    21,
+    28,
+    94,
+    36,
+    33,
+    43,
     49,
-    52,
-    59,
-    51,
-    78,
-    67
+    20,
+    72
    ],
    "first_open": [
-    37,
-    62,
-    54,
-    51,
-    56,
-    63,
-    64,
-    79,
-    71
+    22,
+    28,
+    100,
+    39,
+    33,
+    46,
+    49,
+    28,
+    72
    ],
    "objective": [
-    27645.251273515245,
-    28561.808541415707,
-    28392.89519804115,
-    28733.89734029081,
-    29055.68887692249,
-    27147.312875865697,
-    28201.17885878159,
-    28183.52761847305,
-    27830.09475081039
+    15103.806767406,
+    14707.311282000019,
+    13148.16182699998,
+    14041.418866958209,
+    14483.738931985285,
+    15564.429971999993,
+    15382.117836000036,
+    15275.637736000004,
+    12173.877732014744
    ],
    "crossings": [
-    3149,
-    3348,
-    3301,
-    3464,
-    3434,
-    3145,
-    3320,
-    3198,
-    3172
+    1701,
+    1602,
+    1343,
+    1443,
+    1657,
+    1782,
+    1665,
+    1434,
+    1170
    ],
    "seeds": [
     1,
@@ -423,6 +467,9 @@
     601,
     701,
     801
+   ],
+   "binaries": [
+    "build/bin/pcb-maker-x1851"
    ]
   },
   "ohdsp__DSP-ADAU1452__DSP-ADAU1452": {
@@ -480,6 +527,9 @@
     601,
     701,
     801
+   ],
+   "binaries": [
+    "build/bin/pcb-maker-x1828"
    ]
   },
   "stonedDiscord__MegaDrive__MegaDrive": {
@@ -537,6 +587,9 @@
     601,
     701,
     801
+   ],
+   "binaries": [
+    "build/bin/pcb-maker-x1828"
    ]
   },
   "stonedDiscord__nonSNES__SNSP-CPU-01": {
@@ -594,6 +647,9 @@
     601,
     701,
     801
+   ],
+   "binaries": [
+    "build/bin/pcb-maker-x1828"
    ]
   },
   "thpoll83__PolyKybd__poly_kybd_split72_left": {
@@ -651,6 +707,9 @@
     601,
     701,
     801
+   ],
+   "binaries": [
+    "build/bin/pcb-maker-x1828"
    ]
   }
  }
