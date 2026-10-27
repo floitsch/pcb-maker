@@ -470,7 +470,7 @@ designer's own, docs/changelog.md, "edge clearance and mask bridges"):
   reach over it) and tested pads alone, so the meander came to rest on
   the battery cutout's edge (copper_edge_clearance 0.0 mm against
   0.25). A part's copper graphics (`Component::copper_graphics`, any
-  copper layer, KiCad 9's `layers` lists too) now keep the edge margin
+  copper layer, KiCad 9's lists of layers too) now keep the edge margin
   from cutouts as its pads do, in the legality test and the annealer, and
   the copper-to-edge clearance from the outline where the body comes
   within it (`pads_keep_edge`). The outline's own test was already
