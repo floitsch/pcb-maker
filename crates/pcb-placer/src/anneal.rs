@@ -114,6 +114,15 @@ struct State<'a> {
     legal_far_side: bool,
     /// The last global route's overflow field (`AnnealConfig::guidance`).
     field: Option<crate::guidance::Prepared>,
+    /// Per net, its term of `wirelength` at the poses and the field of
+    /// now (`refresh_lengths`, `keep_lengths`): a move's wirelength before
+    /// it is the sum of these, without turning every pin of its nets again
+    /// (the before half of the anneal's wirelength, 3 to 7 % of a
+    /// placement's instructions, 2026-10-28).
+    lengths: Vec<f64>,
+    /// Whether every cached sum is checked against the direct one (debug
+    /// builds and `PCB_PLACER_CHECK_OVERLAP`).
+    check_lengths: bool,
 }
 
 impl State<'_> {
@@ -520,36 +529,78 @@ impl State<'_> {
             + 1000.0 * constraints::hard_violation(self.problem, index, self.poses[index])
     }
 
+    /// A net's term of the wirelength at the poses of now: its weighted
+    /// half perimeter, guided by the field.
+    fn net_length(&self, net: usize) -> f64 {
+        let pins = &self.members[net];
+        if pins.len() < 2 {
+            return 0.0;
+        }
+        let mut bounds = [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ];
+        for (component, pin) in pins {
+            let description = &self.problem.components[*component];
+            let at = description.pin_position(&description.pins[*pin], self.poses[*component]);
+            bounds[0] = bounds[0].min(at[0]);
+            bounds[1] = bounds[1].min(at[1]);
+            bounds[2] = bounds[2].max(at[0]);
+            bounds[3] = bounds[3].max(at[1]);
+        }
+        let length = (bounds[2] - bounds[0]) + (bounds[3] - bounds[1]);
+        let guided = match &self.field {
+            Some(field) => 1.0 + field.weight * field.mean(bounds),
+            None => 1.0,
+        };
+        self.problem.net_weights[net] * length * guided
+    }
+
     fn wirelength(&self, nets: &[usize]) -> f64 {
-        nets.iter()
-            .map(|net| {
-                let pins = &self.members[*net];
-                if pins.len() < 2 {
-                    return 0.0;
-                }
-                let mut bounds = [
-                    f64::INFINITY,
-                    f64::INFINITY,
-                    f64::NEG_INFINITY,
-                    f64::NEG_INFINITY,
-                ];
-                for (component, pin) in pins {
-                    let description = &self.problem.components[*component];
-                    let at =
-                        description.pin_position(&description.pins[*pin], self.poses[*component]);
-                    bounds[0] = bounds[0].min(at[0]);
-                    bounds[1] = bounds[1].min(at[1]);
-                    bounds[2] = bounds[2].max(at[0]);
-                    bounds[3] = bounds[3].max(at[1]);
-                }
-                let length = (bounds[2] - bounds[0]) + (bounds[3] - bounds[1]);
-                let guided = match &self.field {
-                    Some(field) => 1.0 + field.weight * field.mean(bounds),
-                    None => 1.0,
-                };
-                self.problem.net_weights[*net] * length * guided
-            })
-            .sum()
+        nets.iter().map(|net| self.net_length(*net)).sum()
+    }
+
+    /// `wirelength` from the cached terms (`lengths`): the same sum of the
+    /// same values in the same order, so the same bits, as long as every
+    /// change of the poses or the field since went through
+    /// `refresh_lengths` or `keep_lengths`.
+    fn cached_wirelength(&self, nets: &[usize]) -> f64 {
+        let cached: f64 = nets.iter().map(|net| self.lengths[*net]).sum();
+        if self.check_lengths {
+            let direct = self.wirelength(nets);
+            assert_eq!(
+                cached.to_bits(),
+                direct.to_bits(),
+                "cached wirelength {cached}, direct {direct}"
+            );
+        }
+        cached
+    }
+
+    /// `wirelength` at the poses of now, its terms left in `terms` for
+    /// `keep_lengths` (the same sum: `wirelength`'s terms in its order).
+    fn wirelength_terms(&self, nets: &[usize], terms: &mut Vec<f64>) -> f64 {
+        terms.clear();
+        terms.extend(nets.iter().map(|net| self.net_length(*net)));
+        terms.iter().copied().sum()
+    }
+
+    /// Takes the terms `wirelength_terms` gave for `nets` as the cache's
+    /// (after a move it measured was kept).
+    fn keep_lengths(&mut self, nets: &[usize], terms: &[f64]) {
+        for (net, term) in nets.iter().zip(terms) {
+            self.lengths[*net] = *term;
+        }
+    }
+
+    /// Every net's term again (the start, a new field, moves made outside
+    /// the single moves and swaps).
+    fn refresh_lengths(&mut self) {
+        self.lengths = (0..self.members.len())
+            .map(|net| self.net_length(net))
+            .collect();
     }
 }
 
@@ -614,6 +665,9 @@ fn build_state<'a>(problem: &'a Problem, poses: &[Pose], legal_far_side: bool) -
         check_overlap: std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
         legal_far_side,
         field: None,
+        lengths: Vec::new(),
+        check_lengths: cfg!(debug_assertions)
+            || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
     };
     state.rects = (0..problem.components.len())
         .map(|index| state.rect(index, state.poses[index]))
@@ -621,7 +675,7 @@ fn build_state<'a>(problem: &'a Problem, poses: &[Pose], legal_far_side: bool) -
     for (index, rect) in state.rects.iter().enumerate() {
         state.grid.get_mut().insert(index, rect.center, rect.half);
     }
-
+    state.refresh_lengths();
     state
 }
 
@@ -815,6 +869,8 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
         ..Default::default()
     };
 
+    // A move's nets' wirelength terms after it (`wirelength_terms`).
+    let mut terms = Vec::new();
     for stage in 0..config.stages {
         if config
             .deadline
@@ -880,7 +936,7 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                 nets.extend(&state.incident[other]);
                 nets.sort_unstable();
                 nets.dedup();
-                let before = state.wirelength(&nets)
+                let before = state.cached_wirelength(&nets)
                     + state.constraint_cost(index)
                     + state.constraint_cost(other)
                     + penalty
@@ -893,7 +949,7 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                     (state.rect(index, first_new), state.rect(other, second_new));
                 state.set_rect(index, first_rect);
                 state.set_rect(other, second_rect);
-                let after = state.wirelength(&nets)
+                let after = state.wirelength_terms(&nets, &mut terms)
                     + state.constraint_cost(index)
                     + state.constraint_cost(other)
                     + penalty
@@ -917,8 +973,11 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                     state.poses[other] = second_pose;
                     state.set_rect(index, saved.0);
                     state.set_rect(other, saved.1);
-                } else if let Some(guide) = guide.as_mut() {
-                    guide.accepted += 1;
+                } else {
+                    state.keep_lengths(&nets, &terms);
+                    if let Some(guide) = guide.as_mut() {
+                        guide.accepted += 1;
+                    }
                 }
                 continue;
             }
@@ -950,14 +1009,14 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                     angle: old.angle,
                 }
             };
-            let before = state.wirelength(&state.incident[index])
+            let before = state.cached_wirelength(&state.incident[index])
                 + state.constraint_cost(index)
                 + penalty * state.overlap(index, state.rects[index]);
             let saved = state.rects[index];
             state.poses[index] = new;
             let new_rect = state.rect(index, new);
             state.set_rect(index, new_rect);
-            let after = state.wirelength(&state.incident[index])
+            let after = state.wirelength_terms(&state.incident[index], &mut terms)
                 + state.constraint_cost(index)
                 + penalty * state.overlap(index, state.rects[index]);
             let delta = after - before;
@@ -976,8 +1035,14 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
             if rejected {
                 state.poses[index] = old;
                 state.set_rect(index, saved);
-            } else if let Some(guide) = guide.as_mut() {
-                guide.accepted += 1;
+            } else {
+                // The nets of a part are its own list: no copy of it.
+                let incident = std::mem::take(&mut state.incident[index]);
+                state.keep_lengths(&incident, &terms);
+                state.incident[index] = incident;
+                if let Some(guide) = guide.as_mut() {
+                    guide.accepted += 1;
+                }
             }
         }
         if let Some(groups) = groups {
@@ -995,6 +1060,8 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                 &mut random,
                 &mut group_tally,
             );
+            // Its moves keep their own sums: the cache again.
+            state.refresh_lengths();
         }
         let stage_work = work + state.work.replace(0);
         anneal_work += stage_work;
@@ -1465,6 +1532,7 @@ impl<'a> Guide<'a> {
         let Some(field) = (self.guidance.evaluate)(&state.poses) else {
             // Nothing to go by: the plain anneal from here.
             state.field = None;
+            state.refresh_lengths();
             self.cumulative = None;
             self.last_work = u64::MAX / 4;
             return;
@@ -1478,6 +1546,7 @@ impl<'a> Guide<'a> {
         }
         self.last_overflow = field.total_overflow;
         state.field = crate::guidance::Prepared::new(&field, self.guidance.weight);
+        state.refresh_lengths();
         self.cumulative = crate::guidance::cumulative(&field, movable);
     }
 
