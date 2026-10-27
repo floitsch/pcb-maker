@@ -531,14 +531,65 @@ pub fn footprint_own(finding: &DrcFinding) -> bool {
 
 /// Whether a finding of a result judged without a reference board is its
 /// footprint's own: between items of one footprint (`footprint_own`), and
-/// not a short. A library footprint whose pads lie closer to its own holes
-/// than the project's rule (the schematic trial's USB4105: GND pads 0.19
-/// mm from its locating holes against 0.25 mm) fails every layout from a
-/// schematic otherwise, and no placement or route changes it; a short
-/// within one footprint is the schematic's nets on its pads, which stays
-/// judged.
+/// not a short, or a pad's own ring, hole or padstack (`pad_own`). A
+/// library footprint whose pads lie closer to its own holes than the
+/// project's rule (the schematic trial's USB4105: GND pads 0.19 mm from
+/// its locating holes against 0.25 mm) fails every layout from a schematic
+/// otherwise, and no placement or route changes it; a short within one
+/// footprint is the schematic's nets on its pads, which stays judged.
 pub fn footprint_own_unreferenced(finding: &DrcFinding) -> bool {
-    finding.kind != "shorting_items" && footprint_own(finding)
+    (finding.kind != "shorting_items" && footprint_own(finding)) || pad_own(finding)
+}
+
+/// The finding types KiCad reports on one pad alone that are the pad's own
+/// geometry against a board-wide minimum: its annular ring
+/// (`annular_width`), its hole (`drill_out_of_range`) and its padstack
+/// (`padstack`: a hole that leaves no copper, copper of an SMD pad on both
+/// sides, a negative local clearance).
+const PAD_OWN_KINDS: [&str; 3] = ["annular_width", "drill_out_of_range", "padstack"];
+
+/// Whether a finding is one footprint pad's own (`PAD_OWN_KINDS`, its one
+/// item a pad of a footprint: "PTH pad 45 [GND] of U3", "Pad [<no net>] of
+/// FID1 on all copper layers"): the pad's size, hole and layers as the
+/// footprint draws them, which neither a placement nor a route changes. The
+/// nightly sweep of 2026-10-27 (main e7a12a8): 156 such findings on 18 of
+/// 109 layouts (the RP2040's thermal-via pads at 0.10 mm under a 0.13 mm
+/// minimum on 0xCB-1337, the 7805's 0.0875 mm on the mackerel boards, a
+/// connector's 0.225 mm under ErgoSNM's 0.3 mm rule, fiducials with copper
+/// on both sides on hackrf), each on the designer's board too, and none on
+/// a via. A via's finding names no footprint and stays judged.
+pub fn pad_own(finding: &DrcFinding) -> bool {
+    PAD_OWN_KINDS.contains(&finding.kind.as_str())
+        && finding.items.len() == 1
+        && finding
+            .item_descriptions
+            .first()
+            .is_some_and(|description| {
+                is_pad_item(description) && pad_footprint(description).is_some()
+            })
+}
+
+/// Whether an item of KiCad's report is a pad ("Pad 3 [GND] of J2 on
+/// F.Cu", "PTH pad 1 [VCC] of SW4", "NPTH pad of SW4"; run.py's PAD_ITEM).
+fn is_pad_item(description: &str) -> bool {
+    let rest = description
+        .strip_prefix("NPTH ")
+        .or_else(|| description.strip_prefix("PTH "))
+        .unwrap_or(description);
+    rest.strip_prefix("Pad")
+        .or_else(|| rest.strip_prefix("pad"))
+        .is_some_and(|tail| tail.is_empty() || tail.starts_with(' '))
+}
+
+/// The footprint a finding's item belongs to (`item_footprint`), also for a
+/// pad KiCad names on every copper layer ("Pad [<no net>] of FID1 on all
+/// copper layers"), whose layer is more than one word.
+fn pad_footprint(description: &str) -> Option<&str> {
+    item_footprint(description).or_else(|| {
+        description
+            .strip_suffix(" on all copper layers")
+            .and_then(item_footprint)
+    })
 }
 
 /// The constraint of KiCad's custom rules that a finding type is checked
@@ -563,45 +614,74 @@ fn actual_mm(description: &str) -> Option<f64> {
     rest.split_whitespace().next()?.parse().ok()
 }
 
+/// The findings of one footprint and type, for `footprint_findings_note`.
+struct OwnGroup {
+    count: usize,
+    /// The smallest value KiCad measured.
+    smallest: Option<f64>,
+    /// Whether every finding is of one item (a pad's own: `pad_own`).
+    single: bool,
+    /// Whether one is over a maximum (a hole too large).
+    over_max: bool,
+}
+
 /// What a result's footprint findings (`footprint_own_unreferenced`) are and
 /// how KiCad's own DRC accepts them: per footprint and type, a custom rule
 /// for `dru` (the board's `.kicad_dru`) at the smallest value KiCad
 /// measured, rounded down to 0.01 mm, or an exclusion. `None` without such
 /// findings.
 pub fn footprint_findings_note(findings: &[&DrcFinding], dru: &str) -> Option<String> {
-    // (footprint, type): count, smallest actual value.
-    let mut groups: BTreeMap<(String, String), (usize, Option<f64>)> = BTreeMap::new();
+    let mut groups: BTreeMap<(String, String), OwnGroup> = BTreeMap::new();
     for finding in findings {
         let Some(owner) = finding
             .item_descriptions
             .first()
-            .and_then(|description| item_footprint(description))
+            .and_then(|description| pad_footprint(description))
         else {
             continue;
         };
         let entry = groups
             .entry((owner.to_string(), finding.kind.clone()))
-            .or_insert((0, None));
-        entry.0 += 1;
+            .or_insert(OwnGroup {
+                count: 0,
+                smallest: None,
+                single: true,
+                over_max: false,
+            });
+        entry.count += 1;
         if let Some(actual) = actual_mm(&finding.description) {
-            entry.1 = Some(entry.1.map_or(actual, |smallest: f64| smallest.min(actual)));
+            entry.smallest = Some(
+                entry
+                    .smallest
+                    .map_or(actual, |smallest: f64| smallest.min(actual)),
+            );
         }
+        entry.single &= finding.items.len() == 1;
+        entry.over_max |= finding.description.contains(" max ");
     }
     if groups.is_empty() {
         return None;
     }
     let listed: Vec<String> = groups
         .iter()
-        .map(|((owner, kind), (count, _))| format!("{owner}: {kind} {count}"))
+        .map(|((owner, kind), group)| format!("{owner}: {kind} {}", group.count))
         .collect();
     let mut rules = Vec::new();
     let mut excluded = Vec::new();
-    for ((owner, kind), (_, smallest)) in &groups {
-        match (custom_rule_constraint(kind), smallest) {
-            (Some(constraint), Some(smallest)) => {
+    for ((owner, kind), group) in &groups {
+        match (custom_rule_constraint(kind), group.smallest) {
+            (Some(constraint), Some(smallest)) if !group.over_max => {
                 let min = ((smallest * 100.0 + 1.0e-9).floor() / 100.0).max(0.0);
+                // KiCad checks a pad's own ring or hole with no item B: a
+                // condition on B never holds there (kicad-cli 10.0.7 on
+                // 0xCB-1337's U3, 2026-10-27).
+                let condition = if group.single {
+                    format!("A.memberOfFootprint('{owner}')")
+                } else {
+                    format!("A.memberOfFootprint('{owner}') && B.memberOfFootprint('{owner}')")
+                };
                 rules.push(format!(
-                    "(rule \"{owner} own {kind}\" (constraint {constraint} (min {min}mm)) (condition \"A.memberOfFootprint('{owner}') && B.memberOfFootprint('{owner}')\"))"
+                    "(rule \"{owner} own {kind}\" (constraint {constraint} (min {min}mm)) (condition \"{condition}\"))"
                 ));
             }
             _ => excluded.push(format!("{owner}'s {kind}")),
@@ -622,7 +702,7 @@ pub fn footprint_findings_note(findings: &[&DrcFinding], dru: &str) -> Option<St
     }
     Some(format!(
         "{} DRC findings lie within one footprint each ({}): the footprint's own geometry as its library draws it, which no placement or route changes, so they are not judged (footprint_findings) and fab-kicad-board releases with them. KiCad's own DRC still reports them; to accept them there, {}",
-        groups.values().map(|(count, _)| count).sum::<usize>(),
+        groups.values().map(|group| group.count).sum::<usize>(),
         listed.join(", "),
         accept.join("; or ")
     ))
@@ -1055,7 +1135,8 @@ pub struct KiCadVerdict {
     pub preexisting_unknown: Vec<String>,
     /// Without a reference board: KiCad errors per type that lie within one
     /// footprint each (its pads and holes as the library draws them; no
-    /// short), which no placement or route changes
+    /// short) or are one pad's own ring, hole or padstack (`pad_own`),
+    /// which no placement or route changes
     /// (`footprint_own_unreferenced`). They do not count; next_actions says
     /// how KiCad's own DRC accepts them (a custom rule, an exclusion).
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -2222,6 +2303,136 @@ mod tests {
         assert_eq!(verdict.status, KiCadRunStatus::Complete);
         assert!(verdict.footprint_findings.is_empty());
         assert_eq!(verdict.preexisting_findings, map(&[("hole_clearance", 1)]));
+    }
+
+    #[test]
+    fn a_pads_own_ring_hole_or_padstack_does_not_fail_a_layout_without_a_reference() {
+        // 0xCB-1337's RP2040 (U3): its thermal-via pads 45 have a 0.10 mm
+        // ring under the board's 0.13 mm minimum, on the designer's board
+        // too; hackrf's fiducials have copper on both sides. Laid out
+        // without a reference they made a complete board exit 1.
+        let one = |kind: &str, description: &str, item: &str, x: f64| {
+            json!({"type": kind, "severity": "error", "description": description,
+                   "items": [{"description": item, "uuid": format!("{item}{x}"), "pos": {"x": x, "y": 1.0}}]})
+        };
+        let ring = |x: f64| {
+            one(
+                "annular_width",
+                "Annular width (board setup constraints min annular width 0.1300 mm; actual 0.1000 mm)",
+                "PTH pad 45 [GND] of U3",
+                x,
+            )
+        };
+        let fiducial = one(
+            "padstack",
+            "Padstack is questionable (SMD pad has copper on both sides of the board)",
+            "Pad [<no net>] of FID1 on all copper layers",
+            9.0,
+        );
+        let hole = one(
+            "drill_out_of_range",
+            "Hole size out of range (board setup constraints min hole 0.3000 mm; actual 0.2400 mm)",
+            "PTH pad 1 [GND] of TC1",
+            7.0,
+        );
+        let mut facts = routed(tally_drc(&report(vec![
+            ring(1.0),
+            ring(2.0),
+            fiducial,
+            hole,
+        ])));
+        facts
+            .outputs
+            .insert("board".into(), "out/result/board.kicad_pcb".into());
+        let verdict = judge(&facts);
+        assert_eq!(
+            verdict.status,
+            KiCadRunStatus::Complete,
+            "{}",
+            verdict.reason
+        );
+        assert!(verdict.new_findings_strict.is_empty());
+        assert_eq!(
+            verdict.footprint_findings,
+            map(&[
+                ("annular_width", 2),
+                ("drill_out_of_range", 1),
+                ("padstack", 1)
+            ])
+        );
+        let note = verdict
+            .next_actions
+            .iter()
+            .find(|action| action.contains("within one footprint"))
+            .expect("a line for the footprint's findings");
+        // KiCad checks a pad's ring and hole with no item B: the rule's
+        // condition names A alone (a condition on B never holds).
+        assert!(
+            note.contains("U3: annular_width 2")
+                && note.contains("(rule \"U3 own annular_width\" (constraint annular_width (min 0.1mm)) (condition \"A.memberOfFootprint('U3')\"))")
+                && note.contains("(rule \"TC1 own drill_out_of_range\" (constraint hole_size (min 0.24mm)) (condition \"A.memberOfFootprint('TC1')\"))")
+                && note.contains("exclude FID1's padstack"),
+            "{note}"
+        );
+        // A via's ring, a hole over a maximum, a starved thermal on one
+        // pad and a ring of a pad no footprint names count, or (the
+        // maximum) are excluded, not given a minimum.
+        let via = one(
+            "annular_width",
+            "Annular width (board setup constraints min annular width 0.1300 mm; actual 0.1000 mm)",
+            "Via [GND] on F.Cu - B.Cu",
+            3.0,
+        );
+        let starved = one(
+            "starved_thermal",
+            "Thermal relief connection to zone incomplete (zone min spoke count 2; actual 1)",
+            "Pad 2 [GND] of C1 on F.Cu",
+            4.0,
+        );
+        let nameless = one(
+            "drill_out_of_range",
+            "Hole size out of range (board setup constraints min hole 0.3000 mm; actual 0.1000 mm)",
+            "NPTH pad of  ",
+            5.0,
+        );
+        let big = one(
+            "drill_out_of_range",
+            "Hole size out of range (board setup constraints max hole 6.3500 mm; actual 7.0000 mm)",
+            "NPTH pad of H1",
+            6.0,
+        );
+        let verdict = judge(&routed(tally_drc(&report(vec![
+            via, starved, nameless, big,
+        ]))));
+        assert_eq!(verdict.status, KiCadRunStatus::Incomplete);
+        assert_eq!(
+            verdict.new_findings_strict,
+            map(&[
+                ("annular_width", 1),
+                ("drill_out_of_range", 1),
+                ("starved_thermal", 1)
+            ])
+        );
+        assert_eq!(
+            verdict.footprint_findings,
+            map(&[("drill_out_of_range", 1)])
+        );
+        let note = verdict
+            .next_actions
+            .iter()
+            .find(|action| action.contains("within one footprint"))
+            .expect("a line for H1's hole");
+        assert!(
+            note.contains("exclude H1's drill_out_of_range") && !note.contains("(rule "),
+            "{note}"
+        );
+        // With a reference, the strict rule decides (the designer's at the
+        // same place), as before.
+        let mut facts = routed(tally_drc(&report(vec![ring(1.0)])));
+        facts.reference = reference(Vec::new());
+        let verdict = judge(&facts);
+        assert_eq!(verdict.new_findings_strict, map(&[("annular_width", 1)]));
+        assert!(verdict.footprint_findings.is_empty());
     }
 
     #[test]

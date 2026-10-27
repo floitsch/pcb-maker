@@ -661,6 +661,24 @@ KiCad 10.0.7's DRC reads it:
   `min_through_hole_diameter` 0.3, `min_via_annular_width` 0.1, edge
   clearance 0.5, hole clearance and hole to hole 0.25.
   `rules.kicad_defaults` in `board-router.json` lists the ones taken.
+- **Via sizes.** Every class's via is floored by the board setup
+  (`project_rules.rs`, `floored`): the diameter at least
+  `min_via_diameter`, the drill at least `min_through_hole_diameter`, and
+  the diameter at least the drill plus twice `min_via_annular_width`
+  (0.05 at the least): a netclass via that is illegal grows its diameter,
+  never shrinks its drill. A `.kicad_dru`'s `via_diameter`, `hole_size`
+  and `annular_width` rules raise it further per net (below). The vias
+  the router writes take their class's size (`lower.rs`, the output's
+  `rules.via_drill`; stitching by the class; a differential pair's vias
+  and return vias the larger of its two nets'). A router options file
+  that sets its own `connection_rules` or `default_rules` gives the sizes
+  it names. Census of the nightly of 2026-10-27 (109
+  layouts, kicad-cli 10.0.7): 0 `annular_width`, `drill_out_of_range`,
+  `via_diameter` or `padstack` findings on a via; all 156 such findings
+  (18 boards) are footprint pads' own (the RP2040's thermal-via pads on
+  0xCB-1337, the 7805 on the mackerel boards, hackrf's fiducials), on the
+  designer's board too. They are not the router's: the verdict sets them
+  apart without a reference (`pad_own`, docs/agents.md, section 4).
 - **Net classes.** A pattern matches as a wildcard or as an anchored
   regular expression (KiCad's `EDA_COMBINED_MATCHER`: `.*(_TAP|V_POE).*`
   is the latter, `+3V3` only the former). A net takes every class

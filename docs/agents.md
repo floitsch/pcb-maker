@@ -763,7 +763,21 @@ starts with `(version 1)`), or a KiCad exclusion for a type no custom
 rule sets. `fab-kicad-board` releases with them (`footprint_own` and
 `footprint_note` in fab-manifest.json, the note first in the verdict's
 next_actions), and `drc-kicad-board` prints them on a `footprint:` line
-and does not fail on them. A
+and does not fail on them. Since 2026-10-27 a finding on one pad alone
+that is the pad's own geometry against a board-wide minimum counts as its
+footprint's too (`pad_own`): its annular ring (`annular_width`), its hole
+(`drill_out_of_range`) or its padstack (`padstack`: a hole that leaves no
+copper, an SMD pad with copper on both sides). The nightly of 2026-10-27
+laid out ten boards complete and clean but for such findings (the RP2040's
+thermal-via pads with a 0.10 mm ring under 0xCB-1337's 0.13 mm minimum,
+the 7805's 0.0875 mm on the mackerel boards, hackrf's fiducials), each on
+the designer's board too, and every one exited 1 without a reference.
+KiCad checks a pad's ring and hole with no second item, so the rule for
+them names `A` alone: `(rule "U3 own annular_width" (constraint
+annular_width (min 0.1mm)) (condition "A.memberOfFootprint('U3')"))` (a
+condition on `B` never holds there); a hole over a maximum, and a
+padstack, get an exclusion. A via's finding names no footprint and stays
+judged. A
 `copper_edge_clearance` is the reference's where its copper item is
 (KiCad names whichever piece of the outline is nearest beside it). A type the
 reference has 199 times or more (KiCad's report stops at a cap: 199 and
@@ -820,7 +834,7 @@ A finished run also carries it as `verdict` in its report:
 | `new_findings_strict` | KiCad errors per type that the reference does not have at the same place: the run's own. They decide. |
 | `new_findings` | The old rule: errors per type beyond the reference's count of that type anywhere on the board. For comparisons only. |
 | `preexisting_findings`, `preexisting_from` | Errors per type the reference board has at the same place, and its project. |
-| `footprint_findings` | Without a reference: errors per type that lie within one footprint each (no short), which do not count; absent when there are none. next_actions has the custom rule that accepts them. |
+| `footprint_findings` | Without a reference: errors per type that lie within one footprint each (no short), or are one pad's own ring, hole or padstack, which do not count; absent when there are none. next_actions has the custom rule that accepts them. |
 | `preexisting_unknown` | Types the reference has at KiCad's cap (199 or more): only the findings at the same place are subtracted. |
 | `clean_without_subtraction` | KiCad checked the result and finds no unconnected item and no error that counts, with nothing subtracted. |
 | `diff_pairs` | Route mode (absent in a layout's verdict unless switched on; docs/router.md "Differential pairs"): `on`, `default` (`rules`: a custom `diff_pair_gap` or `diff_pair_uncoupled` rule holds for a paired net, so the pairs routed coupled by default; `off`: nothing asks, so they did not; `explicit`: the settings' `diff_pairs` or `PCB_ROUTER_DIFF_PAIRS` decided), `reason` (the rule and the net, or the setting); off, the counts are 0. With the pairs on: `found` (pairs KiCad names by `_P`/`_N`, `+`/`-` or `P`/`N`, both nets with pads), `coupled` (every link between the pair's parts a coupled run), `partly_coupled`, `fallen_back` (routed as two ordinary nets), `links`, `links_coupled`, `crossed` (coupled links whose pads lie in the other order at one end: the stubs cross there, uncoupled), `crossovers` (of those, links whose crossed end has a crossover in its lead: one net dives under the other with a via each side, so the stubs do not cross; off by default, `PCB_ROUTER_DIFF_PAIRS_CROSSOVER=1`), `coupled_mm`, `uncoupled_mm` (per coupled pair the longer net's tracks less its coupled run, KiCad's measure), `skew_mm` (the largest skew of a pair with a coupled link: its two nets' lengths apart in the written board, tracks and vias at the stackup's height), `meanders` (pairs whose shorter net got a meander, written as a KiCad tuning pattern, to match the custom rules' `skew` maximum, else the pair's gap, or a `length` minimum), `skews` (per pair with a coupled link: `positive`, `negative`, `lengths_mm`, `skew_mm`, `target_mm`, `meander_mm`, `pair_vias`, `return_vias`), `not_routed` (the links whose coupled run was not routed, by cause: `a launch has no legal node`, `no path in the negotiation`, `the hard repair found no room`, `no hard repair: the attempt was judged hopeless`, `the hard repair's budget ran out before it`, `lost after the repair`; absent when none), `pair_vias` and `return_vias` (the kept links' vias, and the vias of the reference net placed beside them, each within 0.5 mm ring to ring where a pour of that net reaches it on two layers and every clearance holds; `diff_pair_return_vias: false` turns them off), `return_net` (their net: `diff_pair_return_net`, else `GND`), `work_seconds` (the fallback router's, which routes what the coupled runs left open, charged to the ladder). `board-router.json` also lists each pair: its nets, width, gap, where they came from, why links fell back. |

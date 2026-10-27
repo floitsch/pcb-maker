@@ -11,6 +11,51 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-27 (a pad's own ring, hole or padstack is its footprint's)
+
+Branch annular-width, binary build/bin/pcb-maker-ann1-padown (off side
+x1861). The question: the nightly of 2026-10-27's layouts carried
+`annular_width` (15 boards) and `padstack` (4) in verdict.json's
+`new_findings_strict`, the only findings on ten complete boards. Were our
+vias too small?
+
+- **None is a via.** Census of the 109 layouts' KiCad reports: 156
+  `annular_width`, `padstack` and `drill_out_of_range` errors on 18
+  boards, every one on a footprint pad alone, every one on the
+  designer's board too: the RP2040's thermal-via pads 45 (0.10 mm ring,
+  0xCB-1337's minimum 0.13), the 7805's 0.0875 mm on the mackerel
+  boards, J3's 0.225 mm under ErgoSNM's "Min annular ring PTH" 0.3 mm,
+  mounting pins whose hole leaves no copper (coco2's CN1, ProMicro,
+  SW35), hackrf's fiducials with copper on both sides, REF** pads with
+  negative local clearances on the 0xCB panel. No via of ours has any
+  (the classes' vias are floored by the board setup already:
+  docs/router.md, "Project rules", "Via sizes"). run.py's strict rule
+  subtracts them (the same pad, the same measured value: rule 3), so all
+  ten boards were strict passes in the sweep's 57 already; the verdict
+  had no reference (`preexisting_from` null) and failed them, exit 1.
+- **The verdict** (verdict.rs, `pad_own`): without a reference, a finding
+  of one item, a footprint's pad, of type `annular_width`,
+  `drill_out_of_range` or `padstack` is the footprint's own
+  (`footprint_findings`), as findings between one footprint's items were
+  since 2026-10-26; also in drc-kicad-board's `footprint:` line and the
+  fab release. A via's finding names no footprint and stays judged; a
+  starved thermal on one pad stays judged. With a reference nothing
+  changes (run.py's strict rule 4 and its mirror are untouched).
+- **The note's custom rule** for a one-item finding names `A` alone:
+  kicad-cli 10.0.7 on 0xCB-1337's U3 keeps all 13 findings under
+  `A.memberOfFootprint('U3') && B.memberOfFootprint('U3')` (no item B)
+  and none under `A.memberOfFootprint('U3')`; SNSP-CPU-01's TC1 holes
+  (`hole_size (min 0.24mm)`) alike. A hole over a maximum gets an
+  exclusion, not a minimum. `pad_footprint` reads "Pad [<no net>] of
+  FID1 on all copper layers" (a layer of several words).
+- **Measured** (drc-kicad-board on the nightly's ten results, which
+  judges as the verdict does): x1861 exits 1 on all ten, the new binary 0
+  on all ten, with the same KiCad findings. Placement and routing do not
+  read the verdict (free_dimension reads `new_findings_strict` of each
+  size's run: a size whose only errors are a pad's own now counts as
+  clean). Unit test
+  `a_pads_own_ring_hole_or_padstack_does_not_fail_a_layout_without_a_reference`.
+
 ## Committed on 2026-10-27 (vias in small SMD pads: the regression and the fix)
 
 Branch vias-in-pads, snapshot x1858 (6dbe3508, the chamfer and trapezoid
