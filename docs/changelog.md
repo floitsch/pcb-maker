@@ -140,6 +140,48 @@ layout, inspect and the fab gate with README.md and docs/agents.md alone.
   layout cannot place; a mixed panel placement exiting 0; the template's
   near distance below the designer's; the place check's dependence on the
   measured work rates.
+## Measured on 2026-10-27 (crossings in the anneal under the new protocol)
+
+Branch anneal-crossings-protocol; both sides on x1851 (main 71953b0);
+no new snapshot (the default did not change). The first lever judged by
+the placer-default rule (benchmarks.md, "Measurement discipline:
+placer defaults"). docs/placer.md, "Under the placer-default protocol
+(2026-10-27)", has the tables.
+
+- **Noise refresh**: protoesp, the 0xCB panel and SmartSpin2k_Panelized
+  (layouts changed by the escape guard and the panel copies) over nine
+  seeds on x1851 replace their x1828 rows in
+  `benchmarks/agent-tasks/dense-noise.json`; the other eight boards keep
+  x1828's. The panel routes completely on every seed (weight 0, it had
+  23 %), SmartSpin2k spreads 20 to 94 (cv 0.56, weight 3), protoesp 56 to
+  89 (cv 0.14, weight 50). The rule on the refreshed file: 4.4 % false
+  positives, 55 % power at a 5 % effect, 90 % at 8 %; the weighted
+  change resolves 8.5 % at five pairs.
+- **Crossings in the anneal** (`ratsnest_crossings.anneal`), seeds 1 to
+  401 on the eleven dense boards: KiCad unconnected 969 to 860 by the
+  summed medians; weighted change **-10.8 %** (90 % -16.4 to -5.1 %),
+  p 0.002 sign-flip / 0.001 noise file: **better** at five pairs (no
+  second stage). 7 boards better, 3 worse (SmartSpin2k +16 on the mean,
+  MegaDrive +6, the 4in1-mini +0.6); two of five pair sums rise. Also better
+  with x1828's noise file (-7.4 %, p 0.006). Crossings -8.1 %, the first
+  route's open terminals -8.5 %, the objective -1.5 % (not resolved);
+  placement work +4.6 %, CPU +3.4 %.
+- **Short tier**: KiCad unconnected 20 to 28, strict passes 8 to 6
+  (framework_mobo_lefthalf by one connection, eternal-keypad by a
+  `shorting_items` error), WLED_Matrix 8 to 16. **The default stays
+  off**: the rule asks for no lost strict pass as well.
+- **The anneal's work per move** on x1851: the term is charged (units a
+  move off / on: MegaDrive 7101-7367 / 10390-10665, Glasgow 3818-3861 /
+  5088-5362, video 2779-2862 / 4144-4364, split72_left 3619-3622 /
+  4595-4681); booked units per CPU second 0.99 to 1.16 with the term,
+  1.03 to 1.37 without.
+- **Cost of the protocol**: 146 layouts (110 dense, 12 noise, 24 short
+  tier), 96 CPU hours, 18.3 hours of wall for the five pairs and 21.4
+  to the last row, most of it waiting in the ledger beside the nightly
+  and four agents.
+- **Tools**: `placer_ab.py noise --boards ... --update` (replace some
+  boards' rows, keep the others'); `compare` lists a board whose noise
+  mean is 0 with weight 0 (it divided by it).
 
 ## Committed on 2026-10-27 (koeg's short and MokyaLora's clearances: a plated pad on every layer; area rules)
 

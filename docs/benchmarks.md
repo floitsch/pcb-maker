@@ -181,8 +181,15 @@ file's p alone (`protocol`, 2000 comparisons): 5.2 %, 70 %, 89 %, 98 %,
 boards stay the same (a layout is deterministic in binary, tasks, rates
 and placer settings); when main changes a board's layouts the off rows
 and the noise file's rows of that board need running again (on x1842 and
-x1849 the escape guard and the panel copies changed protoesp and the
-0xCB panel; the noise file is x1828's).
+x1849 the escape guard and the panel copies changed protoesp, the 0xCB
+panel and SmartSpin2k; their rows were run again on x1851 on 2026-10-27,
+"The noise file refreshed" below; the other eight boards' rows are
+x1828's). On the refreshed file the rule calls a lever with no effect
+better 4.4 % of the time (`protocol`, the noise file's p, 2000
+comparisons) and finds a 5 % effect 55 % of the time, 6.5 % 75 %, 8 %
+90 %, 10 % 98 %: the panel, which routes completely on every seed now,
+carries no weight, and the weighted change resolves 8.5 % with five
+pairs and 6.5 % with nine (against 7 and 5.5 % on x1828's file).
 
 **Why.** The weekend's levers (crossings in the anneal, bus-group moves,
 `legality: "kicad"`, and `decoupling_near`) moved the dense summed
@@ -259,6 +266,43 @@ board's values standardised):
   A lever that lowers the objective is a placement change, not yet a
   routing gain (the bus-group row below).
 
+### The noise file refreshed (2026-10-27)
+
+Three boards' layouts changed after x1828 by design: protoesp (the
+escape guard, x1842), the 0xCB panel and SmartSpin2k_Panelized (the
+panel copies, x1849; SmartSpin2k's placed objective halved, 28195 to
+14431 mm, its crossings 3281 to 1533). Their nine seeds on x1851 (main
+71953b0, the off rows of seeds 1 to 401 of the crossings-in-the-anneal
+pairs and four seeds more, `build/cross3-u/noise-s{501,...,801}-off-*`;
+2 threads, through the ledger with 10 GB kept free) replace their rows
+in `dense-noise.json` (`placer_ab.py noise ... --boards protoesp panel
+SmartSpin2k_Panelized --update`; each board entry now names its
+binary). The other eight boards keep their x1828 rows. Not refreshed,
+and stated: on x1851 the five off seeds of split72_left differ from
+x1828's (KiCad unconnected 0 of 5 the same, the placed boards 1 of 5),
+DSP-ADAU1452 1 of 5 (its placements 4 of 5 the same), video and
+SNSP-CPU-01 4 of 5; Glasgow, MegaDrive and both OpenESC boards are the
+same on all five. Those are other draws of the same noise, not a
+changed layout.
+
+| Board | KiCad unconnected, seeds 1, 101, ..., 801 | mean / sd / spread | first-route open: mean / sd / spread | objective (mm): mean / sd (cv) | crossings: mean / sd (cv) |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 0xCB panel (x1851) | 0, 0, 0, 0, 0, 0, 0, 0, 0 | 0 / 0 / 0 | 0.4 / 0.7 / 2 | 6628 / 342 (0.05) | 437 / 38 (0.09) |
+| SmartSpin2k (x1851) | 21, 28, 94, 36, 33, 43, 49, 20, 72 | 44 / 24.6 / 74 | 46 / 25.1 / 78 | 14431 / 1136 (0.08) | 1533 / 198 (0.13) |
+| protoesp (x1851) | 73, 75, 59, 70, 65, 72, 56, 89, 78 | 71 / 10.0 / 33 | 111 / 20.1 / 56 | 8156 / 479 (0.06) | 884 / 90 (0.10) |
+| sum (three boards x1851, eight x1828) | 817, 977, 1025, 785, 1101, 1034, 1039, 959, 985 | 969 / 104.3 / 316 | 1329 / 164.4 / 476 | 249779 / 15159 (0.06) | 38723 / 3434 (0.09) |
+
+- **The panel** routes completely on every seed (first route 0 to 2
+  open): with a noise mean of 0 it has no weight in the weighted change
+  (it had 23 % of it on x1828's file; `compare` lists it as "weight 0").
+- **SmartSpin2k** became the noisiest board relative to its mean (cv
+  0.56, 20 to 94; x1828: 0.22): weight 3 instead of 20.
+- **protoesp** spreads less than on x1828 (cv 0.14 against 0.25): weight
+  50 instead of 16. Within the board its first-route open terminals no
+  longer follow the final count (r 0.28 against 0.97).
+- The pooled within-board correlations with the final count: first
+  route 0.68, objective 0.37, crossings 0.38 (x1828: 0.73, 0.47, 0.43).
+
 ### Resolution per k and statistic
 
 `placer_ab.py resolution` (2000 simulated comparisons per k): each board's
@@ -323,7 +367,11 @@ objective --tool build/bin/pcb-maker-x1828`:
   +26 %, on a board that carries 4 % of the weight). The rule's first
   stage is not complete: two more pairs (seeds 301 and 401 on both
   x1817 and x14312, or the switch on today's main against its off rows)
-  settle it; at -8.1 % five pairs find it with power 0.8.
+  settle it; at -8.1 % five pairs find it with power 0.8. Run on
+  2026-10-27 (x1851 both sides, five pairs, the refreshed noise file):
+  -10.8 % (p 0.002), better on the dense boards; the short tier lost two
+  strict passes, so the default stays off (placer.md, "Under the
+  placer-default protocol (2026-10-27)").
 - **Bus groups** lowers the objective with confidence (the only lever
   that does: -9.4 % on the summed medians, p 0.012) and leaves routing
   where it was (-0.5 %): no number of seeds would confirm the observed

@@ -523,8 +523,9 @@ pub struct KiCadRatsnestCrossings {
     /// term's work reaches half the anneal's own), and half its swaps
     /// trade a part with one like it (the same footprint, or both with
     /// many pins): where the order of parts along a bus is decided. Off
-    /// by default (measured 2026-10-25: flat on the dense boards, worse
-    /// on the short tier).
+    /// by default (measured 2026-10-27 under the placer-default rule:
+    /// better on the dense boards, -10.8 % weighted over five seed pairs,
+    /// but the short tier loses two strict passes; docs/placer.md).
     pub anneal: bool,
     /// After the global placement, the parts with 16 pins or more trade
     /// places and turn where that saves wirelength plus crossings. Off by

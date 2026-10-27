@@ -2068,7 +2068,9 @@ the defaults (2026-10-25)").
 
 The legaliser and the refinement repair orders locally; the anneal and
 the global placement make them. Two sub-switches of
-`ratsnest_crossings`, off by default (the judgement below):
+`ratsnest_crossings`, off by default (the judgement below; `anneal` judged
+again under the placer-default protocol on 2026-10-27: better on the
+dense boards, the short tier loses two strict passes, still off):
 
 - **`anneal`**: every anneal move (shift, quarter turn, swap) pays
   `weight` mm per crossing it adds to the moved parts' nets and earns
@@ -2285,6 +2287,138 @@ and open connections from seed to seed with the term. MegaDrive's QFP
 order, the finding this was for, is not what the anneal changes: in
 our placements U4 and U8 lie one above the other, and no trade of the
 two pays.
+
+#### Under the placer-default protocol (2026-10-27)
+
+The first lever judged by the rule of known resolution
+([benchmarks.md](benchmarks.md#measurement-discipline-placer-defaults-2026-10-26)):
+five seed pairs, the weighted relative change, better at p <= 0.03.
+Re-judged on the three pairs above it stood at -8.1 % (p 0.047 / 0.013);
+the protocol asked for two more pairs. Both sides ran on one binary,
+x1851 (main 71953b0), off = the defaults, on = `--placer
+'{"seed": N, "ratsnest_crossings": {"anneal": true}}'`; the eleven
+dense boards at the task budgets (tasks v7, pinned rates), seeds 1,
+101, 201, 301, 401, 2 threads a layout, at most six layouts in flight,
+through the memory ledger with `--min-free-gb 10`, 2026-10-27 01:24 to
+19:43 beside the nightly and four agents. Seed 1 ran as two 3 x 2
+run.py runs (`build/cross3-dense-s1-{off,on}`); the rest as one run.py
+per board and side at `--jobs 1 --threads 2` from a pool that kept six
+layouts in flight (`build/cross3-u/dense-s<N>-<side>-<board>`, script
+`build/cross3-pool.py`): a layout is the same at any job count, and the
+3 x 2 runs' tails had left two to four of the six slots idle for an hour
+a seed. No row cut by the wall clock (`cut` empty on all 110), no row
+in error. The noise file is the refreshed one (benchmarks.md: protoesp,
+the 0xCB panel and SmartSpin2k on x1851, the other eight boards x1828).
+
+KiCad unconnected per board, off / on:
+
+| Board | seed 1 | seed 101 | seed 201 | seed 301 | seed 401 | median | mean change | relative (weight) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| OpenESC 4in1 | 106 / 88 | 125 / 117 | 125 / 109 | 109 / 91 | 155 / 64 | 125 / 91 | -30.2 | -24.3 % (58) |
+| OpenESC 4in1-mini | 81 / 91 | 82 / 70 | 99 / 89 | 100 / 105 | 83 / 93 | 83 / 91 | +0.6 | +0.7 % (71) |
+| DSP-ADAU1452 | 11 / 3 | 8 / 3 | 28 / 7 | 14 / 13 | 5 / 9 | 11 / 7 | -6.2 | -44.3 % (4) |
+| MegaDrive | 110 / 118 | 108 / 80 | 157 / 190 | 103 / 113 | 146 / 153 | 110 / 118 | +6.0 | +4.7 % (21) |
+| 0xCB panel | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 | (weight 0) |
+| split72_left | 21 / 7 | 26 / 21 | 21 / 16 | 22 / 25 | 28 / 22 | 22 / 21 | -5.4 | -18.3 % (29) |
+| protoesp | 73 / 49 | 75 / 83 | 59 / 67 | 70 / 83 | 65 / 51 | 70 / 67 | -1.8 | -2.5 % (50) |
+| Glasgow | 143 / 127 | 149 / 125 | 173 / 144 | 134 / 127 | 153 / 116 | 149 / 127 | -22.6 | -15.6 % (88) |
+| SmartSpin2k | 21 / 64 | 28 / 63 | 94 / 85 | 36 / 45 | 33 / 34 | 33 / 63 | +15.8 | +35.9 % (3) |
+| SNSP-CPU-01 | 53 / 111 | 123 / 79 | 79 / 57 | 43 / 59 | 104 / 55 | 79 / 59 | -8.2 | -9.9 % (11) |
+| video | 190 / 202 | 287 / 103 | 295 / 238 | 134 / 235 | 327 / 216 | 287 / 216 | -47.8 | -19.9 % (16) |
+| sum | 809 / 860 | 1011 / 744 | 1130 / 1002 | 765 / 896 | 1099 / 813 | 969 / 860 | -99.8 | |
+
+`placer_ab.py compare` (`build/cross3-compare5.txt`):
+
+| statistic | value | p (on better) |
+| --- | --- | ---: |
+| weighted relative change | **-10.8 %** (90 % from the noise file -16.4 to -5.1 %) | sign-flip 0.002, noise file 0.001 |
+| sum of medians | 969 -> 860 (-11.2 %) | 0.054 |
+| mean of the pair sums | -99.8 (two of five pairs rise: seed 1 +51, seed 301 +131) | 0.045 |
+| sign test | 7 boards better, 3 worse, 1 equal | 0.172 |
+| old rule (medians and every pair fall) | no | |
+
+Verdict: **BETTER** at five pairs (p 0.002 <= 0.03; no second stage).
+It does not hang on the noise file: with x1828's file unchanged the
+weighted change is -7.4 % (p 0.006 / 0.003), with only protoesp and the
+panel refreshed -9.0 % (p 0.008 / 0.004), each BETTER; the refreshed
+file gives the panel (0 open on every seed since the panel copies) no
+weight and SmartSpin2k (cv 0.56 on x1851) a small one. Four boards
+carry most of it: the 4in1 -24 %, Glasgow -16 %, split72_left -18 %,
+video -20 % (two of its five pairs rise: 134 to 235 on seed 301);
+SmartSpin2k is worse on three seeds (21 to 64, 28 to 63, 36 to 45),
+MegaDrive by +6 on the mean.
+
+The proxies on the same rows (`--metric`, the placed boards counted by
+x1851's `ablate-kicad-placement`): crossings -8.1 % weighted (10 of 11
+boards fewer, p 0.000), the first route's open terminals -8.5 % (p
+0.016 / 0.006, BETTER), the objective (wirelength plus 3 mm a crossing)
+-1.5 % (p 0.13, extend): the anneal's term buys crossings with
+wirelength. Placement work (board-placer.json, five seeds summed) 15501
+to 16207 s (+4.6 %), the layouts' work 68981 to 69901 s (+1.3 %), their
+CPU 155336 to 160590 s (+3.4 %), vias 45251 to 44201.
+
+**Short tier** (one pair, the tier's seed, 3 x 2, x1851,
+`build/cross3-u/short-{off,on}`):
+
+| Board | KiCad unconnected off / on | strict pass off / on | first-route open off / on |
+| --- | ---: | --- | ---: |
+| 0xCB 1337-v4.0 | 0 / 0 | yes / yes | 0 / 0 |
+| USB_Cable_Tester | 0 / 0 | yes / yes | 0 / 1 |
+| USB_Keypad | 2 / 2 | no / no | 2 / 2 |
+| WLED_Matrix | 8 / 16 | no / no | 15 / 28 |
+| framework_mobo_lefthalf | 0 / 1 | yes / **no** | 3 / 2 |
+| MIDAS-MK1.1 | 6 / 5 | no / no | 14 / 7 |
+| OpenFC | 0 / 0 | yes / yes | 0 / 0 |
+| reCamera_S101 | 4 / 4 | no / no | 6 / 6 |
+| spell_tome_bottom | 0 / 0 | yes / yes | 0 / 0 |
+| eternal-keypad | 0 / 0 | yes / **no** (a `shorting_items` error) | 0 / 0 |
+| urchin main | 0 / 0 | yes / yes | 0 / 0 |
+| Blue_Line | 0 / 0 | yes / yes | 0 / 0 |
+| sum | 20 / 28 | 8 / 6 | 40 / 46 |
+
+The short tier loses two strict passes and 8 connections, as it did on
+2026-10-25 (7 to 6, framework_mobo_lefthalf by one connection,
+WLED_Matrix 8 to 14). One pair, so a board's change there is one draw
+of its seed noise; but the rule's fourth condition is "the short tier
+loses no strict pass", and it lost two.
+
+**The anneal's work per move on x1851** (`place-kicad-board`, seed 1's
+task inputs, the default budget, `PCB_PLACER_DEBUG`, off and on side by
+side at 2 threads each, `build/cross3-prof`; work per CPU second is the
+`placer phase anneal` line's work over its CPU, the main anneals
+summed):
+
+| board | moves | off: units a move | on: units a move | of it the term | judged with the term / cut by the bound / taken | crossings when the term ends | work per CPU second off / on |
+| --- | ---: | ---: | ---: | ---: | --- | --- | ---: |
+| MegaDrive | 1587200 | 7101-7367 | 10390-10665 | 3475-3599 | 0.69-0.76 M / 0.31-0.36 M / 23-32 k | 15456 -> 5309, 14358 -> 7627, 16883 -> 6654 | 1.03 / 0.99 |
+| Glasgow (nine anneals) | 1516800 | 3818-3861 | 5088-5362 | 1283-1590 | 1.42-1.44 M / 0.65-0.93 M / 147-309 k | 2422 -> 656, 2755 -> 1168, 2397 -> 547 | 1.23 / 1.14 |
+| video | 1068800 | 2779-2862 | 4144-4364 | 1443-1566 | 0.05 M / 0.02 M / 3-4 k | 36206 -> 8912, 23891 -> 7952, 30651 -> 10102 | 1.37 / 1.16 |
+| split72_left | 2892800 | 3619-3622 | 4595-4681 | 982-1063 | 2.74 M / 1.77-1.81 M / 198-205 k | 2605 -> 1391, 3552 -> 1289, 2864 -> 1829 | 1.12 / 1.00 |
+
+The term is charged (the moves' units rise by the term's share, as on
+x14312), and the wall per booked unit stays near the ordinary rate: the
+anneal with the term books 0.99 to 1.16 units a CPU second against 1.03
+to 1.37 without, i.e. the term's units cost up to about 15 % more CPU
+than the anneal's own (the band the booking's calibration accepted:
+0.6 to 1.2 by phase). The processes' CPU: MegaDrive 783 to 832 s,
+Glasgow 1679 to 1674 s, video 1045 to 1116 s, split72_left 759 to 722 s.
+
+**Decision**: the default stays off. The dense boards say better
+under the new rule (-10.8 %, p 0.002), the short tier loses two strict
+passes, and the rule asks for both. What would settle the conflict is
+a short-tier read with more than one draw: the tier's boards are small
+and route completely or nearly so, so a lost pass is one connection or
+one error.
+
+**The protocol's cost**: 110 dense layouts (11 boards x 5 seeds x 2
+sides; 88 CPU hours, 39 hours of layout work), 12 noise layouts (three
+boards x four seeds; the seeds 1 to 401 off rows serve both), 24 short
+tier layouts, 8 placements for the work profile: 146 layouts, 96 CPU
+hours (and 3 for the placements). Wall: 18.3 hours for the five pairs (01:24 to 19:43; most
+of it the ledger: up to 32 runs waiting, boards waiting up to 52 minutes
+for memory), 21.4 hours to the last noise and short-tier row. The second
+stage (seeds 501 to 801) was not needed; it would have taken 80 more
+layouts.
 
 ### The crossings' work booking (2026-10-25)
 
