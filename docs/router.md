@@ -350,7 +350,8 @@ package's).
 On boards with four or more layers and 120 or more connections the KiCad
 adapter does not split the ladder's budget by a fixed rule (each rule tried
 failed some board: docs/todo.md). Every rung (exclusive planes, connected
-pours, plane stubs, pour nets as tracks) is lowered and negotiates for
+pours, plane stubs, pour nets as tracks; each keeps the layers a
+`disallow track` rule closes for a net closed, "Project rules" below) is lowered and negotiates for
 `probe_seconds` (75) with `Router::probe`, which keeps its whole state; the
 rung with the fewest unfinished nets (conflicted or incomplete) is resumed
 with `Router::resume` for a third of what is left, then finished and
@@ -716,7 +717,8 @@ KiCad 10.0.7's DRC reads it:
   holes, zone connections, assertions), `skipped` (severity, or a layer
   the board lacks) or `unmodelled` (creepage, length and skew without
   `length_matching` or in time units, diff pairs without `diff_pairs`,
-  physical clearances, disallows other than blind, buried and micro vias,
+  physical clearances, disallows other than blind, buried and micro vias
+  and the `disallow track` that surely holds for a net on a layer,
   rules on what is unknown). `rules.unmodelled` lists the last one line
   each; the verdict's next_actions name them when a route is incomplete,
   and `drc-kicad-board` prints them on a `next:` line when KiCad finds
@@ -789,6 +791,36 @@ KiCad 10.0.7's DRC reads it:
   alone: their inner layers route at 0.16 again, as the designer's do
   (no track of the designer's narrower than 0.16 on any layer).
 
+  **Disallowed layers and rule widths on every rung** (2026-10-27). A
+  `disallow track` rule whose condition surely holds for a net's track
+  on a layer (`dru::track_disallowed`, KiCad's `inDiffPair()` known, as
+  for the pairs' own layers) closes that layer to the net: the project
+  gives the router, per net, the closed layers
+  (`KiCadBoardRouterConfig::track_disallowed`), and every lowering keeps
+  the net's class off them (`RuleClass::layers`, intersected with a
+  pair's layers; the static maps block the others, vias pass), so every
+  rung of the ladder, its seed retries, the probed rung's continuation
+  in the other pour mode and the steps honour it whatever they do with
+  the pours. Only a rule whose findings are errors closes a layer (its
+  own severity, else the project's `items_not_allowed`): OpenAIO-Whoop's
+  "In1 and In6: GND planes, no tracks" is a warning. The rule is
+  reported `applied` ("tracks of N nets kept off the layers it
+  disallows"). Until then only the pairs' nets were kept off (phase 3 of
+  differential pairs) and the exclusive planes kept the rest off the
+  ground layers on the rungs that have them: on ducktop2's right_io the
+  probes ranked the pours-as-tracks rung first (122 nets unfinished
+  against the plane stubs' 123), which has no plane at all, and other
+  nets' tracks crossed the "right solid ground layers" (In1, In3, In6;
+  58 items_not_allowed). A net the rules close on every layer keeps
+  every layer (no rule asks that). Beside it, the narrow-signal step
+  keeps the widths a rule gives (`ruled_widths`, "Rules beyond the
+  classes" below): on oculink_port its attempt had put the pairs' nets
+  at 0.15 mm, under the `inDiffPair()` rule's 0.1712 mm (70 tracks,
+  track_width 19 -> 89 with the crossovers' candidate x15071). Boards
+  without such rules lower the same classes as before. Measured:
+  docs/changelog.md, "Committed on 2026-10-27 (every ladder rung keeps
+  the disallowed layers closed; the narrow step keeps rule widths)".
+
   **Via rules on some layers** (census 2026-10-24). KiCad 10.0.7, measured
   with kicad-cli on a four-layer board with one through via (0.4/0.2 mm)
   and one rule at a time: a `hole_size` rule holds whatever its
@@ -847,7 +879,12 @@ without them) routes as before, byte for byte.
   (`with_neck_classes`, `neck_width_of` for stubs and escapes): a
   `track_width (min ...)` rule on some nets holds in their neck-downs and
   in the narrow-signal step (the lowering sets the narrow width as the
-  class width; the floor raises it again).
+  class width; the floor raises it again). Since 2026-10-27 the step
+  narrows only nets at their class's width: a net whose width a rule
+  gives (a `track_width` opt that holds for it on every layer; a
+  differential pair's width from a rule on `inDiffPair()`, set by
+  `with_pairs`) keeps it (`ruled_widths`; "Disallowed layers and rule
+  widths on every rung" above).
 - **Widths per layer** (2026-10-24). A net of `NetRules::layer_widths`
   gets a class of its widths and floors per layer
   (`ClassRules::class_widths`, `class_floors`; `width_on`, `floor_on`,
@@ -3567,7 +3604,8 @@ for pairs) are identical to x1854 with x15071 (crossovers on by default)
 and with x15075, rows and routed boards byte for byte (unconnected 557,
 passes 24). Left: the ladder keeping exclusive planes in every rung where
 the rules disallow items on a layer (right_io), the narrow-signal step
-keeping the pairs' width rule, and the U-turn at a run's layer change (a
+keeping the pairs' width rule (both done 2026-10-27: "Disallowed layers
+and rule widths on every rung" in "Project rules"), and the U-turn at a run's layer change (a
 crossover in its staggered vias). Tables: docs/changelog.md, "Committed on
 2026-10-27 (differential pairs: the crossover kept only when its link
 couples)".
