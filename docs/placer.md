@@ -442,6 +442,46 @@ against 114, and it ended with 45 more unconnected items. One run a side
 cannot tell a reshuffle of a crowded board from a cost of the rule; the
 v16 layout (x862, the parts under J2) had 152.
 
+## Far-side mask openings and copper graphics at cutouts (2026-10-27)
+
+The nightly sweep of 2026-10-27 had two placement findings of KiCad's
+that the router could not avoid (run.py's strict rule; every other
+`copper_edge_clearance` and `solder_mask_bridge` of the sweep was the
+designer's own, docs/changelog.md, "edge clearance and mask bridges"):
+
+- **A hole's own mask margin on the far side.** vaio_re's J1 (a Raspberry
+  Pi Zero socket on the front) has 2.3 mm mounting holes whose
+  `solder_mask_margin` of 1.625 mm opens the mask 5.55 mm wide on both
+  sides. The far side held only the hole's copper box, so a TSOT-23 and an
+  0805 on the back sat inside the opening: five solder_mask_bridge
+  ("NPTH pad of J1 || Pad 5 [/SW_DC] of U16"). Now a pad that opens the
+  mask on its part's far side (`*.Mask`, `F&B.Mask` or that side's mask)
+  with a margin of its own (the pad's, else the footprint's) adds that
+  opening to `far_copper`: its expansion plus the board's
+  `pad_to_mask_clearance` plus the minimum web, less the copper clearance
+  the far-side test adds (`far_mask_reach`). The board-wide gap alone
+  (`pad_mask_gap`, which parts on one side keep) is left out on the far
+  side: no bridge of the sweep came from it, and it would grow every
+  through-hole pad on the 20-odd boards with a web (Batch_1 299 boxes,
+  protoesp 641).
+- **Copper graphics at a cutout.** osprey's AE1 (a 2.4 GHz PCB antenna on
+  the back) has its meander as a B.Cu polygon reaching 11.85 mm past its
+  feed pad, inside its courtyard. A cutout keeps copper only (bodies may
+  reach over it) and tested pads alone, so the meander came to rest on
+  the battery cutout's edge (copper_edge_clearance 0.0 mm against
+  0.25). A part's copper graphics (`Component::copper_graphics`, any
+  copper layer, KiCad 9's `layers` lists too) now keep the edge margin
+  from cutouts as its pads do, in the legality test and the annealer, and
+  the copper-to-edge clearance from the outline where the body comes
+  within it (`pads_keep_edge`). The outline's own test was already
+  covered: `edge_inset` counts copper graphics since 2026-10-23.
+
+What changes: the lowered problem differs only on boards with such a
+hole (5 of the 109: Batch_1, USB_Cable_Tester, vaio_re, zpn_devboard,
+CyberKeeb2040) or with a movable part that has copper graphics (33, 23 of them with a
+cutout: the cutout test binds only there). Measured in
+docs/changelog.md.
+
 ## Orientation search from a canonical start (2026-10-15)
 
 The placer turns parts at every stage: global placement picks each part's

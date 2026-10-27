@@ -526,6 +526,17 @@ with a `chamfer_ratio` of 0 is sharp, not rounded (`roundrect_pad.rs`;
 AQEYE's solder jumpers: tracks 0.126 mm from the sharp inner corners
 under 0.2, checked with kicad-cli).
 
+The router's copper had no copper_edge_clearance in the nightly sweep of
+2026-10-27 (all 113 errors of the type in its 109 layouts are footprint
+pads, footprint graphics or the designer's own board graphics; run.py's
+strict rule leaves one new, osprey's AE1 antenna polygon over a cutout,
+a placement: docs/placer.md, "Far-side mask openings and copper graphics
+at cutouts"). A test (`an_inner_cutouts_edge_and_an_outline_arc_keep_the_edge_clearance`)
+pins the two curved cases: a convex outline arc (its chords inside the
+board) and a round cutout (its chords inside the hole, the arc bulging
+towards the copper): tracks and vias 0.48 mm from either true arc are
+flagged under 0.5, 0.52 mm pass, at chord ends and between them.
+
 ### Dimensions, text boxes, cached copper texts and padstacks (2026-10-21)
 
 Checked with kicad-cli 10.0.7 on boards made for each (the unit tests in
@@ -626,7 +637,9 @@ the cache. Only where the project rates solder_mask_bridge an error
 of before (OpenESC 4in1-mini: the exact rule took its warnings 29 to 2 and
 cost 9 unconnected). Not modelled: via-to-via mask spacing (no corpus
 board has untented vias with a web or an expansion), pads placed under
-another part's opening (placement's), zone fill under openings.
+another part's opening (placement's: the placer keeps other parts' pads
+out of a hole's own mask margin on the far side since 2026-10-27,
+docs/placer.md), zone fill under openings.
 
 A pad whose layers open the mask on a side it has no copper on (c-lydia's
 U3: `(layers "F.Mask" "B.Cu" "F.Paste")`) bridges other nets' copper under
