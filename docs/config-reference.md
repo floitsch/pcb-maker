@@ -34,10 +34,10 @@ The environment variables are indexed in the hand-over
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 10 | - | 2 | 10 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 72 | - | 0 | 72 | - |
-| [Placer settings](#placer-settings) | 54 | 50 | 4 | 54 | 27 |
+| [Placer settings](#placer-settings) | 54 | 50 | 4 | 54 | 28 |
 | [Layout settings](#layout-settings) | 20 | 20 | 0 | 20 | 9 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 0 |
-| [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 3 |
+| [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 4 |
 | [Layout settings: silkscreen](#layout-settings-silkscreen) | 1 | 1 | 0 | 1 | 1 |
 | [Layout settings: race_probe](#layout-settings-race_probe) | 3 | 3 | 0 | 3 | 3 |
 | [Layout settings: move_descent](#layout-settings-move_descent) | 7 | 7 | 0 | 7 | 0 |
@@ -366,7 +366,7 @@ The placer config file of `place-kicad-board`, and the `placer` object of the la
 | `copper_edge_clearance_mm` | `Option<f64>` | unset | - | The board's copper-to-edge clearance: pads of parts held at an edge keep it. Read from the project when not given. |
 | `tight_bodies` | `Option<bool>` | unset | - | When nothing else fits, bodies may shrink to their fabrication outline and pads (courtyards overlap). Read from the project when not given: allowed unless KiCad's DRC treats a courtyard overlap as an error. |
 | `holes_in_courtyards_error` | `Option<bool>` | unset | - | Whether the project makes a hole inside another part's courtyard an error (`pth_inside_courtyard` or `npth_inside_courtyard`); `None`: read it from the project. Where it does not, a part's holes and pads on the other side keep only the copper clearance from that side's pads (leads through the board still keep off bodies). |
-| `silk_over_parts_error` | `Option<bool>` | unset | - | Whether the project makes the board's silkscreen over a part an error (`silk_overlap` or `silk_over_copper`); `None`: read it from the project. Where it does not, the board's silkscreen marks are no obstacle at the placer's last level (KiCad's legality), only a preference at the others. |
+| `silk_over_parts_error` | `Option<bool>` | unset | placer.md | Whether the project makes the board's silkscreen over a part an error (`silk_overlap` or `silk_over_copper`); `None`: read it from the project. Where it does not, the board's silkscreen marks are no obstacle at the placer's last level (KiCad's legality), only a preference at the others. |
 | `auto_decoupling` | `bool` | `true` | - | Decoupling capacitors (small capacitors between a supply rail and ground) are pulled to the supply pins of the ICs on their rail, unless a constraint already names them. |
 | `decoupling_mm` | `Option<f64>` | unset | placer.md | How close (body to pin) a decoupling capacitor below 4.7 uF is pulled to its IC's supply pin; `None` (the default): 1 mm with `decoupling_near`, else 2.5 mm. At 2.5 mm (first pins only) a third of the capacitors ended within 3 mm of their pin where designers put 60 % there (quick tier). Bulk capacitors (4.7 uF and more) 5 mm. |
 | `decoupling_near` | `bool` | `false` | placer.md | Decoupling at the pins (default off; docs/placer.md, "Decoupling at the pins (2026-10-26)"): each decoupling capacitor is pulled to the nearest of every supply pin of its rail on the ICs (an RP2350's ten +3V3 pins), not only to each IC's first pin on the rail, at 1 mm (`decoupling_mm`); and near relations follow their anchors in the legaliser (`follow_anchors`: a part near another is legalised right after it, from its annealed place moved as far as its anchor moved, and pays for the relation at each spot). The trial's rp2350-dual-usb went from 14 % of its capacitors within 3 mm of a pin to 50 %; on the eleven dense boards the capacitors' median fell on nine and rose on the two OpenESC boards, KiCad's unconnected within the noise (summed medians 974 to 987), so by the agreed rule it is a switch. |
@@ -438,7 +438,7 @@ The `free_dimension` object of the layout settings: one edge of a rectangular ou
 
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
-| `free_dimension.edge` | `String` | required | - | The edge of the rectangular outline that moves: `bottom`, `top`, `left` or `right`. The opposite edge stays where it is. |
+| `free_dimension.edge` | `String` | required | placer.md | The edge of the rectangular outline that moves: `bottom`, `top`, `left` or `right`. The opposite edge stays where it is. |
 | `free_dimension.min` | `Option<f64>` | optional | router.md, placer.md | The smallest extent of the board along the free axis (its height for `top` and `bottom`, its width for `left` and `right`), in millimetres; with `max` and `step`. |
 | `free_dimension.max` | `Option<f64>` | optional | router.md | The largest extent along the free axis, in millimetres. |
 | `free_dimension.step` | `Option<f64>` | optional | - | The sizes tried: `min`, `min + step`, ... up to `max` (and `max` itself). |
