@@ -973,7 +973,7 @@ fn clean(router: &Router, saved: &[Saved]) -> bool {
 }
 
 /// The most nets one length exchange may displace.
-const LENGTH_VICTIMS: usize = 8;
+const LENGTH_VICTIMS: usize = 16;
 
 /// A length exchange is kept when the net comes out at least this much
 /// shorter, mm.
@@ -1031,6 +1031,8 @@ impl Router {
             .collect();
         over.sort_by(|a, b| b.1.total_cmp(&a.1));
         let (mut tried, mut shortened, mut gained) = (0, 0, 0.0);
+        let debug = std::env::var_os("PCB_ROUTER_LENGTH_DEBUG").is_some();
+        let name = |router: &Self, net: NetId| router.board.nets[net as usize].name.clone();
         // Its own budget whatever the negotiation's left (a rule's
         // violation, like the manual spokes' starved pads).
         for (net, _) in over {
@@ -1048,6 +1050,13 @@ impl Router {
             self.stamp(net);
             let after = self.net_length(net);
             if !self.nets[net as usize].complete || after > before - LENGTH_GAIN {
+                if debug {
+                    eprintln!(
+                        "length repair {}: the priced search finds {after:.1} mm (complete {}), before {before:.1}",
+                        name(self, net),
+                        self.nets[net as usize].complete
+                    );
+                }
                 self.restore_nets(saved);
                 continue;
             }
@@ -1066,6 +1075,13 @@ impl Router {
                     .iter()
                     .any(|victim| !self.nets[*victim as usize].plane.is_empty())
             {
+                if debug {
+                    eprintln!(
+                        "length repair {}: {before:.1} to {after:.1} mm, {} victims (a pour net among them or too many)",
+                        name(self, net),
+                        victims.len()
+                    );
+                }
                 self.restore_nets(saved);
                 continue;
             }
@@ -1082,14 +1098,33 @@ impl Router {
                     }
                 }
             }
-            for victim in &victims {
-                self.nets[*victim as usize].hopeless_searches = 0;
-                self.route_net_seq(*victim, 0.0, true, 4.0);
-                self.stamp(*victim);
-            }
-            let kept = open_now(self, &saved) <= open_saved(&saved)
+            // The trouble repair's way with victims: on their corridors
+            // first, then in their windows those left more open, undone as
+            // soon as the exchange cannot pass (ties allowed: the gain is
+            // the length).
+            let settings = TroubleSettings {
+                ties: true,
+                pours: false,
+                ..TroubleSettings::from_env()
+            };
+            let mut work = TroubleWork::default();
+            let routed = self.route_victims(net, &victims, &saved, settings, &mut work);
+            let kept = routed.is_ok()
+                && open_now(self, &saved) <= open_saved(&saved)
                 && clean(self, &saved)
                 && self.net_length(net) <= before - LENGTH_GAIN;
+            if debug {
+                eprintln!(
+                    "length repair {}: {before:.1} to {:.1} mm, {} victims, open {} to {}, clean {}: {}",
+                    name(self, net),
+                    self.net_length(net),
+                    victims.len(),
+                    open_saved(&saved),
+                    open_now(self, &saved),
+                    clean(self, &saved),
+                    if kept { "kept" } else { "undone" }
+                );
+            }
             if kept {
                 shortened += 1;
                 gained += before - self.net_length(net);
