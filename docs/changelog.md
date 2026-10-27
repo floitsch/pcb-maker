@@ -166,17 +166,21 @@ placer defaults"). docs/placer.md, "Under the placer-default protocol
   with x1828's noise file (-7.4 %, p 0.006). Crossings -8.1 %, the first
   route's open terminals -8.5 %, the objective -1.5 % (not resolved);
   placement work +4.6 %, CPU +3.4 %.
-- **Short tier**: KiCad unconnected 20 to 28, strict passes 8 to 6
-  (framework_mobo_lefthalf by one connection, eternal-keypad by a
-  `shorting_items` error), WLED_Matrix 8 to 16. **The default stays
-  off**: the rule asks for no lost strict pass as well.
+- **Short tier**: on x1851 KiCad unconnected 20 to 28, strict passes 8
+  to 6 (framework_mobo_lefthalf by one connection, eternal-keypad by a
+  `shorting_items` error), WLED_Matrix 8 to 16. Again on the rebased head
+  (`build/bin/pcb-maker-cross3-h`, main ff120a4c with x1867's plated-pad
+  fix): 20 to 28, strict 8 to 7; eternal-keypad passes on both sides (its
+  error was the pad bug), framework_mobo_lefthalf still loses by one
+  connection. **The default stays off**: the rule asks for no lost strict
+  pass as well.
 - **The anneal's work per move** on x1851: the term is charged (units a
   move off / on: MegaDrive 7101-7367 / 10390-10665, Glasgow 3818-3861 /
   5088-5362, video 2779-2862 / 4144-4364, split72_left 3619-3622 /
   4595-4681); booked units per CPU second 0.99 to 1.16 with the term,
   1.03 to 1.37 without.
-- **Cost of the protocol**: 146 layouts (110 dense, 12 noise, 24 short
-  tier), 96 CPU hours, 18.3 hours of wall for the five pairs and 21.4
+- **Cost of the protocol**: 170 layouts (110 dense, 12 noise, 48 short
+  tier), 99 CPU hours, 18.3 hours of wall for the five pairs and 21.4
   to the last row, most of it waiting in the ledger beside the nightly
   and four agents.
 - **Tools**: `placer_ab.py noise --boards ... --update` (replace some

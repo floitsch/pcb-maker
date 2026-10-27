@@ -2376,6 +2376,18 @@ CPU 155336 to 160590 s (+3.4 %), vias 45251 to 44201.
 | Blue_Line | 0 / 0 | yes / yes | 0 / 0 |
 | sum | 20 / 28 | 8 / 6 | 40 / 46 |
 
+**Again on the rebased head** (`build/bin/pcb-maker-cross3-h`, the
+branch on main ff120a4c, x1867's fix: a plated pad is copper on every
+layer whatever its layer list; `build/cross3-u/short-h-{off,on}`, 3 x 2,
+the same seeds): every board routes and fails as on x1851 except
+eternal-keypad, whose `shorting_items` error is gone (its two mounting
+pads list one side: the x1867 bug, not the anneal): it passes strict on
+both sides. KiCad unconnected 20 to 28, strict passes **8 to 7**; new
+strict findings only on boards that fail either way (USB_Keypad
+`connection_width` 8 / 5, WLED_Matrix `connection_width` 1 / 2 and
+`track_dangling` 1 / 1). framework_mobo_lefthalf still loses its pass
+by one connection (0 to 1 open; first route 3 to 2).
+
 The short tier loses two strict passes and 8 connections, as it did on
 2026-10-25 (7 to 6, framework_mobo_lefthalf by one connection,
 WLED_Matrix 8 to 14). One pair, so a board's change there is one draw
@@ -2404,8 +2416,10 @@ than the anneal's own (the band the booking's calibration accepted:
 Glasgow 1679 to 1674 s, video 1045 to 1116 s, split72_left 759 to 722 s.
 
 **Decision**: the default stays off. The dense boards say better
-under the new rule (-10.8 %, p 0.002), the short tier loses two strict
-passes, and the rule asks for both. What would settle the conflict is
+under the new rule (-10.8 %, p 0.002), but the short tier loses a
+strict pass on the rebased head too (framework_mobo_lefthalf, one open
+connection; eternal-keypad's loss on x1851 was the x1867 pad bug), and
+the rule asks for both. What would settle the conflict is
 a short-tier read with more than one draw: the tier's boards are small
 and route completely or nearly so, so a lost pass is one connection or
 one error.
@@ -2413,8 +2427,9 @@ one error.
 **The protocol's cost**: 110 dense layouts (11 boards x 5 seeds x 2
 sides; 88 CPU hours, 39 hours of layout work), 12 noise layouts (three
 boards x four seeds; the seeds 1 to 401 off rows serve both), 24 short
-tier layouts, 8 placements for the work profile: 146 layouts, 96 CPU
-hours (and 3 for the placements). Wall: 18.3 hours for the five pairs (01:24 to 19:43; most
+tier layouts and 24 more on the rebased head, 8 placements for the
+work profile: 170 layouts, 99 CPU hours (and 3 for the placements).
+Wall: 18.3 hours for the five pairs (01:24 to 19:43; most
 of it the ledger: up to 32 runs waiting, boards waiting up to 52 minutes
 for memory), 21.4 hours to the last noise and short-tier row. The second
 stage (seeds 501 to 801) was not needed; it would have taken 80 more
