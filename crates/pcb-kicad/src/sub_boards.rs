@@ -924,13 +924,35 @@ pub(crate) fn designed_nets(
     sub: &PlacerSubBoards,
     net_names: &[String],
 ) -> BTreeSet<String> {
-    let mut nets: BTreeSet<String> = sub
+    // The placer names a net as a connection (`NetNames::normalize`: the
+    // hierarchical slash dropped, `/ESC1/GHA` as `ESC1/GHA`); KiCad's
+    // report by the pads' own names.
+    let names = crate::kicad_nets::NetNames::of(pcb);
+    let codes = crate::kicad_nets::net_codes(pcb);
+    let split: BTreeSet<&str> = sub
         .split
         .iter()
         .filter_map(|net| net_names.get(*net))
-        .map(|name| unescaped(name))
+        .map(String::as_str)
         .collect();
-    let codes = crate::kicad_nets::net_codes(pcb);
+    let mut nets: BTreeSet<String> = BTreeSet::new();
+    for footprint in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        for pad in footprint
+            .children()
+            .iter()
+            .filter(|child| child.head() == Some("pad"))
+        {
+            if let Some(net) = crate::kicad_nets::item_net(pad, &codes)
+                && split.contains(names.normalize(net))
+            {
+                nets.insert(unescaped(net));
+            }
+        }
+    }
     let mut on: BTreeMap<String, BTreeMap<String, BTreeSet<usize>>> = BTreeMap::new();
     for (index, footprint) in pcb
         .children()
@@ -1910,6 +1932,11 @@ mod tests {
     /// a row of mouse bites when `bites`); two parts on each, on GND and
     /// SIG; `extra` more items.
     fn panel(bites: bool, extra: &str) -> Expr {
+        panel_with(bites, extra, "SIG")
+    }
+
+    /// `panel` with the second net named `signal`.
+    fn panel_with(bites: bool, extra: &str, signal: &str) -> Expr {
         let outline = "(gr_poly (pts (xy 0 0) (xy 20 0) (xy 20 20) (xy 12 20) (xy 12 25) (xy 20 25) (xy 20 45) (xy 0 45) (xy 0 25) (xy 8 25) (xy 8 20) (xy 0 20)) (layer \"Edge.Cuts\"))";
         let holes: String = if bites {
             (0..5)
@@ -1926,7 +1953,7 @@ mod tests {
         };
         let part = |name: &str, x: f64, y: f64| {
             format!(
-                r#"(footprint "{name}" (at {x} {y}) (property "Reference" "{name}") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "GND")) (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net "SIG")))"#
+                r#"(footprint "{name}" (at {x} {y}) (property "Reference" "{name}") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "GND")) (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net "{signal}")))"#
             )
         };
         let parts = [
@@ -2046,7 +2073,9 @@ mod tests {
 
     #[test]
     fn a_placed_panel_holds_each_part_on_its_board() {
-        let pcb = panel(true, "");
+        // A hierarchical name: the placer's connection drops the slash,
+        // KiCad's report keeps it.
+        let pcb = panel_with(true, "", "/S/SIG");
         let config = crate::board_placer::KiCadBoardPlacerConfig::default();
         let mut lowered = crate::board_placer::lower_placement(&pcb, &config).unwrap();
         let sub = detect_for_placer(&pcb, &lowered.problem, 4, None)
@@ -2059,7 +2088,7 @@ mod tests {
         let designed = designed_nets(&pcb, &sub, &lowered.net_names);
         assert_eq!(
             designed,
-            BTreeSet::from(["GND".to_string(), "SIG".to_string()])
+            BTreeSet::from(["/S/SIG".to_string(), "GND".to_string()])
         );
         let applied = apply_to_placer(
             &sub,
