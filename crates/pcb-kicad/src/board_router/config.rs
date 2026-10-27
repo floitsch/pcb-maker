@@ -405,6 +405,12 @@ pub struct KiCadBoardRouterConfig {
     /// unset, the router's default; `PCB_ROUTER_TROUBLE` overrides this.
     #[serde(default)]
     pub trouble_repair: Option<bool>,
+    /// The trouble repair's last pass (router `last_connections`; docs/router.md,
+    /// "The last connections"): once its rounds leave at most this many open
+    /// terminals, ejection chains and board-wide victims; unset, the router's
+    /// default (0, off); `PCB_ROUTER_LAST_CONNECTIONS` overrides this.
+    #[serde(default)]
+    pub last_connections: Option<usize>,
     /// The negotiation's corridors from the global route with hard
     /// capacities, learning from the searches that miss them (router
     /// `capacitated_corridors`, an experiment; docs/router.md,

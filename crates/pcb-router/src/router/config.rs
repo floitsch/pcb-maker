@@ -139,8 +139,8 @@ pub struct Config {
     /// rounds leave at most this many open terminals on the signal nets, it
     /// tries again with ejection chains (a victim left open pushes others
     /// aside in turn, three deep) and the victims routed board-wide, within
-    /// the repair's own work. 0 turns it off; `PCB_ROUTER_LAST_CONNECTIONS`
-    /// overrides it.
+    /// the repair's own work. 0 (the default) turns it off;
+    /// `PCB_ROUTER_LAST_CONNECTIONS` overrides it.
     pub last_connections: usize,
     /// The clean-up keeps a change only if no pour net has more pads off
     /// its main piece after it.

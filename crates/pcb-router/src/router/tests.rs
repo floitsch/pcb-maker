@@ -925,10 +925,10 @@ fn every_conflict_names_its_blockers() {
     assert_eq!(blockers, vec![1, 2]);
 }
 
-/// The last connections (`Config::last_connections`) run only where the
-/// rounds leave few open terminals, and keep an exchange only where it
-/// closes terminals: with it on, the board ends with no more open
-/// terminals than with it off.
+/// The last connections (`Config::last_connections`, off by default; 8 as
+/// measured on 2026-10-27) run only where the rounds leave few open
+/// terminals, and keep an exchange only where it closes terminals: with it
+/// on, the board ends with no more open terminals than with it off.
 #[test]
 fn the_last_connections_never_open_more_than_the_rounds() {
     let open_after = |last: usize| {
@@ -952,7 +952,7 @@ fn the_last_connections_never_open_more_than_the_rounds() {
             })
             .sum::<usize>()
     };
-    assert!(open_after(super::trouble::LAST_CONNECTIONS_DEFAULT) <= open_after(0));
+    assert!(open_after(8) <= open_after(0));
 }
 
 #[test]

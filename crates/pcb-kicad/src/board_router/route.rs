@@ -785,6 +785,11 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     {
         router_config.trouble_repair = repair;
     }
+    if let Some(last) = config.last_connections
+        && core::router::last_connections_override().is_none()
+    {
+        router_config.last_connections = last;
+    }
     if let Some(capacitated) = config.capacitated_corridors
         && pcb_router::capacitated::switch_override().is_none()
     {

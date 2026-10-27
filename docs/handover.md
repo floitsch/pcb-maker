@@ -495,6 +495,7 @@ Switches and experiment hooks (change the result):
 - `PCB_ROUTER_TROUBLE_POURS`: the trouble-makers' repair: `1` lets pour nets take part, as trouble-makers and as victims, weighed by their pads off the pour's main piece (an experiment, off).
 - `PCB_ROUTER_TROUBLE_LOCAL`: the trouble-makers' repair: `1` routes an exchange's victims again on their corridors first, and a victim left with more open terminals than it had in its window (not grown, never board-wide) while that could still make the exchange pass (default 1; `0` the full hard search for every victim).
 - `PCB_ROUTER_TROUBLE_EARLY`: the trouble-makers' repair: `1` undoes an exchange as soon as the victims routed so far leave it no way to pass (default 1; `0` routes every victim first).
+- `PCB_ROUTER_LAST_CONNECTIONS`: overrides the router's `last_connections` (a number; `0` off, the default): once the trouble repair's rounds leave at most that many open terminals, a last pass with ejection chains three deep, the victims routed board-wide and pour nets taking part (docs/router.md, "The last connections").
 - `PCB_ROUTER_DIFF_PAIRS`: turns differential pairs on (1) or off (0) where the settings name none (`diff_pairs`; unset, route mode turns them on where the project's custom rules ask for pairs, else off): route mode routes the pairs KiCad names (`_P`/`_N`, `+`/`-`, `P`/`N`) as coupled runs at the rules' width and gap, each link a net of the route negotiated with the others (docs/router.md, "Differential pairs").
 - `PCB_ROUTER_DIFF_PAIRS_WORK`: differential pairs: the fallback router's work deadline in seconds, which routes what the coupled runs left open (default 0.05 of the ladder's budget, at least 1 s; for experiments).
 - `PCB_ROUTER_DIFF_PAIRS_CROSSOVER`: differential pairs: `1` gives a crossed link end a crossover in its lead (one net dives under the other, a via each side), with the links' hairpins removed and the kept links' via holes kept clear in the fallback (default off: more links coupled, more errors on the rule boards; docs/router.md, "Polarity"); since 2026-10-27 the crossover keeps room beside the neighbouring pairs' launches and a link's vias spread where they crowd the other net, measured again and still off (ducktop2's io boards worse at 30 s; "The safe crossover").
@@ -529,7 +530,7 @@ Switches and experiment hooks (change the result):
 
 Diagnostics (stderr unless said; the result does not change):
 
-- `PCB_ROUTER_TROUBLE_WHY`: the trouble-makers' repair prints every exchange's outcome (kept, or why refused).
+- `PCB_ROUTER_TROUBLE_WHY`: the trouble-makers' repair prints every exchange's outcome (kept, or why refused; a refusal names the nets left in conflict and what their conflicts name).
 - `PCB_ROUTER_DIFF_PAIRS_DEBUG`: differential pairs: prints each launch, each link's path, the copper refused with the reason, each stub straightened or not, and the fallback's work.
 - `PCB_ROUTER_BUS_WHY`: bus bundles: prints every bus found and every member broken out of its bundle.
 - `PCB_ROUTER_DEBUG`: the router's verbose lines (failed searches, the resolution, what blocks a stub, lattice details).

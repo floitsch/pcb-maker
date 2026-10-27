@@ -80,8 +80,10 @@ pub(super) enum TroubleOrder {
 pub const TROUBLE_REPAIR_DEFAULT: bool = true;
 
 /// The last connections' default (`Config::last_connections`): the most
-/// open terminals on the signal nets for which the repair's last pass runs.
-pub const LAST_CONNECTIONS_DEFAULT: usize = 8;
+/// open terminals for which the repair's last pass runs; 0, off. Measured
+/// at 8 on 2026-10-27 (docs/router.md, "The last connections"): no near-miss
+/// layout of the nightly closed a connection more, so it stays an option.
+pub const LAST_CONNECTIONS_DEFAULT: usize = 0;
 
 /// How deep an ejection chain of the last pass goes: the trouble-maker
 /// displaces its victims, a victim left open displaces nets in turn, and
