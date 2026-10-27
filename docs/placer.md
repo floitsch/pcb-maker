@@ -4342,7 +4342,8 @@ excused where that would leave none.
 The placements differ from the off side's on three of the four (4x5 byte
 for byte): the measured escape correction routes the board while it
 places, and its route now splits the cells' nets. The router's own count
-of open terminals after the first route falls three- to fivefold.
+of open terminals after the first route falls 3 to 50 times (the 5x4
+wave 686 to 13).
 x15028's 5x4 wave ended in an internal error: a layout move took a part
 into another cell, the lowering split its nets otherwise, and the
 router refused the incremental update ("needs the same nets"); since

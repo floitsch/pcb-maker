@@ -58,10 +58,12 @@ boards in a panel (2026-10-27)", docs/router.md "Nets split by sub-board
   designer's places 236 counted (366 in KiCad, 130 across) at seed 1 and
   240 (370) at seed 101, where both sides' whole-panel placement leaves 4
   parts without a place. Molecules: 4x4 499 to at least 244, 4x5 499 to
-  at least 239, 5x2_shifted 427 to 219, 5x4 wave 499 to at least 204 (x15029); first-route
-  open terminals three- to fivefold fewer; 1 starved thermal on the 4x4
-  (0 off), 1 on the 4x5 (8 off). The short tier, the single 4in1 and
-  4in1-mini and the copy panels' placements byte for byte.
+  at least 239, 5x2_shifted 427 to 219, 5x4 wave 499 to at least 204
+  (x15029); the first route's open terminals 3 to 50 times fewer; 1
+  starved thermal on the 4x4 (0 off), 1 on the 4x5 (8 off). The short
+  tier (x1856 against x15028), the single 4in1 and 4in1-mini and the copy
+  panels' placements byte for byte.
+
 ## Measured on 2026-10-27 (nightly: layout sweep v22, matched designer tier)
 
 Written by the nightly from `build/nightly/2026-10-27/` (main e7a12a8;
