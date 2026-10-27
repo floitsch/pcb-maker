@@ -5241,3 +5241,20 @@ fn a_background_cost_raises_the_history_where_it_is() {
     assert_eq!(router.history[0][left], 2.0);
     assert_eq!(router.history[0][right], 0.0);
 }
+
+#[test]
+fn the_coarse_probe_rips_the_conflicted_branches_and_counts_what_is_open() {
+    // One layer: A crosses B and C, so a short negotiation ends in conflict.
+    let mut router = crossed_net();
+    router.config.max_iterations = 2;
+    router.probe(1.0);
+    let (iterations, _) = router.negotiation_progress();
+    assert!(iterations <= 2);
+    let before = router.probe_standing();
+    assert!(before.conflicted > 0, "{before:?}");
+    let (ripped, after) = router.rip_up_standing();
+    assert!(ripped > 0);
+    assert_eq!(after.conflicted, 0);
+    assert_eq!(after.open_terminals, router.board_open_terminals());
+    assert!(after.open_terminals > 0);
+}

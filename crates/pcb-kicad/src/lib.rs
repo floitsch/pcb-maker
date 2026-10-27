@@ -57,13 +57,11 @@ pub use board_layout::{
     KiCadRaceProbe, KiCadRaceProbeScore, KiCadRaceReport, KiCadSilkscreenConfig, KiCadSwappable,
     layout_kicad_board,
 };
+pub use coarse_probe::{KiCadCoarseProbeConfig, KiCadCoarseProbeReport, probe_coarse_placement};
 pub use congestion_rank::{KiCadCongestionScore, score_congestion_sample, score_kicad_congestion};
 pub use congestion_samples::{
     KiCadCongestionJob, KiCadCongestionSampleReport, KiCadCongestionVariant, KiCadPerturbation,
     export_congestion_samples,
-};
-pub use coarse_probe::{
-    KiCadCoarseProbeConfig, KiCadCoarseProbeReport, probe_coarse_placement,
 };
 pub use global_route::{KiCadGlobalRouteReport, KiCadProbeReport, global_route_kicad_board};
 pub use move_descent::{
