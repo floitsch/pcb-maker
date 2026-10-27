@@ -332,6 +332,29 @@ impl Pieces {
         self.boxes.len()
     }
 
+    /// Pieces that are boxes on a board of one outline piece: a panel's
+    /// cells the placement found (`panel_copies` told apart by repeated
+    /// references: the PolyKybd molecules' cells side by side, cut apart
+    /// along straight lines, no neck between them). A point lies on the
+    /// first box that holds it; there are no tabs.
+    pub(crate) fn of_boxes(boxes: Vec<[f64; 4]>) -> Pieces {
+        Pieces {
+            origin: [0.0, 0.0],
+            cell: 1.0,
+            columns: 0,
+            rows: 0,
+            labels: Vec::new(),
+            inside: Vec::new(),
+            boxes,
+            tabs: Vec::new(),
+        }
+    }
+
+    /// Whether the pieces are boxes (`of_boxes`).
+    pub(crate) fn boxed(&self) -> bool {
+        self.columns == 0
+    }
+
     fn cell_of(&self, point: [f64; 2]) -> Option<usize> {
         let column = ((point[0] - self.origin[0]) / self.cell).floor();
         let row = ((point[1] - self.origin[1]) / self.cell).floor();
@@ -344,6 +367,11 @@ impl Pieces {
 
     /// The piece `point` lies on; None off the board, on a tab or a neck.
     pub(crate) fn piece_at(&self, point: [f64; 2]) -> Option<usize> {
+        if self.boxed() {
+            return self.boxes.iter().position(|b| {
+                point[0] >= b[0] && point[0] <= b[2] && point[1] >= b[1] && point[1] <= b[3]
+            });
+        }
         let cell = self.cell_of(point)?;
         (self.labels[cell] != NONE).then_some(self.labels[cell] as usize)
     }
@@ -492,6 +520,11 @@ fn terminal_piece(
     terminal: &core::Terminal,
     pieces: &Pieces,
 ) -> Result<Option<usize>, ()> {
+    if pieces.boxed() {
+        // A panel's cells: a part outside every cell (a test point of an
+        // outer row) belongs to the nearest.
+        return Ok(pieces.piece_near(terminal.anchor, ZONE_REACH_MM));
+    }
     if let Some(piece) = pieces.piece_at(terminal.anchor) {
         return Ok(Some(piece));
     }
@@ -590,7 +623,11 @@ pub(crate) struct NetSplit {
 /// of the same name and class (the writer names copper by the net's name,
 /// so KiCad sees one net again). Its pours are cut to each piece's box.
 /// Nothing changes on a board of one piece.
-pub(crate) fn split_router_nets(board: &mut core::Board, pieces: &Pieces) -> NetSplit {
+pub(crate) fn split_router_nets(
+    board: &mut core::Board,
+    pieces: &Pieces,
+    only: Option<&BTreeSet<String>>,
+) -> NetSplit {
     let mut split = NetSplit::default();
     let overlapping = pieces.boxes_overlap();
     let net_count = board.nets.len();
@@ -618,7 +655,9 @@ pub(crate) fn split_router_nets(board: &mut core::Board, pieces: &Pieces) -> Net
         }
     }
     for net in 0..net_count {
-        if board.nets[net].terminals.len() < 2 {
+        if board.nets[net].terminals.len() < 2
+            || only.is_some_and(|only| !only.contains(&board.nets[net].name))
+        {
             continue;
         }
         let places: Result<Vec<Option<usize>>, ()> = board.nets[net]
@@ -921,6 +960,60 @@ pub(crate) fn note_designed(nets: Option<BTreeSet<String>>) {
     if let Ok(mut designed) = DESIGNED.lock() {
         *designed = nets;
     }
+    note_cells(None);
+}
+
+/// A panel's cells the placement found where the outline has no pieces
+/// (`note_cells`), for the router's net split and KiCad's check judged per
+/// cell in this process.
+static CELLS: std::sync::Mutex<Option<Vec<[f64; 4]>>> = std::sync::Mutex::new(None);
+
+/// Notes a panel's cells (None: none): the nets of `note_designed` are
+/// split per cell and their items across cells excused, as on pieces.
+pub(crate) fn note_cells(cells: Option<Vec<[f64; 4]>>) {
+    if let Ok(mut noted) = CELLS.lock() {
+        *noted = cells;
+    }
+}
+
+/// The cells and the designed nets noted for this process, where both
+/// are.
+pub(crate) fn noted_cells() -> Option<(Pieces, BTreeSet<String>)> {
+    let cells = CELLS.lock().ok()?.clone()?;
+    let designed = DESIGNED.lock().ok()?.clone()?;
+    Some((Pieces::of_boxes(cells), designed))
+}
+
+/// The nets with pads of two footprints of one reference (the second half
+/// of `designed_nets`), by the board's names.
+pub(crate) fn repeated_reference_nets(pcb: &Expr) -> BTreeSet<String> {
+    let codes = crate::kicad_nets::net_codes(pcb);
+    let mut on: BTreeMap<String, BTreeMap<String, BTreeSet<usize>>> = BTreeMap::new();
+    for (index, footprint) in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+        .enumerate()
+    {
+        let reference = crate::kicad_nets::footprint_reference(footprint).unwrap_or_default();
+        for pad in footprint
+            .children()
+            .iter()
+            .filter(|child| child.head() == Some("pad"))
+        {
+            if let Some(net) = crate::kicad_nets::item_net(pad, &codes) {
+                on.entry(net.to_string())
+                    .or_default()
+                    .entry(reference.clone())
+                    .or_default()
+                    .insert(index);
+            }
+        }
+    }
+    on.into_iter()
+        .filter(|(_, references)| references.values().any(|parts| parts.len() >= 2))
+        .map(|(net, _)| net)
+        .collect()
 }
 
 /// The nets on several sub-boards by design: those the placement split
@@ -958,37 +1051,11 @@ pub(crate) fn designed_nets(
             if let Some(net) = crate::kicad_nets::item_net(pad, &codes)
                 && split.contains(names.normalize(net))
             {
-                nets.insert(unescaped(net));
+                nets.insert(net.to_string());
             }
         }
     }
-    let mut on: BTreeMap<String, BTreeMap<String, BTreeSet<usize>>> = BTreeMap::new();
-    for (index, footprint) in pcb
-        .children()
-        .iter()
-        .filter(|item| item.head() == Some("footprint"))
-        .enumerate()
-    {
-        let reference = crate::kicad_nets::footprint_reference(footprint).unwrap_or_default();
-        for pad in footprint
-            .children()
-            .iter()
-            .filter(|child| child.head() == Some("pad"))
-        {
-            if let Some(net) = crate::kicad_nets::item_net(pad, &codes) {
-                on.entry(unescaped(net))
-                    .or_default()
-                    .entry(reference.clone())
-                    .or_default()
-                    .insert(index);
-            }
-        }
-    }
-    for (net, references) in on {
-        if references.values().any(|parts| parts.len() >= 2) {
-            nets.insert(net);
-        }
-    }
+    nets.extend(repeated_reference_nets(pcb));
     nets
 }
 
@@ -1019,6 +1086,7 @@ pub(crate) fn excuse_across(
     }
     let mut split = board_split_nets(pcb, pieces);
     if let Some(designed) = designed {
+        let designed: BTreeSet<String> = designed.iter().map(|net| unescaped(net)).collect();
         split.retain(|net, _| designed.contains(net));
     }
     if split.is_empty() {
@@ -1097,10 +1165,16 @@ pub(crate) fn excuse_across_file(report: &Path, board: &Path) -> Result<usize, S
     let source = fs::read_to_string(board)
         .map_err(|error| format!("failed to read {}: {error}", board.display()))?;
     let pcb = crate::canonical_order::parse_board(&source)?;
-    let Some(pieces) = Pieces::of_board(&pcb)? else {
-        return Ok(0);
+    let (pieces, designed) = match Pieces::of_board(&pcb)? {
+        Some(pieces) => (
+            pieces,
+            DESIGNED.lock().ok().and_then(|designed| designed.clone()),
+        ),
+        None => match noted_cells() {
+            Some((cells, designed)) => (cells, Some(designed)),
+            None => return Ok(0),
+        },
     };
-    let designed = DESIGNED.lock().ok().and_then(|designed| designed.clone());
     let moved = excuse_across(&mut value, &pcb, &pieces, designed.as_ref());
     if moved > 0 {
         let text = serde_json::to_string_pretty(&value).map_err(|error| error.to_string())?;
@@ -2130,5 +2204,32 @@ mod tests {
                 "part {part} at {at:?}"
             );
         }
+    }
+
+    #[test]
+    fn a_panels_cells_split_only_the_nets_named_by_design() {
+        // One outline piece (a solid tab): no pieces; the cells a
+        // placement found split the nets it names, GND here, alone.
+        let pcb = panel(false, "");
+        let config = crate::board_router::KiCadBoardRouterConfig {
+            default_rules: Some(crate::KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..Default::default()
+        };
+        let mut board = crate::board_router::lower(&pcb, &config, true)
+            .unwrap()
+            .board;
+        assert_eq!(board.nets.len(), 2);
+        let cells = Pieces::of_boxes(vec![[0.0, 0.0, 20.0, 22.0], [0.0, 23.0, 20.0, 45.0]]);
+        assert_eq!(cells.piece_at([5.0, 30.0]), Some(1));
+        let only = BTreeSet::from(["GND".to_string()]);
+        let split = split_router_nets(&mut board, &cells, Some(&only));
+        assert_eq!(split.nets, vec![("GND".to_string(), 2)]);
+        assert_eq!(board.nets.iter().filter(|net| net.name == "GND").count(), 2);
+        assert_eq!(board.nets.iter().filter(|net| net.name == "SIG").count(), 1);
     }
 }

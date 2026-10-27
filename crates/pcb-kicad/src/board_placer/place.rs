@@ -194,6 +194,23 @@ pub fn place_kicad_board(
     // seed places them one by one (`sub_boards::place_sub_boards`).
     let mut held_sub_boards = None;
     crate::sub_boards::note_designed(None);
+    // A panel of copies whose cells share net names (the PolyKybd
+    // molecules: every cell's 27 nets, no copper between cells): the
+    // router splits those nets per cell and KiCad's items across cells
+    // are not counted (`sub_boards::note_cells`).
+    if let Some(copies) = &copies
+        && copies.detected_by == "repeated references"
+    {
+        let shared = crate::sub_boards::repeated_reference_nets(&pcb);
+        if !shared.is_empty() {
+            eprintln!(
+                "placer: panel copies: {} nets of one name in several cells: one net per cell",
+                shared.len()
+            );
+            crate::sub_boards::note_designed(Some(shared));
+            crate::sub_boards::note_cells(Some(copies.regions.clone()));
+        }
+    }
     if copies.is_none() && config.sub_boards {
         let footprint_count = pcb
             .children()

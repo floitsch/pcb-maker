@@ -1883,11 +1883,24 @@ fn lower_board(
     };
     // A panel of different boards: a net per sub-board where no copper
     // joins them (`sub_boards::split_router_nets`).
+    // A panel's cells the placement found (`sub_boards::note_cells`): the
+    // nets on several of them by design, a net per cell.
+    let pieces = crate::sub_boards::Pieces::of_loops_cached(&loops.piece_loops, &loops.cutouts)
+        .map(|pieces| (pieces, None))
+        .or_else(|| {
+            crate::sub_boards::noted_cells().map(|(cells, designed)| {
+                let only: BTreeSet<String> = designed
+                    .iter()
+                    .map(|net| net_names.normalize(net).to_string())
+                    .collect();
+                (std::sync::Arc::new(cells), Some(only))
+            })
+        });
     if config.sub_board_nets != Some(false)
-        && let Some(pieces) =
-            crate::sub_boards::Pieces::of_loops_cached(&loops.piece_loops, &loops.cutouts)
+        && let Some((pieces, only)) = pieces
     {
-        let split = crate::sub_boards::split_router_nets(&mut lowered.board, &pieces);
+        let split =
+            crate::sub_boards::split_router_nets(&mut lowered.board, &pieces, only.as_ref());
         if std::env::var_os("PCB_ROUTER_SUB_BOARD_DEBUG").is_some() {
             eprintln!(
                 "sub-boards: {} pieces, {} nets split ({} more nets), kept whole: {:?}",
