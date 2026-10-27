@@ -150,7 +150,12 @@ pub struct Constraints {
     /// routing halos do not keep them apart. Filled by `link_pairs`.
     pub linked: BTreeSet<(usize, usize)>,
     /// `linked` by part: each part's partners, for `linked`'s lookup (a
-    /// tree search per pair of neighbours took 3 to 7 % of a placement).
+    /// tree search per pair of neighbours took 3 to 7 % of a placement),
+    /// in ascending order (`link_pairs` walks the set in order: the
+    /// partners below a part come first, ascending, then those above it),
+    /// so that a lookup is a binary search (a scan of a supply pin's
+    /// partners, Glasgow's U-parts with dozens of decoupling capacitors,
+    /// was 1.5 to 3 % of a placement's instructions, 2026-10-28).
     /// Filled with `linked` by `link_pairs`; empty, `linked` searches the set.
     pub linked_partners: Vec<Vec<usize>>,
     /// Parts held at an edge are on the board when their copper is: a card
@@ -281,6 +286,11 @@ impl Constraints {
                 self.linked_partners[a].push(b);
                 self.linked_partners[b].push(a);
             }
+            debug_assert!(
+                self.linked_partners
+                    .iter()
+                    .all(|partners| partners.is_sorted())
+            );
         }
     }
 
@@ -293,7 +303,7 @@ impl Constraints {
         }
         self.linked_partners
             .get(a)
-            .is_some_and(|partners| partners.contains(&b))
+            .is_some_and(|partners| partners.binary_search(&b).is_ok())
     }
 
     /// Whether two parts meet without their halos: tied together, or one
@@ -1528,6 +1538,45 @@ mod nearest_tests {
             state ^= state >> 7;
             state ^= state << 17;
             (state >> 11) as f64 / (1u64 << 53) as f64
+        }
+    }
+
+    #[test]
+    fn linked_partners_answer_as_the_set() {
+        let mut next = numbers(11);
+        let mut constraints = Constraints::default();
+        let parts = 60;
+        let pick = |next: &mut dyn FnMut() -> f64| (next() * parts as f64) as usize;
+        for _ in 0..80 {
+            let part = pick(&mut next);
+            if next() < 0.5 {
+                let anchor = Anchor::Body(pick(&mut next));
+                constraints.relations.push(Relation::Near {
+                    part,
+                    anchor,
+                    max: 1.0,
+                });
+            } else {
+                let anchors = (0..1 + (next() * 30.0) as usize)
+                    .map(|_| Anchor::Point(pick(&mut next), [0.0, 0.0]))
+                    .collect();
+                constraints.relations.push(Relation::NearAny {
+                    part,
+                    anchors,
+                    max: 1.0,
+                });
+            }
+        }
+        constraints.link_pairs();
+        assert!(!constraints.linked_partners.is_empty());
+        for a in 0..parts + 2 {
+            for b in 0..parts + 2 {
+                assert_eq!(
+                    constraints.linked(a, b),
+                    constraints.linked.contains(&(a.min(b), a.max(b))),
+                    "{a} {b}"
+                );
+            }
         }
     }
 
