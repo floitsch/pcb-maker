@@ -1481,11 +1481,16 @@ pub fn keepout_warnings(
 /// A pad's box on the board, its copper layers' names and its copper's
 /// exact shape (`copper_geometry::lower_pad`; `None` where that shape
 /// cannot be read, and the box stands for it).
-type PadBox = ([f64; 4], Vec<String>, Option<pcb_router::geometry::Shape>);
+type PadBox = (
+    [f64; 4],
+    Vec<String>,
+    Option<pcb_router::geometry::Shape>,
+    Option<String>,
+);
 
 /// Pads of a footprint as boxes on the board: [x0, y0, x1, y1], the
-/// copper layers' names (`*.Cu` and `F&B.Cu` stand for both outer sides)
-/// and the copper's shape.
+/// copper layers' names (`*.Cu` and `F&B.Cu` stand for both outer sides),
+/// the copper's shape and the pad's net (its name; `None` without one).
 fn pad_boxes(footprint: &Expr) -> Result<Vec<PadBox>, String> {
     let at = form_at(footprint)?;
     let mut boxes = Vec::new();
@@ -1540,6 +1545,11 @@ fn pad_boxes(footprint: &Expr) -> Result<Vec<PadBox>, String> {
             ],
             layers,
             shape,
+            pad.child("net")
+                .and_then(|net| net.children().last())
+                .and_then(Expr::atom)
+                .filter(|name| !name.is_empty())
+                .map(str::to_string),
         ));
     }
     Ok(boxes)
@@ -1553,7 +1563,7 @@ pub(crate) fn part_box(footprint: &Expr) -> Result<Option<[f64; 4]>, String> {
     }
     Ok(pad_boxes(footprint)?
         .into_iter()
-        .map(|(bounds, _, _)| bounds)
+        .map(|(bounds, ..)| bounds)
         .reduce(|a, b| {
             [
                 a[0].min(b[0]),
@@ -1661,8 +1671,14 @@ pub(crate) fn held_parts_overlapping(
                 }
             }
             let mut layers: Vec<String> = Vec::new();
-            for (a, layers_a, shape_a) in &first.pads {
-                for (b, layers_b, shape_b) in &second.pads {
+            for (a, layers_a, shape_a, net_a) in &first.pads {
+                for (b, layers_b, shape_b, net_b) in &second.pads {
+                    // Pads of one net on each other are joined, not in
+                    // conflict: framework_mobo_lefthalf's R31 (a 0R) has
+                    // its pad 1 soldered onto J1's B5, both Net-(J1-CC2).
+                    if net_a.is_some() && net_a == net_b {
+                        continue;
+                    }
                     let shrunk =
                         |r: &[f64; 4]| [r[0] + 0.01, r[1] + 0.01, r[2] - 0.01, r[3] - 0.01];
                     // The boxes first, then the copper itself: an oval or
@@ -4173,8 +4189,8 @@ mod tests {
             format!(
                 r#"(footprint "c" (layer "{layer}.Cu") (at {x} {y}) (property "Reference" "{reference}")
                   (fp_rect (start -1 -0.5) (end 1 0.5) (layer "{layer}.CrtYd"))
-                  (pad "1" smd rect (at -0.5 0) (size 0.6 0.6) (layers "{layer}.Cu") (net 1 "A"))
-                  (pad "2" smd rect (at 0.5 0) (size 0.6 0.6) (layers "{layer}.Cu") (net 2 "B")))"#
+                  (pad "1" smd rect (at -0.5 0) (size 0.6 0.6) (layers "{layer}.Cu") (net "{reference}-A"))
+                  (pad "2" smd rect (at 0.5 0) (size 0.6 0.6) (layers "{layer}.Cu") (net "{reference}-B")))"#
             )
         };
         let board = format!(
@@ -4260,5 +4276,10 @@ mod tests {
                 "pads on *.Cu".to_string()
             )]
         );
+        // The same pads on one net: R31's pad 1 soldered onto J1's B5,
+        // as the designer drew it.
+        let joined = parse(&board(10.6).replace(r#"(net 2 "B")"#, r#"(net 1 "A")"#)).unwrap();
+        let held = held_parts(&joined, &config).unwrap();
+        assert!(held_parts_overlapping(&joined, &held).unwrap().is_empty());
     }
 }
