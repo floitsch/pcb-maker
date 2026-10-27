@@ -653,6 +653,31 @@ another part's opening (placement's: the placer keeps other parts' pads
 out of a hole's own mask margin on the far side since 2026-10-27,
 docs/placer.md), zone fill under openings.
 
+**A zone's fill under a footprint's mask graphic** (2026-10-27,
+MokyaLora in the third fresh-agent trial): one new `solder_mask_bridge`,
+"Rectangle of J6 on B.Mask" against "Track [GND] on B.Cu". J6 is a U.FL
+whose B.Mask rectangle covers its two GND pads; the router lowers it as
+an opening (footprint graphics on `*.Mask` have been openings since
+2026-10-15) of GND, the one net under it, and let a GND track under it.
+KiCad 10.0.7's check (`checkMaskAperture`) records the first copper it
+finds in an aperture and reports the opening with that item when copper
+of a second net follows: the report names the first item, not the
+other net's. With pcbnew 10.0.7 on the trial's result board: every track
+in the rectangle removed, the bridge stays (then against J6's own pad
+2); J6's signal pad set to GND, it stays; the VSYS zone on B.Cu removed,
+it goes. The placement put J6 on the designer's VSYS zone, whose fill
+KiCad lays under the opening around the GND pads: the second net is
+VSYS's fill, which no route keeps out (the router's pour model counts an
+opening's pours only where no pad is under it, and KiCad fills under
+mask graphics). The verdict's action for a bridge at a footprint's mask
+graphic now says so (move the part off the zone, keep the zone's fill out
+of the opening, or allow solder mask bridges in the footprint), where it
+said "the router keeps them". Left: the placer could keep a part's mask
+graphics off zones of nets other than its pads' (as it keeps other
+parts' pads out of them, docs/placer.md, "Mask openings block
+placement"), or the router could write a rule area without pours over
+such an opening; neither is built.
+
 A pad whose layers open the mask on a side it has no copper on (c-lydia's
 U3: `(layers "F.Mask" "B.Cu" "F.Paste")`) bridges other nets' copper under
 that opening to itself ("Front solder mask aperture ... Track on F.Cu ||

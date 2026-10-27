@@ -2249,7 +2249,7 @@ fn finding_action(
             "an item lies in a rule area (a keepout): move the keepout or the part, or let the rule area allow it"
         }
         "solder_mask_bridge" => {
-            "copper of two nets under one mask opening: the project's solder_mask_to_copper_clearance and the solder_mask_bridge severity (Board Setup) decide, and the router keeps them"
+            "copper of two nets under one mask opening (KiCad names the opening and the first copper it found there, not the other net's item): the router keeps its tracks and vias the project's solder_mask_to_copper_clearance plus the opening's expansion from an opening of another net, and out of one over two nets; the solder_mask_bridge severity (Board Setup) decides whether it counts"
         }
         "courtyards_overlap" => {
             "placer.tight_bodies false keeps bodies to their courtyards; or give the parts room"
@@ -2277,6 +2277,14 @@ fn finding_action(
         (None, Some(parts)) if ELECTRICAL_KINDS.contains(&kind) => format!(
             "every finding lies between parts kept where the input has them ({parts}), copper this run neither placed nor routed, but between two nets, so it counts and fab-kicad-board refuses it; move one of the parts in the input (or free it from fixed so the placer does), or accept it knowingly (a KiCad exclusion, fab-kicad-board --allow-findings); the designer's board as --reference makes it pre-existing where that board has it, which the release still refuses"
         ),
+        (None, _)
+            if kind == "solder_mask_bridge" && !footprint_mask_graphics(findings).is_empty() =>
+        {
+            format!(
+                "{step}; but no route keeps a zone's fill out: KiCad fills a zone of another net under a footprint's mask graphic ({}), so with the footprint's pads that is a bridge whatever is routed (MokyaLora's J6, a U.FL's B.Mask rectangle over its GND pads, placed on the VSYS zone of B.Cu: the bridge stayed with every track under it removed and went with the zone); move the part off the zone of the other net, keep that zone's fill out of the opening (a rule area without pours, or the zone's outline), or allow solder mask bridges in the footprint's properties where the opening is meant to expose both",
+                footprint_mask_graphics(findings).join(", ")
+            )
+        }
         (None, _) => step.to_string(),
     };
     if what.is_empty() {
@@ -2284,6 +2292,25 @@ fn finding_action(
     } else {
         format!("{kind} {count} ({}): {step}", what.join("; "))
     }
+}
+
+/// The footprints' mask graphics among the findings' items, as KiCad names
+/// them ("Rectangle of J6 on B.Mask"): a footprint's graphic, not a pad
+/// or the board's own graphic, on a mask layer.
+fn footprint_mask_graphics(findings: &[&DrcFinding]) -> Vec<String> {
+    let mut graphics: Vec<String> = findings
+        .iter()
+        .flat_map(|finding| finding.item_descriptions.iter())
+        .filter(|description| {
+            !description.starts_with("Pad ")
+                && (description.ends_with(" on F.Mask") || description.ends_with(" on B.Mask"))
+                && description.contains(" of ")
+        })
+        .cloned()
+        .collect();
+    graphics.sort();
+    graphics.dedup();
+    graphics
 }
 
 /// The finding types between two nets' copper that `kept_parts_of` speaks
@@ -4246,6 +4273,45 @@ mod tests {
         assert!(
             finding_action("hole_clearance", 1, &[&apart], None).contains("move the parts apart")
         );
+    }
+
+    #[test]
+    fn a_bridge_at_a_footprints_mask_graphic_names_the_zone_fill_under_it() {
+        // MokyaLora (the trial's layout): KiCad names J6's rectangle and
+        // the first copper it found under it, a GND track; the other net
+        // is the VSYS zone's fill, which no route keeps out.
+        let finding = DrcFinding {
+            kind: "solder_mask_bridge".into(),
+            description: "Rear solder mask aperture bridges items with different nets".into(),
+            nets: vec!["GND".into()],
+            item_descriptions: vec![
+                "Rectangle of J6 on B.Mask".into(),
+                "Track [GND] on B.Cu, length 0.5381 mm".into(),
+            ],
+            ..DrcFinding::default()
+        };
+        let action = finding_action("solder_mask_bridge", 1, &[&finding], None);
+        assert!(
+            action.contains("no route keeps a zone's fill out")
+                && action.contains("(Rectangle of J6 on B.Mask)")
+                && action.contains("move the part off the zone"),
+            "{action}"
+        );
+        assert!(!action.contains("the router keeps them"), "{action}");
+        // A pad's opening over a track: the router's rule, no zone note.
+        let pad = DrcFinding {
+            item_descriptions: vec![
+                "Pad 2 [VBUS] of J1 on F.Cu".into(),
+                "Track [GND] on F.Cu, length 1.0 mm".into(),
+            ],
+            ..finding.clone()
+        };
+        let action = finding_action("solder_mask_bridge", 1, &[&pad], None);
+        assert!(
+            action.contains("the router keeps its tracks and vias"),
+            "{action}"
+        );
+        assert!(!action.contains("zone's fill out"), "{action}");
     }
 
     #[test]
