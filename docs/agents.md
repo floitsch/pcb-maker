@@ -818,7 +818,10 @@ way, even with both items the input's: `shorting_items`, `clearance`,
 `hole_clearance`, `hole_to_hole`, `items_not_allowed`,
 `connection_width`, `track_width`, unconnected items and every other
 type: two fixed parts of two nets too close still fail the run and
-refuse the release (framework_mobo_lefthalf's R31 and R32 at J1). The
+refuse the release (framework_mobo_lefthalf's R31 and R32 at J1). Their
+next action says that the parts are kept where the input has them, and to
+move one in the input (or free it from `fixed`) or accept the finding
+knowingly, not "move the parts apart" (since 2026-10-27). The
 nightly of 2026-10-27 (109 layouts without a reference): 113
 `copper_edge_clearance` findings, 96 of them fixed parts' pads, 16
 Batch_1's own GND ring of `gr_line`/`gr_arc`, none a track, via or zone

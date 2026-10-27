@@ -1983,7 +1983,8 @@ fn next_actions(
                 .copied()
                 .filter(|finding| &finding.kind == kind)
                 .collect();
-            actions.push(finding_action(kind, *count, &findings));
+            let kept = kept_parts_of(&findings, facts.input.as_ref());
+            actions.push(finding_action(kind, *count, &findings, kept.as_deref()));
         }
     }
     // The board's .kicad_dru: beside the board written.
@@ -2136,7 +2137,12 @@ fn top_counts(map: &BTreeMap<String, usize>, limit: usize) -> String {
 /// One finding type's next action: what KiCad found (the rule, the nets
 /// or the items of the type's findings) and the setting or step that
 /// addresses it, where there is one.
-fn finding_action(kind: &str, count: usize, findings: &[&DrcFinding]) -> String {
+fn finding_action(
+    kind: &str,
+    count: usize,
+    findings: &[&DrcFinding],
+    kept: Option<&[String]>,
+) -> String {
     // The rule as KiCad states it: the first parenthesis of the first
     // finding's description ("Clearance violation (netclass 'Default'
     // clearance 0.2000 mm; actual 0.1500 mm)"; a layer may follow in a
@@ -2211,18 +2217,69 @@ fn finding_action(kind: &str, count: usize, findings: &[&DrcFinding]) -> String 
     // A finding between items of one footprint (a USB receptacle's pad
     // and its own locating hole) is the library's geometry: moving parts
     // does not change it.
-    let step = match own_footprints(findings) {
-        Some(references) => format!(
+    let step = match (own_footprints(findings), kept) {
+        (Some(references), _) => format!(
             "each finding lies between items of one footprint ({}): its library geometry, which no placement or route changes; the designer's board as --reference makes it pre-existing where it has the same footprint, a custom rule for the footprint (.kicad_dru) or a KiCad exclusion accepts it, and fab-kicad-board --allow-findings releases with it",
             references.join(", ")
         ),
-        None => step.to_string(),
+        // Two nets' copper of parts the run kept where the input has them
+        // (framework_mobo_lefthalf's fixed R31 and R32 under J1's pads, as
+        // the designer put them): "move the parts apart" is not the
+        // run's to do.
+        (None, Some(parts)) if ELECTRICAL_KINDS.contains(&kind) => format!(
+            "every finding lies between parts kept where the input has them ({}: fixed, or every part in route mode), copper this run neither placed nor routed, but between two nets, so it counts and fab-kicad-board refuses it; move one of the parts in the input (or free it from fixed so the placer does), or accept it knowingly (a KiCad exclusion, fab-kicad-board --allow-findings); the designer's board as --reference makes it pre-existing where that board has it, which the release still refuses",
+            parts.join(", ")
+        ),
+        (None, _) => step.to_string(),
     };
     if what.is_empty() {
         format!("{kind} {count}: {step}")
     } else {
         format!("{kind} {count} ({}): {step}", what.join("; "))
     }
+}
+
+/// The finding types between two nets' copper that `kept_parts_of` speaks
+/// of: never the input's to excuse (`INPUT_KINDS`).
+const ELECTRICAL_KINDS: [&str; 4] = [
+    "clearance",
+    "hole_clearance",
+    "hole_to_hole",
+    "shorting_items",
+];
+
+/// The parts of findings every item of which is a pad of a part the run
+/// kept where the input has it (`KiCadInputItems`), in order; `None`
+/// without the input's items, for a finding of an item of no part or of a
+/// part the run placed, or without findings.
+fn kept_parts_of(findings: &[&DrcFinding], input: Option<&KiCadInputItems>) -> Option<Vec<String>> {
+    let input = input?;
+    if findings.is_empty() {
+        return None;
+    }
+    let mut parts: Vec<String> = Vec::new();
+    for finding in findings {
+        if finding.item_descriptions.len() < 2
+            || finding.item_descriptions.len() != finding.items.len()
+        {
+            return None;
+        }
+        for (item, description) in finding.items.iter().zip(&finding.item_descriptions) {
+            let reference = named_footprint(description)?;
+            let kept = item
+                .uuid
+                .as_ref()
+                .is_some_and(|uuid| input.uuids.contains(uuid))
+                || input.kept_references.contains(reference);
+            if !kept {
+                return None;
+            }
+            if !parts.iter().any(|part| part == reference) {
+                parts.push(reference.to_string());
+            }
+        }
+    }
+    Some(parts)
 }
 
 /// The footprints of findings whose items all belong to one footprint
@@ -2720,6 +2777,50 @@ mod tests {
             errors: tally.errors,
             findings: tally.findings,
         }
+    }
+
+    #[test]
+    fn a_clearance_between_fixed_parts_is_not_the_runs_to_move() {
+        // framework_mobo_lefthalf without a reference: R31 and R32 fixed
+        // under J1's pads by the designer, 0.0867 mm against 0.1 mm.
+        let between = |r: &str, pad: &str, net: &str| {
+            json!({"type": "clearance", "severity": "error",
+                   "description": "Clearance violation (footprint J1 clearance 0.1000 mm; actual 0.0867 mm)",
+                   "items": [{"description": format!("Pad 1 [{net}] of {r} on B.Cu"), "uuid": format!("{r}-1"), "pos": {"x": 1.0, "y": 1.0}},
+                             {"description": format!("PTH pad {pad} [/TC_D+] of J1"), "uuid": pad, "pos": {"x": 1.5, "y": 1.0}}]})
+        };
+        let mut facts = routed(tally_drc(&report(vec![
+            between("R31", "B6", "Net-(J1-CC2)"),
+            between("R32", "B7", "Net-(J1-SBU2)"),
+        ])));
+        facts.command = "layout-kicad-board".into();
+        let kept = |references: &[&str]| KiCadInputItems {
+            kept_references: references.iter().map(|r| r.to_string()).collect(),
+            ..Default::default()
+        };
+        facts.input = Some(kept(&["J1", "R31", "R32"]));
+        let verdict = judge(&facts);
+        assert_eq!(verdict.new_findings_strict.get("clearance"), Some(&2));
+        let action = verdict
+            .next_actions
+            .iter()
+            .find(|action| action.starts_with("clearance 2"))
+            .unwrap();
+        assert!(
+            action.contains("kept where the input has them (R31, J1, R32: fixed")
+                && action.contains("fab-kicad-board refuses it")
+                && !action.contains("move those nets' parts apart"),
+            "{action}"
+        );
+        // R32 placed by the run: the finding is the run's to move.
+        facts.input = Some(kept(&["J1", "R31"]));
+        let verdict = judge(&facts);
+        let action = verdict
+            .next_actions
+            .iter()
+            .find(|action| action.starts_with("clearance 2"))
+            .unwrap();
+        assert!(action.contains("move those nets' parts apart"), "{action}");
     }
 
     #[test]
@@ -3779,7 +3880,7 @@ mod tests {
             ..DrcFinding::default()
         };
         assert!(
-            finding_action("connection_width", 1, &[&finding]).starts_with(
+            finding_action("connection_width", 1, &[&finding], None).starts_with(
                 "connection_width 1 (board setup constraints minimum connection width 0.1270 mm; actual 0.1137 mm): "
             )
         );
@@ -3789,7 +3890,7 @@ mod tests {
             ..DrcFinding::default()
         };
         assert!(
-            finding_action("clearance", 1, &[&finding])
+            finding_action("clearance", 1, &[&finding], None)
                 .starts_with("clearance 1 (clearance 0.1270 mm; actual 0.0000 mm): ")
         );
         // A footprint's own pad and hole (the schematic trial's USB-C
@@ -3804,7 +3905,7 @@ mod tests {
         }
         };
         let (a1, b1) = (own("A1"), own("B1"));
-        let action = finding_action("hole_clearance", 2, &[&a1, &b1]);
+        let action = finding_action("hole_clearance", 2, &[&a1, &b1], None);
         assert!(
             action.contains("between items of one footprint (J1)")
                 && action.contains("--allow-findings")
@@ -3815,7 +3916,9 @@ mod tests {
             item_descriptions: vec!["Pad 1 [GND] of J1 on F.Cu".into(), "NPTH pad of H2".into()],
             ..own("A1")
         };
-        assert!(finding_action("hole_clearance", 1, &[&apart]).contains("move the parts apart"));
+        assert!(
+            finding_action("hole_clearance", 1, &[&apart], None).contains("move the parts apart")
+        );
     }
 
     #[test]
