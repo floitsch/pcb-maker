@@ -1478,11 +1478,14 @@ pub fn keepout_warnings(
         .collect())
 }
 
-/// A pad's box on the board and its copper layers' names.
-type PadBox = ([f64; 4], Vec<String>);
+/// A pad's box on the board, its copper layers' names and its copper's
+/// exact shape (`copper_geometry::lower_pad`; `None` where that shape
+/// cannot be read, and the box stands for it).
+type PadBox = ([f64; 4], Vec<String>, Option<pcb_router::geometry::Shape>);
 
-/// Pads of a footprint as boxes on the board: [x0, y0, x1, y1] and the
-/// copper layers' names (`*.Cu` and `F&B.Cu` stand for both outer sides).
+/// Pads of a footprint as boxes on the board: [x0, y0, x1, y1], the
+/// copper layers' names (`*.Cu` and `F&B.Cu` stand for both outer sides)
+/// and the copper's shape.
 fn pad_boxes(footprint: &Expr) -> Result<Vec<PadBox>, String> {
     let at = form_at(footprint)?;
     let mut boxes = Vec::new();
@@ -1525,6 +1528,9 @@ fn pad_boxes(footprint: &Expr) -> Result<Vec<PadBox>, String> {
         if layers.is_empty() {
             continue;
         }
+        let shape = crate::copper_geometry::lower_pad(pad, at)
+            .ok()
+            .map(|lowered| lowered.geometry.router_shape());
         boxes.push((
             [
                 center[0] - half[0],
@@ -1533,6 +1539,7 @@ fn pad_boxes(footprint: &Expr) -> Result<Vec<PadBox>, String> {
                 center[1] + half[1],
             ],
             layers,
+            shape,
         ));
     }
     Ok(boxes)
@@ -1546,7 +1553,7 @@ pub(crate) fn part_box(footprint: &Expr) -> Result<Option<[f64; 4]>, String> {
     }
     Ok(pad_boxes(footprint)?
         .into_iter()
-        .map(|(bounds, _)| bounds)
+        .map(|(bounds, _, _)| bounds)
         .reduce(|a, b| {
             [
                 a[0].min(b[0]),
@@ -1563,6 +1570,35 @@ fn pad_layers_meet(a: &[String], b: &[String]) -> bool {
     let wide = |name: &str| name == "*.Cu" || name == "F&B.Cu";
     a.iter()
         .any(|x| b.iter().any(|y| x == y || wide(x) || wide(y)))
+}
+
+/// A point of a shape's copper (for a containment test).
+fn point_of(shape: &pcb_router::geometry::Shape) -> Option<[f64; 2]> {
+    use pcb_router::geometry::Shape;
+    match shape {
+        Shape::Circle { center, .. } => Some(*center),
+        Shape::Capsule { start, .. } => Some(*start),
+        Shape::Polygon { points } => points.first().copied(),
+        Shape::Union { parts } => parts.iter().find_map(point_of),
+    }
+}
+
+/// Whether two copper shapes touch or overlap: the distance between them
+/// is zero (an edge of one crosses or touches the other, or one lies
+/// inside the other).
+fn shapes_meet(a: &pcb_router::geometry::Shape, b: &pcb_router::geometry::Shape) -> bool {
+    use pcb_router::geometry::Shape;
+    match b {
+        Shape::Circle { center, radius } => a.distance_to_point(*center) <= *radius,
+        Shape::Capsule { start, end, radius } => a.distance_to_segment(*start, *end) <= *radius,
+        Shape::Polygon { points } => {
+            points.iter().enumerate().any(|(index, start)| {
+                let end = points[(index + 1) % points.len()];
+                a.distance_to_segment(*start, end) <= 0.0
+            }) || point_of(a).is_some_and(|point| b.contains(point))
+        }
+        Shape::Union { parts } => parts.iter().any(|part| shapes_meet(a, part)),
+    }
 }
 
 /// The area two boxes share.
@@ -1625,12 +1661,22 @@ pub(crate) fn held_parts_overlapping(
                 }
             }
             let mut layers: Vec<String> = Vec::new();
-            for (a, layers_a) in &first.pads {
-                for (b, layers_b) in &second.pads {
+            for (a, layers_a, shape_a) in &first.pads {
+                for (b, layers_b, shape_b) in &second.pads {
                     let shrunk =
                         |r: &[f64; 4]| [r[0] + 0.01, r[1] + 0.01, r[2] - 0.01, r[3] - 0.01];
+                    // The boxes first, then the copper itself: an oval or
+                    // round pad's box reaches past its copper
+                    // (framework_mobo_lefthalf's R31 and R32 under J1's
+                    // oval pads, 0.087 mm apart in KiCad, boxes 0.2 mm
+                    // into each other, were warned of as pads that
+                    // "cannot both be connected").
                     if box_overlap(shrunk(a), shrunk(b)) > 0.0
                         && pad_layers_meet(layers_a, layers_b)
+                        && match (shape_a, shape_b) {
+                            (Some(shape_a), Some(shape_b)) => shapes_meet(shape_a, shape_b),
+                            _ => true,
+                        }
                     {
                         let layer = layers_a
                             .iter()
@@ -4173,5 +4219,46 @@ mod tests {
         };
         let held = held_parts(&pcb, &config).unwrap();
         assert!(held_parts_overlapping(&pcb, &held).unwrap().is_empty());
+    }
+
+    #[test]
+    fn fixed_pads_whose_boxes_meet_but_not_their_copper_are_not_warned_of() {
+        // framework_mobo_lefthalf: R31's 0603 pad under J1's oval
+        // through-hole pad, 0.087 mm apart by KiCad, their boxes 0.2 mm
+        // into each other. J2 moved 0.3 mm nearer: the copper meets.
+        let board = |oval_x: f64| {
+            format!(
+                r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal)) (gr_rect (start 0 0) (end 30 20) (layer "Edge.Cuts"))
+                  (footprint "r" (layer "B.Cu") (at 10 10) (property "Reference" "R31")
+                    (pad "1" smd rect (at 0 0) (size 0.8 0.95) (layers "B.Cu") (net 1 "A")))
+                  (footprint "j" (layer "F.Cu") (at {oval_x} 10.675) (property "Reference" "J1")
+                    (pad "B6" thru_hole oval (at 0 0 90) (size 0.6 1.2) (drill oval 0.3 0.9) (layers "*.Cu") (net 2 "B"))))"#
+            )
+        };
+        let config = KiCadBoardPlacerConfig {
+            fixed: vec!["R31".to_string(), "J1".to_string()],
+            ..Default::default()
+        };
+        // The 0603 pad's corner at (10.4, 10.475); the oval (radius 0.3,
+        // its axis from x - 0.3 to x + 0.3 at y 10.675) has its box 0.05
+        // mm past the corner on both axes, its copper 0.02 mm away at
+        // x 10.95 (the end's centre at 10.65) and 0.1 mm into the pad at
+        // x 10.6.
+        let far = parse(&board(10.95)).unwrap();
+        let held = held_parts(&far, &config).unwrap();
+        assert!(
+            held_parts_overlapping(&far, &held).unwrap().is_empty(),
+            "boxes meet, copper apart"
+        );
+        let near = parse(&board(10.6)).unwrap();
+        let held = held_parts(&near, &config).unwrap();
+        assert_eq!(
+            held_parts_overlapping(&near, &held).unwrap(),
+            [(
+                "J1".to_string(),
+                "R31".to_string(),
+                "pads on *.Cu".to_string()
+            )]
+        );
     }
 }
