@@ -196,6 +196,32 @@ fn key_heap_pops_in_order() {
 }
 
 #[test]
+fn key_heap_hints_the_next_pop() {
+    // Without a push in between, the hint is the key the next pop takes
+    // (the search prefetches its node an expansion ahead).
+    let mut heap = KeyHeap::default();
+    assert_eq!(heap.next_hint(), NO_KEY);
+    let mut state = 0x243f_6a88_85a3_08d3u64;
+    for round in 0..50_000u64 {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        if round % 3 == 0 || heap.len == 0 {
+            for push in 0..(state >> 62) + 1 {
+                heap.push((state >> (8 * push)) & 0xff_ffff);
+            }
+        } else {
+            let hint = heap.next_hint();
+            assert_eq!(heap.pop(), Some(hint));
+        }
+    }
+    while heap.len != 0 {
+        let hint = heap.next_hint();
+        assert_eq!(heap.pop(), Some(hint));
+    }
+}
+
+#[test]
 fn key_heap_fills_the_root_a_pop_leaves() {
     // A search's rhythm: a pop, then a few pushes (none at times), pops
     // of an empty heap between; the root a pop leaves is filled by the
