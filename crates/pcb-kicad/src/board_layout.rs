@@ -139,6 +139,36 @@ pub struct KiCadBoardLayoutConfig {
     /// `first_unconnected_terminals` is the full layout's at the same
     /// `total_seconds`. The report says so (`stopped_after_first_route`).
     pub stop_after_first_route: bool,
+    /// What the race ranks its probes by (docs/placer.md, "The race ranks
+    /// its probes by the ripped count (2026-10-27)"): `"unfinished"` (the
+    /// nets each probe left unfinished; with `race_probe`, its standing)
+    /// or `"ripped"`: the board's open terminals once each probe's nets in
+    /// conflict lose their conflicted branches (the hard repair's rip-up
+    /// without its searches, on a copy of the probe's router: the kept
+    /// one routes on unripped), ties by the standing. Without
+    /// `race_probe` the pick then needs `RACE_RIPPED_MARGIN` over the
+    /// first-ranked placement's count. Not with `race_probe.repair`.
+    #[serde(skip_serializing_if = "KiCadRaceCount::is_default")]
+    pub race_count: KiCadRaceCount,
+}
+
+/// What the race ranks its probes by (`KiCadBoardLayoutConfig::race_count`).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum KiCadRaceCount {
+    /// The nets each probe left unfinished (with `race_probe`, its
+    /// standing).
+    #[default]
+    Unfinished,
+    /// The open terminals after the rip-up of the conflicted branches,
+    /// ties by the standing.
+    Ripped,
+}
+
+impl KiCadRaceCount {
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// The race's route probe (`KiCadBoardLayoutConfig::race_probe`).
@@ -215,39 +245,59 @@ fn race_probes_that_fit(
 /// one's) for the race to route on with it (`race_pick`).
 pub const RACE_CONFIDENT_MARGIN: f64 = 0.05;
 
+/// `RACE_CONFIDENT_MARGIN` for the ripped count (`race_count: "ripped"`:
+/// fewer open terminals after the rip-up, as a share of the first-ranked
+/// placement's). Calibrated on the coarse study's 73 placements
+/// (docs/placer.md, "The race ranks its probes by the ripped count
+/// (2026-10-27)"): of the seed pairs whose counts differ by less than
+/// 2 %, the lower count routed better in 8 and worse in 9; from 2 % to
+/// 5 % in 23 against 13, from 5 % to 10 % in 38 against 12.
+pub const RACE_RIPPED_MARGIN: f64 = 0.02;
+
 /// The race's pick without the route probe: the probes' `best` (by
-/// unfinished nets, `race`, in the ranking's order) where it leaves at
-/// least `RACE_CONFIDENT_MARGIN` fewer nets unfinished than the
-/// first-ranked placement, else the first-ranked one (the pre-route
+/// `counts`, unfinished nets or with `ripped` the open terminals after
+/// the rip-up, in the ranking's order) where its count is at least the
+/// margin (`RACE_CONFIDENT_MARGIN`, `RACE_RIPPED_MARGIN`) below the
+/// first-ranked placement's, else the first-ranked one (the pre-route
 /// ranking: the placer's key, RUDY and the crossings). Returns the
 /// chosen index, whether the probes were confident, and why.
 /// Calibrated on the 31 dense races of 2026-10-25 (docs/placer.md, "The
 /// race counts every probe it ran"): video's seed 201 (504 against 529,
 /// 4.7 %, a far worse route) reverts; 4in1's picks (33 % and 16 %) stand.
-fn race_pick(race: &[usize], best: usize, labels: &[usize]) -> (usize, bool, String) {
+fn race_pick(
+    counts: &[usize],
+    best: usize,
+    labels: &[usize],
+    ripped: bool,
+) -> (usize, bool, String) {
+    let (what, required) = if ripped {
+        ("open terminals after the rip-up", RACE_RIPPED_MARGIN)
+    } else {
+        ("nets unfinished", RACE_CONFIDENT_MARGIN)
+    };
     if best == 0 {
         return (
             0,
             true,
-            "the first-ranked placement left the fewest nets unfinished".to_string(),
+            format!("the first-ranked placement left the fewest {what}"),
         );
     }
-    let first = race[0] as f64;
+    let first = counts[0] as f64;
     let margin = if first > 0.0 {
-        (first - race[best] as f64) / first
+        (first - counts[best] as f64) / first
     } else {
         0.0
     };
-    if margin >= RACE_CONFIDENT_MARGIN {
+    if margin >= required {
         (
             best,
             true,
             format!(
-                "placement {} left {:.1} % fewer nets unfinished than the first-ranked ({} against {})",
+                "placement {} left {:.1} % fewer {what} than the first-ranked ({} against {})",
                 labels[best],
                 margin * 100.0,
-                race[best],
-                race[0]
+                counts[best],
+                counts[0]
             ),
         )
     } else {
@@ -255,12 +305,12 @@ fn race_pick(race: &[usize], best: usize, labels: &[usize]) -> (usize, bool, Str
             0,
             false,
             format!(
-                "placement {} left only {:.1} % fewer nets unfinished than the first-ranked ({} against {}, less than {:.0} %): the probes do not separate them, the first-ranked kept",
+                "placement {} left only {:.1} % fewer {what} than the first-ranked ({} against {}, less than {:.0} %): the probes do not separate them, the first-ranked kept",
                 labels[best],
                 margin * 100.0,
-                race[best],
-                race[0],
-                RACE_CONFIDENT_MARGIN * 100.0
+                counts[best],
+                counts[0],
+                required * 100.0
             ),
         )
     }
@@ -292,6 +342,24 @@ pub struct KiCadRaceProbeScore {
     pub work_seconds: f64,
     #[serde(default)]
     pub gated: bool,
+    /// With `race_count: "ripped"`: the board's open terminals once the
+    /// probe's nets in conflict lost their conflicted branches (what the
+    /// race ranked by) and how many nets were ripped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ripped_open_terminals: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ripped_nets: Option<usize>,
+}
+
+/// What the ripped count cost (`race_count: "ripped"`), summed over the
+/// probes: the wall clock of copying each probe's router and of its
+/// rip-up and count (no search: no work is charged), and the largest
+/// copy's resident growth.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct KiCadRaceRippedCost {
+    pub copy_seconds: f64,
+    pub rip_seconds: f64,
+    pub copy_mb: f64,
 }
 
 /// What the race did (the verdict's `race`): every probed placement in
@@ -321,6 +389,9 @@ pub struct KiCadRaceReport {
     pub confident: bool,
     #[serde(default)]
     pub reason: String,
+    /// With `race_count: "ripped"`: what its count cost.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ripped: Option<KiCadRaceRippedCost>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -426,6 +497,7 @@ impl Default for KiCadBoardLayoutConfig {
             final_route_from_state: false,
             race_probe: None,
             stop_after_first_route: false,
+            race_count: KiCadRaceCount::default(),
         }
     }
 }
@@ -1989,6 +2061,51 @@ pub fn layout_kicad_board(
             .map(|(_, router)| router.expansions() as f64 / core::router::expansions_per_second())
             .collect();
         work += probe_work.iter().sum::<f64>();
+        // The ripped count (`race_count: "ripped"`): each probe's router
+        // copied, the copy's nets in conflict stripped of their conflicted
+        // branches and the board's open terminals counted; the probe's
+        // own router stays as it negotiated (the kept one routes on). One
+        // copy at a time, in the ranking's order, after every probe ran:
+        // deterministic, and at most one router's memory beside them. No
+        // search runs: nothing is charged to the work clock.
+        let ripped = config.race_count == KiCadRaceCount::Ripped && !repair;
+        if config.race_count == KiCadRaceCount::Ripped && repair {
+            eprintln!(
+                "placement race: race_count \"ripped\" does not apply with race_probe.repair (each probe's count is its first route's)"
+            );
+        }
+        let mut ripped_counts: Vec<(usize, usize)> = Vec::new();
+        let mut ripped_cost = None;
+        if ripped {
+            let mut cost = KiCadRaceRippedCost {
+                copy_seconds: 0.0,
+                rip_seconds: 0.0,
+                copy_mb: 0.0,
+            };
+            for (_, router) in &probed {
+                crate::ledger::reserve_at_least(
+                    crate::board_router::resident_mb() + router_mb,
+                    "the race's ripped count",
+                );
+                let before_mb = crate::board_router::resident_mb();
+                let started = std::time::Instant::now();
+                let mut copy = router.clone();
+                cost.copy_seconds += started.elapsed().as_secs_f64();
+                cost.copy_mb = cost
+                    .copy_mb
+                    .max(crate::board_router::resident_mb() - before_mb);
+                let started = std::time::Instant::now();
+                let (nets, standing) = copy.rip_up_standing();
+                drop(copy);
+                cost.rip_seconds += started.elapsed().as_secs_f64();
+                ripped_counts.push((standing.open_terminals, nets));
+            }
+            eprintln!(
+                "placement race: the ripped count: copies {:.2} s (at most {:.0} MB), rip-ups {:.2} s",
+                cost.copy_seconds, cost.copy_mb, cost.rip_seconds
+            );
+            ripped_cost = Some(cost);
+        }
         // What the race did until 2026-10-25 (the 40 % gate, its probes
         // uncharged), for the report: whether each probe would have been
         // dropped, and the placement it would have kept.
@@ -2017,13 +2134,20 @@ pub fn layout_kicad_board(
                 conflicted: standing.conflicted,
                 work_seconds: probe_work[index],
                 gated,
+                ripped_open_terminals: ripped_counts.get(index).map(|count| count.0),
+                ripped_nets: ripped_counts.get(index).map(|count| count.1),
             });
             eprintln!(
-                "placement race: probed placement {} ({probe_seconds:.0} s): {} open terminals, {} nets unfinished, {} in conflict{}",
+                "placement race: probed placement {} ({probe_seconds:.0} s): {} open terminals, {} nets unfinished, {} in conflict{}{}",
                 labels[index],
                 standing.open_terminals,
                 standing.unfinished,
                 standing.conflicted,
+                ripped_counts
+                    .get(index)
+                    .map_or(String::new(), |(open, nets)| format!(
+                        "; {open} open terminals after ripping {nets} nets"
+                    )),
                 if gated {
                     " (the 40 % gate would have dropped it)"
                 } else {
@@ -2031,11 +2155,15 @@ pub fn layout_kicad_board(
                 }
             );
         }
-        // The probes' best: with the route probe by the standing, else by
-        // the nets left unfinished; a tie to the better-ranked placement.
+        // The probes' best: by the ripped count (ties by the standing),
+        // else with the route probe by the standing, else by the nets left
+        // unfinished; a tie to the better-ranked placement.
         let mut best = 0;
         for index in 1..race.len() {
-            let better = if race_probe.is_some() {
+            let better = if ripped {
+                (ripped_counts[index].0, standings[index])
+                    < (ripped_counts[best].0, standings[best])
+            } else if race_probe.is_some() {
                 standings[index] < standings[best]
             } else {
                 race[index] < race[best]
@@ -2050,10 +2178,17 @@ pub fn layout_kicad_board(
             (
                 best,
                 true,
-                "the route probe ranks by its standing".to_string(),
+                if ripped {
+                    "the route probe ranks by the ripped count".to_string()
+                } else {
+                    "the route probe ranks by its standing".to_string()
+                },
             )
+        } else if ripped {
+            let counts: Vec<usize> = ripped_counts.iter().map(|count| count.0).collect();
+            race_pick(&counts, best, &labels, true)
         } else {
-            race_pick(&race, best, &labels)
+            race_pick(&race, best, &labels, false)
         };
         eprintln!(
             "placement race: placement {} kept: {reason}",
@@ -2086,6 +2221,7 @@ pub fn layout_kicad_board(
             best: labels[best],
             confident,
             reason,
+            ripped: ripped_cost,
         });
         arm(&mut kept, work + pool_excess);
         // A whole first route as the probe: the kept one's is the first
@@ -3529,16 +3665,22 @@ mod budget_tests {
     fn the_race_keeps_the_first_ranked_placement_unless_a_probe_beats_it_by_the_margin() {
         let labels = [0, 1, 2];
         // video seed 201: 504 against 529 (4.7 %).
-        let (chosen, confident, _) = race_pick(&[529, 504], 1, &labels);
+        let (chosen, confident, _) = race_pick(&[529, 504], 1, &labels, false);
         assert_eq!((chosen, confident), (0, false));
         // 4in1 seed 201: 185 against 220 (16 %).
-        let (chosen, confident, _) = race_pick(&[220, 189, 185], 2, &labels);
+        let (chosen, confident, _) = race_pick(&[220, 189, 185], 2, &labels, false);
         assert_eq!((chosen, confident), (2, true));
         // The first-ranked best.
-        let (chosen, confident, _) = race_pick(&[164, 199], 0, &labels);
+        let (chosen, confident, _) = race_pick(&[164, 199], 0, &labels, false);
         assert_eq!((chosen, confident), (0, true));
         // Exactly the margin counts.
-        assert_eq!(race_pick(&[100, 95], 1, &labels).0, 1);
+        assert_eq!(race_pick(&[100, 95], 1, &labels, false).0, 1);
+        // The ripped count's margin: 2 %.
+        assert_eq!(race_pick(&[1000, 981], 1, &labels, true).0, 0);
+        assert_eq!(race_pick(&[1000, 980], 1, &labels, true).0, 1);
+        let (chosen, confident, reason) = race_pick(&[1532, 1453], 1, &labels, true);
+        assert_eq!((chosen, confident), (1, true));
+        assert!(reason.contains("after the rip-up"), "{reason}");
     }
 
     #[test]
@@ -3570,6 +3712,24 @@ mod budget_tests {
         // Off, the config serializes as before.
         let text = serde_json::to_string(&KiCadBoardLayoutConfig::default()).unwrap();
         assert!(!text.contains("race_probe"), "{text}");
+        assert!(!text.contains("race_count"), "{text}");
+    }
+
+    #[test]
+    fn the_race_counts_unfinished_nets_unless_the_ripped_count_is_named() {
+        let config: KiCadBoardLayoutConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.race_count, KiCadRaceCount::Unfinished);
+        let config: KiCadBoardLayoutConfig =
+            serde_json::from_str(r#"{"race_count": "ripped"}"#).unwrap();
+        assert_eq!(config.race_count, KiCadRaceCount::Ripped);
+        assert!(
+            serde_json::to_string(&config)
+                .unwrap()
+                .contains(r#""race_count":"ripped""#)
+        );
+        assert!(
+            serde_json::from_str::<KiCadBoardLayoutConfig>(r#"{"race_count": "open"}"#).is_err()
+        );
     }
 
     #[test]
