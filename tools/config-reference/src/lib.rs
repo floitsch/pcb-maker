@@ -290,7 +290,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_ROUTER_DIFF_PAIRS_CROSSOVER",
         Kind::Switch,
-        "differential pairs: `1` gives a crossed link end a crossover in its lead (one net dives under the other, a via each side), with the links' hairpins removed and the kept links' via holes kept clear in the fallback (default off: more links coupled, more errors on the rule boards; docs/router.md, \"Polarity\").",
+        "differential pairs: `1` gives a crossed link end a crossover in its lead (one net dives under the other, a via each side), with the links' hairpins removed and the kept links' via holes kept clear in the fallback (default off: more links coupled, more errors on the rule boards; docs/router.md, \"Polarity\"); since 2026-10-27 the crossover keeps room beside the neighbouring pairs' launches and a link's vias spread where they crowd the other net, measured again and still off (ducktop2's io boards worse at 30 s; \"The safe crossover\").",
     ),
     (
         "PCB_ROUTER_DIFF_PAIRS_SKEW",
