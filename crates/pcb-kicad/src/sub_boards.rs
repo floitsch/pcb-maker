@@ -342,9 +342,10 @@ impl Pieces {
         (self.labels[cell] != NONE).then_some(self.labels[cell] as usize)
     }
 
-    /// The piece `point` lies on or, off the board, the nearest piece
-    /// within `reach` mm (a zone's corner beyond the edge, as KiCad places
-    /// a zone's unconnected item); None on a tab or a neck.
+    /// The piece `point` lies on or, off the board, the piece whose box is
+    /// nearest within `reach` mm and half a millimetre nearer than any
+    /// other's (a zone's corner beyond the edge, where KiCad places a
+    /// zone's unconnected item); None on a tab.
     pub(crate) fn piece_near(&self, point: [f64; 2], reach: f64) -> Option<usize> {
         if let Some(piece) = self.piece_at(point) {
             return Some(piece);
@@ -352,24 +353,27 @@ impl Pieces {
         if self.between(point) {
             return None;
         }
-        let steps = (reach / self.cell).ceil() as i64;
-        let mut best: Option<(f64, usize)> = None;
-        for dy in -steps..=steps {
-            for dx in -steps..=steps {
-                let at = [
-                    point[0] + dx as f64 * self.cell,
-                    point[1] + dy as f64 * self.cell,
-                ];
-                let distance = ((dx * dx + dy * dy) as f64).sqrt() * self.cell;
-                if distance > reach || best.is_some_and(|(d, _)| d <= distance) {
-                    continue;
-                }
-                if let Some(piece) = self.piece_at(at) {
-                    best = Some((distance, piece));
-                }
+        // The nearest piece's box, where no other's is about as near.
+        let mut distances: Vec<(f64, usize)> = self
+            .boxes
+            .iter()
+            .enumerate()
+            .map(|(piece, b)| {
+                let dx = (b[0] - point[0]).max(point[0] - b[2]).max(0.0);
+                let dy = (b[1] - point[1]).max(point[1] - b[3]).max(0.0);
+                ((dx * dx + dy * dy).sqrt(), piece)
+            })
+            .collect();
+        distances.sort_by(|a, b| a.0.total_cmp(&b.0));
+        match distances.as_slice() {
+            [(nearest, piece), rest @ ..]
+                if *nearest <= reach
+                    && rest.first().is_none_or(|(next, _)| next - nearest > 0.5) =>
+            {
+                Some(*piece)
             }
+            _ => None,
         }
-        best.map(|(_, piece)| piece)
     }
 
     /// Whether `point` lies on the board but on no piece (a tab).
@@ -865,9 +869,9 @@ pub(crate) fn board_split_nets(pcb: &Expr, pieces: &Pieces) -> BTreeMap<String, 
 
 /// How far beyond the board an unconnected item's place may lie and still
 /// count on the nearest piece (mm): KiCad places a zone's item at a corner
-/// of its outline, which designers draw past the edge (5 mm on the 4in1
-/// panel).
-const ZONE_REACH_MM: f64 = 10.0;
+/// of its outline, which designers draw past the edge (up to 9 mm on the
+/// 4in1 panel).
+const ZONE_REACH_MM: f64 = 25.0;
 
 /// A net's name as KiCad's reports write it: the board file escapes `/`
 /// as `{slash}` and so on (KiCad's EscapeString), the DRC report does not.
