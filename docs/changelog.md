@@ -11,6 +11,94 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-27 (koeg's short and MokyaLora's clearances: a plated pad on every layer; area rules)
+
+Branch koeg-regression, binary build/bin/pcb-maker-koeg1-a (off side
+x1863, main 60395783). Two boards of the nightly of 2026-10-27 with new
+strict findings (the sweep's rows, judged against the designer's board).
+
+**koeg** (hackclub__OnBoard__koeg-board-pcb; x1832 11 open and no new
+finding, x1833 and every snapshot since 15 open, clearance 2,
+shorting_items 1). KiCad's items: J5.3 (/right/SWDIO, a 1 mm SWD header,
+0.85 mm pad, 0.5 mm drill) against an /right/XC1 track on In2.Cu whose
+edge is 0.365 mm from the pad's centre (shorting_items, and a clearance
+0.0654 mm from another XC1 segment) and a /right/DEC3 track on In2.Cu
+0.01 mm from the ring (clearance 0.09). The pad's layers are `("*.Mask"
+"F.Cu" "B.Cu" "In1.Cu")` (35 pads of the board so); the lowering took
+that list, so on In2.Cu the router saw only the hole and kept its hole
+clearance (0.25 + 0.1 mm from the centre: the XC1 track at 0.465 was
+legal to it). KiCad 10.0.7 puts a plated through-hole pad on every
+copper layer whatever it lists (pcbnew: `("*.Mask" "F.Cu" "B.Cu"
+"In1.Cu")`, `("F.Cu" "*.Mask")` and `("In1.Cu")` all load on the four
+layers, flashed; kicad-cli on a test board joins a B.Cu track to a pad
+that lists F.Cu alone). The fix (lower.rs, `LayerTable::pad_mask`, also
+the pour plan's region pads): a `thru_hole` pad is copper on every layer;
+SMD pads keep their list (docs/router.md, "Dimensions, text boxes,
+cached copper texts and padstacks"). Of the sweep's and the expansion
+tier's task boards only koeg (and eternal-keypad's two unnetted mounting
+pads listing one side) have such pads.
+
+What x1833 did: nothing in its code writes the copper (no escape stub
+or pour there; XC1 is a crystal net routed by the search). The exact
+escape stubs changed the race's 75 s probes (unfinished nets of
+placements 0, 6, 2: x1832 108, 109, 106, not confident, placement 0
+kept; x1833 109, 118, 102, confident, placement 2 kept), and placement 2
+put J5 where the route crosses it on In2.Cu. The +4 open are the
+placement's (route mode, x1863, the same budget: x1832's placement 12
+open, x1833's 19; neither route has the short), the race's choice, not
+a routing loss.
+
+**MokyaLora** (tengigabytes__MokyaLora__MokyaLora; 0 open, clearance 4).
+KiCad's items: rule `TFT_ZONE_2W_Clearance` (0.25 mm; actual 0.1301 mm),
+four pairs of /KeyBoard/KEY_R5 and Net-(U2C-GPIO11) tracks on In3.Cu.
+The rule's condition `A.Type == 'Track' && B.Type == 'Track' &&
+A.intersectsArea('TFT_ZONE') && B.intersectsArea('TFT_ZONE')` names a
+rule area on In3.Cu; area tests were unknown and the rule was not
+lowered (`unmodelled`). KiCad holds an area test only on the area's
+layers (the result board inside TFT_ZONE's outline: 226 track pairs
+under 0.25 mm on B.Cu, 38 on F.Cu, 3 on In1.Cu, none flagged; In3.Cu's
+flagged). The fix (project_rules/dru.rs, `resolve_areas`): an area test
+is false on layers no zone or rule area of that name (or uuid) has, and
+where none has it; on the areas' layers it is unknown; a clearance
+unknown only by area tests is kept wherever it may hold, as a pair rule
+on the area's layers (here 0.25 mm track to track on all of In3.Cu,
+`approximated`). The board's other area rule (`Shrink_Clearance_In_MCU`,
+0.085 mm) stays `no_effect`. Only MokyaLora's rules among the task
+boards' change (anthracite's area rule is a footprint disallow).
+
+**Measured** (layout, tasks v7, the sweep's budget, placer seed 1,
+2 x 2; route mode on the given placement; open / strict findings /
+strict pass / vias / length / work):
+
+| Board | x1863 | koeg1-a |
+| --- | --- | --- |
+| koeg, layout | 15 / clearance 2, shorting_items 1 / no / 419 / 7938.5 mm / 1116.9 s | 12 / none / no / 508 / 8324.5 mm / 1362.0 s |
+| koeg, route mode on x1833's placement | 19 / none / no / 402 | 18 / none / no / 397 |
+| koeg, route mode on x1832's placement | 12 / none / no / 402 | |
+| MokyaLora, layout | 0 / clearance 4 / no / 327 / 7196.1 mm / 1224.2 s | **0 / none / pass** / 349 / 7322.1 mm / 1239.6 s |
+| MokyaLora, route mode on the nightly's placement | 0 / clearance 4 / no / 327 | **0 / none / pass** / 349 |
+| eternal-keypad, short tier (x1863: build/edge1/short-x1863) | 0 / none / pass / 31 | 0 / none / pass / 30 |
+
+x1863 reproduces the nightly's rows of both boards (the same counts,
+vias and length). koeg's layout with the fix keeps a third placement
+(the race's probes: 114, 108, 112 unfinished; placement 6). The board
+of the fix holds no via in a pad (score-kicad-board).
+
+Identity (no other board of the sets has such a pad or an area rule):
+the expansion tier (route mode, 8 x 1, 30 s; build/koeg1/exp-*) 46 of
+46 result boards byte for byte, 558 unconnected, 24 strict passes, 4256
+vias both ways; the eleven dense boards (layout, placer seed 1, 3 x 2;
+build/koeg1/dense-s1-*) 11 of 11 byte for byte, 809 unconnected, 1
+strict pass, 9148 vias both ways.
+
+Unit tests: `a_plated_through_hole_pad_is_copper_on_every_layer_whatever_it_lists`
+(board_router/tests.rs: J5's three layer lists, obstacles and terminals on
+every layer, an SMD pad on its own), `a_clearance_inside_a_rule_area_holds_on_the_areas_layers`
+(dru.rs: MokyaLora's two rules, a missing area, an area beside a
+courtyard test, by uuid); `custom_rules_raise_the_router_rules_and_are_reported`
+now finds its `insideArea('ANT')` rule `no_effect` (no area ANT on the
+board).
+
 ## Committed on 2026-10-27 (verdict: the input's own findings without a reference)
 
 Branch verdict-input-findings; binaries build/bin/pcb-maker-verd1-a, -b

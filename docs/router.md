@@ -596,10 +596,22 @@ Checked with kicad-cli 10.0.7 on boards made for each (the unit tests in
   every layer, so a track on another layer over one was kept off it and
   `copper_components` could join through it. The router's own vias are
   through vias.
-- **A plated hole that lists no copper layer** (`(layers "*.Mask")`, a
-  DevKitC's mounting pins) is copper on every layer, as KiCad shorts it on
-  F.Cu, an inner layer and B.Cu; a pad listing some copper layers is
-  copper only on those.
+- **A plated through-hole pad is copper on every layer, whatever its
+  `layers` list names** (`LayerTable::pad_mask`, 2026-10-27). One that
+  lists no copper layer (`(layers "*.Mask")`, a DevKitC's mounting pins)
+  KiCad shorts on F.Cu, an inner layer and B.Cu; until 2026-10-27 a pad
+  listing some copper layers was copper only on those, and that was
+  wrong: pcbnew 10.0.7 loads `("*.Mask" "F.Cu" "B.Cu" "In1.Cu")`,
+  `("F.Cu" "*.Mask")` and `("In1.Cu")` alike on all four layers of a
+  four-layer board, flashed, and kicad-cli's DRC measures tracks against
+  the ring there. koeg's 1 mm SWD header J5 (35 such pads on the board)
+  had an /right/XC1 track on In2.Cu through J5.3's ring, 0.365 mm from
+  its centre (a shorting_items with /right/SWDIO; the router saw only
+  the 0.5 mm hole on In2.Cu and kept its hole clearance) and a
+  /right/DEC3 track 0.01 mm from it (clearance 0.09). An SMD pad keeps
+  its list. `remove_unused_layers` is not read: such a pad stays copper
+  on every layer to the router (KiCad leaves it off the layers where
+  nothing connects; kept the stricter way).
 - **An arc ending where it starts** is a whole circle with `mid` across
   from `start` (`outline::arc_points`: cnlohr's ring pad, a custom pad's
   arc primitive; jetson's two small rings on In4.Cu).
@@ -714,8 +726,16 @@ KiCad 10.0.7's DRC reads it:
   `NetName`, `Net` (also `A.Net == B.Net`), `Layer`, `Pad_Type`,
   `Via_Type`, `isPlated()`, `hasNetclass()`, `hasExactNetclass()`,
   `existsOnLayer()`, the blind/buried/micro via tests (false: through
-  vias only). Anything else (areas, courtyards, references, sizes,
-  component classes, diff pairs) is unknown; a rule whose result depends
+  vias only). Area tests (`intersectsArea()`, `insideArea()`,
+  `enclosedByArea()`, by an area's name or uuid; since 2026-10-27) are
+  false on layers the named zones and rule areas (the footprints' too)
+  do not have, and where no area has the name; on the areas' layers
+  they are unknown (where the item lies). A clearance whose condition is
+  unknown only by such tests is kept wherever it may hold: on the pairs
+  of nets, the kinds and the areas' layers it can match, over the whole
+  layer (`approximated`, "where a rule area may hold"). Anything else
+  (courtyards, references, sizes, component classes, diff pairs, and an
+  area test beside one of those) is unknown; a rule whose result depends
   on it is not lowered. Nets are grouped by what the condition can tell
   apart, so a rule costs the number of groups squared, not of nets.
 
