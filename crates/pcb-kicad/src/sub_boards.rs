@@ -240,7 +240,12 @@ impl Pieces {
             stack.push(start);
             while let Some(at) = stack.pop() {
                 let (row, column) = (at / columns, at % columns);
-                b = [b[0].min(column), b[1].min(row), b[2].max(column), b[3].max(row)];
+                b = [
+                    b[0].min(column),
+                    b[1].min(row),
+                    b[2].max(column),
+                    b[3].max(row),
+                ];
                 let mut neighbours = Vec::with_capacity(4);
                 if column > 0 {
                     neighbours.push(at - 1);
@@ -493,7 +498,14 @@ fn polygon_box(points: &[[f64; 2]]) -> [f64; 4] {
             f64::NEG_INFINITY,
             f64::NEG_INFINITY,
         ],
-        |b, p| [b[0].min(p[0]), b[1].min(p[1]), b[2].max(p[0]), b[3].max(p[1])],
+        |b, p| {
+            [
+                b[0].min(p[0]),
+                b[1].min(p[1]),
+                b[2].max(p[0]),
+                b[3].max(p[1]),
+            ]
+        },
     )
 }
 
@@ -672,10 +684,19 @@ pub(crate) fn split_router_nets(board: &mut core::Board, pieces: &Pieces) -> Net
         }
         for (index, place) in copper[net].iter().zip(&copper_places) {
             if let Some(piece) = place {
-                board.obstacles[*index].net = Some(id_of_piece.get(piece).copied().unwrap_or(net as core::NetId));
+                board.obstacles[*index].net = Some(
+                    id_of_piece
+                        .get(piece)
+                        .copied()
+                        .unwrap_or(net as core::NetId),
+                );
             }
         }
-        for merged in board.merged_pads.iter_mut().filter(|m| m.net as usize == net) {
+        for merged in board
+            .merged_pads
+            .iter_mut()
+            .filter(|m| m.net as usize == net)
+        {
             if let Some(&(id, index)) = moved.get(merged.host) {
                 merged.net = id;
                 merged.host = index;
@@ -684,7 +705,11 @@ pub(crate) fn split_router_nets(board: &mut core::Board, pieces: &Pieces) -> Net
                 }
             }
         }
-        for copper in board.terminal_copper.iter_mut().filter(|c| c.net as usize == net) {
+        for copper in board
+            .terminal_copper
+            .iter_mut()
+            .filter(|c| c.net as usize == net)
+        {
             if let Some(&(id, index)) = moved.get(copper.terminal) {
                 copper.net = id;
                 copper.terminal = index;
@@ -789,7 +814,11 @@ pub(crate) fn board_split_nets(pcb: &Expr, pieces: &Pieces) -> BTreeMap<String, 
         match item.head() {
             Some("footprint") => {
                 let Ok(at) = form_at(item) else { continue };
-                for pad in item.children().iter().filter(|child| child.head() == Some("pad")) {
+                for pad in item
+                    .children()
+                    .iter()
+                    .filter(|child| child.head() == Some("pad"))
+                {
                     let Some(net) = crate::kicad_nets::item_net(pad, &codes) else {
                         continue;
                     };
@@ -948,7 +977,11 @@ impl Pieces {
     ) -> Option<std::sync::Arc<Pieces>> {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        for polygon in loops.iter().chain(std::iter::once(&Vec::new())).chain(cutouts) {
+        for polygon in loops
+            .iter()
+            .chain(std::iter::once(&Vec::new()))
+            .chain(cutouts)
+        {
             polygon.len().hash(&mut hasher);
             for point in polygon {
                 point[0].to_bits().hash(&mut hasher);
@@ -1073,7 +1106,12 @@ pub(crate) fn detect_for_placer(
             .children()
             .iter()
             .filter(|item| item.head() == Some("footprint"))
-            .filter_map(|item| Some((crate::kicad_nets::footprint_uuid(item)?, form_at(item).ok()?)))
+            .filter_map(|item| {
+                Some((
+                    crate::kicad_nets::footprint_uuid(item)?,
+                    form_at(item).ok()?,
+                ))
+            })
             .collect();
         for part in 0..footprints {
             if part_piece[part].is_none()
@@ -1098,14 +1136,20 @@ pub(crate) fn detect_for_placer(
         for part in &movable {
             let at = problem.poses[*part].position;
             *seen
-                .entry(((at[0] * 100.0).round() as i64, (at[1] * 100.0).round() as i64))
+                .entry((
+                    (at[0] * 100.0).round() as i64,
+                    (at[1] * 100.0).round() as i64,
+                ))
                 .or_default() += 1;
         }
         let alone = movable
             .iter()
             .filter(|part| {
                 let at = problem.poses[**part].position;
-                seen[&((at[0] * 100.0).round() as i64, (at[1] * 100.0).round() as i64)] == 1
+                seen[&(
+                    (at[0] * 100.0).round() as i64,
+                    (at[1] * 100.0).round() as i64,
+                )] == 1
             })
             .count();
         if on_piece * 10 >= movable.len() * 9 && alone * 10 >= movable.len() * 9 {
@@ -1164,7 +1208,10 @@ pub(crate) fn detect_for_placer(
             group_pieces.entry(group).or_default().insert(piece);
         }
     }
-    let conflicts = group_pieces.values().filter(|pieces| pieces.len() > 1).count();
+    let conflicts = group_pieces
+        .values()
+        .filter(|pieces| pieces.len() > 1)
+        .count();
     let mut by_nets = false;
     for part in 0..footprints {
         if part_piece[part].is_none() && with_pins(part) {
@@ -1185,7 +1232,10 @@ pub(crate) fn detect_for_placer(
         pieces,
         part_piece,
         split,
-        from: order.into_iter().filter(|kind| from.contains(kind)).collect(),
+        from: order
+            .into_iter()
+            .filter(|kind| from.contains(kind))
+            .collect(),
         conflicts,
     }))
 }
@@ -1315,10 +1365,10 @@ pub(crate) fn apply_to_placer(
         let region = sub.pieces.boxes[piece];
         problem.constraints.regions.push((part, region));
         if !started.contains(&part) {
-            problem
-                .constraints
-                .starts
-                .push((part, [(region[0] + region[2]) / 2.0, (region[1] + region[3]) / 2.0]));
+            problem.constraints.starts.push((
+                part,
+                [(region[0] + region[2]) / 2.0, (region[1] + region[3]) / 2.0],
+            ));
         }
         applied.held += 1;
     }
@@ -1452,7 +1502,13 @@ impl KiCadSubBoardsReport {
             unassigned_parts: unassigned
                 .iter()
                 .take(20)
-                .map(|part| names.get(*part).or(references.get(*part)).cloned().unwrap_or_default())
+                .map(|part| {
+                    names
+                        .get(*part)
+                        .or(references.get(*part))
+                        .cloned()
+                        .unwrap_or_default()
+                })
                 .collect(),
             conflicts: sub.conflicts,
             held: applied.held > 0,
@@ -1533,7 +1589,9 @@ mod tests {
             }),
             ..Default::default()
         };
-        let board = crate::board_router::lower(&pcb, &config, true).unwrap().board;
+        let board = crate::board_router::lower(&pcb, &config, true)
+            .unwrap()
+            .board;
         let names: Vec<&str> = board.nets.iter().map(|net| net.name.as_str()).collect();
         assert_eq!(names.iter().filter(|name| **name == "GND").count(), 2);
         assert_eq!(names.iter().filter(|name| **name == "SIG").count(), 2);
@@ -1546,7 +1604,10 @@ mod tests {
                 .collect();
             assert_eq!(ends.len(), 1, "{}", net.name);
             for terminal in &net.terminals {
-                assert_eq!(board.obstacles[terminal.pad].net, Some(index as core::NetId));
+                assert_eq!(
+                    board.obstacles[terminal.pad].net,
+                    Some(index as core::NetId)
+                );
             }
         }
         // A track of SIG over the tab joins it: SIG stays one net.
@@ -1558,7 +1619,9 @@ mod tests {
             board_split_nets(&joined, &pieces),
             BTreeMap::from([("GND".to_string(), 2)])
         );
-        let board = crate::board_router::lower(&joined, &config, true).unwrap().board;
+        let board = crate::board_router::lower(&joined, &config, true)
+            .unwrap()
+            .board;
         assert_eq!(board.nets.iter().filter(|net| net.name == "SIG").count(), 1);
         // Switched off: one net each.
         let off = crate::board_router::KiCadBoardRouterConfig {

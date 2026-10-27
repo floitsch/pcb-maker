@@ -147,8 +147,8 @@ pub use pin_swap::{
 };
 mod shrink;
 mod sub_boards;
-pub use sub_boards::describe_sub_boards;
 pub use shrink::{KiCadShrinkReport, shrink_kicad_board};
+pub use sub_boards::describe_sub_boards;
 mod project_rules;
 mod run_diagnosis;
 pub use board_router::{

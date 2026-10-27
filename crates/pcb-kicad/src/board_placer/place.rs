@@ -204,7 +204,10 @@ pub fn place_kicad_board(
                         path.display()
                     ))
                 })?;
-                Some(crate::canonical_order::parse_board(&text).map_err(crate::verdict::input_error)?)
+                Some(
+                    crate::canonical_order::parse_board(&text)
+                        .map_err(crate::verdict::input_error)?,
+                )
             }
             None => None,
         };

@@ -1884,7 +1884,8 @@ fn lower_board(
     // A panel of different boards: a net per sub-board where no copper
     // joins them (`sub_boards::split_router_nets`).
     if config.sub_board_nets != Some(false)
-        && let Some(pieces) = crate::sub_boards::Pieces::of_loops_cached(&loops.piece_loops, &loops.cutouts)
+        && let Some(pieces) =
+            crate::sub_boards::Pieces::of_loops_cached(&loops.piece_loops, &loops.cutouts)
     {
         let split = crate::sub_boards::split_router_nets(&mut lowered.board, &pieces);
         if std::env::var_os("PCB_ROUTER_SUB_BOARD_DEBUG").is_some() {

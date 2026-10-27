@@ -438,8 +438,7 @@ const LAYOUT_USAGE: &str = "usage: pcb-maker layout-kicad-board <project-dir> <b
 /// of its default budget.
 const PLACE_WORK_SECONDS: f64 = 600.0;
 
-const PLACE_USAGE: &str =
-    "usage: pcb-maker place-kicad-board <project-dir> <board-id> <out-dir> [placer-config.json] [--reference <project-dir>]";
+const PLACE_USAGE: &str = "usage: pcb-maker place-kicad-board <project-dir> <board-id> <out-dir> [placer-config.json] [--reference <project-dir>]";
 
 fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     let command = "route-kicad-board";
