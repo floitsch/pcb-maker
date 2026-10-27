@@ -198,6 +198,36 @@ pub(crate) enum ObstacleGeometry {
     },
 }
 
+impl ObstacleGeometry {
+    /// The router's shape of this copper (the lowering's obstacles, and
+    /// score-kicad-board's vias in pads: one measure of a pad's copper).
+    pub(crate) fn router_shape(&self) -> pcb_router::geometry::Shape {
+        use pcb_router::geometry::Shape;
+        match self {
+            Self::Circle { center, radius } => Shape::Circle {
+                center: *center,
+                radius: *radius,
+            },
+            Self::Segment { start, end, radius } => Shape::Capsule {
+                start: *start,
+                end: *end,
+                radius: *radius,
+            },
+            Self::Rectangle {
+                center,
+                half_size,
+                angle_degrees,
+            } => Shape::rectangle(*center, *half_size, *angle_degrees),
+            Self::Polygon { points } => Shape::Polygon {
+                points: points.clone(),
+            },
+            Self::Union { parts } => Shape::Union {
+                parts: parts.iter().map(Self::router_shape).collect(),
+            },
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct GeometryAabb {
     pub(crate) minimum: [f64; 2],

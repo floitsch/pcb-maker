@@ -179,6 +179,11 @@ struct Pad {
     size: [f64; 2],
     corner: f64,
     angle: f64,
+    /// A small SMD pad's copper as the router lowers it (chamfered corners,
+    /// a trapezoid's slanted sides, a custom shape), for the vias in pads;
+    /// `None` for other pads and where the lowering fails (the rounded box
+    /// above stands in).
+    copper_shape: Option<pcb_router::geometry::Shape>,
     power_pin: bool,
     /// Pin function without KiCad's appended pin number (`AIN0`, `SW`).
     function: String,
@@ -386,6 +391,10 @@ fn parts_of(pcb: &Expr, names: &NetNames) -> Result<Vec<Part>, String> {
                     }
                 },
                 angle: pad_at[2],
+                copper_shape: (kind == "smd" && size[0].max(size[1]) < 2.0)
+                    .then(|| lower_pad(pad, at).ok())
+                    .flatten()
+                    .map(|lowered| lowered.geometry.router_shape()),
                 copper: pad
                     .child("layers")
                     .map(Expr::children)
@@ -940,11 +949,12 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
     };
 
     // Manufacturing: a via whose drill reaches into a small SMD pad's copper
-    // (the drill's disc against the pad's shape in its own frame, corners
-    // rounded as the pad's: a via beside a pad's corner, where the router
-    // puts a pad's own via, is not in it). An exposed pad's
-    // thermal vias are the designer's (the router's rule: docs/router.md,
-    // "Vias in pads").
+    // (the drill's disc against the pad's copper as the router lowers it:
+    // a chamfered corner cut, a trapezoid's slanted sides, a custom shape;
+    // a via beside a pad's corner, where the router puts a pad's own via,
+    // is not in it). Without that shape, the pad's box in its own frame
+    // with the pad's corners rounded. An exposed pad's thermal vias are
+    // the designer's (the router's rule: docs/router.md, "Vias in pads").
     let exposed: Vec<Vec<usize>> = parts.iter().map(exposed_pad).collect();
     let mut vias_in_pads = 0;
     for (at, drill) in &vias {
@@ -959,14 +969,23 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
                     .map(|(_, pad)| pad)
             })
             .any(|pad| {
-                let local =
-                    rotate_vector([at[0] - pad.center[0], at[1] - pad.center[1]], pad.angle);
-                let outside = [0, 1]
-                    .map(|axis| (local[axis].abs() - (pad.size[axis] / 2.0 - pad.corner)).max(0.0));
+                let distance = match &pad.copper_shape {
+                    Some(shape) => shape.distance_to_point(*at),
+                    None => {
+                        let local = rotate_vector(
+                            [at[0] - pad.center[0], at[1] - pad.center[1]],
+                            pad.angle,
+                        );
+                        let outside = [0, 1].map(|axis| {
+                            (local[axis].abs() - (pad.size[axis] / 2.0 - pad.corner)).max(0.0)
+                        });
+                        outside[0].hypot(outside[1]) - pad.corner
+                    }
+                };
                 pad.smd
                     && pad.copper
                     && pad.half[0].max(pad.half[1]) < 1.0
-                    && outside[0].hypot(outside[1]) - pad.corner < drill / 2.0
+                    && distance < drill / 2.0
             });
         vias_in_pads += inside as usize;
     }
@@ -1480,5 +1499,66 @@ mod tests {
         let report = score_kicad_board(&directory, "b");
         fs::remove_dir_all(&directory).ok();
         assert_eq!(report.unwrap().manufacturing.vias_in_pads, 1);
+    }
+
+    #[test]
+    fn a_via_in_a_chamfered_corner_or_beside_a_trapezoids_slant_is_not_in_the_pad() {
+        // The nightly of 2026-10-26: koeg's D23.4 (a rear-mount LED on
+        // B.Cu turned 180 degrees, its GND pad's corner chamfered by half
+        // its width) and bumwings' SW32.1 (a trapezoid, rect_delta 0.8)
+        // each had their own net's via in the cut-away corner, its ring
+        // clear of the copper (KiCad's own polygons: 0.3465 and 0.4337 mm
+        // from the via's centre); the rounded box counted them. A via at
+        // the LED pad's uncut corner and one in the trapezoid's wide end,
+        // outside its nominal box, are in the pads.
+        let board = |via: &str| {
+            format!(
+                r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+            (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+            (footprint "LED_6028R" (layer "B.Cu") (at 10 10 180) (property "Reference" "D23") (property "Value" "LED")
+              (pad "4" smd roundrect (at -2.725 -0.75 90) (size 0.82 1.35) (layers "B.Cu" "B.Mask" "B.Paste")
+                (roundrect_rratio 0.1) (chamfer_ratio 0.5) (chamfer bottom_left) (net 1 "GND")))
+            (footprint "hotswap" (layer "F.Cu") (at 30 10) (property "Reference" "SW32") (property "Value" "SW")
+              (pad "1" smd trapezoid (at 0 0) (size 0.6 1.4) (rect_delta 0.8 0) (layers "B.Cu" "B.Paste" "B.Mask") (net 2 "COL")))
+            {via})"#
+            )
+        };
+        let cases = [
+            // The LED pad's centre is at (12.725, 10.75); its chamfered
+            // corner points to +x +y on the board.
+            (
+                "(via (at 13.52 11.12) (size 0.6) (drill 0.3) (layers \"F.Cu\" \"B.Cu\") (net 1))",
+                0,
+            ),
+            (
+                "(via (at 13.52 10.38) (size 0.6) (drill 0.3) (layers \"F.Cu\" \"B.Cu\") (net 1))",
+                1,
+            ),
+            // The trapezoid's narrow side at x 30.3 (y 9.7 to 10.3), its
+            // wide one at x 29.7 (y 8.9 to 11.1).
+            (
+                "(via (at 30.468 9.201) (size 0.8) (drill 0.4) (layers \"F.Cu\" \"B.Cu\") (net 2))",
+                0,
+            ),
+            (
+                "(via (at 29.75 10.9) (size 0.6) (drill 0.3) (layers \"F.Cu\" \"B.Cu\") (net 2))",
+                1,
+            ),
+        ];
+        for (index, (via, expected)) in cases.into_iter().enumerate() {
+            let directory = std::env::temp_dir().join(format!(
+                "pcb-maker-vias-in-shaped-pads-{}-{index}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&directory).unwrap();
+            fs::write(directory.join("b.kicad_pcb"), board(via)).unwrap();
+            let report = score_kicad_board(&directory, "b");
+            fs::remove_dir_all(&directory).ok();
+            assert_eq!(
+                report.unwrap().manufacturing.vias_in_pads,
+                expected,
+                "{via}"
+            );
+        }
     }
 }

@@ -1829,6 +1829,84 @@ mod pour_request_tests {
     }
 
     #[test]
+    fn a_pads_own_via_keeps_its_ring_out_of_a_chamfered_or_trapezoid_pads_copper() {
+        // The two pads of the nightly of 2026-10-26 that score-kicad-board
+        // counted with a via: koeg's D23.4 (a rear-mount LED on B.Cu turned
+        // 180 degrees, a corner chamfered by half the pad's width) and
+        // bumwings' SW32.1 (a trapezoid, rect_delta 0.8). Each pad's net
+        // may put a via on a node only where the via's ring stays out of
+        // the pad's copper as KiCad draws it (`lower_pad`, the shape the
+        // score now measures too); its nodes in the chamfer's cut and
+        // beside the trapezoid's slant hold vias that the pad's rounded
+        // box would have counted.
+        let pcb = parse(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+              (footprint "LED_6028R" (layer "B.Cu") (at 10 10 180) (property "Reference" "D23")
+                (pad "4" smd roundrect (at -2.725 -0.75 90) (size 0.82 1.35) (layers "B.Cu" "B.Mask" "B.Paste")
+                  (roundrect_rratio 0.1) (chamfer_ratio 0.5) (chamfer bottom_left) (net "GND"))
+                (pad "1" smd roundrect (at 2.725 0.75 90) (size 0.82 1.35) (layers "B.Cu" "B.Mask" "B.Paste")
+                  (roundrect_rratio 0.1) (net "GND")))
+              (footprint "hotswap" (layer "F.Cu") (at 30 10 25) (property "Reference" "SW32")
+                (pad "1" smd trapezoid (at 0 0 205) (size 0.6 1.4) (rect_delta 0.8 0) (layers "B.Cu" "B.Paste" "B.Mask") (net "COL"))
+                (pad "2" smd rect (at 5 0 25) (size 1 1) (layers "B.Cu") (net "COL"))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.25,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        let grid = core::grid::Grid::choose(&board, &[0.05]);
+        let rounded_box =
+            |center: [f64; 2], size: [f64; 2], corner: f64, angle: f64, at: [f64; 2]| {
+                let local = rotate_vector([at[0] - center[0], at[1] - center[1]], angle);
+                let outside =
+                    [0, 1].map(|axis| (local[axis].abs() - (size[axis] / 2.0 - corner)).max(0.0));
+                outside[0].hypot(outside[1]) - corner
+            };
+        // The pad, its box as the score measured it before, the nodes the
+        // pad's net may hold a via on that the box counted.
+        for (label, center, size, corner, angle) in [
+            ("D23.4", [12.725, 10.75], [0.82, 1.35], 0.082, 90.0),
+            ("SW32.1", [30.0, 10.0], [0.6, 1.4], 0.0, 205.0),
+        ] {
+            let index = board
+                .no_via_pads
+                .iter()
+                .copied()
+                .find(|&index| board.obstacles[index].label == label)
+                .unwrap_or_else(|| panic!("{label} is listed"));
+            let obstacle = &board.obstacles[index];
+            let net = obstacle.net.unwrap();
+            let statics =
+                core::grid::StaticMaps::build(&board, &grid, board.nets[net as usize].class, true);
+            let (mut allowed, mut counted_before) = (0, 0);
+            for cell in 0..grid.cells() {
+                let at = grid.center_of(cell);
+                if core::geometry::distance(at, center) > 1.5 || !statics.via_allowed(cell, net) {
+                    continue;
+                }
+                allowed += 1;
+                assert!(
+                    obstacle.shape.distance_to_point(at) >= 0.3 - 1.0e-6,
+                    "{label}: a via at {at:?} reaches into the pad"
+                );
+                counted_before += (rounded_box(center, size, corner, angle, at) < 0.15) as usize;
+            }
+            assert!(
+                allowed > 0 && counted_before > 0,
+                "{label}: {allowed} {counted_before}"
+            );
+        }
+    }
+
+    #[test]
     fn a_two_sided_or_split_exposed_pad_is_one_exposed_pad() {
         // U1: Sisu's U2.11, an exposed pad drawn twice at one place (F.Cu
         // and B.Cu, 1.2 x 2 mm) with a thermal via between, six pins

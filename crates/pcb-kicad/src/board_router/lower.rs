@@ -8,28 +8,7 @@ use super::*;
 use pcb_router as core;
 
 pub(super) fn shape(geometry: &ObstacleGeometry) -> core::Shape {
-    match geometry {
-        ObstacleGeometry::Circle { center, radius } => core::Shape::Circle {
-            center: *center,
-            radius: *radius,
-        },
-        ObstacleGeometry::Segment { start, end, radius } => core::Shape::Capsule {
-            start: *start,
-            end: *end,
-            radius: *radius,
-        },
-        ObstacleGeometry::Rectangle {
-            center,
-            half_size,
-            angle_degrees,
-        } => core::Shape::rectangle(*center, *half_size, *angle_degrees),
-        ObstacleGeometry::Polygon { points } => core::Shape::Polygon {
-            points: points.clone(),
-        },
-        ObstacleGeometry::Union { parts } => core::Shape::Union {
-            parts: parts.iter().map(shape).collect(),
-        },
-    }
+    geometry.router_shape()
 }
 
 /// The board's copper layers in stack order: front, inner 1..n, back.
