@@ -1722,3 +1722,101 @@ fn pads_keep_the_hole_clearance_from_a_non_plated_hole() {
         "0.201 mm from the hole is not legal: {why:?}"
     );
 }
+
+#[test]
+fn a_holes_own_mask_margin_keeps_far_side_pads_out_of_its_opening() {
+    // vaio_re's J1, a Pi Zero socket on the front: its 2.3 mm mounting
+    // holes open the mask 1.625 mm around (`solder_mask_margin`) on both
+    // sides, and KiCad 10.0.7 bridged a back part's pads under that
+    // opening (solder_mask_bridge "NPTH pad of J1 || Pad 5 of U16").
+    let lowered = |margin: &str| {
+        let pcb = parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (setup (pad_to_mask_clearance 0))
+            (gr_rect (start 0 0) (end 60 30) (layer "Edge.Cuts"))
+            (footprint "Socket" (layer "F.Cu") (at 20 15) (attr through_hole)
+                (property "Reference" "J1")
+                (fp_rect (start -4 -4) (end 4 4) (layer "F.CrtYd"))
+                (pad "" np_thru_hole circle (at 0 0) (size 2.3 2.3) (drill 2.3) (layers "*.Cu" "*.Mask") {margin}))
+            (footprint "Reg" (layer "B.Cu") (at 50 15)
+                (property "Reference" "U1")
+                (fp_rect (start -1.6 -0.6) (end 1.6 0.6) (layer "B.CrtYd"))
+                (pad "1" smd rect (at -1 0) (size 0.6 0.6) (layers "B.Cu" "B.Mask") (net 1 "A"))
+                (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "B.Cu" "B.Mask") (net 2 "B"))))"#
+        ))
+        .unwrap();
+        lower_placement(&pcb, &KiCadBoardPlacerConfig::default()).unwrap()
+    };
+    let index = |lowered: &LoweredPlacement, name: &str| {
+        lowered
+            .problem
+            .components
+            .iter()
+            .position(|component| component.name == name)
+            .unwrap()
+    };
+    let with = lowered("(solder_mask_margin 1.625)");
+    let socket = &with.problem.components[index(&with, "J1")];
+    // The hole's copper box, and its opening less the copper clearance
+    // the far-side test adds: 1.15 + 1.625 - 0.2.
+    assert_eq!(socket.far_copper.len(), 2, "{:?}", socket.far_copper);
+    assert!((socket.far_copper[1][2] - 2.575).abs() < 1.0e-9);
+    let without = lowered("");
+    assert_eq!(
+        without.problem.components[index(&without, "J1")]
+            .far_copper
+            .len(),
+        1,
+        "no margin of its own: the copper alone"
+    );
+    let legal_at = |lowered: &LoweredPlacement, y: f64| {
+        let back = index(lowered, "U1");
+        let mut poses = lowered.problem.poses.clone();
+        poses[back].position = [20.0, y];
+        !core::legal::illegal_components(&lowered.problem, &poses).contains(&back)
+    };
+    // U1's pads 0.55 mm from the hole's copper, inside its opening.
+    assert!(!legal_at(&with, 17.0));
+    assert!(legal_at(&without, 17.0));
+    // 1.1 mm beyond the opening.
+    assert!(legal_at(&with, 19.0));
+}
+
+#[test]
+fn a_parts_copper_graphics_keep_the_edge_margin_from_a_cutout() {
+    // osprey's AE1, a PCB antenna: its meander is a B.Cu polygon beyond
+    // its pads, and the placement put it over the battery cutout's edge
+    // (copper_edge_clearance 0.0 mm against 0.25). A cutout lets bodies
+    // reach over it but keeps copper out: graphics as well as pads.
+    let pcb = parse(
+        r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+        (gr_rect (start 0 0) (end 60 30) (layer "Edge.Cuts"))
+        (gr_rect (start 30 10) (end 40 20) (layer "Edge.Cuts"))
+        (footprint "Antenna" (layer "F.Cu") (at 10 25)
+            (property "Reference" "AE1")
+            (fp_rect (start -1 -1) (end 7 1) (layer "F.CrtYd"))
+            (fp_poly (pts (xy 0.5 -0.5) (xy 6 -0.5) (xy 6 0.5) (xy 0.5 0.5)) (layer "F.Cu") (width 0) (fill solid))
+            (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net 1 "RF"))))"#,
+    )
+    .unwrap();
+    let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default()).unwrap();
+    let antenna = lowered
+        .problem
+        .components
+        .iter()
+        .position(|component| component.name == "AE1")
+        .unwrap();
+    assert_eq!(
+        lowered.problem.components[antenna].copper_graphics,
+        vec![[0.5, -0.5, 6.0, 0.5]]
+    );
+    let legal_at = |x: f64| {
+        let mut poses = lowered.problem.poses.clone();
+        poses[antenna].position = [x, 15.0];
+        !core::legal::illegal_components(&lowered.problem, &poses).contains(&antenna)
+    };
+    // The pad 5 mm before the cutout, the meander over its edge.
+    assert!(!legal_at(25.0));
+    // The meander 4 mm before it.
+    assert!(legal_at(20.0));
+}

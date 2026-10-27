@@ -115,6 +115,12 @@ pub struct Component {
     /// mouse bite's 0.5 mm holes in a 0.7 mm courtyard: OpenRX's pad came
     /// 0.19 mm to a hole where the project asks 0.2).
     pub hole_rings: Vec<[f64; 4]>,
+    /// The footprint's copper graphics (own frame, boxes with their
+    /// stroke): an antenna's meander, a logo on copper. KiCad 10.0.7's
+    /// copper_edge_clearance checks them against every edge, a cutout's
+    /// too, as it checks pads (osprey's AE1: its B.Cu polygon over the
+    /// battery cutout's edge, 0.0 mm against 0.25).
+    pub copper_graphics: Vec<[f64; 4]>,
 }
 
 /// Position of the component origin and its rotation in degrees. Following

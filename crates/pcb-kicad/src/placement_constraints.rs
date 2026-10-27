@@ -2925,6 +2925,7 @@ mod tests {
             cutout_outline: Vec::new(),
             tight_hollow: Vec::new(),
             hole_rings: Vec::new(),
+            copper_graphics: Vec::new(),
         };
         let problem = core::Problem {
             outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],

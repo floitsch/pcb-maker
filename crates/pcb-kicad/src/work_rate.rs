@@ -535,6 +535,7 @@ fn canned_placement() -> placer::Problem {
         cutout_outline: Vec::new(),
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
+        copper_graphics: Vec::new(),
     };
     let parts = 40;
     let pin = |offset: [f64; 2], net: usize| Pin { offset, net };

@@ -405,6 +405,7 @@ fn pads_keep_edge(problem: &Problem, index: usize, pose: Pose) -> bool {
     }
     turned_rects(&component.pads, pose, reach)
         .into_iter()
+        .chain(turned_rects(&component.copper_graphics, pose, reach))
         .all(|pad| inside_outline(problem, pad))
 }
 
@@ -745,8 +746,14 @@ fn copper_meets_cutout(
     let margin = problem.edge_margin;
     let outline = &problem.components[hole].cutout_outline;
     let component = &problem.components[part];
-    let pads = turned_rects(&component.pads, pose_part, margin);
+    let mut pads = turned_rects(&component.pads, pose_part, margin);
     *work += list_work(pads.len());
+    // Its copper graphics too: KiCad checks them against a cutout's edge
+    // as it checks pads (osprey's AE1 antenna).
+    if !component.copper_graphics.is_empty() {
+        pads.extend(turned_rects(&component.copper_graphics, pose_part, margin));
+        *work += list_work(component.copper_graphics.len());
+    }
     if outline.len() >= 3 {
         // The hole's own outline: its box covers much more board where
         // the hole runs diagonally. A pad outside the outline's box cannot
@@ -2818,6 +2825,7 @@ mod tests {
             cutout_outline: Vec::new(),
             tight_hollow: Vec::new(),
             hole_rings: Vec::new(),
+            copper_graphics: Vec::new(),
         }
     }
 

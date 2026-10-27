@@ -219,6 +219,14 @@ impl State<'_> {
                         for (center, half) in built(part.pad_boxes(part_pose)) {
                             total += area((center, [half[0] + margin, half[1] + margin]), hole);
                         }
+                        // Its copper graphics keep the margin as its pads do.
+                        if !part.copper_graphics.is_empty() {
+                            for (center, half) in
+                                built(part.boxes_of(&part.copper_graphics, part_pose))
+                            {
+                                total += area((center, [half[0] + margin, half[1] + margin]), hole);
+                            }
+                        }
                         // A cutout the user cut keeps bodies off too (by
                         // its box here; legality tests its outline).
                         let solid = &self.problem.constraints.solid_cutouts;

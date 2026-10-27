@@ -287,6 +287,7 @@ mod tests {
             cutout_outline: Vec::new(),
             tight_hollow: Vec::new(),
             hole_rings: Vec::new(),
+            copper_graphics: Vec::new(),
         }
     }
 

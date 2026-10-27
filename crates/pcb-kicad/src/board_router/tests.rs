@@ -2793,6 +2793,116 @@ mod lowering_gap_tests {
     }
 
     #[test]
+    fn an_inner_cutouts_edge_and_an_outline_arc_keep_the_edge_clearance() {
+        // KiCad's copper_edge_clearance measures against every edge: the
+        // outline's arcs and a cutout's (inner) edge. The lowering
+        // flattens arcs to chords within `outline::ARC_TOLERANCE` and adds
+        // that tolerance to the clearance, so copper the model passes keeps
+        // the clearance from the true arc on both sides of it: a convex
+        // corner (the chords inside the board) and a round cutout (the
+        // chords inside the hole, the arc bulging towards the copper).
+        let pcb = parse(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (gr_line (start 0 0) (end 35 0) (layer "Edge.Cuts"))
+              (gr_arc (start 35 0) (mid 38.535534 1.464466) (end 40 5) (layer "Edge.Cuts"))
+              (gr_line (start 40 5) (end 40 40) (layer "Edge.Cuts"))
+              (gr_line (start 40 40) (end 0 40) (layer "Edge.Cuts"))
+              (gr_line (start 0 40) (end 0 0) (layer "Edge.Cuts"))
+              (gr_circle (center 20 20) (end 25 20) (layer "Edge.Cuts"))
+              (footprint "c" (at 5 35) (property "Reference" "C1")
+                (pad "1" smd rect (at 0 0) (size 0.5 0.5) (layers "F.Cu") (net "A"))
+                (pad "2" smd rect (at 1 0) (size 0.5 0.5) (layers "F.Cu") (net "A"))))"#,
+        )
+        .unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(rules(0.1)),
+            edge_clearance_mm: 0.5,
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, false).unwrap().board;
+        let cutout: Vec<&core::Obstacle> = board
+            .obstacles
+            .iter()
+            .filter(|obstacle| obstacle.label == "board cutout")
+            .collect();
+        assert_eq!(cutout.len(), 1);
+        assert_eq!(cutout[0].layers, 0b11);
+        assert!(cutout[0].blocks_tracks && cutout[0].blocks_vias);
+        let net = board.nets.iter().position(|net| net.name == "A").unwrap();
+        let edge = |routes: Vec<core::NetRoute>| {
+            core::verify(&board, &routes)
+                .into_iter()
+                .filter(|violation| {
+                    violation.other == "board edge" || violation.other == "board cutout"
+                })
+                .count()
+        };
+        let segment = |start: [f64; 2], end: [f64; 2]| {
+            let mut routes = vec![core::NetRoute::default(); board.nets.len()];
+            routes[net].segments.push(core::board::Segment {
+                layer: 0,
+                start,
+                end,
+                width: 0.2,
+            });
+            routes
+        };
+        let via = |at: [f64; 2]| {
+            let mut routes = vec![core::NetRoute::default(); board.nets.len()];
+            routes[net].vias.push(core::board::Via {
+                at,
+                diameter: 0.6,
+                drill: 0.3,
+            });
+            routes
+        };
+        // Copper `gap` from the circle's top (20, 15), on the board side.
+        for (gap, findings) in [(0.48, 1), (0.52, 0)] {
+            let y = 15.0 - 0.1 - gap;
+            assert_eq!(
+                edge(segment([19.9, y], [20.1, y])),
+                findings,
+                "track {gap} mm from the cutout"
+            );
+            assert_eq!(
+                edge(via([20.0, 15.0 - 0.3 - gap])),
+                findings,
+                "via {gap} mm from the cutout"
+            );
+        }
+        // Copper `gap` inside the corner arc's middle (centre (35, 5),
+        // radius 5), half way between its chord ends or on one.
+        let inward = [
+            -std::f64::consts::FRAC_1_SQRT_2,
+            std::f64::consts::FRAC_1_SQRT_2,
+        ];
+        for angle in [-45.0f64, -30.0, -10.0] {
+            let (sin, cos) = angle.to_radians().sin_cos();
+            let on_arc = [35.0 + 5.0 * cos, 5.0 + 5.0 * sin];
+            let inward = if angle == -45.0 { inward } else { [-cos, -sin] };
+            for (gap, findings) in [(0.48, 1), (0.52, 0)] {
+                let at =
+                    |reach: f64| [on_arc[0] + inward[0] * reach, on_arc[1] + inward[1] * reach];
+                let centre = at(gap + 0.1);
+                let along = [-inward[1] * 0.05, inward[0] * 0.05];
+                assert_eq!(
+                    edge(segment(
+                        [centre[0] - along[0], centre[1] - along[1]],
+                        [centre[0] + along[0], centre[1] + along[1]],
+                    )),
+                    findings,
+                    "track {gap} mm from the arc at {angle} degrees"
+                );
+                assert_eq!(
+                    edge(via(at(gap + 0.3))),
+                    findings,
+                    "via {gap} mm from the arc at {angle} degrees"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn unplated_slots_and_margin_graphics_keep_the_edge_clearance() {
         // KiCad 10.0.7's copper_edge_clearance (checked with kicad-cli on
         // the same shapes): an NPTH slot is board edge, a round NPTH hole

@@ -1227,6 +1227,7 @@ fn make_inert(component: &mut core::Component) {
     component.courtyards.clear();
     component.tight_hollow.clear();
     component.hole_rings.clear();
+    component.copper_graphics.clear();
     component.copper_only = false;
     component.cutout_outline.clear();
     component.halo = 0.0;
@@ -1922,6 +1923,7 @@ mod tests {
                 cutout_outline: Vec::new(),
                 tight_hollow: Vec::new(),
                 hole_rings: Vec::new(),
+                copper_graphics: Vec::new(),
             },
             core::Pose {
                 position: at,

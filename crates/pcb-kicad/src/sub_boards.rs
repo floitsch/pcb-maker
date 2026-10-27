@@ -1582,6 +1582,7 @@ pub(crate) fn apply_to_placer(
             cutout_outline: Vec::new(),
             tight_hollow: Vec::new(),
             hole_rings: Vec::new(),
+            copper_graphics: Vec::new(),
         });
         problem.poses.push(pcb_placer::Pose {
             position: [(tab[0] + tab[2]) / 2.0, (tab[1] + tab[3]) / 2.0],
@@ -1801,6 +1802,7 @@ fn make_inert(component: &mut pcb_placer::Component) {
     component.courtyards.clear();
     component.tight_hollow.clear();
     component.hole_rings.clear();
+    component.copper_graphics.clear();
     component.copper_only = false;
     component.cutout_outline.clear();
     component.halo = 0.0;

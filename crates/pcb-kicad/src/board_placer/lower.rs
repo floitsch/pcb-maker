@@ -209,6 +209,7 @@ fn rule_area_obstacle(
         cutout_outline: if bodies { Vec::new() } else { points },
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
+        copper_graphics: Vec::new(),
     };
     let pose = core::Pose {
         position: [
@@ -565,6 +566,17 @@ pub(crate) fn lower_placement(
         _ => (copper_layers - 2) as f64,
     };
     let mask_growth = mask_opening_growth(pcb, config);
+    // The board's mask expansion and minimum web: a pad's mask opening on
+    // the side its part is not on keeps other parts' openings the web
+    // apart there (`far_mask_reach`).
+    let mask_setup = |key: &str| {
+        pcb.child("setup")
+            .and_then(|setup| form_f64(setup, key, 1).ok())
+            .unwrap_or(0.0)
+    };
+    let board_mask_expansion = mask_setup("pad_to_mask_clearance");
+    let mask_web = mask_setup("solder_mask_min_width").max(0.0);
+    let copper_clearance = config.copper_clearance_mm.unwrap_or(0.2);
     for footprint in pcb
         .children()
         .iter()
@@ -665,6 +677,7 @@ pub(crate) fn lower_placement(
         // The copper layer of the side the part is not on: an edge-mount
         // connector's SMD pads there occupy that side too.
         let other_copper = if back { "F.Cu" } else { "B.Cu" };
+        let other_mask = if back { "F.Mask" } else { "B.Mask" };
         for pad in footprint
             .children()
             .iter()
@@ -782,6 +795,24 @@ pub(crate) fn lower_placement(
                         far_side.push(hole_box);
                     }
                 }
+                // Its mask opening there, where it reaches past the copper
+                // clearance: other parts' pads on that side keep it the
+                // web plus their expansion away (vaio_re's J1, a Pi Zero
+                // socket on the front: its 2.3 mm mounting holes open the
+                // mask 1.625 mm around on both sides, and a TSOT-23 and an
+                // 0805 on the back under it bridged five times).
+                let reach =
+                    far_mask_reach(pad, footprint, other_mask, board_mask_expansion, mask_web)
+                        - copper_clearance;
+                if reach > keep_away + 1.0e-9 {
+                    let grow = reach - keep_away;
+                    far_copper.push([
+                        pad_box[0] - grow,
+                        pad_box[1] - grow,
+                        pad_box[2] + grow,
+                        pad_box[3] + grow,
+                    ]);
+                }
             }
             let Some(net) = node_net(pad)
                 .filter(|raw| placer_net(raw))
@@ -805,11 +836,6 @@ pub(crate) fn lower_placement(
             (core::Side::Back, core::Side::Front)
         } else {
             (core::Side::Front, core::Side::Back)
-        };
-        let other_mask = if other_copper == "F.Cu" {
-            "F.Mask"
-        } else {
-            "B.Mask"
         };
         let mut own_graphics = false;
         let mut own_graphic_boxes = Vec::new();
@@ -890,6 +916,25 @@ pub(crate) fn lower_placement(
             }
             angles
         };
+        // The footprint's copper graphics on any copper layer (KiCad 9's
+        // `(layers "B.Cu" "B.Mask")` too): copper the edge and cutouts
+        // keep their clearance from (`Component::copper_graphics`).
+        let mut copper_graphics = Vec::new();
+        for child in footprint.children() {
+            let on_copper = form_atom(child, "layer", 1)
+                .is_some_and(|layer| layer.ends_with(".Cu"))
+                || child.child("layers").is_some_and(|layers| {
+                    layers
+                        .children()
+                        .iter()
+                        .skip(1)
+                        .filter_map(Expr::atom)
+                        .any(|layer| layer.trim_matches('"').ends_with(".Cu"))
+                });
+            if on_copper && let Some(graphic) = graphic_box(child)? {
+                copper_graphics.push(graphic);
+            }
+        }
         // How far the copper stays inside the body: the body may come that
         // much closer to the board edge.
         let edge_inset = if own_pads.is_empty() {
@@ -1073,6 +1118,7 @@ pub(crate) fn lower_placement(
             cutout_outline: Vec::new(),
             tight_hollow: Vec::new(),
             hole_rings: hole_rings.clone(),
+            copper_graphics,
         });
         poses.push(core::Pose {
             position: [at[0], at[1]],
@@ -1197,6 +1243,7 @@ pub(crate) fn lower_placement(
             cutout_outline: Vec::new(),
             tight_hollow: Vec::new(),
             hole_rings: Vec::new(),
+            copper_graphics: Vec::new(),
         });
         poses.push(core::Pose {
             position: [
@@ -1275,6 +1322,7 @@ pub(crate) fn lower_placement(
             cutout_outline: cutout.clone(),
             tight_hollow: Vec::new(),
             hole_rings: Vec::new(),
+            copper_graphics: Vec::new(),
         });
         poses.push(core::Pose {
             position: [
@@ -1621,4 +1669,41 @@ pub(crate) fn lower_placement(
         attached_marks: attached,
         attached_report,
     })
+}
+
+/// How far a pad's mask opening on the side `mask` (the side its part is
+/// not on) keeps other copper's openings there, from the pad's copper:
+/// its own expansion (its `solder_mask_margin`, else its footprint's)
+/// plus the other opening's (the board's `pad_to_mask_clearance`) plus
+/// the minimum web (KiCad 10.0.7's solder_mask_bridge: two openings
+/// closer than the web bridge their items). Zero for a pad that does not
+/// open the mask there, and for one without a margin of its own: the
+/// board's expansion and web alone (`pad_mask_gap`, which parts on one
+/// side keep) brought no far-side bridge in the 2026-10-27 sweep, and
+/// would move every through-hole part on 20-odd boards.
+pub(super) fn far_mask_reach(
+    pad: &Expr,
+    footprint: &Expr,
+    mask: &str,
+    board_expansion: f64,
+    web: f64,
+) -> f64 {
+    let opens = pad.child("layers").is_some_and(|layers| {
+        layers
+            .children()
+            .iter()
+            .skip(1)
+            .filter_map(Expr::atom)
+            .any(|layer| layer == mask || layer == "*.Mask" || layer == "F&B.Mask")
+    });
+    if !opens {
+        return 0.0;
+    }
+    let Some(expansion) = form_f64(pad, "solder_mask_margin", 1)
+        .ok()
+        .or_else(|| form_f64(footprint, "solder_mask_margin", 1).ok())
+    else {
+        return 0.0;
+    };
+    (expansion + board_expansion + web).max(0.0)
 }
