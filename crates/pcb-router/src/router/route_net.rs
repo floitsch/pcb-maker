@@ -888,7 +888,7 @@ impl Router {
                 .get(&(first as u32))
                 .copied()
                 .unwrap_or(NO_TERMINAL);
-            let (reached, end_terminal) = if scratch.nodes[last].target_mark == scratch.generation {
+            let (reached, end_terminal) = if scratch.nodes[last].is_target(scratch.generation) {
                 let element = scratch.targets[&(last as u32)] as usize;
                 (
                     element,

@@ -240,7 +240,7 @@ impl Router {
                     let cell = y * nx + x;
                     let tile = rows[y] as usize * frame.tiles_x + columns[x] as usize;
                     for layer in 0..layers {
-                        if scratch.nodes[layer * cells + cell].closed == generation {
+                        if scratch.nodes[layer * cells + cell].closed(generation) {
                             reached[layer * tiles + tile] = true;
                         }
                     }

@@ -611,6 +611,62 @@ impl Stamped {
     fn contains(&self, pair: (u32, u32)) -> bool {
         self.iter().any(|stamp| stamp == pair)
     }
+
+    /// The (map, cell) pairs in order, each with the pair `AHEAD` entries
+    /// on (None within the last `AHEAD`), for a pass that prefetches what
+    /// it will read: the list decoded once, through a ring of the pairs
+    /// ahead (until 2026-10-27 a second iterator decoded it again `AHEAD`
+    /// entries on: the restamp's passes decoded every list twice; the
+    /// third router round, docs/profiling.md).
+    #[inline(always)]
+    fn iter_ahead<const AHEAD: usize>(&self) -> StampsAhead<'_, AHEAD> {
+        let mut iter = self.iter();
+        let mut ring = [(0, 0); AHEAD];
+        let mut left = 0;
+        for slot in &mut ring {
+            match iter.next() {
+                Some(pair) => {
+                    *slot = pair;
+                    left += 1;
+                }
+                None => break,
+            }
+        }
+        StampsAhead {
+            iter,
+            ring,
+            index: 0,
+            left,
+        }
+    }
+}
+
+/// `Stamped::iter_ahead`.
+struct StampsAhead<'a, const AHEAD: usize> {
+    iter: StampIter<'a>,
+    /// The next `left` pairs, from `index` on (cyclically).
+    ring: [(u32, u32); AHEAD],
+    index: usize,
+    left: usize,
+}
+
+impl<const AHEAD: usize> Iterator for StampsAhead<'_, AHEAD> {
+    type Item = ((u32, u32), Option<(u32, u32)>);
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.left == 0 {
+            return None;
+        }
+        let pair = self.ring[self.index];
+        let ahead = self.iter.next();
+        match ahead {
+            Some(next) => self.ring[self.index] = next,
+            None => self.left -= 1,
+        }
+        self.index = (self.index + 1) % AHEAD;
+        Some((pair, ahead))
+    }
 }
 
 /// The stamps of a `Stamped` in order.
@@ -812,8 +868,6 @@ impl Scratch {
         if self.generation == u16::MAX {
             for node in &mut self.nodes {
                 node.seen = 0;
-                node.closed = 0;
-                node.target_mark = 0;
             }
             self.own_via_near.fill(0);
             self.generation = 0;
@@ -953,22 +1007,67 @@ const VIA_COVER_MIXED: u32 = u32::MAX;
 #[derive(Clone, Copy, Default)]
 struct SearchNode {
     cost: f32,
-    /// Search generation marks: 16 bits (a thread's scratch is the biggest
-    /// part of a large board's footprint), cleared when the counter wraps.
+    /// Where the node is in the search (with `seen` of the search's
+    /// generation; else nowhere): its key's slot in the open list
+    /// (`SearchHeap`, which keeps it), `SLOT_CLOSED` once expanded, or
+    /// `SLOT_UNQUEUED` for a target not reached yet. The slot lets a better
+    /// key for a queued node move its entry instead of queueing another
+    /// (since 2026-10-27: 39 to 41 % of the pops were such stale entries;
+    /// the third router round, docs/profiling.md); it took the closed mark
+    /// and the target mark's bytes, so a node stays 12 bytes.
+    slot: u32,
+    /// The search generation that last reached the node: 16 bits (a
+    /// thread's scratch is the biggest part of a large board's footprint),
+    /// cleared when the counter wraps.
     seen: u16,
-    closed: u16,
-    target_mark: u16,
     parent: u8,
-    /// Steps along the path from the last node arrived at through a via
-    /// or from a source (0 there; at most 255), set with `parent`: the hop
-    /// test (`hops_from_a_via`) walks back only where a via can lie within
-    /// its reach (the byte the struct's padding had; since 2026-10-25,
-    /// docs/profiling.md).
+    /// Bits 0 to 6: steps along the path from the last node arrived at
+    /// through a via or from a source (0 there; at most 127), set with
+    /// `parent`: the hop test (`hops_from_a_via`) walks back only where a
+    /// via can lie within its reach (since 2026-10-25, docs/profiling.md;
+    /// a count that stops at 127 is still a lower bound: beyond it the
+    /// walk answers). Bit 7 (`TARGET_MARK`): the node is a target of the
+    /// search (with `seen`).
     since_via: u8,
 }
 
-// `since_via` took the padding: a node stays 12 bytes (a thread's scratch
-// is the biggest part of a large board's footprint).
+/// `SearchNode::slot` of an expanded node.
+const SLOT_CLOSED: u32 = u32::MAX;
+/// `SearchNode::slot` of a target the search has not reached yet.
+const SLOT_UNQUEUED: u32 = u32::MAX - 1;
+/// `SearchNode::since_via`'s bit marking a target.
+const TARGET_MARK: u8 = 0x80;
+/// `SearchNode::since_via`'s step count.
+const SINCE_VIA_STEPS: u8 = 0x7f;
+
+impl SearchNode {
+    /// Whether the search of `generation` expanded the node.
+    #[inline(always)]
+    fn closed(&self, generation: u16) -> bool {
+        self.seen == generation && self.slot == SLOT_CLOSED
+    }
+
+    /// Whether the node is a target of the search of `generation`.
+    #[inline(always)]
+    fn is_target(&self, generation: u16) -> bool {
+        self.target_bit(generation) != 0
+    }
+
+    /// `TARGET_MARK` where the node is a target of the search of
+    /// `generation`, else 0 (to keep while its other fields change).
+    #[inline(always)]
+    fn target_bit(&self, generation: u16) -> u8 {
+        if self.seen == generation {
+            self.since_via & TARGET_MARK
+        } else {
+            0
+        }
+    }
+}
+
+// The slot took the closed and target marks' bytes: a node stays 12 bytes
+// (a thread's scratch is the biggest part of a large board's footprint;
+// the `memory:` line, which sizes the ladder's routers, counts 12).
 const _: () = assert!(std::mem::size_of::<SearchNode>() == 12);
 
 /// Per-thread search state: A* arrays, generation marks and counters.
@@ -985,7 +1084,7 @@ pub struct Scratch {
     tree: StateMap,
     own_via_near: Vec<u16>,
     /// The search's open list, kept for its capacity.
-    heap: KeyHeap,
+    heap: SearchHeap,
     /// Bits per (class or neck class, map kind, cell): set for the routed
     /// net's own stamps while its search is to ignore them (see `mask_own`;
     /// a bit per entry, cleared again from `own_set`, so a thread's mask
@@ -1111,7 +1210,7 @@ impl Scratch {
             let arrays = SearchArrays::take(states, cells).unwrap_or_else(|| SearchArrays {
                 nodes: vec![SearchNode::default(); states],
                 own_via_near: vec![0; cells],
-                heap: KeyHeap::default(),
+                heap: SearchHeap::default(),
                 generation: 0,
             });
             ARRAYS_IN_USE.fetch_add(arrays.bytes(), std::sync::atomic::Ordering::Relaxed);
@@ -1157,7 +1256,7 @@ impl Scratch {
 struct SearchArrays {
     nodes: Vec<SearchNode>,
     own_via_near: Vec<u16>,
-    heap: KeyHeap,
+    heap: SearchHeap,
     generation: u16,
 }
 

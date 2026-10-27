@@ -503,12 +503,12 @@ impl Router {
         // its mark goes so that the new list passes it over; the others
         // go (the count down, the tile's claim with the last of a cell).
         // The count a stamp AHEAD entries on is asked for early: the maps
-        // are larger than the core's cache and a list visits dozens of them.
+        // are larger than the core's cache and a list visits dozens of them
+        // (each list decoded once for both: `iter_ahead`).
         let nxu = self.grid.nx;
         const AHEAD: usize = 32;
-        let mut ahead = old.iter().skip(AHEAD);
-        for (map, cell) in old.iter() {
-            if let Some((map, cell)) = ahead.next() {
+        for ((map, cell), ahead) in old.iter_ahead::<AHEAD>() {
+            if let Some((map, cell)) = ahead {
                 self.occupancy.prefetch(map as usize, cell as usize);
             }
             let (map, cell) = (map as usize, cell as usize);
@@ -523,9 +523,8 @@ impl Router {
             }
         }
         // A new stamp still marked was not stamped before: it counts.
-        let mut ahead = stamped.iter().skip(AHEAD);
-        for (map, cell) in stamped.iter() {
-            if let Some((map, cell)) = ahead.next() {
+        for ((map, cell), ahead) in stamped.iter_ahead::<AHEAD>() {
+            if let Some((map, cell)) = ahead {
                 self.occupancy.prefetch(map as usize, cell as usize);
             }
             let (map, cell) = (map as usize, cell as usize);

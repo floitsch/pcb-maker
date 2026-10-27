@@ -158,6 +158,36 @@ fn stamps_keep_every_pair_in_order_as_differences() {
 }
 
 #[test]
+fn stamps_ahead_pair_each_stamp_with_the_one_ahead() {
+    // `iter_ahead` gives what the restamp's two iterators gave: every
+    // pair in order, and beside it the pair AHEAD entries on (None for the
+    // last AHEAD).
+    let mut state = 0x6a09_e667_f3bc_c908u64;
+    for length in [0, 1, 2, 7, 8, 9, 31, 32, 33, 64, 1000] {
+        let mut stamped = Stamped::default();
+        for _ in 0..length {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            stamped.push((state >> 40) as u32 % 50, state as u32 % (1 << 22));
+        }
+        let pairs: Vec<_> = stamped.iter().collect();
+        let expected: Vec<_> = pairs
+            .iter()
+            .enumerate()
+            .map(|(index, pair)| (*pair, pairs.get(index + 8).copied()))
+            .collect();
+        assert_eq!(stamped.iter_ahead::<8>().collect::<Vec<_>>(), expected);
+        let expected: Vec<_> = pairs
+            .iter()
+            .enumerate()
+            .map(|(index, pair)| (*pair, pairs.get(index + 32).copied()))
+            .collect();
+        assert_eq!(stamped.iter_ahead::<32>().collect::<Vec<_>>(), expected);
+    }
+}
+
+#[test]
 fn a_tiny_budget_has_the_guard_floor_before_its_wall_guard() {
     // Batch_1 in route mode: a budget of 0.2 s used to be cut by the
     // guard at 0.8 s, inside its first pour analysis.
@@ -196,32 +226,6 @@ fn key_heap_pops_in_order() {
 }
 
 #[test]
-fn key_heap_hints_the_next_pop() {
-    // Without a push in between, the hint is the key the next pop takes
-    // (the search prefetches its node an expansion ahead).
-    let mut heap = KeyHeap::default();
-    assert_eq!(heap.next_hint(), NO_KEY);
-    let mut state = 0x243f_6a88_85a3_08d3u64;
-    for round in 0..50_000u64 {
-        state = state
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        if round % 3 == 0 || heap.len == 0 {
-            for push in 0..(state >> 62) + 1 {
-                heap.push((state >> (8 * push)) & 0xff_ffff);
-            }
-        } else {
-            let hint = heap.next_hint();
-            assert_eq!(heap.pop(), Some(hint));
-        }
-    }
-    while heap.len != 0 {
-        let hint = heap.next_hint();
-        assert_eq!(heap.pop(), Some(hint));
-    }
-}
-
-#[test]
 fn key_heap_fills_the_root_a_pop_leaves() {
     // A search's rhythm: a pop, then a few pushes (none at times), pops
     // of an empty heap between; the root a pop leaves is filled by the
@@ -253,6 +257,148 @@ fn key_heap_fills_the_root_a_pop_leaves() {
     assert_eq!(heap.pop(), None);
 }
 
+/// Checks that every queued state's node holds its key's slot.
+fn check_slots(heap: &SearchHeap, nodes: &[SearchNode], queued: &[Option<u64>]) {
+    for (state, key) in queued.iter().enumerate() {
+        if let Some(key) = key {
+            let slot = nodes[state].slot as usize;
+            assert_eq!(heap.key_at(slot), *key, "state {state}");
+        }
+    }
+}
+
+#[test]
+fn search_heap_pops_as_a_lazy_heap() {
+    // A search's rhythm: a pop, then a few keys for neighbours, some of
+    // them better keys of states already queued. The lazy reference
+    // queues every key and skips the pops of states already expanded;
+    // the decrease-key heap must expand the same states with the same
+    // keys, and pop nothing stale.
+    const STATES: usize = 4096;
+    let mut heap = SearchHeap::default();
+    let mut nodes = vec![SearchNode::default(); STATES];
+    let mut reference = std::collections::BinaryHeap::new();
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    for search in 0..6u64 {
+        heap.clear();
+        reference.clear();
+        let mut queued: Vec<Option<u64>> = vec![None; STATES];
+        let mut closed = vec![false; STATES];
+        let offer = |heap: &mut SearchHeap,
+                     nodes: &mut Vec<SearchNode>,
+                     reference: &mut std::collections::BinaryHeap<std::cmp::Reverse<u64>>,
+                     queued: &mut Vec<Option<u64>>,
+                     closed: &[bool],
+                     target: usize,
+                     estimate: u32| {
+            if closed[target] {
+                return;
+            }
+            let key = ((estimate as u64) << 32) | target as u64;
+            match queued[target] {
+                Some(old) if key >= old => {}
+                Some(_) => {
+                    heap.decrease(key, nodes);
+                    queued[target] = Some(key);
+                    reference.push(std::cmp::Reverse(key));
+                }
+                None => {
+                    heap.push(key, nodes);
+                    queued[target] = Some(key);
+                    reference.push(std::cmp::Reverse(key));
+                }
+            }
+        };
+        for source in 0..3 {
+            let target = (search as usize * 7 + source * 11) % STATES;
+            offer(
+                &mut heap,
+                &mut nodes,
+                &mut reference,
+                &mut queued,
+                &closed,
+                target,
+                1000,
+            );
+        }
+        let mut last: u32;
+        for round in 0..40_000u64 {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            // The reference's next valid pop.
+            let expected = loop {
+                match reference.pop() {
+                    Some(std::cmp::Reverse(key)) if closed[(key & 0xffff_ffff) as usize] => {}
+                    Some(std::cmp::Reverse(key)) => break Some(key),
+                    None => break None,
+                }
+            };
+            let popped = heap.pop(&mut nodes);
+            assert_eq!(popped, expected, "search {search} round {round}");
+            let Some(key) = popped else {
+                break;
+            };
+            let popped_state = (key & 0xffff_ffff) as usize;
+            closed[popped_state] = true;
+            queued[popped_state] = None;
+            last = (key >> 32) as u32;
+            for neighbour in 0..(state >> 61) {
+                let bits = state >> (8 * neighbour);
+                let target = (popped_state + 1 + (bits as usize & 0x3f) * 37) % STATES;
+                let estimate = match (bits >> 6) % 8 {
+                    // A key below the last pop (an inconsistent heuristic).
+                    0 => last.saturating_sub((bits >> 9) as u32 & 0xff),
+                    1 => last,
+                    _ => last + ((bits >> 9) as u32 & 0xfff),
+                };
+                offer(
+                    &mut heap,
+                    &mut nodes,
+                    &mut reference,
+                    &mut queued,
+                    &closed,
+                    target,
+                    estimate,
+                );
+            }
+            if round % 997 == 0 {
+                check_slots(&heap, &nodes, &queued);
+            }
+        }
+    }
+}
+
+#[test]
+fn search_heap_hints_the_next_pop() {
+    let mut heap = SearchHeap::default();
+    let mut nodes = vec![SearchNode::default(); 1 << 17];
+    assert_eq!(heap.next_hint(), NO_KEY);
+    let mut state = 0x243f_6a88_85a3_08d3u64;
+    let mut next = 0u64;
+    for round in 0..50_000u64 {
+        state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        if round % 3 == 0 || heap.len == 0 {
+            for push in 0..(state >> 62) + 1 {
+                // A fresh state each time (the low 17 bits), any estimate.
+                let key = (((state >> (8 * push)) & 0xff_ffff) << 32) | (next & 0x1_ffff);
+                next += 1;
+                heap.push(key, &mut nodes);
+            }
+        } else {
+            let hint = heap.next_hint();
+            assert_eq!(heap.pop(&mut nodes), Some(hint));
+        }
+    }
+    while heap.len != 0 {
+        let hint = heap.next_hint();
+        assert_eq!(heap.pop(&mut nodes), Some(hint));
+    }
+    assert_eq!(heap.pop(&mut nodes), None);
+}
+
 #[test]
 fn key_heap_pops_as_binary_heap_across_clears() {
     // A search's pattern: keys mostly at or above the last popped one,
@@ -266,7 +412,7 @@ fn key_heap_pops_as_binary_heap_across_clears() {
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
         if round % 40_000 == 39_999 {
-            heap.clear();
+            heap = KeyHeap::default();
             reference.clear();
             last = 0;
             continue;
@@ -4780,7 +4926,8 @@ fn idle_search_arrays_are_shared_and_go_with_the_last_router_of_their_lattice() 
     let mut first = Scratch::default();
     first.ensure(states, cells);
     first.next_generation();
-    first.nodes[5].closed = first.generation;
+    first.nodes[5].seen = first.generation;
+    first.nodes[5].slot = SLOT_CLOSED;
     let generation = first.generation;
     first.release();
     assert!(first.nodes.is_empty() && first.own_via_near.is_empty());
@@ -4790,7 +4937,7 @@ fn idle_search_arrays_are_shared_and_go_with_the_last_router_of_their_lattice() 
     second.ensure(states, cells);
     assert_eq!(idle(), 0);
     assert_eq!(second.generation, generation);
-    assert_eq!(second.nodes[5].closed, generation);
+    assert!(second.nodes[5].closed(generation));
     assert_eq!(second.next_generation(), generation + 1);
     // A copy of the router keeps the lattice's idle arrays; the last one
     // to go takes them along.

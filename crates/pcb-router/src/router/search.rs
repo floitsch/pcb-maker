@@ -82,7 +82,14 @@ impl Router {
                 continue;
             }
             let state = self.state(*node);
-            scratch.nodes[state].target_mark = generation;
+            // A target is reached (`seen`) before the search starts, with
+            // no cost yet and no slot (`SLOT_UNQUEUED`: the first step to
+            // it queues it).
+            let target = &mut scratch.nodes[state];
+            target.seen = generation;
+            target.cost = f32::INFINITY;
+            target.slot = SLOT_UNQUEUED;
+            target.since_via = TARGET_MARK;
             scratch.targets.insert(state as u32, *element);
         }
 
@@ -194,14 +201,22 @@ impl Router {
             }
             let state = self.state(*node);
             let (x, y) = self.grid.xy(node.cell as usize);
-            scratch.nodes[state].seen = generation;
-            scratch.nodes[state].cost = 0.0;
-            scratch.nodes[state].parent = PARENT_SOURCE;
-            scratch.nodes[state].since_via = 0;
-            heap.push(heap_key(
-                heuristic(node.layer as usize, x as i32, y as i32),
-                state,
-            ));
+            // A source listed twice is queued once; a source that is a
+            // target stays one.
+            let source = &mut scratch.nodes[state];
+            let seen = source.seen == generation;
+            let queued = seen && source.slot != SLOT_UNQUEUED;
+            let target = source.target_bit(generation);
+            source.seen = generation;
+            source.cost = 0.0;
+            source.parent = PARENT_SOURCE;
+            source.since_via = target;
+            let key = heap_key(heuristic(node.layer as usize, x as i32, y as i32), state);
+            if queued {
+                heap.decrease(key, &mut scratch.nodes);
+            } else {
+                heap.push(key, &mut scratch.nodes);
+            }
         }
 
         let (hop_steps, hop_reach) = self.hop_reach(class);
@@ -229,7 +244,7 @@ impl Router {
             _ => class,
         };
         let mut found = None;
-        while let Some(key) = heap.pop() {
+        while let Some(key) = heap.pop(&mut scratch.nodes) {
             let state = (key & u32::MAX as u64) as usize;
             // The search node the next pop most likely takes (unless this
             // expansion pushes a lesser key), asked for an expansion ahead:
@@ -243,12 +258,15 @@ impl Router {
                 let next_layer = next / cells;
                 statics.prefetch_edges(next_layer, next - next_layer * cells);
             }
-            if scratch.nodes[state].closed == generation {
-                continue;
-            }
-            scratch.nodes[state].closed = generation;
+            // The heap holds each queued node once, at its least key: no
+            // pop is stale (until 2026-10-27, 39 to 41 % were).
+            debug_assert!(
+                scratch.nodes[state].seen == generation
+                    && scratch.nodes[state].slot < SLOT_UNQUEUED
+            );
+            scratch.nodes[state].slot = SLOT_CLOSED;
             scratch.expansions += 1;
-            if scratch.nodes[state].target_mark == generation {
+            if scratch.nodes[state].since_via & TARGET_MARK != 0 {
                 found = Some(state);
                 break;
             }
@@ -273,8 +291,8 @@ impl Router {
             let x = cell % nx;
             let y = cell / nx;
             let here = scratch.nodes[state].cost;
-            let since_via = scratch.nodes[state].since_via;
-            let next_since_via = since_via.saturating_add(1);
+            let since_via = scratch.nodes[state].since_via & SINCE_VIA_STEPS;
+            let next_since_via = since_via + (since_via < SINCE_VIA_STEPS) as u8;
             let arrived = scratch.nodes[state].parent;
             let here_statics = if necks {
                 &self.statics[class_xy(x, y)]
@@ -405,7 +423,7 @@ impl Router {
                         let target_state = layer * cells + target_cell;
                         // The search node is read for the cost update anyway: a
                         // closed neighbour costs no other map's cache line.
-                        if scratch.nodes[target_state].closed == generation {
+                        if scratch.nodes[target_state].closed(generation) {
                             break 'step;
                         }
                         let target_class = if near_zones {
@@ -484,15 +502,22 @@ impl Router {
                             step += bend_cost * turn.min(8 - turn) as f32;
                         }
                         let total = here + step;
-                        if scratch.nodes[target_state].seen != generation
-                            || total < scratch.nodes[target_state].cost
-                        {
-                            scratch.nodes[target_state].seen = generation;
-                            scratch.nodes[target_state].cost = total;
-                            scratch.nodes[target_state].parent = direction as u8;
-                            scratch.nodes[target_state].since_via = next_since_via;
+                        let node = &mut scratch.nodes[target_state];
+                        let seen = node.seen == generation;
+                        let queued = seen && node.slot != SLOT_UNQUEUED;
+                        if !queued || total < node.cost {
+                            let target = node.target_bit(generation);
+                            node.seen = generation;
+                            node.cost = total;
+                            node.parent = direction as u8;
+                            node.since_via = next_since_via | target;
                             let estimate = total + heuristic(layer, tx as i32, ty as i32);
-                            heap.push(heap_key(estimate, target_state));
+                            let key = heap_key(estimate, target_state);
+                            if queued {
+                                heap.decrease(key, &mut scratch.nodes);
+                            } else {
+                                heap.push(key, &mut scratch.nodes);
+                            }
                         }
                     }
                 };
@@ -597,19 +622,26 @@ impl Router {
                         continue;
                     }
                     let target_state = target_layer * cells + cell;
-                    if scratch.nodes[target_state].closed == generation {
+                    if scratch.nodes[target_state].closed(generation) {
                         continue;
                     }
                     let total = here + step;
-                    if scratch.nodes[target_state].seen != generation
-                        || total < scratch.nodes[target_state].cost
-                    {
-                        scratch.nodes[target_state].seen = generation;
-                        scratch.nodes[target_state].cost = total;
-                        scratch.nodes[target_state].parent = 8 + layer as u8;
-                        scratch.nodes[target_state].since_via = 0;
+                    let node = &mut scratch.nodes[target_state];
+                    let seen = node.seen == generation;
+                    let queued = seen && node.slot != SLOT_UNQUEUED;
+                    if !queued || total < node.cost {
+                        let target = node.target_bit(generation);
+                        node.seen = generation;
+                        node.cost = total;
+                        node.parent = 8 + layer as u8;
+                        node.since_via = target;
                         let estimate = total + heuristic(target_layer, x as i32, y as i32);
-                        heap.push(heap_key(estimate, target_state));
+                        let key = heap_key(estimate, target_state);
+                        if queued {
+                            heap.decrease(key, &mut scratch.nodes);
+                        } else {
+                            heap.push(key, &mut scratch.nodes);
+                        }
                     }
                 }
             }
