@@ -97,6 +97,20 @@
 //! Until then it was 10 GB by opinion, and a 3 GB board waited 4371 s
 //! with 9.4 GB beside the growth. Binaries keep no floor.
 //!
+//! The capacity from the machine (since 2026-10-27, `machine_capacity_mb`):
+//! MemTotal less the memory outside the ledger (the headroom samples'
+//! median, `DEFAULT_OUTSIDE_SHARE` of MemTotal without fresh samples), at
+//! most MemTotal less the margin; a binary's new request keeps the
+//! harnesses' floor beside it (`binary_floor_allows`: the measured one,
+//! `FLOOR_KEEP_MB` for a short request). Until then the capacity was
+//! MemTotal less the margin, 11-21 GB more than the machine could give
+//! beside the memory outside the ledger, and binaries admitted by it alone.
+//! Every kicad-cli that loads a board runs inside its process's
+//! reservation (`kicad_check`): reserved up front by a command whose memory
+//! is its checks, at the first check by any other (`arm_on_demand`), and
+//! a process of a harness's board runs inside the board's reservation
+//! (`PCB_MAKER_LEDGER_INSIDE`).
+//!
 //! `PCB_MAKER_LEDGER` names the file (default
 //! `$XDG_RUNTIME_DIR/pcb-maker-ledger.json`, else
 //! `/tmp/pcb-maker-ledger.json`; `off`: no ledger),

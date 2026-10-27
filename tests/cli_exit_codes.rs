@@ -1876,7 +1876,7 @@ fn routes_side_by_side_serialise_through_the_memory_ledger() {
         .unwrap();
     let listed = String::from_utf8_lossy(&listed.stdout).into_owned();
     assert!(
-        listed.contains("900 MB reserved of 1000 MB by 1 run"),
+        listed.contains("900 MB reserved of 1000 MB (PCB_MAKER_LEDGER_TOTAL_MB) by 1 run"),
         "{listed}"
     );
     assert!(listed.contains("another run"), "{listed}");
