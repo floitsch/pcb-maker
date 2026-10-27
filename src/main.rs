@@ -478,6 +478,7 @@ const RESEARCH_USAGE: &[&str] = &[
     "dump-pour-map <source-directory> <board-id> <output-directory> [config.json|auto]",
     "bench-search <source-directory> <board-id> <iterations> [config.json|auto]",
     "calibrate-work-rate [rounds]",
+    "sub-boards-kicad-board <board.kicad_pcb>",
 ];
 
 /// The commands without the agent contract (and the agent commands that
@@ -945,6 +946,16 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
                 probe,
                 corridors.as_deref().map(Path::new),
             )?;
+            println!(
+                "{}",
+                serde_json::to_string(&report).map_err(|error| error.to_string())?
+            );
+            Ok(())
+        }
+        "sub-boards-kicad-board" => {
+            let usage = research_usage("sub-boards-kicad-board").unwrap_or_default();
+            let board = arguments.next().ok_or_else(|| usage.clone())?;
+            let report = pcb_kicad::describe_sub_boards(Path::new(&board))?;
             println!(
                 "{}",
                 serde_json::to_string(&report).map_err(|error| error.to_string())?

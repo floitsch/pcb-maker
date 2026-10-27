@@ -103,6 +103,12 @@ pub struct KiCadBoardRouterConfig {
     /// negotiation (default on; see `pcb_router::Config::pour_islands`).
     #[serde(default)]
     pub pour_islands: Option<bool>,
+    /// On a panel of different boards (an outline of two pieces or more
+    /// once its tabs are taken out), each net whose pads lie on several
+    /// pieces with no copper of its own joining them is routed as one net
+    /// per piece (default on; docs/router.md, "Nets split by sub-board").
+    #[serde(default)]
+    pub sub_board_nets: Option<bool>,
     /// Thermal spokes as KiCad draws and counts them (default on; see
     /// `pcb_router::Config::kicad_spokes`).
     #[serde(default)]

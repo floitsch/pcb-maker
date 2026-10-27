@@ -179,6 +179,22 @@ pub struct KiCadBoardPlacerConfig {
     /// "Panel copies (2026-10-26)"). Boards without copies place as with
     /// it off.
     pub panel_copies: bool,
+    /// Sub-boards of a panel of different boards (on by default; false
+    /// turns it off): where the outline falls into pieces once its tabs
+    /// are taken out and nets of one name lie on several of them (the
+    /// OpenESC 4in1 panel), each part whose sub-board is known (a fixed
+    /// part's place, the reference board's, nets no evidence splits)
+    /// stays in its sub-board's region, the same-named nets pull each
+    /// sub-board's pins only, and no part sits on a tab. Panels of copies
+    /// (`panel_copies`) are placed as such. `board-placer.json` and the
+    /// verdict report the sub-boards (`sub_boards`; docs/placer.md,
+    /// "Sub-boards in a panel (2026-10-27)").
+    pub sub_boards: bool,
+    /// The reference board (the layout's `--reference`): where its
+    /// footprints lie says which sub-board each part belongs to. Set by
+    /// the layout, not read from the configuration.
+    #[serde(skip)]
+    pub sub_board_reference: Option<PathBuf>,
     /// A footprint without a courtyard whose pads stand in rows of pins
     /// (three or more at most 2.6 mm apart, holding three quarters of its
     /// pads: a QFP, an SOIC, a header, a card slot) blocks with the whole
@@ -368,6 +384,8 @@ impl Default for KiCadBoardPlacerConfig {
             keep_on_pieces: true,
             keep_copies: true,
             panel_copies: true,
+            sub_boards: true,
+            sub_board_reference: None,
             solid_pin_rows: true,
             mask_openings: true,
             solder_mask_to_copper_mm: None,

@@ -370,7 +370,20 @@ fn run_kicad_report_untimed(arguments: &[&str], output: &Path, input: &Path) -> 
         input,
         crate::drc_cache::directory_from_env().as_deref(),
         config_home.as_deref(),
-    )
+    )?;
+    // KiCad's check judged per sub-board (a panel of different boards
+    // sharing net names): the items across two sub-boards are moved out
+    // of the counted list (`sub_boards::excuse_across`).
+    if arguments.get(..2) == Some(&["pcb", "drc"]) {
+        let moved = crate::sub_boards::excuse_across_file(output, input)?;
+        if moved > 0 {
+            eprintln!(
+                "kicad check: {moved} unconnected items join two sub-boards of a panel (nets of the same name no copper joins): not counted ({})",
+                crate::sub_boards::ACROSS_KEY
+            );
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

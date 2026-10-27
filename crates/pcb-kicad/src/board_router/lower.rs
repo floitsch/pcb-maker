@@ -1835,7 +1835,7 @@ fn lower_board(
     if classes.is_empty() {
         return Err("the board has no routable connections".into());
     }
-    Ok(Lowered {
+    let mut lowered = Lowered {
         board: core::Board {
             layer_count: layers.len(),
             neck_width: config
@@ -1880,7 +1880,24 @@ fn lower_board(
             attachment: Default::default(),
         },
         expressions: 0,
-    })
+    };
+    // A panel of different boards: a net per sub-board where no copper
+    // joins them (`sub_boards::split_router_nets`).
+    if config.sub_board_nets != Some(false)
+        && let Some(pieces) = crate::sub_boards::Pieces::of_loops_cached(&loops.piece_loops, &loops.cutouts)
+    {
+        let split = crate::sub_boards::split_router_nets(&mut lowered.board, &pieces);
+        if std::env::var_os("PCB_ROUTER_SUB_BOARD_DEBUG").is_some() {
+            eprintln!(
+                "sub-boards: {} pieces, {} nets split ({} more nets), {} kept whole",
+                pieces.count(),
+                split.nets.len(),
+                split.nets.iter().map(|(_, count)| count - 1).sum::<usize>(),
+                split.joined
+            );
+        }
+    }
+    Ok(lowered)
 }
 
 /// Pads of a pin row lie at most this many times the closer one's nearest

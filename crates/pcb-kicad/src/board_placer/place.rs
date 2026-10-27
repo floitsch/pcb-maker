@@ -147,6 +147,101 @@ pub fn place_kicad_board(
     for warning in &lowered.constraint_warnings {
         eprintln!("warning: {warning}");
     }
+    // Panel copies (`panel_copies`): each seed places the first copy and
+    // replicates it (`panel::place_copies`).
+    let copies = if config.panel_copies {
+        let footprint_count = pcb
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("footprint"))
+            .count();
+        match self::panel::detect(&lowered.problem, footprint_count) {
+            Ok(copies) => {
+                eprintln!(
+                    "placer: panel copies: {} copies of {} parts ({}, regions from {})",
+                    copies.members.len(),
+                    copies.members[0].len(),
+                    copies.detected_by,
+                    copies.regions_from
+                );
+                if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
+                    eprintln!(
+                        "placer: panel copies: regions {:?}",
+                        copies
+                            .regions
+                            .iter()
+                            .map(|r| r.map(|v| (v * 100.0).round() / 100.0))
+                            .collect::<Vec<_>>()
+                    );
+                }
+                Some(copies)
+            }
+            Err(why) => {
+                if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
+                    eprintln!("placer: panel copies: none ({why})");
+                }
+                None
+            }
+        }
+    } else {
+        None
+    };
+    // Sub-boards of a panel of different boards (`sub_boards`): where no
+    // copies were found (`sub_boards::detect_for_placer`), before the
+    // escape demand and the crossings read the problem's nets.
+    let mut sub_boards_report = None;
+    if copies.is_none() && config.sub_boards {
+        let footprint_count = pcb
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("footprint"))
+            .count();
+        let reference = match &config.sub_board_reference {
+            Some(path) => {
+                let text = fs::read_to_string(path).map_err(|error| {
+                    crate::verdict::input_error(format!(
+                        "failed to read the reference board {}: {error}",
+                        path.display()
+                    ))
+                })?;
+                Some(crate::canonical_order::parse_board(&text).map_err(crate::verdict::input_error)?)
+            }
+            None => None,
+        };
+        if let Some(sub) = crate::sub_boards::detect_for_placer(
+            &pcb,
+            &lowered.problem,
+            footprint_count,
+            reference.as_ref(),
+        )? && sub.count(&lowered.problem) >= 2
+        {
+            let names = lowered.references.clone();
+            let applied = crate::sub_boards::apply_to_placer(
+                &sub,
+                &mut lowered.problem,
+                &mut lowered.references,
+                &mut lowered.source_at,
+                &mut lowered.poured,
+            );
+            let report = crate::sub_boards::KiCadSubBoardsReport::of(
+                &sub,
+                &lowered.problem,
+                &lowered.references,
+                &names,
+                &applied,
+            );
+            eprintln!(
+                "placer: sub-boards: {} ({}), {} nets on several, {} parts without one, {} held in their region, {} tabs kept clear",
+                report.count,
+                report.from.join(", "),
+                report.split_nets,
+                report.unassigned,
+                applied.held,
+                applied.tabs
+            );
+            sub_boards_report = Some(report);
+        }
+    }
     let fixed = lowered
         .problem
         .components
@@ -247,45 +342,6 @@ pub fn place_kicad_board(
     // the wall clock (SmartSpin2k: sixteen seeds took 1218 s of placement
     // on four cores and left the route no time).
     let minimum_seeds = seeds.min(3);
-    // Panel copies (`panel_copies`): each seed places the first copy and
-    // replicates it (`panel::place_copies`).
-    let copies = if config.panel_copies {
-        let footprint_count = pcb
-            .children()
-            .iter()
-            .filter(|item| item.head() == Some("footprint"))
-            .count();
-        match self::panel::detect(&lowered.problem, footprint_count) {
-            Ok(copies) => {
-                eprintln!(
-                    "placer: panel copies: {} copies of {} parts ({}, regions from {})",
-                    copies.members.len(),
-                    copies.members[0].len(),
-                    copies.detected_by,
-                    copies.regions_from
-                );
-                if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
-                    eprintln!(
-                        "placer: panel copies: regions {:?}",
-                        copies
-                            .regions
-                            .iter()
-                            .map(|r| r.map(|v| (v * 100.0).round() / 100.0))
-                            .collect::<Vec<_>>()
-                    );
-                }
-                Some(copies)
-            }
-            Err(why) => {
-                if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
-                    eprintln!("placer: panel copies: none ({why})");
-                }
-                None
-            }
-        }
-    } else {
-        None
-    };
     let threads = rayon::current_num_threads().max(1);
     // The kept seeds' work as the clock of the reference machine sees it
     // (`REFERENCE_THREADS` at once), and in all; the seeds run, the kept
@@ -642,6 +698,7 @@ pub fn place_kicad_board(
             )
         }),
         panel_copies,
+        sub_boards: sub_boards_report,
     };
     let report_path = output_directory.join("board-placer.json");
     fs::write(

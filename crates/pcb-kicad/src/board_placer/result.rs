@@ -211,4 +211,9 @@ pub struct KiCadBoardPlacerResult {
     /// otherwise.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub panel_copies: Option<KiCadPanelCopiesReport>,
+    /// The sub-boards of a panel of different boards (`sub_boards` on,
+    /// an outline of two pieces or more without its tabs with parts on
+    /// two): absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sub_boards: Option<crate::sub_boards::KiCadSubBoardsReport>,
 }
