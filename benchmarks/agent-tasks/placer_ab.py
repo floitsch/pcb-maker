@@ -5,7 +5,7 @@
     benchmarks/agent-tasks/placer_ab.py compare --off DIR... --on DIR... [--noise FILE] [--metric M] [--tool BINARY]
     benchmarks/agent-tasks/placer_ab.py resolution [--noise FILE] [--k 3 5 9] [--alpha 0.05] [--power 0.8] [--at 0.03 0.05]
     benchmarks/agent-tasks/placer_ab.py protocol [--noise FILE] [--at 0 0.03 0.05 ...]
-    benchmarks/agent-tasks/placer_ab.py noise DIR... --out FILE [--tool BINARY]
+    benchmarks/agent-tasks/placer_ab.py noise DIR... --out FILE [--tool BINARY] [--boards NAME...] [--update]
     benchmarks/agent-tasks/placer_ab.py report [--noise FILE]
 
 docs/benchmarks.md, "Measurement discipline: placer defaults". A layout is
@@ -27,7 +27,10 @@ later one's boards over an earlier one's.
 per board and seed KiCad unconnected, the first route's open terminals and,
 with `--tool` (a pcb-maker with `ablate-kicad-placement`), the placed
 board's unweighted wirelength and ratsnest crossings (the placement
-objective is wirelength plus 3 mm per crossing). `report` prints the
+objective is wirelength plus 3 mm per crossing); `--boards` takes only
+the boards named, `--update` replaces their entries in the existing file
+and keeps the other boards' rows (each entry records its binaries).
+`report` prints the
 noise table and the correlations across seeds between each proxy and the
 final unconnected count. `resolution` simulates k-seed comparisons from
 the noise file (each board's values by a smoothed bootstrap, the on side
@@ -206,17 +209,30 @@ def short(name):
 
 # --- the noise file ---------------------------------------------------------
 
-def write_noise(arguments, out, tool=None, tasks_path=DEFAULT_TASKS):
+def write_noise(arguments, out, tool=None, tasks_path=DEFAULT_TASKS, only=None, update=False):
+    """The noise file of the runs' boards (those `only` names, by their
+    full or short name, when given). With `update` the boards it has
+    replace theirs in the existing file `out` and the other boards keep
+    their rows; each board entry records the binaries of its rows."""
     side = side_of(arguments)
     tasks = tasks_by_name(tasks_path)
     seeds = sorted(side)
     boards = sorted({name for rows in side.values() for name in rows})
-    binaries = sorted({row.get("binary", "?") for rows in side.values() for row, _ in rows.values()})
+    if only:
+        wanted = set(only)
+        boards = [name for name in boards if name in wanted or short(name) in wanted]
+        missing = wanted - {name for name in boards} - {short(name) for name in boards}
+        if missing:
+            raise SystemExit(f"no rows of {', '.join(sorted(missing))} in the runs")
+    binaries = sorted({row.get("binary", "?") for rows in side.values() for name, (row, _) in rows.items()
+                       if name in boards})
     noise = {"binaries": binaries, "seeds": seeds, "sources": [str(argument) for argument in arguments],
              "boards": {}}
     for name in boards:
         entry = {metric: [] for metric in METRICS}
         entry["seeds"] = []
+        entry["binaries"] = sorted({side[seed][name][0].get("binary", "?") for seed in seeds
+                                    if name in side[seed]})
         for seed in seeds:
             if name not in side[seed]:
                 continue
@@ -228,6 +244,16 @@ def write_noise(arguments, out, tool=None, tasks_path=DEFAULT_TASKS):
             for metric, value in zip(METRICS, values):
                 entry[metric].append(value)
         noise["boards"][name] = entry
+    if update and Path(out).exists():
+        kept = load_noise(out)
+        for name, entry in kept["boards"].items():
+            entry.setdefault("binaries", kept["binaries"])
+        kept["boards"].update(noise["boards"])
+        kept["boards"] = dict(sorted(kept["boards"].items()))
+        kept["binaries"] = sorted(set(kept["binaries"]) | set(binaries))
+        kept["seeds"] = sorted(set(kept["seeds"]) | set(seeds))
+        kept["sources"] = kept["sources"] + [source for source in noise["sources"] if source not in kept["sources"]]
+        noise = kept
     Path(out).write_text(json.dumps(noise, indent=1) + "\n")
     return noise
 
@@ -709,12 +735,15 @@ def main():
     p.add_argument("runs", nargs="+")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--tool", type=Path)
+    p.add_argument("--boards", nargs="+", help="only these boards (full or short names)")
+    p.add_argument("--update", action="store_true",
+                   help="replace these boards' rows in the existing --out file, keep the others'")
     p = commands.add_parser("report")
     p.add_argument("--noise", type=Path, default=DEFAULT_NOISE)
     arguments = parser.parse_args()
 
     if arguments.command == "noise":
-        write_noise(arguments.runs, arguments.out, arguments.tool)
+        write_noise(arguments.runs, arguments.out, arguments.tool, only=arguments.boards, update=arguments.update)
         print("\n".join(report(load_noise(arguments.out))))
     elif arguments.command == "report":
         print("\n".join(report(load_noise(arguments.noise))))

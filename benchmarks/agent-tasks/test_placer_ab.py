@@ -53,6 +53,34 @@ class Reading(unittest.TestCase):
         self.assertEqual(missing, [("b", 1)])
 
 
+    def test_the_noise_file_updates_the_named_boards_and_keeps_the_others(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            out = tmp / "noise.json"
+            old = {"binaries": ["build/bin/old"], "seeds": [1, 2], "sources": ["old-s1", "old-s2"],
+                   "boards": {"x__a": {"unconnected": [1, 2], "seeds": [1, 2]},
+                              "x__b": {"unconnected": [3, 4], "seeds": [1, 2]}}}
+            out.write_text(json.dumps(old))
+            runs = []
+            for seed, values in ((1, (5, 7)), (3, (6, 8))):
+                directory = tmp / f"new-s{seed}-off"
+                directory.mkdir()
+                rows = [dict(row("x__a", values[0]), binary="build/bin/new"),
+                        dict(row("x__b", values[1]), binary="build/bin/new")]
+                (directory / "results.json").write_text(json.dumps(rows))
+                runs.append(str(directory))
+            noise = placer_ab.write_noise(runs, out, only=["b"], update=True)
+            self.assertEqual(noise["boards"]["x__a"]["unconnected"], [1, 2])
+            self.assertEqual(noise["boards"]["x__a"]["binaries"], ["build/bin/old"])
+            self.assertEqual(noise["boards"]["x__b"]["unconnected"], [7, 8])
+            self.assertEqual(noise["boards"]["x__b"]["seeds"], [1, 3])
+            self.assertEqual(noise["boards"]["x__b"]["binaries"], ["build/bin/new"])
+            self.assertEqual(noise["binaries"], ["build/bin/new", "build/bin/old"])
+            self.assertEqual(placer_ab.load_noise(out), noise)
+            with self.assertRaises(SystemExit):
+                placer_ab.write_noise(runs, out, only=["c"], update=True)
+
+
 class Statistics(unittest.TestCase):
     pairs = {"a": {1: (10.0, 8.0), 2: (12.0, 11.0), 3: (11.0, 12.0)},
              "b": {1: (100.0, 90.0), 2: (80.0, 85.0), 3: (90.0, 70.0)}}
