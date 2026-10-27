@@ -404,6 +404,28 @@ fn lower_board(
             allowed
         }
     };
+    // Every net keeps off the layers a custom rule disallows its tracks on
+    // (`track_disallowed`: ducktop2's solid ground layers for every net but
+    // GND), on every rung: the class's layers, whatever the rung does with
+    // the pours (until 2026-10-27 only the exclusive planes kept other nets
+    // off them, and the rungs without those routed over the ground
+    // layers). A net the rules close on every layer keeps every layer.
+    let all_layers = layers.all();
+    let class_layers = |name: &str, width: f64| -> core::LayerMask {
+        let pair = match pair_layers(name, width) {
+            0 => all_layers,
+            mask => mask,
+        };
+        let open = config
+            .track_disallowed
+            .get(name)
+            .map_or(all_layers, |closed| all_layers & !closed);
+        match pair & open {
+            0 => pair_layers(name, width),
+            mask if mask == all_layers => 0,
+            mask => mask,
+        }
+    };
     let mut net_id = |name: &str,
                       nets: &mut Vec<core::Net>,
                       classes: &mut Vec<core::RuleClass>|
@@ -419,6 +441,7 @@ fn lower_board(
         let narrow = match (config.use_narrow_signals, config.narrow_signal_mm) {
             (Some(true), Some(width))
                 if width < rules.trace_width_mm
+                    && !config.ruled_widths.contains(name)
                     && !poured.contains(name)
                     && !crate::quality::ground(name)
                     && !crate::quality::rail_name(name) =>
@@ -434,7 +457,7 @@ fn lower_board(
             clearance: rules.clearance_mm,
             via_diameter: rules.via_size_mm,
             via_drill: rules.via_drill_mm,
-            layers: pair_layers(name, rules.trace_width_mm),
+            layers: class_layers(name, rules.trace_width_mm),
         };
         let class_index = classes
             .iter()

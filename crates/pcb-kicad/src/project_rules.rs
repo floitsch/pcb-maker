@@ -718,6 +718,9 @@ pub fn resolve_project_rules(
     let dru_path = project_path.with_extension("kicad_dru");
     let pair_facts = net_facts.clone();
     let mut pair_custom_rules: Vec<dru::Rule> = Vec::new();
+    // The nets whose width a custom rule's opt gives on every layer: the
+    // narrow-signal step keeps them (`ruled_widths`).
+    let mut ruled_widths: BTreeSet<String> = BTreeSet::new();
     if let Ok(text) = fs::read_to_string(&dru_path) {
         report.custom_rules_file = dru_path
             .file_name()
@@ -751,6 +754,11 @@ pub fn resolve_project_rules(
                     }
                 }
                 apply_custom(&mut default_rules, &lowered, None);
+                for (index, net) in board.nets.iter().enumerate() {
+                    if lowered.width_opt[index].is_some() {
+                        ruled_widths.insert(net_names.normalize(&net.name).to_string());
+                    }
+                }
                 edge_clearance = edge_clearance.max(lowered.edge_clearance);
                 hole_clearance = hole_clearance.max(lowered.hole_clearance);
                 hole_to_hole = hole_to_hole.max(lowered.hole_to_hole);
@@ -836,6 +844,13 @@ pub fn resolve_project_rules(
         |name: &str| net_names.normalize(name).to_string(),
         &severities,
     );
+    let track_disallowed = track_disallowed(
+        &pair_facts,
+        &pair_custom_rules,
+        &copper_layer_names(&pcb),
+        |name: &str| net_names.normalize(name).to_string(),
+        &mut report,
+    );
     let mut config = KiCadBoardRouterConfig {
         narrow_signal_mm: narrow_signal,
         relaxed_clearance_mm:
@@ -879,6 +894,8 @@ pub fn resolve_project_rules(
         net_rules: (!net_rules.is_empty()).then(|| std::sync::Arc::new(net_rules)),
         diff_pair_rules,
         length_rules,
+        track_disallowed,
+        ruled_widths,
         ..KiCadBoardRouterConfig::default()
     };
     // The narrow-signal and neck widths, too (the classes are floored
@@ -973,6 +990,8 @@ pub fn router_config_over_project(
     config.net_rules = project.net_rules;
     config.diff_pair_rules = project.diff_pair_rules;
     config.length_rules = project.length_rules;
+    config.track_disallowed = project.track_disallowed;
+    config.ruled_widths = project.ruled_widths;
     // The width floor holds for a file's own classes too.
     config.apply_width_floor();
     Ok(config)
@@ -1248,6 +1267,79 @@ fn diff_pair_rules(
             }
         }
         out.insert(key(&fact.name), rule);
+    }
+    out
+}
+
+/// Per net with one (keyed by `key`), the copper layers (bits in the
+/// router's order, `copper`) where a custom rule surely disallows its
+/// tracks (`(constraint disallow track)`, `dru::track_disallowed`; KiCad's
+/// `inDiffPair()` known, as for the pairs' own layers): every rung of the
+/// ladder keeps the net's tracks off them (`RuleClass::layers`). A rule
+/// that closes a layer for some net is reported `applied` (before, every
+/// `disallow track` was `unmodelled`: only the exclusive planes and the
+/// pairs' classes kept nets off such layers).
+fn track_disallowed(
+    facts: &[dru::NetFacts],
+    rules: &[dru::Rule],
+    copper: &[String],
+    key: impl Fn(&str) -> String,
+    report: &mut KiCadProjectRulesReport,
+) -> BTreeMap<String, pcb_router::LayerMask> {
+    let mut out = BTreeMap::new();
+    let track_rules: Vec<(usize, &dru::Rule)> = rules
+        .iter()
+        .enumerate()
+        .filter(|(_, rule)| {
+            rule.constraints.iter().any(|constraint| {
+                constraint.kind == "disallow" && constraint.words.iter().any(|word| word == "track")
+            })
+        })
+        .collect();
+    if track_rules.is_empty() {
+        return out;
+    }
+    let names: BTreeSet<&str> = facts.iter().map(|net| net.name.as_str()).collect();
+    // Per rule (index): the nets it closes some layer for.
+    let mut closing: BTreeMap<usize, usize> = BTreeMap::new();
+    for fact in facts {
+        let mut known = fact.clone();
+        known.diff_pair = Some(
+            diff_pair_of(&fact.name)
+                .filter(|(partner, ..)| names.contains(partner.as_str()))
+                .map(|(_, base, _)| base),
+        );
+        let mut mask: pcb_router::LayerMask = 0;
+        let mut by: BTreeSet<usize> = BTreeSet::new();
+        for (layer, name) in copper.iter().enumerate().take(32) {
+            for &(index, rule) in &track_rules {
+                if dru::track_disallowed(std::slice::from_ref(rule), &known, name, copper) {
+                    mask |= 1 << layer;
+                    by.insert(index);
+                }
+            }
+        }
+        for index in by {
+            *closing.entry(index).or_default() += 1;
+        }
+        if mask != 0 {
+            out.insert(key(&fact.name), mask);
+        }
+    }
+    for (index, nets) in closing {
+        let rule = &rules[index];
+        let prefix = format!("disallow ('{}'", rule.name);
+        for entry in &mut report.custom_rules {
+            if entry.rule == rule.name && entry.constraint == "disallow" && entry.status == "unmodelled"
+            {
+                entry.status = "applied".into();
+                entry.detail = format!(
+                    "tracks of {nets} net{} kept off the layers it disallows (the class's layers, every rung)",
+                    if nets == 1 { "" } else { "s" }
+                );
+            }
+        }
+        report.unmodelled.retain(|line| !line.starts_with(&prefix));
     }
     out
 }

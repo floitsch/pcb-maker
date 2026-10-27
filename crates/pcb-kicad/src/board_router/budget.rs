@@ -19,7 +19,7 @@ pub(crate) fn narrow_step_applies(config: &KiCadBoardRouterConfig) -> bool {
     let narrow = config.use_narrow_signals.is_none()
         && config
             .narrow_signal_mm
-            .is_some_and(|narrow| rules().any(|rules| rules.trace_width_mm > narrow + 1.0e-9));
+            .is_some_and(|narrow| config.narrows_some(narrow));
     let relaxed = config
         .relaxed_clearance_mm
         .is_some_and(|relaxed| rules().any(|rules| rules.clearance_mm > relaxed + 1.0e-9));
@@ -402,15 +402,12 @@ pub(crate) fn check_attempt(
 /// again.
 pub(crate) fn narrow_step_config(config: &KiCadBoardRouterConfig) -> KiCadBoardRouterConfig {
     let mut step = config.clone();
-    let wider = |narrow: f64| {
-        config
-            .connection_rules
-            .values()
-            .chain(config.default_rules.iter())
-            .any(|rules| rules.trace_width_mm > narrow + 1.0e-9)
-    };
     if config.use_narrow_signals.is_none() {
-        step.use_narrow_signals = Some(config.narrow_signal_mm.is_some_and(wider));
+        step.use_narrow_signals = Some(
+            config
+                .narrow_signal_mm
+                .is_some_and(|narrow| config.narrows_some(narrow)),
+        );
     }
     if let Some(relaxed) = config.relaxed_clearance_mm {
         step.relaxed_clearance_mm = None;

@@ -2782,7 +2782,7 @@ impl<'a> Ladder<'a> {
         if let Some(narrow) = config.narrow_signal_mm
             && self.open_best()
             && config.use_narrow_signals.is_none()
-            && rules().any(|rules| rules.trace_width_mm > narrow + 1.0e-9)
+            && config.narrows_some(narrow)
             && let Some(why) = self.blocked(&kept)
         {
             eprintln!(
@@ -2803,7 +2803,7 @@ impl<'a> Ladder<'a> {
             && self.spent(self.work) < 1.5 * self.ladder_budget
             && !self.past_deadline()
             && self.step_has_time(&kept)
-            && rules().any(|rules| rules.trace_width_mm > narrow + 1.0e-9)
+            && config.narrows_some(narrow)
         {
             let (attempt, connect) = self.best_attempt.clone().expect("open_best");
             let mut narrowed = attempt;

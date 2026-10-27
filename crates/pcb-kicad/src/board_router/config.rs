@@ -203,6 +203,22 @@ pub struct KiCadBoardRouterConfig {
     /// rules, not read from a file).
     #[serde(skip)]
     pub diff_pair_rules: BTreeMap<String, KiCadDiffPairRule>,
+    /// Per net (normalized like `connection_rules`): the copper layers
+    /// (bits in the router's order) where a custom rule surely disallows
+    /// its tracks (`disallow track`: ducktop2's solid ground layers, no
+    /// track but GND's on In1, In3 and In6). Every lowering keeps the
+    /// net's class off them (`RuleClass::layers`), on every rung of the
+    /// ladder whatever it does with the pours (set by the project's rules,
+    /// not read from a file).
+    #[serde(skip)]
+    pub track_disallowed: BTreeMap<String, pcb_router::LayerMask>,
+    /// The nets whose track width a custom rule gives (a `track_width` opt
+    /// that holds for the net on every layer; a differential pair's width
+    /// from a rule on `inDiffPair()`, `with_pairs`): the narrow-signal step
+    /// keeps their width and narrows only nets at their class's (set by
+    /// the project's rules, not read from a file).
+    #[serde(skip)]
+    pub ruled_widths: std::collections::BTreeSet<String>,
     /// Length and skew rules (docs/router.md, "Length and skew rules"):
     /// the custom rules' `length` and `skew` constraints over single nets
     /// and groups of nets are kept after the route: a net shorter than a
@@ -765,6 +781,18 @@ impl KiCadBoardRouterConfig {
                 "route mode only".into()
             },
         }
+    }
+
+    /// Whether the narrow-signal step would narrow some net to `narrow`:
+    /// a net (or the default rules) at its class's width wider than it.
+    /// A net whose width a rule gives (`ruled_widths`) keeps it.
+    pub fn narrows_some(&self, narrow: f64) -> bool {
+        self.connection_rules
+            .iter()
+            .filter(|(name, _)| !self.ruled_widths.contains(*name))
+            .map(|(_, rules)| rules)
+            .chain(self.default_rules.iter())
+            .any(|rules| rules.trace_width_mm > narrow + 1.0e-9)
     }
 
     /// The narrowest track width allowed by `min_connection_mm` (0: none).
