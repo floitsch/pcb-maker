@@ -604,6 +604,11 @@ fn clip(polygon: &[[f64; 2]], region: [f64; 4]) -> Vec<[f64; 2]> {
     points
 }
 
+/// The router's refusal of an incremental update to a board of other nets
+/// (`Router::update`): a part moved to another sub-board splits its nets
+/// differently.
+pub(crate) const OTHER_NETS: &str = "incremental update needs the same nets and rules";
+
 /// What `split_router_nets` did: the nets split and into how many.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct NetSplit {

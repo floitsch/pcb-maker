@@ -669,7 +669,13 @@ pub(crate) fn descend(
                 arm(&mut copy, *work);
                 let update_started = std::time::Instant::now();
                 let before = copy.expansions();
-                let ripped = copy.update(&trial_board)?;
+                let ripped = match copy.update(&trial_board) {
+                    Ok(ripped) => ripped,
+                    // A move that takes a part to another sub-board splits
+                    // the nets otherwise (`sub_boards`): no trial.
+                    Err(error) if error == crate::sub_boards::OTHER_NETS => 0,
+                    Err(error) => return Err(error),
+                };
                 let updated = update_started.elapsed().as_secs_f64();
                 let reroute_started = std::time::Instant::now();
                 let rerouted = copy.reroute(false);
@@ -689,7 +695,17 @@ pub(crate) fn descend(
             arm(&mut trial, *work);
             let update_started = std::time::Instant::now();
             let before = trial.expansions();
-            let ripped = trial.update_nets(&trial_board)?;
+            let ripped = match trial.update_nets(&trial_board) {
+                Ok(ripped) => ripped,
+                // A move that takes a part to another sub-board splits the
+                // nets otherwise (`sub_boards`): not a move to make.
+                Err(error) if error == crate::sub_boards::OTHER_NETS => {
+                    *work += lower_work;
+                    report.tier_two_work_seconds += lower_work;
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
             let updated = update_started.elapsed().as_secs_f64();
             let update_work = trial.update_work();
             let local_started = std::time::Instant::now();

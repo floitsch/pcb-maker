@@ -4260,6 +4260,64 @@ boards of one piece are untouched.
 `conflicts`, `held`, `tabs`, and per sub-board its `region`, `parts` and
 `movable` (docs/agents.md).
 
+### Measurement
+
+Layout mode at the task budget (tasks v7, pinned rates, `--placer
+'{"seed": N}'`), one 4in1 panel at a time, 1 job x 2 threads through the
+memory ledger with 10 GB kept free; output `build/panel4/`. Off: x1853
+(main 3ad3b1b7), byte for byte x1856's at seed 1 (main edc1d286: the
+placed and the result board). On: the branch's snapshots: x15025 (the
+rule as shipped but the designed nets by the placer's names), x15026
+(the designed nets by KiCad's names: the ESC sheets' 26 gate and vdda
+nets had stayed counted), x15028 (rebased on x1856, the molecules' cells;
+the panel's rows below its are the confirmation). "KiCad" is KiCad's own
+list of unconnected items; "counted" what the verdict and run.py count
+after the items across the sub-boards (`unconnected_across_sub_boards`)
+are taken out. With `--reference-designer` (run.py, new: the designer's
+project as the layout's `--reference`) the parts' boards come from the
+designer's places; the off side's rows with it are its rows without it
+byte for byte (its reference only judges errors, and there are none).
+
+| 4in1 panel | seed | KiCad | across | counted | new errors | nets routed | vias | first-route open |
+| --- | ---: | ---: | ---: | ---: | --- | --- | ---: | ---: |
+| off (x1853, x1856) | 1 | 499 (KiCad's cap) | | 499 | 0 | 43/184 | 160 | 1009 |
+| on, the task as it is (x15025) | 1 | 394 | 37 | 357 | 0 | 96/213 | 348 | 560 |
+| on, `--reference` (x15025, judged by x15026's rule) | 1 | 392 | 130 | 262 | 0 | 166/300 | 258 | 338 |
+| off | 101 | 4 parts without a place: no route | | | | | | |
+| on, the task as it is (x15025) | 101 | the same placement, the same 4 parts | | | | | | |
+| on, `--reference` (x15026) | 101 | 370 | 130 | 240 | 0 | 148/300 | 240 | 358 |
+
+Without a reference the placement is the off side's byte for byte (392
+of 398 parts without a board: nothing held, no tab keepouts) and the
+change is the router's: the nets on both boards by design (the 33 the
+fixed parts split, and those that hold two parts of one reference) are
+routed per board and their items across are not counted; 37 such items
+at seed 1 (the other designed nets have their parts on one board in this
+placement, or are left open within one). With the reference every part
+is held in its board and each board placed alone: seed 101, whose whole
+panel left 4 parts without a place on both sides, places and routes; at
+seed 1 KiCad's own count is about the same (392 against 394), but 130
+items of it are the boards' 130 shared nets (exactly the designer's
+own), and 262 are left within the boards against 357.
+
+The x15024 snapshot (before the padstack fix below) had 16 clearance
+errors at seed 1 where x15025 has none: OpenESC's motor pads (U4's PTH
+pads 13-23 on the 4in1-mini frame) have a padstack whose inner and back
+copper (1.8 x 0.6 mm at offset -0.4 mm) the lowering placed at the
+front's drill offset (-0.5 mm), 0.1 mm off; routing more near them
+exposed it. The fix (`padstack_variants`: a layer's `offset` is its
+drill offset) changes no other sweep board's lowering (the padstack
+offsets census: the three OpenESC boards), and the single 4in1 and
+4in1-mini route byte for byte as before (seed 1, x1853 against x15025).
+
+**Identity**: the short tier (3 x 2, its budget scale): every placed and
+result board byte for byte, x1853 against x15022 and against x15027, and
+x1856 against x15028 (`build/panel4/short-*`). The four panels of copies:
+their placements byte for byte (place-kicad-board, 120 s of work, seed 1,
+x1853 against x15022 and x15027): none has pieces, so nothing of this
+applies to them. zpn_devboard and the Modular Hub (separate loops) have
+no pieces since x15027: as main.
+
 
 ## The trouble-maker probe (2026-10-26)
 

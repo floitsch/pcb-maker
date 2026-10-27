@@ -2211,8 +2211,19 @@ pub fn layout_kicad_board(
             .board;
             arm(&mut router, work + pool_excess);
             let expansions_before = router.expansions();
-            // (An error ends the layout: nothing to restore.)
-            let rerouted = router.update(&trial_board)?;
+            // (An error ends the layout: nothing to restore.) A move that
+            // takes a part to another sub-board splits the nets otherwise
+            // (`sub_boards`): not a move to make.
+            let rerouted = match router.update(&trial_board) {
+                Ok(rerouted) => rerouted,
+                Err(error) if error == crate::sub_boards::OTHER_NETS => {
+                    router = saved_router;
+                    pcb = saved_pcb;
+                    problem.problem.poses = saved_poses.clone();
+                    continue;
+                }
+                Err(error) => return Err(error),
+            };
             let polish = best.0 == 0;
             let trial = router.reroute(polish);
             work += router.expansions().saturating_sub(expansions_before) as f64
