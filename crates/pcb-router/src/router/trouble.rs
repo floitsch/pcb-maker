@@ -75,6 +75,23 @@ pub(super) enum TroubleOrder {
 /// The repair's default (`Config::trouble_repair`).
 pub const TROUBLE_REPAIR_DEFAULT: bool = true;
 
+/// The last connections' default (`Config::last_connections`): the most
+/// open terminals on the signal nets for which the repair's last pass runs.
+pub const LAST_CONNECTIONS_DEFAULT: usize = 8;
+
+/// How deep an ejection chain of the last pass goes: the trouble-maker
+/// displaces its victims, a victim left open displaces nets in turn, and
+/// so on, this many levels in all.
+const LAST_CONNECTIONS_DEPTH: usize = 3;
+
+/// `PCB_ROUTER_LAST_CONNECTIONS`: unset, the configuration decides; a
+/// number replaces it (`0` off).
+pub fn last_connections_override() -> Option<usize> {
+    std::env::var("PCB_ROUTER_LAST_CONNECTIONS")
+        .ok()
+        .and_then(|value| value.trim().parse().ok())
+}
+
 /// `PCB_ROUTER_TROUBLE`: unset, the configuration decides; `0` or empty
 /// off; anything else on. It overrides the configuration either way.
 pub fn trouble_override() -> Option<bool> {
@@ -149,6 +166,9 @@ struct TroubleWork {
     rescued_work: f64,
     /// Exchanges undone early (`TroubleSettings::early`).
     early: usize,
+    /// The budget work (`Router::budget_work`) at which the pass's work
+    /// is spent: an ejection chain starts no further step past it.
+    stop_at: f64,
 }
 
 /// A net's state as an exchange may have to restore it, and its open
@@ -204,9 +224,57 @@ impl Router {
     }
 
     /// The repair (see the module). Returns the open terminals it closed.
+    ///
+    /// Then the last connections (`Config::last_connections`): where the
+    /// rounds leave at most that many open terminals on the signal nets
+    /// and work is left, a last pass with ejection chains three deep
+    /// (`LAST_CONNECTIONS_DEPTH`) and the victims routed board-wide
+    /// (`local` off), within the same work. The rounds' exchanges are
+    /// pure trades on such boards (the trouble-maker closes its terminal,
+    /// its one victim finds no other way: "1 open to 1"); the chain lets
+    /// the victim push a third net aside, and the board-wide search lets
+    /// it take a detour the corridors and the window do not hold.
     pub(super) fn repair_trouble(&mut self, order: &[NetId], settings: TroubleSettings) -> usize {
         let budget = (self.negotiation_seconds * settings.share).max(30.0);
         let clock = self.clock();
+        let mut closed = self.trouble_pass(order, settings, &clock, budget, "trouble");
+        let last = self.config.last_connections;
+        if last == 0 || self.spent(&clock, budget) {
+            return closed;
+        }
+        let open: usize = order
+            .iter()
+            .copied()
+            .filter(|net| {
+                let state = &self.nets[*net as usize];
+                state.routable && state.plane.is_empty() && !state.complete
+            })
+            .map(|net| self.open_measure(net))
+            .sum();
+        if open == 0 || open > last {
+            return closed;
+        }
+        let escalated = TroubleSettings {
+            depth: settings.depth.max(LAST_CONNECTIONS_DEPTH),
+            local: false,
+            ..settings
+        };
+        closed += self.trouble_pass(order, escalated, &clock, budget, "last connections");
+        closed
+    }
+
+    /// The repair's rounds with `settings`, within `budget` of work from
+    /// `clock`; `label` names them in the log. Returns the open terminals
+    /// they closed.
+    fn trouble_pass(
+        &mut self,
+        order: &[NetId],
+        settings: TroubleSettings,
+        clock: &(f64, std::time::Instant),
+        budget: f64,
+        label: &str,
+    ) -> usize {
+        let clock = *clock;
         let debug = std::env::var_os("PCB_ROUTER_DEBUG").is_some();
         let why = debug || std::env::var_os("PCB_ROUTER_TROUBLE_WHY").is_some();
         let mut closed = 0;
@@ -215,7 +283,10 @@ impl Router {
         // A net refused is tried again only once an exchange was kept
         // after its refusal: nothing else changed that it could see.
         let mut refused: HashMap<NetId, usize> = HashMap::new();
-        let mut work = TroubleWork::default();
+        let mut work = TroubleWork {
+            stop_at: clock.0 + budget,
+            ..TroubleWork::default()
+        };
         for round in 0..settings.rounds {
             let mut trouble: Vec<NetId> = order
                 .iter()
@@ -290,7 +361,7 @@ impl Router {
                 }
                 if debug {
                     eprintln!(
-                        "trouble {}: {} open before, closed {}, {} displaced",
+                        "{label} {}: {} open before, closed {}, {} displaced",
                         self.board.nets[net as usize].name,
                         before_net,
                         exchange.closed,
@@ -301,7 +372,7 @@ impl Router {
             closed += closed_round;
             if self.config.verbose {
                 eprintln!(
-                    "trouble round {round}: {closed_round} open terminals closed ({tried} tried, {kept} kept, {ties} of them ties, {displaced} nets displaced so far)"
+                    "{label} round {round}: {closed_round} open terminals closed ({tried} tried, {kept} kept, {ties} of them ties, {displaced} nets displaced so far)"
                 );
             }
             // Another round only where this one changed the board (a tie
@@ -312,7 +383,7 @@ impl Router {
         }
         if self.config.verbose {
             eprintln!(
-                "trouble: {closed} open terminals closed in {tried} exchanges tried, {kept} kept ({ties} ties), {:.1} s of work{}; priced searches {:.1} s, victims {:.1} s ({} routed; again {}, {:.1} s, {} of them closing terminals, {:.1} s), kept exchanges {:.1} s, {} undone early",
+                "{label}: {closed} open terminals closed in {tried} exchanges tried, {kept} kept ({ties} ties), {:.1} s of work{}; priced searches {:.1} s, victims {:.1} s ({} routed; again {}, {:.1} s, {} of them closing terminals, {:.1} s), kept exchanges {:.1} s, {} undone early",
                 self.budget_work() - clock.0,
                 if out_of_work { " (out of work)" } else { "" },
                 work.priced,
@@ -414,30 +485,20 @@ impl Router {
             Err(reason) => return (Exchange::default(), reason),
         };
         // A victim that came out worse may push others aside in turn (not
-        // the net the exchange is for).
+        // the net the exchange is for), and its victims theirs, up to
+        // `settings.depth` levels (an ejection chain).
         let mut nested = 0;
         if settings.depth > 1 {
-            for victim in &victims {
-                let before = saved
-                    .iter()
-                    .find(|entry| entry.0 == *victim)
-                    .map_or(0, |entry| entry.4);
-                if self.open_measure(*victim) <= before {
-                    continue;
-                }
-                if let Ok((inner, _)) = self.displace(*victim, &[net], order, settings, work) {
-                    if open_now(self, &inner) < open_saved(&inner) && clean(self, &inner) {
-                        nested += 1;
-                        for entry in inner {
-                            if !saved.iter().any(|kept| kept.0 == entry.0) {
-                                saved.push(entry);
-                            }
-                        }
-                    } else {
-                        self.restore_nets(inner);
-                    }
-                }
-            }
+            let mut chain = vec![net];
+            nested = self.push_on(
+                &victims,
+                &mut chain,
+                &mut saved,
+                settings.depth - 1,
+                order,
+                settings,
+                work,
+            );
         }
         let before = open_saved(&saved);
         let after = open_now(self, &saved);
@@ -473,6 +534,72 @@ impl Router {
                 ),
             )
         }
+    }
+
+    /// The ejection chain of an exchange: each of `victims` that came out
+    /// with more open terminals than it had (`saved`) is routed through
+    /// others in turn (`displace`, the nets of `chain` protected), its own
+    /// victims likewise while `depth` lasts; a step is kept when it leaves
+    /// the nets it changed with fewer open terminals and none in conflict,
+    /// its saved states then joining `saved` (the earliest state of a net
+    /// stays). Returns the steps kept.
+    #[allow(clippy::too_many_arguments)]
+    fn push_on(
+        &mut self,
+        victims: &[NetId],
+        chain: &mut Vec<NetId>,
+        saved: &mut Vec<Saved>,
+        depth: usize,
+        order: &[NetId],
+        settings: TroubleSettings,
+        work: &mut TroubleWork,
+    ) -> usize {
+        if depth == 0 {
+            return 0;
+        }
+        let mut kept = 0;
+        for victim in victims {
+            if self.budget_work() >= work.stop_at || self.past_deadline() {
+                break;
+            }
+            if chain.contains(victim) {
+                continue;
+            }
+            let before = saved
+                .iter()
+                .find(|entry| entry.0 == *victim)
+                .map_or(0, |entry| entry.4);
+            if self.open_measure(*victim) <= before {
+                continue;
+            }
+            let Ok((mut inner, inner_victims)) =
+                self.displace(*victim, chain, order, settings, work)
+            else {
+                continue;
+            };
+            chain.push(*victim);
+            let deeper = self.push_on(
+                &inner_victims,
+                chain,
+                &mut inner,
+                depth - 1,
+                order,
+                settings,
+                work,
+            );
+            chain.pop();
+            if open_now(self, &inner) < open_saved(&inner) && clean(self, &inner) {
+                kept += 1 + deeper;
+                for entry in inner {
+                    if !saved.iter().any(|old| old.0 == entry.0) {
+                        saved.push(entry);
+                    }
+                }
+            } else {
+                self.restore_nets(inner);
+            }
+        }
+        kept
     }
 
     /// Routes `net` at the settings' price through other copper, rips up
@@ -579,8 +706,16 @@ impl Router {
                     .iter()
                     .map(|other| self.board.nets[*other as usize].name.clone())
                     .collect();
+                let detail = if names.is_empty() {
+                    self.unnamed_conflicts(net)
+                } else {
+                    String::new()
+                };
                 self.restore_nets(saved);
-                return Err(format!("fixed copper in its way ({})", names.join(", ")));
+                return Err(format!(
+                    "fixed copper in its way ({}){detail}",
+                    names.join(", ")
+                ));
             }
         }
         let started = self.budget_work();
@@ -696,23 +831,16 @@ impl Router {
 }
 
 impl Router {
-    /// The nets whose stamps cover a node of `net` in conflict (`net`'s
-    /// maps: its class, or its neck class there, and its via map).
-    fn blockers(&self, net: NetId) -> Vec<NetId> {
-        let class = self.board.nets[net as usize].class;
-        let layers = self.board.layer_count;
-        let cells: HashSet<(u32, u32)> = self
-            .conflicts(net)
-            .into_iter()
-            .map(|(layer, cell)| {
-                let map = if layer < layers {
-                    self.map_index(self.node_class(net, cell), layer)
-                } else {
-                    self.map_index(class, layers)
-                };
-                (map as u32, cell)
-            })
-            .collect();
+    /// The nets whose stamps cover a node of `net` in conflict, in the
+    /// map that counts the conflict (`conflict_maps`: a node's class or
+    /// neck class there, a stub's own class, the via map). Until
+    /// 2026-10-27 the map was the node's class at the cell for every
+    /// conflict, so a neck-width escape stub's conflicts (counted in the
+    /// neck class's map) named no net, and the exchange was refused as
+    /// "fixed copper in its way ()": jetson's TMDS_D0_C_N at J1, the
+    /// OpenAirScope's SD-card nets.
+    pub(super) fn blockers(&self, net: NetId) -> Vec<NetId> {
+        let cells: HashSet<(u32, u32)> = self.conflict_maps(net).into_iter().collect();
         (0..self.nets.len() as NetId)
             .filter(|other| *other != net)
             .filter(|other| {
@@ -722,6 +850,41 @@ impl Router {
                     .any(|stamp| cells.contains(&stamp))
             })
             .collect()
+    }
+}
+
+impl Router {
+    /// Why conflicts of `net` name no net (`blockers` empty): each
+    /// conflict's map and cell, its count there, and the nets with a stamp
+    /// at that cell in any map (for the log).
+    fn unnamed_conflicts(&self, net: NetId) -> String {
+        let conflicts = self.conflict_maps(net);
+        let mut parts = Vec::new();
+        for (map, cell) in conflicts.iter().take(4) {
+            let count = self.occupancy.get(*map as usize, *cell as usize);
+            let nets: Vec<String> = (0..self.nets.len())
+                .filter(|other| {
+                    self.nets[*other]
+                        .stamped
+                        .iter()
+                        .any(|(_, stamp_cell)| stamp_cell == *cell)
+                })
+                .map(|other| {
+                    let maps: Vec<u32> = self.nets[other]
+                        .stamped
+                        .iter()
+                        .filter(|(_, stamp_cell)| *stamp_cell == *cell)
+                        .map(|(stamp_map, _)| stamp_map)
+                        .collect();
+                    format!("{} {maps:?}", self.board.nets[other].name)
+                })
+                .collect();
+            parts.push(format!(
+                "map {map} cell {cell} count {count}: {}",
+                nets.join("; ")
+            ));
+        }
+        format!("; {} conflicts, {}", conflicts.len(), parts.join(" | "))
     }
 }
 

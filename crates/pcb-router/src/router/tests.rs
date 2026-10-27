@@ -896,6 +896,65 @@ fn crossed_net() -> Router {
     Router::new(&board, &config)
 }
 
+/// Every conflict the negotiation counts names the nets that cause it
+/// (`blockers`, from `conflict_maps`: the map that counts each conflict),
+/// and an ejection chain of the last connections never leaves the nets it
+/// touched with more open terminals than the trouble repair's rounds did.
+#[test]
+fn every_conflict_names_its_blockers() {
+    let mut router = crossed_net();
+    for net in 0..3 {
+        router.route_net_seq(net, 0.0, false, 1.0);
+        router.stamp(net);
+    }
+    let conflicts = router.conflicts(0);
+    let maps = router.conflict_maps(0);
+    assert!(!conflicts.is_empty());
+    assert_eq!(conflicts.len(), maps.len());
+    for (map, cell) in &maps {
+        assert!(
+            (1..3).any(|other| router.nets[other]
+                .stamped
+                .iter()
+                .any(|stamp| stamp == (*map, *cell))),
+            "conflict at map {map} cell {cell} names no net"
+        );
+    }
+    let mut blockers = router.blockers(0);
+    blockers.sort_unstable();
+    assert_eq!(blockers, vec![1, 2]);
+}
+
+/// The last connections (`Config::last_connections`) run only where the
+/// rounds leave few open terminals, and keep an exchange only where it
+/// closes terminals: with it on, the board ends with no more open
+/// terminals than with it off.
+#[test]
+fn the_last_connections_never_open_more_than_the_rounds() {
+    let open_after = |last: usize| {
+        let mut router = crossed_net();
+        router.config.last_connections = last;
+        for net in 0..3 {
+            router.route_net_seq(net, 0.0, false, 1.0);
+            router.stamp(net);
+        }
+        router.resolve_remaining(&[0, 1, 2]);
+        let settings = super::trouble::TroubleSettings::from_env();
+        router.repair_trouble(&[0, 1, 2], settings);
+        assert!((0..3).all(|net| router.conflicts(net).is_empty()));
+        (0..3)
+            .map(|net| {
+                router.nets[net]
+                    .connected
+                    .iter()
+                    .filter(|connected| !**connected)
+                    .count()
+            })
+            .sum::<usize>()
+    };
+    assert!(open_after(super::trouble::LAST_CONNECTIONS_DEFAULT) <= open_after(0));
+}
+
 #[test]
 fn the_hard_repair_keeps_the_branches_out_of_conflict() {
     let mut router = crossed_net();

@@ -134,6 +134,14 @@ pub struct Config {
     /// docs/experiments/human-level-routing.md). `PCB_ROUTER_TROUBLE`
     /// overrides it (`0` off, `1` on).
     pub trouble_repair: bool,
+    /// The last connections (`repair_trouble`'s last pass, router/trouble.rs;
+    /// docs/router.md, "The last connections"): once the trouble repair's
+    /// rounds leave at most this many open terminals on the signal nets, it
+    /// tries again with ejection chains (a victim left open pushes others
+    /// aside in turn, three deep) and the victims routed board-wide, within
+    /// the repair's own work. 0 turns it off; `PCB_ROUTER_LAST_CONNECTIONS`
+    /// overrides it.
+    pub last_connections: usize,
     /// The clean-up keeps a change only if no pour net has more pads off
     /// its main piece after it.
     pub pour_aware_polish: bool,
@@ -396,6 +404,8 @@ impl Default for Config {
             lost_spoke_repair: std::env::var_os("PCB_ROUTER_NO_LOST_SPOKES").is_none(),
             trouble_repair: super::trouble::trouble_override()
                 .unwrap_or(super::trouble::TROUBLE_REPAIR_DEFAULT),
+            last_connections: super::trouble::last_connections_override()
+                .unwrap_or(super::trouble::LAST_CONNECTIONS_DEFAULT),
             pour_aware_polish: true,
             pour_aware_via_reduction: true,
             pour_whole_rip_up: true,

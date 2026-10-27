@@ -571,6 +571,39 @@ impl Router {
         branch: &Branch,
         result: &mut Vec<(usize, u32)>,
     ) {
+        self.branch_conflicts_with(net, branch, &mut |layer, _, cell| {
+            result.push((layer, cell))
+        });
+    }
+
+    /// The conflicts of `net` (`conflicts`) by the occupancy map that
+    /// counts each: `(map, cell)`, so that the nets stamping them can be
+    /// named (the trouble repair's `blockers`). A stub's cells are in its
+    /// stub's class map (the neck class where the stub is narrower than
+    /// the track), which the node's class at that cell need not be.
+    pub(super) fn conflict_maps(&self, net: NetId) -> Vec<(u32, u32)> {
+        let mut result = Vec::new();
+        for branch in self.nets[net as usize]
+            .branches
+            .iter()
+            .skip(self.nets[net as usize].fixed)
+        {
+            self.branch_conflicts_with(net, branch, &mut |_, map, cell| {
+                result.push((map as u32, cell))
+            });
+        }
+        result
+    }
+
+    /// `branch_conflicts`, each conflict given to `found` as its layer
+    /// (the layer count for the via map), the occupancy map that counts
+    /// it and its cell.
+    fn branch_conflicts_with(
+        &self,
+        net: NetId,
+        branch: &Branch,
+        found: &mut dyn FnMut(usize, usize, u32),
+    ) {
         let class = self.board.nets[net as usize].class;
         let layers = self.board.layer_count;
         let state = &self.nets[net as usize];
@@ -585,7 +618,7 @@ impl Router {
                 let map = self.map_index(stub_class, end.layer as usize);
                 for cell in cells {
                     if self.occupancy.get(map, *cell as usize) > 1 {
-                        result.push((end.layer as usize, *cell));
+                        found(end.layer as usize, map, *cell);
                     }
                 }
             }
@@ -593,18 +626,14 @@ impl Router {
         for (index, node) in branch.nodes.iter().enumerate() {
             let map = self.map_index(self.node_class(net, node.cell), node.layer as usize);
             if self.occupancy.get(map, node.cell as usize) > 1 {
-                result.push((node.layer as usize, node.cell));
+                found(node.layer as usize, map, node.cell);
             }
             let is_via = index > 0
                 && branch.nodes[index - 1].cell == node.cell
                 && branch.nodes[index - 1].layer != node.layer;
-            if is_via
-                && self
-                    .occupancy
-                    .get(self.map_index(class, layers), node.cell as usize)
-                    > 1
-            {
-                result.push((layers, node.cell));
+            let via_map = self.map_index(class, layers);
+            if is_via && self.occupancy.get(via_map, node.cell as usize) > 1 {
+                found(layers, via_map, node.cell);
             }
         }
     }
