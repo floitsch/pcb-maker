@@ -1274,6 +1274,7 @@ bash scripts/nightly.sh --quick         # without the sweep and the designer tie
 bash scripts/nightly.sh --install       # once: the systemd user timer, 02:00 local
 bash scripts/nightly.sh --print-units   # the units --install writes
 scripts/nightly-report.py --print       # the newest night as a table row and a state line
+scripts/nightly-report.py --docs build/nightly/<night> --dry-run   # the night's write-up, printed
 ```
 
 `scripts/nightly.sh` refuses when the main checkout has uncommitted
@@ -1336,19 +1337,21 @@ better / same / worse line with the boards that gained or lost the pass
 and the strict pass. Nights beyond the newest 14 keep their logs and
 summaries, not their board directories (a full night is about 2 GB).
 
-**Into the docs.** `scripts/nightly-report.py` writes the newest night
-as a row of docs/benchmarks.md's "Nightly" table (newest first, the
-last 14 nights; a night's row replaces its earlier one) and as the
-state line of docs/handover.md ("Benchmarks that count"), between their
-markers, into the checkout it lies in (`--docs` another; run it in a
-worktree: an uncommitted change in the main checkout stops the next
-night). `--commit`
-writes the main checkout's two files instead, commits them alone on main
-("Docs: nightly <date> (main <sha12>)"), pushes main and touches nothing
-else; it refuses when the main checkout is not on main or either file
-has uncommitted changes. The nightly runs it with `--commit-report`
-(`PCB_NIGHTLY_COMMIT_REPORT=1` in the service); off by default, so that
-an agent reads the summary first.
+**Into the docs** (since 2026-10-27 by default; `--no-commit-report`
+or `PCB_NIGHTLY_COMMIT_REPORT=0` turns it off). The nightly's last step,
+`scripts/nightly-report.py --commit`, publishes the night into the main
+checkout's docs: a "Layout sweep vN (<date>)" section and the night's
+"Nightly" row in docs/benchmarks.md, the README's headline and its two
+newest rows, the hand-over's title, state line and night note, and a
+changelog section; it commits those four files alone on main
+("nightly <date>: layout sweep vN, ...") and pushes main. A night is
+published only when every stage ran, no row was cut or killed and the
+sweep has at least 100 rows with a result (else nightly.log says why),
+and only when the main checkout is on main with no change to a tracked
+file and `git pull --ff-only origin main` succeeds (else it writes
+nothing and the next night publishes both). `--docs <night>` writes a
+night into this checkout's docs (`--checkout` another, `--dry-run`
+prints the section): docs/benchmarks.md, "Nightly", has the details.
 
 **The timer.** `--install` writes `scripts/nightly.service` and
 `scripts/nightly.timer` (templates: the main checkout and the

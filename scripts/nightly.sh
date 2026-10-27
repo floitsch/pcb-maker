@@ -3,12 +3,14 @@
 #
 # The nightly measurement of main (benchmarks/agent-tasks/README.md,
 # "Nightly"): builds main at its head, snapshots the binary and runs the
-# tiers through the memory ledger (no lock), then writes a summary.
+# tiers through the memory ledger (no lock), then writes a summary and
+# publishes it into the docs on main (step 5).
 #
 #   bash scripts/nightly.sh                  # tonight's measurement
 #   bash scripts/nightly.sh --quick          # without the sweep and the designer tier
 #   bash scripts/nightly.sh --install        # installs the systemd user timer (02:00)
 #   bash scripts/nightly.sh --print-units    # prints the units --install would write
+#   bash scripts/nightly.sh --no-commit-report   # measure and summarise, publish nothing
 #
 # What it does:
 #   1. Refuses when the main checkout has uncommitted changes to tracked
@@ -72,10 +74,36 @@
 #      that the estimates follow the binary; build/nightly/<date>/
 #      estimates.log says what changed. The committed sidecar changes only
 #      by hand (tier_estimates.py --refresh after a sweep, committed).
-#   5. With --commit-report (PCB_NIGHTLY_COMMIT_REPORT=1), puts the night
-#      into docs/benchmarks.md ("Nightly") and docs/handover.md (the
-#      nightly state line) and commits and pushes those two files on main
-#      (scripts/nightly-report.py --commit). Off by default.
+#   5. Publishes the night (since 2026-10-27 by default; --no-commit-report
+#      or PCB_NIGHTLY_COMMIT_REPORT=0 turns it off): scripts/nightly-report.py
+#      --commit writes the night into the main checkout's docs, as the
+#      hand-written sweep write-ups v19 to v21 did, and commits them on
+#      main ("nightly <date>: layout sweep vN, ...") and pushes main:
+#        docs/benchmarks.md  a section "Layout sweep vN (<date>)" (vN one
+#                            more than the newest numbered sweep): the
+#                            totals against the previous night and the
+#                            previous numbered sweep, the strict passes
+#                            gained and lost with their findings, the
+#                            designer tier's gap split, the costliest
+#                            placements, the losers beyond the seed
+#                            noise; and the night's row of "Nightly"
+#        README.md           the headline's measured part and the two
+#                            newest rows of the table
+#        docs/handover.md    the title's state, the nightly state line,
+#                            the night note
+#        docs/changelog.md   "Measured on <date> (nightly: layout sweep
+#                            vN, matched designer tier)"
+#      The guard: only a night on which every stage ran, no row of any
+#      stage was cut by the wall clock or killed, and the sweep has at
+#      least 100 rows with a result is published; otherwise the night is
+#      summarised only and nightly.log says why (the summary's last line).
+#      The race with the supervisor's merges in the main checkout: the
+#      report commits only when the main checkout is on main, its working
+#      tree has no change to a tracked file and `git pull --ff-only origin
+#      main` succeeds, and then commits the four files alone; otherwise it
+#      writes nothing, says so in nightly.log, and the next night publishes
+#      this night with its own (every guarded night after the newest one
+#      docs/benchmarks.md has, at most three).
 #
 # One night at a time: build/nightly/.lock (a second start exits at once).
 #
@@ -87,20 +115,25 @@
 #   PCB_NIGHTLY_ROOT         where build/ lies (default: the main checkout)
 #   PCB_NIGHTLY_DATE         the night's name (default: today, YYYY-MM-DD)
 #   PCB_NIGHTLY_SOURCE       the checkout to build and run from
+#   PCB_NIGHTLY_CHECKOUT     the checkout the report commits into (default:
+#                            the main checkout; a run with
+#                            PCB_NIGHTLY_FAKE_BINARY commits only into this)
+#   PCB_NIGHTLY_MIN_RESULTS  the guard's least number of sweep rows with a
+#                            result (default 100)
 
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 usage() {
-  sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'
-  echo "options: --quick --no-sweep --no-designer --sweep-days DAYS --force --commit-report --install --print-units"
+  sed -n '3,13p' "$0" | sed 's/^# \{0,1\}//'
+  echo "options: --quick --no-sweep --no-designer --sweep-days DAYS --force --no-commit-report --install --print-units"
 }
 
 sweep=1
 designer=1
 force=0
-commit_report="${PCB_NIGHTLY_COMMIT_REPORT:-0}"
+commit_report="${PCB_NIGHTLY_COMMIT_REPORT:-1}"
 sweep_days="${PCB_NIGHTLY_SWEEP_DAYS:-all}"
 action=run
 while [ $# -gt 0 ]; do
@@ -111,6 +144,7 @@ while [ $# -gt 0 ]; do
     --sweep-days) shift; sweep_days="${1:?--sweep-days needs a value}" ;;
     --force) force=1 ;;
     --commit-report) commit_report=1 ;;
+    --no-commit-report) commit_report=0 ;;
     --install) action=install ;;
     --print-units) action=print-units ;;
     -h|--help) usage; exit 0 ;;
@@ -336,7 +370,7 @@ fi
 
 python3 "$here/scripts/nightly-report.py" --summarize "$directory" --nights "$nights" --sha "$sha" \
   --binary "$snapshot" --harness "$source_dir" --planned "${planned[@]}" --statuses "${statuses[@]}" \
-  --seconds "$(($(date +%s) - started))"
+  --seconds "$(($(date +%s) - started))" ${PCB_NIGHTLY_MIN_RESULTS:+--min-results "$PCB_NIGHTLY_MIN_RESULTS"}
 echo "summary $directory/summary.md"
 
 # The estimates follow the binary: tonight's rows into the nightly's own
@@ -362,5 +396,12 @@ for name in ${stale[@]+"${stale[@]}"}; do
 done
 
 if [ "$commit_report" = 1 ]; then
-  python3 "$here/scripts/nightly-report.py" --nights "$nights" --commit
+  if [ -n "$fake_binary" ] && [ -z "${PCB_NIGHTLY_CHECKOUT:-}" ]; then
+    echo "report not committed: a test run (PCB_NIGHTLY_FAKE_BINARY) commits only into PCB_NIGHTLY_CHECKOUT"
+  elif ! python3 "$here/scripts/nightly-report.py" --nights "$nights" --commit \
+         --checkout "${PCB_NIGHTLY_CHECKOUT:-$main}" ${PCB_NIGHTLY_MIN_RESULTS:+--min-results "$PCB_NIGHTLY_MIN_RESULTS"}; then
+    echo "the report failed; nothing committed"
+  fi
+else
+  echo "report not committed (--no-commit-report or PCB_NIGHTLY_COMMIT_REPORT=0)"
 fi

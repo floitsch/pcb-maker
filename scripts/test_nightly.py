@@ -23,7 +23,9 @@ spec.loader.exec_module(report)
 # The stub for run.py: rows by stage (the output directory's name) and
 # night (FAKE_NIGHT), summary.json by compare.py's own functions, the
 # fingerprint stage's route.log files, and its command line and
-# environment in <output>/argv.json.
+# environment in <output>/argv.json. Night 3 is night 2 without the kill
+# and the cut, with Gamma's project files changed (INPUT) and Alpha's
+# strict pass lost to a clearance finding.
 STUB = textwrap.dedent('''\
     import json, os, sys
     from pathlib import Path
@@ -39,16 +41,22 @@ STUB = textwrap.dedent('''\
         r = {"name": name, "mode": "route" if stage != "sweep" else "layout", "routed": f"{50 - unconnected}/50",
              "native": {"unconnected": unconnected, "errors": {}}, "new_findings_strict": {}, "vias": 10,
              "length_mm": 100.0, "work_seconds": 30.0, "pass": unconnected == 0, "pass_strict": unconnected == 0,
-             "peak_rss_mb": 1000 * night + unconnected, "seconds": 60.0}
+             "peak_rss_mb": 1000 * night + unconnected, "seconds": 60.0, "project_sha256": "a" * 64}
         r.update(extra)
         return r
 
     rows = [row("repo__Alpha", 0), row("repo__Beta", 2 if night == 1 else 0), row("repo__Gamma", 5)]
+    if night == 3:
+        rows[2]["project_sha256"] = "b" * 64
+        rows[0].update(new_findings_strict={"clearance": 2}, pass_strict=False, **{"pass": False})
+        rows[0]["native"]["errors"] = {"clearance": 2}
     if stage == "sweep":
         for r, share in zip(rows, (0.6, 0.7, 0.8)):
             r["ladder_budget_share"] = share
         if night == 2:
             rows[2]["cut"] = ["wall_guard"]
+        for r in rows:
+            r["quality"] = {"ours": {"vias_in_pads": 0}}
     if stage == "designer":
         for r in rows:
             r["placement"] = "designer"
@@ -77,7 +85,7 @@ STUB = textwrap.dedent('''\
 ''')
 
 
-def night(tmp_path, date, sha, fake_night, *arguments):
+def night(tmp_path, date, sha, fake_night, *arguments, environment_extra=None):
     stub = tmp_path / "fake_run.py"
     stub.write_text(STUB)
     binary = tmp_path / "pcb-maker"
@@ -88,6 +96,7 @@ def night(tmp_path, date, sha, fake_night, *arguments):
                    "FAKE_COMPARE": str(REPO / "benchmarks/agent-tasks")}
     environment.pop("PCB_NIGHTLY_SWEEP_DAYS", None)
     environment.pop("PCB_NIGHTLY_COMMIT_REPORT", None)
+    environment.update(environment_extra or {})
     return subprocess.run(["bash", str(HERE / "nightly.sh"), *arguments], env=environment, capture_output=True,
                           text=True, timeout=120)
 
@@ -191,33 +200,6 @@ def test_the_summary(two_nights):
     assert record["gap"]["placement_share"] == 0.4
 
 
-def test_the_report_into_the_docs(two_nights, tmp_path):
-    docs = tmp_path / "docs"
-    docs.mkdir()
-    old = "| 2026-10-01 | `000000000000` | first | - | - | - | - | - | - |"
-    (docs / "benchmarks.md").write_text(f"# B\n\n## Nightly\n\n{report.TABLE_BEGIN}\n{report.HEADER}\n"
-                                        f"| --- |\n{old}\n{report.TABLE_END}\n\n## Other\n")
-    (docs / "handover.md").write_text(f"# H\n\n{report.STATE_BEGIN}\nnone yet\n{report.STATE_END}\nrest\n")
-    result = subprocess.run([sys.executable, str(HERE / "nightly-report.py"), "--nights",
-                             str(two_nights / "build/nightly"), "--docs", str(tmp_path)],
-                            capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
-    benchmarks = (docs / "benchmarks.md").read_text()
-    table = benchmarks.split(report.TABLE_BEGIN)[1].split(report.TABLE_END)[0].strip().splitlines()
-    assert table[0] == report.HEADER
-    assert table[2].startswith("| 2026-10-23 | `222222222222` | changed: Gamma | 2/3 (strict 2), 0 open, 1 KILLED "
-                               "| 2/3 (strict 2), 5 open | 2/3 (strict 2), 5 open, 1 cut "
-                               "| 2/3 (strict 2), 3 open at 0.7 | 40% / 60% |")
-    assert "short 1/2/0 (pass +1 -0)" in table[2]
-    assert table[3] == old and len(table) == 4
-    assert benchmarks.endswith("\n\n## Other\n")
-    handover = (docs / "handover.md").read_text()
-    line = report.state_line(report.newest(two_nights / "build/nightly"))
-    assert handover == f"# H\n\n{report.STATE_BEGIN}\n{line}\n{report.STATE_END}\nrest\n"
-    assert "**Nightly** 2026-10-23 (main 222222222222" in handover
-    assert "gap placement 40%, routing 60%." in handover
-
-
 def test_an_unchanged_main_is_not_measured_again(two_nights):
     again = night(two_nights, "2026-10-24", "2" * 40, 2)
     assert again.returncode == 0, again.stderr
@@ -312,40 +294,313 @@ def test_ladder_share(tmp_path):
     assert report.ladder_share(tmp_path / "none.log", compare) is None
 
 
-def test_commit_commits_the_two_docs_alone_and_pushes(two_nights, tmp_path):
-    def git(*arguments, cwd=tmp_path / "main"):
-        return subprocess.run(["git", *arguments], cwd=cwd, capture_output=True, text=True, check=True).stdout
+# --- the published write-up -------------------------------------------------------
 
+DOCS = {
+    "docs/benchmarks.md": textwrap.dedent(f"""\
+        # Board corpus
+
+        ## Nightly
+
+        {report.TABLE_BEGIN}
+        {report.TABLE_END}
+
+        ## Layout sweep v21 (2026-10-21)
+
+        Written by hand.
+
+        ### Placement or routing on one binary
+
+        By hand too.
+
+        ## Other
+
+        Unrelated.
+        """),
+    "README.md": textwrap.dedent("""\
+        # pcb-maker
+
+        - **Boards harvested from GitHub** (3 finished designs). Reduced to
+          what an agent starts from - parts stacked - pcb-maker places and
+          routes **1 of 3** by hand ([results](docs/benchmarks.md)).
+        - **At scale**: unrelated.
+
+        | Sweep | Boards | pcb-maker | Freerouting |
+        | --- | --- | --- | --- |
+        | Layout from stacked parts and constraints, 1500 s of work (v21, x1, 2026-10-21) | 3 | 1 clean | - |
+        | Routing the designer's placement at the layout's routing budget, 1000 s of work (matched designer tier x1, 2026-10-21) | 3 | 2 clean | - |
+        | Routing the designer's placement cold | 3 | 2 clean | - |
+        """),
+    "docs/handover.md": textwrap.dedent(f"""\
+        # Hand-over (state as of 2026-10-21; measured by layout sweep v21 on x1)
+
+        Intro.
+
+        {report.STATE_BEGIN}
+        none yet
+        {report.STATE_END}
+
+        **Layout sweep v21** (x1): 1 of 3 pass, by hand.
+
+        **Quick tier** (30 boards): unrelated.
+        """),
+    "docs/changelog.md": textwrap.dedent("""\
+        # Changelog
+
+        ## Committed on 2026-10-25 (later work)
+
+        Text.
+
+        ## Committed on 2026-10-23 (earlier work)
+
+        Text.
+
+        ## Measured on 2026-10-21 (layout sweep v21)
+
+        Text.
+        """),
+}
+
+
+def git_in(directory, *arguments):
+    return subprocess.run(["git", *arguments], cwd=directory, capture_output=True, text=True, check=True).stdout
+
+
+def docs_checkout(tmp_path):
+    """A main checkout with the documents above, pushed to a bare origin."""
     subprocess.run(["git", "init", "--quiet", "--bare", str(tmp_path / "origin.git")], check=True)
-    subprocess.run(["git", "init", "--quiet", "-b", "main", str(tmp_path / "main")], check=True)
-    git("config", "user.email", "nightly@example.com")
-    git("config", "user.name", "Nightly")
-    (tmp_path / "main/docs").mkdir()
-    (tmp_path / "main/docs/benchmarks.md").write_text(f"{report.TABLE_BEGIN}\n{report.TABLE_END}\n")
-    (tmp_path / "main/docs/handover.md").write_text(f"{report.STATE_BEGIN}\n{report.STATE_END}\n")
-    (tmp_path / "main/other.txt").write_text("other\n")
-    git("add", ".")
-    git("commit", "--quiet", "-m", "start")
-    git("remote", "add", "origin", str(tmp_path / "origin.git"))
-    git("push", "--quiet", "origin", "main")
-    # Something else staged and changed: never part of the commit.
-    (tmp_path / "main/other.txt").write_text("changed\n")
-    git("add", "other.txt")
-    record = report.newest(two_nights / "build/nightly")
-    report.commit(record, tmp_path / "main")
-    assert git("log", "-1", "--format=%s") == "Docs: nightly 2026-10-23 (main 222222222222)\n"
-    assert git("show", "--name-only", "--format=", "HEAD").split() == ["docs/benchmarks.md", "docs/handover.md"]
-    assert git("diff", "--cached", "--name-only") == "other.txt\n"
-    assert git("rev-parse", "main", cwd=tmp_path / "origin.git") == git("rev-parse", "HEAD")
-    # The same night again: nothing to commit.
-    report.commit(record, tmp_path / "main")
-    assert git("rev-list", "--count", "HEAD") == "2\n"
-    # A change of either file in the checkout: refused, untouched.
-    (tmp_path / "main/docs/handover.md").write_text("edited by hand\n")
-    with pytest.raises(SystemExit):
-        report.commit(record, tmp_path / "main")
-    assert (tmp_path / "main/docs/handover.md").read_text() == "edited by hand\n"
-    # Not on main: refused.
-    git("checkout", "--quiet", "-f", "-b", "other")
-    with pytest.raises(SystemExit):
-        report.commit(record, tmp_path / "main")
+    main = tmp_path / "main"
+    subprocess.run(["git", "init", "--quiet", "-b", "main", str(main)], check=True)
+    git_in(main, "config", "user.email", "nightly@example.com")
+    git_in(main, "config", "user.name", "Nightly")
+    for path, text in DOCS.items():
+        (main / path).parent.mkdir(parents=True, exist_ok=True)
+        (main / path).write_text(text)
+    (main / "other.txt").write_text("other\n")
+    git_in(main, "add", *DOCS, "other.txt")
+    git_in(main, "commit", "--quiet", "-m", "start")
+    git_in(main, "remote", "add", "origin", str(tmp_path / "origin.git"))
+    git_in(main, "push", "--quiet", "-u", "origin", "main")
+    return main
+
+
+@pytest.fixture(scope="module")
+def published(tmp_path_factory):
+    """Night 1 measured and not published (--no-commit-report), a hand
+    sweep v21 (night 1's rows less one open connection on Gamma), then
+    night 3 measured and published by nightly.sh into a main checkout."""
+    tmp_path = tmp_path_factory.mktemp("published")
+    main = docs_checkout(tmp_path)
+    environment = {"PCB_NIGHTLY_CHECKOUT": str(main), "PCB_NIGHTLY_MIN_RESULTS": "3"}
+    first = night(tmp_path, "2026-10-22", "1" * 40, 1, "--no-commit-report", environment_extra=environment)
+    assert first.returncode == 0, first.stdout + first.stderr
+    rows = [json.loads(line) for line in (tmp_path / "build/nightly/2026-10-22/sweep.log").read_text().splitlines()
+            if line.startswith("{")]
+    rows[2]["native"]["unconnected"] = 6
+    (tmp_path / "build/github-layout-v21.log").write_text("".join(json.dumps(row) + "\n" for row in rows))
+    third = night(tmp_path, "2026-10-24", "3" * 40, 3, environment_extra=environment)
+    assert third.returncode == 0, third.stdout + third.stderr
+    return tmp_path, main
+
+
+def section_of(text, heading):
+    start = text.index(heading)
+    end = text.find("\n## ", start + 3)
+    return text[start:end if end >= 0 else len(text)]
+
+
+def test_the_guard():
+    def record(**changes):
+        stages = {stage: {"status": "ran", "exit": 0, "cut": [], "killed": [],
+                          "summary": {"rows": 109, "failed": 5}} for stage in report.STAGES}
+        for stage, entry in changes.items():
+            stages[stage].update(entry)
+        return {"night": "2026-10-26", "stages": stages}
+
+    assert report.guard(record()) == []
+    assert report.guard(record(sweep={"summary": {"rows": 109, "failed": 9}})) == []
+    assert report.guard(record(sweep={"summary": {"rows": 109, "failed": 10}})) == \
+        ["sweep: 99 rows with a result, fewer than 100"]
+    assert report.guard(record(sweep={"summary": {"rows": 104, "failed": 5}}), min_results=99) == []
+    assert report.guard(record(designer={"status": "skipped", "exit": None})) == ["designer skipped"]
+    assert report.guard(record(designer={"status": "failed", "exit": 1})) == ["designer failed (exit 1)"]
+    assert report.guard(record(short={"cut": ["repo__Alpha"]}, expansion={"killed": ["repo__Beta"]})) == \
+        ["expansion: 1 rows killed (Beta)", "short: 1 rows cut by the wall clock (Alpha)"]
+    assert report.guard_line(record()).startswith("publishable:")
+    assert report.guard_line(record(designer={"status": "skipped"})) == \
+        "not published: designer skipped (the night is summarised only)"
+
+
+def test_sweep_numbers():
+    hand = "# B\n\n## Layout sweep v20 (2026-10-23)\n\nx\n\n## Layout sweep v21 (2026-10-26)\n\ny\n\n## Other\n"
+    assert report.sweep_number(hand, "2026-10-26") == 22
+    assert report.published_nights(hand) == []
+    assert report.previous_sweep(hand, 22) == (21, None, "build/github-layout-v21.log", None)
+    marker = "<!-- nightly-sweep night=2026-10-27 sweep=build/nightly/2026-10-27/sweep.log main=abc -->"
+    generated = hand.replace("## Other", f"## Layout sweep v22 (2026-10-27)\n\n{marker}\n\nz\n\n## Other")
+    # The night that has a section keeps its number; the next one counts on.
+    assert report.sweep_number(generated, "2026-10-27") == 22
+    assert report.sweep_number(generated, "2026-10-28") == 23
+    assert report.published_nights(generated) == ["2026-10-27"]
+    assert report.previous_sweep(generated, 23) == (22, "2026-10-27", "build/nightly/2026-10-27/sweep.log", "abc")
+    # Written again: in place, the rest kept.
+    again = report.merge_section(generated, "2026-10-27", 22, "## Layout sweep v22 (2026-10-27)\n\nnew\n")
+    assert again == hand.replace("## Other", "## Layout sweep v22 (2026-10-27)\n\nnew\n\n## Other")
+    # A new one: after the newest numbered sweep with its subsections.
+    text = "## Layout sweep v21 (x)\n\na\n\n### Sub\n\nb\n\n## Other\n"
+    assert report.merge_section(text, "n", 22, "## Layout sweep v22 (n)\n") == \
+        "## Layout sweep v21 (x)\n\na\n\n### Sub\n\nb\n\n## Layout sweep v22 (n)\n\n## Other\n"
+
+
+def test_pending_nights(published, capsys):
+    tmp_path, main = published
+    nights = tmp_path / "build/nightly"
+    text = (main / "docs/benchmarks.md").read_text()
+    # Night 3 is published: nothing after it.
+    assert report.pending(nights, text, min_results=3) == []
+    # Without a published night only the newest counts.
+    assert [r["night"] for r in report.pending(nights, DOCS["docs/benchmarks.md"], min_results=3)] == ["2026-10-24"]
+    # After a published night every later one that passes the guard, oldest first.
+    marker = "<!-- nightly-sweep night=2026-10-21 sweep=x main=y -->"
+    older = DOCS["docs/benchmarks.md"].replace("Written by hand.", marker)
+    assert [r["night"] for r in report.pending(nights, older, min_results=3)] == ["2026-10-22", "2026-10-24"]
+    assert report.pending(nights, older) == []
+    assert "fewer than 100" in capsys.readouterr().out
+
+
+def test_the_nightly_publishes_its_night(published):
+    tmp_path, main = published
+    log = (tmp_path / "build/nightly/2026-10-24/nightly.log").read_text()
+    assert "nightly 2026-10-24: publishable: every stage ran" in log
+    assert "committed on main: nightly 2026-10-24: layout sweep v22, 1 of 3 strict" in log
+    assert "pushed main" in log
+    assert "report not committed (--no-commit-report" in (tmp_path / "build/nightly/2026-10-22/nightly.log").read_text()
+    subject = git_in(main, "log", "-1", "--format=%s").strip()
+    assert subject == ("nightly 2026-10-24: layout sweep v22, 1 of 3 strict (+0 against the nightly of 2026-10-22), "
+                       "matched designer tier 1 strict, gap placement 40% / routing 60%")
+    assert sorted(git_in(main, "show", "--name-only", "--format=", "HEAD").split()) == sorted(report.DOC_FILES)
+    assert git_in(main, "rev-parse", "HEAD") == git_in(tmp_path / "origin.git", "rev-parse", "main")
+    benchmarks = (main / "docs/benchmarks.md").read_text()
+    # After v21 and its subsection, before the next section.
+    assert benchmarks.index("By hand too.") < benchmarks.index("## Layout sweep v22 (2026-10-24)") \
+        < benchmarks.index("## Other")
+    section = section_of(benchmarks, "## Layout sweep v22 (2026-10-24)")
+    assert "<!-- nightly-sweep night=2026-10-24 sweep=build/nightly/2026-10-24/sweep.log main=" + "3" * 40 in section
+    # Gamma's project files changed: named and left out of both comparisons.
+    flat = " ".join(section.split())
+    assert "1 board ran on other inputs than in nightly 2026-10-22 (INPUT" in flat
+    assert "1 board ran on other inputs than in v21 (INPUT" in flat
+    assert "| | v21 | nightly 2026-10-22 (1111111) | v22 (nightly 2026-10-24, 3333333) |" in section
+    assert "| pass, strict rule (rule 1) | 1 of 3 | 1 of 3 | **1 of 3** |" in section
+    assert "| strict passes on the 2 boards of the same input as v21 | 1 | - | 1 |" in section
+    paragraph = " ".join(section_of(benchmarks, "**Against the nightly of 2026-10-22**").split())
+    assert "better 1, same 1, worse 0" in paragraph and "Better, the largest: repo Beta 2 -> 0." in paragraph
+    assert "Strict passes 1 -> 1: gained 1: repo Beta (2 open -> none); lost 1: Alpha (clearance 2)." in paragraph
+    assert "### Placement or routing on one binary (matched designer tier, nightly 2026-10-24)" in section
+    assert "layout open 5, designer-route open 3: placement gap +2 (40 %), routing gap 3 (60 %)" in flat
+    assert "| Gamma | 50 | 5 | 3 | +2 |" in section
+    assert "beyond noise** (" in flat and "), 0: none. Losing the strict pass: Alpha (clearance 2)." in flat
+    readme = (main / "README.md").read_text()
+    flat = " ".join(readme.split())
+    assert "Reduced to what an agent starts from - parts stacked - pcb-maker places and routes **1 of 3**" in flat
+    assert "(sweep v22, the nightly of 2026-10-24)" in flat
+    assert "([results](docs/benchmarks.md#layout-sweep-v22-2026-10-24))" in flat
+    assert "- **At scale**: unrelated." in readme
+    rows = [line for line in readme.splitlines() if line.startswith("| ")]
+    assert rows[2].startswith("| Layout from stacked parts and constraints, 1500 s of work (v22, nightly 2026-10-24")
+    assert rows[3].startswith("| Routing the designer's placement at the layout's routing budget, budget scale 0.7 "
+                              "(matched designer tier, nightly 2026-10-24)")
+    assert "(v21, x1, 2026-10-21)" in rows[4] and len(rows) == 7
+    handover = (main / "docs/handover.md").read_text()
+    assert handover.startswith("# Hand-over (state as of 2026-10-24; measured by layout sweep v22, the nightly of "
+                               "2026-10-24 on main 3333333)\n")
+    assert "**Nightly** 2026-10-24 (main 333333333333" in handover
+    assert handover.index("**Layout sweep v21** (x1)") < handover.index("**Layout sweep v22** (the nightly of") \
+        < handover.index("**Quick tier**")
+    changelog = (main / "docs/changelog.md").read_text()
+    assert changelog.index("## Committed on 2026-10-25") \
+        < changelog.index("## Measured on 2026-10-24 (nightly: layout sweep v22, matched designer tier)") \
+        < changelog.index("## Committed on 2026-10-23")
+    for text in (benchmarks, readme, handover, changelog):
+        # No wrapped line begins like a list item or a heading by accident.
+        assert not any(line.startswith(("  - ", "  + ", "  # ")) for line in text.splitlines())
+
+
+def test_publishing_again_changes_nothing(published, tmp_path):
+    source, main = published
+    copy = tmp_path / "copy"
+    for path in report.DOC_FILES:
+        (copy / path).parent.mkdir(parents=True, exist_ok=True)
+        (copy / path).write_text((main / path).read_text())
+    writeup = report.publish(copy, source / "build/nightly/2026-10-24", min_results=3)
+    assert writeup.number == 22
+    for path in report.DOC_FILES:
+        assert (copy / path).read_text() == (main / path).read_text(), path
+    # The guard: at 100 rows nothing is written.
+    assert report.publish(copy, source / "build/nightly/2026-10-24") is None
+
+
+def test_a_night_that_fails_the_guard_is_only_summarised(two_nights):
+    log = (two_nights / "build/nightly/2026-10-23/nightly.log").read_text()
+    assert ("nightly 2026-10-23: not published: expansion: 1 rows killed (Gamma); sweep: 1 rows cut by the wall "
+            "clock (Gamma); sweep: 3 rows with a result, fewer than 100") in log
+    # A test run commits only into PCB_NIGHTLY_CHECKOUT.
+    assert "report not committed: a test run" in log
+
+
+def test_the_commit_waits_for_a_clean_main(published, tmp_path, capsys):
+    source, _ = published
+    nights = source / "build/nightly"
+    main = docs_checkout(tmp_path)
+    start = git_in(main, "rev-parse", "HEAD")
+    # A change to a tracked file (the supervisor's merge in progress): nothing written.
+    (main / "other.txt").write_text("changed\n")
+    assert not report.commit(nights, main, min_results=3)
+    assert "main's working tree" in capsys.readouterr().out
+    assert (main / "README.md").read_text() == DOCS["README.md"]
+    git_in(main, "checkout", "--quiet", "--", "other.txt")
+    # Untracked files do not count.
+    (main / "untracked.txt").write_text("x\n")
+    # origin moved on and main too: the pull cannot fast-forward.
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "--quiet", str(tmp_path / "origin.git"), str(clone)], check=True)
+    git_in(clone, "config", "user.email", "a@example.com")
+    git_in(clone, "config", "user.name", "A")
+    (clone / "other.txt").write_text("theirs\n")
+    git_in(clone, "commit", "--quiet", "-am", "theirs")
+    git_in(clone, "push", "--quiet", "origin", "main")
+    (main / "other.txt").write_text("ours\n")
+    git_in(main, "commit", "--quiet", "-am", "ours")
+    assert not report.commit(nights, main, min_results=3)
+    assert "git pull --ff-only origin main failed" in capsys.readouterr().out
+    assert git_in(main, "status", "--porcelain", "--untracked-files=no") == ""
+    # Back on origin's line: published, on top of the pulled commit.
+    git_in(main, "reset", "--quiet", "--hard", start.strip())
+    assert report.commit(nights, main, min_results=3)
+    assert git_in(main, "log", "-2", "--format=%s").splitlines()[1] == "theirs"
+    assert (main / "untracked.txt").exists()
+    # Not on main: nothing.
+    git_in(main, "checkout", "--quiet", "-b", "other")
+    assert not report.commit(nights, main, min_results=3)
+    assert "not main" in capsys.readouterr().out
+
+
+def test_losers_beyond_noise():
+    diff = {"worse": [("repo__video", 165, 190), ("repo__ATAT1800", 5, 19), ("repo__glasgow", 100, 160)]}
+    beyond, within = report.losers(diff, {"repo__video": 193, "repo__glasgow": 49})
+    assert beyond == [("repo__ATAT1800", 5, 19, None), ("repo__glasgow", 100, 160, 49)]
+    assert within == [("repo__video", 165, 190, 193)]
+    spreads = report.noise_spreads()
+    assert spreads["Huaqiu-Electronics__ecad-viewer__video"] == 193
+
+
+def test_names_and_wrapping():
+    assert report.name_of("CRImier__MyKiCad__protoesp") == "protoesp"
+    assert report.name_of("GlasgowEmbedded__glasgow__glasgow__revC3") == "glasgow revC3"
+    assert report.name_of("0xCB-dev__0xCB-1337__pcb-panel") == "0xCB-1337 pcb-panel"
+    assert report.name_of("OpenDrone-hw__OpenRX__OpenRX-panel-rev2") == "OpenRX-panel-rev2"
+    assert report.name_of("byrantech__laptop__power") == "laptop power"
+    text = report.wrap("word " * 13 + "- dash and 57 % and " + "x " * 30 + "1. not a list")
+    for line in text.splitlines():
+        assert not line.startswith(("- ", "1. ", "% "))
+    assert "57 %" in text and " " not in text

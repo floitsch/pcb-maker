@@ -36,6 +36,64 @@ target boards (`compare.py --gap --targets`); against the previous
 nightly that ran each stage, better / same / worse (compare.py) and the
 boards that gained or lost the pass.
 
+**How the nightly publishes** (since 2026-10-27). The sweep write-ups
+v19 to v21 were written by hand from the logs, so README.md and this
+file went stale between them. Now the nightly writes them:
+`scripts/nightly-report.py --commit` (nightly.sh's last step, on by
+default; `--no-commit-report` or `PCB_NIGHTLY_COMMIT_REPORT=0` turns it
+off) publishes each night into
+
+- this file: a section "Layout sweep vN (<date>)", vN one more than the
+  newest numbered sweep (a night written again keeps its number; a
+  marker comment under the heading names the night, its sweep log and
+  main), placed after the newest numbered sweep, in the hand-written
+  sections' shape: the totals table against the previous night that ran
+  the sweep and the previous numbered sweep; better / same / worse,
+  unconnected where both have a result, the strict passes gained and
+  lost with the rows' finding types; the rows without a result; the
+  strict errors by board; the matched designer tier with its gap split
+  (`compare.py --gap --targets`, also without the board whose designer
+  route leaves most, and over all boards), the five costliest
+  placements, the next five and the boards where routing comes first;
+  the losers: the boards worse than the previous night, beyond noise
+  when the loss exceeds the board's seed spread in
+  `benchmarks/agent-tasks/dense-noise.json` (every loss of a board
+  without a measured spread counts). Boards whose inputs changed
+  (compare.py's INPUT: project files, task, board or constraints) are
+  named and left out of each comparison. And the night's row below;
+- README.md: the headline (the "Boards harvested from GitHub" bullet
+  from "pcb-maker places and routes" on) and the two newest table rows
+  (layout and matched designer tier; the previous nightly's two are
+  replaced, the hand-written rows stay below);
+- docs/handover.md: the title's state, the nightly state line and a
+  night note after the last "Layout sweep vN" paragraph (the previous
+  nightly's note is replaced);
+- docs/changelog.md: "Measured on <date> (nightly: layout sweep vN,
+  matched designer tier)".
+
+**The guard.** A night is published only when every stage ran, no row
+of any stage was cut by the wall clock or killed, and the sweep has at
+least 100 rows with a result. Otherwise the night is summarised
+(`summary.md`, `nightly.json`) but nothing is written; the summary's
+last line in `nightly.log` says why ("not published: ...").
+
+**The race with the supervisor's merges.** The supervisor merges into
+the main checkout during the day, when the night's sweep may still be
+running. The report commits only when the main checkout is on main, its
+working tree has no change to a tracked file (untracked files do not
+count) and `git pull --ff-only origin main` succeeds; then it writes the
+four files and commits them alone (`git commit -- <files>`), with the
+message "nightly <date>: layout sweep vN, <strict passes> strict (<change>
+against the previous night), matched designer tier <strict> strict, gap
+placement <p> / routing <r>", and pushes main (with any merge not yet
+pushed). Otherwise it writes nothing and says so in `nightly.log`; the
+next night publishes every guarded night after the newest one this file
+has (at most three, oldest first), so a skipped night is not lost. A
+merge that touches these files while the report writes them fails on
+the changed files instead of mixing with them. By hand:
+`scripts/nightly-report.py --docs build/nightly/<night>` (`--dry-run`
+prints the section; `--checkout` writes another checkout's docs).
+
 <!-- nightly:begin -->
 | Night | main | Fingerprints | Expansion | Short | Sweep | Designer | Gap (placement / routing) | Against the previous night (better/same/worse) |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |

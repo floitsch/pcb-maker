@@ -11,6 +11,54 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-27 (the nightly writes its sweep section, README and hand-over itself)
+
+Branch nightly-docs. The write-ups of v19, v20 and v21 were done by hand
+from the logs while the nightly's `summary.md` had the same numbers, so
+README.md and docs/benchmarks.md went stale between them. The nightly
+now publishes its night ([benchmarks.md](benchmarks.md#nightly), "How
+the nightly publishes"):
+
+- **`nightly-report.py --docs <night>`** writes a "Layout sweep vN
+  (<date>)" section into docs/benchmarks.md in the hand-written
+  sections' shape (the totals table against the previous night and the
+  previous numbered sweep; better / same / worse and the strict passes
+  gained and lost with their finding types; INPUT boards named and left
+  out; the rows without a result; the strict errors; the matched
+  designer tier's gap split, the five costliest placements; the losers
+  beyond the seed spreads of `dense-noise.json`), the night's "Nightly"
+  row, README.md's headline and two newest rows, the hand-over's title,
+  state line and night note, and a changelog section "Measured on
+  <date> (nightly: layout sweep vN, matched designer tier)". vN is one
+  more than the newest numbered sweep; a night written again keeps its
+  number and replaces its own parts. `--dry-run` prints the section.
+  (`--docs` named the checkout before; that is `--checkout` now.)
+- **The guard**: every stage ran, no row cut or killed, at least 100
+  sweep rows with a result; otherwise the night is summarised only and
+  the summary's last line in nightly.log gives the reason.
+- **Committed by default** (`--commit-report` is the default;
+  `--no-commit-report` or `PCB_NIGHTLY_COMMIT_REPORT=0` turns it off):
+  the four files alone on main, "nightly <date>: layout sweep vN, ...",
+  pushed. Only when the main checkout is on main with no change to a
+  tracked file and `git pull --ff-only origin main` succeeds; else
+  nothing is written, nightly.log says so, and the next night publishes
+  every guarded night after the newest published one (at most three).
+- compare.py's INPUT test is one function now (`on_other_input`), used
+  by its table and by the write-up.
+
+Run on the night of 2026-10-26 into a scratch copy of the docs (not
+committed; the first published section is tonight's): v22 = 57 of 109
+strict (v21 56, the nightly of 2026-10-25 53), against the nightly
+better 20 / same 74 / worse 6 with neotron-pico, Explorer, homebrew_486
+and ghoul gaining the strict pass; the matched tier 64 strict, the gap
+over the 100 target boards 57 % placement / 43 % routing (73 / 27
+without Batch_1); losers beyond noise ATAT1800 5 -> 19,
+poly_corne_split42_right 20 -> 25, ULK 2 -> 4, koeg 13 -> 15, vaio_re
+9 -> 10 (the 0xCB panel's 50 -> 60 lies within its seed spread of 11).
+Tests: scripts/test_nightly.py (the guard, the numbering, a night
+published by nightly.sh into a git checkout and pushed, publishing
+again changes nothing, the commit rule against a dirty tree, a
+diverged origin and another branch, the losers, the wrapping).
 ## Measured on 2026-10-27 (a coarse first route as a placement ranker)
 
 Branch coarse-probe, snapshot x14982 (on main 947ee550); docs/placer.md,

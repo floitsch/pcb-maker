@@ -153,6 +153,22 @@ def other_inputs(before, after):
             if before.get(key) and after.get(key) and before[key] != after[key]]
 
 
+def on_other_input(before, after, before_directory, after_directory):
+    """Whether two rows of a board ran on other inputs (INPUT): their
+    prepared constraints, task entry, designer's board or project files
+    (.kicad_pro, .kicad_dru) differ, where both rows (or their runs'
+    output directories) say. Such a pair is not a change of the binary."""
+    digest_before = input_digest(before, before_directory)
+    digest_after = input_digest(after, after_directory)
+    if digest_before is not None and digest_after is not None and digest_before != digest_after:
+        return True
+    if other_inputs(before, after):
+        return True
+    project_before = project_digest(before, before_directory)
+    project_after = project_digest(after, after_directory)
+    return project_before is not None and project_after is not None and project_before != project_after
+
+
 def prepared_constraints(directory, name):
     try:
         return json.loads((directory / name / "source" / "constraints.json").read_text())
@@ -793,17 +809,8 @@ def main():
     # Boards prepared from other constraints: another input, not a change.
     other_input = set()
     for name in common:
-        digest_before = input_digest(before[name], output_directory(arguments.before))
-        digest_after = input_digest(after[name], after_directory[name])
-        if digest_before is not None and digest_after is not None and digest_before != digest_after:
+        if on_other_input(before[name], after[name], output_directory(arguments.before), after_directory[name]):
             other_input.add(name)
-        elif other_inputs(before[name], after[name]):
-            other_input.add(name)
-        else:
-            project_before = project_digest(before[name], output_directory(arguments.before))
-            project_after = project_digest(after[name], after_directory[name])
-            if project_before is not None and project_after is not None and project_before != project_after:
-                other_input.add(name)
     lists = f"before {before_list}; after {after_list}"
     warning = rules_warning([before[n] for n in common], [after[n] for n in common])
     if warning:
