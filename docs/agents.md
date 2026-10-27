@@ -238,7 +238,13 @@ starter for a schematic:
   the project's schematic draws it nearest to (an IC of the rail drawn
   without a capacitor takes the extra of one with more capacitors than
   supply pins on the rail; at an IC its supply pins in turn), else at the
-  rail's supply pins in turn; `max_mm` 1.5 (3 for 4.7 uF and more). A
+  rail's supply pins in turn; `max_mm` 1.5 (3 for 4.7 uF and more), and on a
+  placed board at least the board's own distance from the capacitor's
+  courtyard to the pin, rounded up to 0.5 mm, where that is more (the
+  `comment` lists them; since 2026-10-27: framework_mobo_lefthalf's C1 lies
+  5.85 mm from U1:22, `max_mm` 6, where 1.5 missed on the designer's own
+  placement; 26 of MokyaLora's 53 entries widen, to 2 to 6 mm). A board
+  without a placement keeps 1.5 and 3. A
   supply pin is told by the pin's function where the board names it
   (`VDD`, `VCC`, `AVDD`, `VIN`, `VM`, `3V3`, ...; never an enable or
   control input tied to the rail: `EN`, `SHDN`, `CE`, `SLEEP`, `CS`), else

@@ -357,6 +357,13 @@ fn placed(parts: &[Part]) -> bool {
     parts.len() >= 2 && positions.len() * 2 > parts.len()
 }
 
+/// The distance from a box (`[x0, y0, x1, y1]`) to a point, 0 inside.
+fn box_to_point(body: [f64; 4], point: [f64; 2]) -> f64 {
+    let dx = (body[0] - point[0]).max(point[0] - body[2]).max(0.0);
+    let dy = (body[1] - point[1]).max(point[1] - body[3]).max(0.0);
+    dx.hypot(dy)
+}
+
 /// The sides of the outline box `bounds` a body lies within `reach` of,
 /// the nearest first.
 fn near_edges(bounds: [f64; 4], body: [f64; 4], reach: f64) -> Vec<&'static str> {
@@ -557,6 +564,7 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
         )
     };
     let mut near = Vec::new();
+    let mut widened = Vec::new();
     let mut taken: BTreeMap<String, usize> = BTreeMap::new();
     for (part, net, center) in &capacitors {
         let pins = &supplies[net];
@@ -580,14 +588,45 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
             continue;
         };
         let bulk = capacitance(&part.value).is_some_and(|farads| farads >= 4.7e-6);
+        let default = if bulk { 3.0 } else { 1.5 };
+        // On a placed board, at least the designer's own distance (the
+        // capacitor's courtyard box to the pin; the placer measures from
+        // its body, which holds that box), rounded up to 0.5 mm:
+        // framework_mobo_lefthalf's designer has C1 7.96 mm from U1:22,
+        // and 1.5 mm missed on the designer's own placement.
+        let designer = if has_placement {
+            part.body
+                .zip(pins.iter().find(|(name, _)| *name == pin))
+                .map(|(body, (_, at))| box_to_point(body, *at))
+        } else {
+            None
+        };
+        let max_mm = match designer {
+            // (within the placer's tolerance of the default: kept)
+            Some(distance) if distance > default + pcb_placer::constraints::RELATION_TOLERANCE => {
+                let max_mm = (distance / 0.5).ceil() * 0.5;
+                widened.push(format!(
+                    "{} at {pin} {distance:.2} mm (max_mm {max_mm})",
+                    part.reference
+                ));
+                max_mm
+            }
+            _ => default,
+        };
         near.push(serde_json::json!({
             "part": part.reference,
             "pin_of": pin,
-            "max_mm": if bulk { 3.0 } else { 1.5 },
+            "max_mm": max_mm,
         }));
     }
     if !near.is_empty() {
         comment.push("near: each decoupling capacitor (two pins, a supply rail and ground, the rail on an IC's supply pin) at that pin, 1.5 mm body to pin (3 mm for 4.7 uF and more). Without these entries the placer pulls each to within 2.5 mm of its IC's first pin on the rail (1 mm of the nearest supply pin with the placer's decoupling_near), softer; written down, place-kicad-board checks them and the verdict reports a miss. Several capacitors at one pin, or more than fit around a fine-pitch IC: give them other pins of the rail or loosen max_mm.".into());
+    }
+    if !widened.is_empty() {
+        comment.push(format!(
+            "near: these lie farther from their pin on this board than 1.5 mm (3 mm), so their max_mm is that distance rounded up to 0.5 mm, which the board's own placement keeps; tighten them where the design wants the capacitor closer: {}.",
+            widened.join(", ")
+        ));
     }
     comment.push("To fill in: parts that must not move (fixed), keepouts (antennas, mounting hardware), regions, the outline if the board has none (docs/constraints.md).".into());
     let mut template = serde_json::json!({
@@ -741,6 +780,49 @@ mod tests {
             .map(|entry| entry["pin_of"].as_str().unwrap())
             .collect();
         assert_eq!(pins, vec!["U3:1", "U5:1", "U6:1"]);
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_placed_boards_near_entries_keep_at_least_the_designers_distance() {
+        // framework_mobo_lefthalf: the designer has C1 7.96 mm from U1:22,
+        // and the template's 1.5 mm missed on the designer's placement.
+        let dir = std::env::temp_dir().join(format!("ux5-template-far-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        board(&dir, true);
+        let path = dir.join("t.kicad_pcb");
+        let text = fs::read_to_string(&path)
+            .unwrap()
+            .replace(r#""C_0402" (at 23 10)"#, r#""C_0402" (at 26 10)"#);
+        fs::write(&path, text).unwrap();
+        let template = constraints_template(&dir, "t").unwrap();
+        // C1's pads reach 25.25, U1:1 lies at 21.5: 3.75 mm, max_mm 4; C2
+        // (10 uF) 0.85 mm from U1:2 keeps its 3 mm.
+        assert_eq!(
+            template["near"],
+            serde_json::json!([
+                {"part": "C1", "pin_of": "U1:1", "max_mm": 4.0},
+                {"part": "C2", "pin_of": "U1:2", "max_mm": 3.0}
+            ])
+        );
+        let comments = template["comment"].to_string();
+        assert!(
+            comments.contains("C1 at U1:1 3.75 mm (max_mm 4)"),
+            "{comments}"
+        );
+        // Stacked (no placement): today's defaults.
+        board(&dir, false);
+        let template = constraints_template(&dir, "t").unwrap();
+        assert!(
+            template["near"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|entry| entry["max_mm"] == 1.5 || entry["max_mm"] == 3.0),
+            "{}",
+            template["near"]
+        );
+        assert!(!template["comment"].to_string().contains("rounded up"));
         fs::remove_dir_all(&dir).unwrap();
     }
 
