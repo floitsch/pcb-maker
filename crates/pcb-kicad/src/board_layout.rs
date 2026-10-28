@@ -140,9 +140,10 @@ pub struct KiCadBoardLayoutConfig {
     /// `total_seconds`. The report says so (`stopped_after_first_route`).
     pub stop_after_first_route: bool,
     /// What the race ranks its probes by (docs/placer.md, "The race ranks
-    /// its probes by the ripped count (2026-10-27)"): `"unfinished"` (the
-    /// nets each probe left unfinished; with `race_probe`, its standing)
-    /// or `"ripped"`: the board's open terminals once each probe's nets in
+    /// its probes by the ripped count (2026-10-27)"; `"ripped"` by default
+    /// since the nine seed pairs of 2026-10-28): `"unfinished"` (the nets
+    /// each probe left unfinished; with `race_probe`, its standing) or
+    /// `"ripped"`: the board's open terminals once each probe's nets in
     /// conflict lose their conflicted branches (the hard repair's rip-up
     /// without its searches, on a copy of the probe's router: the kept
     /// one routes on unripped), ties by the standing. Without
@@ -156,11 +157,11 @@ pub struct KiCadBoardLayoutConfig {
 #[serde(rename_all = "snake_case")]
 pub enum KiCadRaceCount {
     /// The nets each probe left unfinished (with `race_probe`, its
-    /// standing).
-    #[default]
+    /// standing): the race's count until 2026-10-28.
     Unfinished,
     /// The open terminals after the rip-up of the conflicted branches,
     /// ties by the standing.
+    #[default]
     Ripped,
 }
 
@@ -3705,20 +3706,20 @@ mod budget_tests {
         // Off, the config serializes as before.
         let text = serde_json::to_string(&KiCadBoardLayoutConfig::default()).unwrap();
         assert!(!text.contains("race_probe"), "{text}");
-        assert!(text.contains(r#""race_count":"unfinished""#), "{text}");
+        assert!(text.contains(r#""race_count":"ripped""#), "{text}");
     }
 
     #[test]
-    fn the_race_counts_unfinished_nets_unless_the_ripped_count_is_named() {
+    fn the_race_counts_ripped_terminals_unless_the_unfinished_nets_are_named() {
         let config: KiCadBoardLayoutConfig = serde_json::from_str("{}").unwrap();
-        assert_eq!(config.race_count, KiCadRaceCount::Unfinished);
-        let config: KiCadBoardLayoutConfig =
-            serde_json::from_str(r#"{"race_count": "ripped"}"#).unwrap();
         assert_eq!(config.race_count, KiCadRaceCount::Ripped);
+        let config: KiCadBoardLayoutConfig =
+            serde_json::from_str(r#"{"race_count": "unfinished"}"#).unwrap();
+        assert_eq!(config.race_count, KiCadRaceCount::Unfinished);
         assert!(
             serde_json::to_string(&config)
                 .unwrap()
-                .contains(r#""race_count":"ripped""#)
+                .contains(r#""race_count":"unfinished""#)
         );
         assert!(
             serde_json::from_str::<KiCadBoardLayoutConfig>(r#"{"race_count": "open"}"#).is_err()
