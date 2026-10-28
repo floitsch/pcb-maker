@@ -459,6 +459,15 @@ pub struct CrossingState<'a> {
     cell_fresh: Vec<u32>,
     cell_rank: Vec<u32>,
     tail_places: Vec<Vec<u32>>,
+    /// `involving`'s buffers: the fresh lines, per cell slot the fresh
+    /// lines there, and per fresh line the stamp of the line that met it.
+    fresh: Vec<u32>,
+    slot_lines: Vec<Vec<u32>>,
+    fresh_seen: Vec<u32>,
+    fresh_stamp: u32,
+    /// Every `involving` checked against `involving_direct` (debug builds
+    /// and `PCB_PLACER_CHECK_OVERLAP`).
+    check: bool,
 }
 
 /// Where `swap_remove`'s removal of a list's fresh lines (appended in
@@ -566,6 +575,11 @@ impl<'a> CrossingState<'a> {
             cell_fresh: Vec::new(),
             cell_rank: Vec::new(),
             tail_places: Vec::new(),
+            fresh: Vec::new(),
+            slot_lines: Vec::new(),
+            fresh_seen: Vec::new(),
+            fresh_stamp: 0,
+            check: cfg!(debug_assertions) || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
         };
         let cells = state.grid.cells.len();
         state.cell_stamp = vec![0; cells];
@@ -739,7 +753,45 @@ impl<'a> CrossingState<'a> {
     /// The crossings of the trees of the nets on the pins of `moved` with
     /// all lines, the parts where `poses` has them; the lines kept are
     /// unchanged.
+    ///
+    /// The fresh trees stay out of the grid: `involving_direct` inserted
+    /// their lines into the grid's lists, counted them against the grid and
+    /// took them out again, for every spot of the legaliser and every
+    /// candidate of the refinement (61 % of video's placement, 2026-10-28).
+    /// The fresh lines meet the kept ones through the grid as before and
+    /// each other where they share a cell (every cell a line passes holds
+    /// it in the grid: two fresh lines meet there exactly when their walks
+    /// share a cell), each crossing of two of them once; the work booked is
+    /// `involving_direct`'s: the trees, the insertion's cells, the count's
+    /// cells and lines met (the fresh ones among them), and the removal's
+    /// cells and scans, each fresh line found behind a cell's kept lines at
+    /// the place `swap_remove` leaves it (`tail_place`). The same count and
+    /// the same work; checked against `involving_direct` in debug builds
+    /// and with `PCB_PLACER_CHECK_OVERLAP`.
     pub fn involving(&mut self, poses: &[Pose], moved: &[usize]) -> u64 {
+        let nets = self.nets_of(moved);
+        if nets.is_empty() {
+            return 0;
+        }
+        let check_from = self.check.then(crate::work);
+        let found = self.involving_apart(poses, &nets);
+        if let Some(start) = check_from {
+            let booked = crate::work() - start;
+            let direct_start = crate::work();
+            let direct = self.involving_direct(poses, moved);
+            let direct_work = crate::work() - direct_start;
+            crate::add_work_back(direct_work);
+            assert_eq!(
+                (found, booked),
+                (direct, direct_work),
+                "parts {moved:?}: (crossings, work) of the fresh trees beside the grid against the grid's"
+            );
+        }
+        found
+    }
+
+    /// `involving` the way it was: the fresh trees' lines through the grid.
+    fn involving_direct(&mut self, poses: &[Pose], moved: &[usize]) -> u64 {
         let _timed = profile::Timed::start();
         let nets = self.nets_of(moved);
         if nets.is_empty() {
@@ -752,6 +804,146 @@ impl<'a> CrossingState<'a> {
         }
         let found = self.count(&fresh, &nets);
         self.drop_lines(&fresh);
+        found
+    }
+
+    /// `involving_direct` of the nets `nets` (sorted, not empty) without
+    /// the fresh lines in the grid (`involving`).
+    fn involving_apart(&mut self, poses: &[Pose], nets: &[usize]) -> u64 {
+        let _timed = profile::Timed::start();
+        let mut fresh = std::mem::take(&mut self.fresh);
+        fresh.clear();
+        for &net in nets {
+            let ids = self.tree(poses, net, false);
+            fresh.extend(ids);
+        }
+        let mut work = 0u64;
+        // The insertion: each line's cells (in the walk's order, each
+        // once), and per cell the fresh lines there in insertion order.
+        let mut cells_of = std::mem::take(&mut self.cells_of);
+        cells_of.clear();
+        let mut line_cells = std::mem::take(&mut self.line_cells);
+        line_cells.clear();
+        let mark = Self::next_stamp(&mut self.cell_mark, &mut self.cell_stamp);
+        let mut slots = std::mem::take(&mut self.slot_lines);
+        let mut used = 0usize;
+        let mut grid_cells = 0u64;
+        for (rank, &id) in fresh.iter().enumerate() {
+            let line = self.lines[id as usize];
+            let first = cells_of.len();
+            let visited = self.grid.walk(line.a, line.b, |cell| cells_of.push(cell)) as u64;
+            line_cells.push((first, cells_of.len()));
+            work += at_rate(visited, GRID_CELL_WORK);
+            grid_cells += visited;
+            for &cell in &cells_of[first..] {
+                if self.cell_stamp[cell] != mark {
+                    self.cell_stamp[cell] = mark;
+                    self.cell_rank[cell] = used as u32;
+                    if slots.len() <= used {
+                        slots.push(Vec::new());
+                    }
+                    slots[used].clear();
+                    used += 1;
+                }
+                slots[self.cell_rank[cell] as usize].push(rank as u32);
+            }
+        }
+        // The count: each fresh line against the kept lines in its cells
+        // (the moved nets' kept lines met but not tested) and against the
+        // fresh lines sharing a cell with it.
+        let query = Self::next_stamp(&mut self.query, &mut self.subject);
+        if query == 1 {
+            self.touched.iter_mut().for_each(|mark| *mark = 0);
+        }
+        for &net in nets {
+            self.touched[net] = query;
+        }
+        if self.fresh_seen.len() < fresh.len() {
+            self.fresh_seen.resize(fresh.len(), 0);
+        }
+        let mut found = 0u64;
+        let mut walked = 0u64;
+        let mut met = 0u64;
+        let mut tested = 0u64;
+        for (rank, &id) in fresh.iter().enumerate() {
+            let line = self.lines[id as usize];
+            let (first, last) = line_cells[rank];
+            walked += (last - first) as u64;
+            let stamp = Self::next_stamp(&mut self.stamp, &mut self.seen);
+            let fresh_stamp = Self::next_stamp(&mut self.fresh_stamp, &mut self.fresh_seen);
+            for &cell in &cells_of[first..last] {
+                for &other in &self.grid.cells[cell] {
+                    if self.seen[other as usize] == stamp {
+                        continue;
+                    }
+                    self.seen[other as usize] = stamp;
+                    met += 1;
+                    let theirs = self.lines[other as usize];
+                    if theirs.net == line.net || self.touched[theirs.net] == query {
+                        continue;
+                    }
+                    tested += 1;
+                    if lines_cross(line.a, line.b, theirs.a, theirs.b) {
+                        found += 1;
+                    }
+                }
+                for &other in &slots[self.cell_rank[cell] as usize] {
+                    let other = other as usize;
+                    if self.fresh_seen[other] == fresh_stamp {
+                        continue;
+                    }
+                    self.fresh_seen[other] = fresh_stamp;
+                    met += 1;
+                    // Two fresh lines: counted from the earlier one.
+                    if other <= rank {
+                        continue;
+                    }
+                    let theirs = self.lines[fresh[other] as usize];
+                    if theirs.net == line.net {
+                        continue;
+                    }
+                    tested += 1;
+                    if lines_cross(line.a, line.b, theirs.a, theirs.b) {
+                        found += 1;
+                    }
+                }
+            }
+        }
+        work += walked + at_rate(met, MET_WORK);
+        // The removal, line by line in insertion order (`involving_kept`).
+        let ranked = Self::next_stamp(&mut self.cell_mark, &mut self.cell_stamp);
+        let mut scanned_total = 0u64;
+        for &(first, last) in &line_cells {
+            let mut scanned = 0u64;
+            for &cell in &cells_of[first..last] {
+                let slot = self.cell_rank[cell] as usize;
+                if self.cell_stamp[cell] != ranked {
+                    self.cell_stamp[cell] = ranked;
+                    self.cell_fresh[cell] = 0;
+                }
+                let place = self.cell_fresh[cell] as usize;
+                self.cell_fresh[cell] += 1;
+                let kept = self.grid.cells[cell].len() as u64;
+                scanned +=
+                    kept + tail_place(&mut self.tail_places, slots[slot].len(), place) as u64 + 1;
+            }
+            scanned_total += scanned;
+            work += at_rate((last - first) as u64, GRID_CELL_WORK) + at_rate(scanned, SCAN_WORK);
+        }
+        crate::add_work(work);
+        profile::add(|tally| {
+            tally.grid_cells += 2 * grid_cells;
+            tally.cells += walked;
+            tally.met += met;
+            tally.tested += tested;
+            tally.scanned += scanned_total;
+        });
+        // The ids go back as `drop_lines` gives them back.
+        self.free.extend_from_slice(&fresh);
+        self.cells_of = cells_of;
+        self.line_cells = line_cells;
+        self.slot_lines = slots;
+        self.fresh = fresh;
         found
     }
 
@@ -1545,6 +1737,9 @@ mod tests {
         // Few lines a move (counted directly) and many (through the grid).
         exactness(24, 14, 12345);
         exactness(60, 8, 777);
+        // Many lines a net, many sharing cells.
+        exactness(80, 5, 4242);
+        exactness(150, 40, 99);
     }
 
     fn exactness(parts: usize, nets: usize, seed: u64) {
@@ -1581,6 +1776,7 @@ mod tests {
             global: false,
         };
         let mut state = CrossingState::new(&problem, &crossings, &poses);
+        state.check = false;
         assert_eq!(state.total(), brute(&problem, &crossings, &poses));
         for step in 0..300 {
             let a = (random() * parts as f64) as usize;
@@ -1607,7 +1803,14 @@ mod tests {
             let before = state.involving(&poses, &moved);
             let direct_work = crate::work() - start;
             assert_eq!((kept, kept_work), (before, direct_work));
+            let start = crate::work();
             let after = state.involving(&next, &moved);
+            let apart_work = crate::work() - start;
+            // The fresh trees beside the grid: the count and the work of
+            // the trees through the grid.
+            let start = crate::work();
+            let direct = state.involving_direct(&next, &moved);
+            assert_eq!((after, apart_work), (direct, crate::work() - start));
             // Elsewhere only where the moved nets' parts did not move (or
             // the parts have none).
             if let Some(kept) = state.involving_kept(&next, &moved) {
