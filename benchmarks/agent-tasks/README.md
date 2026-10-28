@@ -1267,6 +1267,45 @@ spliced, compare.py: "30 boards in both: better 0, same 29, worse 0;
 unconnected 26 -> 26; passes 23 -> 23" and "after: 28 of the 30 rows
 spliced from an earlier run (SPL)".
 
+## Reused layouts (`--reuse`)
+
+`--reuse <dir>` (layout mode; since 2026-10-28) keeps a cache of layouts
+by their placement in `<dir>` (e.g. `build/layout-reuse`). A layout
+prints `layout: placement digest <sha256>` at the end of its placement
+phase (board_layout.rs, `placement_digest`; also `placement_digest` in
+board-layout.json): the placed board, the lowered placement problem with
+the placer settings it carries, the race's other placements, the pin
+swaps and the work the placement booked, everything the steps after it
+read from the placement. run.py's key is the sha256 of that digest, the
+binary's sha256, the task (its entry and its prepared source directory),
+the layout settings beside the placer's, the rates, the threads and the
+`PCB_*` environment (the ledger's variables left out). On a hit run.py
+ends the layout there, copies the earlier run's `layout/` (its log as
+`layout-reused.log`) and returns its row with `reused_from` (the earlier
+directory, its key, seconds and CPU); `seconds` and `cpu_seconds` are
+this run's own (the placement's), and summary.json counts `reused`. A
+row that ended by itself (no error, cut or kill) is stored under its key
+as `<key>.json` with its directory, which must stay where it is (a
+stored entry whose directory is gone is a miss).
+
+What it saves: everything after the placement (the race, the routes, the
+ladder, KiCad's checks), about 45 % of a dense layout's wall clock
+(docs/placer.md, "Cheaper stages of the placer protocol, calibrated
+(2026-10-28)"). When it hits: a placer A/B whose two sides run on one
+binary (the switch as an option) on the boards the switch leaves alone,
+and every rerun of a row (the off side of the next experiment, the noise
+file's seeds). The digest holds the placer settings that land in the
+lowered problem, so a switch carried there (`ratsnest_crossings.anneal`
+is one) never hits, whatever the placement; two binaries never share a
+key. The demo (0xCB 1337-v4.0, the short tier's task at budget scale
+0.2, `build/proto1-t-*`): the first run 227 CPU s, the second with an
+explicit `{"seed": 1}` (the default) 34.5 CPU s, its row the first's.
+
+```sh
+benchmarks/agent-tasks/run.py build/X-dense-s1-on --tasks benchmarks/agent-tasks/tasks/v7/tasks.json \
+  --binary build/bin/pcb-maker-xNNNN --placer '{"seed": 1, "my_switch": true}' --reuse build/layout-reuse
+```
+
 ## Nightly
 
 **What runs where** (since 2026-10-23). A package does not validate

@@ -397,6 +397,116 @@ class ProcessGroups(unittest.TestCase):
         self.assertLess(time.monotonic() - before, 30)
 
 
+class LayoutReuseTests(unittest.TestCase):
+    """--reuse: a layout whose placement was routed before takes that run's
+    row (run.LayoutReuse)."""
+
+    DIGEST = "ab" * 32
+
+    def setUp(self):
+        self.temporary = Path(tempfile.mkdtemp())
+        self.source = self.temporary / "source"
+        self.source.mkdir()
+        (self.source / "b.kicad_pcb").write_text("(kicad_pcb)")
+        (self.source / "constraints.json").write_text("{}")
+        self.cache = run.LayoutReuse(self.temporary / "cache")
+
+    def tearDown(self):
+        shutil.rmtree(self.temporary)
+
+    def base(self, binary="b1", layout=None, environ=None):
+        layout = layout or {"placer": {"seed": 1}, "total_seconds": 375}
+        return run.LayoutReuse.base(binary, {"name": "t", "board_id": "b"}, self.source, layout, 2,
+                                    "3.15e6,150e6", environ=environ or {})
+
+    def earlier(self, name="earlier"):
+        directory = self.temporary / name
+        (directory / "layout" / "result").mkdir(parents=True)
+        (directory / "layout" / "board-layout.json").write_text("{}")
+        (directory / "layout" / "result" / "b.kicad_pcb").write_text("(kicad_pcb routed)")
+        (directory / "layout.log").write_text("layout: done\n")
+        return directory
+
+    def test_the_placer_settings_act_only_through_the_digest(self):
+        one = self.base(layout={"placer": {"seed": 1}, "total_seconds": 375})
+        other = self.base(layout={"placer": {"seed": 101, "ratsnest_crossings": {"anneal": True}},
+                                  "total_seconds": 375})
+        self.assertEqual(run.LayoutReuse.key(one, self.DIGEST), run.LayoutReuse.key(other, self.DIGEST))
+        self.assertNotEqual(run.LayoutReuse.key(one, self.DIGEST), run.LayoutReuse.key(one, "cd" * 32))
+
+    def test_binary_layout_source_and_environment_are_in_the_key(self):
+        key = run.LayoutReuse.key(self.base(), self.DIGEST)
+        self.assertNotEqual(key, run.LayoutReuse.key(self.base(binary="b2"), self.DIGEST))
+        self.assertNotEqual(key, run.LayoutReuse.key(
+            self.base(layout={"placer": {"seed": 1}, "total_seconds": 1500}), self.DIGEST))
+        self.assertNotEqual(key, run.LayoutReuse.key(
+            self.base(environ={"PCB_ROUTER_NO_WALL_GUARD": "1"}), self.DIGEST))
+        # The ledger's variables name the board's reservation: not in it.
+        self.assertEqual(key, run.LayoutReuse.key(
+            self.base(environ={"PCB_MAKER_LEDGER_INSIDE": "x", "HOME": "/h"}), self.DIGEST))
+        (self.source / "b.kicad_pcb").write_text("(kicad_pcb (other))")
+        self.assertNotEqual(key, run.LayoutReuse.key(self.base(), self.DIGEST))
+
+    def test_a_stored_row_is_found_by_the_digest_line(self):
+        base = self.base()
+        key = run.LayoutReuse.key(base, self.DIGEST)
+        earlier = self.earlier()
+        row = {"name": "t", "native": {"unconnected": 7}, "seconds": 900.0, "cpu_seconds": 1700.0}
+        self.assertTrue(self.cache.store(key, row, earlier))
+        watch, state = self.cache.watcher(base)
+        self.assertFalse(watch("layout: placed (12 s, work 3 s)\n"))
+        self.assertTrue(watch(f"layout: placement digest {self.DIGEST}\n"))
+        self.assertEqual(state["key"], key)
+        work = self.temporary / "now"
+        (work / "layout").mkdir(parents=True)
+        (work / "layout" / "partial").write_text("left by the stopped layout")
+        reused = run.LayoutReuse.reused_row(state["entry"], key, {"seconds": 300.0, "cpu_seconds": 500.0}, work)
+        self.assertEqual(reused["native"], {"unconnected": 7})
+        self.assertEqual((reused["seconds"], reused["cpu_seconds"]), (300.0, 500.0))
+        self.assertEqual(reused["reused_from"]["cpu_seconds"], 1700.0)
+        self.assertEqual(reused["reused_from"]["directory"], str(earlier.resolve()))
+        self.assertTrue((work / "layout" / "result" / "b.kicad_pcb").is_file())
+        self.assertFalse((work / "layout" / "partial").exists())
+        self.assertTrue((work / "layout-reused.log").is_file())
+
+    def test_another_digest_or_a_gone_directory_is_a_miss(self):
+        base = self.base()
+        earlier = self.earlier()
+        key = run.LayoutReuse.key(base, self.DIGEST)
+        self.cache.store(key, {"name": "t"}, earlier)
+        watch, state = self.cache.watcher(base)
+        self.assertFalse(watch(f"layout: placement digest {'cd' * 32}\n"))
+        self.assertNotIn("entry", state)
+        shutil.rmtree(earlier)
+        self.assertIsNone(self.cache.lookup(key))
+
+    def test_only_rows_that_ended_by_themselves_are_stored(self):
+        earlier = self.earlier()
+        for row in ({"name": "t", "error": "timed out"}, {"name": "t", "cut": ["timeout"]},
+                    {"name": "t", "killed": True}, {"name": "t", "reused_from": {"directory": "x"}}):
+            self.assertFalse(self.cache.store("k", row, earlier))
+        self.assertIsNone(self.cache.lookup("k"))
+
+    @unittest.skipUnless(Path("/proc").is_dir(), "needs /proc")
+    def test_a_watched_line_ends_the_layout_and_its_group(self):
+        started = []
+        before = time.monotonic()
+        line = f"layout: placement digest {self.DIGEST}"
+        code, output, _, _, _ = run.run_measured(["sh", "-c", f"echo '{line}'; sleep 60 & sleep 60"], timeout=120,
+                                                 on_start=started.append,
+                                                 watch=lambda text: run.PLACEMENT_DIGEST.match(text.strip()))
+        self.assertEqual(code, "reused")
+        self.assertIn(line, output)
+        self.assertLess(time.monotonic() - before, 30)
+        self.assertEqual(run.harness_common.group_members(started[0]), [])
+
+    def test_without_a_match_the_watched_run_ends_as_before(self):
+        code, output, _, _, _ = run.run_measured(["sh", "-c", "echo one; echo two"], timeout=30,
+                                                 watch=lambda text: False)
+        self.assertEqual(code, 0)
+        self.assertEqual(output, "one\ntwo\n")
+
+
 class Provenance(unittest.TestCase):
     """Rows name their binary, spliced rows their log (review 2026-10-21,
     M2 and M3)."""

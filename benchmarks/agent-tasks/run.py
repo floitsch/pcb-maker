@@ -1297,9 +1297,11 @@ def take_lock(path=LOCK_FILE, poll_seconds=30, log=None):
     return descriptor
 
 
-def run_measured(command, timeout=None, env=None, on_start=None):
+def run_measured(command, timeout=None, env=None, on_start=None, watch=None):
     """Runs `command` with its output captured, in a process group of its
-    own. Returns (exit code, or "timeout" after killing its group; output; peak resident set in MB; the
+    own. Returns (exit code, or "timeout" after killing its group, or "reused" after killing it when
+    `watch`, given each line of the output as it comes, returned true for one (--reuse: the placement
+    has been routed before); output; peak resident set in MB; the
     command's own peak in MB; CPU seconds of the process tree). The first peak is wait4's ru_maxrss: the
     largest of the process and the children it waited for (kicad-cli's DRC
     alone takes 2.2 GB, on any board), for this process alone, so that jobs
@@ -1314,7 +1316,18 @@ def run_measured(command, timeout=None, env=None, on_start=None):
     if on_start:
         on_start(process.pid)
     chunks = []
-    reader = threading.Thread(target=lambda: chunks.append(process.stdout.read()), daemon=True)
+    stop = threading.Event()
+
+    def read():
+        if watch is None:
+            chunks.append(process.stdout.read())
+            return
+        for line in iter(process.stdout.readline, b""):
+            chunks.append(line)
+            if not stop.is_set() and watch(line.decode(errors="replace")):
+                stop.set()
+
+    reader = threading.Thread(target=read, daemon=True)
     reader.start()
     deadline = None if timeout is None else time.monotonic() + timeout
     own = 0.0
@@ -1329,6 +1342,11 @@ def run_measured(command, timeout=None, env=None, on_start=None):
             _, status, usage = os.wait4(process.pid, 0)
             code = "timeout"
             break
+        if stop.is_set():
+            harness_common.kill_group(process.pid)
+            _, status, usage = os.wait4(process.pid, 0)
+            code = "reused"
+            break
         time.sleep(0.5)
     # Reaped here: Popen must not wait for it again.
     process.returncode = code if isinstance(code, int) else -9
@@ -1338,7 +1356,7 @@ def run_measured(command, timeout=None, env=None, on_start=None):
     # whole tree has ended.
     harness_common.end_group(process.pid)
     reader.join(60)
-    output = (chunks[0] if chunks else b"").decode(errors="replace")
+    output = b"".join(chunks).decode(errors="replace")
     return code, output, round(usage.ru_maxrss / 1024), round(own), round(usage.ru_utime + usage.ru_stime, 1)
 
 
@@ -1615,6 +1633,130 @@ def run_once(task, arguments, expected_mb):
         arguments.gate.done(token)
 
 
+# The layout's line at the end of its placement phase (board_layout.rs,
+# `placement_digest`).
+PLACEMENT_DIGEST = re.compile(r"^layout: placement digest ([0-9a-f]{64})\s*$")
+# Environment variables that do not change what a layout does: the memory
+# ledger's own (the board's reservation is handed to it by name).
+REUSE_IGNORED_ENVIRONMENT = ("PCB_MAKER_LEDGER",)
+
+
+class LayoutReuse:
+    """--reuse DIR: a layout whose placement equals one routed before skips
+    its routing (docs/benchmarks.md, "The ladder of placer measurements
+    (2026-10-28)"). Everything a layout does after its placement phase is a
+    function of the binary, the task (its prepared source directory and its
+    entry), the layout settings beside the placer's, the rates, the threads,
+    the PCB_* environment and what the placement phase handed on: the
+    placed board, the lowered placement problem with the placer settings it
+    carries, the race's other placements and the work booked, which the
+    binary prints as `layout: placement digest <sha256>` before it routes.
+    The key is the sha256 of all of these. On a hit run.py ends the layout
+    there (its placement's work is spent; the routing, the ladder and
+    KiCad's checks are not), copies the earlier run's `layout/` and returns
+    its row with `reused_from` (the earlier directory and its seconds and
+    CPU; `seconds` and `cpu_seconds` are this run's own). A row that ended
+    by itself, without an error, a cut or a kill, is stored under its key
+    (DIR/<key>.json: the row and its directory, which must stay)."""
+
+    def __init__(self, directory):
+        self.directory = Path(directory)
+        self.directory.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def source_digest(source):
+        """sha256 over the prepared source directory's files (relative path
+        and bytes, in order)."""
+        digest = hashlib.sha256()
+        for path in sorted(p for p in Path(source).rglob("*") if p.is_file()):
+            relative = path.relative_to(source).as_posix().encode()
+            data = path.read_bytes()
+            digest.update(len(relative).to_bytes(8, "little") + relative)
+            digest.update(len(data).to_bytes(8, "little") + data)
+        return digest.hexdigest()
+
+    @staticmethod
+    def base(binary_sha256, task, source, layout, threads, work_rate, reference_designer=False, environ=None):
+        """What the key holds beside the placement digest."""
+        environ = os.environ if environ is None else environ
+        return {
+            "binary_sha256": binary_sha256,
+            "task": task,
+            "source_sha256": LayoutReuse.source_digest(source),
+            # The placer's settings act through the placement (the digest).
+            "layout": {key: value for key, value in layout.items() if key != "placer"},
+            "threads": threads,
+            "work_rate": work_rate,
+            "reference_designer": bool(reference_designer),
+            "environment": {key: value for key, value in sorted(environ.items())
+                            if key.startswith("PCB_") and not key.startswith(REUSE_IGNORED_ENVIRONMENT)},
+        }
+
+    @staticmethod
+    def key(base, digest):
+        text = json.dumps({"base": base, "placement_digest": digest}, sort_keys=True, default=str)
+        return hashlib.sha256(text.encode()).hexdigest()
+
+    def lookup(self, key):
+        """The stored entry of `key` whose directory still holds its layout,
+        else None."""
+        path = self.directory / f"{key}.json"
+        try:
+            entry = json.loads(path.read_text())
+        except (OSError, ValueError):
+            return None
+        if not (Path(entry.get("directory", "")) / "layout" / "board-layout.json").is_file():
+            return None
+        return entry
+
+    def store(self, key, row, directory):
+        """Stores a row that ended by itself (no error, cut or kill)."""
+        if row.get("error") or row.get("cut") or row.get("killed") or row.get("reused_from"):
+            return False
+        path = self.directory / f"{key}.json"
+        temporary = path.with_suffix(f".{os.getpid()}.{threading.get_ident()}.tmp")
+        temporary.write_text(json.dumps({"key": key, "directory": str(Path(directory).resolve()), "row": row}))
+        os.replace(temporary, path)
+        return True
+
+    def watcher(self, base):
+        """(watch, state) for run_measured: watch stops the layout at its
+        digest line when the key has an entry; state holds the key and the
+        entry."""
+        state = {}
+
+        def watch(line):
+            match = PLACEMENT_DIGEST.match(line.strip())
+            if not match or "key" in state:
+                return False
+            state["key"] = self.key(base, match.group(1))
+            entry = self.lookup(state["key"])
+            if entry is None:
+                return False
+            state["entry"] = entry
+            return True
+        return watch, state
+
+    @staticmethod
+    def reused_row(entry, key, row, work):
+        """The earlier run's row for this one (`row`: this run's measured
+        fields), its `layout/` copied into `work`."""
+        earlier = Path(entry["directory"])
+        layout = Path(work) / "layout"
+        if layout.exists():
+            shutil.rmtree(layout)
+        shutil.copytree(earlier / "layout", layout, symlinks=True)
+        if (earlier / "layout.log").is_file():
+            shutil.copyfile(earlier / "layout.log", Path(work) / "layout-reused.log")
+        reused = dict(entry["row"])
+        reused.update({name: row[name] for name in ("seconds", "cpu_seconds", "load", "peak_rss_mb",
+                                                   "layout_rss_mb") if name in row})
+        reused["reused_from"] = {"directory": str(earlier), "key": key,
+                                 "seconds": entry["row"].get("seconds"),
+                                 "cpu_seconds": entry["row"].get("cpu_seconds")}
+        return reused
+
+
 def run_task(task, arguments):
     expected = task.get("peak_rss_mb", arguments.expected_mb)
     row = run_once(task, arguments, expected)
@@ -1770,8 +1912,15 @@ def run_admitted(task, arguments, token):
     load_before = os.getloadavg()[0]
     timeout = scaled_timeout(arguments, layout.get("total_seconds", LAYOUT_BUDGETS["total_seconds"]),
                              layout.get("wall_guard"))
+    reuse = getattr(arguments, "reuse", None)
+    watch, reuse_state = None, {}
+    if reuse is not None:
+        watch, reuse_state = reuse.watcher(LayoutReuse.base(
+            arguments.binary_sha256, task, source, layout, arguments.threads, arguments.work_rate,
+            arguments.reference_designer))
     code, output, peak_mb, own_mb, cpu_seconds = run_measured(command, timeout, env,
-                                                              lambda pid: arguments.gate.started(token, pid))
+                                                              lambda pid: arguments.gate.started(token, pid),
+                                                              watch=watch)
     (work / "layout.log").write_text(output)
     # CPU seconds are the speed measure: other work on the machine (sweeps,
     # Florian's other projects) stretches the wall clock, not the CPU time.
@@ -1785,6 +1934,8 @@ def run_admitted(task, arguments, token):
         row.update(labels=LABELS, labels_dropped=labels_dropped)
     if arguments.budget_scale != 1:
         row["budget_scale"] = arguments.budget_scale
+    if code == "reused":
+        return LayoutReuse.reused_row(reuse_state["entry"], reuse_state["key"], row, work)
     if code == "timeout":
         # The harness's limit cut the run: what it would have done depends
         # on the machine's load.
@@ -1792,8 +1943,11 @@ def run_admitted(task, arguments, token):
         return row
     if killed(code):
         return killed_row(row, code, output)
-    return layout_result(row, task, work, code, output, allowed, designer_seconds, baseline=baseline,
-                         total_seconds=layout.get("total_seconds", LAYOUT_BUDGETS["total_seconds"]))
+    row = layout_result(row, task, work, code, output, allowed, designer_seconds, baseline=baseline,
+                        total_seconds=layout.get("total_seconds", LAYOUT_BUDGETS["total_seconds"]))
+    if reuse is not None and "key" in reuse_state:
+        reuse.store(reuse_state["key"], row, work)
+    return row
 
 
 # A line of the layout's log after "layout: routed (" that only its final
@@ -2658,6 +2812,12 @@ def main():
                         help="an earlier log (or output directory): the rows of the boards not run "
                              "(outside --only) are copied from it, marked spliced, into this run's log "
                              "and results.json")
+    parser.add_argument("--reuse", type=Path, default=None,
+                        help="layout mode: a cache directory of layouts by their placement (e.g. build/layout-reuse): "
+                             "a layout whose placement digest, binary, task, layout settings beside the placer's, "
+                             "rates and threads equal an earlier run's stops after its placement and takes that "
+                             "run's row and layout (marked reused_from); finished rows are stored there "
+                             "(docs/benchmarks.md, \"The ladder of placer measurements (2026-10-28)\")")
     parser.add_argument("--quality", action="store_true",
                         help="score the designer's board and the result with score-kicad-board (quality.py's "
                              "measures, about 0.1 s a board) into each row's quality")
@@ -2679,6 +2839,8 @@ def main():
     print(f"work rate {arguments.work_rate}" + (" (the reference's)" if arguments.work_rate == REFERENCE_WORK_RATE
                                                 else ""), file=sys.stderr)
     arguments.harvest_boards = arguments.harvest_data / "boards"
+    if arguments.reuse is not None:
+        arguments.reuse = LayoutReuse(arguments.reuse)
     arguments.output.mkdir(parents=True, exist_ok=True)
     tier = None
     if arguments.tier:
@@ -2917,6 +3079,8 @@ def main():
         # `wall_seconds`, `jobs` and `threads` above are this run's own.
         summary["parts"] = run_parts(ordered, ran, arguments, wall)
         summary["this_run_rates"] = measured_rates(ran)
+    # Rows whose routing an earlier run's stood for (--reuse).
+    summary["reused"] = sum(1 for row in ran if row.get("reused_from"))
     retried = [row["name"] for row in ran if row.get("ledger_retry")]
     # Rows the memory ledger ended and run.py ran once more (run_task), and
     # those it ended again.
