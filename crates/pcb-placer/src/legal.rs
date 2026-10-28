@@ -1072,7 +1072,17 @@ impl Sweep {
 
     /// `is_legal(problem, poses, self.index, pose, 0..count)`, booking
     /// its work. `pose`'s body centre must lie in the sweep's area.
-    pub(crate) fn is_legal(&self, problem: &Problem, poses: &[Pose], pose: Pose) -> bool {
+    ///
+    /// The near parts apart from the spot by their boxes (`Apart`) take
+    /// their far work untested too (the relation repair's near parts were
+    /// apart by their boxes at 91 to 95 % of its tests, 2026-10-28).
+    pub(crate) fn is_legal(
+        &self,
+        problem: &Problem,
+        poses: &[Pose],
+        apart: &mut Apart,
+        pose: Pose,
+    ) -> bool {
         let count = problem.components.len();
         if self.direct {
             return is_legal(problem, poses, self.index, pose, 0..count);
@@ -1080,6 +1090,7 @@ impl Sweep {
         let index = self.index;
         let body = rect(problem, index, pose);
         let linked_work = linked_work(problem);
+        let mine = apart.board_box(problem, index, pose, &body);
         // `is_legal`'s own unit, then the parts in index order: the far
         // ones by their far work, the near ones tested.
         let mut work = 1;
@@ -1088,6 +1099,13 @@ impl Sweep {
         for &other in &self.near {
             work += self.prefix[other] - self.prefix[next];
             next = other + 1;
+            if let Some(mine) = mine
+                && let Some(theirs) = apart.other_box(problem, poses, other)
+                && boxes_apart(mine, theirs, apart.gap)
+            {
+                work += self.prefix[other + 1] - self.prefix[other];
+                continue;
+            }
             if !clear_of_one(
                 problem,
                 poses,
@@ -1097,7 +1115,7 @@ impl Sweep {
                 linked_work,
                 other,
                 &mut work,
-                None,
+                Some(&apart.cutouts),
             ) {
                 clear = false;
                 break;
@@ -2688,6 +2706,7 @@ pub fn repair_relations(problem: &Problem, poses: &mut [Pose]) -> usize {
     };
     let mut moved = 0;
     let sweep_reach = Reach::new(problem);
+    let mut apart = Apart::new(problem);
     for relation in &constraints.relations {
         if crate::out_of_work(0) {
             break;
@@ -2750,7 +2769,7 @@ pub fn repair_relations(problem: &Problem, poses: &mut [Pose]) -> usize {
                         position: [origin[0] + dx as f64 * step, origin[1] + dy as f64 * step],
                         angle: *angle,
                     };
-                    if !sweep.is_legal(problem, poses, pose) {
+                    if !sweep.is_legal(problem, poses, &mut apart, pose) {
                         continue;
                     }
                     poses[index] = pose;
@@ -3794,6 +3813,8 @@ mod tests {
                 .collect();
             problem.poses = poses.clone();
             let reach = Reach::new(&problem);
+            let mut apart = Apart::new(&problem);
+            apart.check = false;
             for index in 0..parts {
                 let corner = [next() * 26.0, next() * 26.0];
                 let area = [corner[0], corner[1], corner[0] + 4.0, corner[1] + 4.0];
@@ -3811,7 +3832,7 @@ mod tests {
                         angle,
                     };
                     let before = crate::work();
-                    let swept = sweep.is_legal(&problem, &poses, pose);
+                    let swept = sweep.is_legal(&problem, &poses, &mut apart, pose);
                     let swept_work = crate::work() - before;
                     let before = crate::work();
                     let direct = is_legal(&problem, &poses, index, pose, 0..parts);
@@ -4023,6 +4044,56 @@ mod tests {
             nears > 1000 && insides > 1000,
             "{nears} near, {insides} inside"
         );
+    }
+
+    #[test]
+    fn a_sweep_with_boxes_answers_and_books_as_the_direct_test() {
+        let mut state = 0x3C6E_F372_FE94_F82Bu64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        for round in 0..12 {
+            let (problem, poses) = random_board(round, &mut next);
+            let parts = problem.components.len();
+            let reach = Reach::new(&problem);
+            let mut apart = Apart::new(&problem);
+            apart.check = false;
+            for index in 0..parts {
+                if problem.components[index].copper_only {
+                    continue;
+                }
+                let corner = [next() * 26.0, next() * 26.0];
+                let area = [corner[0], corner[1], corner[0] + 4.0, corner[1] + 4.0];
+                let mut sweep = Sweep::new(&problem, &poses, &reach, index, area);
+                sweep.check = false;
+                for _ in 0..40 {
+                    let angle = [0.0, 90.0, 180.0, 45.0][(next() * 4.0) as usize];
+                    let center = [
+                        area[0] + next() * (area[2] - area[0]),
+                        area[1] + next() * (area[3] - area[1]),
+                    ];
+                    let component = &problem.components[index];
+                    let pose = Pose {
+                        position: component.position_for_center(center, angle),
+                        angle,
+                    };
+                    let before = crate::work();
+                    let swept = sweep.is_legal(&problem, &poses, &mut apart, pose);
+                    let swept_work = crate::work() - before;
+                    let before = crate::work();
+                    let direct = is_legal(&problem, &poses, index, pose, 0..parts);
+                    let direct_work = crate::work() - before;
+                    assert_eq!(
+                        (swept, swept_work),
+                        (direct, direct_work),
+                        "round {round}, part {index}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
