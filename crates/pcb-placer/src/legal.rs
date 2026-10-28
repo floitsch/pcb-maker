@@ -494,96 +494,332 @@ fn clear_of(
     work: &mut u64,
 ) -> bool {
     let body = rect(problem, index, pose);
-    let side = problem.components[index].side;
     let linked_work = linked_work(problem);
     // The parts first: on a crowded board they turn down most spots, and
     // the outline test walks every outline edge.
     for other in others {
-        if other == index {
-            continue;
-        }
-        *work += 1;
-        // Two fixed parts are the designer's responsibility.
-        if problem.components[index].fixed && problem.components[other].fixed {
-            continue;
-        }
-        // A part without room elsewhere may lie on the board's marks.
-        if problem.constraints.lies_on(index, other) {
-            continue;
-        }
-        let other_side = problem.components[other].side;
-        if side.collides(other_side) {
-            let (mine, theirs) = (&problem.components[index], &problem.components[other]);
-            if mine.copper_only || theirs.copper_only {
-                if copper_meets_cutout(problem, index, pose, other, poses[other], work)
-                    || body_meets_solid_cutout(problem, index, pose, other, poses[other], work)
-                {
-                    return false;
-                }
-                continue;
-            }
-            let hollow = mine.hollow_for(theirs) || theirs.hollow_for(mine);
-            if !hollow {
-                // The other's box (two turns) and the linked-pair lookup.
-                *work += RECT_WORK + linked_work;
-            }
-            if if hollow {
-                hollow_overlap(problem, index, pose, other, poses[other], work)
-            } else {
-                if problem.constraints.bare(index, other) {
-                    // Parts tied together meet without their halos.
-                    let bare = |part: usize, pose: Pose| {
-                        let rect = rect(problem, part, pose);
-                        let halo = problem.components[part].halo;
-                        rect.grown(-halo)
-                    };
-                    overlaps(
-                        bare(index, pose),
-                        bare(other, poses[other]),
-                        body_spacing(problem, index, other),
-                    )
-                } else if problem.shared_halos {
-                    // The larger halo between them, as spacing between the
-                    // bodies (growing one body instead is not symmetric where
-                    // a disc meets a rectangle's corner).
-                    let (mine, theirs) = (
-                        problem.components[index].halo,
-                        problem.components[other].halo,
-                    );
-                    let gap = body_spacing(problem, index, other) + mine.max(theirs);
-                    overlaps(
-                        body.grown(-mine),
-                        rect(problem, other, poses[other]).grown(-theirs),
-                        gap,
-                    )
-                } else {
-                    overlaps(
-                        body,
-                        rect(problem, other, poses[other]),
-                        body_spacing(problem, index, other),
-                    )
-                }
-            } {
-                return false;
-            }
-            if !hollow && far_courtyard_overlap(problem, index, pose, other, poses[other], work) {
-                return false;
-            }
-            if problem.constraints.pad_clearance
-                && pads_too_close(problem, index, pose, other, poses[other], work)
-            {
-                return false;
-            }
-            if pads_in_hole_rings(problem, index, pose, other, poses[other], work) {
-                return false;
-            }
-        } else if side.opposite(other_side)
-            && far_side_overlap(problem, index, pose, other, poses[other], work)
-        {
+        if !clear_of_one(problem, poses, index, pose, &body, linked_work, other, work) {
             return false;
         }
     }
     true
+}
+
+/// Whether part `index` at `pose` (its box `body`) keeps clear of part
+/// `other`, counting the work of the test: one step of `clear_of`.
+#[allow(clippy::too_many_arguments)]
+fn clear_of_one(
+    problem: &Problem,
+    poses: &[Pose],
+    index: usize,
+    pose: Pose,
+    body: &Rect,
+    linked_work: u64,
+    other: usize,
+    work: &mut u64,
+) -> bool {
+    let body = *body;
+    let side = problem.components[index].side;
+    if other == index {
+        return true;
+    }
+    *work += 1;
+    // Two fixed parts are the designer's responsibility.
+    if problem.components[index].fixed && problem.components[other].fixed {
+        return true;
+    }
+    // A part without room elsewhere may lie on the board's marks.
+    if problem.constraints.lies_on(index, other) {
+        return true;
+    }
+    let other_side = problem.components[other].side;
+    if side.collides(other_side) {
+        let (mine, theirs) = (&problem.components[index], &problem.components[other]);
+        if mine.copper_only || theirs.copper_only {
+            if copper_meets_cutout(problem, index, pose, other, poses[other], work)
+                || body_meets_solid_cutout(problem, index, pose, other, poses[other], work)
+            {
+                return false;
+            }
+            return true;
+        }
+        let hollow = mine.hollow_for(theirs) || theirs.hollow_for(mine);
+        if !hollow {
+            // The other's box (two turns) and the linked-pair lookup.
+            *work += RECT_WORK + linked_work;
+        }
+        if if hollow {
+            hollow_overlap(problem, index, pose, other, poses[other], work)
+        } else {
+            if problem.constraints.bare(index, other) {
+                // Parts tied together meet without their halos.
+                let bare = |part: usize, pose: Pose| {
+                    let rect = rect(problem, part, pose);
+                    let halo = problem.components[part].halo;
+                    rect.grown(-halo)
+                };
+                overlaps(
+                    bare(index, pose),
+                    bare(other, poses[other]),
+                    body_spacing(problem, index, other),
+                )
+            } else if problem.shared_halos {
+                // The larger halo between them, as spacing between the
+                // bodies (growing one body instead is not symmetric where
+                // a disc meets a rectangle's corner).
+                let (mine, theirs) = (
+                    problem.components[index].halo,
+                    problem.components[other].halo,
+                );
+                let gap = body_spacing(problem, index, other) + mine.max(theirs);
+                overlaps(
+                    body.grown(-mine),
+                    rect(problem, other, poses[other]).grown(-theirs),
+                    gap,
+                )
+            } else {
+                overlaps(
+                    body,
+                    rect(problem, other, poses[other]),
+                    body_spacing(problem, index, other),
+                )
+            }
+        } {
+            return false;
+        }
+        if !hollow && far_courtyard_overlap(problem, index, pose, other, poses[other], work) {
+            return false;
+        }
+        if problem.constraints.pad_clearance
+            && pads_too_close(problem, index, pose, other, poses[other], work)
+        {
+            return false;
+        }
+        if pads_in_hole_rings(problem, index, pose, other, poses[other], work) {
+            return false;
+        }
+    } else if side.opposite(other_side)
+        && far_side_overlap(problem, index, pose, other, poses[other], work)
+    {
+        return false;
+    }
+    true
+}
+
+/// How far the parts reach, for `Sweep`: per part the distance from its
+/// body's centre to the farthest corner of anything it tests legality
+/// with (its body and halo, pads, holes, courtyards, rings, copper),
+/// whatever its pose (a turn keeps distances), and the widest gap a test
+/// asks for.
+pub(crate) struct Reach {
+    radius: Vec<f64>,
+    gap: f64,
+}
+
+impl Reach {
+    pub(crate) fn new(problem: &Problem) -> Self {
+        let radius = problem
+            .components
+            .iter()
+            .map(|component| {
+                let center = component.body_center;
+                let corner = |box_: &[f64; 4]| {
+                    [
+                        [box_[0], box_[1]],
+                        [box_[2], box_[1]],
+                        [box_[2], box_[3]],
+                        [box_[0], box_[3]],
+                    ]
+                    .iter()
+                    .map(|point| (point[0] - center[0]).hypot(point[1] - center[1]))
+                    .fold(0.0, f64::max)
+                };
+                let body = (component.body_size[0] / 2.0 + component.halo)
+                    .hypot(component.body_size[1] / 2.0 + component.halo);
+                component
+                    .pads
+                    .iter()
+                    .chain(&component.far_side)
+                    .chain(&component.far_copper)
+                    .chain(&component.far_courtyard)
+                    .chain(&component.hollow)
+                    .chain(&component.courtyards)
+                    .chain(&component.tight_hollow)
+                    .chain(&component.hole_rings)
+                    .chain(&component.copper_graphics)
+                    .chain(component.tight.as_ref())
+                    .map(corner)
+                    .fold(body, f64::max)
+                    * (1.0 + 1.0e-9)
+                    + 1.0e-6
+            })
+            .collect();
+        let gap = problem.spacing
+            + problem.min_spacing
+            + problem.constraints.pad_mask_gap
+            + problem.edge_margin
+            + 1.0;
+        Reach { radius, gap }
+    }
+}
+
+/// `is_legal(problem, poses, index, pose, 0..count)` for many spots of one
+/// part within an area (the relation repair's ring search), the same
+/// answer and the same work booked, without testing every part of the
+/// board at every spot (the repair's legality tests were 10 to 36 % of a
+/// placement's CPU on MegaDrive and SmartSpin2k's panel, 2026-10-28).
+/// Only the parts that may come near are tested (`near`, in index order);
+/// a part farther away takes the test's far path, which keeps it clear
+/// and books work that depends on the two parts alone, not on their poses
+/// (`far`: what `clear_of_one` books for it with the part moved far off),
+/// so its work is added without the test. Cutouts (`copper_only`) are
+/// always tested.
+pub(crate) struct Sweep {
+    index: usize,
+    /// The parts that may come near a spot in the area, ascending.
+    near: Vec<usize>,
+    /// `prefix[k]`: the far work of the parts below `k` (0 for `index`).
+    prefix: Vec<u64>,
+    /// The direct test instead (the part is a cutout).
+    direct: bool,
+    /// Every answer and its work checked against the direct test (debug
+    /// builds and `PCB_PLACER_CHECK_OVERLAP`).
+    check: bool,
+}
+
+/// How much farther than the parts' reach and the gap a part must lie to
+/// count as far: a test on turned boxes separates them along their own
+/// axes, which may be 45 degrees off the axis they lie apart on (a factor
+/// of the square root of two).
+const SWEEP_FACTOR: f64 = 1.5;
+
+impl Sweep {
+    /// The sweep for part `index` at spots whose body centres lie in
+    /// `area` (min x, min y, max x, max y), the others at `poses`.
+    pub(crate) fn new(
+        problem: &Problem,
+        poses: &[Pose],
+        reach: &Reach,
+        index: usize,
+        area: [f64; 4],
+    ) -> Self {
+        let count = problem.components.len();
+        let check =
+            cfg!(debug_assertions) || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some();
+        if problem.components[index].copper_only {
+            return Sweep {
+                index,
+                near: Vec::new(),
+                prefix: Vec::new(),
+                direct: true,
+                check,
+            };
+        }
+        let mine = SWEEP_FACTOR * (reach.radius[index] + reach.gap);
+        let near = (0..count)
+            .filter(|&other| {
+                if other == index {
+                    return false;
+                }
+                if problem.components[other].copper_only {
+                    return true;
+                }
+                let center = problem.components[other].center(poses[other]);
+                let theirs = SWEEP_FACTOR * (reach.radius[other] + reach.gap);
+                let apart = [
+                    (area[0] - center[0]).max(center[0] - area[2]),
+                    (area[1] - center[1]).max(center[1] - area[3]),
+                ];
+                apart[0].max(apart[1]) < mine + theirs
+            })
+            .collect();
+        // The far path's work: the part moved far off, where every test
+        // keeps it clear.
+        let away = Pose {
+            position: [
+                poses[index].position[0] + 1.0e7,
+                poses[index].position[1] + 1.0e7,
+            ],
+            angle: poses[index].angle,
+        };
+        let body = rect(problem, index, away);
+        let linked_work = linked_work(problem);
+        let mut prefix = Vec::with_capacity(count + 1);
+        let mut total = 0u64;
+        prefix.push(0);
+        for other in 0..count {
+            let mut work = 0;
+            let clear = clear_of_one(
+                problem,
+                poses,
+                index,
+                away,
+                &body,
+                linked_work,
+                other,
+                &mut work,
+            );
+            debug_assert!(clear, "part {index} far off meets part {other}");
+            total += work;
+            prefix.push(total);
+        }
+        Sweep {
+            index,
+            near,
+            prefix,
+            direct: false,
+            check,
+        }
+    }
+
+    /// `is_legal(problem, poses, self.index, pose, 0..count)`, booking
+    /// its work. `pose`'s body centre must lie in the sweep's area.
+    pub(crate) fn is_legal(&self, problem: &Problem, poses: &[Pose], pose: Pose) -> bool {
+        let count = problem.components.len();
+        if self.direct {
+            return is_legal(problem, poses, self.index, pose, 0..count);
+        }
+        let index = self.index;
+        let body = rect(problem, index, pose);
+        let linked_work = linked_work(problem);
+        // `is_legal`'s own unit, then the parts in index order: the far
+        // ones by their far work, the near ones tested.
+        let mut work = 1;
+        let mut next = 0;
+        let mut clear = true;
+        for &other in &self.near {
+            work += self.prefix[other] - self.prefix[next];
+            next = other + 1;
+            if !clear_of_one(
+                problem,
+                poses,
+                index,
+                pose,
+                &body,
+                linked_work,
+                other,
+                &mut work,
+            ) {
+                clear = false;
+                break;
+            }
+        }
+        let legal = clear && {
+            work += self.prefix[count] - self.prefix[next];
+            fits_board(problem, index, pose, &mut work)
+        };
+        if self.check {
+            let mut direct_work = 1;
+            let direct = is_legal_counting(problem, poses, index, pose, 0..count, &mut direct_work);
+            assert_eq!(
+                (legal, work),
+                (direct, direct_work),
+                "part {index} at {pose:?}: swept (legal, work) against the direct test"
+            );
+        }
+        crate::add_work(work);
+        legal
+    }
 }
 
 /// Debugging aid: why part `index` at `pose` may not sit beside `other`
@@ -1971,13 +2207,13 @@ pub fn repair_relations(problem: &Problem, poses: &mut [Pose]) -> usize {
     if constraints.relations.is_empty() {
         return 0;
     }
-    let count = problem.components.len();
     let step = if problem.grid > 0.0 {
         problem.grid
     } else {
         0.25
     };
     let mut moved = 0;
+    let sweep_reach = Reach::new(problem);
     for relation in &constraints.relations {
         if crate::out_of_work(0) {
             break;
@@ -2008,6 +2244,29 @@ pub fn repair_relations(problem: &Problem, poses: &mut [Pose]) -> usize {
         let target = constraints::relation_target(problem, poses, relation);
         let reach = component.body_size[0].max(component.body_size[1]) + 6.0;
         let rings = (reach / step).ceil() as i64;
+        // The spots' body centres, for the sweep's legality tests.
+        let mut area = [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ];
+        for angle in &component.angle_options {
+            let ideal = component.position_for_center(target, *angle);
+            let origin = constraints::snap_position(problem, index, ideal, *angle);
+            let center = component.center(Pose {
+                position: origin,
+                angle: *angle,
+            });
+            let span = rings as f64 * step + 1.0e-6;
+            area = [
+                area[0].min(center[0] - span),
+                area[1].min(center[1] - span),
+                area[2].max(center[0] + span),
+                area[3].max(center[1] + span),
+            ];
+        }
+        let sweep = Sweep::new(problem, poses, &sweep_reach, index, area);
         for angle in &component.angle_options {
             let ideal = component.position_for_center(target, *angle);
             let origin = constraints::snap_position(problem, index, ideal, *angle);
@@ -2017,7 +2276,7 @@ pub fn repair_relations(problem: &Problem, poses: &mut [Pose]) -> usize {
                         position: [origin[0] + dx as f64 * step, origin[1] + dy as f64 * step],
                         angle: *angle,
                     };
-                    if !is_legal(problem, poses, index, pose, 0..count) {
+                    if !sweep.is_legal(problem, poses, pose) {
                         continue;
                     }
                     poses[index] = pose;
@@ -3000,6 +3259,86 @@ mod tests {
             crossings: None,
         };
         (problem, poses)
+    }
+
+    #[test]
+    fn a_sweep_answers_and_books_as_the_direct_test() {
+        let mut state = 0xD1B5_4A32_D192_ED03u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        for round in 0..6 {
+            let parts = 40;
+            let (mut problem, _) = pair(0.0, 0.0);
+            problem.outline = vec![[0.0, 0.0], [30.0, 0.0], [30.0, 30.0], [0.0, 30.0]];
+            problem.constraints.pad_clearance = round % 2 == 1;
+            problem.components = (0..parts)
+                .map(|number| {
+                    let mut part = resistor(0.0);
+                    part.halo = if next() < 0.5 { 0.2 } else { 0.0 };
+                    part.angle_options = vec![0.0, 90.0, 45.0];
+                    part.side = match number % 4 {
+                        0 => Side::Back,
+                        1 => Side::Both,
+                        _ => Side::Front,
+                    };
+                    part.fixed = next() < 0.2;
+                    if next() < 0.3 {
+                        part.far_side = vec![[-0.5, -0.5, 0.5, 0.5]];
+                    }
+                    if next() < 0.2 {
+                        part.far_copper = vec![[-3.0, -0.2, -2.0, 0.2]];
+                    }
+                    if next() < 0.2 {
+                        part.hollow = vec![[-1.0, -0.5, -0.6, 0.5], [0.6, -0.5, 1.0, 0.5]];
+                        part.courtyards = vec![[-1.0, -0.5, 1.0, 0.5]];
+                    }
+                    if next() < 0.2 {
+                        part.hole_rings = vec![[1.5, 1.5, 2.5, 2.5]];
+                    }
+                    if next() < 0.2 {
+                        part.far_courtyard = vec![[-1.5, -1.0, 1.5, 1.0]];
+                    }
+                    part
+                })
+                .collect();
+            let poses: Vec<Pose> = (0..parts)
+                .map(|_| Pose {
+                    position: [next() * 30.0, next() * 30.0],
+                    angle: [0.0, 90.0, 45.0][(next() * 3.0) as usize],
+                })
+                .collect();
+            problem.poses = poses.clone();
+            let reach = Reach::new(&problem);
+            for index in 0..parts {
+                let corner = [next() * 26.0, next() * 26.0];
+                let area = [corner[0], corner[1], corner[0] + 4.0, corner[1] + 4.0];
+                let mut sweep = Sweep::new(&problem, &poses, &reach, index, area);
+                sweep.check = false;
+                for _ in 0..40 {
+                    let angle = [0.0, 90.0, 45.0][(next() * 3.0) as usize];
+                    let center = [
+                        area[0] + next() * (area[2] - area[0]),
+                        area[1] + next() * (area[3] - area[1]),
+                    ];
+                    let component = &problem.components[index];
+                    let pose = Pose {
+                        position: component.position_for_center(center, angle),
+                        angle,
+                    };
+                    let before = crate::work();
+                    let swept = sweep.is_legal(&problem, &poses, pose);
+                    let swept_work = crate::work() - before;
+                    let before = crate::work();
+                    let direct = is_legal(&problem, &poses, index, pose, 0..parts);
+                    let direct_work = crate::work() - before;
+                    assert_eq!((swept, swept_work), (direct, direct_work), "part {index}");
+                }
+            }
+        }
     }
 
     #[test]
