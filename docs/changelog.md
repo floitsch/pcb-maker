@@ -52,7 +52,17 @@ before is the night's row on all three):
 |---|---|---|---|
 | CDFER USB_Keypad | 2 -> 2 | connection_width 4 -> none | 4 (0.8 mm) -> 31 (5.2 mm) |
 | CDFER WLED_Matrix | 7 -> 7 | connection_width 3, track_dangling 1 -> none | 6 (1.1 mm) -> 343 (54.7 mm) |
-| oro link | OROROW |
+| oro link | 4 -> pending (-j's row queued behind the ledger at the time of writing: build/rules2-3b2-rules2-j.log) | length_out_of_range 12 -> pending | - |
+
+oro's layout with -d (the same layout path, with the congestion share
+since dropped): 1 open (4 before), `length_out_of_range` 10: CK and STP
+met at 31.5 mm with meanders of 6.2 and 4.9 mm written on the layout's
+own routes; D3 to D6 over the maximum by their pads' distance, the rest
+by their routes. In route mode from the night's placement (300 s of
+work) -j and x1870 give the same findings (244/251, 8 open, 9 length:
+the length repair found the short ways but none its victims could go
+round; DIR, NXT and STP met by meanders on both), the boards differing
+by two dropped graphic stubs.
 
 Routes, vias and lengths of the two CDFER boards are identical; the neck
 repair's checks cost 312 and 143 s more work (KiCad checks at 15 s each:
