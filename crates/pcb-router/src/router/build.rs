@@ -419,7 +419,7 @@ impl Router {
         router.mark_via_cells();
         // The marking's work is in the build's (as before the moves
         // rebuilt it: route mode's work unchanged).
-        router.mark_pin_rows();
+        let pin_row_work = router.mark_pin_rows();
         router.build_hot();
         let counts = router.build_counts();
         router.build_work = counts.work_seconds();
@@ -430,7 +430,7 @@ impl Router {
             let statics_tests: u64 = router.statics.iter().map(|maps| maps.tests).sum();
             let statics_edges: u64 = router.statics.iter().map(|maps| maps.vertex_tests).sum();
             eprintln!(
-                "build trace: map_nodes {} tests {} edges {} statics_tests {statics_tests} statics_edges {statics_edges} tight {} hot_nodes {} work {:.0} wall {:.0} statics {:.0} stamps {:.0} nets {:.0} rest {:.0} cells {cells} layers {layers} classes {} searched {} obstacles {} netcount {} planes {} shared {}",
+                "build trace: map_nodes {} tests {} edges {} statics_tests {statics_tests} statics_edges {statics_edges} tight {} hot_nodes {} work {:.0} wall {:.0} statics {:.0} stamps {:.0} nets {:.0} rest {:.0} cells {cells} layers {layers} classes {} searched {} obstacles {} netcount {} planes {} shared {} pin_row_nodes {pin_row_work}",
                 counts.map_nodes,
                 counts.tests,
                 counts.edges,
