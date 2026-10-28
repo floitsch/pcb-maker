@@ -21,10 +21,8 @@ pub(crate) struct Grid {
 }
 
 /// `Grid::query`'s answers by the cells a query looks at, while no item
-/// goes into or out of those cells: the same cells then hold the same
-/// items in the same order, so a query of the same cells has the same
-/// answer (an item going in or out forgets the answers of the cells it
-/// meets, `forget`). The
+/// goes in or out: the same cells then hold the same items in the same
+/// order, so a query of the same cells has the same answer. The
 /// legaliser's spot search, the refinement's candidates and the eviction
 /// query a grid that holds still for one part's spots, steps of 0.25 to
 /// 0.5 mm in cells of 2.5 mm: most spots look at the cells of a spot
@@ -38,8 +36,6 @@ struct Answers {
     items: Vec<usize>,
     /// The answers' generation: a slot of another is empty.
     generation: u32,
-    /// The slots filled in this generation (some more than once).
-    live: Vec<u32>,
     /// Every answer kept checked against a scan (debug builds and
     /// `PCB_PLACER_CHECK_OVERLAP`).
     check: bool,
@@ -60,45 +56,13 @@ impl Answers {
             slots: vec![(0, 0, 0, 0); ANSWER_SLOTS],
             items: Vec::new(),
             generation: 1,
-            live: Vec::new(),
             check: cfg!(debug_assertions) || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
-        }
-    }
-
-    /// Forgets the answers of the cells that meet `range` (an item went
-    /// into or out of those cells; the others hold what they held). Since
-    /// 2026-10-28 an item going in or out forgot every answer: the
-    /// legaliser placed a part and the next part's search started anew.
-    fn forget(&mut self, range: (usize, usize, usize, usize)) {
-        let (x0, y0, x1, y1) = (
-            range.0 as u64,
-            range.1 as u64,
-            range.2 as u64,
-            range.3 as u64,
-        );
-        let generation = self.generation;
-        for &slot in &self.live {
-            let entry = &mut self.slots[slot as usize];
-            if entry.1 != generation {
-                continue;
-            }
-            let key = entry.0;
-            let (kx0, ky0, kx1, ky1) = (
-                key & 0xFFFF,
-                (key >> 16) & 0xFFFF,
-                (key >> 32) & 0xFFFF,
-                key >> 48,
-            );
-            if kx0 <= x1 && x0 <= kx1 && ky0 <= y1 && y0 <= ky1 {
-                entry.1 = 0;
-            }
         }
     }
 
     /// Forgets every answer.
     fn clear(&mut self) {
         self.items.clear();
-        self.live.clear();
         self.generation = self.generation.wrapping_add(1);
         if self.generation == 0 {
             self.slots.iter_mut().for_each(|slot| *slot = (0, 0, 0, 0));
@@ -129,8 +93,8 @@ impl Grid {
         }
     }
 
-    /// The grid with `query`'s answers kept while no item goes into or
-    /// out of their cells (`Answers`): the same answers, each found once. A grid of more
+    /// The grid with `query`'s answers kept while no item goes in or out
+    /// (`Answers`): the same answers, each found once. A grid of more
     /// than 2^16 columns or rows keeps none.
     pub(crate) fn with_answers(mut self) -> Self {
         if self.columns <= 1 << 16 && self.rows <= 1 << 16 {
@@ -162,10 +126,10 @@ impl Grid {
     }
 
     pub(crate) fn insert(&mut self, item: usize, center: Point, half: Point) {
-        let (x0, y0, x1, y1) = self.range(center, half);
         if let Some(answers) = self.answers.as_mut() {
-            answers.forget((x0, y0, x1, y1));
+            answers.clear();
         }
+        let (x0, y0, x1, y1) = self.range(center, half);
         for y in y0..=y1 {
             for x in x0..=x1 {
                 self.cells[y * self.columns + x].push(item);
@@ -175,10 +139,10 @@ impl Grid {
 
     /// Takes out an item inserted with this box.
     pub(crate) fn remove(&mut self, item: usize, center: Point, half: Point) {
-        let (x0, y0, x1, y1) = self.range(center, half);
         if let Some(answers) = self.answers.as_mut() {
-            answers.forget((x0, y0, x1, y1));
+            answers.clear();
         }
+        let (x0, y0, x1, y1) = self.range(center, half);
         for y in y0..=y1 {
             for x in x0..=x1 {
                 let cell = &mut self.cells[y * self.columns + x];
@@ -214,13 +178,12 @@ impl Grid {
         }
         self.scan(range, out);
         let answers = self.answers.as_mut().expect("answers kept");
-        if answers.items.len() + out.len() > ANSWER_ITEMS || answers.live.len() >= ANSWER_ITEMS {
+        if answers.items.len() + out.len() > ANSWER_ITEMS {
             answers.clear();
         }
         let start = answers.items.len() as u32;
         answers.items.extend_from_slice(out);
         answers.slots[slot] = (key, answers.generation, start, out.len() as u32);
-        answers.live.push(slot as u32);
         cells
     }
 
