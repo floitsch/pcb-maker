@@ -49,8 +49,9 @@ pub fn fanout_override() -> Option<bool> {
     Some(!(value.is_empty() || value == "0"))
 }
 
-/// The axis directions of a run: +x, +y, -x, -y.
-const AXES: [(i64, i64); 4] = [(1, 0), (0, 1), (-1, 0), (0, -1)];
+/// A diagonal way out costs this more than an axis one (it passes
+/// between the corners of two neighbours: an aQFN's inner row).
+const DIAGONAL_COST: f64 = 0.25;
 
 /// One way out of a pad: a straight lattice run from the first node
 /// outside the pad to `end`.
@@ -237,28 +238,19 @@ pub(crate) fn assign_exits(
         }
     }
     let mut blocked: Vec<Vec<u32>> = costs.iter().map(|options| vec![0; options.len()]).collect();
-    for group in &groups {
-        // The greedy choice in pad order: the bound to beat.
-        let mut greedy = vec![None; group.len()];
-        let (mut served, mut cost) = (0usize, 0.0f64);
-        for (position, &pad) in group.iter().enumerate() {
-            if let Some(&option) = order[pad].iter().find(|option| blocked[pad][**option] == 0) {
-                greedy[position] = Some(option);
-                served += 1;
-                cost += costs[pad][option];
-                for &(other, other_option) in &against[pad][option] {
-                    blocked[other][other_option] += 1;
-                }
-            }
-        }
-        // Undo the greedy marks: the search keeps its own.
-        for (position, &pad) in group.iter().enumerate() {
-            if let Some(option) = greedy[position] {
-                for &(other, other_option) in &against[pad][option] {
-                    blocked[other][other_option] -= 1;
-                }
-            }
-        }
+    for group in &mut groups {
+        // The most constrained pads first (fewest options), for the greedy
+        // choice and the search alike.
+        group.sort_by_key(|pad| (costs[*pad].len(), *pad));
+        let group: &[usize] = group;
+        // The greedy choice, repaired: the bound to beat.
+        let greedy = greedy_with_repair(group, &order, &against, &mut blocked);
+        let served = greedy.iter().filter(|chosen| chosen.is_some()).count();
+        let cost: f64 = group
+            .iter()
+            .zip(&greedy)
+            .filter_map(|(pad, chosen)| chosen.map(|option| costs[*pad][option]))
+            .sum();
         let mut rest = vec![0.0; group.len() + 1];
         for position in (0..group.len()).rev() {
             let pad = group[position];
@@ -289,6 +281,110 @@ pub(crate) fn assign_exits(
         blocked = search.blocked;
     }
     ExitAssignment { chosen, searched }
+}
+
+/// `assign_exits`' first answer for one group (`blocked` all zero before
+/// and after): each pad in turn its cheapest option no chosen one
+/// conflicts with; then each pad left without one takes an option whose
+/// conflicts are at most two chosen pads that can move to another free
+/// option each (an augmenting step), while that serves more pads.
+fn greedy_with_repair(
+    group: &[usize],
+    order: &[Vec<usize>],
+    against: &[Vec<Vec<(usize, usize)>>],
+    blocked: &mut [Vec<u32>],
+) -> Vec<Option<usize>> {
+    let position_of: HashMap<usize, usize> = group
+        .iter()
+        .enumerate()
+        .map(|(position, pad)| (*pad, position))
+        .collect();
+    let mut chosen: Vec<Option<usize>> = vec![None; group.len()];
+    let mark = |blocked: &mut [Vec<u32>], pad: usize, option: usize, delta: i32| {
+        for &(other, other_option) in &against[pad][option] {
+            let count = &mut blocked[other][other_option];
+            *count = (*count as i32 + delta) as u32;
+        }
+    };
+    for (position, &pad) in group.iter().enumerate() {
+        if let Some(&option) = order[pad].iter().find(|option| blocked[pad][**option] == 0) {
+            chosen[position] = Some(option);
+            mark(blocked, pad, option, 1);
+        }
+    }
+    let mut progress = true;
+    let mut rounds = 0;
+    while progress && rounds < 4 {
+        progress = false;
+        rounds += 1;
+        for position in 0..group.len() {
+            if chosen[position].is_some() {
+                continue;
+            }
+            let pad = group[position];
+            'options: for &option in &order[pad] {
+                // The chosen pads in the way.
+                let mut in_way: Vec<usize> = Vec::new();
+                for &(other, other_option) in &against[pad][option] {
+                    let other_position = position_of[&other];
+                    if chosen[other_position] == Some(other_option)
+                        && !in_way.contains(&other_position)
+                    {
+                        in_way.push(other_position);
+                    }
+                }
+                if in_way.is_empty() || in_way.len() > 2 {
+                    continue;
+                }
+                // Lift them, take the option, and give each another one.
+                for &other_position in &in_way {
+                    let other = group[other_position];
+                    mark(blocked, other, chosen[other_position].unwrap(), -1);
+                }
+                let lifted: Vec<(usize, usize)> = in_way
+                    .iter()
+                    .map(|other_position| (*other_position, chosen[*other_position].unwrap()))
+                    .collect();
+                mark(blocked, pad, option, 1);
+                let mut moved: Vec<(usize, usize)> = Vec::new();
+                for &(other_position, old) in &lifted {
+                    let other = group[other_position];
+                    match order[other]
+                        .iter()
+                        .find(|candidate| **candidate != old && blocked[other][**candidate] == 0)
+                    {
+                        Some(&candidate) => {
+                            chosen[other_position] = Some(candidate);
+                            mark(blocked, other, candidate, 1);
+                            moved.push((other_position, candidate));
+                        }
+                        None => {
+                            // Undo: the moves, the option, the lifted pads.
+                            for &(moved_position, candidate) in &moved {
+                                mark(blocked, group[moved_position], candidate, -1);
+                            }
+                            mark(blocked, pad, option, -1);
+                            for &(lifted_position, old) in &lifted {
+                                chosen[lifted_position] = Some(old);
+                                mark(blocked, group[lifted_position], old, 1);
+                            }
+                            continue 'options;
+                        }
+                    }
+                }
+                chosen[position] = Some(option);
+                progress = true;
+                break;
+            }
+        }
+    }
+    // Back to all zero: the search keeps its own marks.
+    for (position, &pad) in group.iter().enumerate() {
+        if let Some(option) = chosen[position] {
+            mark(blocked, pad, option, -1);
+        }
+    }
+    chosen
 }
 
 impl Router {
@@ -405,7 +501,8 @@ impl Router {
                     None
                 };
                 let mut runs = Vec::new();
-                for (direction, (dx, dy)) in AXES.iter().enumerate() {
+                for (direction, (dx, dy)) in crate::grid::DIRECTIONS.iter().enumerate() {
+                    let (dx, dy) = (*dx as i64, *dy as i64);
                     let (mut x, mut y) = (cx as i64, cy as i64);
                     let mut start: Option<crate::geometry::Point> = None;
                     let mut end = None;
@@ -425,6 +522,14 @@ impl Router {
                         if !self.statics[node_class].trace_allowed(layer, cell, net) {
                             break;
                         }
+                        // The step into this node (a diagonal one may
+                        // pass a corner closer than its nodes do).
+                        let previous = ((y - dy) * nx + x - dx) as usize;
+                        let (blocked, owner) = self.statics[self.node_class(net, previous as u32)]
+                            .edges_at(layer, previous);
+                        if blocked & (1 << direction) != 0 && owner != crate::grid::owner16(net) {
+                            break;
+                        }
                         let first = *start.get_or_insert(point);
                         // Beyond the pad by `depth` (the first node outside
                         // lies within a pitch of its edge).
@@ -436,7 +541,15 @@ impl Router {
                     let (Some(start), Some(end)) = (start, end) else {
                         continue;
                     };
-                    let along = [*dx as f64, *dy as f64];
+                    let diagonal = dx != 0 && dy != 0;
+                    let along = if diagonal {
+                        [
+                            dx as f64 * std::f64::consts::FRAC_1_SQRT_2,
+                            dy as f64 * std::f64::consts::FRAC_1_SQRT_2,
+                        ]
+                    } else {
+                        [dx as f64, dy as f64]
+                    };
                     let mut cost = match target {
                         Some(at) => {
                             let (tx, ty) = (at[0] - terminal.anchor[0], at[1] - terminal.anchor[1]);
@@ -458,6 +571,9 @@ impl Router {
                             cost += 0.5;
                         }
                     }
+                    if diagonal {
+                        cost += DIAGONAL_COST;
+                    }
                     runs.push(ExitRun {
                         direction,
                         start,
@@ -465,8 +581,13 @@ impl Router {
                         cost,
                     });
                 }
-                let free = runs.len();
-                if free == 0 || (free > 2 && nearest >= FINE_PITCH) {
+                // The straight ways along the axes: a pad with at most
+                // two is in a row whatever its pitch.
+                let free = runs.iter().filter(|run| run.direction % 2 == 0).count();
+                // A pad with no straight way out at all is listed (the
+                // report names it) where the row is fine-pitch; it takes
+                // no part in the choice.
+                if nearest >= FINE_PITCH && (free == 0 || free > 2) {
                     continue;
                 }
                 let neck = self.node_class(net, centre as u32);
@@ -650,9 +771,10 @@ impl Router {
         if self.config.verbose || why {
             let assigned = plan.chosen.iter().filter(|chosen| chosen.is_some()).count();
             eprintln!(
-                "fanout: {} dense pads, {assigned} with a way out reserved, {} short, {} search nodes",
+                "fanout: {} dense pads, {assigned} with a way out reserved, {} short, {} without a straight way out, {} search nodes",
                 plan.pads.len(),
                 plan.shortfall(),
+                plan.pads.iter().filter(|pad| pad.runs.is_empty()).count(),
                 plan.work
             );
         }
@@ -682,7 +804,7 @@ impl Router {
     /// `PCB_ROUTER_FANOUT_WHY`: per part with dense pads, each pad's ways
     /// out and the choice.
     fn report_fanout(&self, plan: &FanoutPlan) {
-        const NAMES: [&str; 4] = ["+x", "+y", "-x", "-y"];
+        const NAMES: [&str; 8] = ["+x", "+x+y", "+y", "-x+y", "-x", "-x-y", "-y", "+x-y"];
         let mut by_part: Vec<(String, usize)> = plan
             .pads
             .iter()
@@ -719,7 +841,9 @@ impl Router {
                 pad.pitch,
                 pad.free,
                 options.join(", "),
-                if plan.chosen[index].is_none() {
+                if pad.runs.is_empty() {
+                    " NO WAY OUT"
+                } else if plan.chosen[index].is_none() {
                     " SHORT"
                 } else {
                     ""
@@ -985,7 +1109,7 @@ mod tests {
         assert_eq!(plan.pads.len(), 5);
         for (pad, chosen) in plan.pads.iter().zip(&plan.chosen) {
             let run = &pad.runs[chosen.expect("every row pad has a way out")];
-            assert_eq!(run.direction, 1, "towards the pads above");
+            assert_eq!(run.direction, 2, "towards the pads above");
         }
         let highest = |router: &Router, nodes: &[Node]| {
             nodes
