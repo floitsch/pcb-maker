@@ -11,6 +11,50 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-28 (the third placer round: the legaliser's and the refinement's legality, the same placements)
+
+Branch placer-profile-3; binaries `build/bin/pcb-maker-prof5-final` (the
+measured head, 19c845aa on main 39fc92d6, x1874), `-final2` (with the
+seventeenth commit), `-c1b` to `-c16` (each commit); outputs in
+`build/prof5-*`. docs/profiling.md, "The third placer round (2026-10-28)",
+has the profile, the changes and the tables.
+
+- **The profile** (nine boards at the layout's budget, a throwaway build's
+  per-category timing, pair counts, callgrind of the phases): the
+  legaliser's legality tests (protoesp 64 %, the 0xCB panel 39 %, 4in1
+  39 % of the placement) are pair test after pair test at spots that are
+  almost all illegal, 30 to 86 % of the pairs farther apart than any gap
+  the test asks for; the panel's are two thirds its slots' polygon tests;
+  video's legaliser is its crossings (62 %), not its ring scan; the bucket
+  queries 3 to 16 %.
+- **Sixteen changes, each the same computation and the same work booked**
+  (a fifteenth, forgetting only the answers of the cells an item meets,
+  did not pay and is taken back by a seventeenth): the bucket queries keep
+  their answers (forgotten where a part goes in or out); the pairs apart
+  by their boxes take the far path untested (its work measured once a
+  pair), in the legaliser, the refinement, the eviction and the relation
+  repair's sweep; cutouts' and the board's outlines by bands of y; the
+  crossings of fresh trees without their lines in the grid (the grid's
+  upkeep booked as before); the fit test's outline walk without the sides
+  of edges with every corner on one side; marks and obstacles from flags;
+  boxes turned once per pose; the searched part's body and box from its
+  frame. Unit tests against the direct computation (with mutation checks),
+  and `PCB_PLACER_CHECK_OVERLAP=1` checks every one at every use.
+- **Measured** (pinned pairs on SMT siblings against x1874): the
+  placement's CPU -4 to -52 % on all fifteen boards: -29.4 % the dense
+  boards' geometric mean, -9.0 % the fingerprint boards', -24.5 % the
+  fifteen's (protoesp -51.5 %, the 0xCB panel -43.8 %, least where the
+  anneal is most: Castor -4 %, split72_left -5 %); in six dense layouts
+  the placement -7 to -50 % (-26.6 %) and the layout -0.4 to -11 %
+  (-5.7 %). Peak RSS within a few megabytes.
+- **Identical**: every placement of the pairs; each commit's binary on six
+  boards at 30 s of work; the head against x1874 on all fifteen boards at
+  60 s and in check mode on seven; the placed board, the result board and
+  every fingerprint line of the six layout pairs; the route-mode
+  fingerprints of Castor, k30-SBC, jetson and Sisu; `-final2` against
+  x1874 on all fifteen at 60 s; the rebased head against x1875 on six at
+  30 s.
+
 ## Committed on 2026-10-28 (the memory ledger drains past its bound, for the first waiter it can drain for; a request larger than the capacity ends)
 
 Branch ledger-drain-bound. docs/benchmarks.md, "Memory ledger", "The drain

@@ -17,7 +17,12 @@ decode a list. The second placer round of 2026-10-28 ("The second placer
 round" at the end: branch placer-profile-2, measured on main's x1871,
 e54c6ada)
 profiled the placement again and made it 7 to 44 % cheaper in CPU (22 %
-as the geometric mean of fifteen boards) with the same placements.
+as the geometric mean of fifteen boards) with the same placements. The
+third placer round of 2026-10-28 ("The third placer round" at the end:
+branch placer-profile-3, measured on main's x1874, 39fc92d6) took the
+legaliser's and the refinement's legality tests, queries and crossings:
+the placement 4 to 52 % cheaper again (24.5 % as the geometric mean of the
+same fifteen boards, 29.4 % of the eleven dense ones).
 
 ## How to profile
 
@@ -1555,3 +1560,372 @@ categories time the same code paths, so the shares stand as estimates.
 `place-kicad-board` gave the layout's placement on every board measured
 (the same work and seeds as the layout pairs' and the single layouts'
 placements of x1871).
+
+## The third placer round (2026-10-28)
+
+The legaliser's and the refinement's legality after the second round,
+whose "candidates not taken" named their neighbour queries the next
+step. Branch placer-profile-3: sixteen commits on main f26f822f (x1873,
+the second round), rebased on main 39fc92d6 (x1874: the sub-boards' tabs
+and frames, no placer code) as 7f4b1082 to 19c845aa, the measured head
+(`build/bin/pcb-maker-prof5-final`), and a seventeenth, 297f458f, that
+takes the fifteenth back (`-final2`, below). The branch was rebased on
+later mains after the measurements (the router's via-in-pad and
+fan-out, the fast-protocol harness, the ledger's drain: no placer code;
+the rebased head's placements checked against x1875 at 30 s of work on
+six boards), so its commits' hashes are newer than these. Each commit's
+binary before
+the rebase is `build/bin/pcb-maker-prof5-c1b` to `-c13` (`-c8`: the
+seventh and eighth), after it `-r1` (the fourteenth), `-c15`, `-c16`;
+outputs in `build/prof5-*`.
+
+### How
+
+perf could not be fetched in the sandbox again; the placement was
+attributed as in the second round, with finer categories:
+
+- **Categories**: a throwaway build (branch placer-profile-3-attr, not
+  for merging: `attr.rs`, a time-stamp counter per category,
+  `PCB_PLACER_ATTR`) times the legaliser's bucket query, legality test,
+  escape term, crossings and near relations, the eviction's queries and
+  tests, the refinement's query, legality test, wirelength and
+  relations, escape term, escape measurements, crossings and swaps, and
+  the relation repair's legality; each phase's CPU (`PCB_PLACER_DEBUG`)
+  split by its categories' ticks; `place-kicad-board` at the layout's
+  budget, two threads, pinned rates, one run a board (shares, not CPU
+  changes).
+- **Counts** (`PCB_PLACER_ATTR_COUNT`, runs of their own: they slow the
+  tests): per caller the spots tested, the parts each bucket query found
+  and the cells it looked at, the pair tests (`clear_of_one`), and how
+  many of the pairs lay apart by the boxes of `Apart` (below).
+- **Callgrind** on short placements (`PCB_PLACER_WORK_SECONDS` 10 or 15,
+  one thread) with the collection toggled on one phase
+  (`--collect-atstart=no --toggle-collect='*legalize_keeping*'`, or
+  `'*refine_with*'`): the profiling build of "How to profile" for the
+  functions inside; the release binaries (they keep their symbols) for
+  each commit's instructions, which do not depend on the machine's load.
+
+CPU pairs, identity checks and fingerprints as the second round's
+("Measured"), against x1874; on the shared machine every
+`place-kicad-board` reserves a KiCad check (2253 MB) in the memory
+ledger, so the later pairs ran one orientation a reservation
+(`--halves`, 2500 MB) and the callgrind runs two at a time.
+
+### Where the placement's CPU goes (x1873, f26f822f)
+
+Shares of the placement's CPU (the timing build: its counter reads add a
+little to the timed categories):
+
+| category (% of the placement's CPU) | 0xCB panel | protoesp | Glasgow | video | 4in1 | Castor | k30-SBC | jetson | Sisu |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| placement CPU s (2 threads, the timing build) | 188 | 810 | 1015 | 990 | 1063 | 182 | 166 | 481 | 450 |
+| global placement | 21.0 | 3.2 | 0.5 | 1.0 | 0.3 | 3.8 | 2.2 | 0.6 | 0.8 |
+| anneal | 15.0 | 11.7 | 28.7 | 8.6 | 23.1 | 67.6 | 60.2 | 46.6 | 73.0 |
+| legaliser: bucket query | 3.3 | 15.6 | 2.7 | 11.3 | 6.5 | 0.7 | 0.6 | 1.0 | 0.1 |
+| legaliser: legality test | 38.5 | 64.1 | 11.7 | 11.9 | 39.2 | 1.2 | 0.6 | 10.5 | 0.4 |
+| legaliser: crossings | 0.5 | 0.2 | 17.4 | 61.8 | 3.1 | 0.8 | 5.7 | 0.6 | 0.4 |
+| legaliser: escape term | 0.0 | 0.0 | 1.1 | 1.2 | 0.5 | 0.1 | 0.1 | 0.1 | 0.0 |
+| legaliser: eviction (queries, tests) | 10.4 | 0.4 | 0.0 | 1.0 | 0.1 | 0.0 | 0.0 | 0.0 | 0.0 |
+| legaliser: the rest (ring scan, near relations) | 0.7 | 1.7 | 0.4 | 1.5 | 1.4 | 0.1 | 0.2 | 0.1 | 0.0 |
+| refinement: bucket query | 0.7 | 0.4 | 1.7 | 0.0 | 1.5 | 1.4 | 1.1 | 1.6 | 1.6 |
+| refinement: legality test | 5.0 | 1.3 | 9.6 | 0.0 | 6.9 | 2.6 | 1.0 | 13.2 | 5.8 |
+| refinement: wirelength and relations | 0.2 | 0.1 | 9.2 | 0.1 | 0.9 | 1.5 | 5.3 | 0.9 | 1.3 |
+| refinement: escape term | 0.0 | 0.0 | 6.5 | 0.1 | 8.5 | 5.5 | 5.0 | 5.5 | 5.3 |
+| refinement: escape measurements | 0.0 | 0.0 | 0.2 | 0.6 | 0.0 | 2.6 | 2.4 | 3.3 | 1.9 |
+| refinement: crossings | 0.5 | 0.1 | 9.1 | 0.1 | 0.6 | 0.8 | 1.0 | 1.9 | 0.9 |
+| refinement: equal-part swaps | 0.2 | 0.4 | 0.3 | 0.6 | 0.4 | 7.3 | 1.6 | 10.8 | 3.6 |
+| relation repair: legality | 1.7 | 0.4 | 0.3 | 0.0 | 6.3 | 2.6 | 11.0 | 2.2 | 4.0 |
+| refinement and repair: the rest | 0.1 | 0.1 | 0.4 | -0.2 | 0.4 | 0.3 | 1.2 | -0.1 | 0.6 |
+| outside the phases | 2.1 | 0.3 | 0.2 | 0.2 | 0.2 | 1.2 | 0.7 | 1.2 | 0.5 |
+
+- **The legaliser's legality is pair test after pair test** at spots that
+  are almost all illegal: protoesp's legaliser tested 442 million spots
+  at the layout's budget (0.03 % legal: a part without room scans the
+  board ring by ring, at every pass of `seat_on_marks` and
+  `legalize_stuck_first`), 4.8 pair tests a spot, the bucket query
+  finding 10.4 parts in 32 cells. 86 % of those pairs lay farther apart
+  than any gap the test asks for, by the boxes around the two parts (the
+  0xCB panel 63 %, Glasgow 72 %, video 53 %, 4in1 30 %); of the
+  refinement's 78 % on protoesp and Glasgow, 52 % on the panel, 40 % on
+  4in1; of the relation repair's sweep's near parts 91 to 95 %. The
+  second round's sweep reach (`Reach`, a radius by 1.5) judged almost none
+  of the legaliser's pairs far.
+- **Inside the legaliser** (callgrind at 10 to 15 s of work): two thirds
+  of the 0xCB panel's is the cutouts' polygon test (`rect_meets_polygon`:
+  the panel's slots run around whole copies, thousands of points, and
+  every pad of a part near one walked every edge); protoesp's the bucket
+  query (27 %), the pair tests' hole rings (13 %), hollow boxes (12 %),
+  bodies (8 %) and the binary searches of `lies_on` and `bare` (10 %);
+  4in1's the hollow boxes' lists (30 %), the fit test's walk of the board
+  outline (`inside_outline`, 22 %, every legal spot), the query (10 %),
+  the crossings (8 %).
+- **video's legaliser is its crossings** (62 % of its placement: the
+  second round's "rest" was not its ring scan): every legal spot within
+  `CROSSING_REACH` of the closest builds the part's nets' trees, inserts
+  their lines into the line grid, counts their crossings and takes them
+  out again; 60 % of those instructions the count (the crossing tests
+  themselves), 18 % the insertion and removal, 9 % the trees. Glasgow's
+  crossings: 17 % (legaliser) and 9 % (refinement).
+- **Not this round's**: the anneal (9 to 73 %; two thirds of the four
+  fingerprint boards), global placement (21 % on the panel), the
+  refinement's escape term and swaps (5 to 11 %).
+
+### The changes (bit-identical)
+
+Each its own commit, each the same computation: the same answers, the
+same work booked; a unit test against the direct computation each (with
+mutation checks: the tests fail with a box kind left out, a smaller
+gap, a band too few, the courtyards or the nets dropped), and checked
+against it at every use in debug builds and with
+`PCB_PLACER_CHECK_OVERLAP=1`. The instructions of the legaliser
+(callgrind, `legalize_keeping`, 10 s of work, one thread, release
+binaries), each commit against the one before:
+
+| commit | protoesp | video | 4in1 |
+| --- | ---: | ---: | ---: |
+| x1873 (f26f822f) | 52.2 G | | |
+| 1. bucket answers | 40.7 G (-22 %) | | |
+| 2. pairs apart by boxes | 17.7 G (-56 %) | | |
+| 3. cutouts' outlines by bands | 14.0 G (-21 %) | 84.4 G | |
+| 4. fresh trees beside the grid | | 61.7 G (-27 %) | |
+| 4 and 5 (the sweep: the repair, not here) | 13.8 G (-1.4 %) | | |
+| 6. the fit test's outline walk | 13.7 G (-0.6 %) | | |
+| 7 to 9 (escape grid, memory, flags) | 12.8 G (-6.8 %) | | |
+| 10. full polygon test by bands | 12.6 G (-1.6 %) | | |
+| 11. linked work once | 11.8 G (-6.2 %) | | 28.3 G |
+| 12. boxes turned once a pose | 11.9 G (+0.7 %) | 60.1 G | 23.9 G (-16 %) |
+| 13 to 15 (Prim's lists, check mode, forgetting by cells) | 12.4 G (+4.6 %) | 59.8 G (-0.5 %) | |
+| 16. the searched part's frame | 12.4 G (-0.4 %) | | |
+| 17. forgetting every answer again | 12.2 G (-1.4 %) | | |
+
+The legaliser of the 0xCB panel (15 s of work, the profiling build):
+131.2 G instructions on x1873, 24.6 G after the seventh commit, 22.1 G
+after the thirteenth; 4in1's 51.9, 32.0, 25.3 G; video's 106.5, 71.6,
+69.6 G; protoesp's 54.3, 13.8, 12.0 G (10 s). 4in1-mini's refinement
+(`refine_with`, 15 s): 6.55, 5.46, 5.46 G.
+
+1. **The bucket queries keep their answers** (buckets.rs `Answers`,
+   `Grid::with_answers`; the legaliser's, the refinement's and the
+   eviction's grids). The same cells hold the same parts in the same
+   order until a part goes in or out, so a query of the same cells has
+   the same answer: kept by the cells' range in a direct-mapped table of
+   4096 slots, forgotten at an insertion or removal. A spot search steps
+   0.25 to 0.5 mm in cells of 2.5 mm (video's spots looked at 60 cells
+   for 1.7 parts). The work booked is the query's, as before. Test:
+   random grids, items going in and out, queries on a lattice, against a
+   grid without kept answers.
+2. **Pairs apart by their boxes take the test's far path untested**
+   (legal.rs `Apart`; the legaliser, the refinement's candidates, the
+   eviction). Per part a box in its own frame around everything
+   `clear_of_one` compares beside its body (pads, far side and far
+   copper, far courtyards, hollow boxes, courtyards, hole rings), on the
+   board at its pose together with its body (a disc's radius on both
+   axes); the gap: the largest a test asks for (the spacing, the copper
+   clearance, the mask gap, two copper shares) and 10^-6 mm. Two parts
+   at quarter turns whose boxes lie farther apart than that on one axis
+   are apart on that axis in every comparison of the test (every
+   rectangle there is axis-aligned, a disc within its box), which takes
+   its far path: clear, booking work of the two parts alone (the second
+   round's sweep argument), measured once a pair with the part 10^7 mm
+   off. A part turned off a quarter turn (separating axes on its own
+   axes) and a cutout are always tested. Test: random boards of every
+   kind of part at both legality levels, with shared halos, copper
+   shares, marks, linked pairs, pins of three nets and slots of many
+   points, against `is_legal`.
+3. **The cutouts' polygon tests from their outline's edges by bands**
+   (legal.rs `Outline`). A cutout of 32 edges or more keeps its box and
+   its edges by bands of y (an edge in every band its y range touches):
+   the first pass of `rect_meets_polygon` (is an edge near the pad's box;
+   else the even-odd side of its first corner) takes the edges of the
+   bands of the box's y range and of the corner's y (a band function
+   monotonic in y: an edge near the box, or crossing the corner's ray,
+   lies in one of them). The work stays booked by the outline's length.
+   Test: ragged rings, rings on a lattice (edges along the bands'
+   borders), plain and turned boxes, against the pass over every edge.
+4. **The crossings of fresh trees without their lines in the grid**
+   (crossings.rs `involving`). `involving` inserted a spot's or a
+   candidate's trees into the line grid, counted them against it and took
+   them out again. The fresh lines meet the kept ones through the grid as
+   before, each other where their walks share a cell (a line is in every
+   cell it passes: two fresh lines met in the grid exactly when they
+   share one), each crossing of two once; the work `involving_direct`
+   books (the trees, the insertion's cells, the count's cells and lines
+   met, the fresh ones among them, the removal's cells and scans, a fresh
+   line found behind its cell's kept lines where `swap_remove` leaves it,
+   `tail_place`) is booked from those. The ids go back to the free list as
+   `drop_lines` gave them. Test: the second round's exactness test with
+   `involving` against `involving_direct` (count and work) at every move,
+   four board sizes; a mutation of the removal's scan fails it.
+5. **The relation repair's sweep with the boxes** (`Sweep::is_legal`): a
+   near part apart from the spot by the boxes takes its far work from the
+   sweep's prefix untested (91 to 95 % of the sweep's tests). Test: the
+   sweep's test on the random boards.
+6. **The fit test's outline walk** (`inside_outline`): the corners'
+   even-odd tests from the board outline's bands (an outline of 12 edges
+   or more), and per outline edge its four corner orientations first:
+   with all four on one side of the edge's line no side crosses it
+   (`segments_cross`'s second condition, the same orientations), so the
+   sides' are not taken (sixteen orientations an edge before, four now).
+   Test: rounded, ragged and lattice outlines against the walk before.
+7. **The escape term's grid keeps its answers** (escape.rs,
+   `Grid::with_answers`).
+8. **The kept answers' memory bounded**: an answer whose slot another took
+   is kept anew, so the items grew with the misses; at 2^20 items a grid
+   grew to eight megabytes (protoesp's peak 67 to 76 MB in the first
+   pairs), at most 2^16 now.
+9. **Marks and obstacles from per-part flags** (legal.rs `Facts`):
+   `Constraints::lies_on` and `halo_free` were binary searches of their
+   lists, two to four a pair test; flags now, the lists' own answers where
+   one is not ascending. Test: every pair of the random boards.
+10. **The cutouts' full polygon test by bands too**
+    (`rect_meets_outline`): a pad near a slot's edge took nine passes over
+    every edge; the corners' sides from their bands, the polygon's corners
+    inside the box from the bands of its y range (a hair wider for the
+    rounding), an edge's sides only where the box's corners lie on both
+    sides of its line. Test: against the test before, a thousand pads of
+    each answer near the edges.
+11. **The linked pairs' lookup work once a search** (`Apart::linked_work`):
+    a logarithm and a rounding, libm's calls, at every spot.
+12. **The pair tests from boxes turned once a pose** (legal.rs `Turned`):
+    hollow boxes, courtyards, far side, far copper, far courtyards, hole
+    rings and pads of a part turned to its pose and kept while it stays
+    there, its pads' nets once; the other parts of a search stay put, the
+    searched part is at one spot for all its tests there. The same boxes
+    (the same `turned`). Test: the random boards with hollow parts of
+    split courtyards against parts with holes.
+13. **Prim's trees without lists** (`tree_into`, `spanning_tree_into`):
+    a list a net and Prim's two for every spot.
+14. **Check mode compares the tested pairs too**: with
+    `PCB_PLACER_CHECK_OVERLAP` every pair test from the kept facts against
+    the direct one.
+15. **An item going in or out forgot only the answers of its cells**
+    (`Answers::forget`): did not pay (see below), taken back by the
+    seventeenth commit.
+16. **The searched part's body and box from its frame** (`Apart::spot`,
+    `Frame`, `turned_offset`): its body's offset and rectangle and its
+    box's turned offset and half size kept per part and angle, a spot
+    adds its position: the same sums as `rect` and `turned` (test: bit for
+    bit at quarter, 30 and 45 degree turns, positions off the lattice).
+17. **Forgetting every answer again** (297f458f, reverts the fifteenth):
+    its list of live slots, scanned at every insertion and removal, grew
+    to 2^16 entries between clears.
+
+### Measured (2026-10-28)
+
+**The placement** (`place-kicad-board` of the task, the race's 16 seeds
+and the layout's 600 s of work; pinned pairs on SMT siblings, two
+threads, pinned rates, `PCB_ROUTER_NO_WALL_GUARD=1
+PCB_ROUTER_FINGERPRINT=1 PCB_MAKER_NO_CACHE=1`; the five boards above
+both orientations at once, the other ten one orientation a reservation
+on the same cores, the machine's load 14 to 40). x1874 against the
+measured head (19c845aa): CPU seconds of both orientations, the change
+(the geometric mean of the orientations' ratios), peak RSS (MB), the
+placed board identical in all four runs:
+
+| board | x1874 CPU s | head CPU s | CPU | x1874 MB | head MB | identical |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 0xCB panel | 198 / 195 | 109 / 112 | -43.8 % | 146 / 146 | 147 / 147 | yes |
+| protoesp | 782 / 839 | 394 / 392 | -51.5 % | 66 / 66 | 69 / 71 | yes |
+| Glasgow | 1006 / 1005 | 732 / 739 | -26.9 % | 95 / 95 | 99 / 95 | yes |
+| video | 986 / 967 | 693 / 696 | -28.9 % | 80 / 80 | 81 / 80 | yes |
+| 4in1-mini | 510 / 524 | 359 / 375 | -29.1 % | 74 / 73 | 85 / 74 | yes |
+| 4in1 | 1281 / 1212 | 816 / 815 | -34.6 % | 75 / 74 | 75 / 76 | yes |
+| SmartSpin2k | 414 / 366 | 269 / 239 | -35.0 % | 292 / 291 | 291 / 292 | yes |
+| DSP-ADAU1452 | 343 / 323 | 307 / 283 | -11.4 % | 63 / 62 | 64 / 65 | yes |
+| MegaDrive | 698 / 639 | 446 / 442 | -33.5 % | 81 / 81 | 82 / 81 | yes |
+| SNSP-CPU-01 | 558 / 495 | 496 / 457 | -9.3 % | 105 / 105 | 107 / 107 | yes |
+| split72_left | 329 / 343 | 313 / 323 | -5.4 % | 530 / 530 | 530 / 530 | yes |
+| jetson | 357 / 362 | 311 / 319 | -12.2 % | 936 / 935 | 936 / 936 | yes |
+| Sisu | 431 / 386 | 393 / 360 | -7.9 % | 96 / 83 | 86 / 85 | yes |
+| k30-SBC | 186 / 182 | 166 / 160 | -11.6 % | 51 / 55 | 53 / 57 | yes |
+| Castor | 202 / 202 | 193 / 194 | -4.2 % | 127 / 126 | 111 / 128 | yes |
+
+The placement's CPU falls 4 to 52 %: 29.4 % as the geometric mean of the
+eleven dense boards, 9.0 % of the four fingerprint boards, 24.5 % of the
+fifteen. Most where the legaliser's tests were most: protoesp -52 %, the
+0xCB panel -44 %, SmartSpin2k, 4in1 and MegaDrive -34 to -35 %, 4in1-mini
+and video -29 %, Glasgow -27 %; least where the anneal is most of it
+(Castor -4 %, split72_left -5 %, Sisu -8 %, SNSP-CPU-01 -9 %). The peak
+resident size moves by a few megabytes (the kept answers, the turned
+boxes).
+
+**Taking the fifteenth commit back** (297f458f, `-final2`, against the
+measured head; pinned pairs, one orientation a reservation):
+
+| board | head CPU s | 297f458f CPU s | CPU | head MB | 297f458f MB | identical |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| protoesp | 355 / 362 | 353 / 357 | -0.9 % | 68 / 70 | 72 / 71 | yes |
+| Glasgow | 661 / 590 | 664 / 587 | +0.0 % | 95 / 96 | 96 / 96 | yes |
+| 4in1 | 710 / 664 | 695 / 651 | -2.1 % | 75 / 76 | 76 / 76 | yes |
+| jetson | 309 / 352 | 304 / 351 | -0.9 % | 935 / 936 | 937 / 1111 | yes |
+| Castor | 152 / 154 | 152 / 155 | +0.3 % | 112 / 112 | 112 / 112 | yes |
+
+-0.7 % as the geometric mean of the five: within the pairs' noise (the
+instructions say 1.4 % of protoesp's legaliser); the seventeenth commit
+is kept for the bounded scan, not for a measured gain.
+
+**The layout** (`layout-kicad-board`, the task's 1500 s of work, six dense
+boards, one orientation a reservation): the layout's CPU, the placement's
+(the process's CPU from `layout: placing` to `layout: placed`), the
+layout's peak RSS, the placed board, the result board and every
+fingerprint line identical in all four runs:
+
+| board | x1874 CPU s | head CPU s | CPU | x1874 placement CPU s | head | placement | x1874 MB | head MB | identical |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Glasgow | 2481 / 1847 | 2202 / 1658 | -10.7 % | 1136 / 916 | 782 / 657 | -29.7 % | 464 / 464 | 466 / 466 | yes (placed and result boards, 18 fingerprint lines) |
+| SmartSpin2k | 2149 / 2004 | 1930 / 1844 | -9.1 % | 433 / 484 | 229 / 233 | -49.6 % | 1056 / 1074 | 1060 / 1067 | yes (placed and result boards, 12 fingerprint lines) |
+| DSP-ADAU1452 | 2868 / 2870 | 2809 / 2816 | -2.0 % | 405 / 411 | 328 / 346 | -17.4 % | 1203 / 1197 | 1202 / 1207 | yes (placed and result boards, 46 fingerprint lines) |
+| MegaDrive | 2370 / 2262 | 2189 / 2108 | -7.2 % | 591 / 670 | 389 / 427 | -35.2 % | 1754 / 1775 | 1760 / 1752 | yes (placed and result boards, 20 fingerprint lines) |
+| SNSP-CPU-01 | 2819 / 2426 | 2669 / 2349 | -4.2 % | 567 / 585 | 492 / 529 | -11.5 % | 1658 / 1677 | 1660 / 1665 | yes (placed and result boards, 20 fingerprint lines) |
+| split72_left | 4023 / 3957 | 3948 / 3997 | -0.4 % | 426 / 438 | 397 / 408 | -6.8 % | 2658 / 2683 | 2677 / 2645 | yes (placed and result boards, 62 fingerprint lines) |
+
+The layout's placement falls 7 to 50 % (26.6 % as the geometric mean of
+the six), the layout 0.4 to 11 % (5.7 %): the rest of a layout is the
+router's (the race's probes, the routes, the moves), which this round did
+not touch. SmartSpin2k's and DSP-ADAU1452's layouts end with exit 1 (the
+verdict's) on both binaries alike.
+
+**Identical.** Every placement of the pairs (fifteen boards, all four runs
+of each) and of the layout pairs (placed boards, result boards,
+fingerprint lines). Each commit on its own: its binary against x1873
+(before the rebase) or the rebased fourteenth (after), placements at 30 s
+of work of protoesp, the 0xCB panel, video, 4in1, Glasgow and SmartSpin2k:
+the same board from all of them. The head against x1874 at 60 s of work
+on all fifteen boards: the same placements; and `-final2` too. In check
+mode (`PCB_PLACER_CHECK_OVERLAP=1`: every kept answer, box skip, kept
+fact, band and fresh tree against the direct computation at every use)
+on protoesp, the 0xCB panel, 4in1, video, Glasgow, SmartSpin2k and jetson
+at 60 s: no difference, and the placements those of x1874 in check mode
+(check mode books the anneal's check, so its placements are not the
+plain ones; both binaries alike). The route-mode fingerprints (Castor,
+k30-SBC, jetson, Sisu from build/github-layout-v16, a quarter budget, two
+threads): every fingerprint line and the routed boards identical
+(Castor's still dad3a6cb3787). `scripts/check.sh --fast` passes.
+
+**The work clock**: the work booked is the same by construction (each
+change books what the computation it replaces booked).
+
+### Candidates not taken
+
+- **Forgetting only the answers of the cells an item meets** (the
+  fifteenth commit, taken back): it kept the answers across the parts of
+  a legalisation, but its list of live slots, scanned at every insertion
+  and removal, grew to 2^16 entries between clears: protoesp's legaliser
+  took 4.6 % more instructions (12.4 G against 11.9 G). A list without
+  repeats (at most the 4096 slots) would bound the scan; not tried.
+- **A two-dimensional index of the cutouts' edges**: after the bands, the
+  0xCB panel's polygon tests are still a third of its legaliser (about 30
+  band edges a pad near a slot); a grid of cells would find the edges near
+  a pad among fewer.
+- **The crossing tests themselves** (video: the count is 60 % of its
+  legaliser after the fourth commit): each spot's fresh lines against the
+  kept lines in their cells, booked per line met; the lines a spot meets
+  change with every spot.
+- **The anneal** (Castor, k30-SBC, Sisu, jetson, split72_left, SNSP: 46 to
+  73 % of their placement): the box prefilter could serve its overlap sums
+  (a pair apart adds 0.0 and books its work from counts), not tried this
+  round; the second round's notes on its crossings term and its cached
+  sums stand.
+- **The refinement's swaps' and the alignment's legality** (`is_legal`
+  against every part, 96 to 98 % of the pairs apart by boxes): below 0.2 %
+  of a placement; not changed.
