@@ -574,6 +574,45 @@ Tests: `a_net_over_its_length_maximum_takes_the_short_way_from_the_net_in_it`
 `a_slit_in_one_piece_of_copper_is_bridged_wall_to_wall`,
 `the_tip_of_a_hatch_hole_is_no_slot` (necks).
 
+
+## Measured on 2026-10-27 (the race ranks its probes by the ripped count)
+
+Branch race-ripped-count, snapshot x15190 (f6dac63a on main 1f023ee5)
+against main's x1859 (docs/placer.md, "The race ranks its probes by the
+ripped count (2026-10-27)"; scripts `experiments/race-ripped/`).
+
+- **`race_count`** (layout option, default `"unfinished"`): with
+  `"ripped"` the race ranks its probes by the board's open terminals
+  once each probe's nets in conflict lose their conflicted branches
+  (`Router::rip_up_standing` on a copy of the probe's router; the kept
+  router routes on unripped), ties by the standing, and keeps the best
+  only where its count is at least `RACE_RIPPED_MARGIN` (2 %) below the
+  first-ranked placement's. The report carries each probe's
+  `ripped_open_terminals` and `ripped_nets` and the copies' cost
+  (`race.ripped`). Off, nothing runs: x15190 without the switch wrote
+  byte-identical boards to x1859 on 4in1-mini seed 1 and the 0xCB panel
+  seed 101.
+- **The margin** from the coarse study's 208 seed pairs: below 2 % the
+  lower ripped count routed better 8 times and worse 9; 2 to 5 % 23
+  against 13; the study's race of three 909 to 914 from 0 to 5 %, 931
+  at 7.5 %, 954 at 10 %.
+- **The cost**: copies at most 0.99 s a race (video 0.46 to 0.79 s, 417
+  MB at most), rip-ups 0.2 to 11 s, wall clock only (no work charged);
+  video's peak 1.95 to 2.09 GB against 1.55 to 1.69 GB.
+- **Measured** (the placer-default protocol, seeds 1 to 401, the
+  eleven dense boards at the task budgets; the off side from the on
+  side's races where the pick did not change, x1859 on the 19 races
+  where it did): summed medians 998 to 846 (-15 %), pairs +2, -186,
+  -109, +35, -220; video 287 to 140, 295 to 178, 327 to 156. placer_ab:
+  weighted -1.5 %, p 0.276 (sign-flip 0.131): **not better**, not
+  extended. The pick changed in 19 of 54 races, right in 12 (555
+  connections summed), wrong in 7 (77). Short tier: 10 of 12 boards
+  identical, unconnected 20 to 23 (WLED_Matrix 8 to 11), strict passes
+  8 / 8.
+- **Decision**: the default stays `"unfinished"`; the option stays for
+  the nine-pair extension or a guard by conflict depth (video's probes
+  end 330 to 490 nets unfinished).
+
 ## Committed on 2026-10-27 (the last connections: why the near-misses stay open)
 
 Branch last-connections; binaries build/bin/pcb-maker-last1-a to -g (off
@@ -621,6 +660,7 @@ side x1863 = main 60395783). docs/router.md, "The last connections
   (9 items on 3 boards), `via_in_pad` where the designer put vias in a
   BGA's pads (MIDAS, 4), the fine-pitch exit order before negotiation
   (open problem 2).
+
 ## Committed on 2026-10-27 (the third trial's open points)
 
 Branch trial3-followups (main 19bf4569, x1868), binaries

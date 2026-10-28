@@ -5342,7 +5342,239 @@ placement's first route started afresh at the normal pitch (k = 6:
 902, its first route 75 s longer for losing the probe's start). The
 first route itself remains the only ranker at +0.7; a cheaper probe
 that ranks as well would have to reproduce what its long negotiation
-and repairs decide.
+and repairs decide. (Measured: "The race ranks its probes by the ripped count
+(2026-10-27)" below, `race_count: "ripped"`, not better by the
+placer-default protocol, p 0.276.)
+
+## The race ranks its probes by the ripped count (2026-10-27)
+
+`race_count` (layout option; `"unfinished"`, the default, or `"ripped"`;
+code `board_layout.rs`: the race, `race_pick`, `RACE_RIPPED_MARGIN`;
+`Router::rip_up_standing` in `pcb-router/src/router/coarse.rs`). The
+coarse study ("A coarse whole first route as the race probe") found the
+measure, not the probe: on its 73 placements with a race probe, the
+same negotiation ranked by the board's open terminals once the
+conflicted branches are ripped (the hard repair's rip-up without its
+searches) correlates with the final KiCad unconnected at Spearman +0.42
+to +0.49 against the standing's +0.11 to +0.41, and in the race of k = 3
+picks a summed final of 910 against the recorded probe's 989 (the real
+first route's ranking 871, random 1037). A net in conflict counts once
+in the unfinished nets; ripped, it counts the terminals its conflicted
+branches held. Same probes, same work, a different count.
+
+**The implementation.** With `race_count: "ripped"` the race probes as
+before (the pre-ranking, three placements, 75 s of work each, the final
+route's 45 %); after every probe ran, each probe's router is copied (in
+the ranking's order, one copy at a time), the copy's nets in conflict
+lose their conflicted branches, the most conflicted first
+(`rip_up_standing`), and its open terminals are counted with the pour
+pads off their pour, as the standing counts them. The probes' own
+routers are untouched: the kept one routes on as its first route,
+unripped, exactly as without the option. The best is the fewest open
+terminals after the rip-up, ties by the standing, then the
+better-ranked placement; it routes on only where its count is at least
+`RACE_RIPPED_MARGIN` (2 %) below the first-ranked placement's, else the
+first-ranked one does (the same logic as `RACE_CONFIDENT_MARGIN`'s 5 %
+on the unfinished nets). With `race_probe` the probes rank by the same
+key and no margin; with `race_probe.repair` the option does not apply.
+The rip-up runs no search: nothing is charged to the work clock, and
+with the option off nothing runs. The report (`race.probe[]`) carries
+each probe's `ripped_open_terminals` and `ripped_nets`, and `race.ripped`
+the copies' and rip-ups' wall clock and the largest copy's growth.
+
+**The margin, recalibrated on the study's data.** The study has the
+ripped count (its `p1-i25` probe at 5 %: the race's probe but for an
+iteration cap of 25) and the final of every seed's kept placement, not
+of the race's other placements, so the races of 2026-10-25 cannot be
+replayed on the new count (video's seed 201, the mispick the 5 % margin
+was set for, is a placement no study row holds). The calibration takes
+the study's seed pairs instead: per board, every pair of placements
+whose ripped counts differ, by the relative margin of the lower count,
+and whether its final was lower (`experiments/race-ripped/margin.py`, 208 pairs):
+
+| margin | pairs | lower count routed better | worse | mean gain (connections) |
+| --- | ---: | ---: | ---: | ---: |
+| under 2 % | 18 | 8 | 9 | +3.1 |
+| 2 to 5 % | 37 | 23 | 13 | +5.6 |
+| 5 to 10 % | 51 | 38 | 12 | +17.6 |
+| 10 to 20 % | 70 | 57 | 10 | +25.8 |
+| 20 to 40 % | 21 | 11 | 9 | +2.4 |
+| over 40 % | 11 | 1 | 10 | -7.6 |
+
+and the race of k = 3 with a margin over the first of each ordering
+(every subset and every placement as the first-ranked, summed over the
+boards' mean finals): margin 0 910, 1 % 909, 2 % 910, 3 % 913, 5 % 914,
+7.5 % 931, 10 % 954, 15 % 1019, 20 % 1038. Below 2 % the count is a
+coin (8 right, 9 wrong); from 2 % it is right about two times in three
+and the race loses nothing by keeping those picks; above 5 % the margin
+throws away good picks (931 at 7.5 %). The margin is 2 %. (The same
+table for the unfinished nets of the recorded 75 s probe: under 2 % 5
+right, 9 wrong, mean -16.6; 2 to 5 % 15 against 11; the race 984 to 990
+from 0 to 5 %: its 5 % stands where it was.) The pairs over 40 % are
+split72_left's and SmartSpin2k's, where the ripped count ranks against
+the finals in the study (Spearman -0.32 and -0.31); no margin separates
+them.
+
+**The cost** (each race's `race.ripped`, 54 races): the copies take
+0.02 to 0.05 s on the 4in1 boards and at most 0.99 s anywhere (video
+0.46 to 0.79 s for its two probes, its largest copy 417 MB of resident
+growth; MegaDrive 273 MB, split72_left 271 MB); the rip-ups 0.2 to 11 s
+(video 2.5 to 5.5 s, MegaDrive and split72_left up to 11 s), wall clock
+only: no search runs, no work is charged, and the probes' routers are
+not touched. The copy is the price of leaving the kept router as it
+negotiated: video's peak resident size was 1.95 to 2.09 GB on against
+1.55 to 1.69 GB off on the three seeds where both sides ran (other kept
+placements). A count from the conflict set without a copy would have to
+replay `rip_up_conflicted`'s order (the most conflicted first, the
+others judged again after each), and at under a second of copying the
+copy was kept.
+
+### Measurement
+
+The placer-default protocol (docs/benchmarks.md, "Measurement
+discipline: placer defaults"): the eleven dense boards in layout mode at
+the task budgets (tasks v7, pinned rates), placer seeds 1, 101, 201, 301
+and 401, 3 x 2 with at most six layouts in flight, through the memory
+ledger (measured floor) beside the nightly and four other agents; no
+row cut by the wall clock. Off: main's x1859 (1f023ee5). On: x15190
+(branch race-ripped-count f6dac63a on 1f023ee5) with `--layout
+'{"race_count": "ripped"}'`. Seeds 1 and 101 ran whole
+(`build/race3-dense-s{1,101}-on`), the rest one board at a time
+(`build/race3-q/dense-s<N>-on-<board>`).
+
+**The off side from the on side's races.** Each on race reports both
+counts of the same probes, so the placement the unfinished count keeps
+(off's rule, 5 % margin) is known from the on run; where it is the
+ripped count's pick, off's layout is on's (the probes and the kept
+router are the same, the rip-up runs on copies and charges nothing). The
+off binary ran only the 19 races whose pick changed
+(`build/race3-q/dense-s<N>-off-<board>`), and the off side reuses the
+on rows elsewhere (`experiments/race-ripped/picks.py compare`). Checked:
+x15190 with the switch off wrote byte-identical boards to x1859 on
+4in1-mini seed 1 and the 0xCB panel seed 101 (`build/race3-q/ident-*`);
+on those two the ripped count keeps off's placement, and x15190 with the
+switch on wrote the same boards as x1859 too. Every off race that ran
+kept the placement predicted from the on report.
+
+KiCad unconnected per board, off / on (`placer_ab.py compare`):
+
+| Board | s1 | s101 | s201 | s301 | s401 | median | mean change | relative (weight) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| OpenESC 4in1 | 106 / 119 | 125 / 125 | 125 / 125 | 109 / 142 | 155 / 131 | 125 / 125 | +4.4 | +3.5 % (58) |
+| OpenESC 4in1-mini | 81 / 81 | 109 / 101 | 99 / 99 | 100 / 92 | 91 / 91 | 99 / 92 | -3.2 | -3.5 % (71) |
+| DSP-ADAU1452 | 11 / 16 | 8 / 8 | 28 / 28 | 14 / 14 | 5 / 5 | 11 / 14 | +1.0 | +7.1 % (4) |
+| MegaDrive | 110 / 110 | 108 / 108 | 157 / 157 | 103 / 103 | 146 / 146 | 110 / 110 | 0 | 0 (21) |
+| 0xCB panel | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 | 0 (100) |
+| split72_left | 21 / 21 | 26 / 26 | 21 / 26 | 22 / 22 | 28 / 28 | 22 / 26 | +1.0 | +3.4 % (29) |
+| protoesp | 73 / 58 | 75 / 55 | 59 / 59 | 70 / 80 | 65 / 73 | 70 / 59 | -3.4 | -4.5 % (16) |
+| Glasgow | 143 / 142 | 149 / 147 | 173 / 176 | 134 / 134 | 153 / 153 | 149 / 147 | 0 | 0 (88) |
+| SmartSpin2k | 21 / 21 | 74 / 74 | 28 / 28 | 46 / 46 | 61 / 61 | 46 / 46 | 0 | 0 (20) |
+| SNSP-CPU-01 | 53 / 53 | 123 / 114 | 79 / 79 | 43 / 43 | 104 / 71 | 79 / 71 | -8.4 | -10.1 % (11) |
+| video | 190 / 190 | 287 / 140 | 295 / 178 | 134 / 134 | 327 / 156 | 287 / 156 | -87.0 | -36.2 % (16) |
+| sum | 809 / 811 | 1084 / 898 | 1064 / 955 | 775 / 810 | 1135 / 915 | 998 / 846 | | |
+
+- **The verdict: NOT BETTER.** The weighted relative change is -1.5 %
+  (the noise file's 90 % interval -5.7 to +2.7 %), sign-flip p 0.131,
+  the noise file's p 0.276; the rule's p is the larger, 0.276, above
+  the 0.25 that would extend to seeds 501 to 801. Boards better 4,
+  worse 3, equal 4 (sign p 0.5).
+- **The sums say much more than the weighted statistic.** The summed
+  medians fall 998 to 846 (-15 %, sign-flip p 0.012), the pair sums by
+  95.6 on average (p 0.031; pairs +2, -186, -109, +35, -220). Video
+  carries it: 287 to 140, 295 to 178 and 327 to 156 on the three seeds
+  where its two placements race and the counts disagree (its seed 1 has
+  one placement, its seed 301 the same pick). The weighted statistic
+  gives video a weight of 16 against 4in1's 58 (cv 0.25 against 0.13 in
+  the noise file), so video's -36 % counts about as much as 4in1's
+  +3.5 %.
+- The 0xCB panel routes completely on both sides at every seed (x1828's
+  noise file has it at 45 to 56): its weight of 100 multiplies a change
+  of 0. The noise file predates the panel copies' changes.
+- Work per pair (s, off / on): 13870 / 13690, 13862 / 14095, 14115 /
+  14097, 13616 / 13787, 13741 / 13793. First-route open terminals summed
+  6634 / 5993.
+
+**The picks** (`picks.py table`). 19 of the 54 races (video's seed 1 has
+none) kept another placement than the unfinished count would have; the
+off binary ran all 19, and the ripped count's pick routed better on 12,
+worse on 7:
+
+| seed | board | probed placements | unfinished | ripped | kept on / off | unconnected on / off | right |
+| ---: | --- | --- | --- | --- | --- | --- | --- |
+| 1 | protoesp | 0, 1, 2 | 111, 109, 121 | 410, 359, 376 | 1 / 0 | 58 / 73 | yes |
+| 1 | Glasgow | 0, 1, 2 | 194, 185, 230 | 836, 757, 853 | 1 / 0 | 142 / 143 | yes |
+| 1 | 4in1 | 0, 1, 2 | 171, 255, 249 | 603, 586, 660 | 1 / 0 | 119 / 106 | no |
+| 1 | DSP-ADAU1452 | 0, 2, 3 | 212, 230, 238 | 640, 604, 678 | 2 / 0 | 16 / 11 | no |
+| 101 | protoesp | 0, 1, 2 | 93, 133, 87 | 354, 361, 381 | 0 / 2 | 55 / 75 | yes |
+| 101 | Glasgow | 0, 1, 2 | 200, 226, 234 | 881, 790, 883 | 1 / 0 | 147 / 149 | yes |
+| 101 | video | 0, 1 | 484, 449 | 1558, 1699 | 0 / 1 | 140 / 287 | yes |
+| 101 | 4in1-mini | 0, 1, 2 | 215, 182, 179 | 524, 480, 542 | 1 / 2 | 101 / 109 | yes |
+| 101 | SNSP-CPU-01 | 1, 0, 2 | 309, 240, 292 | 859, 874, 963 | 1 / 0 | 114 / 123 | yes |
+| 201 | Glasgow | 0, 1, 2 | 216, 208, 198 | 843, 858, 870 | 0 / 2 | 176 / 173 | no |
+| 201 | video | 0, 1 | 529, 491 | 1532, 1613 | 0 / 1 | 178 / 295 | yes |
+| 201 | split72_left | 0, 1, 2 | 260, 96, 152 | 1000, 992, 1061 | 0 / 1 | 26 / 21 | no |
+| 301 | protoesp | 0, 1, 2 | 144, 135, 127 | 281, 409, 411 | 0 / 2 | 80 / 70 | no |
+| 301 | 4in1-mini | 0, 1, 2 | 157, 178, 170 | 515, 495, 496 | 1 / 0 | 92 / 100 | yes |
+| 301 | 4in1 | 0, 1, 2 | 304, 232, 205 | 511, 734, 573 | 0 / 2 | 142 / 109 | no |
+| 401 | protoesp | 0, 1, 2 | 106, 146, 137 | 415, 341, 265 | 2 / 0 | 73 / 65 | no |
+| 401 | video | 0, 1 | 487, 378 | 1534, 1695 | 0 / 1 | 156 / 327 | yes |
+| 401 | 4in1 | 0, 1, 2 | 189, 185, 202 | 683, 665, 510 | 2 / 0 | 131 / 155 | yes |
+| 401 | SNSP-CPU-01 | 0, 1, 2 | 313, 344, 386 | 923, 874, 932 | 1 / 0 | 71 / 104 | yes |
+
+("kept": the ripped count's pick / the unfinished count's.) The right
+picks gain 1 to 171 connections (summed 555; video 147, 117 and 171,
+the others 1 to 33); the wrong ones lose 3 to 33 (summed 77: 4in1 13 and 33, protoesp 10 and 8, DSP-ADAU1452 5,
+split72_left 5, Glasgow 3). One change is the margin's alone:
+split72_left seed 201, where the ripped count's best (992 against 1000,
+0.8 %) reverted to the first-ranked placement and the unfinished count
+had kept placement 1 (96 against 260 nets).
+
+Video is the 2026-10-25 mispick again, now on three seeds: the
+unfinished count prefers its placement 1 by 7 to 22 % (beyond the 5 %
+margin) and placement 1 routes 117 to 171 connections worse; the ripped
+count keeps placement 0, lower by 5 to 10 % (1558 against 1699, 1532
+against 1613, 1534 against 1695). Deep in conflict (330 to 490 nets
+unfinished) the nets left unfinished do not say how much is open; the
+terminals the conflicted branches hold do.
+
+**Short tier** (seed 1, 3 x 2, x1859 `build/race3-short-off` against
+x15190 with the ripped count `build/race3-short-on`): 10 of 12 boards
+byte-identical (the same pick). MIDAS-MK1.1 keeps placement 1 (19
+ripped against 20; off placement 2, 16 against 19 unfinished): 151/156
+routed and 6 unconnected on both. WLED_Matrix keeps placement 1 (38
+ripped against placement 0's 141, which had the fewest nets unfinished,
+16 against 25): 8 to 11 unconnected (98/104 to 97/104 routed). KiCad
+unconnected 20 / 23, strict passes 8 / 8: no strict pass lost.
+
+### Judgement
+
+By the protocol `race_count: "ripped"` is **not better**: the weighted
+relative change over five pairs is -1.5 % at p 0.276 (the noise file's
+null; the sign-flip test's own p is 0.131), above the 0.25 that would
+have extended it to nine pairs. The default stays `"unfinished"`. What
+the step showed:
+
+- The count changes the race's pick in 19 of 54 races and is right in
+  12 of them, by much more where it is right (555 connections summed)
+  than where it is wrong (77). The summed medians fall 15 % (998 to
+  846) and four of five pairs fall, three by 109 to 220.
+- Nearly all of it is video, whose probes end 330 to 490 nets
+  unfinished: the unfinished count picks its worse placement on three
+  of five seeds beyond the 5 % margin, the ripped count does not. The
+  rule weighs boards by their seed noise, and video's noise (cv 0.25) is
+  the largest; the boards the rule trusts most (4in1, 4in1-mini,
+  Glasgow) move by -3.5 to +3.5 %, and 4in1 loses two picks by 13 and
+  33.
+- On the races where the probes nearly finish (the short tier, the
+  0xCB panel, SmartSpin2k) the two counts agree; WLED_Matrix's change
+  costs 3 connections.
+- What would decide it: the four seeds 501 to 801 (the protocol does
+  not ask for them at p 0.276), or a rule that uses the ripped count
+  only where the probes end deep in conflict (video's 330 to 490 nets,
+  against 150 to 350 on the others), which is a new hypothesis and would
+  need its own measurement. The noise file (x1828) also predates the
+  0xCB panel's complete routes (0 on every seed now; 45 to 56 then),
+  which gives that board a weight of 100 on a change of 0.
 
 ## Cheaper stages of the placer protocol, calibrated (2026-10-28)
 
