@@ -11,6 +11,29 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-10-28 (nightly: layout sweep v23, matched designer tier)
+
+Written by the nightly from `build/nightly/2026-10-28/` (main be0e629;
+[benchmarks.md](benchmarks.md#layout-sweep-v23-2026-10-28)). The guard
+held: every stage ran, no row was cut or killed, the sweep has at least
+100 rows with a result.
+
+- **Layout sweep v23**: **59 of 109 pass the strict rule** (59 per
+  type), 2924 unconnected in all, strict errors 43, 1 without a result.
+  Against the nightly of 2026-10-27: better 6, same 93, worse 4, strict
+  passes 57 -> 59 (gained Quanta75_RP2040Stamp_JLCPCBAoptimized,
+  MokyaLora).
+- **Medians against the designer's**: vias x0.72, length x1.06, open
+  0.000 (mean 0.119), bends x1.16, stair-steps +58, crossings +1.
+- **Matched designer tier** (budget scale 0.68): 64 strict passes (68
+  per type); over the 100 target boards placement 53 %, routing 47 % of
+  the open connections (placement 69 %, routing 31 % without Batch_1).
+- **Placement costs most** on video (+189: 190 / 1), OpenESC-30x30 4in1
+  (+91: 106 / 15), glasgow revC3 (+88: 143 / 55), protoesp (+78: 79 /
+  1), 4in1-mini (+44: 81 / 37).
+- **Worse beyond noise**: Batch_1 268 -> 294, OpenRX-panel-rev2 191 ->
+  197, Sisu_SSE-9 18 -> 19.
+
 ## Committed on 2026-10-28 (panel tabs and frames: mouse bites and V-cuts cut the outline)
 
 Branch panel-tabs; binaries build/bin/pcb-maker-tabs1-a to -d (the
