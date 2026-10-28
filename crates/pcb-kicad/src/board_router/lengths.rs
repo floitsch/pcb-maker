@@ -930,10 +930,10 @@ mod tests {
 
     /// The layout writes its own routes outside an attempt: the same
     /// meanders as an attempt's (`finish_lengths`), the heights from the
-    /// board; and the nets a maximum bounds search near their shortest way
-    /// (`length_bounded_nets`), with `length_matching` only.
+    /// board; and the nets a maximum bounds go to the length repair with
+    /// it (`length_bounded_nets`), with `length_matching` only.
     #[test]
-    fn the_layouts_routes_get_the_attempts_meanders_and_bounded_nets_their_price() {
+    fn the_layouts_routes_get_the_attempts_meanders_and_bounded_nets_their_maxima() {
         let pcb = parse(BOARD).unwrap();
         let rule = |constraint: &str, max: Option<f64>, net: &str| KiCadLengthRule {
             rule: format!("{constraint} {net}"),

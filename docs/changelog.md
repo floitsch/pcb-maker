@@ -11,6 +11,74 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-28 (length rules in layouts, the length repair, connection-width gaps, graphic stubs)
+
+Branch length-width-rules (rebased on main be0e6298, x1870); binaries
+build/bin/pcb-maker-rules2-d (the congestion share, dropped), -e (the
+neck repair as committed), -j (the head). The question: the night's
+layout sweep (2026-10-27, run.py's strict rule, the designer's board as
+the reference) had new findings on three boards from rules we apply:
+oro link `length_out_of_range` 12, USB_Keypad `connection_width` 4,
+WLED_Matrix `connection_width` 3 and `track_dangling` 1. Causes and
+fixes in docs/router.md ("Length and skew rules", "KiCad's connection
+width (necks)", "KiCad's connectivity").
+
+- **oro (lengths).** The layout wrote its own routes without the length
+  pass (only the ladder's attempts had it; oro's first route took the
+  whole budget, no attempt was written), so the rule was `unmodelled`
+  and NXT and STP short; 4 nets were over the maximum by the placement
+  (pads 32.7 to 37.6 mm apart against 31.6), 4 by their routes, 2 open.
+  Now the layout's routes get the meanders and the report; a length
+  repair reroutes a net over its maximum the short way where the nets
+  in its way go round (kept on no oro net: they cannot, in the ULPI
+  fan-out). A share of the congestion price for the bounded nets (-d)
+  cost connections (route mode: 8 to 12 open) and was dropped.
+- **USB_Keypad, WLED_Matrix (connection width).** No track: all in the
+  hatched GND pour, two curved webs at a hatch hole's sliver (the
+  raster's straight walk left them) and five gaps across empty space
+  (slots between two lobes of fill, slivers of hatch holes, a pinch at a
+  teardrop), which the repair did not look for. Now a ridge walk for bent
+  passages and wall-to-wall bridges over every slot that can be a gap,
+  pruned by KiCad's checks.
+- **WLED_Matrix (dangling).** The router's stub from the node it reached
+  inside a filled copper graphic of the net (`Net-(AE1-A)`'s rectangle,
+  left by the designer's antenna feed) to the graphic's centre, which
+  KiCad flags; such stubs are no longer written.
+
+Measured (tasks v7, the sweep's budget, 3 x 2; before x1870, after -j;
+before is the night's row on all three):
+
+| board | open before -> after | strict new findings | repair tracks |
+|---|---|---|---|
+| CDFER USB_Keypad | 2 -> 2 | connection_width 4 -> none | 4 (0.8 mm) -> 31 (5.2 mm) |
+| CDFER WLED_Matrix | 7 -> 7 | connection_width 3, track_dangling 1 -> none | 6 (1.1 mm) -> 343 (54.7 mm) |
+| oro link | OROROW |
+
+Routes, vias and lengths of the two CDFER boards are identical; the neck
+repair's checks cost 312 and 143 s more work (KiCad checks at 15 s each:
+the slots' trials and pruning). Neither passes: their open connections
+(2, 7) are the placement's and the router's, as in the night.
+
+Identity (byte-identical result boards unless named):
+- the expansion tier, route mode, 46 boards, 8 x 1, 30 s, x1865 against
+  -e: rows identical (558 unconnected, 24 strict passes on both); 43
+  boards byte-identical, 3 (pdlc, CleverHand EMG_DAQ, minuet light)
+  differ only by the dropped graphic stubs, their KiCad findings the
+  same.
+- the rule boards (build/dp6-rules/dp6-rules30-tasks.json: ducktop2's
+  three, OpenAIO-Whoop, oculink's three; route mode, 30 s, 1 x 1), x1865
+  against -e: 5 byte-identical, oculink_port the same but for 34 dropped
+  stubs (its 34 `track_dangling` gone), ducktop2-center timed out at the
+  harness's 420 s on both sides.
+- the 11 dense boards (layout, seed 1, 3 x 2), x1865 against -f: all 11 byte-identical (0xCB-1337 panel the one strict pass on both).
+
+Tests: `a_net_over_its_length_maximum_takes_the_short_way_from_the_net_in_it`
+(pcb-router), `the_layouts_routes_get_the_attempts_meanders_and_bounded_nets_their_maxima`
+(lengths), `a_stub_wholly_inside_a_graphic_of_its_net_is_not_written`,
+`a_bent_passage_is_followed_along_its_ridge`,
+`a_slit_in_one_piece_of_copper_is_bridged_wall_to_wall`,
+`the_tip_of_a_hatch_hole_is_no_slot` (necks).
+
 ## Committed on 2026-10-27 (the last connections: why the near-misses stay open)
 
 Branch last-connections; binaries build/bin/pcb-maker-last1-a to -g (off
