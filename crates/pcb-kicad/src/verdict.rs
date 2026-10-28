@@ -1500,7 +1500,7 @@ impl KiCadRunFacts {
     pub fn boards_mixed(&self) -> Option<&crate::sub_boards::KiCadSubBoardsReport> {
         self.sub_boards
             .as_ref()
-            .filter(|sub| sub.unassigned > 0 && !sub.held)
+            .filter(|sub| sub.count >= 2 && sub.unassigned > 0 && !sub.held)
     }
 
     pub fn new(command: &str) -> Self {
@@ -1946,7 +1946,11 @@ fn next_actions(
         if let Some(room) = &facts.room
             && let Some(size) = room.suggested_outline_mm
         {
-            actions.push(room_action(room, size));
+            let mut action = room_action(room, size);
+            if let Some(note) = facts.sub_boards.as_ref().and_then(frames_and_tabs_note) {
+                action.push_str(&format!("; {note}"));
+            }
+            actions.push(action);
         }
     }
     if !facts.unplaced.is_empty()
@@ -2510,6 +2514,24 @@ fn placement_rates_action(command: &str, rate: &crate::work_rate::KiCadWorkRate)
         rate.expansions_per_second,
         rate.placer_work_per_second,
     ))
+}
+
+/// What the room advice says of a panel's frames and tabs, where the
+/// placement kept parts off them (`sub_boards.kept_clear_mm2`): that area
+/// is no room for parts, and on a panel the outline is the panel's.
+fn frames_and_tabs_note(sub: &crate::sub_boards::KiCadSubBoardsReport) -> Option<String> {
+    (sub.kept_clear_mm2 > 0.0).then(|| {
+        format!(
+            "{:.0} mm2 of it are the panel's {} and tabs ({}), which take no parts: room is made on the boards themselves, not on the frame",
+            sub.kept_clear_mm2,
+            match sub.frames.len() {
+                0 => "sub-boards' joints".to_string(),
+                1 => "frame".to_string(),
+                count => format!("{count} frame pieces"),
+            },
+            sub.cut_by.join(", ")
+        )
+    })
 }
 
 pub fn room_action(room: &crate::placement_room::KiCadRoom, size: [f64; 2]) -> String {
@@ -4028,6 +4050,27 @@ mod tests {
                 .iter()
                 .any(|action| action.contains("try an outline of 43.0 x 83.0"))
         );
+        // With the panel's frame kept clear: the room line says so.
+        if let Some(sub) = &mut facts.sub_boards {
+            sub.frames = vec![[0.0, 80.0, 41.6, 84.0]];
+            sub.cut_by = vec!["mouse bites".into()];
+            sub.kept_clear_mm2 = 190.0;
+        }
+        let verdict = judge(&facts);
+        assert!(
+            verdict.next_actions.iter().any(|action| action
+                .contains("try an outline of 43.0 x 83.0")
+                && action.contains("190 mm2 of it are the panel's frame and tabs (mouse bites)")),
+            "{:?}",
+            verdict.next_actions
+        );
+        // One board beside its frame, parts not held: not a panel of
+        // mixed boards.
+        if let Some(sub) = &mut facts.sub_boards {
+            sub.count = 1;
+            sub.held = false;
+        }
+        assert!(facts.boards_mixed().is_none());
     }
 
     #[test]

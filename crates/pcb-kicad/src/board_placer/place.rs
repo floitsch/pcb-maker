@@ -237,13 +237,17 @@ pub fn place_kicad_board(
             &lowered.problem,
             footprint_count,
             reference.as_ref(),
-        )? && sub.count(&lowered.problem) >= 2
+        )? && (sub.count(&lowered.problem) >= 2 || sub.has_frames())
         {
-            crate::sub_boards::note_designed(Some(crate::sub_boards::designed_nets(
-                &pcb,
-                &sub,
-                &lowered.net_names,
-            )));
+            // A board beside its frame alone (one sub-board) has no nets on
+            // several by design.
+            if sub.count(&lowered.problem) >= 2 {
+                crate::sub_boards::note_designed(Some(crate::sub_boards::designed_nets(
+                    &pcb,
+                    &sub,
+                    &lowered.net_names,
+                )));
+            }
             let names = lowered.references.clone();
             let applied = crate::sub_boards::apply_to_placer(
                 &sub,
@@ -260,13 +264,16 @@ pub fn place_kicad_board(
                 &applied,
             );
             eprintln!(
-                "placer: sub-boards: {} ({}), {} nets on several, {} parts without one, {} held in their region, {} tabs kept clear",
+                "placer: sub-boards: {} ({}), {} nets on several, {} parts without one, {} held in their region, {} frames, cut by {}, {} keepouts over the tabs and frames ({:.0} mm2)",
                 report.count,
                 report.from.join(", "),
                 report.split_nets,
                 report.unassigned,
                 applied.held,
-                applied.tabs
+                report.frames.len(),
+                report.cut_by.join(", "),
+                applied.tabs,
+                applied.kept_clear_mm2
             );
             sub_boards_report = Some(report);
             if applied.held > 0 {

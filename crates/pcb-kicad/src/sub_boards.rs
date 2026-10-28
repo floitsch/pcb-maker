@@ -42,8 +42,213 @@ const MIN_CORE_MM2: f64 = 20.0;
 /// The least core of a piece as a share of the largest one's.
 const MIN_PIECE_SHARE: f64 = 0.05;
 
+/// The keepouts' blocks (mm, `Pieces::keepouts`).
+const KEEPOUT_BLOCK_MM: f64 = 0.5;
+
+/// How far parts keep from a tab beyond the board the opening took from
+/// it (mm): a row of mouse bites breaks along its holes, its edge rough
+/// (the keepout then reaches about 1.6 mm from the row's centre line,
+/// 1.4 mm from 0.5 mm holes' edges).
+pub(crate) const TAB_MARGIN_MM: f64 = 1.5;
+
+/// Frames and rails together take at most this share of the area of the
+/// pieces parts lie on (the ULK panels' frames: about a sixth).
+const MOST_FRAME_SHARE: f64 = 0.5;
+
 /// No piece: the cell's label where the opened area does not reach.
 const NONE: u16 = u16::MAX;
+
+/// A mouse bite's hole: a non-plated drill of at most this diameter (mm;
+/// KiKit's and the Panelization library's 0.5 mm, 0.4 to 0.6 mm
+/// usually).
+const MOUSE_BITE_DRILL_MM: f64 = 1.0;
+
+/// Two holes of a row of mouse bites lie at most this far apart, centre
+/// to centre (mm; 0.6 to 1.19 mm on the sweep's panels, 0.75 mm on the
+/// ULK's). Wider gaps carry tracks: protoesp's breakaway modules keep
+/// 1.5 mm between some holes for signals that cross the tab, and stay
+/// one board.
+const MOUSE_BITE_PITCH_MM: f64 = 1.25;
+
+/// A row of mouse bites has at least this many holes.
+const MOUSE_BITE_HOLES: usize = 3;
+
+/// A V-cut's label lies at most this far from its line's extension and
+/// this far beyond one of its ends (mm; KiKit writes "V-CUT" 3 mm before
+/// the line's start, on its axis).
+const V_CUT_LABEL_OFF_AXIS_MM: f64 = 2.0;
+const V_CUT_LABEL_REACH_MM: f64 = 10.0;
+
+/// What cuts a board's outline into pieces besides its own narrowing:
+/// rows of mouse bites drilled as separate holes (non-plated pads of
+/// footprints with no other pad), and V-cut lines (a graphic line on a
+/// user layer with a "V-CUT" or "V-SCORE" label at one end).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Cuts {
+    /// The mouse bites' holes: centre and radius.
+    pub holes: Vec<([f64; 2], f64)>,
+    /// The V-cut lines.
+    pub lines: Vec<[[f64; 2]; 2]>,
+    /// How many rows of mouse bites the holes make.
+    pub rows: usize,
+}
+
+impl Cuts {
+    /// The mouse bites and V-cuts of a KiCad board (`Cuts`).
+    pub(crate) fn of_board(pcb: &Expr) -> Cuts {
+        let mut holes: Vec<([f64; 2], f64)> = Vec::new();
+        for footprint in pcb
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("footprint"))
+        {
+            let pads: Vec<&Expr> = footprint
+                .children()
+                .iter()
+                .filter(|child| child.head() == Some("pad"))
+                .collect();
+            if pads.is_empty()
+                || pads
+                    .iter()
+                    .any(|pad| pad.children().get(2).and_then(Expr::atom) != Some("np_thru_hole"))
+            {
+                continue;
+            }
+            let Ok(at) = form_at(footprint) else { continue };
+            for pad in pads {
+                // A round drill (`(drill 0.5)`, not `(drill oval ...)`).
+                let Some(drill) =
+                    form_atom(pad, "drill", 1).and_then(|text| text.parse::<f64>().ok())
+                else {
+                    continue;
+                };
+                if !(drill > 0.0 && drill <= MOUSE_BITE_DRILL_MM) {
+                    continue;
+                }
+                let Ok(local) = form_at(pad) else { continue };
+                let offset = crate::geometry::rotate_vector([local[0], local[1]], -at[2]);
+                holes.push(([at[0] + offset[0], at[1] + offset[1]], drill / 2.0));
+            }
+        }
+        // Rows: holes chained by the pitch, three or more.
+        let mut parent: Vec<usize> = (0..holes.len()).collect();
+        fn root(parent: &mut [usize], mut at: usize) -> usize {
+            while parent[at] != at {
+                parent[at] = parent[parent[at]];
+                at = parent[at];
+            }
+            at
+        }
+        let mut order: Vec<usize> = (0..holes.len()).collect();
+        order.sort_by(|a, b| holes[*a].0[0].total_cmp(&holes[*b].0[0]));
+        for (index, &a) in order.iter().enumerate() {
+            for &b in &order[index + 1..] {
+                if holes[b].0[0] - holes[a].0[0] > MOUSE_BITE_PITCH_MM {
+                    break;
+                }
+                let (pa, pb) = (holes[a].0, holes[b].0);
+                if (pa[0] - pb[0]).hypot(pa[1] - pb[1]) <= MOUSE_BITE_PITCH_MM {
+                    let (ra, rb) = (root(&mut parent, a), root(&mut parent, b));
+                    parent[ra] = rb;
+                }
+            }
+        }
+        let mut sizes: BTreeMap<usize, usize> = BTreeMap::new();
+        for index in 0..holes.len() {
+            *sizes.entry(root(&mut parent, index)).or_default() += 1;
+        }
+        let in_row: Vec<bool> = (0..holes.len())
+            .map(|index| sizes[&root(&mut parent, index)] >= MOUSE_BITE_HOLES)
+            .collect();
+        let rows = sizes
+            .values()
+            .filter(|count| **count >= MOUSE_BITE_HOLES)
+            .count();
+        let holes: Vec<([f64; 2], f64)> = holes
+            .into_iter()
+            .zip(in_row)
+            .filter_map(|(hole, keep)| keep.then_some(hole))
+            .collect();
+        Cuts {
+            holes,
+            lines: v_cut_lines(pcb),
+            rows,
+        }
+    }
+}
+
+/// Whether a layer may carry a V-cut's drawing: a user layer (not copper,
+/// not the outline, the mask, the paste or the silk).
+fn v_cut_layer(layer: &str) -> bool {
+    layer.ends_with(".User") || layer.starts_with("User.")
+}
+
+/// Whether a text labels a V-cut.
+fn v_cut_label(text: &str) -> bool {
+    let plain: String = text
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_uppercase();
+    matches!(plain.as_str(), "VCUT" | "VSCORE" | "VGROOVE" | "VSCORING")
+}
+
+/// The V-cut lines of a board: graphic lines on a user layer with a V-cut
+/// label on the same layer on their axis near one of their ends.
+fn v_cut_lines(pcb: &Expr) -> Vec<[[f64; 2]; 2]> {
+    let mut labels: Vec<(&str, [f64; 2])> = Vec::new();
+    for item in pcb.children() {
+        if item.head() == Some("gr_text")
+            && let Some(text) = item.children().get(1).and_then(Expr::atom)
+            && v_cut_label(text)
+            && let Some(layer) = form_atom(item, "layer", 1)
+            && let Ok(at) = form_at(item)
+        {
+            labels.push((layer, [at[0], at[1]]));
+        }
+    }
+    if labels.is_empty() {
+        return Vec::new();
+    }
+    let mut lines = Vec::new();
+    for item in pcb.children() {
+        if item.head() != Some("gr_line") {
+            continue;
+        }
+        let Some(layer) = form_atom(item, "layer", 1) else {
+            continue;
+        };
+        if !v_cut_layer(layer) {
+            continue;
+        }
+        let (Ok(a), Ok(b)) = (
+            crate::kicad_sexpr::form_xy(item, "start"),
+            crate::kicad_sexpr::form_xy(item, "end"),
+        ) else {
+            continue;
+        };
+        let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+        if length <= 0.0 {
+            continue;
+        }
+        let direction = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
+        let labelled = labels.iter().any(|(label_layer, at)| {
+            let relative = [at[0] - a[0], at[1] - a[1]];
+            let along = relative[0] * direction[0] + relative[1] * direction[1];
+            let across = (relative[0] * direction[1] - relative[1] * direction[0]).abs();
+            *label_layer == layer
+                && across <= V_CUT_LABEL_OFF_AXIS_MM
+                && along >= -V_CUT_LABEL_REACH_MM
+                && along <= length + V_CUT_LABEL_REACH_MM
+                && (along <= V_CUT_LABEL_REACH_MM.min(length / 2.0)
+                    || along >= length - V_CUT_LABEL_REACH_MM.min(length / 2.0))
+        });
+        if labelled {
+            lines.push([a, b]);
+        }
+    }
+    lines
+}
 
 /// The outline's pieces without its tabs (module comment): a raster of
 /// the board, each cell labelled with its piece.
@@ -62,6 +267,12 @@ pub(crate) struct Pieces {
     /// The boxes of the board's area on no piece that touches two pieces
     /// or more (the tabs).
     pub tabs: Vec<[f64; 4]>,
+    /// Per piece, its area (mm²).
+    pub areas: Vec<f64>,
+    /// What cut the outline into its pieces: `narrow outline` (a neck of
+    /// the outline under 2 mm), `mouse bites` (a row of holes across a
+    /// wider bridge), `V-cuts`.
+    pub cut_by: Vec<&'static str>,
 }
 
 impl Pieces {
@@ -69,11 +280,20 @@ impl Pieces {
     /// two.
     pub(crate) fn of_board(pcb: &Expr) -> Result<Option<Pieces>, String> {
         let loops = outline::board_loops(pcb)?;
-        Ok(Pieces::of_loops(&loops.piece_loops, &loops.cutouts))
+        Ok(Pieces::of_loops(
+            &loops.piece_loops,
+            &loops.cutouts,
+            &Cuts::of_board(pcb),
+        ))
     }
 
-    /// The pieces of the area inside `loops` (even-odd with `cutouts`).
-    pub(crate) fn of_loops(loops: &[Vec<[f64; 2]>], cutouts: &[Vec<[f64; 2]>]) -> Option<Pieces> {
+    /// The pieces of the area inside `loops` (even-odd with `cutouts`),
+    /// less the mouse bites' holes and the V-cut lines of `cuts`.
+    pub(crate) fn of_loops(
+        loops: &[Vec<[f64; 2]>],
+        cutouts: &[Vec<[f64; 2]>],
+        cuts: &Cuts,
+    ) -> Option<Pieces> {
         let mut all = [
             f64::INFINITY,
             f64::INFINITY,
@@ -125,9 +345,70 @@ impl Pieces {
                 }
             }
         }
-        // Distance to the outside (chamfer 3-4, in thirds of a cell).
+        // The cuts: a mouse bite's hole and a V-cut line are no board.
+        let mut cut = vec![false; columns * rows];
+        let cell_range = |low: f64, high: f64, origin: f64, count: usize| {
+            let first = ((low - origin) / cell - 0.5).ceil().max(0.0) as usize;
+            let last = ((high - origin) / cell - 0.5).floor();
+            (
+                first,
+                if last < 0.0 {
+                    None
+                } else {
+                    Some((last as usize).min(count - 1))
+                },
+            )
+        };
+        for (centre, radius) in &cuts.holes {
+            let (first_row, last_row) =
+                cell_range(centre[1] - radius, centre[1] + radius, origin[1], rows);
+            let (first_column, last_column) =
+                cell_range(centre[0] - radius, centre[0] + radius, origin[0], columns);
+            let (Some(last_row), Some(last_column)) = (last_row, last_column) else {
+                continue;
+            };
+            for row in first_row..=last_row {
+                let y = origin[1] + (row as f64 + 0.5) * cell;
+                for column in first_column..=last_column {
+                    let x = origin[0] + (column as f64 + 0.5) * cell;
+                    if (x - centre[0]).hypot(y - centre[1]) <= *radius {
+                        cut[row * columns + column] = true;
+                    }
+                }
+            }
+        }
+        // A V-cut line as the cells its centre line passes: board on no
+        // piece (a tab along the whole line), which the erosion starts
+        // from as from the outside.
+        let mut scored = vec![false; columns * rows];
+        for [a, b] in &cuts.lines {
+            let length = (b[0] - a[0]).hypot(b[1] - a[1]);
+            let steps = (length / (cell / 4.0)).ceil().max(1.0) as usize;
+            for step in 0..=steps {
+                let t = step as f64 / steps as f64;
+                let point = [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
+                let column = ((point[0] - origin[0]) / cell).floor();
+                let row = ((point[1] - origin[1]) / cell).floor();
+                if column < 0.0 || row < 0.0 {
+                    continue;
+                }
+                let (column, row) = (column as usize, row as usize);
+                if column < columns && row < rows {
+                    scored[row * columns + column] = true;
+                }
+            }
+        }
+        for (inside, cut) in inside.iter_mut().zip(&cut) {
+            *inside &= !cut;
+        }
+        // Distance to the outside or a V-cut (chamfer 3-4, in thirds of a
+        // cell).
         let far = u32::MAX / 2;
-        let mut distance: Vec<u32> = inside.iter().map(|&i| if i { far } else { 0 }).collect();
+        let mut distance: Vec<u32> = inside
+            .iter()
+            .zip(&scored)
+            .map(|(&i, &s)| if i && !s { far } else { 0 })
+            .collect();
         chamfer(&mut distance, columns, rows);
         let radius = (NECK_RADIUS_MM / cell * 3.0).round() as u32;
         // The cores: what the erosion leaves, by 4-connected component.
@@ -197,7 +478,7 @@ impl Pieces {
         }
         chamfer_labels(&mut grown, &mut labels, columns, rows);
         for index in 0..columns * rows {
-            if !inside[index] || grown[index] > radius + 3 {
+            if !inside[index] || grown[index] > radius + 3 || scored[index] {
                 labels[index] = NONE;
             }
         }
@@ -307,6 +588,41 @@ impl Pieces {
             merged.push(tab);
         }
         let tabs = merged;
+        // What cut each tab: a hole or a V-cut within the neck radius of
+        // its box, else the outline's own narrowing.
+        let mut kinds: BTreeSet<usize> = BTreeSet::new();
+        for tab in &tabs {
+            let grown = NECK_RADIUS_MM;
+            let (first_row, last_row) = cell_range(tab[1] - grown, tab[3] + grown, origin[1], rows);
+            let (first_column, last_column) =
+                cell_range(tab[0] - grown, tab[2] + grown, origin[0], columns);
+            let mut kind = 0;
+            if let (Some(last_row), Some(last_column)) = (last_row, last_column) {
+                'scan: for row in first_row..=last_row {
+                    for column in first_column..=last_column {
+                        let at = row * columns + column;
+                        if cut[at] {
+                            kind = 1;
+                            break 'scan;
+                        }
+                        if scored[at] {
+                            kind = 2;
+                        }
+                    }
+                }
+            }
+            kinds.insert(kind);
+        }
+        let cut_by: Vec<&'static str> = kinds
+            .iter()
+            .map(|kind| ["narrow outline", "mouse bites", "V-cuts"][*kind])
+            .collect();
+        let mut areas = vec![0.0; pieces as usize];
+        for label in &labels {
+            if *label != NONE {
+                areas[*label as usize] += cell * cell;
+            }
+        }
         // Pieces only tabs join: a board drawn as separate loops (a module
         // beside its main board, zpn_devboard; the Modular Hub's three
         // boards) is left to `keep_on_pieces` (the Hub with its GND split
@@ -325,6 +641,8 @@ impl Pieces {
             inside,
             boxes,
             tabs,
+            areas,
+            cut_by,
         })
     }
 
@@ -347,6 +665,8 @@ impl Pieces {
             inside: Vec::new(),
             boxes,
             tabs: Vec::new(),
+            areas: Vec::new(),
+            cut_by: Vec::new(),
         }
     }
 
@@ -443,6 +763,105 @@ impl Pieces {
             }
         }
         Some(if on_board { piece } else { None })
+    }
+
+    /// The area no part may take, as boxes: the tabs (the board on no
+    /// piece) and the pieces `frames` marks, grown by `margin` into the
+    /// pieces beside them, in blocks of `KEEPOUT_BLOCK_MM` (a block any
+    /// such cell of the board reaches is kept out whole), the blocks of
+    /// one row joined into runs and equal runs of consecutive rows into
+    /// one box. None on pieces that are boxes (`of_boxes`).
+    pub(crate) fn keepouts(&self, frames: &[bool], margin: f64) -> Vec<[f64; 4]> {
+        if self.boxed() {
+            return Vec::new();
+        }
+        let (columns, rows, cell) = (self.columns, self.rows, self.cell);
+        let far = u32::MAX / 2;
+        let mut distance: Vec<u32> = (0..columns * rows)
+            .map(|at| {
+                let label = self.labels[at];
+                let kept = self.inside[at]
+                    && (label == NONE || frames.get(label as usize).copied().unwrap_or(false));
+                if kept { 0 } else { far }
+            })
+            .collect();
+        chamfer(&mut distance, columns, rows);
+        let reach = (margin.max(0.0) / cell * 3.0).round() as u32;
+        let per = ((KEEPOUT_BLOCK_MM / cell).round() as usize).max(1);
+        let (block_columns, block_rows) = (columns.div_ceil(per), rows.div_ceil(per));
+        let mut blocked = vec![false; block_columns * block_rows];
+        for (at, near) in distance.iter().enumerate() {
+            if self.inside[at] && *near <= reach {
+                let (row, column) = (at / columns, at % columns);
+                blocked[(row / per) * block_columns + column / per] = true;
+            }
+        }
+        let size = per as f64 * cell;
+        let mut boxes = Vec::new();
+        // Open boxes: (first block column, last, first block row).
+        let mut open: Vec<(usize, usize, usize)> = Vec::new();
+        for row in 0..=block_rows {
+            let mut runs: Vec<(usize, usize)> = Vec::new();
+            if row < block_rows {
+                let mut column = 0;
+                while column < block_columns {
+                    if blocked[row * block_columns + column] {
+                        let first = column;
+                        while column + 1 < block_columns
+                            && blocked[row * block_columns + column + 1]
+                        {
+                            column += 1;
+                        }
+                        runs.push((first, column));
+                    }
+                    column += 1;
+                }
+            }
+            let mut still = Vec::new();
+            for (first, last, top) in open.drain(..) {
+                if let Some(index) = runs.iter().position(|run| *run == (first, last)) {
+                    runs.remove(index);
+                    still.push((first, last, top));
+                } else {
+                    boxes.push([
+                        self.origin[0] + first as f64 * size,
+                        self.origin[1] + top as f64 * size,
+                        self.origin[0] + (last + 1) as f64 * size,
+                        self.origin[1] + row as f64 * size,
+                    ]);
+                }
+            }
+            still.extend(runs.into_iter().map(|(first, last)| (first, last, row)));
+            open = still;
+        }
+        boxes
+    }
+
+    /// The pieces that are a panel's frame or rails: none of `occupied`
+    /// (the pieces parts lie on) where at least one is, and together at
+    /// most `MOST_FRAME_SHARE` of the occupied pieces' area (else a
+    /// board whose parts are all movable would lose its room: nothing is
+    /// a frame).
+    pub(crate) fn frames(&self, occupied: &BTreeSet<usize>) -> Vec<bool> {
+        let none = vec![false; self.count()];
+        if occupied.is_empty() || self.boxed() {
+            return none;
+        }
+        let frames: Vec<bool> = (0..self.count())
+            .map(|piece| !occupied.contains(&piece))
+            .collect();
+        let area = |frame: bool| -> f64 {
+            frames
+                .iter()
+                .zip(&self.areas)
+                .filter(|(is, _)| **is == frame)
+                .map(|(_, area)| area)
+                .sum()
+        };
+        if area(true) > MOST_FRAME_SHARE * area(false) {
+            return none;
+        }
+        frames
     }
 
     /// Whether two pieces' boxes overlap (an L-shaped board beside
@@ -1218,6 +1637,7 @@ impl Pieces {
     pub(crate) fn of_loops_cached(
         loops: &[Vec<[f64; 2]>],
         cutouts: &[Vec<[f64; 2]>],
+        cuts: &Cuts,
     ) -> Option<std::sync::Arc<Pieces>> {
         use std::hash::{Hash, Hasher};
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -1232,6 +1652,17 @@ impl Pieces {
                 point[1].to_bits().hash(&mut hasher);
             }
         }
+        for (centre, radius) in &cuts.holes {
+            centre[0].to_bits().hash(&mut hasher);
+            centre[1].to_bits().hash(&mut hasher);
+            radius.to_bits().hash(&mut hasher);
+        }
+        for line in &cuts.lines {
+            for point in line {
+                point[0].to_bits().hash(&mut hasher);
+                point[1].to_bits().hash(&mut hasher);
+            }
+        }
         let key = hasher.finish();
         if let Ok(cache) = PIECES_CACHE.lock()
             && let Some((cached, pieces)) = cache.as_ref()
@@ -1239,7 +1670,7 @@ impl Pieces {
         {
             return pieces.clone();
         }
-        let pieces = Pieces::of_loops(loops, cutouts).map(std::sync::Arc::new);
+        let pieces = Pieces::of_loops(loops, cutouts, cuts).map(std::sync::Arc::new);
         if let Ok(mut cache) = PIECES_CACHE.lock() {
             *cache = Some((key, pieces.clone()));
         }
@@ -1256,15 +1687,55 @@ pub fn describe_sub_boards(board: &Path) -> Result<serde_json::Value, String> {
     let pcb = crate::canonical_order::parse_board(&source)?;
     let loops = outline::board_loops(&pcb)?;
     let round = |b: &[f64; 4]| b.map(|v| (v * 1000.0).round() / 1000.0);
-    let Some(pieces) = Pieces::of_loops(&loops.piece_loops, &loops.cutouts) else {
-        return Ok(serde_json::json!({"pieces": 1, "outline_loops": loops.piece_loops.len()}));
+    let cuts = Cuts::of_board(&pcb);
+    let Some(pieces) = Pieces::of_loops(&loops.piece_loops, &loops.cutouts, &cuts) else {
+        return Ok(serde_json::json!({
+            "pieces": 1,
+            "outline_loops": loops.piece_loops.len(),
+            "mouse_bite_rows": cuts.rows,
+            "v_cut_lines": cuts.lines.len(),
+        }));
     };
     let split = board_split_nets(&pcb, &pieces);
+    // The parts with pins on each piece, by the board's own places: a
+    // piece without any is a frame or rail.
+    let codes = crate::kicad_nets::net_codes(&pcb);
+    let mut parts = vec![0usize; pieces.count()];
+    for footprint in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        let pinned = footprint
+            .children()
+            .iter()
+            .filter(|child| child.head() == Some("pad"))
+            .any(|pad| crate::kicad_nets::item_net(pad, &codes).is_some());
+        if pinned
+            && let Ok(at) = form_at(footprint)
+            && let Some(piece) = pieces.piece_at([at[0], at[1]])
+        {
+            parts[piece] += 1;
+        }
+    }
+    let occupied: BTreeSet<usize> = (0..pieces.count())
+        .filter(|piece| parts[*piece] > 0)
+        .collect();
+    let frames = pieces.frames(&occupied);
+    let keepouts = pieces.keepouts(&frames, TAB_MARGIN_MM);
     Ok(serde_json::json!({
         "pieces": pieces.count(),
         "outline_loops": loops.piece_loops.len(),
+        "cut_by": pieces.cut_by,
+        "mouse_bite_rows": cuts.rows,
+        "v_cut_lines": cuts.lines.len(),
         "boxes": pieces.boxes.iter().map(round).collect::<Vec<_>>(),
+        "areas_mm2": pieces.areas.iter().map(|area| area.round()).collect::<Vec<_>>(),
+        "parts": parts,
+        "frames": frames,
         "tabs": pieces.tabs.iter().map(round).collect::<Vec<_>>(),
+        "keepouts": keepouts.len(),
+        "kept_clear_mm2": keepouts.iter().map(|b| (b[2] - b[0]) * (b[3] - b[1])).sum::<f64>().round(),
         "split_nets": split.len(),
         "split": split,
     }))
@@ -1285,6 +1756,10 @@ pub(crate) struct PlacerSubBoards {
     /// Groups of parts nets join that the evidence puts on two sub-boards
     /// (left without one).
     pub conflicts: usize,
+    /// Per piece: a frame or rail (`Pieces::frames`): no part with pins
+    /// lies on it by the fixed parts, the reference board or the placed
+    /// input; no part may.
+    pub frames: Vec<bool>,
 }
 
 /// The share of the movable parts that may be without a sub-board for
@@ -1321,7 +1796,9 @@ pub(crate) fn detect_for_placer(
     reference: Option<&Expr>,
 ) -> Result<Option<PlacerSubBoards>, String> {
     let loops = outline::board_loops(pcb)?;
-    let Some(pieces) = Pieces::of_loops_cached(&loops.piece_loops, &loops.cutouts) else {
+    let Some(pieces) =
+        Pieces::of_loops_cached(&loops.piece_loops, &loops.cutouts, &Cuts::of_board(pcb))
+    else {
         return Ok(None);
     };
     let footprints = footprints.min(problem.components.len());
@@ -1407,6 +1884,14 @@ pub(crate) fn detect_for_placer(
             }
         }
     }
+    // The frames: pieces no part with pins lies on by that evidence.
+    let occupied: BTreeSet<usize> = part_piece
+        .iter()
+        .enumerate()
+        .filter(|(part, _)| with_pins(*part))
+        .filter_map(|(_, piece)| *piece)
+        .collect();
+    let frames = pieces.frames(&occupied);
     // The nets: on two pieces by the parts placed so far, split.
     let net_count = problem.net_weights.len();
     let mut on: Vec<BTreeSet<usize>> = vec![BTreeSet::new(); net_count];
@@ -1481,10 +1966,16 @@ pub(crate) fn detect_for_placer(
             .filter(|kind| from.contains(kind))
             .collect(),
         conflicts,
+        frames,
     }))
 }
 
 impl PlacerSubBoards {
+    /// Whether some pieces are a frame or rails (`frames`).
+    pub(crate) fn has_frames(&self) -> bool {
+        self.frames.iter().any(|frame| *frame)
+    }
+
     /// The sub-boards that hold parts with pins: a panel of different
     /// boards has two or more.
     pub(crate) fn count(&self, problem: &pcb_placer::Problem) -> usize {
@@ -1522,23 +2013,25 @@ pub(crate) struct PlacerApplied {
     /// Nets of the problem split, and the nets added for them.
     pub nets_split: usize,
     pub nets_added: usize,
-    /// Tab keepouts added.
+    /// Keepouts added (boxes over the tabs and the frames,
+    /// `Pieces::keepouts`), and their area (mm², overlaps counted once).
     pub tabs: usize,
+    pub kept_clear_mm2: f64,
 }
 
-/// The sub-boards in the placement problem (on a panel of different
-/// boards: two sub-boards or more, nets on several of them):
+/// The sub-boards in the placement problem (a panel: two sub-boards or
+/// more, or a board beside its frame or rails):
 ///
-/// where at most `MOST_UNASSIGNED_SHARE` of the movable parts have no
-/// sub-board (else nothing changes):
-///
-/// - no part's body on a tab: each tab a keepout (an obstacle of the
-///   board, as a rule area's);
-/// - each other movable part held in its sub-board's region
-///   (unless a constraint holds it in one already) and started at its
-///   centre, and each split net one net per sub-board (the parts without
-///   one stay on the first's), its weight as the lowering gives a net of
-///   that many pins.
+/// - no part's body on a tab or a frame: each box of `Pieces::keepouts`
+///   (the tabs grown by `TAB_MARGIN_MM`, the frames) a keepout (an
+///   obstacle of the board, as a rule area's), where the parts are held
+///   (below) or the board has a frame;
+/// - where the parts lie on two sub-boards or more and at most
+///   `MOST_UNASSIGNED_SHARE` of the movable parts have none, each movable
+///   part held in its sub-board's region (unless a constraint holds it
+///   in one already) and started at its centre, and each split net one
+///   net per sub-board (the parts without one stay on the first's), its
+///   weight as the lowering gives a net of that many pins.
 pub(crate) fn apply_to_placer(
     sub: &PlacerSubBoards,
     problem: &mut pcb_placer::Problem,
@@ -1547,17 +2040,22 @@ pub(crate) fn apply_to_placer(
     poured: &mut Vec<bool>,
 ) -> PlacerApplied {
     let mut applied = PlacerApplied::default();
-    if sub.split.is_empty() || sub.count(problem) < 2 {
-        return applied;
-    }
-    // Most parts' boards unknown: the placement stays as it was (tab
-    // keepouts alone cost the crowded 4in1 panel's front 70 mm², and 8
-    // parts found no place where 0 to 4 had not).
+    // Most parts' boards unknown: no part is held (tab keepouts alone
+    // cost the crowded 4in1 panel's front 70 mm², and 8 parts found no
+    // place where 0 to 4 had not), unless the panel has a frame.
     let (movable, unassigned) = sub.unassigned(problem);
-    if unassigned.len() as f64 > MOST_UNASSIGNED_SHARE * movable as f64 {
+    // Held also where no net lies on two sub-boards (the ULK's halves:
+    // their nets apart, each part's half told by the nets): a part on
+    // the other half is no part of its circuit there (no track crosses
+    // a row of mouse bites).
+    let hold = sub.count(problem) >= 2
+        && unassigned.len() as f64 <= MOST_UNASSIGNED_SHARE * movable as f64;
+    if !hold && !sub.has_frames() {
         return applied;
     }
-    for tab in &sub.pieces.tabs {
+    let keepouts = sub.pieces.keepouts(&sub.frames, TAB_MARGIN_MM);
+    applied.kept_clear_mm2 = keepouts.iter().map(|b| (b[2] - b[0]) * (b[3] - b[1])).sum();
+    for tab in &keepouts {
         let size = [tab[2] - tab[0], tab[3] - tab[1]];
         problem.components.push(pcb_placer::Component {
             name: "tab".into(),
@@ -1591,6 +2089,9 @@ pub(crate) fn apply_to_placer(
         references.push("tab".into());
         source_at.push([0.0; 3]);
         applied.tabs += 1;
+    }
+    if !hold {
+        return applied;
     }
     let held: BTreeSet<usize> = problem
         .constraints
@@ -1697,10 +2198,23 @@ pub struct KiCadSubBoardsReport {
     /// sub-boards (their unplaced parts left without one).
     pub conflicts: usize,
     /// Whether the placement held the parts in their sub-boards (at most
-    /// a tenth of the movable parts without one), and the tabs it kept
-    /// parts off.
+    /// a tenth of the movable parts without one), and the tabs (boxes)
+    /// it kept parts off.
     pub held: bool,
     pub tabs: Vec<[f64; 4]>,
+    /// What cut the outline into pieces: `narrow outline`, `mouse
+    /// bites`, `V-cuts`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cut_by: Vec<String>,
+    /// The boxes of the pieces that are a frame or rails (no part with
+    /// pins lies on them by the fixed parts, the reference or the placed
+    /// input): no part is placed there.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub frames: Vec<[f64; 4]>,
+    /// The area kept free of parts over the tabs (grown by 1.5 mm) and the
+    /// frames (mm²); 0 where the placement kept nothing free.
+    #[serde(default)]
+    pub kept_clear_mm2: f64,
     /// Each sub-board: its region and parts (with pins), of them the
     /// movable ones.
     pub sub_boards: Vec<KiCadSubBoard>,
@@ -1763,6 +2277,21 @@ impl KiCadSubBoardsReport {
             conflicts: sub.conflicts,
             held: applied.held > 0,
             tabs: sub.pieces.tabs.iter().map(round).collect(),
+            cut_by: sub
+                .pieces
+                .cut_by
+                .iter()
+                .map(|kind| kind.to_string())
+                .collect(),
+            frames: sub
+                .pieces
+                .boxes
+                .iter()
+                .zip(&sub.frames)
+                .filter(|(_, frame)| **frame)
+                .map(|(b, _)| round(b))
+                .collect(),
+            kept_clear_mm2: (applied.kept_clear_mm2 * 10.0).round() / 10.0,
             sub_boards,
         }
     }
@@ -2077,6 +2606,175 @@ mod tests {
         .unwrap()
     }
 
+    /// A 20 x 20 board above a 20 x `lower` piece, joined by a bridge
+    /// `bridge` mm wide at x 10 (y 20 to 25); `extra` more items.
+    fn two_pieces(bridge: f64, lower: f64, extra: &str) -> Expr {
+        let (left, right, bottom) = (10.0 - bridge / 2.0, 10.0 + bridge / 2.0, 25.0 + lower);
+        let outline = format!(
+            "(gr_poly (pts (xy 0 0) (xy 20 0) (xy 20 20) (xy {right} 20) (xy {right} 25) (xy 20 25) (xy 20 {bottom}) (xy 0 {bottom}) (xy 0 25) (xy {left} 25) (xy {left} 20) (xy 0 20)) (layer \"Edge.Cuts\"))"
+        );
+        crate::kicad_sexpr::parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user) (41 "Cmts.User" user)) {outline} {extra})"#
+        ))
+        .unwrap()
+    }
+
+    /// A footprint of `count` non-plated holes of `drill` mm at `pitch`
+    /// along x from `x`, at y 22.5 (a row of mouse bites across the
+    /// bridge).
+    fn bites(x: f64, count: usize, pitch: f64, drill: f64) -> String {
+        let pads: String = (0..count)
+            .map(|index| {
+                format!(
+                    r#"(pad "" np_thru_hole circle (at {} 0) (size {drill} {drill}) (drill {drill}) (layers "*.Cu" "*.Mask"))"#,
+                    index as f64 * pitch
+                )
+            })
+            .collect();
+        format!(
+            r#"(footprint "Panelization:mouse-bites" (at {x} 22.5) (property "Reference" "MB") {pads})"#
+        )
+    }
+
+    #[test]
+    fn tabs_are_narrow_bridges_rows_of_mouse_bites_and_v_cuts() {
+        // A bridge of 1.5 mm: the outline's own neck.
+        let narrow = Pieces::of_board(&two_pieces(1.5, 20.0, ""))
+            .unwrap()
+            .expect("pieces");
+        assert_eq!(narrow.count(), 2);
+        assert_eq!(narrow.cut_by, vec!["narrow outline"]);
+        // A solid bridge of 6 mm is board.
+        assert!(
+            Pieces::of_board(&two_pieces(6.0, 20.0, ""))
+                .unwrap()
+                .is_none()
+        );
+        // Crossed by a row of 0.5 mm holes at 0.75 mm (a footprint of
+        // non-plated pads, as the ULK's), from edge to edge.
+        let row = bites(7.25, 8, 0.75, 0.5);
+        let pcb = two_pieces(6.0, 20.0, &row);
+        let cuts = Cuts::of_board(&pcb);
+        assert_eq!((cuts.holes.len(), cuts.rows), (8, 1));
+        let bitten = Pieces::of_board(&pcb).unwrap().expect("pieces");
+        assert_eq!(bitten.count(), 2);
+        assert_eq!(bitten.cut_by, vec!["mouse bites"]);
+        assert!(bitten.between([10.25 + 0.375, 22.5]));
+        assert_ne!(bitten.piece_at([10.0, 10.0]), bitten.piece_at([10.0, 35.0]));
+        // Holes 1.5 mm apart leave bridges for tracks (protoesp's signal
+        // tabs): no row, one board.
+        let sparse = two_pieces(6.0, 20.0, &bites(7.25, 4, 1.5, 0.5));
+        assert_eq!(Cuts::of_board(&sparse).rows, 0);
+        assert!(Pieces::of_board(&sparse).unwrap().is_none());
+        // Two holes are no row.
+        assert_eq!(
+            Cuts::of_board(&two_pieces(6.0, 20.0, &bites(9.0, 2, 0.75, 0.5))).rows,
+            0
+        );
+        // A V-cut: a line on a user layer across the bridge, labelled at
+        // its start (as KiKit writes it).
+        let line = r#"(gr_line (start -1 22.5) (end 21 22.5) (stroke (width 0.4) (type default)) (layer "Cmts.User"))"#;
+        let label = r#"(gr_text "V-CUT" (at -4 22.5 0) (layer "Cmts.User"))"#;
+        let scored = two_pieces(6.0, 20.0, &format!("{line} {label}"));
+        assert_eq!(Cuts::of_board(&scored).lines.len(), 1);
+        let pieces = Pieces::of_board(&scored).unwrap().expect("pieces");
+        assert_eq!(pieces.count(), 2);
+        assert_eq!(pieces.cut_by, vec!["V-cuts"]);
+        assert!(pieces.between([10.0, 22.5]));
+        // Without its label the line is a drawing.
+        assert!(
+            Pieces::of_board(&two_pieces(6.0, 20.0, line))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn a_piece_without_parts_is_a_frame() {
+        // The board above, a 5 mm rail below, joined by mouse bites.
+        let pcb = two_pieces(6.0, 5.0, &bites(7.25, 8, 0.75, 0.5));
+        let pieces = Pieces::of_board(&pcb).unwrap().expect("pieces");
+        let board = pieces.piece_at([10.0, 10.0]).unwrap();
+        let rail = pieces.piece_at([10.0, 28.0]).unwrap();
+        assert_eq!(
+            pieces.frames(&BTreeSet::from([board])),
+            (0..2).map(|piece| piece == rail).collect::<Vec<_>>()
+        );
+        // Nothing known: no frame.
+        assert_eq!(pieces.frames(&BTreeSet::new()), vec![false, false]);
+        // A piece larger than half of those with parts is a board whose
+        // parts are all movable, not a frame.
+        let pcb = two_pieces(6.0, 15.0, &bites(7.25, 8, 0.75, 0.5));
+        let pieces = Pieces::of_board(&pcb).unwrap().expect("pieces");
+        let board = pieces.piece_at([10.0, 10.0]).unwrap();
+        assert_eq!(pieces.frames(&BTreeSet::from([board])), vec![false, false]);
+    }
+
+    #[test]
+    fn the_placeable_area_leaves_out_frames_and_tabs() {
+        // The board above, a rail below; two placed parts on the board.
+        let part = |name: &str, x: f64, y: f64| {
+            format!(
+                r#"(footprint "{name}" (at {x} {y}) (property "Reference" "{name}") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "GND")) (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net "SIG")))"#
+            )
+        };
+        let extra = format!(
+            "{} {} {}",
+            bites(7.25, 8, 0.75, 0.5),
+            part("R1", 4.0, 5.0),
+            part("R2", 12.0, 15.0)
+        );
+        let pcb = two_pieces(6.0, 5.0, &extra);
+        let config = crate::board_placer::KiCadBoardPlacerConfig::default();
+        let mut lowered = crate::board_placer::lower_placement(&pcb, &config).unwrap();
+        let footprints = 3;
+        let sub = detect_for_placer(&pcb, &lowered.problem, footprints, None)
+            .unwrap()
+            .expect("pieces");
+        assert_eq!(sub.count(&lowered.problem), 1);
+        assert!(sub.has_frames());
+        let components = lowered.problem.components.len();
+        let applied = apply_to_placer(
+            &sub,
+            &mut lowered.problem,
+            &mut lowered.references,
+            &mut lowered.source_at,
+            &mut lowered.poured,
+        );
+        assert_eq!(applied.held, 0, "one sub-board: nothing to hold");
+        assert!(applied.tabs > 0);
+        let keepouts: Vec<[f64; 4]> = (components..lowered.problem.components.len())
+            .map(|index| {
+                body_box(
+                    &lowered.problem.components[index],
+                    lowered.problem.poses[index],
+                )
+            })
+            .collect();
+        let kept = |point: [f64; 2]| {
+            keepouts.iter().any(|b| {
+                point[0] >= b[0] && point[0] <= b[2] && point[1] >= b[1] && point[1] <= b[3]
+            })
+        };
+        // The rail, the tab and a margin beside the tab are kept out; the
+        // board is not.
+        assert!(kept([10.0, 28.0]) && kept([2.0, 28.0]));
+        assert!(kept([10.0, 22.5]));
+        assert!(kept([10.0, 21.0]), "the margin above the tab: {keepouts:?}");
+        assert!(!kept([10.0, 10.0]) && !kept([2.0, 18.0]));
+        let mut placer = pcb_placer::Config::new();
+        placer.global.seed = 1;
+        placer.work_limit = Some((2.0 * pcb_placer::work_per_second()) as u64);
+        let placement = pcb_placer::place(&lowered.problem, &placer);
+        assert!(placement.unplaced.is_empty() && placement.illegal.is_empty());
+        for name in ["R1", "R2"] {
+            let part = lowered.references.iter().position(|r| r == name).unwrap();
+            assert!(!lowered.problem.components[part].fixed);
+            let b = body_box(&lowered.problem.components[part], placement.poses[part]);
+            assert!(b[3] < 20.0, "{name} off the board: {b:?}");
+        }
+    }
+
     #[test]
     fn mouse_bites_cut_the_outline_into_pieces() {
         let pieces = Pieces::of_board(&panel(true, "")).unwrap().expect("pieces");
@@ -2205,7 +2903,8 @@ mod tests {
             &mut lowered.source_at,
             &mut lowered.poured,
         );
-        assert_eq!((applied.held, applied.nets_split, applied.tabs), (4, 2, 1));
+        assert_eq!((applied.held, applied.nets_split), (4, 2));
+        assert!(applied.tabs >= 1);
         // The two boards' R1 no longer share a net.
         let nets = |part: usize| -> Vec<usize> {
             lowered.problem.components[part]
