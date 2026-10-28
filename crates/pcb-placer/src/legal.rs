@@ -711,6 +711,9 @@ pub(crate) struct Apart {
     far: Vec<u64>,
     /// The cutouts' outlines for the polygon tests, the parts' flags.
     facts: Facts,
+    /// `linked_work(problem)` (a logarithm and a rounding, libm's calls,
+    /// for every spot: 4 % of protoesp's legalisation, 2026-10-28).
+    linked_work: u64,
     /// The board's outline by bands for the fit tests (an outline of
     /// more than a few edges).
     board: Option<Outline>,
@@ -768,6 +771,7 @@ impl Apart {
             far_part: usize::MAX,
             far: vec![u64::MAX; count],
             facts: Facts::new(problem),
+            linked_work: linked_work(problem),
             board: (problem.outline.len() >= BOARD_INDEX_EDGES)
                 .then(|| Outline::new(&problem.outline)),
             check: cfg!(debug_assertions) || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
@@ -855,7 +859,7 @@ impl Apart {
                 index,
                 away,
                 &body,
-                linked_work(problem),
+                self.linked_work,
                 other,
                 &mut work,
                 None,
@@ -878,7 +882,7 @@ impl Apart {
         work: &mut u64,
     ) -> bool {
         let body = rect(problem, index, pose);
-        let linked_work = linked_work(problem);
+        let linked_work = self.linked_work;
         let mine = self.board_box(problem, index, pose, &body);
         for other in others {
             if let Some(mine) = mine
@@ -1135,7 +1139,7 @@ impl Sweep {
         }
         let index = self.index;
         let body = rect(problem, index, pose);
-        let linked_work = linked_work(problem);
+        let linked_work = apart.linked_work;
         let mine = apart.board_box(problem, index, pose, &body);
         // `is_legal`'s own unit, then the parts in index order: the far
         // ones by their far work, the near ones tested.
@@ -4064,6 +4068,18 @@ mod tests {
                 yielding.iter().copied().filter(|_| next() < 0.5).collect();
             problem.constraints.yielding = yielding;
             problem.constraints.on_marks = (0..parts).filter(|_| next() < 0.2).collect();
+        }
+        if round % 4 == 1 {
+            // Linked pairs (they meet without their halos; the lookup's work).
+            for _ in 0..12 {
+                let (a, b) = (
+                    (next() * parts as f64) as usize,
+                    (next() * parts as f64) as usize,
+                );
+                if a != b {
+                    problem.constraints.linked.insert((a.min(b), a.max(b)));
+                }
+            }
         }
         if round.is_multiple_of(2) {
             problem.constraints.solid_cutouts = (0..parts)
