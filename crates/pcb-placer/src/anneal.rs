@@ -88,6 +88,82 @@ struct Rect {
     half: Point,
 }
 
+/// A part's boxes at a pose (`Component::boxes_of` of its lists): the
+/// overlap sums take them from here instead of turning them again for every
+/// neighbour they meet (the hollow parts' blocking boxes, their lists and
+/// allocations were half of DSP-ADAU1452's overlap sums, 2026-10-28).
+#[derive(Default)]
+struct PartBoxes {
+    /// The pose's bits the boxes are at (`pose_key`); None: none yet.
+    pose: Option<[u64; 3]>,
+    far: Boxes,
+    pads: Boxes,
+    graphics: Boxes,
+    far_courtyard: Boxes,
+    hollow: Boxes,
+    courtyards: Boxes,
+}
+
+/// A pose by its bits (a box list is the pose's, not an equal one's: -0
+/// and 0 turn alike but are other bits).
+fn pose_key(pose: Pose) -> [u64; 3] {
+    [
+        pose.position[0].to_bits(),
+        pose.position[1].to_bits(),
+        pose.angle.to_bits(),
+    ]
+}
+
+/// What a part blocks another with in the overlap sum
+/// (`Component::blocking_boxes` grown by half the spacing, or its whole
+/// rectangle less the halo where it is not hollow for it).
+enum Blocking<'a> {
+    Whole((Point, Point)),
+    Lists(&'a [(Point, Point)], &'a [(Point, Point)], f64),
+}
+
+impl<'a> Blocking<'a> {
+    fn of(
+        part: &crate::problem::Component,
+        against: &crate::problem::Component,
+        boxes: &'a PartBoxes,
+        whole: &Rect,
+        bare: bool,
+        margin: f64,
+    ) -> Self {
+        if !part.hollow_for(against) {
+            let halo = if bare { part.halo } else { 0.0 };
+            return Blocking::Whole((whole.center, [whole.half[0] - halo, whole.half[1] - halo]));
+        }
+        let courtyards: &[(Point, Point)] = if against.has_holes() && !part.holes_inside {
+            &boxes.courtyards
+        } else {
+            &[]
+        };
+        Blocking::Lists(&boxes.hollow, courtyards, margin)
+    }
+
+    /// The boxes of a list (its work), None for the whole rectangle.
+    fn boxes(&self) -> Option<usize> {
+        match self {
+            Blocking::Whole(_) => None,
+            Blocking::Lists(hollow, courtyards, _) => Some(hollow.len() + courtyards.len()),
+        }
+    }
+
+    /// Each box in order (the hollow boxes, then the courtyards).
+    fn each(&self, mut visit: impl FnMut((Point, Point))) {
+        match self {
+            Blocking::Whole(whole) => visit(*whole),
+            Blocking::Lists(hollow, courtyards, margin) => {
+                for (center, half) in hollow.iter().chain(courtyards.iter()) {
+                    visit((*center, [half[0] + margin, half[1] + margin]));
+                }
+            }
+        }
+    }
+}
+
 struct State<'a> {
     problem: &'a Problem,
     poses: Vec<Pose>,
@@ -101,6 +177,8 @@ struct State<'a> {
     work: std::cell::Cell<u64>,
     /// The rectangles by area: the overlap sum visits the parts near one.
     grid: std::cell::RefCell<crate::buckets::Grid>,
+    /// Each part's boxes at its pose (`fresh_boxes`).
+    boxes: std::cell::RefCell<Vec<PartBoxes>>,
     near: std::cell::RefCell<Vec<usize>>,
     /// How far beyond its rectangle a part's overlap reaches (a cutout's
     /// edge margin around pads).
@@ -174,10 +252,15 @@ impl State<'_> {
     fn overlap_with(&self, index: usize, rect: Rect, everything: bool) -> f64 {
         let side = self.problem.components[index].side;
         let mut total = 0.0;
-        // A box list costs its allocation and transforms.
+        // A box list costs its allocation and transforms (as it did when
+        // each was built per pair: the lists now come from `boxes`, the
+        // work is the same).
         let built = |boxes: Vec<(Point, Point)>| {
             self.work.set(self.work.get() + 8 + 2 * boxes.len() as u64);
             boxes
+        };
+        let booked = |boxes: usize| {
+            self.work.set(self.work.get() + 8 + 2 * boxes as u64);
         };
         let area = |a: (Point, Point), b: (Point, Point)| {
             self.work.set(self.work.get() + 1);
@@ -191,11 +274,11 @@ impl State<'_> {
         };
         let component = &self.problem.components[index];
         let pose = self.poses[index];
-        let own_far = if component.far_side.is_empty() {
-            Vec::new()
-        } else {
-            built(component.far_boxes(pose))
-        };
+        let mut cache = self.boxes.borrow_mut();
+        self.fresh_boxes(&mut cache, index);
+        if !component.far_side.is_empty() {
+            booked(cache[index].far.len());
+        }
         let mut near = self.near.borrow_mut();
         let cells = self.grid.borrow_mut().query(
             rect.center,
@@ -221,21 +304,29 @@ impl State<'_> {
                 if component.copper_only || other_component.copper_only {
                     // A cutout keeps only copper away.
                     let margin = self.problem.edge_margin;
-                    let (hole, part, part_pose) = if component.copper_only {
-                        ((rect.center, rect.half), other_component, self.poses[other])
+                    let (hole, part, part_index, part_pose) = if component.copper_only {
+                        (
+                            (rect.center, rect.half),
+                            other_component,
+                            other,
+                            self.poses[other],
+                        )
                     } else {
-                        ((body.center, body.half), component, pose)
+                        ((body.center, body.half), component, index, pose)
                     };
                     if !part.copper_only {
-                        for (center, half) in built(part.pad_boxes(part_pose)) {
-                            total += area((center, [half[0] + margin, half[1] + margin]), hole);
+                        self.fresh_boxes(&mut cache, part_index);
+                        let boxes = &cache[part_index];
+                        booked(boxes.pads.len());
+                        for (center, half) in &boxes.pads {
+                            total += area((*center, [half[0] + margin, half[1] + margin]), hole);
                         }
                         // Its copper graphics keep the margin as its pads do.
                         if !part.copper_graphics.is_empty() {
-                            for (center, half) in
-                                built(part.boxes_of(&part.copper_graphics, part_pose))
-                            {
-                                total += area((center, [half[0] + margin, half[1] + margin]), hole);
+                            booked(boxes.graphics.len());
+                            for (center, half) in &boxes.graphics {
+                                total +=
+                                    area((*center, [half[0] + margin, half[1] + margin]), hole);
                             }
                         }
                         // A cutout the user cut keeps bodies off too (by
@@ -276,21 +367,9 @@ impl State<'_> {
                     if !component.far_courtyard.is_empty()
                         || !other_component.far_courtyard.is_empty()
                     {
-                        total += self.far_courtyards(
-                            index,
-                            pose,
-                            other,
-                            self.poses[other],
-                            &built,
-                            &area,
-                        ) + self.far_courtyards(
-                            other,
-                            self.poses[other],
-                            index,
-                            pose,
-                            &built,
-                            &area,
-                        );
+                        self.fresh_boxes(&mut cache, other);
+                        total += self.far_courtyards(&cache, index, other, &booked, &area)
+                            + self.far_courtyards(&cache, other, index, &booked, &area);
                     }
                 } else {
                     // A hollow part blocks with its boxes (grown by half the
@@ -299,30 +378,33 @@ impl State<'_> {
                     // the halo.
                     let bare = self.problem.constraints.halo_free(index)
                         || self.problem.constraints.halo_free(other);
-                    let blocking = |part: &crate::problem::Component,
-                                    against: &crate::problem::Component,
-                                    pose: Pose,
-                                    whole: &Rect|
-                     -> Vec<(Point, Point)> {
-                        if !part.hollow_for(against) {
-                            let halo = if bare { part.halo } else { 0.0 };
-                            return vec![(
-                                whole.center,
-                                [whole.half[0] - halo, whole.half[1] - halo],
-                            )];
-                        }
-                        let margin = self.problem.spacing / 2.0;
-                        built(part.blocking_boxes(against, pose))
-                            .into_iter()
-                            .map(|(center, half)| (center, [half[0] + margin, half[1] + margin]))
-                            .collect()
-                    };
-                    let theirs = blocking(other_component, component, self.poses[other], body);
-                    for mine in blocking(component, other_component, pose, &rect) {
-                        for other in &theirs {
-                            total += area(mine, *other);
+                    self.fresh_boxes(&mut cache, other);
+                    let margin = self.problem.spacing / 2.0;
+                    let theirs = Blocking::of(
+                        other_component,
+                        component,
+                        &cache[other],
+                        body,
+                        bare,
+                        margin,
+                    );
+                    let mine = Blocking::of(
+                        component,
+                        other_component,
+                        &cache[index],
+                        &rect,
+                        bare,
+                        margin,
+                    );
+                    // The lists' work, theirs first as they were built.
+                    for blocking in [&theirs, &mine] {
+                        if let Some(boxes) = blocking.boxes() {
+                            booked(boxes);
                         }
                     }
+                    mine.each(|mine| {
+                        theirs.each(|other| total += area(mine, other));
+                    });
                 }
             } else if side.opposite(other_component.side) {
                 // Across the board only holes and pads meet bodies, at the
@@ -348,12 +430,16 @@ impl State<'_> {
                         &area,
                     );
                 } else {
-                    for far in &own_far {
-                        total += area(*far, (body.center, body.half));
+                    if !component.far_side.is_empty() {
+                        for far in &cache[index].far {
+                            total += area(*far, (body.center, body.half));
+                        }
                     }
                     if !other_component.far_side.is_empty() {
-                        for far in built(other_component.far_boxes(self.poses[other])) {
-                            total += area(far, (rect.center, rect.half));
+                        self.fresh_boxes(&mut cache, other);
+                        booked(cache[other].far.len());
+                        for far in &cache[other].far {
+                            total += area(*far, (rect.center, rect.half));
                         }
                     }
                 }
@@ -486,14 +572,14 @@ impl State<'_> {
 
     /// The overlap of part `yard`'s courtyard on the other side with part
     /// `other`'s courtyard, holes and pads there, for two parts on the
-    /// same side, each grown by its share of the spacing.
+    /// same side, each grown by its share of the spacing (the boxes at the
+    /// parts' poses from `boxes`, fresh for both).
     fn far_courtyards(
         &self,
+        cache: &[PartBoxes],
         yard: usize,
-        yard_pose: Pose,
         other: usize,
-        other_pose: Pose,
-        built: &dyn Fn(Boxes) -> Boxes,
+        booked: &dyn Fn(usize),
         area: &dyn Fn((Point, Point), (Point, Point)) -> f64,
     ) -> f64 {
         let (component, against) = (
@@ -504,11 +590,13 @@ impl State<'_> {
             return 0.0;
         }
         let (mine, theirs) = (self.share(component), self.share(against));
-        let yards = built(component.boxes_of(&component.far_courtyard, yard_pose));
-        let blocking = built(against.far_boxes(other_pose));
+        let yards = &cache[yard].far_courtyard;
+        let blocking = &cache[other].far;
+        booked(yards.len());
+        booked(blocking.len());
         let mut total = 0.0;
-        for (center, half) in &yards {
-            for (their_center, their_half) in &blocking {
+        for (center, half) in yards {
+            for (their_center, their_half) in blocking {
                 total += area(
                     (*center, [half[0] + mine, half[1] + mine]),
                     (
@@ -519,6 +607,24 @@ impl State<'_> {
             }
         }
         total
+    }
+
+    /// Brings part `part`'s boxes in `cache` to its pose of now.
+    fn fresh_boxes(&self, cache: &mut [PartBoxes], part: usize) {
+        let pose = self.poses[part];
+        let key = pose_key(pose);
+        let entry = &mut cache[part];
+        if entry.pose == Some(key) {
+            return;
+        }
+        let component = &self.problem.components[part];
+        component.boxes_into(&component.far_side, pose, &mut entry.far);
+        component.boxes_into(&component.pads, pose, &mut entry.pads);
+        component.boxes_into(&component.copper_graphics, pose, &mut entry.graphics);
+        component.boxes_into(&component.far_courtyard, pose, &mut entry.far_courtyard);
+        component.boxes_into(&component.hollow, pose, &mut entry.hollow);
+        component.boxes_into(&component.courtyards, pose, &mut entry.courtyards);
+        entry.pose = Some(key);
     }
 
     /// Relations involving `index`, plus its hard constraints priced so
@@ -652,6 +758,11 @@ fn build_state<'a>(problem: &'a Problem, poses: &[Pose], legal_far_side: bool) -
             problem.components.len(),
         )),
         near: std::cell::RefCell::new(Vec::new()),
+        boxes: std::cell::RefCell::new(
+            (0..problem.components.len())
+                .map(|_| PartBoxes::default())
+                .collect(),
+        ),
         // The legality test's gaps across the board reach farther.
         reach: problem.edge_margin
             + 0.5

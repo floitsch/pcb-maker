@@ -389,26 +389,32 @@ impl Component {
     }
 
     fn boxes(&self, boxes: &[[f64; 4]], pose: Pose) -> Vec<(Point, Point)> {
+        let mut out = Vec::with_capacity(boxes.len());
+        self.boxes_into(boxes, pose, &mut out);
+        out
+    }
+
+    /// `boxes_of` into `out` (cleared first): the same boxes, without a
+    /// new list.
+    pub fn boxes_into(&self, boxes: &[[f64; 4]], pose: Pose, out: &mut Vec<(Point, Point)>) {
+        out.clear();
         // The pose's turns once for all its boxes (`offset` and the extent).
         let turn = rotation(-pose.angle);
         let (sin, cos) = sin_cos_degrees(-pose.angle);
-        boxes
-            .iter()
-            .map(|local| {
-                let center = rotate_by(
-                    [(local[0] + local[2]) / 2.0, (local[1] + local[3]) / 2.0],
-                    turn,
-                );
-                let half = [(local[2] - local[0]) / 2.0, (local[3] - local[1]) / 2.0];
-                (
-                    [pose.position[0] + center[0], pose.position[1] + center[1]],
-                    [
-                        cos.abs() * half[0] + sin.abs() * half[1],
-                        sin.abs() * half[0] + cos.abs() * half[1],
-                    ],
-                )
-            })
-            .collect()
+        out.extend(boxes.iter().map(|local| {
+            let center = rotate_by(
+                [(local[0] + local[2]) / 2.0, (local[1] + local[3]) / 2.0],
+                turn,
+            );
+            let half = [(local[2] - local[0]) / 2.0, (local[3] - local[1]) / 2.0];
+            (
+                [pose.position[0] + center[0], pose.position[1] + center[1]],
+                [
+                    cos.abs() * half[0] + sin.abs() * half[1],
+                    sin.abs() * half[0] + cos.abs() * half[1],
+                ],
+            )
+        }));
     }
 
     pub fn pin_position(&self, pin: &Pin, pose: Pose) -> Point {
