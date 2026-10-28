@@ -3944,6 +3944,50 @@ mod tests {
     }
 
     #[test]
+    fn open_bga_balls_without_a_via_in_pad_name_the_opt_in() {
+        let report = crate::KiCadViaInPadReport {
+            closed: vec![crate::KiCadClosedPads {
+                part: "U106".into(),
+                footprint: "Package_TFBGA:TFBGA-153_11.5x13mm".into(),
+                pads: vec!["B2 (MEM_DAT3)".into(), "M5 (MEM_CMD)".into()],
+                nets: vec!["MEM_CMD".into(), "MEM_DAT3".into()],
+            }],
+            ..Default::default()
+        };
+        let mut unconnected_nets = BTreeMap::new();
+        unconnected_nets.insert("/MEM_DAT3".to_string(), 1);
+        let mut facts = routed(DrcTally {
+            unconnected: 1,
+            unconnected_nets,
+            ..Default::default()
+        });
+        facts.vias_in_pads = Some(report.clone());
+        let verdict = judge(&facts);
+        let action = verdict
+            .next_actions
+            .iter()
+            .find(|action| action.starts_with("U106 ("))
+            .expect("the via-in-pad action");
+        assert!(action.contains("open there: MEM_DAT3"), "{action}");
+        assert!(action.contains("\"via_in_pad\": [\"U106\"]"), "{action}");
+        // Open elsewhere: no such action.
+        let mut elsewhere = BTreeMap::new();
+        elsewhere.insert("/SDA".to_string(), 1);
+        let mut facts = routed(DrcTally {
+            unconnected: 1,
+            unconnected_nets: elsewhere,
+            ..Default::default()
+        });
+        facts.vias_in_pads = Some(report);
+        assert!(
+            !judge(&facts)
+                .next_actions
+                .iter()
+                .any(|action| action.starts_with("U106 ("))
+        );
+    }
+
+    #[test]
     fn kicad_decides_over_the_routers_count() {
         // A pad the pour's fill joins: the router counts it open, KiCad not.
         let mut facts = routed(DrcTally::default());
