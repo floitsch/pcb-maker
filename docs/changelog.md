@@ -13,7 +13,7 @@ v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
 ## Committed on 2026-10-28 (vias in BGA pads where the designer has them)
 
-Branch via-in-pad (rebased on main 39fc92d6); binaries
+Branch via-in-pad (rebased on main 63b74ac1); binaries
 build/bin/pcb-maker-vip1-a to -g (-e on main 5905bf9a, x1872, the
 measured pair; -g the head on 39fc92d6). docs/router.md,
 "Vias in BGA pads (2026-10-28)", has the rule, the design and the tables;
