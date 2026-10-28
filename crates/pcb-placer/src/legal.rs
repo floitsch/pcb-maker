@@ -2923,23 +2923,23 @@ pub fn legalize_keeping(
             .map_or(0, |state| state.involving_or_kept(poses, &[index]));
         // A part near another (`follow_anchors`) pays for the near
         // relations it misses at a spot: the closest spot that keeps them
-        // beats a closer one that does not.
-        let own_relations: Vec<&constraints::Relation> = if start.is_empty() {
-            Vec::new()
-        } else {
-            problem
-                .constraints
-                .relations
-                .iter()
-                .filter(|relation| {
-                    matches!(
-                        relation,
-                        constraints::Relation::Near { part, .. }
-                            | constraints::Relation::NearAny { part, .. } if *part == index
-                    )
-                })
-                .collect()
-        };
+        // beats a closer one that does not. A part with a pin under a
+        // net's length maximum (`Relation::Within`) pays for it always.
+        let own_relations: Vec<&constraints::Relation> = problem
+            .constraints
+            .relations
+            .iter()
+            .filter(|relation| match relation {
+                constraints::Relation::Near { part, .. }
+                | constraints::Relation::NearAny { part, .. } => {
+                    !start.is_empty() && *part == index
+                }
+                constraints::Relation::Within { part, other, .. } => {
+                    *part == index || *other == index
+                }
+                _ => false,
+            })
+            .collect();
         for angle in &component.angle_options {
             // Rotating about the body centre keeps the part where global
             // placement wanted it; prefer the global angle on ties.
@@ -4521,6 +4521,53 @@ mod tests {
             crossings: None,
         };
         (problem, poses)
+    }
+
+    #[test]
+    fn a_length_relation_measures_turned_pins_octilinearly_and_steers_the_legaliser() {
+        use crate::constraints::{Relation, relation_violation};
+        // Two resistors stacked at one place, part 0 fixed; part 1's
+        // centre pin is to stay within 2.4 mm of part 0's left pad (soft
+        // bound 0).
+        let (mut problem, mut poses) = pair(0.0, 0.0);
+        problem.components[0].fixed = true;
+        poses[1] = poses[0];
+        let relation = Relation::Within {
+            part: 1,
+            pin: [0.0, 0.0],
+            other: 0,
+            other_pin: [-1.0, 0.0],
+            soft: 0.0,
+            max: 2.4,
+        };
+        // 1 mm along x; turned a quarter, the left pad lies 1 mm along y.
+        assert!((relation_violation(&problem, &poses, &relation) - 1.0).abs() < 1.0e-9);
+        let mut turned = poses.clone();
+        turned[0].angle = 90.0;
+        turned[1].position[0] += 1.0;
+        let both = 1.0 + (std::f64::consts::SQRT_2 - 1.0);
+        assert!((relation_violation(&problem, &turned, &relation) - both).abs() < 1.0e-9);
+        // Beyond the maximum the steep share: 3 mm away, 0.6 beyond.
+        let mut far = poses.clone();
+        far[1].position[0] += 2.0;
+        let steep = 3.0 + crate::constraints::WITHIN_STEEPNESS * 0.6;
+        assert!((relation_violation(&problem, &far, &relation) - steep).abs() < 1.0e-9);
+        // The legaliser: without the relation part 1 goes to the nearest
+        // spot (straight above or below, 1.2 mm), with it above or below
+        // the left pad (1.56 mm), where its pin lies 1.2 mm from the pad
+        // rather than 1.61.
+        let mut free = poses.clone();
+        assert!(legalize(&problem, &mut free).is_empty());
+        assert_eq!(free[1].position[0], 10.0);
+        problem.constraints.relations.push(relation.clone());
+        problem.constraints.relation_weight = 50.0;
+        let mut bound = poses.clone();
+        assert!(legalize(&problem, &mut bound).is_empty());
+        assert!((bound[1].position[0] - 9.0).abs() < 1.0e-9, "{bound:?}");
+        assert!(
+            relation_violation(&problem, &bound, &relation)
+                < relation_violation(&problem, &free, &relation) - 0.4
+        );
     }
 
     #[test]

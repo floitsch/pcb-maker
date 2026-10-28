@@ -338,6 +338,28 @@ pub struct KiCadBoardPlacerConfig {
     /// layout; the default otherwise).
     #[serde(skip)]
     pub guidance_router: Option<KiCadBoardRouterConfig>,
+    /// The far side under a via in a BGA's pad stays free (on): where the
+    /// router's via-in-pad rule admits a footprint (the designer's vias in
+    /// its pads, or the router's `via_in_pad`), each enclosed pad's via
+    /// goes through the board, and other parts on the other side keep off
+    /// it as off a through-hole pin, with the clearances a via needs
+    /// (docs/placer.md, "Length maxima and the far side of vias in pads
+    /// (2026-10-28)"). Nothing changes on a board without such a footprint.
+    pub via_in_pad_far_side: bool,
+    /// Length maxima (on): for each net with a `length` rule and a
+    /// maximum (the project's `.kicad_dru`, as the router reads it), every
+    /// two of its pins on different parts are kept within 0.8 times the
+    /// maximum, octilinearly, by a penalty in the global placement, the
+    /// anneal, the legaliser and the refinement, and beyond the maximum
+    /// by a penalty steep enough that no wirelength pays for it (the
+    /// router cannot make a net shorter than its pads lie apart). Nothing
+    /// changes on a board without such a rule.
+    pub length_maxima: bool,
+    /// The router's rules the two above read (via-in-pad admissions, net
+    /// classes and via sizes; the length rules), set by the layout where
+    /// either applies.
+    #[serde(skip)]
+    pub router_rules: Option<std::sync::Arc<KiCadBoardRouterConfig>>,
 }
 
 impl KiCadBoardPlacerConfig {
@@ -408,6 +430,9 @@ impl Default for KiCadBoardPlacerConfig {
             ratsnest_crossings: default_ratsnest_crossings(),
             bus_groups: None,
             guidance_router: None,
+            via_in_pad_far_side: true,
+            length_maxima: true,
+            router_rules: None,
         }
     }
 }

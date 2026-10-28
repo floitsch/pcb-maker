@@ -37,7 +37,8 @@ pub(crate) use self::lengths::{
 };
 pub(crate) use self::meander::copper_heights;
 pub(crate) use self::via_in_pad::{
-    PlannedVia, designer_entries, pad_vias_of, plan as plan_vias_in_pads,
+    PlannedVia, admits_any as admits_vias_in_pads, designer_entries, far_side_vias, pad_vias_of,
+    plan as plan_vias_in_pads,
 };
 pub(crate) use self::{attempt::*, budget::*, geometry::*, ladder::*, lower::*, memory::*};
 pub use self::{

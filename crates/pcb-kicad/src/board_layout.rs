@@ -1284,6 +1284,15 @@ pub fn layout_placer_config(
     if placer_config.global_guidance.is_some() || placer_config.escape_demand.is_some() {
         placer_config.guidance_router = Some(router_config.clone());
     }
+    // The router's rules the placer keeps (the far side under vias in
+    // pads, length maxima), only where one applies.
+    if (placer_config.via_in_pad_far_side
+        && crate::board_router::admits_vias_in_pads(router_config))
+        || (placer_config.length_maxima
+            && crate::board_router::length_bounded_nets(router_config).is_some())
+    {
+        placer_config.router_rules = Some(std::sync::Arc::new(router_config.clone()));
+    }
     Ok(placer_config)
 }
 

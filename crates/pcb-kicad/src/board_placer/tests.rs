@@ -1843,3 +1843,247 @@ fn a_fixed_part_on_many_marks_is_one_warning() {
     );
     assert!(many.contains("; 2 more): all stay"), "{many}");
 }
+
+/// A 5 x 5 ball grid at 0.5 mm pitch (0.3 mm balls) on the front at
+/// `at`, locked: the centre ball C3 on `X`, B2 on `Y` (both enclosed),
+/// the others unconnected; R1 on the front carries the nets' other ends,
+/// and `back` (footprints on the back) joins them.
+fn far_side_board(back: &str) -> Expr {
+    let mut balls = String::new();
+    for (row, letter) in ["A", "B", "C", "D", "E"].iter().enumerate() {
+        for column in 0..5 {
+            let number = format!("{letter}{}", column + 1);
+            let net = match number.as_str() {
+                "C3" => "X".to_string(),
+                "B2" => "Y".to_string(),
+                other => format!("unconnected-(U1-{other})"),
+            };
+            balls.push_str(&format!(
+                r#"(pad "{number}" smd circle (at {} {}) (size 0.3 0.3) (layers "F.Cu" "F.Mask") (net "{net}"))"#,
+                (column as f64 - 2.0) * 0.5,
+                (row as f64 - 2.0) * 0.5
+            ));
+        }
+    }
+    parse(&format!(
+        r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+             (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+             (footprint "Package_BGA:BGA-25" (layer "F.Cu") (locked) (at 10 10)
+                 (property "Reference" "U1")
+                 (fp_rect (start -1.5 -1.5) (end 1.5 1.5) (layer "F.CrtYd"))
+                 {balls})
+             (footprint "R" (layer "F.Cu") (at 30 10) (property "Reference" "R1")
+                 (fp_rect (start -0.5 -0.5) (end 1.5 0.5) (layer "F.CrtYd"))
+                 (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net "X"))
+                 (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net "Y")))
+             {back})"#
+    ))
+    .unwrap()
+}
+
+/// The router's rules of `far_side_board`: U1 admitted (as the designer's
+/// via in its pads would), the project's vias 0.35/0.2 and 0.8/0.4.
+fn far_side_rules(admitted: bool) -> KiCadBoardRouterConfig {
+    KiCadBoardRouterConfig {
+        default_rules: Some(KiCadConnectionRoutingRules {
+            trace_width_mm: 0.1,
+            clearance_mm: 0.1,
+            via_size_mm: 0.6,
+            via_drill_mm: 0.3,
+        }),
+        neck_width_mm: Some(0.1),
+        hole_clearance_mm: 0.1,
+        hole_to_hole_clearance_mm: 0.2,
+        via_in_pad: admitted.then(|| {
+            KiCadViaInPad::Parts(vec![KiCadViaInPadEntry {
+                part: Some("U1".into()),
+                ..Default::default()
+            }])
+        }),
+        project_rules: Some(crate::project_rules::KiCadProjectRulesReport {
+            via_sizes: vec![[0.35, 0.2], [0.8, 0.4]],
+            via_minimums: [0.25, 0.15, 0.05],
+            ..Default::default()
+        }),
+        ..KiCadBoardRouterConfig::default()
+    }
+}
+
+fn far_side_config(rules: Option<KiCadBoardRouterConfig>) -> KiCadBoardPlacerConfig {
+    KiCadBoardPlacerConfig {
+        copper_clearance_mm: Some(0.1),
+        hole_clearance_mm: Some(0.1),
+        grid_mm: 0.1,
+        router_rules: rules.map(std::sync::Arc::new),
+        ..KiCadBoardPlacerConfig::default()
+    }
+}
+
+#[test]
+fn a_part_on_the_far_side_of_an_admitted_bgas_via_in_pad_is_illegal_and_moves() {
+    // An 0603 on the back right under U1's centre ball, its nets joined by
+    // a resistor on the back elsewhere.
+    let pcb = far_side_board(
+        r#"(footprint "C_0603" (layer "B.Cu") (at 10 10) (property "Reference" "C1")
+               (fp_rect (start -1.5 -0.7) (end 1.5 0.7) (layer "B.CrtYd"))
+               (pad "1" smd rect (at -0.8 0) (size 0.8 0.9) (layers "B.Cu") (net "P"))
+               (pad "2" smd rect (at 0.8 0) (size 0.8 0.9) (layers "B.Cu") (net "Q")))
+           (footprint "R_0603" (layer "B.Cu") (at 20 10) (property "Reference" "R2")
+               (fp_rect (start -1.5 -0.7) (end 1.5 0.7) (layer "B.CrtYd"))
+               (pad "1" smd rect (at -0.8 0) (size 0.8 0.9) (layers "B.Cu") (net "P"))
+               (pad "2" smd rect (at 0.8 0) (size 0.8 0.9) (layers "B.Cu") (net "Q")))"#,
+    );
+    let (bga, cap) = (0, 2);
+    // Without the rule (or with U1 not admitted) the back under U1 is free.
+    for rules in [None, Some(far_side_rules(false))] {
+        let lowered = lower_placement(&pcb, &far_side_config(rules)).unwrap();
+        let problem = &lowered.problem;
+        assert!(problem.components[bga].far_side.is_empty());
+        assert!(!core::legal::illegal_components(problem, &problem.poses).contains(&cap));
+    }
+    // Admitted: B2 and C3 (enclosed) each hold a 0.35/0.2 via, the largest
+    // size that keeps its clearances among U1's balls; each is a far-side
+    // box of half the via's diameter (the drill's hole clearance less the
+    // copper clearance is less).
+    let lowered = lower_placement(&pcb, &far_side_config(Some(far_side_rules(true)))).unwrap();
+    let problem = &lowered.problem;
+    let far = &problem.components[bga].far_side;
+    assert_eq!(far.len(), 2, "{far:?}");
+    for (got, center) in far.iter().zip([[-0.5, -0.5], [0.0, 0.0]]) {
+        let want = [
+            center[0] - 0.175,
+            center[1] - 0.175,
+            center[0] + 0.175,
+            center[1] + 0.175,
+        ];
+        assert!(
+            got.iter().zip(want).all(|(a, b)| (a - b).abs() < 1.0e-9),
+            "{got:?} against {want:?}"
+        );
+    }
+    let mut poses = problem.poses.clone();
+    let illegal = core::legal::illegal_components(problem, &poses);
+    assert!(illegal.contains(&cap), "{illegal:?}");
+    // The legaliser moves it off the vias; the front stays as it was.
+    let failed = core::legal::legalize(problem, &mut poses);
+    assert!(failed.is_empty(), "{failed:?}");
+    assert!(core::legal::illegal_components(problem, &poses).is_empty());
+    assert_ne!(poses[cap], problem.poses[cap]);
+    assert_eq!(poses[bga], problem.poses[bga]);
+    // The switch off: the same problem as without the rules.
+    let mut off = far_side_config(Some(far_side_rules(true)));
+    off.via_in_pad_far_side = false;
+    let off = lower_placement(&pcb, &off).unwrap();
+    let none = lower_placement(&pcb, &far_side_config(None)).unwrap();
+    assert_eq!(format!("{:?}", off.problem), format!("{:?}", none.problem));
+}
+
+/// `far_side_board`'s rules with a `length` rule of maximum `max` over
+/// net `X`.
+fn length_rules(max: f64) -> KiCadBoardRouterConfig {
+    KiCadBoardRouterConfig {
+        length_matching: Some(true),
+        length_rules: vec![crate::board_router::KiCadLengthRule {
+            rule: "bus".into(),
+            constraint: "length".into(),
+            min: Some(max - 1.0),
+            max: Some(max),
+            nets: vec![crate::board_router::KiCadLengthMember {
+                net: "X".into(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }],
+        ..far_side_rules(false)
+    }
+}
+
+#[test]
+fn a_length_bounded_nets_pins_are_kept_within_its_maximum() {
+    // R3 on X (U1's centre ball) and on three nets to J1, locked at the
+    // board's right edge: its wire pulls it to J1, 27 mm from U1.
+    let pcb = far_side_board(
+        r#"(footprint "R" (layer "F.Cu") (at 30 5) (property "Reference" "R3")
+               (fp_rect (start -0.5 -0.5) (end 3.5 0.5) (layer "F.CrtYd"))
+               (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net "X"))
+               (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net "W1"))
+               (pad "3" smd rect (at 2 0) (size 0.6 0.6) (layers "F.Cu") (net "W2"))
+               (pad "4" smd rect (at 3 0) (size 0.6 0.6) (layers "F.Cu") (net "W3")))
+           (footprint "J" (layer "F.Cu") (locked) (at 37 15) (property "Reference" "J1")
+               (fp_rect (start -0.5 -0.5) (end 2.5 0.5) (layer "F.CrtYd"))
+               (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net "W1"))
+               (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net "W2"))
+               (pad "3" smd rect (at 2 0) (size 0.6 0.6) (layers "F.Cu") (net "W3")))"#,
+    );
+    let (bga, r1, r3) = (0, 1, 2);
+    let lowered = lower_placement(&pcb, &far_side_config(Some(length_rules(15.0)))).unwrap();
+    let problem = &lowered.problem;
+    // X joins U1.C3 (fixed), R1.1 and R3.1: a relation for each two of
+    // them, the movable part first (the smaller of two movable ones), all
+    // automatic.
+    let pairs: Vec<(usize, usize, f64, f64)> = problem
+        .constraints
+        .relations
+        .iter()
+        .map(|relation| match relation {
+            core::constraints::Relation::Within {
+                part,
+                other,
+                soft,
+                max,
+                ..
+            } => (*part, *other, *soft, *max),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        pairs,
+        [
+            (r1, bga, 12.0, 15.0),
+            (r3, bga, 12.0, 15.0),
+            (r1, r3, 12.0, 15.0)
+        ]
+    );
+    assert_eq!(problem.constraints.automatic, 3);
+    assert_eq!(problem.constraints.relation_weight, 50.0);
+    let relation = &problem.constraints.relations[1];
+    // R3's pin 20 mm from U1's: 8 mm beyond the soft bound, 5 beyond the
+    // maximum.
+    let violation = |x: f64| {
+        let mut poses = problem.poses.clone();
+        poses[r3].position = [x, 10.0];
+        core::constraints::relation_violation(problem, &poses, relation)
+    };
+    assert!((violation(30.0) - (8.0 + 20.0 * 5.0)).abs() < 1.0e-9);
+    // Between the soft bound and the maximum only the distance beyond the
+    // soft bound counts; within it nothing.
+    assert!((violation(24.0) - 2.0).abs() < 1.0e-9);
+    assert_eq!(violation(20.0), 0.0);
+    let x_pin = |problem: &core::Problem, index: usize, poses: &[core::Pose]| {
+        let component = &problem.components[index];
+        let pin = component
+            .pins
+            .iter()
+            .find(|pin| lowered.net_names[pin.net] == "X")
+            .unwrap();
+        component.pin_position(pin, poses[index])
+    };
+    // The refinement: without the rule R3 goes to J1, beyond the maximum;
+    // with it R3 stays within.
+    let none = lower_placement(&pcb, &far_side_config(None)).unwrap();
+    assert!(none.problem.constraints.relations.is_empty());
+    let mut free = none.problem.poses.clone();
+    core::legal::refine(&none.problem, &mut free, 8);
+    let mut bounded = problem.poses.clone();
+    core::legal::refine(problem, &mut bounded, 8);
+    let apart = |problem: &core::Problem, poses: &[core::Pose]| {
+        core::constraints::octilinear(x_pin(problem, r3, poses), x_pin(problem, bga, poses))
+    };
+    assert!(apart(&none.problem, &free) > 15.0, "{:?}", free[r3]);
+    assert!(apart(problem, &bounded) <= 15.0, "{:?}", bounded[r3]);
+    // The switch off: the same problem as without the rule.
+    let mut off = far_side_config(Some(length_rules(15.0)));
+    off.length_maxima = false;
+    let off = lower_placement(&pcb, &off).unwrap();
+    assert_eq!(format!("{:?}", off.problem), format!("{:?}", none.problem));
+}

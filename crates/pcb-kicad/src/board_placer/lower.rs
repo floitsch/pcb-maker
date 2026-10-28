@@ -1674,6 +1674,14 @@ pub(crate) fn lower_placement(
             problem.constraints.relations.extend(automatic);
         }
     }
+    if let Some(rules) = &config.router_rules {
+        if config.via_in_pad_far_side {
+            far_side_of_vias_in_pads(pcb, rules, config, &pad_offsets, &mut problem);
+        }
+        if config.length_maxima {
+            length_maxima(rules, config, &net_ids, footprint_count, &mut problem);
+        }
+    }
     if config.keep_on_pieces {
         keep_on_pieces(&mut problem, footprint_count);
     }
@@ -1704,6 +1712,119 @@ pub(crate) fn lower_placement(
         attached_marks: attached,
         attached_report,
     })
+}
+
+/// The far side under the vias the router's via-in-pad rule puts in
+/// admitted footprints' enclosed pads (`far_side_vias`): each via goes
+/// through the board, so it joins its footprint's `far_side`, where parts
+/// on the other side keep off it as off a through-hole pin (MIDAS-MK1:
+/// C112, an 0603 on the back, under U106's B2, whose via the router then
+/// refused). The box keeps the via's copper and its drill's hole clearance
+/// from the other side's pads where the legality test adds the copper
+/// clearance alone (the tight levels and KiCad's legality, which test
+/// far-side boxes against pads).
+fn far_side_of_vias_in_pads(
+    pcb: &Expr,
+    rules: &KiCadBoardRouterConfig,
+    config: &KiCadBoardPlacerConfig,
+    pad_offsets: &[BTreeMap<String, [f64; 2]>],
+    problem: &mut core::Problem,
+) {
+    let copper = config.copper_clearance_mm.unwrap_or(0.2);
+    let hole = config.hole_clearance_mm.unwrap_or(rules.hole_clearance_mm);
+    for via in crate::board_router::far_side_vias(pcb, rules) {
+        let Some(center) = pad_offsets
+            .get(via.footprint)
+            .and_then(|pads| pads.get(&via.pad))
+        else {
+            continue;
+        };
+        let half = (via.diameter / 2.0).max(via.drill / 2.0 + hole - copper);
+        problem.components[via.footprint].far_side.push([
+            center[0] - half,
+            center[1] - half,
+            center[0] + half,
+            center[1] + half,
+        ]);
+    }
+}
+
+/// The share of a net's length maximum its pins are kept within before
+/// the anneal pays for the distance (`Relation::Within`'s soft bound).
+pub(super) const LENGTH_SOFT_SHARE: f64 = 0.8;
+
+/// At most this many pins of a length-bounded net are related pairwise (a
+/// bus's nets join two or three pins).
+const LENGTH_MOST_PINS: usize = 16;
+
+/// Length maxima (`length_maxima`): for each net of a `length` rule with a
+/// maximum (`length_bounded_nets`), every two of its pins on different
+/// parts, not both fixed, keep within `LENGTH_SOFT_SHARE` of the maximum
+/// octilinearly, and pay steeply beyond it (`Relation::Within`, automatic
+/// relations: not reported as the user's constraints). The part that moves
+/// in the relation repair is the movable one, the smaller of two movable.
+fn length_maxima(
+    rules: &KiCadBoardRouterConfig,
+    config: &KiCadBoardPlacerConfig,
+    net_ids: &BTreeMap<String, usize>,
+    footprint_count: usize,
+    problem: &mut core::Problem,
+) {
+    let Some(bounded) = crate::board_router::length_bounded_nets(rules) else {
+        return;
+    };
+    let mut relations = Vec::new();
+    for (net, max) in bounded.iter() {
+        let Some(&id) = net_ids.get(net) else {
+            continue;
+        };
+        let pins: Vec<(usize, [f64; 2])> = (0..footprint_count)
+            .flat_map(|index| {
+                problem.components[index]
+                    .pins
+                    .iter()
+                    .filter(move |pin| pin.net == id)
+                    .map(move |pin| (index, pin.offset))
+            })
+            .collect();
+        if pins.len() > LENGTH_MOST_PINS {
+            continue;
+        }
+        for (position, &(a, pin_a)) in pins.iter().enumerate() {
+            for &(b, pin_b) in &pins[position + 1..] {
+                let (fixed_a, fixed_b) = (problem.components[a].fixed, problem.components[b].fixed);
+                if a == b || (fixed_a && fixed_b) {
+                    continue;
+                }
+                let area = |index: usize| {
+                    let size = problem.components[index].body_size;
+                    size[0] * size[1]
+                };
+                let first = fixed_b || (!fixed_a && area(a) <= area(b));
+                let ((part, pin), (other, other_pin)) = if first {
+                    ((a, pin_a), (b, pin_b))
+                } else {
+                    ((b, pin_b), (a, pin_a))
+                };
+                relations.push(core::constraints::Relation::Within {
+                    part,
+                    pin,
+                    other,
+                    other_pin,
+                    soft: LENGTH_SOFT_SHARE * max,
+                    max: *max,
+                });
+            }
+        }
+    }
+    if relations.is_empty() {
+        return;
+    }
+    if problem.constraints.relation_weight == 0.0 {
+        problem.constraints.relation_weight = config.constraint_weight;
+    }
+    problem.constraints.automatic += relations.len();
+    problem.constraints.relations.extend(relations);
 }
 
 /// How far a pad's mask opening on the side `mask` (the side its part is

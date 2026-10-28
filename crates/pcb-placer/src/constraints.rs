@@ -90,6 +90,50 @@ pub enum Relation {
         anchors: Vec<Anchor>,
         max: f64,
     },
+    /// A pin of `part` and a pin of `other` (points in their parts' own
+    /// frames) lie within `soft` of each other, octilinearly, and never
+    /// beyond `max`: a net's length rule (KiCad's `length` constraint with
+    /// a maximum), which no route of the net can meet when its pads lie
+    /// further apart than the maximum (docs/placer.md, "Length maxima and
+    /// the far side of vias in pads (2026-10-28)"). Missed by the distance
+    /// beyond `soft`, and `WITHIN_STEEPNESS` times the distance beyond
+    /// `max` besides: no wirelength pays for a pad pair beyond the maximum.
+    Within {
+        part: usize,
+        pin: Point,
+        other: usize,
+        other_pin: Point,
+        soft: f64,
+        max: f64,
+    },
+}
+
+/// How much more a millimetre of a `Within` relation beyond its maximum
+/// costs than a millimetre between its soft bound and its maximum.
+pub const WITHIN_STEEPNESS: f64 = 20.0;
+
+/// The octilinear distance of two points: the length of the shortest
+/// track of 45-degree steps between them.
+pub fn octilinear(a: Point, b: Point) -> f64 {
+    let (dx, dy) = ((a[0] - b[0]).abs(), (a[1] - b[1]).abs());
+    dx.max(dy) + (std::f64::consts::SQRT_2 - 1.0) * dx.min(dy)
+}
+
+/// The board positions of a `Within` relation's two pins at `poses`.
+fn within_pins(
+    problem: &Problem,
+    poses: &[Pose],
+    part: usize,
+    pin: Point,
+    other: usize,
+    other_pin: Point,
+) -> (Point, Point) {
+    let at = |index: usize, local: Point| {
+        let pose = poses[index];
+        let offset = problem.components[index].offset(local, pose.angle);
+        [pose.position[0] + offset[0], pose.position[1] + offset[1]]
+    };
+    (at(part, pin), at(other, other_pin))
 }
 
 impl Relation {
@@ -107,6 +151,7 @@ impl Relation {
                 [Some(*part), Some(*anchor)]
             }
             Relation::NearAny { part, .. } => [Some(*part), None],
+            Relation::Within { part, other, .. } => [Some(*part), Some(*other)],
         }
     }
 
@@ -1111,6 +1156,18 @@ fn raw_relation_violation(problem: &Problem, poses: &[Pose], relation: &Relation
             };
             (-gap).max(0.0) + (gap - max_gap).max(0.0) + across.max(0.0)
         }
+        Relation::Within {
+            part,
+            pin,
+            other,
+            other_pin,
+            soft,
+            max,
+        } => {
+            let (a, b) = within_pins(problem, poses, *part, *pin, *other, *other_pin);
+            let distance = octilinear(a, b);
+            (distance - soft).max(0.0) + WITHIN_STEEPNESS * (distance - max).max(0.0)
+        }
     }
 }
 
@@ -1375,6 +1432,27 @@ pub fn add_relation_gradient(
                 push(*part, force);
                 push(*anchor, [-force[0], -force[1]]);
             }
+            Relation::Within {
+                part,
+                pin,
+                other,
+                other_pin,
+                max,
+                ..
+            } => {
+                let (a, b) = within_pins(problem, poses, *part, *pin, *other, *other_pin);
+                let delta = [a[0] - b[0], a[1] - b[1]];
+                let length = delta[0].hypot(delta[1]).max(1.0e-9);
+                // Beyond the maximum the steeper slope.
+                let slope = if octilinear(a, b) > *max {
+                    1.0 + WITHIN_STEEPNESS
+                } else {
+                    1.0
+                };
+                let unit = [slope * delta[0] / length, slope * delta[1] / length];
+                push(*part, unit);
+                push(*other, [-unit[0], -unit[1]]);
+            }
         }
     }
 }
@@ -1440,6 +1518,7 @@ pub fn report(problem: &Problem, poses: &[Pose]) -> Vec<Status> {
                 Relation::Near { .. } | Relation::NearAny { .. } => "near",
                 Relation::Beside { .. } => "relative",
                 Relation::Apart { .. } => "apart",
+                Relation::Within { .. } => "length",
             },
             part: part.unwrap_or(0),
             other,
@@ -1635,6 +1714,29 @@ pub fn relation_target(problem: &Problem, poses: &[Pose], relation: &Relation) -
                 Edge::Right => [b[0] + bh[0] + gap + ah[0], b[1]],
                 Edge::Left => [b[0] - bh[0] - gap - ah[0], b[1]],
             }
+        }
+        Relation::Within {
+            part,
+            pin,
+            other,
+            other_pin,
+            soft,
+            ..
+        } => {
+            // The body moved along the line between the pins until its pin
+            // lies `soft` from the other's.
+            let (a, b) = within_pins(problem, poses, *part, *pin, *other, *other_pin);
+            let (center, _) = body(problem, *part, poses[*part]);
+            let distance = octilinear(a, b);
+            let share = if distance > *soft {
+                1.0 - soft / distance
+            } else {
+                0.0
+            };
+            [
+                center[0] + share * (b[0] - a[0]),
+                center[1] + share * (b[1] - a[1]),
+            ]
         }
     }
 }

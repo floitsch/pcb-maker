@@ -289,7 +289,13 @@ fn rules_of<'a>(
         .or(config.default_rules.as_ref())
 }
 
-fn plan_of(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Result<ViaInPadPlan, String> {
+/// The board's footprints (reference, footprint name) and pads.
+type BoardPads = (Vec<(String, String)>, Vec<BoardPad>);
+
+/// The board's footprints (reference, footprint name) and pads as the
+/// plan sees them, a net of one pad left without a net (it needs no way
+/// out).
+fn board_pads(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Result<BoardPads, String> {
     let names = NetNames::of(pcb);
     let layers = LayerTable::from_pcb(pcb)?;
     let rules_of = |name: Option<&str>| rules_of(config, name);
@@ -361,7 +367,6 @@ fn plan_of(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Result<ViaInPadPlan, 
             });
         }
     }
-    let vias = board_vias(pcb);
     // A net of one pad needs no way out.
     let mut pad_counts: BTreeMap<String, usize> = BTreeMap::new();
     for pad in &pads {
@@ -374,30 +379,146 @@ fn plan_of(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Result<ViaInPadPlan, 
             pad.net = None;
         }
     }
-    let designer: Vec<KiCadViaInPadEntry> = config
-        .project_rules
-        .as_ref()
-        .map(|report| report.via_in_pad_designer.clone())
-        .unwrap_or_default();
+    Ok((footprints, pads))
+}
+
+/// Whether the rule admits footprint `name` of part `reference`: why (the
+/// rule) and the via size it asks for, or `None`.
+fn admission(
+    config: &KiCadBoardRouterConfig,
+    reference: &str,
+    name: &str,
+) -> Option<(String, Option<[f64; 2]>)> {
     let listed: &[KiCadViaInPadEntry] = match &config.via_in_pad {
         Some(KiCadViaInPad::Parts(entries)) => entries,
         _ => &[],
     };
-    let neck = config.neck_width_mm.unwrap_or(f64::INFINITY);
-    let mut plan = ViaInPadPlan::default();
-    for (footprint, (reference, name)) in footprints.iter().enumerate() {
-        let own: Vec<usize> = (0..pads.len())
-            .filter(|index| pads[*index].footprint == footprint)
-            .collect();
-        let enclosed = enclosed_pads(&pads, &own, &|net: &str| {
-            rules_of(Some(net)).map_or((neck.min(0.2), 0.0, 0.6), |rules| {
+    match &config.via_in_pad {
+        Some(KiCadViaInPad::All(true)) => Some(("via_in_pad: true".into(), None)),
+        Some(KiCadViaInPad::All(false)) => None,
+        _ => listed
+            .iter()
+            .find(|entry| entry.matches(reference, name))
+            .map(|entry| {
                 (
-                    neck.min(rules.trace_width_mm),
-                    rules.clearance_mm,
-                    rules.via_size_mm,
+                    entry.source.clone().unwrap_or_else(|| {
+                        format!(
+                            "via_in_pad: [{:?}]",
+                            entry
+                                .part
+                                .as_deref()
+                                .or(entry.footprint.as_deref())
+                                .unwrap_or("")
+                        )
+                    }),
+                    entry.via_mm,
                 )
             })
-        });
+            .or_else(|| {
+                config
+                    .project_rules
+                    .as_ref()
+                    .into_iter()
+                    .flat_map(|report| &report.via_in_pad_designer)
+                    .find(|entry| entry.matches(reference, name))
+                    .map(|entry| (entry.source.clone().unwrap_or_default(), entry.via_mm))
+            }),
+    }
+}
+
+/// Whether the rule can admit any footprint: `via_in_pad: true`, a list,
+/// or the designer's vias in pads.
+pub(crate) fn admits_any(config: &KiCadBoardRouterConfig) -> bool {
+    match &config.via_in_pad {
+        Some(KiCadViaInPad::All(admit)) => *admit,
+        Some(KiCadViaInPad::Parts(entries)) if !entries.is_empty() => true,
+        _ => config
+            .project_rules
+            .as_ref()
+            .is_some_and(|report| !report.via_in_pad_designer.is_empty()),
+    }
+}
+
+/// The enclosed pads of footprint `footprint` (`enclosed_pads` with the
+/// nets' rules).
+fn enclosed_of(config: &KiCadBoardRouterConfig, pads: &[BoardPad], footprint: usize) -> Vec<usize> {
+    let neck = config.neck_width_mm.unwrap_or(f64::INFINITY);
+    let own: Vec<usize> = (0..pads.len())
+        .filter(|index| pads[*index].footprint == footprint)
+        .collect();
+    enclosed_pads(pads, &own, &|net: &str| {
+        rules_of(config, Some(net)).map_or((neck.min(0.2), 0.0, 0.6), |rules| {
+            (
+                neck.min(rules.trace_width_mm),
+                rules.clearance_mm,
+                rules.via_size_mm,
+            )
+        })
+    })
+}
+
+/// A via the rule will put in a pad wherever its part is placed, for the
+/// placer (docs/placer.md, "The far side of a via in a BGA's pad"): the
+/// footprint (its place among the board's footprints), the pad's number,
+/// and the via's diameter and drill.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FarSideVia {
+    pub footprint: usize,
+    pub pad: String,
+    pub diameter: f64,
+    pub drill: f64,
+}
+
+/// The vias `plan` puts in the enclosed pads of the footprints it admits,
+/// judged by the footprint alone (its own pads and the vias placed in them
+/// before; not the board's other parts, which the placer moves): each
+/// through the board, so the far side under them is no place for another
+/// part's pads. Empty where the rule admits no footprint with an enclosed
+/// pad (every board but those with a designer's via in a BGA's pad or the
+/// opt-in).
+pub(crate) fn far_side_vias(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Vec<FarSideVia> {
+    if !admits_any(config) {
+        return Vec::new();
+    }
+    let Ok((footprints, pads)) = board_pads(pcb, config) else {
+        return Vec::new();
+    };
+    let mut vias = Vec::new();
+    for (footprint, (reference, name)) in footprints.iter().enumerate() {
+        let Some((_, wanted)) = admission(config, reference, name) else {
+            continue;
+        };
+        let enclosed = enclosed_of(config, &pads, footprint);
+        if enclosed.is_empty() {
+            continue;
+        }
+        let sizes = size_candidates(config, wanted, &pads, &enclosed);
+        let own = |other: usize| pads[other].footprint == footprint;
+        let mut placed: Vec<([f64; 2], Option<String>, f64, f64)> = Vec::new();
+        for &index in &enclosed {
+            if let Some(&[diameter, drill]) = sizes
+                .iter()
+                .find(|size| fits(**size, &pads, index, &[], &placed, config, &own))
+            {
+                placed.push((pads[index].center, pads[index].net.clone(), diameter, drill));
+                vias.push(FarSideVia {
+                    footprint,
+                    pad: pads[index].number.clone(),
+                    diameter,
+                    drill,
+                });
+            }
+        }
+    }
+    vias
+}
+
+fn plan_of(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Result<ViaInPadPlan, String> {
+    let (footprints, pads) = board_pads(pcb, config)?;
+    let vias = board_vias(pcb);
+    let mut plan = ViaInPadPlan::default();
+    for (footprint, (reference, name)) in footprints.iter().enumerate() {
+        let enclosed = enclosed_of(config, &pads, footprint);
         if enclosed.is_empty() {
             continue;
         }
@@ -408,34 +529,7 @@ fn plan_of(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Result<ViaInPadPlan, 
                 pads[index].net.as_deref().unwrap_or("")
             )
         };
-        let admitted: Option<(String, Option<[f64; 2]>)> = match &config.via_in_pad {
-            Some(KiCadViaInPad::All(true)) => Some(("via_in_pad: true".into(), None)),
-            Some(KiCadViaInPad::All(false)) => None,
-            _ => listed
-                .iter()
-                .find(|entry| entry.matches(reference, name))
-                .map(|entry| {
-                    (
-                        entry.source.clone().unwrap_or_else(|| {
-                            format!(
-                                "via_in_pad: [{:?}]",
-                                entry
-                                    .part
-                                    .as_deref()
-                                    .or(entry.footprint.as_deref())
-                                    .unwrap_or("")
-                            )
-                        }),
-                        entry.via_mm,
-                    )
-                })
-                .or_else(|| {
-                    designer
-                        .iter()
-                        .find(|entry| entry.matches(reference, name))
-                        .map(|entry| (entry.source.clone().unwrap_or_default(), entry.via_mm))
-                }),
-        };
+        let admitted = admission(config, reference, name);
         let Some((rule, wanted)) = admitted else {
             plan.report.closed.push(KiCadClosedPads {
                 part: reference.clone(),
@@ -475,7 +569,7 @@ fn plan_of(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Result<ViaInPadPlan, 
             for &index in &open {
                 match sizes
                     .iter()
-                    .find(|size| fits(**size, &pads, index, &vias, &placed, config))
+                    .find(|size| fits(**size, &pads, index, &vias, &placed, config, &|_| true))
                 {
                     Some(&[diameter, drill]) => {
                         placed.push((pads[index].center, pads[index].net.clone(), diameter, drill));
@@ -552,6 +646,8 @@ fn size_candidates(
 /// back's parts too), from the board's other vias and from the vias placed
 /// before it (`placed`: centre, net, diameter, drill); its drill the hole
 /// clearance from that copper and the hole-to-hole spacing from every hole.
+/// Only the pads `consider` names count (all of them for the plan).
+#[allow(clippy::too_many_arguments)]
 fn fits(
     [diameter, drill]: [f64; 2],
     pads: &[BoardPad],
@@ -559,6 +655,7 @@ fn fits(
     vias: &[([f64; 2], f64, f64)],
     placed: &[([f64; 2], Option<String>, f64, f64)],
     config: &KiCadBoardRouterConfig,
+    consider: &dyn Fn(usize) -> bool,
 ) -> bool {
     const SLACK: f64 = 1.0e-6;
     let radius = diameter / 2.0;
@@ -575,7 +672,7 @@ fn fits(
     }
     .inflated(radius + 2.0);
     let pads_clear = pads.iter().enumerate().all(|(other_index, other)| {
-        if other_index == index || !other.shape.aabb().intersects(probe) {
+        if other_index == index || !consider(other_index) || !other.shape.aabb().intersects(probe) {
             return true;
         }
         if let Some((at, other_hole)) = other.hole
