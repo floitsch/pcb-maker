@@ -11,6 +11,36 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-28 (panel tabs and frames: mouse bites and V-cuts cut the outline)
+
+Branch panel-tabs; binaries build/bin/pcb-maker-tabs1-a, -b (off side
+x1870 = main be0e6298). docs/placer.md, "Tabs and frames (2026-10-28)",
+has the rule, the census and the tables.
+
+- **The question.** 9 of the 34 open items on the 12 near-miss boards
+  were parts placed across mouse-bite tabs or on a panel's frame (ULK,
+  ULK_sl_PG1316s, woagboard): `sub_boards` cut the outline only where it
+  narrows under 2 mm, and the bites there are separate drills across
+  4 to 6 mm bridges.
+- **Tabs**: also a row of three or more non-plated holes of at most
+  1 mm, at most 1.25 mm apart (footprints of non-plated pads only), and
+  a V-cut line (a user-layer line with a "V-CUT"/"V-SCORE" label on its
+  axis at one end). protoesp's signal tabs (1.5 mm between some holes,
+  tracks across) are no row.
+- **Frames**: a piece no part with pins lies on by the fixed parts, the
+  reference or a placed input (at most half the area of the pieces with
+  parts). No part is placed on a frame or within 1.5 mm of a tab
+  (keepout boxes) where the parts are held or the board has a frame;
+  parts are now held in their sub-board also where no net lies on two
+  (the ULK). Report: `cut_by`, `frames`, `kept_clear_mm2`; the room
+  advice names the frame's area.
+- **Census** (109 boards): pieces on 12 (before: 1): ULK x2, katia,
+  jiran, woagboard, koeg-board, urchin, Batch_1 (sub-boards); OpenRX,
+  the 0xCB panel and pcb-panel, SmartSpin2k (copies: placement as
+  before, their rails and V-cuts pieces for the router); the 4in1 panel
+  as before.
+@@MEASURE@@
+
 ## Committed on 2026-10-28 (the second placer round: the placement 22 % cheaper, the same placements)
 
 Branch placer-profile-2; binaries `build/bin/pcb-maker-prof4-final` (the

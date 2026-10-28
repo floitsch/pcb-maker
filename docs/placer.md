@@ -4587,6 +4587,156 @@ applies to them. zpn_devboard and the Modular Hub (separate loops) have
 no pieces since x15027: as main.
 
 
+### Tabs and frames (2026-10-28)
+
+The last-connections diagnosis (router.md, "The last connections
+(2026-10-27)") found 9 of the 34 open items on the 12 near-miss boards
+to be parts placed across mouse-bite tabs or on a panel's frame: the
+ULK's RSW2 on the top rail and U5 on the bottom frame, the ULK_sl's SW43
+and U3 on the frame, woagboard's SW8, SW15 and SW28 on the other half
+(x1866 happened to move them back). None of those outlines narrows: the
+bridges are 4 to 6 mm wide and the bites are separate drills
+(`np_thru_hole` pads of a footprint), not outline graphics. Code:
+`crates/pcb-kicad/src/sub_boards.rs` (`Cuts`, `Pieces::keepouts`,
+`Pieces::frames`).
+
+**Tabs** (`Cuts::of_board`, cut into the raster before the opening):
+
+- a neck of the outline under 2 mm (as before: `narrow outline`);
+- a row of mouse bites (`mouse bites`): three or more round non-plated
+  holes of at most 1 mm, each within 1.25 mm (centre to centre) of the
+  next, in footprints whose pads are all non-plated. Each hole is taken
+  out of the board, so the 0.2 to 0.7 mm between holes falls away under
+  the opening like any neck. The sweep's rows: 0.6 to 1.19 mm apart
+  (KiKit 0.8, the ULK's 0.75, jiran's 1.19). protoesp's breakaway
+  modules leave 1.5 and 2.5 mm between some holes for the signals that
+  cross the tab (its designer's tracks run there): those are no row, and
+  protoesp stays one board;
+- a V-cut (`V-cuts`): a `gr_line` on a user layer (`*.User`, `User.N`)
+  with a text "V-CUT", "V-SCORE" or "V-GROOVE" on the same layer on its
+  axis (within 2 mm) within 10 mm of one of its ends (KiKit writes it
+  3 mm before the start). The line's cells are board on no piece (a tab
+  along the whole line), and the opening starts from them as from the
+  outside.
+
+**Frames** (`Pieces::frames`, in `detect_for_placer`): a piece no part
+with pins lies on by the evidence the placement trusts (the fixed
+parts, the reference board's places, a placed input), where another
+piece holds parts, and all such pieces together at most half the area
+of the pieces with parts (else a board whose parts are all movable
+would lose its room; then nothing is a frame). The mouse-bite
+footprints, logos, fiducials and tooling holes have no pins and make no
+piece a board.
+
+**Placement** (`apply_to_placer`): where the parts are held (below) or
+the board has a frame, the tabs and the frames are kept free of parts:
+the board on no piece and the frames' cells, grown by 1.5 mm
+(`TAB_MARGIN_MM`; about 1.6 mm from a row's centre line), in blocks of
+0.5 mm joined into boxes (`Pieces::keepouts`), each box a keepout (a
+fixed body of no side). The parts are held in their sub-board's region
+where they lie on two sub-boards or more and at most a tenth of them
+have none; since this change also where no net lies on two sub-boards
+(the ULK's halves share no net name: every part's half is told by the
+nets from the fixed key switches). A board beside its frame alone (one
+sub-board) keeps its parts off the frame and its tabs and is placed as
+one board. Where the parts are not held and there is no frame (the
+4in1 panel without a reference: 392 of 398 parts without a board), the
+placement is as before, no keepout.
+
+Panels of copies (`panel_copies`) are placed as copies, as before: their
+rails and V-cuts are pieces now (the 0xCB panels, SmartSpin2k), which
+changes the router's split only where a net of one name has pads on two
+pieces (none of their nets: KiKit names each copy's nets apart), and
+their copies' regions come from the fixed parts.
+
+**Report**: `sub_boards` gains `cut_by`, `frames` (the frame pieces'
+boxes) and `kept_clear_mm2`; the verdict's room advice names the area
+("... mm2 of it are the panel's frame and tabs (mouse bites), which take
+no parts: room is made on the boards themselves, not on the frame"); a
+board of one sub-board is no panel of mixed boards (`boards_mixed`
+needs two). `pcb-maker sub-boards-kicad-board` reports the cuts, the
+pieces' areas and parts, the frames and the keepouts.
+
+**The router** splits a net per piece where its pads lie on several and
+no copper of it crosses a tab (unchanged code, more pieces): in layout
+and in route mode alike. KiCad's items between two pieces of a net on
+several by design are not counted, as before.
+
+**Census** (`sub-boards-kicad-board` on the 109 sweep boards, the
+designers' boards; "parts" counts the footprints with pins on each
+piece by the designer's places; "nets split" the router's split on the
+board with its tracks stripped). Before this change only the 4in1 panel
+had pieces.
+
+| Board | pieces | cut by | frames | parts per piece | kept clear mm² | nets split | placed as |
+| --- | ---: | --- | ---: | --- | ---: | ---: | --- |
+| Goga64 ULK, ULK_sl_PG1316s | 4 | mouse bites (8 rows) | 2 (top rail, bottom frame) | 0, 46, 46, 0 | 6379 | 0 | sub-boards |
+| ikajdan katia | 4 | mouse bites (8) | 2 | 0, 81, 81, 0 | 6410 | 4 | sub-boards |
+| Ladniy jiran-ble-lite | 3 | mouse bites (8) | 1 (the middle strip) | 69, 69, 0 | 1890 | 1 (GND) | sub-boards |
+| hackclub woagboard | 2 | mouse bites (4) | 0 | 47, 47 | 113 | 1 (GND) | sub-boards |
+| hackclub koeg-board-pcb | 2 | mouse bites (6) | 0 | 116, 116 | 41 | 1 (GND) | sub-boards |
+| duckyb urchin | 2 | mouse bites (4) | 0 | 40, 40 | 42 | 0 | sub-boards |
+| CDFER Business-Cards Batch_1 | 4 | mouse bites (12) | 0 | 85, 142, 113, 61 | 1015 | 74 | sub-boards |
+| OpenDrone OpenRX-panel-rev2 | 6 | mouse bites (6) | 2 | 61, 86, 0, 47, 47, 0 | 288 | 64 | copies |
+| 0xCB-1337 panel | 8 | mouse bites (24) | 4 (rails) | 0, 52, 52, 0, 0, 52, 52, 0 | 3908 | 0 | copies |
+| 0xCB-1337 pcb-panel | 11 | V-cuts (6) | 7 | 114 on each of 4 | 3464 | 0 | copies |
+| doudar SmartSpin2k_Panelized | 21 | V-cuts (12) | 12 | 79 on each of 9 | 8884 | 0 | copies |
+| OpenDrone 4in1-panel | 2 | narrow outline | 0 | 218, 186 | 102 | 130 | sub-boards (unchanged) |
+
+Rows of mouse bites that cut nothing: USB_Keypad and WLED_Matrix (2
+rows each, a breakaway strip within one piece), slab interchange-pcb-right
+(16), protoesp (22; with 1.5 mm counted as a row, 49 rows and 6 pieces,
+which its signal tabs join). The nightly's placements of 2026-10-27 put
+parts of one sub-board on another on koeg-board (15 nets on both
+halves), katia (37), Batch_1 (54), OpenRX (62), woagboard (4), ULK (3)
+and jiran (1, GND, the designer's own). The expansion tier (route mode,
+46 boards): BloopBox_LED-Board-I2C gains 3 pieces by mouse bites and
+splits no net (route mode routes it as before); RS485M_Unit had its 2
+pieces already.
+
+**Measured** (layout mode at the sweep's budgets and seeds, tasks v7,
+pinned rates, `--quality`; off x1871 = main e54c6ada (the crossings in
+the anneal on, as both sides), on build/bin/pcb-maker-tabs1-c, the
+branch on x1871; 4 jobs x 2 threads through the memory ledger beside
+the day's work; output `build/tabs1/four-{off,on}`, ULK_sl's on row
+`build/tabs1/four-on-sl`). KiCad unconnected / strict pass / new strict
+findings / vias / work s / CPU s (CPU from a loaded, shared machine:
+no claim):
+
+| Board | off (x1871) | on (tabs1-c) | where the parts landed |
+| --- | --- | --- | --- |
+| Goga64 ULK | 4 / no / 0 / 105 / 1413 / 2317 | **0 / pass** / 0 / 106 / 248 / 683 | off: RSW2 on the top rail (157.5, 15.9), U5 on the bottom frame (238.8, 90.8); on: both on the right half (177.8, 35.6; 248.9, 73.0) |
+| Goga64 ULK_sl_PG1316s | 5 / no / 0 / 123 / 1400 / 2301 | **0 / pass** / 0 / 86 / 186 / 464 | off: RSW2 on the top rail, SW43 on the bottom frame (55.2, 88.3), U3 beside its tab (53.3, 80.0); on: all on their halves |
+| hackclub woagboard | 4 / no / 0 / 85 / 1472 / 3277 | 1 / no / 0 / 71 / 1438 / 3301 | off: SW8 on the right half, its net on U9 on the left (Switch8, Switch11 open); on: SW8, SW15 with U9 on the left, SW28 with U5 on the right; the one item left the designer's own GND zone island on B.Cu |
+| Ladniy jiran-ble-lite | 1 / no / 1 hole_to_hole / 68 / 611 / 1147 | **0 / pass** / 0 / 42 / 200 / 731 | on: each half's parts held in it, the middle strip a frame (1906 mm² kept clear); the GND item between the halves (the designer's own) not counted (`unconnected_across_sub_boards`) |
+
+Sums: 14 to 1 KiCad unconnected, 0 to 3 strict passes, no new finding
+(jiran's hole_to_hole is gone). The first route's open terminals fall
+from 4, 9, 65, 20 to 0 on all four. jiran's 40 `items_not_allowed`
+(its mouse-bite pads in the designer's keepouts) and woagboard's
+`zones_intersect` are the input's, on both sides. The branch was then
+rebased on x1872 (router changes only; nothing of this code). An
+earlier pair on x1870 (main be0e6298) gave jiran 1 to 0 (strict pass)
+alike.
+
+**Identity**: the short tier (3 x 2, its budget scale, x1871 against
+tabs1-c, `build/tabs1/short-{off,on}`): 11 of 12 boards' placed and
+result boards byte for byte; urchin (two halves joined by mouse bites,
+no net on both) moves: its parts held in their halves, a strict pass on
+both sides, 40 to 41 vias. (The same on x1870 against tabs1-b: 11
+identical, urchin a pass both, 40 to 39 vias.) @@DENSE@@
+
+**Route mode**: not unaffected by construction. The router's pieces
+come from the same `Cuts` in every mode, so where a board gains pieces
+and a net has pads on two of them with no copper across, the router
+routes it per piece and KiCad's item across is not counted. On the
+expansion tier (46 boards, route mode) only BloopBox_LED-Board-I2C
+gains pieces (3, mouse bites) and no net lies on two: its route is as
+before, the tier identical by construction. The designer tier (route
+mode on the 109 designers' placements, tracks stripped) changes on the
+boards whose stripped board splits nets: jiran, woagboard and
+koeg-board (GND), katia (4), Batch_1 (74), OpenRX (64).
+
 ## The place check is the layout's placement (2026-10-27)
 
 The third fresh-agent trial's OpenESC 4in1 panel (no reference): the
