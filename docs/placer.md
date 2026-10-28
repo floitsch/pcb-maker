@@ -5478,6 +5478,14 @@ KiCad unconnected per board, off / on (`placer_ab.py compare`):
   the noise file's p 0.276; the rule's p is the larger, 0.276, above
   the 0.25 that would extend to seeds 501 to 801. Boards better 4,
   worse 3, equal 4 (sign p 0.5).
+- **On the refreshed noise file** (branch anneal-crossings-protocol's
+  `dense-noise.json` on x1851: protoesp, the 0xCB panel and SmartSpin2k
+  rerun at seeds 1 to 801; weights protoesp 50, the panel 0 at a noise
+  mean of 0, SmartSpin2k 3; that branch's `placer_ab.py`, which handles
+  a mean of 0; the same rows, no new layouts): weighted -2.4 % (90 %
+  interval -7.9 to +3.0 %), sign-flip p 0.115, the noise file's p 0.231:
+  **EXTEND** to nine pairs (seeds 501, 601, 701, 801). Those seeds have
+  not been run; the decision below stands until they are.
 - **The sums say much more than the weighted statistic.** The summed
   medians fall 998 to 846 (-15 %, sign-flip p 0.012), the pair sums by
   95.6 on average (p 0.031; pairs +2, -186, -109, +35, -220). Video
@@ -5551,8 +5559,9 @@ unconnected 20 / 23, strict passes 8 / 8: no strict pass lost.
 By the protocol `race_count: "ripped"` is **not better**: the weighted
 relative change over five pairs is -1.5 % at p 0.276 (the noise file's
 null; the sign-flip test's own p is 0.131), above the 0.25 that would
-have extended it to nine pairs. The default stays `"unfinished"`. What
-the step showed:
+have extended it to nine pairs. On the refreshed noise file the same
+rows give p 0.231, the extension case (not run). The default stays
+`"unfinished"`. What the step showed:
 
 - The count changes the race's pick in 19 of 54 races and is right in
   12 of them, by much more where it is right (555 connections summed)
@@ -5568,8 +5577,9 @@ the step showed:
 - On the races where the probes nearly finish (the short tier, the
   0xCB panel, SmartSpin2k) the two counts agree; WLED_Matrix's change
   costs 3 connections.
-- What would decide it: the four seeds 501 to 801 (the protocol does
-  not ask for them at p 0.276), or a rule that uses the ripped count
+- What would decide it: the four seeds 501 to 801 (the protocol asks
+  for them on the refreshed noise file, p 0.231, not on x1828's, p
+  0.276), or a rule that uses the ripped count
   only where the probes end deep in conflict (video's 330 to 490 nets,
   against 150 to 350 on the others), which is a new hypothesis and would
   need its own measurement. The noise file (x1828) also predates the

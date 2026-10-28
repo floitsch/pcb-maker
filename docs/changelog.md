@@ -605,12 +605,15 @@ ripped count (2026-10-27)"; scripts `experiments/race-ripped/`).
   where it did): summed medians 998 to 846 (-15 %), pairs +2, -186,
   -109, +35, -220; video 287 to 140, 295 to 178, 327 to 156. placer_ab:
   weighted -1.5 %, p 0.276 (sign-flip 0.131): **not better**, not
-  extended. The pick changed in 19 of 54 races, right in 12 (555
+  extended. On the refreshed noise file (anneal-crossings-protocol's,
+  x1851: protoesp, the 0xCB panel and SmartSpin2k rerun; the same rows):
+  weighted -2.4 %, p 0.231 (sign-flip 0.115): **EXTEND** to seeds 501 to
+  801, not run. The pick changed in 19 of 54 races, right in 12 (555
   connections summed), wrong in 7 (77). Short tier: 10 of 12 boards
   identical, unconnected 20 to 23 (WLED_Matrix 8 to 11), strict passes
   8 / 8.
-- **Decision**: the default stays `"unfinished"`; the option stays for
-  the nine-pair extension or a guard by conflict depth (video's probes
+- **Decision**: the default stays `"unfinished"` (the supervisor
+  decides on the extension); the option stays for the nine-pair extension or a guard by conflict depth (video's probes
   end 330 to 490 nets unfinished).
 
 ## Committed on 2026-10-27 (the last connections: why the near-misses stay open)

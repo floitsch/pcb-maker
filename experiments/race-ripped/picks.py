@@ -10,7 +10,7 @@
 # Only the races whose pick changed ran on the off binary.
 #
 #   python3 -I experiments/race-ripped/picks.py table SEED...      # per race: the probes, both picks, both finals
-#   python3 -I experiments/race-ripped/picks.py compare SEED...    # placer_ab compare on the spliced off side
+#   python3 -I experiments/race-ripped/picks.py compare SEED... [--noise FILE]   # placer_ab compare on the spliced off side
 #
 # Directories (under build/): race3-dense-s<N>-on (whole seeds),
 # race3-q/dense-s<N>-on-<board> and race3-q/dense-s<N>-off-<board> (one
@@ -88,7 +88,7 @@ def table(seeds):
     print('changed picks %d: right %d, wrong %d' % (changed, right, wrong))
 
 
-def run_compare(seeds):
+def run_compare(seeds, noise=None):
     on_args, off_args = [], []
     for seed in seeds:
         on_dirs, off_dirs = dirs(seed, 'on'), dirs(seed, 'off')
@@ -96,9 +96,19 @@ def run_compare(seeds):
         # A later directory's boards replace an earlier one's: the off runs over the on rows.
         off_args += ['%s@%d' % (d, seed) for d in on_dirs + off_dirs]
     subprocess.run([sys.executable, '-I', os.path.join(HERE, '..', '..', 'benchmarks', 'agent-tasks', 'placer_ab.py'),
-                    'compare', '--off'] + off_args + ['--on'] + on_args, check=True)
+                    'compare', '--off'] + off_args + ['--on'] + on_args + (['--noise', noise] if noise else []),
+                   check=True)
 
 
 if __name__ == '__main__':
-    command, seeds = sys.argv[1], [int(s) for s in sys.argv[2:]]
-    {'table': table, 'compare': run_compare}[command](seeds)
+    arguments = sys.argv[2:]
+    noise = None
+    if '--noise' in arguments:
+        at = arguments.index('--noise')
+        noise = arguments[at + 1]
+        del arguments[at:at + 2]
+    seeds = [int(s) for s in arguments]
+    if sys.argv[1] == 'compare':
+        run_compare(seeds, noise)
+    else:
+        table(seeds)
