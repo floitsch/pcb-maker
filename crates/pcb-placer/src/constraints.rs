@@ -249,7 +249,8 @@ pub struct Constraints {
 /// for the parts that may reach over them (`passes`).
 #[derive(Clone, Debug, Default)]
 pub struct Frames {
-    /// The keepouts (fixed obstacles), ascending.
+    /// The keepouts (fixed obstacles), ascending (also where no part
+    /// passes: a panel's copy cuts them to its region).
     pub keepouts: Vec<usize>,
     /// The frames and tabs themselves, not grown ([min x, min y, max x,
     /// max y] on the board): a connector that reaches over a keepout

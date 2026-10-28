@@ -1269,6 +1269,36 @@ fn reference_problem(problem: &core::Problem, copies: &PanelCopies, copy: usize)
             }
         }
     }
+    // A panel's frame and tab keepouts (`sub_boards::keep_off_frames`)
+    // cut to the region, none outside it: the copy's parts are held in
+    // it, and the keepouts beyond (the other copies', the rails) counted
+    // whole against the region's area made every level but the last
+    // overfull (the 0xCB panel's first copy: no halos, its wires packed
+    // 30 % shorter, two nets per copy left open).
+    for &keepout in &problem.constraints.frames.keepouts {
+        let component = &mut sub.components[keepout];
+        let pose = problem.poses[keepout];
+        let (center, half) = (component.center(pose), component.half_extent(pose.angle));
+        let cut = intersect(
+            [
+                center[0] - half[0],
+                center[1] - half[1],
+                center[0] + half[0],
+                center[1] + half[1],
+            ],
+            region,
+        );
+        if empty(cut) {
+            make_inert(component);
+            continue;
+        }
+        component.body_center = [0.0, 0.0];
+        component.body_size = [cut[2] - cut[0], cut[3] - cut[1]];
+        sub.poses[keepout] = core::Pose {
+            position: [(cut[0] + cut[2]) / 2.0, (cut[1] + cut[3]) / 2.0],
+            angle: 0.0,
+        };
+    }
     let pulls = |part: usize| active.contains(&part) || !sub.components[part].pins.is_empty();
     let pulling: Vec<bool> = (0..sub.components.len()).map(pulls).collect();
     sub.outline = clip(&problem.outline, region);
@@ -2122,6 +2152,33 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn a_copys_problem_cuts_the_keepouts_to_its_region() {
+        // A rail along the whole top (x 0 to 60) and one along the second
+        // copy's right edge: the first copy's problem keeps the rail's
+        // part over its region and none of the other.
+        let mut problem = panel(false);
+        let copies = detect(&problem, problem.components.len()).expect("copies");
+        let region = copies.regions[0];
+        let first = problem.components.len();
+        for b in [[0.0, 0.0, 60.0, 2.0], [57.0, 0.0, 60.0, 20.0]] {
+            let (mut component, mut pose) = part("tab", [0.0, 0.0], true, &[]);
+            component.body_size = [b[2] - b[0], b[3] - b[1]];
+            component.side = core::Side::Both;
+            pose.position = [(b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0];
+            problem.components.push(component);
+            problem.poses.push(pose);
+        }
+        problem.constraints.frames.keepouts = vec![first, first + 1];
+        let sub = reference_problem(&problem, &copies, 0);
+        let rail = &sub.components[first];
+        let pose = sub.poses[first];
+        let (center, half) = (rail.center(pose), rail.half_extent(pose.angle));
+        assert!((center[0] - half[0] - region[0].max(0.0)).abs() < 1.0e-9);
+        assert!((center[0] + half[0] - region[2].min(60.0)).abs() < 1.0e-9);
+        assert_eq!(sub.components[first + 1].side, core::Side::Neither);
     }
 
     #[test]

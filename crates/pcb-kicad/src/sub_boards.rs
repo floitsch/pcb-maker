@@ -2397,9 +2397,9 @@ pub(crate) fn keep_off_frames(
         source_at.push([0.0; 3]);
         applied.tabs += 1;
     }
+    let frames = &mut problem.constraints.frames;
+    frames.keepouts = (first..problem.components.len()).collect();
     if !passes.is_empty() {
-        let frames = &mut problem.constraints.frames;
-        frames.keepouts = (first..problem.components.len()).collect();
         frames.copper = copper;
         frames.passes = passes;
     }
