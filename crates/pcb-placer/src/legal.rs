@@ -244,10 +244,13 @@ fn body_spacing(problem: &Problem, a: usize, b: usize) -> f64 {
     }
 }
 
+/// Twice the signed area of the triangle `p`, `q`, `r` (positive where `r`
+/// lies left of the line from `p` to `q`).
+fn orient(p: Point, q: Point, r: Point) -> f64 {
+    (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+}
+
 fn segments_cross(a: Point, b: Point, c: Point, d: Point) -> bool {
-    let orient = |p: Point, q: Point, r: Point| {
-        (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
-    };
     let (d1, d2, d3, d4) = (
         orient(c, d, a),
         orient(c, d, b),
@@ -257,17 +260,40 @@ fn segments_cross(a: Point, b: Point, c: Point, d: Point) -> bool {
     ((d1 > 0.0) != (d2 > 0.0)) && ((d3 > 0.0) != (d4 > 0.0))
 }
 
-fn inside_outline(problem: &Problem, body: Rect) -> bool {
+/// Whether `body` lies inside the board's outline: its corners inside
+/// (from the outline's edges by bands, `board`, where there is one: the
+/// edges a ray from a corner crosses lie in its band), no outline edge
+/// crossing a side. An edge with all four corners on one side of its line
+/// crosses no side (`segments_cross`'s second condition, the same
+/// orientations): its sides' orientations are not taken (the fit test of
+/// every legal spot walked the outline sixteen orientations an edge: a
+/// fifth of the 4in1's legalisation, 2026-10-28). The same answers.
+fn inside_outline(problem: &Problem, body: Rect, board: Option<&Outline>) -> bool {
     let corners = body.corners();
-    if !corners
-        .iter()
-        .all(|corner| point_in_polygon(*corner, &problem.outline))
-    {
+    let outline = &problem.outline;
+    let inside = |corner: &Point| match board {
+        Some(board) => {
+            let inside = board.inside(*corner, outline);
+            if board.check {
+                assert_eq!(
+                    inside,
+                    point_in_polygon(*corner, outline),
+                    "{corner:?} inside the outline by bands against the pass over every edge"
+                );
+            }
+            inside
+        }
+        None => point_in_polygon(*corner, outline),
+    };
+    if !corners.iter().all(inside) {
         return false;
     }
-    let outline = &problem.outline;
     for index in 0..outline.len() {
         let (a, b) = (outline[index], outline[(index + 1) % outline.len()]);
+        let left = corners.map(|corner| orient(a, b, corner) > 0.0);
+        if left == [left[0]; 4] {
+            continue;
+        }
         for side in 0..4 {
             if segments_cross(a, b, corners[side], corners[(side + 1) % 4]) {
                 return false;
@@ -300,7 +326,7 @@ fn bare(problem: &Problem, index: usize, pose: Pose, margin: f64) -> Rect {
 /// Whether the part keeps the edge margin inside the outline; an
 /// overhanging part only with the share of its body that belongs on the
 /// board.
-fn on_board(problem: &Problem, index: usize, pose: Pose) -> bool {
+fn on_board(problem: &Problem, index: usize, pose: Pose, board: Option<&Outline>) -> bool {
     let component = &problem.components[index];
     if problem.constraints.edge_copper && !component.pads.is_empty() {
         let mut touching = [false; 4];
@@ -350,6 +376,7 @@ fn on_board(problem: &Problem, index: usize, pose: Pose) -> bool {
                         round: false,
                         turn: None,
                     },
+                    board,
                 )
             });
         }
@@ -363,11 +390,11 @@ fn on_board(problem: &Problem, index: usize, pose: Pose) -> bool {
     // At KiCad's legality an unheld part's pads keep the copper-to-edge
     // clearance, its body only the outline.
     if problem.constraints.pad_clearance && !held && !component.pads.is_empty() {
-        return pads_keep_edge(problem, index, pose);
+        return pads_keep_edge(problem, index, pose, board);
     }
     if problem.constraints.is_empty() || (!held && turn_of(pose.angle, [0.0, 0.0]).is_some()) {
         let margin = problem.components[index].edge_margin(problem.edge_margin);
-        return inside_outline(problem, bare(problem, index, pose, margin));
+        return inside_outline(problem, bare(problem, index, pose, margin), board);
     }
     let inner = constraints::inner_box(problem, index, pose).unwrap_or_else(|| {
         let (center, half) = (
@@ -402,6 +429,7 @@ fn on_board(problem: &Problem, index: usize, pose: Pose) -> bool {
             round: false,
             turn: None,
         },
+        board,
     )
 }
 
@@ -410,9 +438,9 @@ fn on_board(problem: &Problem, index: usize, pose: Pose) -> bool {
 /// the outline, each pad the project's copper-to-edge clearance from it,
 /// as KiCad checks copper against the edge (not the body by its copper's
 /// least inset, nor the level's margin for routing).
-fn pads_keep_edge(problem: &Problem, index: usize, pose: Pose) -> bool {
+fn pads_keep_edge(problem: &Problem, index: usize, pose: Pose, board: Option<&Outline>) -> bool {
     let component = &problem.components[index];
-    if !inside_outline(problem, bare(problem, index, pose, 0.0)) {
+    if !inside_outline(problem, bare(problem, index, pose, 0.0), board) {
         return false;
     }
     // Pads near no side of the body cannot be nearer the edge than the
@@ -421,23 +449,23 @@ fn pads_keep_edge(problem: &Problem, index: usize, pose: Pose) -> bool {
     // that is less).
     let body = bare(problem, index, pose, 0.0);
     let reach = problem.edge_margin.min(problem.constraints.copper_edge);
-    if inside_outline(problem, body.grown(reach)) {
+    if inside_outline(problem, body.grown(reach), board) {
         return true;
     }
     turned_rects(&component.pads, pose, reach)
         .into_iter()
         .chain(turned_rects(&component.copper_graphics, pose, reach))
-        .all(|pad| inside_outline(problem, pad))
+        .all(|pad| inside_outline(problem, pad, board))
 }
 
 /// Whether the body itself (without any margin) lies inside the outline.
 pub fn body_inside_outline(problem: &Problem, index: usize, pose: Pose) -> bool {
-    inside_outline(problem, bare(problem, index, pose, 0.0))
+    inside_outline(problem, bare(problem, index, pose, 0.0), None)
 }
 
 /// Whether the body grown by `reach` on every side touches the outline.
 pub fn body_near_outline(problem: &Problem, index: usize, pose: Pose, reach: f64) -> bool {
-    !inside_outline(problem, bare(problem, index, pose, reach))
+    !inside_outline(problem, bare(problem, index, pose, reach), None)
 }
 
 /// Whether component `index` at `pose` is inside the board and clear of all
@@ -464,12 +492,19 @@ fn is_legal_counting(
     others: impl Iterator<Item = usize>,
     work: &mut u64,
 ) -> bool {
-    clear_of(problem, poses, index, pose, others, work) && fits_board(problem, index, pose, work)
+    clear_of(problem, poses, index, pose, others, work)
+        && fits_board(problem, index, pose, work, None)
 }
 
 /// Whether a movable part at `pose` is on the board and keeps its hard
 /// constraints (a fixed one always is).
-fn fits_board(problem: &Problem, index: usize, pose: Pose, work: &mut u64) -> bool {
+fn fits_board(
+    problem: &Problem,
+    index: usize,
+    pose: Pose,
+    work: &mut u64,
+    board: Option<&Outline>,
+) -> bool {
     if !problem.components[index].fixed {
         // The outline walk; with constraints, the edge and region lists
         // and the part's pads (its copper's offsets from the edges).
@@ -483,7 +518,7 @@ fn fits_board(problem: &Problem, index: usize, pose: Pose, work: &mut u64) -> bo
                 + 2 * problem.components[index].pads.len()) as u64;
             *work += 2 * held_work(problem, index);
         }
-        if !on_board(problem, index, pose) || !constraints::hard_ok(problem, index, pose) {
+        if !on_board(problem, index, pose, board) || !constraints::hard_ok(problem, index, pose) {
             return false;
         }
     }
@@ -670,6 +705,9 @@ pub(crate) struct Apart {
     far: Vec<u64>,
     /// The cutouts' outlines for the polygon tests.
     cutouts: Cutouts,
+    /// The board's outline by bands for the fit tests (an outline of
+    /// more than a few edges).
+    board: Option<Outline>,
     /// Every skipped test checked against the direct one.
     check: bool,
 }
@@ -724,6 +762,8 @@ impl Apart {
             far_part: usize::MAX,
             far: vec![u64::MAX; count],
             cutouts: Cutouts::new(problem),
+            board: (problem.outline.len() >= BOARD_INDEX_EDGES)
+                .then(|| Outline::new(&problem.outline)),
             check: cfg!(debug_assertions) || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
         }
     }
@@ -891,7 +931,7 @@ impl Apart {
     ) -> bool {
         let mut work = 1;
         let legal = self.clear_of(problem, poses, index, pose, others, &mut work)
-            && fits_board(problem, index, pose, &mut work);
+            && fits_board(problem, index, pose, &mut work, self.board.as_ref());
         crate::add_work(work);
         legal
     }
@@ -1123,7 +1163,7 @@ impl Sweep {
         }
         let legal = clear && {
             work += self.prefix[count] - self.prefix[next];
-            fits_board(problem, index, pose, &mut work)
+            fits_board(problem, index, pose, &mut work, apart.board.as_ref())
         };
         if self.check {
             let mut direct_work = 1;
@@ -1492,6 +1532,9 @@ pub(crate) struct Outline {
 
 /// Outlines with fewer edges keep the plain pass.
 const OUTLINE_INDEX_EDGES: usize = 32;
+
+/// Board outlines with fewer edges keep the plain corner tests.
+const BOARD_INDEX_EDGES: usize = 12;
 
 impl Outline {
     fn new(polygon: &[[f64; 2]]) -> Self {
@@ -2511,7 +2554,7 @@ fn evict_scan(
                     continue;
                 }
                 *work += SPOT_WORK as u64 + held_work(problem, index);
-                if !fits_board(problem, index, pose, work) {
+                if !fits_board(problem, index, pose, work, apart.board.as_ref()) {
                     continue;
                 }
                 buckets.near(problem, index, pose, near);
@@ -2641,7 +2684,7 @@ pub fn evict_for(problem: &Problem, poses: &mut [Pose], failed: &[usize]) -> Vec
                         if spot.is_some_and(|(best, _)| best <= distance) {
                             continue;
                         }
-                        if !fits_board(problem, moved, candidate, &mut work) {
+                        if !fits_board(problem, moved, candidate, &mut work, apart.board.as_ref()) {
                             continue;
                         }
                         buckets.near(problem, moved, candidate, &mut near);
@@ -4094,6 +4137,89 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// `inside_outline` before the outline's bands and the orientations'
+    /// shortcut.
+    fn inside_outline_before(problem: &Problem, body: Rect) -> bool {
+        let corners = body.corners();
+        if !corners
+            .iter()
+            .all(|corner| point_in_polygon(*corner, &problem.outline))
+        {
+            return false;
+        }
+        let outline = &problem.outline;
+        for index in 0..outline.len() {
+            let (a, b) = (outline[index], outline[(index + 1) % outline.len()]);
+            for side in 0..4 {
+                if segments_cross(a, b, corners[side], corners[(side + 1) % 4]) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    #[test]
+    fn the_outline_test_by_bands_answers_as_the_pass_over_every_edge() {
+        let mut state = 0x0BAD_5EED_1234_ABCDu64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let (mut problem, _) = pair(0.0, 0.0);
+        let (mut insides, mut outsides) = (0, 0);
+        for round in 0..24 {
+            let points = [12, 13, 40, 150][round % 4];
+            // A rounded rectangle, a ragged ring, or one on a lattice
+            // (edges along the bands' borders, corners on its edges).
+            problem.outline = (0..points)
+                .map(|index| {
+                    let angle = index as f64 / points as f64 * std::f64::consts::TAU;
+                    let radius = match round % 3 {
+                        0 => 10.0 / angle.cos().abs().max(angle.sin().abs()).max(0.8),
+                        _ => 7.0 + 5.0 * next(),
+                    };
+                    let point = [20.0 + radius * angle.cos(), 20.0 + radius * angle.sin()];
+                    if round % 3 == 2 {
+                        [
+                            (point[0] * 2.0).round() / 2.0,
+                            (point[1] * 2.0).round() / 2.0,
+                        ]
+                    } else {
+                        point
+                    }
+                })
+                .collect();
+            let board = Outline::new(&problem.outline);
+            for _ in 0..3000 {
+                let pose = Pose {
+                    position: [(next() * 80.0).round() / 2.0, (next() * 80.0).round() / 2.0],
+                    angle: [0.0, 90.0, 30.0, 45.0][(next() * 4.0) as usize],
+                };
+                let local = [[-0.5 - 2.0 * next(), -0.5, 0.5, 0.5 + 2.0 * next()]];
+                let body = turned(&local, pose, 0.0).next().unwrap();
+                let before = inside_outline_before(&problem, body);
+                assert_eq!(
+                    inside_outline(&problem, body, Some(&board)),
+                    before,
+                    "{body:?}"
+                );
+                assert_eq!(inside_outline(&problem, body, None), before, "{body:?}");
+                if before {
+                    insides += 1;
+                } else {
+                    outsides += 1;
+                }
+            }
+        }
+        assert!(
+            insides > 5_000 && outsides > 5_000,
+            "{insides} in, {outsides} out"
+        );
     }
 
     #[test]
