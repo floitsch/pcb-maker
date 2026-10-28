@@ -36,8 +36,6 @@ The environment variables are indexed in the hand-over
 | [Router core](#router-core) | 75 | - | 0 | 75 | - |
 | [Placer settings](#placer-settings) | 56 | 51 | 5 | 56 | 29 |
 | [Layout settings](#layout-settings) | 21 | 21 | 0 | 21 | 11 |
-| [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 1 |
-| [Layout settings](#layout-settings) | 20 | 20 | 0 | 20 | 10 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 2 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 4 |
 | [Layout settings: silkscreen](#layout-settings-silkscreen) | 1 | 1 | 0 | 1 | 1 |
