@@ -679,6 +679,21 @@ fn counted_penalty(problem: &Problem, poses: &[Pose], index: usize) -> f64 {
     constraints::relation_penalty(problem, poses, Some(index))
 }
 
+/// `counted_penalty` from the relations each part is in (`PartRelations`):
+/// the same value and the same work.
+fn counted_penalty_of(
+    problem: &Problem,
+    relations: &constraints::PartRelations,
+    poses: &[Pose],
+    index: usize,
+) -> f64 {
+    if problem.constraints.relations.is_empty() {
+        return 0.0;
+    }
+    crate::add_work(4 * problem.constraints.relations.len() as u64 + relations.work(index));
+    relations.penalty(problem, poses, index)
+}
+
 /// Placed parts by area: a spot is tested only against parts near it.
 struct Buckets {
     grid: crate::buckets::Grid,
@@ -2164,6 +2179,7 @@ pub fn refine_with(
     for (index, pose) in poses.iter().enumerate().take(count) {
         buckets.insert(problem, index, *pose);
     }
+    let relations = constraints::PartRelations::new(problem);
     let mut near = Vec::new();
     let step = if problem.grid > 0.0 {
         problem.grid
@@ -2216,7 +2232,8 @@ pub fn refine_with(
                 state.prepare(poses, index);
             }
             let score = |poses: &[Pose]| {
-                moving.cost(problem, &members, poses) + counted_penalty(problem, poses, index)
+                moving.cost(problem, &members, poses)
+                    + counted_penalty_of(problem, &relations, poses, index)
             };
             let mut best = (score(poses), original);
             if let Some(state) = escape.as_mut() {
@@ -2356,8 +2373,8 @@ pub fn refine_with(
                 nets.dedup();
                 let pair = |poses: &[Pose]| {
                     cost(poses, &nets)
-                        + counted_penalty(problem, poses, a)
-                        + counted_penalty(problem, poses, b)
+                        + counted_penalty_of(problem, &relations, poses, a)
+                        + counted_penalty_of(problem, &relations, poses, b)
                 };
                 let mut before = pair(poses);
                 if let Some(state) = escape.as_mut() {
@@ -2976,6 +2993,74 @@ mod tests {
             crossings: None,
         };
         (problem, poses)
+    }
+
+    #[test]
+    fn part_relations_give_the_penalty_of_the_scan() {
+        use crate::constraints::{Anchor, Edge, PartRelations, Relation};
+        let mut state = 0x9E37_79B9_7F4A_7C15u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let parts = 30;
+        let (mut problem, _) = pair(0.0, 0.0);
+        problem.components = (0..parts).map(|_| resistor(0.0)).collect();
+        let pick = |next: &mut dyn FnMut() -> f64| (next() * parts as f64) as usize;
+        for _ in 0..40 {
+            let part = pick(&mut next);
+            let kind = next();
+            let relation = if kind < 0.3 {
+                Relation::Near {
+                    part,
+                    anchor: Anchor::Point(pick(&mut next), [0.5, 0.0]),
+                    max: next() * 3.0,
+                }
+            } else if kind < 0.6 {
+                Relation::NearAny {
+                    part,
+                    anchors: (0..1 + (next() * 23.0) as usize)
+                        .map(|_| Anchor::Body(pick(&mut next)))
+                        .collect(),
+                    max: next() * 3.0,
+                }
+            } else if kind < 0.8 {
+                Relation::Beside {
+                    part,
+                    anchor: pick(&mut next),
+                    side: Edge::Left,
+                    max_gap: next() * 2.0,
+                }
+            } else {
+                Relation::Apart {
+                    part,
+                    anchor: pick(&mut next),
+                    min: next() * 5.0,
+                }
+            };
+            problem.constraints.relations.push(relation);
+        }
+        problem.constraints.relation_weight = 1.7;
+        let relations = PartRelations::new(&problem);
+        for _ in 0..20 {
+            let poses: Vec<Pose> = (0..parts)
+                .map(|_| Pose {
+                    position: [next() * 30.0, next() * 30.0],
+                    angle: [0.0, 90.0, 180.0, 270.0][(next() * 4.0) as usize],
+                })
+                .collect();
+            for index in 0..parts {
+                let scan = constraints::relation_penalty(&problem, &poses, Some(index));
+                let listed = relations.penalty(&problem, &poses, index);
+                assert_eq!(scan.to_bits(), listed.to_bits(), "{scan} {listed}");
+                assert_eq!(
+                    relations.work(index),
+                    constraints::relation_work(&problem, index)
+                );
+            }
+        }
     }
 
     #[test]

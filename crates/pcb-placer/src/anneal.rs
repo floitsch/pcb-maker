@@ -123,6 +123,8 @@ struct State<'a> {
     /// Whether every cached sum is checked against the direct one (debug
     /// builds and `PCB_PLACER_CHECK_OVERLAP`).
     check_lengths: bool,
+    /// The relations each part is in (`constraint_cost`).
+    relations: constraints::PartRelations,
 }
 
 impl State<'_> {
@@ -525,7 +527,7 @@ impl State<'_> {
         if self.problem.constraints.is_empty() {
             return 0.0;
         }
-        constraints::relation_penalty(self.problem, &self.poses, Some(index))
+        self.relations.penalty(self.problem, &self.poses, index)
             + 1000.0 * constraints::hard_violation(self.problem, index, self.poses[index])
     }
 
@@ -666,6 +668,7 @@ fn build_state<'a>(problem: &'a Problem, poses: &[Pose], legal_far_side: bool) -
         legal_far_side,
         field: None,
         lengths: Vec::new(),
+        relations: constraints::PartRelations::new(problem),
         check_lengths: cfg!(debug_assertions)
             || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
     };

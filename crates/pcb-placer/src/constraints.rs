@@ -1069,6 +1069,56 @@ pub fn relation_work(problem: &Problem, index: usize) -> u64 {
         .sum()
 }
 
+/// Per part, the relations that involve it, in order, and their work
+/// (`relation_work`), for a problem whose relations stay as they are:
+/// `relation_penalty` of one part without scanning every relation and
+/// every anchor of it for the part (a decoupling capacitor's 23 anchors on
+/// Glasgow; the scans were most of the refinement's relation penalty,
+/// 21 % of Glasgow's placement CPU, 2026-10-28).
+pub struct PartRelations {
+    involved: Vec<Vec<usize>>,
+    work: Vec<u64>,
+}
+
+impl PartRelations {
+    pub fn new(problem: &Problem) -> Self {
+        let relations = &problem.constraints.relations;
+        let involved: Vec<Vec<usize>> = (0..problem.components.len())
+            .map(|index| {
+                relations
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, relation)| relation.involves(index))
+                    .map(|(number, _)| number)
+                    .collect()
+            })
+            .collect();
+        let work = (0..problem.components.len())
+            .map(|index| relation_work(problem, index))
+            .collect();
+        PartRelations { involved, work }
+    }
+
+    /// `relation_penalty(problem, poses, Some(index))`: the same
+    /// relations' violations summed in the same order.
+    pub fn penalty(&self, problem: &Problem, poses: &[Pose], index: usize) -> f64 {
+        let constraints = &problem.constraints;
+        if constraints.relations.is_empty() {
+            return 0.0;
+        }
+        self.involved[index]
+            .iter()
+            .map(|number| relation_violation(problem, poses, &constraints.relations[*number]))
+            .sum::<f64>()
+            * constraints.relation_weight
+    }
+
+    /// `relation_work(problem, index)`.
+    pub fn work(&self, index: usize) -> u64 {
+        self.work[index]
+    }
+}
+
 /// Weighted violation of the relations that involve `index` (all of them
 /// for `None`).
 pub fn relation_penalty(problem: &Problem, poses: &[Pose], index: Option<usize>) -> f64 {
