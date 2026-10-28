@@ -4051,6 +4051,11 @@ matches its numbers, above).
   apart in a straight line than the maximum ("the placement decides"),
   else no shorter way found round the other nets.
 
+In the layout (tasks v7, the sweep's budget, the same placement and
+routes as main's x1870): `length_out_of_range` 12 -> 10, NXT and STP met
+by meanders (9.0 and 5.6 mm) on the layout's own routes; 4 open as
+before; no pass.
+
 What is left: the placement. A `length` maximum is a bound on the
 distance of the net's pads, which the placer does not know (oro's U1
 turned with its ULPI pins away from U6); a near-constraint from the rule

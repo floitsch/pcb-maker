@@ -168,7 +168,20 @@ before is the night's row on all three):
 |---|---|---|---|
 | CDFER USB_Keypad | 2 -> 2 | connection_width 4 -> none | 4 (0.8 mm) -> 31 (5.2 mm) |
 | CDFER WLED_Matrix | 7 -> 7 | connection_width 3, track_dangling 1 -> none | 6 (1.1 mm) -> 343 (54.7 mm) |
-| oro link | 4 -> pending (-j's row queued behind the ledger at the time of writing: build/rules2-3b2-rules2-j.log) | length_out_of_range 12 -> pending | - |
+| oro link | 4 -> 4 | length_out_of_range 12 -> 10 (no pass either side) | - |
+
+oro's row with -j (build/rules2-oro2-j.log; the request waited 7.6 h in
+the ledger): the same placement and routes as x1870 (248/251, 555 vias,
+1250 s of work), so the change is the meanders on the layout's own
+routes: NXT and STP now met at 31.5 mm (meanders of 9.0 and 5.6 mm),
+before 22.5 and 25.9. CK got none: it is over the maximum (44.6 mm, a
+detour of the route for pads 22.4 mm apart), not under it, and the
+length repair did not run on the layout's routes (no line of it in the
+layout's log; the layout finished its first route past the work deadline,
+its clean-up at 0 s of work). Left: D1 and DIR open,
+D5 and D6 over the maximum by their pads' distance (33.9 and 34.8 mm in
+a straight line), CK, D0, D2, D3, D4 and D7 over it by their routes (D3
+and D4's pads 30.3 and 30.9 mm apart, octilinear 32.7 and 33.4).
 
 oro's layout with -d (the same layout path, with the congestion share
 since dropped): 1 open (4 before), `length_out_of_range` 10: CK and STP
