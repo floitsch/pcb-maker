@@ -11,6 +11,33 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-10-28 (nightly: layout sweep v24, matched designer tier)
+
+Written by the nightly from `build/nightly/2026-10-28T1429/` (main
+c68e9a8; [benchmarks.md](benchmarks.md#layout-sweep-v24-2026-10-28)).
+The guard held: every stage ran, no row was cut or killed, the sweep has
+at least 100 rows with a result.
+
+- **Layout sweep v24**: **61 of 109 pass the strict rule** (61 per
+  type), 2667 unconnected in all, strict errors 40, 2 without a result.
+  Against the nightly of 2026-10-28: better 21, same 66, worse 20,
+  strict passes 59 -> 61 (gained ULK, ULK_sl_PG1316s,
+  BAGEL-MK1.1-Avocado, jiran-ble-lite, OpenAirScope, koeg-board-pcb;
+  lost framework_mobo_lefthalf, capybully, k30-SBC, ghoul).
+- **Medians against the designer's**: vias x0.68, length x1.04, open
+  0.000 (mean 0.100), bends x1.12, stair-steps +56, crossings +1.
+- **Matched designer tier** (budget scale 0.637): 68 strict passes (70
+  per type); over the 100 target boards placement 74 %, routing 26 % of
+  the open connections.
+- **Placement costs most** on video (+201: 202 / 1), Batch_1 (+153: 156
+  / 3), SmartSpin2k_Panelized (+115: 115 / 0), OpenESC-30x30 4in1 (+73:
+  88 / 15), glasgow revC3 (+69: 127 / 58).
+- **Worse beyond noise**: SmartSpin2k_Panelized 21 -> 115,
+  poly_kb_molecule_4x4 244 -> 289, poly_kb_molecule_4x5 239 -> 272,
+  0xCB-1337 pcb-panel 43 -> 62, OpenESC-30x30 4in1-panel 353 -> 364,
+  poly_kybd_split72_right 21 -> 28, link 4 -> 10, WLED_Matrix 7 -> 10,
+  ATAT1800 19 -> 22, framework_mobo_lefthalf 0 -> 1 and 6 more.
+
 ## Committed on 2026-10-28 (the third placer round: the legaliser's and the refinement's legality, the same placements)
 
 Branch placer-profile-3; binaries `build/bin/pcb-maker-prof5-final` (the
