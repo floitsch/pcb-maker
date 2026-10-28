@@ -357,11 +357,11 @@ fn lower_board(
     // Vias the via-in-pad rule puts in enclosed pads (a fine-pitch BGA's
     // inner balls), by the pad's label: each copper of the pad's net on
     // every layer and the pad's terminal there (`via_in_pad`).
-    let pad_vias: BTreeMap<String, PlannedVia> = plan_vias_in_pads(pcb, config)
-        .vias
-        .into_iter()
-        .map(|via| (via.label.clone(), via))
-        .collect();
+    // (A panel repeats references: a via is its pad's by place too.)
+    let mut pad_vias: BTreeMap<String, Vec<PlannedVia>> = BTreeMap::new();
+    for via in plan_vias_in_pads(pcb, config).vias {
+        pad_vias.entry(via.label.clone()).or_default().push(via);
+    }
     // The gaps between adjacent SMD pads of a footprint's pin rows
     // (`core::Board::pin_row_gaps`, `pin_row_gaps`).
     let mut pin_row_gaps: Vec<core::PinRowGap> = Vec::new();
@@ -961,7 +961,15 @@ fn lower_board(
                     // terminal there (a padstack's copper, joining a pour
                     // solidly as KiCad joins a via), its drill a hole of
                     // the net.
-                    let pad_via = pad_vias.get(&label).filter(|_| net.is_some());
+                    let pad_via = pad_vias
+                        .get(&label)
+                        .and_then(|vias| {
+                            vias.iter().find(|via| {
+                                (via.at[0] - lowered.center[0]).abs() < 1.0e-6
+                                    && (via.at[1] - lowered.center[1]).abs() < 1.0e-6
+                            })
+                        })
+                        .filter(|_| net.is_some());
                     if let Some(via) = pad_via {
                         let ring = core::Shape::Circle {
                             center: via.at,
