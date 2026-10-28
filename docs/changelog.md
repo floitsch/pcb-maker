@@ -13,9 +13,10 @@ v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
 ## Committed on 2026-10-28 (panel tabs and frames: mouse bites and V-cuts cut the outline)
 
-Branch panel-tabs; binaries build/bin/pcb-maker-tabs1-a, -b (off side
-x1870 = main be0e6298). docs/placer.md, "Tabs and frames (2026-10-28)",
-has the rule, the census and the tables.
+Branch panel-tabs; binaries build/bin/pcb-maker-tabs1-a to -d (the
+measured pair: x1871 = main e54c6ada against tabs1-c). docs/placer.md,
+"Tabs and frames (2026-10-28)", has the rule, the census and the
+tables.
 
 - **The question.** 9 of the 34 open items on the 12 near-miss boards
   were parts placed across mouse-bite tabs or on a panel's frame (ULK,
@@ -34,12 +35,29 @@ has the rule, the census and the tables.
   parts are now held in their sub-board also where no net lies on two
   (the ULK). Report: `cut_by`, `frames`, `kept_clear_mm2`; the room
   advice names the frame's area.
-- **Census** (109 boards): pieces on 12 (before: 1): ULK x2, katia,
+- **Census** (109 boards): pieces on 13 (before: 1, the 4in1 panel): ULK x2, katia,
   jiran, woagboard, koeg-board, urchin, Batch_1 (sub-boards); OpenRX,
   the 0xCB panel and pcb-panel, SmartSpin2k (copies: placement as
   before, their rails and V-cuts pieces for the router); the 4in1 panel
   as before.
-@@MEASURE@@
+- **Measured** (layout, the sweep's budgets and seeds, tasks v7; off
+  x1871, on tabs1-c on x1871): ULK 4 to 0 (strict pass), ULK_sl 5 to 0
+  (strict pass), woagboard 4 to 1 (the designer's own GND island), jiran
+  1 to 0 (strict pass; its GND across the halves, the designer's own,
+  not counted); 14 to 1 unconnected, 0 to 3 passes, no new finding. RSW2,
+  U5, SW43 and U3 on their halves, SW8/SW15/SW28 with their MCUs.
+- **Identity**: the short tier 11 of 12 byte for byte (urchin, two
+  halves by mouse bites, moves: a pass both sides); the dense boards 10 of
+  11 byte for byte, SmartSpin2k's placement the same and its route
+  different (118 to 115: 6 items of D2, which the copies' placement put
+  on a V-cut strip on both sides, now across two pieces and not
+  counted). Route mode: the expansion tier identical by construction
+  (BloopBox gains pieces, splits no net); the designer tier changes on
+  jiran, woagboard, koeg-board, katia, Batch_1 and OpenRX (their nets on
+  two pieces are routed per piece).
+- **Left out**: the frames as keepouts for panels of copies (SmartSpin2k
+  118 to 89, but the 0xCB panel lost its strict pass at three seeds: its
+  USB connector overhangs the rail as the designer's does).
 
 ## Committed on 2026-10-28 (the second placer round: the placement 22 % cheaper, the same placements)
 

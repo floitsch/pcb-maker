@@ -4643,11 +4643,21 @@ one board. Where the parts are not held and there is no frame (the
 4in1 panel without a reference: 392 of 398 parts without a board), the
 placement is as before, no keepout.
 
-Panels of copies (`panel_copies`) are placed as copies, as before: their
-rails and V-cuts are pieces now (the 0xCB panels, SmartSpin2k), which
-changes the router's split only where a net of one name has pads on two
-pieces (none of their nets: KiKit names each copy's nets apart), and
-their copies' regions come from the fixed parts.
+Panels of copies (`panel_copies`) are placed as copies, as before, and
+keep no part off their frames: their rails and V-cut strips are pieces
+now (the 0xCB panels, SmartSpin2k, OpenRX), which the router's split
+sees, but the copies' regions come from the fixed parts and reach into
+the rails. Tried and left out (build/bin/pcb-maker-tabs1-d, on x1873
+against x1873): the tabs and frames as keepouts in the copies path too.
+SmartSpin2k gained (seed 1: 118 to 89 KiCad unconnected; its top-row
+copies' D2 had landed on the V-cut strip above them, y 19.2, the strip
+y 12 to 22, the designer's D2 at y 62.9), but the 0xCB panel lost its
+strict pass at all three seeds tried (seeds 1, 101, 201: 0 to 8, 10 and
+8 unconnected, U1's SCL and SDA in every copy): the designer's USB
+connector J1 overhangs the rail (y 18.97, the copy's edge at y 19.02),
+and with the rail kept free the copies put J1 inside the board and the
+copy no longer routes. A frame that a connector may overhang (an
+`overhang` into the rail, as the designer's) is the open point.
 
 **Report**: `sub_boards` gains `cut_by`, `frames` (the frame pieces'
 boxes) and `kept_clear_mm2`; the verdict's room advice names the area
@@ -4715,7 +4725,8 @@ Sums: 14 to 1 KiCad unconnected, 0 to 3 strict passes, no new finding
 from 4, 9, 65, 20 to 0 on all four. jiran's 40 `items_not_allowed`
 (its mouse-bite pads in the designer's keepouts) and woagboard's
 `zones_intersect` are the input's, on both sides. The branch was then
-rebased on x1872 (router changes only; nothing of this code). An
+rebased on x1872 (router changes) and x1873 (bit-identical placer
+refactors); its code of this change is tabs1-c's. An
 earlier pair on x1870 (main be0e6298) gave jiran 1 to 0 (strict pass)
 alike.
 
@@ -4724,7 +4735,22 @@ tabs1-c, `build/tabs1/short-{off,on}`): 11 of 12 boards' placed and
 result boards byte for byte; urchin (two halves joined by mouse bites,
 no net on both) moves: its parts held in their halves, a strict pass on
 both sides, 40 to 41 vias. (The same on x1870 against tabs1-b: 11
-identical, urchin a pass both, 40 to 39 vias.) @@DENSE@@
+identical, urchin a pass both, 40 to 39 vias.)
+
+The eleven dense boards (layout, seed 1, 3 x 2, x1871 against tabs1-c,
+`build/tabs1/dense-on` against `dense-off` and `dense-off2`): 10 of 11
+placed and result boards byte for byte (the 0xCB panel, protoesp,
+Glasgow, video, the 4in1-mini, the 4in1, DSP-ADAU1452, MegaDrive,
+SNSP-CPU-01, split72_left; the 4in1 panel's pieces are as before and its
+parts are not held without a reference). SmartSpin2k_Panelized's
+placement is byte for byte the same (a panel of copies: placed as
+before) and its route differs: its V-cut strips are pieces now, and the
+copies' placement (on both sides) put the top row's D2 on the strip
+above its copy, so the router routes D2's two nets (`Board_N-/ShiftDown`,
+`Board_N-Net-(D2-Pad2)`, three copies) per piece and KiCad's 6 items
+across are not counted: 118 to 115 KiCad unconnected (6 not counted, 3
+more connections routed elsewhere), 765 to 756 vias, no new finding.
+Those 6 are a part on the frame, not the design (see the copies above).
 
 **Route mode**: not unaffected by construction. The router's pieces
 come from the same `Cuts` in every mode, so where a board gains pieces
