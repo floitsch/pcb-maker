@@ -44,8 +44,11 @@ struct Answers {
 /// The answers kept: a power of two.
 const ANSWER_SLOTS: usize = 4096;
 
-/// More items than this kept start the answers again (memory).
-const ANSWER_ITEMS: usize = 1 << 20;
+/// More items than this kept start the answers again: an answer whose
+/// slot another took is kept anew, so the items grow with the misses
+/// (at 2^20, half a megabyte a grid became eight: protoesp's peak 67 MB
+/// went to 76, 2026-10-28).
+const ANSWER_ITEMS: usize = 1 << 16;
 
 impl Answers {
     fn new() -> Self {
