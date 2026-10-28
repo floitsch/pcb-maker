@@ -154,8 +154,17 @@ pub struct KiCadPlane {
 
 #[derive(Clone, Debug, Serialize)]
 pub struct KiCadManufacturing {
-    /// Vias whose hole lies in a small SMD pad (solder wicks away).
+    /// Vias whose hole lies in a small SMD pad (solder wicks away), but
+    /// filled and capped ones (`(filling yes)` and `(capping yes)`, IPC-4761
+    /// type VII: the via in pad a fab plates over, as the router writes
+    /// the vias the via-in-pad rule allows).
     pub vias_in_pads: usize,
+    /// Filled and capped vias in small SMD pads (not counted above).
+    pub filled_vias_in_pads: usize,
+    /// Every via in a small SMD pad, filled or not: the pad, the via and
+    /// how far its centre lies from the pad's.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub vias_in_pads_at: Vec<KiCadViaInPadSite>,
     /// Two-pad parts of 0603 or smaller whose pads take tracks more than
     /// twice as wide on one side (tombstoning).
     pub tombstone_risk: Vec<String>,
@@ -164,6 +173,124 @@ pub struct KiCadManufacturing {
     pub drc: Option<BTreeMap<String, usize>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub drc_note: Option<String>,
+}
+
+/// A via whose drill reaches into a small SMD pad's copper
+/// (`KiCadManufacturing::vias_in_pads_at`).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct KiCadViaInPadSite {
+    pub part: String,
+    /// The footprint's library name (`Package_TFBGA:TFBGA-153_11.5x13mm`).
+    pub footprint: String,
+    pub pad: String,
+    pub net: Option<String>,
+    pub at: [f64; 2],
+    pub diameter_mm: f64,
+    pub drill_mm: f64,
+    /// The via's centre to the pad's.
+    pub offset_mm: f64,
+    /// Filled and capped (`(filling yes)`, `(capping yes)`).
+    pub filled: bool,
+}
+
+/// A via of the board as the vias-in-pads count reads it.
+struct BoardVia {
+    at: [f64; 2],
+    size: f64,
+    drill: f64,
+    filled: bool,
+}
+
+fn board_via(item: &Expr) -> Result<BoardVia, String> {
+    let at = form_at(item)?;
+    Ok(BoardVia {
+        at: [at[0], at[1]],
+        size: form_f64(item, "size", 1).unwrap_or(0.0),
+        drill: form_f64(item, "drill", 1).unwrap_or(0.0),
+        filled: form_atom(item, "filling", 1) == Some("yes")
+            && form_atom(item, "capping", 1) == Some("yes"),
+    })
+}
+
+/// The board's vias whose drill reaches into a small SMD pad's copper (the
+/// drill's disc against the pad's copper as the router lowers it: a
+/// chamfered corner cut, a trapezoid's slanted sides, a custom shape; a via
+/// beside a pad's corner, where the router puts a pad's own via, is not in
+/// it). Without that shape, the pad's box in its own frame with the pad's
+/// corners rounded. An exposed pad's thermal vias are the designer's (the
+/// router's rule: docs/router.md, "Vias in pads"). A via in two pads is
+/// listed at the first.
+pub(crate) fn vias_in_small_smd_pads(pcb: &Expr) -> Result<Vec<KiCadViaInPadSite>, String> {
+    let names = NetNames::of(pcb);
+    let parts = parts_of(pcb, &names)?;
+    let vias = pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("via"))
+        .map(board_via)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(sites_of(&parts, &vias))
+}
+
+fn sites_of(parts: &[Part], vias: &[BoardVia]) -> Vec<KiCadViaInPadSite> {
+    let exposed: Vec<Vec<usize>> = parts.iter().map(exposed_pad).collect();
+    let mut sites = Vec::new();
+    for via in vias {
+        let at = via.at;
+        let inside = parts
+            .iter()
+            .zip(&exposed)
+            .flat_map(|(part, exposed)| {
+                part.pads
+                    .iter()
+                    .enumerate()
+                    .filter(move |(index, _)| !exposed.contains(index))
+                    .map(move |(_, pad)| (part, pad))
+            })
+            .find(|(_, pad)| {
+                let distance = match &pad.copper_shape {
+                    Some(shape) => shape.distance_to_point(at),
+                    None => {
+                        let local = rotate_vector(
+                            [at[0] - pad.center[0], at[1] - pad.center[1]],
+                            pad.angle,
+                        );
+                        let outside = [0, 1].map(|axis| {
+                            (local[axis].abs() - (pad.size[axis] / 2.0 - pad.corner)).max(0.0)
+                        });
+                        outside[0].hypot(outside[1]) - pad.corner
+                    }
+                };
+                // Small by the nominal size; a custom pad by its copper's
+                // extent, its anchor not being its copper (d20_pcb's touch
+                // electrode, a die's face on a 1.5 mm anchor, holds its
+                // net's via by design).
+                let small = match (&pad.copper_shape, pad.custom) {
+                    (Some(shape), true) => {
+                        let bounds = shape.aabb();
+                        (bounds.maximum[0] - bounds.minimum[0])
+                            .max(bounds.maximum[1] - bounds.minimum[1])
+                            < 2.0
+                    }
+                    _ => pad.half[0].max(pad.half[1]) < 1.0,
+                };
+                pad.smd && pad.copper && small && distance < via.drill / 2.0
+            });
+        if let Some((part, pad)) = inside {
+            sites.push(KiCadViaInPadSite {
+                part: part.reference.clone(),
+                footprint: part.footprint.clone(),
+                pad: pad.name.trim_matches('"').to_string(),
+                net: pad.net.clone(),
+                at,
+                diameter_mm: via.size,
+                drill_mm: via.drill,
+                offset_mm: (distance(at, pad.center) * 1.0e4).round() / 1.0e4,
+                filled: via.filled,
+            });
+        }
+    }
+    sites
 }
 
 struct Pad {
@@ -496,6 +623,7 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
     let codes = net_codes(&pcb);
     let mut tracks = Vec::new();
     let mut vias = Vec::new();
+    let mut board_vias = Vec::new();
     for item in pcb.children() {
         match item.head() {
             Some("segment" | "arc") => {
@@ -516,8 +644,9 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
                 });
             }
             Some("via") => {
-                let at = form_at(item)?;
-                vias.push(([at[0], at[1]], form_f64(item, "drill", 1).unwrap_or(0.0)));
+                let via = board_via(item)?;
+                vias.push((via.at, via.drill));
+                board_vias.push(via);
             }
             _ => {}
         }
@@ -951,57 +1080,11 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         not_facing_out,
     };
 
-    // Manufacturing: a via whose drill reaches into a small SMD pad's copper
-    // (the drill's disc against the pad's copper as the router lowers it:
-    // a chamfered corner cut, a trapezoid's slanted sides, a custom shape;
-    // a via beside a pad's corner, where the router puts a pad's own via,
-    // is not in it). Without that shape, the pad's box in its own frame
-    // with the pad's corners rounded. An exposed pad's thermal vias are
-    // the designer's (the router's rule: docs/router.md, "Vias in pads").
-    let exposed: Vec<Vec<usize>> = parts.iter().map(exposed_pad).collect();
-    let mut vias_in_pads = 0;
-    for (at, drill) in &vias {
-        let inside = parts
-            .iter()
-            .zip(&exposed)
-            .flat_map(|(part, exposed)| {
-                part.pads
-                    .iter()
-                    .enumerate()
-                    .filter(move |(index, _)| !exposed.contains(index))
-                    .map(|(_, pad)| pad)
-            })
-            .any(|pad| {
-                let distance = match &pad.copper_shape {
-                    Some(shape) => shape.distance_to_point(*at),
-                    None => {
-                        let local = rotate_vector(
-                            [at[0] - pad.center[0], at[1] - pad.center[1]],
-                            pad.angle,
-                        );
-                        let outside = [0, 1].map(|axis| {
-                            (local[axis].abs() - (pad.size[axis] / 2.0 - pad.corner)).max(0.0)
-                        });
-                        outside[0].hypot(outside[1]) - pad.corner
-                    }
-                };
-                // Small by the nominal size; a custom pad by its copper's
-                // extent, its anchor not being its copper (d20_pcb's touch
-                // electrode, a die's face on a 1.5 mm anchor, holds its
-                // net's via by design).
-                let small = match (&pad.copper_shape, pad.custom) {
-                    (Some(shape), true) => {
-                        let bounds = shape.aabb();
-                        (bounds.maximum[0] - bounds.minimum[0])
-                            .max(bounds.maximum[1] - bounds.minimum[1])
-                            < 2.0
-                    }
-                    _ => pad.half[0].max(pad.half[1]) < 1.0,
-                };
-                pad.smd && pad.copper && small && distance < drill / 2.0
-            });
-        vias_in_pads += inside as usize;
-    }
+    // Manufacturing: vias in small SMD pads (`vias_in_small_smd_pads`),
+    // filled and capped ones apart.
+    let vias_in_pads_at = sites_of(&parts, &board_vias);
+    let filled_vias_in_pads = vias_in_pads_at.iter().filter(|site| site.filled).count();
+    let vias_in_pads = vias_in_pads_at.len() - filled_vias_in_pads;
     let mut tombstone_risk = Vec::new();
     for part in parts
         .iter()
@@ -1047,6 +1130,8 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
     }
     let manufacturing = KiCadManufacturing {
         vias_in_pads,
+        filled_vias_in_pads,
+        vias_in_pads_at,
         tombstone_risk,
         drc_note: drc.is_none().then(|| {
             format!(
@@ -1263,7 +1348,8 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
             layers: economy.copper_layers,
             smallest_drill_mm: economy.smallest_via_drill_mm,
             narrowest_track_mm: economy.narrowest_track_mm,
-            vias_in_pads: manufacturing.vias_in_pads,
+            // Filled and capped ones cost the via-in-pad process.
+            vias_in_pads: manufacturing.vias_in_pads + manufacturing.filled_vias_in_pads,
             smd_sides: economy.smd_sides,
             unique_parts: economy.unique_parts,
             smd_joints: joints(false),
@@ -1512,6 +1598,40 @@ mod tests {
         let report = score_kicad_board(&directory, "b");
         fs::remove_dir_all(&directory).ok();
         assert_eq!(report.unwrap().manufacturing.vias_in_pads, 1);
+    }
+
+    #[test]
+    fn a_filled_and_capped_via_in_a_pad_is_not_counted() {
+        // An 0402's pads, an open via in R1.1 and a filled and capped one
+        // (the via-in-pad rule's) in R2.1.
+        let directory = std::env::temp_dir().join(format!("quality-filled-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("b.kicad_pcb"),
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+              (footprint "R_0402" (at 5 5) (property "Reference" "R1")
+                (pad "1" smd roundrect (at -0.5 0) (size 0.6 0.6) (layers "F.Cu") (roundrect_rratio 0.25) (net "A"))
+                (pad "2" smd roundrect (at 0.5 0) (size 0.6 0.6) (layers "F.Cu") (roundrect_rratio 0.25) (net "B")))
+              (footprint "R_0402" (at 10 5) (property "Reference" "R2")
+                (pad "1" smd roundrect (at -0.5 0) (size 0.6 0.6) (layers "F.Cu") (roundrect_rratio 0.25) (net "A"))
+                (pad "2" smd roundrect (at 0.5 0) (size 0.6 0.6) (layers "F.Cu") (roundrect_rratio 0.25) (net "B")))
+              (via (at 4.5 5) (size 0.4) (drill 0.2) (layers "F.Cu" "B.Cu") (net "A"))
+              (via (at 9.5 5) (size 0.4) (drill 0.2) (layers "F.Cu" "B.Cu") (capping yes) (filling yes) (net "A")))"#,
+        )
+        .unwrap();
+        let report = score_kicad_board(&directory, "b").unwrap();
+        fs::remove_dir_all(&directory).ok();
+        let manufacturing = &report.manufacturing;
+        assert_eq!(manufacturing.vias_in_pads, 1);
+        assert_eq!(manufacturing.filled_vias_in_pads, 1);
+        let sites: Vec<(&str, &str, bool)> = manufacturing
+            .vias_in_pads_at
+            .iter()
+            .map(|site| (site.part.as_str(), site.pad.as_str(), site.filled))
+            .collect();
+        assert_eq!(sites, [("R1", "1", false), ("R2", "1", true)]);
+        assert_eq!(manufacturing.vias_in_pads_at[0].offset_mm, 0.0);
     }
 
     #[test]

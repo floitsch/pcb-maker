@@ -187,6 +187,32 @@ pub fn route_kicad_board(
         memory_at_start.describe(),
         resident_mb()
     );
+    // What the via-in-pad rule does on this board (every lowering of it
+    // places the same vias).
+    let vias_in_pads = plan_vias_in_pads(&parsed, config).report;
+    for footprint in &vias_in_pads.footprints {
+        eprintln!(
+            "vias in pads: {} ({}): {} in {} ({}){}",
+            footprint.part,
+            footprint.footprint,
+            footprint.pads.len(),
+            footprint.pads.join(", "),
+            footprint.rule,
+            footprint
+                .refused
+                .as_ref()
+                .map_or(String::new(), |why| format!("; {why}"))
+        );
+    }
+    for closed in &vias_in_pads.closed {
+        eprintln!(
+            "vias in pads: {} ({}): {} pads no track leaves, no via allowed ({})",
+            closed.part,
+            closed.footprint,
+            closed.pads.len(),
+            closed.pads.join(", ")
+        );
+    }
     let kept_tracks = count_tracks(&parsed);
     if kept_tracks != [0, 0, 0] {
         eprintln!(
@@ -237,6 +263,7 @@ pub fn route_kicad_board(
         });
     };
     result.pin_swaps = pin_swaps;
+    result.vias_in_pads = (vias_in_pads != KiCadViaInPadReport::default()).then_some(vias_in_pads);
     // The connections the board's own copper made, from whichever
     // lowering ran (an attempt's own or the ladder's).
     let kept = result
@@ -1006,6 +1033,7 @@ pub(crate) fn finish_routed_board(
         lowering_work_seconds: 0.0,
         wall_accounting: None,
         kept_copper: None,
+        vias_in_pads: None,
         diff_pairs: None,
         lengths: Vec::new(),
         warnings: input_warnings(pcb),

@@ -1960,7 +1960,7 @@ mod pour_request_tests {
             ]
         );
         let allowed = KiCadBoardRouterConfig {
-            via_in_pad: Some(true),
+            via_in_pad: Some(KiCadViaInPad::All(true)),
             ..config
         };
         assert!(listed(&allowed).is_empty());

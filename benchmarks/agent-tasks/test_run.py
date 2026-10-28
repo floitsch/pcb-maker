@@ -1730,5 +1730,54 @@ class MeasuredFloor(unittest.TestCase):
         self.assertEqual(stored["summary"]["samples"], len(stored["samples"]))
 
 
+
+class DesignerViasInPads(unittest.TestCase):
+    """The designer's vias in pads as the router config's via_in_pad
+    entries (docs/router.md, "Vias in BGA pads")."""
+
+    def setUp(self):
+        self.directory = Path(tempfile.mkdtemp())
+        (self.directory / "b.kicad_pcb").write_text("(kicad_pcb)")
+        self.cache = run.VIA_SITES_CACHE
+        run.VIA_SITES_CACHE = self.directory / "cache.json"
+        run.DESIGNER_VIAS_IN_PADS.clear()
+        self.score = run.quality.score
+        site = lambda pad, size: {"part": "U106", "footprint": "Package_TFBGA:TFBGA-153", "pad": pad,
+                                  "diameter_mm": size[0], "drill_mm": size[1], "filled": False}
+        self.calls = 0
+
+        def score(binary, directory, board_id):
+            self.calls += 1
+            return {"manufacturing": {"vias_in_pads": 3, "filled_vias_in_pads": 0, "vias_in_pads_at": [
+                site("B2", (0.35, 0.25)), site("C2", (0.4, 0.25)), site("M5", (0.35, 0.25))]}}
+        run.quality.score = score
+
+    def tearDown(self):
+        run.quality.score = self.score
+        run.VIA_SITES_CACHE = self.cache
+        run.DESIGNER_VIAS_IN_PADS.clear()
+        shutil.rmtree(self.directory)
+
+    def test_one_entry_per_part_with_its_most_common_size(self):
+        class Arguments:
+            designer_via_in_pad = "on"
+            binary = "pcb-maker"
+        row = {}
+        router = run.with_designer_vias({"seeds": 2}, row, Arguments, self.directory, "b")
+        self.assertEqual(router["seeds"], 2)
+        self.assertEqual(router["via_in_pad"], [{
+            "part": "U106", "footprint": "Package_TFBGA:TFBGA-153", "via_mm": [0.35, 0.25],
+            "source": "the designer's board has 3 vias in U106's pads B2, C2, M5"}])
+        self.assertEqual(row["via_in_pad"], ["U106"])
+        # The task's own key wins; off adds none; the sites are cached by the board.
+        self.assertEqual(run.with_designer_vias({"via_in_pad": False}, {}, Arguments, self.directory, "b"),
+                         {"via_in_pad": False})
+        Arguments.designer_via_in_pad = "off"
+        self.assertEqual(run.with_designer_vias({}, {}, Arguments, self.directory, "b"), {})
+        run.DESIGNER_VIAS_IN_PADS.clear()
+        run.designer_vias_in_pads("other", self.directory, "b")
+        self.assertEqual(self.calls, 1)
+
+
 if __name__ == "__main__":
     unittest.main()

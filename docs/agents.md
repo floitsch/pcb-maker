@@ -353,6 +353,7 @@ Router side (the file passed in place of `auto`):
 | "In1 is a solid ground plane, no traces on it" | `"add_pours": [{"net": "GND", "layers": ["In1.Cu"], "plane": true}]` |
 | "Keep the bottom ground solid under the MCU" | `"add_pours": [{"net": "GND", "layers": ["B.Cu"], "keep_whole": [{"parts": ["U1"]}]}]` |
 | "Our fab fills and caps vias, vias in pads are fine" | `"via_in_pad": true` |
+| "The BGA's inner balls need vias in their pads" (the verdict names them) | `"via_in_pad": ["U106"]` (only that part's pads no track leaves get a filled and capped via) |
 | "Power traces 0.8 mm wide" | `"net_classes": [{"name": "Power", "nets": ["VBUS", "+5V", "GND"], "track_width_mm": 0.8}]` |
 
 ## 3. Run
@@ -417,10 +418,40 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     2026-10-26: 22 connections opened); under the IC on the other layer
     of a two-layer board it is what the cookbook's "keep the bottom
     ground solid under the MCU" means.
-  - `via_in_pad` (default false): no via inside an SMD pad, but an exposed
-    (thermal) pad; a pad's own net's vias sit beside it. A via in a
-    reflowed pad takes its solder; set it true only for filled and capped
-    vias. score-kicad-board's "vias in pads" counts them.
+  - `via_in_pad` (**vias in BGA pads**, since 2026-10-28): by default no
+    via goes inside an SMD pad but an exposed (thermal) pad; a pad's own
+    net's vias sit beside it. A via in a reflowed pad takes its solder
+    unless the fab fills and caps it (via-in-pad, IPC-4761 type VII), at
+    extra cost. A fine-pitch BGA's inner balls have no other way out,
+    though: at 0.5 mm pitch no track passes between two balls. Where the
+    designer's board holds vias in a footprint's small pads (the input
+    board's own vias, or the `--reference` board's), the designer has
+    told the router the fab does it: each pad of that footprint (same
+    reference, or same footprint name) that no track at the neck width
+    can leave between its neighbours gets a filled and capped via of its
+    net at its centre, of the designer's size where it fits, else of the
+    largest of the project's via sizes that keeps every clearance (the
+    other side's parts too: the via goes through). Other pads and other
+    footprints stay closed. For a board without such a reference (from a
+    netlist), name the parts or footprints: `"via_in_pad": ["U106"]`
+    (a reference or a footprint name, with or without its library), or
+    `[{"part": "U106", "via_mm": [0.35, 0.25]}]` for a via size of your
+    fab's. `true` lets vias into every SMD pad (all vias filled and
+    capped) and puts one in every such enclosed pad; `false` none, the
+    designer's neither. board-router.json's `vias_in_pads` says what was
+    done: `placed`, per footprint the `rule` that admitted it (`the board
+    has 10 vias in U106's pads B2, ...` or `via_in_pad: ["U106"]`), the
+    `via_mm` and the `pads`, and under `closed` the footprints whose
+    enclosed pads no rule admits. When connections are open at such
+    pads, the verdict's next_actions names the part, its pads and nets
+    and the opt-in (`U106 (Package_TFBGA:TFBGA-153_11.5x13mm): pads B2
+    (MEM_DAT3), ... have no way out but a via in the pad ...; add
+    "via_in_pad": ["U106"] to the router config`); `describe-kicad-board`
+    lists the same before any run (`vias_in_pads`). The vias are written
+    `(capping yes) (filling yes)`, so KiCad's fab outputs carry the
+    process, and score-kicad-board's "vias in pads" does not count them
+    (`filled_vias_in_pads` does; `vias_in_pads_at` lists every via in a
+    small pad, filled or not).
   - `automatic_planes` (default true): a board with four or more copper
     layers and no pours gets ground as a plane on the first inner layer
     and the supply rail with the most pads on the last inner layer, as a

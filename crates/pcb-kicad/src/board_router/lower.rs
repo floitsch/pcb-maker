@@ -354,6 +354,14 @@ fn lower_board(
     // pad's copper but an exposed pad's, unless the board's vias are
     // filled and capped (`via_in_pad`).
     let mut no_via_pads: Vec<usize> = Vec::new();
+    // Vias the via-in-pad rule puts in enclosed pads (a fine-pitch BGA's
+    // inner balls), by the pad's label: each copper of the pad's net on
+    // every layer and the pad's terminal there (`via_in_pad`).
+    let pad_vias: BTreeMap<String, PlannedVia> = plan_vias_in_pads(pcb, config)
+        .vias
+        .into_iter()
+        .map(|via| (via.label.clone(), via))
+        .collect();
     // The gaps between adjacent SMD pads of a footprint's pin rows
     // (`core::Board::pin_row_gaps`, `pin_row_gaps`).
     let mut pin_row_gaps: Vec<core::PinRowGap> = Vec::new();
@@ -948,6 +956,56 @@ fn lower_board(
                             label: format!("{label} padstack"),
                         });
                     }
+                    // A via in the pad (`pad_vias`): its copper on the
+                    // pad's layer, and on the other layers the pad's
+                    // terminal there (a padstack's copper, joining a pour
+                    // solidly as KiCad joins a via), its drill a hole of
+                    // the net.
+                    let pad_via = pad_vias.get(&label).filter(|_| net.is_some());
+                    if let Some(via) = pad_via {
+                        let ring = core::Shape::Circle {
+                            center: via.at,
+                            radius: via.diameter / 2.0,
+                        };
+                        for (via_layers, suffix) in [
+                            (pad_layers, "via in pad ring"),
+                            (layers.all() & !pad_layers, "via in pad"),
+                        ] {
+                            if via_layers == 0 {
+                                continue;
+                            }
+                            let index = obstacles.len();
+                            if suffix == "via in pad" {
+                                padstack_copper.push((pad_obstacle, index));
+                                solid_pad_obstacles.push(index);
+                            }
+                            obstacles.push(core::Obstacle {
+                                shape: ring.clone(),
+                                layers: via_layers,
+                                kind: core::ObstacleKind::Copper,
+                                net,
+                                clearance,
+                                clearance_override: None,
+                                blocks_tracks: true,
+                                blocks_vias: true,
+                                label: format!("{label} {suffix}"),
+                            });
+                        }
+                        obstacles.push(core::Obstacle {
+                            shape: core::Shape::Circle {
+                                center: via.at,
+                                radius: via.drill / 2.0,
+                            },
+                            layers: layers.all(),
+                            kind: core::ObstacleKind::Hole,
+                            net,
+                            clearance: 0.0,
+                            clearance_override: None,
+                            blocks_tracks: true,
+                            blocks_vias: true,
+                            label: format!("{label} via in pad hole"),
+                        });
+                    }
                     // The pad's mask aperture, where it reaches past the
                     // copper clearance. A mask opening of the pad's net; its
                     // own net's copper never bridges (KiCad skips pairs of
@@ -1096,6 +1154,10 @@ fn lower_board(
                                 .filter(|mask: &core::LayerMask| mask & pad_layers != 0);
                             terminal_layers = side.unwrap_or(pad_layers.isolate_lowest_one());
                         }
+                        // A via in the pad reaches it on every layer.
+                        if pad_via.is_some() {
+                            terminal_layers = layers.all();
+                        }
                         // A custom pad connects through its anchor only.
                         let contact = match (
                             pad.children().get(3).and_then(Expr::atom),
@@ -1128,7 +1190,7 @@ fn lower_board(
                         })
                         .collect::<Vec<_>>(),
                 ));
-                if config.via_in_pad != Some(true) {
+                if config.via_in_pad != Some(KiCadViaInPad::All(true)) {
                     let exposed = exposed_pad(&footprint_pads);
                     for (index, pad) in footprint_pads.iter().enumerate() {
                         if pad.smd && !exposed.contains(&index) && !electrode {

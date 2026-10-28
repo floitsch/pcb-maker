@@ -69,6 +69,21 @@ pub struct KiCadProjectRulesReport {
     /// (`net_rules.clearances`), which no class shows.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pad_clearance_mm: Option<f64>,
+    /// The footprints whose small SMD pads the board's own vias (or the
+    /// `--reference` board's) lie in: the designer's sign that the fab
+    /// fills and caps them, which lets the router put a via in those
+    /// footprints' enclosed pads (`via_in_pad`; docs/router.md, "Vias in
+    /// BGA pads").
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub via_in_pad_designer: Vec<crate::board_router::KiCadViaInPadEntry>,
+    /// The project's predefined via sizes (diameter, drill), for a via in
+    /// a pad.
+    #[serde(skip)]
+    pub via_sizes: Vec<[f64; 2]>,
+    /// The board's via minimums: diameter, drill, annular width (board
+    /// setup, custom rules on every via).
+    #[serde(skip)]
+    pub via_minimums: [f64; 3],
     /// Per net (as the router names it): its classes, the highest
     /// priority first ("Default" for a net in none).
     #[serde(skip)]
@@ -513,6 +528,22 @@ pub fn resolve_project_rules(
     let floor =
         connection_width_floor(minimum("min_connection"), severity.as_deref(), floor_mode());
 
+    // A via in a pad's sizes: the project's predefined vias, within the
+    // board's minimums (raised below by custom rules on every via).
+    report.via_sizes = project["board"]["design_settings"]["via_dimensions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|size| Some([size["diameter"].as_f64()?, size["drill"].as_f64()?]))
+        .filter(|[diameter, drill]| *drill > 0.0 && diameter > drill)
+        .map(|[diameter, drill]| [nanometres(diameter), nanometres(drill)])
+        .collect();
+    report.via_minimums = [
+        nanometres(minimum("min_via_diameter")),
+        nanometres(minimum("min_through_hole_diameter")),
+        nanometres(minimum("min_via_annular_width")),
+    ];
+    report.via_in_pad_designer = crate::board_router::designer_entries(&pcb, "the board");
     let mut widths = Vec::new();
     let mut via_sizes = Vec::new();
     let mut via_drills = Vec::new();
@@ -804,6 +835,11 @@ pub fn resolve_project_rules(
                     }
                 }
                 apply_custom(&mut default_rules, &lowered, None);
+                report.via_minimums = [
+                    report.via_minimums[0].max(lowered.via_diameter_min_all),
+                    report.via_minimums[1].max(lowered.via_drill_min_all),
+                    report.via_minimums[2].max(lowered.annulus_min_all),
+                ];
                 for (index, net) in board.nets.iter().enumerate() {
                     if lowered.width_opt[index].is_some() {
                         ruled_widths.insert(net_names.normalize(&net.name).to_string());

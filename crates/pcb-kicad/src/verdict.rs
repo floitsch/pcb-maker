@@ -1387,6 +1387,63 @@ pub struct KiCadRunFacts {
     /// The parts a `near` constraint of the layout held (its capacitors
     /// among them).
     pub decoupling_constrained: BTreeSet<String>,
+    /// What the via-in-pad rule did (`KiCadBoardRouterResult::vias_in_pads`).
+    pub vias_in_pads: Option<crate::KiCadViaInPadReport>,
+    /// The nets the router left open (partial or unreachable), as it names
+    /// them.
+    pub open_nets: Vec<String>,
+}
+
+/// The next actions for open connections at pads no track leaves (a
+/// fine-pitch BGA's inner balls, `KiCadViaInPadReport`): where the rule
+/// does not admit the footprint, the opt-in; where no via size fits, why.
+/// A footprint counts when one of its enclosed pads' nets is open, by
+/// KiCad's unconnected items or else by the router.
+fn via_in_pad_actions(facts: &KiCadRunFacts) -> Vec<String> {
+    let Some(report) = &facts.vias_in_pads else {
+        return Vec::new();
+    };
+    let bare = |net: &str| net.trim_start_matches('/').to_string();
+    let open: BTreeSet<String> = match facts
+        .native
+        .as_ref()
+        .filter(|native| !native.unconnected_nets.is_empty())
+    {
+        Some(native) => native
+            .unconnected_nets
+            .keys()
+            .map(|net| bare(net))
+            .collect(),
+        None => facts.open_nets.iter().map(|net| bare(net)).collect(),
+    };
+    let mut actions = Vec::new();
+    for closed in &report.closed {
+        let nets: Vec<&String> = closed
+            .nets
+            .iter()
+            .filter(|net| open.contains(&bare(net)))
+            .collect();
+        if nets.is_empty() {
+            continue;
+        }
+        actions.push(format!(
+            "{} ({}): pads {} have no way out but a via in the pad (no track passes between the pads around them), and no via may go into its pads; open there: {}. If the fab fills and caps vias in pads (via-in-pad, IPC-4761 type VII: JLCPCB, PCBWay and Eurocircuits make it at extra cost), add \"via_in_pad\": [\"{}\"] to the router config (or give the designer's board with --reference when it has vias in those pads): the router then puts a filled and capped via in each such pad",
+            closed.part,
+            closed.footprint,
+            closed.pads.join(", "),
+            nets.iter().map(|net| net.as_str()).collect::<Vec<_>>().join(", "),
+            closed.part
+        ));
+    }
+    for footprint in &report.footprints {
+        if let Some(why) = &footprint.refused {
+            actions.push(format!(
+                "{} ({}): the via-in-pad rule admits it ({}) but {}: move the parts whose copper is in the way (on the other side too: a via goes through the board)",
+                footprint.part, footprint.footprint, footprint.rule, why
+            ));
+        }
+    }
+    actions
 }
 
 /// The share of decoupling capacitors within 3 mm of a supply pin below
@@ -1549,6 +1606,8 @@ impl KiCadRunFacts {
             decoupling: None,
             decoupling_near: false,
             decoupling_constrained: BTreeSet::new(),
+            vias_in_pads: None,
+            open_nets: Vec::new(),
         }
     }
 
@@ -1996,6 +2055,9 @@ fn next_actions(
             "connections are open: {}; `pcb-maker inspect-routing-run` on this output names each open net's pads, rules and KiCad's pairs and each hot spot's pads and nets (--reference: the designer's route of the net): read it before changing the design. Where the designer's board routes those nets on this placement under these rules (reference.connected), density is not shown to be the reason and more room, layers or narrower classes are not called for; without that evidence they are hypotheses to test (classes never below the board's minimum)",
             if where_.is_empty() { "the router's count; drc.json lists KiCad's unconnected items".to_string() } else { where_.join(", ") }
         ));
+    }
+    if facts.routes && open > 0 {
+        actions.extend(via_in_pad_actions(facts));
     }
     let thermal_action = facts.starved_thermals > 0 && new_findings.contains_key("starved_thermal");
     if thermal_action {
@@ -2861,6 +2923,13 @@ pub fn route_facts(
         pairs
     });
     facts.lengths = result.lengths.clone();
+    facts.vias_in_pads = result.vias_in_pads.clone();
+    facts.open_nets = result
+        .nets
+        .iter()
+        .filter(|net| net.unconnected_terminals > 0)
+        .map(|net| net.connection.clone())
+        .collect();
     facts.routable_connections = result.routable_connections;
     facts.routed_connections = result.routed_connections;
     facts.unconnected_terminals = result.unconnected_terminals;

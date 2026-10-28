@@ -492,6 +492,93 @@ Unit tests: `a_pads_own_via_keeps_its_ring_out_of_a_chamfered_or_trapezoid_pads_
 the ring out) and `a_via_in_a_chamfered_corner_or_beside_a_trapezoids_slant_is_not_in_the_pad`
 (quality.rs).
 
+### Vias in BGA pads (2026-10-28)
+
+A fine-pitch BGA's inner balls have no way out but a via in the pad: at
+0.5 mm pitch with 0.305 mm balls (MIDAS-MK1.1's U106, a TFBGA-153) the
+gap between two balls is 0.195 mm, and a 0.09 mm track with 0.09 mm
+clearance needs 0.27. The designer of MIDAS put ten vias in U106's pads,
+centred (0.35/0.25 and 0.4/0.25 mm, the class via being 0.8/0.4); the
+router, which puts no via in an SMD pad (above), left U106's B2, C2, M5
+and M6 open on our placement and on the designer's alike ("The last
+connections (2026-10-27)"). Of the designers' boards of the sweep, @CENSUS@.
+
+**The rule** (board_router/via_in_pad.rs, `plan`; router config
+`via_in_pad`). A footprint is admitted when the designer's board holds a
+via in one of its small SMD pads (score-kicad-board's vias in pads,
+filled or not: the board's own vias, read before `--strip`, or the
+`--reference` board's; same reference or same footprint name), when the
+router config names it (`"via_in_pad": ["U106"]`, a reference or a
+footprint name with or without its library; `{"part": "U106", "via_mm":
+[0.35, 0.25]}` with a size), or with `via_in_pad: true` (every footprint;
+the old switch, which also opens every SMD pad to the search's vias as
+before). `false` admits none. KiCad's rule language has no via-in-pad
+constraint, and none of the 14 `.kicad_dru` files of the corpus says
+anything about vias in pads, so no custom rule admits one. On an
+admitted footprint only the pads that need it get a via: an SMD pad of a
+net with two pads or more, not the exposed pad, its centre strictly
+inside the box of the footprint's other pads' centres on its layer, that
+no track leaves (`enclosed_pads`): on a raster of a twentieth of the
+pitch (5 to 25 um) of the footprint's pads on that layer, a cell is
+blocked for a net where it lies closer than half the neck width plus the
+larger clearance to another net's pad (or an unconnected one); a flood of
+the net's free cells from the raster's border and from every cell where
+the net's class via fits (a BGA's empty middle, which the search reaches
+with its own vias) that does not reach the pad leaves it enclosed. On
+MIDAS's U106 that is B2, C2, M5, M6 and N2 (the designer's other five
+vias sit in balls next to the empty middle, where a class via fits). The
+other pads of the footprint keep the rule above.
+
+**The via.** Centred in the pad (MIDAS's designer vias lie within 5 um
+of their pads' centres), of the designer's most common size in that
+footprint's pads where it fits, else of the largest size the project
+names that fits (its predefined via sizes, `via_dimensions`, and the
+pad's class via), each within the board's via minimums (board setup
+`min_via_diameter`, `min_through_hole_diameter`, `min_via_annular_width`
+and custom rules on every via). It fits when its drill lies inside the
+pad's copper, its copper keeps the larger clearance of both from every
+other net's pad on any layer (a through via meets a capacitor on the back
+under the BGA: MIDAS's C125 lies 0.14 mm from U106's K8 on B.Cu), its drill the
+hole clearance from that copper, and the hole-to-hole spacing from every
+hole, the board's vias and the vias placed before it; a pad that already
+holds a via (the board's own, kept in route mode) keeps it. Pads without
+a fitting size are named (`refused`).
+
+**Lowering and output.** Each planned via is copper of the pad's net: a
+ring on the pad's layer, and on the other layers the pad's terminal there
+(`MergedPad::padstack`, as a KiCad 9 padstack's other shapes are; solid
+to a pour, as KiCad joins a via), its drill a hole of the net. The pad's
+terminal reaches every layer, so the search ends on the via's copper on
+an inner layer or the back without a stub; other nets keep their
+clearance from it as from a through-hole pad, and the pad stays in
+`no_via_pads` (no search via inside it). The plan depends on the board
+and the settings only, so every lowering (probes, rungs, moves) places
+the same vias. `emit_routes` writes them (found by their obstacles'
+labels, `<pad> via in pad hole`) as vias with `(capping yes) (filling
+yes)` (KiCad 9's via protection, IPC-4761 type VII), counted in the
+net's vias. score-kicad-board's "vias in pads" leaves filled and capped
+vias out (`filled_vias_in_pads` counts them, `vias_in_pads_at` lists
+every via in a small pad with its part, pad, size and offset; the cost
+estimate counts both: the process costs extra). board-router.json's
+`vias_in_pads` (and board-layout.json's `routed.vias_in_pads`) reports
+`placed`, per admitted footprint the rule, the size and the pads, and
+under `closed` the footprints whose enclosed pads no rule admits; the
+verdict's next_actions name such a footprint, its pads and its open nets
+and the opt-in when one of those nets is open (`via_in_pad_actions`).
+`describe-kicad-board` gives the same report before a run.
+
+**The harness.** The tiers strip the designer's board before the binary
+sees it, so run.py passes what the designer's board shows, as the task's
+constraints pass the designer's placement wishes: score-kicad-board's
+`vias_in_pads_at` on the designer's board (cached per board file in
+`build/designer-vias-in-pads.json`) become the router config's
+`via_in_pad` entries (part, footprint, the designer's most common size;
+the row's `via_in_pad` lists the parts), unless the task sets the key or
+`--designer-via-in-pad off`. A binary without the list gives none, so
+older binaries run as before.
+
+@MEASURED@
+
 A path no longer hops: a via within the hole-to-hole spacing (the drill
 plus `hole_to_hole`) of the previous via of the path being searched is
 not taken (`hops_from_a_via`; the net's routed branches kept theirs

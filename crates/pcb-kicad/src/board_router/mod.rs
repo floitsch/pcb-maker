@@ -26,6 +26,7 @@ mod route;
 #[cfg(test)]
 mod tests;
 mod tools;
+mod via_in_pad;
 
 pub(crate) use self::diff_pairs::{
     finish_pairs, measure_uncoupled, plan_pairs, with_pairs, write_pair_copper,
@@ -35,6 +36,9 @@ pub(crate) use self::lengths::{
     finish_lengths, match_lengths, with_lengths, write_length_patterns,
 };
 pub(crate) use self::meander::copper_heights;
+pub(crate) use self::via_in_pad::{
+    PlannedVia, designer_entries, pad_vias_of, plan as plan_vias_in_pads,
+};
 pub(crate) use self::{attempt::*, budget::*, geometry::*, ladder::*, lower::*, memory::*};
 pub use self::{
     config::*,
@@ -46,4 +50,8 @@ pub use self::{
     result::*,
     route::*,
     tools::*,
+    via_in_pad::{
+        KiCadClosedPads, KiCadViaInPad, KiCadViaInPadEntry, KiCadViaInPadFootprint,
+        KiCadViaInPadReport, admit_reference_vias_in_pads,
+    },
 };

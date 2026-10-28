@@ -473,17 +473,26 @@ pub struct KiCadBoardRouterConfig {
     /// of it (router `min_spokes`).
     #[serde(default)]
     pub min_resolved_spokes: Option<usize>,
-    /// Allow vias inside SMD pads (default false): a board whose vias
-    /// are filled and capped (via-in-pad plating) may put them there. Off,
-    /// every via keeps its annular ring out of every SMD pad but an
-    /// exposed pad (a QFN's thermal pad, which holds thermal vias as
-    /// designers place them): another net's vias keep their clearance
-    /// beyond the pad's copper, the pad's own net's may touch it from
-    /// outside. Open vias in a reflowed pad take its solder down the hole
-    /// (score-kicad-board's "vias in pads" counts them). Through-hole pads
-    /// hold no via either way.
+    /// Vias inside SMD pads. Unset (the default): no via in an SMD pad but
+    /// an exposed pad (a QFN's thermal pad, which holds thermal vias as
+    /// designers place them), except a filled and capped via in each pad
+    /// that no track can leave between its neighbours (a fine-pitch BGA's
+    /// inner balls) on a footprint whose pads the designer's board holds
+    /// vias in (the board's own vias, the `--reference` board's).
+    /// Elsewhere every via keeps its annular ring out of every SMD pad:
+    /// another net's vias keep their clearance beyond the pad's copper,
+    /// the pad's own net's may touch it from outside. Open vias in a
+    /// reflowed pad take its solder down the hole (score-kicad-board's
+    /// "vias in pads" counts them). A list of parts or footprints
+    /// (`["U106"]`, a reference or a footprint name; an entry
+    /// `{"part": "U106", "via_mm": [0.35, 0.25]}` names the via's
+    /// diameter and drill) admits those footprints' enclosed pads besides
+    /// the designer's; `true` lets vias into every SMD pad (a board whose
+    /// vias are all filled and capped) and the enclosed pads of every
+    /// footprint; `false` none, the designer's neither. Through-hole pads
+    /// hold no via either way (docs/router.md, "Vias in BGA pads").
     #[serde(default)]
-    pub via_in_pad: Option<bool>,
+    pub via_in_pad: Option<KiCadViaInPad>,
     /// What route-kicad-board does with the board's own tracks and vias
     /// (`keep`, the default, or `strip`). Kept, they stay exactly as they
     /// are and other nets keep clear of them; pads they join count as

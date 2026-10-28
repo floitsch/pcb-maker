@@ -107,7 +107,7 @@ fn routers_of_other_inputs_do_not_share_static_maps() {
     };
     // Vias in pads allowed: no pad is closed to vias.
     let via_in_pad = KiCadBoardRouterConfig {
-        via_in_pad: Some(true),
+        via_in_pad: Some(KiCadViaInPad::All(true)),
         ..config.clone()
     };
     let open = f1_board(&via_in_pad);
@@ -335,7 +335,7 @@ fn the_lowering_of_f1_is_the_golden_table() {
     assert_eq!(net("14").terminals.len(), 3, "the jumper group is one item");
     assert_eq!(board.isolated_pads, ["R1.2"]);
     let via_in_pad = f1_board(&KiCadBoardRouterConfig {
-        via_in_pad: Some(true),
+        via_in_pad: Some(KiCadViaInPad::All(true)),
         ..config
     });
     assert!(via_in_pad.no_via_pads.is_empty());

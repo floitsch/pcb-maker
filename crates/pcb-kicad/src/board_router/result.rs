@@ -58,6 +58,12 @@ pub struct KiCadBoardRouterResult {
     /// without them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kept_copper: Option<super::KiCadKeptCopper>,
+    /// What the via-in-pad rule did (`via_in_pad`): the vias it put in
+    /// pads, by footprint with the rule that admits them, and the
+    /// footprints whose enclosed pads it does not admit; absent on a board
+    /// with neither.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vias_in_pads: Option<super::KiCadViaInPadReport>,
     /// Route mode with `diff_pairs`: the differential pairs found and what
     /// became of them; absent with the switch off.
     #[serde(default, skip_serializing_if = "Option::is_none")]

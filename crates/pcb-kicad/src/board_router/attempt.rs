@@ -22,6 +22,19 @@ pub(crate) fn emit_routes(
     if !keep_existing {
         items.retain(|item| !matches!(item.head(), Some("segment" | "arc" | "via")));
     }
+    // The vias the via-in-pad rule put in pads, fixed copper of their net
+    // that the routes join: written with them, filled and capped.
+    let mut pad_vias = vec![0usize; board.nets.len()];
+    for (net, at, diameter, drill) in pad_vias_of(board) {
+        pad_vias[net as usize] += 1;
+        items.push(pad_via_expr(&SupplementalVia {
+            connection: board.nets[net as usize].name.clone(),
+            at: nanometres(at),
+            size: diameter,
+            drill,
+            layers: ["F.Cu".into(), "B.Cu".into()],
+        }));
+    }
     let mut nets = Vec::new();
     for (net, route) in result.routes.iter().enumerate() {
         let description = &board.nets[net];
@@ -64,7 +77,7 @@ pub(crate) fn emit_routes(
             terminals: description.terminals.len(),
             status: status.into(),
             unconnected_terminals,
-            vias: route.vias.len(),
+            vias: route.vias.len() + pad_vias[net],
             length_mm: route
                 .segments
                 .iter()

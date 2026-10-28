@@ -350,6 +350,14 @@ fn reference_option(
     }
 }
 
+/// Whether two paths name one directory.
+fn same_directory(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
 /// Fills in the reference's errors when the result has errors that count.
 fn check_reference(
     facts: &mut KiCadRunFacts,
@@ -482,6 +490,13 @@ fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     let mut config =
         crate::board_router_config(positional.get(3).map(String::as_str), source, board_id)
             .map_err(Failure::Usage)?;
+    // The reference board's vias in pads admit vias in those footprints'
+    // enclosed pads (the board's own did already).
+    if let Some(project) = reference.as_deref()
+        && !same_directory(project, Path::new(source))
+    {
+        pcb_kicad::admit_reference_vias_in_pads(&mut config, project, board_id);
+    }
     if strip {
         config.existing_tracks = pcb_kicad::KiCadExistingTracks::Strip;
     }
@@ -849,9 +864,14 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     check_project(source, board_id)?;
     check_fresh_output(output)?;
     let reference = reference_option(&values, None, board_id)?;
-    let router =
+    let mut router =
         crate::board_router_config(positional.get(3).map(String::as_str), source, board_id)
             .map_err(Failure::Usage)?;
+    if let Some(project) = reference.as_deref()
+        && !same_directory(project, Path::new(source))
+    {
+        pcb_kicad::admit_reference_vias_in_pads(&mut router, project, board_id);
+    }
     let mut config: pcb_kicad::KiCadBoardLayoutConfig = match positional.get(4) {
         Some(path) => read_json(path)?,
         None => Default::default(),
@@ -1821,9 +1841,11 @@ usage: pcb-maker route-kicad-board <project-dir> <board-id> <out-dir> [router-co
                        automatic_planes (default true), exclusive_planes (default: tried both ways),
                        net_classes (default: the project's), ladder_budget_seconds (default 1200 s
                        of work), deadline_seconds (default none: the work alone ends the run),
-                       solid_starved_thermals (default true), via_in_pad (default false: no
-                       via in an SMD pad but an exposed pad; true for filled and capped vias),
-                       existing_tracks (default keep; strip as --strip).
+                       solid_starved_thermals (default true), via_in_pad (default: no via in
+                       an SMD pad but an exposed pad, and a filled and capped via in a BGA's
+                       pads no track leaves where the designer's board has vias in that
+                       footprint's pads; a list of parts or footprints admits them; true every SMD
+                       pad; false none), existing_tracks (default keep; strip as --strip).
   --reference <dir>    the project whose board's DRC errors count as pre-existing (the same type at
                        the same place), not as the route's; default <project-dir> (the input as
                        given); none counts every error. Checked only when the result has errors

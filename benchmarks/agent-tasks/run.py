@@ -1031,6 +1031,93 @@ def has_drc_command(binary):
     return _DRC_COMMAND[key]
 
 
+# The designer's vias in pads (docs/router.md, "Vias in BGA pads"): the
+# stripped board the binary gets has none, so the harness says what the
+# designer's board shows, as the task's constraints say where the designer
+# put the parts. score-kicad-board's `vias_in_pads_at` (filled or not) on
+# the designer's board, one `via_in_pad` entry per part with its footprint
+# and its vias' most common size; a binary without the list (before
+# 2026-10-28) gives none, and the task's own `via_in_pad` wins. The sites
+# are kept per board file (its SHA-256) in VIA_SITES_CACHE: a panel's
+# score takes minutes.
+DESIGNER_VIAS_IN_PADS = {}
+VIA_SITES_CACHE = ROOT / "build" / "designer-vias-in-pads.json"
+VIA_SITES_LOCK = threading.Lock()
+
+
+def designer_via_sites(binary, directory, board_id):
+    """score-kicad-board's `vias_in_pads_at` on the designer's board, from
+    VIA_SITES_CACHE where it holds the board; None when the binary gives
+    no list."""
+    board = Path(directory) / f"{board_id}.kicad_pcb"
+    digest = file_sha256(board)
+    with VIA_SITES_LOCK:
+        try:
+            cached = json.loads(VIA_SITES_CACHE.read_text())
+        except (OSError, ValueError):
+            cached = {}
+    if digest in cached:
+        return cached[digest]
+    report = quality.score(binary, directory, board_id) or {}
+    manufacturing = report.get("manufacturing") or {}
+    if "filled_vias_in_pads" not in manufacturing:
+        return None
+    sites = manufacturing.get("vias_in_pads_at") or []
+    with VIA_SITES_LOCK:
+        try:
+            cached = json.loads(VIA_SITES_CACHE.read_text())
+        except (OSError, ValueError):
+            cached = {}
+        cached[digest] = sites
+        try:
+            VIA_SITES_CACHE.parent.mkdir(parents=True, exist_ok=True)
+            temporary = VIA_SITES_CACHE.with_name(f"{VIA_SITES_CACHE.name}.{os.getpid()}.tmp")
+            temporary.write_text(json.dumps(cached, sort_keys=True))
+            temporary.replace(VIA_SITES_CACHE)
+        except OSError:
+            pass
+    return sites
+
+
+def designer_vias_in_pads(binary, directory, board_id):
+    key = (str(binary), str(directory), board_id)
+    if key not in DESIGNER_VIAS_IN_PADS:
+        sites = designer_via_sites(binary, directory, board_id) or []
+        parts = {}
+        for site in sites:
+            parts.setdefault((site["part"], site["footprint"]), []).append(site)
+        entries = []
+        for (part, footprint), members in sorted(parts.items()):
+            sizes = {}
+            for site in members:
+                size = (round(site["diameter_mm"], 6), round(site["drill_mm"], 6))
+                sizes[size] = sizes.get(size, 0) + 1
+            # The most common size, the smaller first on a tie.
+            size = max(sorted(sizes), key=lambda candidate: (sizes[candidate], tuple(-v for v in candidate)))
+            pads = sorted({site["pad"] for site in members})
+            entry = {"part": part, "footprint": footprint,
+                     "source": f"the designer's board has {len(members)} via{'s' if len(members) != 1 else ''} "
+                               f"in {part}'s pads {', '.join(pads)}"}
+            if size[1] > 0 and size[0] > size[1]:
+                entry["via_mm"] = list(size)
+            entries.append(entry)
+        DESIGNER_VIAS_IN_PADS[key] = entries
+    return DESIGNER_VIAS_IN_PADS[key]
+
+
+def with_designer_vias(router, row, arguments, directory, board_id):
+    """`router` with the designer's vias in pads as its `via_in_pad`
+    entries (`designer_vias_in_pads`), unless the task sets the key or
+    `--designer-via-in-pad off`; the row names the parts."""
+    if arguments.designer_via_in_pad == "off" or "via_in_pad" in router:
+        return router
+    entries = designer_vias_in_pads(arguments.binary, directory, board_id)
+    if not entries:
+        return router
+    row["via_in_pad"] = [entry["part"] for entry in entries]
+    return {**router, "via_in_pad": entries}
+
+
 def designer_findings(directory, board_id, work, binary=None):
     """Copper errors per type on the designer's own routed board, which a
     task from a real board need not do better than (harvested boards come
@@ -1640,7 +1727,8 @@ def run_admitted(task, arguments, token):
         for key, default in LAYOUT_BUDGETS.items():
             layout[key] = round(layout.get(key, default) * arguments.budget_scale)
     (work / "layout.json").write_text(json.dumps(layout))
-    router = task.get("router") or {}
+    via_in_pad = {}
+    router = with_designer_vias(task.get("router") or {}, via_in_pad, arguments, directory, task["board_id"])
     router_argument = "auto"
     if router:
         (work / "router.json").write_text(json.dumps(router))
@@ -1670,7 +1758,7 @@ def run_admitted(task, arguments, token):
     row = {"name": name, "seconds": round(time.monotonic() - started, 1), "cpu_seconds": cpu_seconds,
            "load": [round(load_before, 1), round(os.getloadavg()[0], 1)],
            "peak_rss_mb": peak_mb, "layout_rss_mb": own_mb, "mode": "layout",
-           "constraints_sha256": constraints_sha256}
+           "constraints_sha256": constraints_sha256, **via_in_pad}
     if labels_dropped is not None:
         # The labels of movable parts unplace took off the board (LABELS).
         row.update(labels=LABELS, labels_dropped=labels_dropped)
@@ -1984,7 +2072,7 @@ def route_admitted(task, arguments, token):
     allowed = designer_findings(directory, task["board_id"], work, arguments.binary) if task.get("designer_budget") else {}
     designer_seconds = round(time.monotonic() - designer_started, 1)
     baseline = StrictBaseline(directory, task["board_id"], work, arguments.binary, bool(task.get("designer_budget")))
-    router = dict(task.get("router") or {})
+    router = with_designer_vias(dict(task.get("router") or {}), row, arguments, directory, task["board_id"])
     if arguments.budget_scale != 1:
         key, default = ROUTE_BUDGET
         router[key] = round(router.get(key, default) * arguments.budget_scale)
@@ -2105,7 +2193,7 @@ def designer_admitted(task, arguments, token):
     designer_seconds = round(time.monotonic() - designer_started, 1)
     # The strict rule's baseline, as for the other modes.
     baseline = StrictBaseline(directory, board_id, work, arguments.binary, bool(task.get("designer_budget")))
-    router = dict(task.get("router") or {})
+    router = with_designer_vias(dict(task.get("router") or {}), row, arguments, directory, board_id)
     key, _ = ROUTE_BUDGET
     router[key] = round(arguments.designer_budget * arguments.budget_scale, 3)
     (work / "router.json").write_text(json.dumps(router))
@@ -2323,7 +2411,7 @@ def route_task_admitted(task, arguments, token):
     allowed = designer_findings(directory, board_id, work, arguments.binary) if task.get("designer_budget") else {}
     designer_seconds = round(time.monotonic() - designer_started, 1)
     baseline = StrictBaseline(directory, board_id, work, arguments.binary, bool(task.get("designer_budget")))
-    router = route_task_config(task, arguments.budget_scale)
+    router = with_designer_vias(route_task_config(task, arguments.budget_scale), row, arguments, directory, board_id)
     budget = router[ROUTE_BUDGET[0]]
     (work / "router.json").write_text(json.dumps(router))
     row["budget_seconds"] = budget
@@ -2489,6 +2577,10 @@ def main():
                         help="only the boards of a tier (quick: quick.json, many small boards side by side)")
     parser.add_argument("--placer", type=json.loads, default={},
                         help="placer settings for every board, as JSON (e.g. '{\"halo_scale\": 0.75}')")
+    parser.add_argument("--designer-via-in-pad", choices=["on", "off"], default="on",
+                        help="on (default): the designer's vias in small SMD pads (score-kicad-board's "
+                             "vias_in_pads_at on the designer's board) become the router config's via_in_pad "
+                             "entries, as the task's constraints carry the designer's placement wishes; off: none")
     parser.add_argument("--reference-designer", action="store_true",
                         help="layout mode: pass the designer's project as --reference (its errors "
                              "count as pre-existing; a panel's sub-boards from its places)")

@@ -23,6 +23,14 @@ pub struct KiCadBoardDescription {
     /// the firmware can use any of them for any of these signals,
     /// `swappable` lets the layout choose.
     pub swap_candidates: Vec<KiCadSwapCandidate>,
+    /// Footprints with pads no track leaves between their neighbours (a
+    /// fine-pitch BGA's inner balls), and what the via-in-pad rule does
+    /// with them under the project's rules: the vias it would put in pads
+    /// (where the board's own vias lie in that footprint's pads) and the
+    /// footprints it does not admit (`via_in_pad` in the router config
+    /// admits them; docs/agents.md, "Vias in BGA pads").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vias_in_pads: Option<crate::KiCadViaInPadReport>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -649,6 +657,13 @@ pub fn describe_kicad_board(
         footprints,
         nets,
         swap_candidates,
+        vias_in_pads: crate::resolve_project_rules(
+            &directory.join(format!("{board_id}.kicad_pro")),
+            &board_path,
+        )
+        .ok()
+        .map(|config| crate::board_router::plan_vias_in_pads(&pcb, &config).report)
+        .filter(|report| *report != crate::KiCadViaInPadReport::default()),
     })
 }
 
