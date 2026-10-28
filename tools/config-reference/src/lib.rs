@@ -565,7 +565,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_PLACER_CHECK_OVERLAP",
         Kind::Diagnostic,
-        "the annealer checks its incremental overlap against a full recount.",
+        "the annealer checks its incremental overlap against a full recount, and the placer its caches against the direct computation at every use (the anneal's wirelength terms, the escape term's prepared pads, the relation repair's sweep; docs/profiling.md, \"The second placer round\").",
     ),
     (
         "PCB_LADDER_STATS",

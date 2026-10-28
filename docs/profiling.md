@@ -13,7 +13,11 @@ snapshot x14967 against main's x1851, 71953b0) profiled the search again
 after both. The third router round of 2026-10-27 ("The third router
 round" below: branch router-profile-3, snapshot x15185 against main's
 x1856, edc1d286) gave the open list a decrease-key and the restamp one
-decode a list.
+decode a list. The second placer round of 2026-10-28 ("The second placer
+round" at the end: branch placer-profile-2, measured on main's x1871,
+e54c6ada)
+profiled the placement again and made it 7 to 44 % cheaper in CPU (22 %
+as the geometric mean of fifteen boards) with the same placements.
 
 ## How to profile
 
@@ -1206,3 +1210,348 @@ measurably.
   still held five sets (297 MB). A cap at the threads would block a
   probe thread.
 
+## The second placer round (2026-10-28)
+
+The placement side of a layout again, after the layout round: the
+placement (`place_kicad_board`: the race's seeds, each a global
+placement, anneal, legalisation and refinement with its repairs), the
+first part of the layout's budget (40 %). Branch placer-profile-2:
+eleven commits measured on main e54c6ada (x1871, the anneal's crossings
+term on by default since that commit), the head
+built as `build/bin/pcb-maker-prof4-final` (3daff389), each commit's
+binary as `build/bin/pcb-maker-prof4-n1` to `-n10`; rebased on main
+5905bf9a (x1872) as 55235df8 to 28119348, and a twelfth commit (37b81380,
+a debug switch's work, below).
+
+### How
+
+perf could not be fetched this round (the package download was refused
+in the agent's sandbox), so the placement was attributed three ways:
+
+- **Phases** (`PCB_PLACER_DEBUG`): each phase's thread CPU (global,
+  anneal, the legalisations, refinement, repair and alignment), summed
+  over the seeds; they add up to the process's CPU within 0.1 to 2 %.
+- **Inside the phases**: a throwaway build (branch
+  placer-profile-2-attr, not for merging: `attr.rs`, a time-stamp
+  counter per category and thread, printed at the end of each seed with
+  `PCB_PLACER_ATTR`) times the anneal's wirelength, relation, overlap
+  and crossings terms, the legaliser's legality tests and escape term,
+  the refinement's wirelength, relation penalty, escape term, escape
+  measurements (the global route), crossings, legality and equal-part
+  swaps, and the relation repair's legality tests; each phase's CPU is
+  split by its categories' share of the phase's ticks.
+- **Callgrind** (valgrind 3.25, `--tool=callgrind`, the profiling build
+  of "How to profile") on short placements (`PCB_PLACER_WORK_SECONDS`
+  15 to 30, one thread) of Castor, Glasgow, MegaDrive, SmartSpin2k,
+  DSP-ADAU1452 and protoesp, for the functions inside a category; the
+  shares at a short budget are not the full placement's (the seeds'
+  repairs come late), the categories above are.
+
+`place-kicad-board <task source> <board> <out> <layout.json> --router
+auto` is the layout's placement byte for byte since the third trial's
+follow-ups (the check takes the layout's budget share, the race's seeds,
+the router's rules for the escape measurements and pins the reference's
+rates), so the placement was measured alone: the eleven dense boards'
+task sources (tasks v7, seed 1, as run.py prepares them) and the four
+fingerprint boards' (Castor, k30-SBC, jetson, Sisu), two threads on two
+CPUs of one core (`taskset`), `PCB_ROUTER_NO_WALL_GUARD=1`, pinned rates.
+
+### Where the placement's CPU goes (main e54c6ada, x1871)
+
+Shares of the placement's CPU (the process's, two threads):
+
+| category (% of the placement's CPU) | 0xCB panel | protoesp | Glasgow | video | 4in1-mini | 4in1 | SmartSpin2k | DSP | MegaDrive | SNSP | split72 | Castor | k30-SBC | jetson | Sisu |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| placement CPU s (2 threads) | 209 | 1001 | 1579 | 532 | 855 | 1529 | 904 | 616 | 664 | 799 | 727 | 258 | 244 | 596 | 685 |
+| global placement | 17.1 | 2.6 | 0.2 | 1.5 | 0.5 | 0.2 | 1.9 | 0.2 | 0.1 | 0.5 | 0.3 | 2.8 | 1.5 | 0.4 | 0.5 |
+| anneal: wirelength | 3.8 | 1.3 | 3.8 | 3.4 | 1.8 | 2.7 | 0.5 | 11.6 | 2.6 | 7.3 | 13.1 | 10.7 | 10.8 | 7.4 | 13.3 |
+| anneal: relations, hard constraints | 0.7 | 0.4 | 5.9 | 2.3 | 0.2 | 0.9 | 0.4 | 1.4 | 1.1 | 4.1 | 6.1 | 6.1 | 11.5 | 2.7 | 5.7 |
+| anneal: overlap (grid query, pairs) | 7.8 | 6.3 | 4.4 | 1.8 | 10.9 | 10.3 | 0.7 | 32.3 | 22.9 | 23.0 | 5.8 | 17.7 | 6.6 | 15.1 | 16.6 |
+| anneal: crossings term | 2.0 | 2.3 | 5.7 | 4.8 | 3.1 | 4.8 | 0.6 | 10.8 | 12.1 | 14.6 | 8.8 | 17.0 | 15.6 | 14.2 | 18.8 |
+| anneal: the rest (moves, snap, grid upkeep) | 2.0 | 1.4 | 1.6 | 2.0 | 1.2 | 1.8 | 0.4 | 5.1 | 2.8 | 5.8 | 3.3 | 9.1 | 7.7 | 5.6 | 6.7 |
+| legaliser: legality tests | 34.6 | 59.1 | 7.5 | 8.9 | 19.5 | 33.6 | 0.4 | 1.1 | 19.0 | 1.0 | 0.4 | 1.2 | 0.4 | 8.4 | 0.2 |
+| legaliser: escape term | 0.0 | 0.0 | 0.8 | 0.9 | 0.7 | 0.5 | 0.1 | 0.0 | 0.1 | 0.0 | 0.0 | 0.1 | 0.1 | 0.1 | 0.0 |
+| legaliser: the rest (ring scan, neighbour queries, crossings) | 13.9 | 22.6 | 13.8 | 68.5 | 6.0 | 12.0 | 1.6 | 0.7 | 11.3 | 1.4 | 2.5 | 1.3 | 4.7 | 1.5 | 0.3 |
+| refinement: wirelength | 1.7 | 0.3 | 10.4 | 0.0 | 8.5 | 8.1 | 5.5 | 5.4 | 0.8 | 2.2 | 7.3 | 4.3 | 4.7 | 5.3 | 8.2 |
+| refinement: relation penalty | 0.2 | 0.1 | 21.8 | 0.0 | 1.2 | 3.2 | 2.8 | 1.0 | 0.5 | 2.1 | 4.7 | 3.1 | 6.3 | 2.9 | 4.7 |
+| refinement: escape term | 0.0 | 0.0 | 8.1 | 0.0 | 19.9 | 11.0 | 18.4 | 4.7 | 0.6 | 3.2 | 4.9 | 6.8 | 5.2 | 6.7 | 6.6 |
+| refinement: escape measurements (global route) | 0.0 | 0.0 | 0.1 | 5.1 | 0.1 | 0.0 | 0.1 | 0.7 | 11.4 | 3.9 | 0.8 | 1.9 | 1.7 | 2.5 | 1.3 |
+| refinement: crossings | 0.5 | 0.1 | 6.7 | 0.1 | 2.1 | 0.6 | 6.2 | 0.4 | 1.8 | 2.3 | 6.1 | 0.9 | 1.1 | 1.7 | 0.9 |
+| refinement: legality (neighbour query, test) | 5.7 | 1.7 | 7.8 | 0.0 | 22.5 | 7.0 | 7.7 | 7.5 | 6.6 | 6.2 | 3.7 | 3.5 | 1.8 | 11.0 | 5.4 |
+| refinement: equal-part swaps | 0.3 | 0.5 | 0.3 | 0.1 | 0.7 | 0.4 | 0.2 | 7.7 | 1.8 | 22.5 | 29.7 | 7.4 | 1.5 | 10.3 | 3.8 |
+| relation repair: legality | 7.9 | 1.1 | 0.4 | 0.0 | 0.0 | 2.2 | 49.8 | 9.1 | 4.4 | 0.6 | 1.7 | 5.0 | 17.4 | 3.6 | 6.5 |
+| refinement and repair: the rest | 0.1 | 0.0 | 0.5 | -0.0 | 1.0 | 0.6 | 1.3 | 0.1 | 0.0 | -0.9 | 0.1 | 0.0 | 0.3 | -0.3 | 0.2 |
+| outside the phases (lowering, set-up) | 1.6 | 0.3 | 0.1 | 0.2 | 0.2 | 0.2 | 0.5 | 0.3 | 0.2 | 0.2 | 0.5 | 0.9 | 0.7 | 0.7 | 0.2 |
+
+- **No single hot spot**: the anneal's overlap sums (up to 32 %), the
+  legaliser's legality tests (up to 59 %), the refinement's escape term
+  (up to 20 %), the relation repair's legality tests (up to 50 %), the
+  equal-part swaps (up to 30 %) and the anneal's crossings term (2 to
+  19 %, on by default since e54c6ada) each dominate a few boards.
+- **video's legalisation (69 %)** is its ring search: a part without a
+  spot scanned every step of every ring of the board for the steps on the
+  ring (`(2 r + 1)^2` a ring, the legality test run only on the ring),
+  the "rest" of the legaliser beside the tests.
+- **The relation repair** (SmartSpin2k 50 %, k30-SBC 17 %) tested every
+  one of up to 100 000 spots a relation against every part of the board.
+- **The swaps** (split72_left 30 %, SNSP-CPU-01 23 %): 42 to 46 % of them
+  (the throwaway build's finer split) the crossings before a swap, the
+  moved nets' trees built again at the poses the state keeps.
+- **The escape measurements** (the global route, `pcb-global`): up to
+  11 % (MegaDrive); not changed (a change of the global router).
+- **Global placement**: 17 % on the 0xCB panel (30 movable parts, its
+  spectral solve), below 3 % elsewhere; not changed (the solve's order
+  of operations is its result).
+- **Outside the phases** (lowering, set-up, the work-rate calibration):
+  0.1 to 1.6 %.
+- **The race's probes, the first route and the moves** are the router's
+  (the router rounds above); the race's ranking (lowering, RUDY, the
+  crossings' total) is milliseconds a placement.
+
+### The changes (bit-identical)
+
+Each its own commit, each the same computation: the same values in the
+same order, and the same work booked (the placer's budgets are work, so a
+change that booked a unit more or less would move every stop and every
+placement after it). Where a cache or a shortcut is new, a unit test
+compares it with the direct computation, and the release binary checks it
+against the direct one at every use with `PCB_PLACER_CHECK_OVERLAP=1`
+(debug builds always do).
+
+1. **The grids' cells without libm's `floor`** (buckets.rs `cell_index`,
+   crossings.rs `column`, `row`). x86-64's baseline has no rounding
+   instruction, so `floor` is a call (1 to 2.6 % of a placement's
+   instructions); a cast truncates towards zero and takes negatives and
+   NaN to 0, which is `floor().max(0)` for every input (test: 200 000
+   values, the extremes, NaN and the infinities). The bucket query keeps
+   its output's length in a register for a cell (the vector's own
+   `spare_capacity_mut` and `set_len` per item were a third of its
+   instructions on MegaDrive): the same items in the same order.
+2. **A linked pair by binary search** (constraints.rs `linked`). Each
+   part's partners list is ascending by construction (`link_pairs` walks
+   the set in order); the lookup scanned it (a supply pin's part has
+   dozens). Test: every pair against the set.
+3. **The anneal's wirelength before a move from cached net terms**
+   (anneal.rs `lengths`, `cached_wirelength`, `wirelength_terms`,
+   `keep_lengths`). A move's wirelength before it is the sum of its nets'
+   terms at the poses of now; they are kept per net and replaced by the
+   terms measured after a move that is kept, and computed again whenever
+   the field (the guidance) changes or the bus groups move parts. The same
+   terms summed in the same order: the same bits. Checked against the
+   direct sum in debug builds and with `PCB_PLACER_CHECK_OVERLAP`.
+4. **The refinement's candidates fold their nets' other pins once**
+   (legal.rs `MovingNets`). Among one part's candidate spots and turns
+   only that part moves; each of its nets' box of the other pins is folded
+   once and a candidate folds only its own pins into it (a power net's
+   hundreds of pins were turned again at every candidate). A minimum of
+   numbers that are neither NaN nor zero is the same in any order; a net
+   with a coordinate of either zero is folded directly. Test: random
+   boards and candidates, the bits and the work against `net_cost`.
+5. **The escape term from boxes and pads it already has** (escape.rs
+   `channel_of_boxes`, `Targets`, `EscapeState::prepare`). A channel took
+   both parts' bodies turned again for every neighbour; the grid's parts
+   keep theirs since they were placed, the candidate's is turned once. A
+   refinement candidate's exits look for each pin's nearest pad of its
+   net on another part: those pads stay where they are among the part's
+   candidates and are taken once (`prepare`, dropped at any change of the
+   state). The same exits, the same overflow; checked against the direct
+   exits in debug builds and with `PCB_PLACER_CHECK_OVERLAP`.
+6. **Relation penalties from each part's own relations** (constraints.rs
+   `PartRelations`). The anneal's and the refinement's penalty of one part
+   scanned every relation and every anchor of a near-any relation for the
+   part (Glasgow: 82 relations, 23 anchors to each decoupling capacitor);
+   the relations it is in are listed once per anneal and refinement, the
+   same ones summed in the same order. Test: random relations of all four
+   kinds, the bits and the work against `relation_penalty`.
+7. **The ring searches visit only the ring** (legal.rs `ring_steps`). The
+   legaliser's, the refinement's and the relation repair's spot searches
+   scanned every step of the square of side `2 r + 1` for the ring's
+   steps; a part without a spot scanned every ring of the board (most of
+   video's legalisation). The same steps in the same order. Test: every
+   ring and window against the scan.
+8. **The relation repair's legality from the parts that may come near**
+   (legal.rs `Reach`, `Sweep`). The repair searches up to `(2 r + 1)^2`
+   spots around a relation's target and tested each against every part
+   of the board (`is_legal(.., 0..count)`, the board's order, the first
+   conflict ending the test). Per relation the parts that may come near
+   any of its spots are found once (body centres against the parts'
+   reach: the farthest corner of anything a part tests legality with, by
+   1.5 for turned boxes, plus the widest gap); a part farther away takes
+   every sub-test's far path, which keeps it clear and books work that
+   depends on the two parts alone (measured once: `clear_of_one` with the
+   repaired part far off), so its work is added in the board's order
+   without the test. Cutouts are always tested. The same answers and the
+   same work; checked against the direct test in debug builds and with
+   `PCB_PLACER_CHECK_OVERLAP`; test: random boards with far sides,
+   hollow parts, rings and courtyards on the far side, at both legality
+   levels.
+9. **The anneal's overlap sums from cached boxes** (anneal.rs `PartBoxes`,
+   `Blocking`). A pair's overlap built its parts' box lists (far side,
+   pads, hollow blocking boxes, courtyards) and freed them again for every
+   pair: on DSP-ADAU1452 (354 hollow parts) the lists and their
+   allocations were half the overlap sums. Each part's boxes at its pose
+   are kept (keyed by the pose's bits) and turned again when it moves; the
+   same boxes in the same order and the same work.
+10. **The crossings at the poses kept from the kept lines** (crossings.rs
+    `involving_kept`). The refinement's starting count of a part and the
+    count before each swap built the moved nets' trees again (Prim's
+    tree of every pin) at the poses the state keeps them at, inserted them
+    into the line grid, counted and removed them: 42 to 46 % of the swaps'
+    time on SNSP-CPU-01 and split72_left. Where every pin of those nets is
+    where it was kept, the trees are the kept ones, so their crossings are
+    the kept lines' count; the work the direct way books (the trees, the
+    lines' insertion, the count with each moved net's line met twice, the
+    removal's scan of each cell's list, whose order `swap_remove` decides)
+    follows from the kept lines and the grid's lists alone. The same count
+    and the same work; test: 600 random moves against `involving`.
+11. **The legality tests without a list a pair** (legal.rs `turned`,
+    `with_rects`). Hollow parts, far sides, rings, pads near a cutout:
+    each pair turned its boxes into a new list. They are turned one by one
+    now, and a list a test needs twice is held in a buffer of the thread:
+    the same answers in the same order, the same work.
+
+### Measured (2026-10-28)
+
+x1871 (main e54c6ada) against the head (3daff389, `pcb-maker-prof4-final`),
+pinned on SMT siblings as the router rounds were (one binary on two CPUs
+of one core, the other on their siblings 16 higher; the other orientation
+with the binaries' CPUs swapped), two threads each, pinned rates,
+`PCB_ROUTER_NO_WALL_GUARD=1 PCB_ROUTER_FINGERPRINT=1 PCB_MAKER_NO_CACHE=1`,
+each pair inside one reservation of the memory ledger, the machine's load
+19 to 38 (the nightly from 02:00 and other agents). The first pairs ran
+both orientations at once on two cores; once the nightly held the ledger
+(the four-binary reservations waited up to 80 minutes) the rest ran one
+orientation a reservation, the second after the first on the same cores
+(a pair's two orientations then differ more: 4in1-mini 807 and 649 s for
+the same binary). CPU seconds are the process's own threads (utime and
+stime from /proc, polled; kicad-cli left out); the change is the geometric
+mean of the two orientations' ratios; peak RSS is the process's VmHWM.
+
+**The placement** (`place-kicad-board` of the task, the race's 16 seeds and
+the layout's 600 s of work; the eleven dense boards and the four
+fingerprint boards). Cells: x1871's two orientations, the head's, the
+change, peak RSS (MB), identical placed board in all four runs:
+
+| board | x1871 CPU s | head CPU s | CPU | x1871 MB | head MB | identical |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| 0xCB panel | 224 / 213 | 199 / 187 | -11.7 % | 152 / 146 | 147 / 147 | yes |
+| protoesp | 949 / 923 | 874 / 872 | -6.7 % | 67 / 67 | 68 / 68 | yes |
+| Glasgow | 1703 / 1703 | 1181 / 1186 | -30.5 % | 96 / 96 | 97 / 97 | yes |
+| video | 1158 / 1145 | 989 / 970 | -15.0 % | 82 / 81 | 82 / 82 | yes |
+| 4in1-mini | 807 / 649 | 651 / 550 | -17.3 % | 74 / 85 | 86 / 74 | yes |
+| 4in1 | 1603 / 1554 | 1264 / 1208 | -21.7 % | 75 / 75 | 75 / 75 | yes |
+| jetson | 547 / 478 | 431 / 410 | -17.8 % | 936 / 1110 | 1110 / 937 | yes |
+| Sisu | 592 / 674 | 423 / 478 | -28.8 % | 97 / 84 | 85 / 84 | yes |
+| SmartSpin2k | 961 / 991 | 543 / 541 | -44.4 % | 278 / 278 | 275 / 276 | yes |
+| DSP-ADAU1452 | 667 / 676 | 454 / 464 | -31.7 % | 63 / 72 | 64 / 73 | yes |
+| MegaDrive | 839 / 841 | 710 / 727 | -14.4 % | 82 / 82 | 82 / 81 | yes |
+| SNSP-CPU-01 | 642 / 608 | 534 / 540 | -14.1 % | 106 / 106 | 106 / 124 | yes |
+| split72_left | 679 / 701 | 470 / 473 | -31.7 % | 531 / 531 | 531 / 531 | yes |
+| k30-SBC | 223 / 215 | 171 / 175 | -21.1 % | 51 / 50 | 55 / 57 | yes |
+| Castor | 237 / 200 | 191 / 164 | -18.6 % | 111 / 110 | 111 / 111 | yes |
+
+The placement's CPU falls 7 to 44 % on every board, 22.6 % as the
+geometric mean of the eleven dense boards and 21.7 % of the four
+fingerprint boards (22.3 % over the fifteen). Most where the profile's
+largest parts were changed: SmartSpin2k (the relation repair), DSP,
+Glasgow and split72_left (the overlap boxes, the relation penalties, the
+swaps' crossings); least where the legaliser's neighbour queries and
+tests dominate (protoesp -7 %, the 0xCB panel -12 %: the legality tests'
+lists went, their queries stay) and where the anneal's overlap queries,
+crossings term and the escape measurements are most of it (MegaDrive,
+SNSP-CPU-01 -14 %). The peak resident size does not change (the caches
+are a part's boxes and a net's term: kilobytes).
+
+**The layout** (`layout-kicad-board`, the task budget of 1500 s of work,
+six dense boards): the layout's CPU, the placement's (the process's CPU
+from `layout: placing` to `layout: placed`), the layout's peak RSS, and
+the placed board, the result board and every fingerprint line identical
+in all four runs:
+
+| board | x1871 CPU s | head CPU s | CPU | x1871 placement CPU s | head | placement | x1871 MB | head MB | identical |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Glasgow | 2668 / 2625 | 2294 / 2331 | -12.6 % | 1577 / 1538 | 1066 / 1090 | -30.8 % | 464 / 467 | 468 / 468 | yes (placed and result boards, 18 fingerprint lines) |
+| SmartSpin2k | 2956 / 3093 | 2558 / 2691 | -13.2 % | 980 / 1004 | 477 / 503 | -50.6 % | 1057 / 1046 | 1065 / 1048 | yes (placed and result boards, 16 fingerprint lines) |
+| DSP-ADAU1452 | 3193 / 3505 | 3016 / 3326 | -5.3 % | 702 / 675 | 469 / 441 | -33.9 % | 1222 / 1204 | 1195 / 1226 | yes (placed and result boards, 46 fingerprint lines) |
+| MegaDrive | 2960 / 3363 | 2834 / 3146 | -5.4 % | 888 / 886 | 716 / 724 | -18.8 % | 1752 / 1750 | 1771 / 1760 | yes (placed and result boards, 20 fingerprint lines) |
+| SNSP-CPU-01 | 3229 / 2803 | 2937 / 2773 | -5.2 % | 731 / 700 | 583 / 586 | -18.3 % | 1652 / 1651 | 1669 / 1659 | yes (placed and result boards, 20 fingerprint lines) |
+| split72_left | 4669 / 3593 | 4474 / 3517 | -3.2 % | 643 / 585 | 433 / 407 | -31.5 % | 2676 / 2695 | 2609 / 2631 | yes (placed and result boards, 62 fingerprint lines) |
+
+The layout's placement falls 18 to 51 % (31.6 % as the geometric mean);
+the layout as a whole falls 3 to 13 % (7.6 % as the geometric mean of
+the six):
+the placement is 14 to 59 % of a layout's CPU (Glasgow's placement takes
+its whole share; split72_left's routing is three quarters of its CPU),
+and the rest (the race's probes, the routes, the moves) is the router's,
+which this round did not touch.
+
+**Identical.** Every placement of the pairs above (eleven dense and four
+fingerprint boards, all four runs of each). Each commit on its own:
+the binary of each of the eleven commits against x1871, placements at
+30 s of work (`PCB_PLACER_WORK_SECONDS=30`) of SmartSpin2k, DSP-ADAU1452,
+4in1-mini, MegaDrive, Glasgow and split72_left: the same board from all
+twelve binaries on each. The head against x1871 at 60 s of work on all
+fifteen boards: the same placements; in check mode
+(`PCB_PLACER_CHECK_OVERLAP=1`, every cache and the sweep against the
+direct computation at every use) on split72_left, Glasgow and
+DSP-ADAU1452 at 80 s and on k30-SBC, SmartSpin2k, 4in1-mini and DSP at
+120 s: no difference. The layouts: the six pairs above, and single
+layouts of the other five dense boards (0xCB panel, protoesp, video,
+4in1-mini, 4in1; x1871 and the head, unpinned): placed board, result
+board and fingerprint lines identical. The fingerprints (route mode,
+Castor, k30-SBC, jetson and Sisu from build/github-layout-v16, a quarter
+budget, two threads): every fingerprint line and the routed boards
+identical (Castor's still dad3a6cb3787). After the rebase on main
+5905bf9a (x1872): the rebased head against x1872 at 60 s of work on all
+fifteen boards, the same placements. `scripts/check.sh --fast` passes.
+
+**The work clock.** Placement budgets are work; the work booked is the
+same by construction (each change books what the computation it replaces
+booked), so a faster placement does the same work, and the measured
+placer rate (the calibration's canned anneal) is the anneal's: it does not
+move with these changes by more than the anneal's own share
+(`calibrate-work-rate` was not rerun).
+
+### Candidates not taken
+
+- **The anneal's overlap "before" cached per part**: a move's overlap
+  before it is the sum over the parts the bucket query finds, in the
+  query's order; the query's order follows the cells' lists, which every
+  move attempt permutes (`swap_remove` on the way out, a push on the way
+  back), so a cached sum can differ in its last bits from the sum the
+  anneal takes. Not exact; not taken.
+- **The bucket query from a coarser index** (MegaDrive's overlap sums and
+  legality tests: a reach of the largest far-side part's makes every query
+  span hundreds of cells): the order of the items (their first cell in the
+  query's row-major scan, then their place in that cell's list) can be
+  reproduced from each item's cell range, but the count of distinct items
+  the work books needs the scan or a 2-D count structure; at the boards'
+  sizes no clear gain over the scan. Not tried.
+- **The anneal's crossings term** (2 to 19 % since e54c6ada): each move's
+  `before` counts the moved nets' kept lines through the grid; a cached
+  count would have to book the same work, which depends on every line
+  in the cells the moved nets' lines pass. Not taken.
+- **The legaliser's and the refinement's neighbour queries** (the rest of
+  protoesp's 59 % and the 0xCB panel's 35 % of legality): the query's
+  work (cells and items) is booked, so a cheaper query must still count
+  the items it skipped; the sweep's reasoning (far parts' work from their
+  far path) would serve, with the bucket query's own order of the near
+  parts reproduced. The next step.
+- **The escape measurements** (the global route, `pcb-global`, up to 11 %
+  on MegaDrive) and **global placement** (17 % on the 0xCB panel): the
+  global router's and the spectral solve's own rounds.
+
+**A debug switch that booked work**: `PCB_PLACER_DEBUG`'s refinement line
+counted the board's crossings again (`resync`), booking that count's work,
+so a run with the switch could place otherwise than one without (the
+seeds' work decides the race's batches); its work is taken back now
+(37b81380, after the measured head; the path runs only with the switch:
+the placements without it are the head's).
+The attribution build's own placements differ from x1871's on some boards
+(SmartSpin2k, DSP-ADAU1452, MegaDrive: 3 to 16 % less work): its timing
+of an anneal swap's two relation costs added them to each other before
+adding them to the wirelength, another rounding of the same sum; its
+categories time the same code paths, so the shares stand as estimates.
+`place-kicad-board` gave the layout's placement on every board measured
+(the same work and seeds as the layout pairs' and the single layouts'
+placements of x1871).

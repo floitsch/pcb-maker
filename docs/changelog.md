@@ -11,6 +11,51 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-28 (the second placer round: the placement 22 % cheaper, the same placements)
+
+Branch placer-profile-2; binaries `build/bin/pcb-maker-prof4-final` (the
+measured head, 3daff389 on main e54c6ada), `-n1` to `-n10` (each commit),
+`-rebased` (on main 5905bf9a); outputs in `build/prof4-*`.
+docs/profiling.md, "The second placer round (2026-10-28)", has the
+profile, the changes and the tables.
+
+- **The profile** (fifteen boards: the eleven dense and the four
+  fingerprint boards' placements, at the layout's budget; per-phase thread
+  CPU, a throwaway build's per-category timing, callgrind): no single hot
+  spot; per board one of the anneal's overlap sums (up to 32 %), the
+  legaliser's legality tests (up to 59 %), the relation repair's legality
+  tests (up to 50 %), the refinement's escape term (up to 20 %), the
+  equal-part swaps (up to 30 %, half of it their crossings counts), the
+  anneal's crossings term (2 to 19 %, on since e54c6ada), video's ring
+  search (69 %).
+- **Eleven changes, each the same computation and the same work booked**:
+  the grids' cells without libm's floor; linked pairs by binary search; the
+  anneal's wirelength before a move from cached net terms; the
+  refinement's candidates fold their nets' other pins once; the escape
+  term from the boxes and pads it has; relation penalties from each part's
+  own relations; ring searches that visit only the ring; the relation
+  repair's legality from the parts that may come near (the far parts'
+  work booked from their far path); the anneal's overlap sums from cached
+  boxes; the crossings at the kept poses from the kept lines (the direct
+  way's work emulated); the legality tests without a list per pair. Unit
+  tests compare each cache or shortcut with the direct computation, and
+  `PCB_PLACER_CHECK_OVERLAP=1` checks them at every use.
+- **Measured** (pinned pairs on SMT siblings against x1871): the
+  placement's CPU -7 to -44 % on every one of the fifteen boards (-22.6 %
+  the dense boards' geometric mean, -21.7 % the fingerprint boards'); in
+  six dense layouts the placement -18 to -51 % (-31.6 %) and the layout
+  -3 to -13 % (-7.6 %): the rest of a layout is the router's. Peak RSS
+  unchanged.
+- **Identical**: every placement of the pairs; each commit's binary on six
+  boards at 30 s of work; the head on all fifteen at 60 s and in check
+  mode on seven; the placed board, the result board and every fingerprint
+  line of the six layout pairs and of single layouts of the other five
+  dense boards; the route-mode fingerprints of Castor, k30-SBC, jetson and
+  Sisu; after the rebase, the rebased head against x1872 on all fifteen at
+  60 s.
+- **A debug switch that booked work** (37b81380): `PCB_PLACER_DEBUG`'s
+  refinement line counted the crossings again and booked it; taken back.
+
 ## Committed on 2026-10-28 (length rules in layouts, the length repair, connection-width gaps, graphic stubs)
 
 Branch length-width-rules (rebased on main be0e6298, x1870); binaries
