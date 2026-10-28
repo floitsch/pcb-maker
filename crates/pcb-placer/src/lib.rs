@@ -655,6 +655,12 @@ pub(crate) fn add_work(amount: u64) {
     WORK.with(|work| work.set(work.get() + amount));
 }
 
+/// Takes back work a debug check of a cache booked (its direct
+/// computation is not the placement's work).
+pub(crate) fn add_work_back(amount: u64) {
+    WORK.with(|work| work.set(work.get() - amount));
+}
+
 /// The CPU time this thread has run (Linux: `/proc/thread-self/schedstat`),
 /// in seconds; `None` where that is not available.
 fn thread_cpu_seconds() -> Option<f64> {

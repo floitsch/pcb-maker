@@ -131,6 +131,69 @@ pub fn exits(
     index: usize,
     out: &mut Vec<Exit>,
 ) {
+    exits_with(problem, escape, members, poses, index, out, None);
+}
+
+/// Per pin of a part, the pads of its net on other parts (`Targets::of`):
+/// their positions and parts, in the net's order. None for a pin whose
+/// net does not count.
+type PinTargets = Vec<Option<Vec<(Point, usize)>>>;
+
+/// The other parts' pads of one part's nets at the poses of now, for its
+/// candidates' exits while only it moves (`EscapeState::prepare`).
+struct Targets {
+    part: usize,
+    pins: PinTargets,
+}
+
+impl Targets {
+    fn of(
+        problem: &Problem,
+        escape: &Escape,
+        members: &[Vec<(usize, usize)>],
+        poses: &[Pose],
+        index: usize,
+    ) -> Self {
+        let pins = problem.components[index]
+            .pins
+            .iter()
+            .map(|pin| {
+                escape
+                    .counted
+                    .get(pin.net)
+                    .copied()
+                    .unwrap_or(false)
+                    .then(|| {
+                        members[pin.net]
+                            .iter()
+                            .filter(|(other, _)| *other != index)
+                            .map(|(other, other_pin)| {
+                                let part = &problem.components[*other];
+                                (
+                                    part.pin_position(&part.pins[*other_pin], poses[*other]),
+                                    *other,
+                                )
+                            })
+                            .collect()
+                    })
+            })
+            .collect();
+        Targets { part: index, pins }
+    }
+}
+
+/// `exits`, the other parts' pads taken from `targets` where given (the
+/// same positions in the same order: the same exits) instead of turned
+/// again.
+fn exits_with(
+    problem: &Problem,
+    escape: &Escape,
+    members: &[Vec<(usize, usize)>],
+    poses: &[Pose],
+    index: usize,
+    out: &mut Vec<Exit>,
+    targets: Option<&PinTargets>,
+) {
     out.clear();
     let component = &problem.components[index];
     let pose = poses[index];
@@ -139,22 +202,36 @@ pub fn exits(
     let high = [center[0] + half[0], center[1] + half[1]];
     let mut nets: Vec<(usize, usize)> = Vec::new();
     let mut work = 0u64;
-    for pin in &component.pins {
+    for (pin_index, pin) in component.pins.iter().enumerate() {
         if !escape.counted.get(pin.net).copied().unwrap_or(false) {
             continue;
         }
         let at = component.pin_position(pin, pose);
         let mut nearest: Option<(f64, Point, usize)> = None;
         work += members[pin.net].len() as u64;
-        for (other, other_pin) in &members[pin.net] {
-            if *other == index {
-                continue;
-            }
-            let part = &problem.components[*other];
-            let there = part.pin_position(&part.pins[*other_pin], poses[*other]);
+        let mut consider = |there: Point, other: usize| {
             let distance = (there[0] - at[0]).powi(2) + (there[1] - at[1]).powi(2);
             if nearest.is_none_or(|(best, _, _)| distance < best) {
-                nearest = Some((distance, there, *other));
+                nearest = Some((distance, there, other));
+            }
+        };
+        match targets.and_then(|targets| targets[pin_index].as_ref()) {
+            Some(pads) => {
+                for &(there, other) in pads {
+                    consider(there, other);
+                }
+            }
+            None => {
+                for (other, other_pin) in &members[pin.net] {
+                    if *other == index {
+                        continue;
+                    }
+                    let part = &problem.components[*other];
+                    consider(
+                        part.pin_position(&part.pins[*other_pin], poses[*other]),
+                        *other,
+                    );
+                }
             }
         }
         let Some((_, target, owner)) = nearest else {
@@ -216,8 +293,28 @@ pub fn channel(
     if !first.side.collides(second.side) || exits_a.is_empty() || exits_b.is_empty() {
         return 0.0;
     }
-    let (center_a, half_a) = body_box(problem, a, pose_a);
-    let (center_b, half_b) = body_box(problem, b, pose_b);
+    channel_of_boxes(
+        escape,
+        a,
+        body_box(problem, a, pose_a),
+        exits_a,
+        b,
+        body_box(problem, b, pose_b),
+        exits_b,
+    )
+}
+
+/// `channel` of two parts on colliding sides with exits on both, from
+/// their body boxes (`body_box`) at their poses.
+fn channel_of_boxes(
+    escape: &Escape,
+    a: usize,
+    (center_a, half_a): (Point, Point),
+    exits_a: &[Exit],
+    b: usize,
+    (center_b, half_b): (Point, Point),
+    exits_b: &[Exit],
+) -> f64 {
     let gap = |axis: usize| (center_b[axis] - center_a[axis]).abs() - half_a[axis] - half_b[axis];
     let (gap_x, gap_y) = (gap(0), gap(1));
     // The axis the gap is across, and the other one the channel runs
@@ -279,8 +376,19 @@ pub struct EscapeState<'a> {
     grid: Grid,
     /// Where each part is in the grid (`None`: not in it).
     in_grid: Vec<Option<Pose>>,
+    /// Each part's body box (`body_box`) at its pose in the grid: a
+    /// candidate's channels with its neighbours take theirs from here
+    /// instead of turning their bodies again (and its own once a
+    /// candidate, not once a neighbour).
+    boxes: Vec<(Point, Point)>,
     near: Vec<usize>,
     scratch: Vec<Exit>,
+    /// The part whose candidates are scored now and its nets' other pads
+    /// (`prepare`), dropped at any change of the other parts' poses.
+    targets: Option<Targets>,
+    /// Whether every exit from `targets` is checked against the direct
+    /// one (debug builds and `PCB_PLACER_CHECK_OVERLAP`).
+    check_targets: bool,
     /// Per part, the measured correction of its term (1 until measured).
     scale: Vec<f64>,
     session: Option<MeasuredSession>,
@@ -311,8 +419,12 @@ impl<'a> EscapeState<'a> {
             exits: exits_of,
             grid: Grid::new(problem.bounds(), 2.5, count),
             in_grid: vec![None; count],
+            boxes: vec![([0.0; 2], [0.0; 2]); count],
             near: Vec::new(),
             scratch: Vec::new(),
+            targets: None,
+            check_targets: cfg!(debug_assertions)
+                || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
             scale: vec![1.0; count],
             session: None,
             kept: 0,
@@ -359,7 +471,27 @@ impl<'a> EscapeState<'a> {
         self.kept
     }
 
+    /// Takes the other parts' pads of part `index`'s nets at `poses` for
+    /// its candidates (`cost` and `cost_without` of `index` while no other
+    /// part moves; the refinement's spots for one part). Dropped by
+    /// `unprepare`, and by any change of the state.
+    pub fn prepare(&mut self, poses: &[Pose], index: usize) {
+        self.targets = Some(Targets::of(
+            self.problem,
+            self.escape,
+            &self.members,
+            poses,
+            index,
+        ));
+    }
+
+    /// Drops what `prepare` took.
+    pub fn unprepare(&mut self) {
+        self.targets = None;
+    }
+
     pub fn insert(&mut self, index: usize, pose: Pose) {
+        self.targets = None;
         if let Some(old) = self.in_grid[index].take() {
             let (center, half) = body_box(self.problem, index, old);
             self.grid.remove(index, center, half);
@@ -367,11 +499,13 @@ impl<'a> EscapeState<'a> {
         let (center, half) = body_box(self.problem, index, pose);
         self.grid.insert(index, center, half);
         self.in_grid[index] = Some(pose);
+        self.boxes[index] = (center, half);
     }
 
     /// The grid and every part's exits at `poses` (parts moved by others
     /// since: the relation repair between two refinements).
     pub fn resync(&mut self, poses: &[Pose]) {
+        self.targets = None;
         for index in 0..self.in_grid.len() {
             if let Some(pose) = self.in_grid[index]
                 && pose != poses[index]
@@ -409,14 +543,35 @@ impl<'a> EscapeState<'a> {
     pub fn cost_without(&mut self, poses: &[Pose], index: usize, without: usize) -> f64 {
         let pose = poses[index];
         let mut own = std::mem::take(&mut self.scratch);
-        exits(
+        let targets = self
+            .targets
+            .as_ref()
+            .filter(|targets| targets.part == index)
+            .map(|targets| &targets.pins);
+        exits_with(
             self.problem,
             self.escape,
             &self.members,
             poses,
             index,
             &mut own,
+            targets,
         );
+        if self.check_targets && targets.is_some() {
+            let mut direct = Vec::new();
+            let work = crate::work();
+            exits(
+                self.problem,
+                self.escape,
+                &self.members,
+                poses,
+                index,
+                &mut direct,
+            );
+            // The check's own work is not the placement's.
+            crate::add_work_back(crate::work() - work);
+            assert_eq!(own, direct, "exits of part {index} from the prepared pads");
+        }
         let mut total = 0.0;
         if !own.is_empty() {
             let (center, half) = body_box(self.problem, index, pose);
@@ -425,22 +580,28 @@ impl<'a> EscapeState<'a> {
                 .grid
                 .query(center, [half[0] + reach, half[1] + reach], &mut self.near);
             crate::add_work((cells + self.near.len()) as u64);
+            let sides = |part: usize| self.problem.components[part].side;
             for &other in &self.near {
                 if other == index || other == without {
                     continue;
                 }
-                let Some(other_pose) = self.in_grid[other] else {
+                if self.in_grid[other].is_none() {
                     continue;
-                };
-                let overflow = channel(
-                    self.problem,
+                }
+                // `channel` of the two, the boxes from the query and the
+                // grid.
+                let exits = &self.exits[other];
+                if !sides(index).collides(sides(other)) || exits.is_empty() {
+                    continue;
+                }
+                let overflow = channel_of_boxes(
                     self.escape,
                     index,
-                    pose,
+                    (center, half),
                     &own,
                     other,
-                    other_pose,
-                    &self.exits[other],
+                    self.boxes[other],
+                    exits,
                 );
                 if overflow > 0.0 {
                     total += overflow * (self.scale[index] + self.scale[other]) / 2.0;
@@ -455,6 +616,7 @@ impl<'a> EscapeState<'a> {
     /// parts and of the parts sharing a small net with them; every
     /// `measure_every` kept moves the measured correction again.
     pub fn kept(&mut self, poses: &[Pose], moved: &[usize]) {
+        self.targets = None;
         let mut touched: Vec<usize> = moved.to_vec();
         for &index in moved {
             if self.in_grid[index].is_some() {

@@ -2211,6 +2211,10 @@ pub fn refine_with(
             // Only this part moves among its candidates: its nets' other
             // pins are folded once (`MovingNets`), `cost` of its nets.
             let moving = MovingNets::new(problem, &members, &incident[index], index, poses);
+            // Its exits' targets, likewise (`EscapeState::prepare`).
+            if let Some(state) = escape.as_mut() {
+                state.prepare(poses, index);
+            }
             let score = |poses: &[Pose]| {
                 moving.cost(problem, &members, poses) + counted_penalty(problem, poses, index)
             };
@@ -2310,6 +2314,9 @@ pub fn refine_with(
                         }
                     }
                 }
+            }
+            if let Some(state) = escape.as_mut() {
+                state.unprepare();
             }
             poses[index] = best.1;
             if best.1 != original {
