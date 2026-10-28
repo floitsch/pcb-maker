@@ -5344,6 +5344,264 @@ first route itself remains the only ranker at +0.7; a cheaper probe
 that ranks as well would have to reproduce what its long negotiation
 and repairs decide.
 
+## Cheaper stages of the placer protocol, calibrated (2026-10-28)
+
+The placer-default protocol (benchmarks.md, "Measurement discipline:
+placer defaults") judges a lever by 110 full layouts (eleven dense boards,
+five seed pairs, placement and routing to KiCad's final check): 50 to 90
+CPU hours and 18 hours of wall a lever. This step calibrates cheaper
+stages against the two experiments whose full rows are complete, so
+that a ladder (benchmarks.md, "The ladder of placer measurements
+(2026-10-28)") can drop a lever early without losing the ones the full
+protocol would keep. Script `experiments/fast-protocol/calibrate.py`
+(`analyse`, `bootstrap`, `reuse`, `locality`, `race-off-plan`).
+
+The ground truth:
+
+- **cross**: crossings in the anneal, x1851 on both sides (off: the
+  defaults; on: `ratsnest_crossings.anneal`), `build/cross3-dense-s1-*`
+  and `build/cross3-u/dense-s<N>-*`: -10.8 % weighted, p 0.002, BETTER
+  ("Under the placer-default protocol (2026-10-27)" above).
+- **race**: the race's ripped count, off x1859, on x15190 with
+  `race_count: "ripped"`, `build/race3-*`: -2.4 % weighted, p 0.231 on
+  the refreshed noise file, EXTEND (branch race-ripped-count, placer.md
+  "The race ranks its probes by the ripped count"). 34 of its 55 off rows
+  are the on rows (the race kept the same placement); 21 ran on x1859.
+
+The stages:
+
+- **first route**: the first route's open terminals
+  (`first_unconnected_terminals`) of the same rows. A layout with the new
+  layout option `stop_after_first_route` reports exactly that count and
+  ends there (the placement, the race and the first route as without it,
+  then the board as the first route left it, its labels, KiCad's check
+  and the report); every full row already carries it, so its statistics
+  need no new run.
+- **placement metrics**: `ablate-kicad-placement` (x1873) on each row's
+  placed board (the poses the final route had; on the dense boards the
+  moves do not run, so it is the race's pick): wirelength, ratsnest
+  crossings, the objective (wirelength plus 3 mm a crossing), blocked
+  exits (the escape model's exits facing another body), channel
+  overflow and the global route's overflow.
+- **quarter budget**: the same seeds, binaries and settings at
+  `--budget-scale 0.25` (`build/proto1-q`, the race's off side by the
+  same rule: off runs only where the on report's unfinished count picks
+  another placement). **Pending**: the 165 layouts were queued at 10:50
+  through the memory ledger, which admitted none of them by 13:35 (its
+  floor held every non-nightly request: placement checks of another
+  agent reserved 2.2 to 6 GB each at 23 to 135 MB resident); the table
+  below has no quarter rows yet.
+
+**The calibration** (`calibrate.py analyse`; 55 pairs each; the
+weighted change with the noise file's weights and its two p values, as
+`placer_ab.py compare`; "own noise": weights and null from the stage's
+own off side, five seeds, for the metrics the noise file lacks; Spearman
+per board over its ten rows (seed x side) against the full rows' KiCad
+unconnected, the mean over the boards (equal to the pooled correlation
+of the within-board ranks, every board having ten rows); the per-pair
+changes on - off relative to the board's noise mean: their Spearman
+against the full rows' changes, how many of the pairs the full rows
+moved get the same sign, and how many of the boards whose mean change
+moved):
+
+| experiment, stage | weighted (noise file) | p sign-flip / noise | verdict | weighted (own noise) | verdict (own) | sum of medians | rows vs full final | changes: Spearman, pair signs, board signs |
+| --- | ---: | --- | --- | ---: | --- | --- | ---: | --- |
+| cross, full | -10.8 % | 0.002 / 0.001 | BETTER | -9.6 % | BETTER | 969 -> 860 | +1.00 | - |
+| cross, first route | -8.5 % | 0.014 / 0.006 | BETTER | -10.0 % | BETTER | 1331 -> 1291 | +0.78 | +0.66, 40/50, 9/10 |
+| cross, crossings | -8.1 % | 0.000 / 0.000 | BETTER | -7.6 % | BETTER | 39107 -> 36078 | +0.39 | +0.46, 34/50, 8/10 |
+| cross, objective | -1.5 % | 0.136 / 0.141 | EXTEND | -1.1 % | EXTEND | 258503 -> 247310 | +0.36 | +0.25, 28/50, 6/10 |
+| cross, wirelength | - | - | - | +2.7 % | WORSE | 136828 -> 133623 | +0.10 | -0.03, 22/50, 4/10 |
+| cross, blocked exits | - | - | - | -1.2 % | EXTEND | 8116 -> 8008 | -0.06 | +0.03, 28/50, 6/10 |
+| cross, channel overflow | - | - | - | -3.8 % | NOT BETTER | 176 -> 238 | +0.10 | +0.01, 24/50, 4/10 |
+| cross, global overflow | - | - | - | -29.7 % | BETTER | 241 -> 195 | +0.33 | +0.13, 25/50, 6/10 |
+| race, full | -2.4 % | 0.123 / 0.231 | EXTEND | -1.8 % | NOT BETTER | 998 -> 846 | +1.00 | - |
+| race, first route | -2.3 % | 0.243 / 0.248 | EXTEND | -0.3 % | NOT BETTER | 1347 -> 1179 | +0.82 | +0.69, 15/19, 7/7 |
+| race, crossings | -3.0 % | 0.069 / 0.038 | EXTEND | -1.2 % | EXTEND | 38640 -> 38084 | +0.44 | +0.33, 12/19, 7/7 |
+| race, objective | -1.6 % | 0.074 / 0.070 | EXTEND | -0.8 % | EXTEND | 255916 -> 245379 | +0.42 | +0.53, 14/19, 6/7 |
+| race, wirelength | - | - | - | -1.1 % | EXTEND | 135606 -> 129097 | +0.30 | +0.28, 11/19, 5/7 |
+| race, blocked exits | - | - | - | -0.2 % | NOT BETTER | 8106 -> 8103 | +0.17 | +0.33, 12/19, 7/7 |
+| race, channel overflow | - | - | - | -7.1 % | EXTEND | 226 -> 179 | -0.06 | -0.09, 7/19, 2/7 |
+| race, global overflow | - | - | - | -19.9 % | BETTER | 249 -> 213 | +0.41 | +0.47, 12/19, 5/7 |
+| either, quarter budget | pending | | | | | | | |
+
+(The race's placement metrics see the race's pick, a routing decision:
+a placement-only run, which ends before the race, sees no difference
+at all between its two sides.)
+
+**The screen's risk** (`calibrate.py bootstrap`, 1000 resamples of the
+five seeds with replacement, each seed's eleven boards kept together;
+the full stage and the cheap one judged on each resample by the
+weighted change on the noise file's weights and its noise-null p; a
+cheap stage passes a lever on when its change is negative and its p is
+at most 0.25):
+
+| experiment, stage | full change < 0 | full BETTER (p <= 0.03) | passes where the full change < 0 | passes where the full says BETTER | signs agree |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| cross, first route | 0.99 | 0.87 | 0.97 | 1.00 | 1.00 |
+| cross, crossings | 1.00 | 0.86 | 1.00 | 1.00 | 1.00 |
+| cross, objective | 0.99 | 0.87 | 0.65 | 0.74 | 0.82 |
+| race, first route | 0.86 | 0.06 | 0.60 | 1.00 | 0.85 |
+| race, crossings | 0.87 | 0.05 | 0.88 | 1.00 | 0.90 |
+| race, objective | 0.86 | 0.03 | 0.91 | 1.00 | 0.89 |
+
+(Resampling five seeds with replacement understates the seed noise of a
+fresh draw; read the rates as optimistic, and the race's "full BETTER"
+column as 30 to 60 resamples.)
+
+**Cost** (the full rows' own clocks; `calibrate.py analyse`): cross 110
+layouts, 87.8 CPU hours, 38.6 hours of work; race 76 layouts run (55 on,
+21 off), 49.0 CPU hours. Of a row's wall clock the placement takes 0.25
+(cross) and 0.28 (race), the placement, the race and the first route
+together 0.55 and 0.57; per board 0.19 (the 0xCB panel) to 0.99 (video,
+whose first route runs to the end of the budget: many open, no moves,
+the narrow-signal attempt only), MegaDrive 0.70, the 4in1 0.74, Glasgow
+0.67, split72_left 0.35, DSP-ADAU1452 0.36. The first-route stage is
+therefore about 55 % of the full protocol's cost, about 48 CPU hours on
+the crossings experiment, not the large saving the idea hoped for. (A
+measured sample of `stop_after_first_route` beside full layouts on the
+same binary is queued with the quarter rows: pending.)
+
+**Reuse** (`calibrate.py reuse`): of the crossings experiment's 55 pairs
+(one binary) no placed board is the same on both sides (the anneal's
+term changes every placement); a placement cache would have reused
+nothing there, and nothing on the race (two binaries; and the race is
+after the placement). The race experiment's own rule, reusing the on row
+where the race kept the same placement, saved 34 of 110 layouts (31 %).
+The cache (run.py `--reuse`, below) pays for levers that leave boards
+alone and run both sides on one binary, and for every rerun.
+
+### Judgement
+
+- **The first route agrees with the full verdict on both experiments**:
+  BETTER on the crossings (-8.5 %, p 0.014 / 0.006 against -10.8 %, p
+  0.002), EXTEND on the race (-2.3 %, p 0.248 against -2.4 %, p 0.231),
+  its rows at Spearman +0.78 / +0.82 with the full finals, its per-pair
+  changes at +0.66 / +0.69, the boards' signs 9 of 10 and 7 of 7. As a
+  screen it let every resampled BETTER through. It costs 55 % of the
+  full stage: a cheaper stage by half, not by ten.
+- **The placement metrics do not judge routing.** The crossings agree on
+  the crossings experiment because the lever lowers crossings (its own
+  objective: circular), and their rows correlate with the final count at
+  +0.39 / +0.44 only; the objective is EXTEND where the full stage says
+  BETTER, the wirelength says WORSE where routing improved, the blocked
+  exits and the channel overflow do not follow the final count (row
+  Spearman -0.06 to +0.17). A placement-only stage cannot see a change
+  after the placement (the race) at all. Stage 0 is a sanity check that
+  the lever moved what it meant to move, not a filter.
+- **The global route's overflow** is the one placement-side measure that
+  is BETTER on both (-29.7 % and -19.9 %, own noise), with row
+  correlations of +0.33 and +0.41: a candidate proxy for a later study,
+  not yet a screen (its change Spearman +0.13 on the crossings).
+- **The quarter budget** is pending; it is the stage that could cut the
+  cost by four if it agrees.
+
+**The new switches.** `stop_after_first_route` (layout option, off by
+default; board_layout.rs: every step after the first route refused by
+the layout's stop, the race not, no wall cut noted; the report's
+`stopped_after_first_route`). On the 0xCB 1337-v4.0 at budget scale
+0.2: 59.8 CPU s against the full layout's 227, the same first route (0
+open). The placement digest (`layout: placement digest <sha256>` before
+the race, `placement_digest` in the report) and run.py `--reuse DIR`
+(README.md, "Reused layouts"): a layout whose digest, binary, task,
+layout settings beside the placer's, rates and threads equal a stored
+run's ends after its placement and takes that run's row (`reused_from`);
+on the same board a rerun took 34.5 CPU s against 227.
+
+## Condensed boards as a fast benchmark: an assessment (2026-10-28)
+
+The idea (design only, nothing built): cut a difficult board to a window
+around its crowded cluster; the parts outside stay fixed and the nets
+that leave the window become ports on its edge; place the window's parts
+and route the window alone, at a fraction of the board's work. Whether
+that is a benchmark of the placer depends on how much of a board's
+difficulty sits in such a window, and on what the window cannot see.
+
+**How local the difficulty is** (`experiments/fast-protocol/calibrate.py
+locality`, over the full-budget rows of both calibrated experiments that
+ran, 15 to 19 a board: KiCad's unconnected items of each result, each at
+the midpoint of its two items and by the parts whose pads it names; the
+share of the items that name the part named most, and the three named
+most; the largest share inside a window of a quarter of the parts' box
+(half its width, half its height) and of a ninth, slid in tenths; the
+share of the board's parts inside that quarter window):
+
+| Board | parts (movable) | open, mean | part named most (rows of 15-19) | its share | top 3 | in a quarter window | in a ninth | parts in the quarter window |
+| --- | ---: | ---: | --- | ---: | ---: | ---: | ---: | ---: |
+| Glasgow | 375 (237) | 145 | U30, BGA-121 0.8 mm (18) | 0.52 | 0.60 | 0.93 | 0.66 | 0.59 |
+| split72_left | 727 (452) | 22 | U10, RP2040 QFN-56 (15) | 0.69 | 0.84 | 0.92 | 0.74 | 0.33 |
+| DSP-ADAU1452 | 445 (366) | 11 | U201 (15) | 0.59 | 0.71 | 0.92 | 0.85 | 0.49 |
+| MegaDrive | 331 (248) | 127 | U4, QFP-160 0.65 mm (14) | 0.51 | 0.78 | 0.82 | 0.53 | 0.32 |
+| SNSP-CPU-01 | 525 (372) | 79 | U1, PQFP-100 (6) | 0.25 | 0.51 | 0.83 | 0.58 | 0.43 |
+| video | 190 (167) | 219 | U24, PQFP-160 (12) | 0.31 | 0.62 | 0.74 | 0.48 | 0.35 |
+| OpenESC 4in1 | 252 (221) | 117 | U4, QFN-24 (6) | 0.11 | 0.26 | 0.63 | 0.36 | 0.46 |
+| protoesp | 327 (122) | 68 | U4, SOP-16 (11) | 0.11 | 0.24 | 0.60 | 0.36 | 0.29 |
+| OpenESC 4in1-mini | 223 (189) | 92 | U9, QFN-24 (10) | 0.12 | 0.27 | 0.55 | 0.31 | 0.42 |
+| SmartSpin2k | 1169 (630) | 49 | U2, QFN-28 (12; one per panel copy) | 0.80 | 0.97 | 0.43 | 0.15 | 0.28 |
+| 0xCB panel | 524 (120) | 0 | - | - | - | - | - | - |
+
+- **Local on four boards**: Glasgow (the FPGA's BGA), split72_left (the
+  RP2040), DSP-ADAU1452 and MegaDrive: one part is named in half or more
+  of the open items, and a quarter window holds 82 to 93 % of them, in
+  the same part on 14 to 18 of the rows. SNSP-CPU-01 and video are local
+  by place (74 to 83 % in a quarter window) but spread over several
+  large parts. The ESCs and protoesp are not local (no part in more than
+  12 %, 55 to 63 % in a quarter window); SmartSpin2k's items name the same
+  reference in every copy of the panel (80 %) and spread over the copies
+  (43 % in a quarter window); the panel routes completely.
+- **The window is not small**: the quarter window that holds 82 to 93 % of
+  the open items holds 32 to 59 % of the board's parts (a ninth holds 53
+  to 85 % of the items). A window around the cluster with its
+  connections' room is a third to three fifths of the board: a routing
+  pass perhaps two to three times cheaper, not the order of magnitude the
+  idea needs; the quarter budget (above; its calibration pending) cuts
+  every board by about four with nothing cut away, if it agrees.
+
+**What a window loses.**
+
+- *The placement outside it.* The levers act on the whole board: of the
+  crossings-in-the-anneal effect (-10.8 %), the largest weighted share
+  is the 4in1's (-24 %, weight 58), a board that is not local, and
+  video's -20 %; on the local boards Glasgow -16 % and split72_left -18 %.
+  A condensed tier of the four local boards would have judged a fifth of
+  the weight the protocol judged.
+- *Global wirelength and the connectors.* Fixed parts outside fix where
+  the window's nets leave it; a change that moves the cluster relative to
+  its connectors, or the connectors themselves (edge constraints, the
+  race between whole placements), is invisible.
+- *The ports' order.* A port where the full route crossed the window's
+  edge imposes that route's exit order (open problem 2 in handover.md is
+  exactly that order at fine-pitch rows); ports from the ratsnest impose
+  none and route too easily. Either way the window's difficulty is
+  partly the ports'.
+- *Pours and the race.* A plane net spans the board (its stubs and
+  thermals in the window depend on the plane outside); the race and the
+  moves compare whole placements.
+- *A moving cluster.* The cluster's parts move between seeds and
+  placements, so the window must follow parts (the most-named part and
+  the parts on its nets within a hop), not coordinates; its size then
+  varies per placement, and the condensed board is a different problem
+  per row.
+
+**How representativeness would be measured** (if built): the window
+tier of the four local boards at the protocol's seeds for both
+calibrated experiments; per row the Spearman between the window's KiCad
+unconnected and the full board's (all of them, and those inside the
+window), the per-pair changes' Spearman and sign agreement as in the
+calibration above, and the verdict on those four boards against the
+full verdict restricted to them; it would need a row Spearman of about
++0.7 and the changes' signs on four in five pairs, at a quarter of the
+CPU or less, to pay.
+
+**Recommendation: no-go** for a placer benchmark now. Four of eleven
+boards are local, their windows keep a third to three fifths of the
+parts, the effect the protocol confirmed lies mostly on boards a window
+cannot represent, and the ports are a design problem with their own
+validation (the exit order is the open problem it would have to
+assume solved). Worth revisiting as a router or fan-out benchmark
+around one part (Glasgow's U30, split72_left's U10, MegaDrive's U4),
+where the window is the honest unit and the placement outside it is
+meant to stay.
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a

@@ -11,6 +11,40 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-28 (cheaper stages of the placer protocol, calibrated; the quarter budget pending)
+
+Branch fast-placer-protocol; binary `build/bin/pcb-maker-proto1-a`
+(the option and the digest on main f26f822f); outputs in
+`build/proto1-*`; script `experiments/fast-protocol/calibrate.py`.
+docs/placer.md, "Cheaper stages of the placer protocol, calibrated
+(2026-10-28)" and "Condensed boards as a fast benchmark: an assessment
+(2026-10-28)"; docs/benchmarks.md, "The ladder of placer measurements
+(2026-10-28)".
+
+- **Calibrated against the two complete experiments** (crossings in the
+  anneal, BETTER -10.8 %; the race's ripped count, EXTEND -2.4 %): the
+  first route's open terminals give the same verdict on both (-8.5 %
+  BETTER, -2.3 % EXTEND), rows at Spearman +0.78 / +0.82 with the
+  finals, per-pair changes +0.66 / +0.69; they cost 0.55 to 0.57 of the
+  full stage (video 0.99). The placement metrics do not judge routing
+  (row Spearman +0.10 to +0.44; the crossings agree only on the lever
+  that lowers them; blind to the race). The quarter budget: 165 layouts
+  queued, none admitted by the memory ledger by 13:35: pending.
+- **`stop_after_first_route`** (layout option, off): the layout ends with
+  its first route's board, KiCad's check and the report
+  (`stopped_after_first_route`).
+- **The placement digest** (`layout: placement digest`,
+  `placement_digest` in board-layout.json) and **run.py `--reuse DIR`**:
+  a layout whose placement, binary, task, layout settings beside the
+  placer's, rates and threads equal a stored run's ends after its
+  placement and takes that row (`reused_from`). On the calibrated
+  experiments it would have reused nothing (all 55 crossings placements
+  moved; the race ran two binaries); the race's own pick rule saved 34
+  of 110.
+- **Condensed boards**: four of the eleven dense boards are local
+  (Glasgow, split72_left, DSP-ADAU1452, MegaDrive: 82 to 93 % of the
+  open items in a quarter window), whose windows hold a third to three
+  fifths of the parts; no-go as a placer benchmark.
 ## Committed on 2026-10-28 (vias in BGA pads where the designer has them)
 
 Branch via-in-pad (rebased on main 63b74ac1); binaries

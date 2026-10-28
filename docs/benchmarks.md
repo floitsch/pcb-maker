@@ -412,6 +412,44 @@ change of the observed size needs; `--metric first_open|objective|crossings`
 judges a proxy instead (`--tool` counts the objective and the crossings
 of each placed board, cached by its sha256 in `build/placer-ab-signals`).
 
+### The ladder of placer measurements (2026-10-28)
+
+The protocol above costs 110 full layouts a lever (about 88 CPU hours,
+18 hours of wall beside the nightly). Calibrated against its two complete
+experiments (crossings in the anneal: BETTER, -10.8 %; the race's ripped
+count: EXTEND, -2.4 %; placer.md, "Cheaper stages of the placer
+protocol, calibrated (2026-10-28)"), a lever climbs three stages and
+stops where it fails:
+
+| stage | what runs | cost (the crossings experiment) | calibration | false-negative risk |
+| --- | --- | --- | --- | --- |
+| 0: placement | the placement alone, or the placed boards of stage 1's rows; `ablate-kicad-placement` metrics (crossings, objective, wirelength, blocked exits, overflows) | a quarter of a layout's wall (0.25 to 0.28: about 22 CPU h for 110 placements at the task budget; main's placer is 22 % cheaper since 2026-10-28) | row Spearman with the final count +0.10 to +0.44; agrees with the full verdict only where the metric is the lever's own (crossings on the crossings lever); blind to anything after the placement (the race) | high: a check that the lever moved what it meant to move, not a filter |
+| 1: first route | the five seed pairs with `--layout '{"stop_after_first_route": true}'` (or any full rows' `first_unconnected_terminals`); `placer_ab.py compare --metric first_open` | 0.55 to 0.57 of the full stage (about 48 CPU h); per board 0.19 (0xCB panel) to 0.99 (video) | the full verdict on both: BETTER -8.5 % (p 0.014 / 0.006) and EXTEND -2.3 % (p 0.248); rows +0.78 / +0.82 with the finals, per-pair changes +0.66 / +0.69, boards' signs 9/10 and 7/7 | low on these two: it passed on every resampled BETTER (1000 resamples of the seeds); it passed 60 % of the race's resamples whose full change was negative |
+| 1': quarter budget | the five seed pairs at `--budget-scale 0.25` | about a quarter (pending) | pending: 165 layouts queued 2026-10-28, none admitted by the ledger by 13:35 | pending |
+| 2: full | the protocol above | 110 layouts, 88 CPU h | the ground truth | - |
+
+- **A lever passes stage 1** when the first route's weighted change is
+  negative at the noise file's p <= 0.25 (`placer_ab.py compare --metric
+  first_open`); then stage 2 on the same seeds, which repeats stage 1's
+  placements and first routes (a full layout cannot start from a stopped
+  one, and `--reuse` does not cross the option: it is in the key).
+- **What it saves** is half, not an order of magnitude: the first route
+  is most of a dense layout's routing (video's runs to the budget's end).
+  Stage 1 is worth it where most levers fail: a lever that fails stage 1
+  costs 48 CPU hours instead of 88. The quarter budget, if its
+  calibration agrees, is the stage that would cut by four.
+- **Reuse** (run.py `--reuse build/layout-reuse`, README.md "Reused
+  layouts"): run both sides on one binary with the lever as an option;
+  boards the lever leaves alone then cost their placement only (about a
+  quarter), and every rerun of a row (the next lever's off side, the noise
+  file) too. On the two calibrated experiments it would have reused
+  nothing (the anneal's term moved all 55 placements; the race used two
+  binaries); the race's own rule (reuse the on row where the race kept
+  the same placement) saved 34 of 110 layouts.
+- **Condensed boards** (a window around a crowded cluster) are not a
+  stage: placer.md, "Condensed boards as a fast benchmark: an assessment
+  (2026-10-28)", no-go.
+
 ## Memory ledger: who runs next (2026-10-24, the drain 2026-10-25, its feasibility cap, its end and short requests 2026-10-26, the measured floor, the capacity from the machine, kicad-cli under a reservation, the hand-over and the wait past a reservation 2026-10-27)
 
 Benchmarks share the machine through the memory ledger

@@ -1289,9 +1289,9 @@ as `<key>.json` with its directory, which must stay where it is (a
 stored entry whose directory is gone is a miss).
 
 What it saves: everything after the placement (the race, the routes, the
-ladder, KiCad's checks), about 45 % of a dense layout's wall clock
-(docs/placer.md, "Cheaper stages of the placer protocol, calibrated
-(2026-10-28)"). When it hits: a placer A/B whose two sides run on one
+ladder, KiCad's checks), about three quarters of a dense layout's wall
+clock (the placement takes 0.25 to 0.28 of it; docs/placer.md, "Cheaper
+stages of the placer protocol, calibrated (2026-10-28)"). When it hits: a placer A/B whose two sides run on one
 binary (the switch as an option) on the boards the switch leaves alone,
 and every rerun of a row (the off side of the next experiment, the noise
 file's seeds). The digest holds the placer settings that land in the
