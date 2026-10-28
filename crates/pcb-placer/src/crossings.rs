@@ -45,14 +45,32 @@ pub struct Crossings {
 /// from the first point; a tie to the earlier point), as pairs of indices
 /// in the order the tree takes them.
 pub fn spanning_tree(points: &[Point]) -> Vec<(usize, usize)> {
+    let mut edges = Vec::with_capacity(points.len().saturating_sub(1));
+    spanning_tree_into(points, &mut edges, &mut Prim::default());
+    edges
+}
+
+/// `spanning_tree`'s buffers.
+#[derive(Default)]
+struct Prim {
+    in_tree: Vec<bool>,
+    best: Vec<(f64, usize)>,
+}
+
+/// `spanning_tree` into `edges` (cleared), with the buffers of `prim`.
+fn spanning_tree_into(points: &[Point], edges: &mut Vec<(usize, usize)>, prim: &mut Prim) {
     let count = points.len();
-    let mut edges = Vec::with_capacity(count.saturating_sub(1));
+    edges.clear();
     if count < 2 {
-        return edges;
+        return;
     }
     let distance = |a: Point, b: Point| ((a[0] - b[0]).powi(2) + (a[1] - b[1]).powi(2)).sqrt();
-    let mut in_tree = vec![false; count];
-    let mut best = vec![(f64::INFINITY, 0usize); count];
+    let in_tree = &mut prim.in_tree;
+    in_tree.clear();
+    in_tree.resize(count, false);
+    let best = &mut prim.best;
+    best.clear();
+    best.resize(count, (f64::INFINITY, 0usize));
     in_tree[0] = true;
     for other in 1..count {
         best[other] = (distance(points[0], points[other]), 0);
@@ -75,7 +93,6 @@ pub fn spanning_tree(points: &[Point]) -> Vec<(usize, usize)> {
             }
         }
     }
-    edges
 }
 
 /// Whether the lines `a`-`b` and `c`-`d` properly cross (bounding boxes
@@ -465,6 +482,11 @@ pub struct CrossingState<'a> {
     slot_lines: Vec<Vec<u32>>,
     fresh_seen: Vec<u32>,
     fresh_stamp: u32,
+    /// `tree_into`'s buffers: Prim's and its edges, and `involving`'s
+    /// nets.
+    prim: Prim,
+    edges: Vec<(usize, usize)>,
+    nets: Vec<usize>,
     /// Every `involving` checked against `involving_direct` (debug builds
     /// and `PCB_PLACER_CHECK_OVERLAP`).
     check: bool,
@@ -579,6 +601,9 @@ impl<'a> CrossingState<'a> {
             slot_lines: Vec::new(),
             fresh_seen: Vec::new(),
             fresh_stamp: 0,
+            prim: Prim::default(),
+            edges: Vec::new(),
+            nets: Vec::new(),
             check: cfg!(debug_assertions) || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
         };
         let cells = state.grid.cells.len();
@@ -606,13 +631,21 @@ impl<'a> CrossingState<'a> {
 
     /// The counted nets on the pins of `parts`, sorted, each once.
     fn nets_of(&self, parts: &[usize]) -> Vec<usize> {
-        let mut nets: Vec<usize> = parts
-            .iter()
-            .flat_map(|part| self.incident[*part].iter().copied())
-            .collect();
+        let mut nets = Vec::new();
+        self.nets_into(parts, &mut nets);
+        nets
+    }
+
+    /// `nets_of` into `nets` (cleared).
+    fn nets_into(&self, parts: &[usize], nets: &mut Vec<usize>) {
+        nets.clear();
+        nets.extend(
+            parts
+                .iter()
+                .flat_map(|part| self.incident[*part].iter().copied()),
+        );
         nets.sort_unstable();
         nets.dedup();
-        nets
     }
 
     /// The tree of `net` at `poses`, its lines added to the grid; their
@@ -624,6 +657,15 @@ impl<'a> CrossingState<'a> {
     /// The tree of `net` at `poses`, its lines in the grid where `insert`;
     /// their ids.
     fn tree(&mut self, poses: &[Pose], net: usize, insert: bool) -> Vec<u32> {
+        let mut ids = Vec::new();
+        self.tree_into(poses, net, insert, &mut ids);
+        ids
+    }
+
+    /// `tree`, its ids appended to `ids` (no list of its own: `involving`
+    /// built one a net, Prim's two and its edges' for every spot and
+    /// candidate).
+    fn tree_into(&mut self, poses: &[Pose], net: usize, insert: bool, ids: &mut Vec<u32>) {
         let started = profile::now();
         let mut points = std::mem::take(&mut self.points);
         points.clear();
@@ -631,7 +673,8 @@ impl<'a> CrossingState<'a> {
             let component = &self.problem.components[*part];
             points.push(component.pin_position(&component.pins[*pin], poses[*part]));
         }
-        let edges = spanning_tree(&points);
+        let mut edges = std::mem::take(&mut self.edges);
+        spanning_tree_into(&points, &mut edges, &mut self.prim);
         let pins = points.len() as u64;
         crate::add_work(crate::PIN_WORK * pins + pins * pins);
         profile::add(|tally| {
@@ -640,8 +683,8 @@ impl<'a> CrossingState<'a> {
             tally.lines += edges.len() as u64;
         });
         profile::lap(started, |tally, nanos| tally.tree_nanos += nanos);
-        let mut ids = Vec::with_capacity(edges.len());
-        for (from, to) in edges {
+        ids.reserve(edges.len());
+        for &(from, to) in &edges {
             let line = Line {
                 net,
                 a: points[from],
@@ -665,7 +708,7 @@ impl<'a> CrossingState<'a> {
             ids.push(id);
         }
         self.points = points;
-        ids
+        self.edges = edges;
     }
 
     fn drop_lines(&mut self, ids: &[u32]) {
@@ -769,12 +812,15 @@ impl<'a> CrossingState<'a> {
     /// the same work; checked against `involving_direct` in debug builds
     /// and with `PCB_PLACER_CHECK_OVERLAP`.
     pub fn involving(&mut self, poses: &[Pose], moved: &[usize]) -> u64 {
-        let nets = self.nets_of(moved);
+        let mut nets = std::mem::take(&mut self.nets);
+        self.nets_into(moved, &mut nets);
         if nets.is_empty() {
+            self.nets = nets;
             return 0;
         }
         let check_from = self.check.then(crate::work);
         let found = self.involving_apart(poses, &nets);
+        self.nets = nets;
         if let Some(start) = check_from {
             let booked = crate::work() - start;
             let direct_start = crate::work();
@@ -814,8 +860,7 @@ impl<'a> CrossingState<'a> {
         let mut fresh = std::mem::take(&mut self.fresh);
         fresh.clear();
         for &net in nets {
-            let ids = self.tree(poses, net, false);
-            fresh.extend(ids);
+            self.tree_into(poses, net, false, &mut fresh);
         }
         let mut work = 0u64;
         // The insertion: each line's cells (in the walk's order, each
@@ -1544,6 +1589,34 @@ mod tests {
             }
         }
         count
+    }
+
+    #[test]
+    fn prims_buffers_give_the_trees_of_fresh_ones() {
+        let mut seed = 0x00DD_BA11_u64;
+        let mut random = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let (mut edges, mut prim) = (Vec::new(), Prim::default());
+        for round in 0..200 {
+            let count = (random() * 30.0) as usize;
+            // Some on a lattice: ties.
+            let points: Vec<Point> = (0..count)
+                .map(|_| {
+                    let point = [random() * 20.0, random() * 20.0];
+                    if round % 2 == 0 {
+                        [point[0].round(), point[1].round()]
+                    } else {
+                        point
+                    }
+                })
+                .collect();
+            spanning_tree_into(&points, &mut edges, &mut prim);
+            assert_eq!(edges, spanning_tree(&points));
+        }
     }
 
     #[test]
