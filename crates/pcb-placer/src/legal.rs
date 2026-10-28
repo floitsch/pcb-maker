@@ -100,6 +100,29 @@ fn turned_rects(boxes: &[[f64; 4]], pose: Pose, margin: f64) -> Vec<Rect> {
     turned(boxes, pose, margin).collect()
 }
 
+/// What `turned` gives box `local` at a pose of angle `angle` but for the
+/// position: its centre's offset from the position (`turned`'s `center`
+/// is the position plus it) and its half size, by `turned`'s sums.
+fn turned_offset(local: &[f64; 4], angle: f64) -> (Point, Point) {
+    let (sin, cos) = crate::problem::sin_cos_degrees(-angle);
+    let turn = crate::problem::rotation(-angle);
+    let center = crate::problem::rotate_by(
+        [(local[0] + local[2]) / 2.0, (local[1] + local[3]) / 2.0],
+        turn,
+    );
+    let own = [
+        (local[2] - local[0]) / 2.0 + 0.0,
+        (local[3] - local[1]) / 2.0 + 0.0,
+    ];
+    (
+        center,
+        [
+            cos.abs() * own[0] + sin.abs() * own[1],
+            sin.abs() * own[0] + cos.abs() * own[1],
+        ],
+    )
+}
+
 /// `turned_rects` one by one, without the list.
 fn turned(boxes: &[[f64; 4]], pose: Pose, margin: f64) -> impl Iterator<Item = Rect> + Clone + '_ {
     let (sin, cos) = crate::problem::sin_cos_degrees(-pose.angle);
@@ -747,6 +770,9 @@ pub(crate) struct Apart {
     /// `linked_work(problem)` (a logarithm and a rounding, libm's calls,
     /// for every spot: 4 % of protoesp's legalisation, 2026-10-28).
     linked_work: u64,
+    /// The searched part's body and box at one angle, but for the
+    /// position (`spot`).
+    frame: Option<Frame>,
     /// The board's outline by bands for the fit tests (an outline of
     /// more than a few edges).
     board: Option<Outline>,
@@ -756,6 +782,22 @@ pub(crate) struct Apart {
 
 /// A part's pose (its bits) and its board box there (`Apart`).
 type KeptBox = ([u64; 3], Option<[f64; 4]>);
+
+/// What `rect` and `Apart::board_box` give a part at an angle but for the
+/// position: the body's offset from the pose's position (`center`), its
+/// rectangle there, and the turned box of its other boxes' offset and
+/// half size. A spot search moves one part in steps at a few angles: its
+/// body and box were turned again at every spot (`rect`, the box's turn:
+/// 13 % of protoesp's legalisation, 2026-10-28); a spot's are the
+/// frame's plus the position, the same sums.
+struct Frame {
+    part: usize,
+    angle: u64,
+    offset: Point,
+    body: Rect,
+    local: Option<(Point, Point)>,
+    boxed: bool,
+}
 
 impl Apart {
     pub(crate) fn new(problem: &Problem) -> Self {
@@ -805,6 +847,7 @@ impl Apart {
             far: vec![u64::MAX; count],
             facts: Facts::new(problem),
             linked_work: linked_work(problem),
+            frame: None,
             board: (problem.outline.len() >= BOARD_INDEX_EDGES)
                 .then(|| Outline::new(&problem.outline)),
             check: cfg!(debug_assertions) || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
@@ -848,6 +891,64 @@ impl Apart {
             ];
         }
         Some(extent)
+    }
+
+    /// `rect(problem, index, pose)` and `board_box` of it, from the frame
+    /// of `index` at `pose`'s angle.
+    fn spot(&mut self, problem: &Problem, index: usize, pose: Pose) -> (Rect, Option<[f64; 4]>) {
+        let angle = pose.angle.to_bits();
+        if self
+            .frame
+            .as_ref()
+            .is_none_or(|frame| frame.part != index || frame.angle != angle)
+        {
+            let component = &problem.components[index];
+            let body = rect(problem, index, pose);
+            let local = self.local[index]
+                .as_ref()
+                .map(|local| turned_offset(local, pose.angle));
+            self.frame = Some(Frame {
+                part: index,
+                angle,
+                offset: component.offset(component.body_center, pose.angle),
+                body,
+                local,
+                boxed: !component.copper_only && direction_of(pose.angle).is_none(),
+            });
+        }
+        let frame = self.frame.as_ref().expect("framed");
+        let body = Rect {
+            center: [
+                pose.position[0] + frame.offset[0],
+                pose.position[1] + frame.offset[1],
+            ],
+            ..frame.body
+        };
+        if !frame.boxed {
+            return (body, None);
+        }
+        let half = if body.round {
+            let radius = body.half[0].max(body.half[1]);
+            [radius, radius]
+        } else {
+            body.half
+        };
+        let mut extent = [
+            body.center[0] - half[0],
+            body.center[1] - half[1],
+            body.center[0] + half[0],
+            body.center[1] + half[1],
+        ];
+        if let Some((offset, half)) = frame.local {
+            let center = [pose.position[0] + offset[0], pose.position[1] + offset[1]];
+            extent = [
+                extent[0].min(center[0] - half[0]),
+                extent[1].min(center[1] - half[1]),
+                extent[2].max(center[0] + half[0]),
+                extent[3].max(center[1] + half[1]),
+            ];
+        }
+        (body, Some(extent))
     }
 
     /// `board_box` of part `other` at its pose in `poses`, kept per pose.
@@ -914,9 +1015,8 @@ impl Apart {
         others: impl Iterator<Item = usize>,
         work: &mut u64,
     ) -> bool {
-        let body = rect(problem, index, pose);
+        let (body, mine) = self.spot(problem, index, pose);
         let linked_work = self.linked_work;
-        let mine = self.board_box(problem, index, pose, &body);
         for other in others {
             if let Some(mine) = mine
                 && other != index
@@ -1193,9 +1293,8 @@ impl Sweep {
             return is_legal(problem, poses, self.index, pose, 0..count);
         }
         let index = self.index;
-        let body = rect(problem, index, pose);
+        let (body, mine) = apart.spot(problem, index, pose);
         let linked_work = apart.linked_work;
-        let mine = apart.board_box(problem, index, pose, &body);
         // `is_legal`'s own unit, then the parts in index order: the far
         // ones by their far work, the near ones tested.
         let mut work = 1;
@@ -4903,6 +5002,62 @@ mod tests {
                     assert_eq!(facts.bare(&problem, a, b), problem.constraints.bare(a, b));
                 }
             }
+        }
+    }
+
+    #[test]
+    fn a_spot_from_its_frame_is_the_direct_body_and_box() {
+        let mut state = 0x6A09_E667_F3BC_C908u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let bits = |rect: &Rect| {
+            format!(
+                "{:?}",
+                (
+                    rect.center.map(f64::to_bits),
+                    rect.half.map(f64::to_bits),
+                    rect.round,
+                    rect.turn
+                        .map(|(d, o)| (d.map(f64::to_bits), o.map(f64::to_bits)))
+                )
+            )
+        };
+        for round in 0..10 {
+            let (mut problem, poses) = random_board(round, &mut next);
+            for component in problem.components.iter_mut() {
+                // Bodies off their origin.
+                component.body_center = [next() * 2.0 - 1.0, next() * 2.0 - 1.0];
+            }
+            let parts = problem.components.len();
+            let mut apart = Apart::new(&problem);
+            for _ in 0..2000 {
+                let index = (next() * parts as f64) as usize;
+                let angle = [0.0, 90.0, 180.0, 270.0, -90.0, 45.0, 30.0][(next() * 7.0) as usize];
+                // Spots of one search: steps from an origin at an angle.
+                for _ in 0..5 {
+                    let pose = Pose {
+                        position: [
+                            10.0 + (next() * 40.0).floor() * 0.25 + 1.0e-3 / 3.0,
+                            7.0 + (next() * 40.0).floor() * 0.1,
+                        ],
+                        angle,
+                    };
+                    let (body, mine) = apart.spot(&problem, index, pose);
+                    let direct = rect(&problem, index, pose);
+                    assert_eq!(bits(&body), bits(&direct), "part {index} at {pose:?}");
+                    let direct_box = apart.board_box(&problem, index, pose, &direct);
+                    assert_eq!(
+                        mine.map(|b| b.map(f64::to_bits)),
+                        direct_box.map(|b| b.map(f64::to_bits)),
+                        "part {index} at {pose:?}"
+                    );
+                }
+            }
+            let _ = poses;
         }
     }
 
