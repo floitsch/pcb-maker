@@ -825,10 +825,17 @@ impl Router {
         }
         let gap = self.pin_row_at(layer, cell);
         let own = crate::grid::owner(net);
-        (gap != 0 && {
-            let (a, b) = self.pin_row_nets[gap as usize];
-            a != own && b != own
-        })
+        (gap != 0
+            && {
+                let (a, b) = self.pin_row_nets[gap as usize];
+                a != own && b != own
+            }
+            // A pour net pays for no reserved fan-out run (`search`).
+            && ((gap as usize) < self.fanout_first
+                || self
+                    .nets
+                    .get(net as usize)
+                    .is_none_or(|state| state.plane.is_empty())))
         .then_some(gap as usize)
     }
 

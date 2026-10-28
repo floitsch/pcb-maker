@@ -57,6 +57,9 @@ pub fn fanout_override() -> Option<bool> {
 /// and stayed open).
 const INWARD_COST: f64 = 2.0;
 
+/// A part with fewer pads has no row.
+const MIN_PART_PADS: usize = 4;
+
 /// A diagonal way out costs this more than an axis one (it passes
 /// between the corners of two neighbours: an aQFN's inner row).
 const DIAGONAL_COST: f64 = 0.25;
@@ -450,7 +453,10 @@ impl Router {
         for (net, description) in self.board.nets.iter().enumerate() {
             let net = net as NetId;
             let state = &self.nets[net as usize];
-            if !state.routable {
+            // A pour net's pads join their pour by spokes and stubs: no
+            // way out of theirs is reserved, and they pay for none
+            // (`Router::search`).
+            if !state.routable || !state.plane.is_empty() {
                 continue;
             }
             let class = description.class;
@@ -487,9 +493,16 @@ impl Router {
                     .label
                     .rsplit_once('.')
                     .map_or(terminal.label.as_str(), |(part, _)| part);
+                // Rows are a part's: a part of fewer pads (a 0201's two
+                // pads closer than the fine pitch) has none.
+                if parts
+                    .get(part)
+                    .is_none_or(|(_, count)| *count < MIN_PART_PADS)
+                {
+                    continue;
+                }
                 let part_centre = parts
                     .get(part)
-                    .filter(|(_, count)| *count >= 3)
                     .map(|(sum, count)| [sum[0] / *count as f64, sum[1] / *count as f64]);
                 // The ratsnest's direction: the nearest pad of the net on
                 // another part, else the nearest pad; none for a pour net.
