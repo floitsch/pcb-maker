@@ -1375,9 +1375,11 @@ class MemoryGate:
     reservations were this process's alone (other runs on the machine did
     not see them) and only MemAvailable counted. A board that has waited
     `drain_after` seconds has the ledger drain for it (harness_common.
-    drain_allows; --ledger-drain-after), while the ledger could start it
-    and for at most `drain_max` seconds of its wait (harness_common.
-    drain_state; --ledger-drain-max); `priority` "nightly" (--ledger-
+    drain_allows; --ledger-drain-after), while the ledger could start it,
+    past `drain_max` seconds of its wait strictly (harness_common.
+    drain_state; --ledger-drain-max; since 2026-10-28, before it ended
+    there); a board larger than the ledger's capacity ends after
+    `drain_max` (harness_common.TooLarge); `priority` "nightly" (--ledger-
     priority nightly) puts its boards first among the waiters and has the
     ledger drain for them at once. A board's reservation carries its
     expected end (the tier's seconds), which the drain reads.
@@ -2780,9 +2782,10 @@ def main():
                              "then go only if they leave it its room or end before every running board "
                              "(default %(default).0f; docs/benchmarks.md, \"Memory ledger\")")
     parser.add_argument("--ledger-drain-max", type=float, default=harness_common.DEFAULT_DRAIN_MAX_SECONDS,
-                        help="seconds of a board's wait after which the ledger no longer drains for it: newer "
-                             "requests then pass it by ordered admission alone, and it keeps its place "
-                             "(default %(default).0f; docs/benchmarks.md, \"Memory ledger\")")
+                        help="seconds of a board's wait after which the ledger drains for it strictly (no request "
+                             "passes it on an earlier end), and after which a board larger than the ledger's "
+                             "capacity ends with an error (default %(default).0f; docs/benchmarks.md, "
+                             "\"Memory ledger\")")
     parser.add_argument("--ledger-priority", choices=("normal", harness_common.PRIORITY_NIGHTLY), default="normal",
                         help="nightly: this run's boards go first among the waiters and are never passed once "
                              "waiting (the ledger drains for them at once); scripts/nightly.sh sets it")

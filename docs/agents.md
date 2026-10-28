@@ -746,8 +746,11 @@ request that has waited longest, only takes what still leaves it its room
 (`behind an older request` on stderr; docs/benchmarks.md, "Memory ledger:
 who runs next"), and once that request has waited 10 minutes, only what
 leaves it the room it waits for (`the ledger drains for it`), as long as
-the ledger could start it and for at most 2 hours of its wait (otherwise
-`not drained for: ...`). A short command never waits behind that order
+the ledger could start it (otherwise `not drained for: ...`, and the
+ledger drains for the next waiter it could start); after 2 hours of its
+wait strictly (since 2026-10-28). A request larger than the ledger's
+capacity runs only alone; one that has waited 2 hours for the ledger to
+empty ends with exit 4 and a verdict saying so. A short command never waits behind that order
 or a drain (since 2026-10-26): `drc-kicad-board`, `inspect-routing-run
 --native-check` and `place-kicad-board` (which reserves only for KiCad's
 check) hold their memory for seconds, and a request of theirs of at most

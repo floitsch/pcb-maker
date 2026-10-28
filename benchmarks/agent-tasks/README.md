@@ -395,8 +395,10 @@ measurement). The discipline:
   the ledger, and newer requests pass the one that has waited longest
   only with what still leaves it its room; once it has waited
   `--ledger-drain-after` (600 s) the ledger drains for it (while it
-  could start it, for at most `--ledger-drain-max`, 7200 s, of its
-  wait), and the
+  could start it; past `--ledger-drain-max`, 7200 s, of its wait,
+  strictly, since 2026-10-28; a board larger than the ledger's capacity
+  ends there with an error instead of waiting for the ledger to empty),
+  and the
   nightly's boards (`--ledger-priority nightly`) go first and are never
   passed
   ([docs/benchmarks.md](../../docs/benchmarks.md), "Memory ledger: who

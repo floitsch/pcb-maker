@@ -11,6 +11,23 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-28 (the memory ledger drains past its bound, for the first waiter it can drain for; a request larger than the capacity ends)
+
+Branch ledger-drain-bound. docs/benchmarks.md, "Memory ledger", "The drain
+past its bound, and for the waiter behind one it does not drain for".
+
+- **No waiter is starved past the drain's bound.** Two 4.4 GB boards
+  waited 5.3 and 3.2 hours: held back by their floor, they were passed by
+  every smaller request once the drain ended at `drain_max` (7200 s). The
+  drain now goes on past the bound, strictly (no request passes on an
+  earlier end); staleness and "cannot start" still end it.
+- **A first waiter the ledger cannot drain for no longer stops the drain**
+  for the waiters behind it (the nightly's floor-held 487 MB board first
+  for hours); the nightly's waiters still rank first.
+- **A request larger than the capacity ends** after `drain_max` (a binary
+  with exit 4, a harness's board with `TooLarge`) instead of holding
+  every newer request back until the ledger empties.
+
 ## Committed on 2026-10-28 (the fan-out step before negotiation: diagnosed, built, off)
 
 Branch fanout-order; binaries build/bin/pcb-maker-fan1-a to -h (-g the

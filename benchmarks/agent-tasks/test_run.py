@@ -825,6 +825,59 @@ class MemoryLedger(unittest.TestCase):
                          [("route-kicad-board board", 1000, 1000)])
         gate.done(token)
 
+    def test_a_waiter_past_the_bound_is_drained_for_strictly_and_before_newer_ones(self):
+        # Since 2026-10-28 (ledger.rs, the same rule): past its drain_max
+        # the ledger still drains for a waiter, without the end exception;
+        # a first waiter it does not drain for no longer stops the drain for
+        # the one behind it; a request larger than the capacity ends.
+        h = run.harness_common
+        capacity, now = 43084.0, 19201.0
+
+        def holding(pid, megabytes, since, end=None):
+            entry = {"pid": pid, "started": since, "held_since": since, "megabytes": megabytes, "label": ""}
+            if end is not None:
+                entry["expected_end"] = end
+            return entry
+        video = {"pid": 30, "started": 0.0, "megabytes": 0.0, "label": "video", "waiting_mb": 4389.0,
+                 "waiting_since": 0.0, "refreshed": now, "floor_mb": 7184.0, "waits_on_floor": True}
+        runs = [holding(11 + i, 3750.0, 1000.0 + i, now + 3600) for i in range(8)] + [holding(20, 3389.0, 2000.0, now + 3600)]
+        others = runs + [video]
+        self.assertEqual(h.drain_state(video, others, now, capacity, 6922.0),
+                         ("past bound", h.DEFAULT_DRAIN_MAX_SECONDS))
+        self.assertIs(h.drained_for(others, now, now, own_pid=99, capacity_mb=capacity, available_mb=6922.0), video)
+        # A 1536 MB request that ends before every run would pass a waiter
+        # within its bound; past it, not.
+        self.assertTrue(h.drain_allows(dict(video, drain_max=1e9), others, 1536.0, capacity, 6922.0,
+                                       expected_end=now + 60))
+        self.assertTrue(h.order_allows(others, 1536.0, now, capacity, own_pid=99))
+        self.assertFalse(h.drain_allows(video, others, 1536.0, capacity, 6922.0, expected_end=None))
+        # The nightly's waiter first, not startable: the drain is the
+        # video's; the nightly's own new requests are never held to it.
+        nightly = {"pid": 40, "started": now - 41, "megabytes": 0.0, "label": "4x4", "waiting_mb": 487.0,
+                   "waiting_since": now - 41, "refreshed": now, "floor_mb": 7128.0, "waits_on_floor": True,
+                   "priority": h.PRIORITY_NIGHTLY}
+        others = runs + [nightly, video]
+        self.assertIs(h.oldest_waiter(others), nightly)
+        self.assertEqual(h.drain_state(nightly, others, now, capacity, 6922.0)[0], "cannot start")
+        self.assertIs(h.drained_for(others, now, now, own_pid=99, capacity_mb=capacity, available_mb=6922.0), video)
+        self.assertIsNone(h.drained_for(others, now, now, own_pid=99, priority=h.PRIORITY_NIGHTLY,
+                                        capacity_mb=capacity, available_mb=6922.0))
+        # Startable, the nightly's waiter is drained for first.
+        self.assertIs(h.drained_for(runs[:8] + [nightly, video], now, now, own_pid=99, capacity_mb=capacity,
+                                    available_mb=8000.0), nightly)
+        # Larger than the capacity: it ends after its bound, saying why.
+        self.assertIsNone(h.too_large_ends(50000.0, capacity, 7199.0, 7200.0))
+        self.assertIn("more than the memory ledger's capacity of 43084 MB",
+                      h.too_large_ends(50000.0, capacity, 7200.0, 7200.0))
+        self.assertIsNone(h.too_large_ends(capacity, capacity, 1e9, 7200.0))
+        self.assertIsNone(h.too_large_ends(50000.0, None, 1e9, 7200.0))
+        other = self.sleeper()
+        self.ledger.reserve(1000, "another run", pid=other.pid)
+        with self.assertRaises(h.TooLarge) as raised:
+            h.admit(self.ledger, 5000, "huge", poll_seconds=0.05, drain_max=0.2)
+        self.assertIn("huge: waited", str(raised.exception))
+        self.assertEqual([r["label"] for r in self.ledger.live()], ["another run"])
+
     def test_a_row_the_ledger_ended_is_retried_once_when_it_has_room(self):
         # Since 2026-10-27: a row whose binary the memory ledger ended (exit
         # 4, "past its reservation") runs once more, admitted again with
@@ -1295,13 +1348,14 @@ class MemoryLedger(unittest.TestCase):
         drained = h.drained_for(others, now, now, own_pid=99, capacity_mb=capacity, available_mb=available)
         self.assertIs(drained, waiter)
         self.assertFalse(h.drain_allows(drained, others, katia, capacity, available))
-        # ... for at most 2 hours of its wait; then ordered admission alone,
-        # and the waiter keeps its place (16 GB still waits).
+        # ... and past 2 hours of its wait too, strictly (since 2026-10-28;
+        # until then ordered admission alone let the 7 GB request go).
         later = h.DEFAULT_DRAIN_MAX_SECONDS + 1
         self.assertEqual(h.drain_state(waiter, others, later, capacity, available),
                          ("past bound", h.DEFAULT_DRAIN_MAX_SECONDS))
-        self.assertIsNone(h.drained_for(others, later, later, own_pid=99, capacity_mb=capacity,
-                                        available_mb=available))
+        drained = h.drained_for(others, later, later, own_pid=99, capacity_mb=capacity, available_mb=available)
+        self.assertIs(drained, waiter)
+        self.assertFalse(h.drain_allows(drained, others, katia, capacity, available))
         self.assertTrue(h.order_allows(others, katia, later, capacity, own_pid=99))
         self.assertFalse(h.order_allows(others, 16384.0, later, capacity, own_pid=99))
         self.assertEqual(h.drain_state(dict(waiter, drain_max=10000.0), others, later, capacity, available)[0],
@@ -1482,11 +1536,14 @@ class MemoryLedger(unittest.TestCase):
         key, text = h.try_admit(self.ledger, 500, "small")
         self.assertIsNone(key)
         self.assertIn("the ledger drains for it", text)
-        # Stale (not rewritten for 200 s), or past its bound: not drained for.
+        # Stale (not rewritten for 200 s): not drained for. Past its bound:
+        # drained for strictly (since 2026-10-28), the 500 still wait.
         large(refreshed=time.time() - 200)
         self.assertIn("(stale)", h.try_admit(self.ledger, 500, "small")[1])
         large(refreshed=time.time(), drain_max=100.0)
-        self.assertIn("past the drain's bound of 100 s", h.try_admit(self.ledger, 500, "small")[1])
+        key, text = h.try_admit(self.ledger, 500, "small")
+        self.assertIsNone(key)
+        self.assertIn("the ledger drains for it strictly: it has waited past the drain's bound of 100 s", text)
         large(drain_max=7200.0)
         # The holder held before the large one began waiting: the ledger
         # cannot start it before the holder ends (500 of 4000 beside the

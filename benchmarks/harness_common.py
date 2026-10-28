@@ -621,13 +621,26 @@ def drained_for(others, since, now, own_pid=None, priority=None, capacity_mb=Non
     the first waiter, when it comes before the request and the ledger
     drains for it (drain_state: it has waited its `drain_after`, default
     DEFAULT_DRAIN_AFTER_SECONDS, the nightly's at once, and the ledger
-    could start it). `capacity_mb`, `available_mb` (MemAvailable less
-    growth_mb): None, unknown, unbounded. None: no drain."""
+    could start it); of the waiters ahead of the request, the first it
+    drains for (since 2026-10-28; before, the first waiter or none).
+    `capacity_mb`, `available_mb` (MemAvailable less growth_mb): None,
+    unknown, unbounded. None: no drain."""
     own_pid = own_pid or os.getpid()
-    waiter = oldest_waiter(others)
-    if waiter is None or _order_key(waiter) >= (_rank(priority), since, own_pid):
-        return None
-    return waiter if drain_state(waiter, others, now, capacity_mb, available_mb)[0] == "drains" else None
+    ahead = sorted((r for r in others if r.get("waiting_mb") is not None
+                    and _order_key(r) < (_rank(priority), since, own_pid)), key=_order_key)
+    # The first waiter ahead that the ledger drains for: one it does not
+    # (not yet, stale, cannot start) keeps its place by ordered admission
+    # and no longer stops the drain for those behind it (since 2026-10-28).
+    for waiter in ahead:
+        if drain_state(waiter, others, now, capacity_mb, available_mb)[0] in DRAINS:
+            return waiter
+    return None
+
+
+# The drain_state kinds under which the ledger drains for a waiter: "past
+# bound" (since 2026-10-28) strictly, no request passing it on an earlier
+# end (drain_allows without `expected_end`), as for the nightly's.
+DRAINS = ("drains", "past bound")
 
 
 def drain_state(waiter, others, now, capacity_mb=None, available_mb=None):
@@ -635,24 +648,24 @@ def drain_state(waiter, others, now, capacity_mb=None, available_mb=None):
     (crates/pcb-kicad/src/ledger.rs, `drain_state`: the same rule, since
     2026-10-26), and why not: ("not yet", None) before its `drain_after`;
     ("stale", seconds) when its entry was last rewritten (`refreshed`) more
-    than STALE_AFTER_SECONDS ago (absent: unknown, live); ("past bound",
-    seconds) when its wait is longer than its `drain_max` (default
-    DEFAULT_DRAIN_MAX_SECONDS); ("cannot start", room) when, with every
+    than STALE_AFTER_SECONDS ago (absent: unknown, live); ("cannot start", room) when, with every
     reservation that began holding since its wait began gone, its room (the
     capacity less the older reservations, and `available_mb` with the newer
     ones' megabytes back less its floor, assumed_floor_mb) falls short of
-    what it waits for; else ("drains", None). Not drained for, it is passed
-    by ordered admission alone and keeps its place. Until then a drain for
-    an old harness's waiter of 24.7 GB with a floor of 10 GB that could not
-    start held every request of more than 4 GB back for hours."""
+    what it waits for; ("past bound", seconds) when its wait is longer than
+    its `drain_max` (default DEFAULT_DRAIN_MAX_SECONDS): the ledger drains
+    for it strictly (since 2026-10-28; until then the drain ended there,
+    and two 4.4 GB boards waited 5.3 and 3.2 hours while smaller requests
+    went); else ("drains", None). Not drained for, it is passed by ordered
+    admission alone and keeps its place. Until then a drain for an old
+    harness's waiter of 24.7 GB with a floor of 10 GB that could not start
+    held every request of more than 4 GB back for hours."""
     waited = now - _waiting_since(waiter)
     if waited < _drain_after(waiter):
         return "not yet", None
     refreshed = waiter.get("refreshed")
     if isinstance(refreshed, (int, float)) and now - refreshed > STALE_AFTER_SECONDS:
         return "stale", now - refreshed
-    if waited > _drain_max(waiter):
-        return "past bound", _drain_max(waiter)
     rest = [r for r in others if r is not waiter]
     newer = sum(r.get("megabytes", 0.0) for r in rest
                 if r.get("megabytes", 0.0) > 0 and (r.get("short") or _held_since(r) >= _waiting_since(waiter)))
@@ -660,6 +673,8 @@ def drain_state(waiter, others, now, capacity_mb=None, available_mb=None):
                             floor_mb=assumed_floor_mb(waiter)))
     if room < float(waiter["waiting_mb"]):
         return "cannot start", room
+    if waited > _drain_max(waiter):
+        return "past bound", _drain_max(waiter)
     return "drains", None
 
 
@@ -672,7 +687,7 @@ def describe_drain(state):
     if kind == "stale":
         return f"not drained for: its entry was last rewritten {value:.0f} s ago (stale)"
     if kind == "past bound":
-        return f"not drained for: it has waited past the drain's bound of {value:.0f} s"
+        return f"the ledger drains for it strictly: it has waited past the drain's bound of {value:.0f} s"
     if kind == "cannot start":
         return (f"not drained for: with every run since its wait began gone its room would be {value:.0f} MB "
                 "(the capacity, and the memory available less its floor), too little to start it")
@@ -800,7 +815,11 @@ def try_admit(ledger, megabytes, label, min_free_mb=0.0, since=None, expected_se
             available_mb - growth_mb(reservations, own_pid=pid)
         drained = drained_for(reservations, begun, now, pid, priority, capacity, seen)
         if drained is not None and ordered:
-            ordered = drain_allows(drained, reservations, megabytes, capacity, seen, expected_end)
+            # Past its bound the drain is strict: no request passes it on
+            # an earlier end (since 2026-10-28).
+            strict = drain_state(drained, reservations, now, capacity, seen)[0] == "past bound"
+            ordered = drain_allows(drained, reservations, megabytes, capacity, seen,
+                                   None if strict else expected_end)
         # (A harness's request is one number: its process's and its
         # children's together.)
         is_short = bool(short) and megabytes <= SHORT_OWN_MB + KICAD_CHECK_MB
@@ -854,19 +873,42 @@ def withdraw(ledger, label, since):
         slice(None), [r for r in reservations if not _is_waiting_entry(r, pid, label, since)]))
 
 
+class TooLarge(RuntimeError):
+    """A request larger than the ledger's capacity that the ledger did not
+    empty for within its bound (admit, too_large_ends)."""
+
+
+def too_large_ends(megabytes, capacity_mb, waited, bound):
+    """Why a request of `megabytes` that has waited `waited` seconds ends
+    (ledger.rs, `too_large_ends`: the same rule, since 2026-10-28), None:
+    it waits on. Only one larger than the ledger's capacity (None:
+    unknown, never) ends: it runs only alone, and once it has waited
+    `bound` seconds for the ledger to empty, it ends rather than wait for
+    ever."""
+    if capacity_mb is None or megabytes <= capacity_mb or waited < bound:
+        return None
+    return (f"waited {waited:.0f} s for {megabytes:.0f} MB, more than the memory ledger's capacity of "
+            f"{capacity_mb:.0f} MB for every run: it can run only alone, and the ledger did not empty within the "
+            f"drain's bound of {bound:.0f} s; rerun when the machine is idle, or with a larger "
+            "PCB_MAKER_LEDGER_TOTAL_MB or a smaller board")
+
+
 def admit(ledger, megabytes, label, min_free_mb=0.0, poll_seconds=15.0, log=None, stop=None, expected_seconds=None,
           drain_after=None, priority=None, drain_max=None, short=False):
     """Waits until `megabytes` fit and reserves them (try_admit), in the
     ledger as a waiting request meanwhile (newer requests do not pass it:
     order_allows; once it has waited `drain_after` seconds, default
     DEFAULT_DRAIN_AFTER_SECONDS, the ledger drains for it: drain_allows,
-    while it could start and for at most `drain_max` seconds of its wait,
-    default DEFAULT_DRAIN_MAX_SECONDS: drain_state). `short`: a request
+    while it could start; past `drain_max` seconds of its wait, default
+    DEFAULT_DRAIN_MAX_SECONDS, strictly: drain_state). `short`: a request
     that holds its memory for seconds (try_admit). `min_free_mb`: the
     floor, or a function giving it, called on every poll (run.py's
     measured floor follows the samples).
     Returns the reservation's key, None when `stop()` said to give up.
-    `log` gets the waiting lines."""
+    `log` gets the waiting lines. A request larger than the ledger's
+    capacity runs only alone and holds every newer one back meanwhile
+    (order_allows); once it has waited `drain_max` for the ledger to empty
+    it ends with TooLarge (since 2026-10-28; too_large_ends)."""
     started = time.monotonic()
     since = time.time()
     said = None
@@ -887,6 +929,12 @@ def admit(ledger, megabytes, label, min_free_mb=0.0, poll_seconds=15.0, log=None
             said = text
             if stop and stop():
                 return None
+            reason = too_large_ends(megabytes, ledger_capacity_mb(ledger=ledger), waited,
+                                    DEFAULT_DRAIN_MAX_SECONDS if drain_max is None else drain_max)
+            if reason is not None:
+                if log:
+                    log(f"{label}: {reason}")
+                raise TooLarge(f"memory: {label}: {reason}")
             time.sleep(poll_seconds)
     finally:
         if key is None:

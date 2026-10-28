@@ -367,13 +367,23 @@ fn print_ledger(json: bool) -> Result<(), String> {
     // The first waiter and whether the ledger drains for it (a new
     // request's view: every entry is another's).
     let all: Vec<&ledger::Reservation> = live.iter().collect();
+    let available = ledger::available_less_growth(&all);
     let first = ledger::first_waiter(&all).map(|waiter| {
-        let available = ledger::available_less_growth(&all);
         (
             waiter,
             ledger::drain_state(waiter, &all, now, capacity, available),
         )
     });
+    // The waiter a new request is held to a drain for: the first the ledger
+    // drains for, which need not be the first waiter (since 2026-10-28).
+    let drained = ledger::drained_for(&all, u32::MAX, now, now, capacity, available)
+        .filter(|waiter| first.is_none_or(|(first, _)| !std::ptr::eq(*waiter, first)))
+        .map(|waiter| {
+            (
+                waiter,
+                ledger::drain_state(waiter, &all, now, capacity, available),
+            )
+        });
     // run.py's floor of available memory (before its board's tier's
     // overshoot): measured from the headroom samples, else the default.
     let headroom = book.headroom();
@@ -393,7 +403,14 @@ fn print_ledger(json: bool) -> Result<(), String> {
                 "label": waiter.label,
                 "waiting_mb": waiter.waiting_mb,
                 "waited_seconds": (now - waiter.waiting_since()).max(0.0),
-                "drained_for": state == ledger::Drain::Drains,
+                "drained_for": state.drains(),
+                "drain": state.describe(),
+            })),
+            "drained_for": drained.map(|(waiter, state)| serde_json::json!({
+                "pid": waiter.pid,
+                "label": waiter.label,
+                "waiting_mb": waiter.waiting_mb,
+                "waited_seconds": (now - waiter.waiting_since()).max(0.0),
                 "drain": state.describe(),
             })),
         });
@@ -444,6 +461,16 @@ fn print_ledger(json: bool) -> Result<(), String> {
     if let Some((waiter, state)) = first {
         println!(
             "first waiter: pid {}, {}, waiting {:.0} s for {:.0} MB: {}",
+            waiter.pid,
+            waiter.label,
+            (now - waiter.waiting_since()).max(0.0),
+            waiter.waiting_mb.unwrap_or(0.0),
+            state.describe()
+        );
+    }
+    if let Some((waiter, state)) = drained {
+        println!(
+            "drained for: pid {}, {}, waiting {:.0} s for {:.0} MB: {}",
             waiter.pid,
             waiter.label,
             (now - waiter.waiting_since()).max(0.0),

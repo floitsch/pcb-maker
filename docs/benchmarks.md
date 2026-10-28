@@ -450,7 +450,7 @@ stops where it fails:
   stage: placer.md, "Condensed boards as a fast benchmark: an assessment
   (2026-10-28)", no-go.
 
-## Memory ledger: who runs next (2026-10-24, the drain 2026-10-25, its feasibility cap, its end and short requests 2026-10-26, the measured floor, the capacity from the machine, kicad-cli under a reservation, the hand-over and the wait past a reservation 2026-10-27)
+## Memory ledger: who runs next (2026-10-24, the drain 2026-10-25, its feasibility cap, its end and short requests 2026-10-26, the measured floor, the capacity from the machine, kicad-cli under a reservation, the hand-over and the wait past a reservation 2026-10-27, the drain past its bound 2026-10-28)
 
 Benchmarks share the machine through the memory ledger
 (`$XDG_RUNTIME_DIR/pcb-maker-ledger.json`; how a run reserves and waits:
@@ -599,7 +599,7 @@ rule) only
 A waiter that does not count keeps its place: newer requests pass it by
 ordered admission alone (room for it beside the runs since its wait
 began), and once it counts again (older runs ended, or room appears)
-the drain resumes, until the bound. There is no drain for the next
+the drain resumes, until the bound (since 2026-10-28 strictly past it, below). There is no drain for the next
 waiter meanwhile. `pcb-maker ledger` ends with the first waiter and its
 state (`first waiter: pid ..., waiting ... s for ... MB: the ledger
 drains for it` or `not drained for: ...`; `--json`: `first_waiter`), and
@@ -1125,6 +1125,75 @@ identical to each other and to x1860's on a roomy ledger. The short tier
 result boards byte identical, the same objectives (unconnected 20,
 vias 1245, length 21 565 mm, work 2489 s). Routing and placement are
 unchanged.
+
+**The drain past its bound, and for the waiter behind one it does not
+drain for** (2026-10-28). On 2026-10-28 `pcb-maker ledger` said `first
+waiter: pid 3306359, run.py: video (expected peak), waiting 19201 s for
+4389 MB: not drained for: it has waited past the drain's bound of 7200
+s`: two 4.4 GB boards of one agent had waited 5.3 and 3.2 hours while
+smaller requests went ahead. Their floor held them back (the ledger had
+the room: `waits_on_floor`), and ordered admission passes such a waiter
+by the capacity alone, so only the drain kept their room, and the drain
+ended at `drain_max`: past it a waiter was worse off than a fresh one.
+Later the same day the nightly's designer stage (from 14:29) put a second
+cause beside it: its waiters come first (`priority: nightly`), and its
+small boards were held back by their own floor (`poly_kb_molecule_4x4`,
+487 MB with a floor of 7128 MB beside 6922 MB of memory available less
+growth: `cannot start`), so the first waiter was never drained for and
+the drain went to nobody, whatever the bound, for as long as the nightly
+ran. Now:
+
+- *The drain goes on past the bound, strictly* (`drain_state` gives
+  `PastBound`, which drains: `Drain::drains`). Past its `drain_max` the
+  ledger drains for a waiter as for the nightly's: a newer request goes
+  only if it leaves the waiter its room (or is small while a larger run
+  blocks the waiter anyway: the feasibility cap), not on an earlier
+  expected end (harness_common's try_admit passes no `expected_end` for
+  such a waiter; binaries never pass one). `pcb-maker ledger` says `the
+  ledger drains for it strictly: it has waited past the drain's bound of
+  7200 s`. What ends a drain is unchanged otherwise: a stale entry, and a
+  waiter the ledger could not start even with every run since its wait
+  began gone (`cannot start`), the guard that had made the bound
+  necessary on 2026-10-26 (the 27-hour waiter of 24.7 GB).
+- *The drain is for the first waiter it can drain for* (`drained_for`):
+  of the waiters ahead of a request, in their order (the nightly's
+  first, then by when their wait began), the first that is drained for.
+  A waiter ahead that is not (not yet, stale, cannot start) keeps its
+  place by ordered admission (`order_allows`, unchanged) and no longer
+  stops the drain for the waiters behind it. The nightly's priority
+  stands: its waiters rank first, a drain for one of them comes first,
+  and the nightly's own new requests rank before every other waiter, so
+  a drain for another waiter never holds them back. `pcb-maker ledger`
+  adds `drained for: pid ...` when that waiter is not the first.
+- *A request larger than the capacity ends.* It runs only alone
+  (`may_hold`) and no newer request passes it (`order_allows`); the drain
+  cannot start it. Once it has waited `drain_max` (7200 s, run.py's
+  `--ledger-drain-max`) for the ledger to empty, it ends instead of
+  waiting for ever: a binary with exit 4 and a verdict naming the
+  capacity (`too_large_ends` in `hold`), a harness's board with
+  `harness_common.TooLarge` (run.py's row: `runner: TooLarge: memory:
+  ... waited 7200 s for <n> MB, more than the memory ledger's capacity of
+  <c> MB for every run: it can run only alone, and the ledger did not
+  empty ...`).
+
+Tests (ledger.rs; test_run.py's
+`test_a_waiter_past_the_bound_is_drained_for_strictly_and_before_newer_ones`
+the same numbers and `admit` raising `TooLarge` on a file):
+`a_waiter_past_the_drain_s_bound_still_goes_before_newer_smaller_requests`
+(43 084 MB; 33 389 MB reserved by nine runs that began after the video
+board's wait; 6922 MB available less growth; the video board waiting
+19 201 s for 4389 MB with a floor of 7184 MB: drained for, strictly; a
+1536 MB request that ordered admission lets go waits; once 13 000 MB are
+available less growth the board goes and the 1536 MB request beside it
+only at 13 200), `the_nightly_s_requests_still_go_first_beside_a_waiter_past_the_bound`
+(the nightly's 487 MB board first and `cannot start`: the drain is the
+video board's; startable at 8000 MB, the nightly's is drained for first
+and a 1536 MB request waits for it), `a_waiter_larger_than_the_capacity_ends_after_the_drain_s_bound`;
+`the_ledger_drains_only_for_a_waiter_it_could_start` now drains past 7200 s
+(the 7 GB request waits). On the live ledger (read only) the rule named
+the video board drained for. The simulations of the drain, the cap and
+the short requests give the same numbers as before. Routing and
+placement are unchanged.
 
 Older binaries and harness copies ignore the new fields (`floor_mb`,
 `drain_after`, `expected_end`, `priority`) and do not drain; an older
