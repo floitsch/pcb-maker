@@ -1593,6 +1593,23 @@ impl Outline {
         })
     }
 
+    /// Whether a polygon corner passes `in_box` (true only inside the box
+    /// around `rect`): the corners in the bands of the box's y range (each
+    /// edge's first point; a band holds every edge whose y range touches
+    /// it), a hair wider for the rounding.
+    fn any_corner(
+        &self,
+        rect: &Rect,
+        polygon: &[[f64; 2]],
+        in_box: impl Fn(&[f64; 2]) -> bool,
+    ) -> bool {
+        let low = self.band(rect.center[1] - rect.half[1] - POLYGON_SLACK);
+        let high = self.band(rect.center[1] + rect.half[1] + POLYGON_SLACK);
+        self.bands[low..=high]
+            .iter()
+            .any(|band| band.iter().any(|&edge| in_box(&polygon[edge as usize])))
+    }
+
     /// Whether `point` lies inside by the even-odd rule
     /// (`rect_meets_polygon`'s `inside` where no edge is near).
     fn inside(&self, point: [f64; 2], polygon: &[[f64; 2]]) -> bool {
@@ -1692,6 +1709,28 @@ fn rect_meets_outline(
     indexed: Option<&Outline>,
     work: &mut u64,
 ) -> bool {
+    if indexed.is_some_and(|indexed| indexed.check) {
+        let (mut banded_work, mut plain_work) = (0, 0);
+        let banded = rect_meets_outline_once(rect, polygon, indexed, &mut banded_work);
+        let plain = rect_meets_outline_once(rect, polygon, None, &mut plain_work);
+        assert_eq!(
+            (banded, banded_work),
+            (plain, plain_work),
+            "{rect:?}: (meets, work) by bands against the passes over every edge"
+        );
+        *work += banded_work;
+        return banded;
+    }
+    rect_meets_outline_once(rect, polygon, indexed, work)
+}
+
+/// `rect_meets_outline` without its check.
+fn rect_meets_outline_once(
+    rect: &Rect,
+    polygon: &[[f64; 2]],
+    indexed: Option<&Outline>,
+    work: &mut u64,
+) -> bool {
     // One pass first: where no edge comes near the box around the rect,
     // no polygon corner lies in it, no edge crosses it, and its corners
     // lie on one side of the outline alike, so the first corner's side is
@@ -1717,16 +1756,7 @@ fn rect_meets_outline(
     let (near, inside) = match indexed {
         Some(indexed) => {
             let near = indexed.near(rect, polygon);
-            let answer = (near, !near && indexed.inside(first, polygon));
-            if indexed.check {
-                let (plain_near, plain_inside) = plain();
-                assert_eq!(
-                    answer,
-                    (plain_near, !plain_near && plain_inside),
-                    "{rect:?}: (near, inside) by bands against the pass over every edge"
-                );
-            }
-            answer
+            (near, !near && indexed.inside(first, polygon))
         }
         None => plain(),
     };
@@ -1734,19 +1764,28 @@ fn rect_meets_outline(
         return inside;
     }
     *work += 9 * edge_work(polygon.len());
-    if corners
-        .iter()
-        .any(|corner| crate::problem::point_in_polygon(*corner, polygon))
-    {
+    // The full test (an outline by bands: the corners' sides from their
+    // bands, the polygon's corners from the bands of the box's y range,
+    // an edge's sides' orientations only where the box's corners lie on
+    // both sides of it; the same answer).
+    let in_polygon = |corner: &[f64; 2]| match indexed {
+        Some(indexed) => indexed.inside(*corner, polygon),
+        None => crate::problem::point_in_polygon(*corner, polygon),
+    };
+    if corners.iter().any(in_polygon) {
         return true;
     }
     // A polygon corner inside the box.
     let (axes, own) = rect.frame();
-    if polygon.iter().any(|p| {
+    let in_box = |p: &[f64; 2]| {
         let delta = [p[0] - rect.center[0], p[1] - rect.center[1]];
         (delta[0] * axes[0][0] + delta[1] * axes[0][1]).abs() <= own[0]
             && (delta[0] * axes[1][0] + delta[1] * axes[1][1]).abs() <= own[1]
-    }) {
+    };
+    if match indexed {
+        Some(indexed) => indexed.any_corner(rect, polygon, in_box),
+        None => polygon.iter().any(in_box),
+    } {
         return true;
     }
     let cross = |a: [f64; 2], b: [f64; 2], c: [f64; 2]| {
@@ -1759,7 +1798,11 @@ fn rect_meets_outline(
     };
     (0..polygon.len()).any(|index| {
         let (a, b) = (polygon[index], polygon[(index + 1) % polygon.len()]);
-        (0..4).any(|edge| segments_cross(a, b, corners[edge], corners[(edge + 1) % 4]))
+        // Every corner on one side of the edge's line: no side crosses it
+        // (`segments_cross`'s second condition, the same orientations).
+        let left = corners.map(|corner| cross(a, b, corner) > 0.0);
+        left != [left[0]; 4]
+            && (0..4).any(|edge| segments_cross(a, b, corners[edge], corners[(edge + 1) % 4]))
     })
 }
 
@@ -4095,6 +4138,64 @@ mod tests {
         assert!(skipped > 10_000, "{skipped} tests spared");
     }
 
+    /// `rect_meets_polygon` before the outlines' bands (2026-10-28).
+    fn rect_meets_polygon_before(rect: &Rect, polygon: &[[f64; 2]], work: &mut u64) -> bool {
+        *work += edge_work(polygon.len());
+        let corners = rect.corners();
+        let first = corners[0];
+        let mut inside = false;
+        let mut near = false;
+        for index in 0..polygon.len() {
+            let (a, b) = (polygon[index], polygon[(index + 1) % polygon.len()]);
+            let extent = [
+                a[0].min(b[0]),
+                a[1].min(b[1]),
+                a[0].max(b[0]),
+                a[1].max(b[1]),
+            ];
+            if !box_apart(rect, extent, POLYGON_SLACK) {
+                near = true;
+                break;
+            }
+            if (a[1] > first[1]) != (b[1] > first[1]) {
+                let x = a[0] + (first[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]);
+                if first[0] < x {
+                    inside = !inside;
+                }
+            }
+        }
+        if !near {
+            return inside;
+        }
+        *work += 9 * edge_work(polygon.len());
+        if corners
+            .iter()
+            .any(|corner| crate::problem::point_in_polygon(*corner, polygon))
+        {
+            return true;
+        }
+        let (axes, own) = rect.frame();
+        if polygon.iter().any(|p| {
+            let delta = [p[0] - rect.center[0], p[1] - rect.center[1]];
+            (delta[0] * axes[0][0] + delta[1] * axes[0][1]).abs() <= own[0]
+                && (delta[0] * axes[1][0] + delta[1] * axes[1][1]).abs() <= own[1]
+        }) {
+            return true;
+        }
+        let cross = |a: [f64; 2], b: [f64; 2], c: [f64; 2]| {
+            (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+        };
+        let segments_cross = |a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]| {
+            let (d1, d2) = (cross(c, d, a), cross(c, d, b));
+            let (d3, d4) = (cross(a, b, c), cross(a, b, d));
+            (d1 > 0.0) != (d2 > 0.0) && (d3 > 0.0) != (d4 > 0.0)
+        };
+        (0..polygon.len()).any(|index| {
+            let (a, b) = (polygon[index], polygon[(index + 1) % polygon.len()]);
+            (0..4).any(|edge| segments_cross(a, b, corners[edge], corners[(edge + 1) % 4]))
+        })
+    }
+
     #[test]
     fn an_outline_by_bands_answers_and_books_as_the_pass_over_every_edge() {
         let mut state = 0x51F1_5E7A_C0DE_1234u64;
@@ -4105,6 +4206,7 @@ mod tests {
             (state >> 11) as f64 / (1u64 << 53) as f64
         };
         let mut nears = 0;
+        let mut near_meets = 0;
         let mut insides = 0;
         for round in 0..30 {
             let points = [40, 64, 333, 1200][round % 4];
@@ -4139,21 +4241,31 @@ mod tests {
                     rect_meets_outline(&rect, &polygon, Some(&outline), &mut indexed_work);
                 let mut plain_work = 0;
                 let plain = rect_meets_outline(&rect, &polygon, None, &mut plain_work);
+                let mut before_work = 0;
+                let before = rect_meets_polygon_before(&rect, &polygon, &mut before_work);
                 assert_eq!(
                     (indexed, indexed_work),
-                    (plain, plain_work),
+                    (before, before_work),
                     "round {round}, {rect:?}"
                 );
-                if plain_work > edge_work(polygon.len()) {
+                assert_eq!(
+                    (plain, plain_work),
+                    (before, before_work),
+                    "round {round}, {rect:?}"
+                );
+                if before_work > edge_work(polygon.len()) {
                     nears += 1;
-                } else if plain {
+                    if before {
+                        near_meets += 1;
+                    }
+                } else if before {
                     insides += 1;
                 }
             }
         }
         assert!(
-            nears > 1000 && insides > 1000,
-            "{nears} near, {insides} inside"
+            nears > 1000 && near_meets > 500 && nears - near_meets > 100 && insides > 1000,
+            "{nears} near ({near_meets} meeting), {insides} inside"
         );
     }
 
