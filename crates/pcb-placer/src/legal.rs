@@ -619,7 +619,12 @@ fn clear_of_one(
             *work += RECT_WORK + linked_work;
         }
         if if hollow {
-            hollow_overlap(problem, index, pose, other, poses[other], work)
+            match facts {
+                Some(facts) => {
+                    hollow_overlap_turned(problem, facts, index, pose, other, poses[other], work)
+                }
+                None => hollow_overlap(problem, index, pose, other, poses[other], work),
+            }
         } else {
             if match facts {
                 Some(facts) => facts.bare(problem, index, other),
@@ -660,19 +665,47 @@ fn clear_of_one(
         } {
             return false;
         }
-        if !hollow && far_courtyard_overlap(problem, index, pose, other, poses[other], work) {
-            return false;
-        }
-        if problem.constraints.pad_clearance
-            && pads_too_close(problem, index, pose, other, poses[other], work)
+        if !hollow
+            && match facts {
+                Some(facts) => far_courtyard_overlap_turned(
+                    problem,
+                    facts,
+                    index,
+                    pose,
+                    other,
+                    poses[other],
+                    work,
+                ),
+                None => far_courtyard_overlap(problem, index, pose, other, poses[other], work),
+            }
         {
             return false;
         }
-        if pads_in_hole_rings(problem, index, pose, other, poses[other], work) {
+        if problem.constraints.pad_clearance
+            && match facts {
+                Some(facts) => {
+                    pads_too_close_turned(problem, facts, index, pose, other, poses[other], work)
+                }
+                None => pads_too_close(problem, index, pose, other, poses[other], work),
+            }
+        {
+            return false;
+        }
+        if match facts {
+            Some(facts) => {
+                pads_in_hole_rings_turned(problem, facts, index, pose, other, poses[other], work)
+            }
+            None => pads_in_hole_rings(problem, index, pose, other, poses[other], work),
+        } {
             return false;
         }
     } else if side.opposite(other_side)
-        && far_side_overlap(problem, index, pose, other, poses[other], work)
+        && match facts {
+            Some(facts) => {
+                far_side_overlap_turned(problem, facts, index, pose, other, poses[other], work)
+            }
+            None => far_side_overlap(problem, index, pose, other, poses[other], work),
+        }
     {
         return false;
     }
@@ -1642,6 +1675,8 @@ pub(crate) struct Facts {
     flags: Option<Vec<u8>>,
     /// Whether any part lies on the marks.
     marks: bool,
+    /// The parts' boxes turned to their poses, for the pair tests.
+    turned: std::cell::RefCell<Turned>,
 }
 
 const ON_MARKS: u8 = 1;
@@ -1691,6 +1726,7 @@ impl Facts {
         Facts {
             flags,
             marks: !constraints.on_marks.is_empty(),
+            turned: std::cell::RefCell::new(Turned::new(problem.components.len())),
             outlines: problem
                 .components
                 .iter()
@@ -1808,6 +1844,387 @@ fn rect_meets_outline_once(
         left != [left[0]; 4]
             && (0..4).any(|edge| segments_cross(a, b, corners[edge], corners[(edge + 1) % 4]))
     })
+}
+
+/// A kind of a part's boxes (`Component`'s lists) the pair tests turn to
+/// its pose.
+#[derive(Clone, Copy)]
+enum Kind {
+    Pads,
+    FarSide,
+    FarCopper,
+    FarCourtyard,
+    Hollow,
+    Courtyards,
+    HoleRings,
+}
+
+const KINDS: usize = 7;
+
+fn kind_boxes(component: &crate::problem::Component, kind: Kind) -> &[[f64; 4]] {
+    match kind {
+        Kind::Pads => &component.pads,
+        Kind::FarSide => &component.far_side,
+        Kind::FarCopper => &component.far_copper,
+        Kind::FarCourtyard => &component.far_courtyard,
+        Kind::Hollow => &component.hollow,
+        Kind::Courtyards => &component.courtyards,
+        Kind::HoleRings => &component.hole_rings,
+    }
+}
+
+/// One part's turned boxes: the pose (bits) they were turned to, which
+/// kinds are there.
+#[derive(Default)]
+struct PartTurned {
+    pose: [u64; 3],
+    filled: u8,
+    lists: [Vec<Rect>; KINDS],
+}
+
+/// The parts' boxes turned to their poses (`turned`), kept per part while
+/// it stays at a pose, and each part's pads' nets (`pad_nets`): the pair
+/// tests turned both parts' lists again for every pair, the hollow parts'
+/// boxes most (38 % of the 4in1's legalisation, 2026-10-28), where the
+/// other parts of a spot search stay where they are and the searched
+/// part is at one spot for all its pair tests there. The same boxes (the
+/// same `turned`) in the same order.
+pub(crate) struct Turned {
+    parts: Vec<PartTurned>,
+    pad_nets: Vec<Option<Vec<Option<usize>>>>,
+}
+
+impl Turned {
+    fn new(count: usize) -> Self {
+        Turned {
+            parts: (0..count).map(|_| PartTurned::default()).collect(),
+            pad_nets: vec![None; count],
+        }
+    }
+
+    /// Turns part `part`'s boxes of `kind` to `pose` unless they are.
+    fn fill(&mut self, problem: &Problem, part: usize, pose: Pose, kind: Kind) {
+        let key = [
+            pose.position[0].to_bits(),
+            pose.position[1].to_bits(),
+            pose.angle.to_bits(),
+        ];
+        let entry = &mut self.parts[part];
+        if entry.pose != key {
+            entry.pose = key;
+            entry.filled = 0;
+        }
+        let bit = 1u8 << kind as u8;
+        if entry.filled & bit == 0 {
+            let list = &mut entry.lists[kind as usize];
+            list.clear();
+            list.extend(turned(
+                kind_boxes(&problem.components[part], kind),
+                pose,
+                0.0,
+            ));
+            entry.filled |= bit;
+        }
+    }
+
+    /// Part `part`'s boxes of `kind` (after `fill`).
+    fn get(&self, part: usize, kind: Kind) -> &[Rect] {
+        &self.parts[part].lists[kind as usize]
+    }
+
+    /// `pad_nets` of part `part`, kept.
+    fn fill_nets(&mut self, problem: &Problem, part: usize) {
+        if self.pad_nets[part].is_none() {
+            self.pad_nets[part] = Some(pad_nets(&problem.components[part]));
+        }
+    }
+}
+
+/// `pads_too_close` from the turned pads kept in `facts`.
+fn pads_too_close_turned(
+    problem: &Problem,
+    facts: &Facts,
+    a: usize,
+    pose_a: Pose,
+    b: usize,
+    pose_b: Pose,
+    work: &mut u64,
+) -> bool {
+    let clearance = problem.min_spacing.max(problem.constraints.pad_mask_gap);
+    let (first, second) = (&problem.components[a], &problem.components[b]);
+    if first.pads.is_empty() || second.pads.is_empty() {
+        return false;
+    }
+    let bare =
+        |part: usize, pose: Pose| rect(problem, part, pose).grown(-problem.components[part].halo);
+    if !overlaps(bare(a, pose_a), bare(b, pose_b), clearance) {
+        return false;
+    }
+    let reach = bare(b, pose_b);
+    let mut turned = facts.turned.borrow_mut();
+    turned.fill(problem, a, pose_a, Kind::Pads);
+    let near = turned
+        .get(a, Kind::Pads)
+        .iter()
+        .filter(|pad| overlaps(**pad, reach, clearance))
+        .count();
+    if near == 0 {
+        return false;
+    }
+    turned.fill(problem, b, pose_b, Kind::Pads);
+    turned.fill_nets(problem, a);
+    turned.fill_nets(problem, b);
+    let turned = &*turned;
+    let (mine, theirs) = (turned.get(a, Kind::Pads), turned.get(b, Kind::Pads));
+    *work +=
+        list_work(first.pads.len()) + list_work(second.pads.len()) + (near * theirs.len()) as u64;
+    let (nets_a, nets_b) = (
+        turned.pad_nets[a].as_deref().expect("filled"),
+        turned.pad_nets[b].as_deref().expect("filled"),
+    );
+    let mut close = false;
+    let mut apart_nets = false;
+    for (index, pad) in mine.iter().enumerate() {
+        if !overlaps(*pad, reach, clearance) {
+            continue;
+        }
+        for (other, theirs) in theirs.iter().enumerate() {
+            if overlaps(*pad, *theirs, clearance) {
+                close = true;
+                if match (nets_a[index], nets_b[other]) {
+                    (Some(x), Some(y)) => x != y,
+                    _ => true,
+                } {
+                    apart_nets = true;
+                }
+            }
+        }
+    }
+    if !close {
+        return false;
+    }
+    *work += (first.pads.len() * first.pins.len() + second.pads.len() * second.pins.len()) as u64;
+    apart_nets
+}
+
+/// `pads_in_hole_rings` from the turned rings and pads kept in `facts`.
+fn pads_in_hole_rings_turned(
+    problem: &Problem,
+    facts: &Facts,
+    a: usize,
+    pose_a: Pose,
+    b: usize,
+    pose_b: Pose,
+    work: &mut u64,
+) -> bool {
+    let clearance = problem.min_spacing;
+    let mut meets = |ringed: usize, ring_pose: Pose, padded: usize, pad_pose: Pose| {
+        let (rings, pads) = (
+            &problem.components[ringed].hole_rings,
+            &problem.components[padded].pads,
+        );
+        if rings.is_empty() || pads.is_empty() {
+            return false;
+        }
+        let reach = rect(problem, padded, pad_pose);
+        *work += list_work(rings.len());
+        let mut turned = facts.turned.borrow_mut();
+        turned.fill(problem, ringed, ring_pose, Kind::HoleRings);
+        let near = turned
+            .get(ringed, Kind::HoleRings)
+            .iter()
+            .filter(|ring| overlaps(**ring, reach, clearance))
+            .count();
+        if near == 0 {
+            return false;
+        }
+        turned.fill(problem, padded, pad_pose, Kind::Pads);
+        let turned = &*turned;
+        let pads = turned.get(padded, Kind::Pads);
+        *work += list_work(pads.len()) + (near * pads.len()) as u64;
+        turned
+            .get(ringed, Kind::HoleRings)
+            .iter()
+            .filter(|ring| overlaps(**ring, reach, clearance))
+            .any(|ring| pads.iter().any(|pad| overlaps(*ring, *pad, clearance)))
+    };
+    meets(a, pose_a, b, pose_b) || meets(b, pose_b, a, pose_a)
+}
+
+/// `hollow_overlap` from the turned boxes kept in `facts`.
+fn hollow_overlap_turned(
+    problem: &Problem,
+    facts: &Facts,
+    a: usize,
+    pose_a: Pose,
+    b: usize,
+    pose_b: Pose,
+    work: &mut u64,
+) -> bool {
+    // As `hollow_overlap`'s `blocking`: the count, the whole rectangle or
+    // None (the hollow boxes, and the courtyards where `true`).
+    let blocking = |index: usize, pose: Pose, other: usize| {
+        let component = &problem.components[index];
+        if !component.hollow_for(&problem.components[other]) {
+            let halo = if problem.constraints.halo_free(other) {
+                component.halo
+            } else {
+                0.0
+            };
+            return (1, Some(rect(problem, index, pose).grown(-halo)), false);
+        }
+        let against = &problem.components[other];
+        let courtyards = against.has_holes() && !component.holes_inside;
+        let count = component.hollow.len()
+            + if courtyards {
+                component.courtyards.len()
+            } else {
+                0
+            };
+        (count, None, courtyards)
+    };
+    let (their_count, their_whole, their_yards) = blocking(b, pose_b, a);
+    let (my_count, my_whole, my_yards) = blocking(a, pose_a, b);
+    *work += list_work(my_count) + list_work(their_count) + (my_count * their_count) as u64;
+    let spacing = if problem.constraints.pad_clearance {
+        0.0
+    } else {
+        problem.spacing
+    };
+    let mut turned = facts.turned.borrow_mut();
+    for (part, pose, whole, yards) in [
+        (b, pose_b, &their_whole, their_yards),
+        (a, pose_a, &my_whole, my_yards),
+    ] {
+        if whole.is_none() {
+            turned.fill(problem, part, pose, Kind::Hollow);
+            if yards {
+                turned.fill(problem, part, pose, Kind::Courtyards);
+            }
+        }
+    }
+    let turned = &*turned;
+    let lists = |part: usize, whole: &Option<Rect>, yards: bool| -> (&[Rect], &[Rect]) {
+        match whole {
+            Some(_) => (&[], &[]),
+            None => (
+                turned.get(part, Kind::Hollow),
+                if yards {
+                    turned.get(part, Kind::Courtyards)
+                } else {
+                    &[]
+                },
+            ),
+        }
+    };
+    let theirs = lists(b, &their_whole, their_yards);
+    let mine = lists(a, &my_whole, my_yards);
+    let theirs = their_whole.iter().chain(theirs.0).chain(theirs.1);
+    my_whole
+        .iter()
+        .chain(mine.0)
+        .chain(mine.1)
+        .any(|mine| theirs.clone().any(|other| overlaps(*mine, *other, spacing)))
+}
+
+/// `far_side_overlap` from the turned boxes kept in `facts`.
+fn far_side_overlap_turned(
+    problem: &Problem,
+    facts: &Facts,
+    a: usize,
+    pose_a: Pose,
+    b: usize,
+    pose_b: Pose,
+    work: &mut u64,
+) -> bool {
+    let meets = |holes: usize, pose_holes: Pose, body: usize, pose_body: Pose, work: &mut u64| {
+        let component = &problem.components[holes];
+        if component.far_side.is_empty() && component.far_copper.is_empty() {
+            return false;
+        }
+        let other = &problem.components[body];
+        let (far_count, copper_count) = (component.far_side.len(), component.far_copper.len());
+        *work += list_work(far_count) + list_work(copper_count);
+        let mut turned = facts.turned.borrow_mut();
+        turned.fill(problem, holes, pose_holes, Kind::FarSide);
+        turned.fill(problem, holes, pose_holes, Kind::FarCopper);
+        // The other part's copper: its pads, or all of it where it has
+        // none.
+        let whole = other
+            .pads
+            .is_empty()
+            .then(|| rect(problem, body, pose_body));
+        if whole.is_none() {
+            turned.fill(problem, body, pose_body, Kind::Pads);
+        }
+        let turned = &*turned;
+        let pads: &[Rect] = match &whole {
+            Some(whole) => std::slice::from_ref(whole),
+            None => turned.get(body, Kind::Pads),
+        };
+        let (far, copper) = (
+            turned.get(holes, Kind::FarSide),
+            turned.get(holes, Kind::FarCopper),
+        );
+        let pad_count = pads.len();
+        if problem.far_side_pads_only
+            || (problem.constraints.pad_clearance && problem.constraints.leads_keep_copper)
+        {
+            *work += list_work(pad_count);
+            *work += ((far_count + copper_count) * pad_count) as u64;
+            return far.iter().chain(copper).any(|far| {
+                pads.iter()
+                    .any(|pad| overlaps(*far, *pad, problem.min_spacing))
+            });
+        }
+        let target = rect(problem, body, pose_body);
+        *work += far_count as u64;
+        if far
+            .iter()
+            .any(|far| overlaps(*far, target, problem.spacing))
+        {
+            return true;
+        }
+        copper_count > 0 && {
+            *work += list_work(pad_count);
+            *work += (copper_count * pad_count) as u64;
+            copper.iter().any(|far| {
+                pads.iter()
+                    .any(|pad| overlaps(*far, *pad, problem.min_spacing))
+            })
+        }
+    };
+    meets(a, pose_a, b, pose_b, work) || meets(b, pose_b, a, pose_a, work)
+}
+
+/// `far_courtyard_overlap` from the turned boxes kept in `facts`.
+fn far_courtyard_overlap_turned(
+    problem: &Problem,
+    facts: &Facts,
+    a: usize,
+    pose_a: Pose,
+    b: usize,
+    pose_b: Pose,
+    work: &mut u64,
+) -> bool {
+    let meets = |yard: usize, pose_yard: Pose, other: usize, pose_other: Pose, work: &mut u64| {
+        let (component, against) = (&problem.components[yard], &problem.components[other]);
+        if component.far_courtyard.is_empty() || against.far_side.is_empty() {
+            return false;
+        }
+        *work += (component.far_courtyard.len() * against.far_side.len()) as u64;
+        let gap = body_spacing(problem, yard, other);
+        let mut turned = facts.turned.borrow_mut();
+        turned.fill(problem, yard, pose_yard, Kind::FarCourtyard);
+        turned.fill(problem, other, pose_other, Kind::FarSide);
+        let turned = &*turned;
+        let theirs = turned.get(other, Kind::FarSide);
+        turned
+            .get(yard, Kind::FarCourtyard)
+            .iter()
+            .any(|yard| theirs.iter().any(|their| overlaps(*yard, *their, gap)))
+    };
+    meets(a, pose_a, b, pose_b, work) || meets(b, pose_b, a, pose_a, work)
 }
 
 /// At KiCad's legality (`Constraints::pad_clearance`): whether two parts
@@ -4004,6 +4421,7 @@ mod tests {
         problem.shared_halos = round % 4 == 2;
         problem.far_side_pads_only = round % 5 == 3;
         problem.constraints.pad_mask_gap = if round % 3 == 2 { 0.3 } else { 0.0 };
+        problem.net_weights = vec![1.0; 3];
         problem.edge_margin = [0.5, 0.2, 1.0][round % 3];
         problem.components = (0..parts)
             .map(|number| {
@@ -4029,6 +4447,11 @@ mod tests {
                 if next() < 0.2 {
                     part.hollow = vec![[-1.0, -0.5, -0.6, 0.5], [0.6, -0.5, 1.0, 0.5]];
                     part.courtyards = vec![[-1.0, -0.5, 1.0, 0.5]];
+                    if next() < 0.5 {
+                        // A courtyard of separate shapes: hollow also
+                        // against parts with holes, blocking with them.
+                        part.courtyards = vec![[-1.0, -0.5, -0.5, 0.5], [0.5, -0.5, 1.0, 0.5]];
+                    }
                 }
                 if next() < 0.2 {
                     part.hole_rings = vec![[1.5, 1.5, 2.5, 2.5]];
@@ -4039,6 +4462,18 @@ mod tests {
                 if next() < 0.1 {
                     part.pads.push([2.0, -0.3, 3.5, 0.3]);
                 }
+                // Pins in most pads, of a few nets (two pads of one net may
+                // come closer than the clearance).
+                let mut pins = Vec::new();
+                for pad in &part.pads {
+                    if next() < 0.8 {
+                        pins.push(crate::problem::Pin {
+                            offset: [(pad[0] + pad[2]) / 2.0, (pad[1] + pad[3]) / 2.0],
+                            net: (next() * 3.0) as usize,
+                        });
+                    }
+                }
+                part.pins = pins;
                 if next() < 0.08 {
                     part.copper_only = true;
                     part.fixed = true;
