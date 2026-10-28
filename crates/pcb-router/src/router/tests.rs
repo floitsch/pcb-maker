@@ -4771,11 +4771,11 @@ fn straightening_takes_a_stair_step_out_and_keeps_the_ends() {
     assert!(router.conflicts(0).is_empty());
 }
 
-/// A row of three SMD pads (P, Q, R at 1 mm pitch) across net S's
-/// straight line, which passes between P and Q: with the pin-row cost S
-/// goes round the row, without it between the pads.
-#[test]
-fn the_pin_row_cost_keeps_other_nets_out_from_between_a_parts_pads() {
+/// A row of three SMD pads (P, Q, R at 1 mm pitch, the first at x =
+/// `left`, y = 5) with their two pin-row gaps, and net S's two pads at x
+/// = 4.5 from y = `s_start` to y = 8: with `left` 4 S's straight line
+/// passes between P and Q.
+fn pin_row_board(left: f64, s_start: f64) -> Board {
     let class = RuleClass {
         trace_width: 0.15,
         clearance: 0.1,
@@ -4815,16 +4815,15 @@ fn the_pin_row_cost_keeps_other_nets_out_from_between_a_parts_pads() {
             label,
         )
     };
-    let mut gaps = Vec::new();
-    for (a, b) in [(4.0, 5.0), (5.0, 6.0)] {
-        gaps.push(crate::board::PinRowGap {
+    let gaps = (0..2)
+        .map(|index| crate::board::PinRowGap {
             layer: 0,
-            a: [a, 5.0],
-            b: [b, 5.0],
-            nets: [Some(a as NetId - 4), Some(b as NetId - 4)],
-        });
-    }
-    let board = Board {
+            a: [left + index as f64, 5.0],
+            b: [left + index as f64 + 1.0, 5.0],
+            nets: [Some(index as NetId), Some(index as NetId + 1)],
+        })
+        .collect();
+    Board {
         layer_count: 1,
         outline: vec![[0.0, 0.0], [10.0, 0.0], [10.0, 10.0], [0.0, 10.0]],
         edge_clearance: 0.1,
@@ -4833,10 +4832,10 @@ fn the_pin_row_cost_keeps_other_nets_out_from_between_a_parts_pads() {
         classes: vec![class],
         neck_width: 0.15,
         obstacles: vec![
-            pad(4.0, 0, "U1.1"),
-            pad(5.0, 1, "U1.2"),
-            pad(6.0, 2, "U1.3"),
-            s_pad(2.0, "J1.1"),
+            pad(left, 0, "U1.1"),
+            pad(left + 1.0, 1, "U1.2"),
+            pad(left + 2.0, 2, "U1.3"),
+            s_pad(s_start, "J1.1"),
             s_pad(8.0, "J2.1"),
         ],
         nets: ["P", "Q", "R"]
@@ -4845,13 +4844,13 @@ fn the_pin_row_cost_keeps_other_nets_out_from_between_a_parts_pads() {
             .map(|(index, name)| Net {
                 name: (*name).into(),
                 class: 0,
-                terminals: vec![terminal(index, [4.0 + index as f64, 5.0], name)],
+                terminals: vec![terminal(index, [left + index as f64, 5.0], name)],
             })
             .chain([Net {
                 name: "S".into(),
                 class: 0,
                 terminals: vec![
-                    terminal(3, [4.5, 2.0], "J1.1"),
+                    terminal(3, [4.5, s_start], "J1.1"),
                     terminal(4, [4.5, 8.0], "J2.1"),
                 ],
             }])
@@ -4868,7 +4867,35 @@ fn the_pin_row_cost_keeps_other_nets_out_from_between_a_parts_pads() {
         pin_row_gaps: gaps,
         terminal_copper: Vec::new(),
         attachment: Default::default(),
-    };
+    }
+}
+
+/// Whether net S's route crosses y = 5 between x = 4 and x = 6 (between
+/// the pads of `pin_row_board(4.0, _)`).
+fn crosses_the_row(route: &crate::NetRoute) -> bool {
+    route.segments.iter().any(|segment| {
+        let (low, high) = if segment.start[1] < segment.end[1] {
+            (segment.start, segment.end)
+        } else {
+            (segment.end, segment.start)
+        };
+        low[1] <= 5.0 && high[1] >= 5.0 && {
+            let x = if high[1] > low[1] {
+                low[0] + (high[0] - low[0]) * (5.0 - low[1]) / (high[1] - low[1])
+            } else {
+                low[0]
+            };
+            x > 4.0 && x < 6.0
+        }
+    })
+}
+
+/// A row of three SMD pads (P, Q, R at 1 mm pitch) across net S's
+/// straight line, which passes between P and Q: with the pin-row cost S
+/// goes round the row, without it between the pads.
+#[test]
+fn the_pin_row_cost_keeps_other_nets_out_from_between_a_parts_pads() {
+    let board = pin_row_board(4.0, 2.0);
     let crosses = |cost: f64| {
         let config = Config {
             pitches: vec![0.05],
@@ -4877,24 +4904,61 @@ fn the_pin_row_cost_keeps_other_nets_out_from_between_a_parts_pads() {
         };
         let result = crate::route(&board, &config);
         assert_eq!(result.status[3], crate::NetStatus::Routed);
-        result.routes[3].segments.iter().any(|segment| {
-            let (low, high) = if segment.start[1] < segment.end[1] {
-                (segment.start, segment.end)
-            } else {
-                (segment.end, segment.start)
-            };
-            low[1] <= 5.0 && high[1] >= 5.0 && {
-                let x = if high[1] > low[1] {
-                    low[0] + (high[0] - low[0]) * (5.0 - low[1]) / (high[1] - low[1])
-                } else {
-                    low[0]
-                };
-                x > 4.0 && x < 6.0
-            }
-        })
+        crosses_the_row(&result.routes[3])
     };
     assert!(crosses(0.0));
     assert!(!crosses(5.0));
+}
+
+/// A part moved by `update` (the layout's moves) takes its pin-row gaps
+/// with it: the row starts at x = 7, off S's line, and moves to x = 4,
+/// across it (S's first pad moves too, so S is routed again). After the
+/// update the gaps are marked at the new place and nowhere at the old
+/// one, the marking's work is on the work clock, and S's new route pays
+/// the gap cost and goes round the row. With and without the fan-out.
+#[test]
+fn a_part_moved_by_update_takes_its_pin_row_gaps_along() {
+    for fanout in [false, true] {
+        let config = Config {
+            pitches: vec![0.05],
+            pin_row_cost: 5.0,
+            fanout,
+            ..Config::default()
+        };
+        let mut router = Router::new(&pin_row_board(7.0, 2.0), &config);
+        let first = router.run_in_place();
+        assert_eq!(first.status[3], crate::NetStatus::Routed);
+        let gap_at = |router: &Router, at: [f64; 2]| {
+            router.pin_row_at(0, router.grid.nearest_node(at).unwrap())
+        };
+        let (old, new) = ([7.5, 5.0], [4.5, 5.0]);
+        assert_ne!(gap_at(&router, old), 0);
+        assert_eq!(gap_at(&router, new), 0);
+
+        let moved = pin_row_board(4.0, 1.8);
+        let before = router.expansions();
+        router.update(&moved).unwrap();
+        assert_eq!(gap_at(&router, old), 0, "fanout {fanout}");
+        for at in [[4.1, 5.0], [4.5, 5.0], [5.5, 5.0], [5.9, 5.0]] {
+            assert_ne!(gap_at(&router, at), 0, "{at:?}, fanout {fanout}");
+        }
+        // Every marked node lies between the new pads.
+        for (cell, _) in &router.pin_row[0] {
+            let at = router.grid.center(
+                *cell as usize % router.grid.nx,
+                *cell as usize / router.grid.nx,
+            );
+            assert!(at[0] >= 4.0 - 1.0e-9 && at[0] <= 6.0 + 1.0e-9, "{at:?}");
+        }
+        let node = router.grid.nearest_node(new).unwrap();
+        assert!(router.pin_row_foreign(3, 0, node));
+        assert!(!router.pin_row_foreign(0, 0, node));
+        assert!(router.expansions() > before, "the marking's work, booked");
+
+        let second = router.reroute(true);
+        assert_eq!(second.status[3], crate::NetStatus::Routed);
+        assert!(!crosses_the_row(&second.routes[3]), "fanout {fanout}");
+    }
 }
 
 /// An oblique stub's measured footprint: every node closer than the radius

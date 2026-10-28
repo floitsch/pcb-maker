@@ -417,6 +417,8 @@ impl Router {
         router.guard = router.thermal_guards();
         router.mark_covered();
         router.mark_via_cells();
+        // The marking's work is in the build's (as before the moves
+        // rebuilt it: route mode's work unchanged).
         router.mark_pin_rows();
         router.build_hot();
         let counts = router.build_counts();
@@ -729,28 +731,36 @@ impl Router {
     /// one where the line runs along a node row). A node in two gaps keeps
     /// the first. Nothing with `pin_row_cost` 0. Then the fan-out's
     /// reserved runs (`mark_fanout`, with `Config::fanout`), whose nodes
-    /// a gap's node keeps.
-    pub(super) fn mark_pin_rows(&mut self) {
+    /// a gap's node keeps. Everything is marked again from the board as it
+    /// is (`update` after a move: the old marks go, the moved parts' gaps
+    /// are marked where they now are). Returns the gaps' work: the nodes
+    /// the gaps' boxes visit and the marks sorted (the fan-out books its
+    /// own on the work clock; `update` books this, `Router::new` leaves it
+    /// in the build as before).
+    pub(super) fn mark_pin_rows(&mut self) -> u64 {
         let layers = self.board.layer_count;
         self.pin_row = vec![Vec::new(); layers];
         self.pin_row_nets.clear();
         self.pin_row_costs.clear();
-        self.mark_pin_row_gaps();
+        let mut work = self.mark_pin_row_gaps();
         self.fanout_first = self.pin_row_nets.len().max(1);
         self.mark_fanout();
         for nodes in &mut self.pin_row {
+            work += nodes.len() as u64;
             // Stable: of a node's gaps, the first stays.
             nodes.sort_by_key(|(cell, _)| *cell);
             nodes.dedup_by_key(|(cell, _)| *cell);
         }
+        work
     }
 
-    /// `mark_pin_rows`' gaps.
-    fn mark_pin_row_gaps(&mut self) {
+    /// `mark_pin_rows`' gaps; returns the nodes visited.
+    fn mark_pin_row_gaps(&mut self) -> u64 {
         let layers = self.board.layer_count;
         if self.config.pin_row_cost <= 0.0 || self.board.pin_row_gaps.is_empty() {
-            return;
+            return 0;
         }
+        let mut work = 0u64;
         self.pin_row_nets.push((0, 0));
         self.pin_row_costs.push(0.0);
         let pitch = self.grid.pitch;
@@ -775,6 +785,7 @@ impl Router {
             };
             let index = self.pin_row_nets.len() as u16;
             let mut marked = false;
+            work += ((x1 - x0 + 1) * (y1 - y0 + 1)) as u64;
             for y in y0..=y1 {
                 for x in x0..=x1 {
                     let point = self.grid.center(x, y);
@@ -793,6 +804,7 @@ impl Router {
                 self.pin_row_costs.push(self.config.pin_row_cost as f32);
             }
         }
+        work
     }
 
     /// The pin-row gap (an index into `pin_row_nets`, 0 for none) at
