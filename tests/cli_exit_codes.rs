@@ -1824,6 +1824,119 @@ fn kicad_cli_is_checked_before_any_work() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// A harness's reservation handed to the binary is the binary's: run.py's
+/// gate moves the board's reservation to the binary's pid
+/// (harness_common.Ledger.move, `granted_mb`), and the binary counts it as
+/// held, not only its own estimate (since 2026-10-27; until then
+/// Quanta75's layout, admitted with 2.4 GB, replaced it with 1331 MB of
+/// its own and in the nightly ended with exit 4 at 1474 MB resident, past
+/// 1415 MB).
+///
+/// Deterministic under load: a third process holds 900 of the ledger's
+/// 1000 MB, so the route's own request (its estimate, more than the 100 MB
+/// handed to it) waits, and its waiting entry stays in the ledger until
+/// the test ends the holder. That entry keeps the hand-over as held
+/// (megabytes 100, `granted_mb` 100; before, a waiting entry held 0 and
+/// the harness's reservation was gone). Until 2026-10-28 the test polled
+/// the ledger every 5 ms for the route's entry while it held memory, which
+/// it does for about 25 ms; under a merge gate's load the poll missed it.
+#[test]
+fn a_harness_s_reservation_handed_to_the_binary_is_its_own() {
+    use pcb_kicad::ledger::{Ledger, Reservation, start_ticks};
+    let root = scratch("ledger-grant");
+    let project = project(&root);
+    let path = root.join("ledger.json");
+    let ledger = Ledger::at(&path);
+    let mut holder = std::process::Command::new("sleep")
+        .arg("3600")
+        .spawn()
+        .unwrap();
+    ledger
+        .update(|reservations| {
+            reservations.push(Reservation {
+                pid: holder.id(),
+                started: 0.0,
+                start_ticks: start_ticks(holder.id()),
+                megabytes: 900.0,
+                label: "another run".into(),
+                ..Default::default()
+            })
+        })
+        .unwrap();
+    let out = root.join("out");
+    let mut child = binary()
+        .env("PCB_MAKER_LEDGER", &path)
+        .env("PCB_MAKER_LEDGER_TOTAL_MB", "1000")
+        .env("PCB_SKIP_NATIVE", "1")
+        .env("PCB_WORK_RATE", "3.15e6,150e6")
+        .args([
+            "route-kicad-board",
+            &project.display().to_string(),
+            "t",
+            &out.display().to_string(),
+            "auto",
+        ])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let pid = child.id();
+    // The harness's reservation, moved to the binary as the gate moves it
+    // (merged into the binary's entry where it has one already, as
+    // Ledger.move does: the order does not matter).
+    ledger
+        .update(|reservations| {
+            if let Some(own) = reservations.iter_mut().find(|r| r.pid == pid) {
+                own.megabytes = own.megabytes.max(100.0);
+                own.granted_mb = Some(100.0);
+            } else {
+                reservations.push(Reservation {
+                    pid,
+                    started: 1.0,
+                    start_ticks: start_ticks(pid),
+                    megabytes: 100.0,
+                    label: "run.py: t (expected peak)".into(),
+                    granted_mb: Some(100.0),
+                    ..Default::default()
+                });
+            }
+        })
+        .unwrap();
+    // The route waits behind the holder with its own entry: it stays.
+    let started = std::time::Instant::now();
+    let entry = loop {
+        let live = ledger.live().unwrap();
+        if let Some(entry) = live
+            .iter()
+            .find(|r| r.pid == pid && !r.label.starts_with("run.py") && r.waiting_mb.is_some())
+        {
+            break entry.clone();
+        }
+        assert!(
+            live.iter().any(|r| r.pid == pid),
+            "the route's entry is gone without waiting: {live:?}"
+        );
+        assert!(
+            started.elapsed().as_secs() < 600,
+            "the route never waited: {live:?}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    assert_eq!(entry.megabytes, 100.0, "{entry:?}");
+    assert_eq!(entry.granted_mb, Some(100.0), "{entry:?}");
+    assert!(entry.waiting_mb.unwrap() > 100.0, "{entry:?}");
+    holder.kill().unwrap();
+    holder.wait().unwrap();
+    let output = child.wait().unwrap();
+    assert_eq!(output.code(), Some(1));
+    assert_eq!(
+        verdict(&out.join("board-router.json"))["status"],
+        "router_complete_unverified"
+    );
+    assert_eq!(ledger.live().unwrap(), vec![]);
+    fs::remove_dir_all(root).unwrap();
+}
+
 /// Two routes started together under a memory ledger that holds one of
 /// them at a time (`PCB_MAKER_LEDGER_TOTAL_MB`): both wait while a third
 /// process holds most of it, then they go one after the other, never both
@@ -1842,80 +1955,6 @@ fn kicad_cli_is_checked_before_any_work() {
 /// memory at once"). The literal parts of a line are written whole (one
 /// write each, atomic in a pipe), so the markers stay intact even where two
 /// lines interleave.
-/// A harness's reservation handed to the binary is the binary's: run.py's
-/// gate moves the board's reservation to the binary's pid
-/// (harness_common.Ledger.move, `granted_mb`), and the binary's own
-/// reservation is at least that, not only its own estimate (since
-/// 2026-10-27; until then Quanta75's layout, admitted with 2.4 GB,
-/// replaced it with 1331 MB of its own and in the nightly ended with exit 4
-/// at 1474 MB resident, past 1415 MB).
-#[test]
-fn a_harness_s_reservation_handed_to_the_binary_is_its_own() {
-    use pcb_kicad::ledger::{Ledger, Reservation, start_ticks};
-    let root = scratch("ledger-grant");
-    let project = project(&root);
-    let path = root.join("ledger.json");
-    let ledger = Ledger::at(&path);
-    let out = root.join("out");
-    let mut child = binary()
-        .env("PCB_MAKER_LEDGER", &path)
-        .env("PCB_MAKER_LEDGER_TOTAL_MB", "100000")
-        .env("PCB_SKIP_NATIVE", "1")
-        .env("PCB_WORK_RATE", "3.15e6,150e6")
-        .args([
-            "route-kicad-board",
-            &project.display().to_string(),
-            "t",
-            &out.display().to_string(),
-            "auto",
-        ])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .unwrap();
-    let pid = child.id();
-    // The harness's reservation, moved to the binary as the gate moves it.
-    ledger
-        .update(|reservations| {
-            reservations.push(Reservation {
-                pid,
-                started: 1.0,
-                start_ticks: start_ticks(pid),
-                megabytes: 3000.0,
-                label: "run.py: t (expected peak)".into(),
-                granted_mb: Some(3000.0),
-                ..Default::default()
-            })
-        })
-        .unwrap();
-    // The binary replaces it with its own entry once it reserves.
-    let mut seen = None;
-    let started = std::time::Instant::now();
-    while seen.is_none() {
-        let live = ledger.live().unwrap();
-        if let Some(entry) = live
-            .iter()
-            .find(|r| r.pid == pid && !r.label.starts_with("run.py"))
-        {
-            seen = Some(entry.clone());
-        } else if live.iter().all(|r| r.pid != pid) {
-            break;
-        }
-        assert!(
-            started.elapsed().as_secs() < 600,
-            "the route never reserved: {live:?}"
-        );
-        std::thread::sleep(std::time::Duration::from_millis(5));
-    }
-    let output = child.wait().unwrap();
-    assert_eq!(output.code(), Some(1));
-    let entry = seen.expect("the binary's own entry");
-    assert!(entry.megabytes >= 3000.0, "{entry:?}");
-    assert_eq!(entry.granted_mb, Some(3000.0), "{entry:?}");
-    assert_eq!(ledger.live().unwrap(), vec![]);
-    fs::remove_dir_all(root).unwrap();
-}
-
 #[test]
 fn routes_side_by_side_serialise_through_the_memory_ledger() {
     use pcb_kicad::ledger::{Ledger, Reservation, start_ticks};
