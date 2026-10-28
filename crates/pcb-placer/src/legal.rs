@@ -519,7 +519,17 @@ fn clear_of(
     // The parts first: on a crowded board they turn down most spots, and
     // the outline test walks every outline edge.
     for other in others {
-        if !clear_of_one(problem, poses, index, pose, &body, linked_work, other, work) {
+        if !clear_of_one(
+            problem,
+            poses,
+            index,
+            pose,
+            &body,
+            linked_work,
+            other,
+            work,
+            None,
+        ) {
             return false;
         }
     }
@@ -538,6 +548,7 @@ fn clear_of_one(
     linked_work: u64,
     other: usize,
     work: &mut u64,
+    cutouts: Option<&Cutouts>,
 ) -> bool {
     let body = *body;
     let side = problem.components[index].side;
@@ -557,8 +568,8 @@ fn clear_of_one(
     if side.collides(other_side) {
         let (mine, theirs) = (&problem.components[index], &problem.components[other]);
         if mine.copper_only || theirs.copper_only {
-            if copper_meets_cutout(problem, index, pose, other, poses[other], work)
-                || body_meets_solid_cutout(problem, index, pose, other, poses[other], work)
+            if copper_meets_cutout(problem, index, pose, other, poses[other], work, cutouts)
+                || body_meets_solid_cutout(problem, index, pose, other, poses[other], work, cutouts)
             {
                 return false;
             }
@@ -657,6 +668,8 @@ pub(crate) struct Apart {
     /// work (`u64::MAX`: not measured yet).
     far_part: usize,
     far: Vec<u64>,
+    /// The cutouts' outlines for the polygon tests.
+    cutouts: Cutouts,
     /// Every skipped test checked against the direct one.
     check: bool,
 }
@@ -710,6 +723,7 @@ impl Apart {
             boxes: vec![None; count],
             far_part: usize::MAX,
             far: vec![u64::MAX; count],
+            cutouts: Cutouts::new(problem),
             check: cfg!(debug_assertions) || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
         }
     }
@@ -798,6 +812,7 @@ impl Apart {
                 linked_work(problem),
                 other,
                 &mut work,
+                None,
             );
             debug_assert!(clear, "part {index} far off meets part {other}");
             self.far[other] = work;
@@ -837,6 +852,7 @@ impl Apart {
                         linked_work,
                         other,
                         &mut direct,
+                        Some(&self.cutouts),
                     );
                     assert_eq!(
                         (clear, direct),
@@ -847,7 +863,17 @@ impl Apart {
                 *work += far;
                 continue;
             }
-            if !clear_of_one(problem, poses, index, pose, &body, linked_work, other, work) {
+            if !clear_of_one(
+                problem,
+                poses,
+                index,
+                pose,
+                &body,
+                linked_work,
+                other,
+                work,
+                Some(&self.cutouts),
+            ) {
                 return false;
             }
         }
@@ -1029,6 +1055,7 @@ impl Sweep {
                 linked_work,
                 other,
                 &mut work,
+                None,
             );
             debug_assert!(clear, "part {index} far off meets part {other}");
             total += work;
@@ -1070,6 +1097,7 @@ impl Sweep {
                 linked_work,
                 other,
                 &mut work,
+                None,
             ) {
                 clear = false;
                 break;
@@ -1282,6 +1310,7 @@ fn copper_meets_cutout(
     b: usize,
     pose_b: Pose,
     work: &mut u64,
+    cutouts: Option<&Cutouts>,
 ) -> bool {
     let (hole, pose_hole, part, pose_part) = if problem.components[a].copper_only {
         (a, pose_a, b, pose_b)
@@ -1309,24 +1338,14 @@ fn copper_meets_cutout(
         // the hole runs diagonally. A pad outside the outline's box cannot
         // meet it (a tabbed panel's slots run around whole copies, with
         // thousands of points).
-        let mut extent = [
-            f64::INFINITY,
-            f64::INFINITY,
-            f64::NEG_INFINITY,
-            f64::NEG_INFINITY,
-        ];
-        for point in outline {
-            extent = [
-                extent[0].min(point[0]),
-                extent[1].min(point[1]),
-                extent[2].max(point[0]),
-                extent[3].max(point[1]),
-            ];
-        }
+        let indexed = cutouts.and_then(|cutouts| cutouts.outlines[hole].as_ref());
+        let extent = indexed.map_or_else(|| outline_extent(outline), |indexed| indexed.extent);
         *work += edge_work(outline.len());
         for pad in pads {
             *work += 1;
-            if !box_apart(&pad, extent, POLYGON_SLACK) && rect_meets_polygon(&pad, outline, work) {
+            if !box_apart(&pad, extent, POLYGON_SLACK)
+                && rect_meets_outline(&pad, outline, indexed, work)
+            {
                 return true;
             }
         }
@@ -1347,6 +1366,7 @@ fn body_meets_solid_cutout(
     b: usize,
     pose_b: Pose,
     work: &mut u64,
+    cutouts: Option<&Cutouts>,
 ) -> bool {
     let solid = &problem.constraints.solid_cutouts;
     if solid.is_empty() {
@@ -1365,23 +1385,11 @@ fn body_meets_solid_cutout(
     if outline.len() < 3 {
         return false;
     }
-    let mut extent = [
-        f64::INFINITY,
-        f64::INFINITY,
-        f64::NEG_INFINITY,
-        f64::NEG_INFINITY,
-    ];
-    for point in outline {
-        extent = [
-            extent[0].min(point[0]),
-            extent[1].min(point[1]),
-            extent[2].max(point[0]),
-            extent[3].max(point[1]),
-        ];
-    }
+    let indexed = cutouts.and_then(|cutouts| cutouts.outlines[hole].as_ref());
+    let extent = indexed.map_or_else(|| outline_extent(outline), |indexed| indexed.extent);
     // A body touching the hole's edge is on the board.
     let body = body.grown(-1.0e-6);
-    !box_apart(&body, extent, 0.0) && rect_meets_polygon(&body, outline, work)
+    !box_apart(&body, extent, 0.0) && rect_meets_outline(&body, outline, indexed, work)
 }
 
 /// The work of building a list of boxes (an allocation, and a turn of each
@@ -1409,8 +1417,160 @@ fn box_apart(rect: &Rect, extent: [f64; 4], slack: f64) -> bool {
         || rect.center[1] - rect.half[1] - slack > extent[3]
 }
 
-/// Whether a box (turned or not) meets a polygon (overlap or touch).
-fn rect_meets_polygon(rect: &Rect, polygon: &[[f64; 2]], work: &mut u64) -> bool {
+/// The box around an outline's points ([min x, min y, max x, max y]).
+fn outline_extent(outline: &[[f64; 2]]) -> [f64; 4] {
+    let mut extent = [
+        f64::INFINITY,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        f64::NEG_INFINITY,
+    ];
+    for point in outline {
+        extent = [
+            extent[0].min(point[0]),
+            extent[1].min(point[1]),
+            extent[2].max(point[0]),
+            extent[3].max(point[1]),
+        ];
+    }
+    extent
+}
+
+/// The box around the edge from `a` to `b`.
+fn edge_extent(a: [f64; 2], b: [f64; 2]) -> [f64; 4] {
+    [
+        a[0].min(b[0]),
+        a[1].min(b[1]),
+        a[0].max(b[0]),
+        a[1].max(b[1]),
+    ]
+}
+
+/// Whether the edge from `a` to `b` crosses the ray from `point` towards
+/// +x (the even-odd rule's step).
+fn crosses_ray(a: [f64; 2], b: [f64; 2], point: [f64; 2]) -> bool {
+    (a[1] > point[1]) != (b[1] > point[1])
+        && point[0] < a[0] + (point[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0])
+}
+
+/// A cutout's outline for the first pass of the polygon test
+/// (`rect_meets_outline`): its box, and its edges by bands of y, each edge
+/// in every band its y range touches. A box's edges near it lie in the
+/// bands of its y range, the edges a ray from a point crosses in the band
+/// of the point's y: the pass over every edge of a tabbed panel's slots
+/// (thousands of points around whole copies), for every pad against them,
+/// was two thirds of the 0xCB panel's legalisation (2026-10-28).
+pub(crate) struct Outline {
+    extent: [f64; 4],
+    low: f64,
+    /// Bands per millimetre of y.
+    scale: f64,
+    /// Per band, the edges (edge `i` from point `i` to the next).
+    bands: Vec<Vec<u32>>,
+    /// Every first pass checked against the pass over every edge (debug
+    /// builds and `PCB_PLACER_CHECK_OVERLAP`).
+    check: bool,
+}
+
+/// Outlines with fewer edges keep the plain pass.
+const OUTLINE_INDEX_EDGES: usize = 32;
+
+impl Outline {
+    fn new(polygon: &[[f64; 2]]) -> Self {
+        let extent = outline_extent(polygon);
+        let count = (polygon.len() / 4).clamp(1, 1 << 14);
+        let height = extent[3] - extent[1];
+        let scale = if height > 0.0 {
+            count as f64 / height
+        } else {
+            0.0
+        };
+        let mut outline = Outline {
+            extent,
+            low: extent[1],
+            scale,
+            bands: vec![Vec::new(); count],
+            check: cfg!(debug_assertions) || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
+        };
+        for index in 0..polygon.len() {
+            let (a, b) = (polygon[index], polygon[(index + 1) % polygon.len()]);
+            let (low, high) = (outline.band(a[1].min(b[1])), outline.band(a[1].max(b[1])));
+            for band in low..=high {
+                outline.bands[band].push(index as u32);
+            }
+        }
+        outline
+    }
+
+    /// The band of `y` (monotonic in `y`; NaN and below the outline 0).
+    fn band(&self, y: f64) -> usize {
+        let at = (y - self.low) * self.scale;
+        crate::buckets::cell_index(at).min(self.bands.len() - 1)
+    }
+
+    fn edge(polygon: &[[f64; 2]], index: u32) -> ([f64; 2], [f64; 2]) {
+        let index = index as usize;
+        (polygon[index], polygon[(index + 1) % polygon.len()])
+    }
+
+    /// Whether an edge comes near the box around `rect`
+    /// (`rect_meets_polygon`'s `near`).
+    fn near(&self, rect: &Rect, polygon: &[[f64; 2]]) -> bool {
+        let low = self.band(rect.center[1] - rect.half[1] - POLYGON_SLACK);
+        let high = self.band(rect.center[1] + rect.half[1] + POLYGON_SLACK);
+        self.bands[low..=high].iter().any(|band| {
+            band.iter().any(|&edge| {
+                let (a, b) = Self::edge(polygon, edge);
+                !box_apart(rect, edge_extent(a, b), POLYGON_SLACK)
+            })
+        })
+    }
+
+    /// Whether `point` lies inside by the even-odd rule
+    /// (`rect_meets_polygon`'s `inside` where no edge is near).
+    fn inside(&self, point: [f64; 2], polygon: &[[f64; 2]]) -> bool {
+        self.bands[self.band(point[1])]
+            .iter()
+            .filter(|&&edge| {
+                let (a, b) = Self::edge(polygon, edge);
+                crosses_ray(a, b, point)
+            })
+            .count()
+            % 2
+            == 1
+    }
+}
+
+/// Per part, the `Outline` of a cutout's outline with many edges.
+pub(crate) struct Cutouts {
+    outlines: Vec<Option<Outline>>,
+}
+
+impl Cutouts {
+    pub(crate) fn new(problem: &Problem) -> Self {
+        Cutouts {
+            outlines: problem
+                .components
+                .iter()
+                .map(|component| {
+                    (component.copper_only && component.cutout_outline.len() >= OUTLINE_INDEX_EDGES)
+                        .then(|| Outline::new(&component.cutout_outline))
+                })
+                .collect(),
+        }
+    }
+}
+
+/// Whether a box (turned or not) meets a polygon (overlap or touch), its
+/// first pass from the outline's edges by bands
+/// (`indexed`, the polygon's `Outline`) where there is one: the same
+/// answer and the same work.
+fn rect_meets_outline(
+    rect: &Rect,
+    polygon: &[[f64; 2]],
+    indexed: Option<&Outline>,
+    work: &mut u64,
+) -> bool {
     // One pass first: where no edge comes near the box around the rect,
     // no polygon corner lies in it, no edge crosses it, and its corners
     // lie on one side of the outline alike, so the first corner's side is
@@ -1418,27 +1578,37 @@ fn rect_meets_polygon(rect: &Rect, polygon: &[[f64; 2]], work: &mut u64) -> bool
     *work += edge_work(polygon.len());
     let corners = rect.corners();
     let first = corners[0];
-    let mut inside = false;
-    let mut near = false;
-    for index in 0..polygon.len() {
-        let (a, b) = (polygon[index], polygon[(index + 1) % polygon.len()]);
-        let extent = [
-            a[0].min(b[0]),
-            a[1].min(b[1]),
-            a[0].max(b[0]),
-            a[1].max(b[1]),
-        ];
-        if !box_apart(rect, extent, POLYGON_SLACK) {
-            near = true;
-            break;
-        }
-        if (a[1] > first[1]) != (b[1] > first[1]) {
-            let x = a[0] + (first[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]);
-            if first[0] < x {
+    let plain = || {
+        let mut inside = false;
+        let mut near = false;
+        for index in 0..polygon.len() {
+            let (a, b) = (polygon[index], polygon[(index + 1) % polygon.len()]);
+            if !box_apart(rect, edge_extent(a, b), POLYGON_SLACK) {
+                near = true;
+                break;
+            }
+            if crosses_ray(a, b, first) {
                 inside = !inside;
             }
         }
-    }
+        (near, inside)
+    };
+    let (near, inside) = match indexed {
+        Some(indexed) => {
+            let near = indexed.near(rect, polygon);
+            let answer = (near, !near && indexed.inside(first, polygon));
+            if indexed.check {
+                let (plain_near, plain_inside) = plain();
+                assert_eq!(
+                    answer,
+                    (plain_near, !plain_near && plain_inside),
+                    "{rect:?}: (near, inside) by bands against the pass over every edge"
+                );
+            }
+            answer
+        }
+        None => plain(),
+    };
     if !near {
         return inside;
     }
@@ -3663,6 +3833,7 @@ mod tests {
         problem.shared_halos = round % 4 == 2;
         problem.far_side_pads_only = round % 5 == 3;
         problem.constraints.pad_mask_gap = if round % 3 == 2 { 0.3 } else { 0.0 };
+        problem.edge_margin = [0.5, 0.2, 1.0][round % 3];
         problem.components = (0..parts)
             .map(|number| {
                 let mut part = resistor(0.0);
@@ -3697,13 +3868,33 @@ mod tests {
                 if next() < 0.1 {
                     part.pads.push([2.0, -0.3, 3.5, 0.3]);
                 }
-                if next() < 0.05 {
+                if next() < 0.08 {
                     part.copper_only = true;
                     part.fixed = true;
+                    if next() < 0.7 {
+                        // A slot of many points (its outline on the board).
+                        let center = [5.0 + next() * 20.0, 5.0 + next() * 20.0];
+                        let points = 32 + (next() * 60.0) as usize;
+                        part.cutout_outline = (0..points)
+                            .map(|index| {
+                                let angle = index as f64 / points as f64 * std::f64::consts::TAU;
+                                let radius = 2.0 + 3.0 * next();
+                                [
+                                    center[0] + radius * angle.cos(),
+                                    center[1] + 0.6 * radius * angle.sin(),
+                                ]
+                            })
+                            .collect();
+                    }
                 }
                 part
             })
             .collect();
+        if round.is_multiple_of(2) {
+            problem.constraints.solid_cutouts = (0..parts)
+                .filter(|index| problem.components[*index].copper_only)
+                .collect();
+        }
         let poses: Vec<Pose> = (0..parts)
             .map(|_| Pose {
                 position: [next() * 30.0, next() * 30.0],
@@ -3770,6 +3961,68 @@ mod tests {
             }
         }
         assert!(skipped > 10_000, "{skipped} tests spared");
+    }
+
+    #[test]
+    fn an_outline_by_bands_answers_and_books_as_the_pass_over_every_edge() {
+        let mut state = 0x51F1_5E7A_C0DE_1234u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut nears = 0;
+        let mut insides = 0;
+        for round in 0..30 {
+            let points = [40, 64, 333, 1200][round % 4];
+            // A ragged ring around (20, 20), some stretches flat and on a
+            // lattice (edges along the bands' borders, repeated y values).
+            let polygon: Vec<[f64; 2]> = (0..points)
+                .map(|index| {
+                    let angle = index as f64 / points as f64 * std::f64::consts::TAU;
+                    let radius = 8.0 + 6.0 * next();
+                    let point = [20.0 + radius * angle.cos(), 20.0 + radius * angle.sin()];
+                    if round % 3 == 0 {
+                        [
+                            (point[0] * 4.0).round() / 4.0,
+                            (point[1] * 2.0).round() / 2.0,
+                        ]
+                    } else {
+                        point
+                    }
+                })
+                .collect();
+            let outline = Outline::new(&polygon);
+            for _ in 0..2000 {
+                let angle = [0.0, 90.0, 30.0, 45.0][(next() * 4.0) as usize];
+                let pose = Pose {
+                    position: [next() * 40.0, next() * 40.0],
+                    angle,
+                };
+                let local = [[-0.3 - next(), -0.2 - next(), 0.3 + next(), 0.2 + next()]];
+                let rect = turned(&local, pose, 0.0).next().unwrap();
+                let mut indexed_work = 0;
+                let indexed =
+                    rect_meets_outline(&rect, &polygon, Some(&outline), &mut indexed_work);
+                let mut plain_work = 0;
+                let plain = rect_meets_outline(&rect, &polygon, None, &mut plain_work);
+                assert_eq!(
+                    (indexed, indexed_work),
+                    (plain, plain_work),
+                    "round {round}, {rect:?}"
+                );
+                if plain_work > edge_work(polygon.len()) {
+                    nears += 1;
+                } else if plain {
+                    insides += 1;
+                }
+            }
+        }
+        assert!(
+            nears > 1000 && insides > 1000,
+            "{nears} near, {insides} inside"
+        );
     }
 
     #[test]
