@@ -702,6 +702,8 @@ impl Router {
             vec![HashMap::new(); self.board.layer_count];
         let mut vias: HashMap<u32, u32> = HashMap::new();
         let mut work = plan.work;
+        // `PCB_ROUTER_FANOUT_VIAS=0` (an experiment): no via sites.
+        let via_band = std::env::var("PCB_ROUTER_FANOUT_VIAS").map_or(true, |value| value != "0");
         for (pad, chosen) in plan.pads.iter().zip(&plan.chosen) {
             let Some(run) = chosen.map(|index| &pad.runs[index]) else {
                 continue;
@@ -735,7 +737,7 @@ impl Router {
                         }
                         entry.2 = entry.2.max(per_node);
                     }
-                    if distance < via_reach - 1.0e-9 {
+                    if via_band && distance < via_reach - 1.0e-9 {
                         vias.entry(cell).or_insert(own);
                     }
                 }
