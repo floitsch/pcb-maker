@@ -1197,6 +1197,56 @@ mod tests {
         assert_eq!(taken, ["U0", "U1", "U2", "U3"]);
     }
 
+    /// A row of four pads leaving upwards (+y; the row runs along -x)
+    /// whose targets follow the row's order but for the third, which
+    /// heads to the row's other end: it is the one crosser, and only its
+    /// ways without a via pay the order's cost.
+    #[test]
+    fn the_pad_against_the_rows_order_is_the_crosser() {
+        let pad_at = |x: f64, target_x: f64| DensePad {
+            net: x as NetId,
+            terminal: 0,
+            layer: 0,
+            half_width: 0.1,
+            clearance: 0.2,
+            via_radius: 0.3,
+            runs: vec![
+                ExitRun {
+                    direction: 2,
+                    start: [x, 1.0],
+                    end: [x, 1.5],
+                    cost: 0.0,
+                    via: false,
+                },
+                ExitRun {
+                    direction: 2,
+                    start: [x, 1.0],
+                    end: [x, 2.2],
+                    cost: VIA_EXIT_COST,
+                    via: true,
+                },
+            ],
+            free: 2,
+            pitch: 0.4,
+            row: Some(("U1".into(), 2)),
+            target: Some([target_x, 10.0]),
+            crosser: false,
+        };
+        let mut pads = vec![
+            pad_at(0.0, 0.0),
+            pad_at(1.0, 1.0),
+            pad_at(2.0, -5.0),
+            pad_at(3.0, 3.0),
+        ];
+        let anchors: Vec<[f64; 2]> = pads.iter().map(|pad| pad.runs[0].start).collect();
+        mark_crossers(&mut pads, |pad| anchors[pad.net as usize]);
+        let crossers: Vec<bool> = pads.iter().map(|pad| pad.crosser).collect();
+        assert_eq!(crossers, [false, false, true, false]);
+        assert_eq!(pads[2].runs[0].cost, ORDER_COST);
+        assert_eq!(pads[2].runs[1].cost, VIA_EXIT_COST);
+        assert_eq!(pads[0].runs[0].cost, 0.0);
+    }
+
     fn pad(shape: Shape, net: Option<NetId>, kind: ObstacleKind, label: &str) -> Obstacle {
         Obstacle {
             shape,
