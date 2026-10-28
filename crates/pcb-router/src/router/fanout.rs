@@ -49,6 +49,14 @@ pub fn fanout_override() -> Option<bool> {
     Some(!(value.is_empty() || value == "0"))
 }
 
+/// A way out into the pad's own part (under a QFN, towards its exposed
+/// pad) costs this more: it leads under the part, where only a via goes
+/// on, so it is taken where the outward way is closed or taken, not
+/// because the net's other pad lies beyond the part (facade60's U4: two
+/// pads given their inward way left the outward one to a neighbour's via
+/// and stayed open).
+const INWARD_COST: f64 = 2.0;
+
 /// A diagonal way out costs this more than an axis one (it passes
 /// between the corners of two neighbours: an aQFN's inner row).
 const DIAGONAL_COST: f64 = 0.25;
@@ -575,7 +583,7 @@ impl Router {
                             terminal.anchor[1] - centre[1],
                         );
                         if ox * along[0] + oy * along[1] < -1.0e-6 {
-                            cost += 0.5;
+                            cost += INWARD_COST;
                         }
                     }
                     if diagonal {
