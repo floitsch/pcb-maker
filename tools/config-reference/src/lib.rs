@@ -193,6 +193,21 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "overrides the router's `exact_escape_stubs` (`0` off, anything else on; off by default): escape stubs stamp exactly (along a lattice line as lattice nodes, oblique ones by their measured footprint) and a pad leaves by straight stubs along a lattice line where it has any; off, the stubs stamp the lattice's discs grown by the snapping error (docs/router.md, \"Fine-pitch escapes\").",
     ),
     (
+        "PCB_ROUTER_FANOUT",
+        Kind::Switch,
+        "overrides the router's `fanout` (`0` off, anything else on; off by default): before the negotiation every pad of a dense row gets one straight way out, chosen jointly with its neighbours, that other nets pay `fanout_cost` to cross or to put a via beside (docs/router.md, \"Fan-out before negotiation\").",
+    ),
+    (
+        "PCB_ROUTER_FANOUT_COST",
+        Kind::Switch,
+        "the router's `fanout_cost` in millimetres (default 6; with `fanout`): what another net pays to cross a reserved fan-out run or to put a via within reach of it.",
+    ),
+    (
+        "PCB_ROUTER_FANOUT_DEPTH",
+        Kind::Switch,
+        "the router's `fanout_depth` in millimetres (default 0.5; with `fanout`): how far beyond its pad a fan-out run reaches.",
+    ),
+    (
         "PCB_ROUTER_CAPACITATED_CORRIDORS",
         Kind::Switch,
         "overrides the router's `capacitated_corridors` (`0` off, anything else on; off by default): the negotiation's corridors from the global route with hard capacities, a search that misses its corridor lowering the capacity of the boundary it failed at and re-planning the nets through it (docs/router.md, \"Capacitated corridors (2026-10-24)\"; an experiment).",
@@ -281,6 +296,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "PCB_ROUTER_TROUBLE_WHY",
         Kind::Diagnostic,
         "the trouble-makers' repair prints every exchange's outcome (kept, or why refused; a refusal names the nets left in conflict and what their conflicts name).",
+    ),
+    (
+        "PCB_ROUTER_FANOUT_WHY",
+        Kind::Diagnostic,
+        "the fan-out step (`fanout`) prints every dense pad with its ways out, their costs, the one chosen and the pads left short.",
     ),
     (
         "PCB_ROUTER_DIFF_PAIRS",

@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 104 | 85 | 19 | 104 | 45 |
+| [Router settings](#router-settings) | 105 | 86 | 19 | 105 | 45 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 1 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 1 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
@@ -33,7 +33,7 @@ The environment variables are indexed in the hand-over
 | [Router report: rules](#router-report-rules) | 5 | - | 0 | 5 | - |
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 13 | - | 4 | 13 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
-| [Router core](#router-core) | 75 | - | 0 | 75 | - |
+| [Router core](#router-core) | 78 | - | 0 | 78 | - |
 | [Placer settings](#placer-settings) | 56 | 51 | 5 | 56 | 29 |
 | [Layout settings](#layout-settings) | 21 | 21 | 0 | 21 | 11 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 2 |
@@ -128,6 +128,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `probe_seconds` | `Option<f64>` | unset | router.md, placer.md | Seconds of negotiation per probe (default 75). |
 | `escape_stub_mm` | `Option<f64>` | unset | router.md | Fixed escape stubs for fine-pitch pad rows, this long in mm (router `escape_stub_mm`; off by default). |
 | `exact_escape_stubs` | `Option<bool>` | unset | router.md | Escape stubs stamped exactly, straight ones along a lattice line first (router `exact_escape_stubs`; docs/router.md, "Fine-pitch escapes"): unset, the router's default (on since 2026-10-26); `PCB_ROUTER_EXACT_ESCAPES` overrides this. |
+| `fanout` | `Option<bool>` | unset | - | The fan-out step before the negotiation (router `fanout`; docs/router.md, "Fan-out before negotiation"): every pad of a dense row gets one straight way out, chosen jointly with its neighbours, that other nets pay to cross. Unset, the router's default (off); `PCB_ROUTER_FANOUT` overrides this. |
 | `fixed_plane_stubs` | `Option<bool>` | unset | router.md | Connect every pour-net pad to its plane by a fixed stub and via before the signals route (router `fixed_plane_stubs`). |
 | `trouble_repair` | `Option<bool>` | unset | router.md | The trouble-makers' repair after the hard repair (router `trouble_repair`; docs/experiments/human-level-routing.md): unset, the router's default; `PCB_ROUTER_TROUBLE` overrides this. |
 | `last_connections` | `Option<usize>` | unset | router.md | The trouble repair's last pass (router `last_connections`; docs/router.md, "The last connections"): once its rounds leave at most this many open terminals, ejection chains and board-wide victims; unset, the router's default (0, off); `PCB_ROUTER_LAST_CONNECTIONS` overrides this. |
@@ -298,6 +299,9 @@ One constraint of one rule of the project's `.kicad_dru`. Source: `KiCadCustomRu
 | `pour_whole_rip_up` | `bool` | `true` | - | Whether a pour net stuck in conflict is ripped up whole now and then like the other nets (`rip_up_whole`). |
 | `escape_stub_mm` | `f64` | `0.0` | `escape_stub_mm` | Fine-pitch pads (narrower than the track plus its clearance, on one layer, in a row of their kind) get a straight stub outward fixed before negotiation, up to this long in mm (0, the default, turns it off). The stubs keep every pad's only way out open: nothing else may run along the row inside the escape zone. Tried on Tiny Tapeout (82/108 either way) and ColdFire (205 vs 208 of 209): no gain yet. |
 | `exact_escape_stubs` | `bool` | `true` | `exact_escape_stubs` | Escape stubs (a pad too narrow for a lattice node leaves by a stub from its centre) stamp exactly: one along a lattice line as a run of lattice nodes, an oblique or bent one by its measured footprint (`escapes::stub_footprint`); and a pad leaves by straight stubs along a lattice line where it has any. Off: every stub stamps the lattice's discs grown by the snapping error (0.525 mm at a 0.1 mm lattice with 0.2 mm tracks and clearance), which in a 0.4 or 0.5 mm pitch row covers the neighbouring pads' stubs for good (jfedor2/hid-remapper's RP2040 rows, docs/router.md "Fine-pitch escapes"). On by default since 2026-10-26 (with the pour model matching KiCad's starved thermals): on the expansion tier 32 connections fewer open and three passes more than off, no new error either way. |
+| `fanout` | `bool` | `false` | `fanout` | The fan-out step (router/fanout.rs; docs/router.md, "Fan-out before negotiation"): before the negotiation, every pad of a dense row (another net's pad closer than 0.65 mm, or at most two straight ways out) gets one straight way out, `fanout_depth` beyond its edge, chosen jointly with its neighbours (no two chosen ways in conflict, the most pads served, then the ratsnest's direction), and another net pays `fanout_cost` to cross a chosen way or to put a via beside it. `PCB_ROUTER_FANOUT` overrides it. |
+| `fanout_cost` | `f64` | `6.0` | - | What another net pays, in millimetres of track, to cross a pad's reserved fan-out run (spread over the run's band of nodes) or to put a via within reach of it (`PCB_ROUTER_FANOUT_COST`, default 6). |
+| `fanout_depth` | `f64` | `0.5` | - | How far beyond its pad a fan-out run reaches, in millimetres (`PCB_ROUTER_FANOUT_DEPTH`, default 0.5). |
 | `measured_thermals` | `bool` | `false` (`true` with `PCB_ROUTER_MEASURED_THERMALS`) | - | The pour model as the measurement of a written board takes it (`measured_board`'s starved thermals, its solid step, and dump-pour-map), closer to KiCad's DRC than routing's: a pad merged into its terminal (an exposed pad's thermal via) by its own zone connection (one set to solid has no spokes and no relief), a custom pad's spokes in KiCad's frame (`PadSpokes::custom`), and in the DRC's track rule a blocked spoke's part over its pad as fill and a piece joined through a neck the lattice misses as kept (`Router::neck_joined`). Off while routing (the default), so routes stay as they were: on, the in-route repairs see it too and routes move (docs/router.md, "Thermal vias, custom pads and necks"). `PCB_ROUTER_MEASURED_THERMALS=1` turns it on everywhere. |
 | `min_spokes` | `usize` | `2` | `min_resolved_spokes` | The thermal spokes KiCad's DRC wants a pad to have into each zone (the board setup's `min_resolved_spokes`, KiCad's default 2; 0 where the project ignores starved thermals): the spoke model's starved pads are those short of it (`Router::spokes_short`). |
 | `history_increment` | `f64` | `0.3` | - | History cost added to a lattice node (and its tile) for every net still in conflict there after an iteration; also the amplitude of the noise a `seed` puts into the history. |

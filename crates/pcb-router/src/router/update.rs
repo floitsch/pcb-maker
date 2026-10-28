@@ -109,6 +109,12 @@ impl Router {
         self.tile_covered = vec![vec![0.0; tiles]; layers];
         self.mark_covered();
         self.mark_via_cells();
+        // The fan-out's reservations follow the moved pads (the pin-row
+        // gaps with them: `mark_pin_rows` builds both). Only with the
+        // switch on, so that a run without it is as before.
+        if self.config.fanout {
+            self.mark_pin_rows();
+        }
         self.build_hot();
 
         let mut rerouted = 0;

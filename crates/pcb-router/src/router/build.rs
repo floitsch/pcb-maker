@@ -340,6 +340,9 @@ impl Router {
             hot_pours: Vec::new(),
             pin_row: vec![Vec::new(); layers],
             pin_row_nets: Vec::new(),
+            pin_row_costs: Vec::new(),
+            fanout_first: usize::MAX,
+            fanout_via: Vec::new(),
             tile_covered: vec![vec![0.0; tiles_x * tiles_y]; layers],
             layer_cut: vec![1.0; layers],
             sever: vec![Vec::new(); layers],
@@ -724,15 +727,32 @@ impl Router {
     /// changes its distance from the line by at most that a step, so every
     /// path across the line between the centres has a node in the band,
     /// one where the line runs along a node row). A node in two gaps keeps
-    /// the first. Nothing with `pin_row_cost` 0.
+    /// the first. Nothing with `pin_row_cost` 0. Then the fan-out's
+    /// reserved runs (`mark_fanout`, with `Config::fanout`), whose nodes
+    /// a gap's node keeps.
     pub(super) fn mark_pin_rows(&mut self) {
         let layers = self.board.layer_count;
         self.pin_row = vec![Vec::new(); layers];
         self.pin_row_nets.clear();
+        self.pin_row_costs.clear();
+        self.mark_pin_row_gaps();
+        self.fanout_first = self.pin_row_nets.len().max(1);
+        self.mark_fanout();
+        for nodes in &mut self.pin_row {
+            // Stable: of a node's gaps, the first stays.
+            nodes.sort_by_key(|(cell, _)| *cell);
+            nodes.dedup_by_key(|(cell, _)| *cell);
+        }
+    }
+
+    /// `mark_pin_rows`' gaps.
+    fn mark_pin_row_gaps(&mut self) {
+        let layers = self.board.layer_count;
         if self.config.pin_row_cost <= 0.0 || self.board.pin_row_gaps.is_empty() {
             return;
         }
         self.pin_row_nets.push((0, 0));
+        self.pin_row_costs.push(0.0);
         let pitch = self.grid.pitch;
         let owner = |net: Option<NetId>| net.map_or(0, crate::grid::owner);
         for gap in &self.board.pin_row_gaps {
@@ -770,12 +790,8 @@ impl Router {
             if marked {
                 self.pin_row_nets
                     .push((owner(gap.nets[0]), owner(gap.nets[1])));
+                self.pin_row_costs.push(self.config.pin_row_cost as f32);
             }
-        }
-        for nodes in &mut self.pin_row {
-            // Stable: of a node's gaps, the first stays.
-            nodes.sort_by_key(|(cell, _)| *cell);
-            nodes.dedup_by_key(|(cell, _)| *cell);
         }
     }
 
@@ -790,17 +806,30 @@ impl Router {
     }
 
     /// Whether `cell` of `layer` lies in a pin-row gap of other nets than
-    /// `net` (where the search charges `pin_row_cost`).
+    /// `net` (where the search charges `pin_row_cost`), or in another
+    /// net's reserved fan-out run.
     pub(super) fn pin_row_foreign(&self, net: NetId, layer: usize, cell: usize) -> bool {
+        self.pin_row_foreign_entry(net, layer, cell).is_some()
+    }
+
+    /// The entry of `pin_row_nets` at `cell` of `layer` when it is
+    /// another net's (`pin_row_foreign`).
+    pub(super) fn pin_row_foreign_entry(
+        &self,
+        net: NetId,
+        layer: usize,
+        cell: usize,
+    ) -> Option<usize> {
         if self.pin_row.get(layer).is_none_or(Vec::is_empty) {
-            return false;
+            return None;
         }
         let gap = self.pin_row_at(layer, cell);
         let own = crate::grid::owner(net);
-        gap != 0 && {
+        (gap != 0 && {
             let (a, b) = self.pin_row_nets[gap as usize];
             a != own && b != own
-        }
+        })
+        .then_some(gap as usize)
     }
 
     /// Packs the static map, the guard, the pour cover and the history
@@ -1020,6 +1049,7 @@ impl Router {
             }
         }
         self.via_marks = marks;
+        self.apply_fanout_via_marks();
         // Read only where bit 0 of `via_marks` is set: none without pours
         // (jiran-ble-lite at 0.05 mm: 55 MB).
         if self.covered.iter().all(Vec::is_empty) {

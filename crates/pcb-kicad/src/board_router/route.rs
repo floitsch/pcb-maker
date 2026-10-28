@@ -827,6 +827,11 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     {
         router_config.exact_escape_stubs = exact;
     }
+    if let Some(fanout) = config.fanout
+        && core::router::fanout_override().is_none()
+    {
+        router_config.fanout = fanout;
+    }
     if let Some(fixed) = config.fixed_plane_stubs {
         router_config.fixed_plane_stubs = fixed;
     }

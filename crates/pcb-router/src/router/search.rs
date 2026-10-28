@@ -37,7 +37,6 @@ impl Router {
             self.config.via_cost
         } as f32;
         let bend_cost = self.config.bend_cost as f32;
-        let pin_row_cost = self.config.pin_row_cost as f32;
         // Cleanup and hard reinsertion decide final geometry: search exactly.
         let weight = if self.cleanup || hard {
             0.999
@@ -476,7 +475,7 @@ impl Router {
                             if gap != 0 {
                                 let (a, b) = self.pin_row_nets[gap as usize];
                                 if a != own && b != own {
-                                    pin_row = pin_row_cost;
+                                    pin_row = self.pin_row_costs[gap as usize];
                                 }
                             }
                             if guard != 0 && guard as u32 != own {
@@ -595,7 +594,11 @@ impl Router {
                         cut *= self.config.thermal_guard_cost as f32;
                     }
                 }
-                let step = via_cost * cut * (1.0 + history) * (1.0 + present * occupied);
+                let mut step = via_cost * cut * (1.0 + history) * (1.0 + present * occupied);
+                // Another net's reserved fan-out run within reach.
+                if marks & 4 != 0 {
+                    step += self.fanout_via_cost(own, cell);
+                }
                 let cell_class = if necks { class_xy(x, y) } else { class };
                 let cell_statics = &self.statics[cell_class];
                 let free_layers = cell_statics.free_layers.get(cell);

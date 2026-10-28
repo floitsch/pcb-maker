@@ -171,6 +171,22 @@ pub struct Config {
     /// connections fewer open and three passes more than off, no new
     /// error either way.
     pub exact_escape_stubs: bool,
+    /// The fan-out step (router/fanout.rs; docs/router.md, "Fan-out
+    /// before negotiation"): before the negotiation, every pad of a dense
+    /// row (another net's pad closer than 0.65 mm, or at most two straight
+    /// ways out) gets one straight way out, `fanout_depth` beyond its
+    /// edge, chosen jointly with its neighbours (no two chosen ways in
+    /// conflict, the most pads served, then the ratsnest's direction), and
+    /// another net pays `fanout_cost` to cross a chosen way or to put a via
+    /// beside it. `PCB_ROUTER_FANOUT` overrides it.
+    pub fanout: bool,
+    /// What another net pays, in millimetres of track, to cross a pad's
+    /// reserved fan-out run (spread over the run's band of nodes) or to
+    /// put a via within reach of it (`PCB_ROUTER_FANOUT_COST`, default 6).
+    pub fanout_cost: f64,
+    /// How far beyond its pad a fan-out run reaches, in millimetres
+    /// (`PCB_ROUTER_FANOUT_DEPTH`, default 0.5).
+    pub fanout_depth: f64,
     /// The pour model as the measurement of a written board takes it
     /// (`measured_board`'s starved thermals, its solid step, and
     /// dump-pour-map), closer to KiCad's DRC than routing's: a pad merged
@@ -422,6 +438,15 @@ impl Default for Config {
             pour_whole_rip_up: true,
             escape_stub_mm: 0.0,
             exact_escape_stubs: super::escapes::exact_escapes_override().unwrap_or(true),
+            fanout: super::fanout::fanout_override().unwrap_or(super::fanout::FANOUT_DEFAULT),
+            fanout_cost: std::env::var("PCB_ROUTER_FANOUT_COST")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(6.0),
+            fanout_depth: std::env::var("PCB_ROUTER_FANOUT_DEPTH")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(0.5),
             min_spokes: 2,
             measured_thermals: std::env::var_os("PCB_ROUTER_MEASURED_THERMALS").is_some(),
             global_routing: false,

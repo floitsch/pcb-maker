@@ -17,16 +17,22 @@ impl Router {
         let nx = self.grid.nx as i64;
         let mut cost = 0.0;
         for branch in branches {
-            // The search's pin-row cost, a node in another net's gap.
-            if self.config.pin_row_cost > 0.0 {
-                cost += self.config.pin_row_cost
-                    * branch
-                        .nodes
-                        .iter()
-                        .filter(|node| {
-                            self.pin_row_foreign(net, node.layer as usize, node.cell as usize)
-                        })
-                        .count() as f64;
+            // The search's pin-row cost, a node in another net's gap, and
+            // the fan-out's, a node in another net's reserved run.
+            if !self.pin_row_nets.is_empty() {
+                let (mut gaps, mut reserved) = (0usize, 0.0f64);
+                for node in &branch.nodes {
+                    if let Some(entry) =
+                        self.pin_row_foreign_entry(net, node.layer as usize, node.cell as usize)
+                    {
+                        if entry < self.fanout_first {
+                            gaps += 1;
+                        } else {
+                            reserved += self.pin_row_costs[entry] as f64;
+                        }
+                    }
+                }
+                cost += self.config.pin_row_cost * gaps as f64 + reserved;
             }
             for pair in branch.nodes.windows(2) {
                 if pair[0].cell == pair[1].cell {
