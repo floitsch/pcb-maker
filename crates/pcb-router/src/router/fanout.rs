@@ -633,6 +633,7 @@ impl Router {
                     let (mut x, mut y) = (cx as i64, cy as i64);
                     let mut start: Option<crate::geometry::Point> = None;
                     let mut end = None;
+                    let mut last = None;
                     loop {
                         x += dx;
                         y += dy;
@@ -658,12 +659,26 @@ impl Router {
                             break;
                         }
                         let first = *start.get_or_insert(point);
+                        last = Some(point);
                         // Beyond the pad by `depth` (the first node outside
                         // lies within a pitch of its edge).
                         if crate::geometry::distance(first, point) + pitch >= depth - 1.0e-9 {
                             end = Some(point);
                             break;
                         }
+                    }
+                    // A way stopped short by fixed copper still counts
+                    // where it clears the pad by a track and its clearance
+                    // (room to turn): OpenAirScope's U14.10, whose outward
+                    // way meets a neighbouring part 0.4 mm out.
+                    if end.is_none()
+                        && let (Some(first), Some(last)) = (start, last)
+                        && crate::geometry::distance(first, last) + pitch
+                            >= self.board.classes[class].clearance
+                                + self.width_on(class, layer) / 2.0
+                                - 1.0e-9
+                    {
+                        end = Some(last);
                     }
                     let (Some(start), Some(end)) = (start, end) else {
                         continue;
