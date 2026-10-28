@@ -627,6 +627,256 @@ fn clear_of_one(
     true
 }
 
+/// The legality tests' prefilter by boxes (the legaliser's spot search,
+/// the refinement's candidates, the eviction): per part the box on the
+/// board around everything `clear_of_one` compares of it (its body with
+/// its halo, pads, holes and their rings, courtyards, hollow boxes, the
+/// far side's), and the widest gap a test asks for. Two parts at quarter
+/// turns whose boxes lie farther apart than that on one axis are apart on
+/// that axis in every comparison of the test, which takes its far path:
+/// clear, and the work of the two parts alone, not of their poses (as
+/// `Sweep`'s far parts). That work is measured once per pair with the
+/// part far off (`far_work`) and booked without the test. A part turned
+/// off a quarter turn (separating axes on its own axes) and a cutout are
+/// always tested. The same answers and the same work as `clear_of`
+/// (protoesp's legaliser tested 4.8 parts a spot, 86 % of them apart by
+/// their boxes, 2026-10-28); checked against the direct test in debug
+/// builds and with `PCB_PLACER_CHECK_OVERLAP`.
+pub(crate) struct Apart {
+    /// Per part: the box (own frame, [min x, min y, max x, max y]) around
+    /// its pads, holes, rings, courtyards and hollow boxes; None where it
+    /// has none.
+    local: Vec<Option<[f64; 4]>>,
+    /// Every gap a pair test asks for (the spacing, the copper clearance,
+    /// the mask gap, two copper shares), and a margin for the rounding.
+    gap: f64,
+    /// Per part: the pose (bits) its board box was taken at, and the box
+    /// (None: turned off a quarter turn, or a cutout).
+    boxes: Vec<Option<KeptBox>>,
+    /// The part whose far work `far` holds, and per other part its far
+    /// work (`u64::MAX`: not measured yet).
+    far_part: usize,
+    far: Vec<u64>,
+    /// Every skipped test checked against the direct one.
+    check: bool,
+}
+
+/// A part's pose (its bits) and its board box there (`Apart`).
+type KeptBox = ([u64; 3], Option<[f64; 4]>);
+
+impl Apart {
+    pub(crate) fn new(problem: &Problem) -> Self {
+        let count = problem.components.len();
+        let local = problem
+            .components
+            .iter()
+            .map(|component| {
+                component
+                    .pads
+                    .iter()
+                    .chain(&component.far_side)
+                    .chain(&component.far_copper)
+                    .chain(&component.far_courtyard)
+                    .chain(&component.hollow)
+                    .chain(&component.courtyards)
+                    .chain(&component.hole_rings)
+                    .fold(None, |union: Option<[f64; 4]>, b| {
+                        Some(match union {
+                            None => *b,
+                            Some(u) => [
+                                u[0].min(b[0]),
+                                u[1].min(b[1]),
+                                u[2].max(b[2]),
+                                u[3].max(b[3]),
+                            ],
+                        })
+                    })
+            })
+            .collect();
+        let share = problem
+            .components
+            .iter()
+            .map(|component| component.copper_share(problem.min_spacing))
+            .fold(0.0, f64::max);
+        let gap = problem
+            .spacing
+            .max(problem.min_spacing)
+            .max(problem.constraints.pad_mask_gap)
+            .max(2.0 * share)
+            + 1.0e-6;
+        Apart {
+            local,
+            gap,
+            boxes: vec![None; count],
+            far_part: usize::MAX,
+            far: vec![u64::MAX; count],
+            check: cfg!(debug_assertions) || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
+        }
+    }
+
+    /// The board box of part `part` at `pose`, its body's box `body`
+    /// (`rect`); None where the part is turned off a quarter turn or is a
+    /// cutout.
+    fn board_box(
+        &self,
+        problem: &Problem,
+        part: usize,
+        pose: Pose,
+        body: &Rect,
+    ) -> Option<[f64; 4]> {
+        if problem.components[part].copper_only || direction_of(pose.angle).is_some() {
+            return None;
+        }
+        // A disc's radius is its first half extent (`overlaps`).
+        let half = if body.round {
+            let radius = body.half[0].max(body.half[1]);
+            [radius, radius]
+        } else {
+            body.half
+        };
+        let mut extent = [
+            body.center[0] - half[0],
+            body.center[1] - half[1],
+            body.center[0] + half[0],
+            body.center[1] + half[1],
+        ];
+        if let Some(local) = &self.local[part]
+            && let Some(rect) = turned(std::slice::from_ref(local), pose, 0.0).next()
+        {
+            extent = [
+                extent[0].min(rect.center[0] - rect.half[0]),
+                extent[1].min(rect.center[1] - rect.half[1]),
+                extent[2].max(rect.center[0] + rect.half[0]),
+                extent[3].max(rect.center[1] + rect.half[1]),
+            ];
+        }
+        Some(extent)
+    }
+
+    /// `board_box` of part `other` at its pose in `poses`, kept per pose.
+    fn other_box(&mut self, problem: &Problem, poses: &[Pose], other: usize) -> Option<[f64; 4]> {
+        let pose = poses[other];
+        let key = [
+            pose.position[0].to_bits(),
+            pose.position[1].to_bits(),
+            pose.angle.to_bits(),
+        ];
+        if let Some((kept, extent)) = self.boxes[other]
+            && kept == key
+        {
+            return extent;
+        }
+        let body = rect(problem, other, pose);
+        let extent = self.board_box(problem, other, pose, &body);
+        self.boxes[other] = Some((key, extent));
+        extent
+    }
+
+    /// The work `clear_of_one` books for `index` against `other` on its
+    /// far path: measured with `index` far off, kept per pair.
+    fn far_work(&mut self, problem: &Problem, poses: &[Pose], index: usize, other: usize) -> u64 {
+        if self.far_part != index {
+            self.far_part = index;
+            self.far.iter_mut().for_each(|work| *work = u64::MAX);
+        }
+        if self.far[other] == u64::MAX {
+            let away = Pose {
+                position: [
+                    poses[index].position[0] + 1.0e7,
+                    poses[index].position[1] + 1.0e7,
+                ],
+                angle: poses[index].angle,
+            };
+            let body = rect(problem, index, away);
+            let mut work = 0;
+            let clear = clear_of_one(
+                problem,
+                poses,
+                index,
+                away,
+                &body,
+                linked_work(problem),
+                other,
+                &mut work,
+            );
+            debug_assert!(clear, "part {index} far off meets part {other}");
+            self.far[other] = work;
+        }
+        self.far[other]
+    }
+
+    /// `clear_of(problem, poses, index, pose, others, work)`: the same
+    /// answer and the same work, the parts apart by their boxes not tested.
+    pub(crate) fn clear_of(
+        &mut self,
+        problem: &Problem,
+        poses: &[Pose],
+        index: usize,
+        pose: Pose,
+        others: impl Iterator<Item = usize>,
+        work: &mut u64,
+    ) -> bool {
+        let body = rect(problem, index, pose);
+        let linked_work = linked_work(problem);
+        let mine = self.board_box(problem, index, pose, &body);
+        for other in others {
+            if let Some(mine) = mine
+                && other != index
+                && let Some(theirs) = self.other_box(problem, poses, other)
+                && boxes_apart(mine, theirs, self.gap)
+            {
+                let far = self.far_work(problem, poses, index, other);
+                if self.check {
+                    let mut direct = 0;
+                    let clear = clear_of_one(
+                        problem,
+                        poses,
+                        index,
+                        pose,
+                        &body,
+                        linked_work,
+                        other,
+                        &mut direct,
+                    );
+                    assert_eq!(
+                        (clear, direct),
+                        (true, far),
+                        "part {index} at {pose:?} against part {other}: (clear, work) apart by boxes against the direct test"
+                    );
+                }
+                *work += far;
+                continue;
+            }
+            if !clear_of_one(problem, poses, index, pose, &body, linked_work, other, work) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// `is_legal(problem, poses, index, pose, others)`, booking its work.
+    pub(crate) fn is_legal(
+        &mut self,
+        problem: &Problem,
+        poses: &[Pose],
+        index: usize,
+        pose: Pose,
+        others: impl Iterator<Item = usize>,
+    ) -> bool {
+        let mut work = 1;
+        let legal = self.clear_of(problem, poses, index, pose, others, &mut work)
+            && fits_board(problem, index, pose, &mut work);
+        crate::add_work(work);
+        legal
+    }
+}
+
+/// Whether two boxes ([min x, min y, max x, max y]) lie more than `gap`
+/// apart on one axis.
+fn boxes_apart(a: [f64; 4], b: [f64; 4], gap: f64) -> bool {
+    b[0] - a[2] > gap || a[0] - b[2] > gap || b[1] - a[3] > gap || a[1] - b[3] > gap
+}
+
 /// How far the parts reach, for `Sweep`: per part the distance from its
 /// body's centre to the farthest corner of anything it tests legality
 /// with (its body and halo, pads, holes, courtyards, rings, copper),
@@ -1670,6 +1920,7 @@ pub fn legalize_keeping(
     for &index in &placed {
         buckets.insert(problem, index, poses[index]);
     }
+    let mut apart = Apart::new(problem);
     // Escape demand: a spot whose channels overflow is that much farther.
     let mut escape = problem.escape.as_deref().map(|escape| {
         let mut present = vec![false; count];
@@ -1803,7 +2054,7 @@ pub fn legalize_keeping(
                     // level that places it). The spot chosen is the
                     // same: the least distance of the legal spots.
                     buckets.near(problem, index, pose, &mut near);
-                    if !is_legal(problem, poses, index, pose, near.iter().copied()) {
+                    if !apart.is_legal(problem, poses, index, pose, near.iter().copied()) {
                         continue;
                     }
                     let distance = if own_relations.is_empty() {
@@ -2041,6 +2292,7 @@ fn evict_scan(
     steps: [f64; 2],
     clamp: bool,
     buckets: &mut Buckets,
+    apart: &mut Apart,
     near: &mut Vec<usize>,
     work: &mut u64,
     best: &mut Option<(f64, Pose, Vec<usize>)>,
@@ -2079,7 +2331,7 @@ fn evict_scan(
                     .iter()
                     .copied()
                     .filter(|other| problem.components[*other].fixed);
-                if !clear_of(problem, poses, index, pose, fixed, work) {
+                if !apart.clear_of(problem, poses, index, pose, fixed, work) {
                     continue;
                 }
                 let mut movable: Vec<usize> = near
@@ -2091,7 +2343,7 @@ fn evict_scan(
                 let mut area = 0.0;
                 let mut displaced = Vec::new();
                 for other in movable {
-                    if !clear_of(problem, poses, index, pose, std::iter::once(other), work) {
+                    if !apart.clear_of(problem, poses, index, pose, std::iter::once(other), work) {
                         let size = problem.components[other].body_size;
                         area += size[0] * size[1];
                         displaced.push(other);
@@ -2133,6 +2385,7 @@ pub fn evict_for(problem: &Problem, poses: &mut [Pose], failed: &[usize]) -> Vec
     for &other in &placed {
         buckets.insert(problem, other, poses[other]);
     }
+    let mut apart = Apart::new(problem);
     let mut near = Vec::new();
     let mut work = 0;
     for &index in failed {
@@ -2157,6 +2410,7 @@ pub fn evict_for(problem: &Problem, poses: &mut [Pose], failed: &[usize]) -> Vec
                 [x_step, y_step],
                 clamp,
                 &mut buckets,
+                &mut apart,
                 &mut near,
                 &mut work,
                 &mut best,
@@ -2203,7 +2457,7 @@ pub fn evict_for(problem: &Problem, poses: &mut [Pose], failed: &[usize]) -> Vec
                             continue;
                         }
                         buckets.near(problem, moved, candidate, &mut near);
-                        if clear_of(
+                        if apart.clear_of(
                             problem,
                             poses,
                             moved,
@@ -2510,6 +2764,7 @@ pub fn refine_with(
         buckets.insert(problem, index, *pose);
     }
     let relations = constraints::PartRelations::new(problem);
+    let mut apart = Apart::new(problem);
     let mut near = Vec::new();
     let step = if problem.grid > 0.0 {
         problem.grid
@@ -2611,7 +2866,7 @@ pub fn refine_with(
                     }
                     if candidate < best.0 - 1.0e-9 {
                         buckets.near(problem, index, pose, &mut near);
-                        if is_legal(problem, poses, index, pose, near.iter().copied()) {
+                        if apart.is_legal(problem, poses, index, pose, near.iter().copied()) {
                             if let Some(state) = crossings.as_mut() {
                                 candidate += crossing_cost(state, poses, &[index]);
                             }
@@ -2642,7 +2897,7 @@ pub fn refine_with(
                         }
                         if candidate < best.0 - 1.0e-9 {
                             buckets.near(problem, index, pose, &mut near);
-                            if is_legal(problem, poses, index, pose, near.iter().copied()) {
+                            if apart.is_legal(problem, poses, index, pose, near.iter().copied()) {
                                 if let Some(state) = crossings.as_mut() {
                                     candidate += crossing_cost(state, poses, &[index]);
                                 }
@@ -3395,6 +3650,126 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// Random parts of every kind the legality test knows, at random
+    /// poses on a small board (many near, many far), for the box tests.
+    fn random_board(round: usize, next: &mut impl FnMut() -> f64) -> (Problem, Vec<Pose>) {
+        let parts = 40;
+        let (mut problem, _) = pair(0.0, 0.0);
+        problem.outline = vec![[0.0, 0.0], [30.0, 0.0], [30.0, 30.0], [0.0, 30.0]];
+        problem.constraints.pad_clearance = round % 2 == 1;
+        problem.constraints.courtyard_spacing = round % 3 == 1;
+        problem.shared_halos = round % 4 == 2;
+        problem.far_side_pads_only = round % 5 == 3;
+        problem.constraints.pad_mask_gap = if round % 3 == 2 { 0.3 } else { 0.0 };
+        problem.components = (0..parts)
+            .map(|number| {
+                let mut part = resistor(0.0);
+                part.halo = if next() < 0.5 { 0.2 } else { 0.0 };
+                part.angle_options = vec![0.0, 90.0, 180.0, 270.0, 45.0];
+                part.side = match number % 4 {
+                    0 => Side::Back,
+                    1 => Side::Both,
+                    _ => Side::Front,
+                };
+                part.fixed = next() < 0.2;
+                if next() < 0.15 {
+                    part.round = true;
+                    part.body_size = [1.4, 1.4];
+                }
+                if next() < 0.3 {
+                    part.far_side = vec![[-0.5, -0.5, 0.5, 0.5]];
+                }
+                if next() < 0.2 {
+                    part.far_copper = vec![[-3.0, -0.2, -2.0, 0.2]];
+                }
+                if next() < 0.2 {
+                    part.hollow = vec![[-1.0, -0.5, -0.6, 0.5], [0.6, -0.5, 1.0, 0.5]];
+                    part.courtyards = vec![[-1.0, -0.5, 1.0, 0.5]];
+                }
+                if next() < 0.2 {
+                    part.hole_rings = vec![[1.5, 1.5, 2.5, 2.5]];
+                }
+                if next() < 0.2 {
+                    part.far_courtyard = vec![[-1.5, -1.0, 1.5, 1.0]];
+                }
+                if next() < 0.1 {
+                    part.pads.push([2.0, -0.3, 3.5, 0.3]);
+                }
+                if next() < 0.05 {
+                    part.copper_only = true;
+                    part.fixed = true;
+                }
+                part
+            })
+            .collect();
+        let poses: Vec<Pose> = (0..parts)
+            .map(|_| Pose {
+                position: [next() * 30.0, next() * 30.0],
+                angle: [0.0, 90.0, 180.0, 270.0, 45.0][(next() * 4.4) as usize],
+            })
+            .collect();
+        problem.poses = poses.clone();
+        (problem, poses)
+    }
+
+    #[test]
+    fn parts_apart_by_their_boxes_answer_and_book_as_the_direct_test() {
+        let mut state = 0x7A3C_91E5_0D4B_62F1u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut skipped = 0;
+        for round in 0..12 {
+            let (problem, mut poses) = random_board(round, &mut next);
+            let parts = problem.components.len();
+            let mut apart = Apart::new(&problem);
+            apart.check = false;
+            for _ in 0..parts * 30 {
+                // Now and then another part moves (its box kept by pose).
+                if next() < 0.1 {
+                    let moved = (next() * parts as f64) as usize;
+                    poses[moved].position = [next() * 30.0, next() * 30.0];
+                }
+                let index = (next() * parts as f64) as usize;
+                let angle = [0.0, 90.0, 180.0, 270.0, 45.0][(next() * 4.4) as usize];
+                let pose = Pose {
+                    position: [next() * 30.0, next() * 30.0],
+                    angle,
+                };
+                let others: Vec<usize> = (0..parts).filter(|_| next() < 0.6).collect();
+                let before = crate::work();
+                let filtered =
+                    apart.is_legal(&problem, &poses, index, pose, others.iter().copied());
+                let filtered_work = crate::work() - before;
+                let before = crate::work();
+                let direct = is_legal(&problem, &poses, index, pose, others.iter().copied());
+                let direct_work = crate::work() - before;
+                assert_eq!(
+                    (filtered, filtered_work),
+                    (direct, direct_work),
+                    "round {round}, part {index} at {pose:?}"
+                );
+                // How many tests the boxes spared (that the test sees some).
+                let body = rect(&problem, index, pose);
+                if let Some(mine) = apart.board_box(&problem, index, pose, &body) {
+                    skipped += others
+                        .iter()
+                        .filter(|&&other| {
+                            other != index
+                                && apart
+                                    .other_box(&problem, &poses, other)
+                                    .is_some_and(|theirs| boxes_apart(mine, theirs, apart.gap))
+                        })
+                        .count();
+                }
+            }
+        }
+        assert!(skipped > 10_000, "{skipped} tests spared");
     }
 
     #[test]
