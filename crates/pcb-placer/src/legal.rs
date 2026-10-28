@@ -946,7 +946,8 @@ impl Apart {
                 *work += far;
                 continue;
             }
-            if !clear_of_one(
+            let mut tested = 0;
+            let clear = clear_of_one(
                 problem,
                 poses,
                 index,
@@ -954,9 +955,30 @@ impl Apart {
                 &body,
                 linked_work,
                 other,
-                work,
+                &mut tested,
                 Some(&self.facts),
-            ) {
+            );
+            if self.check {
+                let mut direct = 0;
+                let direct_clear = clear_of_one(
+                    problem,
+                    poses,
+                    index,
+                    pose,
+                    &body,
+                    linked_work,
+                    other,
+                    &mut direct,
+                    None,
+                );
+                assert_eq!(
+                    (clear, tested),
+                    (direct_clear, direct),
+                    "part {index} at {pose:?} against part {other}: (clear, work) from the kept facts against the direct test"
+                );
+            }
+            *work += tested;
+            if !clear {
                 return false;
             }
         }
