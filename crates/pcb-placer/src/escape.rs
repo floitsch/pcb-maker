@@ -417,7 +417,10 @@ impl<'a> EscapeState<'a> {
             escape,
             members,
             exits: exits_of,
-            grid: Grid::new(problem.bounds(), 2.5, count),
+            // Its answers kept while no part goes in or out: a part's
+            // candidates and the swaps query the same cells again
+            // (`Grid::with_answers`).
+            grid: Grid::new(problem.bounds(), 2.5, count).with_answers(),
             in_grid: vec![None; count],
             boxes: vec![([0.0; 2], [0.0; 2]); count],
             near: Vec::new(),
