@@ -791,7 +791,12 @@ fn finish(
         );
     }
     if debug && let (Some(state), Some(before)) = (crossings.as_mut(), crossings_before) {
+        // The line's count is not the placement's work: booked, it made a
+        // run with PCB_PLACER_DEBUG place otherwise than one without (its
+        // seeds' work, so the race's batches and the seeds kept).
+        let counted = work();
         state.resync(poses);
+        add_work_back(work() - counted);
         eprintln!(
             "placer: ratsnest crossings {before} -> {} in the refinement",
             state.total()
