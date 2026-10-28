@@ -1052,10 +1052,7 @@ impl<F: Fn() -> bool> WallStop<F> {
             let mut skipped = self.ended_skipped.borrow_mut();
             if !skipped.contains(&step) {
                 skipped.push(step);
-                eprintln!(
-                    "layout: stop_after_first_route: {} skipped",
-                    step.name()
-                );
+                eprintln!("layout: stop_after_first_route: {} skipped", step.name());
             }
             return false;
         }
