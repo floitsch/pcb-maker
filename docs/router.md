@@ -278,7 +278,11 @@ holds:
   designer's antenna feed when the layout moved the antenna: kicad-cli
   10.0.7 found the stub `track_dangling` and the track from outside
   ending inside the rectangle connected). A stub whose anchor joins
-  other copper of the route (a via, another track) stays.
+  other copper of the route (a via, another track) stays. KiCad does not
+  flag every such stub (on the expansion tier's pdlc, CleverHand EMG_DAQ
+  and minuet light it did not; their findings are the same without
+  them), but none carries a connection: oculink_port's 34
+  `track_dangling` (route mode, 30 s) were such stubs and are gone.
 - **The pour model connects only what KiCad's fill connects.** A solidly
   connected pad (`connect_pads yes`, `zone_connect 2`) joins a fill piece
   only where the fill reaches its copper: a free node of the piece within
@@ -3998,6 +4002,61 @@ the meander out of the pair's gap: Sisu's diff_pair_gap 3 to 4).
 not define (KiCad's QA board skew_group_matched_drc: `DIFF_PAIR`) is not
 the net's class to the lowering, so the rule holds for no net there;
 KiCad's `hasNetclass()` sees it.
+
+**Layouts and the maximum (2026-10-27).** The nightly's layout sweep of
+2026-10-27 left oro's 12 ULPI nets out of range (`length_out_of_range`
+12, the strict rule's only new findings there): its board-router.json
+reported the rule `unmodelled` and the verdict had no `lengths`. The
+layout writes its own routes (`board_layout.rs`, `emit_routes` after the
+moves and the polish) and only the ladder's attempts went through
+`write_attempt` and `match_lengths`; oro's first route took the whole
+budget (1250 s of work), no ladder ran, so no net got a meander. KiCad's
+measures of the 12 against their pads' octilinear distance on that
+placement: 2 nets open (D1, DIR: 0), 2 short (NXT 22.5, STP 25.9 mm:
+the missing meander), 4 whose pads lie further apart than the maximum
+already (D3 to D6: 32.7 to 37.6 mm octilinear against 31.6, U1's ULPI
+pins on its far side from U6: the placement's), 4 longer by their routes'
+detours (CK 44.6 for 24.1, D7 37.8 for 25.4, D0 and D2 32.5 for 21.5 and
+27.0, two vias each). The rule is read right (class ULPI, 31.4 to 31.6 mm)
+and measured as KiCad measures (route mode on the designer's placement
+matches its numbers, above).
+
+- A layout's own routes get the meanders, the tuning patterns and the
+  report as an attempt does (`finish_lengths`; the rule `approximated`,
+  the verdict's `lengths`). The meanders join the routes, so the final
+  route from the router's state keeps them with the nets' copper; the
+  patterns go into the board written, not into the placement the ladder
+  routes again.
+- **The length repair** (`Router::repair_lengths`, after the clean-up;
+  `Config::length_bounded`, the nets of `length` rules with a maximum and
+  that maximum): each complete net over its maximum, by the lattice's
+  measure (a via at 1.6 mm over the copper layers), the furthest over
+  first, is routed again by geometry (the clean-up's search) through the
+  copper in its way at a price (`PCB_ROUTER_LENGTH_REPAIR_PRESENT`, 2);
+  the nets it then overlaps (at most 16, no pour net) lose the branches
+  it crosses and are routed again around it as the trouble repair routes
+  its victims; kept when the net is 0.5 mm shorter and no terminal of
+  any of them more open, else undone. It has its own budget (5 % of the
+  negotiation's, 10 s of work at least), as the manual spokes do.
+  Measured on oro (route mode from the night's placement, 300 s of work,
+  `PCB_ROUTER_LENGTH_DEBUG`): the priced search finds the short ways (CK
+  37.7 to 28.0 mm, D7 40.5 to 28.7, D5 62.8 to 41.3), but the 4 to 13
+  nets in each way cannot all go round in the ULPI fan-out (open 2 to 4
+  up to 2 to 16): 0 of 7 kept, 10 s of work. Before it, a share of the
+  congestion price for the bounded nets in the search and the corridor
+  planner (half, rerouted after the others; build/bin/pcb-maker-rules2-d) was tried:
+  in route mode on the same placement 4 ULPI nets open instead of 2 and
+  12 connections instead of 8, lengths no better; dropped.
+- The verdict's note on a net over its maximum says why: its pads further
+  apart in a straight line than the maximum ("the placement decides"),
+  else no shorter way found round the other nets.
+
+What is left: the placement. A `length` maximum is a bound on the
+distance of the net's pads, which the placer does not know (oro's U1
+turned with its ULPI pins away from U6); a near-constraint from the rule
+for the two parts (pins of the bounded nets within the maximum less a
+margin) would be the placer's share. The router cannot make a net shorter
+than its pads lie apart.
 
 ## CPU profile (2026-10-25)
 
