@@ -300,6 +300,54 @@ impl State<'_> {
             if self.problem.constraints.lies_on(index, other) {
                 continue;
             }
+            // A part that may reach over a panel's frames and tabs
+            // (`legal::frame_clear`): the least overlap its passes leave.
+            if let Some((part, keepout, pass)) = self.problem.constraints.frames.pass(index, other)
+            {
+                let frames = &self.problem.constraints.frames;
+                let (part_component, part_pose) =
+                    (&self.problem.components[part], self.poses[part]);
+                let keepout_pose = self.poses[keepout];
+                let keep = (
+                    self.problem.components[keepout].center(keepout_pose),
+                    self.problem.components[keepout].half_extent(keepout_pose.angle),
+                );
+                let half = part_component.half_extent(part_pose.angle);
+                let center = part_component.center(part_pose);
+                let whole = area((center, half), keep);
+                let mut least = whole;
+                if whole > 0.0 && pass.overhang > 0.0 {
+                    let shrunk = [
+                        (half[0] - pass.overhang).max(0.0),
+                        (half[1] - pass.overhang).max(0.0),
+                    ];
+                    least = least.min(area((center, shrunk), keep));
+                }
+                if pass.connector {
+                    self.fresh_boxes(&mut cache, part);
+                    let boxes = &cache[part];
+                    booked(boxes.pads.len() + boxes.graphics.len() + frames.copper.len());
+                    if whole > 0.0 && least > 0.0 {
+                        let margin = self.problem.edge_margin;
+                        let mut copper = 0.0;
+                        for (pad_center, pad_half) in boxes.pads.iter().chain(&boxes.graphics) {
+                            let grown = [pad_half[0] + margin, pad_half[1] + margin];
+                            for b in &frames.copper {
+                                let width = grown[0] + (b[2] - b[0]) / 2.0
+                                    - (pad_center[0] - (b[0] + b[2]) / 2.0).abs();
+                                let height = grown[1] + (b[3] - b[1]) / 2.0
+                                    - (pad_center[1] - (b[1] + b[3]) / 2.0).abs();
+                                if width > 0.0 && height > 0.0 {
+                                    copper += width * height;
+                                }
+                            }
+                        }
+                        least = least.min(copper);
+                    }
+                }
+                total += least;
+                continue;
+            }
             if side.collides(other_component.side) {
                 if component.copper_only || other_component.copper_only {
                     // A cutout keeps only copper away.

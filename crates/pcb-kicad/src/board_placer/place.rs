@@ -211,7 +211,7 @@ pub fn place_kicad_board(
             crate::sub_boards::note_cells(Some(copies.regions.clone()));
         }
     }
-    if copies.is_none() && config.sub_boards {
+    if config.sub_boards {
         let footprint_count = pcb
             .children()
             .iter()
@@ -232,12 +232,61 @@ pub fn place_kicad_board(
             }
             None => None,
         };
-        if let Some(sub) = crate::sub_boards::detect_for_placer(
+        let sub = crate::sub_boards::detect_for_placer(
             &pcb,
             &lowered.problem,
             footprint_count,
             reference.as_ref(),
-        )? && (sub.count(&lowered.problem) >= 2 || sub.has_frames())
+        )?
+        .filter(|sub| sub.count(&lowered.problem) >= 2 || sub.has_frames());
+        if let (Some(copies), Some(sub)) = (&copies, &sub) {
+            // A panel of copies keeps its parts off its frames and tabs
+            // too, each copy off the images of every copy's (one
+            // placement replicates to all), but for connectors and the
+            // designer's overhangs (`sub_boards::keep_off_frames`); the
+            // copies are placed as copies, nothing held by sub-board, no
+            // net split.
+            let frames = crate::sub_boards::CopyFrames {
+                transforms: copies
+                    .transforms
+                    .iter()
+                    .map(|transform| (transform.angle, transform.offset))
+                    .collect(),
+                within: copies_surroundings(copies, sub),
+            };
+            let names = lowered.references.clone();
+            let mut applied = crate::sub_boards::PlacerApplied::default();
+            crate::sub_boards::keep_off_frames(
+                sub,
+                &mut lowered.problem,
+                &mut lowered.references,
+                &mut lowered.source_at,
+                &mut applied,
+                true,
+                Some(&frames),
+            );
+            let mut report = crate::sub_boards::KiCadSubBoardsReport::of(
+                sub,
+                &lowered.problem,
+                &lowered.references,
+                &names,
+                &applied,
+            );
+            report.copies = true;
+            eprintln!(
+                "placer: sub-boards: a panel of {} copies, {} frames, cut by {}, {} keepouts over the tabs and frames ({:.0} mm2, each copy's in every copy), {} connectors and {} designer's overhangs may reach over them",
+                copies.members.len(),
+                report.frames.len(),
+                report.cut_by.join(", "),
+                applied.tabs,
+                applied.kept_clear_mm2,
+                applied.connectors,
+                applied.designer_overhangs
+            );
+            sub_boards_report = Some(report);
+        }
+        if copies.is_none()
+            && let Some(sub) = sub
         {
             // A board beside its frame alone (one sub-board) has no nets on
             // several by design.
@@ -264,7 +313,7 @@ pub fn place_kicad_board(
                 &applied,
             );
             eprintln!(
-                "placer: sub-boards: {} ({}), {} nets on several, {} parts without one, {} held in their region, {} frames, cut by {}, {} keepouts over the tabs and frames ({:.0} mm2)",
+                "placer: sub-boards: {} ({}), {} nets on several, {} parts without one, {} held in their region, {} frames, cut by {}, {} keepouts over the tabs and frames ({:.0} mm2), {} connectors and {} designer's overhangs may reach over them",
                 report.count,
                 report.from.join(", "),
                 report.split_nets,
@@ -273,7 +322,9 @@ pub fn place_kicad_board(
                 report.frames.len(),
                 report.cut_by.join(", "),
                 applied.tabs,
-                applied.kept_clear_mm2
+                applied.kept_clear_mm2,
+                applied.connectors,
+                applied.designer_overhangs
             );
             sub_boards_report = Some(report);
             if applied.held > 0 {
@@ -751,6 +802,49 @@ pub fn place_kicad_board(
 
 /// The movable parts without a legal place, each once (unplaced first),
 /// with their uuids and the constraints that hold them.
+/// Per copy of a panel, where its own parts may lie: its region, cut to
+/// the box of the outline pieces its parts lie on (`sub_boards`; the
+/// region alone where none does) grown by the tabs' margin: the area
+/// whose keepouts every copy takes over (`Pieces::copies_keepouts`).
+fn copies_surroundings(
+    copies: &self::panel::PanelCopies,
+    sub: &crate::sub_boards::PlacerSubBoards,
+) -> Vec<[f64; 4]> {
+    let margin = crate::sub_boards::TAB_MARGIN_MM;
+    copies
+        .members
+        .iter()
+        .zip(&copies.regions)
+        .map(|(members, region)| {
+            let pieces: BTreeSet<usize> = members
+                .iter()
+                .filter_map(|part| sub.part_piece.get(*part).copied().flatten())
+                .collect();
+            let Some(around) =
+                pieces
+                    .iter()
+                    .map(|piece| sub.pieces.boxes[*piece])
+                    .reduce(|a, b| {
+                        [
+                            a[0].min(b[0]),
+                            a[1].min(b[1]),
+                            a[2].max(b[2]),
+                            a[3].max(b[3]),
+                        ]
+                    })
+            else {
+                return *region;
+            };
+            [
+                region[0].max(around[0] - margin),
+                region[1].max(around[1] - margin),
+                region[2].min(around[2] + margin),
+                region[3].min(around[3] + margin),
+            ]
+        })
+        .collect()
+}
+
 fn unplaced_parts(
     problem: &core::Problem,
     references: &[String],

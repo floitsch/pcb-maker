@@ -238,6 +238,68 @@ pub struct Constraints {
     /// trial's rp2350-dual-usb, 2026-10-26: the RP2350 moved and its
     /// capacitors stayed behind, 15 mm from any pin).
     pub follow_anchors: bool,
+    /// A panel's frames and tabs (the sub-boards of a panel): the
+    /// keepouts over them and the parts that may reach over those.
+    pub frames: Frames,
+}
+
+/// A panel's frames and tabs as the placement keeps them (`Constraints::
+/// frames`): fixed obstacles over the frames and the tabs (grown by a
+/// margin into the boards beside them) that no part's body takes, but
+/// for the parts that may reach over them (`passes`).
+#[derive(Clone, Debug, Default)]
+pub struct Frames {
+    /// The keepouts (fixed obstacles), ascending.
+    pub keepouts: Vec<usize>,
+    /// The frames and tabs themselves, not grown ([min x, min y, max x,
+    /// max y] on the board): a connector that reaches over a keepout
+    /// keeps its pads and copper the edge margin off them.
+    pub copper: Vec<[f64; 4]>,
+    /// The parts that may reach over the keepouts, ascending by part.
+    pub passes: Vec<(usize, FramePass)>,
+}
+
+/// How a part may reach over a panel's frame and tab keepouts
+/// (`Frames`). Against a keepout the part keeps clear when its body
+/// (without its halo) does not meet the keepout, or its body shrunk by
+/// `overhang` does not, or (`connector`) its pads and copper graphics,
+/// grown by the edge margin, meet none of the frames and tabs
+/// themselves.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FramePass {
+    /// How far the designer's placement put the body into the keepouts
+    /// (mm; 0: no such placement).
+    pub overhang: f64,
+    /// A connector: its body may reach over the frames and tabs where its
+    /// copper stays on its board.
+    pub connector: bool,
+}
+
+impl Frames {
+    /// Where one of the two is a part that may reach over keepouts and
+    /// the other a keepout: the part, the keepout and the pass.
+    pub fn pass(&self, a: usize, b: usize) -> Option<(usize, usize, FramePass)> {
+        if self.passes.is_empty() {
+            return None;
+        }
+        let find = |part: usize| {
+            self.passes
+                .binary_search_by_key(&part, |(part, _)| *part)
+                .ok()
+                .map(|at| self.passes[at].1)
+        };
+        if let Some(pass) = find(a)
+            && self.keepouts.binary_search(&b).is_ok()
+        {
+            return Some((a, b, pass));
+        }
+        if let Some(pass) = find(b)
+            && self.keepouts.binary_search(&a).is_ok()
+        {
+            return Some((b, a, pass));
+        }
+        None
+    }
 }
 
 /// A constraint kept by construction: `side`, the side the part (or the

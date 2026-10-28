@@ -1553,11 +1553,12 @@ fn decoupling_action(
 impl KiCadRunFacts {
     /// The panel's sub-boards when their parts were placed mixed: more
     /// than a tenth of the movable parts belong to no sub-board, so the
-    /// placement held none in its board (`sub_boards.held` false).
+    /// placement held none in its board (`sub_boards.held` false); a
+    /// panel of copies places each copy in its region (`copies`).
     pub fn boards_mixed(&self) -> Option<&crate::sub_boards::KiCadSubBoardsReport> {
         self.sub_boards
             .as_ref()
-            .filter(|sub| sub.count >= 2 && sub.unassigned > 0 && !sub.held)
+            .filter(|sub| sub.count >= 2 && sub.unassigned > 0 && !sub.held && !sub.copies)
     }
 
     pub fn new(command: &str) -> Self {

@@ -625,6 +625,16 @@ fn clear_of_one(
     } {
         return true;
     }
+    // A connector or a part the designer put there may reach over a
+    // panel's frame or tab.
+    if let Some((part, keepout, pass)) = problem.constraints.frames.pass(index, other) {
+        let (part_pose, keepout_pose) = if part == index {
+            (pose, poses[other])
+        } else {
+            (poses[other], pose)
+        };
+        return frame_clear(problem, part, part_pose, keepout, keepout_pose, pass, work);
+    }
     let other_side = problem.components[other].side;
     if side.collides(other_side) {
         let (mine, theirs) = (&problem.components[index], &problem.components[other]);
@@ -1108,6 +1118,67 @@ fn boxes_apart(a: [f64; 4], b: [f64; 4], gap: f64) -> bool {
     b[0] - a[2] > gap || a[0] - b[2] > gap || b[1] - a[3] > gap || a[1] - b[3] > gap
 }
 
+/// Whether a part that may reach over a panel's frames and tabs
+/// (`constraints::Frames`) keeps clear of one of their keepouts: its body
+/// (without its halo) does not meet the keepout, or shrunk by the
+/// designer's overhang does not, or (a connector) its pads and copper
+/// graphics, grown by the edge margin, meet none of the frames and tabs
+/// themselves. The work booked depends on the two parts alone.
+fn frame_clear(
+    problem: &Problem,
+    part: usize,
+    pose: Pose,
+    keepout: usize,
+    keepout_pose: Pose,
+    pass: constraints::FramePass,
+    work: &mut u64,
+) -> bool {
+    let component = &problem.components[part];
+    let frames = &problem.constraints.frames;
+    *work += RECT_WORK;
+    if pass.connector {
+        *work += list_work(component.pads.len() + component.copper_graphics.len())
+            + frames.copper.len() as u64;
+    }
+    let keep = rect(problem, keepout, keepout_pose);
+    let body = bare(problem, part, pose, 0.0);
+    if !overlaps(body, keep, 0.0) {
+        return true;
+    }
+    if pass.overhang > 0.0 && !overlaps(bare(problem, part, pose, -pass.overhang), keep, 0.0) {
+        return true;
+    }
+    if pass.connector {
+        // The frames and tabs near the body (its box grown by the margin
+        // holds its copper so grown), then each pad against those.
+        let margin = problem.edge_margin;
+        let reach = body.grown(margin);
+        let near = |b: &[f64; 4]| {
+            b[0] < reach.center[0] + reach.half[0]
+                && b[2] > reach.center[0] - reach.half[0]
+                && b[1] < reach.center[1] + reach.half[1]
+                && b[3] > reach.center[1] - reach.half[1]
+        };
+        let mut copper = turned(&component.pads, pose, margin).chain(turned(
+            &component.copper_graphics,
+            pose,
+            margin,
+        ));
+        return !copper.any(|pad| {
+            frames.copper.iter().filter(|b| near(b)).any(|b| {
+                let frame = Rect {
+                    center: [(b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0],
+                    half: [(b[2] - b[0]) / 2.0, (b[3] - b[1]) / 2.0],
+                    round: false,
+                    turn: None,
+                };
+                overlaps(pad, frame, 0.0)
+            })
+        });
+    }
+    false
+}
+
 /// How far the parts reach, for `Sweep`: per part the distance from its
 /// body's centre to the farthest corner of anything it tests legality
 /// with (its body and halo, pads, holes, courtyards, rings, copper),
@@ -1364,6 +1435,9 @@ pub fn conflict_kind(
         return None;
     }
     let (mine, theirs) = (&problem.components[index], &problem.components[other]);
+    if problem.constraints.frames.pass(index, other).is_some() {
+        return Some("over a panel's frame or tab");
+    }
     Some(if mine.side.collides(theirs.side) {
         if mine.copper_only || theirs.copper_only {
             "pads in a cutout or pad keepout"

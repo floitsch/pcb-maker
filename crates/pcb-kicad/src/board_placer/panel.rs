@@ -1697,6 +1697,25 @@ pub(crate) fn place_copies(
     let mut fin = problem.clone();
     relaxation.apply(&mut fin);
     let illegal_final = core::legal::illegal_components(&fin, &poses);
+    if debug {
+        // Why parts are not legal at the end: the first few.
+        for &part in illegal_final.iter().take(4) {
+            let mut met: Vec<String> = Vec::new();
+            for other in 0..fin.components.len() {
+                if other != part
+                    && let Some(kind) =
+                        core::legal::conflict_kind(&fin, &poses, part, poses[part], other)
+                {
+                    met.push(format!("{} {other} {kind}", fin.components[other].name));
+                }
+            }
+            eprintln!(
+                "panel copies: {} not legal at the end: {}",
+                fin.components[part].name,
+                met.join(", ")
+            );
+        }
+    }
     let constraints = core::constraints::report(&fin, &poses);
     let wirelength_final = problem.wirelength(&poses);
     if debug {
@@ -2052,6 +2071,56 @@ mod tests {
             let region = copies.regions[1];
             let at = placement.poses[b].position;
             assert!(at[0] >= region[0] && at[0] <= region[2]);
+        }
+    }
+
+    #[test]
+    fn copies_keep_their_geometry_off_every_copys_frame() {
+        // A rail along the first copy's left edge (x 0 to 6, a keepout)
+        // and its image along the second copy's right edge (turned half a
+        // turn), as `sub_boards::Pieces::copies_keepouts` gives every copy
+        // each copy's keepouts: one placement replicates to both copies,
+        // off both.
+        let mut problem = panel(false);
+        let copies = detect(&problem, problem.components.len()).expect("copies");
+        let rail = [0.0, 0.0, 6.0, 20.0];
+        let image = copies.transforms[1].region(rail);
+        assert!(
+            (image[0] - 54.0).abs() < 1.0e-9 && (image[2] - 60.0).abs() < 1.0e-9,
+            "{image:?}"
+        );
+        let keepouts = [rail, image];
+        for b in &keepouts {
+            let (mut component, mut pose) = part("tab", [0.0, 0.0], true, &[]);
+            component.body_size = [b[2] - b[0], b[3] - b[1]];
+            component.side = core::Side::Both;
+            component.angle_options = vec![0.0];
+            pose.position = [(b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0];
+            problem.components.push(component);
+            problem.poses.push(pose);
+        }
+        let mut config = core::Config::new();
+        config.global.seed = 1;
+        let placement = place_copies(&problem, &copies, &config);
+        assert!(placement.unplaced.is_empty() && placement.illegal.is_empty());
+        for rank in 1..5 {
+            let (a, b) = (copies.members[0][rank], copies.members[1][rank]);
+            let image = copies.transforms[1].pose(placement.poses[a]);
+            assert!(distance_squared(image.position, placement.poses[b].position) < 1.0e-12);
+            for part in [a, b] {
+                let component = &problem.components[part];
+                let pose = placement.poses[part];
+                let (center, half) = (component.center(pose), component.half_extent(pose.angle));
+                for k in &keepouts {
+                    assert!(
+                        center[0] + half[0] <= k[0] + 1.0e-9
+                            || center[0] - half[0] >= k[2] - 1.0e-9,
+                        "{} at {:?} on the keepout {k:?}",
+                        component.name,
+                        pose.position
+                    );
+                }
+            }
         }
     }
 

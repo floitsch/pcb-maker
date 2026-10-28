@@ -29,6 +29,40 @@ use super::*;
 use crate::kicad_sexpr::{Expr, form_at};
 use pcb_router as core;
 
+/// A panel of copies as the keepouts see it (`Pieces::copies_keepouts`):
+/// per copy its transform from the first copy (a turn by `angle`
+/// degrees, as `pcb_placer::problem::rotate` turns, then `offset`) and its
+/// surroundings (`within`: where its own parts may lie).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct CopyFrames {
+    pub transforms: Vec<(f64, [f64; 2])>,
+    pub within: Vec<[f64; 4]>,
+}
+
+impl CopyFrames {
+    /// A point of copy `copy` in the first copy's frame.
+    fn carried_back(&self, copy: usize, point: [f64; 2]) -> [f64; 2] {
+        let (angle, offset) = self.transforms[copy];
+        pcb_placer::problem::rotate([point[0] - offset[0], point[1] - offset[1]], angle)
+    }
+
+    /// A point of the first copy in copy `copy`'s frame.
+    fn carried_out(&self, copy: usize, point: [f64; 2]) -> [f64; 2] {
+        let (angle, offset) = self.transforms[copy];
+        let turned = pcb_placer::problem::rotate(point, -angle);
+        [turned[0] + offset[0], turned[1] + offset[1]]
+    }
+}
+
+fn clip_box(a: [f64; 4], b: [f64; 4]) -> [f64; 4] {
+    [
+        a[0].max(b[0]),
+        a[1].max(b[1]),
+        a[2].min(b[2]),
+        a[3].min(b[3]),
+    ]
+}
+
 /// Necks narrower than twice this are no part of a piece (mm): a mouse
 /// bite's bridges (0.3 mm between 0.6 mm holes) and tabs narrower than
 /// 2 mm fall away; boards are far wider.
@@ -44,6 +78,10 @@ const MIN_PIECE_SHARE: f64 = 0.05;
 
 /// The keepouts' blocks (mm, `Pieces::keepouts`).
 const KEEPOUT_BLOCK_MM: f64 = 0.5;
+
+/// The blocks of the frames and tabs themselves (mm, `Pieces::copper`):
+/// a connector reaching over them keeps its copper off these.
+const COPPER_BLOCK_MM: f64 = 0.25;
 
 /// How far parts keep from a tab beyond the board the opening took from
 /// it (mm): a row of mouse bites breaks along its holes, its edge rough
@@ -772,6 +810,114 @@ impl Pieces {
     /// one row joined into runs and equal runs of consecutive rows into
     /// one box. None on pieces that are boxes (`of_boxes`).
     pub(crate) fn keepouts(&self, frames: &[bool], margin: f64) -> Vec<[f64; 4]> {
+        self.mask_boxes(&self.kept_mask(frames, margin), KEEPOUT_BLOCK_MM)
+    }
+
+    /// The tabs and the frames themselves (`keepouts` not grown), in
+    /// blocks of `COPPER_BLOCK_MM`: what a connector reaching over the
+    /// keepouts keeps its copper off.
+    pub(crate) fn copper(&self, frames: &[bool]) -> Vec<[f64; 4]> {
+        self.mask_boxes(&self.kept_mask(frames, 0.0), COPPER_BLOCK_MM)
+    }
+
+    /// `keepouts` and `copper` on a panel of copies (`CopyFrames`): each
+    /// copy keeps off what every copy keeps off, carried into its own
+    /// frame, so that one placement of the first copy is legal in all
+    /// (a top copy's rail is a strip along the top of every copy). The
+    /// first copy's cells within its surroundings are kept where the
+    /// point, carried to any copy, lies on a kept cell within that copy's;
+    /// those cells in blocks make the first copy's boxes, and each other
+    /// copy takes their exact images (cut to its surroundings). The kept
+    /// cells within no copy's surroundings (the frames beyond) are boxes
+    /// of their own.
+    pub(crate) fn copies_keepouts(
+        &self,
+        frames: &[bool],
+        copies: &CopyFrames,
+    ) -> (Vec<[f64; 4]>, Vec<[f64; 4]>) {
+        (
+            self.spread(
+                &self.kept_mask(frames, TAB_MARGIN_MM),
+                KEEPOUT_BLOCK_MM,
+                copies,
+            ),
+            self.spread(&self.kept_mask(frames, 0.0), COPPER_BLOCK_MM, copies),
+        )
+    }
+
+    fn spread(&self, mask: &[bool], block: f64, copies: &CopyFrames) -> Vec<[f64; 4]> {
+        if self.boxed() || copies.within.is_empty() {
+            return self.mask_boxes(mask, block);
+        }
+        let inside = |point: [f64; 2], b: &[f64; 4]| {
+            point[0] >= b[0] && point[0] <= b[2] && point[1] >= b[1] && point[1] <= b[3]
+        };
+        let kept_at = |point: [f64; 2]| self.cell_of(point).is_some_and(|cell| mask[cell]);
+        let mut first = vec![false; mask.len()];
+        let mut rest = vec![false; mask.len()];
+        for row in 0..self.rows {
+            for column in 0..self.columns {
+                let at = row * self.columns + column;
+                let point = [
+                    self.origin[0] + (column as f64 + 0.5) * self.cell,
+                    self.origin[1] + (row as f64 + 0.5) * self.cell,
+                ];
+                if mask[at] && !copies.within.iter().any(|b| inside(point, b)) {
+                    rest[at] = true;
+                }
+                if !inside(point, &copies.within[0]) {
+                    continue;
+                }
+                let local = copies.carried_back(0, point);
+                first[at] = (0..copies.within.len()).any(|copy| {
+                    let there = copies.carried_out(copy, local);
+                    inside(there, &copies.within[copy]) && kept_at(there)
+                });
+            }
+        }
+        let mut boxes = self.mask_boxes(&rest, block);
+        let first_boxes: Vec<[f64; 4]> = self
+            .mask_boxes(&first, block)
+            .into_iter()
+            .map(|b| clip_box(b, copies.within[0]))
+            .filter(|b| b[0] < b[2] && b[1] < b[3])
+            .collect();
+        for copy in 0..copies.within.len() {
+            for b in &first_boxes {
+                let image = if copy == 0 {
+                    *b
+                } else {
+                    let corners = [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]]
+                        .map(|corner| copies.carried_out(copy, copies.carried_back(0, corner)));
+                    corners.iter().fold(
+                        [
+                            f64::INFINITY,
+                            f64::INFINITY,
+                            f64::NEG_INFINITY,
+                            f64::NEG_INFINITY,
+                        ],
+                        |b, p| {
+                            [
+                                b[0].min(p[0]),
+                                b[1].min(p[1]),
+                                b[2].max(p[0]),
+                                b[3].max(p[1]),
+                            ]
+                        },
+                    )
+                };
+                let image = clip_box(image, copies.within[copy]);
+                if image[0] < image[2] && image[1] < image[3] {
+                    boxes.push(image);
+                }
+            }
+        }
+        boxes
+    }
+
+    /// Per cell: the board on no piece (a tab) or on a piece `frames`
+    /// marks, or within `margin` of such a cell, on the board.
+    fn kept_mask(&self, frames: &[bool], margin: f64) -> Vec<bool> {
         if self.boxed() {
             return Vec::new();
         }
@@ -787,11 +933,26 @@ impl Pieces {
             .collect();
         chamfer(&mut distance, columns, rows);
         let reach = (margin.max(0.0) / cell * 3.0).round() as u32;
-        let per = ((KEEPOUT_BLOCK_MM / cell).round() as usize).max(1);
+        distance
+            .iter()
+            .zip(&self.inside)
+            .map(|(near, inside)| *inside && *near <= reach)
+            .collect()
+    }
+
+    /// The cells of `mask` as boxes: in blocks of `block` mm (a block any
+    /// such cell lies in is kept whole), the blocks of one row joined into
+    /// runs and equal runs of consecutive rows into one box.
+    fn mask_boxes(&self, mask: &[bool], block: f64) -> Vec<[f64; 4]> {
+        if self.boxed() {
+            return Vec::new();
+        }
+        let (columns, rows, cell) = (self.columns, self.rows, self.cell);
+        let per = ((block / cell).round() as usize).max(1);
         let (block_columns, block_rows) = (columns.div_ceil(per), rows.div_ceil(per));
         let mut blocked = vec![false; block_columns * block_rows];
-        for (at, near) in distance.iter().enumerate() {
-            if self.inside[at] && *near <= reach {
+        for (at, kept) in mask.iter().enumerate() {
+            if *kept {
                 let (row, column) = (at / columns, at % columns);
                 blocked[(row / per) * block_columns + column / per] = true;
             }
@@ -1760,6 +1921,79 @@ pub(crate) struct PlacerSubBoards {
     /// lies on it by the fixed parts, the reference board or the placed
     /// input; no part may.
     pub frames: Vec<bool>,
+    /// Per footprint: a connector that may reach over the frames and tabs
+    /// (`overhang_connector`).
+    pub connectors: Vec<bool>,
+    /// Per footprint: its place on the reference board (the designer's),
+    /// where there is one.
+    pub designer: Vec<Option<pcb_placer::Pose>>,
+}
+
+/// Connector families by footprint name (lower case, anywhere in the
+/// name): their bodies reach past their pads (a receptacle's shell, a
+/// right-angle header's housing).
+const CONNECTOR_NAMES: &[&str] = &[
+    "connector",
+    "conn_",
+    "jst",
+    "molex",
+    "hirose",
+    "pinheader",
+    "pin_header",
+    "pinsocket",
+    "pin_socket",
+    "header",
+    "socket",
+    "receptacle",
+    "type-c",
+    "typec",
+    "micro_sd",
+    "microsd",
+    "sim_card",
+];
+
+/// Whether a footprint is a connector that may reach over a panel's frame
+/// or tab where its copper stays on its board
+/// (`pcb_placer::constraints::FramePass`): a plug-in connector by its
+/// footprint name (`netlist_import::edge_connector`: USB, SMA, jacks,
+/// card edges, terminal blocks), a connector family's name
+/// (`CONNECTOR_NAMES`: JST, Molex, Hirose, pin headers and sockets), the
+/// USB-C pads (A1, A12, B1 and B12), or a connector's reference (J, P,
+/// CN, CON, USB, X; not a crystal) whose courtyard reaches past its pads
+/// on one side (`connector_mouth`).
+pub(crate) fn overhang_connector(footprint: &Expr) -> bool {
+    let name = footprint
+        .children()
+        .get(1)
+        .and_then(Expr::atom)
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if crate::netlist_import::edge_connector(&name)
+        || CONNECTOR_NAMES.iter().any(|key| name.contains(key))
+    {
+        return true;
+    }
+    let pads: BTreeSet<&str> = footprint
+        .children()
+        .iter()
+        .filter(|child| child.head() == Some("pad"))
+        .filter_map(|pad| pad.children().get(1).and_then(Expr::atom))
+        .collect();
+    if ["A1", "A12", "B1", "B12"]
+        .iter()
+        .all(|pad| pads.contains(pad))
+    {
+        return true;
+    }
+    let reference = crate::kicad_nets::footprint_reference(footprint).unwrap_or_default();
+    let prefix: String = reference
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect::<String>()
+        .to_ascii_uppercase();
+    matches!(prefix.as_str(), "J" | "P" | "CN" | "CON" | "USB" | "X")
+        && !name.contains("crystal")
+        && matches!(crate::board_placer::connector_mouth(footprint), Ok(Some(_)))
 }
 
 /// The share of the movable parts that may be without a sub-board for
@@ -1802,12 +2036,16 @@ pub(crate) fn detect_for_placer(
         return Ok(None);
     };
     let footprints = footprints.min(problem.components.len());
-    let uuids: Vec<Option<String>> = pcb
+    let footprint_items: Vec<&Expr> = pcb
         .children()
         .iter()
         .filter(|item| item.head() == Some("footprint"))
-        .map(crate::kicad_nets::footprint_uuid)
         .collect();
+    let uuids: Vec<Option<String>> = footprint_items
+        .iter()
+        .map(|item| crate::kicad_nets::footprint_uuid(item))
+        .collect();
+    let mut designer_places: BTreeMap<String, [f64; 3]> = BTreeMap::new();
     let mut part_piece: Vec<Option<usize>> = vec![None; footprints];
     let mut from: BTreeSet<&'static str> = BTreeSet::new();
     let with_pins = |part: usize| !problem.components[part].pins.is_empty();
@@ -1823,7 +2061,7 @@ pub(crate) fn detect_for_placer(
         }
     }
     if let Some(reference) = reference {
-        let places: BTreeMap<String, [f64; 3]> = reference
+        designer_places = reference
             .children()
             .iter()
             .filter(|item| item.head() == Some("footprint"))
@@ -1834,6 +2072,7 @@ pub(crate) fn detect_for_placer(
                 ))
             })
             .collect();
+        let places = &designer_places;
         for (part, place) in part_piece.iter_mut().enumerate() {
             if place.is_none()
                 && let Some(Some(uuid)) = uuids.get(part)
@@ -1957,6 +2196,22 @@ pub(crate) fn detect_for_placer(
         from.insert("nets");
     }
     let order = ["fixed parts", "reference board", "placed input", "nets"];
+    let connectors: Vec<bool> = footprint_items
+        .iter()
+        .take(footprints)
+        .enumerate()
+        .map(|(part, item)| with_pins(part) && overhang_connector(item))
+        .collect();
+    let designer: Vec<Option<pcb_placer::Pose>> = (0..footprints)
+        .map(|part| {
+            let uuid = uuids.get(part)?.as_ref()?;
+            let at = designer_places.get(uuid)?;
+            Some(pcb_placer::Pose {
+                position: [at[0], at[1]],
+                angle: at[2],
+            })
+        })
+        .collect();
     Ok(Some(PlacerSubBoards {
         pieces,
         part_piece,
@@ -1967,6 +2222,8 @@ pub(crate) fn detect_for_placer(
             .collect(),
         conflicts,
         frames,
+        connectors,
+        designer,
     }))
 }
 
@@ -2017,6 +2274,135 @@ pub(crate) struct PlacerApplied {
     /// `Pieces::keepouts`), and their area (mm², overlaps counted once).
     pub tabs: usize,
     pub kept_clear_mm2: f64,
+    /// Movable parts that may reach over the keepouts
+    /// (`pcb_placer::constraints::FramePass`): connectors, and parts the
+    /// designer's placement put into them (by how far).
+    pub connectors: usize,
+    pub designer_overhangs: usize,
+}
+
+/// How far the body `b` reaches into the keepouts: the least that, taken
+/// off every side, leaves it clear of each (0 where it meets none).
+fn depth_into(b: [f64; 4], keepouts: &[[f64; 4]]) -> f64 {
+    keepouts
+        .iter()
+        .filter(|k| b[0] < k[2] && k[0] < b[2] && b[1] < k[3] && k[1] < b[3])
+        .map(|k| {
+            let x = (b[2] - k[0]).min(k[2] - b[0]);
+            let y = (b[3] - k[1]).min(k[3] - b[1]);
+            x.min(y).max(0.0)
+        })
+        .fold(0.0, f64::max)
+}
+
+/// Keeps every part off the panel's tabs and frames: each box of
+/// `Pieces::keepouts` (the tabs and the frames grown by `TAB_MARGIN_MM`)
+/// a fixed obstacle of no side, but for the parts that may reach over
+/// them (`pcb_placer::constraints::Frames`):
+///
+/// - a part the designer's placement (the reference board) put into the
+///   keepouts may reach as far into them (its body shrunk by that much
+///   keeps off them; a fixed part stays where it is anyway);
+/// - on a panel (a board with a frame or rails, or a panel of copies:
+///   `panel`), a connector (`overhang_connector`) may reach over them
+///   with its body where its pads and copper graphics keep the edge margin
+///   off the tabs and frames themselves (`Pieces::copper`): on its own
+///   board. A board of two halves joined by tabs and no frame (urchin,
+///   woagboard) is one board whose tabs lie inside it: nothing reaches
+///   over them.
+///
+/// The board's outline is not changed: a part still keeps inside it.
+///
+/// On a panel of copies (`copies`) each copy keeps off every copy's
+/// keepouts carried into its frame (`Pieces::copies_keepouts`).
+pub(crate) fn keep_off_frames(
+    sub: &PlacerSubBoards,
+    problem: &mut pcb_placer::Problem,
+    references: &mut Vec<String>,
+    source_at: &mut Vec<[f64; 3]>,
+    applied: &mut PlacerApplied,
+    panel: bool,
+    copies: Option<&CopyFrames>,
+) {
+    let (keepouts, copper) = match copies {
+        Some(copies) => sub.pieces.copies_keepouts(&sub.frames, copies),
+        None => (
+            sub.pieces.keepouts(&sub.frames, TAB_MARGIN_MM),
+            sub.pieces.copper(&sub.frames),
+        ),
+    };
+    if keepouts.is_empty() {
+        return;
+    }
+    applied.kept_clear_mm2 = keepouts.iter().map(|b| (b[2] - b[0]) * (b[3] - b[1])).sum();
+    let mut passes = Vec::new();
+    for part in 0..sub.part_piece.len().min(problem.components.len()) {
+        let component = &problem.components[part];
+        if component.fixed || component.pins.is_empty() {
+            continue;
+        }
+        let overhang = match sub.designer.get(part).copied().flatten() {
+            Some(pose) => {
+                let depth = depth_into(body_box(component, pose), &keepouts);
+                if depth > 0.0 { depth + 1.0e-6 } else { 0.0 }
+            }
+            None => 0.0,
+        };
+        let connector = panel && sub.connectors.get(part).copied().unwrap_or(false);
+        if overhang > 0.0 || connector {
+            applied.connectors += connector as usize;
+            applied.designer_overhangs += (overhang > 0.0) as usize;
+            passes.push((
+                part,
+                pcb_placer::constraints::FramePass {
+                    overhang,
+                    connector,
+                },
+            ));
+        }
+    }
+    let first = problem.components.len();
+    for tab in &keepouts {
+        let size = [tab[2] - tab[0], tab[3] - tab[1]];
+        problem.components.push(pcb_placer::Component {
+            name: "tab".into(),
+            body_center: [0.0, 0.0],
+            body_size: size,
+            round: false,
+            halo: 0.0,
+            pins: Vec::new(),
+            side: pcb_placer::Side::Both,
+            fixed: true,
+            angle_options: vec![0.0],
+            far_side: Vec::new(),
+            far_copper: Vec::new(),
+            far_courtyard: Vec::new(),
+            hollow: Vec::new(),
+            tight: None,
+            edge_inset: 0.0,
+            courtyards: Vec::new(),
+            holes_inside: false,
+            pads: Vec::new(),
+            copper_only: false,
+            cutout_outline: Vec::new(),
+            tight_hollow: Vec::new(),
+            hole_rings: Vec::new(),
+            copper_graphics: Vec::new(),
+        });
+        problem.poses.push(pcb_placer::Pose {
+            position: [(tab[0] + tab[2]) / 2.0, (tab[1] + tab[3]) / 2.0],
+            angle: 0.0,
+        });
+        references.push("tab".into());
+        source_at.push([0.0; 3]);
+        applied.tabs += 1;
+    }
+    if !passes.is_empty() {
+        let frames = &mut problem.constraints.frames;
+        frames.keepouts = (first..problem.components.len()).collect();
+        frames.copper = copper;
+        frames.passes = passes;
+    }
 }
 
 /// The sub-boards in the placement problem (a panel: two sub-boards or
@@ -2053,43 +2439,15 @@ pub(crate) fn apply_to_placer(
     if !hold && !sub.has_frames() {
         return applied;
     }
-    let keepouts = sub.pieces.keepouts(&sub.frames, TAB_MARGIN_MM);
-    applied.kept_clear_mm2 = keepouts.iter().map(|b| (b[2] - b[0]) * (b[3] - b[1])).sum();
-    for tab in &keepouts {
-        let size = [tab[2] - tab[0], tab[3] - tab[1]];
-        problem.components.push(pcb_placer::Component {
-            name: "tab".into(),
-            body_center: [0.0, 0.0],
-            body_size: size,
-            round: false,
-            halo: 0.0,
-            pins: Vec::new(),
-            side: pcb_placer::Side::Both,
-            fixed: true,
-            angle_options: vec![0.0],
-            far_side: Vec::new(),
-            far_copper: Vec::new(),
-            far_courtyard: Vec::new(),
-            hollow: Vec::new(),
-            tight: None,
-            edge_inset: 0.0,
-            courtyards: Vec::new(),
-            holes_inside: false,
-            pads: Vec::new(),
-            copper_only: false,
-            cutout_outline: Vec::new(),
-            tight_hollow: Vec::new(),
-            hole_rings: Vec::new(),
-            copper_graphics: Vec::new(),
-        });
-        problem.poses.push(pcb_placer::Pose {
-            position: [(tab[0] + tab[2]) / 2.0, (tab[1] + tab[3]) / 2.0],
-            angle: 0.0,
-        });
-        references.push("tab".into());
-        source_at.push([0.0; 3]);
-        applied.tabs += 1;
-    }
+    keep_off_frames(
+        sub,
+        problem,
+        references,
+        source_at,
+        &mut applied,
+        sub.has_frames(),
+        None,
+    );
     if !hold {
         return applied;
     }
@@ -2215,9 +2573,26 @@ pub struct KiCadSubBoardsReport {
     /// frames (mm²); 0 where the placement kept nothing free.
     #[serde(default)]
     pub kept_clear_mm2: f64,
+    /// Movable parts that may reach over the frames and tabs: connectors
+    /// (their pads and copper on their board) and parts the designer's
+    /// placement (the reference board) put into the kept area, as far as
+    /// it did.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub overhang_connectors: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub overhang_designer: usize,
+    /// A panel of copies (`panel_copies`): the copies are placed as
+    /// copies, each in its region, kept off the frames and tabs; their
+    /// parts are not held by sub-board.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub copies: bool,
     /// Each sub-board: its region and parts (with pins), of them the
     /// movable ones.
     pub sub_boards: Vec<KiCadSubBoard>,
+}
+
+fn is_zero(count: &usize) -> bool {
+    *count == 0
 }
 
 #[derive(Clone, Debug, Default, Serialize, serde::Deserialize, PartialEq)]
@@ -2292,6 +2667,9 @@ impl KiCadSubBoardsReport {
                 .map(|(b, _)| round(b))
                 .collect(),
             kept_clear_mm2: (applied.kept_clear_mm2 * 10.0).round() / 10.0,
+            overhang_connectors: applied.connectors,
+            overhang_designer: applied.designer_overhangs,
+            copies: false,
             sub_boards,
         }
     }
@@ -2773,6 +3151,225 @@ mod tests {
             let b = body_box(&lowered.problem.components[part], placement.poses[part]);
             assert!(b[3] < 20.0, "{name} off the board: {b:?}");
         }
+    }
+
+    #[test]
+    fn connectors_and_the_designers_overhangs_may_reach_over_frames_and_tabs() {
+        // The board above, a rail below, joined over x 7 to 13 and cut
+        // along y 22.5 by a V-cut; a resistor, a USB receptacle (its pads
+        // at the back, its shell reaching 3.7 mm past them towards +y) and
+        // a second resistor, placed on the board.
+        let resistor = |name: &str, x: f64, y: f64| {
+            format!(
+                r#"(footprint "Resistor_SMD:R_0603" (at {x} {y}) (uuid "uuid-{name}") (property "Reference" "{name}") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "GND")) (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net "SIG")))"#
+            )
+        };
+        let usb = |x: f64, y: f64| {
+            format!(
+                r#"(footprint "Connector_USB:USB_C_Receptacle" (at {x} {y}) (uuid "uuid-J1") (property "Reference" "J1") (fp_rect (start -2 -2) (end 2 3) (layer "F.CrtYd")) (pad "1" smd rect (at -1 -1) (size 0.6 0.6) (layers "F.Cu") (net "GND")) (pad "2" smd rect (at 1 -1) (size 0.6 0.6) (layers "F.Cu") (net "SIG")))"#
+            )
+        };
+        let v_cut = r#"(gr_line (start -1 22.5) (end 21 22.5) (stroke (width 0.4) (type default)) (layer "Cmts.User")) (gr_text "V-CUT" (at -4 22.5 0) (layer "Cmts.User"))"#;
+        let board = |r1: [f64; 2]| {
+            two_pieces(
+                6.0,
+                5.0,
+                &format!(
+                    "{v_cut} {} {} {}",
+                    resistor("R1", r1[0], r1[1]),
+                    usb(4.0, 8.0),
+                    resistor("R2", 12.0, 5.0)
+                ),
+            )
+        };
+        let pcb = board([3.0, 15.0]);
+        let config = crate::board_placer::KiCadBoardPlacerConfig::default();
+        let lowered_of = |reference: Option<&Expr>| {
+            let mut lowered = crate::board_placer::lower_placement(&pcb, &config).unwrap();
+            let footprints = 3;
+            let sub = detect_for_placer(&pcb, &lowered.problem, footprints, reference)
+                .unwrap()
+                .expect("pieces");
+            assert!(sub.has_frames());
+            let applied = apply_to_placer(
+                &sub,
+                &mut lowered.problem,
+                &mut lowered.references,
+                &mut lowered.source_at,
+                &mut lowered.poured,
+            );
+            (lowered, applied)
+        };
+        let part = |lowered: &crate::board_placer::LoweredPlacement, name: &str| {
+            lowered.references.iter().position(|r| r == name).unwrap()
+        };
+        let legal_in = |problem: &pcb_placer::Problem, index: usize, at: [f64; 2]| {
+            let pose = pcb_placer::Pose {
+                position: at,
+                angle: 0.0,
+            };
+            pcb_placer::legal::is_legal(
+                problem,
+                &problem.poses,
+                index,
+                pose,
+                (0..problem.components.len()).filter(|other| problem.components[*other].fixed),
+            )
+        };
+        let legal = |lowered: &crate::board_placer::LoweredPlacement, name: &str, at: [f64; 2]| {
+            legal_in(&lowered.problem, part(lowered, name), at)
+        };
+        let at_origin = |lowered: &crate::board_placer::LoweredPlacement, index: usize| {
+            body_box(
+                &lowered.problem.components[index],
+                pcb_placer::Pose {
+                    position: [0.0, 0.0],
+                    angle: 0.0,
+                },
+            )
+        };
+        let (lowered, applied) = lowered_of(None);
+        assert_eq!((applied.connectors, applied.designer_overhangs), (1, 0));
+        let frames = &lowered.problem.constraints.frames;
+        assert_eq!(frames.passes.len(), 1);
+        assert_eq!(frames.passes[0].0, part(&lowered, "J1"));
+        assert!(frames.passes[0].1.connector);
+        // The keepout over the cut reaches 1.5 mm up into the board, the
+        // cut itself (`copper`) starts at about y 22.5.
+        let top = frames
+            .keepouts
+            .iter()
+            .map(|k| body_box(&lowered.problem.components[*k], lowered.problem.poses[*k]))
+            .filter(|b| b[0] < 10.0 && b[2] > 10.0)
+            .map(|b| b[1])
+            .fold(f64::INFINITY, f64::min);
+        let cut = frames
+            .copper
+            .iter()
+            .filter(|b| b[0] < 10.0 && b[2] > 10.0)
+            .map(|b| b[1])
+            .fold(f64::INFINITY, f64::min);
+        assert!(
+            (cut - 22.4).abs() < 0.4 && (cut - top - 1.6).abs() < 0.4,
+            "{top} {cut}"
+        );
+        // A resistor above the cut: off the keepout (by its halo and the
+        // spacing) legal, on it not.
+        let r1 = part(&lowered, "R1");
+        let r1_box = at_origin(&lowered, r1);
+        let above = |depth: f64| [9.0 - r1_box[0], top - r1_box[3] + depth];
+        assert!(legal(&lowered, "R1", above(-1.5)));
+        assert!(!legal(&lowered, "R1", above(0.5)));
+        // The connector's shell may reach over the cut and the rail where
+        // its pads (0.7 to 1.3 mm behind its origin) keep the edge margin
+        // off the cut; not where they come closer.
+        let j1 = part(&lowered, "J1");
+        let j1_box = at_origin(&lowered, j1);
+        assert!(j1_box[3] > 2.9, "{j1_box:?}");
+        let margin = lowered.problem.edge_margin;
+        let pads_at = |gap: f64| [10.0, cut - margin - gap + 0.7];
+        assert!(legal(&lowered, "J1", pads_at(0.05)));
+        assert!(!legal(&lowered, "J1", pads_at(-0.05)));
+        // Without the pass its body keeps off the keepout.
+        let mut strict = lowered.problem.clone();
+        strict.constraints.frames.passes.clear();
+        assert!(!legal_in(&strict, j1, pads_at(0.05)));
+        assert!(legal_in(&strict, j1, [10.0, 8.0]));
+        // The designer put R1 0.5 mm into the keepout: it may reach as far,
+        // not farther.
+        let designer = board(above(0.5));
+        let (lowered, applied) = lowered_of(Some(&designer));
+        assert_eq!((applied.connectors, applied.designer_overhangs), (1, 1));
+        let pass = lowered
+            .problem
+            .constraints
+            .frames
+            .passes
+            .iter()
+            .find(|(part, _)| *part == r1)
+            .expect("R1's pass")
+            .1;
+        assert!(
+            !pass.connector && (pass.overhang - 0.5).abs() < 0.01,
+            "{pass:?}"
+        );
+        assert!(legal(&lowered, "R1", above(0.5)));
+        assert!(!legal(&lowered, "R1", above(0.6)));
+        // R2 has no pass: it keeps off.
+        let r2 = part(&lowered, "R2");
+        let r2_box = at_origin(&lowered, r2);
+        assert!(!legal(
+            &lowered,
+            "R2",
+            [13.0 - r2_box[0], top - r2_box[3] + 0.5]
+        ));
+    }
+
+    #[test]
+    fn copies_keep_off_every_copys_tabs_and_frames() {
+        // Two copies side by side (x 0 to 20 and 21.5 to 41.5), a rail at
+        // the left (x -9.5 to -1.5); bridges over the 1.5 mm slots at y 8
+        // to 12, cut by rows of mouse bites, between the rail and the
+        // first copy and between the copies.
+        let outline = "(gr_poly (pts (xy -9.5 0) (xy -1.5 0) (xy -1.5 8) (xy 0 8) (xy 0 0) (xy 20 0) (xy 20 8) (xy 21.5 8) (xy 21.5 0) (xy 41.5 0) (xy 41.5 20) (xy 21.5 20) (xy 21.5 12) (xy 20 12) (xy 20 20) (xy 0 20) (xy 0 12) (xy -1.5 12) (xy -1.5 20) (xy -9.5 20)) (layer \"Edge.Cuts\"))";
+        let row = |x: f64| {
+            let pads: String = (0..6)
+                .map(|index| {
+                    format!(
+                        r#"(pad "" np_thru_hole circle (at 0 {}) (size 0.5 0.5) (drill 0.5) (layers "*.Cu" "*.Mask"))"#,
+                        index as f64 * 0.75
+                    )
+                })
+                .collect();
+            format!(
+                r#"(footprint "Panelization:mouse-bites" (at {x} 8.125) (property "Reference" "MB") {pads})"#
+            )
+        };
+        let pcb = crate::kicad_sexpr::parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user)) {outline} {} {})"#,
+            row(-0.75),
+            row(20.75)
+        ))
+        .unwrap();
+        let pieces = Pieces::of_board(&pcb).unwrap().expect("pieces");
+        assert_eq!(pieces.count(), 3);
+        let (first, second) = (
+            pieces.piece_at([10.0, 10.0]).unwrap(),
+            pieces.piece_at([31.5, 10.0]).unwrap(),
+        );
+        let frames = pieces.frames(&BTreeSet::from([first, second]));
+        assert_eq!(frames.iter().filter(|frame| **frame).count(), 1);
+        let copies = CopyFrames {
+            transforms: vec![(0.0, [0.0, 0.0]), (0.0, [21.5, 0.0])],
+            within: vec![[-1.5, -1.5, 20.0, 21.5], [20.0, -1.5, 41.5, 21.5]],
+        };
+        let (keepouts, copper) = pieces.copies_keepouts(&frames, &copies);
+        let kept = |boxes: &[[f64; 4]], point: [f64; 2]| {
+            boxes.iter().any(|b| {
+                point[0] >= b[0] && point[0] <= b[2] && point[1] >= b[1] && point[1] <= b[3]
+            })
+        };
+        // The rail and the tabs' margins as before.
+        let own = pieces.keepouts(&frames, TAB_MARGIN_MM);
+        assert!(kept(&keepouts, [-5.0, 10.0]) && kept(&own, [-5.0, 10.0]));
+        assert!(kept(&keepouts, [19.6, 10.0]) && kept(&own, [19.6, 10.0]));
+        // The tab at the first copy's right side, carried to the second
+        // copy's right side, where it has none.
+        assert!(!kept(&own, [41.1, 10.0]));
+        assert!(kept(&keepouts, [41.1, 10.0]));
+        // Each copy keeps off what the other does, in its own frame.
+        for x in 0..40 {
+            for y in 0..40 {
+                let point = [0.3 + 0.5 * x as f64, 0.3 + 0.5 * y as f64];
+                assert_eq!(
+                    kept(&keepouts, point),
+                    kept(&keepouts, [point[0] + 21.5, point[1]]),
+                    "{point:?}"
+                );
+            }
+        }
+        // The copper: the tabs themselves, not their margins.
+        assert!(kept(&copper, [20.75, 10.0]) && !kept(&copper, [18.5, 10.0]));
     }
 
     #[test]
