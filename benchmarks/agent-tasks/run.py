@@ -69,6 +69,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 from pathlib import Path, PurePosixPath
@@ -1045,10 +1046,30 @@ VIA_SITES_CACHE = ROOT / "build" / "designer-vias-in-pads.json"
 VIA_SITES_LOCK = threading.Lock()
 
 
+VIA_IN_PAD_BINARIES = {}
+
+
+def lists_vias_in_pads(binary):
+    """Whether `binary` reads a `via_in_pad` list (2026-10-28 and later):
+    its score-kicad-board reports `filled_vias_in_pads`, asked of an empty
+    board once per binary. The cache below holds what newer binaries
+    found; an older binary gets no entries from it."""
+    key = str(binary)
+    if key not in VIA_IN_PAD_BINARIES:
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "probe.kicad_pcb").write_text(
+                '(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user)))\n')
+            report = quality.score(binary, directory, "probe") or {}
+        VIA_IN_PAD_BINARIES[key] = "filled_vias_in_pads" in (report.get("manufacturing") or {})
+    return VIA_IN_PAD_BINARIES[key]
+
+
 def designer_via_sites(binary, directory, board_id):
     """score-kicad-board's `vias_in_pads_at` on the designer's board, from
     VIA_SITES_CACHE where it holds the board; None when the binary gives
-    no list."""
+    no list (`lists_vias_in_pads`)."""
+    if not lists_vias_in_pads(binary):
+        return None
     board = Path(directory) / f"{board_id}.kicad_pcb"
     digest = file_sha256(board)
     with VIA_SITES_LOCK:

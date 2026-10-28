@@ -1747,6 +1747,8 @@ class DesignerViasInPads(unittest.TestCase):
         self.calls = 0
 
         def score(binary, directory, board_id):
+            if board_id == "probe":
+                return {"manufacturing": {"vias_in_pads": 0, "filled_vias_in_pads": 0}}
             self.calls += 1
             return {"manufacturing": {"vias_in_pads": 3, "filled_vias_in_pads": 0, "vias_in_pads_at": [
                 site("B2", (0.35, 0.25)), site("C2", (0.4, 0.25)), site("M5", (0.35, 0.25))]}}
@@ -1777,6 +1779,10 @@ class DesignerViasInPads(unittest.TestCase):
         run.DESIGNER_VIAS_IN_PADS.clear()
         run.designer_vias_in_pads("other", self.directory, "b")
         self.assertEqual(self.calls, 1)
+        # A binary without the list gets nothing, not even from the cache.
+        run.DESIGNER_VIAS_IN_PADS.clear()
+        run.VIA_IN_PAD_BINARIES["old"] = False
+        self.assertEqual(run.designer_vias_in_pads("old", self.directory, "b"), [])
 
 
 if __name__ == "__main__":
