@@ -208,6 +208,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "the router's `fanout_depth` in millimetres (default 0.5; with `fanout`): how far beyond its pad a fan-out run reaches.",
     ),
     (
+        "PCB_ROUTER_FANOUT_FREE",
+        Kind::Switch,
+        "with `fanout`: a pad of a row coarser than 0.65 mm takes part when it has at most this many straight ways out along the axes (default 2; 0: fine-pitch rows only; an experiment).",
+    ),
+    (
         "PCB_ROUTER_CAPACITATED_CORRIDORS",
         Kind::Switch,
         "overrides the router's `capacitated_corridors` (`0` off, anything else on; off by default): the negotiation's corridors from the global route with hard capacities, a search that misses its corridor lowering the capacity of the boundary it failed at and re-planning the nets through it (docs/router.md, \"Capacitated corridors (2026-10-24)\"; an experiment).",

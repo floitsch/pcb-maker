@@ -9,11 +9,11 @@
 //! cost.
 //!
 //! A way out (`ExitRun`) is a straight lattice run from the pad's edge,
-//! along one of the four axes through the lattice node at the pad's
-//! centre, `fanout_depth` beyond the pad, every node legal for the net.
-//! Its cost is how far it points from the net's nearest pad on another
-//! part (the ratsnest's direction), and more where it points into its own
-//! part (under a QFN). Two runs of different nets conflict when their
+//! in one of the eight lattice directions from the lattice node at the
+//! pad's centre, `fanout_depth` beyond the pad, every node and step legal
+//! for the net. Its cost is how far it points from the net's nearest pad
+//! on another part (the ratsnest's direction), more where it points into
+//! its own part (under a QFN) and a little more on a diagonal. Two runs of different nets conflict when their
 //! centrelines come closer than both half widths and the clearance; the
 //! pads of a row choose one run each such that no two chosen runs
 //! conflict, the most pads served first, the least cost second
@@ -432,6 +432,13 @@ impl Router {
             buckets.entry(bucket(anchor.at)).or_default().push(index);
         }
         let mut work = 0u64;
+        // A pad of a coarser row takes part with at most this many
+        // straight ways out (`PCB_ROUTER_FANOUT_FREE`, an experiment; 0:
+        // fine-pitch rows only).
+        let coarse_free: usize = std::env::var("PCB_ROUTER_FANOUT_FREE")
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(2);
         for (net, description) in self.board.nets.iter().enumerate() {
             let net = net as NetId;
             let state = &self.nets[net as usize];
@@ -587,7 +594,7 @@ impl Router {
                 // A pad with no straight way out at all is listed (the
                 // report names it) where the row is fine-pitch; it takes
                 // no part in the choice.
-                if nearest >= FINE_PITCH && (free == 0 || free > 2) {
+                if nearest >= FINE_PITCH && (free == 0 || free > coarse_free) {
                     continue;
                 }
                 let neck = self.node_class(net, centre as u32);
