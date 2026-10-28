@@ -694,6 +694,31 @@ fn counted_penalty_of(
     relations.penalty(problem, poses, index)
 }
 
+/// The steps `(dx, dy)` on ring `ring` (`max(|dx|, |dy|) == ring`) within
+/// `window` (low x, low y, high x, high y), in the order of a scan of the
+/// window's square, rows (`dy`) ascending and each row's `dx` ascending,
+/// that skips the steps off the ring: the same steps in the same order
+/// without visiting the square's inside (a part without a spot scanned
+/// every step of every ring of the board, `(2 r + 1)^2` a ring: most of
+/// video's legalisation, 2026-10-28).
+fn ring_steps(ring: i64, window: [i64; 4]) -> impl Iterator<Item = (i64, i64)> {
+    let [low_x, low_y, high_x, high_y] = window;
+    let (from_x, to_x) = ((-ring).max(low_x), ring.min(high_x));
+    ((-ring).max(low_y)..=ring.min(high_y)).flat_map(move |dy| {
+        let (row, ends): (std::ops::RangeInclusive<i64>, [Option<i64>; 2]) = if dy.abs() == ring {
+            (from_x..=to_x, [None, None])
+        } else {
+            // A row inside the ring: its two ends, where the window holds
+            // them (one where the ring is the centre).
+            let left = (from_x..=to_x).contains(&-ring).then_some(-ring);
+            let right = (ring != 0 && (from_x..=to_x).contains(&ring)).then_some(ring);
+            ((to_x + 1)..=to_x, [left, right])
+        };
+        row.chain(ends.into_iter().flatten())
+            .map(move |dx| (dx, dy))
+    })
+}
+
 /// Placed parts by area: a spot is tested only against parts near it.
 struct Buckets {
     grid: crate::buckets::Grid,
@@ -1472,90 +1497,85 @@ pub fn legalize_keeping(
                 }
                 // Only the steps the part's regions admit (the same order).
                 let [low_x, low_y, high_x, high_y] = window.unwrap_or([-ring, -ring, ring, ring]);
-                for dy in (-ring).max(low_y)..=ring.min(high_y) {
-                    for dx in (-ring).max(low_x)..=ring.min(high_x) {
-                        if dx.abs().max(dy.abs()) != ring {
+                for (dx, dy) in ring_steps(ring, [low_x, low_y, high_x, high_y]) {
+                    let pose = Pose {
+                        position: [origin[0] + dx as f64 * step, origin[1] + dy as f64 * step],
+                        angle: *angle,
+                    };
+                    let distance = (pose.position[0] - ideal[0]).powi(2)
+                        + (pose.position[1] - ideal[1]).powi(2)
+                        + penalty;
+                    if best.is_some_and(|(best, _)| best <= distance) {
+                        continue;
+                    }
+                    // Legal first, then the escape overflow: on a
+                    // crowded board most spots are illegal, and the
+                    // overflow (each pin's way out, the channels with
+                    // the parts around) cost several times the test
+                    // there (katia: a pass of 134 s against 21 s
+                    // without escape demand, the deadline before the
+                    // level that places it). The spot chosen is the
+                    // same: the least distance of the legal spots.
+                    buckets.near(problem, index, pose, &mut near);
+                    if !is_legal(problem, poses, index, pose, near.iter().copied()) {
+                        continue;
+                    }
+                    let distance = if own_relations.is_empty() {
+                        distance
+                    } else {
+                        poses[index] = pose;
+                        let missed: f64 = own_relations
+                            .iter()
+                            .map(|relation| {
+                                constraints::relation_violation(problem, poses, relation)
+                            })
+                            .sum();
+                        poses[index] = wanted;
+                        crate::add_work(constraints::relation_work(problem, index));
+                        let total = (distance.sqrt() + FOLLOW_WEIGHT * missed).powi(2);
+                        if best.is_some_and(|(best, _)| best <= total) {
                             continue;
                         }
-                        let pose = Pose {
-                            position: [origin[0] + dx as f64 * step, origin[1] + dy as f64 * step],
-                            angle: *angle,
-                        };
-                        let distance = (pose.position[0] - ideal[0]).powi(2)
-                            + (pose.position[1] - ideal[1]).powi(2)
-                            + penalty;
-                        if best.is_some_and(|(best, _)| best <= distance) {
-                            continue;
-                        }
-                        // Legal first, then the escape overflow: on a
-                        // crowded board most spots are illegal, and the
-                        // overflow (each pin's way out, the channels with
-                        // the parts around) cost several times the test
-                        // there (katia: a pass of 134 s against 21 s
-                        // without escape demand, the deadline before the
-                        // level that places it). The spot chosen is the
-                        // same: the least distance of the legal spots.
-                        buckets.near(problem, index, pose, &mut near);
-                        if !is_legal(problem, poses, index, pose, near.iter().copied()) {
-                            continue;
-                        }
-                        let distance = if own_relations.is_empty() {
-                            distance
-                        } else {
+                        total
+                    };
+                    let distance = match escape.as_mut() {
+                        None => distance,
+                        Some(state) => {
+                            let wanted = poses[index];
                             poses[index] = pose;
-                            let missed: f64 = own_relations
-                                .iter()
-                                .map(|relation| {
-                                    constraints::relation_violation(problem, poses, relation)
-                                })
-                                .sum();
+                            let overflow = state.cost(poses, index);
                             poses[index] = wanted;
-                            crate::add_work(constraints::relation_work(problem, index));
-                            let total = (distance.sqrt() + FOLLOW_WEIGHT * missed).powi(2);
+                            let total = (distance.sqrt() + overflow).powi(2);
                             if best.is_some_and(|(best, _)| best <= total) {
                                 continue;
                             }
                             total
-                        };
-                        let distance = match escape.as_mut() {
-                            None => distance,
-                            Some(state) => {
-                                let wanted = poses[index];
-                                poses[index] = pose;
-                                let overflow = state.cost(poses, index);
-                                poses[index] = wanted;
-                                let total = (distance.sqrt() + overflow).powi(2);
+                        }
+                    };
+                    let distance = match crossings.as_mut() {
+                        None => distance,
+                        Some(state) => {
+                            if plain.is_none_or(|plain| distance < plain) {
+                                plain = Some(distance);
+                            }
+                            poses[index] = pose;
+                            let added = state
+                                .involving(poses, &[index])
+                                .saturating_sub(wanted_crossings);
+                            poses[index] = wanted;
+                            if added == 0 {
+                                distance
+                            } else {
+                                let total =
+                                    (distance.sqrt() + state.weight() * added as f64).powi(2);
                                 if best.is_some_and(|(best, _)| best <= total) {
                                     continue;
                                 }
                                 total
                             }
-                        };
-                        let distance = match crossings.as_mut() {
-                            None => distance,
-                            Some(state) => {
-                                if plain.is_none_or(|plain| distance < plain) {
-                                    plain = Some(distance);
-                                }
-                                poses[index] = pose;
-                                let added = state
-                                    .involving(poses, &[index])
-                                    .saturating_sub(wanted_crossings);
-                                poses[index] = wanted;
-                                if added == 0 {
-                                    distance
-                                } else {
-                                    let total =
-                                        (distance.sqrt() + state.weight() * added as f64).powi(2);
-                                    if best.is_some_and(|(best, _)| best <= total) {
-                                        continue;
-                                    }
-                                    total
-                                }
-                            }
-                        };
-                        best = Some((distance, pose));
-                    }
+                        }
+                    };
+                    best = Some((distance, pose));
                 }
             }
         }
@@ -1992,24 +2012,19 @@ pub fn repair_relations(problem: &Problem, poses: &mut [Pose]) -> usize {
             let ideal = component.position_for_center(target, *angle);
             let origin = constraints::snap_position(problem, index, ideal, *angle);
             for ring in 0..=rings {
-                for dy in -ring..=ring {
-                    for dx in -ring..=ring {
-                        if dx.abs().max(dy.abs()) != ring {
-                            continue;
-                        }
-                        let pose = Pose {
-                            position: [origin[0] + dx as f64 * step, origin[1] + dy as f64 * step],
-                            angle: *angle,
-                        };
-                        if !is_legal(problem, poses, index, pose, 0..count) {
-                            continue;
-                        }
-                        poses[index] = pose;
-                        let candidate = score(poses);
-                        poses[index] = original;
-                        if better(candidate, best.0) {
-                            best = (candidate, pose);
-                        }
+                for (dx, dy) in ring_steps(ring, [-ring, -ring, ring, ring]) {
+                    let pose = Pose {
+                        position: [origin[0] + dx as f64 * step, origin[1] + dy as f64 * step],
+                        angle: *angle,
+                    };
+                    if !is_legal(problem, poses, index, pose, 0..count) {
+                        continue;
+                    }
+                    poses[index] = pose;
+                    let candidate = score(poses);
+                    poses[index] = original;
+                    if better(candidate, best.0) {
+                        best = (candidate, pose);
                     }
                 }
             }
@@ -2295,37 +2310,29 @@ pub fn refine_with(
                 let ideal = component.position_for_center(target, *angle);
                 let origin = constraints::snap_position(problem, index, ideal, *angle);
                 for ring in 0..=rings {
-                    for dy in -ring..=ring {
-                        for dx in -ring..=ring {
-                            if dx.abs().max(dy.abs()) != ring {
-                                continue;
-                            }
-                            let pose = Pose {
-                                position: [
-                                    origin[0] + dx as f64 * step,
-                                    origin[1] + dy as f64 * step,
-                                ],
-                                angle: *angle,
-                            };
-                            if pose == original {
-                                continue;
-                            }
-                            poses[index] = pose;
-                            let mut candidate = score(poses);
-                            if candidate < best.0 - 1.0e-9
-                                && let Some(state) = escape.as_mut()
-                            {
-                                candidate += state.cost(poses, index);
-                            }
-                            if candidate < best.0 - 1.0e-9 {
-                                buckets.near(problem, index, pose, &mut near);
-                                if is_legal(problem, poses, index, pose, near.iter().copied()) {
-                                    if let Some(state) = crossings.as_mut() {
-                                        candidate += crossing_cost(state, poses, &[index]);
-                                    }
-                                    if candidate < best.0 - 1.0e-9 {
-                                        best = (candidate, pose);
-                                    }
+                    for (dx, dy) in ring_steps(ring, [-ring, -ring, ring, ring]) {
+                        let pose = Pose {
+                            position: [origin[0] + dx as f64 * step, origin[1] + dy as f64 * step],
+                            angle: *angle,
+                        };
+                        if pose == original {
+                            continue;
+                        }
+                        poses[index] = pose;
+                        let mut candidate = score(poses);
+                        if candidate < best.0 - 1.0e-9
+                            && let Some(state) = escape.as_mut()
+                        {
+                            candidate += state.cost(poses, index);
+                        }
+                        if candidate < best.0 - 1.0e-9 {
+                            buckets.near(problem, index, pose, &mut near);
+                            if is_legal(problem, poses, index, pose, near.iter().copied()) {
+                                if let Some(state) = crossings.as_mut() {
+                                    candidate += crossing_cost(state, poses, &[index]);
+                                }
+                                if candidate < best.0 - 1.0e-9 {
+                                    best = (candidate, pose);
                                 }
                             }
                         }
@@ -2993,6 +3000,31 @@ mod tests {
             crossings: None,
         };
         (problem, poses)
+    }
+
+    #[test]
+    fn ring_steps_are_the_squares_scan_on_the_ring() {
+        for ring in 0..9i64 {
+            for low_x in -10..=3 {
+                for low_y in [-10, -ring, -2, 0, 4] {
+                    for high_x in [-10, -3, 0, 1, ring, 10] {
+                        for high_y in [-1, 0, 2, ring, 10] {
+                            let window = [low_x, low_y, high_x, high_y];
+                            let mut scan = Vec::new();
+                            for dy in (-ring).max(low_y)..=ring.min(high_y) {
+                                for dx in (-ring).max(low_x)..=ring.min(high_x) {
+                                    if dx.abs().max(dy.abs()) == ring {
+                                        scan.push((dx, dy));
+                                    }
+                                }
+                            }
+                            let steps: Vec<(i64, i64)> = ring_steps(ring, window).collect();
+                            assert_eq!(steps, scan, "ring {ring} window {window:?}");
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]
