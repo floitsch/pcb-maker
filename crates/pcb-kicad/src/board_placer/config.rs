@@ -310,8 +310,9 @@ pub struct KiCadBoardPlacerConfig {
     /// wirelength per crossing the moved part's nets make, and the
     /// layout's race ranks the seeds' placements by their crossings beside
     /// the congestion score. Keys `weight`, `legalise`, `refine`,
-    /// `rank_seeds`, `anneal`, `global` (defaults 3 mm, on, on, on, off,
-    /// off; docs/placer.md, "Ratsnest crossings (2026-10-24)").
+    /// `rank_seeds`, `anneal`, `global` (defaults 3 mm, on, on, on, on
+    /// since 2026-10-28, off; docs/placer.md, "Ratsnest crossings
+    /// (2026-10-24)").
     #[serde(default = "default_ratsnest_crossings")]
     pub ratsnest_crossings: Option<KiCadRatsnestCrossings>,
     /// Bus-group moves (off by default; `{}` for the defaults): banks of
@@ -522,10 +523,12 @@ pub struct KiCadRatsnestCrossings {
     /// The anneal pays for them too (the nets of up to 16 pins, until the
     /// term's work reaches half the anneal's own), and half its swaps
     /// trade a part with one like it (the same footprint, or both with
-    /// many pins): where the order of parts along a bus is decided. Off
-    /// by default (measured 2026-10-27 under the placer-default rule:
-    /// better on the dense boards, -10.8 % weighted over five seed pairs,
-    /// but the short tier loses two strict passes; docs/placer.md).
+    /// many pins): where the order of parts along a bus is decided. On
+    /// by default since 2026-10-28 (the placer-default rule: -10.8 %
+    /// weighted over five seed pairs on the dense boards, p 0.002; the
+    /// short tier's one lost pass, framework_mobo_lefthalf at the tier's
+    /// seed, checked at the five seeds: 4 strict passes on, 3 off;
+    /// docs/placer.md).
     pub anneal: bool,
     /// After the global placement, the parts with 16 pins or more trade
     /// places and turn where that saves wirelength plus crossings. Off by
@@ -546,7 +549,7 @@ impl Default for KiCadRatsnestCrossings {
             legalise: true,
             refine: true,
             rank_seeds: true,
-            anneal: false,
+            anneal: true,
             global: false,
             per_layer: false,
         }

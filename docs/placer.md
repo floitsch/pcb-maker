@@ -1851,7 +1851,8 @@ Glasgow's hybrids.
 
 `ratsnest_crossings` (placer option, on since 2026-10-24, `null` turns
 it off; `{"weight", "legalise", "refine", "rank_seeds", "anneal",
-"global"}`, defaults 3 mm, on, on, on, off, off; the last two below,
+"global"}`, defaults 3 mm, on, on, on, on (since 2026-10-28), off; the
+last two below,
 "Where the order is decided"). The
 placement ablation's lever (above): on MegaDrive and Glasgow the costly
 decisions are part orders along buses, which wirelength cannot see and
@@ -1910,8 +1911,8 @@ were added in, so the count is deterministic.
   courtyard-touching last resort sorts after as before. The counts are
   in board-layout.json's `congestion.crossings`.
 - The anneal and the global placement: behind the sub-switches
-  `anneal` and `global`, off by default (below, "Where the order is
-  decided").
+  `anneal` (on by default since 2026-10-28) and `global` (off; below,
+  "Where the order is decided").
 
 With the switch off none of this runs (`Problem::crossings` is `None`):
 `place-kicad-board` with x14270 off and x1813 (main 2e41ea3) writes
@@ -2068,9 +2069,10 @@ the defaults (2026-10-25)").
 
 The legaliser and the refinement repair orders locally; the anneal and
 the global placement make them. Two sub-switches of
-`ratsnest_crossings`, off by default (the judgement below; `anneal` judged
-again under the placer-default protocol on 2026-10-27: better on the
-dense boards, the short tier loses two strict passes, still off):
+`ratsnest_crossings`, both off by default until 2026-10-28 (the
+judgement below); `anneal` is on since then (judged again under the
+placer-default protocol: "Under the placer-default protocol
+(2026-10-27)" below), `global` stays off:
 
 - **`anneal`**: every anneal move (shift, quarter turn, swap) pays
   `weight` mm per crossing it adds to the moved parts' nets and earns
