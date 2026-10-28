@@ -97,32 +97,53 @@ fn direction_of(angle: f64) -> Option<Point> {
 /// at a quarter turn (a 45 degree 0402's pads are not the square around
 /// them).
 fn turned_rects(boxes: &[[f64; 4]], pose: Pose, margin: f64) -> Vec<Rect> {
+    turned(boxes, pose, margin).collect()
+}
+
+/// `turned_rects` one by one, without the list.
+fn turned(boxes: &[[f64; 4]], pose: Pose, margin: f64) -> impl Iterator<Item = Rect> + Clone + '_ {
     let (sin, cos) = crate::problem::sin_cos_degrees(-pose.angle);
     // The pose's turns once for all its boxes (`offset`, `turn_of`).
     let turn = crate::problem::rotation(-pose.angle);
     let direction = direction_of(pose.angle);
-    boxes
-        .iter()
-        .map(|local| {
-            let center = crate::problem::rotate_by(
-                [(local[0] + local[2]) / 2.0, (local[1] + local[3]) / 2.0],
-                turn,
-            );
-            let own = [
-                (local[2] - local[0]) / 2.0 + margin,
-                (local[3] - local[1]) / 2.0 + margin,
-            ];
-            Rect {
-                center: [pose.position[0] + center[0], pose.position[1] + center[1]],
-                half: [
-                    cos.abs() * own[0] + sin.abs() * own[1],
-                    sin.abs() * own[0] + cos.abs() * own[1],
-                ],
-                round: false,
-                turn: direction.map(|direction| (direction, own)),
-            }
-        })
-        .collect()
+    boxes.iter().map(move |local| {
+        let center = crate::problem::rotate_by(
+            [(local[0] + local[2]) / 2.0, (local[1] + local[3]) / 2.0],
+            turn,
+        );
+        let own = [
+            (local[2] - local[0]) / 2.0 + margin,
+            (local[3] - local[1]) / 2.0 + margin,
+        ];
+        Rect {
+            center: [pose.position[0] + center[0], pose.position[1] + center[1]],
+            half: [
+                cos.abs() * own[0] + sin.abs() * own[1],
+                sin.abs() * own[0] + cos.abs() * own[1],
+            ],
+            round: false,
+            turn: direction.map(|direction| (direction, own)),
+        }
+    })
+}
+
+thread_local! {
+    /// Lists of rectangles the legality tests hold while they compare
+    /// every box of one part with every box of another (`with_rects`).
+    static RECT_LISTS: std::cell::RefCell<Vec<Vec<Rect>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Calls `test` with the rectangles of `rects` in a list kept for the
+/// thread (no allocation a pair of parts, as `turned_rects` made one).
+fn with_rects<T>(rects: impl Iterator<Item = Rect>, test: impl FnOnce(&[Rect]) -> T) -> T {
+    let mut list = RECT_LISTS
+        .with(|lists| lists.borrow_mut().pop())
+        .unwrap_or_default();
+    list.clear();
+    list.extend(rects);
+    let answer = test(&list);
+    RECT_LISTS.with(|lists| lists.borrow_mut().push(list));
+    answer
 }
 
 fn rect(problem: &Problem, index: usize, pose: Pose) -> Rect {
@@ -1022,14 +1043,16 @@ fn copper_meets_cutout(
     let margin = problem.edge_margin;
     let outline = &problem.components[hole].cutout_outline;
     let component = &problem.components[part];
-    let mut pads = turned_rects(&component.pads, pose_part, margin);
-    *work += list_work(pads.len());
+    let pads = turned(&component.pads, pose_part, margin);
+    *work += list_work(component.pads.len());
     // Its copper graphics too: KiCad checks them against a cutout's edge
     // as it checks pads (osprey's AE1 antenna).
+    let graphics = turned(&component.copper_graphics, pose_part, margin);
     if !component.copper_graphics.is_empty() {
-        pads.extend(turned_rects(&component.copper_graphics, pose_part, margin));
         *work += list_work(component.copper_graphics.len());
     }
+    let pads = pads.chain(graphics);
+    let pad_count = component.pads.len() + component.copper_graphics.len();
     if outline.len() >= 3 {
         // The hole's own outline: its box covers much more board where
         // the hole runs diagonally. A pad outside the outline's box cannot
@@ -1050,13 +1073,16 @@ fn copper_meets_cutout(
             ];
         }
         *work += edge_work(outline.len());
-        return pads.into_iter().any(|pad| {
+        for pad in pads {
             *work += 1;
-            !box_apart(&pad, extent, POLYGON_SLACK) && rect_meets_polygon(&pad, outline, work)
-        });
+            if !box_apart(&pad, extent, POLYGON_SLACK) && rect_meets_polygon(&pad, outline, work) {
+                return true;
+            }
+        }
+        return false;
     }
     let hole = rect(problem, hole, pose_hole);
-    *work += pads.len() as u64;
+    *work += pad_count as u64;
     pads.into_iter().any(|pad| overlaps(pad, hole, 0.0))
 }
 
@@ -1218,16 +1244,15 @@ fn pads_too_close(
     if !overlaps(bare(a, pose_a), bare(b, pose_b), clearance) {
         return false;
     }
-    let mine = turned_rects(&first.pads, pose_a, 0.0);
     let reach = bare(b, pose_b);
-    let mine: Vec<(usize, Rect)> = mine
-        .into_iter()
+    // No list unless a pad comes near the other part.
+    if !turned(&first.pads, pose_a, 0.0).any(|pad| overlaps(pad, reach, clearance)) {
+        return false;
+    }
+    let mine: Vec<(usize, Rect)> = turned(&first.pads, pose_a, 0.0)
         .enumerate()
         .filter(|(_, pad)| overlaps(*pad, reach, clearance))
         .collect();
-    if mine.is_empty() {
-        return false;
-    }
     let theirs = turned_rects(&second.pads, pose_b, 0.0);
     *work += list_work(first.pads.len())
         + list_work(second.pads.len())
@@ -1299,14 +1324,14 @@ fn pads_in_hole_rings(
             return false;
         }
         let reach = rect(problem, padded, pad_pose);
-        let near: Vec<Rect> = turned_rects(rings, ring_pose, 0.0)
-            .into_iter()
-            .filter(|ring| overlaps(*ring, reach, clearance))
-            .collect();
         *work += list_work(rings.len());
-        if near.is_empty() {
+        // No list unless a ring comes near the other part.
+        if !turned(rings, ring_pose, 0.0).any(|ring| overlaps(ring, reach, clearance)) {
             return false;
         }
+        let near: Vec<Rect> = turned(rings, ring_pose, 0.0)
+            .filter(|ring| overlaps(*ring, reach, clearance))
+            .collect();
         let pads = turned_rects(pads, pad_pose, 0.0);
         *work += list_work(pads.len()) + (near.len() * pads.len()) as u64;
         near.iter()
@@ -1325,28 +1350,43 @@ fn hollow_overlap(
     pose_b: Pose,
     work: &mut u64,
 ) -> bool {
-    let blocking = |index: usize, pose: Pose, other: usize| -> Vec<Rect> {
+    // What a part blocks the other with, and how many boxes: its
+    // rectangle (against an obstacle without routing room, without the
+    // halo), or its hollow boxes and, against a part with holes, its
+    // courtyards.
+    let blocking = |index: usize, pose: Pose, other: usize| {
         let component = &problem.components[index];
+        let empty: &[[f64; 4]] = &[];
         if !component.hollow_for(&problem.components[other]) {
-            // Against an obstacle without routing room, without the halo.
             let halo = if problem.constraints.halo_free(other) {
                 component.halo
             } else {
                 0.0
             };
-            return vec![rect(problem, index, pose).grown(-halo)];
+            let whole = rect(problem, index, pose).grown(-halo);
+            return (
+                1,
+                Some(whole)
+                    .into_iter()
+                    .chain(turned(empty, pose, 0.0).chain(turned(empty, pose, 0.0))),
+            );
         }
         let against = &problem.components[other];
-        let mut rects = turned_rects(&component.hollow, pose, 0.0);
-        if against.has_holes() && !component.holes_inside {
-            rects.extend(turned_rects(&component.courtyards, pose, 0.0));
-        }
-        rects
+        let courtyards: &[[f64; 4]] = if against.has_holes() && !component.holes_inside {
+            &component.courtyards
+        } else {
+            empty
+        };
+        (
+            component.hollow.len() + courtyards.len(),
+            None.into_iter()
+                .chain(turned(&component.hollow, pose, 0.0).chain(turned(courtyards, pose, 0.0))),
+        )
     };
-    let theirs = blocking(b, pose_b, a);
-    let mine = blocking(a, pose_a, b);
+    let (their_count, theirs) = blocking(b, pose_b, a);
+    let (my_count, mine) = blocking(a, pose_a, b);
     // The lists, and every pair at worst.
-    *work += list_work(mine.len()) + list_work(theirs.len()) + (mine.len() * theirs.len()) as u64;
+    *work += list_work(my_count) + list_work(their_count) + (my_count * their_count) as u64;
     // At KiCad's legality the boxes may touch, the pads keeping their
     // clearance (`pads_too_close`).
     let spacing = if problem.constraints.pad_clearance {
@@ -1354,8 +1394,10 @@ fn hollow_overlap(
     } else {
         problem.spacing
     };
-    mine.into_iter()
-        .any(|mine| theirs.iter().any(|other| overlaps(mine, *other, spacing)))
+    with_rects(theirs, |theirs| {
+        mine.into_iter()
+            .any(|mine| theirs.iter().any(|other| overlaps(mine, *other, spacing)))
+    })
 }
 
 /// Whether a part's holes and pads on the far side meet the other part's
@@ -1374,40 +1416,45 @@ fn far_side_overlap(
             return false;
         }
         let other = &problem.components[body];
-        let far = turned_rects(&component.far_side, pose_holes, 0.0);
-        let copper = turned_rects(&component.far_copper, pose_holes, 0.0);
-        *work += list_work(far.len()) + list_work(copper.len());
+        let far = turned(&component.far_side, pose_holes, 0.0);
+        let copper = turned(&component.far_copper, pose_holes, 0.0);
+        let (far_count, copper_count) = (component.far_side.len(), component.far_copper.len());
+        *work += list_work(far_count) + list_work(copper_count);
         // The other part's copper: its pads, or all of it where it has
         // none (artwork, a copper graphic, a rule area).
-        let pads = |work: &mut u64| {
-            let pads = if other.pads.is_empty() {
-                vec![rect(problem, body, pose_body)]
+        let empty: &[[f64; 4]] = &[];
+        let pads = || {
+            if other.pads.is_empty() {
+                (
+                    1,
+                    Some(rect(problem, body, pose_body))
+                        .into_iter()
+                        .chain(turned(empty, pose_body, 0.0)),
+                )
             } else {
-                turned_rects(&other.pads, pose_body, 0.0)
-            };
-            *work += list_work(pads.len());
-            pads
+                (
+                    other.pads.len(),
+                    None.into_iter().chain(turned(&other.pads, pose_body, 0.0)),
+                )
+            }
         };
-        if problem.far_side_pads_only {
-            // Copper against copper only.
-            let pads = pads(work);
-            *work += ((far.len() + copper.len()) * pads.len()) as u64;
-            return far.iter().chain(&copper).any(|far| {
-                pads.iter()
-                    .any(|pad| overlaps(*far, *pad, problem.min_spacing))
-            });
-        }
-        if problem.constraints.pad_clearance && problem.constraints.leads_keep_copper {
-            // At KiCad's legality the leads are copper to the other side.
-            let pads = pads(work);
-            *work += ((far.len() + copper.len()) * pads.len()) as u64;
-            return far.iter().chain(&copper).any(|far| {
-                pads.iter()
-                    .any(|pad| overlaps(*far, *pad, problem.min_spacing))
+        if problem.far_side_pads_only
+            || (problem.constraints.pad_clearance && problem.constraints.leads_keep_copper)
+        {
+            // Copper against copper only (at KiCad's legality the leads are
+            // copper to the other side).
+            let (pad_count, pads) = pads();
+            *work += list_work(pad_count);
+            *work += ((far_count + copper_count) * pad_count) as u64;
+            return with_rects(pads, |pads| {
+                far.chain(copper).any(|far| {
+                    pads.iter()
+                        .any(|pad| overlaps(far, *pad, problem.min_spacing))
+                })
             });
         }
         let target = rect(problem, body, pose_body);
-        *work += far.len() as u64;
+        *work += far_count as u64;
         if far
             .into_iter()
             .any(|far| overlaps(far, target, problem.spacing))
@@ -1415,12 +1462,15 @@ fn far_side_overlap(
             return true;
         }
         // Copper that only copper may not come near.
-        !copper.is_empty() && {
-            let pads = pads(work);
-            *work += (copper.len() * pads.len()) as u64;
-            copper.iter().any(|far| {
-                pads.iter()
-                    .any(|pad| overlaps(*far, *pad, problem.min_spacing))
+        copper_count > 0 && {
+            let (pad_count, pads) = pads();
+            *work += list_work(pad_count);
+            *work += (copper_count * pad_count) as u64;
+            with_rects(pads, |pads| {
+                copper.into_iter().any(|far| {
+                    pads.iter()
+                        .any(|pad| overlaps(far, *pad, problem.min_spacing))
+                })
             })
         }
     };
@@ -1448,11 +1498,10 @@ fn far_courtyard_overlap(
         }
         *work += (component.far_courtyard.len() * against.far_side.len()) as u64;
         let gap = body_spacing(problem, yard, other);
-        let yards = turned_rects(&component.far_courtyard, pose_yard, 0.0);
-        let theirs = turned_rects(&against.far_side, pose_other, 0.0);
-        yards
-            .iter()
-            .any(|yard| theirs.iter().any(|their| overlaps(*yard, *their, gap)))
+        let mut yards = turned(&component.far_courtyard, pose_yard, 0.0);
+        with_rects(turned(&against.far_side, pose_other, 0.0), |theirs| {
+            yards.any(|yard| theirs.iter().any(|their| overlaps(yard, *their, gap)))
+        })
     };
     meets(a, pose_a, b, pose_b, work) || meets(b, pose_b, a, pose_a, work)
 }
