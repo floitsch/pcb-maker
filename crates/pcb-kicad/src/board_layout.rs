@@ -129,6 +129,16 @@ pub struct KiCadBoardLayoutConfig {
     /// `congestion_probes`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub race_probe: Option<KiCadRaceProbe>,
+    /// A measurement mode (off by default; docs/benchmarks.md, "The
+    /// ladder of placer measurements (2026-10-28)"): the layout ends after
+    /// its first route. Sizing, placement, the race and the first route
+    /// run as without it (the same work, the same budget), then the move
+    /// trials, the resume, the polish, the final ladder and the neck repair
+    /// are skipped and the layout finishes with the first route's board:
+    /// its labels, KiCad's check and the report, whose
+    /// `first_unconnected_terminals` is the full layout's at the same
+    /// `total_seconds`. The report says so (`stopped_after_first_route`).
+    pub stop_after_first_route: bool,
 }
 
 /// The race's route probe (`KiCadBoardLayoutConfig::race_probe`).
@@ -415,6 +425,7 @@ impl Default for KiCadBoardLayoutConfig {
             move_descent: None,
             final_route_from_state: false,
             race_probe: None,
+            stop_after_first_route: false,
         }
     }
 }
@@ -451,6 +462,15 @@ pub struct KiCadBoardLayoutResult {
     pub first_unconnected_terminals: usize,
     pub first_vias: usize,
     pub first_length_mm: f64,
+    /// The layout ended after its first route (`stop_after_first_route`):
+    /// the steps after it did not run. Absent otherwise.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub stopped_after_first_route: bool,
+    /// The digest of what the steps after the placement read from it
+    /// (`placement_digest`): two layouts of one binary, task, layout
+    /// settings (beside the placer's) and rates with the same digest route
+    /// alike (run.py --reuse).
+    pub placement_digest: String,
     /// The work the final ladder (or the narrow-signal attempt standing in
     /// for it) had: `total_seconds` less the work so far and the seed
     /// pool's excess; `None` where it did not run. A route of the
@@ -997,6 +1017,11 @@ pub(crate) struct WallStop<F: Fn() -> bool> {
     passed: F,
     fired: std::cell::Cell<bool>,
     skipped: std::cell::RefCell<Vec<LayoutStep>>,
+    /// Set by `end_after_first_route` (`stop_after_first_route`): every
+    /// step but the race is skipped from then on, by the option, not by
+    /// the wall clock (no cut is noted).
+    ended: std::cell::Cell<bool>,
+    ended_skipped: std::cell::RefCell<Vec<LayoutStep>>,
 }
 
 impl<F: Fn() -> bool> WallStop<F> {
@@ -1005,11 +1030,35 @@ impl<F: Fn() -> bool> WallStop<F> {
             passed,
             fired: std::cell::Cell::new(false),
             skipped: std::cell::RefCell::new(Vec::new()),
+            ended: std::cell::Cell::new(false),
+            ended_skipped: std::cell::RefCell::new(Vec::new()),
         }
+    }
+
+    /// The layout ends after its first route (`stop_after_first_route`):
+    /// from now on `allows` refuses every step but the race.
+    pub(crate) fn end_after_first_route(&self) {
+        self.ended.set(true);
+    }
+
+    /// The steps the end after the first route skipped, in order.
+    pub(crate) fn ended_skipped(&self) -> Vec<LayoutStep> {
+        self.ended_skipped.borrow().clone()
     }
 
     /// Whether `step` runs: until the wall clock has passed the deadline.
     pub(crate) fn allows(&self, step: LayoutStep) -> bool {
+        if self.ended.get() && step != LayoutStep::Race {
+            let mut skipped = self.ended_skipped.borrow_mut();
+            if !skipped.contains(&step) {
+                skipped.push(step);
+                eprintln!(
+                    "layout: stop_after_first_route: {} skipped",
+                    step.name()
+                );
+            }
+            return false;
+        }
         if !self.fired.get() && (self.passed)() {
             self.fired.set(true);
         }
@@ -1040,6 +1089,88 @@ impl<F: Fn() -> bool> WallStop<F> {
     pub(crate) fn skipped(&self) -> Vec<LayoutStep> {
         self.skipped.borrow().clone()
     }
+}
+
+/// The digest of what a layout's steps after its placement read from the
+/// placement phase (`layout: placement digest` in the log,
+/// `placement_digest` in the report; docs/benchmarks.md, "The ladder of
+/// placer measurements (2026-10-28)"): the placed board (with its pours
+/// and pin swaps), the lowered placement problem (its parts, nets, poses
+/// and the placer settings it carries, the first placement's relaxation
+/// applied), the other placements the race may probe and their
+/// relaxations, the placer settings the later steps read beside the
+/// problem (the crossings' seed ranking, the guided moves, the board's
+/// marks), the pin swaps, and the work the placement booked (the later
+/// steps' budgets are what is left of the layout's). Two layouts of one
+/// binary, task, layout settings and rates whose digests are equal route
+/// alike: everything after the placement is a function of these and of
+/// the settings outside the placer's.
+fn placement_digest(
+    board_text: &str,
+    problem: &crate::board_placer::LoweredPlacement,
+    others: &[(&Vec<placer::Pose>, &placer::Relaxation)],
+    placer_config: &KiCadBoardPlacerConfig,
+    pin_swaps: Option<&crate::pin_swap::KiCadPinSwapResult>,
+    work: f64,
+    pool_excess: f64,
+) -> String {
+    use sha2::{Digest, Sha256};
+    fn part(hash: &mut Sha256, label: &str, text: &str) {
+        hash.update(label.as_bytes());
+        hash.update((text.len() as u64).to_le_bytes());
+        hash.update(text.as_bytes());
+    }
+    let mut hash = Sha256::new();
+    part(&mut hash, "board", board_text);
+    part(&mut hash, "problem", &format!("{:?}", problem.problem));
+    part(
+        &mut hash,
+        "lowered",
+        &format!(
+            "{:?} {:?} {:?} {:?} {:?} {:?} {:?}",
+            problem.net_names,
+            problem.references,
+            problem.source_at,
+            problem.routing_layers,
+            problem.poured,
+            problem.attached_marks,
+            problem.attached_report
+        ),
+    );
+    for (poses, relaxation) in others {
+        part(&mut hash, "other", &format!("{poses:?} {relaxation:?}"));
+    }
+    part(
+        &mut hash,
+        "placer",
+        &format!(
+            "{:?} {:?} {:?} {:?} {:?}",
+            placer_config
+                .ratsnest_crossings
+                .as_ref()
+                .map(|crossings| crossings.rank_seeds),
+            placer_config
+                .global_guidance
+                .as_ref()
+                .map(|guidance| (guidance.moves, guidance.threshold)),
+            placer_config.keep_board_marks,
+            placer_config.tight_bodies,
+            placer_config.attached_marks,
+        ),
+    );
+    part(
+        &mut hash,
+        "pin_swaps",
+        &pin_swaps
+            .map(|swaps| serde_json::to_string(swaps).unwrap_or_default())
+            .unwrap_or_default(),
+    );
+    part(
+        &mut hash,
+        "work",
+        &format!("{} {}", work.to_bits(), pool_excess.to_bits()),
+    );
+    format!("{:x}", hash.finalize())
 }
 
 /// The placement's share of a layout's budget: 40 % of `total_seconds`
@@ -1544,6 +1675,19 @@ pub fn layout_kicad_board(
             }
         }
     }
+    // What the steps after the placement read from it, as a digest: the
+    // harness reuses a layout's routing for a placement it has routed
+    // before (run.py --reuse).
+    let placement_digest = placement_digest(
+        &encode(&pcb),
+        &problem,
+        &others,
+        &placer_config,
+        pin_swaps.as_ref(),
+        work,
+        pool_excess,
+    );
+    eprintln!("layout: placement digest {placement_digest}");
     // The seeds' placements are ranked by predicted routability (RUDY, or
     // the model), and only the best few are probed (a probe is a real
     // route of up to `probe_seconds`; a score takes milliseconds). The
@@ -1998,6 +2142,13 @@ pub fn layout_kicad_board(
             .sum::<f64>(),
     );
 
+    if config.stop_after_first_route {
+        eprintln!(
+            "layout: {} open after the first route; stop_after_first_route: the layout finishes with the first route's board",
+            best.0
+        );
+        stop.end_after_first_route();
+    }
     let move_started = std::time::Instant::now();
     let move_work_started = work;
     let mut moves = Vec::new();
@@ -3083,6 +3234,8 @@ pub fn layout_kicad_board(
         first_unconnected_terminals: first.0,
         first_vias: first.1,
         first_length_mm: first.2,
+        stopped_after_first_route: config.stop_after_first_route,
+        placement_digest,
         final_ladder_budget_seconds,
         moves,
         move_descent,
@@ -3135,6 +3288,16 @@ pub fn layout_kicad_board(
             String::new()
         }
     );
+    if config.stop_after_first_route {
+        eprintln!(
+            "layout: stopped after the first route: {} skipped",
+            stop.ended_skipped()
+                .iter()
+                .map(|step| format!("{step:?}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+    }
     Ok(layout)
 }
 
@@ -3204,6 +3367,38 @@ mod budget_tests {
         assert!(!stop.allows(Ladder));
         assert!(stop.fired());
         assert!(!stop.allows(NeckRepair));
+    }
+
+    #[test]
+    fn after_the_first_route_only_the_race_still_runs() {
+        use LayoutStep::*;
+        // The guard never fires: the end after the first route alone
+        // skips the improving steps, without a wall cut.
+        let stop = WallStop::new(|| false);
+        assert!(stop.allows(Race));
+        assert!(stop.allows(Move));
+        stop.end_after_first_route();
+        for step in [Move, Resume, Polish, Ladder, Continuation, NeckRepair, Move] {
+            assert!(!stop.allows(step));
+        }
+        assert!(stop.allows(Race));
+        assert!(!stop.fired());
+        assert!(stop.skipped().is_empty());
+        assert_eq!(
+            stop.ended_skipped(),
+            vec![Move, Resume, Polish, Ladder, Continuation, NeckRepair]
+        );
+    }
+
+    #[test]
+    fn the_layout_config_reads_stop_after_first_route() {
+        let config: KiCadBoardLayoutConfig =
+            serde_json::from_str(r#"{"stop_after_first_route": true}"#).unwrap();
+        assert!(config.stop_after_first_route);
+        // Off by default.
+        assert!(!KiCadBoardLayoutConfig::default().stop_after_first_route);
+        let config: KiCadBoardLayoutConfig = serde_json::from_str("{}").unwrap();
+        assert!(!config.stop_after_first_route);
     }
 
     #[test]
