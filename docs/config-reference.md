@@ -36,7 +36,7 @@ The environment variables are indexed in the hand-over
 | [Router core](#router-core) | 75 | - | 0 | 75 | - |
 | [Placer settings](#placer-settings) | 56 | 51 | 5 | 56 | 29 |
 | [Layout settings](#layout-settings) | 20 | 20 | 0 | 20 | 10 |
-| [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 1 |
+| [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 2 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 4 |
 | [Layout settings: silkscreen](#layout-settings-silkscreen) | 1 | 1 | 0 | 1 | 1 |
 | [Layout settings: race_probe](#layout-settings-race_probe) | 3 | 3 | 0 | 3 | 3 |
@@ -440,7 +440,7 @@ One entry of `swappable`. Source: `KiCadSwappable` in [crates/pcb-kicad/src/boar
 
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
-| `swappable[].part` | `String` | required | - | The part's reference (`U1`). |
+| `swappable[].part` | `String` | required | router.md | The part's reference (`U1`). |
 | `swappable[].pins` | `Vec<String>` | required | placer.md | Pad functions (`GPIO*`, `IO?`) or pad numbers, as globs. |
 | `swappable[].except` | `Vec<String>` | optional | - | Pads to leave alone (strapping pins, a UART the bootloader uses). |
 
