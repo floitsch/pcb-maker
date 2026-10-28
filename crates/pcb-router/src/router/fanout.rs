@@ -31,7 +31,9 @@
 //! open connections on fine-pitch rows were pads whose two straight exits
 //! a neighbour's via (inward) and a neighbour's track turning across the
 //! pad's tip (outward) had closed, where the row had an exit for every
-//! pad.
+//! pad. Off by default: reserving the ways moved which pad of a
+//! crossing pair stays open and cost passes elsewhere (the measurements
+//! there).
 
 use super::*;
 

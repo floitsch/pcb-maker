@@ -5039,6 +5039,183 @@ and, for the fine-pitch rows, the exit order decided
 before negotiation (open problem 2 in handover.md).
 
 
+## Fan-out before negotiation (2026-10-28)
+
+"The last connections" above put 8 of the 34 open items of the night's
+near misses down to fine-pitch rows: two nets for one exit, every
+trouble exchange a pure trade. The question: does the row have an exit
+for every pad, and would deciding the exits before the negotiation (a
+fan-out step) close them?
+
+**Diagnosis.** Each open item on the four boards, from the night's
+result boards (2026-10-27, layout) and route mode on the night's
+placements (x1871 and x1872, `PCB_ROUTER_TROUBLE_WHY`): the pad's
+straight ways out (a track of the class from the pad's centre along
+the eight lattice directions, `PCB_ROUTER_FANOUT_WHY`'s count along
+the axes, the statics only), what took each one in the result (the
+first other net's copper a track there would meet, measured from the
+pad's centre; the pad's half length in brackets), and whether the
+row's joint assignment (`assign_exits` below, on the statics) serves
+every pad:
+
+| Board | Open item | Row | Ways out | What took them | Joint assignment |
+| --- | --- | --- | --- | --- | --- |
+| Quanta75_BareRP2040 | +3V3, U1.10 | RP2040 QFN-56, 0.4 mm, B.Cu, 14 a side | 2 (out, in) | out: Column9's track (U1.9's net) turning across the tip at 0.70 mm (0.44); in: Column10's via at 0.47 mm | all 56 pads served, none short |
+| | +3V3, U1.22 | the same, the right side | 2 | out: +1V1's track at 0.96 mm; in: XOUT's via at 0.37 mm | served |
+| | ~RESET, U1.26 | the same | 2 | out: SWD's track at 0.95 mm; in: +1V1's track at 1.03 mm | served |
+| | USB4+, J7.A6 | USB-C, 0.5 mm, B.Cu | 2 | out: USB4-'s track (A7 to B7) at 0.57 mm (0.58); in: USB4-'s via at 0.84 mm | served (B6, the other USB4+ pad, against the row's order: a via) |
+| OpenAirScope | layout: a GND island (no row); route mode: CMD U14.11, SD_DAT3 U14.7 | CM1624 UDFN-16, 0.4 mm, F.Cu | 1 each (inward: the exposed pad) | U14.11 out: DAT3's via at 0.29 mm (0.31, at the tip); U14.7 out: SD_CMD's via at 0.63 mm | served but U14.10 (DAT3), whose outward way meets a part 0.4 mm out (no way 0.5 mm deep) |
+| laptop keyboard | VSS_PA, U2.F23 | nRF aQFN inner pad, 0.4 mm | 0 at the class's 0.127 mm neck, none diagonal | NT1 (the net tie to GND) above, the exposed pad, the outer ring's pads | no way out: not a fan-out case (the neck and the lattice) |
+| jetson-nano-baseboard | TMDS_D0_C_N, J1.11 to R8.2 | HDMI 0.5 mm (two staggered rows) | J1.11: out free beyond 2 mm in the result | the boxed end is R8.2, the 0402 AC-coupling capacitor: HDMI_PWR's track and TMDS_CLK_C_N's via and track round it; R8.2 has three ways along the axes, no row | not a row: no fan-out case |
+| k30-SBC (open problem 2) | U10 pad 8's spoke | a pour net's pad | - | the neighbours' exits in its spoke corridors | pour nets take no part (below) |
+
+So the pattern is the one the hand-over guessed, on Quanta75 and
+OpenAirScope (6 of the 8 items, route mode or layout): a pad of a
+0.4-0.5 mm row has two straight ways out (one where the exposed pad
+closes the inner end), and both were taken by its neighbours' copper
+close to its tip: a via just beyond the tip (Column10, XOUT, USB4-,
+DAT3, SD_CMD) or a track turning across it (Column9, +1V1, SWD,
+USB4-). The row itself has a way out for every pad, all along the
+axes: the shortage is not capacity but who takes the space in front of
+whose tip. Where the neighbour's net must cross the pad's (U1.9's
+Column9 heads right, U1.10's +3V3 left; U14.10's DAT3 and U14.11's CMD)
+no assignment on one layer serves both: one of them needs a via, and
+in a 0.4 mm row a via fits only beyond the neighbours' tips (0.3 mm
+via radius and 0.2 mm clearance against 0.4 mm pitch). The keyboard's
+and jetson's items are no row problem.
+
+**The step** (`Config::fanout`, router settings `fanout`,
+`PCB_ROUTER_FANOUT`; router/fanout.rs). Once per router (and after a
+move, `update`), before the negotiation:
+
+- *Dense pads*: single-layer pads of signal nets on parts of four pads
+  or more, where another net's pad lies closer than 0.65 mm, or the pad
+  has at most two straight ways out along the axes
+  (`PCB_ROUTER_FANOUT_FREE`, 2; 0: fine pitch only). Pour nets take no
+  part: their pads join by spokes and stubs.
+- *Ways out* (`ExitRun`): from the lattice node at the pad's centre, a
+  straight run in each of the eight lattice directions, from the first
+  node outside the pad to `fanout_depth` (0.5 mm) beyond it, every node
+  and step legal for the net (the statics). On an outward axis, also
+  runs to a via site: the
+  first two nodes, a via's spacing apart, beyond the neighbours' runs
+  where the class's via is allowed (`VIA_REACH` 3 mm).
+- *Costs*: how far the run points from the net's nearest pad on another
+  part (1 - cos), 2 more into the pad's own part (under the package: a
+  way in leads only to a via; facade60's U4 lost two pads given their
+  inward way), 0.25 more on a diagonal, 1.25 for a via site. *The row's
+  order*: per part, layer and outward side, tracks leaving on the layer
+  keep the pads' order, so the most pads whose targets follow the row's
+  order stay (the longest run of the targets' coordinates along the row
+  that does not fall), and the others (crossers) pay 1.5 more on their
+  ways without a via.
+- *The joint choice* (`assign_exits`): two runs of different nets
+  conflict when their centrelines come closer than both half widths and
+  the clearance (a via site by its radius); each pad gets at most one
+  run, no two chosen in conflict, the most pads first, the least cost
+  second: per group of pads linked by conflicts, a greedy start (most
+  constrained pads first) repaired by augmenting steps (a pad without
+  a run takes one whose conflicts are at most two pads that can move),
+  then an exact search within 20 000 nodes.
+- *The hand-over to the search*: the chosen runs are reservations, not
+  fixed copper. Another net's step within a track and clearance of a
+  chosen run costs `fanout_cost` (6 mm) per crossing, spread over the
+  band's nodes as a pin-row gap's cost (the same marks and the same
+  lookup, a cost per entry, `pin_row_costs`); its via within reach of
+  the run, or of a chosen via site on any layer, costs `fanout_cost`
+  once (bit 4 of `via_marks`). The pad's own net pays nothing; a net
+  that has no other way still crosses (the fallback: a price, not a
+  wall). The clean-up's comparison counts the same; the straightening
+  enters no other net's reservation.
+- *Work*: the nodes walked, the pairs compared and the search's nodes,
+  eight to a search expansion, on the work clock.
+
+`PCB_ROUTER_FANOUT_WHY` prints every dense pad with its ways, their
+costs, the chosen one, crossers, pads short and pads with no way out.
+
+**Measured** (off: build/bin/pcb-maker-x1872, main 5905bf9a; on:
+build/bin/pcb-maker-fan1-g with `PCB_ROUTER_FANOUT=1`, the committed
+step; tasks v7, the reference work rate; KiCad unconnected / strict
+new findings / vias / work s).
+
+*Route mode on the night's placements* (the 2026-10-27 sweep's, the
+task budgets, 5 x 2):
+
+| Board | off | on |
+| --- | --- | --- |
+| jetson-nano-baseboard | 1 / 0 / 607 / 1258 | 1 / 0 / 611 / 1259 |
+| k30-SBC | 0, pass / 0 / 847 / 366 | 0, pass / 0 / 289 / 553 (another rung kept: tracks, not exclusive planes) |
+| laptop keyboard | 2 / 0 / 186 / 716 | 2 / 0 / 194 / 728 |
+| OpenAirScope | 2 (CMD U14.11, SD_DAT3 U14.7) / 0 / 274 / 681 | 2 (DAT3 U14.10, SD_DAT3 U14.7) / 0 / 262 / 569 |
+| Quanta75_BareRP2040 | 3 (Column7, 8, 10: U1.7, U1.8, U1.11) / 1 starved / 223 / 1027 | 3 (Row4 U1.30, two GND) / 3 starved / 243 / 977 |
+
+Sum 8 and 8 unconnected, strict findings 1 and 3. On Quanta75 the
+three top-row pads connect while another row's pad and the ground pour
+(U1's exposed pad, Y1.2) lose; on OpenAirScope the UDFN's pair trades
+CMD for DAT3: the trade the trouble repair refused, made before the
+negotiation instead.
+
+*Layout mode* (the sweep's budgets and seeds, 5 x 2, `--quality`):
+
+| Board | off | on |
+| --- | --- | --- |
+| jetson-nano-baseboard | 2 / 1 (items_not_allowed) / 623 / 1261 | 1 / 0 / 760 / 1275 |
+| k30-SBC | 0 / 1 (starved thermal) / 455 / 1095 | 0, **pass** / 0 / 465 / 454 |
+| laptop keyboard | 2 / 0 / 254 / 1218 | 2 / 0 / 334 / 1218 |
+| OpenAirScope | 0, **pass** / 0 / 285 / 1115 | 2 / 0 / 300 / 1411 |
+| Quanta75_BareRP2040 | 4 / 0 / 251 / 1065 | 3 / 2 (starved thermals) / 274 / 1327 |
+
+Sum 8 and 8 unconnected, strict findings 2 and 2, strict passes 1 and
+1 (k30 gained, OpenAirScope lost).
+
+*The expansion tier* (route mode, 46 boards, 8 x 1, 30 s): unconnected
+558 to 510 (Wonkle 364 to 322 of it), strict passes 24 to 23 (gained
+rpi_cm5_dronecarrier and magnetorquer_control_board; lost
+EMG_DAQ_ADS1292, snaphat main_board and anthracite-bottom), new errors
+1 and 1 (strict 0 and 0), vias 4256 to 4331, work 1140 to 1136 s;
+better 8, same 31, worse 7 (OpenRX-Mono 11 to 20, node_v6 11 to 16,
+driver_cplex 87 to 93 among them). The tier at 30 s is noisy: x1872
+itself with the history seeded (`PCB_ROUTER_SEED` 1 and 2) on nine of
+its boards went 31 to 42 and 31 to 34 unconnected and lost or traded
+passes (EMG_DAQ and snaphat flip with the seed; anthracite-bottom did
+not). Earlier variants on the tier, all losing passes: every dense pad,
+pour nets included, the inward cost 0.5 (-b): 589 unconnected, 23
+passes; fine pitch only (-c, `PCB_ROUTER_FANOUT_FREE=0`): 579, 25 (+4
+-3); that at 3 mm and 0.3 mm deep: 564, 22. facade60's U4 lost two pads
+in -b and -c (inward ways chosen, the outward ones then a neighbour's via
+site): the inward cost of 2 since -e. A run stopped short by fixed
+copper counted as a way (-h): Quanta75 in route mode 3 to 7 unconnected,
+backed out.
+
+*The eleven dense boards* (layout, placer seed 1, 3 x 2): unconnected
+931 to 966, strict passes 1 and 1 (the 0xCB panel); better video 202 to
+175, 4in1-mini 91 to 77, SNSP-CPU-01 111 to 92, SmartSpin2k 118 to 113;
+worse 4in1 88 to 122, MegaDrive 118 to 142, split72_left 7 to 30,
+protoesp 66 to 82 (its strict findings 6 to 3), DSP-ADAU1452 3 to 4,
+glasgow 127 to 129.
+
+*Identity*: with the switch off the fingerprints (route mode on the v16
+placements, a quarter of the budget: Castor, k30-SBC, jetson, Sisu) are
+identical to x1872's line by line, and every row the same.
+
+*Work*: the step's own work is a few tens of thousands of nodes a
+router (k30: 21 000 to 33 000, eight to an expansion: about 0.001 s of
+work); the work differences above are the routes'.
+
+**Default: off.** The diagnosis holds (the rows have a way out for
+every pad; the neighbours' vias and turns take them), but reserving the
+ways before the negotiation does not close the near misses: on the four
+boards it moves which pad of a crossing pair stays open, it cost
+OpenAirScope's layout pass and three of the tier's passes, and the dense
+boards end 35 connections worse. What the rows need is the crossing
+decided as a topology inside the negotiation (which net of a crossing
+pair dives, and its via placed where the neighbours leave room), not a
+price on space reserved before any route exists. The step stays as a
+switch with its report: `PCB_ROUTER_FANOUT_WHY` lists every dense pad's
+ways and the rows' crossers, a diagnostic of a board's fine-pitch rows
+on its own.
+
+
 ## Known limits / next steps
 
 - Through vias only: inner layers are routed (and take the automatic

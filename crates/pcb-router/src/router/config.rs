@@ -178,7 +178,9 @@ pub struct Config {
     /// edge, chosen jointly with its neighbours (no two chosen ways in
     /// conflict, the most pads served, then the ratsnest's direction), and
     /// another net pays `fanout_cost` to cross a chosen way or to put a via
-    /// beside it. `PCB_ROUTER_FANOUT` overrides it.
+    /// beside it. `PCB_ROUTER_FANOUT` overrides it. Off by default:
+    /// measured on 2026-10-28 it traded which pad of a crossing pair
+    /// stays open on the near misses and lost passes elsewhere.
     pub fanout: bool,
     /// What another net pays, in millimetres of track, to cross a pad's
     /// reserved fan-out run (spread over the run's band of nodes) or to

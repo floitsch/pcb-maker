@@ -11,6 +11,57 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-28 (the fan-out step before negotiation: diagnosed, built, off)
+
+Branch fanout-order; binaries build/bin/pcb-maker-fan1-a to -h (-g the
+measured step), the off side x1872. The question (handover.md, open
+problem 2, and "The last connections" in router.md: 8 of the 34 open
+items of the near misses at fine-pitch rows, every trouble exchange a
+pure trade): does a dense row have an exit for every pad, and does
+deciding the exits jointly before the negotiation close them?
+
+- **Diagnosis** (docs/router.md, "Fan-out before negotiation", the
+  table). Quanta75's RP2040 (U1.10, U1.22, U1.26) and USB-C (J7.A6) and
+  OpenAirScope's CM1624 UDFN (route mode: U14.11, U14.7): each pad has
+  one or two straight ways out on the statics and the row's joint
+  assignment serves every pad; what closed them is a neighbour's via
+  just beyond the tip or a neighbour's track turning across it, where
+  the two nets' targets cross (one needs a via, which in a 0.4 mm row
+  fits only beyond the neighbours' tips). The keyboard's VSS_PA (an
+  aQFN inner pad) has no way out at the class's neck; jetson's
+  TMDS_D0_C_N is boxed in at R8.2, an 0402 capacitor, not at the HDMI
+  row. k30's one-spoke pad is a pour net's.
+- **The step** (`fanout`, router settings `fanout`, `PCB_ROUTER_FANOUT`;
+  router/fanout.rs): dense pads' straight ways out in eight directions
+  and via sites beyond the neighbours' runs, costed by the ratsnest's
+  direction, inward and diagonal costs and the rows' order (crossers),
+  chosen jointly (`assign_exits`: most pads, then least cost; greedy,
+  augmenting repair, bounded exact search), handed to the search as
+  reservations other nets pay `fanout_cost` to cross or to put a via
+  beside (the pin-row gaps' marks with a cost per entry; bit 4 of
+  `via_marks`). Pour nets take no part. `PCB_ROUTER_FANOUT_WHY` reports
+  every dense pad; `_COST`, `_DEPTH`, `_FREE`, `_VIAS` are experiment
+  knobs. Off, the fingerprints are identical to x1872's.
+- **Measured** (on -g): route mode on the night's placements, the five
+  boards 8 and 8 unconnected (Quanta75's three top-row pads connect,
+  another pad and the ground pour lose; OpenAirScope trades CMD for
+  DAT3), strict findings 1 and 3; layout mode 8 and 8, a pass each way
+  (k30-SBC gained, OpenAirScope lost); the expansion tier 558 to 510
+  unconnected but strict passes 24 to 23 (+2 -3, within the tier's
+  seed noise for two of them); the eleven dense boards 931 to 966.
+- **Default: off.** The rows need the crossing decided as a topology in
+  the negotiation (which net dives, the via where the neighbours leave
+  room), not reserved space. Found on the way: `update` (the layout's
+  moves) does not rebuild the pin-row gaps (`mark_pin_rows` runs at
+  construction only), so a moved part's gaps stay where it was; with
+  `fanout` on `update` rebuilds them with the reservations, off it is
+  left as it was (fixing it changes layouts): noted for the router.
+
+Tests: `a_row_assigns_every_pad_an_exit_when_it_can_and_names_the_shortfall`,
+`the_pad_against_the_rows_order_is_the_crosser`,
+`the_search_keeps_out_of_a_reserved_way_out_and_crosses_it_when_it_must`
+(pcb-router, router/fanout.rs).
+
 ## Committed on 2026-10-28 (cheaper stages of the placer protocol, calibrated; the quarter budget pending)
 
 Branch fast-placer-protocol; binary `build/bin/pcb-maker-proto1-a`

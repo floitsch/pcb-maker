@@ -242,6 +242,20 @@ Numbers are kept from earlier hand-overs (other docs cite "open problem
    the repair (`free_thermal_spokes`, budgeted, only when polishing) moves
    2 of 10 nets. Probably needs the exit direction of the neighbouring
    pads decided before negotiation (a fan-out step), not a cost.
+   Built and measured on 2026-10-28 (`fanout`, off; docs/router.md,
+   "Fan-out before negotiation"): on the near misses' fine-pitch rows
+   (Quanta75's RP2040 and USB-C, OpenAirScope's UDFN) every pad has a
+   straight way out on the statics and the row's joint assignment
+   serves all of them; what closes a pad is a neighbour's via just
+   beyond its tip or a neighbour's track turning across it, where the
+   two nets' targets cross (one of them needs a via, which in a 0.4 mm
+   row fits only beyond the neighbours' tips). Reserving each pad's
+   chosen way (and a via site beyond its neighbours for the pads
+   against the row's order) as a cost moved which pad stays open (a
+   trade again: OpenAirScope's CMD for DAT3) and cost passes elsewhere;
+   pour-net pads (k30's U10 pad 8) take no part. Left: the crossing
+   decided as a topology (which net of a crossing pair dives, and the
+   via placed in the negotiation, not reserved before it).
 3. **The ladder's judge.** On 21 boards with every rung continued to its
    final (2026-10-13), today's judge (unfinished nets after the probe)
    picks the best rung 16 times; no other count does better, and a class
