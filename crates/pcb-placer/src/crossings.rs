@@ -449,6 +449,39 @@ pub struct CrossingState<'a> {
     /// Buffers of `count` and `before`.
     near: Vec<u32>,
     ids: Vec<u32>,
+    /// `involving_kept`'s buffers: the lines' cells, each line's stretch
+    /// of them, per grid cell its stamp, the fresh lines there and the
+    /// rank of the next, and the places of a cell's fresh lines.
+    cells_of: Vec<usize>,
+    line_cells: Vec<(usize, usize)>,
+    cell_stamp: Vec<u32>,
+    cell_mark: u32,
+    cell_fresh: Vec<u32>,
+    cell_rank: Vec<u32>,
+    tail_places: Vec<Vec<u32>>,
+}
+
+/// Where `swap_remove`'s removal of a list's fresh lines (appended in
+/// order, removed in order) finds the `rank`-th of `fresh` of them, counted
+/// from the first fresh one; `places` keeps each count's answers.
+fn tail_place(places: &mut Vec<Vec<u32>>, fresh: usize, rank: usize) -> u32 {
+    if places.len() <= fresh {
+        places.resize(fresh + 1, Vec::new());
+    }
+    if places[fresh].is_empty() && fresh > 0 {
+        let mut list: Vec<usize> = (0..fresh).collect();
+        places[fresh] = (0..fresh)
+            .map(|line| {
+                let at = list
+                    .iter()
+                    .position(|other| *other == line)
+                    .expect("each line once");
+                list.swap_remove(at);
+                at as u32
+            })
+            .collect();
+    }
+    places[fresh][rank]
 }
 
 /// A pending move's new lines up to this many are counted against each
@@ -526,7 +559,18 @@ impl<'a> CrossingState<'a> {
             pending_inserted: false,
             near: Vec::new(),
             ids: Vec::new(),
+            cells_of: Vec::new(),
+            line_cells: Vec::new(),
+            cell_stamp: Vec::new(),
+            cell_mark: 0,
+            cell_fresh: Vec::new(),
+            cell_rank: Vec::new(),
+            tail_places: Vec::new(),
         };
+        let cells = state.grid.cells.len();
+        state.cell_stamp = vec![0; cells];
+        state.cell_fresh = vec![0; cells];
+        state.cell_rank = vec![0; cells];
         let all: Vec<usize> = (0..nets).filter(|net| counted(*net)).collect();
         for &net in &all {
             let ids = state.add_tree(poses, net);
@@ -709,6 +753,159 @@ impl<'a> CrossingState<'a> {
         let found = self.count(&fresh, &nets);
         self.drop_lines(&fresh);
         found
+    }
+
+    /// `involving(poses, moved)` where every part of the moved parts' nets
+    /// is where the state kept it: the trees `involving` would build are
+    /// the kept ones (Prim's tree of the same points), so their crossings
+    /// are the kept lines' (`count` of them, each pair once, the other
+    /// moved nets' lines among the subjects as `involving`'s fresh ones
+    /// are), and the work `involving` books (the trees, their lines'
+    /// insertion into the grid, the count with the fresh lines beside the
+    /// kept ones, the removal) follows from the kept lines and the grid's
+    /// lists alone. The same count and the same work without building a
+    /// tree (the refinement's swaps judged every pair at its kept poses
+    /// with new trees: 46 % of split72_left's swaps, 2026-10-28). None
+    /// where a part of those nets moved since it was kept.
+    pub fn involving_kept(&mut self, poses: &[Pose], moved: &[usize]) -> Option<u64> {
+        let nets = self.nets_of(moved);
+        if nets.is_empty() {
+            return Some(0);
+        }
+        let pose_bits = |pose: &Pose| {
+            [
+                pose.position[0].to_bits(),
+                pose.position[1].to_bits(),
+                pose.angle.to_bits(),
+            ]
+        };
+        for &net in &nets {
+            for (part, _) in &self.members[net] {
+                if pose_bits(&poses[*part]) != pose_bits(&self.poses[*part]) {
+                    return None;
+                }
+            }
+        }
+        let _timed = profile::Timed::start();
+        // The trees' work: their pins turned and Prim's steps.
+        let mut work = 0u64;
+        for &net in &nets {
+            let pins = self.members[net].len() as u64;
+            work += crate::PIN_WORK * pins + pins * pins;
+        }
+        let mut old = std::mem::take(&mut self.ids);
+        old.clear();
+        for &net in &nets {
+            old.extend(self.net_lines[net].iter().copied());
+        }
+        // The count, as `count` of the fresh lines against the grid with
+        // them in it: the same crossings; the same cells walked; each line
+        // met as there, and every moved net's line met twice (its kept and
+        // its fresh copy lie in the same cells).
+        let query = Self::next_stamp(&mut self.query, &mut self.subject);
+        if query == 1 {
+            self.touched.iter_mut().for_each(|mark| *mark = 0);
+        }
+        for &net in &nets {
+            self.touched[net] = query;
+        }
+        for &id in &old {
+            self.subject[id as usize] = query;
+        }
+        let mut found = 0u64;
+        let mut walked = 0u64;
+        let mut met = 0u64;
+        let mut near = std::mem::take(&mut self.near);
+        // Each line's cells, and per cell how many of the fresh lines
+        // `involving` would insert there (for its removal's scan).
+        let mut cells_of = std::mem::take(&mut self.cells_of);
+        cells_of.clear();
+        let mut lines_cells = std::mem::take(&mut self.line_cells);
+        lines_cells.clear();
+        let mark = Self::next_stamp(&mut self.cell_mark, &mut self.cell_stamp);
+        let mut insert_work = 0u64;
+        for &id in &old {
+            let line = self.lines[id as usize];
+            let stamp = Self::next_stamp(&mut self.stamp, &mut self.seen);
+            near.clear();
+            let first = cells_of.len();
+            let (grid, seen) = (&self.grid, &mut self.seen);
+            let visited = grid.walk(line.a, line.b, |cell| {
+                cells_of.push(cell);
+                for &other in &grid.cells[cell] {
+                    if seen[other as usize] != stamp {
+                        seen[other as usize] = stamp;
+                        near.push(other);
+                    }
+                }
+            }) as u64;
+            lines_cells.push((first, cells_of.len()));
+            walked += visited;
+            insert_work += at_rate(visited, GRID_CELL_WORK);
+            met += near.len() as u64;
+            for &other in &near {
+                let theirs = self.lines[other as usize];
+                if self.touched[theirs.net] == query {
+                    // A moved net's kept line: met again as its fresh copy.
+                    met += 1;
+                }
+                if theirs.net == line.net {
+                    continue;
+                }
+                // Both subjects: counted from the earlier one.
+                if self.subject[other as usize] == query && other <= id {
+                    continue;
+                }
+                if lines_cross(line.a, line.b, theirs.a, theirs.b) {
+                    found += 1;
+                }
+            }
+        }
+        for &cell in &cells_of {
+            if self.cell_stamp[cell] != mark {
+                self.cell_stamp[cell] = mark;
+                self.cell_fresh[cell] = 0;
+            }
+            self.cell_fresh[cell] += 1;
+        }
+        self.near = near;
+        work += insert_work + walked + at_rate(met, MET_WORK);
+        // The removal, line by line in insertion order: each cell's list
+        // is its kept lines and then the fresh ones in insertion order,
+        // the scan finds a line at its place there, and `swap_remove`
+        // moves the list's last line into it, so where the scan finds the
+        // cell's i-th fresh line of k depends on i and k alone
+        // (`tail_places`).
+        let ranked = Self::next_stamp(&mut self.cell_mark, &mut self.cell_stamp);
+        for &(first, last) in &lines_cells {
+            let mut scanned = 0u64;
+            for &cell in &cells_of[first..last] {
+                if self.cell_stamp[cell] != ranked {
+                    self.cell_stamp[cell] = ranked;
+                    self.cell_rank[cell] = 0;
+                }
+                let fresh = self.cell_fresh[cell] as usize;
+                let rank = self.cell_rank[cell] as usize;
+                self.cell_rank[cell] += 1;
+                let kept = self.grid.cells[cell].len() as u64;
+                scanned += kept + tail_place(&mut self.tail_places, fresh, rank) as u64 + 1;
+            }
+            work += at_rate((last - first) as u64, GRID_CELL_WORK) + at_rate(scanned, SCAN_WORK);
+        }
+        self.cells_of = cells_of;
+        self.line_cells = lines_cells;
+        self.ids = old;
+        crate::add_work(work);
+        Some(found)
+    }
+
+    /// `involving`, from the kept lines where the moved parts' nets are
+    /// where they were kept (`involving_kept`): the same count and work.
+    pub fn involving_or_kept(&mut self, poses: &[Pose], moved: &[usize]) -> u64 {
+        match self.involving_kept(poses, moved) {
+            Some(found) => found,
+            None => self.involving(poses, moved),
+        }
     }
 
     /// After a kept move of `moved` (to where `poses` has them): their
@@ -1399,8 +1596,23 @@ mod tests {
                     angle: [0.0, 90.0, 180.0, 270.0][(random() * 4.0) as usize],
                 };
             }
+            // At the kept poses, from the kept lines: the same count and
+            // the same work as with new trees.
+            let start = crate::work();
+            let kept = state
+                .involving_kept(&poses, &moved)
+                .expect("the parts where they were kept");
+            let kept_work = crate::work() - start;
+            let start = crate::work();
             let before = state.involving(&poses, &moved);
+            let direct_work = crate::work() - start;
+            assert_eq!((kept, kept_work), (before, direct_work));
             let after = state.involving(&next, &moved);
+            // Elsewhere only where the moved nets' parts did not move (or
+            // the parts have none).
+            if let Some(kept) = state.involving_kept(&next, &moved) {
+                assert_eq!(kept, after);
+            }
             let expected = brute(&problem, &crossings, &next);
             assert_eq!(
                 state.total() as i64 + after as i64 - before as i64,

@@ -1669,7 +1669,7 @@ pub fn legalize_keeping(
         let mut plain: Option<f64> = None;
         let wanted_crossings = crossings
             .as_mut()
-            .map_or(0, |state| state.involving(poses, &[index]));
+            .map_or(0, |state| state.involving_or_kept(poses, &[index]));
         // A part near another (`follow_anchors`) pays for the near
         // relations it misses at a spot: the closest spot that keeps them
         // beats a closer one that does not.
@@ -2422,6 +2422,12 @@ pub fn refine_with(
         |state: &mut crate::crossings::CrossingState, poses: &[Pose], parts: &[usize]| {
             state.weight() * state.involving(poses, parts) as f64
         };
+    // The same at the poses kept, from the kept lines where they are
+    // (`CrossingState::involving_or_kept`).
+    let kept_crossing_cost =
+        |state: &mut crate::crossings::CrossingState, poses: &[Pose], parts: &[usize]| {
+            state.weight() * state.involving_or_kept(poses, parts) as f64
+        };
     let count = problem.components.len();
     let nets = problem.net_weights.len();
     let mut members: Vec<Vec<(usize, usize)>> = vec![Vec::new(); nets];
@@ -2514,7 +2520,7 @@ pub fn refine_with(
                 best.0 += state.cost(poses, index);
             }
             if let Some(state) = crossings.as_mut() {
-                best.0 += crossing_cost(state, poses, &[index]);
+                best.0 += kept_crossing_cost(state, poses, &[index]);
             }
             let center = component.center(original);
             // Besides the pull of its nets, a part that misses a relation
@@ -2647,7 +2653,7 @@ pub fn refine_with(
                     before += state.cost_without(poses, a, b) + state.cost_without(poses, b, a);
                 }
                 if let Some(state) = crossings.as_mut() {
-                    before += crossing_cost(state, poses, &[a, b]);
+                    before += kept_crossing_cost(state, poses, &[a, b]);
                 }
                 poses.swap(a, b);
                 let mut after = pair(poses);
