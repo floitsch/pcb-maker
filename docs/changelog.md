@@ -145,7 +145,8 @@ layout, inspect and the fab gate with README.md and docs/agents.md alone.
 
 Branch anneal-crossings-protocol; both sides on x1851 (main 71953b0);
 the short tier again on the rebased head (`build/bin/pcb-maker-cross3-h`,
-main ff120a4c); the default did not change. The first lever judged by
+main ff120a4c); framework_mobo_lefthalf at five seeds on the same head;
+the flip snapshot x15201 (d81cf141, base x15200). The first lever judged by
 the placer-default rule (benchmarks.md, "Measurement discipline:
 placer defaults"). docs/placer.md, "Under the placer-default protocol
 (2026-10-27)", has the tables.
@@ -174,15 +175,26 @@ placer defaults"). docs/placer.md, "Under the placer-default protocol
   (`build/bin/pcb-maker-cross3-h`, main ff120a4c with x1867's plated-pad
   fix): 20 to 28, strict 8 to 7; eternal-keypad passes on both sides (its
   error was the pad bug), framework_mobo_lefthalf still loses by one
-  connection. **The default stays off**: the rule asks for no lost strict
-  pass as well.
+  connection.
+- **The lost pass at five seeds** (framework_mobo_lefthalf alone, the
+  short tier's task, seeds 1 to 401, the head binary): strict passes off
+  3 of 5 (seeds 301 and 401 end with 2 open), on 4 of 5 (seed 1, the
+  tier's own, with 1 open); no new strict findings. The single-seed loss
+  was noise, the fourth condition holds: **`ratsnest_crossings.anneal`
+  on by default** (x15201). x15201 at its defaults places and routes
+  Glasgow (dense, seed 1) and framework_mobo_lefthalf byte-identically
+  to x15200 with the switch on (and to the earlier on-runs).
+- **The rule, refined** (benchmarks.md, placer.md): a strict pass the
+  short tier loses at its seed is checked on that board at the five seed
+  pairs; the condition holds when on passes at least as often as off.
 - **The anneal's work per move** on x1851: the term is charged (units a
   move off / on: MegaDrive 7101-7367 / 10390-10665, Glasgow 3818-3861 /
   5088-5362, video 2779-2862 / 4144-4364, split72_left 3619-3622 /
   4595-4681); booked units per CPU second 0.99 to 1.16 with the term,
   1.03 to 1.37 without.
-- **Cost of the protocol**: 170 layouts (110 dense, 12 noise, 48 short
-  tier), 99 CPU hours, 18.3 hours of wall for the five pairs and 21.4
+- **Cost of the protocol**: 180 layouts (110 dense, 12 noise, 48 short
+  tier, 10 framework_mobo; 4 more for the flip's identity check), about
+  100 CPU hours, 18.3 hours of wall for the five pairs and 21.4
   to the last row, most of it waiting in the ledger beside the nightly
   and four agents.
 - **Tools**: `placer_ab.py noise --boards ... --update` (replace some

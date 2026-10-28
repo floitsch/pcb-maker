@@ -2060,7 +2060,8 @@ four), the dense spread per board is as large as any perturbation gives
 more placement work. Next: the global placement and the anneal do not
 see the crossings yet (they make the orders the legaliser and the
 refinement can only repair locally; MegaDrive's U4/U8 order is such a
-case; tried 2026-10-25, below: the anneal's term stays off), and a
+case; tried 2026-10-25, below: the anneal's term stayed off then and is
+on by default since 2026-10-28), and a
 weight per board (by layers: a crossing costs less with more of them)
 was tried on 2026-10-25 and not kept (`per_layer`, "Per-board losers of
 the defaults (2026-10-25)").
@@ -2277,7 +2278,8 @@ once: 947 to 1010, video 190 to 319 with 21361 crossings
 By the rule agreed for this step (the dense sum of medians falls, each
 pair's sum falls, the short tier loses no strict pass and its
 unconnected does not rise, MegaDrive's median improves) the anneal's
-term stays off: the summed medians are flat (926 to 927), seed 201's
+term stayed off (on since 2026-10-28, under the placer-default rule:
+below): the summed medians are flat (926 to 927), seed 201's
 sum rises, the short tier loses a pass and 10 connections, and
 MegaDrive's 110 to 105 is within one route's noise there (sd 12.7).
 `global` stays off (no effect on the placed boards). What the step
@@ -2417,20 +2419,51 @@ than the anneal's own (the band the booking's calibration accepted:
 0.6 to 1.2 by phase). The processes' CPU: MegaDrive 783 to 832 s,
 Glasgow 1679 to 1674 s, video 1045 to 1116 s, split72_left 759 to 722 s.
 
-**Decision**: the default stays off. The dense boards say better
-under the new rule (-10.8 %, p 0.002), but the short tier loses a
-strict pass on the rebased head too (framework_mobo_lefthalf, one open
-connection; eternal-keypad's loss on x1851 was the x1867 pad bug), and
-the rule asks for both. What would settle the conflict is
-a short-tier read with more than one draw: the tier's boards are small
-and route completely or nearly so, so a lost pass is one connection or
-one error.
+**The lost pass at five seeds.** The short tier's single seed cannot
+tell one board's one connection from its seed noise, while the dense
+result stands at p 0.002 over five pairs. So framework_mobo_lefthalf ran
+alone at the protocol's five seed pairs (seeds 1, 101, 201, 301, 401;
+the short tier's task and its third of the budget, 2 threads, the head
+binary `pcb-maker-cross3-h`, `build/cross3-u/fwmobo-s<N>-{off,on}`;
+seed 1 is the tier's own and reproduces the rows above):
+
+| seed | off: KiCad unconnected, strict | on: KiCad unconnected, strict | first-route open off / on | vias off / on |
+| ---: | --- | --- | ---: | ---: |
+| 1 | 0, pass | 1, fail | 3 / 2 | 111 / 97 |
+| 101 | 0, pass | 0, pass | 4 / 4 | 111 / 112 |
+| 201 | 0, pass | 0, pass | 0 / 2 | 104 / 99 |
+| 301 | 2, fail | 0, pass | 3 / 4 | 82 / 106 |
+| 401 | 2, fail | 0, pass | 6 / 2 | 81 / 92 |
+| passes | 3 of 5 | **4 of 5** | | |
+
+No new strict findings on either side. The tier's seed happened to be
+the one seed of five where the switch loses; at five seeds it passes
+more often than off. The fourth condition is met.
+
+**Decision**: `ratsnest_crossings.anneal` **on by default** since
+2026-10-28 (snapshot x15201, d81cf141; base x15200 is the same commit
+without the flip). The dense boards: -10.8 % weighted over five pairs,
+p 0.002. The short tier: the one strict pass it loses at the tier's seed
+is noise at five seeds (4 passes on against 3 off), and eternal-keypad's
+x1851 loss was the x1867 pad bug. The flip places and routes as the
+switch did: x15201 at its defaults against x15200 with `"anneal": true`,
+in layout mode (`build/cross3-u/ident`), gives the same placed and result
+boards byte for byte on Glasgow (dense, seed 1: also the same as x1851's
+on-run, 127 open) and on framework_mobo_lefthalf (short tier: also the
+same as the head's on-run).
+
+**The rule, refined**: a strict pass the short tier loses at the tier's
+seed does not decide by itself. That board runs alone at the protocol's
+five seed pairs (the short tier's task and budget), and the condition
+holds when the on side passes strictly on at least as many of the five
+seeds as the off side.
 
 **The protocol's cost**: 110 dense layouts (11 boards x 5 seeds x 2
 sides; 88 CPU hours, 39 hours of layout work), 12 noise layouts (three
 boards x four seeds; the seeds 1 to 401 off rows serve both), 24 short
-tier layouts and 24 more on the rebased head, 8 placements for the
-work profile: 170 layouts, 99 CPU hours (and 3 for the placements).
+tier layouts and 24 more on the rebased head, 10 framework_mobo
+layouts at five seeds, 8 placements for the work profile: 180 layouts,
+about 100 CPU hours (and 3 for the placements).
 Wall: 18.3 hours for the five pairs (01:24 to 19:43; most
 of it the ledger: up to 32 runs waiting, boards waiting up to 52 minutes
 for memory), 21.4 hours to the last noise and short-tier row. The second

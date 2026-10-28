@@ -169,7 +169,12 @@ at most six layouts in flight, through the ledger):
    701, 801 too and judge the nine pairs again at p <= 0.03. Otherwise
    not better. Worse when the smaller p is at least 0.97.
 4. The other conditions stay as each lever sets them (the short tier
-   loses no strict pass, no new DRC error).
+   loses no strict pass, no new DRC error). A strict pass lost at the
+   short tier's seed is checked on that board alone at the five seed
+   pairs (the tier's task and budget): the condition holds when the on
+   side passes on at least as many of the five as the off side (since
+   2026-10-28; placer.md, "Under the placer-default protocol
+   (2026-10-27)").
 
 Simulated from the noise file (`placer_ab.py protocol --flip-rounds 400`,
 600 comparisons, the same relative effect on every board): the rule
@@ -369,8 +374,9 @@ objective --tool build/bin/pcb-maker-x1828`:
   x1817 and x14312, or the switch on today's main against its off rows)
   settle it; at -8.1 % five pairs find it with power 0.8. Run on
   2026-10-27 (x1851 both sides, five pairs, the refreshed noise file):
-  -10.8 % (p 0.002), better on the dense boards; the short tier lost two
-  strict passes, so the default stays off (placer.md, "Under the
+  -10.8 % (p 0.002), better on the dense boards; the short tier's lost
+  pass (framework_mobo_lefthalf) was noise at five seeds (4 passes on,
+  3 off): on by default since 2026-10-28 (placer.md, "Under the
   placer-default protocol (2026-10-27)").
 - **Bus groups** lowers the objective with confidence (the only lever
   that does: -9.4 % on the summed medians, p 0.012) and leaves routing
