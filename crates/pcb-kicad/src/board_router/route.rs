@@ -1033,7 +1033,17 @@ pub(crate) fn finish_routed_board(
         lowering_work_seconds: 0.0,
         wall_accounting: None,
         kept_copper: None,
-        vias_in_pads: None,
+        // What the via-in-pad rule did, from the board without its vias
+        // (the written board holds them; route mode replaces this with
+        // the plan of its input, whose own vias stay).
+        vias_in_pads: {
+            let mut bare = pcb.clone();
+            if let Expr::List(items) = &mut bare {
+                items.retain(|item| item.head() != Some("via"));
+            }
+            Some(plan_vias_in_pads(&bare, config).report)
+                .filter(|report| *report != KiCadViaInPadReport::default())
+        },
         diff_pairs: None,
         lengths: Vec::new(),
         warnings: input_warnings(pcb),
