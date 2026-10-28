@@ -60,6 +60,19 @@ const INWARD_COST: f64 = 2.0;
 /// A part with fewer pads has no row.
 const MIN_PART_PADS: usize = 4;
 
+/// A way out that ends in a via costs this (the via, beside the run's
+/// direction cost): taken where the row's order needs the pad's track
+/// off its layer, or where the outward way leads far from the net's
+/// other pad.
+const VIA_EXIT_COST: f64 = 1.25;
+
+/// A pad whose track the row's order cannot keep on its layer
+/// (`mark_crossers`) pays this more on its ways without a via.
+const ORDER_COST: f64 = 1.5;
+
+/// How far beyond the pad a via site is looked for, in millimetres.
+const VIA_REACH: f64 = 3.0;
+
 /// A diagonal way out costs this more than an axis one (it passes
 /// between the corners of two neighbours: an aQFN's inner row).
 const DIAGONAL_COST: f64 = 0.25;
@@ -72,6 +85,9 @@ pub(super) struct ExitRun {
     pub(super) start: crate::geometry::Point,
     pub(super) end: crate::geometry::Point,
     pub(super) cost: f64,
+    /// The run ends in a via site (`end`): the pad's net leaves its layer
+    /// there, so that the row's other ways cross its column beyond it.
+    pub(super) via: bool,
 }
 
 /// A dense pad and its ways out.
@@ -89,6 +105,14 @@ pub(super) struct DensePad {
     pub(super) free: usize,
     /// The nearest pad of another net on the layer, centre to centre.
     pub(super) pitch: f64,
+    /// Its part's outward axis direction (an index of `DIRECTIONS`) and
+    /// the part's name, for the rows' order.
+    pub(super) row: Option<(String, usize)>,
+    /// Where the ratsnest leads (`None` for no other pad).
+    pub(super) target: Option<crate::geometry::Point>,
+    /// The row's order cannot keep this pad's track on its layer
+    /// (`mark_crossers`).
+    pub(super) crosser: bool,
 }
 
 /// What the fan-out decided (`Router::fanout_plan`), for the report and
@@ -398,6 +422,81 @@ fn greedy_with_repair(
     chosen
 }
 
+/// The rows' order: per part, layer and outward direction, the pads in
+/// their order along the row. Tracks leaving a row on its layer keep that
+/// order (they fan out side by side), so the most pads whose ratsnest
+/// targets follow the row's order stay on the layer (the longest run of
+/// targets' coordinates along the row that does not fall), and the others
+/// are crossers: their ways without a via cost `ORDER_COST` more, so that
+/// they take a via site where one fits (facade60's U4: LED_1 above LED_0
+/// heading down, LED_0 heading up, the one crossing the other's tip on
+/// one layer). Returns the work (pairs compared).
+fn mark_crossers(
+    pads: &mut [DensePad],
+    anchor: impl Fn(&DensePad) -> crate::geometry::Point,
+) -> u64 {
+    let mut rows: HashMap<(String, usize, usize), Vec<usize>> = HashMap::new();
+    for (index, pad) in pads.iter().enumerate() {
+        if let (Some((part, outward)), Some(_)) = (&pad.row, pad.target) {
+            rows.entry((part.clone(), pad.layer, *outward))
+                .or_default()
+                .push(index);
+        }
+    }
+    let mut work = 0u64;
+    for ((_, _, outward), members) in rows {
+        if members.len() < 3 {
+            continue;
+        }
+        let (dx, dy) = crate::grid::DIRECTIONS[outward];
+        let axis = [-dy as f64, dx as f64];
+        let along = |point: crate::geometry::Point| point[0] * axis[0] + point[1] * axis[1];
+        let mut order = members;
+        order.sort_by(|a, b| {
+            along(anchor(&pads[*a]))
+                .total_cmp(&along(anchor(&pads[*b])))
+                .then(a.cmp(b))
+        });
+        let targets: Vec<f64> = order
+            .iter()
+            .map(|index| along(pads[*index].target.unwrap_or_default()))
+            .collect();
+        let count = targets.len();
+        let mut length = vec![1usize; count];
+        let mut previous = vec![usize::MAX; count];
+        for j in 0..count {
+            for i in 0..j {
+                work += 1;
+                if targets[i] <= targets[j] + 1.0e-9 && length[i] + 1 > length[j] {
+                    length[j] = length[i] + 1;
+                    previous[j] = i;
+                }
+            }
+        }
+        let mut keep = vec![false; count];
+        let mut at = (0..count)
+            .max_by(|a, b| length[*a].cmp(&length[*b]).then(b.cmp(a)))
+            .unwrap_or(usize::MAX);
+        while at != usize::MAX {
+            keep[at] = true;
+            at = previous[at];
+        }
+        for (position, index) in order.into_iter().enumerate() {
+            if keep[position] {
+                continue;
+            }
+            let pad = &mut pads[index];
+            pad.crosser = true;
+            for run in &mut pad.runs {
+                if !run.via {
+                    run.cost += ORDER_COST;
+                }
+            }
+        }
+    }
+    work
+}
+
 impl Router {
     /// The fan-out's plan on the current board: the dense pads, their ways
     /// out and the choice (`assign_exits`).
@@ -570,6 +669,55 @@ impl Router {
                         continue;
                     };
                     let diagonal = dx != 0 && dy != 0;
+                    let outward = part_centre.is_some_and(|centre| {
+                        (terminal.anchor[0] - centre[0]) * dx as f64
+                            + (terminal.anchor[1] - centre[1]) * dy as f64
+                            > 1.0e-6
+                    });
+                    // Via sites further along an outward axis: beyond the
+                    // neighbours' runs (a via there keeps its clearance
+                    // from their tracks), two at most, a via's spacing
+                    // apart (staggered for neighbours that both take one).
+                    let mut vias: Vec<crate::geometry::Point> = Vec::new();
+                    if outward && !diagonal && self.board.layer_count > 1 {
+                        let via_radius = self.board.classes[class].via_diameter / 2.0;
+                        let clearance = self.board.classes[class].clearance;
+                        let half_width = self.width_on(class, layer) / 2.0;
+                        let first_site = depth + via_radius + clearance + half_width - pitch;
+                        let spacing = 2.0 * via_radius + clearance;
+                        let statics = &self.statics[class];
+                        let (mut vx, mut vy) =
+                            self.grid.xy(self.grid.nearest_node(end).unwrap_or(0));
+                        loop {
+                            vx = (vx as i64 + dx) as usize;
+                            vy = (vy as i64 + dy) as usize;
+                            work += 1;
+                            if vx >= self.grid.nx || vy >= self.grid.ny {
+                                break;
+                            }
+                            let cell = self.grid.index(vx, vy);
+                            let point = self.grid.center_of(cell);
+                            let along_run = crate::geometry::distance(start, point);
+                            if along_run > VIA_REACH
+                                || !self.statics[self.node_class(net, cell as u32)]
+                                    .trace_allowed(layer, cell, net)
+                            {
+                                break;
+                            }
+                            if along_run + 1.0e-9 < first_site
+                                || vias.last().is_some_and(|last| {
+                                    crate::geometry::distance(*last, point) + 1.0e-9 < spacing
+                                })
+                                || !statics.via_allowed(cell, net)
+                            {
+                                continue;
+                            }
+                            vias.push(point);
+                            if vias.len() == 2 {
+                                break;
+                            }
+                        }
+                    }
                     let along = if diagonal {
                         [
                             dx as f64 * std::f64::consts::FRAC_1_SQRT_2,
@@ -607,11 +755,24 @@ impl Router {
                         start,
                         end,
                         cost,
+                        via: false,
                     });
+                    for (index, site) in vias.into_iter().enumerate() {
+                        runs.push(ExitRun {
+                            direction,
+                            start,
+                            end: site,
+                            cost: VIA_EXIT_COST + 0.05 * index as f64,
+                            via: true,
+                        });
+                    }
                 }
                 // The straight ways along the axes: a pad with at most
                 // two is in a row whatever its pitch.
-                let free = runs.iter().filter(|run| run.direction % 2 == 0).count();
+                let free = runs
+                    .iter()
+                    .filter(|run| run.direction % 2 == 0 && !run.via)
+                    .count();
                 // A pad with no straight way out at all is listed (the
                 // report names it) where the row is fine-pitch; it takes
                 // no part in the choice.
@@ -626,18 +787,42 @@ impl Router {
                     half_width: self.width_on(neck, layer) / 2.0,
                     clearance: self.board.classes[class].clearance,
                     via_radius: self.board.classes[class].via_diameter / 2.0,
+                    row: part_centre.map(|centre| {
+                        // The axis direction closest to the way from the
+                        // part's centre to the pad.
+                        let away = [
+                            terminal.anchor[0] - centre[0],
+                            terminal.anchor[1] - centre[1],
+                        ];
+                        let outward = (0..8)
+                            .step_by(2)
+                            .max_by(|a, b| {
+                                let dot = |direction: usize| {
+                                    let (dx, dy) = crate::grid::DIRECTIONS[direction];
+                                    away[0] * dx as f64 + away[1] * dy as f64
+                                };
+                                dot(*a).total_cmp(&dot(*b)).then(b.cmp(a))
+                            })
+                            .unwrap_or(0);
+                        (part.to_string(), outward)
+                    }),
+                    target,
+                    crosser: false,
                     runs,
                     free,
                     pitch: nearest,
                 });
             }
         }
+        work += mark_crossers(&mut plan.pads, |pad| {
+            self.board.nets[pad.net as usize].terminals[pad.terminal].anchor
+        });
         // Conflicts between the runs of pads of different nets on one
         // layer, through a bucket grid of 1 mm over the runs' ends.
         let mut cells: HashMap<(usize, i64, i64), Vec<(usize, usize)>> = HashMap::new();
         for (pad_index, pad) in plan.pads.iter().enumerate() {
             for (run_index, run) in pad.runs.iter().enumerate() {
-                let reach = 2.0 * pad.half_width + pad.clearance;
+                let reach = 2.0 * pad.half_width.max(pad.via_radius) + pad.clearance;
                 let (x0, y0) = bucket([
                     run.start[0].min(run.end[0]) - reach,
                     run.start[1].min(run.end[1]) - reach,
@@ -675,14 +860,31 @@ impl Router {
                     }
                     work += 1;
                     let (run_a, run_b) = (&pa.runs[ra], &pb.runs[rb]);
-                    let required =
-                        pa.half_width + pb.half_width + pa.clearance.max(pb.clearance) - 1.0e-9;
-                    if crate::geometry::segment_segment_distance(
-                        run_a.start,
-                        run_a.end,
-                        run_b.start,
-                        run_b.end,
-                    ) < required
+                    let clearance = pa.clearance.max(pb.clearance) - 1.0e-9;
+                    let required = pa.half_width + pb.half_width + clearance;
+                    // A via site against the other run, and two sites
+                    // against each other.
+                    let via_against = |via: &ExitRun, radius: f64, other: &ExitRun, half: f64| {
+                        via.via
+                            && crate::geometry::point_segment_distance(
+                                via.end,
+                                other.start,
+                                other.end,
+                            ) < radius + half + clearance
+                    };
+                    let both_vias = run_a.via
+                        && run_b.via
+                        && crate::geometry::distance(run_a.end, run_b.end)
+                            < pa.via_radius + pb.via_radius + clearance;
+                    if both_vias
+                        || via_against(run_a, pa.via_radius, run_b, pb.half_width)
+                        || via_against(run_b, pb.via_radius, run_a, pa.half_width)
+                        || crate::geometry::segment_segment_distance(
+                            run_a.start,
+                            run_a.end,
+                            run_b.start,
+                            run_b.end,
+                        ) < required
                     {
                         conflicts.push(key);
                     }
@@ -731,7 +933,17 @@ impl Router {
             };
             let trace_reach = 2.0 * pad.half_width + pad.clearance;
             let via_reach = pad.half_width + pad.clearance + pad.via_radius;
-            let reach = trace_reach.max(via_reach);
+            // Around a via site: another net's track within the via's
+            // clearance, another via within both.
+            let (site_trace, site_via) = if run.via {
+                (
+                    pad.via_radius + pad.clearance + pad.half_width,
+                    2.0 * pad.via_radius + pad.clearance,
+                )
+            } else {
+                (0.0, 0.0)
+            };
+            let reach = trace_reach.max(via_reach).max(site_via);
             let bounds = crate::geometry::Aabb {
                 minimum: [run.start[0].min(run.end[0]), run.start[1].min(run.end[1])],
                 maximum: [run.start[0].max(run.end[0]), run.start[1].max(run.end[1])],
@@ -751,14 +963,27 @@ impl Router {
                         run.start,
                         run.end,
                     );
-                    if distance < trace_reach - 1.0e-9 {
-                        let entry = bands[pad.layer].entry(cell).or_insert((own, own, per_node));
+                    let at_site = if run.via {
+                        crate::geometry::distance(self.grid.center(x, y), run.end)
+                    } else {
+                        f64::INFINITY
+                    };
+                    // The run on its layer; the via site on every layer.
+                    let layers = if at_site < site_trace - 1.0e-9 {
+                        0..self.board.layer_count
+                    } else if distance < trace_reach - 1.0e-9 {
+                        pad.layer..pad.layer + 1
+                    } else {
+                        0..0
+                    };
+                    for layer in layers {
+                        let entry = bands[layer].entry(cell).or_insert((own, own, per_node));
                         if entry.0 != own && entry.1 == entry.0 {
                             entry.1 = own;
                         }
                         entry.2 = entry.2.max(per_node);
                     }
-                    if via_band && distance < via_reach - 1.0e-9 {
+                    if via_band && (distance < via_reach - 1.0e-9 || at_site < site_via - 1.0e-9) {
                         vias.entry(cell).or_insert(own);
                     }
                 }
@@ -853,22 +1078,24 @@ impl Router {
                 .enumerate()
                 .map(|(run_index, run)| {
                     format!(
-                        "{}{} {:.2}",
+                        "{}{}{} {:.2}",
                         if plan.chosen[index] == Some(run_index) {
                             "*"
                         } else {
                             ""
                         },
                         NAMES[run.direction],
+                        if run.via { " via" } else { "" },
                         run.cost
                     )
                 })
                 .collect();
             eprintln!(
-                "fanout {label} {} layer {} pitch {:.2}: {} free [{}]{}",
+                "fanout {label} {} layer {} pitch {:.2}{}: {} free [{}]{}",
                 self.board.nets[pad.net as usize].name,
                 pad.layer,
                 pad.pitch,
+                if pad.crosser { " crosser" } else { "" },
                 pad.free,
                 options.join(", "),
                 if pad.runs.is_empty() {
