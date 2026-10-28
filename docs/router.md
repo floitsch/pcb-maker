@@ -501,7 +501,17 @@ clearance needs 0.27. The designer of MIDAS put ten vias in U106's pads,
 centred (0.35/0.25 and 0.4/0.25 mm, the class via being 0.8/0.4); the
 router, which puts no via in an SMD pad (above), left U106's B2, C2, M5
 and M6 open on our placement and on the designer's alike ("The last
-connections (2026-10-27)"). Of the designers' boards of the sweep, @CENSUS@.
+connections (2026-10-27)"). Of the 109 designers' boards of the sweep (tasks v7), 61 have vias in small SMD pads (3138 vias; score-kicad-board's
+`vias_in_pads_at`, filled or not), nearly all in two-pad passives,
+power FETs and test points where a track would do (OpenESC 4in1's 281
+in PDFN-8 FETs, bumwings' 64 in SOD-123 diodes, MokyaLora's 45 in test
+pads), and only three hold vias in pads that no track can leave: the
+two MIDAS boards (U106, 5 pads each) and byrantech's laptop motherboard
+(two WLCSP-9, U7 and U13, the middle ball each). Two more boards have
+such pads with no designer via in them (the rule leaves them closed and
+the verdict names them): vd-rd's sbc module (U200, a DDR3 BGA-96 at 0.8
+mm, 16 balls) and byrantech's laptop keyboard (U2, an aQFN-73: AC9, AC11
+and AC13 on RESET, the keyboard's open RESET of the diagnosis table).
 
 **The rule** (board_router/via_in_pad.rs, `plan`; router config
 `via_in_pad`). A footprint is admitted when the designer's board holds a
@@ -577,7 +587,49 @@ the row's `via_in_pad` lists the parts), unless the task sets the key or
 `--designer-via-in-pad off`. A binary without the list gives none, so
 older binaries run as before.
 
-@MEASURED@
+**Measured** (off build/bin/pcb-maker-x1872 = main 5905bf9a, on
+build/bin/pcb-maker-vip1-e, the branch rebased on it; the same rows on
+x1871 against vip1-a/-b/-c before the rebase, identical; KiCad
+unconnected / strict pass / new strict findings / vias / work s; our vias
+in small SMD pads, the filled ones not counted / filled):
+
+| Board | off | on |
+| --- | --- | --- |
+| MIDAS-MK1.1, layout (tasks v7, the sweep's budget) | 5 / no / 0 / 210 / 1319; 0 / 0 | **0 / pass** / 0 / 265 / 633; 0 / 5 (B2, C2, M5, M6, N2, 0.35/0.25) |
+| MIDAS-MK1.1, designer tier (route on the designer's placement, scale 0.69) | 5 / no / 0 / 134 / 970 | **0 / pass** / 0 / 149 / 189 |
+| MIDAS-MK1, layout | 5 / no / 0 / 219 / 1443 | 1 / no / 0 / 248 / 1387; 4 vias (C2, M5, M6, N2): B2 refused, C112 on B.Cu under it |
+| laptop motherboard, layout | 25 / no / 0 / 502 / 1155 | the same board: U7.B2 and U13.B2 `refused` (the designer's 0.5/0.3 via, the board's minimum, has a drill wider than the 0.25 mm ball) |
+
+On MIDAS-MK1.1 the open items off were the four balls and a GND zone
+island; on, KiCad finds the board complete (the N2 via joins the ground
+there). The layout's work halves (1319 to 633 s): no ladder past the
+first complete route. KiCad's DRC is clean of new findings; the vias
+(0.35 mm over 0.305 mm balls, drill 0.25 inside the copper) keep 0.15 mm
+to the neighbouring balls' vias and 0.1725 mm to their copper (0.09
+required), the drills 0.2225 mm to it (hole clearance 0.2). MIDAS-MK1
+shows the placement's side: the placer does not know a via goes through
+under the BGA and put a 0603 on the back under B2, so B2 stays open (its
+via is `refused`); a placement that keeps the back free under enclosed
+pads is the next step.
+
+*The expansion tier* (route mode, 8 x 1, 30 s): 46 of 46 boards byte for
+byte identical (558 unconnected, 24 strict passes, 0 new strict
+findings, 4256 vias, work 1139.5 s both); 15 of them get `via_in_pad`
+entries from their designer's boards (vias in passives and connector
+pads), none has an enclosed pad. *The eleven dense boards* (layout, seed
+1, 3 x 2; x1872 against vip1-e): 11 of 11 result boards byte for byte
+identical (931 unconnected, 1 strict pass, 6 new strict findings, 8792
+vias, work 14484 s both); 8 of them get designer entries, none an
+enclosed pad. MIDAS-MK1.1 on the head rebased on main 39fc92d6
+(build/bin/pcb-maker-vip1-g): the same row (0 unconnected, pass, 265
+vias, work 632.6 s).
+
+Default: on where the designer's board has them (it is the designer's
+statement about the fab, and nothing changes elsewhere). Open: the
+placer keeping the other side free under a BGA's enclosed pads
+(MIDAS-MK1), blind or micro vias, a dogbone fan-out for 0.65 mm and
+coarser BGAs whose balls a track can leave one at a time (the enclosure
+test sees a way out there; capacity is the router's).
 
 A path no longer hops: a via within the hole-to-hole spacing (the drill
 plus `hole_to_hole`) of the previous via of the path being searched is
@@ -4982,7 +5034,8 @@ stays a switch for experiments. The two faults' fixes are on. What
 would close these boards is not a deeper rip-up: the placement's mouse-
 bite tabs as cuts (`sub_boards` taking a row of NPTH holes across a neck
 as one), a via in a BGA's pad where the project's designer used one
-(`via_in_pad`), and, for the fine-pitch rows, the exit order decided
+(`via_in_pad`; since 2026-10-28, "Vias in BGA pads": MIDAS-MK1.1 passes),
+and, for the fine-pitch rows, the exit order decided
 before negotiation (open problem 2 in handover.md).
 
 

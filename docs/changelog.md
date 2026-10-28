@@ -11,6 +11,63 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-10-28 (vias in BGA pads where the designer has them)
+
+Branch via-in-pad (rebased on main 39fc92d6); binaries
+build/bin/pcb-maker-vip1-a to -g (-e on main 5905bf9a, x1872, the
+measured pair; -g the head on 39fc92d6). docs/router.md,
+"Vias in BGA pads (2026-10-28)", has the rule, the design and the tables;
+docs/agents.md the opt-in and the verdict's advice.
+
+- **The question.** MIDAS-MK1.1's U106 (a TFBGA-153 at 0.5 mm) left four
+  balls open on our placement and on the designer's: no track passes
+  between 0.305 mm balls at 0.09/0.09, and the router puts no via in an
+  SMD pad. The designer put ten vias in U106's pads (centred, 0.35/0.25
+  and 0.4/0.25 mm).
+- **The rule** (board_router/via_in_pad.rs). A footprint whose small SMD
+  pads the designer's board holds vias in (the input board's own vias,
+  before `--strip`; the `--reference` board's; same reference or same
+  footprint name), or one the router config names (`"via_in_pad":
+  ["U106"]`, entries with a `via_mm`), gets a filled and capped via of
+  the pad's net centred in each pad that no track at the neck width
+  leaves between its neighbours (a raster flood from outside the pad
+  field and from the places a class via fits; a pad of an outer row,
+  an exposed pad and a net of one pad never), of the designer's size
+  where it fits, else of the largest predefined or class via that keeps
+  every clearance on every layer (a through via meets the back's
+  parts). `true` (all SMD pads open, as before) and `false` (none) stay.
+  No `.kicad_dru` of the corpus speaks of vias in pads (KiCad's rule
+  language has no such constraint).
+- **Router.** The via is fixed copper of the pad's net on every layer and
+  the pad's terminal there (a padstack's shape, solid to pours, a hole of
+  the net); the search ends on it on any layer, no stub; the pad stays
+  closed to the search's vias. Written `(capping yes) (filling yes)`.
+- **Score and report.** score-kicad-board counts filled and capped vias
+  apart (`filled_vias_in_pads`; `vias_in_pads_at` lists every via in a
+  small pad); board-router.json's and board-layout.json's
+  `vias_in_pads` say what was placed under which rule and which
+  footprints' enclosed pads stay closed; describe-kicad-board says it
+  before a run; the verdict names a closed footprint, its pads and its
+  open nets and the opt-in when one of those nets is open.
+- **Harness.** run.py passes the designer's vias in pads as `via_in_pad`
+  entries (score-kicad-board on the designer's board, cached per board in
+  build/designer-vias-in-pads.json, only for binaries that read the list;
+  `--designer-via-in-pad off`).
+- **Census** (109 boards, docs/benchmarks.md, "Designer vias in small SMD
+  pads"): 61 boards, 3138 vias in small SMD pads, nearly all in
+  passives, FETs and test points; enclosed pads under a designer's via on
+  three boards (the two MIDAS, 5 pads each; the laptop motherboard's two
+  WLCSP-9, 1 each); enclosed pads without one on two (vd-rd's DDR3
+  BGA-96, 16; the laptop keyboard's aQFN-73, its RESET pads).
+- **Measured** (off x1872, on vip1-e): MIDAS-MK1.1 layout 5 to **0
+  unconnected, a strict pass** (work 1319 to 633 s), its designer tier 5
+  to **0, a pass**; MIDAS-MK1 5 to 1 (B2's via refused: our placement put
+  a 0603 on the back under it); the laptop motherboard unchanged (its WLCSP balls are narrower than the board's smallest legal drill, 0.3 mm: both vias refused). The
+  expansion tier 46 of 46 boards byte-identical (15 with designer
+  entries, none with an enclosed pad); the eleven dense boards (seed 1, 3 x 2) 11 of 11 byte-identical (8 with designer
+  entries, none with an enclosed pad). MIDAS-MK1.1 again on the head
+  rebased on 39fc92d6 (vip1-g): the same pass.
+- **Next:** the placer keeping the back free under enclosed pads.
 ## Measured on 2026-10-28 (nightly: layout sweep v23, matched designer tier)
 
 Written by the nightly from `build/nightly/2026-10-28/` (main be0e629;

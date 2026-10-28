@@ -4126,3 +4126,78 @@ the whole table and summary in `build/krt-compare.txt`. Our timing runs
 are a loop of `PCB_MAKER_NO_CACHE=1 run.py build/krt-ours-t<threads>/<task>
 --route-from build/github-layout-v17 --only <task> --jobs 1 --threads
 <threads> --min-free-gb 10 --binary build/bin/pcb-maker-x1367`.
+
+## Designer vias in small SMD pads, the 109 boards of tasks v7 (2026-10-28)
+
+score-kicad-board's `vias_in_pads_at` (filled or not) on each designer's board
+(build/bin/pcb-maker-vip1-a), and the pads the via-in-pad rule admits on
+it (`describe-kicad-board`'s `vias_in_pads`: the enclosed pads of a
+footprint the board's own vias lie in; docs/router.md, "Vias in BGA
+pads"). 61 boards, 3138 vias; the 48 boards without any are left out.
+Enclosed pads of footprints without a designer via (not admitted):
+vd-rd's sbc module U200 (BGA-96, 16 balls), byrantech's laptop keyboard
+U2 (aQFN-73, AC9, AC11, AC13).
+
+| Board | Vias in small SMD pads | Parts | Footprints (vias) | Enclosed pads the rule admits |
+| --- | --- | --- | --- | --- |
+| OpenDrone-hw__OpenESC-30x30__4in1-panel | 601 | 140 | PDFN-8L_L6.0-W5.0-P1.27 236, C_1206_3216Metric 184, Diodes_PowerDI3333-8 70, R_0201_0603Metric 42, 10 more | - |
+| OpenDrone-hw__OpenESC-30x30__4in1 | 416 | 82 | PDFN-8L_L6.0-W5.0-P1.27 281, C_1206_3216Metric 89, R_0201_0603Metric 20, C_0201_0603Metric 12, 4 more | - |
+| OpenDrone-hw__OpenRX__OpenRX-panel-rev2 | 215 | 102 | C_0201_0603Metric 52, QFN-32-1EP_5x5mm_P0.5mm_EP3.7x3.7mm 46, QFN-16_L3.0-W3.0-P0.50-BL-EP1.7 19, QFN-24_L4.0-W4.0-P0.50-TL-EP2.6 18, 14 more | - |
+| MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub | 208 | 118 | C_0402_1005Metric 57, C_0603_1608Metric 44, R_0603_1608Metric 34, ESP32-MINI 26, 15 more | - |
+| OpenDrone-hw__OpenESC-20x20__4in1-mini | 199 | 72 | C_1206_3216Metric 75, Diodes_PowerDI3333-8 70, R_0201_0603Metric 21, C_0402_WIDE 8, 7 more | - |
+| briskspirit__Sisu_SSE-9__Sisu_SSE-9 | 183 | 114 | C_0402_1005Metric 56, R_0402_1005Metric 32, C_0603_1608Metric 14, C_0805_2012Metric 9, 23 more | - |
+| oro-os__link__link | 155 | 104 | CAP_0402_N_WAL 58, 150120M173000 15, STA_RMCF0402_STP 11, CAP_MSAS1L-3_TAY 8, 20 more | - |
+| OpenDrone-hw__OpenFC-Lite__OpenFC | 125 | 54 | R_0201_0603Metric 17, CONN-SMD_SM06B-SRSS-TB-LF-SN 16, C_0201_0603Metric 14, USB-TYPE-C-SMD_TYPE-C-16P-QTWT 14, 20 more | - |
+| CRImier__MyKiCad__vaio_re | 70 | 59 | C_0402_1005Metric 14, R_0402_1005Metric 11, USON-10_2.5x1.0mm_P0.5mm 9, C_0805_2012Metric 8, 15 more | - |
+| 0xCB-dev__0xCB-1337__pcb-panel | 64 | 16 | C_0201_0603Metric 52, R_0201_0603Metric 12 | - |
+| tubbytwins__bumwings-kbd__bumwings_v001R64_nano_sd | 64 | 64 | Diode_D_SOD-123 64 | - |
+| tubbytwins__bumwings-kbd__bumwings_v001R64_rp2040zero_sd | 64 | 64 | Diode_D_SOD-123 64 | - |
+| tubbytwins__bumwings-kbd__bumwings_v001R64_xiao_sd | 64 | 64 | Diode_D_SOD-123 64 | - |
+| Twisted-Fields__rp2040-motor-controller__RP2040_base | 59 | 54 | C_0603_1608Metric 17, C_0805_2012Metric 12, TestPoint_Pad_D1.0mm 6, SOT-23-6 6, 9 more | - |
+| thpoll83__PolyKybd__poly_kb_molecule_7x5_wave_left | 56 | 2 | C_0402_1005Metric 28, C_0603_1608Metric 28 | - |
+| tubbytwins__bumwings-kbd__bumwings_v001R55_rp2040zero_sd | 55 | 55 | Diode_D_SOD-123 55 | - |
+| tubbytwins__bumwings-kbd__bumwings_v001R55_xiao_sd | 55 | 55 | Diode_D_SOD-123 55 | - |
+| tubbytwins__bumwings-kbd__bumwings_v001_xiao_s | 53 | 53 | Diode_D_SOD-123 53 | - |
+| tengigabytes__MokyaLora__MokyaLora | 45 | 43 | TestPoint_Pad_D1.0mm 45 | - |
+| thpoll83__PolyKybd__poly_kb_molecule_4x5 | 40 | 2 | C_0402_1005Metric 20, C_0603_1608Metric 20 | - |
+| thpoll83__PolyKybd__poly_kb_molecule_5x4_wave | 40 | 2 | C_0402_1005Metric 20, C_0603_1608Metric 20 | - |
+| bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV | 34 | 23 | C_0805_2012Metric_Pad1.18x1.45mm_HandSolder 6, ESP32-S3-WROOM-1 6, R_0805_2012Metric_Pad1.20x1.40mm_HandSolder 5, TestPoint_Pad_1.0x1.0mm 4, 6 more | - |
+| thpoll83__PolyKybd__poly_kb_molecule_4x4 | 32 | 2 | C_0402_1005Metric 16, C_0603_1608Metric 16 | - |
+| CRImier__MyKiCad__zpn_devboard | 28 | 26 | R_0402_1005Metric 7, C_0402_1005Metric 6, JST_SH_BM04B-SRSS-TB_1x04-1MP_P1.00mm_Vertical 4, USON-10_2.5x1.0mm_P0.5mm 4, 6 more | - |
+| CDFER__Business-Cards__USB_Cable_Tester__PCB | 22 | 4 | USB-A-SMD_HC-USB3.0-C225-P 12, USB-SMD-LIGHTNING_USB-PG 7, USB_Micro-B_XKB_U254-051T-4BH83-F1S 2, TYPE-C-USB-SMD_QCHT-143 1 | - |
+| thpoll83__PolyKybd__poly_kb_molecule_5x2_shifted | 20 | 2 | C_0402_1005Metric 10, C_0603_1608Metric 10 | - |
+| 0xCB-dev__0xCB-1337__panel | 16 | 4 | R_0603_1608Metric 8, SOT-23-6 4, C_0603_1608Metric 4 | - |
+| 0xCB-dev__0xCB-1337__pcb | 16 | 16 | C_0201_0603Metric 13, R_0201_0603Metric 3 | - |
+| bitshiftcrazy__d20_pcb__d20_pcb | 16 | 13 | LED_0603_1608Metric 15, SOIC-14_3.9x8.7mm_P1.27mm 1 | - |
+| ISSUIUC__ISS-PCB__MIDAS-MK1.1__MIDAS-MK1.1-revA | 10 | 1 | TFBGA-153_11.5x13mm 10 | U106 5 |
+| ISSUIUC__ISS-PCB__MIDAS-MK1__MIDAS-MK1-revA | 10 | 1 | TFBGA-153_11.5x13mm 10 | U106 5 |
+| CRImier__MyKiCad__protoesp | 9 | 5 | SOIC-28W_SOIC16_CH34x_Combined 5, R_0603_1608Metric 3, C_0805_2012Metric 1 | - |
+| Huaqiu-Electronics__ecad-viewer__video | 9 | 9 | R_1206_3216Metric_Pad1.30x1.75mm_HandSolder 9 | - |
+| GlasgowEmbedded__glasgow__glasgow__revC3 | 8 | 7 | TestPoint_Pad_D1.0mm 6, R_0402_1005Metric_DNP 2 | - |
+| ISSUIUC__ISS-PCB__BAGEL-MK1.1-Avocado | 7 | 7 | R_0402_1005Metric 6, C_0402_1005Metric 1 | - |
+| antmicro__jetson-nano-baseboard__jetson-nano-baseboard | 7 | 6 | SOT-23-3 3, C_1206_3216Metric 2, FB_0603_1608Metric 1, C_0402_1005Metric 1 | - |
+| stonedDiscord__nonSNES__SNSP-CPU-1CHIP | 7 | 2 | SO-24_5.3x15mm_P1.27mm 6, SO-8_3.9x4.9mm_P1.27mm 1 | - |
+| 0xCB-dev__0xCB-1337__1337-v4.0 | 4 | 4 | R_0603_1608Metric 2, SOT-23-6 1, C_0603_1608Metric 1 | - |
+| CDFER__Business-Cards__Batch_1 | 4 | 4 | SOT-23-3_L2.9-W1.6-P1.90-LS2.8-BR 2, SW-SMD_4P-L5.1-W5.1-P3.70-LS6.5-TL-2 1, 0402_1005Metric 1 | - |
+| CRImier__MyKiCad__framework_mobo_lefthalf | 4 | 3 | R_0805_2012Metric 2, R_Array_Concave_4x0603 1, SOT-23 1 | - |
+| Jana-Marie__ligra__ligra_back | 4 | 2 | R_0805 2, Diodes_SO-8EP 2 | - |
+| byrantech__laptop__power | 4 | 4 | R_0603_1608Metric 3, C_0603_1608Metric 1 | - |
+| stonedDiscord__nonSNES__SNSP-CPU-01 | 4 | 2 | SOIC-14_3.9x8.7mm_P1.27mm 2, SO-14_3.9x8.65mm_P1.27mm 2 | - |
+| zli117__CyberKeeb2040__MainBoard | 4 | 4 | C_1206_3216Metric_Pad1.33x1.80mm_HandSolder 2, D_DO-35_SOD27_P7.62mm_Horizontal 2 | - |
+| hackclub__OnBoard__PixelWave | 3 | 3 | C_1206_3216Metric 1, TVS_ESDA25P35-1U1M 1, SOT-23-3 1 | - |
+| tzarc__keyboards__ghoul | 3 | 3 | R_Array_Convex_4x0603 2, NetTie-2_SMD_Pad0.2mm 1 | - |
+| apfaudio__eurorack-pmod__eurorack-pmod-pcb | 2 | 2 | LED_0402_1005Metric 1, R_0402_1005Metric 1 | - |
+| bitshiftcrazy__spell_tome__spell_tome_bottom | 2 | 2 | C_0805_2012Metric 1, R_0603_1608Metric 1 | - |
+| byrantech__laptop__motherboard | 2 | 2 | WLCSP9_1P2X1P2_ONS 2 | U7 1; U13 1 |
+| greatscottgadgets__hackrf__hackrf-one | 2 | 2 | SKY13350-385LF 2 | - |
+| hackclub__OnBoard__krishveercard | 2 | 2 | C_0603_1608Metric 1, HRS_DF40C-100DP-0.4V(51) 1 | - |
+| sporkus__le_chiffre_keyboard_stm32__stm32_chiffre_36keys | 2 | 2 | D_SOD-123 1, LED_SK6812MINI_PLCC4_3.5x3.5mm_P1.75mm 1 | - |
+| sporkus__le_chiffre_keyboard_stm32__stm32_hotswap_chiffre | 2 | 2 | D_SOD-123 1, LED_SK6812MINI_PLCC4_3.5x3.5mm_P1.75mm 1 | - |
+| CDFER__Business-Cards__USB_Keypad | 1 | 1 | SW-SMD_4P-L5.1-W5.1-P3.70-LS6.5-TL-2 1 | - |
+| CDFER__Business-Cards__WLED_Matrix | 1 | 1 | 0402_1005Metric 1 | - |
+| ISSUIUC__ISS-PCB__BAGEL-MK1 | 1 | 1 | R_0402_1005Metric 1 | - |
+| Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1 | 1 | 1 | X2SON4-0.625-1x1x0.6mm 1 | - |
+| emertcakir__OpenAirScope__OpenAirScope | 1 | 1 | XDCR_SGP41-D-R4 1 | - |
+| ikajdan__katia__katia | 1 | 1 | C_0603_1608Metric 1 | - |
+| obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized | 1 | 1 | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder 1 | - |
+| thpoll83__PolyKybd__poly_kybd_split72_left | 1 | 1 | RP2040-QFN-56 1 | - |
