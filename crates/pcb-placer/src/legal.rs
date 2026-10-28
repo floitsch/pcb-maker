@@ -583,7 +583,7 @@ fn clear_of_one(
     linked_work: u64,
     other: usize,
     work: &mut u64,
-    cutouts: Option<&Cutouts>,
+    facts: Option<&Facts>,
 ) -> bool {
     let body = *body;
     let side = problem.components[index].side;
@@ -596,15 +596,18 @@ fn clear_of_one(
         return true;
     }
     // A part without room elsewhere may lie on the board's marks.
-    if problem.constraints.lies_on(index, other) {
+    if match facts {
+        Some(facts) => facts.lies_on(problem, index, other),
+        None => problem.constraints.lies_on(index, other),
+    } {
         return true;
     }
     let other_side = problem.components[other].side;
     if side.collides(other_side) {
         let (mine, theirs) = (&problem.components[index], &problem.components[other]);
         if mine.copper_only || theirs.copper_only {
-            if copper_meets_cutout(problem, index, pose, other, poses[other], work, cutouts)
-                || body_meets_solid_cutout(problem, index, pose, other, poses[other], work, cutouts)
+            if copper_meets_cutout(problem, index, pose, other, poses[other], work, facts)
+                || body_meets_solid_cutout(problem, index, pose, other, poses[other], work, facts)
             {
                 return false;
             }
@@ -618,7 +621,10 @@ fn clear_of_one(
         if if hollow {
             hollow_overlap(problem, index, pose, other, poses[other], work)
         } else {
-            if problem.constraints.bare(index, other) {
+            if match facts {
+                Some(facts) => facts.bare(problem, index, other),
+                None => problem.constraints.bare(index, other),
+            } {
                 // Parts tied together meet without their halos.
                 let bare = |part: usize, pose: Pose| {
                     let rect = rect(problem, part, pose);
@@ -703,8 +709,8 @@ pub(crate) struct Apart {
     /// work (`u64::MAX`: not measured yet).
     far_part: usize,
     far: Vec<u64>,
-    /// The cutouts' outlines for the polygon tests.
-    cutouts: Cutouts,
+    /// The cutouts' outlines for the polygon tests, the parts' flags.
+    facts: Facts,
     /// The board's outline by bands for the fit tests (an outline of
     /// more than a few edges).
     board: Option<Outline>,
@@ -761,7 +767,7 @@ impl Apart {
             boxes: vec![None; count],
             far_part: usize::MAX,
             far: vec![u64::MAX; count],
-            cutouts: Cutouts::new(problem),
+            facts: Facts::new(problem),
             board: (problem.outline.len() >= BOARD_INDEX_EDGES)
                 .then(|| Outline::new(&problem.outline)),
             check: cfg!(debug_assertions) || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
@@ -892,7 +898,7 @@ impl Apart {
                         linked_work,
                         other,
                         &mut direct,
-                        Some(&self.cutouts),
+                        Some(&self.facts),
                     );
                     assert_eq!(
                         (clear, direct),
@@ -912,7 +918,7 @@ impl Apart {
                 linked_work,
                 other,
                 work,
-                Some(&self.cutouts),
+                Some(&self.facts),
             ) {
                 return false;
             }
@@ -1155,7 +1161,7 @@ impl Sweep {
                 linked_work,
                 other,
                 &mut work,
-                Some(&apart.cutouts),
+                Some(&apart.facts),
             ) {
                 clear = false;
                 break;
@@ -1368,7 +1374,7 @@ fn copper_meets_cutout(
     b: usize,
     pose_b: Pose,
     work: &mut u64,
-    cutouts: Option<&Cutouts>,
+    facts: Option<&Facts>,
 ) -> bool {
     let (hole, pose_hole, part, pose_part) = if problem.components[a].copper_only {
         (a, pose_a, b, pose_b)
@@ -1396,7 +1402,7 @@ fn copper_meets_cutout(
         // the hole runs diagonally. A pad outside the outline's box cannot
         // meet it (a tabbed panel's slots run around whole copies, with
         // thousands of points).
-        let indexed = cutouts.and_then(|cutouts| cutouts.outlines[hole].as_ref());
+        let indexed = facts.and_then(|facts| facts.outlines[hole].as_ref());
         let extent = indexed.map_or_else(|| outline_extent(outline), |indexed| indexed.extent);
         *work += edge_work(outline.len());
         for pad in pads {
@@ -1424,7 +1430,7 @@ fn body_meets_solid_cutout(
     b: usize,
     pose_b: Pose,
     work: &mut u64,
-    cutouts: Option<&Cutouts>,
+    facts: Option<&Facts>,
 ) -> bool {
     let solid = &problem.constraints.solid_cutouts;
     if solid.is_empty() {
@@ -1443,7 +1449,7 @@ fn body_meets_solid_cutout(
     if outline.len() < 3 {
         return false;
     }
-    let indexed = cutouts.and_then(|cutouts| cutouts.outlines[hole].as_ref());
+    let indexed = facts.and_then(|facts| facts.outlines[hole].as_ref());
     let extent = indexed.map_or_else(|| outline_extent(outline), |indexed| indexed.extent);
     // A body touching the hole's edge is on the board.
     let body = body.grown(-1.0e-6);
@@ -1602,14 +1608,68 @@ impl Outline {
     }
 }
 
-/// Per part, the `Outline` of a cutout's outline with many edges.
-pub(crate) struct Cutouts {
+/// What the legality test looks up per part, kept for a search: the
+/// `Outline` of a cutout's outline with many edges, and whether a part
+/// lies on the board's marks, yields to them or is an obstacle without
+/// routing room (`Constraints::lies_on`, `halo_free`: binary searches of
+/// their lists, two to four a pair test, 7 to 10 % of protoesp's and the
+/// 4in1's legalisation, 2026-10-28).
+pub(crate) struct Facts {
     outlines: Vec<Option<Outline>>,
+    /// Per part: `ON_MARKS`, `YIELDING`, `HALO_FREE`; None where a list
+    /// is not ascending (its binary search is then the answer).
+    flags: Option<Vec<u8>>,
+    /// Whether any part lies on the marks.
+    marks: bool,
 }
 
-impl Cutouts {
+const ON_MARKS: u8 = 1;
+const YIELDING: u8 = 2;
+const HALO_FREE: u8 = 4;
+
+impl Facts {
+    /// `problem.constraints.lies_on(a, b)`.
+    fn lies_on(&self, problem: &Problem, a: usize, b: usize) -> bool {
+        let Some(flags) = &self.flags else {
+            return problem.constraints.lies_on(a, b);
+        };
+        self.marks
+            && ((flags[a] & ON_MARKS != 0 && flags[b] & YIELDING != 0)
+                || (flags[b] & ON_MARKS != 0 && flags[a] & YIELDING != 0))
+    }
+
+    /// `problem.constraints.bare(a, b)`.
+    fn bare(&self, problem: &Problem, a: usize, b: usize) -> bool {
+        let Some(flags) = &self.flags else {
+            return problem.constraints.bare(a, b);
+        };
+        problem.constraints.linked(a, b) || flags[a] & HALO_FREE != 0 || flags[b] & HALO_FREE != 0
+    }
+
     pub(crate) fn new(problem: &Problem) -> Self {
-        Cutouts {
+        let constraints = &problem.constraints;
+        let lists = [
+            (&constraints.on_marks, ON_MARKS),
+            (&constraints.yielding, YIELDING),
+            (&constraints.halo_free, HALO_FREE),
+        ];
+        let ascending = lists
+            .iter()
+            .all(|(list, _)| list.windows(2).all(|pair| pair[0] <= pair[1]));
+        let flags = ascending.then(|| {
+            let mut flags = vec![0u8; problem.components.len()];
+            for (list, flag) in lists {
+                for &part in list {
+                    if let Some(flags) = flags.get_mut(part) {
+                        *flags |= flag;
+                    }
+                }
+            }
+            flags
+        });
+        Facts {
+            flags,
+            marks: !constraints.on_marks.is_empty(),
             outlines: problem
                 .components
                 .iter()
@@ -3954,6 +4014,14 @@ mod tests {
                 part
             })
             .collect();
+        if round % 3 != 1 {
+            // Marks some parts may lie on, obstacles without routing room.
+            let yielding: Vec<usize> = (0..parts).filter(|_| next() < 0.15).collect();
+            problem.constraints.halo_free =
+                yielding.iter().copied().filter(|_| next() < 0.5).collect();
+            problem.constraints.yielding = yielding;
+            problem.constraints.on_marks = (0..parts).filter(|_| next() < 0.2).collect();
+        }
         if round.is_multiple_of(2) {
             problem.constraints.solid_cutouts = (0..parts)
                 .filter(|index| problem.components[*index].copper_only)
@@ -4220,6 +4288,37 @@ mod tests {
             insides > 5_000 && outsides > 5_000,
             "{insides} in, {outsides} out"
         );
+    }
+
+    #[test]
+    fn the_facts_flags_answer_as_the_constraints_lists() {
+        let mut state = 0x1234_5678_9ABC_DEF1u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        for round in 0..8 {
+            let (mut problem, _) = random_board(round, &mut next);
+            let parts = problem.components.len();
+            if round == 5 {
+                // A list out of order: the facts take the lists' answers.
+                problem.constraints.yielding = vec![7, 3, 30, 12];
+                problem.constraints.on_marks = vec![3, 12];
+            }
+            let facts = Facts::new(&problem);
+            assert_eq!(facts.flags.is_none(), round == 5);
+            for a in 0..parts {
+                for b in 0..parts {
+                    assert_eq!(
+                        facts.lies_on(&problem, a, b),
+                        problem.constraints.lies_on(a, b)
+                    );
+                    assert_eq!(facts.bare(&problem, a, b), problem.constraints.bare(a, b));
+                }
+            }
+        }
     }
 
     #[test]
