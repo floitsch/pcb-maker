@@ -987,7 +987,8 @@ struct Buckets {
 impl Buckets {
     fn new(problem: &Problem) -> Self {
         Buckets {
-            grid: crate::buckets::Grid::new(problem.bounds(), 2.5, problem.components.len()),
+            grid: crate::buckets::Grid::new(problem.bounds(), 2.5, problem.components.len())
+                .with_answers(),
             reach: problem.spacing
                 + problem.min_spacing
                 + problem.edge_margin

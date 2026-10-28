@@ -15,6 +15,61 @@ pub(crate) struct Grid {
     cells: Vec<Vec<usize>>,
     seen: Vec<u32>,
     stamp: u32,
+    /// The answers of `query` since an item last went in or out, by
+    /// their cells (`with_answers`), or None.
+    answers: Option<Answers>,
+}
+
+/// `Grid::query`'s answers by the cells a query looks at, while no item
+/// goes in or out: the same cells then hold the same items in the same
+/// order, so a query of the same cells has the same answer. The
+/// legaliser's spot search, the refinement's candidates and the eviction
+/// query a grid that holds still for one part's spots, steps of 0.25 to
+/// 0.5 mm in cells of 2.5 mm: most spots look at the cells of a spot
+/// before them (the bucket queries were 27 % of protoesp's legalisation's
+/// instructions, video's spots look at 60 cells for 1.7 parts,
+/// 2026-10-28).
+struct Answers {
+    /// Direct-mapped by the cells' key: (key, generation, start, length)
+    /// into `items`.
+    slots: Vec<(u64, u32, u32, u32)>,
+    items: Vec<usize>,
+    /// The answers' generation: a slot of another is empty.
+    generation: u32,
+    /// Every answer kept checked against a scan (debug builds and
+    /// `PCB_PLACER_CHECK_OVERLAP`).
+    check: bool,
+}
+
+/// The answers kept: a power of two.
+const ANSWER_SLOTS: usize = 4096;
+
+/// More items than this kept start the answers again (memory).
+const ANSWER_ITEMS: usize = 1 << 20;
+
+impl Answers {
+    fn new() -> Self {
+        Answers {
+            slots: vec![(0, 0, 0, 0); ANSWER_SLOTS],
+            items: Vec::new(),
+            generation: 1,
+            check: cfg!(debug_assertions) || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
+        }
+    }
+
+    /// Forgets every answer.
+    fn clear(&mut self) {
+        self.items.clear();
+        self.generation = self.generation.wrapping_add(1);
+        if self.generation == 0 {
+            self.slots.iter_mut().for_each(|slot| *slot = (0, 0, 0, 0));
+            self.generation = 1;
+        }
+    }
+
+    fn slot(key: u64) -> usize {
+        (key.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> (64 - ANSWER_SLOTS.trailing_zeros())) as usize
+    }
 }
 
 impl Grid {
@@ -31,7 +86,18 @@ impl Grid {
             cells: vec![Vec::new(); columns * rows],
             seen: vec![0; items],
             stamp: 0,
+            answers: None,
         }
+    }
+
+    /// The grid with `query`'s answers kept while no item goes in or out
+    /// (`Answers`): the same answers, each found once. A grid of more
+    /// than 2^16 columns or rows keeps none.
+    pub(crate) fn with_answers(mut self) -> Self {
+        if self.columns <= 1 << 16 && self.rows <= 1 << 16 {
+            self.answers = Some(Answers::new());
+        }
+        self
     }
 
     fn range(&self, center: Point, half: Point) -> (usize, usize, usize, usize) {
@@ -57,6 +123,9 @@ impl Grid {
     }
 
     pub(crate) fn insert(&mut self, item: usize, center: Point, half: Point) {
+        if let Some(answers) = self.answers.as_mut() {
+            answers.clear();
+        }
         let (x0, y0, x1, y1) = self.range(center, half);
         for y in y0..=y1 {
             for x in x0..=x1 {
@@ -67,6 +136,9 @@ impl Grid {
 
     /// Takes out an item inserted with this box.
     pub(crate) fn remove(&mut self, item: usize, center: Point, half: Point) {
+        if let Some(answers) = self.answers.as_mut() {
+            answers.clear();
+        }
         let (x0, y0, x1, y1) = self.range(center, half);
         for y in y0..=y1 {
             for x in x0..=x1 {
@@ -81,13 +153,47 @@ impl Grid {
     /// The items whose boxes may meet this one, each once; returns the
     /// cells looked at (work).
     pub(crate) fn query(&mut self, center: Point, half: Point, out: &mut Vec<usize>) -> usize {
+        let range = self.range(center, half);
+        let (x0, y0, x1, y1) = range;
+        let cells = (x1 - x0 + 1) * (y1 - y0 + 1);
+        let Some(answers) = self.answers.as_mut() else {
+            self.scan(range, out);
+            return cells;
+        };
+        let key = (x0 as u64) | (y0 as u64) << 16 | (x1 as u64) << 32 | (y1 as u64) << 48;
+        let slot = Answers::slot(key);
+        let (kept, generation, start, length) = answers.slots[slot];
+        if generation == answers.generation && kept == key {
+            out.clear();
+            out.extend_from_slice(&answers.items[start as usize..(start + length) as usize]);
+            if answers.check {
+                let mut scanned = Vec::new();
+                self.scan(range, &mut scanned);
+                assert_eq!(*out, scanned, "kept answer of cells {range:?}");
+            }
+            return cells;
+        }
+        self.scan(range, out);
+        let answers = self.answers.as_mut().expect("answers kept");
+        if answers.items.len() + out.len() > ANSWER_ITEMS {
+            answers.clear();
+        }
+        let start = answers.items.len() as u32;
+        answers.items.extend_from_slice(out);
+        answers.slots[slot] = (key, answers.generation, start, out.len() as u32);
+        cells
+    }
+
+    /// The items of the cells `range` (`range`'s), each once, in the
+    /// order of a row-major scan of the cells and each cell's list.
+    fn scan(&mut self, range: (usize, usize, usize, usize), out: &mut Vec<usize>) {
         out.clear();
         self.stamp = self.stamp.wrapping_add(1);
         if self.stamp == 0 {
             self.seen.iter_mut().for_each(|seen| *seen = 0);
             self.stamp = 1;
         }
-        let (x0, y0, x1, y1) = self.range(center, half);
+        let (x0, y0, x1, y1) = range;
         let (stamp, seen) = (self.stamp, &mut self.seen);
         for y in y0..=y1 {
             let row = y * self.columns;
@@ -116,7 +222,6 @@ impl Grid {
                 unsafe { out.set_len(length) };
             }
         }
-        (x1 - x0 + 1) * (y1 - y0 + 1)
     }
 }
 
@@ -178,6 +283,54 @@ mod tests {
         }
         for value in values {
             assert_eq!(cell_index(value), before(value), "{value:e}");
+        }
+    }
+
+    #[test]
+    fn kept_answers_are_the_scans_answers() {
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        for round in 0..20 {
+            let items = 60;
+            let bounds = [0.0, 0.0, 20.0 + round as f64, 15.0];
+            let mut plain = Grid::new(bounds, 2.5, items);
+            let mut kept = Grid::new(bounds, 2.5, items).with_answers();
+            assert!(kept.answers.is_some());
+            let mut boxes: Vec<Option<(Point, Point)>> = vec![None; items];
+            let (mut a, mut b) = (Vec::new(), Vec::new());
+            for _ in 0..4000 {
+                let roll = next();
+                if roll < 0.08 {
+                    // An item goes in or out (or moves: out, then in).
+                    let item = (next() * items as f64) as usize;
+                    if let Some((center, half)) = boxes[item].take() {
+                        plain.remove(item, center, half);
+                        kept.remove(item, center, half);
+                    }
+                    if next() < 0.7 {
+                        let center = [next() * 30.0 - 5.0, next() * 25.0 - 5.0];
+                        let half = [next() * 3.0, next() * 3.0];
+                        plain.insert(item, center, half);
+                        kept.insert(item, center, half);
+                        boxes[item] = Some((center, half));
+                    }
+                } else {
+                    // Queries on a lattice of spots, as the searches ask.
+                    let center = [
+                        (next() * 60.0).floor() * 0.5 - 3.0,
+                        (next() * 40.0).floor() * 0.5 - 3.0,
+                    ];
+                    let half = [0.5 + (next() * 3.0).floor(), 0.5 + (next() * 2.0).floor()];
+                    let cells = plain.query(center, half, &mut a);
+                    assert_eq!(kept.query(center, half, &mut b), cells);
+                    assert_eq!(a, b);
+                }
+            }
         }
     }
 
