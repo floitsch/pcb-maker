@@ -11,6 +11,27 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-10-30 (nightly: layout sweep v26, matched designer tier)
+
+Written by the nightly from `build/nightly/2026-10-30/` (main 288051a;
+[benchmarks.md](benchmarks.md#layout-sweep-v26-2026-10-30)). The guard
+held: every stage ran, no row was cut or killed, the sweep has at least
+100 rows with a result.
+
+- **Layout sweep v26**: **62 of 109 pass the strict rule** (62 per
+  type), 2658 unconnected in all, strict errors 40, 2 without a result.
+  Against the nightly of 2026-10-29: better 0, same 107, worse 0, strict
+  passes 62 -> 62.
+- **Medians against the designer's**: vias x0.68, length x1.04, open
+  0.000 (mean 0.100), bends x1.12, stair-steps +56, crossings +1.
+- **Matched designer tier** (budget scale 0.675): 68 strict passes (71
+  per type); over the 100 target boards placement 76 %, routing 24 % of
+  the open connections.
+- **Placement costs most** on video (+201: 202 / 1), Batch_1 (+153: 156
+  / 3), SmartSpin2k_Panelized (+115: 115 / 0), SNSP-CPU-01 (+76: 111 /
+  35), OpenESC-30x30 4in1 (+73: 88 / 15).
+- **Worse beyond noise**: none.
+
 ## Measured on 2026-10-29 (nightly: layout sweep v25, matched designer tier)
 
 Written by the nightly from `build/nightly/2026-10-29/` (main 1f0ca50;
