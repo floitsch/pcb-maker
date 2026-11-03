@@ -469,6 +469,9 @@ pub struct CrossingState<'a> {
     /// Lines `count_kept` took from their kept counts (for the tests).
     #[cfg(test)]
     kept_hits: u64,
+    /// New lines `count_fresh` took from a kept one's count (for the tests).
+    #[cfg(test)]
+    fresh_hits: u64,
     free: Vec<u32>,
     grid: LineGrid,
     /// Per line, the stamp of the query that saw it last.
@@ -606,6 +609,8 @@ impl<'a> CrossingState<'a> {
             line_cache: Vec::new(),
             #[cfg(test)]
             kept_hits: 0,
+            #[cfg(test)]
+            fresh_hits: 0,
             free: Vec::new(),
             grid: LineGrid::new(bounds, line_count),
             seen: Vec::new(),
@@ -850,11 +855,14 @@ impl<'a> CrossingState<'a> {
             let line = self.lines[id as usize];
             let cache = self.line_cache[id as usize];
             if cache.at > 0 {
-                let versions = &self.grid.versions;
-                let mut fresh = true;
-                self.grid.walk(line.a, line.b, |cell| {
-                    fresh &= versions[cell] < cache.at;
-                });
+                let fresh = cache.at > self.grid.version || {
+                    let versions = &self.grid.versions;
+                    let mut fresh = true;
+                    self.grid.walk(line.a, line.b, |cell| {
+                        fresh &= versions[cell] < cache.at;
+                    });
+                    fresh
+                };
                 if fresh {
                     #[cfg(test)]
                     {
@@ -923,6 +931,116 @@ impl<'a> CrossingState<'a> {
                 (found, booked),
                 (direct, direct_work),
                 "lines {ids:?}: (crossings, work) from the lines' kept counts against the grid's"
+            );
+        }
+        found
+    }
+
+    /// `count(fresh, nets)` of the anneal's new lines `fresh` (out of the
+    /// grid) of the moved parts' nets `nets`, each line once: a new line
+    /// with the ends of one of its net's kept lines whose count is the
+    /// grid's of now (`LineCache`, as `before` left it) meets the lines that
+    /// one meets and crosses those it crosses, less the kept lines of the
+    /// other moved nets (`count` passes the moved nets' kept lines by); the
+    /// others are counted through the grid. Half the anneal's new lines
+    /// are a kept one again (the tree's edges away from the moved pins:
+    /// MegaDrive 1.5 of 2.8 million, 2026-11-04). The same count and work;
+    /// checked against `count` in debug builds and with
+    /// `PCB_PLACER_CHECK_OVERLAP`.
+    fn count_fresh(&mut self, fresh: &[u32], nets: &[usize]) -> u64 {
+        let started = profile::now();
+        let check_from = self.check.then(crate::work);
+        let query = Self::next_stamp(&mut self.query, &mut self.subject);
+        if query == 1 {
+            self.touched.iter_mut().for_each(|mark| *mark = 0);
+        }
+        for &net in nets {
+            self.touched[net] = query;
+        }
+        for &id in fresh {
+            self.subject[id as usize] = query;
+        }
+        let bits = |point: Point| [point[0].to_bits(), point[1].to_bits()];
+        let mut found = 0u64;
+        let mut walked = 0u64;
+        let mut met = 0u64;
+        let mut near = std::mem::take(&mut self.near);
+        for &id in fresh {
+            let line = self.lines[id as usize];
+            let (a, b) = (bits(line.a), bits(line.b));
+            let same = self.net_lines[line.net].iter().copied().find(|&kept| {
+                let kept = &self.lines[kept as usize];
+                bits(kept.a) == a && bits(kept.b) == b
+            });
+            if let Some(kept) = same {
+                let cache = self.line_cache[kept as usize];
+                if cache.at > self.grid.version {
+                    // Its crossings with the other moved nets' kept lines
+                    // are in the kept count, not in this one.
+                    let mut moved = 0u64;
+                    for &net in nets {
+                        if net == line.net {
+                            continue;
+                        }
+                        for &other in &self.net_lines[net] {
+                            let theirs = &self.lines[other as usize];
+                            if lines_cross(line.a, line.b, theirs.a, theirs.b) {
+                                moved += 1;
+                            }
+                        }
+                    }
+                    walked += cache.cells as u64;
+                    met += cache.met as u64;
+                    found += cache.crossings as u64 - moved;
+                    #[cfg(test)]
+                    {
+                        self.fresh_hits += 1;
+                    }
+                    continue;
+                }
+            }
+            let stamp = Self::next_stamp(&mut self.stamp, &mut self.seen);
+            near.clear();
+            let (grid, seen) = (&self.grid, &mut self.seen);
+            walked += grid.walk(line.a, line.b, |cell| {
+                for &other in &grid.cells[cell] {
+                    if seen[other as usize] != stamp {
+                        seen[other as usize] = stamp;
+                        near.push(other);
+                    }
+                }
+            }) as u64;
+            met += near.len() as u64;
+            for &other in &near {
+                let theirs = self.lines[other as usize];
+                if theirs.net == line.net
+                    || self.subject[other as usize] == query
+                    || self.touched[theirs.net] == query
+                {
+                    continue;
+                }
+                if lines_cross(line.a, line.b, theirs.a, theirs.b) {
+                    found += 1;
+                }
+            }
+        }
+        self.near = near;
+        crate::add_work(walked + at_rate(met, MET_WORK));
+        profile::add(|tally| {
+            tally.cells += walked;
+            tally.met += met;
+        });
+        profile::lap(started, |tally, nanos| tally.count_nanos += nanos);
+        if let Some(start) = check_from {
+            let booked = crate::work() - start;
+            let direct_start = crate::work();
+            let direct = self.count(fresh, nets);
+            let direct_work = crate::work() - direct_start;
+            crate::add_work_back(direct_work);
+            assert_eq!(
+                (found, booked),
+                (direct, direct_work),
+                "lines {fresh:?}: (crossings, work) of the new lines from the kept ones' counts against the grid's"
             );
         }
         found
@@ -1374,9 +1492,9 @@ impl<'a> CrossingState<'a> {
             }
             found = self.count(&fresh, &nets);
         } else {
-            // Against the kept lines through the grid, among themselves
-            // directly.
-            found = self.count(&fresh, &nets);
+            // Against the kept lines through the grid (`count_fresh`),
+            // among themselves directly.
+            found = self.count_fresh(&fresh, &nets);
             let mut work = 0u64;
             for (index, &first) in fresh.iter().enumerate() {
                 let one = self.lines[first as usize];
@@ -2064,7 +2182,11 @@ mod tests {
                 state.settle(&next, &moved, false, 0);
                 continue;
             }
+            // `after` from the kept lines' counts: checked against `count`
+            // (count and work) inside.
+            state.check = true;
             let late = state.after(&next);
+            state.check = false;
             assert_eq!(late, after);
             let keep = random() < 0.7;
             state.settle(&next, &moved, keep, late as i64 - early as i64);
@@ -2090,6 +2212,11 @@ mod tests {
             state.kept_hits > 500,
             "{} kept counts taken",
             state.kept_hits
+        );
+        assert!(
+            state.fresh_hits > 50,
+            "{} new lines from kept counts",
+            state.fresh_hits
         );
     }
 
