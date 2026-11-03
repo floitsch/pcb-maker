@@ -1736,10 +1736,53 @@ pub fn overlap_warnings(
     // The parts the layout holds (`held_parts`); a board the lowering
     // refuses is the placement's to report, not the input check's.
     let held = held_parts_as_given(&pcb, &resolved).unwrap_or_default();
+    let held = match &resolved.constraints {
+        Some(KiCadConstraintsSource::Inline(constraints)) => {
+            without_parts_placed_elsewhere(&pcb, held, constraints)
+        }
+        _ => held,
+    };
     Ok(held_parts_overlapping(&pcb, &held)?
         .into_iter()
         .map(|(first, second, what)| overlap_warning(&first, &second, &what))
         .collect())
+}
+
+/// `held` without the parts a `place` entry puts at `x`, `y`: they are
+/// held where the entry puts them, not where the input has them, so their
+/// input position says nothing about an overlap (a fresh netlist import
+/// stacks every part at one point: trial 4's six thumb keys placed at the
+/// designer's positions gave 15 warnings "fixed parts SW19 and SW20
+/// overlap" ahead of every other next action). The lowering checks the
+/// held parts again at the positions the constraints give them.
+pub(crate) fn without_parts_placed_elsewhere(
+    pcb: &Expr,
+    mut held: HeldParts,
+    constraints: &KiCadPlacementConstraints,
+) -> HeldParts {
+    let placed: BTreeSet<&str> = constraints
+        .place
+        .iter()
+        .filter(|entry| entry.x.is_some() && entry.y.is_some())
+        .map(|entry| entry.part.as_str())
+        .collect();
+    if placed.is_empty() {
+        return held;
+    }
+    for (index, footprint) in pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+        .enumerate()
+    {
+        let reference = footprint_reference(footprint).unwrap_or_default();
+        if placed.contains(reference.as_str())
+            && let Some(slot) = held.0.get_mut(index)
+        {
+            *slot = false;
+        }
+    }
+    held
 }
 
 /// The warning for two held parts on top of each other.
@@ -4227,6 +4270,15 @@ mod tests {
             warning.starts_with("fixed parts C1 and C2 overlap"),
             "{warning}"
         );
+        // Placed with x and y elsewhere, C2's input position is not where
+        // it will be held: nothing to warn of here (the lowering checks it
+        // where the entry puts it).
+        let constraints: KiCadPlacementConstraints =
+            serde_json::from_str(r#"{"version": 1, "place": [{"part": "C2", "x": 25, "y": 15}]}"#)
+                .unwrap();
+        let held = held_parts(&pcb, &config).unwrap();
+        let held = without_parts_placed_elsewhere(&pcb, held, &constraints);
+        assert!(held_parts_overlapping(&pcb, &held).unwrap().is_empty());
         // Not fixed, C2 is the placer's to move: nothing to warn of.
         let fixed = ["C1".to_string(), "C3".to_string(), "U1".to_string()];
         let config = KiCadBoardPlacerConfig {
