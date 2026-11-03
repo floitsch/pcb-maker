@@ -494,6 +494,7 @@ fn release_gate(
     tally: &crate::verdict::DrcTally,
     dru: &str,
     input: Option<&crate::verdict::KiCadInputItems>,
+    alone: bool,
 ) -> KiCadFabDrc {
     use crate::verdict::{Apart, unreferenced_apart};
     let apart = |which: Apart| -> Vec<&crate::verdict::DrcFinding> {
@@ -524,7 +525,7 @@ fn release_gate(
         errors,
         footprint_note: footprint_findings_note(&own, dru),
         footprint_own,
-        input_note: crate::verdict::input_findings_note(&board, dru),
+        input_note: crate::verdict::input_findings_note(&board, dru, alone),
         input_own,
         unconnected_items: tally.unconnected,
         warnings: tally.warnings,
@@ -607,7 +608,12 @@ pub fn fab_kicad_board(
             crate::verdict::input_items_of(&parse(&text).map_err(input_error)?, &pcb)
         }
     };
-    manifest.drc = release_gate(&tally_drc(&drc), &dru.display().to_string(), Some(&input));
+    manifest.drc = release_gate(
+        &tally_drc(&drc),
+        &dru.display().to_string(),
+        Some(&input),
+        options.input.is_none(),
+    );
     let schematic = directory.join(format!("{board_id}.kicad_sch"));
     if schematic.is_file() {
         let erc_path = output.join("erc.json");
@@ -980,6 +986,7 @@ mod tests {
             &tally_drc(&report(vec![own.clone()])),
             "p/b.kicad_dru",
             None,
+            true,
         );
         assert!(gate.clean && gate.errors.is_empty());
         assert_eq!(
@@ -999,6 +1006,7 @@ mod tests {
             &tally_drc(&report(vec![apart.clone()])),
             "p/b.kicad_dru",
             None,
+            true,
         );
         assert!(!gate.clean && gate.footprint_note.is_none());
         assert_eq!(finding_lines(&report(vec![apart]), 20, None).len(), 1);
@@ -1030,17 +1038,19 @@ mod tests {
             &tally_drc(&report(vec![edge.clone()])),
             "p/b.kicad_dru",
             Some(&input),
+            true,
         );
         assert!(gate.clean, "{:?}", gate.errors);
         assert_eq!(
             gate.input_own,
             BTreeMap::from([("copper_edge_clearance".to_string(), 1)])
         );
-        assert!(
-            gate.input_note
-                .unwrap()
-                .contains("A.memberOfFootprint('J1')")
-        );
+        let note = gate.input_note.unwrap();
+        assert!(note.contains("A.memberOfFootprint('J1')"));
+        // Judged on its own, the note does not claim an input kept the
+        // parts (trial 4), and names --input.
+        assert!(note.contains("judged on its own (no --input)"), "{note}");
+        assert!(!note.contains("kept where the input has it"), "{note}");
         assert!(finding_lines(&report(vec![edge.clone()]), 20, Some(&input)).is_empty());
         // The designer's own short, or a track at the edge, blocks.
         for blocking in [
@@ -1070,6 +1080,7 @@ mod tests {
                 &tally_drc(&report(vec![edge.clone(), blocking.clone()])),
                 "p/b.kicad_dru",
                 Some(&input),
+                true,
             );
             assert!(
                 !gate.clean && gate.errors.values().sum::<usize>() == 1,

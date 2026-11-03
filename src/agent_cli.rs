@@ -1259,7 +1259,7 @@ fn drc(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     if let Some(note) = pcb_kicad::footprint_findings_note(&own, &dru) {
         println!("footprint: {note}");
     }
-    if let Some(note) = pcb_kicad::input_findings_note(&board_own, &dru) {
+    if let Some(note) = pcb_kicad::input_findings_note(&board_own, &dru, input_project.is_none()) {
         println!("input: {note}");
     }
     let failed =

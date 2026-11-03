@@ -872,7 +872,13 @@ fn rule_name_fits(name: &str) -> bool {
 /// rule of KiCad's changes a solder mask bridge: `bridged_mask`,
 /// `solder_mask_expansion` and `clearance` with `(severity ignore)` left
 /// Explorer's three as they were). `None` without such findings.
-pub fn input_findings_note(findings: &[&DrcFinding], dru: &str) -> Option<String> {
+///
+/// `alone`: the board judged on its own (`drc-kicad-board` and
+/// `fab-kicad-board` without `--input`), where every part counts as kept:
+/// the note says so and names `--input`, instead of claiming the parts
+/// stayed where an input has them (trial 4: a layout's keys placed over
+/// other keys' holes were called "a part kept where the input has it").
+pub fn input_findings_note(findings: &[&DrcFinding], dru: &str, alone: bool) -> Option<String> {
     if findings.is_empty() {
         return None;
     }
@@ -989,8 +995,16 @@ pub fn input_findings_note(findings: &[&DrcFinding], dru: &str) -> Option<String
             listed.join(", ")
         ));
     }
+    let what = if alone {
+        "are the board's own ({}): judged on its own (no --input), every part, zone and board graphic counts as the board's, never a track or via, and none of them is electrical between two nets, so they are not judged and fab-kicad-board releases with them; on a layout's result, --input <the project it was laid out from> judges the parts the layout placed as its verdict did (a part it put at the edge or at another part's cutout then counts). KiCad's own DRC still reports them; to accept them there, {}"
+    } else {
+        "are the input's ({}): every item of each is a part kept where the input has it, the board edge, the input's own board graphics or zones, none a track, via, pour or part of this run, and none is electrical between two nets (input_findings), so they are not judged and fab-kicad-board releases with them; the designer's board as --reference judges them by place instead. KiCad's own DRC still reports them; to accept them there, {}"
+    };
+    let (head, tail) = what.split_once("{}").unwrap();
+    let (middle, end) = tail.split_once("{}").unwrap();
+    debug_assert!(end.is_empty());
     Some(format!(
-        "{} DRC findings are the input's ({}): every item of each is a part kept where the input has it, the board edge, the input's own board graphics or zones, none a track, via, pour or part of this run, and none is electrical between two nets (input_findings), so they are not judged and fab-kicad-board releases with them; the designer's board as --reference judges them by place instead. KiCad's own DRC still reports them; to accept them there, {}",
+        "{} DRC findings {head}{}{middle}{}",
         findings.len(),
         counts(
             &kinds
@@ -2111,7 +2125,7 @@ fn next_actions(
         },
     );
     actions.extend(footprint_findings_note(footprint, &dru));
-    actions.extend(input_findings_note(input, &dru));
+    actions.extend(input_findings_note(input, &dru, false));
     if !facts.board_mark_overlaps.is_empty() {
         let shown = 6;
         let mut listed: Vec<String> = facts
