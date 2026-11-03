@@ -610,7 +610,9 @@ required), the drills 0.2225 mm to it (hole clearance 0.2). MIDAS-MK1
 shows the placement's side: the placer does not know a via goes through
 under the BGA and put a 0603 on the back under B2, so B2 stays open (its
 via is `refused`); a placement that keeps the back free under enclosed
-pads is the next step.
+pads is the next step (since 2026-10-28 the placer keeps it free:
+docs/placer.md, "Length maxima and the far side of vias in pads
+(2026-10-28)"; MIDAS-MK1 then places all five vias).
 
 *The expansion tier* (route mode, 8 x 1, 30 s): 46 of 46 boards byte for
 byte identical (558 unconnected, 24 strict passes, 0 new strict
@@ -625,9 +627,10 @@ enclosed pad. MIDAS-MK1.1 on the head rebased on main 39fc92d6
 vias, work 632.6 s).
 
 Default: on where the designer's board has them (it is the designer's
-statement about the fab, and nothing changes elsewhere). Open: the
-placer keeping the other side free under a BGA's enclosed pads
-(MIDAS-MK1), blind or micro vias, a dogbone fan-out for 0.65 mm and
+statement about the fab, and nothing changes elsewhere). Open: blind or
+micro vias (the placer keeps the other side free under a BGA's enclosed
+pads since 2026-10-28: docs/placer.md, "Length maxima and the far side of
+vias in pads"), a dogbone fan-out for 0.65 mm and
 coarser BGAs whose balls a track can leave one at a time (the enclosure
 test sees a way out there; capacity is the router's).
 
@@ -4229,7 +4232,10 @@ distance of the net's pads, which the placer does not know (oro's U1
 turned with its ULPI pins away from U6); a near-constraint from the rule
 for the two parts (pins of the bounded nets within the maximum less a
 margin) would be the placer's share. The router cannot make a net shorter
-than its pads lie apart.
+than its pads lie apart. Since 2026-10-28 the placer keeps such a net's
+pins within 0.8 of the maximum (`length_maxima`; docs/placer.md, "Length
+maxima and the far side of vias in pads (2026-10-28)"): oro's layout
+12 -> 5 `length_out_of_range`, seven ULPI nets met at 31.500 mm.
 
 ## CPU profile (2026-10-25)
 

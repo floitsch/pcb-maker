@@ -6166,6 +6166,123 @@ around one part (Glasgow's U30, split72_left's U10, MegaDrive's U4),
 where the window is the honest unit and the placement outside it is
 meant to stay.
 
+## Length maxima and the far side of vias in pads (2026-10-28)
+
+Two rules the router keeps and the placer did not know of, both read from
+the router's settings of the layout (`router_rules`, set by
+`layout_placer_config` only where one applies), both no-ops elsewhere:
+on a board without an admitted via-in-pad footprint with enclosed pads
+and without a `length` rule with a maximum the lowered problem is the one
+before, byte for byte.
+
+**The far side of a via in a BGA's pad** (`via_in_pad_far_side`, on). The
+router puts a via through an enclosed BGA pad where the designer did
+(docs/router.md, "Vias in BGA pads (2026-10-28)"; via_in_pad.rs admits the
+footprint: the designer's vias in its pads, which run.py passes as the
+router's `via_in_pad` entries, or the opt-in). The via goes through the
+board: on MIDAS-MK1 our placement put C112 (an 0603 on B.Cu) under U106's
+B2, and the router refused B2's via (no size kept its clearance to C112's
+pads), so B2 stayed open. Now the lowering asks the router's plan for the
+vias it will put in the enclosed pads of every admitted footprint,
+judged by the footprint alone (`far_side_vias`: its own pads and the vias
+placed in its pads before, not the board's other parts, which the placer
+moves), and adds each via to its footprint's `far_side`: other parts on
+the other side keep off it as off a through-hole pin, in the anneal (its
+bodies' overlap with far-side boxes, on by default), the legaliser, the
+refinement and every later lowering of the layout (the moves). The box is the via's square of
+half its diameter, or of its drill's radius plus the hole clearance less
+the copper clearance where that is larger (the levels and KiCad's
+legality that test far-side boxes against the other side's pads add the
+copper clearance). Only enclosed pads count (MIDAS's U106: B2, C2, M5,
+M6, N2; byrantech's laptop motherboard's WLCSP middles, whose vias the
+router refuses anyway): the capacitors under the rest of a BGA keep their
+places. Stricter than the designer: MIDAS-MK1's own C112 lies with its
+body over B2 and C2, its pads 0.29 mm from their vias; the far side
+keeps bodies off the via, not only pads (a body's box against a via is
+what the anneal sees).
+
+**Length maxima** (`length_maxima`, on). A net's `length` rule with a
+maximum (`Config::length_bounded`, the router's reading of the project's
+`.kicad_dru`) cannot be met where its pads lie further apart than the
+maximum: the router cannot make a net shorter than that. The nightly's
+layout of oro's link had ULPI_D3 to D6 at 32.7 to 37.6 mm octilinear
+against the rule's 31.6 (U6, the ULPI PHY, movable; U1, the MCU, fixed
+by the task). Now every two pins of such a net on different parts, not
+both fixed (at most 16 pins a net), are a relation (`Relation::Within`,
+automatic: not reported as the user's constraints) whose violation is
+the pins' octilinear distance beyond 0.8 times the maximum, plus
+`WITHIN_STEEPNESS` (20) times the distance beyond the maximum. It is
+priced like any relation (`constraint_weight`, 50 mm of wire a mm of
+violation): the global placement's relation forces (steeper beyond the
+maximum), the anneal, the refinement and the relation repair (the
+movable part moves, the smaller of two movable), and the legaliser
+prices it at every spot of either part (the near relations only with
+`decoupling_near`). Beyond the maximum a millimetre costs 1050 mm of
+wire: no wirelength pays for it; "illegal" is that price, not a
+legality test, so a part with no spot within the maximum still gets one
+(the rule is as strong as the movable parts allow; two fixed parts are
+not related at all). The rule's minimum is not the placer's: the
+meanders lengthen a net (docs/router.md, "Length and skew rules").
+
+**Measured** (layout mode, tasks v7, the sweep's budget and seed, two
+threads; off build/bin/pcb-maker-x1880 = main 1a005be4, on
+build/bin/pcb-maker-prules1-a = this branch's 47c51bfd; KiCad unconnected /
+strict pass / KiCad errors / vias / work s; outputs build/prules1/):
+
+| board, seed | off | on | vias in U106's pads, off / on |
+| --- | --- | --- | --- |
+| MIDAS-MK1, 1 | 1 / no / 0 / 248 / 1387 | 1 / no / 0 / 254 / 1497 | 4, B2 refused (C112 under it) / 5 |
+| MIDAS-MK1, 101 | 1 / no / 0 / 237 / 1463 | **0 / pass** / 0 / 222 / 1011 | 4, refused / 5 |
+| MIDAS-MK1, 201 | 3 / no / 0 / 198 / 1449 | **0 / pass** / 0 / 244 / 876 | 4, refused / 5 |
+| MIDAS-MK1.1, 1 | **0 / pass** / 0 / 265 / 633 | 2 / no / 0 / 191 / 1384 | 5 / 5 |
+| MIDAS-MK1.1, 101 | 5 / no / 0 / 209 / 1307 | **0 / pass** / 0 / 222 / 593 | 3, two refused / 5 |
+| MIDAS-MK1.1, 201 | 1 / no / 0 / 182 / 1413 | 1 / no / 0 / 210 / 1293 | 4, refused / 5 |
+| oro link, 1 | 10 / no / 12 length / 497 / 1136 | 9 / no / 5 length / 548 / 1268 | - |
+| oro link, 101 | 4 / no / 6 length / 511 / 1343 | 5 / no / 4 length / 542 / 1321 | - |
+
+Summed: MIDAS-MK1 unconnected 5 -> 1, strict passes 0 -> 2 of 3;
+MIDAS-MK1.1 6 -> 3, 1 -> 1 of 3; the router refused an enclosed pad's
+via on five of the six off runs and on none of the on runs (the open
+items left on are a GND island and other nets, not U106's balls). Seed 1
+of MIDAS-MK1.1 is the one loss: its off placement kept the back free
+already, and the rule's boxes moved the anneal to another placement
+(first route open terminals 2 -> 12); one run a side cannot tell that
+reshuffle from a cost. oro: `length_out_of_range` 12 -> 5 and 6 -> 4,
+unconnected 14 -> 14 summed, vias +82.
+
+oro: the placement keeps every ULPI pad pair within 25.3 mm (0.8 of the
+maximum; off: DIR, NXT and STP 32.9 to 35.6 mm, over the maximum). Of
+the twelve nets seven now end at 31.500 mm (meanders of 0.2 to 16.3 mm),
+none off; the five findings left are D0 open, D5, D6 and D7 longer by
+their routes' detours (33.3 to 43.2 mm: the length repair found no
+shorter way round the other nets), and NXT short (24.1 mm, the meander
+found room for 5.5 of 12.9 mm). Off: five over the maximum by detours,
+two by their pads already (DIR and STP, 32.3 and 33.0 mm apart), five
+open. At seed 101 eight nets meet the rule (off six), the pads at most
+29.4 mm apart (off 32.6). Shorter pads make longer meanders: the rule's
+minimum (31.4 mm) then needs room beside the tracks (NXT above), which
+the placer does not keep.
+
+**Identity** (the rules are no-ops where they do not apply): the
+eleven dense boards (layout, seed 1, one board at a time on two
+threads), 11 of 11 result boards byte for byte identical (928
+unconnected, 1 strict pass, 8783 vias, work 14324 s both; eight of them
+get the designer's `via_in_pad` entries, none an enclosed pad, none a
+length rule); the short tier (its third of the budget, two threads), 11
+of 12 identical, the twelfth MIDAS-MK1.1, which has the rule's
+footprint (off 0 unconnected / pass / 267 vias, on 1 / no / 242; all
+five vias placed on both); the four fingerprint boards (route mode, no
+placement) identical boards and fingerprint lines. Of the 109 sweep
+boards only oro has a length rule with a maximum (Sisu's is a skew,
+docs/router.md, "Length and skew rules"); ducktop2's left_io and
+right_io (the expansion tier, route mode) have none in their
+`.kicad_dru`. Unit tests: `a_part_on_the_far_side_of_an_admitted_bgas_via_in_pad_is_illegal_and_moves`,
+`a_length_bounded_nets_pins_are_kept_within_its_maximum`
+(board_placer/tests.rs; each also checks that without the rule or with
+its switch off the lowered problem is the same) and
+`a_length_relation_measures_turned_pins_octilinearly_and_steers_the_legaliser`
+(pcb-placer legal.rs).
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a

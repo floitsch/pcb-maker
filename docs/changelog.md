@@ -11,6 +11,33 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-03 (the placer keeps length maxima and the far side under vias in BGA pads)
+
+Branch placer-via-length; binary `build/bin/pcb-maker-prules1-a` (47c51bfd
+on main 1a005be4) against x1880; outputs in `build/prules1/`.
+docs/placer.md, "Length maxima and the far side of vias in pads
+(2026-10-28)", has the rules and the tables.
+
+- **The far side of a via in a BGA's pad** (`via_in_pad_far_side`, on):
+  the vias the router's via-in-pad rule will put in an admitted
+  footprint's enclosed pads (via_in_pad.rs `far_side_vias`, the plan
+  judged by the footprint alone) are far-side boxes of the footprint:
+  parts on the other side keep off them in the anneal, the legaliser
+  and the refinement. MIDAS-MK1 and MK1.1 at seeds 1, 101, 201: a via
+  refused on 5 of 6 off runs, on none on; unconnected 5 -> 1 and 6 -> 3,
+  strict passes 0 -> 2 and 1 -> 1 of 3.
+- **Length maxima** (`length_maxima`, on): every two pins of a net with a
+  `length` maximum (`length_bounded_nets`) on different parts, not both
+  fixed, are an automatic relation (`Relation::Within`): the octilinear
+  distance beyond 0.8 of the maximum, 20 times more beyond the maximum,
+  priced in the global placement, the anneal, the legaliser (always for
+  these), the refinement and the relation repair. oro link at seeds 1 and
+  101: `length_out_of_range` 12 -> 5 and 6 -> 4 (seven and eight nets met
+  at 31.500 mm), unconnected 14 -> 14 summed.
+- **No-ops elsewhere**: the eleven dense boards 11 of 11 and the short tier
+  11 of 12 result boards byte for byte identical (the twelfth MIDAS-MK1.1,
+  the rule's board), the four fingerprint boards identical.
+
 ## Committed on 2026-11-03 (panels of copies keep off their frames and tabs; connectors and the designer's overhangs may reach over them)
 
 Branch copies-frames; binaries build/bin/pcb-maker-copies1-a to -h (the
