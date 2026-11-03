@@ -3182,6 +3182,35 @@ designers' crossings) 2 mm took crossings 452 to 410 and 6 mm 437 to 365
 (of the ten run at 6), but SNSP-CPU-01 went 6 to 11 unconnected (22 at
 6 mm) and video 0 to 1.
 
+**After a move (2026-11-03).** `mark_pin_rows` ran at construction only,
+so `update` (the layout's moves and the move descent's trials) kept a
+moved part's gap marks where the part had been and marked none where it
+went; the fan-out step rebuilt them only with `fanout` on. `update` now
+calls `mark_pin_rows` with and without the fan-out: every mark is built
+again from the new board (the old ones go, the moved parts' gaps are
+marked at their new place) before `build_hot`, and the fan-out's old via
+sites are cleared before `mark_via_cells`. Its work goes on the work
+clock as the fan-out's does, eight nodes a search expansion: the nodes
+the gaps' boxes visit and the marks sorted (`pin_row_nodes` in
+`PCB_ROUTER_BUILD_TRACE`), 2 600 to 13 000 nodes on the dense boards
+(4in1-mini to protoesp), 330 to 1 600 expansions, about
+0.0001 to 0.0005 s of work a move against the 0.03 to 1.8 s the update's
+map rebuild counts (`update_work`). `Router::new` books nothing more
+(route mode's work and fingerprints unchanged: the four identical line
+by line, the routed boards byte-identical, x1877 against
+pcb-maker-gaps1-a). Only a move of a part with a pin row changes
+anything (an IC, an RGB LED's four pads; not a two-pad passive or a
+through-hole part): on the eleven dense boards (layout, placer seed 1,
+two threads, the sides side by side) only poly_kybd_split72_left
+changed (U8's trials, then LED4 moved and kept): 7 and 7 unconnected,
+vias 1098 to 1070, the sum 928 and 928, strict passes 1 and 1; on the
+short tier spell_tome_bottom (after D1, a four-pad LED, moved: R1's
+trials) and MIDAS (one of U501's trials; the board the same) changed,
+unconnected 23 and 23, strict passes 8 and 8. The fix without the work
+booking gives split72's and spell_tome's boards byte for byte: the marks
+made the difference. Test
+`a_part_moved_by_update_takes_its_pin_row_gaps_along` (router/tests.rs).
+
 ## Differential pairs (2026-10-23, phases 2 to 4 2026-10-24, polarity and skew 2026-10-25, runs not routed and return vias 2026-10-26)
 
 `diff_pairs` in the router settings (route mode). **Default by need**

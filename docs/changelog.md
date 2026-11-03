@@ -11,6 +11,47 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-03 (pin-row gaps follow a moved part)
+
+Branch pin-row-gaps-update; binaries `build/bin/pcb-maker-gaps1-a` (the
+fix) against x1877 (main with the fan-out, off), `-nobook` (the fix
+without the work booking, an attribution check); outputs in
+`build/gaps1-*`. docs/router.md, "Pin-row cost", "After a move".
+
+- **The bug** (found by the fan-out round): `Router::update`, the
+  layout's moves and the move descent's trials, never rebuilt the
+  pin-row gap marks (`mark_pin_rows` ran at construction only), so a
+  moved part's gaps stayed where it had been and none were where it
+  went; the fan-out branch rebuilt them only with `fanout` on.
+- **The fix**: `update` calls `mark_pin_rows` with and without the
+  fan-out (every mark built again from the new board) and clears the
+  fan-out's old via sites before `mark_via_cells`. The marking's work,
+  the gaps' box nodes and the marks sorted, goes on the work clock at
+  eight nodes an expansion: 2 600 to 13 000 nodes on the dense boards,
+  about 0.0001 to 0.0005 s of work a move (the update's map rebuild
+  counts 0.03 to 1.8 s). `PCB_ROUTER_BUILD_TRACE` names `pin_row_nodes`.
+- **Measured** (KiCad unconnected / strict passes / new strict findings
+  / vias / work s): route mode does not move a part: the four
+  fingerprints identical line by line, the routed boards byte-identical.
+  The eleven dense boards (layout, seed 1): 928 / 1 / 6 / 8783 / 14324
+  and 928 / 1 / 6 / 8755 / 14297; only poly_kybd_split72_left changed
+  (U8's trials kept another pose, then LED4 moved too: 7 and 7
+  unconnected, vias 1098 to 1070); the other boards' moves were of
+  passives and through-hole parts (no pin rows), their boards
+  byte-identical. The short tier: 23 / 8 / 7 / 1124 / 2935 both sides;
+  spell_tome_bottom (after D1, a four-pad RGB LED, moved: R1's trials,
+  still a pass, vias 7 and 7) and MIDAS (one of U501's trials, the board
+  the same) changed. No pass lost. With the booking taken out
+  (`-nobook`) spell_tome_bottom and poly_kybd_split72_left are the
+  fix's boards byte for byte (the same trials): the marks, not the
+  work, made the difference; x1877 run again on spell_tome_bottom gives
+  its board again (deterministic).
+
+Test: `a_part_moved_by_update_takes_its_pin_row_gaps_along` (pcb-router,
+router/tests.rs; with and without the fan-out: marks at the new place,
+none at the old, the work booked, the reroute goes round the row; fails
+on the old `update`).
+
 ## Committed on 2026-11-03 (the race ranks its probes by the ripped count by default)
 
 Branch race-ripped-count on main 1a005be4 (x1880); snapshots x15191 (the
