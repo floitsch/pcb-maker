@@ -432,7 +432,10 @@ def bootstrap(arguments):
             for _ in range(arguments.resamples):
                 picks = [rng.choice(SEEDS) for _ in SEEDS]
                 def resample(pairs):
-                    return {b: {i: pairs[b][s] for i, s in enumerate(picks) if s in pairs[b]} for b in boards}
+                    # (A board without a row at a picked seed, the quarter's
+                    # unplaced MegaDrive and Glasgow, leaves the resample.)
+                    out = {b: {i: pairs[b][s] for i, s in enumerate(picks) if s in pairs[b]} for b in boards}
+                    return {b: v for b, v in out.items() if v}
                 f = placer_ab.statistics_of(resample(base), reference)["weighted"]
                 c = placer_ab.statistics_of(resample(cheap), ref)["weighted"]
                 p_full = placer_ab.noise_p(null, f)

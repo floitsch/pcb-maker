@@ -5719,11 +5719,11 @@ The stages:
 - **quarter budget**: the same seeds, binaries and settings at
   `--budget-scale 0.25` (`build/proto1-q`, the race's off side by the
   same rule: off runs only where the on report's unfinished count picks
-  another placement). **Pending**: the 165 layouts were queued at 10:50
-  through the memory ledger, which admitted none of them by 13:35 (its
-  floor held every non-nightly request: placement checks of another
-  agent reserved 2.2 to 6 GB each at 23 to 135 MB resident); the table
-  below has no quarter rows yet.
+  another placement: 18 of the 46 races with a probe, plus three identity
+  checks). Run 2026-10-28 16:05 to 2026-11-03 22:00 (the memory ledger
+  admitted none of them for five hours on 2026-10-28, and a reboot
+  interrupted the pool; every row ended by itself); 110 + 76 layouts,
+  the stage's own section below.
 
 **The calibration** (`calibrate.py analyse`; 55 pairs each; the
 weighted change with the noise file's weights and its two p values, as
@@ -5755,7 +5755,10 @@ moved):
 | race, blocked exits | - | - | - | -0.2 % | NOT BETTER | 8106 -> 8103 | +0.17 | +0.33, 12/19, 7/7 |
 | race, channel overflow | - | - | - | -7.1 % | EXTEND | 226 -> 179 | -0.06 | -0.09, 7/19, 2/7 |
 | race, global overflow | - | - | - | -19.9 % | BETTER | 249 -> 213 | +0.41 | +0.47, 12/19, 5/7 |
-| either, quarter budget | pending | | | | | | | |
+| cross, quarter budget | -19.0 % | 0.013 / 0.013 | BETTER | -3.2 % | NOT BETTER | 1721 -> 1547 | +0.17 | +0.09, 22/41, 4/9 |
+| cross, quarter first route | -28.1 % | 0.070 / 0.000 | EXTEND | -0.0 % | NOT BETTER | 3093 -> 2772 | +0.16 | +0.03, 24/41, 5/9 |
+| race, quarter budget | -5.2 % | 0.271 / 0.270 | NOT BETTER | -0.8 % | NOT BETTER | 1297 -> 1264 | +0.09 | -0.07, 3/16, 5/7 |
+| race, quarter first route | -14.4 % | 0.292 / 0.045 | NOT BETTER | +1.7 % | NOT BETTER | 2225 -> 2143 | +0.19 | +0.06, 4/16, 6/7 |
 
 (The race's placement metrics see the race's pick, a routing decision:
 a placement-only run, which ends before the race, sees no difference
@@ -5790,9 +5793,18 @@ whose first route runs to the end of the budget: many open, no moves,
 the narrow-signal attempt only), MegaDrive 0.70, the 4in1 0.74, Glasgow
 0.67, split72_left 0.35, DSP-ADAU1452 0.36. The first-route stage is
 therefore about 55 % of the full protocol's cost, about 48 CPU hours on
-the crossings experiment, not the large saving the idea hoped for. (A
-measured sample of `stop_after_first_route` beside full layouts on the
-same binary is queued with the quarter rows: pending.)
+the crossings experiment, not the large saving the idea hoped for.
+Measured (`build/proto1-q/first-*`, `pcb-maker-proto1-a`, main
+f26f822f with the option, seed 1, the task budgets, 2 threads, an idle
+machine for the last rows): beside full layouts of the same binary on
+the three cheapest boards, the stopped layout took 0.67 of the CPU (the
+4in1 1277 against 1792 CPU s, the 4in1-mini 727 against 1001, the 0xCB
+panel 398 against 814) and reported the same first route (176, 118 and
+0 open terminals: the count is the full layout's). On all eleven boards
+the stopped layouts summed 3.3 CPU hours against 10.1 for x1851's full
+on-side rows of seed 1, a ratio of 0.33 across two binaries (main's
+layouts are cheaper since the placer rounds of 2026-10-28; not a pair).
+Per stopped layout 398 (the panel) to 1537 CPU s (video).
 
 **Reuse** (`calibrate.py reuse`): of the crossings experiment's 55 pairs
 (one binary) no placed board is the same on both sides (the anneal's
@@ -5825,8 +5837,76 @@ alone and run both sides on one binary, and for every rerun.
   is BETTER on both (-29.7 % and -19.9 %, own noise), with row
   correlations of +0.33 and +0.41: a candidate proxy for a later study,
   not yet a screen (its change Spearman +0.13 on the crossings).
-- **The quarter budget** is pending; it is the stage that could cut the
-  cost by four if it agrees.
+- **The quarter budget does not judge the levers** (below): it is
+  cheap (0.20 of the CPU) but measures another placer and another
+  router.
+
+### The quarter budget (2026-11-03)
+
+The 110 crossings layouts and the race's 55 on and 21 off layouts (the
+18 races whose pick changed and three identity checks: on the 0xCB panel
+and SmartSpin2k at seed 1 the off binary kept the on side's placement
+and wrote the same counts, 0 and 65 unconnected, 0 and 348 first-route
+open terminals) at `--budget-scale 0.25` (the layout's
+`total_seconds` 375 s, the moves 150 s, the polish 15 s), the same
+binaries, seeds and settings (`build/proto1-q/{cross,race}-q-*`).
+KiCad unconnected per board, full / quarter (off; on), and each
+board's Spearman over its ten rows between the two budgets:
+
+| Board | crossings: s1 | s101 | s201 | s301 | s401 | rows | race: rows |
+| --- | --- | --- | --- | --- | --- | ---: | ---: |
+| OpenESC 4in1 | 106 / 147; 88 / 116 | 125 / 121; 117 / 159 | 125 / 141; 109 / 135 | 109 / 157; 91 / 108 | 155 / 151; 64 / 118 | +0.58 | +0.27 |
+| OpenESC 4in1-mini | 81 / 102; 91 / 107 | 82 / 118; 70 / 110 | 99 / 130; 89 / 111 | 100 / 118; 105 / 117 | 83 / 127; 93 / 116 | +0.43 | -0.28 |
+| DSP-ADAU1452 | 11 / 71; 3 / 87 | 8 / 63; 3 / 55 | 28 / 58; 7 / 73 | 14 / 72; 13 / 72 | 5 / 61; 9 / 102 | -0.01 | -0.52 |
+| MegaDrive | - | - | 157 / 192; 190 / 135 | - | - | - | - |
+| 0xCB panel | 0 / 0; 0 / 0 | 0 / 0; 0 / 0 | 0 / 1; 0 / 0 | 0 / 0; 0 / 0 | 0 / 0; 0 / 0 | - | - |
+| split72_left | 21 / 105; 7 / 26 | 26 / 35; 21 / 21 | 21 / 21; 16 / 26 | 22 / 40; 25 / 28 | 28 / 31; 22 / 38 | +0.41 | -0.22 |
+| protoesp | 73 / 89; 49 / 67 | 75 / 66; 83 / 55 | 59 / 41; 67 / 58 | 70 / 76; 83 / 78 | 65 / 71; 51 / 82 | +0.02 | +0.33 |
+| Glasgow | - | - | - | - | - | - | - |
+| SmartSpin2k | 21 / 43; 64 / 444 | 28 / 499; 63 / 115 | 94 / 499; 85 / 455 | 36 / 499; 45 / 63 | 33 / 499; 34 / 499 | +0.01 | +0.70 |
+| SNSP-CPU-01 | 53 / 181; 111 / 172 | 123 / 195; 79 / 123 | 79 / 226; 57 / 124 | 43 / 213; 59 / 129 | 104 / 166; 55 / 177 | -0.12 | +0.21 |
+| video | 190 / 434; 202 / 444 | 287 / 401; 103 / 272 | 295 / 344; 238 / 313 | 134 / 375; 235 / 455 | 327 / 409; 216 / 499 | +0.05 | +0.22 |
+
+- **Two boards do not place.** At a quarter the placement gets 40 % of
+  375 s; Glasgow ("2 parts without a legal place", J5 and J2) on all
+  ten crossings rows and five race rows, MegaDrive (J2 and U3, or J111
+  and J7) on eight of ten and four of five: 18 of 110 and 9 of 55 rows
+  have no result. Glasgow carries the noise file's largest weight (88),
+  MegaDrive 21.
+- **The rest is another regime.** SmartSpin2k's quarter rows run to 499
+  open on half of them (the full rows 21 to 94); SNSP-CPU-01 and video
+  double; DSP-ADAU1452 goes from 3 to 28 to 54 to 102. Within a board the
+  quarter rows rank the full rows at +0.17 (crossings) and +0.09 (race)
+  on the mean, and the per-pair changes at +0.09 and -0.07: 22 of 41 and
+  3 of 16 pairs moved the way the full rows did, a coin.
+- **The verdicts.** On the noise file's weights the crossings come out
+  BETTER (-19.0 %, p 0.013), but the file's means are the full budget's
+  (a quarter row is two to five times larger, so the relative changes
+  are not the full stage's), and on the stage's own five off seeds the
+  change is -3.2 %, NOT BETTER (p 0.290). The race: -5.2 % and -0.8 %,
+  NOT BETTER on both, where the full stage says EXTEND. The quarter's
+  first route agrees no better (rows +0.16 and +0.19).
+- **Cost**: 15.9 CPU hours for the crossings' 92 layouts with a result
+  (17.3 with the 18 that did not place), 0.20 of the full stage's 87.8;
+  the race's 67 with a result, 11.1 CPU hours against 49.0. The placement takes 0.32
+  to 0.34 of a quarter row's wall, the first route's end 0.84 to 0.87
+  (the routing after it gets little).
+- **Bootstrap** (`calibrate.py bootstrap`, the same 1000 resamples, on
+  the boards with quarter rows): on the crossings a quarter screen
+  would pass every resample, but on the noise file's weights, which
+  overstate its changes; on the race it agrees with the full stage's
+  sign on 69 % of resamples (the first route 84 %) and passes 48 % of
+  those the full stage calls BETTER.
+
+**Stage 1': rejected.** A quarter budget changes the placement (two
+boards without a legal one) and the routing regime (another set of
+open connections), and its rows do not rank the full rows (+0.09 to
++0.17) nor its changes follow theirs. It is five times cheaper and
+judges something else. The ladder's cheap stage stays the first route
+(0.55 to 0.67 of the cost, agreeing on both experiments). A cheaper
+stage that keeps the placement would need the placement's budget kept
+and only the routing cut (a layout option the layout lacks: the
+placement's share is 40 % of `total_seconds`); not built.
 
 **The new switches.** `stop_after_first_route` (layout option, off by
 default; board_layout.rs: every step after the first route refused by
@@ -5886,8 +5966,8 @@ share of the board's parts inside that quarter window):
   to 85 % of the items). A window around the cluster with its
   connections' room is a third to three fifths of the board: a routing
   pass perhaps two to three times cheaper, not the order of magnitude the
-  idea needs; the quarter budget (above; its calibration pending) cuts
-  every board by about four with nothing cut away, if it agrees.
+  idea needs; the quarter budget (above) is five times cheaper on every
+  board but does not agree with the full verdicts either.
 
 **What a window loses.**
 

@@ -184,6 +184,26 @@ at least 100 rows with a result.
   poly_kybd_split72_right 21 -> 28, link 4 -> 10, WLED_Matrix 7 -> 10,
   ATAT1800 19 -> 22, framework_mobo_lefthalf 0 -> 1 and 6 more.
 
+## Committed on 2026-11-03 (the quarter budget calibrated: rejected as a stage)
+
+Branch fast-protocol-quarter (docs and the calibration script's
+bootstrap); rows in `build/proto1-q` (x1851, x1859, x15190 at
+`--budget-scale 0.25`; `pcb-maker-proto1-a` for the first-route cost
+sample). docs/placer.md, "The quarter budget (2026-11-03)";
+docs/benchmarks.md, the ladder's stage 1'.
+
+- **The quarter budget is not a stage**: Glasgow and MegaDrive find no
+  legal placement on 27 of their 30 rows at 40 % of 375 s; the other
+  boards' rows rank the full rows at +0.17 (crossings) and +0.09
+  (race), their per-pair changes at +0.09 and -0.07; on the stage's
+  own noise both verdicts are NOT BETTER (the full: BETTER, EXTEND).
+  It costs 0.20 of the full stage.
+- **The first route's cost measured**: `stop_after_first_route` took
+  0.67 of the CPU of full layouts of the same binary on three boards,
+  with the same first-route count; it stays stage 1 of the ladder.
+- `calibrate.py bootstrap` leaves out a board without a row at a
+  resampled seed (the quarter's unplaced boards).
+
 ## Committed on 2026-10-28 (the third placer round: the legaliser's and the refinement's legality, the same placements)
 
 Branch placer-profile-3; binaries `build/bin/pcb-maker-prof5-final` (the

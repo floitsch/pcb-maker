@@ -432,7 +432,7 @@ stops where it fails:
 | --- | --- | --- | --- | --- |
 | 0: placement | the placement alone, or the placed boards of stage 1's rows; `ablate-kicad-placement` metrics (crossings, objective, wirelength, blocked exits, overflows) | a quarter of a layout's wall (0.25 to 0.28: about 22 CPU h for 110 placements at the task budget; main's placer is 22 % cheaper since 2026-10-28) | row Spearman with the final count +0.10 to +0.44; agrees with the full verdict only where the metric is the lever's own (crossings on the crossings lever); blind to anything after the placement (the race) | high: a check that the lever moved what it meant to move, not a filter |
 | 1: first route | the five seed pairs with `--layout '{"stop_after_first_route": true}'` (or any full rows' `first_unconnected_terminals`); `placer_ab.py compare --metric first_open` | 0.55 to 0.57 of the full stage (about 48 CPU h); per board 0.19 (0xCB panel) to 0.99 (video) | the full verdict on both: BETTER -8.5 % (p 0.014 / 0.006) and EXTEND -2.3 % (p 0.248); rows +0.78 / +0.82 with the finals, per-pair changes +0.66 / +0.69, boards' signs 9/10 and 7/7 | low on these two: it passed on every resampled BETTER (1000 resamples of the seeds); it passed 60 % of the race's resamples whose full change was negative |
-| 1': quarter budget | the five seed pairs at `--budget-scale 0.25` | about a quarter (pending) | pending: 165 layouts queued 2026-10-28, none admitted by the ledger by 13:35 | pending |
+| 1': quarter budget (rejected 2026-11-03) | the five seed pairs at `--budget-scale 0.25` | 0.20 of the full stage (17.3 CPU h) | Glasgow and MegaDrive find no legal placement on 27 of 30 rows; the rest ranks the full rows at +0.09 / +0.17, per-pair changes -0.07 / +0.09; own-noise verdicts NOT BETTER on both (full: BETTER, EXTEND) | high: another placer and another router; not a stage |
 | 2: full | the protocol above | 110 layouts, 88 CPU h | the ground truth | - |
 
 - **A lever passes stage 1** when the first route's weighted change is
@@ -443,8 +443,11 @@ stops where it fails:
 - **What it saves** is half, not an order of magnitude: the first route
   is most of a dense layout's routing (video's runs to the budget's end).
   Stage 1 is worth it where most levers fail: a lever that fails stage 1
-  costs 48 CPU hours instead of 88. The quarter budget, if its
-  calibration agrees, is the stage that would cut by four.
+  costs 48 CPU hours instead of 88 (measured beside full layouts of one
+  binary: 0.67 of the CPU on three boards, the same first route). The
+  quarter budget does not agree (placer.md, "The quarter budget
+  (2026-11-03)"): at a quarter the placement itself changes (two boards
+  find no legal placement) and the rows do not rank the full rows.
 - **Reuse** (run.py `--reuse build/layout-reuse`, README.md "Reused
   layouts"): run both sides on one binary with the lever as an option;
   boards the lever leaves alone then cost their placement only (about a
