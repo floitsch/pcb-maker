@@ -270,6 +270,15 @@ pub struct KiCadDescribedOutline {
     /// a board fresh from a netlist): not the board's shape. Give the board
     /// one with `outline` in constraints.json.
     pub from_footprints: bool,
+    /// The holes the board's own Edge.Cuts draws inside the outline
+    /// (arcs as segments; a footprint's slot is the footprint's): a
+    /// panel's slots between its boards and rails, mounting holes drawn
+    /// on Edge.Cuts. `points` is the outer loop alone; to keep another
+    /// board's shape, copy each into constraints.json's
+    /// `outline.cutouts` as `{"polygon": [...], "origin": "absolute"}`
+    /// (trial 4: Goga64's ULK panel, its two halves and rails cut apart
+    /// by 2 mm slots, came back as one plate from `points` alone).
+    pub cutouts: Vec<Vec<[f64; 2]>>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -369,6 +378,13 @@ pub fn describe_kicad_board(
             height: maximum[1] - minimum[1],
             points: loops.outline.clone(),
             from_footprints: !board_edge,
+            cutouts: loops
+                .cutouts
+                .iter()
+                .zip(&loops.board_cutouts)
+                .filter(|(_, on_board)| **on_board)
+                .map(|(cutout, _)| cutout.clone())
+                .collect(),
         }
     });
     let layers = board_router::LayerTable::from_pcb(&pcb)?;
@@ -710,6 +726,29 @@ mod tests {
                 )
             ]
         );
+    }
+
+    #[test]
+    fn the_outline_lists_the_boards_own_cutouts_not_a_footprints_slot() {
+        // A panel: a plate with a slot cut by the board's own lines, and a
+        // switch whose footprint brings a slot of its own.
+        crate::note_net_names(&parse("(kicad_pcb)").unwrap());
+        let board = r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+            (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+            (gr_rect (start 5 9) (end 35 11) (layer "Edge.Cuts"))
+            (footprint "SW" (layer "F.Cu") (at 10 4) (property "Reference" "SW1") (property "Value" "SW")
+              (fp_rect (start -1 -1) (end 1 1) (layer "Edge.Cuts"))
+              (pad "1" smd rect (at -2 0) (size 1 1) (layers "F.Cu") (net "A"))))"#;
+        let directory =
+            std::env::temp_dir().join(format!("pcb-maker-describe-cutouts-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("b.kicad_pcb"), board).unwrap();
+        let description = describe_kicad_board(&directory, "b");
+        fs::remove_dir_all(&directory).ok();
+        let outline = description.unwrap().outline.unwrap();
+        assert_eq!(outline.cutouts.len(), 1, "{:?}", outline.cutouts);
+        let xs: Vec<f64> = outline.cutouts[0].iter().map(|point| point[0]).collect();
+        assert!(xs.contains(&5.0) && xs.contains(&35.0), "{xs:?}");
     }
 
     #[test]
