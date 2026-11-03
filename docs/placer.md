@@ -4881,7 +4881,7 @@ two sub-boards not counted:
 | | 201 | 0 (0), **pass**, 291 | 0 (1), **pass**, 293 |
 | 0xCB-1337 pcb-panel | 1 | 62 (39), 305/309 routed, 362 vias, 23 items across | **0 (0), strict pass**, 340/340, 444 vias, none across |
 | SmartSpin2k_Panelized | 1 | 115 (115), 473/582 routed, 756 vias, 6 across | 78 (83), 507/585, 856 vias, none across |
-| OpenRX-panel-rev2 | 1 | 85 (177), 203 vias | as off: nothing kept off (placement byte for byte x1880's); without the margin (-g) 125 (152) |
+| OpenRX-panel-rev2 | 1 | 85 (177), 203 vias | as off: nothing kept off (-h: placed and result board byte for byte the off row's); without the margin (-g) 125 (152) |
 | | 101 | 96 (144), 198 vias (x1880) | without the margin (-g) 126 (224) |
 | OpenESC 4in1 panel, `--reference` | 1 | 253 (352), 167/300 routed | the same, byte for byte (no designer part reaches into the tab margins; no frame) |
 
