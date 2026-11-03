@@ -275,13 +275,16 @@ pub fn place_kicad_board(
             );
             report.copies = true;
             eprintln!(
-                "placer: sub-boards: a panel of {} copies, {} frames, cut by {}, {} keepouts over the tabs and frames ({:.0} mm2, each copy's in every copy; margin {} mm, grown by 1.5 mm they took {:.2} of the first copy's surroundings), {} connectors and {} designer's overhangs may reach over them",
+                "placer: sub-boards: a panel of {} copies, {} frames, cut by {}, {} keepouts over the tabs and frames ({:.0} mm2, each copy's in every copy; margin {}, grown by 1.5 mm they take {:.2} of the first copy's surroundings), {} connectors and {} designer's overhangs may reach over them",
                 copies.members.len(),
                 report.frames.len(),
                 report.cut_by.join(", "),
                 applied.tabs,
                 applied.kept_clear_mm2,
-                applied.margin_mm,
+                match applied.margin_mm {
+                    Some(margin) => format!("{margin} mm"),
+                    None => "none: the copies are too small for it, nothing kept off".into(),
+                },
                 applied.copy_kept_share,
                 applied.connectors,
                 applied.designer_overhangs

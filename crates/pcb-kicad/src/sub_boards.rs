@@ -2321,17 +2321,17 @@ pub(crate) struct PlacerApplied {
     pub connectors: usize,
     pub designer_overhangs: usize,
     /// How far the keepouts reach beyond the tabs and frames (mm):
-    /// `TAB_MARGIN_MM`, or 0 on a panel of copies too small for it
-    /// (`MOST_COPY_KEPT_SHARE`).
-    pub margin_mm: f64,
+    /// `TAB_MARGIN_MM`; None where nothing is kept off (a panel of copies
+    /// too small for the margin, `MOST_COPY_KEPT_SHARE`).
+    pub margin_mm: Option<f64>,
     /// On a panel of copies: the share of the first copy's surroundings
     /// the keepouts grown by `TAB_MARGIN_MM` take.
     pub copy_kept_share: f64,
 }
 
 /// On a panel of copies, the keepouts grown by `TAB_MARGIN_MM` take at
-/// most this share of the first copy's surroundings; past it they are the
-/// tabs and frames themselves (OpenRX's copies: 0.40; the 0xCB panel 0.02,
+/// most this share of the first copy's surroundings; past it nothing is
+/// kept off (OpenRX's copies: 0.40; the 0xCB panel 0.02,
 /// the pcb-panel 0.07, SmartSpin2k 0.15).
 const MOST_COPY_KEPT_SHARE: f64 = 0.3;
 
@@ -2378,15 +2378,16 @@ pub(crate) fn keep_off_frames(
     panel: bool,
     copies: Option<&CopyFrames>,
 ) {
-    applied.margin_mm = TAB_MARGIN_MM;
+    applied.margin_mm = Some(TAB_MARGIN_MM);
     let (keepouts, copper) = match copies {
         Some(copies) => {
             let grown = sub
                 .pieces
                 .copies_keepouts(&sub.frames, copies, TAB_MARGIN_MM);
-            // A copy too small for the margin (OpenRX's 10.5 x 11.5 mm
-            // copies: their parts found no place) keeps off the tabs and
-            // frames themselves only.
+            // Copies too small for the margin (OpenRX's 10.5 x 11.5 mm
+            // copies: their parts found no place with it, and kept off
+            // the tabs and frames alone they routed worse) keep nothing
+            // off, as before.
             let within = copies.within[0];
             let share = grown
                 .0
@@ -2399,11 +2400,10 @@ pub(crate) fn keep_off_frames(
                 / ((within[2] - within[0]) * (within[3] - within[1])).max(1.0e-9);
             applied.copy_kept_share = share;
             if share > MOST_COPY_KEPT_SHARE {
-                applied.margin_mm = 0.0;
-                sub.pieces.copies_keepouts(&sub.frames, copies, 0.0)
-            } else {
-                grown
+                applied.margin_mm = None;
+                return;
             }
+            grown
         }
         None => (
             sub.pieces.keepouts(&sub.frames, TAB_MARGIN_MM),
@@ -2665,12 +2665,12 @@ pub struct KiCadSubBoardsReport {
     /// parts are not held by sub-board.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub copies: bool,
-    /// How far the keepouts reach beyond the tabs and frames (mm): 1.5,
-    /// or 0 on a panel of copies too small for the margin (its keepouts
-    /// grown by it would take more than 0.3 of the first copy's
-    /// surroundings).
+    /// How far the keepouts reach beyond the tabs and frames (mm): 1.5;
+    /// null where nothing is kept off: a panel of copies too small for the
+    /// margin (the keepouts grown by it would take more than 0.3 of the
+    /// first copy's surroundings) is placed as before.
     #[serde(default)]
-    pub keepout_margin_mm: f64,
+    pub keepout_margin_mm: Option<f64>,
     /// Each sub-board: its region and parts (with pins), of them the
     /// movable ones.
     pub sub_boards: Vec<KiCadSubBoard>,
