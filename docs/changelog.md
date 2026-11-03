@@ -11,6 +11,32 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-04 (fresh agent trial 4: a keyboard panel from the netlist, a dense 2-layer RP2040 board, a length rule)
+
+Branch fresh-agent-trial-4; the trial is
+[reviews/2026-11-04-fresh-agent-trial-4.md](reviews/2026-11-04-fresh-agent-trial-4.md)
+(Goga64 ULK from its schematic, obsilab Quanta75, oro-os link).
+
+- `describe-kicad-board`'s `outline.cutouts`: the board's own Edge.Cuts
+  holes inside the outline (a panel's slots), to copy into
+  `outline.cutouts`; `points` alone lost ULK's slots and with them its
+  boards, frames and tabs.
+- A footprint's closed Edge.Cuts loop outside every piece the board
+  draws is no piece: a netlist import's switches stacked at the origin
+  no longer stretch the outline's box (ULK: 292.5 x 121.0 mm for the
+  275.5 x 105.6 mm panel; the regions' halves, `origin: board` and the
+  room with it).
+- The input check's fixed-parts overlap leaves out parts a `place` puts
+  at `x`, `y` (15 false warnings on ULK's six placed thumb keys).
+- The verdict: copper at another part's own Edge.Cuts hole names the
+  pairs and says the parts are too close; a length or skew finding's
+  action summarises `verdict.lengths` (not routed, over by the placement
+  or the route, under); open connections at measured rates under half
+  the reference's say what share of the search the budget bought.
+- `fab-kicad-board`, `drc-kicad-board` without `--input` no longer call
+  a layout's placed parts "the input's"; `import-kicad-netlist`'s
+  `starter.why` says parts are missing instead of "no keyboard".
+
 ## Committed on 2026-11-03 (the placer keeps length maxima and the far side under vias in BGA pads)
 
 Branch placer-via-length; binary `build/bin/pcb-maker-prules1-a` (47c51bfd
