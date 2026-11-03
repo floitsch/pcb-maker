@@ -98,6 +98,19 @@ impl Router {
         self.board.nets[pad.net as usize].terminals[pad.terminal].anchor
     }
 
+    /// Whether `pad`'s terminal is open: its net is not complete and no
+    /// branch of the net ends at it (a net's first terminal counts as
+    /// connected in its flags even where no route left it).
+    fn pad_open(&self, pad: &DensePad) -> bool {
+        let state = &self.nets[pad.net as usize];
+        let terminal = pad.terminal as u16;
+        !state.complete
+            && !state
+                .branches
+                .iter()
+                .any(|branch| branch.start_terminal == terminal || branch.end_terminal == terminal)
+    }
+
     fn pad_label(&self, pad: &DensePad) -> &str {
         &self.board.nets[pad.net as usize].terminals[pad.terminal].label
     }
@@ -222,13 +235,16 @@ impl Router {
         pads * targets < -1.0e-9
     }
 
-    /// The crossing pairs of `net` (its dense pads, nearest neighbour
+    /// The crossing pairs of `net` (its open dense pads, nearest neighbour
     /// first) and the work of finding them (nodes looked at).
     pub(super) fn crossing_pairs(&self, dive: &DivePlan, net: NetId) -> (Vec<CrossingPair>, u64) {
         let mut pairs = Vec::new();
         let mut work = 0;
         for &open in dive.by_net.get(&net).map_or(&[][..], Vec::as_slice) {
             let pad = &dive.plan.pads[open];
+            if !self.pad_open(pad) {
+                continue;
+            }
             for other in self.row_neighbours(dive, open) {
                 let neighbour = &dive.plan.pads[other];
                 if !self.targets_cross(pad, neighbour) {
@@ -244,13 +260,14 @@ impl Router {
         (pairs, work)
     }
 
-    /// `PCB_ROUTER_TROUBLE_WHY`: every dense pad of a signal net still open,
+    /// `PCB_ROUTER_TROUBLE_WHY`: every open dense pad (`pad_open`) of a signal net still open,
     /// its straight ways out and what closes each (the net, by a via or a
     /// track, and whether that net has a pad in the row whose target
     /// crosses this one's: a crossing pair); open nets without a dense pad
     /// are named too. Analysis only: no work is charged.
     pub(super) fn crossing_census(&self, dive: &DivePlan, order: &[NetId], label: &str) {
         let (mut open_nets, mut pads, mut boxed, mut paired, mut no_way) = (0, 0, 0, 0, 0);
+        let mut without = 0;
         for &net in order {
             let state = &self.nets[net as usize];
             if !state.routable || !state.plane.is_empty() || state.complete {
@@ -258,13 +275,21 @@ impl Router {
             }
             open_nets += 1;
             let name = &self.board.nets[net as usize].name;
-            let Some(indices) = dive.by_net.get(&net) else {
-                eprintln!("crossing census {label}: {name}: open, no dense pad");
+            let indices = dive.by_net.get(&net).map_or(&[][..], Vec::as_slice);
+            if !indices
+                .iter()
+                .any(|index| self.pad_open(&dive.plan.pads[*index]))
+            {
+                without += 1;
+                eprintln!("crossing census {label}: {name}: open, no open dense pad");
                 continue;
-            };
+            }
             for &index in indices {
-                pads += 1;
                 let pad = &dive.plan.pads[index];
+                if !self.pad_open(pad) {
+                    continue;
+                }
+                pads += 1;
                 let ways: Vec<usize> = pad
                     .runs
                     .iter()
@@ -342,7 +367,7 @@ impl Router {
             }
         }
         eprintln!(
-            "crossing census {label}: {open_nets} signal nets open, {pads} dense pads of theirs, {boxed} with every straight way closed, {paired} in a crossing pair, {no_way} without a straight way out"
+            "crossing census {label}: {open_nets} signal nets open ({without} without an open dense pad), {pads} open dense pads of theirs, {boxed} with every straight way closed, {paired} in a crossing pair, {no_way} without a straight way out"
         );
     }
 
