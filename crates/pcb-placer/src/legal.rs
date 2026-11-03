@@ -4456,7 +4456,7 @@ pub fn center_edge_copper(problem: &Problem, poses: &mut [Pose]) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::problem::{Component, Side};
 
@@ -4654,7 +4654,10 @@ mod tests {
 
     /// Random parts of every kind the legality test knows, at random
     /// poses on a small board (many near, many far), for the box tests.
-    fn random_board(round: usize, next: &mut impl FnMut() -> f64) -> (Problem, Vec<Pose>) {
+    pub(crate) fn random_board(
+        round: usize,
+        next: &mut impl FnMut() -> f64,
+    ) -> (Problem, Vec<Pose>) {
         let parts = 40;
         let (mut problem, _) = pair(0.0, 0.0);
         problem.outline = vec![[0.0, 0.0], [30.0, 0.0], [30.0, 30.0], [0.0, 30.0]];

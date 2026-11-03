@@ -102,7 +102,31 @@ struct PartBoxes {
     far_courtyard: Boxes,
     hollow: Boxes,
     courtyards: Boxes,
+    /// The box around every list above and the body (centre and half
+    /// extent) at the pose: [min x, min y, max x, max y] (`far_work`).
+    extent: [f64; 4],
 }
+
+/// The box around `extent` and the box (centre, half).
+fn extent_with(extent: [f64; 4], (center, half): (Point, Point)) -> [f64; 4] {
+    [
+        extent[0].min(center[0] - half[0]),
+        extent[1].min(center[1] - half[1]),
+        extent[2].max(center[0] + half[0]),
+        extent[3].max(center[1] + half[1]),
+    ]
+}
+
+/// Whether two extents grown by `grow` each lie more than `FAR_GAP` apart
+/// on an axis.
+fn extents_apart(a: [f64; 4], b: [f64; 4], grow: f64) -> bool {
+    let gap = 2.0 * grow + FAR_GAP;
+    a[2] + gap < b[0] || b[2] + gap < a[0] || a[3] + gap < b[1] || b[3] + gap < a[1]
+}
+
+/// How far apart (mm) two parts' grown extents must lie for every box
+/// comparison of their pair to be clear, float rounding included.
+const FAR_GAP: f64 = 1.0e-6;
 
 /// A pose by its bits (a box list is the pose's, not an equal one's: -0
 /// and 0 turn alike but are other bits).
@@ -186,8 +210,16 @@ struct State<'a> {
     /// Work per part visited (the linked-pair lookup).
     visit_work: u64,
     /// `PCB_PLACER_CHECK_OVERLAP`: each bucketed overlap sum is checked
-    /// against the sum over all parts.
+    /// against the sum over all parts, and each pair taken as far
+    /// (`far_work`) against its direct sum.
     check_overlap: bool,
+    /// The most any box of a pair's sum grows beyond its part's extent (a
+    /// margin, a halo, a share of the spacing): two parts whose extents
+    /// lie farther apart than twice this add nothing (`far_work`).
+    far_grow: f64,
+    /// Whether far pairs take `far_work` without their sum (off only in
+    /// the tests, for the direct sums).
+    skip_far: bool,
     /// `AnnealConfig::legal_far_side`.
     legal_far_side: bool,
     /// The last global route's overflow field (`AnnealConfig::guidance`).
@@ -273,7 +305,6 @@ impl State<'_> {
             }
         };
         let component = &self.problem.components[index];
-        let pose = self.poses[index];
         let mut cache = self.boxes.borrow_mut();
         self.fresh_boxes(&mut cache, index);
         if !component.far_side.is_empty() {
@@ -291,207 +322,50 @@ impl State<'_> {
         }
         self.work
             .set(self.work.get() + cells as u64 + near.len() as u64 * self.visit_work);
+        let mine = extent_with(cache[index].extent, (rect.center, rect.half));
         for &other in near.iter() {
             if other == index {
                 continue;
             }
-            let body = &self.rects[other];
-            let other_component = &self.problem.components[other];
-            if self.problem.constraints.lies_on(index, other) {
-                continue;
-            }
-            // A part that may reach over a panel's frames and tabs
-            // (`legal::frame_clear`): the least overlap its passes leave.
-            if let Some((part, keepout, pass)) = self.problem.constraints.frames.pass(index, other)
+            // A pair farther apart than any of its comparisons reaches adds
+            // nothing (every box product is 0.0, and 0.0 added to the sum
+            // leaves its bits) and books what its comparisons would have
+            // booked: work that depends on the two parts alone.
+            if self.skip_far
+                && !(self.legal_far_side && side.opposite(self.problem.components[other].side))
             {
-                let frames = &self.problem.constraints.frames;
-                let (part_component, part_pose) =
-                    (&self.problem.components[part], self.poses[part]);
-                let keepout_pose = self.poses[keepout];
-                let keep = (
-                    self.problem.components[keepout].center(keepout_pose),
-                    self.problem.components[keepout].half_extent(keepout_pose.angle),
-                );
-                let half = part_component.half_extent(part_pose.angle);
-                let center = part_component.center(part_pose);
-                let whole = area((center, half), keep);
-                let mut least = whole;
-                if whole > 0.0 && pass.overhang > 0.0 {
-                    let shrunk = [
-                        (half[0] - pass.overhang).max(0.0),
-                        (half[1] - pass.overhang).max(0.0),
-                    ];
-                    least = least.min(area((center, shrunk), keep));
-                }
-                if pass.connector {
-                    self.fresh_boxes(&mut cache, part);
-                    let boxes = &cache[part];
-                    booked(boxes.pads.len() + boxes.graphics.len() + frames.copper.len());
-                    if whole > 0.0 && least > 0.0 {
-                        let margin = self.problem.edge_margin;
-                        let mut copper = 0.0;
-                        for (pad_center, pad_half) in boxes.pads.iter().chain(&boxes.graphics) {
-                            let grown = [pad_half[0] + margin, pad_half[1] + margin];
-                            for b in &frames.copper {
-                                let width = grown[0] + (b[2] - b[0]) / 2.0
-                                    - (pad_center[0] - (b[0] + b[2]) / 2.0).abs();
-                                let height = grown[1] + (b[3] - b[1]) / 2.0
-                                    - (pad_center[1] - (b[1] + b[3]) / 2.0).abs();
-                                if width > 0.0 && height > 0.0 {
-                                    copper += width * height;
-                                }
-                            }
-                        }
-                        least = least.min(copper);
-                    }
-                }
-                total += least;
-                continue;
-            }
-            if side.collides(other_component.side) {
-                if component.copper_only || other_component.copper_only {
-                    // A cutout keeps only copper away.
-                    let margin = self.problem.edge_margin;
-                    let (hole, part, part_index, part_pose) = if component.copper_only {
-                        (
-                            (rect.center, rect.half),
-                            other_component,
+                self.fresh_boxes(&mut cache, other);
+                let body = &self.rects[other];
+                let theirs = extent_with(cache[other].extent, (body.center, body.half));
+                if extents_apart(mine, theirs, self.far_grow) {
+                    let far = self.far_work(index, other);
+                    if self.check_overlap {
+                        let before = self.work.get();
+                        let mut direct = 0.0;
+                        self.pair(
+                            index,
+                            rect,
                             other,
-                            self.poses[other],
-                        )
-                    } else {
-                        ((body.center, body.half), component, index, pose)
-                    };
-                    if !part.copper_only {
-                        self.fresh_boxes(&mut cache, part_index);
-                        let boxes = &cache[part_index];
-                        booked(boxes.pads.len());
-                        for (center, half) in &boxes.pads {
-                            total += area((*center, [half[0] + margin, half[1] + margin]), hole);
-                        }
-                        // Its copper graphics keep the margin as its pads do.
-                        if !part.copper_graphics.is_empty() {
-                            booked(boxes.graphics.len());
-                            for (center, half) in &boxes.graphics {
-                                total +=
-                                    area((*center, [half[0] + margin, half[1] + margin]), hole);
-                            }
-                        }
-                        // A cutout the user cut keeps bodies off too (by
-                        // its box here; legality tests its outline).
-                        let solid = &self.problem.constraints.solid_cutouts;
-                        if !solid.is_empty()
-                            && solid.contains(&if component.copper_only { index } else { other })
-                        {
-                            total += area(
-                                (part.center(part_pose), part.half_extent(part_pose.angle)),
-                                hole,
-                            );
-                        }
-                    }
-                } else if !component.hollow_for(other_component)
-                    && !other_component.hollow_for(component)
-                {
-                    if self.problem.constraints.bare(index, other) {
-                        // Parts tied together meet without their halos.
-                        let (mine, theirs) = (component.halo, other_component.halo);
-                        total += area(
-                            (rect.center, [rect.half[0] - mine, rect.half[1] - mine]),
-                            (body.center, [body.half[0] - theirs, body.half[1] - theirs]),
+                            &mut cache,
+                            &built,
+                            &booked,
+                            &area,
+                            &mut direct,
                         );
-                    } else if self.problem.shared_halos {
-                        // The larger halo between them.
-                        let (mine, theirs) = (component.halo, other_component.halo);
-                        let grow = mine.max(theirs) - mine;
-                        total += area(
-                            (rect.center, [rect.half[0] + grow, rect.half[1] + grow]),
-                            (body.center, [body.half[0] - theirs, body.half[1] - theirs]),
+                        let booked = self.work.get() - before;
+                        self.work.set(before);
+                        assert!(
+                            direct.to_bits() == 0 && booked == far,
+                            "parts {index} and {other}: far pair (0, work {far}) against the direct sum ({direct}, work {booked})"
                         );
-                    } else {
-                        total += area((rect.center, rect.half), (body.center, body.half));
                     }
-                    // Courtyards on the other side meet there too
-                    // (`legal::far_courtyard_overlap`).
-                    if !component.far_courtyard.is_empty()
-                        || !other_component.far_courtyard.is_empty()
-                    {
-                        self.fresh_boxes(&mut cache, other);
-                        total += self.far_courtyards(&cache, index, other, &booked, &area)
-                            + self.far_courtyards(&cache, other, index, &booked, &area);
-                    }
-                } else {
-                    // A hollow part blocks with its boxes (grown by half the
-                    // spacing, as the rectangles are) only.
-                    // Against an obstacle without routing room, without
-                    // the halo.
-                    let bare = self.problem.constraints.halo_free(index)
-                        || self.problem.constraints.halo_free(other);
-                    self.fresh_boxes(&mut cache, other);
-                    let margin = self.problem.spacing / 2.0;
-                    let theirs = Blocking::of(
-                        other_component,
-                        component,
-                        &cache[other],
-                        body,
-                        bare,
-                        margin,
-                    );
-                    let mine = Blocking::of(
-                        component,
-                        other_component,
-                        &cache[index],
-                        &rect,
-                        bare,
-                        margin,
-                    );
-                    // The lists' work, theirs first as they were built.
-                    for blocking in [&theirs, &mine] {
-                        if let Some(boxes) = blocking.boxes() {
-                            booked(boxes);
-                        }
-                    }
-                    mine.each(|mine| {
-                        theirs.each(|other| total += area(mine, other));
-                    });
-                }
-            } else if side.opposite(other_component.side) {
-                // Across the board only holes and pads meet bodies, at the
-                // gaps the legality test asks for (`legal::far_side_overlap`).
-                if self.legal_far_side {
-                    total += self.far_overlap(
-                        index,
-                        pose,
-                        &rect,
-                        other,
-                        self.poses[other],
-                        body,
-                        &built,
-                        &area,
-                    ) + self.far_overlap(
-                        other,
-                        self.poses[other],
-                        body,
-                        index,
-                        pose,
-                        &rect,
-                        &built,
-                        &area,
-                    );
-                } else {
-                    if !component.far_side.is_empty() {
-                        for far in &cache[index].far {
-                            total += area(*far, (body.center, body.half));
-                        }
-                    }
-                    if !other_component.far_side.is_empty() {
-                        self.fresh_boxes(&mut cache, other);
-                        booked(cache[other].far.len());
-                        for far in &cache[other].far {
-                            total += area(*far, (rect.center, rect.half));
-                        }
-                    }
+                    self.work.set(self.work.get() + far);
+                    continue;
                 }
             }
+            self.pair(
+                index, rect, other, &mut cache, &built, &booked, &area, &mut total,
+            );
         }
         // Leaving the board is as bad as overlapping something (for an
         // overhanging part, only with what belongs on the board).
@@ -543,6 +417,315 @@ impl State<'_> {
             }
         }
         total
+    }
+
+    /// Adds the overlap of part `index` (at `rect`) with part `other` to
+    /// `total` box by box, as the sum takes it (the same additions in the
+    /// same order: not the pair's own sum added once), the work booked
+    /// through `built`, `booked` and `area`.
+    #[allow(clippy::too_many_arguments)]
+    fn pair(
+        &self,
+        index: usize,
+        rect: Rect,
+        other: usize,
+        cache: &mut [PartBoxes],
+        built: &dyn Fn(Boxes) -> Boxes,
+        booked: &dyn Fn(usize),
+        area: &dyn Fn((Point, Point), (Point, Point)) -> f64,
+        total: &mut f64,
+    ) {
+        let component = &self.problem.components[index];
+        let side = component.side;
+        let pose = self.poses[index];
+        let body = &self.rects[other];
+        let other_component = &self.problem.components[other];
+        if self.problem.constraints.lies_on(index, other) {
+            return;
+        }
+        // A part that may reach over a panel's frames and tabs
+        // (`legal::frame_clear`): the least overlap its passes leave.
+        if let Some((part, keepout, pass)) = self.problem.constraints.frames.pass(index, other) {
+            let frames = &self.problem.constraints.frames;
+            let (part_component, part_pose) = (&self.problem.components[part], self.poses[part]);
+            let keepout_pose = self.poses[keepout];
+            let keep = (
+                self.problem.components[keepout].center(keepout_pose),
+                self.problem.components[keepout].half_extent(keepout_pose.angle),
+            );
+            let half = part_component.half_extent(part_pose.angle);
+            let center = part_component.center(part_pose);
+            let whole = area((center, half), keep);
+            let mut least = whole;
+            if whole > 0.0 && pass.overhang > 0.0 {
+                let shrunk = [
+                    (half[0] - pass.overhang).max(0.0),
+                    (half[1] - pass.overhang).max(0.0),
+                ];
+                least = least.min(area((center, shrunk), keep));
+            }
+            if pass.connector {
+                self.fresh_boxes(cache, part);
+                let boxes = &cache[part];
+                booked(boxes.pads.len() + boxes.graphics.len() + frames.copper.len());
+                if whole > 0.0 && least > 0.0 {
+                    let margin = self.problem.edge_margin;
+                    let mut copper = 0.0;
+                    for (pad_center, pad_half) in boxes.pads.iter().chain(&boxes.graphics) {
+                        let grown = [pad_half[0] + margin, pad_half[1] + margin];
+                        for b in &frames.copper {
+                            let width = grown[0] + (b[2] - b[0]) / 2.0
+                                - (pad_center[0] - (b[0] + b[2]) / 2.0).abs();
+                            let height = grown[1] + (b[3] - b[1]) / 2.0
+                                - (pad_center[1] - (b[1] + b[3]) / 2.0).abs();
+                            if width > 0.0 && height > 0.0 {
+                                copper += width * height;
+                            }
+                        }
+                    }
+                    least = least.min(copper);
+                }
+            }
+            *total += least;
+            return;
+        }
+        if side.collides(other_component.side) {
+            if component.copper_only || other_component.copper_only {
+                // A cutout keeps only copper away.
+                let margin = self.problem.edge_margin;
+                let (hole, part, part_index, part_pose) = if component.copper_only {
+                    (
+                        (rect.center, rect.half),
+                        other_component,
+                        other,
+                        self.poses[other],
+                    )
+                } else {
+                    ((body.center, body.half), component, index, pose)
+                };
+                if !part.copper_only {
+                    self.fresh_boxes(cache, part_index);
+                    let boxes = &cache[part_index];
+                    booked(boxes.pads.len());
+                    for (center, half) in &boxes.pads {
+                        *total += area((*center, [half[0] + margin, half[1] + margin]), hole);
+                    }
+                    // Its copper graphics keep the margin as its pads do.
+                    if !part.copper_graphics.is_empty() {
+                        booked(boxes.graphics.len());
+                        for (center, half) in &boxes.graphics {
+                            *total += area((*center, [half[0] + margin, half[1] + margin]), hole);
+                        }
+                    }
+                    // A cutout the user cut keeps bodies off too (by
+                    // its box here; legality tests its outline).
+                    let solid = &self.problem.constraints.solid_cutouts;
+                    if !solid.is_empty()
+                        && solid.contains(&if component.copper_only { index } else { other })
+                    {
+                        *total += area(
+                            (part.center(part_pose), part.half_extent(part_pose.angle)),
+                            hole,
+                        );
+                    }
+                }
+            } else if !component.hollow_for(other_component)
+                && !other_component.hollow_for(component)
+            {
+                if self.problem.constraints.bare(index, other) {
+                    // Parts tied together meet without their halos.
+                    let (mine, theirs) = (component.halo, other_component.halo);
+                    *total += area(
+                        (rect.center, [rect.half[0] - mine, rect.half[1] - mine]),
+                        (body.center, [body.half[0] - theirs, body.half[1] - theirs]),
+                    );
+                } else if self.problem.shared_halos {
+                    // The larger halo between them.
+                    let (mine, theirs) = (component.halo, other_component.halo);
+                    let grow = mine.max(theirs) - mine;
+                    *total += area(
+                        (rect.center, [rect.half[0] + grow, rect.half[1] + grow]),
+                        (body.center, [body.half[0] - theirs, body.half[1] - theirs]),
+                    );
+                } else {
+                    *total += area((rect.center, rect.half), (body.center, body.half));
+                }
+                // Courtyards on the other side meet there too
+                // (`legal::far_courtyard_overlap`).
+                if !component.far_courtyard.is_empty() || !other_component.far_courtyard.is_empty()
+                {
+                    self.fresh_boxes(cache, other);
+                    *total += self.far_courtyards(cache, index, other, &booked, &area)
+                        + self.far_courtyards(cache, other, index, &booked, &area);
+                }
+            } else {
+                // A hollow part blocks with its boxes (grown by half the
+                // spacing, as the rectangles are) only.
+                // Against an obstacle without routing room, without
+                // the halo.
+                let bare = self.problem.constraints.halo_free(index)
+                    || self.problem.constraints.halo_free(other);
+                self.fresh_boxes(cache, other);
+                let margin = self.problem.spacing / 2.0;
+                let theirs = Blocking::of(
+                    other_component,
+                    component,
+                    &cache[other],
+                    body,
+                    bare,
+                    margin,
+                );
+                let mine = Blocking::of(
+                    component,
+                    other_component,
+                    &cache[index],
+                    &rect,
+                    bare,
+                    margin,
+                );
+                // The lists' work, theirs first as they were built.
+                for blocking in [&theirs, &mine] {
+                    if let Some(boxes) = blocking.boxes() {
+                        booked(boxes);
+                    }
+                }
+                mine.each(|mine| {
+                    theirs.each(|other| *total += area(mine, other));
+                });
+            }
+        } else if side.opposite(other_component.side) {
+            // Across the board only holes and pads meet bodies, at the
+            // gaps the legality test asks for (`legal::far_side_overlap`).
+            if self.legal_far_side {
+                *total += self.far_overlap(
+                    index,
+                    pose,
+                    &rect,
+                    other,
+                    self.poses[other],
+                    body,
+                    &built,
+                    &area,
+                ) + self.far_overlap(
+                    other,
+                    self.poses[other],
+                    body,
+                    index,
+                    pose,
+                    &rect,
+                    &built,
+                    &area,
+                );
+            } else {
+                if !component.far_side.is_empty() {
+                    for far in &cache[index].far {
+                        *total += area(*far, (body.center, body.half));
+                    }
+                }
+                if !other_component.far_side.is_empty() {
+                    self.fresh_boxes(cache, other);
+                    booked(cache[other].far.len());
+                    for far in &cache[other].far {
+                        *total += area(*far, (rect.center, rect.half));
+                    }
+                }
+            }
+        }
+    }
+
+    /// The work `pair` books for parts `index` and `other` whose boxes lie
+    /// apart: every box comparison it makes (one unit each) and every
+    /// list it takes (`booked`, `built`), which its branches decide from
+    /// the two parts alone, not from where they are. Not for parts on
+    /// opposite sides with `legal_far_side`.
+    fn far_work(&self, index: usize, other: usize) -> u64 {
+        let component = &self.problem.components[index];
+        let other_component = &self.problem.components[other];
+        let list = |boxes: usize| 8 + 2 * boxes as u64;
+        if self.problem.constraints.lies_on(index, other) {
+            return 0;
+        }
+        // A pass over a panel's frames: the whole bodies' comparison (no
+        // overlap, so neither the shrunk one nor the copper's), and the
+        // connector's list.
+        if let Some((part, _, pass)) = self.problem.constraints.frames.pass(index, other) {
+            let part = &self.problem.components[part];
+            return 1 + if pass.connector {
+                list(
+                    part.pads.len()
+                        + part.copper_graphics.len()
+                        + self.problem.constraints.frames.copper.len(),
+                )
+            } else {
+                0
+            };
+        }
+        if component.side.collides(other_component.side) {
+            if component.copper_only || other_component.copper_only {
+                let (part, cutout) = if component.copper_only {
+                    (other_component, index)
+                } else {
+                    (component, other)
+                };
+                if part.copper_only {
+                    return 0;
+                }
+                let mut work = list(part.pads.len()) + part.pads.len() as u64;
+                if !part.copper_graphics.is_empty() {
+                    work += list(part.copper_graphics.len()) + part.copper_graphics.len() as u64;
+                }
+                let solid = &self.problem.constraints.solid_cutouts;
+                if !solid.is_empty() && solid.contains(&cutout) {
+                    work += 1;
+                }
+                work
+            } else if !component.hollow_for(other_component)
+                && !other_component.hollow_for(component)
+            {
+                let mut work = 1;
+                if !component.far_courtyard.is_empty() || !other_component.far_courtyard.is_empty()
+                {
+                    let yards =
+                        |yard: &crate::problem::Component, against: &crate::problem::Component| {
+                            if yard.far_courtyard.is_empty() || against.far_side.is_empty() {
+                                0
+                            } else {
+                                list(yard.far_courtyard.len())
+                                    + list(against.far_side.len())
+                                    + (yard.far_courtyard.len() * against.far_side.len()) as u64
+                            }
+                        };
+                    work += yards(component, other_component) + yards(other_component, component);
+                }
+                work
+            } else {
+                // `Blocking::of`'s boxes: None for the whole rectangle.
+                let boxes = |part: &crate::problem::Component,
+                             against: &crate::problem::Component| {
+                    part.hollow_for(against).then(|| {
+                        part.hollow.len()
+                            + if against.has_holes() && !part.holes_inside {
+                                part.courtyards.len()
+                            } else {
+                                0
+                            }
+                    })
+                };
+                let theirs = boxes(other_component, component);
+                let mine = boxes(component, other_component);
+                let lists: u64 = [theirs, mine].into_iter().flatten().map(list).sum();
+                lists + (mine.unwrap_or(1) * theirs.unwrap_or(1)) as u64
+            }
+        } else if component.side.opposite(other_component.side) {
+            let mut work = component.far_side.len() as u64;
+            if !other_component.far_side.is_empty() {
+                work +=
+                    list(other_component.far_side.len()) + other_component.far_side.len() as u64;
+            }
+            work
+        } else {
+            0
+        }
     }
 
     /// The overlap of part `holes`' far-side boxes with part `body` across
@@ -672,6 +855,29 @@ impl State<'_> {
         component.boxes_into(&component.far_courtyard, pose, &mut entry.far_courtyard);
         component.boxes_into(&component.hollow, pose, &mut entry.hollow);
         component.boxes_into(&component.courtyards, pose, &mut entry.courtyards);
+        let body = (component.center(pose), component.half_extent(pose.angle));
+        let mut extent = extent_with(
+            [
+                f64::INFINITY,
+                f64::INFINITY,
+                f64::NEG_INFINITY,
+                f64::NEG_INFINITY,
+            ],
+            body,
+        );
+        for boxes in [
+            &entry.far,
+            &entry.pads,
+            &entry.graphics,
+            &entry.far_courtyard,
+            &entry.hollow,
+            &entry.courtyards,
+        ] {
+            for &one in boxes.iter() {
+                extent = extent_with(extent, one);
+            }
+        }
+        entry.extent = extent;
         entry.pose = Some(key);
     }
 
@@ -824,6 +1030,8 @@ fn build_state<'a>(problem: &'a Problem, poses: &[Pose], legal_far_side: bool) -
         visit_work: (1.0 + (problem.constraints.linked.len() as f64 + 1.0).log2() / 2.0).round()
             as u64,
         check_overlap: std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
+        far_grow: far_grow(problem),
+        skip_far: true,
         legal_far_side,
         field: None,
         lengths: Vec::new(),
@@ -839,6 +1047,24 @@ fn build_state<'a>(problem: &'a Problem, poses: &[Pose], legal_far_side: bool) -
     }
     state.refresh_lengths();
     state
+}
+
+/// `State::far_grow`: the margins a pair's sum grows a box by (the edge
+/// margin around pads and copper graphics, half the spacing around hollow
+/// boxes, the larger halo between two parts, a part's share of the
+/// spacing around far courtyards and far-side boxes), each at most this.
+fn far_grow(problem: &Problem) -> f64 {
+    let halo = problem
+        .components
+        .iter()
+        .map(|component| component.halo.abs())
+        .fold(0.0, f64::max);
+    let share = problem
+        .components
+        .iter()
+        .map(|component| component.copper_share(problem.min_spacing).abs())
+        .fold(0.0, f64::max);
+    problem.edge_margin.abs() + problem.spacing.abs() + problem.min_spacing.abs() + halo + share
 }
 
 /// Debugging aid: the overlap the annealer sees for every part at `poses`.
@@ -1730,5 +1956,113 @@ impl<'a> Guide<'a> {
             anneal_work as f64 / crate::work_per_second(),
         );
         state.field = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The overlap sums with far pairs taken from `far_work` give the
+    /// direct sums' bits and work: random boards of every kind of part
+    /// (hollow, far sides and courtyards, cutouts with and without
+    /// outlines, copper graphics, marks, linked pairs, shared halos), at
+    /// both far-side models, parts moving between the sums.
+    #[test]
+    fn far_pairs_sum_and_book_as_the_direct_sums() {
+        let mut seed = 0x51F3_8C2D_9A47_E601u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut far_pairs = 0u64;
+        for round in 0..16 {
+            let (mut problem, mut poses) = crate::legal::tests::random_board(round, &mut next);
+            for component in problem.components.iter_mut() {
+                if next() < 0.1 {
+                    component.copper_graphics = vec![[1.0, 1.0, 2.5, 1.6]];
+                }
+            }
+            if round % 2 == 1 {
+                // Frames of a panel: keepouts some parts may reach over.
+                let parts = problem.components.len();
+                let frames = &mut problem.constraints.frames;
+                frames.keepouts = (0..parts).filter(|_| next() < 0.15).collect();
+                frames.copper = vec![[4.0, 4.0, 26.0, 5.0], [4.0, 25.0, 26.0, 26.0]];
+                for part in 0..parts {
+                    if next() < 0.3 {
+                        let overhang = if next() < 0.5 { 0.3 } else { 0.0 };
+                        let connector = next() < 0.5;
+                        frames.passes.push((
+                            part,
+                            crate::constraints::FramePass {
+                                overhang,
+                                connector,
+                            },
+                        ));
+                    }
+                }
+            }
+            let legal_far_side = round % 3 == 2;
+            let mut fast = build_state(&problem, &poses, legal_far_side);
+            let mut direct = build_state(&problem, &poses, legal_far_side);
+            fast.check_overlap = false;
+            direct.check_overlap = false;
+            direct.skip_far = false;
+            let parts = problem.components.len();
+            for step in 0..parts * 40 {
+                if next() < 0.3 {
+                    let moved = (next() * parts as f64) as usize;
+                    let pose = Pose {
+                        position: [next() * 30.0, next() * 30.0],
+                        angle: [0.0, 90.0, 180.0, 270.0, 45.0][(next() * 4.4) as usize],
+                    };
+                    poses[moved] = pose;
+                    for state in [&mut fast, &mut direct] {
+                        state.poses[moved] = pose;
+                        let rect = state.rect(moved, pose);
+                        state.set_rect(moved, rect);
+                    }
+                }
+                let index = (next() * parts as f64) as usize;
+                let everything = step % 7 == 0;
+                let (before_fast, before_direct) = (fast.work.get(), direct.work.get());
+                let near_far = {
+                    let counted = fast.work.get();
+                    let value = fast.overlap_with(index, fast.rects[index], everything);
+                    (value, fast.work.get() - counted)
+                };
+                let expected = direct.overlap_with(index, direct.rects[index], everything);
+                assert_eq!(
+                    (near_far.0.to_bits(), fast.work.get() - before_fast),
+                    (expected.to_bits(), direct.work.get() - before_direct),
+                    "round {round}, step {step}, part {index}: (sum, work) with far pairs against the direct sums"
+                );
+                // How many pairs the far test took (from the extents).
+                let cache = fast.boxes.borrow();
+                let mine = extent_with(
+                    cache[index].extent,
+                    (fast.rects[index].center, fast.rects[index].half),
+                );
+                for other in 0..parts {
+                    if other != index
+                        && cache[other].pose.is_some()
+                        && extents_apart(
+                            mine,
+                            extent_with(
+                                cache[other].extent,
+                                (fast.rects[other].center, fast.rects[other].half),
+                            ),
+                            fast.far_grow,
+                        )
+                    {
+                        far_pairs += 1;
+                    }
+                }
+            }
+        }
+        assert!(far_pairs > 10_000, "far pairs {far_pairs}");
     }
 }
