@@ -653,6 +653,8 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
             .total_cmp(&polygon_area(&a.0).abs())
     });
     let mut pieces: Vec<Vec<[f64; 2]>> = Vec::new();
+    // Whether a piece so far is drawn by the board's own graphics.
+    let mut board_piece = false;
     let mut cutouts: Vec<Vec<[f64; 2]>> = Vec::new();
     let mut board_cutouts = Vec::new();
     for (candidate, on_board) in loops {
@@ -669,7 +671,19 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
         if pieces.iter().any(inside) {
             cutouts.push(candidate);
             board_cutouts.push(on_board);
+        } else if !on_board && board_piece {
+            // A footprint's own closed loop (a key switch's or a slide
+            // switch's slot) outside every piece the board draws belongs
+            // to a part off the board, not to the board: on a fresh
+            // netlist import whose outline was drawn at the designer's
+            // coordinates, the 42 switches stacked at the origin made
+            // their slots a second piece, and the outline's box (the
+            // regions' halves, `origin: board`, the room) reached from
+            // the origin (Goga64 ULK, trial 4: 292.5 x 121.0 mm for a
+            // 275.5 x 105.6 mm panel).
+            continue;
         } else {
+            board_piece |= on_board;
             pieces.push(candidate);
         }
     }
@@ -767,6 +781,45 @@ mod tests {
         assert!(point_in_polygon([35.0, 5.0], &loops.outline));
         assert!(point_in_polygon([10.0, 5.0], &loops.outline));
         assert!(!point_in_polygon([25.0, 5.0], &loops.outline));
+    }
+
+    #[test]
+    fn a_footprints_slot_outside_the_drawn_board_is_no_piece() {
+        // A board drawn at 10..30, 10..20 and a switch footprint stacked at
+        // the origin, off the board, with its own slot on Edge.Cuts: the
+        // slot is the part's, not a second piece of the board.
+        let pcb = parse(
+            r#"(kicad_pcb
+          (gr_rect (start 10 10) (end 30 20) (layer "Edge.Cuts"))
+          (footprint "SW" (at 0 0)
+            (fp_rect (start -6 -3) (end 6 3) (layer "Edge.Cuts"))))"#,
+        )
+        .unwrap();
+        let loops = board_loops(&pcb).unwrap();
+        assert_eq!(loops.pieces, vec![[10.0, 10.0, 30.0, 20.0]]);
+        assert!(loops.cutouts.is_empty());
+        assert!((polygon_area(&loops.outline).abs() - 200.0).abs() < 1.0e-6);
+        // On the board it is a cutout, as before.
+        let pcb = parse(
+            r#"(kicad_pcb
+          (gr_rect (start 10 10) (end 30 20) (layer "Edge.Cuts"))
+          (footprint "SW" (at 20 15)
+            (fp_rect (start -2 -1) (end 2 1) (layer "Edge.Cuts"))))"#,
+        )
+        .unwrap();
+        assert_eq!(board_loops(&pcb).unwrap().cutouts.len(), 1);
+        // Without the board's own outline the footprints' loops are all
+        // there is (a fresh import): they stay the outline.
+        let pcb = parse(
+            r#"(kicad_pcb
+          (footprint "SW" (at 0 0)
+            (fp_rect (start -6 -3) (end 6 3) (layer "Edge.Cuts"))))"#,
+        )
+        .unwrap();
+        assert_eq!(
+            board_loops(&pcb).unwrap().pieces,
+            vec![[-6.0, -3.0, 6.0, 3.0]]
+        );
     }
 
     #[test]
