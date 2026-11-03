@@ -1275,30 +1275,7 @@ fn reference_problem(problem: &core::Problem, copies: &PanelCopies, copy: usize)
     // whole against the region's area made every level but the last
     // overfull (the 0xCB panel's first copy: no halos, its wires packed
     // 30 % shorter, two nets per copy left open).
-    for &keepout in &problem.constraints.frames.keepouts {
-        let component = &mut sub.components[keepout];
-        let pose = problem.poses[keepout];
-        let (center, half) = (component.center(pose), component.half_extent(pose.angle));
-        let cut = intersect(
-            [
-                center[0] - half[0],
-                center[1] - half[1],
-                center[0] + half[0],
-                center[1] + half[1],
-            ],
-            region,
-        );
-        if empty(cut) {
-            make_inert(component);
-            continue;
-        }
-        component.body_center = [0.0, 0.0];
-        component.body_size = [cut[2] - cut[0], cut[3] - cut[1]];
-        sub.poses[keepout] = core::Pose {
-            position: [(cut[0] + cut[2]) / 2.0, (cut[1] + cut[3]) / 2.0],
-            angle: 0.0,
-        };
-    }
+    crate::sub_boards::cut_keepouts(&mut sub, region);
     let pulls = |part: usize| active.contains(&part) || !sub.components[part].pins.is_empty();
     let pulling: Vec<bool> = (0..sub.components.len()).map(pulls).collect();
     sub.outline = clip(&problem.outline, region);

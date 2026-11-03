@@ -2805,6 +2805,38 @@ fn make_inert(component: &mut pcb_placer::Component) {
 /// parts (`active`) the only ones placed; the other movable parts take
 /// no room and pull no net; fixed parts away from the region keep their
 /// bodies but pull no net; the constraints of the active parts only.
+/// A panel's frame and tab keepouts (`keep_off_frames`) in a problem of
+/// one region (a copy's, a held sub-board's): cut to the region, none
+/// outside it. The region's parts are held in it, and the keepouts beyond
+/// (the other sub-boards' tabs, the rails), counted whole against the
+/// region's area, made every placement level but the last overfull.
+pub(crate) fn cut_keepouts(sub: &mut pcb_placer::Problem, region: [f64; 4]) {
+    for keepout in sub.constraints.frames.keepouts.clone() {
+        let pose = sub.poses[keepout];
+        let component = &mut sub.components[keepout];
+        let (center, half) = (component.center(pose), component.half_extent(pose.angle));
+        let cut = clip_box(
+            [
+                center[0] - half[0],
+                center[1] - half[1],
+                center[0] + half[0],
+                center[1] + half[1],
+            ],
+            region,
+        );
+        if !(cut[0] < cut[2] && cut[1] < cut[3]) {
+            make_inert(component);
+            continue;
+        }
+        component.body_center = [0.0, 0.0];
+        component.body_size = [cut[2] - cut[0], cut[3] - cut[1]];
+        sub.poses[keepout] = pcb_placer::Pose {
+            position: [(cut[0] + cut[2]) / 2.0, (cut[1] + cut[3]) / 2.0],
+            angle: 0.0,
+        };
+    }
+}
+
 fn region_problem(
     problem: &pcb_placer::Problem,
     poses: &[pcb_placer::Pose],
@@ -2828,6 +2860,7 @@ fn region_problem(
             }
         }
     }
+    cut_keepouts(&mut sub, region);
     let pulling: Vec<bool> = (0..sub.components.len())
         .map(|part| active.contains(&part) || !sub.components[part].pins.is_empty())
         .collect();
@@ -3466,6 +3499,116 @@ mod tests {
         let (keepouts, _) = pieces.copies_keepouts(&frames, &held, TAB_MARGIN_MM);
         assert!(!kept(&keepouts, [41.1, 10.0]));
         assert!(kept(&keepouts, [22.0, 10.0]) && kept(&keepouts, [19.6, 10.0]));
+    }
+
+    #[test]
+    fn a_held_sub_boards_problem_cuts_the_keepouts_to_its_region() {
+        // Two 20 x 20 halves (y 0 to 20 and 25 to 45) joined by mouse bites
+        // over x 7 to 13, and a 9 x 45 mm rail at their left (x -12 to
+        // -3) joined to each by mouse bites over 4 mm: the keepouts take
+        // more than a half's area.
+        let outline = "(gr_poly (pts (xy -12 0) (xy -3 0) (xy -3 8) (xy 0 8) (xy 0 0) (xy 20 0) (xy 20 20) (xy 13 20) (xy 13 25) (xy 20 25) (xy 20 45) (xy 0 45) (xy 0 37) (xy -3 37) (xy -3 45) (xy -12 45)) (layer \"Edge.Cuts\")) (gr_poly (pts (xy -3 12) (xy 0 12) (xy 0 20) (xy 7 20) (xy 7 25) (xy 0 25) (xy 0 33) (xy -3 33)) (layer \"Edge.Cuts\"))";
+        let column = |y: f64| {
+            let pads: String = (0..6)
+                .map(|index| {
+                    format!(
+                        r#"(pad "" np_thru_hole circle (at 0 {}) (size 0.5 0.5) (drill 0.5) (layers "*.Cu" "*.Mask"))"#,
+                        index as f64 * 0.75
+                    )
+                })
+                .collect();
+            format!(
+                r#"(footprint "Panelization:mouse-bites" (at -1.5 {y}) (property "Reference" "MB") {pads})"#
+            )
+        };
+        let part = |name: &str, x: f64, y: f64| {
+            format!(
+                r#"(footprint "Resistor_SMD:R_0603" (at {x} {y}) (property "Reference" "{name}") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "GND")) (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net "SIG")))"#
+            )
+        };
+        let pcb = crate::kicad_sexpr::parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user)) {outline} {} {} {} {} {} {} {})"#,
+            part("R1", 5.0, 5.0),
+            part("R2", 12.0, 15.0),
+            part("R3", 5.0, 30.0),
+            part("R4", 12.0, 40.0),
+            column(8.125),
+            column(33.125),
+            bites(7.25, 8, 0.75, 0.5)
+        ))
+        .unwrap();
+        let config = crate::board_placer::KiCadBoardPlacerConfig::default();
+        let mut lowered = crate::board_placer::lower_placement(&pcb, &config).unwrap();
+        let sub = detect_for_placer(&pcb, &lowered.problem, 4, None)
+            .unwrap()
+            .expect("pieces");
+        assert_eq!(sub.count(&lowered.problem), 2);
+        assert!(sub.has_frames());
+        let applied = apply_to_placer(
+            &sub,
+            &mut lowered.problem,
+            &mut lowered.references,
+            &mut lowered.source_at,
+            &mut lowered.poured,
+        );
+        assert_eq!(applied.held, 4);
+        let problem = &lowered.problem;
+        let first = sub.part_piece[lowered.references.iter().position(|r| r == "R1").unwrap()]
+            .expect("R1's half");
+        let region = sub.pieces.boxes[first];
+        let active: BTreeSet<usize> = (0..4)
+            .filter(|part| sub.part_piece[*part] == Some(first))
+            .collect();
+        let kept = |problem: &pcb_placer::Problem| -> f64 {
+            problem
+                .constraints
+                .frames
+                .keepouts
+                .iter()
+                .filter(|k| problem.components[**k].side != pcb_placer::Side::Neither)
+                .map(|k| problem.components[*k].body_size[0] * problem.components[*k].body_size[1])
+                .sum()
+        };
+        let half = region_problem(problem, &problem.poses, &active, region);
+        let outline = &half.outline;
+        let area = (0..outline.len())
+            .map(|i| {
+                let (a, b) = (outline[i], outline[(i + 1) % outline.len()]);
+                a[0] * b[1] - b[0] * a[1]
+            })
+            .sum::<f64>()
+            .abs()
+            / 2.0;
+        // The keepouts whole: more than the half's area.
+        assert!(kept(problem) > area, "{} of {area}", kept(problem));
+        // Cut to the half: its tabs' margins only.
+        assert!(kept(&half) < 0.25 * area, "{} of {area}", kept(&half));
+        // So the first level (full halos) places the half.
+        let mut placer = pcb_placer::Config::new();
+        placer.global.seed = 1;
+        placer.work_limit = Some((2.0 * pcb_placer::work_per_second()) as u64);
+        let placement = pcb_placer::place(&half, &placer);
+        assert!(placement.unplaced.is_empty() && placement.illegal.is_empty());
+        assert!(
+            placement.relaxation.halo_scale > 0.0,
+            "{:?}",
+            placement.relaxation
+        );
+        // Whole, the keepouts left only the last level.
+        let mut whole = half.clone();
+        whole.components = problem.components.clone();
+        whole.poses = problem.poses.clone();
+        for part in 0..problem.components.len() {
+            if !active.contains(&part) && !problem.components[part].fixed {
+                whole.components[part] = half.components[part].clone();
+            }
+        }
+        let placement = pcb_placer::place(&whole, &placer);
+        assert_eq!(
+            placement.relaxation.halo_scale, 0.0,
+            "{:?}",
+            placement.relaxation
+        );
     }
 
     #[test]
