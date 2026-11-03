@@ -1594,10 +1594,7 @@ pub fn import_kicad_netlist_from(
             let (keys, mut report) =
                 crate::key_matrix::starter_constraints(&matrix, &bodies, starter.clone());
             if matrix.groups.is_empty() || report.switches == 0 {
-                report.why = Some(format!(
-                    "{} switch-like parts, but no two share a row and a column net: no key matrix (keys wired directly to pins, or no keyboard)",
-                    matrix.unassigned.len()
-                ));
+                report.why = Some(no_matrix_why(matrix.unassigned.len(), missing.len()));
             } else {
                 let path = output.join("constraints.starter.json");
                 fs::write(&path, crate::key_matrix::constraints_text(&keys))
@@ -2158,8 +2155,36 @@ fn own_pad_gaps(
     Ok(gaps)
 }
 
+/// The import report's `starter.why` where no key matrix is found among
+/// `switches` switch-like parts on the board, `missing` parts left out of
+/// it: the matrix is found from the parts on the board, so with parts
+/// missing it says that first (trial 4's ULK: 88 of 92 footprints missing,
+/// and the report said "no key matrix (keys wired directly to pins, or no
+/// keyboard)").
+fn no_matrix_why(switches: usize, missing: usize) -> String {
+    let found = format!(
+        "{switches} switch-like parts, but no two share a row and a column net: no key matrix"
+    );
+    if missing > 0 {
+        format!(
+            "{found} among the parts on the board; {missing} parts are missing from it (missing): import again with their footprints and the starter is written from the whole matrix"
+        )
+    } else {
+        format!("{found} (keys wired directly to pins, or no keyboard)")
+    }
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn no_matrix_with_parts_missing_says_the_parts_are_missing() {
+        let why = no_matrix_why(4, 88);
+        assert!(why.contains("88 parts are missing"), "{why}");
+        assert!(!why.contains("or no keyboard"), "{why}");
+        assert!(no_matrix_why(4, 0).ends_with("(keys wired directly to pins, or no keyboard)"));
+    }
+
     use super::*;
 
     #[test]
