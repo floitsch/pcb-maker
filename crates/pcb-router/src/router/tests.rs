@@ -5382,6 +5382,90 @@ fn the_coarse_probe_rips_the_conflicted_branches_and_counts_what_is_open() {
     assert!(after.open_terminals > 0);
 }
 
+/// A one-layer lattice of crossing nets: `rows` horizontal two-pad nets
+/// and `columns` vertical ones over a 40 x 40 mm board, each vertical one
+/// with a third pad off its line (more branches to rip).
+fn lattice_of_crossings(rows: usize, columns: usize) -> Router {
+    let mut router = crossed_net();
+    let mut board = router.board.clone();
+    board.obstacles.clear();
+    board.nets.clear();
+    board.outline = vec![[0.0, 0.0], [40.0, 0.0], [40.0, 40.0], [0.0, 40.0]];
+    let add = |name: String, pads: Vec<[f64; 2]>, board: &mut Board| {
+        let id = board.nets.len() as NetId;
+        let mut terminals = Vec::new();
+        for (index, at) in pads.iter().enumerate() {
+            let label = format!("{name}.{index}");
+            board.obstacles.push(copper(
+                Shape::Circle {
+                    center: *at,
+                    radius: 0.3,
+                },
+                id,
+                &label,
+            ));
+            terminals.push(Terminal {
+                anchor: *at,
+                layers: 1,
+                pad: board.obstacles.len() - 1,
+                contact: None,
+                label,
+            });
+        }
+        board.nets.push(Net {
+            name,
+            class: 0,
+            terminals,
+        });
+    };
+    for row in 0..rows {
+        let y = 4.0 + 32.0 * row as f64 / (rows - 1).max(1) as f64;
+        add(
+            format!("H{row}"),
+            vec![[2.0, y], [38.0, y + 0.7 * row as f64 % 3.0]],
+            &mut board,
+        );
+    }
+    for column in 0..columns {
+        let x = 5.0 + 30.0 * column as f64 / (columns - 1).max(1) as f64;
+        add(
+            format!("V{column}"),
+            vec![
+                [x, 2.0],
+                [x + 1.3 * (column % 3) as f64, 38.0],
+                [x + 2.5, 20.5],
+            ],
+            &mut board,
+        );
+    }
+    let config = router.config.clone();
+    router = Router::new(&board, &config);
+    router
+}
+
+#[test]
+fn the_rip_up_by_its_heap_rips_the_nets_the_scan_rips() {
+    for (rows, columns, iterations) in [(3, 3, 1), (5, 4, 2), (6, 7, 2), (8, 8, 3)] {
+        let mut router = lattice_of_crossings(rows, columns);
+        router.config.max_iterations = iterations;
+        router.probe(1.0);
+        let before = router.probe_standing();
+        assert!(before.conflicted > 2, "{rows} x {columns}: {before:?}");
+        let mut scanned = router.clone();
+        let heap = router.rip_up_most_conflicted();
+        let scan = scanned.rip_up_most_conflicted_scan();
+        assert!(heap.len() > 2, "{rows} x {columns}: {heap:?}");
+        assert_eq!(heap, scan, "{rows} x {columns}: the nets ripped, in order");
+        assert_eq!(router.probe_standing(), scanned.probe_standing());
+        for net in 0..router.nets.len() {
+            assert_eq!(
+                router.nets[net].branches.len(),
+                scanned.nets[net].branches.len()
+            );
+        }
+    }
+}
+
 /// One layer, a wall of no net across the board at x = 15 with a gap at
 /// its middle that holds one track and two wide ones near the edges: nets
 /// A (y = 9) and B (y = 11) both want the middle gap, each the same

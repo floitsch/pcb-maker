@@ -24,24 +24,86 @@ impl Router {
     /// standing then: no net is left in conflict, so its open terminals
     /// are the board's (`board_open_terminals`) and the pour pads off
     /// their pour. Returns the nets ripped and the standing.
+    ///
+    /// The most conflicted net is found from a heap of each net's count
+    /// as last seen, an upper bound: a rip-up only takes branches away, so
+    /// the occupancy only falls and no other net's count rises. The top is
+    /// counted again; where it still holds that count it is the most
+    /// conflicted (ties to the larger net id, as the scan's maximum of
+    /// (count, net) takes them), else it goes back with its count of now.
+    /// The same nets in the same order as the scan of every net after
+    /// every rip-up (`rip_up_standing_scan`), which took the race's ripped
+    /// count up to 11 s on MegaDrive (2026-11-04); checked against it at
+    /// every rip-up in debug builds and with `PCB_ROUTER_CHECK_RIP_UP`.
     pub fn rip_up_standing(&mut self) -> (usize, ProbeStanding) {
+        let removed = self.rip_up_most_conflicted();
+        (removed.len(), self.probe_standing())
+    }
+
+    /// `rip_up_standing`'s rip-ups: the nets ripped, in order.
+    pub(super) fn rip_up_most_conflicted(&mut self) -> Vec<NetId> {
+        let check = cfg!(debug_assertions) || std::env::var_os("PCB_ROUTER_CHECK_RIP_UP").is_some();
         let order = self.routing_order();
+        let mut heap: std::collections::BinaryHeap<(usize, NetId)> = order
+            .iter()
+            .map(|net| (self.conflicts(*net).len(), *net))
+            .filter(|(count, _)| *count > 0)
+            .collect();
         let mut removed: Vec<NetId> = Vec::new();
-        loop {
-            let worst = order
-                .iter()
-                .filter(|net| !removed.contains(*net))
-                .map(|net| (self.conflicts(*net).len(), *net))
-                .filter(|(count, _)| *count > 0)
-                .max();
-            let Some((_, net)) = worst else {
-                break;
-            };
+        while let Some((bound, net)) = heap.pop() {
+            let count = self.conflicts(net).len();
+            if check {
+                assert!(
+                    count <= bound,
+                    "net {net}: {count} conflicts after a rip-up, {bound} before"
+                );
+            }
+            if count < bound {
+                if count > 0 {
+                    heap.push((count, net));
+                }
+                continue;
+            }
+            if check {
+                assert_eq!(
+                    self.most_conflicted(&order, &removed),
+                    Some((count, net)),
+                    "the heap's most conflicted net against the scan's"
+                );
+            }
             self.nets[net as usize].stuck = 0;
             self.rip_up_conflicted(net);
             removed.push(net);
         }
-        (removed.len(), self.probe_standing())
+        if check {
+            assert_eq!(self.most_conflicted(&order, &removed), None);
+        }
+        removed
+    }
+
+    /// The most conflicted net of `order` not in `removed`, by (count,
+    /// net), with its count; None where none is in conflict.
+    fn most_conflicted(&self, order: &[NetId], removed: &[NetId]) -> Option<(usize, NetId)> {
+        order
+            .iter()
+            .filter(|net| !removed.contains(*net))
+            .map(|net| (self.conflicts(*net).len(), *net))
+            .filter(|(count, _)| *count > 0)
+            .max()
+    }
+
+    /// `rip_up_most_conflicted` as it was: every net counted again after
+    /// every rip-up (for the tests).
+    #[cfg(test)]
+    pub(super) fn rip_up_most_conflicted_scan(&mut self) -> Vec<NetId> {
+        let order = self.routing_order();
+        let mut removed: Vec<NetId> = Vec::new();
+        while let Some((_, net)) = self.most_conflicted(&order, &removed) {
+            self.nets[net as usize].stuck = 0;
+            self.rip_up_conflicted(net);
+            removed.push(net);
+        }
+        removed
     }
 
     /// After `probe`: the finish of the layout's first route (the hard
