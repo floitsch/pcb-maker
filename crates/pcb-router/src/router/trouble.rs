@@ -137,7 +137,7 @@ impl TroubleSettings {
 
     /// The most nets an exchange for a trouble-maker with `open` open
     /// terminals may displace.
-    fn victim_limit(&self, open: usize) -> usize {
+    pub(super) fn victim_limit(&self, open: usize) -> usize {
         self.victims
             .max((self.per_open * open as f64).ceil() as usize)
     }
@@ -145,30 +145,30 @@ impl TroubleSettings {
 
 /// What an exchange did.
 #[derive(Clone, Copy, Debug, Default)]
-struct Exchange {
+pub(super) struct Exchange {
     /// Kept (else restored).
-    kept: bool,
+    pub(super) kept: bool,
     /// The open terminals it closed (0 for a tie kept).
-    closed: usize,
+    pub(super) closed: usize,
     /// The nets it displaced.
-    displaced: usize,
+    pub(super) displaced: usize,
 }
 
 /// Where the repair's work went (work seconds), for the summary line.
 #[derive(Clone, Copy, Debug, Default)]
-struct TroubleWork {
+pub(super) struct TroubleWork {
     /// The trouble-makers' priced searches.
     priced: f64,
     /// The victims' hard routes (both passes).
-    victims: f64,
+    pub(super) victims: f64,
     /// Of `victims`, the second pass's.
-    retried: f64,
+    pub(super) retried: f64,
     /// The work of the exchanges kept (priced and victims).
     kept: f64,
     /// Victims routed; of them routed again in the second pass, and of
     /// those the ones that closed terminals so (and their work).
-    routed: usize,
-    retries: usize,
+    pub(super) routed: usize,
+    pub(super) retries: usize,
     rescued: usize,
     rescued_work: f64,
     /// Exchanges undone early (`TroubleSettings::early`).
@@ -176,11 +176,16 @@ struct TroubleWork {
     /// The budget work (`Router::budget_work`) at which the pass's work
     /// is spent: an ejection chain starts no further step past it.
     stop_at: f64,
+    /// The crossing dives (`Config::crossing_dive`): trials run, dives
+    /// kept, and their work (the detection's and the trials').
+    pub(super) dive_trials: usize,
+    pub(super) dives_kept: usize,
+    pub(super) dive_work: f64,
 }
 
 /// A net's state as an exchange may have to restore it, and its open
 /// terminals then (`open_measure`).
-type Saved = (NetId, Vec<Branch>, Vec<bool>, bool, usize);
+pub(super) type Saved = (NetId, Vec<Branch>, Vec<bool>, bool, usize);
 
 impl Router {
     fn open_terminals(&self, net: NetId) -> usize {
@@ -194,7 +199,7 @@ impl Router {
     /// The open terminals the exchanges weigh: a signal net's
     /// unconnected terminals; a pour net's pads off its pour's main piece
     /// (as `unfinished` counts them).
-    fn open_measure(&self, net: NetId) -> usize {
+    pub(super) fn open_measure(&self, net: NetId) -> usize {
         let state = &self.nets[net as usize];
         if state.plane.is_empty() {
             return self.open_terminals(net);
@@ -206,7 +211,7 @@ impl Router {
             .count()
     }
 
-    fn save_net(&self, net: NetId) -> Saved {
+    pub(super) fn save_net(&self, net: NetId) -> Saved {
         let state = &self.nets[net as usize];
         (
             net,
@@ -217,7 +222,7 @@ impl Router {
         )
     }
 
-    fn restore_nets(&mut self, saved: Vec<Saved>) {
+    pub(super) fn restore_nets(&mut self, saved: Vec<Saved>) {
         for (net, ..) in &saved {
             self.unstamp(*net);
         }
@@ -242,6 +247,22 @@ impl Router {
     /// the victim push a third net aside, and the board-wide search lets
     /// it take a detour the corridors and the window do not hold.
     pub(super) fn repair_trouble(&mut self, order: &[NetId], settings: TroubleSettings) -> usize {
+        let closed = self.repair_trouble_passes(order, settings);
+        // `PCB_ROUTER_TROUBLE_WHY`: the fine-pitch rows' open pads and what
+        // closes them (router/dive.rs), on or off; no work charged.
+        if std::env::var_os("PCB_ROUTER_TROUBLE_WHY").is_some()
+            && order.iter().any(|net| {
+                let state = &self.nets[*net as usize];
+                state.routable && state.plane.is_empty() && !state.complete
+            })
+        {
+            let dive = super::dive::DivePlan::new(self.fanout_plan());
+            self.crossing_census(&dive, order, "after the repair");
+        }
+        closed
+    }
+
+    fn repair_trouble_passes(&mut self, order: &[NetId], settings: TroubleSettings) -> usize {
         let budget = (self.negotiation_seconds * settings.share).max(30.0);
         let clock = self.clock();
         let mut closed = self.trouble_pass(order, settings, &clock, budget, "trouble");
@@ -306,6 +327,9 @@ impl Router {
             stop_at: clock.0 + budget,
             ..TroubleWork::default()
         };
+        // The fan-out plan for the crossing dives, made once a pass when
+        // the first dive is tried (the statics' dense pads and via sites).
+        let mut dives: Option<super::dive::DivePlan> = None;
         for round in 0..settings.rounds {
             let mut trouble: Vec<NetId> = order
                 .iter()
@@ -364,7 +388,30 @@ impl Router {
                 }
                 tried += 1;
                 let started = self.budget_work();
-                let exchange = self.trouble_exchange(net, order, settings, &mut work);
+                let mut exchange = self.trouble_exchange(net, order, settings, &mut work);
+                // The crossing dive (`Config::crossing_dive`) where the
+                // exchange was refused: a net of a crossing pair at a
+                // fine-pitch row takes a via beyond the row, or the other
+                // does (router/dive.rs).
+                if !exchange.kept && self.config.crossing_dive && !self.spent(&clock, budget) {
+                    if dives.is_none() {
+                        let plan = self.fanout_plan();
+                        self.scratch.expansions += plan.work.div_ceil(8);
+                        dives = Some(super::dive::DivePlan::new(plan));
+                    }
+                    let dive = dives.as_ref().unwrap();
+                    let (outcome, reason) =
+                        self.crossing_dives(dive, net, order, settings, &clock, budget, &mut work);
+                    if why {
+                        eprintln!(
+                            "crossing dive {}: {reason}",
+                            self.board.nets[net as usize].name
+                        );
+                    }
+                    if outcome.kept {
+                        exchange = outcome;
+                    }
+                }
                 if exchange.kept {
                     work.kept += self.budget_work() - started;
                     closed_round += exchange.closed;
@@ -415,6 +462,12 @@ impl Router {
                 work.kept,
                 work.early,
             );
+            if self.config.crossing_dive {
+                eprintln!(
+                    "{label}: crossing dives: {} trials, {} kept, {:.1} s of work",
+                    work.dive_trials, work.dives_kept, work.dive_work
+                );
+            }
         }
         closed
     }
@@ -956,17 +1009,17 @@ impl Router {
 }
 
 /// The open terminals of the saved nets as they were.
-fn open_saved(saved: &[Saved]) -> usize {
+pub(super) fn open_saved(saved: &[Saved]) -> usize {
     saved.iter().map(|entry| entry.4).sum()
 }
 
 /// The open terminals of the saved nets as they are now.
-fn open_now(router: &Router, saved: &[Saved]) -> usize {
+pub(super) fn open_now(router: &Router, saved: &[Saved]) -> usize {
     saved.iter().map(|entry| router.open_measure(entry.0)).sum()
 }
 
 /// Whether none of the saved nets is in conflict now.
-fn clean(router: &Router, saved: &[Saved]) -> bool {
+pub(super) fn clean(router: &Router, saved: &[Saved]) -> bool {
     saved
         .iter()
         .all(|entry| router.conflicts(entry.0).is_empty())

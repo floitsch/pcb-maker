@@ -189,6 +189,17 @@ pub struct Config {
     /// How far beyond its pad a fan-out run reaches, in millimetres
     /// (`PCB_ROUTER_FANOUT_DEPTH`, default 0.5).
     pub fanout_depth: f64,
+    /// The crossing dive (router/dive.rs; docs/router.md, "Crossings
+    /// decided in the repair (2026-11-03)"): where the trouble repair's
+    /// exchange for an open net is refused and the net has a pad of a
+    /// fine-pitch row whose straight way out a row neighbour's copper
+    /// closes while the two nets' targets lie on opposite sides along the
+    /// row, one net of the pair takes a via at one of the fan-out's via
+    /// sites beyond the row and the other stays on the layer (both
+    /// assignments tried, the best kept when the nets involved end with
+    /// fewer open terminals and none in conflict). `PCB_ROUTER_CROSSING_DIVE`
+    /// overrides it. Off by default.
+    pub crossing_dive: bool,
     /// The pour model as the measurement of a written board takes it
     /// (`measured_board`'s starved thermals, its solid step, and
     /// dump-pour-map), closer to KiCad's DRC than routing's: a pad merged
@@ -449,6 +460,8 @@ impl Default for Config {
                 .ok()
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(0.5),
+            crossing_dive: super::dive::crossing_dive_override()
+                .unwrap_or(super::dive::CROSSING_DIVE_DEFAULT),
             min_spokes: 2,
             measured_thermals: std::env::var_os("PCB_ROUTER_MEASURED_THERMALS").is_some(),
             global_routing: false,

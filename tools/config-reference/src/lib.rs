@@ -198,6 +198,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "overrides the router's `fanout` (`0` off, anything else on; off by default): before the negotiation every pad of a dense row gets one straight way out, chosen jointly with its neighbours, that other nets pay `fanout_cost` to cross or to put a via beside (docs/router.md, \"Fan-out before negotiation\").",
     ),
     (
+        "PCB_ROUTER_CROSSING_DIVE",
+        Kind::Switch,
+        "overrides the router's `crossing_dive` (`0` off, anything else on; off by default): where the trouble repair's exchange for an open net is refused and the net has a pad of a fine-pitch row whose straight way out a row neighbour's copper closes while their targets cross, one net of the pair takes a via at a fan-out via site beyond the row (docs/router.md, \"Crossings decided in the repair (2026-11-03)\").",
+    ),
+    (
         "PCB_ROUTER_FANOUT_COST",
         Kind::Switch,
         "the router's `fanout_cost` in millimetres (default 6; with `fanout`): what another net pays to cross a reserved fan-out run or to put a via within reach of it.",

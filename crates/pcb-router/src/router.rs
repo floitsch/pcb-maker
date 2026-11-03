@@ -26,6 +26,7 @@ mod coarse;
 mod config;
 /// Read-only tile views of the negotiation, for the congestion model.
 pub mod congestion;
+mod dive;
 mod driver;
 mod escapes;
 mod fanout;
@@ -67,6 +68,7 @@ pub use build::{
     BuildCounts, SharedBuild, StaticMapsHold, held_maps_bytes, hold_static_maps, static_maps_key,
 };
 pub use config::Config;
+pub use dive::{CROSSING_DIVE_DEFAULT, crossing_dive_override};
 pub use escapes::exact_escapes_override;
 pub use fanout::{FANOUT_DEFAULT, fanout_override};
 pub use pour_report::{PourLayerReport, StarvedThermal};
