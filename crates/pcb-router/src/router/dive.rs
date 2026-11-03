@@ -630,20 +630,33 @@ impl Router {
             }
             work.retried += self.budget_work() - started;
         }
-        // The diver must take its via: the stub's end joins its route.
-        let end = *stub.nodes.last().unwrap();
+        // Where the diver's route does not take its via (the stayer's
+        // reroute freed its way on the layer), the stub goes, or its part
+        // beyond the furthest node the route joins: no copper hangs off
+        // the pad unused. The trial is judged as it stands.
         let state = &self.nets[diver as usize];
-        let has_stub = state
+        let joined = state
             .branches
             .iter()
-            .any(|branch| branch.nodes == stub.nodes);
-        let used = state.branches.iter().any(|branch| {
-            branch.nodes != stub.nodes
-                && (branch.nodes[0] == end || *branch.nodes.last().unwrap() == end)
-        });
-        if !has_stub || !used {
-            self.restore_nets(saved);
-            return Err("the diver's route does not take its via".into());
+            .filter(|branch| branch.nodes != stub.nodes)
+            .flat_map(|branch| [branch.nodes[0], *branch.nodes.last().unwrap()])
+            .filter_map(|node| stub.nodes.iter().position(|stub_node| *stub_node == node))
+            .max();
+        if joined != Some(stub.nodes.len() - 1) {
+            let state = &mut self.nets[diver as usize];
+            if let Some(at) = state
+                .branches
+                .iter()
+                .position(|branch| branch.nodes == stub.nodes)
+            {
+                match joined {
+                    Some(last) if last > 0 => state.branches[at].nodes.truncate(last + 1),
+                    _ => {
+                        state.branches.remove(at);
+                    }
+                }
+                self.stamp(diver);
+            }
         }
         // A conflict one side of a pair of classes sees (as in the
         // exchange): the nets in conflict lose those branches and are
