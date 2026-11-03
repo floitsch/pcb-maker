@@ -832,6 +832,88 @@ impl<'a> CrossingState<'a> {
         found
     }
 
+    /// Kept line `id`'s count against the grid of now (`LineCache`): as
+    /// kept where none of its cells has changed since, else counted (its
+    /// cells' lines, those of other nets tested) and kept.
+    fn line_count(&mut self, id: u32) -> LineCache {
+        let line = self.lines[id as usize];
+        let cache = self.line_cache[id as usize];
+        if cache.at > 0 {
+            let fresh = cache.at > self.grid.version || {
+                let versions = &self.grid.versions;
+                let mut fresh = true;
+                self.grid.walk(line.a, line.b, |cell| {
+                    fresh &= versions[cell] < cache.at;
+                });
+                fresh
+            };
+            if fresh {
+                #[cfg(test)]
+                {
+                    self.kept_hits += 1;
+                }
+                return cache;
+            }
+        }
+        let stamp = Self::next_stamp(&mut self.stamp, &mut self.seen);
+        let mut near = std::mem::take(&mut self.near);
+        near.clear();
+        let (grid, seen) = (&self.grid, &mut self.seen);
+        let cells = grid.walk(line.a, line.b, |cell| {
+            for &other in &grid.cells[cell] {
+                if seen[other as usize] != stamp {
+                    seen[other as usize] = stamp;
+                    near.push(other);
+                }
+            }
+        });
+        let mut crossings = 0u32;
+        for &other in &near {
+            let theirs = self.lines[other as usize];
+            if theirs.net != line.net && lines_cross(line.a, line.b, theirs.a, theirs.b) {
+                crossings += 1;
+            }
+        }
+        let cache = LineCache {
+            at: self.grid.version + 1,
+            cells: cells as u32,
+            met: near.len() as u32,
+            crossings,
+        };
+        self.near = near;
+        self.line_cache[id as usize] = cache;
+        cache
+    }
+
+    /// The kept line of `line`'s net with `line`'s ends, bit for bit (the
+    /// same cells, lines met and crossings).
+    fn kept_twin(&self, line: &Line) -> Option<u32> {
+        let bits = |point: Point| [point[0].to_bits(), point[1].to_bits()];
+        let (a, b) = (bits(line.a), bits(line.b));
+        self.net_lines[line.net].iter().copied().find(|&kept| {
+            let kept = &self.lines[kept as usize];
+            bits(kept.a) == a && bits(kept.b) == b
+        })
+    }
+
+    /// The crossings of `line` with the kept lines of the nets `nets`
+    /// other than its own.
+    fn crossings_with_nets(&self, line: &Line, nets: &[usize]) -> u64 {
+        let mut found = 0u64;
+        for &net in nets {
+            if net == line.net {
+                continue;
+            }
+            for &other in &self.net_lines[net] {
+                let theirs = &self.lines[other as usize];
+                if lines_cross(line.a, line.b, theirs.a, theirs.b) {
+                    found += 1;
+                }
+            }
+        }
+        found
+    }
+
     /// `count(ids, &[])` of lines `ids` in the grid, each once, from what
     /// each line's count was when none of its cells has changed since
     /// (`LineCache`): `count` meets each line's cells' lines and tests
@@ -850,59 +932,12 @@ impl<'a> CrossingState<'a> {
         let mut sum = 0u64;
         let mut walked = 0u64;
         let mut met = 0u64;
-        let mut near = std::mem::take(&mut self.near);
         for &id in ids {
-            let line = self.lines[id as usize];
-            let cache = self.line_cache[id as usize];
-            if cache.at > 0 {
-                let fresh = cache.at > self.grid.version || {
-                    let versions = &self.grid.versions;
-                    let mut fresh = true;
-                    self.grid.walk(line.a, line.b, |cell| {
-                        fresh &= versions[cell] < cache.at;
-                    });
-                    fresh
-                };
-                if fresh {
-                    #[cfg(test)]
-                    {
-                        self.kept_hits += 1;
-                    }
-                    walked += cache.cells as u64;
-                    met += cache.met as u64;
-                    sum += cache.crossings as u64;
-                    continue;
-                }
-            }
-            let stamp = Self::next_stamp(&mut self.stamp, &mut self.seen);
-            near.clear();
-            let (grid, seen) = (&self.grid, &mut self.seen);
-            let cells = grid.walk(line.a, line.b, |cell| {
-                for &other in &grid.cells[cell] {
-                    if seen[other as usize] != stamp {
-                        seen[other as usize] = stamp;
-                        near.push(other);
-                    }
-                }
-            });
-            let mut crossings = 0u32;
-            for &other in &near {
-                let theirs = self.lines[other as usize];
-                if theirs.net != line.net && lines_cross(line.a, line.b, theirs.a, theirs.b) {
-                    crossings += 1;
-                }
-            }
-            self.line_cache[id as usize] = LineCache {
-                at: self.grid.version + 1,
-                cells: cells as u32,
-                met: near.len() as u32,
-                crossings,
-            };
-            walked += cells as u64;
-            met += near.len() as u64;
-            sum += crossings as u64;
+            let cache = self.line_count(id);
+            walked += cache.cells as u64;
+            met += cache.met as u64;
+            sum += cache.crossings as u64;
         }
-        self.near = near;
         // The crossings among the lines themselves, in the sum twice.
         let mut among = 0u64;
         for (index, &first) in ids.iter().enumerate() {
@@ -960,35 +995,18 @@ impl<'a> CrossingState<'a> {
         for &id in fresh {
             self.subject[id as usize] = query;
         }
-        let bits = |point: Point| [point[0].to_bits(), point[1].to_bits()];
         let mut found = 0u64;
         let mut walked = 0u64;
         let mut met = 0u64;
         let mut near = std::mem::take(&mut self.near);
         for &id in fresh {
             let line = self.lines[id as usize];
-            let (a, b) = (bits(line.a), bits(line.b));
-            let same = self.net_lines[line.net].iter().copied().find(|&kept| {
-                let kept = &self.lines[kept as usize];
-                bits(kept.a) == a && bits(kept.b) == b
-            });
-            if let Some(kept) = same {
+            if let Some(kept) = self.kept_twin(&line) {
                 let cache = self.line_cache[kept as usize];
                 if cache.at > self.grid.version {
                     // Its crossings with the other moved nets' kept lines
                     // are in the kept count, not in this one.
-                    let mut moved = 0u64;
-                    for &net in nets {
-                        if net == line.net {
-                            continue;
-                        }
-                        for &other in &self.net_lines[net] {
-                            let theirs = &self.lines[other as usize];
-                            if lines_cross(line.a, line.b, theirs.a, theirs.b) {
-                                moved += 1;
-                            }
-                        }
-                    }
+                    let moved = self.crossings_with_nets(&line, nets);
                     walked += cache.cells as u64;
                     met += cache.met as u64;
                     found += cache.crossings as u64 - moved;
@@ -1167,10 +1185,29 @@ impl<'a> CrossingState<'a> {
             let line = self.lines[id as usize];
             let (first, last) = line_cells[rank];
             walked += (last - first) as u64;
+            // A fresh line with the ends of a kept one of its net meets
+            // the kept lines that one meets and crosses those it crosses,
+            // less the kept lines of the other nets here (passed by
+            // below): from its count (`line_count`), kept for the spots
+            // after this one while the grid holds still.
+            let twin = self.kept_twin(&line).map(|kept| {
+                let cache = self.line_count(kept);
+                (
+                    cache.met as u64,
+                    cache.crossings as u64 - self.crossings_with_nets(&line, nets),
+                )
+            });
+            if let Some((kept_met, kept_found)) = twin {
+                met += kept_met;
+                found += kept_found;
+            }
             let stamp = Self::next_stamp(&mut self.stamp, &mut self.seen);
             let fresh_stamp = Self::next_stamp(&mut self.fresh_stamp, &mut self.fresh_seen);
             for &cell in &cells_of[first..last] {
                 for &other in &self.grid.cells[cell] {
+                    if twin.is_some() {
+                        break;
+                    }
                     if self.seen[other as usize] == stamp {
                         continue;
                     }
