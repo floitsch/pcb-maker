@@ -1,4 +1,4 @@
-# Hand-over (state as of 2026-11-02; measured by layout sweep v29, the nightly of 2026-11-02 on main 912a1de)
+# Hand-over (state as of 2026-11-03; measured by layout sweep v30, the nightly of 2026-11-03 on main 5657f45)
 
 What the tool does today, which benchmarks count, what is known to be
 wrong, where everything is and how to work on it. What each round of work
@@ -53,7 +53,7 @@ The newest nightly measurement of main (scripts/nightly.sh; the table of
 the last 14 nights is in [benchmarks.md](benchmarks.md#nightly)):
 
 <!-- nightly-state:begin -->
-**Nightly** 2026-11-02 (main 912a1de89d28, `build/nightly/2026-11-02/summary.md`): fingerprints identical; expansion 24/46 (strict 24), 558 open; short 8/12 (strict 8), 23 open; sweep 62/109 (strict 62), 2658 open; designer 71/109 (strict 68), 2759 open at 0.675; gap placement 76%, routing 24%.
+**Nightly** 2026-11-03 (main 5657f451024a, `build/nightly/2026-11-03/summary.md`): fingerprints identical; expansion 24/46 (strict 24), 558 open; short 8/12 (strict 8), 23 open; sweep 62/109 (strict 62), 2658 open; designer 71/109 (strict 68), 2759 open at 0.675; gap placement 76%, routing 24%.
 <!-- nightly-state:end -->
 
 **Layout sweep v16** (x862, tasks v6, 109 boards harvested from GitHub,
@@ -131,18 +131,18 @@ post-dates it. `build/github-layout-v21.log`; table, gap split, the
 costliest placements and the boards worse than the nightly in
 [benchmarks.md](benchmarks.md#layout-sweep-v21-2026-10-26).
 
-**Layout sweep v29** (the nightly of 2026-11-02, main 912a1de, written
+**Layout sweep v30** (the nightly of 2026-11-03, main 5657f45, written
 by the nightly): **62 of 109 pass the strict rule** (62 the per-type
 rule), 2658 unconnected in all, strict errors 40, no row cut or killed,
 2 without a result; medians against the designer's board: vias x0.68,
 length x1.04, open 0.000 (mean 0.100), bends x1.12, stair-steps +56,
-crossings +1. Against the nightly of 2026-11-01: better 0, same 107,
+crossings +1. Against the nightly of 2026-11-02: better 0, same 107,
 worse 0, strict passes 62 -> 62. The matched designer tier on the same
 binary (budget scale 0.675): 68 strict passes (71 per type); over the
 100 target boards placement 76 %, routing 24 % of the open connections.
-`build/nightly/2026-11-02/`; table, gap split, the costliest placements
+`build/nightly/2026-11-03/`; table, gap split, the costliest placements
 and the losers in
-[benchmarks.md](benchmarks.md#layout-sweep-v29-2026-11-02).
+[benchmarks.md](benchmarks.md#layout-sweep-v30-2026-11-03).
 
 **Quick tier** (30 boards, full budget, the merge gate):
 `build/quick30-x1152.log` (x1152 = main 015676c, tasks v6): **24 of 30
