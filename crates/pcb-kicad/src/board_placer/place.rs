@@ -253,6 +253,7 @@ pub fn place_kicad_board(
                     .map(|transform| (transform.angle, transform.offset))
                     .collect(),
                 within: copies_surroundings(copies, sub),
+                held: copies_held_bands(copies, &lowered.problem),
             };
             let names = lowered.references.clone();
             let mut applied = crate::sub_boards::PlacerApplied::default();
@@ -841,6 +842,49 @@ fn copies_surroundings(
                 region[2].min(around[2] + margin),
                 region[3].min(around[3] + margin),
             ]
+        })
+        .collect()
+}
+
+/// Per copy of a panel, the bands along the board's edges where one of
+/// its movable parts is held (an edge or overhang constraint): as deep as
+/// the part's longer side and its edge distance (`max_mm`; the overhang's
+/// box), a millimetre more. The other copies' keepouts are not carried
+/// there (`sub_boards::CopyFrames::held`).
+fn copies_held_bands(
+    copies: &self::panel::PanelCopies,
+    problem: &core::Problem,
+) -> Vec<Vec<[f64; 4]>> {
+    let board = problem.bounds();
+    let band = |edge: core::constraints::Edge, depth: f64| match edge {
+        core::constraints::Edge::Left => [board[0], board[1], board[0] + depth, board[3]],
+        core::constraints::Edge::Right => [board[2] - depth, board[1], board[2], board[3]],
+        core::constraints::Edge::Top => [board[0], board[1], board[2], board[1] + depth],
+        core::constraints::Edge::Bottom => [board[0], board[3] - depth, board[2], board[3]],
+    };
+    copies
+        .members
+        .iter()
+        .map(|members| {
+            let mut bands = Vec::new();
+            for &part in members {
+                let component = &problem.components[part];
+                if component.fixed {
+                    continue;
+                }
+                let longer = component.body_size[0].max(component.body_size[1]);
+                for (held, edge, max) in &problem.constraints.edges {
+                    if *held == part {
+                        bands.push(band(*edge, longer + max + 1.0));
+                    }
+                }
+                for (held, edge, _) in &problem.constraints.overhangs {
+                    if *held == part {
+                        bands.push(band(*edge, longer + 1.0));
+                    }
+                }
+            }
+            bands
         })
         .collect()
 }

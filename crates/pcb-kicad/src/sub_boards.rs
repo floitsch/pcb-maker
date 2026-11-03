@@ -31,12 +31,34 @@ use pcb_router as core;
 
 /// A panel of copies as the keepouts see it (`Pieces::copies_keepouts`):
 /// per copy its transform from the first copy (a turn by `angle`
-/// degrees, as `pcb_placer::problem::rotate` turns, then `offset`) and its
-/// surroundings (`within`: where its own parts may lie).
+/// degrees, as `pcb_placer::problem::rotate` turns, then `offset`), its
+/// surroundings (`within`: where its own parts may lie) and the bands
+/// where the other copies' keepouts are not carried (`held`: along a
+/// board edge one of its parts is held at, as deep as the part and its
+/// distance: OpenRX's second copy holds its crystal X301 within 1.25 mm
+/// of the right edge, where the first copy's frame would come).
 #[derive(Clone, Debug, Default)]
 pub(crate) struct CopyFrames {
     pub transforms: Vec<(f64, [f64; 2])>,
     pub within: Vec<[f64; 4]>,
+    pub held: Vec<Vec<[f64; 4]>>,
+}
+
+/// `a` less `b`: up to four boxes.
+fn subtract_box(a: [f64; 4], b: [f64; 4]) -> Vec<[f64; 4]> {
+    let cut = clip_box(a, b);
+    if !(cut[0] < cut[2] && cut[1] < cut[3]) {
+        return vec![a];
+    }
+    [
+        [a[0], a[1], a[2], cut[1]],
+        [a[0], cut[3], a[2], a[3]],
+        [a[0], cut[1], cut[0], cut[3]],
+        [cut[2], cut[1], a[2], cut[3]],
+    ]
+    .into_iter()
+    .filter(|b| b[0] < b[2] && b[1] < b[3])
+    .collect()
 }
 
 impl CopyFrames {
@@ -829,7 +851,8 @@ impl Pieces {
     /// those cells in blocks make the first copy's boxes, and each other
     /// copy takes their exact images (cut to its surroundings). The kept
     /// cells within no copy's surroundings (the frames beyond) are boxes
-    /// of their own.
+    /// of their own. Within a copy's held bands (`CopyFrames::held`) it
+    /// keeps its own keepouts only.
     pub(crate) fn copies_keepouts(
         &self,
         frames: &[bool],
@@ -876,6 +899,19 @@ impl Pieces {
             }
         }
         let mut boxes = self.mask_boxes(&rest, block);
+        // Within a copy's held bands only its own keepouts.
+        let own = self.mask_boxes(mask, block);
+        for (copy, bands) in copies.held.iter().enumerate() {
+            for band in bands {
+                let band = clip_box(*band, copies.within[copy]);
+                for b in &own {
+                    let cut = clip_box(*b, band);
+                    if cut[0] < cut[2] && cut[1] < cut[3] {
+                        boxes.push(cut);
+                    }
+                }
+            }
+        }
         let first_boxes: Vec<[f64; 4]> = self
             .mask_boxes(&first, block)
             .into_iter()
@@ -906,10 +942,18 @@ impl Pieces {
                         },
                     )
                 };
-                let image = clip_box(image, copies.within[copy]);
-                if image[0] < image[2] && image[1] < image[3] {
-                    boxes.push(image);
+                let mut pieces = vec![clip_box(image, copies.within[copy])];
+                for band in copies.held.get(copy).into_iter().flatten() {
+                    pieces = pieces
+                        .into_iter()
+                        .flat_map(|piece| subtract_box(piece, *band))
+                        .collect();
                 }
+                boxes.extend(
+                    pieces
+                        .into_iter()
+                        .filter(|image| image[0] < image[2] && image[1] < image[3]),
+                );
             }
         }
         boxes
@@ -3342,6 +3386,7 @@ mod tests {
         let copies = CopyFrames {
             transforms: vec![(0.0, [0.0, 0.0]), (0.0, [21.5, 0.0])],
             within: vec![[-1.5, -1.5, 20.0, 21.5], [20.0, -1.5, 41.5, 21.5]],
+            held: vec![Vec::new(), Vec::new()],
         };
         let (keepouts, copper) = pieces.copies_keepouts(&frames, &copies);
         let kept = |boxes: &[[f64; 4]], point: [f64; 2]| {
