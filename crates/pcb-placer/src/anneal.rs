@@ -435,18 +435,26 @@ impl State<'_> {
     /// `total` box by box, as the sum takes it (the same additions in the
     /// same order: not the pair's own sum added once), the work booked
     /// through `built`, `booked` and `area`.
+    /// Generic in its closures and inlined (as the loop body it was: a call
+    /// through `dyn Fn` a box comparison cost the first commit's gain on
+    /// DSP-ADAU1452).
     #[allow(clippy::too_many_arguments)]
-    fn pair(
+    #[inline(always)]
+    fn pair<Built, Booked, Area>(
         &self,
         index: usize,
         rect: Rect,
         other: usize,
         cache: &mut [PartBoxes],
-        built: &dyn Fn(Boxes) -> Boxes,
-        booked: &dyn Fn(usize),
-        area: &dyn Fn((Point, Point), (Point, Point)) -> f64,
+        built: &Built,
+        booked: &Booked,
+        area: &Area,
         total: &mut f64,
-    ) {
+    ) where
+        Built: Fn(Boxes) -> Boxes,
+        Booked: Fn(usize),
+        Area: Fn((Point, Point), (Point, Point)) -> f64,
+    {
         let component = &self.problem.components[index];
         let side = component.side;
         let pose = self.poses[index];
