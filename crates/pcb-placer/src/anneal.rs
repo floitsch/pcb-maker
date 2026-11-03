@@ -220,6 +220,10 @@ struct State<'a> {
     /// Whether far pairs take `far_work` without their sum (off only in
     /// the tests, for the direct sums).
     skip_far: bool,
+    /// Per part, how far from its body centre (on either axis, at any
+    /// pose) its rectangle and its boxes reach: the far test's box of the
+    /// other part of a pair, without bringing its boxes to its pose.
+    reaches: Vec<f64>,
     /// The marks and obstacles of the constraints by part (`PairFlags`).
     flags: PairFlags,
     /// `AnnealConfig::legal_far_side`.
@@ -336,9 +340,15 @@ impl State<'_> {
             if self.skip_far
                 && !(self.legal_far_side && side.opposite(self.problem.components[other].side))
             {
-                self.fresh_boxes(&mut cache, other);
-                let body = &self.rects[other];
-                let theirs = extent_with(cache[other].extent, (body.center, body.half));
+                // The other part's reach about its body centre at any pose
+                // (`reaches`), without its boxes.
+                let (center, reach) = (self.rects[other].center, self.reaches[other]);
+                let theirs = [
+                    center[0] - reach,
+                    center[1] - reach,
+                    center[0] + reach,
+                    center[1] + reach,
+                ];
                 if extents_apart(mine, theirs, self.far_grow) {
                     let far = self.far_work(index, other);
                     if self.check_overlap {
@@ -1034,6 +1044,7 @@ fn build_state<'a>(problem: &'a Problem, poses: &[Pose], legal_far_side: bool) -
         check_overlap: std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
         far_grow: far_grow(problem),
         skip_far: true,
+        reaches: Vec::new(),
         flags: PairFlags::new(problem),
         legal_far_side,
         field: None,
@@ -1044,6 +1055,11 @@ fn build_state<'a>(problem: &'a Problem, poses: &[Pose], legal_far_side: bool) -
     };
     state.rects = (0..problem.components.len())
         .map(|index| state.rect(index, state.poses[index]))
+        .collect();
+    state.reaches = problem
+        .components
+        .iter()
+        .map(|component| reach(component, component.halo + state.share(component)))
         .collect();
     for (index, rect) in state.rects.iter().enumerate() {
         state.grid.get_mut().insert(index, rect.center, rect.half);
@@ -1108,6 +1124,34 @@ impl PairFlags {
     fn bare(&self, problem: &Problem, a: usize, b: usize) -> bool {
         problem.constraints.linked(a, b) || self.halo_free(problem, a) || self.halo_free(problem, b)
     }
+}
+
+/// `State::reaches` of a part whose rectangle grows its body by `margin`:
+/// on either axis its rectangle reaches at most its body's half sides and
+/// the margin from the body centre at any angle, and a box (turned to the
+/// pose and taken as the box around that) at most its centre's distance
+/// from the body centre and its half sides.
+fn reach(component: &crate::problem::Component, margin: f64) -> f64 {
+    let half = [component.body_size[0] / 2.0, component.body_size[1] / 2.0];
+    let mut reach = half[0] + half[1] + margin.max(0.0);
+    for boxes in [
+        &component.far_side,
+        &component.pads,
+        &component.copper_graphics,
+        &component.far_courtyard,
+        &component.hollow,
+        &component.courtyards,
+    ] {
+        for local in boxes.iter() {
+            let center = [
+                (local[0] + local[2]) / 2.0 - component.body_center[0],
+                (local[1] + local[3]) / 2.0 - component.body_center[1],
+            ];
+            let sides = (local[2] - local[0]).abs() / 2.0 + (local[3] - local[1]).abs() / 2.0;
+            reach = reach.max(center[0].hypot(center[1]) + sides);
+        }
+    }
+    reach
 }
 
 /// `State::far_grow`: the margins a pair's sum grows a box by (the edge
@@ -2085,6 +2129,14 @@ mod tests {
                 if next() < 0.1 {
                     component.copper_graphics = vec![[1.0, 1.0, 2.5, 1.6]];
                 }
+                // Boxes reaching far beyond the body (a part's reach is its
+                // farthest box's).
+                if next() < 0.1 {
+                    component.pads.push([6.0, -0.3, 7.5, 0.3]);
+                }
+                if next() < 0.05 && !component.hollow.is_empty() {
+                    component.hollow.push([-7.0, 3.0, -5.0, 6.0]);
+                }
             }
             if round % 2 == 1 {
                 // Frames of a panel: keepouts some parts may reach over.
@@ -2141,24 +2193,21 @@ mod tests {
                     (expected.to_bits(), direct.work.get() - before_direct),
                     "round {round}, step {step}, part {index}: (sum, work) with far pairs against the direct sums"
                 );
-                // How many pairs the far test took (from the extents).
+                // How many pairs the far test took.
                 let cache = fast.boxes.borrow();
                 let mine = extent_with(
                     cache[index].extent,
                     (fast.rects[index].center, fast.rects[index].half),
                 );
                 for other in 0..parts {
-                    if other != index
-                        && cache[other].pose.is_some()
-                        && extents_apart(
-                            mine,
-                            extent_with(
-                                cache[other].extent,
-                                (fast.rects[other].center, fast.rects[other].half),
-                            ),
-                            fast.far_grow,
-                        )
-                    {
+                    let (center, reach) = (fast.rects[other].center, fast.reaches[other]);
+                    let theirs = [
+                        center[0] - reach,
+                        center[1] - reach,
+                        center[0] + reach,
+                        center[1] + reach,
+                    ];
+                    if other != index && extents_apart(mine, theirs, fast.far_grow) {
                         far_pairs += 1;
                     }
                 }
