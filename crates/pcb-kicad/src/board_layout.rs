@@ -2085,14 +2085,14 @@ pub fn layout_kicad_board(
                 rip_seconds: 0.0,
                 copy_mb: 0.0,
             };
-            for (_, router) in &probed {
+            for (_, router) in probed.iter_mut() {
                 crate::ledger::reserve_at_least(
                     crate::board_router::resident_mb() + router_mb,
                     "the race's ripped count",
                 );
                 let before_mb = crate::board_router::resident_mb();
                 let started = std::time::Instant::now();
-                let mut copy = router.clone();
+                let mut copy = router.copy_for_rip_up();
                 cost.copy_seconds += started.elapsed().as_secs_f64();
                 cost.copy_mb = cost
                     .copy_mb

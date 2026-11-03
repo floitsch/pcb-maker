@@ -5452,6 +5452,17 @@ fn the_rip_up_by_its_heap_rips_the_nets_the_scan_rips() {
         let before = router.probe_standing();
         assert!(before.conflicted > 2, "{rows} x {columns}: {before:?}");
         let mut scanned = router.clone();
+        // The race's copy without the history rips and counts as the
+        // router does, and leaves the router's history as it was.
+        let history = router.history.clone();
+        let mut lean = router.copy_for_rip_up();
+        assert_eq!(router.history, history);
+        assert!(lean.history.is_empty());
+        assert_eq!(
+            lean.rip_up_standing(),
+            router.clone().rip_up_standing(),
+            "{rows} x {columns}: the copy's ripped standing"
+        );
         let heap = router.rip_up_most_conflicted();
         let scan = scanned.rip_up_most_conflicted_scan();
         assert!(heap.len() > 2, "{rows} x {columns}: {heap:?}");

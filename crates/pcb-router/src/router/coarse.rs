@@ -18,6 +18,22 @@ impl Router {
         (self.iterations, self.negotiation_stop)
     }
 
+    /// A copy for `rip_up_standing` (the race's ripped count): the router
+    /// but for the negotiation's history (per layer and cell, and per
+    /// tile), which only the searches, the negotiation, the finish and the
+    /// reports read, none of them the rip-up's or the standing's. The
+    /// router stays as it is (its history moved out for the copy and
+    /// back). Video's copies were up to 417 MB and 0.8 s a race
+    /// (2026-10-28). Not a router to route on.
+    pub fn copy_for_rip_up(&mut self) -> Router {
+        let history = std::mem::take(&mut self.history);
+        let tile_history = std::mem::take(&mut self.tile_history);
+        let copy = self.clone();
+        self.history = history;
+        self.tile_history = tile_history;
+        copy
+    }
+
     /// After `probe`: every net in conflict loses its conflicted branches,
     /// the most conflicted first and the others judged again after each
     /// (`resolve_remaining`'s rip-up, without its hard searches), and the
