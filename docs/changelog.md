@@ -11,6 +11,26 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-03 (the race ranks its probes by the ripped count by default)
+
+Branch race-ripped-count on main 1a005be4 (x1880); snapshots x15191 (the
+switch, off) and x15192 (`"ripped"` the default). docs/placer.md, "The
+race ranks its probes by the ripped count (2026-10-27)", has the
+nine-pair tables.
+
+- **`race_count` defaults to `"ripped"`**: the race ranks its three
+  probes by the open terminals after the rip-up of the conflicted
+  branches, with the 2 % margin over the first-ranked placement
+  (`"unfinished"` restores the race until now). Measured: at nine seed
+  pairs on the dense boards weighted -5.6 %, p 0.014, BETTER ("Measured
+  on 2026-10-27 (the race ranks its probes by the ripped count)" below).
+- **Checked from the rebased head** (seed 1): x15192 by default writes
+  the same boards as x15191 with `"ripped"` on 4in1-mini and protoesp,
+  and with `"unfinished"` the same board as x1880 on 4in1-mini. Short
+  tier (3 x 2, x1880 against x15192): 11 of 12 boards identical,
+  WLED_Matrix 16 to 14 unconnected; unconnected 23 / 21, strict passes
+  8 / 8.
+
 ## Measured on 2026-11-03 (nightly: layout sweep v30, matched designer tier)
 
 Written by the nightly from `build/nightly/2026-11-03/` (main 5657f45;
@@ -581,7 +601,8 @@ Branch race-ripped-count, snapshot x15190 (f6dac63a on main 1f023ee5)
 against main's x1859 (docs/placer.md, "The race ranks its probes by the
 ripped count (2026-10-27)"; scripts `experiments/race-ripped/`).
 
-- **`race_count`** (layout option, default `"unfinished"`): with
+- **`race_count`** (layout option, default `"unfinished"` until the
+  nine-pair verdict below, `"ripped"` since): with
   `"ripped"` the race ranks its probes by the board's open terminals
   once each probe's nets in conflict lose their conflicted branches
   (`Router::rip_up_standing` on a copy of the probe's router; the kept
@@ -612,9 +633,17 @@ ripped count (2026-10-27)"; scripts `experiments/race-ripped/`).
   connections summed), wrong in 7 (77). Short tier: 10 of 12 boards
   identical, unconnected 20 to 23 (WLED_Matrix 8 to 11), strict passes
   8 / 8.
-- **Decision**: the default stays `"unfinished"` (the supervisor
-  decides on the extension); the option stays for the nine-pair extension or a guard by conflict depth (video's probes
-  end 330 to 490 nets unfinished).
+- **Nine pairs** (2026-10-28, seeds 501 to 801 added the same way,
+  x1859 on the 17 changed races; main's `placer_ab.py` and the
+  refreshed noise file): summed medians 1012 to 855 (-15.5 %), pairs
+  +2, -186, -109, +35, -220, -284, -196, -109, -98; weighted -5.6 %
+  (90 % interval -9.7 to -1.4 %), p 0.014 (sign-flip 0.000):
+  **BETTER**. The pick changed in 36 of 98 races, right in 27 (+1279
+  connections summed), wrong in 9 (-114); video's unfinished count kept
+  the worse placement on all seven seeds where they disagreed (70 to
+  205 connections).
+- **Decision**: `race_count` defaults to `"ripped"` ("Committed on
+  2026-11-03" above).
 
 ## Committed on 2026-10-27 (the last connections: why the near-misses stay open)
 

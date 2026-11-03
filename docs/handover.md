@@ -18,7 +18,9 @@ the escape demand of each part's sides in the density, the rotations,
 the legaliser and the refinement since 2026-10-24; up to 16
 placer seeds run in a pool of the search threads and are judged in seed
 order; the race ranks them by RUDY and probes the best three with a 75 s
-route), routes the board with the lattice router (PathFinder negotiation;
+route, judged since 2026-11-03 by the open terminals after ripping the
+conflicted branches, docs/placer.md "The race ranks its probes by the
+ripped count"), routes the board with the lattice router (PathFinder negotiation;
 pours as fill the pads join through thermal spokes modelled on KiCad 10's
 filler and DRC, stranded pads routed as tracks, islands stitched, manual
 spokes where the model finds a pad short), tries footprint moves, resumes
