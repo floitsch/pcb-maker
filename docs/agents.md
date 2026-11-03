@@ -201,11 +201,16 @@ The file lists what constraints refer to:
   one; `from_footprints: true` when the board draws no Edge.Cuts itself
   and the box is only footprints' slots and cut-outs, as on a fresh
   import: give the board its size with `outline` in `constraints.json`);
-  `points` are the outline's corners (arcs as short chords): to keep the
-  shape of another board (the designer's, an older revision), describe
-  that board and copy its `points` into `outline.polygon` and its
-  `minimum` into `outline.x`, `outline.y`, so that positions read off it
-  (`place` with `"origin": "absolute"`) stay where they were;
+  `points` are the outline's outer corners (arcs as short chords) and
+  `cutouts` the holes the board's own Edge.Cuts draws inside it (a
+  panel's slots between its boards and rails, holes drawn on Edge.Cuts;
+  since 2026-11-04): to keep the shape of another board (the designer's,
+  an older revision), describe that board and copy its `points` into
+  `outline.polygon`, its `minimum` into `outline.x`, `outline.y` (so
+  that positions read off it, `place` with `"origin": "absolute"`, stay
+  where they were) and each of its `cutouts` into `outline.cutouts` as
+  `{"polygon": [...], "origin": "absolute"}` (without them a panel comes
+  back as one plate, and no tab or frame is found);
 - every footprint with reference, value, library name, position, side
   (where its pads put it), `layer` (the footprint's own, `F.Cu` or `B.Cu`:
   what `back` and `front` set; a key socket under its switch is a front
