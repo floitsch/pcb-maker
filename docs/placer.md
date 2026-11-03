@@ -4657,7 +4657,9 @@ strict pass at all three seeds tried (seeds 1, 101, 201: 0 to 8, 10 and
 connector J1 overhangs the rail (y 18.97, the copy's edge at y 19.02),
 and with the rail kept free the copies put J1 inside the board and the
 copy no longer routes. A frame that a connector may overhang (an
-`overhang` into the rail, as the designer's) is the open point.
+`overhang` into the rail, as the designer's) is the open point (since
+2026-10-28: "Frames on panels of copies, and what may reach over them"
+below).
 
 **Report**: `sub_boards` gains `cut_by`, `frames` (the frame pieces'
 boxes) and `kept_clear_mm2`; the verdict's room advice names the area
@@ -4762,6 +4764,155 @@ before, the tier identical by construction. The designer tier (route
 mode on the 109 designers' placements, tracks stripped) changes on the
 boards whose stripped board splits nets: jiran, woagboard and
 koeg-board (GND), katia (4), Batch_1 (74), OpenRX (64).
+
+### Frames on panels of copies, and what may reach over them (2026-10-28)
+
+The copies path above left the copies' frames out because the 0xCB
+panel's USB connector J1 needs to come to its copy's edge (the designer's
+J1 reaches 0.05 mm past it, into the slot above the copy; ours puts it at
+the copy's lower edge, beside a tab between copies) and a 1.5 mm keepout
+pushed it inside. Now the panels of copies keep off their frames and tabs
+too, under a rule for what may reach over them. Code:
+`sub_boards::keep_off_frames`, `Pieces::copies_keepouts`;
+`pcb_placer::constraints::{Frames, FramePass}` (legality:
+`legal::frame_clear`; the anneal's overlap sum alike).
+
+**The rule.** The keepouts are as before: the tabs and the frames grown
+by 1.5 mm (`TAB_MARGIN_MM`) into the boards, in 0.5 mm blocks; the board's
+outline does not change (a part still keeps inside it, and the task keeps
+the parts that hang over the outline fixed). Against a keepout a movable
+part keeps clear when
+
+1. its body (without its routing halo) does not meet the keepout; or
+2. the designer's placement put it into the keepouts (`--reference`: its
+   place on the reference board, by uuid) and its body, shrunk on every
+   side by how far it reached into them there, does not meet the
+   keepout: it may reach as far as the designer's did (measured as the
+   least shrink that clears every keepout at the designer's place; a
+   fixed part stays where it is anyway); or
+3. it is a connector and its pads and copper graphics, grown by the edge
+   margin, meet none of the tabs and frames themselves (not grown, in
+   0.25 mm blocks): its body may reach over the tab or the frame, its
+   copper stays on its board. A connector is a footprint whose name says
+   so (`netlist_import::edge_connector`: USB, SMA, BNC, RJ45, HDMI,
+   jacks, card edges, terminal blocks; or a connector family's name:
+   connector, conn_, JST, Molex, Hirose, pin header or socket,
+   receptacle, Type-C, micro SD, SIM card), the USB-C pads (A1, A12, B1,
+   B12), or a connector's reference (J, P, CN, CON, USB, X; not a
+   crystal) whose courtyard reaches clearly past its pads on one side
+   (`connector_mouth`). The 0xCB panel's `0xcb:molex2169900001` is one
+   by its name and by its reference and mouth.
+
+Everything else keeps off the frames and tabs with the 1.5 mm margin.
+Rule 3 holds on panels only (a board with a frame or rails, or a panel of
+copies): a board of two halves joined by tabs and no frame (urchin,
+woagboard, koeg-board) is one board whose tabs lie inside it, and
+nothing reaches over them (urchin, in the short tier, is so unchanged).
+Rule 2 needs `--reference`; without it no part has a designer's place.
+
+**Copies.** A panel of copies keeps its parts off the frames and tabs
+where the sub-boards find pieces (`sub_boards` on; the copies are still
+found first and placed as copies: nothing held by sub-board, no net
+split). Each copy keeps off what every copy keeps off, carried into its
+own frame: the first copy's raster cells within its surroundings (its
+region, cut to the box of the pieces its parts lie on, grown by the
+margin) are kept where the point, carried to any copy, lies on a kept
+cell within that copy's surroundings; those cells in blocks are the first
+copy's boxes, and every other copy takes their exact images (cut to its
+surroundings); the kept cells within no copy's surroundings (the frames
+beyond) are boxes of their own. So one placement of the first copy is
+legal in every copy (a top copy's rail is a strip along the top of every
+copy) and the copies keep their mutual geometry. Two exceptions: along a
+board edge where a copy's part is held (an edge or overhang constraint;
+the band as deep as the part's longer side and its edge distance, a
+millimetre more) that copy keeps its own keepouts only (OpenRX's second
+copy holds its crystal X301 within 1.25 mm of the right board edge,
+where the first copy's frame margin would have come); and a panel whose
+copies are too small for the margin (the grown keepouts would take more
+than 0.3 of the first copy's surroundings: OpenRX 0.40, against 0.02 on
+the 0xCB panel, 0.07 on the pcb-panel, 0.15 on SmartSpin2k) keeps
+nothing off and is placed as before (`keepout_margin_mm` null). With the
+margin, or with each copy's own keepouts only, R202 and U203 of OpenRX's
+first copy found no place at three seeds of four (place checks); kept off
+the tabs and frames themselves alone (no margin; build/bin/pcb-maker-copies1-g)
+it placed but routed worse at both seeds tried: 85 to 125 and 96 to 126
+KiCad unconnected (seeds 1 and 101). A copy's own
+problem (`panel::reference_problem`) cuts the keepouts to its region:
+counted whole (the other copies', the rails) against the region's area,
+they made every placement level but the last overfull, and the 0xCB
+panel's first copy was placed without halos, its wires 30 % shorter
+(first-copy wirelength 1050 to 1410 against 700 to 840), two nets per
+copy left open at seed 101 (build/bin/pcb-maker-copies1-c: 8 KiCad
+unconnected, U1's SCL and SDA in every copy, the failure tabs1-d had
+put on J1). Placement checks (place-kicad-board, 60 s of layout budget, three
+seeds) at seed 1: the 0xCB
+panel and SmartSpin2k replicated every part legally; the parts not legal
+after replication on the pcb-panel and OpenRX were the first copy's own
+unplaced parts and parts meeting each other (as on the off side, which
+has 16 to 18 on the pcb-panel at that budget), none a carried keepout
+alone. The keepouts' count and area:
+the 0xCB panel 104 boxes, 4004 mm² (its own 84, 3994 mm²), SmartSpin2k
+490, 10129 mm² (364, 9928), the pcb-panel 77, 4199 mm² (65, 3982),
+OpenRX none (with the margin it would be 35, 355 mm²; its own 26, 332). (Carrying each box to every copy instead
+of the cells gave SmartSpin2k 1748 overlapping boxes, 35795 mm² counted.)
+
+**Report**: `sub_boards` now also on panels of copies, with `copies:
+true` (the verdict does not call such a panel's boards mixed),
+`keepout_margin_mm` (1.5, or null where nothing is kept off), and `overhang_connectors` and
+`overhang_designer` (the movable parts that may reach over the keepouts
+by rule 3 and rule 2). The room advice names the
+frames' area on panels of copies too. Panels of copies whose pieces the
+cuts do not find keep no part off anything, as before.
+
+**Measured** (layout mode, tasks v7, the sweep's budgets and seed,
+`--quality`, pinned rates; off build/bin/pcb-maker-x1874 (main
+39fc92d6, the placements of x1880's), on build/bin/pcb-maker-copies1-d
+(the branch on main 63b74ac1 with the region cut; -e, -g and -h place
+the 0xCB panel and the pcb-panel byte for byte as -d, and OpenRX as
+x1880); 2 + 1 jobs x 2 threads through the memory ledger beside the
+nightly and other agents; output `build/copies1/`). KiCad unconnected
+(first route's open terminals), strict pass, vias, KiCad's items across
+two sub-boards not counted:
+
+| Board | seed | off | on |
+| --- | ---: | --- | --- |
+| 0xCB-1337 panel | 1 | 0 (0), **pass**, 339 vias | 0 (0), **pass**, 301 vias |
+| | 101 | 0 (1), **pass**, 248 | 0 (0), **pass**, 383 (copies1-c, before the region cut: 8 (9), U1's SCL and SDA in every copy) |
+| | 201 | 0 (0), **pass**, 291 | 0 (1), **pass**, 293 |
+| 0xCB-1337 pcb-panel | 1 | 62 (39), 305/309 routed, 362 vias, 23 items across | **0 (0), strict pass**, 340/340, 444 vias, none across |
+| SmartSpin2k_Panelized | 1 | 115 (115), 473/582 routed, 756 vias, 6 across | 78 (83), 507/585, 856 vias, none across |
+| OpenRX-panel-rev2 | 1 | 85 (177), 203 vias | as off: nothing kept off (placement byte for byte x1880's); without the margin (-g) 125 (152) |
+| | 101 | 96 (144), 198 vias (x1880) | without the margin (-g) 126 (224) |
+| OpenESC 4in1 panel, `--reference` | 1 | 253 (352), 167/300 routed | the same, byte for byte (no designer part reaches into the tab margins; no frame) |
+
+The pcb-panel passes strict for the first time (its off row left 23
+items across sub-boards: parts its copies put on the V-cut strips);
+SmartSpin2k keeps its parts off the strips (the 118 to 89 of the tabs1-d
+trial confirmed: 115 to 78 here). The 0xCB panel keeps its strict pass
+at the three seeds; its J1 stays at its copy's lower edge, beside the
+tab between the copies, by the connector rule (copy 1's J1 at (123.8,
+80.6) as off, seed 101).
+
+**Other boards with frames** (connectors may now reach over their
+frames and tabs; same settings): Goga64 ULK 0 / pass / 106 vias to 0 /
+pass / 102 (its two connectors pass; the placement differs), ULK_sl,
+jiran-ble-lite (pass both) and katia (40 (87)) byte for byte. Boards of
+halves without a frame (urchin, woagboard, koeg-board) do not change by
+construction (no pass without a frame).
+
+**Identity** (`build/copies1/short-{off,on}`, `dense-{off,on}`): the
+short tier (3 x 2 at its budget scale, here 2 x 2) 11 of 12 boards'
+placed and result boards byte for byte; MIDAS-MK1.1 differed (off 5
+unconnected, on 0) and is the load's: x1880 rerun on an idle machine
+gives the on row byte for byte, as does the branch's rerun (one outline
+piece: nothing of this applies). The nine dense boards without copies
+(seed 1; protoesp, glasgow, video, 4in1-mini, 4in1, DSP-ADAU1452,
+MegaDrive, SNSP-CPU-01, split72_left) byte for byte.
+
+Left open: held sub-boards (`place_sub_boards`'s region problem) still
+count every keepout whole against a sub-board's area, as a copy's did;
+on the ULK and jiran (large halves) no level is overfull by it, so it
+was left.
 
 ## The place check is the layout's placement (2026-10-27)
 

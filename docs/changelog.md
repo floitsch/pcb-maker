@@ -11,6 +11,41 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-03 (panels of copies keep off their frames and tabs; connectors and the designer's overhangs may reach over them)
+
+Branch copies-frames; binaries build/bin/pcb-maker-copies1-a to -h (the
+measured on side -d; -g and -h for OpenRX); off x1874 (x1880's
+placements). docs/placer.md, "Frames on panels of copies, and what may
+reach over them (2026-10-28)"; docs/agents.md (`sub_boards`).
+
+- **The rule** (`pcb_placer::constraints::{Frames, FramePass}`, in the
+  legality test and the anneal): against a frame or tab keepout (the
+  tabs and frames grown by 1.5 mm) a movable part keeps clear when its
+  body without its halo misses it; or, with `--reference`, its body
+  shrunk by as far as the designer's placement put it into the keepouts
+  misses it; or, on a panel (a frame, or copies), it is a connector
+  (footprint name: USB, SMA, jacks, card edges, JST, Molex, headers...;
+  USB-C pads; a J/P/CN/USB/X reference whose courtyard reaches past its
+  pads on one side) whose pads and copper keep the edge margin off the
+  tabs and frames themselves. Everything else keeps the 1.5 mm.
+- **Copies**: panels of copies keep off the frames and tabs too, each
+  copy off every copy's carried into its own frame (on the raster:
+  exact images, disjoint boxes), so that the copies keep one layout;
+  not along a board edge where a copy's part is held; nothing kept off
+  where the margin would take more than 0.3 of a copy (OpenRX). A copy's
+  own problem cuts the keepouts to its region (whole, they made every
+  level but the last overfull: the 0xCB panel lost its strict pass at
+  seed 101 that way).
+- **Measured** (layout, sweep budgets): the 0xCB panel keeps its strict
+  pass at seeds 1, 101, 201; the 0xCB pcb-panel 62 to **0, strict
+  pass**; SmartSpin2k 115 to 78; OpenRX and the 4in1 panel with
+  `--reference` as before (byte for byte); ULK placed otherwise (pass
+  both), ULK_sl, jiran, katia byte for byte; the short tier and the nine
+  dense boards without copies byte for byte (MIDAS-MK1.1 by an idle
+  rerun of the off side).
+- **Report**: `sub_boards` on panels of copies (`copies: true`, never
+  "boards mixed"), `keepout_margin_mm`, `overhang_connectors`,
+  `overhang_designer`.
 ## Committed on 2026-11-03 (pin-row gaps follow a moved part)
 
 Branch pin-row-gaps-update; binaries `build/bin/pcb-maker-gaps1-a` (the
