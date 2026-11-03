@@ -857,13 +857,10 @@ impl Pieces {
         &self,
         frames: &[bool],
         copies: &CopyFrames,
+        margin: f64,
     ) -> (Vec<[f64; 4]>, Vec<[f64; 4]>) {
         (
-            self.spread(
-                &self.kept_mask(frames, TAB_MARGIN_MM),
-                KEEPOUT_BLOCK_MM,
-                copies,
-            ),
+            self.spread(&self.kept_mask(frames, margin), KEEPOUT_BLOCK_MM, copies),
             self.spread(&self.kept_mask(frames, 0.0), COPPER_BLOCK_MM, copies),
         )
     }
@@ -2323,7 +2320,20 @@ pub(crate) struct PlacerApplied {
     /// designer's placement put into them (by how far).
     pub connectors: usize,
     pub designer_overhangs: usize,
+    /// How far the keepouts reach beyond the tabs and frames (mm):
+    /// `TAB_MARGIN_MM`, or 0 on a panel of copies too small for it
+    /// (`MOST_COPY_KEPT_SHARE`).
+    pub margin_mm: f64,
+    /// On a panel of copies: the share of the first copy's surroundings
+    /// the keepouts grown by `TAB_MARGIN_MM` take.
+    pub copy_kept_share: f64,
 }
+
+/// On a panel of copies, the keepouts grown by `TAB_MARGIN_MM` take at
+/// most this share of the first copy's surroundings; past it they are the
+/// tabs and frames themselves (OpenRX's copies: 0.40; the 0xCB panel 0.02,
+/// the pcb-panel 0.07, SmartSpin2k 0.15).
+const MOST_COPY_KEPT_SHARE: f64 = 0.3;
 
 /// How far the body `b` reaches into the keepouts: the least that, taken
 /// off every side, leaves it clear of each (0 where it meets none).
@@ -2368,8 +2378,33 @@ pub(crate) fn keep_off_frames(
     panel: bool,
     copies: Option<&CopyFrames>,
 ) {
+    applied.margin_mm = TAB_MARGIN_MM;
     let (keepouts, copper) = match copies {
-        Some(copies) => sub.pieces.copies_keepouts(&sub.frames, copies),
+        Some(copies) => {
+            let grown = sub
+                .pieces
+                .copies_keepouts(&sub.frames, copies, TAB_MARGIN_MM);
+            // A copy too small for the margin (OpenRX's 10.5 x 11.5 mm
+            // copies: their parts found no place) keeps off the tabs and
+            // frames themselves only.
+            let within = copies.within[0];
+            let share = grown
+                .0
+                .iter()
+                .map(|b| {
+                    let cut = clip_box(*b, within);
+                    (cut[2] - cut[0]).max(0.0) * (cut[3] - cut[1]).max(0.0)
+                })
+                .sum::<f64>()
+                / ((within[2] - within[0]) * (within[3] - within[1])).max(1.0e-9);
+            applied.copy_kept_share = share;
+            if share > MOST_COPY_KEPT_SHARE {
+                applied.margin_mm = 0.0;
+                sub.pieces.copies_keepouts(&sub.frames, copies, 0.0)
+            } else {
+                grown
+            }
+        }
         None => (
             sub.pieces.keepouts(&sub.frames, TAB_MARGIN_MM),
             sub.pieces.copper(&sub.frames),
@@ -2630,6 +2665,12 @@ pub struct KiCadSubBoardsReport {
     /// parts are not held by sub-board.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub copies: bool,
+    /// How far the keepouts reach beyond the tabs and frames (mm): 1.5,
+    /// or 0 on a panel of copies too small for the margin (its keepouts
+    /// grown by it would take more than 0.3 of the first copy's
+    /// surroundings).
+    #[serde(default)]
+    pub keepout_margin_mm: f64,
     /// Each sub-board: its region and parts (with pins), of them the
     /// movable ones.
     pub sub_boards: Vec<KiCadSubBoard>,
@@ -2714,6 +2755,7 @@ impl KiCadSubBoardsReport {
             overhang_connectors: applied.connectors,
             overhang_designer: applied.designer_overhangs,
             copies: false,
+            keepout_margin_mm: applied.margin_mm,
             sub_boards,
         }
     }
@@ -3388,7 +3430,7 @@ mod tests {
             within: vec![[-1.5, -1.5, 20.0, 21.5], [20.0, -1.5, 41.5, 21.5]],
             held: vec![Vec::new(), Vec::new()],
         };
-        let (keepouts, copper) = pieces.copies_keepouts(&frames, &copies);
+        let (keepouts, copper) = pieces.copies_keepouts(&frames, &copies, TAB_MARGIN_MM);
         let kept = |boxes: &[[f64; 4]], point: [f64; 2]| {
             boxes.iter().any(|b| {
                 point[0] >= b[0] && point[0] <= b[2] && point[1] >= b[1] && point[1] <= b[3]
@@ -3415,6 +3457,15 @@ mod tests {
         }
         // The copper: the tabs themselves, not their margins.
         assert!(kept(&copper, [20.75, 10.0]) && !kept(&copper, [18.5, 10.0]));
+        // A part of the second copy held at the right edge: the first
+        // copy's tab is not carried there; its own keepouts stay.
+        let held = CopyFrames {
+            held: vec![Vec::new(), vec![[38.0, -1.5, 41.5, 21.5]]],
+            ..copies.clone()
+        };
+        let (keepouts, _) = pieces.copies_keepouts(&frames, &held, TAB_MARGIN_MM);
+        assert!(!kept(&keepouts, [41.1, 10.0]));
+        assert!(kept(&keepouts, [22.0, 10.0]) && kept(&keepouts, [19.6, 10.0]));
     }
 
     #[test]
