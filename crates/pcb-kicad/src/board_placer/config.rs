@@ -334,6 +334,17 @@ pub struct KiCadBoardPlacerConfig {
     /// `max_bank` 16 (docs/placer.md, "Bus-group moves (2026-10-26)").
     #[serde(default)]
     pub bus_groups: Option<KiCadBusGroups>,
+    /// Rows of repeated parts (off by default; `{}` for the defaults;
+    /// docs/placer.md, "The designer as teacher (2026-11-04)"): parts of
+    /// one kind (body size, pin count, side) pay `weight` mm of wire per
+    /// millimetre their body centre stands out of line (the smaller of its
+    /// x and y offsets) with the nearest of their kind within `reach_mm`,
+    /// at most `cap_mm` (and `cap_mm` more when turned otherwise) in the
+    /// anneal (the reach at least one and a half body sides); after the refinement each moves up to `cap_mm` to line up
+    /// where that stays legal and costs at most 0.5 mm of wire (`finish`).
+    /// Defaults: `weight` 1, `cap_mm` 1, `reach_mm` 5, `finish` true.
+    #[serde(default)]
+    pub align_rows: Option<KiCadAlignRows>,
     /// The router's configuration the guidance lowers with (set by the
     /// layout; the default otherwise).
     #[serde(skip)]
@@ -429,6 +440,7 @@ impl Default for KiCadBoardPlacerConfig {
             escape_demand: default_escape_demand(),
             ratsnest_crossings: default_ratsnest_crossings(),
             bus_groups: None,
+            align_rows: None,
             guidance_router: None,
             via_in_pad_far_side: true,
             length_maxima: true,
@@ -577,6 +589,46 @@ impl Default for KiCadRatsnestCrossings {
             anneal: true,
             global: false,
             per_layer: false,
+        }
+    }
+}
+
+/// `KiCadBoardPlacerConfig::align_rows`.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields, default)]
+pub struct KiCadAlignRows {
+    /// Millimetres of wire one millimetre out of line costs.
+    pub weight: f64,
+    /// The most a part costs, in millimetres (farther counts as not in
+    /// line).
+    pub cap_mm: f64,
+    /// Parts of a kind farther apart than this (body centres), or than
+    /// one and a half times their larger body side where that is more, do
+    /// not line up with each other.
+    pub reach_mm: f64,
+    /// After the refinement, parts line up where it costs next to nothing.
+    pub finish: bool,
+}
+
+impl Default for KiCadAlignRows {
+    fn default() -> Self {
+        let settings = core::align::Settings::default();
+        Self {
+            weight: settings.weight,
+            cap_mm: settings.cap,
+            reach_mm: settings.reach,
+            finish: settings.finish,
+        }
+    }
+}
+
+impl KiCadAlignRows {
+    pub fn settings(&self) -> core::align::Settings {
+        core::align::Settings {
+            weight: self.weight,
+            cap: self.cap_mm,
+            reach: self.reach_mm,
+            finish: self.finish,
         }
     }
 }

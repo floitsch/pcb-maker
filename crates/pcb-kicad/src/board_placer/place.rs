@@ -407,6 +407,7 @@ pub fn place_kicad_board(
     placer_config.routing_room = routing_room(config, &lowered);
     placer_config.orientation_search = config.orientation_search;
     placer_config.bus_groups = config.bus_groups.as_ref().map(KiCadBusGroups::settings);
+    placer_config.align = config.align_rows.as_ref().map(KiCadAlignRows::settings);
     placer_config.kicad_legality = config.legality == KiCadPlacerLegality::Kicad;
     placer_config.kicad_last_level = config.legality != KiCadPlacerLegality::Strict;
     if let Some(guidance) = &config.global_guidance {

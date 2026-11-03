@@ -5,6 +5,7 @@
 //! PCB component placement: electrostatic global placement, legalization,
 //! and wirelength-driven detailed placement.
 
+pub mod align;
 pub mod anneal;
 mod buckets;
 pub mod constraints;
@@ -59,6 +60,12 @@ pub struct Config {
     /// passives move, turn, trade places and reorder as units in the
     /// anneal and the refinement. Off (`None`) by default.
     pub bus_groups: Option<groups::Settings>,
+    /// Rows of repeated parts (`align`, docs/placer.md "The designer as
+    /// teacher (2026-11-04)"): parts of one kind pay in the anneal for
+    /// standing out of line with the others of their kind nearby, and
+    /// line up after the refinement where it costs next to nothing. Off
+    /// (`None`) by default.
+    pub align: Option<align::Settings>,
     /// KiCad's legality at the levels whose spacing is the rules' least
     /// (`Constraints::pad_clearance`): what KiCad's DRC accepts of a
     /// designer's placement there, rather than bodies kept the copper
@@ -87,6 +94,7 @@ impl Config {
             routing_room: None,
             orientation_search: true,
             bus_groups: None,
+            align: None,
             kicad_legality: false,
             kicad_last_level: false,
         }
@@ -737,6 +745,7 @@ fn finish(
     poses: &mut [Pose],
     passes: usize,
     groups: Option<&groups::BusGroups>,
+    align: Option<&align::Align>,
     debug: bool,
 ) {
     let refine_mark = mark();
@@ -782,6 +791,16 @@ fn finish(
     }
     // Parts of a kind turned alike where it costs next to nothing.
     legal::align_orientations(problem, poses, 0.5);
+    // Rows of repeated parts: lined up where it costs next to nothing.
+    if let Some(align) = align.filter(|align| align.settings.finish) {
+        let lined = legal::align_rows(problem, poses, align, 0.5);
+        if debug {
+            eprintln!(
+                "placer: rows of repeated parts: {lined} parts lined up, {:?} of the kinds' movable parts in line",
+                align.lined_up(problem, poses)
+            );
+        }
+    }
     phase_line(debug, "repair and align", repair_mark);
     if let Some(state) = &escape {
         eprintln!(
@@ -1034,6 +1053,10 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         groups
     });
     anneal_config.bus_groups = bus_groups.clone();
+    // Rows of repeated parts: the kinds found once, on the fitted problem.
+    anneal_config.align = config
+        .align
+        .map(|settings| std::sync::Arc::new(align::Align::new(problem, settings)));
     let out_of_budget = || {
         config
             .anneal
@@ -1488,6 +1511,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         &mut poses,
         config.refine_passes,
         bus_groups.as_deref(),
+        anneal_config.align.as_deref(),
         debug,
     );
     if debug {
@@ -1590,6 +1614,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 &mut again,
                 config.refine_passes,
                 bus_groups.as_deref(),
+                anneal_config.align.as_deref(),
                 debug,
             );
             relaxed.sync_followers(&mut poses);
