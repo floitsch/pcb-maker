@@ -2229,6 +2229,50 @@ fn pour_action(pour: &crate::board_router::KiCadPourQuality) -> String {
     )
 }
 
+/// The reference a KiCad item description names (`Pad 2 [GND] of SW13 on
+/// F.Cu` and `Circle of SW20 on Edge.Cuts` give `SW13` and `SW20`).
+fn described_part(description: &str) -> Option<&str> {
+    let (_, rest) = description.rsplit_once(" of ")?;
+    let (reference, _) = rest.split_once(" on ")?;
+    (!reference.is_empty() && !reference.contains(' ')).then_some(reference)
+}
+
+/// For copper edge clearance findings whose edge is a footprint's own
+/// Edge.Cuts (`Circle of SW20 on Edge.Cuts`) and whose copper is another
+/// part's: `SW13 at SW20's cutout`, each pair once, at most four and how
+/// many more. Trial 4's ULK keyboard had 15 such findings, keys and
+/// diodes over other keys' centre holes where the placement put them on
+/// top of each other, and the advice named edge constraints.
+fn part_cutout_pairs(findings: &[&DrcFinding]) -> Vec<String> {
+    let mut pairs: Vec<String> = Vec::new();
+    for finding in findings {
+        let edge = finding
+            .item_descriptions
+            .iter()
+            .find(|item| item.ends_with(" on Edge.Cuts"))
+            .and_then(|item| described_part(item));
+        let copper = finding
+            .item_descriptions
+            .iter()
+            .find(|item| !item.ends_with(" on Edge.Cuts"))
+            .and_then(|item| described_part(item));
+        if let (Some(edge), Some(copper)) = (edge, copper)
+            && edge != copper
+        {
+            let pair = format!("{copper} at {edge}'s cutout");
+            if !pairs.contains(&pair) {
+                pairs.push(pair);
+            }
+        }
+    }
+    if pairs.len() > 4 {
+        let more = pairs.len() - 4;
+        pairs.truncate(4);
+        pairs.push(format!("{more} more"));
+    }
+    pairs
+}
+
 /// The finding types the verdict gives an action of their own, the
 /// largest first.
 const FINDING_ACTIONS: usize = 4;
@@ -2344,6 +2388,12 @@ fn finding_action(
         (None, Some(parts)) if ELECTRICAL_KINDS.contains(&kind) => format!(
             "every finding lies between parts kept where the input has them ({parts}), copper this run neither placed nor routed, but between two nets, so it counts and fab-kicad-board refuses it; move one of the parts in the input (or free it from fixed so the placer does), or accept it knowingly (a KiCad exclusion, fab-kicad-board --allow-findings); the designer's board as --reference makes it pre-existing where that board has it, which the release still refuses"
         ),
+        (None, _) if kind == "copper_edge_clearance" && !part_cutout_pairs(findings).is_empty() => {
+            format!(
+                "the edge is a part's own Edge.Cuts (a switch's or connector's hole or slot that its footprint brings) with another part's copper at it ({}): the parts lie too close or on each other, which no edge constraint or clearance setting changes; give them room (a looser row or relative, the outline), keep them apart (apart), or place them where they belong",
+                part_cutout_pairs(findings).join(", ")
+            )
+        }
         (None, _)
             if kind == "solder_mask_bridge" && !footprint_mask_graphics(findings).is_empty() =>
         {
@@ -4447,6 +4497,33 @@ mod tests {
         assert!(
             finding_action("clearance", 1, &[&finding], None)
                 .starts_with("clearance 1 (clearance 0.1270 mm; actual 0.0000 mm): ")
+        );
+        // A part's copper at another part's own Edge.Cuts hole (trial 4's
+        // ULK: overlapping keys): the parts, not an edge constraint.
+        let at_cutout = DrcFinding {
+            kind: "copper_edge_clearance".into(),
+            description: "Board edge clearance violation (board setup constraints edge clearance 0.5000 mm; actual 0.0000 mm)".into(),
+            nets: vec!["Net-(D13-A)".into()],
+            item_descriptions: vec![
+                "Circle of SW20 on Edge.Cuts".into(),
+                "Pad 2 [Net-(D13-A)] of SW13 on F.Cu".into(),
+            ],
+            ..DrcFinding::default()
+        };
+        let action = finding_action("copper_edge_clearance", 1, &[&at_cutout], None);
+        assert!(action.contains("(SW13 at SW20's cutout)"), "{action}");
+        assert!(!action.contains("edge constraint's max_mm"), "{action}");
+        // The board's own edge keeps the edge advice.
+        let at_edge = DrcFinding {
+            item_descriptions: vec![
+                "Segment on Edge.Cuts".into(),
+                "Pad 1 [GND] of J1 on F.Cu".into(),
+            ],
+            ..at_cutout.clone()
+        };
+        assert!(
+            finding_action("copper_edge_clearance", 1, &[&at_edge], None)
+                .contains("edge constraint's max_mm")
         );
         // A footprint's own pad and hole (the schematic trial's USB-C
         // receptacle): no "move the parts apart".
