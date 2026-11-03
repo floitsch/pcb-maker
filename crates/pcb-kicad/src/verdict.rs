@@ -2071,6 +2071,12 @@ fn next_actions(
             if where_.is_empty() { "the router's count; drc.json lists KiCad's unconnected items".to_string() } else { where_.join(", ") }
         ));
     }
+    if facts.routes
+        && open > 0
+        && let Some(action) = search_rate_action(&facts.command, &crate::work_rate::work_rate())
+    {
+        actions.push(action);
+    }
     if facts.routes && open > 0 {
         actions.extend(via_in_pad_actions(facts));
     }
@@ -2640,6 +2646,31 @@ fn placement_rates_action(command: &str, rate: &crate::work_rate::KiCadWorkRate)
         rate.placer_work_per_second / pcb_placer::REFERENCE_WORK_PER_SECOND,
         rate.expansions_per_second,
         rate.placer_work_per_second,
+    ))
+}
+
+/// A route or layout that left connections open at measured work rates
+/// under half the reference's (a loaded machine): its budget of seconds
+/// of work bought that share of the search the benchmarks' runs (pinned
+/// at the reference's rates) make, which the agent cannot tell from the
+/// result. Trial 4's Quanta75 layout measured 0.37 of the reference at
+/// load 30 and left 3 open where the nightly left 4 at full rates.
+fn search_rate_action(command: &str, rate: &crate::work_rate::KiCadWorkRate) -> Option<String> {
+    let share = rate.expansions_per_second / pcb_router::router::REFERENCE_EXPANSIONS_PER_SECOND;
+    if !(command.starts_with("layout") || command.starts_with("route"))
+        || rate.source != "measured"
+        || share >= 0.5
+    {
+        return None;
+    }
+    Some(format!(
+        "this run searched at {:.2} of the reference's rate ({:.4e} expansions/s measured at its start: a loaded machine), so its seconds of work bought {:.0} % of the search the benchmarks' runs make; rerun on an idle machine, or pin the reference's rates (PCB_WORK_RATE={:.4e},{:.4e}: the same work, about {:.1} times the wall here) before changing the design",
+        share,
+        rate.expansions_per_second,
+        share * 100.0,
+        pcb_router::router::REFERENCE_EXPANSIONS_PER_SECOND,
+        pcb_placer::REFERENCE_WORK_PER_SECOND,
+        1.0 / share.max(1.0e-9),
     ))
 }
 
@@ -4274,7 +4305,36 @@ mod tests {
             ..measured.clone()
         };
         assert_eq!(placement_rates_action("layout-kicad-board", &pinned), None);
+        assert_eq!(search_rate_action("layout-kicad-board", &pinned), None);
         assert_eq!(placement_rates_action("place-kicad-board", &measured), None);
+    }
+
+    #[test]
+    fn open_connections_at_a_third_of_the_reference_rate_say_so() {
+        // Trial 4's Quanta75 layout at load 30: 0.37 of the reference.
+        let slow = crate::work_rate::KiCadWorkRate {
+            expansions_per_second: 1.1644e6,
+            placer_work_per_second: 4.8911e7,
+            source: "measured".into(),
+            measured: None,
+        };
+        let action = search_rate_action("layout-kicad-board", &slow).unwrap();
+        assert!(
+            action.contains("searched at 0.37 of the reference's rate"),
+            "{action}"
+        );
+        assert!(
+            action.contains("PCB_WORK_RATE=3.1500e6,1.5000e8"),
+            "{action}"
+        );
+        assert!(search_rate_action("route-kicad-board", &slow).is_some());
+        // Near the reference, or a placement: nothing to say.
+        let near = crate::work_rate::KiCadWorkRate {
+            expansions_per_second: 2.4e6,
+            ..slow.clone()
+        };
+        assert_eq!(search_rate_action("layout-kicad-board", &near), None);
+        assert_eq!(search_rate_action("place-kicad-board", &slow), None);
     }
 
     #[test]
