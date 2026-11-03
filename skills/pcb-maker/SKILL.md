@@ -20,8 +20,12 @@ docs/agents.md in the pcb-maker repository.
    (parts, pads, nets, `REF:PAD` names for constraints).
 3. Say what the user wants in `<project-dir>/constraints.json` (below).
 4. Check the constraints: the layout's placement alone (its budget, seeds and
-   router rules, at the reference's work rates; a no where parts cannot fit in seconds):
+   router rules, at the reference's work rates: the layout's placement at the same
+   rates; a no where parts cannot fit in seconds):
    `pcb-maker place-kicad-board <project-dir> <id> <out> <project-dir>/layout.json`.
+   A panel of different boards (pieces joined by tabs, mouse bites or V-cuts) whose
+   nets do not tell the boards apart needs `--reference <designer's project>` here and
+   in the layout (`verdict.sub_boards`).
 5. Lay out: `pcb-maker layout-kicad-board <project-dir> <id> <out> auto <project-dir>/layout.json`;
    the finished project is `<out>/result`.
    A board already placed: `pcb-maker route-kicad-board <project-dir> <id> <out> auto`.
@@ -57,7 +61,14 @@ Fields to read: `reason` (one line), `next_actions` (what to do, in
 order), `kicad_unconnected_items` and `new_findings_strict` (they decide),
 `constraints_missed`, `unplaced`, `room` (`suggested_outline_mm`: an
 outline that fits), `outputs` (absolute paths), `cut`, `free_dimension`,
-`fab_release`.
+`fab_release`; `custom_rules` (each `.kicad_dru` constraint: `applied`,
+`approximated`, `no_effect`, `unmodelled`, ...), `lengths` (the `length`
+and `skew` rules per net), `sub_boards`. Without a reference (a layout's
+default) a footprint's own findings (`footprint_findings`) and the
+input's own edge clearances, mask bridges and courtyards of parts kept
+where the input has them (`input_findings`) do not count; `next_actions`
+gives the custom rule or the exclusion that makes KiCad accept them.
+Clearances and shorts between fixed parts always count.
 
 On exit 1: for open connections run `inspect-routing-run` first (above);
 too little room is a hypothesis, not a finding (`routed.diagnostics.hot_spots`
@@ -90,7 +101,10 @@ worth).
 
 Router options go in a JSON file in place of `auto`: `add_pours`
 (`[{"net": "GND", "layers": ["B.Cu"], "plane": true}]`), `net_classes`
-(`track_width_mm`, `clearance_mm` per net), `seeds`, `via_in_pad`.
+(`track_width_mm`, `clearance_mm` per net), `seeds`, `via_in_pad` (by default a
+filled and capped via goes only into a BGA's enclosed pads where the designer's board,
+the input or `--reference`, has vias in that footprint's pads; `["U106"]` names more
+parts; the verdict names the part when such pads stay open).
 
 ## Pre-routed nets
 
@@ -111,4 +125,7 @@ its own holes: `footprint_note` gives the custom rule for the board's
 `<id>-gerbers.zip` (upload this), `assembly/` (position file, BOM),
 `netlist/`, `<id>.step`, and `fab-manifest.json` (every file's sha256, the
 DRC and ERC counts, KiCad's version). `--profile jlcpcb` adds JLCPCB's BOM
-and placement columns; `--layers` picks the Gerber layers.
+and placement columns; `--layers` picks the Gerber layers. The board is judged on its
+own (every part and zone the board's); `--input <project-dir>` (the project it was laid
+out from) judges it as the layout's verdict did, and names the findings between parts
+kept where the input has them. `drc-kicad-board` takes `--input` too.

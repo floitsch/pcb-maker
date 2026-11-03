@@ -37,6 +37,20 @@ Not finished, but already useful.
   routing budget, on all 100 target boards our placement accounts for
   76 % of the open connections and our router for 24 %
   ([results](docs/benchmarks.md#layout-sweep-v30-2026-11-03)).
+- **What a layout handles** besides parts and nets: panels of copies
+  (one copy placed and replicated) and panels of different boards, whose
+  pieces are found by their necks, mouse-bite rows and V-cuts, each
+  board placed in its own piece with no part on a tab or a frame (give
+  `--reference` the designer's board when the nets cannot tell the
+  boards apart); the project's custom rules (`.kicad_dru`), each reported
+  as applied, approximated or beyond the router, `length` and `skew`
+  rules met by meanders on the layout's own routes too; filled and
+  capped vias in a BGA's enclosed pads where the designer's board has
+  vias in that footprint's pads, or where you name the part
+  (`via_in_pad`). Without a reference, findings that are the input's own
+  (a fixed connector over the edge, a fiducial's mask over the
+  designer's zone) do not fail the run, and the verdict gives the custom
+  rule or the exclusion that makes KiCad accept them.
 - **At scale, on the designer's placement:** 5 834 boards harvested from
   1 146 public KiCad repositories, each routed from stripped copper with a
   30 s budget: 2 309 route clean under KiCad's own DRC within 30 s, 3 896
@@ -73,13 +87,14 @@ Not finished, but already useful.
     starved thermal reliefs on dense boards and as pads routed by tracks
     that KiCad would have joined through the fill.
   - Placement: dense boards (a video board, ESC-class four-in-one
-    controllers, a SNES motherboard) stay 110-200 connections short where
+    controllers, a SNES motherboard) stay 70-200 connections short where
     our router routes the designer's own placement clean or nearly so
-    (video 199 open against 0, the OpenESC 4in1 111 against 0,
-    SNSP-CPU-01 136 against 23); the gap is the placement, not the number
-    of seeds tried or the legaliser.
-  - Features: no differential pairs or length matching; the placer does
-    not choose sides by itself (constraints put parts on the back); pin
+    (video 202 open against 1, SNSP-CPU-01 111 against 35, the OpenESC
+    4in1 88 against 15; nightly 2026-11-03); the gap is the placement,
+    not the number of seeds tried or the legaliser.
+  - Features: differential pairs are routed coupled by default only in
+    route mode, and only where the project's rules ask for them; the placer does not
+    choose sides by itself (constraints put parts on the back); pin
     swapping is opt-in.
 
 Take a look at the [benchmarks](docs/benchmarks.md) before trusting any
@@ -240,8 +255,13 @@ and the agent picks it up when a task is about a KiCad board.
 ### Placement only
 
 ```sh
-pcb-maker place-kicad-board <project-dir> <board-id> <out-dir> [layout.json] [--router <router.json>]
+pcb-maker place-kicad-board <project-dir> <board-id> <out-dir> [layout.json] [--router <router.json>] [--reference <project-dir>]
 ```
+
+It places as the layout of that `layout.json` will (the same budget
+share, seeds and router rules; at the same work rates the same placement
+byte for byte), at the reference's pinned rates unless
+`--measure-work-rate`, so the check repeats on a loaded machine.
 
 ## How it works
 
@@ -295,19 +315,25 @@ the main corpus ([docs/benchmarks.md](docs/benchmarks.md)):
 Smaller tiers of the same boards judge a change in minutes
 ([benchmarks/agent-tasks](benchmarks/agent-tasks/README.md)): the short
 tier (12 boards that flip, a third of the budget) for iterating, the
-quick tier (30 boards, full budget) as the merge gate, and the schematic
+quick tier (30 boards, full budget), and the schematic
 tier (12 boards laid out from the designer's schematic, as an agent
 would). The tiers run 2 search threads a board and physical cores / 2
-boards at once (8 x 2 on a 16-core machine); one benchmark at a time, so
-run.py takes a lock (build/quick-tier.lock) and waits for it. The task
-lists are committed (benchmarks/agent-tasks/tasks/v7, made by
+boards at once (8 x 2 on a 16-core machine); several run side by side,
+each board admitted by a memory ledger the binaries reserve in too
+(`--lock` runs one tier at a time). The nightly runs the sweep, the
+designer tier, the short and expansion tiers and four fingerprint
+boards on main and publishes them here. A placer default is decided on
+eleven dense boards at five seed pairs (nine when that leaves it
+open), after a cheaper stage that stops each layout at its first route
+([the protocol and its ladder](docs/benchmarks.md#measurement-discipline-placer-defaults-2026-10-26)).
+The task lists are committed (benchmarks/agent-tasks/tasks/v7, made by
 from_pcbench.py from benchmarks/github/boards.json):
 
 ```sh
 python3 benchmarks/github/harvest.py fetch                      # the harvested boards
 benchmarks/agent-tasks/run.py build/layout \
   --tasks benchmarks/agent-tasks/tasks/v7/tasks.json --jobs 8 --threads 2  # the full sweep, a night
-benchmarks/agent-tasks/run.py build/short --tier short             # takes build/quick-tier.lock itself
+benchmarks/agent-tasks/run.py build/short --tier short             # beside other runs, through the memory ledger
 benchmarks/github/freerouting.py build/freerouting --ours      # both routers, headless
 ```
 
