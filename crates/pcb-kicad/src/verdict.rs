@@ -2119,7 +2119,13 @@ fn next_actions(
                 };
                 format!("{}: {how}", parts.join(", "))
             });
-            actions.push(finding_action(kind, *count, &findings, kept.as_deref()));
+            let mut action = finding_action(kind, *count, &findings, kept.as_deref());
+            if matches!(kind.as_str(), "length_out_of_range" | "skew_out_of_range")
+                && let Some(summary) = lengths_summary(&facts.lengths)
+            {
+                action.push_str(&format!("; {summary}"));
+            }
+            actions.push(action);
         }
     }
     // The board's .kicad_dru: beside the board written.
@@ -2291,6 +2297,105 @@ fn part_cutout_pairs(findings: &[&DrcFinding]) -> Vec<String> {
         pairs.push(format!("{more} more"));
     }
     pairs
+}
+
+/// What the length rules' nets came to (`lengths`), by why each is out:
+/// not routed (its connections are open: no length to match yet), over
+/// the maximum because its pads lie further apart than it (the placement
+/// decides) or by the route (no shorter way around the other nets),
+/// under the minimum (the meander found no room). KiCad's finding says
+/// `actual 0.0000 mm` for an unrouted net and names no cause; trial 4's
+/// oro link had 9 of its 12 ULPI nets unrouted and one over by the
+/// route, all ten one line "see drc.json". At most six nets named a
+/// group.
+fn lengths_summary(lengths: &[crate::KiCadNetLength]) -> Option<String> {
+    let out: Vec<&crate::KiCadNetLength> = lengths.iter().filter(|entry| !entry.within).collect();
+    if out.is_empty() {
+        return None;
+    }
+    let names = |entries: &[&crate::KiCadNetLength], with_length: bool| -> String {
+        let mut named: Vec<String> = entries
+            .iter()
+            .take(6)
+            .map(|entry| {
+                if with_length {
+                    let bound = if entry.max_mm.is_some_and(|max| entry.length_mm > max) {
+                        entry.max_mm.map(|max| format!(", max {max:.2}"))
+                    } else {
+                        entry.min_mm.map(|min| format!(", min {min:.2}"))
+                    };
+                    format!(
+                        "{} {:.2} mm{}",
+                        entry.net,
+                        entry.length_mm,
+                        bound.unwrap_or_default()
+                    )
+                } else {
+                    entry.net.clone()
+                }
+            })
+            .collect();
+        if entries.len() > 6 {
+            named.push(format!("{} more", entries.len() - 6));
+        }
+        named.join(", ")
+    };
+    let unrouted: Vec<&crate::KiCadNetLength> = out
+        .iter()
+        .copied()
+        .filter(|entry| entry.length_mm <= 0.0)
+        .collect();
+    let over = |entry: &&crate::KiCadNetLength| {
+        entry.length_mm > 0.0 && entry.max_mm.is_some_and(|max| entry.length_mm > max)
+    };
+    let by_placement: Vec<&crate::KiCadNetLength> = out
+        .iter()
+        .copied()
+        .filter(|entry| over(entry) && entry.note.contains("the placement decides"))
+        .collect();
+    let by_route: Vec<&crate::KiCadNetLength> = out
+        .iter()
+        .copied()
+        .filter(|entry| over(entry) && !entry.note.contains("the placement decides"))
+        .collect();
+    let under: Vec<&crate::KiCadNetLength> = out
+        .iter()
+        .copied()
+        .filter(|entry| entry.length_mm > 0.0 && !over(entry))
+        .collect();
+    let mut parts = Vec::new();
+    if !unrouted.is_empty() {
+        parts.push(format!(
+            "{} not routed ({}): they are among the open connections, so their length waits for their route; close those first",
+            unrouted.len(),
+            names(&unrouted, false)
+        ));
+    }
+    if !by_placement.is_empty() {
+        parts.push(format!(
+            "{} over the maximum by the placement ({}): their pads lie further apart in a straight line than the maximum, so no route meets it; place the parts nearer (a near constraint between them)",
+            by_placement.len(),
+            names(&by_placement, true)
+        ));
+    }
+    if !by_route.is_empty() {
+        parts.push(format!(
+            "{} over the maximum by the route ({}): their pads lie within the maximum, but no shorter way was found around the other nets; more room near the parts, or the parts nearer, gives the short way",
+            by_route.len(),
+            names(&by_route, true)
+        ));
+    }
+    if !under.is_empty() {
+        parts.push(format!(
+            "{} under the minimum ({}): no straight track of the route had room for the whole meander",
+            under.len(),
+            names(&under, true)
+        ));
+    }
+    Some(format!(
+        "verdict.lengths: {} (each net's note says more)",
+        parts.join("; ")
+    ))
 }
 
 /// The finding types the verdict gives an action of their own, the
@@ -4307,6 +4412,57 @@ mod tests {
         assert_eq!(placement_rates_action("layout-kicad-board", &pinned), None);
         assert_eq!(search_rate_action("layout-kicad-board", &pinned), None);
         assert_eq!(placement_rates_action("place-kicad-board", &measured), None);
+    }
+
+    #[test]
+    fn length_findings_say_which_nets_are_unrouted_and_which_over_by_what() {
+        // Trial 4's oro link: 9 of the ULPI nets unrouted, ULPI_NXT over
+        // by the route; a net over by the placement for the third kind.
+        let entry = |net: &str, length: f64, note: &str| crate::KiCadNetLength {
+            net: net.into(),
+            rule: "ULPI_exact_length".into(),
+            constraint: "length".into(),
+            length_mm: length,
+            target_mm: 31.5,
+            min_mm: Some(31.4),
+            max_mm: Some(31.6),
+            meander_mm: 0.0,
+            within: false,
+            note: note.into(),
+        };
+        let lengths = vec![
+            entry("ULPI_CK", 0.0, "no copper the rule counts (not routed)"),
+            entry("ULPI_D0", 0.0, "no copper the rule counts (not routed)"),
+            entry(
+                "ULPI_NXT",
+                42.89,
+                "longer than the maximum: no shorter way was found around the other nets (the length repair)",
+            ),
+            entry(
+                "ULPI_D7",
+                48.0,
+                "longer than the maximum: its pads lie 40.00 mm apart in a straight line, more than the maximum (the placement decides)",
+            ),
+            crate::KiCadNetLength {
+                within: true,
+                ..entry("ULPI_D1", 31.5, "")
+            },
+        ];
+        let summary = lengths_summary(&lengths).unwrap();
+        assert!(
+            summary.contains("2 not routed (ULPI_CK, ULPI_D0)"),
+            "{summary}"
+        );
+        assert!(
+            summary.contains("1 over the maximum by the route (ULPI_NXT 42.89 mm, max 31.60)"),
+            "{summary}"
+        );
+        assert!(
+            summary.contains("1 over the maximum by the placement (ULPI_D7 48.00 mm, max 31.60)"),
+            "{summary}"
+        );
+        assert!(!summary.contains("ULPI_D1"), "{summary}");
+        assert_eq!(lengths_summary(&lengths[4..]), None);
     }
 
     #[test]
