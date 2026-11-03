@@ -220,6 +220,8 @@ struct State<'a> {
     /// Whether far pairs take `far_work` without their sum (off only in
     /// the tests, for the direct sums).
     skip_far: bool,
+    /// The marks and obstacles of the constraints by part (`PairFlags`).
+    flags: PairFlags,
     /// `AnnealConfig::legal_far_side`.
     legal_far_side: bool,
     /// The last global route's overflow field (`AnnealConfig::guidance`).
@@ -440,7 +442,7 @@ impl State<'_> {
         let pose = self.poses[index];
         let body = &self.rects[other];
         let other_component = &self.problem.components[other];
-        if self.problem.constraints.lies_on(index, other) {
+        if self.flags.lies_on(self.problem, index, other) {
             return;
         }
         // A part that may reach over a panel's frames and tabs
@@ -532,7 +534,7 @@ impl State<'_> {
             } else if !component.hollow_for(other_component)
                 && !other_component.hollow_for(component)
             {
-                if self.problem.constraints.bare(index, other) {
+                if self.flags.bare(self.problem, index, other) {
                     // Parts tied together meet without their halos.
                     let (mine, theirs) = (component.halo, other_component.halo);
                     *total += area(
@@ -563,8 +565,8 @@ impl State<'_> {
                 // spacing, as the rectangles are) only.
                 // Against an obstacle without routing room, without
                 // the halo.
-                let bare = self.problem.constraints.halo_free(index)
-                    || self.problem.constraints.halo_free(other);
+                let bare = self.flags.halo_free(self.problem, index)
+                    || self.flags.halo_free(self.problem, other);
                 self.fresh_boxes(cache, other);
                 let margin = self.problem.spacing / 2.0;
                 let theirs = Blocking::of(
@@ -642,7 +644,7 @@ impl State<'_> {
         let component = &self.problem.components[index];
         let other_component = &self.problem.components[other];
         let list = |boxes: usize| 8 + 2 * boxes as u64;
-        if self.problem.constraints.lies_on(index, other) {
+        if self.flags.lies_on(self.problem, index, other) {
             return 0;
         }
         // A pass over a panel's frames: the whole bodies' comparison (no
@@ -1032,6 +1034,7 @@ fn build_state<'a>(problem: &'a Problem, poses: &[Pose], legal_far_side: bool) -
         check_overlap: std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
         far_grow: far_grow(problem),
         skip_far: true,
+        flags: PairFlags::new(problem),
         legal_far_side,
         field: None,
         lengths: Vec::new(),
@@ -1047,6 +1050,64 @@ fn build_state<'a>(problem: &'a Problem, poses: &[Pose], legal_far_side: bool) -
     }
     state.refresh_lengths();
     state
+}
+
+/// `Constraints::lies_on`, `bare` and `halo_free` of the overlap sum's
+/// pairs from per-part flags: their lists' binary searches were 3 % of
+/// MegaDrive's anneal (2026-11-04). The lists' own answers where one is not
+/// ascending (a binary search's answer then is its own).
+struct PairFlags(Option<Vec<u8>>);
+
+const ON_MARKS: u8 = 1;
+const YIELDING: u8 = 2;
+const HALO_FREE: u8 = 4;
+
+impl PairFlags {
+    fn new(problem: &Problem) -> Self {
+        let constraints = &problem.constraints;
+        let lists = [
+            (&constraints.on_marks, ON_MARKS),
+            (&constraints.yielding, YIELDING),
+            (&constraints.halo_free, HALO_FREE),
+        ];
+        let ascending = lists
+            .iter()
+            .all(|(list, _)| list.windows(2).all(|pair| pair[0] <= pair[1]));
+        PairFlags(ascending.then(|| {
+            let mut flags = vec![0u8; problem.components.len()];
+            for (list, flag) in lists {
+                for &part in list {
+                    if let Some(flags) = flags.get_mut(part) {
+                        *flags |= flag;
+                    }
+                }
+            }
+            flags
+        }))
+    }
+
+    /// `Constraints::lies_on(a, b)`.
+    fn lies_on(&self, problem: &Problem, a: usize, b: usize) -> bool {
+        let Some(flags) = &self.0 else {
+            return problem.constraints.lies_on(a, b);
+        };
+        !problem.constraints.on_marks.is_empty()
+            && ((flags[a] & ON_MARKS != 0 && flags[b] & YIELDING != 0)
+                || (flags[b] & ON_MARKS != 0 && flags[a] & YIELDING != 0))
+    }
+
+    /// `Constraints::halo_free(part)`.
+    fn halo_free(&self, problem: &Problem, part: usize) -> bool {
+        match &self.0 {
+            Some(flags) => flags[part] & HALO_FREE != 0,
+            None => problem.constraints.halo_free(part),
+        }
+    }
+
+    /// `Constraints::bare(a, b)`.
+    fn bare(&self, problem: &Problem, a: usize, b: usize) -> bool {
+        problem.constraints.linked(a, b) || self.halo_free(problem, a) || self.halo_free(problem, b)
+    }
 }
 
 /// `State::far_grow`: the margins a pair's sum grows a box by (the edge
@@ -1962,6 +2023,46 @@ impl<'a> Guide<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The pair flags answer as the constraints' lists, every pair of
+    /// random boards, ascending lists and not.
+    #[test]
+    fn the_pair_flags_answer_as_the_constraints() {
+        let mut seed = 0x2B99_04D1_77AC_3E15u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut hits = 0;
+        for round in 0..12 {
+            let (mut problem, _) = crate::legal::tests::random_board(round, &mut next);
+            if round % 4 == 3 {
+                problem.constraints.halo_free.reverse();
+            }
+            let flags = PairFlags::new(&problem);
+            assert_eq!(
+                flags.0.is_some(),
+                round % 4 != 3 || problem.constraints.halo_free.len() < 2
+            );
+            let parts = problem.components.len();
+            for a in 0..parts {
+                assert_eq!(
+                    flags.halo_free(&problem, a),
+                    problem.constraints.halo_free(a)
+                );
+                for b in 0..parts {
+                    let lies_on = problem.constraints.lies_on(a, b);
+                    let bare = problem.constraints.bare(a, b);
+                    assert_eq!(flags.lies_on(&problem, a, b), lies_on, "{a} {b}");
+                    assert_eq!(flags.bare(&problem, a, b), bare, "{a} {b}");
+                    hits += usize::from(lies_on) + usize::from(bare);
+                }
+            }
+        }
+        assert!(hits > 500, "{hits}");
+    }
 
     /// The overlap sums with far pairs taken from `far_work` give the
     /// direct sums' bits and work: random boards of every kind of part
