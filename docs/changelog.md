@@ -11,6 +11,17 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-05 (the courtless rule's stage-1 screen)
+
+Branch legality-screen, docs only (docs/placer.md, "The stage-1 screen
+(2026-11-05)"). Eleven dense boards, five seed pairs, first route,
+x1890 against legal2-i: sum of medians 1148 -> 1118, weighted +1.7 %
+(90 % interval -3.1 to +6.7 %): not better, not worse. The rule changes
+37 of 55 placements; the off side had shipped 292 overlapping pairs of
+courtless bodies (373 parts) on the 4in1-mini, the 4in1, DSP-ADAU1452
+and split72_left. The 4in1 +15 %, protoesp +15 % (no overlap shipped),
+video -15 %.
+
 ## Committed on 2026-11-04 (trial 5's leftovers: the rate first, pair rows, the open link's far end, the ledger's wait, V-cut tabs, panels of copies)
 
 Branch trial-5-leftovers (`build/bin/pcb-maker-ux10-pairs` for the pair

@@ -6744,6 +6744,62 @@ two footprints' bodies on each other were legal, and KiCad cannot see
 it without courtyards). It costs routing on this seed's draw, which the
 seed pairs would have to confirm or refute.
 
+### The stage-1 screen (2026-11-05)
+
+Stage 1 of the placer ladder for the rule: the eleven dense boards with
+`stop_after_first_route`, five seed pairs (1, 101, 201, 301, 401), x1890
+against legal2-i (the same base, the rule its only difference),
+`experiments/placement-gap/screen.py --on '{}'` at six in flight beside
+the nightly, judged by `placer_ab.py compare --metric first_open`
+(`build/legal2-screen`).
+
+| board | first route open, median off / on | mean change | relative | placement changed | courtless overlaps the off side shipped (pairs per seed) |
+| --- | ---: | ---: | ---: | :---: | --- |
+| 4in1 | 129 / 176 | +27.0 | +15.0 % | 5 of 5 | 8, 6, 7, 6, 8 (11 to 13 parts: MOSFETs and QFNs on their fabrication outlines) |
+| 4in1-mini | 140 / 132 | -4.0 | -2.8 % | 5 of 5 | 25, 21, 27, 31, 29 (23 to 29 parts) |
+| DSP-ADAU1452 | 64 / 54 | -2.2 | -3.3 % | 5 of 5 | 19, 23, 30, 25, 25 (27 to 40 passives on their silkscreen outlines) |
+| MegaDrive | 149 / 149 | +1.0 | +0.6 % | 2 of 5 | 0 |
+| 0xCB panel | 0 / 0 | -0.2 | | 5 of 5 | 0 |
+| split72_left | 26 / 24 | -1.0 | -2.5 % | 5 of 5 | 0, 1, 1, 0, 0 |
+| protoesp | 86 / 103 | +16.8 | +15.2 % | 5 of 5 | 0 |
+| video | 307 / 233 | -46.0 | -14.8 % | 5 of 5 | 0 |
+| Glasgow, SmartSpin2k, SNSP-CPU-01 | equal | 0 | 0 | 0 of 5 | 0 |
+
+- **The verdict: not worse, not better.** The sum of medians falls
+  1148 -> 1118 (-2.6 %). The pair sums are 1193 -> 1350, 974 -> 1116,
+  1274 -> 1078, 1204 -> 1115 and 1252 -> 1195. 5 boards are better, 3
+  worse and 3 equal. The weighted relative change is +1.7 % (the noise
+  file's 90 % interval is -3.1 to +6.7 %, p 0.72): "NOT BETTER" at 28 %
+  confidence. Resolving a 2 % change on the eight boards it moves would
+  take more than 40 seed pairs. Inside the noise, so no refinement is
+  proposed on these numbers.
+- **What is paid for.** The rule changes 37 of the 55 placements: every
+  seed of the eight boards with movable parts without a courtyard, and
+  MegaDrive at 2 of 5. Glasgow, SmartSpin2k and SNSP-CPU-01 are byte for
+  byte. Of the off side's placements, 17 shipped 292 overlapping pairs of
+  such bodies (373 parts), all on three boards: the 4in1-mini, the 4in1
+  and DSP-ADAU1452, plus split72_left's single pair on two seeds. They
+  are found with `legality-kicad-board` with the task's constraints and
+  the off side's placed board as `--poses`; overlaps between two held
+  parts are not counted.
+- **Where it costs.** The 4in1's +15 % is the price of its 6 to 8
+  overlapping pairs: its power stage's MOSFETs and gate drivers had lain
+  on each other's fabrication outlines. protoesp's +15 % and video's
+  -15 % pay for nothing: the off side shipped no overlap on either. Their
+  placements move all the same. The likely cause, not measured: the
+  rule's boxes widen the parts' reach in the anneal's and the
+  legaliser's neighbour searches, which changes the work they book and
+  so the trajectory. That is another draw of the seed noise, not a
+  constraint.
+- **If a refinement is wanted later.** The smallest one is to leave the
+  silkscreen fallback out (pads and copper only where there is no
+  fabrication layer). DSP-ADAU1452's 0805s have only silkscreen, whose
+  outlines designers overlap freely; that is 8 of the census's 25 new
+  designer conflicts. It would leave the 4in1's real overlaps judged
+  and should take DSP-ADAU1452 back to today's placements: -3.3 % on
+  this screen, inside its noise either way. Expected effect overall:
+  within the noise, so not worth a build on these numbers.
+
 ### Sub-boards from the outline alone
 
 Without a reference a netlist import's panel (every part stacked off its
