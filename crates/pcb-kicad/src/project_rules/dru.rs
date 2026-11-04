@@ -1735,7 +1735,26 @@ fn lower_constraint(
                         matches = matches.or(truth_for(Some(net), other, same));
                     }
                 }
+                // The board setup's value for the kind: a minimum at or
+                // below it only accepts less than the router keeps.
+                let setup = match kind {
+                    "edge_clearance" => board.board_clearances[0],
+                    "hole_clearance" => board.board_clearances[1],
+                    _ => board.board_clearances[2],
+                };
                 match matches {
+                    T3::Unknown if value <= setup + 1.0e-9 => lowered.note(
+                        rule,
+                        constraint,
+                        "no_effect",
+                        format!(
+                            "{} {} at or below the board setup's {}: the router keeps more wherever the condition ({}) holds",
+                            kind.replace('_', " "),
+                            mm(value),
+                            mm(setup),
+                            opaque()
+                        ),
+                    ),
                     T3::Unknown => lowered.note(
                         rule,
                         constraint,
@@ -1878,6 +1897,31 @@ fn lower_constraint(
                 lowered.pad_clearance_all = lowered.pad_clearance_all.max(value);
             }
             shadowed_any.set(shadowed_before);
+            // A minimum at or below every net's clearance only lets KiCad
+            // accept less than the router keeps, whatever its condition
+            // matches: no finding comes of it (ducktop2 right_io's eleven
+            // intra-footprint rules on `A.Reference`, 0.1 to 0.4 mm under
+            // its classes' 0.15 to 0.5, were listed as rules the router does
+            // not keep, trial 5).
+            let least = board
+                .current
+                .iter()
+                .map(|net| net.clearance_mm)
+                .fold(f64::INFINITY, f64::min);
+            if unknown && least.is_finite() && value <= least + 1.0e-9 {
+                lowered.note(
+                    rule,
+                    constraint,
+                    "no_effect",
+                    format!(
+                        "a minimum of {} at or below every net's clearance (the least {}): the router keeps more wherever the condition ({}) holds",
+                        mm(value),
+                        mm(least),
+                        opaque()
+                    ),
+                );
+                return;
+            }
             if unknown {
                 lowered.note(
                     rule,
@@ -3056,6 +3100,41 @@ mod tests {
         assert!(rules.report[0].detail.contains("A.insidecourtyard()"));
         assert_eq!(rules.unmodelled.len(), 3);
         assert!(rules.unmodelled[1].starts_with("creepage ('creep', min 4 mm)"));
+    }
+
+    /// A minimum the router keeps more than anyway (at or below every
+    /// net's clearance, or the board setup's hole clearance) costs nothing
+    /// whatever its condition: ducktop2 right_io's intra-footprint rules
+    /// on `A.Reference` (trial 5) were reported as rules the router does
+    /// not keep. Above them a condition the router cannot read stays
+    /// unmodelled.
+    #[test]
+    fn a_minimum_below_what_the_router_keeps_has_no_effect_whatever_its_condition() {
+        let mut board = board(&[("L1", &["Default"]), ("FB", &["Default"])]);
+        board.board_clearances = [0.0, 0.25, 0.0];
+        let rules = lowered(
+            "(rule own (condition \"A.Reference == 'U41' && B.Reference == 'U41'\") (constraint clearance (min 0.1mm)))
+             (rule raise (condition \"A.Reference == 'U41' && B.Reference == 'U41'\") (constraint clearance (min 0.12mm)))
+             (rule port (condition \"A.memberOfFootprint('MK430') && B.memberOfFootprint('MK430')\") (constraint hole_clearance (min 0.15mm)))",
+            &board,
+        );
+        let statuses: Vec<&str> = rules.report.iter().map(|r| r.status.as_str()).collect();
+        assert_eq!(statuses, ["no_effect", "unmodelled", "no_effect"]);
+        assert!(
+            rules.report[0]
+                .detail
+                .contains("at or below every net's clearance"),
+            "{}",
+            rules.report[0].detail
+        );
+        assert!(
+            rules.report[2]
+                .detail
+                .contains("at or below the board setup's 0.25 mm"),
+            "{}",
+            rules.report[2].detail
+        );
+        assert_eq!(rules.unmodelled.len(), 1);
     }
 
     #[test]
