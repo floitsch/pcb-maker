@@ -205,7 +205,7 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_ROUTER_BGA_FANOUT",
         Kind::Switch,
-        "overrides the router's `bga_fanout` (`0` off, anything else on; off by default): before routing, the inner balls of every grid array (those no track between the outer balls serves) get a stub and a through via in a diagonal gap, the largest of the class's and the project's via sizes that keeps every clearance, as fixed copper of the ball's net that its route may end on; written only where the route uses it; the placer keeps the far side free under those vias (docs/router.md, \"Prepared fan-outs for BGAs (2026-11-04)\").",
+        "overrides the router's `bga_fanout` (`0` off, anything else on; on by default): before routing, the inner balls of every grid array (those no track between the outer balls serves) whose net's own via does not fit a diagonal gap get a stub and a through via in a diagonal gap, the largest of the class's and the project's via sizes that keeps every clearance, as fixed copper of the ball's net that its route may end on; written only where the route uses it; the placer keeps the far side free under those vias (docs/router.md, \"Prepared fan-outs for BGAs (2026-11-04)\").",
     ),
     (
         "PCB_ROUTER_FANOUT_COST",

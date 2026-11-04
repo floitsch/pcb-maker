@@ -1,7 +1,8 @@
 // Copyright (C) 2026 Toit contributors.
 
 //! Prepared fan-outs for BGAs (docs/router.md, "Prepared fan-outs for BGAs
-//! (2026-11-04)"; router settings `bga_fanout`, `PCB_ROUTER_BGA_FANOUT`).
+//! (2026-11-04)"; router settings `bga_fanout`, `PCB_ROUTER_BGA_FANOUT`;
+//! on by default).
 //!
 //! A ball of a grid array's inner rings leaves the part only by a via:
 //! once the channels between the outer balls are taken (one track a
@@ -51,9 +52,11 @@ pub fn bga_fanout_override() -> Option<bool> {
 }
 
 /// Whether the lowering plans fan-outs: the override, else the setting,
-/// else off.
+/// else on (since 2026-11-04: Glasgow's U30, the one task board whose
+/// inner balls the search cannot leave, gains on every measure; no other
+/// board's array takes a plan, so nothing else moves).
 pub(crate) fn bga_fanout_on(config: &KiCadBoardRouterConfig) -> bool {
-    bga_fanout_override().unwrap_or(config.bga_fanout.unwrap_or(false))
+    bga_fanout_override().unwrap_or(config.bga_fanout.unwrap_or(true))
 }
 
 /// Grid arrays have at least this many pads.
@@ -1383,6 +1386,12 @@ mod tests {
             bga_fanout: Some(false),
             ..config.clone()
         };
+        // Unset, the fan-out is on (`PCB_ROUTER_BGA_FANOUT` overrides it).
+        let unset = KiCadBoardRouterConfig {
+            bga_fanout: None,
+            ..config.clone()
+        };
+        assert_eq!(bga_fanout_on(&unset), bga_fanout_override().unwrap_or(true));
         let plain = lower(&pcb, &off, false).unwrap();
         let lowered = lower(&pcb, &config, false).unwrap();
         // The placer keeps the far side free under the same four balls'
