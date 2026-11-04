@@ -3061,6 +3061,53 @@ pub(super) fn apply_constraints(
             }
         }
     }
+    // A row whose first part a place entry puts at x, y runs from there
+    // along its axis in that part's frame: where it then leaves the board
+    // its other parts would lie off it, kept there (trial 6: J4 placed at
+    // the top of a eurorack board, turned 90 degrees, its seven jacks ran
+    // up from it, 96 mm beyond the outline, with no word from the place
+    // check and 71 connections open in the layout).
+    if problem.outline.len() >= 3 {
+        let bounds = problem.bounds();
+        for (leader, _) in &user_rows {
+            if !pinned.contains(leader) {
+                continue;
+            }
+            let component = &problem.components[*leader];
+            let pose = problem.poses[*leader];
+            let center = component.center(pose);
+            let half = component.half_extent(pose.angle);
+            let beyond = [
+                ("left", bounds[0] - (center[0] - half[0])),
+                ("top", bounds[1] - (center[1] - half[1])),
+                ("right", center[0] + half[0] - bounds[2]),
+                ("bottom", center[1] + half[1] - bounds[3]),
+            ];
+            let out: Vec<String> = beyond
+                .iter()
+                .filter(|(_, by)| *by > 0.5)
+                .map(|(side, by)| format!("{by:.1} mm beyond the {side} edge"))
+                .collect();
+            // Half the row or more off the board: a row merely hanging
+            // over an edge (eurorack jacks reach 2 mm past the board, as
+            // the designer's do) is the place entry's to decide.
+            let off = center[0] < bounds[0]
+                || center[0] > bounds[2]
+                || center[1] < bounds[1]
+                || center[1] > bounds[3];
+            if off && !out.is_empty() {
+                cannot.push(format!(
+                    "the row of {} runs from where its place entry puts it ({:.2}, {:.2}, {} degrees) along its axis in that part's frame and reaches {}: its other parts would lie off the board; place {} at the row's other end, or give it the angle a half turn from this one",
+                    references[*leader],
+                    pose.position[0],
+                    pose.position[1],
+                    pose.angle,
+                    out.join(" and "),
+                    references[*leader]
+                ));
+            }
+        }
+    }
     for index in pinned {
         problem.components[index].fixed = true;
     }
@@ -4131,6 +4178,26 @@ mod tests {
         assert!(
             (center[0] - 8.5).abs() < 1.0e-9 && (center[1] - 10.0).abs() < 1.0e-9,
             "{center:?}"
+        );
+    }
+
+    #[test]
+    fn a_placed_row_that_runs_off_the_board_is_refused() {
+        // Trial 6: the row's first part placed at the top, the row running
+        // up from it off the board, accepted without a word.
+        assert!(
+            apply(
+                r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 3}], "place": [{"part": "C1", "x": 5, "y": 10}]}"#
+            )
+            .is_ok()
+        );
+        let error = apply(
+            r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 3}], "place": [{"part": "C1", "x": 29, "y": 10}]}"#,
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("the row of C1 runs from where its place entry puts it (29.00, 10.00, 0 degrees) along its axis in that part's frame and reaches 3.0 mm beyond the right edge: its other parts would lie off the board"),
+            "{error}"
         );
     }
 
