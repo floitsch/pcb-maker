@@ -5452,17 +5452,25 @@ fn the_rip_up_by_its_heap_rips_the_nets_the_scan_rips() {
         let before = router.probe_standing();
         assert!(before.conflicted > 2, "{rows} x {columns}: {before:?}");
         let mut scanned = router.clone();
-        // The race's copy without the history rips and counts as the
-        // router does, and leaves the router's history as it was.
-        let history = router.history.clone();
-        let mut lean = router.copy_for_rip_up();
-        assert_eq!(router.history, history);
-        assert!(lean.history.is_empty());
+        // The race rips the probe's router in place and puts it back
+        // (`saved_for_rip_up`): it counts as a copy ripped does, and the
+        // router is as it was, its history, records and counts too.
+        let whole = router.clone();
+        let saved = router.saved_for_rip_up();
+        assert!(saved.0.history.is_empty() && saved.0.hot.is_empty());
+        assert!(saved.0.occupancy.values().next().is_none());
+        let counted = router.rip_up_standing();
         assert_eq!(
-            lean.rip_up_standing(),
-            router.clone().rip_up_standing(),
-            "{rows} x {columns}: the copy's ripped standing"
+            counted,
+            whole.clone().rip_up_standing(),
+            "{rows} x {columns}: the ripped standing"
         );
+        router.restore_after_rip_up(saved);
+        assert_eq!(restored_state(&router), restored_state(&whole));
+        assert_eq!(router.history, whole.history);
+        assert_eq!(router.tile_history, whole.tile_history);
+        assert_eq!(router.probe_standing(), whole.probe_standing());
+        assert_eq!(router.expansions(), whole.expansions());
         let heap = router.rip_up_most_conflicted();
         let scan = scanned.rip_up_most_conflicted_scan();
         assert!(heap.len() > 2, "{rows} x {columns}: {heap:?}");

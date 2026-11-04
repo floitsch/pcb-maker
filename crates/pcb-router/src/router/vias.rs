@@ -272,18 +272,7 @@ impl Router {
     /// the whole copy (`clone`) put back would: Neotron's saved copies held
     /// 299 MB of its 713 MB of maps in what is rebuilt.
     pub fn saved_copy(&mut self) -> Router {
-        let hot = std::mem::take(&mut self.hot);
-        let stamp_mark = std::mem::take(&mut self.stamp_mark);
-        let occupancy = std::mem::take(&mut self.occupancy);
-        let tile_claimed = std::mem::take(&mut self.tile_claimed);
-        let copy = self.clone();
-        self.hot = hot;
-        self.stamp_mark = stamp_mark;
-        self.occupancy = occupancy;
-        self.tile_claimed = tile_claimed;
-        // (A copy registers its original's parts with the memory profile.)
-        copy.mem_update();
-        copy
+        self.saved_without(false)
     }
 
     /// Goes back to a `saved_copy` of this router (its lattice, nets and
@@ -294,6 +283,40 @@ impl Router {
     /// maps. Everything else is the copy's, as `*self = copy` with a whole
     /// copy.
     pub fn restore_saved(&mut self, saved: Router) {
+        self.restore_without(saved, false);
+    }
+
+    /// `saved_copy`, without the negotiation's history too where the
+    /// router goes back before anything writes it (`without_history`: the
+    /// race's ripped count, `RipUpSaved`).
+    pub(super) fn saved_without(&mut self, without_history: bool) -> Router {
+        let hot = std::mem::take(&mut self.hot);
+        let stamp_mark = std::mem::take(&mut self.stamp_mark);
+        let occupancy = std::mem::take(&mut self.occupancy);
+        let tile_claimed = std::mem::take(&mut self.tile_claimed);
+        let history = without_history.then(|| {
+            (
+                std::mem::take(&mut self.history),
+                std::mem::take(&mut self.tile_history),
+            )
+        });
+        let copy = self.clone();
+        self.hot = hot;
+        self.stamp_mark = stamp_mark;
+        self.occupancy = occupancy;
+        self.tile_claimed = tile_claimed;
+        if let Some((history, tile_history)) = history {
+            self.history = history;
+            self.tile_history = tile_history;
+        }
+        // (A copy registers its original's parts with the memory profile.)
+        copy.mem_update();
+        copy
+    }
+
+    /// `restore_saved` of a `saved_without` (with `without_history`, the
+    /// router's history, unchanged since, stays).
+    pub(super) fn restore_without(&mut self, saved: Router, without_history: bool) {
         for net in 0..self.nets.len() {
             if self.nets[net].stamped != saved.nets[net].stamped {
                 self.unstamp(net as NetId);
@@ -303,10 +326,20 @@ impl Router {
         let occupancy = std::mem::take(&mut self.occupancy);
         let tile_claimed = std::mem::take(&mut self.tile_claimed);
         let stamp_mark = std::mem::take(&mut self.stamp_mark);
+        let history = without_history.then(|| {
+            (
+                std::mem::take(&mut self.history),
+                std::mem::take(&mut self.tile_history),
+            )
+        });
         *self = saved;
         self.occupancy = occupancy;
         self.tile_claimed = tile_claimed;
         self.stamp_mark = stamp_mark;
+        if let Some((history, tile_history)) = history {
+            self.history = history;
+            self.tile_history = tile_history;
+        }
         self.build_hot();
         self.mem_update();
     }

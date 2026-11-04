@@ -2134,14 +2134,16 @@ pub fn layout_kicad_board(
                 crate::mem_profile::phase("race ripped count");
                 let before_mb = crate::board_router::resident_mb();
                 let started = std::time::Instant::now();
-                let mut copy = router.copy_for_rip_up();
+                // The probe's router ripped in place and put back: what
+                // it saves to go back to is a fraction of a copy.
+                let saved = router.saved_for_rip_up();
                 cost.copy_seconds += started.elapsed().as_secs_f64();
                 cost.copy_mb = cost
                     .copy_mb
                     .max(crate::board_router::resident_mb() - before_mb);
                 let started = std::time::Instant::now();
-                let (nets, standing) = copy.rip_up_standing();
-                drop(copy);
+                let (nets, standing) = router.rip_up_standing();
+                router.restore_after_rip_up(saved);
                 cost.rip_seconds += started.elapsed().as_secs_f64();
                 ripped_counts.push((standing.open_terminals, nets));
             }

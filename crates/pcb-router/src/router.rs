@@ -68,6 +68,7 @@ mod wall;
 pub use build::{
     BuildCounts, SharedBuild, StaticMapsHold, held_maps_bytes, hold_static_maps, static_maps_key,
 };
+pub use coarse::RipUpSaved;
 pub use config::Config;
 pub use dive::{CROSSING_DIVE_DEFAULT, crossing_dive_override};
 pub use escapes::exact_escapes_override;

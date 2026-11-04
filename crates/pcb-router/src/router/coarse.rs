@@ -11,6 +11,10 @@
 
 use super::*;
 
+/// A router saved for the race's ripped count (`Router::saved_for_rip_up`):
+/// only to go back to.
+pub struct RipUpSaved(pub(super) Router);
+
 impl Router {
     /// The negotiation iterations so far and why the last negotiation
     /// ended (`RoutingResult::negotiation_stop`).
@@ -18,20 +22,24 @@ impl Router {
         (self.iterations, self.negotiation_stop)
     }
 
-    /// A copy for `rip_up_standing` (the race's ripped count): the router
-    /// but for the negotiation's history (per layer and cell, and per
-    /// tile), which only the searches, the negotiation, the finish and the
-    /// reports read, none of them the rip-up's or the standing's. The
-    /// router stays as it is (its history moved out for the copy and
-    /// back). Video's copies were up to 417 MB and 0.8 s a race
-    /// (2026-10-28). Not a router to route on.
-    pub fn copy_for_rip_up(&mut self) -> Router {
-        let history = std::mem::take(&mut self.history);
-        let tile_history = std::mem::take(&mut self.tile_history);
-        let copy = self.clone();
-        self.history = history;
-        self.tile_history = tile_history;
-        copy
+    /// What the race's ripped count needs to undo `rip_up_standing` on the
+    /// probe's own router (`restore_after_rip_up`): the router but for the
+    /// negotiation's history (per layer and cell, and per tile), which
+    /// neither the rip-up nor the standing reads or writes, and for what is
+    /// rebuilt on the way back (`saved_copy`: the search records, the
+    /// occupancy, the tiles' claims, the stamp marks). Until 2026-11-04 the
+    /// race ripped a copy of each probe's router without its history
+    /// (video's copies up to 381 MB, 2026-11-04): the copy held the
+    /// occupancy and the search records as well. Not a router to route on.
+    pub fn saved_for_rip_up(&mut self) -> RipUpSaved {
+        RipUpSaved(self.saved_without(true))
+    }
+
+    /// Goes back to the router `saved` (`saved_for_rip_up`) after its
+    /// `rip_up_standing`: the router as it was, as a copy ripped in its
+    /// place would have left it.
+    pub fn restore_after_rip_up(&mut self, saved: RipUpSaved) {
+        self.restore_without(saved.0, true);
     }
 
     /// After `probe`: every net in conflict loses its conflicted branches,
