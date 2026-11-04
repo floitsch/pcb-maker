@@ -2421,7 +2421,7 @@ fn next_actions(
     {
         observations.push(if native.schematic_parity_pins_only {
             format!(
-                "nothing to do for the {} schematic parity findings: each is a symbol pin the footprint has no pad for (net_conflict \"No pad found for pin\"), a no-connect pin on KiCad's unconnected-(...) net when import-kicad-netlist listed it in unmatched_pins",
+                "the {} schematic parity findings are each a symbol pin the footprint has no pad for (net_conflict \"No pad found for pin\"), a no-connect pin on KiCad's unconnected-(...) net when import-kicad-netlist listed it in unmatched_pins",
                 native.schematic_parity
             )
         } else {
@@ -2438,8 +2438,10 @@ fn next_actions(
 
 /// The tag that starts a next action which is the input's own observation
 /// (`input_tagged`): nothing this run did or can change, said after every
-/// action of the run.
-pub const INPUT_TAG: &str = "input: ";
+/// action of the run. It starts with "nothing to do", as every line of a
+/// complete run's next_actions does (docs/agents.md; the walkthrough
+/// holds a complete layout to it).
+pub const INPUT_TAG: &str = "nothing to do (the input's): ";
 
 /// A next action that is the input's own observation, tagged
 /// (`INPUT_TAG`).
@@ -3839,7 +3841,7 @@ mod tests {
                 action.contains("fab-kicad-board, which judges the board on its own, refuses them")
             })
             .unwrap();
-        assert!(action.starts_with("input: 1 of the findings the reference has at the same place are between two nets (clearance 1; parts J1, R31)"), "{action}");
+        assert!(action.starts_with("nothing to do (the input's): 1 of the findings the reference has at the same place are between two nets (clearance 1; parts J1, R31)"), "{action}");
         // Without a reference: no such line.
         facts.reference = KiCadReference::None;
         assert!(
@@ -4843,7 +4845,7 @@ mod tests {
                 .next_actions
                 .last()
                 .unwrap()
-                .starts_with("input: fixed part U3")
+                .starts_with("nothing to do (the input's): fixed part U3")
         );
     }
 
@@ -5477,7 +5479,7 @@ mod tests {
             map(&[("net_conflict", 2)])
         );
         assert!(verdict.next_actions.iter().any(|action| {
-            action.starts_with("input: nothing to do for the 2 schematic parity findings")
+            action.starts_with("nothing to do (the input's): the 2 schematic parity findings are each a symbol pin")
         }));
         // A footprint missing is something to look at.
         let report = json!({"schematic_parity": [pin, {"type": "missing_footprint", "description": "Missing footprint R3"}]});
@@ -5486,7 +5488,7 @@ mod tests {
         let verdict = judge(&routed(tally));
         assert!(verdict.next_actions.iter().any(|action| {
             action.starts_with(
-                "input: schematic parity findings (missing_footprint 1, net_conflict 1",
+                "nothing to do (the input's): schematic parity findings (missing_footprint 1, net_conflict 1",
             )
         }));
     }
@@ -5536,9 +5538,12 @@ mod tests {
         let rules = position("the project has rules the router does not keep");
         assert!(open < clearance && clearance < rules, "{actions:#?}");
         // The input's own observations last, each tagged.
-        let marks = position("input: fixed part J3 lies on 2 of the board's texts");
-        let overlap = position("input: fixed parts C17 and U1 overlap (courtyards)");
-        let footprint = position("input: 1 DRC findings lie within one footprint each");
+        let marks =
+            position("nothing to do (the input's): fixed part J3 lies on 2 of the board's texts");
+        let overlap =
+            position("nothing to do (the input's): fixed parts C17 and U1 overlap (courtyards)");
+        let footprint =
+            position("nothing to do (the input's): 1 DRC findings lie within one footprint each");
         assert!(
             rules < marks && marks < overlap && overlap < footprint,
             "{actions:#?}"
@@ -5560,6 +5565,34 @@ mod tests {
             )
         ));
         assert!(!input_observation(&actions[0]));
+        // A complete run: its list says only that there is nothing left
+        // (the walkthrough's keyboard: the controller's no-connect pins),
+        // the input's observations included.
+        let report = json!({
+            "violations": [
+                {"type": "annular_width", "severity": "error", "description": "Annular width",
+                 "items": [{"description": "Pad 1 [GND] of J1 on F.Cu", "uuid": "c", "pos": {"x": 5.0, "y": 5.0}},
+                           {"description": "Pad 2 [GND] of J1 on F.Cu", "uuid": "d", "pos": {"x": 5.5, "y": 5.0}}]}
+            ],
+            "unconnected_items": [],
+            "schematic_parity": [{"type": "net_conflict", "description": "No pad found for pin 31 in symbol U1."}]
+        });
+        let mut complete = KiCadRunFacts::new("layout-kicad-board");
+        complete.routable_connections = 70;
+        complete.routed_connections = 70;
+        complete.native = Some(tally_drc(&report));
+        complete.input_warnings = facts.input_warnings[..2].to_vec();
+        let verdict = judge(&complete);
+        assert_eq!(verdict.status, KiCadRunStatus::Complete);
+        assert_eq!(verdict.next_actions.len(), 4, "{:#?}", verdict.next_actions);
+        assert!(
+            verdict
+                .next_actions
+                .iter()
+                .all(|action| action.starts_with("nothing to do")),
+            "{:#?}",
+            verdict.next_actions
+        );
     }
 
     /// A layout with three open connections (trial 4's Quanta75 run 1).

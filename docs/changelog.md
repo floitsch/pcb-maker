@@ -18,7 +18,8 @@ left open in the verdict's wording. Placement and routing unchanged
 (the reports gain fields; the boards are byte-identical).
 
 - **The order of next_actions**: this run's actions first, the input's
-  own observations last, each starting with `input: ` (fixed parts on
+  own observations last, each starting with `nothing to do (the
+  input's): ` (fixed parts on
   the board's texts, fixed parts on top of each other, the footprints'
   and the input's own findings, schematic parity, the reference's
   findings the release refuses). The rules the router does not keep and
