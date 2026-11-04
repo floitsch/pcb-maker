@@ -156,6 +156,9 @@ pub(super) fn start_from(
 /// `PCB_PLACER_DESIGNER`), the relaxation level, how crowded the global
 /// placement is at that level, the placer's objective at each stage split
 /// by term (at the level, and with no halos: `objective`, `objective_bare`),
+/// the global placement's density overflow at each stage's poses
+/// (at the placement's level, without halos, and at the global
+/// placement's own: `global_overflow_at`, `_bare`, `_global`),
 /// and per movable part each stage's pose, how far each stage moved it and
 /// what it met where the annealer left it. Each seed says its seed
 /// number and whether it is the placement kept (the first).
@@ -163,9 +166,12 @@ pub(super) fn trace_placements(
     lowered: &LoweredPlacement,
     placements: &[core::Placement],
     seeds: &[u64],
-    anneal: &core::anneal::AnnealConfig,
+    config: &core::Config,
     path: &Path,
 ) -> Result<(), String> {
+    let anneal = &config.anneal;
+    // The global placement's own problem (the fitted halos of its level).
+    let global_problem = core::global_problem(&lowered.problem, config);
     let designer = match std::env::var_os("PCB_PLACER_DESIGNER") {
         Some(designer) => Some(designer_poses(lowered, Path::new(&designer))?),
         None => None,
@@ -309,6 +315,33 @@ pub(super) fn trace_placements(
             }
             result
         };
+        // The global placement's density overflow (its stop test, 0.04)
+        // at each stage's poses and the designer's, at the level and
+        // without halos: what the global's model calls a legal placement.
+        let overflows = |problem: &core::Problem| -> serde_json::Map<String, serde_json::Value> {
+            let at = |poses: &[core::Pose]| -> f64 {
+                let mut placed = problem.clone();
+                placed.poses = poses.to_vec();
+                let config = core::GlobalConfig {
+                    max_iterations: 1,
+                    frame_interval: 0,
+                    warm: Some(std::sync::Arc::new(vec![true; count])),
+                    ..core::GlobalConfig::default()
+                };
+                core::global::global_place(&placed, &config).overflow
+            };
+            let mut result: serde_json::Map<String, serde_json::Value> = stages
+                .iter()
+                .map(|(name, poses)| (name.to_string(), serde_json::json!(at(poses))))
+                .collect();
+            if let Some(poses) = &designer {
+                result.insert("designer".to_string(), serde_json::json!(at(poses)));
+            }
+            result
+        };
+        let global_overflow = overflows(&relaxed);
+        let global_overflow_global = overflows(&global_problem);
+        let global_overflow_bare = overflows(&bare);
         let objective = objectives(&relaxed);
         let objective_bare = objectives(&bare);
         let stage_of = |name: &str| stages.iter().position(|(stage, _)| *stage == name);
@@ -391,6 +424,9 @@ pub(super) fn trace_placements(
             "kept": rank == 0,
             "objective": objective,
             "objective_bare": objective_bare,
+            "global_overflow_at": global_overflow,
+            "global_overflow_at_bare": global_overflow_bare,
+            "global_overflow_at_global": global_overflow_global,
             "stages": stages.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
             "wirelength": lengths.iter().map(|(_, lengths)| lengths.iter().sum::<f64>()).collect::<Vec<_>>(),
             "designer_wirelength": designer_lengths.as_ref().map(|lengths| lengths.iter().sum::<f64>()),

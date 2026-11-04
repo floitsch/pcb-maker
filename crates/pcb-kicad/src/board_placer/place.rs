@@ -604,7 +604,7 @@ pub fn place_kicad_board(
             &lowered,
             &placements,
             &kept_seeds,
-            &placer_config.anneal,
+            &placer_config,
             Path::new(&trace),
         )?;
     }

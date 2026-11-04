@@ -216,9 +216,10 @@ def measure_seed(seed, active):
     chosen = [part for key, part in zip(keys, seed["parts"]) if key in active and "designer_center" in part]
     designer = [part["designer_center"] for part in chosen]
     designer_objective = seed["objective"].get("designer")
-    result = {"seed": seed.get("seed"), "kept": seed.get("kept"), "stages": {}}
+    result = {"seed": seed.get("seed"), "kept": seed.get("kept"), "stages": {}, "centers": {}}
     for index, stage in enumerate(seed["stages"]):
         ours = [part["centers"][index] for part in chosen]
+        result["centers"][stage] = ours
         entry = arrangement(ours, designer)
         objective = seed["objective"][stage]
         entry["objective"] = total(objective)
@@ -230,7 +231,25 @@ def measure_seed(seed, active):
         result["stages"][stage] = entry
     if designer_objective:
         result["designer_objective"] = total(designer_objective)
+    result["terms"] = {stage: split(seed["objective"][stage]) for stage in seed["stages"]}
+    if designer_objective:
+        result["terms"]["designer"] = split(designer_objective)
     return result
+
+
+def split(objective):
+    """The objective's terms as the anneal prices them at the end of its
+    schedule (mm of wire): the weighted wires by net size, the overlap
+    (times 400), the crossings it counts (times their weight), the
+    relations (and the hard constraints times 1000)."""
+    return {
+        "wire_2": objective["wirelength"][0], "wire_3_8": objective["wirelength"][1],
+        "wire_9plus": objective["wirelength"][2],
+        "overlap": 400.0 * objective["overlap"], "overlapping": objective["overlapping"],
+        "crossings": objective["crossing_weight"] * (objective.get("crossings_anneal") or 0),
+        "relations": objective["relations"] + 1000.0 * objective["hard"],
+        "total": total(objective),
+    }
 
 
 # --- the race's placement ------------------------------------------------------------------
@@ -378,6 +397,14 @@ def route(arguments):
     (run.py and the ledger), restartable (`.done`)."""
     queue = list(arguments.units)
     running = {}
+
+    def alive(pid):
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
+
     while queue or running:
         for name, (process, log, done) in list(running.items()):
             if process.poll() is not None:
@@ -385,7 +412,8 @@ def route(arguments):
                 done.write_text(f"{process.returncode}\n")
                 print(time.strftime("%H:%M:%S"), "done", name, process.returncode, flush=True)
                 del running[name]
-        while queue and len(running) < arguments.slots:
+        busy = sum(1 for pid in arguments.busy if alive(pid))
+        while queue and len(running) + busy < arguments.slots:
             name = queue.pop(0)
             out, command = route_unit(arguments, name)
             label = Path(command[command.index("--tasks") - 1]).name
@@ -466,12 +494,106 @@ def table(arguments):
                              f"{fmt(entry['displacement_mm'], 1)} ({fmt(entry['displacement_share'])}) | "
                              f"{fmt(entry['raw_mm'], 1)} | {fmt(entry['pairwise'])} | {fmt(entry['neighbours'])} | "
                              f"{hpwl} | {fmt(ratio)} |")
+    (out / "tables.md").write_text("\n".join(summary(results, routes) + ["", "## Every seed and stage", ""] + lines)
+                                   + "\n")
+    print(f"{len(results)} units -> {out / 'tables.md'}")
+
+
+def agreement(seeds, stage):
+    """The mean pairwise rank correlation of the active parts' arrangement
+    between every two seeds at a stage: how much of the arrangement the
+    pipeline decides rather than its noise."""
+    values = [pairwise(a["centers"][stage], b["centers"][stage])
+              for i, a in enumerate(seeds) for b in seeds[i + 1:]]
+    values = [v for v in values if v is not None]
+    return statistics.mean(values) if values else None
+
+
+def kept(result):
+    return next(seed for seed in result["seeds"] if seed["kept"])
+
+
+def cell(entry):
+    """`share / pairwise` of a stage's measures."""
+    if entry is None:
+        return "-"
+    return f"{fmt(entry['displacement_share'])} / {fmt(entry['pairwise'])}"
+
+
+def summary(results, routes):
+    """The decision tables: per board and seed our stages (the kept seed,
+    the race's where known, the mean over the seeds), the warm starts'
+    fixed points, the objective's split, the first routes."""
+    lines = ["## Our pipeline: the active parts against the designer's, per stage", "",
+             "displacement share / pairwise rank correlation (0 / 1: the designer's arrangement; "
+             "a shuffle about 1.4 / 0)", "",
+             "| board | seed | placement | global | annealed | legal | final | hpwl all, final |",
+             "| --- | --- | --- | --- | --- | --- | --- | ---: |"]
+    for name, result in results.items():
+        if result["variant"] != "ours":
+            continue
+        rows = [("kept", kept(result))]
+        race = next((seed for seed in result["seeds"] if seed["seed"] == result["race_seed"]), None)
+        if race is not None:
+            rows.append(("race", race))
+        for label, seed in rows:
+            lines.append(f"| {result['board']} | {result['seed']} | {label} (seed {seed['seed']}) | "
+                         + " | ".join(cell(seed["stages"].get(stage)) for stage in STAGES)
+                         + f" | {fmt(seed['stages']['final'].get('hpwl_all'))} |")
+        means = []
+        for stage in STAGES:
+            shares = [seed["stages"][stage]["displacement_share"] for seed in result["seeds"]]
+            pairs = [seed["stages"][stage]["pairwise"] for seed in result["seeds"]]
+            means.append(f"{fmt(statistics.mean(shares))} / {fmt(statistics.mean(pairs))}")
+        lines.append(f"| {result['board']} | {result['seed']} | mean of {len(result['seeds'])} | "
+                     + " | ".join(means) + " | |")
+        lines.append(f"| {result['board']} | {result['seed']} | seeds against each other (pairwise) | "
+                     + " | ".join(fmt(agreement(result["seeds"], stage)) for stage in STAGES) + " | |")
+    lines += ["", "## Warm starts from the designer's poses (kept seed)", "",
+              "the stage's own result, then the final placement: share / pairwise; the final objective "
+              "against ours (the kept seed's final, same board and seed)", "",
+              "| board | seed | start | the stage's result | final | final objective / ours |",
+              "| --- | --- | --- | --- | --- | ---: |"]
+    own = {"global-all": "global", "global-active": "global", "anneal": "annealed", "legalize": "legal"}
+    for name, result in results.items():
+        if result["variant"] not in own:
+            continue
+        ours = results.get(f"{result['board']}-s{result['seed']}-ours")
+        seed = kept(result)
+        ratio = (seed["stages"]["final"]["objective"] / kept(ours)["stages"]["final"]["objective"]
+                 if ours else None)
+        lines.append(f"| {result['board']} | {result['seed']} | {result['variant']} | "
+                     f"{cell(seed['stages'].get(own[result['variant']]))} | {cell(seed['stages'].get('final'))} | "
+                     f"{fmt(ratio)} |")
+    lines += ["", "## The objective split (kept seed, the placement's level, mm of wire)", "",
+              "| board | seed | arrangement | wire 2 | wire 3-8 | wire 9+ | overlap x 400 (parts) | "
+              "crossings x weight | relations | total |", "| --- " * 10 + "|"]
+    for name, result in results.items():
+        rows = []
+        if result["variant"] == "ours":
+            seed = kept(result)
+            rows = [("ours, final", seed["terms"]["final"]), ("designer's poses", seed["terms"].get("designer"))]
+        elif result["variant"] == "legalize":
+            seed = kept(result)
+            rows = [("designer's, legalised", seed["terms"]["legal"]),
+                    ("designer's, legalised and refined", seed["terms"]["final"])]
+        elif result["variant"] == "anneal":
+            rows = [("designer's, annealed, final", kept(result)["terms"]["final"])]
+        for label, terms in rows:
+            if terms is None:
+                continue
+            lines.append(f"| {result['board']} | {result['seed']} | {label} | {terms['wire_2']:.0f} | "
+                         f"{terms['wire_3_8']:.0f} | {terms['wire_9plus']:.0f} | {terms['overlap']:.0f} "
+                         f"({terms['overlapping']}) | {terms['crossings']:.0f} | {terms['relations']:.0f} | "
+                         f"{terms['total']:.0f} |")
     if routes:
-        lines += ["", "| first route | open terminals | KiCad unconnected | CPU s |", "| --- | ---: | ---: | ---: |"]
+        lines += ["", "## First routes (layout seed 1, `stop_after_first_route`)", "",
+                  "| run | open terminals | KiCad unconnected | CPU s |", "| --- | ---: | ---: | ---: |"]
         lines += [f"| {label} | {r['first_open']} | {r['unconnected']} | {r['cpu_seconds']} |"
                   for label, r in routes.items()]
-    (out / "tables.md").write_text("\n".join(lines) + "\n")
-    print(f"{len(results)} units -> {out / 'tables.md'}")
+    cpu = [result["unit"].get("cpu_seconds") or 0 for result in results.values()]
+    lines += ["", f"Place checks: {len(cpu)} units, {sum(cpu):.0f} CPU seconds."]
+    return lines
 
 
 def main():
@@ -489,6 +611,8 @@ def main():
     router.add_argument("--out", required=True)
     router.add_argument("--binary", required=True)
     router.add_argument("--slots", type=int, default=2)
+    router.add_argument("--busy", type=int, action="append", default=[],
+                        help="a process (pid) of runs started elsewhere: it takes a slot while it lives")
     router.add_argument("units", nargs="+")
     tabler = commands.add_parser("table")
     tabler.add_argument("--inputs", required=True)

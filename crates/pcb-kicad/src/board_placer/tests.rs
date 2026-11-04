@@ -2935,7 +2935,7 @@ fn the_start_reads_the_designers_poses_and_the_trace_is_well_formed() {
     config.start = Some(std::sync::Arc::new(start));
     let placement = core::place(&lowered.problem, &config);
     let trace = root.join("trace.json");
-    trace_placements(&lowered, &[placement], &[7], &config.anneal, &trace).unwrap();
+    trace_placements(&lowered, &[placement], &[7], &config, &trace).unwrap();
     let json: serde_json::Value =
         serde_json::from_str(&fs::read_to_string(&trace).unwrap()).unwrap();
     let seed = &json["seeds"][0];
@@ -2955,6 +2955,12 @@ fn the_start_reads_the_designers_poses_and_the_trace_is_well_formed() {
             let terms = &seed[objective][stage];
             assert_eq!(terms["wirelength"].as_array().unwrap().len(), 3, "{stage}");
             assert!(terms["overlap"].as_f64().is_some(), "{stage}");
+        }
+    }
+    for stage in &stages {
+        for at in ["global_overflow_at", "global_overflow_at_global"] {
+            let overflow = seed[at][stage].as_f64().unwrap();
+            assert!((0.0..=1.0).contains(&overflow), "{stage}: {overflow}");
         }
     }
     let parts = seed["parts"].as_array().unwrap();

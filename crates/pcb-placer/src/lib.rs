@@ -1021,6 +1021,15 @@ pub struct LevelShape {
     pub pad_clearance: bool,
 }
 
+/// The problem the global placement sees (`place`'s, before its levels):
+/// the halos fitted to the board, the linked pairs found; for diagnostics
+/// that judge given poses by the global placement's model.
+pub fn global_problem(problem: &Problem, config: &Config) -> Problem {
+    let (mut fitted, _) = fit_halos(problem, config.maximum_utilization);
+    fitted.constraints.link_pairs();
+    fitted
+}
+
 /// The problem at every relaxation level a placement may walk down, the
 /// loosest first, with the board's halos fitted as `place` fits them: for
 /// diagnostics that judge given poses (a designer's) level by level.
