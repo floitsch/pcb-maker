@@ -1667,7 +1667,7 @@ fn checked_simple(command: &str, arguments: &[String]) -> Result<(), Failure> {
 pub const SILKSCREEN_INCOMPLETE: &str =
     "silkscreen repair remains incomplete; retained native report and rendering";
 /// The message `import-kicad-netlist` ends with when footprints are missing.
-pub const IMPORT_INCOMPLETE: &str = "footprints are missing from the board (the report's missing): add their libraries to the project's fp-lib-table (or put the .pretty folders in the project, or give a board that has them with --footprints-from; for KiCad's own libraries outside the standard install folders, set KICAD10_FOOTPRINT_DIR to its footprints folder) and import again into the same directory (constraints.json and layout.json are kept)";
+pub const IMPORT_INCOMPLETE: &str = "footprints are missing from the board (the report's missing): add their libraries to the schematic project's fp-lib-table (or put the .pretty folders in the output directory or the schematic's folder, or give a board that has them with --footprints-from; for KiCad's own libraries outside the standard install folders, set KICAD10_FOOTPRINT_DIR to its footprints folder) and import again into the same directory (constraints.json and layout.json are kept)";
 
 /// Runs an agent command; `None` when `command` is not one.
 /// Diagnostic commands that were removed, with what replaces them: an

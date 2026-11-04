@@ -27,6 +27,13 @@ pub struct KiCadNetlistImport {
     /// (<folder>)`. Used, not copied into the project.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub add_on_libraries: Vec<String>,
+    /// Footprint libraries a fp-lib-table names at a folder that is not
+    /// there (a path on the designer's machine), found by their last
+    /// folders under the schematic's folder or one of its three parents:
+    /// `AudioJacksFixed: the fp-lib-table's /home/.../AudioJacksFixed.pretty
+    /// is not here; used <checkout>/hardware/libs/custom/AudioJacksFixed.pretty`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub relocated_libraries: Vec<String>,
     /// Symbol pins on a net that the footprint has no pad for (`J1: M1
     /// (GND)`): the footprint does not match the symbol. A pin on no net
     /// (KiCad's `unconnected-(...)`) loses no connection, but KiCad's
@@ -353,11 +360,67 @@ fn user_footprint_tables(variable: &dyn Fn(&str) -> Option<String>) -> Vec<PathB
     tables
 }
 
+/// What the library search found of the tables' entries besides the
+/// libraries: entries whose folder is not where the table says but was
+/// found under the project's folders (`relocated`), and entries found
+/// nowhere, by name, with the folder the table gives (`absent`).
+#[derive(Default)]
+struct LibraryNotes {
+    relocated: Vec<String>,
+    absent: BTreeMap<String, String>,
+}
+
+/// A table's folder that is not where the table says, such as a path on the
+/// designer's machine (eurorack-pmod's
+/// `/home/seb/dev/eurorack-pmod/hardware/libs/custom/AudioJacksFixed.pretty`,
+/// fresh-agent trial 6): the same trailing folders under the project's
+/// folder or one of its three parents, the nearest folder and the longest
+/// tail first (`<checkout>/hardware/libs/custom/AudioJacksFixed.pretty`).
+fn relocated_library(folder: &Path, project: &Path) -> Option<PathBuf> {
+    let parts: Vec<&std::ffi::OsStr> = folder
+        .components()
+        .filter_map(|part| match part {
+            std::path::Component::Normal(name) => Some(name),
+            _ => None,
+        })
+        .collect();
+    if !parts.last()?.to_str()?.ends_with(".pretty") {
+        return None;
+    }
+    let project = project
+        .canonicalize()
+        .unwrap_or_else(|_| project.to_path_buf());
+    for ancestor in project.ancestors().take(4) {
+        for start in 0..parts.len() {
+            let candidate = parts[start..]
+                .iter()
+                .fold(ancestor.to_path_buf(), |path, part| path.join(part));
+            if candidate.is_dir() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
 /// Footprint libraries by name: from fp-lib-tables (the project's first,
 /// then the user's), then `.pretty` folders in the project, then KiCad's
 /// own libraries. A table entry whose folder does not exist here falls back
 /// to the others.
 fn footprint_libraries(project: &Path) -> BTreeMap<String, PathBuf> {
+    footprint_library_search(project, None).0
+}
+
+/// `footprint_libraries`, with what became of the tables' entries whose
+/// folder is not there (`LibraryNotes`), and the output directory's
+/// `.pretty` folders (where an agent puts a library the import asks for,
+/// and where an import with `--footprints-from` wrote the board's) after
+/// the project's own.
+fn footprint_library_search(
+    project: &Path,
+    output: Option<&Path>,
+) -> (BTreeMap<String, PathBuf>, LibraryNotes) {
+    let mut notes = LibraryNotes::default();
     let variable = |name: &str| std::env::var(name).ok().filter(|value| !value.is_empty());
     let candidates = stock_footprint_directories(&variable);
     let system = candidates
@@ -388,11 +451,32 @@ fn footprint_libraries(project: &Path) -> BTreeMap<String, PathBuf> {
             let path = PathBuf::from(expand(uri, project, &system));
             if path.is_dir() {
                 libraries.entry(name.to_string()).or_insert(path);
+            } else if !libraries.contains_key(name) {
+                match relocated_library(&path, project) {
+                    Some(found) => {
+                        notes.relocated.push(format!(
+                            "{name}: the fp-lib-table's {} is not here; used {}",
+                            path.display(),
+                            found.display()
+                        ));
+                        notes.absent.remove(name);
+                        libraries.insert(name.to_string(), found);
+                    }
+                    None => {
+                        notes
+                            .absent
+                            .entry(name.to_string())
+                            .or_insert_with(|| path.display().to_string());
+                    }
+                }
             }
         }
     }
-    // Libraries shipped in the project without a table entry.
+    // Libraries shipped in the project without a table entry, then in the
+    // output directory.
     let mut folders = vec![(project.to_path_buf(), 0)];
+    folders.extend(output.map(|output| (output.to_path_buf(), 0)));
+    folders.reverse();
     while let Some((folder, depth)) = folders.pop() {
         let Ok(entries) = fs::read_dir(&folder) else {
             continue;
@@ -453,7 +537,8 @@ fn footprint_libraries(project: &Path) -> BTreeMap<String, PathBuf> {
             }
         }
     }
-    libraries
+    notes.absent.retain(|name, _| !libraries.contains_key(name));
+    (libraries, notes)
 }
 
 /// Whether a library folder is one of KiCad's add-on libraries (under a
@@ -914,7 +999,7 @@ pub fn import_kicad_netlist_from(
     if netlist.head() != Some("export") || netlist.child("components").is_none() {
         return Err(not_a_netlist());
     }
-    let mut libraries = footprint_libraries(&project);
+    let (mut libraries, library_notes) = footprint_library_search(&project, Some(output));
     // A netlist exported elsewhere names its schematic: that project's
     // libraries (its fp-lib-table, its .pretty folders) come next.
     if !is_schematic
@@ -1219,8 +1304,12 @@ pub fn import_kicad_netlist_from(
                         "{reference} ({footprint_id} not found: {} has no {name}.kicad_mod",
                         folder.display()
                     ),
+                    None if library_notes.absent.contains_key(library) => format!(
+                        "{reference} ({footprint_id} not found: the fp-lib-table names {library:?} at {}, which is not there, nor are its last folders under the schematic's folder or its three parents: put the library there or in the output directory as {library}.pretty",
+                        library_notes.absent[library]
+                    ),
                     None => format!(
-                        "{reference} ({footprint_id} not found: no library {library:?} in the fp-lib-table files, the project's .pretty folders, KiCad's own or its add-on libraries{}",
+                        "{reference} ({footprint_id} not found: no library {library:?} in the fp-lib-table files, the schematic folder's or the output directory's .pretty folders, KiCad's own or its add-on libraries{}",
                         ADD_ON_LIBRARIES
                             .iter()
                             .find(|(name, _)| *name
@@ -1623,6 +1712,7 @@ pub fn import_kicad_netlist_from(
         missing,
         substituted,
         add_on_libraries: add_on,
+        relocated_libraries: library_notes.relocated.clone(),
         unmatched_pins,
         clearances,
         edge_connectors,
@@ -2378,6 +2468,94 @@ mod tests {
     }
 
     #[test]
+    fn a_table_entry_at_another_machines_path_is_found_by_its_last_folders() {
+        // Fresh-agent trial 6, eurorack-pmod: the fp-lib-table names
+        // AudioJacksFixed at /home/seb/dev/eurorack-pmod/hardware/libs/custom/
+        // AudioJacksFixed.pretty, the checkout has it at ../libs/custom; the
+        // import said "no library in the fp-lib-table files". LLP1006-2M is
+        // in the table and nowhere: the message names the table's folder.
+        let directory = std::env::temp_dir().join(format!(
+            "pcb-maker-netlist-relocated-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let project = directory.join("hardware/board-r3");
+        let library = directory.join("hardware/libs/custom/Jacks.pretty");
+        fs::create_dir_all(&project).unwrap();
+        fs::create_dir_all(&library).unwrap();
+        fs::write(
+            project.join("fp-lib-table"),
+            r#"(fp_lib_table (version 7)
+              (lib (name "Jacks") (type "KiCad") (uri "/nowhere/seb/dev/x/hardware/libs/custom/Jacks.pretty") (options "") (descr ""))
+              (lib (name "Gone") (type "KiCad") (uri "/nowhere/seb/dev/x/hardware/libs/custom/Gone.pretty") (options "") (descr "")))"#,
+        )
+        .unwrap();
+        fs::write(
+            library.join("J_Test.kicad_mod"),
+            r#"(footprint "J_Test" (version 20260206) (generator "test") (layer "F.Cu")
+                (property "Reference" "REF**" (at 0 -1.5 0) (layer "F.SilkS") (effects (font (size 1 1) (thickness 0.15))))
+                (property "Value" "J_Test" (at 0 1.5 0) (layer "F.Fab") (effects (font (size 1 1) (thickness 0.15))))
+                (attr smd)
+                (pad "1" smd rect (at -1 0) (size 1 1) (layers "F.Cu" "F.Paste" "F.Mask"))
+                (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu" "F.Paste" "F.Mask")))"#,
+        )
+        .unwrap();
+        let netlist = project.join("test.net");
+        fs::write(
+            &netlist,
+            r#"(export (version "E")
+              (components
+                (comp (ref "J1") (value "jack") (footprint "Jacks:J_Test") (sheetpath (names "/") (tstamps "/")) (tstamps "1111"))
+                (comp (ref "D1") (value "esd") (footprint "Gone:D_Test") (sheetpath (names "/") (tstamps "/")) (tstamps "2222")))
+              (nets
+                (net (code "1") (name "IN") (node (ref "J1") (pin "1") (pintype "passive")) (node (ref "D1") (pin "1") (pintype "passive")))))"#,
+        )
+        .unwrap();
+        let output = directory.join("out");
+        let report = import_kicad_netlist(&netlist, &output, "test", 2).unwrap();
+        assert_eq!(report.footprints, 1);
+        assert_eq!(
+            report.relocated_libraries.len(),
+            1,
+            "{:?}",
+            report.relocated_libraries
+        );
+        assert!(
+            report.relocated_libraries[0].starts_with(
+                "Jacks: the fp-lib-table's /nowhere/seb/dev/x/hardware/libs/custom/Jacks.pretty is not here; used "
+            ) && report.relocated_libraries[0].ends_with("hardware/libs/custom/Jacks.pretty"),
+            "{:?}",
+            report.relocated_libraries
+        );
+        assert_eq!(report.missing.len(), 1);
+        assert!(
+            report.missing[0].starts_with(
+                "D1 (Gone:D_Test not found: the fp-lib-table names \"Gone\" at /nowhere/seb/dev/x/hardware/libs/custom/Gone.pretty, which is not there"
+            ),
+            "{:?}",
+            report.missing
+        );
+        // Put where the message says (the output directory), the library is
+        // found by the next import.
+        let gone = output.join("Gone.pretty");
+        fs::create_dir_all(&gone).unwrap();
+        fs::write(
+            gone.join("D_Test.kicad_mod"),
+            fs::read_to_string(library.join("J_Test.kicad_mod"))
+                .unwrap()
+                .replace("J_Test", "D_Test"),
+        )
+        .unwrap();
+        let again = import_kicad_netlist(&netlist, &output, "test", 2).unwrap();
+        assert!(again.missing.is_empty(), "{:?}", again.missing);
+        assert_eq!(again.footprints, 2);
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
     fn netlist_becomes_a_board_with_nets_fields_and_symbol_links() {
         let directory = std::env::temp_dir().join(format!(
             "pcb-maker-netlist-import-{}-{}",
@@ -2426,7 +2604,7 @@ mod tests {
         let report = import_kicad_netlist(&netlist, &output, "test", 4).unwrap();
         assert_eq!(report.footprints, 2);
         assert_eq!(report.nets, 2);
-        assert_eq!(report.missing, vec!["R2 (Missing:R_Nowhere not found: no library \"Missing\" in the fp-lib-table files, the project's .pretty folders, KiCad's own or its add-on libraries)".to_string()]);
+        assert_eq!(report.missing, vec!["R2 (Missing:R_Nowhere not found: no library \"Missing\" in the fp-lib-table files, the schematic folder's or the output directory's .pretty folders, KiCad's own or its add-on libraries)".to_string()]);
         assert_eq!(
             report.substituted,
             vec!["R3: other:R_Test -> parts:R_Test".to_string()]

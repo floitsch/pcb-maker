@@ -103,8 +103,10 @@ unconnected, exit 0 (`"total_seconds": 30`).
 The report lists what needs a look:
 - `missing`: footprints not found in any library (the board leaves them
   out), or unreadable, each with where it was looked for: no library of
-  that name (add it to the project's `fp-lib-table`, or put its `.pretty`
-  folder in the project), or the library without that footprint; or give
+  that name (add it to the schematic project's `fp-lib-table`, or put its
+  `.pretty` folder in the schematic's folder or in `<project-dir>`, the
+  output), a table entry whose folder is not there (the message names the
+  table's folder), or the library without that footprint; or give
   a board that has them (`--footprints-from`, below). Then
   import again into the same directory: the board is written anew,
   `constraints.json` and `layout.json` are kept (the report still names
@@ -129,6 +131,13 @@ The report lists what needs a look:
   get them: `Espressif` (the ESP32 modules: the Plugin and Content
   Manager's "Espressif KiCad Library", or
   github.com/espressif/kicad-libraries);
+- `relocated_libraries` (since 2026-11-04): libraries a `fp-lib-table`
+  names at a folder that is not there (a path on the designer's machine,
+  `/home/seb/dev/eurorack-pmod/hardware/libs/custom/AudioJacksFixed.pretty`),
+  found by their last folders under the schematic's folder or one of its
+  three parents (`<checkout>/hardware/libs/custom/AudioJacksFixed.pretty`)
+  and used from there; trial 6's eurorack-pmod found 2 of its 3 such
+  libraries so (132 footprints to 141);
 - `unmatched_pins`: symbol pins on a net that the footprint has no pad
   for (a library that changed since the schematic was drawn). A pin on
   KiCad's own `unconnected-(...)` net (a no-connect pin, a module's pads
