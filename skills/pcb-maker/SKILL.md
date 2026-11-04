@@ -66,14 +66,19 @@ drc-kicad-board's `next:` lines in the same order), `kicad_unconnected_items` an
 outline that fits), `outputs` (absolute paths), `cut`, `free_dimension`,
 `fab_release`; `custom_rules` (each `.kicad_dru` constraint: `applied`,
 `approximated`, `no_effect`, `unmodelled`, ...), `lengths` (the `length`
-and `skew` rules per net), `sub_boards`. Without a reference (a layout's
+and `skew` rules per net), `sub_boards`, `ledger_wait_seconds` (the part of
+`wall_seconds` spent waiting in the machine's memory ledger, not working). Without a reference (a layout's
 default) a footprint's own findings (`footprint_findings`) and the
 input's own edge clearances, mask bridges and courtyards of parts kept
 where the input has them (`input_findings`) do not count; `next_actions`
 gives the custom rule or the exclusion that makes KiCad accept them.
 Clearances and shorts between fixed parts always count.
 
-On exit 1: for open connections run `inspect-routing-run` first (above;
+On exit 1: where the first next action says the run searched at under half
+the reference's rate and the first route took the whole budget, rerun as it
+says (idle machine or the pinned rates) before anything else (SmartSpin2k: 475
+unconnected so, 51 pinned). The hot spot's action names its open link's far
+end with a `near` entry to paste. For open connections run `inspect-routing-run` first (above;
 with `--reference` its `reference.placement` says whether the designer's
 route is on this placement or, for a layout, on the designer's own, with
 the layout's own routes as `evidence_for_this_placement`);
@@ -94,6 +99,9 @@ flush on an edge, `opening_outwards`), `near` (`pin_of: "U1:3"`,
 `fixed`, `rotation`, `hollow`, `overhang`, `add` (parts the schematic
 lacks), `outline` (`width`/`height`, `corner_radius`, `polygon`,
 `cutouts`, `pieces`, `shrink`). Unknown keys and parts are errors (exit 2).
+On a panel of copies (`verdict.panel_copies`) a `near`, `relative` or `apart` between two
+parts of one copy holds in every copy (write it once); an `edge`, `region`, `place` or
+`rotation` entry holds in the copy whose footprint it names (docs/agents.md, "Panels of copies").
 
 ## layout.json
 
@@ -113,7 +121,8 @@ the input or `--reference`, has vias in that footprint's pads; `["U106"]` names 
 parts; the verdict names the part when such pads stay open), `diff_pairs` (route mode couples
 the pairs where the project's `.kicad_dru` asks for them; a layout only with `"diff_pairs": true`;
 a pair couples between two parts whose pads of the pair lie side by side, so keep a pair's
-AC-coupling or series parts in a `row` of two; `verdict.diff_pairs` says which coupled and why
+AC-coupling or series parts in a `row` of two (or the placer's `"pair_rows": true`, off by
+default, which rows them itself); `verdict.diff_pairs` says which coupled and why
 the others fell back).
 
 ## Pre-routed nets

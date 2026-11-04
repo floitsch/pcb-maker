@@ -6772,6 +6772,84 @@ the pieces, the branch leads with the line above. With `--reference`
 before; the report has three more fields (`pieces`, `movable`,
 `parts_assigned`).
 
+## Pair rows (2026-11-04)
+
+The router couples a differential pair only between two parts whose pads
+of the pair lie side by side (router.md, "Pair points and links"); the
+placer knew no pair, and trial 5's ducktop2 right_io had 13 of its 19
+fallen-back pairs "fewer than two parts with the pair's pads side by
+side": the HDMI pairs' AC-coupling capacitors placed apart. `pair_rows`
+(placer config, off by default; `board_placer/pair_rows.rs`) makes a
+`row` of two of each pair's two series parts: two free parts (not fixed,
+no constraint names them, a reference of one footprint) of one footprint
+with two pads each, whose pads of one number lie on the two nets of a pair
+KiCad pairs by name (`diff_pair_of`) and whose other pads lie on two nets
+(not both on one rail, as a pair's ESD diodes), the positive net's part
+first, across their pads at their bodies' width (the larger, plus 0.01
+mm, rounded up to 0.01 mm: 0.93 mm for two 0402s). Unlike a user's row it
+may turn by any quarter turn (`KiCadRowConstraint::pair`). The rows join
+the user's before `apply_constraints`; a board where no pair has such
+parts lowers as before, byte for byte. `constraints[]` lists each as
+`pair_row` (kept), stderr `placer: pair rows: N pairs' series parts as
+rows of two (C150 and C151, ...)`.
+
+Found: right_io the six capacitor pairs trial 5's agent rowed by hand,
+left_io seven, jetson-nano-baseboard 24 (its TMDS series resistors among
+them, R7 and R8). Measured with `"diff_pairs": true` in the router file,
+pinned at the reference's rates (`PCB_WORK_RATE=3.15e6,1.5e8`,
+`PCB_ROUTER_NO_WALL_GUARD=1`), one layout each, the boards' own
+placement stripped of tracks (build/diff1/dev2):
+
+| board | pair_rows | KiCad unconnected | first route open | pairs found / coupled / partly / fallen | links / coupled | coupled mm | `diff_pair_gap_out_of_range` | "fewer than two parts side by side" |
+| --- | --- | ---: | ---: | --- | --- | ---: | ---: | ---: |
+| ducktop2 right_io (trial 5's constraints) | off | 23 | 56 | 21 / 1 / 2 / 18 | 12 / 3 | 166 | 59 | 14 |
+| | on | 21 | 37 | 21 / 3 / 1 / 17 | 23 / 4 | 58 | 75 | 3 |
+| ducktop2 left_io (no constraints) | off | 29 | 54 | 39 / 5 / 5 / 29 | 35 / 10 | 280 | 172 | 13 |
+| | on | 37 | 58 | 39 / 6 / 5 / 28 | 47 / 11 | 243 | 137 | 3 |
+
+The rows do what they are for: the pairs short of two parts side by side
+fall from 14 to 3 and from 13 to 3, and the pairs have about twice the
+links. But the new links fall back for other reasons as often ("a pad's
+stub does not reach the run", "the hard repair found no room", and on
+right_io the run's copper on the partner capacitor's other pair at the
+0.93 mm pitch), so coupling barely moves (+2 and +1 pairs coupled), and
+unconnected moved both ways (-2, +8) on one run each. Trial 5's agent,
+with the same six rows at a 1.0 mm pitch and measured rates (0.38 of the
+reference's), had 7 coupled and 9 unconnected: another placement, not
+comparable. The switch stays off; what would decide it: the pitch (the
+pair's own `w + g` across the pads' stubs, not the bodies' width), and
+seed pairs on the expansion tier's boards with pairs.
+
+## Constraints on panels of copies (2026-11-04)
+
+Trial 5's SmartSpin2k left open what an agent's constraints do on a
+panel of copies. By the code before: `place_copies` placed the first copy
+with only the relations among its own parts and copied it; a copied part
+that missed a hard constraint (edge, region, overhang, turn) was not
+legal and placed again with the rest, but a `near`, `relative` or `apart`
+on another copy's parts was overridden by the copying, unseen; and a
+`near` or `relative` of a repeated reference took the first footprint in
+board order (by reference, then uuid) for its part and for its anchor
+alike, so the two could be of different copies. Now:
+
+- the anchor of a `near` or `relative` is the footprint of its reference
+  that shares the most nets with the constrained part (its own copy's on
+  a KiKit panel), else the first (`anchor_in_copy`);
+- a relation between two parts of one copy is carried to the copy placed
+  for it (`carried_relations`, by the parts' ranks, a `relative`'s side
+  turned with the copy), so it holds in every copy that copies the
+  placement, whichever copy it names;
+- a part a relation still misses after the copying (one towards a shared
+  part or another copy) is placed again with the rest, in its copy's
+  region, as a part a hard constraint holds is (`unkept_relations`; not
+  counted towards the share of illegal parts that places the board
+  whole).
+
+A panel whose constraints name no relation places as before: SmartSpin2k's
+place check is byte for byte the trial's. Tests:
+`a_constraint_on_any_copys_parts_holds_in_every_copy`,
+`a_near_on_a_panels_copy_anchors_in_the_parts_own_copy`.
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a

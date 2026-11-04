@@ -11,6 +11,50 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-04 (trial 5's leftovers: the rate first, pair rows, the open link's far end, the ledger's wait, V-cut tabs, panels of copies)
+
+Branch trial-5-leftovers (`build/bin/pcb-maker-ux10-pairs` for the pair
+rows' layouts). What [trial 5](reviews/2026-11-04-fresh-agent-trial-5.md)
+left open. Placement unchanged by default (place checks byte for byte:
+the f1 fixture, ducktop2 right_io with `pair_rows` off, SmartSpin2k's
+panel against the trial's), except on panels of copies whose constraints
+name relations.
+
+- **The rate first**: where a layout searched at under half the
+  reference's rate and nothing ran after its first route (no move, no
+  final ladder, nothing cut), the rate's next action leads the open
+  connections and says what the first route took ("the placement and the
+  first route used 1502 of the 1500 s of work ..., so no move and no
+  final ladder ran"); at a rate that is no reason, the open connections'
+  action says it. board-layout.json has `first_route_work_seconds` and
+  `total_seconds`. SmartSpin2k: 475 unconnected at 0.39 of the
+  reference's rate, 51 pinned; the action came third.
+- **Pair rows** (`"placer": {"pair_rows": true}`, off): a pair's two
+  series parts (one footprint, two pads, pads of one number on the pair's
+  two nets) placed as a row of two across their pads, turning freely;
+  `constraints[]` lists `pair_row`. Right_io and left_io with
+  `diff_pairs: true`, pinned rates, one layout each: the pairs short of
+  two parts side by side 14 -> 3 and 13 -> 3, coupled 1 -> 3 and 5 -> 6,
+  unconnected 23 -> 21 and 29 -> 37 (table in placer.md, "Pair rows
+  (2026-11-04)"). Off until measured further.
+- **The hot spot's open link**: the action ends with KiCad's unconnected
+  item on one of its open nets, its far end and a `near` to paste
+  (jetson: R8:2 10.6 mm from J1:11, `{"part": "R8", "pin_of": "J1:11",
+  "max_mm": 2}`), the free part of the two, the smaller of two free.
+- **`ledger_wait_seconds`** in the verdict and board-layout.json (and the
+  `layout: done` line): the wall clock spent waiting in the memory ledger
+  for reservations, threads waiting at once counted once.
+- **V-cut tabs**: `tabs` is one box per V-cut line (SmartSpin2k: 12 strips
+  about 2 mm wide where one box covered the panel); describe-kicad-board's
+  `sub_boards[]` no longer carries a `movable` of 0.
+- **Panels of copies**: a `near`, `relative` or `apart` between two parts
+  of one copy holds in every copy (carried to the copy placed), a part a
+  relation still misses after the copying is placed again in its copy's
+  region, and a `near`'s or `relative`'s anchor of a repeated reference is
+  the footprint of the part's copy (most nets shared), not the first by
+  uuid. agents.md, "Panels of copies", says what an agent can influence.
+- **The placed count**: a row's other parts count as placed ("placed 163
+  of 174 parts (11 kept ...)" on right_io, which said 17 kept).
 ## Committed on 2026-11-04 (prepared fan-outs for BGAs, on)
 
 Branch bga-fanout; binaries `build/bin/pcb-maker-bga1-a` to `-f` (one

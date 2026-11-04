@@ -53,7 +53,13 @@ it is about one footprint: the one whose `uuid` the entry gives
 footprint's `uuid`, or `tstamp` in KiCad 5 to 7 files, as
 `describe-kicad-board` lists it), or without one, in turn: the n-th entry
 of that kind for the reference is about its n-th footprint in board
-order. A `uuid` no footprint of that reference has is an error. Coordinates are millimetres, in KiCad's orientation: y grows
+order. A `uuid` no footprint of that reference has is an error. A
+`near` or `relative` entry for it is about its first footprint in board
+order, and its anchor (`pin_of`, `part_of`, `below`, ...) about the
+anchor reference's footprint that shares the most nets with that one
+(its own copy's on a panel; since 2026-11-04). On a panel of copies a
+`near`, `relative` or `apart` between two parts of one copy holds in
+every copy ([agents.md](agents.md#panels-of-copies)). Coordinates are millimetres, in KiCad's orientation: y grows
 downwards, so `top` is the smaller y.
 
 | Key | Meaning | Kind |
