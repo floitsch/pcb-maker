@@ -5681,13 +5681,15 @@ length; the inner rings' nets' share of the search falls on every one
 places no dog-bone the lowering, its work and the route are the switch
 off's (`fanout_work` 0, no obstacle added), and the placer's far side is
 untouched where `far_side_balls` finds no array. `PCB_ROUTER_BGA_FANOUT_WHY`
-on route mode at a fiftieth of the budget over the nine boards with grid
-arrays and the eleven dense boards (`build/bga1/runs/plans-d`): vd-rd's
-U200 has no inner ball (every ball faces the outside or the empty
-middle), MIDAS's U106, BAGEL's LGA-77, the aQFN-73s and the WLCSP-9s
-(under 16 pads) plan nothing (no via fits a gap at 0.4 to 0.5 mm; the
-vias in pads stay the way out there), the dense boards but Glasgow have
-no grid array. *The expansion tier* (46 boards, route mode, 30 s, 4 x 1
+on route mode at a fiftieth of the budget (`build/bga1/runs/plans-d`,
+nine of the boards by the end of this work; the others follow from the
+geometry): vd-rd's U200 has no inner ball (every ball faces the outside
+or the empty middle), BAGEL's LGA-77 and the WLCSP-9s (under 16 pads)
+are no grid to the plan, and MIDAS's U106 and the aQFN-73s at 0.5 mm
+have no gap any via size fits (0.354 mm from a gap's centre to a ball's
+centre, less the ball, against a via's radius and clearance), so the
+plan places nothing there and the vias in pads stay the way out; the
+dense boards but Glasgow have no grid array. *The expansion tier* (46 boards, route mode, 30 s, 4 x 1
 here; the same rows at any thread count): with the switch on every
 routed board equals the nightly's of 2026-11-04 byte for byte (558
 unconnected, 24 strict passes, 4256 vias, work 1140 s) but ZSWatch with
