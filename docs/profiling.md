@@ -2420,7 +2420,7 @@ against the direct computation at every use with
    added box by box to the running sum as before (a first version added
    the pair's own subtotal: another rounding, caught by the placement
    identity on the 0xCB panel). Not for opposite sides with
-   `anneal_far_side_gaps`. With main's frames rule (x1883) the frame pass
+   `anneal_far_side_gaps` (removed on 2026-11-04). With main's frames rule (x1883) the frame pass
    is in the pair too (its whole bodies' comparison and the connector's
    list). Test: random boards of every kind of part (hollow, far sides
    and courtyards, cutouts with outlines, copper graphics, marks, linked

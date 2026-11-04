@@ -1872,9 +1872,9 @@ Glasgow's hybrids.
 
 `ratsnest_crossings` (placer option, on since 2026-10-24, `null` turns
 it off; `{"weight", "legalise", "refine", "rank_seeds", "anneal",
-"global"}`, defaults 3 mm, on, on, on, on (since 2026-10-28), off; the
-last two below,
-"Where the order is decided"). The
+"per_layer"}`, defaults 3 mm, on, on, on, on (since 2026-10-28), off;
+`"global"`, off, was removed on 2026-11-04; the anneal's and the global
+placement's below, "Where the order is decided"). The
 placement ablation's lever (above): on MegaDrive and Glasgow the costly
 decisions are part orders along buses, which wirelength cannot see and
 ratsnest crossings can. Code `crates/pcb-placer/src/crossings.rs`, the
