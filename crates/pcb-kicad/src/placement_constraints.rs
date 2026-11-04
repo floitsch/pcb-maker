@@ -2093,6 +2093,11 @@ fn apply_rows(
         // give them, and every member's own slots go with the row.
         carried.courtless.clear();
         carried.slots.clear();
+        // Each member's pads at its place, to refuse a row whose pitch
+        // puts two members' pads on each other (trial 5: a row of two 0402
+        // capacitors turned along the axis at 1 mm, 1.82 mm long, came back
+        // shorted, with no word before the run).
+        let mut member_pads: Vec<(usize, Vec<[f64; 4]>)> = Vec::new();
         for (place, member) in members.iter().enumerate() {
             if leaders.contains_key(member) || leaders.values().any(|leader| leader == member) {
                 return Err(format!("{} is in two rows", references[*member]));
@@ -2141,6 +2146,7 @@ fn apply_rows(
                 .far_courtyard
                 .extend(shift(&component.far_courtyard));
             carried.pads.extend(shift(&pad_boxes[*member]));
+            member_pads.push((*member, shift(&pad_boxes[*member])));
             carried.courtless.extend(shift(&component.courtless));
             carried.slots.extend(shift(&component.slots));
             if shaped {
@@ -2177,6 +2183,29 @@ fn apply_rows(
                         offset,
                         angle: 0.0,
                     });
+            }
+        }
+        // Overlapping by more than a hundredth of a millimetre.
+        let meet = |a: &[f64; 4], b: &[f64; 4]| {
+            a[0] < b[2] - 0.01 && b[0] < a[2] - 0.01 && a[1] < b[3] - 0.01 && b[1] < a[3] - 0.01
+        };
+        for (index, (first, pads)) in member_pads.iter().enumerate() {
+            for (second, others) in &member_pads[index + 1..] {
+                if pads.iter().any(|a| others.iter().any(|b| meet(a, b))) {
+                    let along = |member: usize| {
+                        let size = problem.components[member].body_size;
+                        if axis[0] > 0.5 { size[0] } else { size[1] }
+                    };
+                    return Err(format!(
+                        "row {:?}: at pitch_mm {} the pads of {} and {} lie on each other (their bodies are {:.2} mm along {}): give a pitch_mm of at least that, or turn the parts (rotation)",
+                        row.parts,
+                        row.pitch_mm,
+                        references[*first],
+                        references[*second],
+                        along(*first).max(along(*second)),
+                        if axis[0] > 0.5 { "x" } else { "y" }
+                    ));
+                }
             }
         }
         carried.body_center = [(body[0] + body[2]) / 2.0, (body[1] + body[3]) / 2.0];
@@ -3703,6 +3732,36 @@ mod tests {
         ] {
             assert!(apply(bad).is_err(), "{bad} was accepted");
         }
+    }
+
+    /// A row whose pitch puts two members' pads on each other is refused
+    /// before the run (trial 5: two 0402 capacitors 1.82 mm long at a
+    /// 1 mm pitch came back shorted by the layout).
+    #[test]
+    fn a_row_whose_pitch_puts_pads_on_pads_is_refused() {
+        let rows = |pitch: f64| {
+            let (mut problem, references, pads) = problem();
+            let row: KiCadRowConstraint = serde_json::from_str(&format!(
+                r#"{{"parts": ["C1", "C2"], "pitch_mm": {pitch}}}"#
+            ))
+            .unwrap();
+            let pad = vec![[-1.0, -0.5, -0.4, 0.5], [0.4, -0.5, 1.0, 0.5]];
+            apply_rows(
+                &mut problem,
+                &references,
+                pads.len(),
+                &[Vec::new(), pad.clone(), pad],
+                &[row],
+            )
+            .map(|_| ())
+        };
+        let error = rows(1.0).unwrap_err();
+        assert!(
+            error.contains("the pads of C1 and C2 lie on each other")
+                && error.contains("give a pitch_mm of at least"),
+            "{error}"
+        );
+        assert!(rows(2.0).is_ok());
     }
 
     #[test]

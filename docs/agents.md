@@ -647,7 +647,8 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
      placement. The check takes what the layout's placement takes (the
      seeds' pool), about a minute to several on a large board. What cannot fit is said at once, with exit
      2: a `region` smaller than its part, a `row` longer than the outline
-     (as it may turn), parts held at one edge that need more length than
+     (as it may turn), a `row` whose pitch puts two of its parts' pads on
+     each other (since 2026-11-04; trial 5), parts held at one edge that need more length than
      the edge has. Parts that need more area than a side has even with
      their tightest bodies, or that cannot lie side by side in strips of
      the board, are a no in seconds (exit 1, `"overfull": true` in
