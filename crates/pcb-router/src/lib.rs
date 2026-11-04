@@ -23,6 +23,7 @@ pub mod verify;
 pub use board::{
     Attachment, Board, ClassId, Hatch, LayerMask, MergedPad, Net, NetId, NetRoute, Obstacle,
     ObstacleKind, PadSpokes, PinRowGap, Plane, RuleClass, Segment, Terminal, TerminalCopper, Via,
+    ViaKind, ViaSpan,
 };
 pub use geometry::{Point, Shape};
 pub use router::{

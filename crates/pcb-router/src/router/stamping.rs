@@ -146,6 +146,10 @@ impl Router {
         let diagonal_base = self.board.classes.len() * (layers + 1);
         let size = (nx, ny);
         let words = self.grid.cells().div_ceil(64);
+        // With via spans, every via-map stamp of an item on one layer goes
+        // to that layer's via map too (`SpanModel`).
+        let spans = self.spans.clone();
+        let span_base = spans.as_ref().map(|spans| spans.base);
         let class_rules = &self.class_rules;
         let variant_of = |layer: usize| {
             class_rules
@@ -155,6 +159,7 @@ impl Router {
         for querying in 0..self.board.classes.len() {
             let marks = &mut self.stamp_mark;
             let base = querying * (layers + 1);
+            let layer_via = |layer: usize| span_base.map(|first| first + querying * layers + layer);
             let mut first = 0;
             for branch in &branches {
                 let classes = &node_classes[first..first + branch.nodes.len()];
@@ -193,9 +198,13 @@ impl Router {
                             // error, at every sampled node.
                             for cell in cells {
                                 for (map, offsets) in [
-                                    (map, &stub_stamps.stub_to_trace),
-                                    (base + layers, &stub_stamps.stub_to_via),
+                                    (Some(map), &stub_stamps.stub_to_trace),
+                                    (Some(base + layers), &stub_stamps.stub_to_via),
+                                    (layer_via(end.layer as usize), &stub_stamps.stub_to_via),
                                 ] {
+                                    let Some(map) = map else {
+                                        continue;
+                                    };
                                     mark_footprint(
                                         marks,
                                         words,
@@ -240,17 +249,22 @@ impl Router {
                                     size,
                                     reach,
                                 );
-                                mark_footprint(
-                                    marks,
-                                    words,
-                                    &mut stamped,
-                                    base + layers,
-                                    *cell,
-                                    &stub_stamps.trace_to_via,
-                                    (1, 1),
-                                    size,
-                                    reach,
-                                );
+                                for map in [Some(base + layers), layer_via(end.layer as usize)]
+                                    .into_iter()
+                                    .flatten()
+                                {
+                                    mark_footprint(
+                                        marks,
+                                        words,
+                                        &mut stamped,
+                                        map,
+                                        *cell,
+                                        &stub_stamps.trace_to_via,
+                                        (1, 1),
+                                        size,
+                                        reach,
+                                    );
+                                }
                                 for orientation in 0..2 {
                                     mark_footprint(
                                         marks,
@@ -282,6 +296,10 @@ impl Router {
                             for (map, offsets) in [
                                 (map, &footprint.trace),
                                 (base + layers, &footprint.via),
+                                (
+                                    layer_via(end.layer as usize).unwrap_or(base + layers),
+                                    &footprint.via,
+                                ),
                                 (
                                     diagonal_base + (querying * layers + end.layer as usize) * 2,
                                     &footprint.diagonal[0],
@@ -378,6 +396,25 @@ impl Router {
                         size,
                         reach,
                     );
+                    if let Some(map) = layer_via(node.layer as usize) {
+                        // The layer's own map had the node before stamp
+                        // these offsets only on the same layer.
+                        let offsets = match step {
+                            Some(step) if same_layer => &own.fresh.trace_to_via[step],
+                            _ => &own.trace_to_via,
+                        };
+                        mark_footprint(
+                            marks,
+                            words,
+                            &mut stamped,
+                            map,
+                            node.cell,
+                            offsets,
+                            (1, 1),
+                            size,
+                            reach,
+                        );
+                    }
                     for orientation in 0..2 {
                         let map = diagonal_base
                             + (querying * layers + node.layer as usize) * 2
@@ -403,7 +440,19 @@ impl Router {
                     // A via through several layers at one cell: the via
                     // before stamped the same footprints at the same cell.
                     if is_via && !via_before {
+                        // The via's layers: all of them, or with spans the
+                        // shortest span holding the layers its chain at
+                        // this cell visits.
+                        let pierced = match &spans {
+                            Some(spans) if spans.takes_spans(net) => {
+                                spans.chain_mask(net, chain_layers(&branch.nodes, index))
+                            }
+                            _ => crate::board::LayerMask::MAX,
+                        };
                         for layer in 0..layers {
+                            if pierced & (1 << layer) == 0 {
+                                continue;
+                            }
                             let stamps = match &self.class_rules {
                                 None => &self.stamps[class][querying],
                                 Some(split) => {
@@ -440,7 +489,33 @@ impl Router {
                             size,
                             reach,
                         );
+                        // With spans, on each layer it pierces: two vias
+                        // meet only where both are (KiCad keeps neither
+                        // clearance nor hole-to-hole between vias of
+                        // disjoint spans).
                         for layer in 0..layers {
+                            if pierced & (1 << layer) == 0 {
+                                continue;
+                            }
+                            let Some(map) = layer_via(layer) else {
+                                break;
+                            };
+                            mark_footprint(
+                                marks,
+                                words,
+                                &mut stamped,
+                                map,
+                                node.cell,
+                                &stamps.via_to_via,
+                                (1, 1),
+                                size,
+                                reach,
+                            );
+                        }
+                        for layer in 0..layers {
+                            if pierced & (1 << layer) == 0 {
+                                continue;
+                            }
                             let stamps = match &self.class_rules {
                                 None => &self.stamps[class][querying],
                                 Some(split) => {
@@ -483,18 +558,22 @@ impl Router {
                             size,
                             reach,
                         );
-                        let map = base + layers;
-                        mark_footprint(
-                            marks,
-                            words,
-                            &mut stamped,
-                            map,
-                            previous.cell,
-                            &own.diagonal_to_via,
-                            step,
-                            size,
-                            reach,
-                        );
+                        for map in [Some(base + layers), layer_via(node.layer as usize)]
+                            .into_iter()
+                            .flatten()
+                        {
+                            mark_footprint(
+                                marks,
+                                words,
+                                &mut stamped,
+                                map,
+                                previous.cell,
+                                &own.diagonal_to_via,
+                                step,
+                                size,
+                                reach,
+                            );
+                        }
                     }
                 }
             }
@@ -632,8 +711,34 @@ impl Router {
                 && branch.nodes[index - 1].cell == node.cell
                 && branch.nodes[index - 1].layer != node.layer;
             let via_map = self.map_index(class, layers);
-            if is_via && self.occupancy.get(via_map, node.cell as usize) > 1 {
-                found(layers, via_map, node.cell);
+            if !is_via {
+                continue;
+            }
+            match &self.spans {
+                // A via of a span meets other copper on its layers only.
+                Some(spans) if spans.takes_spans(net) => {
+                    let pierced = spans.chain_mask(net, chain_layers(&branch.nodes, index));
+                    if pierced == spans.all() {
+                        if self.occupancy.get(via_map, node.cell as usize) > 1 {
+                            found(layers, via_map, node.cell);
+                        }
+                        continue;
+                    }
+                    for layer in 0..layers {
+                        let map = self.via_layer_map(spans, class, layer);
+                        if pierced & (1 << layer) != 0
+                            && self.occupancy.get(map, node.cell as usize) > 1
+                        {
+                            found(layers, map, node.cell);
+                            break;
+                        }
+                    }
+                }
+                _ => {
+                    if self.occupancy.get(via_map, node.cell as usize) > 1 {
+                        found(layers, via_map, node.cell);
+                    }
+                }
             }
         }
     }
@@ -646,6 +751,9 @@ impl Router {
         let diagonal_base = self.board.classes.len() * (layers + 1);
         let (of_class, kind) = if map < diagonal_base {
             (map / (layers + 1), map % (layers + 1))
+        } else if let Some(spans) = self.spans.as_ref().filter(|spans| map >= spans.base) {
+            let relative = map - spans.base;
+            (relative / layers, 3 * layers + 1 + relative % layers)
         } else {
             let relative = map - diagonal_base;
             (
@@ -680,7 +788,7 @@ impl Router {
         let Some((which, kind)) = self.own_kind(class, map) else {
             return value;
         };
-        let kinds = 3 * self.board.layer_count + 1;
+        let kinds = self.own_kinds();
         let bit = (which * kinds + kind) * self.grid.cells() + cell;
         if scratch.own_mark[bit / 64] & (1 << (bit % 64)) != 0 {
             value - 1
@@ -695,7 +803,7 @@ impl Router {
     pub(super) fn mask_own(&self, scratch: &mut Scratch, net: NetId, net_state: &NetState) {
         let layers = self.board.layer_count;
         let cells = self.grid.cells();
-        let kinds = 3 * layers + 1;
+        let kinds = self.own_kinds();
         let words = (2 * kinds * cells).div_ceil(64);
         if scratch.own_mark.len() != words {
             scratch.own_mark = vec![0; words];

@@ -89,6 +89,7 @@ fn two_nets(layer_count: usize) -> Board {
         pin_row_gaps: Vec::new(),
         terminal_copper: Vec::new(),
         attachment: Default::default(),
+        via_spans: Vec::new(),
     }
 }
 
@@ -391,6 +392,7 @@ fn the_stub_check_holds_the_rules_beyond_the_classes() {
         at: [3.0, 3.0 + 0.125 + 0.3 + 0.104],
         diameter: 0.6,
         drill: 0.3,
+        span: None,
     });
     assert!(crate::verify::verify_with_rules(&split, &routes, Some(&class_rules)).is_empty());
 }

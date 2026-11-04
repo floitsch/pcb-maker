@@ -23,6 +23,10 @@ pub struct SupplementalVia {
     pub size: f64,
     pub drill: f64,
     pub layers: [String; 2],
+    /// KiCad's via kind where it is not a through via: `blind`, `buried`
+    /// or `micro` (the token after `via`; `layers` its span).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -115,32 +119,40 @@ pub fn write_kicad_board_without_copper(
 }
 
 pub(crate) fn supplemental_via_expr(via: &SupplementalVia) -> Expr {
-    let identity = format!(
+    let mut identity = format!(
         "pcb-maker:supplemental-via:{}:{:.9}:{:.9}:{:.9}:{:.9}:{}:{}",
         via.connection, via.at[0], via.at[1], via.size, via.drill, via.layers[0], via.layers[1]
     );
-    Expr::List(vec![
-        Expr::Atom("via".into()),
-        coordinate_form("at", via.at),
-        Expr::List(vec![
-            Expr::Atom("size".into()),
-            Expr::Atom(via.size.to_string()),
-        ]),
-        Expr::List(vec![
-            Expr::Atom("drill".into()),
-            Expr::Atom(via.drill.to_string()),
-        ]),
-        Expr::List(vec![
-            Expr::Atom("layers".into()),
-            Expr::Atom(quote(&via.layers[0])),
-            Expr::Atom(quote(&via.layers[1])),
-        ]),
-        net_expr(&written_net_name(&via.connection)),
-        Expr::List(vec![
-            Expr::Atom("uuid".into()),
-            Expr::Atom(quote(&deterministic_uuid_for(&identity))),
-        ]),
-    ])
+    if let Some(kind) = &via.kind {
+        identity.push(':');
+        identity.push_str(kind);
+    }
+    let head = std::iter::once(Expr::Atom("via".into()))
+        .chain(via.kind.iter().map(|kind| Expr::Atom(kind.clone())));
+    Expr::List(
+        head.chain([
+            coordinate_form("at", via.at),
+            Expr::List(vec![
+                Expr::Atom("size".into()),
+                Expr::Atom(via.size.to_string()),
+            ]),
+            Expr::List(vec![
+                Expr::Atom("drill".into()),
+                Expr::Atom(via.drill.to_string()),
+            ]),
+            Expr::List(vec![
+                Expr::Atom("layers".into()),
+                Expr::Atom(quote(&via.layers[0])),
+                Expr::Atom(quote(&via.layers[1])),
+            ]),
+            net_expr(&written_net_name(&via.connection)),
+            Expr::List(vec![
+                Expr::Atom("uuid".into()),
+                Expr::Atom(quote(&deterministic_uuid_for(&identity))),
+            ]),
+        ])
+        .collect(),
+    )
 }
 
 /// A via in a pad (the via-in-pad rule's): a supplemental via, filled and

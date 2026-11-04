@@ -7,6 +7,19 @@
 use super::*;
 
 impl Router {
+    /// The allowed span of exactly the layers `mask` (`Board::via_spans`),
+    /// or None for a through via.
+    pub(super) fn span_of_mask(
+        &self,
+        mask: crate::board::LayerMask,
+    ) -> Option<crate::board::ViaSpan> {
+        self.board
+            .via_spans
+            .iter()
+            .find(|span| span.mask() == mask)
+            .copied()
+    }
+
     /// The copper of `net` and the indices of its cosmetic pad-centre stubs.
     pub(super) fn materialize(&self, net: NetId) -> (NetRoute, Vec<usize>) {
         let description = &self.board.nets[net as usize];
@@ -97,12 +110,51 @@ impl Router {
                 if layer_change {
                     // Through vias at one spot are one hole.
                     let at = self.grid.center_of(branch.nodes[index].cell as usize);
-                    if !route.vias.iter().any(|via| via.at == at) {
-                        route.vias.push(Via {
-                            at,
-                            diameter: rules.via_diameter,
-                            drill: rules.via_drill,
-                        });
+                    // With spans, the via's layers (`SpanModel`): those of
+                    // its chain at the cell, joined with any other via of
+                    // the net there (the search keeps a second one within
+                    // the first's layers).
+                    let pierced = self.spans.as_deref().and_then(|spans| {
+                        let mask = spans.chain_mask(net, chain_layers(&branch.nodes, index));
+                        (mask != spans.all()).then_some((spans, mask))
+                    });
+                    // A span's own size (a micro via's) where it is
+                    // within the class's via, which the maps kept clear.
+                    let sized = |via: &mut Via| {
+                        via.diameter = rules.via_diameter;
+                        via.drill = rules.via_drill;
+                        if let Some([diameter, drill]) = via.span.and_then(|span| span.size)
+                            && diameter <= rules.via_diameter
+                            && drill <= rules.via_drill
+                        {
+                            via.diameter = diameter;
+                            via.drill = drill;
+                        }
+                    };
+                    match route.vias.iter_mut().find(|via| via.at == at) {
+                        None => {
+                            let mut via = Via {
+                                at,
+                                diameter: rules.via_diameter,
+                                drill: rules.via_drill,
+                                span: pierced.and_then(|(_, mask)| self.span_of_mask(mask)),
+                            };
+                            if via.span.is_some() {
+                                sized(&mut via);
+                            }
+                            route.vias.push(via);
+                        }
+                        Some(via) => {
+                            if let (Some(span), Some((spans, mask))) = (via.span, pierced) {
+                                let joined = spans.chain_mask(net, span.mask() | mask);
+                                via.span = self.span_of_mask(joined);
+                            } else {
+                                via.span = None;
+                            }
+                            if pierced.is_some() {
+                                sized(via);
+                            }
+                        }
                     }
                 }
                 run_start = index;

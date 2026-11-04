@@ -2564,6 +2564,7 @@ pub(crate) fn write_pair_copper(
                 size: *size,
                 drill: *drill,
                 layers: ["F.Cu".into(), "B.Cu".into()],
+                kind: None,
             }));
         }
     }
@@ -3300,6 +3301,7 @@ fn place_return_vias(
                             at: candidate,
                             diameter: pair.via_diameter,
                             drill: pair.via_drill,
+                            span: None,
                         };
                         (joins_pour(board, &local, &near, reference, &via)
                             && return_via_clear(
@@ -4527,6 +4529,7 @@ fn refused_groups_at(
                     at,
                     diameter: pair.via_diameter,
                     drill: pair.via_drill,
+                    span: None,
                 });
             }
         }
@@ -5600,12 +5603,14 @@ mod tests {
                     at: [5.0, 2.0],
                     diameter: 0.6,
                     drill: 0.3,
+                    span: None,
                 },
                 // A via that joins nothing.
                 core::Via {
                     at: [8.0, 5.0],
                     diameter: 0.6,
                     drill: 0.3,
+                    span: None,
                 },
             ],
         };

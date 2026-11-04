@@ -41,9 +41,17 @@ const TOLERANCE: f64 = 1.0e-5;
 const BUCKET: f64 = 2.0;
 
 /// A routed item as a centreline and a copper radius: start, end, radius,
-/// the layer (`None`: a via, on every layer), a via's drill radius and the
-/// index of the segment it is.
-type RoutedItem = (Point, Point, f64, Option<usize>, Option<f64>, Option<usize>);
+/// the layer (`None`: a via), a via's drill radius, the index of the
+/// segment it is and its layers (a via's: every layer, or its span's).
+type RoutedItem = (
+    Point,
+    Point,
+    f64,
+    Option<usize>,
+    Option<f64>,
+    Option<usize>,
+    crate::board::LayerMask,
+);
 
 fn buckets(bounds: Aabb) -> impl Iterator<Item = (i64, i64)> {
     let x0 = (bounds.minimum[0] / BUCKET).floor() as i64;
@@ -173,6 +181,7 @@ pub fn verify_with_rules(
                     Some(segment.layer),
                     None,
                     Some(index),
+                    1 << segment.layer,
                 )
             })
             .collect();
@@ -184,6 +193,7 @@ pub fn verify_with_rules(
                 None,
                 Some(via.drill / 2.0),
                 None,
+                via.mask(board.layer_count),
             )
         }));
 
@@ -207,15 +217,14 @@ pub fn verify_with_rules(
             }
         }
 
-        for (start, end, radius, layer, drill, own_segment) in items {
+        for (start, end, radius, layer, drill, own_segment, layer_mask) in items {
             let own_kind = if layer.is_some() {
                 crate::rules::TRACK
             } else {
                 crate::rules::VIA
             };
             let at = [(start[0] + end[0]) / 2.0, (start[1] + end[1]) / 2.0];
-            let layer_mask = layer.map_or(board.all_layers(), |layer| 1 << layer);
-            let report_layer = layer.unwrap_or(0);
+            let report_layer = layer.unwrap_or(layer_mask.trailing_zeros() as usize);
 
             let inside =
                 point_in_polygon(start, &board.outline) && point_in_polygon(end, &board.outline);
@@ -344,7 +353,7 @@ pub fn verify_with_rules(
                             }
                             seen.push((1 + other as usize, index));
                             let segment = &routes[other as usize].segments[index];
-                            if layer.is_some_and(|layer| layer != segment.layer) {
+                            if layer_mask & (1 << segment.layer) == 0 {
                                 continue;
                             }
                             let other_class = board.classes[board.nets[other as usize].class];
@@ -386,6 +395,13 @@ pub fn verify_with_rules(
                             }
                             seen.push((usize::MAX - other as usize, index));
                             let via = &routes[other as usize].vias[index];
+                            // Items meet only on a layer both are on: a
+                            // via of a span has neither copper nor a hole
+                            // elsewhere (KiCad checks no clearance and no
+                            // hole-to-hole between vias of disjoint spans).
+                            if via.mask(board.layer_count) & layer_mask == 0 {
+                                continue;
+                            }
                             let other_class = board.classes[board.nets[other as usize].class];
                             let distance = if start == end {
                                 crate::geometry::distance(start, via.at)
@@ -553,7 +569,8 @@ pub fn copper_components(board: &Board, net: NetId, route: &NetRoute) -> Vec<usi
                 center: via.at,
                 radius: via.diameter / 2.0,
             },
-            u64::MAX,
+            // A via of a span joins its layers only.
+            via.span.map_or(u64::MAX, |span| span.mask() as u64),
         ));
     }
     let mut parent: Vec<usize> = (0..shapes.len()).collect();

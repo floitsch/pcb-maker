@@ -28,6 +28,7 @@ mod route;
 mod tests;
 mod tools;
 mod via_in_pad;
+mod via_spans;
 
 pub(crate) use self::bga_fanout::{
     ArrayRoom, array_rooms, bga_fanout_on, fanout_used, fanouts_of, far_side_balls, rings_of,
@@ -45,6 +46,7 @@ pub(crate) use self::via_in_pad::{
     PlannedVia, admits_any as admits_vias_in_pads, designer_entries, far_side_vias, pad_vias_of,
     plan as plan_vias_in_pads,
 };
+pub(crate) use self::via_spans::{allowed_spans, designer_spans, project_spans};
 pub(crate) use self::{attempt::*, budget::*, geometry::*, ladder::*, lower::*, memory::*};
 pub use self::{
     config::*,
@@ -59,5 +61,8 @@ pub use self::{
     via_in_pad::{
         KiCadClosedPads, KiCadViaInPad, KiCadViaInPadEntry, KiCadViaInPadFootprint,
         KiCadViaInPadReport, admit_reference_vias_in_pads,
+    },
+    via_spans::{
+        KiCadMicroViaMinimums, KiCadViaSpanEntry, admit_reference_via_spans, blind_vias_override,
     },
 };

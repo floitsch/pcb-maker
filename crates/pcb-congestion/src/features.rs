@@ -688,6 +688,7 @@ mod tests {
             pin_row_gaps: Vec::new(),
             terminal_copper: Vec::new(),
             attachment: Default::default(),
+            via_spans: Vec::new(),
         }
     }
 

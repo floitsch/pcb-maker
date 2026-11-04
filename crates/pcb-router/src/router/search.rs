@@ -44,6 +44,13 @@ impl Router {
             self.config.heuristic_weight as f32 * 0.999
         };
 
+        // With via spans (`SpanModel`), a via of this net pierces only the
+        // shortest allowed span holding the layers it joins.
+        let span_net = self
+            .spans
+            .as_deref()
+            .filter(|spans| spans.takes_spans(net) && layers > 2);
+        let mut own_vias: HashMap<u32, crate::board::LayerMask> = HashMap::new();
         {
             let stamps = &self.stamps[class][class];
             let nx = self.grid.nx as i64;
@@ -67,9 +74,16 @@ impl Router {
             // A via cell itself stays allowed even inside another own via's
             // ring, so mark exact via cells last.
             for branch in &net_state.branches {
-                for pair in branch.nodes.windows(2) {
+                for (index, pair) in branch.nodes.windows(2).enumerate() {
                     if pair[0].cell == pair[1].cell {
                         near[pair[0].cell as usize] = 0;
+                        // With spans, the layers the net's via there
+                        // pierces: another via at that cell is the same
+                        // hole only within them.
+                        if let Some(spans) = span_net {
+                            let pierced = spans.chain_mask(net, chain_layers(&branch.nodes, index));
+                            *own_vias.entry(pair[0].cell).or_insert(0) |= pierced;
+                        }
                     }
                 }
             }
@@ -546,7 +560,131 @@ impl Router {
             );
 
             let via_occupied = self.occupancy_seen(scratch, class, via_map, cell) as f32;
-            if layers > 1
+            if let Some(spans) = span_net {
+                // A via of a span: no chain of vias at one cell (each would
+                // be a hole of its own there: KiCad's co-located holes),
+                // its layers' statics and occupancy alone, and at a cell of
+                // the net's own via only within that via's layers.
+                let via_arrived = arrived >= 8 && arrived != PARENT_SOURCE;
+                if !via_arrived
+                    && scratch.own_via_near[cell] != generation
+                    && (since_via as usize > hop_steps
+                        || !self
+                            .hops_from_a_via(scratch, state, x, y, arrived, hop_steps, hop_reach))
+                {
+                    let history = if self.cleanup {
+                        0.0
+                    } else {
+                        self.history[layers][cell]
+                    };
+                    let marks = self.via_marks.get(cell).copied().unwrap_or(3);
+                    let own_via = own_vias.get(&(cell as u32)).copied();
+                    let cell_class = if necks { class_xy(x, y) } else { class };
+                    let cell_statics = &self.statics[cell_class];
+                    let free_layers = cell_statics.free_layers.get(cell);
+                    let mut others = (u64::MAX >> (64 - layers)) & !(1u64 << layer);
+                    while others != 0 {
+                        let target_layer = others.trailing_zeros() as usize;
+                        others &= others - 1;
+                        let pierced = spans.mask(net, layer, target_layer);
+                        if own_via.is_some_and(|mask| pierced & !mask != 0) {
+                            continue;
+                        }
+                        let through = pierced == spans.all();
+                        let occupied = if through {
+                            if !statics.via_allowed(cell, net) {
+                                continue;
+                            }
+                            via_occupied
+                        } else {
+                            if !statics.span_allowed(cell, net, pierced) {
+                                continue;
+                            }
+                            let mut most = 0u16;
+                            let mut left = pierced;
+                            while left != 0 {
+                                let pierced_layer = left.trailing_zeros() as usize;
+                                left &= left - 1;
+                                most = most.max(self.occupancy_seen(
+                                    scratch,
+                                    class,
+                                    self.via_layer_map(spans, class, pierced_layer),
+                                    cell,
+                                ));
+                            }
+                            most as f32
+                        };
+                        if hard && occupied > 0.0 {
+                            continue;
+                        }
+                        let mut cut = 1.0f32;
+                        if marks & 1 != 0 {
+                            for (cut_layer, (covered, factor)) in
+                                self.covered.iter().zip(&self.layer_cut).enumerate()
+                            {
+                                if pierced & (1 << cut_layer) != 0
+                                    && !covered.is_empty()
+                                    && covered[cell] != 0
+                                    && covered[cell] as u32 != own
+                                {
+                                    cut *= factor * self.sever_factor(cut_layer, cell);
+                                }
+                            }
+                        }
+                        if marks & 2 != 0 {
+                            let foreign =
+                                self.guard.iter().enumerate().any(|(guard_layer, guard)| {
+                                    pierced & (1 << guard_layer) != 0
+                                        && !guard.is_empty()
+                                        && guard[cell] != 0
+                                        && guard[cell] as u32 != own
+                                });
+                            if foreign {
+                                cut *= thermal_guard_cost;
+                            }
+                        }
+                        let step = via_cost * cut * (1.0 + history) * (1.0 + present * occupied);
+                        if free_layers & (1 << target_layer) == 0 {
+                            let allowed = cell_statics.trace_at(target_layer, cell);
+                            if allowed != crate::grid::FREE && allowed != own {
+                                continue;
+                            }
+                        }
+                        if hard
+                            && self.occupancy_seen(
+                                scratch,
+                                class,
+                                cell_class * (layers + 1) + target_layer,
+                                cell,
+                            ) > 0
+                        {
+                            continue;
+                        }
+                        let target_state = target_layer * cells + cell;
+                        if scratch.nodes[target_state].closed(generation) {
+                            continue;
+                        }
+                        let total = here + step;
+                        let node = &mut scratch.nodes[target_state];
+                        let seen = node.seen == generation;
+                        let queued = seen && node.slot != SLOT_UNQUEUED;
+                        if !queued || total < node.cost {
+                            let target = node.target_bit(generation);
+                            node.seen = generation;
+                            node.cost = total;
+                            node.parent = 8 + layer as u8;
+                            node.since_via = target;
+                            let estimate = total + heuristic(target_layer, x as i32, y as i32);
+                            let key = heap_key(estimate, target_state);
+                            if queued {
+                                heap.decrease(key, &mut scratch.nodes);
+                            } else {
+                                heap.push(key, &mut scratch.nodes);
+                            }
+                        }
+                    }
+                }
+            } else if layers > 1
                 && statics.via_allowed(cell, net)
                 && !(hard && via_occupied > 0.0)
                 && scratch.own_via_near[cell] != generation

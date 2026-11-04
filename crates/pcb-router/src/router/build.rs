@@ -162,6 +162,14 @@ impl Router {
         };
         let statics_built = built.elapsed().as_secs_f64();
         let maps = board.classes.len() * (layers + 1) + board.classes.len() * layers * 2;
+        // With via spans, a via map per class and layer after the others.
+        let spans = SpanModel::new(board, maps).map(Arc::new);
+        let maps = maps
+            + if spans.is_some() {
+                board.classes.len() * layers
+            } else {
+                0
+            };
         let step = grid.pitch * std::f64::consts::SQRT_2;
         let variants = class_rules
             .as_ref()
@@ -318,6 +326,7 @@ impl Router {
             statics_shared,
             statics_key,
             occupancy: Occupancy::new(maps, cells),
+            spans,
             stamp_mark: vec![0; cells.div_ceil(64) * maps],
             history: vec![vec![0.0; cells]; layers + 1],
             stamps,
@@ -1026,6 +1035,21 @@ impl Router {
     #[inline(always)]
     pub(super) fn map_index(&self, class: usize, layer: usize) -> usize {
         class * (self.board.layer_count + 1) + layer
+    }
+
+    /// The via map of `class` on `layer` alone (`SpanModel`): where that
+    /// layer's copper keeps a via of the class out. Only with via spans.
+    #[inline(always)]
+    pub(super) fn via_layer_map(&self, spans: &SpanModel, class: usize, layer: usize) -> usize {
+        spans.base + class * self.board.layer_count + layer
+    }
+
+    /// The kinds of maps `own_mark` keeps per class (`own_kind`): the
+    /// layers, the via map, the diagonal maps and, with via spans, the
+    /// per-layer via maps.
+    pub(super) fn own_kinds(&self) -> usize {
+        let layers = self.board.layer_count;
+        3 * layers + 1 + if self.spans.is_some() { layers } else { 0 }
     }
 
     /// The map counting the nets whose copper a diagonal step of `class`

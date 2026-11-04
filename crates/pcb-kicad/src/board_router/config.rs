@@ -414,6 +414,26 @@ pub struct KiCadBoardRouterConfig {
     /// 2026-11-04); `PCB_ROUTER_BGA_FANOUT` overrides this.
     #[serde(default)]
     pub bga_fanout: Option<bool>,
+    /// Blind, buried and micro vias (board_router/via_spans.rs;
+    /// docs/router.md, "Blind, buried and micro vias (2026-11-05)"): the
+    /// router routes each via as the shortest span the board allows that
+    /// holds the two layers it joins, copper and a hole on those layers
+    /// only (the others stay free), and writes it as KiCad's blind, buried
+    /// or micro via. What allows a span: `via_spans`, else the designer's
+    /// vias of that span on the board (or the `--reference` board) and a
+    /// KiCad 6 or 7 project's `allow_blind_buried_vias` and
+    /// `allow_microvias`. Unset: off; `PCB_ROUTER_BLIND_VIAS` overrides
+    /// this.
+    #[serde(default)]
+    pub blind_vias: Option<bool>,
+    /// The via spans the board allows, replacing the designer's and the
+    /// project's (with `blind_vias` on): `F.Cu-In2.Cu` (blind or buried
+    /// by its layers), `F.Cu-In1.Cu:micro` (a micro via, one dielectric
+    /// deep), or a keyword: `blind` (every span from an outer layer to an
+    /// inner one), `buried` (every span between inner layers), `micro` (one
+    /// dielectric down from each outer layer).
+    #[serde(default)]
+    pub via_spans: Option<Vec<String>>,
     /// Connect every pour-net pad to its plane by a fixed stub and via
     /// before the signals route (router `fixed_plane_stubs`).
     #[serde(default)]

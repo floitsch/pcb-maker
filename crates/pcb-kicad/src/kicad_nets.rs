@@ -451,6 +451,7 @@ mod tests {
                 size: 0.6,
                 drill: 0.3,
                 layers: ["F.Cu".into(), "B.Cu".into()],
+                kind: None,
             }));
         }
         canonicalize_copper_net_names(&mut pcb, &names);

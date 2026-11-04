@@ -1944,6 +1944,15 @@ fn lower_board(
     if classes.is_empty() {
         return Err("the board has no routable connections".into());
     }
+    // Blind, buried and micro vias (`blind_vias`): the spans the board
+    // allows; a micro via's own size within every class's via.
+    let class_via = classes.iter().fold([f64::INFINITY; 2], |least, class| {
+        [
+            least[0].min(class.via_diameter),
+            least[1].min(class.via_drill),
+        ]
+    });
+    let (via_spans, _) = allowed_spans(config, &layers, class_via)?;
     // Prepared fan-outs (`bga_fanout`): the dog-bones of the grid arrays'
     // inner balls, fixed copper of their nets, each via the ball's
     // terminal on the layers off the ball's.
@@ -1972,6 +1981,7 @@ fn lower_board(
             &classes,
             &no_via_pads,
             &holding_vias,
+            (&via_spans, &planes),
             config,
         );
         bga_fanout::report(&plan);
@@ -1980,6 +1990,8 @@ fn lower_board(
         for fanout in plan.fanouts {
             let net = Some(fanout.net);
             let ball = 1 << fanout.layer;
+            // A via of a span is copper and a hole on its layers only.
+            let all = fanout.span.map_or(all, |span| span.mask());
             let copper =
                 |shape: core::Shape, layers: core::LayerMask, suffix: &str| core::Obstacle {
                     shape,
@@ -2043,7 +2055,7 @@ fn lower_board(
                         .map(|merged| (merged.host, merged.anchor))
                 });
             if let Some((host, anchor)) = host {
-                nets[fanout.net as usize].terminals[host].layers = all;
+                nets[fanout.net as usize].terminals[host].layers |= all;
                 merged_pads.push(core::MergedPad {
                     net: fanout.net,
                     host,
@@ -2098,6 +2110,7 @@ fn lower_board(
             pin_row_gaps,
             terminal_copper: Vec::new(),
             attachment: Default::default(),
+            via_spans,
         },
         expressions: 0,
         fanout_work,

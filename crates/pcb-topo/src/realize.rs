@@ -517,6 +517,7 @@ pub fn realize(board: &Board, pieces: &[Piece], vias: &[PlacedVia]) -> Realized 
             at: via.at,
             diameter: class.via_diameter,
             drill: class.via_drill,
+            span: None,
         });
         via_wire[via.net as usize].push(via.wire);
     }

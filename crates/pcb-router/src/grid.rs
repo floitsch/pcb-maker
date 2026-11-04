@@ -552,6 +552,10 @@ pub struct StaticMaps {
     /// ground pad, as designers place them), or within only the hole
     /// clearance of its own plated hole. `owner16`, or 0.
     pub via_owner: Vec<u16>,
+    /// With via spans (`Board::via_spans`), per node: the layers on which
+    /// an obstacle keeps a via of this class out (`via_blocked` per layer,
+    /// for any net). Empty without spans.
+    pub via_layers: LayerBits,
     /// Per node: the layers (bits) where `trace` is `FREE`, so that a via
     /// step reads one word instead of one per layer.
     /// In as few bytes a node as the board's layers need (one up to
@@ -712,6 +716,10 @@ impl LayerBits {
     pub fn bytes(&self) -> usize {
         self.bytes.capacity()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.bytes.is_empty()
+    }
 }
 
 /// The cells where `trace` differs from what a pour's fill may cover (the
@@ -862,6 +870,18 @@ impl StaticMaps {
             .map(|inside| if *inside { FREE16 } else { BLOCKED16 })
             .collect();
         let mut via_blocked: Vec<bool> = inside.iter().map(|inside| !inside).collect();
+        // With via spans (`Board::via_spans`): per node, the layers on which
+        // an obstacle keeps a via of the class out, whatever its net.
+        let all_layers = board.all_layers();
+        let spans = searched && !board.via_spans.is_empty() && board.layer_count > 2;
+        let mut via_layers: Vec<u32> = if spans {
+            inside
+                .iter()
+                .map(|inside| if *inside { 0 } else { all_layers })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let mut via_owner: Vec<u16> = if searched { vec![0; cells] } else { Vec::new() };
         // Where `via_owner` holds a via inside its net's own copper (a
         // touch electrode's, an exposed pad's, at its own plated hole),
@@ -910,6 +930,9 @@ impl StaticMaps {
                     }
                     if distance < via_edge {
                         via_blocked[index] = true;
+                        if let Some(layers) = via_layers.get_mut(index) {
+                            *layers = all_layers;
+                        }
                     }
                 }
             }
@@ -1213,6 +1236,9 @@ impl StaticMaps {
                                 }
                             }
                             via_blocked[index] = true;
+                            if let Some(layers) = via_layers.get_mut(index) {
+                                *layers |= obstacle.layers & all_layers;
+                            }
                         }
                     }
                 }
@@ -1308,6 +1334,7 @@ impl StaticMaps {
         }
         let mut free_layers = vec![0u32; if searched { cells } else { 0 }];
         let via_blocked = NodeBits::from_bools(&via_blocked);
+        let via_layers = LayerBits::new(&via_layers, board.layer_count);
         if searched {
             for (layer, map) in trace.iter().enumerate() {
                 for (cell, value) in map.iter().enumerate() {
@@ -1322,6 +1349,7 @@ impl StaticMaps {
             edges,
             via_blocked,
             via_owner,
+            via_layers,
             free_layers: LayerBits::new(&free_layers, board.layer_count),
             fill_trace,
             tests,
@@ -1333,6 +1361,15 @@ impl StaticMaps {
     /// Whether `net` may put a via on this node.
     pub fn via_allowed(&self, index: usize, net: NetId) -> bool {
         !self.via_blocked.get(index) || self.via_owner[index] == owner16(net)
+    }
+
+    /// Whether `net` may put a via of the layers `mask` on this node: as a
+    /// through via, or where no obstacle on those layers keeps one out
+    /// (`via_layers`).
+    #[inline(always)]
+    pub fn span_allowed(&self, index: usize, net: NetId, mask: u32) -> bool {
+        self.via_allowed(index, net)
+            || (!self.via_layers.is_empty() && self.via_layers.get(index) & mask == 0)
     }
 
     /// Whether `net` may have a trace centreline on this node.
@@ -1392,6 +1429,7 @@ impl StaticMaps {
             + self.edges.iter().map(EdgeMap::bytes).sum::<usize>()
             + self.via_blocked.bytes()
             + self.via_owner.capacity() * 2
+            + self.via_layers.bytes()
             + self.free_layers.bytes()
             + self.fill_trace.as_ref().map_or(0, FillTrace::bytes)
     }
@@ -1548,6 +1586,7 @@ mod tests {
             pin_row_gaps: Vec::new(),
             terminal_copper: Vec::new(),
             attachment: Default::default(),
+            via_spans: Vec::new(),
         }
     }
 

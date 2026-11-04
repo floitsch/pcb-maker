@@ -213,6 +213,92 @@ pub struct Board {
     /// with the routes (route mode's differential pairs: how the coupled
     /// runs' nets map back to the pairs); the router ignores it.
     pub attachment: Attachment,
+    /// The via spans the board allows beside the through via (blind,
+    /// buried and micro vias; docs/router.md, "Blind, buried and micro
+    /// vias (2026-11-05)"). Empty: every via is a through via, as before
+    /// the spans; the router's maps and its routes are then those of a
+    /// board without them.
+    pub via_spans: Vec<ViaSpan>,
+}
+
+/// A via's layers short of the whole stack (`Board::via_spans`): copper
+/// and a hole on the layers `top..=bottom` only (KiCad's blind, buried and
+/// micro vias), so that the layers it does not pierce stay free for other
+/// nets' tracks and vias.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ViaSpan {
+    /// The span's first and last copper layers (`top < bottom`).
+    pub top: usize,
+    pub bottom: usize,
+    /// A micro via (laser drilled, one dielectric deep).
+    pub micro: bool,
+    /// The via's own diameter and drill where they are smaller than its
+    /// class's (a micro via's): it is written at that size, while the
+    /// maps keep the class's via clear (a smaller via inside a legal one
+    /// is legal). None: the class's via.
+    pub size: Option<[f64; 2]>,
+}
+
+/// KiCad's via kinds, by a via's span on a stack of `layers` copper layers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ViaKind {
+    Through,
+    /// From an outer layer to an inner one.
+    Blind,
+    /// Between inner layers.
+    Buried,
+    Micro,
+}
+
+impl ViaSpan {
+    pub fn mask(&self) -> LayerMask {
+        (self.top..=self.bottom).fold(0, |mask, layer| mask | 1 << layer)
+    }
+
+    pub fn depth(&self) -> usize {
+        self.bottom - self.top
+    }
+
+    pub fn contains(&self, layer: usize) -> bool {
+        layer >= self.top && layer <= self.bottom
+    }
+
+    pub fn kind(&self, layers: usize) -> ViaKind {
+        if self.micro {
+            ViaKind::Micro
+        } else if self.top == 0 && self.bottom + 1 == layers {
+            ViaKind::Through
+        } else if self.top == 0 || self.bottom + 1 == layers {
+            ViaKind::Blind
+        } else {
+            ViaKind::Buried
+        }
+    }
+
+    /// Whether the span keeps KiCad's and the fab's rules on `layers`
+    /// copper layers: inside the stack, at least two layers, short of the
+    /// whole stack, and a micro via one dielectric deep from an outer
+    /// layer or between two inner ones.
+    pub fn is_valid(&self, layers: usize) -> bool {
+        self.top < self.bottom
+            && self.bottom < layers
+            && !(self.top == 0 && self.bottom + 1 == layers)
+            && (!self.micro || self.depth() == 1)
+    }
+}
+
+impl Board {
+    /// The span a via joining `a` and `b` takes: the allowed span with the
+    /// fewest layers that holds both (the first listed of as many), else
+    /// the through via (None).
+    pub fn via_span(&self, a: usize, b: usize) -> Option<ViaSpan> {
+        let (low, high) = (a.min(b), a.max(b));
+        self.via_spans
+            .iter()
+            .filter(|span| span.top <= low && span.bottom >= high)
+            .min_by_key(|span| span.depth())
+            .copied()
+    }
 }
 
 /// Data an adapter attaches to a board (`Board::attachment`): shared, and
@@ -421,6 +507,27 @@ pub struct Via {
     pub at: Point,
     pub diameter: f64,
     pub drill: f64,
+    /// Its layers where it is not a through via (`Board::via_spans`).
+    pub span: Option<ViaSpan>,
+}
+
+impl Via {
+    /// Whether the via is copper (and a hole) on `layer`.
+    pub fn on_layer(&self, layer: usize) -> bool {
+        self.span.is_none_or(|span| span.contains(layer))
+    }
+
+    /// Its layers as a mask, on a board of `layers` copper layers.
+    pub fn mask(&self, layers: usize) -> LayerMask {
+        self.span.map_or(
+            if layers >= 32 {
+                LayerMask::MAX
+            } else {
+                (1 << layers) - 1
+            },
+            |span| span.mask(),
+        )
+    }
 }
 
 #[derive(Clone, Debug, Default)]

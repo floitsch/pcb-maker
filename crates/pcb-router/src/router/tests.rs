@@ -576,6 +576,7 @@ fn diagonal_channel(notch: bool) -> (Router, [f64; 2]) {
         pin_row_gaps: Vec::new(),
         terminal_copper: Vec::new(),
         attachment: Default::default(),
+        via_spans: Vec::new(),
     };
     let config = Config {
         pitches: vec![0.1],
@@ -666,6 +667,7 @@ fn walled_in_pad() -> Router {
         pin_row_gaps: Vec::new(),
         terminal_copper: Vec::new(),
         attachment: Default::default(),
+        via_spans: Vec::new(),
     };
     let config = Config {
         pitches: vec![0.1],
@@ -748,6 +750,7 @@ fn halves(apart_trees: bool) -> Router {
         pin_row_gaps: Vec::new(),
         terminal_copper: Vec::new(),
         attachment: Default::default(),
+        via_spans: Vec::new(),
     };
     let config = Config {
         pitches: vec![0.1],
@@ -888,6 +891,7 @@ fn crossed_net() -> Router {
         pin_row_gaps: Vec::new(),
         terminal_copper: Vec::new(),
         attachment: Default::default(),
+        via_spans: Vec::new(),
     };
     let config = Config {
         pitches: vec![0.1],
@@ -1150,6 +1154,7 @@ fn board(
         pin_row_gaps: Vec::new(),
         terminal_copper: Vec::new(),
         attachment: Default::default(),
+        via_spans: Vec::new(),
     }
 }
 
@@ -4039,6 +4044,7 @@ fn the_copper_check_joins_what_overlaps_on_a_shared_layer() {
         at: [5.0, 5.0],
         diameter: 0.6,
         drill: 0.3,
+        span: None,
     });
     let components = crate::verify::copper_components(&board, 0, &route);
     assert_eq!(components[0], components[2]);
@@ -4814,6 +4820,7 @@ fn pin_row_board(left: f64, s_start: f64) -> Board {
         pin_row_gaps: gaps,
         terminal_copper: Vec::new(),
         attachment: Default::default(),
+        via_spans: Vec::new(),
     }
 }
 
@@ -5497,6 +5504,7 @@ fn walled_pair(bounded: &str) -> RoutingResult {
         pin_row_gaps: Vec::new(),
         terminal_copper: Vec::new(),
         attachment: Default::default(),
+        via_spans: Vec::new(),
     };
     let config = Config {
         pitches: vec![0.1],

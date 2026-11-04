@@ -76,6 +76,23 @@ pub struct KiCadProjectRulesReport {
     /// BGA pads").
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub via_in_pad_designer: Vec<crate::board_router::KiCadViaInPadEntry>,
+    /// The spans of the board's own blind, buried and micro vias (or the
+    /// `--reference` board's): the designer's sign that the fab builds
+    /// them, which allows those spans to the router (`blind_vias`;
+    /// docs/router.md, "Blind, buried and micro vias (2026-11-05)").
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub via_spans_designer: Vec<crate::board_router::KiCadViaSpanEntry>,
+    /// A KiCad 6 or 7 project's via switches (`allow_blind_buried_vias`,
+    /// `allow_microvias`) as `via_spans` keywords.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub via_spans_project: Vec<String>,
+    /// The board's micro via minimums (board setup).
+    #[serde(skip)]
+    pub micro_via_minimums: crate::board_router::KiCadMicroViaMinimums,
+    /// The default class's micro via (`microvia_diameter`,
+    /// `microvia_drill`), where the project states it.
+    #[serde(skip)]
+    pub micro_via_mm: Option<[f64; 2]>,
     /// The project's predefined via sizes (diameter, drill), for a via in
     /// a pad.
     #[serde(skip)]
@@ -544,6 +561,26 @@ pub fn resolve_project_rules(
         nanometres(minimum("min_via_annular_width")),
     ];
     report.via_in_pad_designer = crate::board_router::designer_entries(&pcb, "the board");
+    report.via_spans_designer = crate::board_router::designer_spans(&pcb, "the board");
+    report.via_spans_project = crate::board_router::project_spans(rules);
+    report.micro_via_minimums = crate::board_router::KiCadMicroViaMinimums {
+        diameter_mm: rules["min_microvia_diameter"].as_f64().unwrap_or(0.2),
+        drill_mm: rules["min_microvia_drill"].as_f64().unwrap_or(0.1),
+        annular_mm: minimum("min_via_annular_width"),
+    };
+    report.micro_via_mm = project["net_settings"]["classes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|class| class["name"].as_str() == Some("Default"))
+        .and_then(|class| {
+            Some([
+                class["microvia_diameter"].as_f64()?,
+                class["microvia_drill"].as_f64()?,
+            ])
+        })
+        .filter(|[diameter, drill]| *drill > 0.0 && diameter > drill)
+        .map(|[diameter, drill]| [nanometres(diameter), nanometres(drill)]);
     let mut widths = Vec::new();
     let mut via_sizes = Vec::new();
     let mut via_drills = Vec::new();

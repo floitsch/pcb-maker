@@ -33,6 +33,7 @@ pub(crate) fn emit_routes(
             size: diameter,
             drill,
             layers: ["F.Cu".into(), "B.Cu".into()],
+            kind: None,
         }));
     }
     // The prepared fan-outs (`bga_fanout`) the routes use: stub and via
@@ -54,12 +55,14 @@ pub(crate) fn emit_routes(
             width: fanout.width,
             layer: layer_names[fanout.layer].clone(),
         }));
+        let (layers, kind) = via_layers_and_kind(fanout.span, board.layer_count, layer_names);
         items.push(supplemental_via_expr(&SupplementalVia {
             connection: board.nets[net].name.clone(),
             at: nanometres(fanout.end),
             size: fanout.diameter,
             drill: fanout.drill,
-            layers: ["F.Cu".into(), "B.Cu".into()],
+            layers,
+            kind,
         }));
     }
     let mut nets = Vec::new();
@@ -81,12 +84,15 @@ pub(crate) fn emit_routes(
             }));
         }
         for via in &route.vias {
+            // A via of a span (blind, buried, micro) on its layers.
+            let (layers, kind) = via_layers_and_kind(via.span, board.layer_count, layer_names);
             items.push(supplemental_via_expr(&SupplementalVia {
                 connection: description.name.clone(),
                 at: nanometres(via.at),
                 size: via.diameter,
                 drill: via.drill,
-                layers: ["F.Cu".into(), "B.Cu".into()],
+                layers,
+                kind,
             }));
         }
         let (status, unconnected_terminals) = match result.status[net] {
@@ -114,6 +120,34 @@ pub(crate) fn emit_routes(
     }
     canonicalize_copper_net_names(pcb, &copper_net_names);
     Ok(nets)
+}
+
+/// A via's `layers` and kind token as KiCad writes them: `F.Cu B.Cu` and
+/// none for a through via; a span's first and last layers and `micro`,
+/// `blind` (an outer layer to an inner one) or `buried` (inner layers).
+pub(crate) fn via_layers_and_kind(
+    span: Option<core::ViaSpan>,
+    layers: usize,
+    layer_names: &[String],
+) -> ([String; 2], Option<String>) {
+    match span {
+        None => (["F.Cu".into(), "B.Cu".into()], None),
+        Some(span) => {
+            let kind = match span.kind(layers) {
+                core::ViaKind::Through => None,
+                core::ViaKind::Micro => Some("micro"),
+                core::ViaKind::Blind => Some("blind"),
+                core::ViaKind::Buried => Some("buried"),
+            };
+            (
+                [
+                    layer_names[span.top].clone(),
+                    layer_names[span.bottom].clone(),
+                ],
+                kind.map(String::from),
+            )
+        }
+    }
 }
 
 /// The router's stubs into a copper graphic of their net that KiCad's

@@ -14,7 +14,7 @@ use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::board::{Board, NetId, NetRoute, RuleClass, Segment, Via};
+use crate::board::{Board, LayerMask, NetId, NetRoute, RuleClass, Segment, Via};
 use crate::grid::{DIRECTIONS, Grid, SAFETY, StaticMaps};
 use crate::rules::ClassRules;
 mod batching;
@@ -1524,6 +1524,114 @@ type SpokePad = (
     std::collections::BTreeSet<usize>,
 );
 
+/// The via spans of a board that allows them (`Board::via_spans`;
+/// docs/router.md, "Blind, buried and micro vias (2026-11-05)"): a via
+/// between two layers takes the shortest allowed span holding both, and is
+/// copper only there. Each class has a via map per layer as well
+/// (`Router::via_layer_map`, after the diagonal maps): where that layer's
+/// copper keeps a via of the class out. The class's via map stays the
+/// union of every layer's (what a through via meets).
+#[derive(Clone, Debug)]
+pub(crate) struct SpanModel {
+    layers: usize,
+    /// Every layer (a through via's).
+    all: LayerMask,
+    /// Per pair of layers (`a * layers + b`): the layers the via joining
+    /// them pierces (all of them for a through via).
+    pair_mask: Vec<LayerMask>,
+    /// Per net: whether its vias take spans. A net with a pour keeps
+    /// through vias: the pour model joins its vias to its planes on every
+    /// layer.
+    nets: Vec<bool>,
+    /// The first per-layer via map.
+    base: usize,
+}
+
+impl SpanModel {
+    pub(crate) fn new(board: &Board, base: usize) -> Option<Self> {
+        let layers = board.layer_count;
+        if board.via_spans.is_empty() || layers < 3 {
+            return None;
+        }
+        let all: LayerMask = if layers >= 32 {
+            LayerMask::MAX
+        } else {
+            (1 << layers) - 1
+        };
+        let mut pair_mask = vec![all; layers * layers];
+        for a in 0..layers {
+            for b in 0..layers {
+                if let Some(span) = board.via_span(a, b) {
+                    pair_mask[a * layers + b] = span.mask();
+                }
+            }
+        }
+        let mut nets = vec![true; board.nets.len()];
+        for plane in &board.planes {
+            if let Some(flag) = nets.get_mut(plane.net as usize) {
+                *flag = false;
+            }
+        }
+        Some(Self {
+            layers,
+            all,
+            pair_mask,
+            nets,
+            base,
+        })
+    }
+
+    /// The layers a via of `net` joining `a` and `b` pierces.
+    #[inline(always)]
+    pub(crate) fn mask(&self, net: NetId, a: usize, b: usize) -> LayerMask {
+        if self.nets.get(net as usize).copied().unwrap_or(false) {
+            self.pair_mask[a * self.layers + b]
+        } else {
+            self.all
+        }
+    }
+
+    /// Every layer.
+    #[inline(always)]
+    pub(crate) fn all(&self) -> LayerMask {
+        self.all
+    }
+
+    #[inline(always)]
+    pub(crate) fn takes_spans(&self, net: NetId) -> bool {
+        self.nets.get(net as usize).copied().unwrap_or(false)
+    }
+
+    /// The span a via of `net` joining the layers of `mask` (the layers its
+    /// chain at one cell visits) takes, as its layers: the shortest
+    /// allowed span holding the lowest and the highest.
+    pub(crate) fn chain_mask(&self, net: NetId, visited: LayerMask) -> LayerMask {
+        let low = visited.trailing_zeros() as usize;
+        let high = (LayerMask::BITS - 1 - visited.leading_zeros()) as usize;
+        self.mask(net, low, high)
+    }
+}
+
+/// The layers the via chain at `nodes[index]`'s cell visits: the nodes
+/// before and after it at that cell (a via joins the first and the last).
+fn chain_layers(nodes: &[Node], index: usize) -> LayerMask {
+    let cell = nodes[index].cell;
+    let mut visited: LayerMask = 0;
+    for node in nodes[..=index].iter().rev() {
+        if node.cell != cell {
+            break;
+        }
+        visited |= 1 << node.layer;
+    }
+    for node in &nodes[index..] {
+        if node.cell != cell {
+            break;
+        }
+        visited |= 1 << node.layer;
+    }
+    visited
+}
+
 #[derive(Clone)]
 pub struct Router {
     board: Board,
@@ -1546,6 +1654,8 @@ pub struct Router {
     /// the cells from which a diagonal step of that class would pass a
     /// node too closely.
     occupancy: Occupancy,
+    /// The via spans, where the board allows them (`SpanModel`).
+    spans: Option<Arc<SpanModel>>,
     /// Bits per (map, cell): set while one net is stamped, so that a cell
     /// two offsets reach counts once; cleared again from the stamped list.
     stamp_mark: Vec<u64>,
@@ -1728,6 +1838,8 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
 
 #[cfg(test)]
 mod rule_tests;
+#[cfg(test)]
+mod span_tests;
 #[cfg(test)]
 mod tests;
 

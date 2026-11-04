@@ -92,6 +92,40 @@ pub(crate) struct PlannedFanout {
     pub drill: f64,
     pub width: f64,
     pub ring: usize,
+    /// The via's span where it is not a through via (`via_spans`): the
+    /// shortest the board allows from the ball's layer to a routable one.
+    pub span: Option<core::ViaSpan>,
+}
+
+/// The span a dog-bone's via takes from a ball on `layer` of `net`: the
+/// shortest span the board allows (`spans`) from that layer whose far
+/// layer is routable for the net (one its class may use, not another
+/// net's exclusive plane); None (a through via) where none is.
+pub(crate) fn fanout_span(
+    spans: &[core::ViaSpan],
+    layer: usize,
+    net: core::NetId,
+    class: &core::RuleClass,
+    planes: &[core::Plane],
+) -> Option<core::ViaSpan> {
+    let routable = |far: usize| {
+        (class.layers == 0 || class.layers & (1 << far) != 0)
+            && !planes
+                .iter()
+                .any(|plane| plane.layer == far && plane.net != net && plane.exclusive)
+    };
+    spans
+        .iter()
+        .filter(|span| span.top == layer || span.bottom == layer)
+        .filter(|span| {
+            routable(if span.top == layer {
+                span.bottom
+            } else {
+                span.top
+            })
+        })
+        .min_by_key(|span| span.depth())
+        .copied()
 }
 
 /// A grid array's plan, for the report (`PCB_ROUTER_BGA_FANOUT_WHY`).
@@ -406,19 +440,24 @@ impl Context<'_> {
 
     /// Whether a through via of `net` at `at` (radius, drill radius) keeps
     /// every rule against the obstacles `near` (indices).
+    #[allow(clippy::too_many_arguments)]
     fn via_clear(
         &self,
         net: core::NetId,
         at: [f64; 2],
         radius: f64,
         hole: f64,
+        layers: core::LayerMask,
         near: &[usize],
         work: &mut u64,
     ) -> bool {
         *work += near.len() as u64;
         near.iter().all(|&index| {
             let obstacle = &self.obstacles[index];
-            if !obstacle.blocks_vias {
+            // A via of a span meets only what is on its layers.
+            if !obstacle.blocks_vias
+                || (layers != core::LayerMask::MAX && obstacle.layers & layers == 0)
+            {
                 return true;
             }
             let gap = obstacle.shape.distance_to_point(at);
@@ -485,16 +524,23 @@ fn clear_of_planned(
 ) -> bool {
     *work += planned.len() as u64;
     let own = context.classes[context.nets[candidate.net as usize].class].clearance;
+    let mask =
+        |fanout: &PlannedFanout| fanout.span.map_or(core::LayerMask::MAX, |span| span.mask());
     planned.iter().all(|other| {
         let apart = core::geometry::distance(candidate.via, other.via);
-        if apart < (candidate.drill + other.drill) / 2.0 + context.hole_to_hole + SAFETY {
+        // Vias of disjoint spans meet nowhere (no hole-to-hole either).
+        let vias_meet = mask(candidate) & mask(other) != 0;
+        if vias_meet
+            && apart < (candidate.drill + other.drill) / 2.0 + context.hole_to_hole + SAFETY
+        {
             return false;
         }
         if other.net == candidate.net {
             return true;
         }
         let clearance = own.max(context.classes[context.nets[other.net as usize].class].clearance);
-        let vias = apart >= (candidate.diameter + other.diameter) / 2.0 + clearance + SAFETY;
+        let vias =
+            !vias_meet || apart >= (candidate.diameter + other.diameter) / 2.0 + clearance + SAFETY;
         let same_layer = candidate.layer == other.layer;
         let stub_via = |stub: &PlannedFanout, via: &PlannedFanout| {
             core::geometry::point_segment_distance(via.via, stub.start, stub.via)
@@ -522,8 +568,10 @@ pub(crate) fn plan(
     classes: &[core::RuleClass],
     no_via_pads: &[usize],
     holding: &BTreeSet<usize>,
+    spans: (&[core::ViaSpan], &[core::Plane]),
     config: &KiCadBoardRouterConfig,
 ) -> FanoutPlan {
+    let (spans, planes) = spans;
     let mut sorted_no_via = no_via_pads.to_vec();
     sorted_no_via.sort_unstable();
     let context = Context {
@@ -693,39 +741,65 @@ pub(crate) fn plan(
             let start = shapes[position].0;
             let label = obstacle.label.clone();
             let mut found = None;
-            'sites: for (du, dv) in [(su, sv), (su, -sv), (-su, sv), (-su, -sv)] {
-                let site = grid.to_board([
-                    local[0] + du * grid.pitch / 2.0,
-                    local[1] + dv * grid.pitch / 2.0,
-                ]);
-                for &[diameter, drill] in &via_sizes(config, &class) {
-                    if !context.via_clear(net, site, diameter / 2.0, drill / 2.0, &near, &mut work)
-                    {
-                        continue;
-                    }
-                    for &width in &widths {
-                        let candidate = PlannedFanout {
+            // The via: the shortest span the board allows to a routable
+            // layer (a micro via at its own size), else a through via.
+            let span = fanout_span(spans, layer, net, &class, planes);
+            let through_sizes = via_sizes(config, &class);
+            let choices: Vec<(Option<core::ViaSpan>, Vec<[f64; 2]>)> = match span {
+                Some(span) => vec![
+                    (
+                        Some(span),
+                        span.size
+                            .map_or_else(|| through_sizes.clone(), |size| vec![size]),
+                    ),
+                    (None, through_sizes),
+                ],
+                None => vec![(None, through_sizes)],
+            };
+            'sites: for (span, sizes) in &choices {
+                let layers = span.map_or(core::LayerMask::MAX, |span| span.mask());
+                for (du, dv) in [(su, sv), (su, -sv), (-su, sv), (-su, -sv)] {
+                    let site = grid.to_board([
+                        local[0] + du * grid.pitch / 2.0,
+                        local[1] + dv * grid.pitch / 2.0,
+                    ]);
+                    for &[diameter, drill] in sizes {
+                        if !context.via_clear(
                             net,
-                            pad: index,
-                            label: label.clone(),
-                            layer,
-                            start,
-                            via: site,
-                            diameter,
-                            drill,
-                            width,
-                            ring: grid.rings[position],
-                        };
-                        if context.stub_clear(net, layer, start, site, width, &near, &mut work)
-                            && clear_of_planned(
-                                &context,
-                                &candidate,
-                                &plan.fanouts[first..],
-                                &mut work,
-                            )
-                        {
-                            found = Some(candidate);
-                            break 'sites;
+                            site,
+                            diameter / 2.0,
+                            drill / 2.0,
+                            layers,
+                            &near,
+                            &mut work,
+                        ) {
+                            continue;
+                        }
+                        for &width in &widths {
+                            let candidate = PlannedFanout {
+                                net,
+                                pad: index,
+                                label: label.clone(),
+                                layer,
+                                start,
+                                via: site,
+                                diameter,
+                                drill,
+                                width,
+                                ring: grid.rings[position],
+                                span: *span,
+                            };
+                            if context.stub_clear(net, layer, start, site, width, &near, &mut work)
+                                && clear_of_planned(
+                                    &context,
+                                    &candidate,
+                                    &plan.fanouts[first..],
+                                    &mut work,
+                                )
+                            {
+                                found = Some(candidate);
+                                break 'sites;
+                            }
                         }
                     }
                 }
@@ -1066,6 +1140,8 @@ pub(crate) struct FanoutCopper {
     pub width: f64,
     pub diameter: f64,
     pub drill: f64,
+    /// Its span where it is not a through via (the hole's layers).
+    pub span: Option<core::ViaSpan>,
 }
 
 /// The dog-bones the lowering placed (the obstacles it labels `<ball>
@@ -1122,6 +1198,15 @@ pub(crate) fn fanouts_of(board: &core::Board) -> Vec<FanoutCopper> {
                 width,
                 diameter: *rings.get(ball)?,
                 drill: 2.0 * radius,
+                span: (obstacle.layers != board.all_layers())
+                    .then(|| {
+                        board
+                            .via_spans
+                            .iter()
+                            .find(|span| span.mask() == obstacle.layers)
+                            .copied()
+                    })
+                    .flatten(),
             })
         })
         .collect()
@@ -1156,11 +1241,12 @@ pub(crate) fn fanout_used(
             fanout.start[1] + direction[1] * leave,
         ]
     });
+    let on = |layer: usize| fanout.span.is_none_or(|span| span.contains(layer));
     let segment_uses = route.segments.iter().any(|segment| {
         let reach = segment.width / 2.0 + TOUCH;
         let to_via = core::geometry::point_segment_distance(fanout.end, segment.start, segment.end);
         if segment.layer != fanout.layer {
-            return to_via <= radius + reach;
+            return on(segment.layer) && to_via <= radius + reach;
         }
         to_via <= radius + reach
             || core::geometry::segment_segment_distance(
@@ -1170,12 +1256,15 @@ pub(crate) fn fanout_used(
                 fanout.end,
             ) <= fanout.width / 2.0 + reach
     });
+    let mask = fanout.span.map_or(core::LayerMask::MAX, |span| span.mask());
     let via_uses = route.vias.iter().any(|via| {
-        core::geometry::distance(via.at, fanout.end) <= radius + via.diameter / 2.0 + TOUCH
+        via.mask(board.layer_count) & mask != 0
+            && core::geometry::distance(via.at, fanout.end) <= radius + via.diameter / 2.0 + TOUCH
     });
     let pour_uses = board.planes.iter().any(|plane| {
         plane.net == fanout.net
             && plane.layer != fanout.layer
+            && on(plane.layer)
             && core::geometry::point_in_polygon(fanout.end, &plane.polygon)
     });
     segment_uses || via_uses || pour_uses
@@ -1289,6 +1378,7 @@ mod tests {
             &[class()],
             &no_via,
             &BTreeSet::new(),
+            (&[], &[]),
             &config(),
         );
         let part = &plan.parts[0];
@@ -1341,6 +1431,86 @@ mod tests {
         assert_eq!(rings, BTreeSet::from([2, 3, 4]));
     }
 
+    /// With blind and micro vias allowed (`via_spans`), a dog-bone's via is
+    /// the shortest span from the ball's layer to a routable one: the micro
+    /// via F.Cu-In1.Cu at its own size, or, with In1.Cu another net's
+    /// exclusive plane, the blind via to In2.Cu at the class's sizes.
+    #[test]
+    fn a_dog_bone_takes_the_shortest_span_to_a_routable_layer() {
+        let (parts, obstacles, nets, no_via) = array(10, 0.8, 0.35);
+        let micro = core::ViaSpan {
+            top: 0,
+            bottom: 1,
+            micro: true,
+            size: Some([0.3, 0.1]),
+        };
+        let blind = core::ViaSpan {
+            top: 0,
+            bottom: 2,
+            micro: false,
+            size: None,
+        };
+        let deep = core::ViaSpan {
+            top: 1,
+            bottom: 3,
+            micro: false,
+            size: None,
+        };
+        let spans = [blind, micro, deep];
+        let planned = |planes: &[core::Plane]| {
+            super::plan(
+                &parts,
+                &obstacles,
+                &nets,
+                &[class()],
+                &no_via,
+                &BTreeSet::new(),
+                (&spans, planes),
+                &config(),
+            )
+        };
+        let plan = planned(&[]);
+        assert_eq!(plan.parts[0].planned, 36);
+        for fanout in &plan.fanouts {
+            assert_eq!(fanout.span, Some(micro));
+            assert_eq!([fanout.diameter, fanout.drill], [0.3, 0.1]);
+        }
+        let plane = core::Plane {
+            net: nets.len() as core::NetId,
+            class: 0,
+            layer: 1,
+            polygon: vec![[-5.0, -5.0], [15.0, -5.0], [15.0, 15.0], [-5.0, 15.0]],
+            excluded: Vec::new(),
+            above: Vec::new(),
+            connect: true,
+            thermal_reach: 0.0,
+            thermal_gap: 0.0,
+            exclusive: true,
+            solid: false,
+            hatch: None,
+            island_min_area: None,
+        };
+        let plan = planned(std::slice::from_ref(&plane));
+        assert_eq!(plan.parts[0].planned, 36);
+        for fanout in &plan.fanouts {
+            assert_eq!(fanout.span, Some(blind));
+            assert_eq!([fanout.diameter, fanout.drill], [0.4, 0.2]);
+        }
+        // No span from the ball's layer: a through via, as without spans.
+        let plan = super::plan(
+            &parts,
+            &obstacles,
+            &nets,
+            &[class()],
+            &no_via,
+            &BTreeSet::new(),
+            (&[deep], &[]),
+            &config(),
+        );
+        assert!(plan.fanouts.iter().all(|fanout| fanout.span.is_none()));
+        assert_eq!(plan.parts[0].sizes.get("0.4/0.2"), Some(&36));
+    }
+
     #[test]
     fn an_array_whose_class_via_fits_a_gap_is_left_to_the_search() {
         // The class's own via 0.4/0.2 fits the diagonal gaps at 0.8 mm:
@@ -1358,6 +1528,7 @@ mod tests {
             &[small],
             &no_via,
             &BTreeSet::new(),
+            (&[], &[]),
             &config(),
         );
         assert_eq!(plan.parts[0].inner, 36);
@@ -1398,6 +1569,7 @@ mod tests {
             &[class()],
             &no_via,
             &holding,
+            (&[], &[]),
             &config(),
         );
         assert_eq!(plan.parts[0].kept, 1);
@@ -1414,6 +1586,7 @@ mod tests {
             &[class()],
             &no_via,
             &BTreeSet::new(),
+            (&[], &[]),
             &config(),
         );
         assert_eq!(fine.parts[0].surface_rings, 1);
@@ -1444,6 +1617,7 @@ mod tests {
             &[class()],
             &no_via,
             &BTreeSet::new(),
+            (&[], &[]),
             &config(),
         );
         // The ball at (2, 2) points to (1.6, 1.6) and (2.0, 1.2) ... all

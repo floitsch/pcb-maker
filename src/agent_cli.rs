@@ -497,6 +497,7 @@ fn route(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         && !same_directory(project, Path::new(source))
     {
         pcb_kicad::admit_reference_vias_in_pads(&mut config, project, board_id);
+        pcb_kicad::admit_reference_via_spans(&mut config, project, board_id);
     }
     if strip {
         config.existing_tracks = pcb_kicad::KiCadExistingTracks::Strip;
@@ -881,6 +882,7 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         && !same_directory(project, Path::new(source))
     {
         pcb_kicad::admit_reference_vias_in_pads(&mut router, project, board_id);
+        pcb_kicad::admit_reference_via_spans(&mut router, project, board_id);
     }
     let mut config: pcb_kicad::KiCadBoardLayoutConfig = match positional.get(4) {
         Some(path) => read_json(path)?,

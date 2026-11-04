@@ -967,6 +967,7 @@ mod pour_request_tests {
             at: anchor,
             diameter: 0.6,
             drill: 0.3,
+            span: None,
         });
         assert!(graphic_stubs(&board, net, &route).is_empty());
         // A pad's stub is KiCad's to pass over: kept.
@@ -1558,6 +1559,7 @@ mod pour_request_tests {
                 at,
                 diameter: 0.5,
                 drill: 0.15,
+                span: None,
             });
             core::verify(&board, &routes)
         };
@@ -3009,6 +3011,7 @@ mod lowering_gap_tests {
                 at,
                 diameter: 0.6,
                 drill: 0.3,
+                span: None,
             });
             routes
         };
