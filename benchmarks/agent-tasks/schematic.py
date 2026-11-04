@@ -146,9 +146,10 @@ def add_libraries(table, libraries, project):
     table.write_text(text[:end].rstrip() + "\n" + "\n".join(lines) + "\n)\n")
 
 
-def import_schematic(binary, record, work, board_id, layers, footprints_from=None):
+def import_schematic(binary, record, work, board_id, layers, footprints_from=None, near_decoupling=False):
     """Copies the fetched project and imports its schematic (with
-    `--footprints-from` the designer's board, when given). Returns the
+    `--footprints-from` the designer's board, when given; with
+    `near_decoupling` the import's `--near-decoupling`). Returns the
     import's report (or an error string), with what was done to it."""
     source = work / "sch"
     shutil.copytree(STORE / record["name"] / "repo", source)
@@ -157,6 +158,8 @@ def import_schematic(binary, record, work, board_id, layers, footprints_from=Non
     command = [binary, "import-kicad-netlist", schematic, project, board_id, "--layers", str(layers)]
     if footprints_from is not None:
         command += ["--footprints-from", footprints_from]
+    if near_decoupling:
+        command.append("--near-decoupling")
     steps = {"command": command}
     code, stdout, stderr = run(command)
     (work / "import.log").write_text(stdout + stderr)
@@ -181,6 +184,18 @@ def import_schematic(binary, record, work, board_id, layers, footprints_from=Non
         report = json.loads(stdout)
     (work / "import.json").write_text(json.dumps(report, indent=1))
     return report, steps, None
+
+
+def merge_near(constraints, imported):
+    """The import's `near` entries (`--near-decoupling`) added to the
+    tier's constraints, but for parts the constraints place (a capacitor the
+    task keeps where it is) or that already have one."""
+    placed = {entry["part"] for entry in constraints.get("place", [])}
+    named = {entry["part"] for entry in constraints.get("near", [])}
+    near = [entry for entry in imported.get("near", []) if entry["part"] not in placed | named]
+    if near:
+        constraints["near"] = constraints.get("near", []) + near
+    return len(near)
 
 
 def import_again(work, steps):

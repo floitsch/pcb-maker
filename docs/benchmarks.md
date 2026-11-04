@@ -1229,6 +1229,49 @@ new fields (`started` stands in for both times). The expansion intake's
 triage runner (`benchmarks/expansion/triage.py`) admits by its own rule,
 not ordered.
 
+## The import's near entries on the schematic tier (2026-11-04)
+
+Fresh-agent trial 6 asked whether the import's `constraints.json` should
+carry the decoupling `near` entries the constraints template writes
+("measure first": the schematic tier's inputs change with it).
+`import-kicad-netlist --near-decoupling` writes them (the template's
+code on the imported board); `run.py --tier schematic --import-near`
+imports with it and adds the import's entries to the task's constraints,
+but for capacitors the task places (row field `import_near`). Both arms
+on `build/bin/pcb-maker-ux12-near` (branch small-leftovers), the tier's
+budget (a third), the committed estimates, `--jobs 1 --threads 6` each,
+the two arms side by side (two layouts at a time), placer seed 1,
+2026-11-04 21:28 to 22:24 at load 23 to 26 of 32
+(`build/ux12/sch-{off,on}-s1.log`):
+
+| Board | near entries added | KiCad unconnected off / on | constraints missed off / on | vias off / on | pass off / on |
+| --- | ---: | --- | --- | --- | --- |
+| 0xcb-static | 2 | 0 / 0 | 0 / 2 | 4 / 5 | yes / no |
+| USB_Keypad | 12 | 2 / 0 | 0 / 9 | 87 / 87 | no / no |
+| OpenFC | 11 | 0 / 1 | 0 / 0 | 160 / 147 | yes / no |
+| TelemetryOnboard | 11 | 0 / 0 | 0 / 7 | 110 / 143 | yes / no |
+| coco2 | 31 | 0 / 0 | 0 / 27 | 798 / 726 | yes / no |
+| spell_tome_bottom | 0 | 0 / 0 | 0 / 0 | 8 / 8 | yes / yes |
+| urchin main | 0 | 0 / 0 | 0 / 0 | 41 / 41 | yes / yes |
+| slab-pcb-left | 32 | 0 / 0 | 0 / 29 | 332 / 493 | yes / no |
+| homebrew_486 | 29 | 0 / 0 | 0 / 4 | 1050 / 1071 | yes / no |
+| le_chiffre 36keys | 8 | 0 / 0 | 0 / 6 | 76 / 86 | yes / no |
+| MokyaLora | 48 | 0 / 1 | 0 / 15 | 384 / 424 | yes / no |
+| bumwings R64 | 0 | 0 / 0 | 12 / 12 | 19 / 19 | no / no |
+| **sum** | 184 | **2 / 2** | 12 / 111 | 3069 / 3250 | **10 / 2** |
+
+Two boards lose a connection (OpenFC, MokyaLora 0 to 1), one gains two
+(USB_Keypad 2 to 0); the sum is the same. Every board the entries reach
+misses some of them (the placer keeps 1.5 mm to the pin as a hard
+constraint less often than its own softer pull), so the tier's passes
+fall from 10 to 2, vias rise 6 % and length 9 %. No seed pairs were run:
+the rule (no board loses, one gains beyond seed noise) fails on the
+losses alone. The flag stays off; the template's entries remain the
+agent's to take, with their misses reported. What would change this: a
+`near` the placer may relax to the designer-like 3 mm before it counts
+as missed, or entries only for the capacitors of the ICs with few
+supply pins.
+
 ## Per-board estimates for every tier (2026-10-26)
 
 run.py's memory gate reserves each board's expected peak in the ledger,

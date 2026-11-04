@@ -85,6 +85,11 @@ pub struct KiCadNetlistImport {
     /// The files of these two that existed and were kept as they are.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub kept: Vec<String>,
+    /// With `--near-decoupling`: the `near` entries of the decoupling
+    /// capacitors (`describe-kicad-board --constraints-template`'s) the new
+    /// `constraints.json` carries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub near_entries: Option<usize>,
 }
 
 /// Connectors people plug something into from outside the device, by
@@ -869,6 +874,22 @@ pub fn import_kicad_netlist_with(
     board_id: &str,
     layers: Option<usize>,
     footprints_from: Option<&Path>,
+) -> Result<KiCadNetlistImport, String> {
+    import_kicad_netlist_options(input, output, board_id, layers, footprints_from, false)
+}
+
+/// `import_kicad_netlist_with` and `--near-decoupling`: a new
+/// `constraints.json` carries the decoupling capacitors' `near` entries
+/// that `describe-kicad-board --constraints-template` writes for the
+/// imported board (the same code: each capacitor at a supply pin of the
+/// IC the schematic draws it nearest to).
+pub fn import_kicad_netlist_options(
+    input: &Path,
+    output: &Path,
+    board_id: &str,
+    layers: Option<usize>,
+    footprints_from: Option<&Path>,
+    near_decoupling: bool,
 ) -> Result<KiCadNetlistImport, String> {
     check_board_id(board_id)?;
     let designer = footprints_from
@@ -1740,6 +1761,23 @@ pub fn import_kicad_netlist_with(
             Some(report)
         }
     };
+    let mut near_entries = None;
+    if near_decoupling {
+        let template = crate::constraints_template::constraints_template(output, board_id)?;
+        let near = template["near"].as_array().cloned().unwrap_or_default();
+        near_entries = Some(near.len());
+        if !near.is_empty() {
+            starter["near"] = near.into();
+            let comments: Vec<serde_json::Value> = template["comment"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|line| line.as_str().is_some_and(|line| line.starts_with("near:")))
+                .cloned()
+                .collect();
+            starter["comment"] = comments.into();
+        }
+    }
     let constraints = write_new("constraints.json", starter)?;
     let layout = write_new(
         "layout.json",
@@ -1784,6 +1822,7 @@ pub fn import_kicad_netlist_with(
         constraints,
         layout,
         kept,
+        near_entries,
     })
 }
 
@@ -2401,6 +2440,84 @@ mod tests {
             report.missing
         );
         assert_eq!(report.missing[1], "H1 (no footprint)");
+    }
+
+    #[test]
+    fn near_decoupling_puts_the_templates_near_entries_in_the_new_constraints() {
+        let directory = std::env::temp_dir().join(format!(
+            "pcb-maker-netlist-near-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let library = directory.join("parts.pretty");
+        fs::create_dir_all(&library).unwrap();
+        let footprint = |name: &str, pads: &[(&str, f64)]| {
+            let pads: String = pads
+                .iter()
+                .map(|(pad, x)| format!(r#"(pad "{pad}" smd rect (at {x} 0) (size 0.6 0.6) (layers "F.Cu" "F.Paste" "F.Mask"))"#))
+                .collect();
+            format!(
+                r#"(footprint "{name}" (version 20260206) (generator "test") (layer "F.Cu")
+                (property "Reference" "REF**" (at 0 -1.5 0) (layer "F.SilkS") (effects (font (size 1 1) (thickness 0.15))))
+                (property "Value" "{name}" (at 0 1.5 0) (layer "F.Fab") (effects (font (size 1 1) (thickness 0.15))))
+                (fp_rect (start -2 -1) (end 2 1) (layer "F.CrtYd"))
+                (attr smd) {pads})"#
+            )
+        };
+        fs::write(
+            library.join("IC.kicad_mod"),
+            footprint("IC", &[("1", -1.0), ("2", 0.0), ("3", 1.0)]),
+        )
+        .unwrap();
+        fs::write(
+            library.join("C.kicad_mod"),
+            footprint("C", &[("1", -0.5), ("2", 0.5)]),
+        )
+        .unwrap();
+        let netlist = directory.join("test.net");
+        fs::write(
+            &netlist,
+            r#"(export (version "E")
+              (components
+                (comp (ref "U1") (value "MCU") (footprint "parts:IC") (sheetpath (names "/") (tstamps "/")) (tstamps "1111"))
+                (comp (ref "C1") (value "100n") (footprint "parts:C") (sheetpath (names "/") (tstamps "/")) (tstamps "2222")))
+              (nets
+                (net (code "1") (name "+3V3") (node (ref "U1") (pin "1") (pintype "power_in")) (node (ref "C1") (pin "1") (pintype "passive")))
+                (net (code "2") (name "GND") (node (ref "U1") (pin "2") (pintype "power_in")) (node (ref "C1") (pin "2") (pintype "passive")))
+                (net (code "3") (name "A") (node (ref "U1") (pin "3") (pintype "output")))))"#,
+        )
+        .unwrap();
+        // Off by default: the starter as before.
+        let off = directory.join("off");
+        let report =
+            import_kicad_netlist_options(&netlist, &off, "test", Some(2), None, false).unwrap();
+        assert_eq!(report.near_entries, None);
+        let constraints: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(off.join("constraints.json")).unwrap())
+                .unwrap();
+        assert!(constraints.get("near").is_none(), "{constraints}");
+        let on = directory.join("on");
+        let report =
+            import_kicad_netlist_options(&netlist, &on, "test", Some(2), None, true).unwrap();
+        let constraints: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(on.join("constraints.json")).unwrap())
+                .unwrap();
+        fs::remove_dir_all(&directory).ok();
+        assert_eq!(report.near_entries, Some(1));
+        assert_eq!(
+            constraints["near"],
+            serde_json::json!([{"part": "C1", "pin_of": "U1:1", "max_mm": 1.5}])
+        );
+        assert_eq!(constraints["move_all"], true);
+        assert!(
+            constraints["comment"][0]
+                .as_str()
+                .unwrap()
+                .starts_with("near:")
+        );
     }
 
     #[test]

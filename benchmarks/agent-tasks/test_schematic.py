@@ -76,5 +76,18 @@ class Zones(unittest.TestCase):
         self.assertTrue(zones[0].startswith('\t(zone (net "Net-(R1-2)") (layer "B.Cu")'), zones[0])
 
 
+
+class MergeNear(unittest.TestCase):
+    def test_the_imports_near_entries_join_but_for_placed_or_named_parts(self):
+        constraints = {"version": 1, "place": [{"part": "C2", "x": 1, "y": 2}],
+                       "near": [{"part": "C3", "pin_of": "U2:1", "max_mm": 2}]}
+        imported = {"near": [{"part": "C1", "pin_of": "U1:1", "max_mm": 1.5},
+                             {"part": "C2", "pin_of": "U1:2", "max_mm": 1.5},
+                             {"part": "C3", "pin_of": "U1:3", "max_mm": 1.5}]}
+        self.assertEqual(schematic.merge_near(constraints, imported), 1)
+        self.assertEqual([entry["part"] for entry in constraints["near"]], ["C3", "C1"])
+        self.assertEqual(schematic.merge_near({"version": 1}, {}), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

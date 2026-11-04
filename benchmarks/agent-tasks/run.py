@@ -2098,12 +2098,17 @@ def schematic_admitted(task, arguments, token):
     # The designer's board gives the footprints no library has, and its
     # versions of the others (import-kicad-netlist --footprints-from).
     report, steps, error = schematic.import_schematic(arguments.binary, record, work, board_id,
-                                                      len(description["copper_layers"]), designer_file)
+                                                      len(description["copper_layers"]), designer_file,
+                                                      near_decoupling=arguments.import_near)
     row["import"] = {key: value for key, value in steps.items() if key != "command"}
     if error:
         return stop("import", f"import-kicad-netlist: {error}")
     project = work / "project"
     board = project / f"{board_id}.kicad_pcb"
+    # The import's own constraints.json (its `near` entries with
+    # --import-near), before the `add` step writes another.
+    imported_constraints = json.loads((project / "constraints.json").read_text()) \
+        if (project / "constraints.json").exists() else {}
     try:
         task_constraints = json.loads((arguments.tasks.parent / task["constraints"]).read_text())
         designer_text = designer_file.read_text()
@@ -2123,6 +2128,8 @@ def schematic_admitted(task, arguments, token):
                                                                           designer_text, board.read_text())
             constraints["add"] = added
         facts["dropped"] += add_dropped
+        if arguments.import_near:
+            row["import_near"] = schematic.merge_near(constraints, imported_constraints)
         shapes = schematic.edge_cuts(designer_text)
         if not shapes:
             raise ValueError("the designer's board draws no outline of its own on Edge.Cuts")
@@ -2801,6 +2808,10 @@ def main():
     parser.add_argument("--estimates", type=Path, default=tier_estimates.DEFAULT_ESTIMATES,
                         help="the per-board estimates (default %(default)s; tier_estimates.py --refresh "
                              "writes it; scripts/nightly.sh passes its own, build/nightly/estimates.json)")
+    parser.add_argument("--import-near", action="store_true",
+                        help="schematic tier: import with --near-decoupling and add the import's near entries "
+                             "(the decoupling capacitors at their pins) to the task's constraints (row field "
+                             "import_near: how many)")
     parser.add_argument("--dry-run", action="store_true",
                         help="print the boards in the order they would start with each one's declared peak "
                              "and seconds and where they come from, and run nothing")

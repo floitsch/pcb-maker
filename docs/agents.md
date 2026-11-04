@@ -62,7 +62,16 @@ footprints sit at one point and there is no outline. Next to the board it writes
 - `constraints.json`: `"move_all": true`, `"outline": {}` (sized from the
   parts), and the plug-in connectors (USB, RF, audio and barrel jacks,
   D-sub, network, video, card edges, terminal blocks) on `"edge": "any"`,
-  facing out. Edit it: it is where what the user wants goes.
+  facing out. Edit it: it is where what the user wants goes. With
+  `--near-decoupling` (off by default; since 2026-11-04) it also holds the
+  decoupling capacitors' `near` entries that `describe-kicad-board
+  --constraints-template` writes for the imported board (each at a supply
+  pin of the IC the schematic draws it nearest to; the report's
+  `near_entries` counts them). They are hard constraints a layout can
+  miss: on the schematic tier they cost 10 of 12 passes at a third of the
+  budget (2 to 29 missed per board) for no fewer unconnected items
+  ([benchmarks.md](benchmarks.md#the-imports-near-entries-on-the-schematic-tier-2026-11-04));
+  the placer's own pull (`decoupling_near`) is softer.
 - `layout.json`, which uses it, so that
   `pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto <project-dir>/layout.json`
   lays the board out.

@@ -831,6 +831,12 @@ measured with the layout:
    at the tier's budget (a third, as the short tier), then
    **`drc-kicad-board`** on the result.
 
+`--import-near` (2026-11-04) imports with `--near-decoupling` and adds
+the import's decoupling `near` entries to the task's constraints, but
+for parts the task places (row field `import_near`, the entries added);
+measured off by default (docs/benchmarks.md, "The import's near entries
+on the schematic tier").
+
 **Pass rule:** the layout's (every constraint kept, KiCad's DRC with no
 unconnected item and no error beyond the designer's board's), and the
 import found every footprint. KiCad's schematic parity count (`parity`,

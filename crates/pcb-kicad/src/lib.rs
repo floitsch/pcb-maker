@@ -124,7 +124,8 @@ mod netlist_import;
 pub use constraints_template::constraints_template;
 pub use describe::{KiCadBoardDescription, KiCadSwapCandidate, describe_kicad_board};
 pub use netlist_import::{
-    KiCadNetlistImport, import_kicad_netlist, import_kicad_netlist_from, import_kicad_netlist_with,
+    KiCadNetlistImport, import_kicad_netlist, import_kicad_netlist_from,
+    import_kicad_netlist_options, import_kicad_netlist_with,
 };
 mod placement_ablation;
 mod placement_constraints;

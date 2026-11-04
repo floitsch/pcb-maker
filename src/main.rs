@@ -708,15 +708,17 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             Ok(())
         }
         "import-kicad-netlist" => {
-            let usage = "usage: pcb-maker import-kicad-netlist <schematic.kicad_sch|netlist.net> <out-dir> <board-id> [--layers N] [--footprints-from <board.kicad_pcb>]";
+            let usage = "usage: pcb-maker import-kicad-netlist <schematic.kicad_sch|netlist.net> <out-dir> <board-id> [--layers N] [--footprints-from <board.kicad_pcb>] [--near-decoupling]";
             let input = arguments.next().ok_or_else(|| usage.to_string())?;
             let output = arguments.next().ok_or_else(|| usage.to_string())?;
             let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
             pcb_kicad::check_board_id(&board_id)?;
             let mut layers = None;
             let mut footprints_from = None;
+            let mut near_decoupling = false;
             while let Some(argument) = arguments.next() {
                 match argument.as_str() {
+                    "--near-decoupling" => near_decoupling = true,
                     "--layers" => {
                         layers = Some(
                             arguments
@@ -734,12 +736,13 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
                     _ => return Err(usage.into()),
                 }
             }
-            let report = pcb_kicad::import_kicad_netlist_with(
+            let report = pcb_kicad::import_kicad_netlist_options(
                 Path::new(&input),
                 Path::new(&output),
                 &board_id,
                 layers,
                 footprints_from.as_deref(),
+                near_decoupling,
             )?;
             println!(
                 "{}",
