@@ -260,6 +260,57 @@ impl Router {
         snapshot
     }
 
+    /// A copy of the router to go back to with `restore_saved` (the
+    /// layout's move trials, its resume and its polish): the router but
+    /// for what is rebuilt from the rest on the way back, the search
+    /// records (`hot`: the static maps', guards' and history's values per
+    /// node), the occupancy and the tiles' claims (the sum of the nets'
+    /// stamps), and the stamp marks (clear between stamps). Unlike
+    /// `lean_snapshot` it keeps the static maps (shared, not copied: a
+    /// move's `update` builds new ones and the copy keeps the old) and the
+    /// search's counters, so that `restore_saved` leaves the router as
+    /// the whole copy (`clone`) put back would: Neotron's saved copies held
+    /// 299 MB of its 713 MB of maps in what is rebuilt.
+    pub fn saved_copy(&mut self) -> Router {
+        let hot = std::mem::take(&mut self.hot);
+        let stamp_mark = std::mem::take(&mut self.stamp_mark);
+        let occupancy = std::mem::take(&mut self.occupancy);
+        let tile_claimed = std::mem::take(&mut self.tile_claimed);
+        let copy = self.clone();
+        self.hot = hot;
+        self.stamp_mark = stamp_mark;
+        self.occupancy = occupancy;
+        self.tile_claimed = tile_claimed;
+        // (A copy registers its original's parts with the memory profile.)
+        copy.mem_update();
+        copy
+    }
+
+    /// Goes back to a `saved_copy` of this router (its lattice, nets and
+    /// rules; `update` may have changed its board and static maps since):
+    /// the nets whose stamps changed take theirs off the occupancy and
+    /// the copy's back, so that the counts and the tiles' claims are the
+    /// copy's, and the search records are built again from the copy's
+    /// maps. Everything else is the copy's, as `*self = copy` with a whole
+    /// copy.
+    pub fn restore_saved(&mut self, saved: Router) {
+        for net in 0..self.nets.len() {
+            if self.nets[net].stamped != saved.nets[net].stamped {
+                self.unstamp(net as NetId);
+                self.add_stamps(&saved.nets[net].stamped);
+            }
+        }
+        let occupancy = std::mem::take(&mut self.occupancy);
+        let tile_claimed = std::mem::take(&mut self.tile_claimed);
+        let stamp_mark = std::mem::take(&mut self.stamp_mark);
+        *self = saved;
+        self.occupancy = occupancy;
+        self.tile_claimed = tile_claimed;
+        self.stamp_mark = stamp_mark;
+        self.build_hot();
+        self.mem_update();
+    }
+
     /// Goes back to a `lean_snapshot` taken since the static maps last
     /// changed.
     pub(super) fn restore_lean(&mut self, snapshot: Router) {

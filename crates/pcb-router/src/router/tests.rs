@@ -5614,3 +5614,76 @@ fn freed_idle_search_arrays_route_as_reused_ones() {
     again.run_in_place();
     assert_eq!(again.fingerprint(), first.fingerprint());
 }
+
+/// What a router's restore must give back: its routes, the occupancy and
+/// the tiles' claims, the search records (history, static value, pour
+/// index and the pour triples) and the search's counters.
+type RestoredState = (u64, Vec<u16>, Vec<Vec<u32>>, Vec<Vec<(u32, u16, u16)>>);
+
+fn restored_state(router: &Router) -> RestoredState {
+    (
+        router.fingerprint(),
+        router.occupancy.values().collect(),
+        router.tile_claimed.clone(),
+        router
+            .hot
+            .iter()
+            .map(|records| {
+                records
+                    .iter()
+                    .map(|hot| (hot.history.to_bits(), hot.trace, hot.pour))
+                    .collect()
+            })
+            .collect(),
+    )
+}
+
+/// A `saved_copy` put back with `restore_saved` (the layout's move
+/// trials, resume and polish) leaves the router as a whole copy put back
+/// does: after a move (`update`, new static maps) and a reroute, and
+/// after a polish on the same board; and both route on alike.
+#[test]
+fn a_saved_copy_restores_as_a_whole_copy() {
+    for fanout in [false, true] {
+        let config = Config {
+            pitches: vec![0.05],
+            pin_row_cost: 5.0,
+            fanout,
+            ..Config::default()
+        };
+        let mut router = Router::new(&pin_row_board(7.0, 2.0), &config);
+        router.run_in_place();
+        // A move trial thrown away.
+        let whole = router.clone();
+        let saved = router.saved_copy();
+        assert!(saved.hot.is_empty() && saved.stamp_mark.is_empty());
+        assert_eq!(restored_state(&router), restored_state(&whole));
+        router.update(&pin_row_board(4.0, 1.8)).unwrap();
+        router.reroute(true);
+        assert_ne!(router.fingerprint(), whole.fingerprint());
+        router.restore_saved(saved);
+        assert_eq!(
+            restored_state(&router),
+            restored_state(&whole),
+            "fanout {fanout}"
+        );
+        assert_eq!(router.hot_of, whole.hot_of);
+        assert_eq!(router.hot_pours, whole.hot_pours);
+        assert_eq!(router.expansions(), whole.expansions());
+        assert!(Arc::ptr_eq(&router.statics, &whole.statics));
+        assert!(router.stamp_mark.iter().all(|word| *word == 0));
+        // A polish thrown away, on the same board.
+        let mut whole = whole;
+        let saved = router.saved_copy();
+        let before = restored_state(&router);
+        router.polish();
+        router.restore_saved(saved);
+        assert_eq!(restored_state(&router), before);
+        // Both route on alike: the same routes for the same work.
+        let ours = router.reroute(true);
+        let theirs = whole.reroute(true);
+        assert_eq!(router.fingerprint(), whole.fingerprint());
+        assert_eq!(router.expansions(), whole.expansions());
+        assert_eq!(ours.status, theirs.status);
+    }
+}

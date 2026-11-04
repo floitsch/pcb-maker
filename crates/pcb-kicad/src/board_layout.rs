@@ -2590,7 +2590,7 @@ pub fn layout_kicad_board(
                 break;
             }
             let trial_started = std::time::Instant::now();
-            let saved_router = router.clone();
+            let saved_router = router.saved_copy();
             let saved_pcb = pcb.clone();
             let saved_pose = problem.problem.poses[index];
             let saved_poses = problem.problem.poses.clone();
@@ -2621,7 +2621,7 @@ pub fn layout_kicad_board(
             let rerouted = match router.update(&trial_board) {
                 Ok(rerouted) => rerouted,
                 Err(error) if error == crate::sub_boards::OTHER_NETS => {
-                    router = saved_router;
+                    router.restore_saved(saved_router);
                     pcb = saved_pcb;
                     problem.problem.poses = saved_poses.clone();
                     continue;
@@ -2668,7 +2668,7 @@ pub fn layout_kicad_board(
                 improved = true;
                 break;
             }
-            router = saved_router;
+            router.restore_saved(saved_router);
             pcb = saved_pcb;
             problem.problem.poses = saved_poses.clone();
         }
@@ -2697,7 +2697,7 @@ pub fn layout_kicad_board(
             // not leave its state behind for the polish: the router is
             // restored with the result.
             crate::mem_profile::phase("resume");
-            let saved_router = router.clone();
+            let saved_router = router.saved_copy();
             let expansions_before = router.expansions();
             arm(&mut router, work + pool_excess);
             {
@@ -2721,7 +2721,7 @@ pub fn layout_kicad_board(
             if after <= before {
                 result = resumed;
             } else {
-                router = saved_router;
+                router.restore_saved(saved_router);
             }
         }
     }
@@ -2756,7 +2756,7 @@ pub fn layout_kicad_board(
         && stop.allows(LayoutStep::Polish)
     {
         crate::mem_profile::phase("polish");
-        let saved_router = router.clone();
+        let saved_router = router.saved_copy();
         let expansions_before = router.expansions();
         {
             let own = expansions_before as f64 / core::router::expansions_per_second();
@@ -2786,7 +2786,7 @@ pub fn layout_kicad_board(
                 "layout: the polish left {} open (before it {}): kept the unpolished routes",
                 after.0, before.0
             );
-            router = saved_router;
+            router.restore_saved(saved_router);
         }
     }
     // Reference labels off pads and other silkscreen; the board's own
