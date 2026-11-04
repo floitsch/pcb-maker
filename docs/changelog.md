@@ -11,6 +11,49 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-04 (trial 4's leftovers: the verdict's order and wording)
+
+Branch trial4-leftovers: what [the trial](reviews/2026-11-04-fresh-agent-trial-4.md)
+left open in the verdict's wording. Placement and routing unchanged
+(the reports gain fields; the boards are byte-identical).
+
+- **The order of next_actions**: this run's actions first, the input's
+  own observations last, each starting with `input: ` (fixed parts on
+  the board's texts, fixed parts on top of each other, the footprints'
+  and the input's own findings, schematic parity, the reference's
+  findings the release refuses). The rules the router does not keep and
+  missed constraints moved up beside the new findings. Re-judged from
+  the night's results (2026-11-03): the Quanta75's open connections
+  were 5th behind four marks under fixed parts, now 1st; the oro link's
+  4th, now 1st; ULK's two marks now last; poly_corne_split42_right's
+  open connections 12th, now 1st.
+- **"% full"**: the placement hint and board-placer.json's `utilization`
+  are `room.utilization` (the movable parts' bodies with spacing over the
+  usable area) and say so. Before, they counted every component (fixed
+  parts, the board's marks, a panel's frames' keepouts, with spacing)
+  over the outline's gross area, no halos: the night's ULK `utilization`
+  [0.999, 0.905] beside `room.utilization` [0.007, 0.0]; the trial's
+  "99 % full" beside 0.135.
+- **Open connections in a layout**: `reference.connected` is the
+  designer's route on the designer's placement; the action says so (with
+  KiCad's unconnected items on the designer's board when the reference
+  was checked, and the move descent's own routes) instead of asking for
+  the designer's route "on this placement". Route mode keeps the old
+  sentence.
+- **The hot spot names the parts**: the worst hot spot on an open net,
+  with the five parts nearest its point on its layer (pads on the layer,
+  bodies on its side), each with side and distance, and what moves them;
+  none within 5 mm says the copper crowds it. The Quanta75: `hot spot 2
+  (... B.Cu at 202.75, 149.46, on the open nets +1V1): the parts nearest
+  it on B.Cu are C16 (back, 0.7 mm), U1 (back, 0.8 mm), SW21 (front,
+  2.6 mm), C17 (back, 3.1 mm), C25 (back, 4.4 mm)`.
+- **Wording**: stdout's custom-rules line says a length rule's
+  constraint is "applied as a length minimum of 31.40 mm and maximum of
+  31.60 mm (...)" instead of "approximated"; starved thermals name the
+  pads and say what `solid_starved_thermals` did for them (connected
+  solid and undone by KiCad's check, kept, or not tried on this board;
+  board-router.json's new `solid_starved` records the try).
+
 ## Committed on 2026-11-04 (a held sub-board's problem cuts the frame and tab keepouts to its region)
 
 Branch held-keepouts (build/bin/pcb-maker-copies1b-a, -b). The

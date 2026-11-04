@@ -58,7 +58,8 @@ Every run writes `<out>/verdict.json`; the exit code says the same.
 | 4 | `internal_error` | Report the error with the input. |
 
 Fields to read: `reason` (one line), `next_actions` (what to do, in
-order), `kicad_unconnected_items` and `new_findings_strict` (they decide),
+order: this run's actions first; the input's own observations last, each
+starting with `input: `), `kicad_unconnected_items` and `new_findings_strict` (they decide),
 `constraints_missed`, `unplaced`, `room` (`suggested_outline_mm`: an
 outline that fits), `outputs` (absolute paths), `cut`, `free_dimension`,
 `fab_release`; `custom_rules` (each `.kicad_dru` constraint: `applied`,
