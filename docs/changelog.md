@@ -11,6 +11,39 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-04 (the crossing dive in the trouble repair, off)
+
+Branch crossing-dive; binaries `build/bin/pcb-maker-cross1-c` to `-f`
+(one code but for the trials' logging and each stub tried once) against
+x1884 and the nightly of 2026-11-04 (688b59ca); outputs in
+`build/cross1/`. docs/router.md, "Crossings decided in the repair
+(2026-11-03)", has the design and the tables.
+
+- **The crossing census** (`PCB_ROUTER_TROUBLE_WHY`, on or off): after
+  the repair, every open dense pad of a signal net still open, what
+  closes its straight ways out and whether that net's pad in the row has
+  a crossing target. The five boards' nine open items (route mode on the
+  night's placements): 3 crossing pairs, all Quanta75's RP2040 row;
+  OpenAirScope's two UDFN pads and the keyboard's VSS_PA without a
+  straight way out; jetson's two not boxed in.
+- **The crossing dive** (`crossing_dive`, `PCB_ROUTER_CROSSING_DIVE`,
+  off): where an open net's exchange is refused and a crossing pair is
+  found, one net of the pair takes a via at a fan-out via site beyond the
+  row (a stub from the pad), the other stays on the layer; both
+  assignments at each site, the best kept when the nets involved end
+  with fewer open terminals and none in conflict. Route mode on the five
+  boards: the same KiCad counts (keyboard 9 vias fewer, OpenAirScope
+  trades SD_CMD for SD_DAT3); on Quanta75 every dive closes the crossing
+  and opens a key-matrix row on the other layer. The expansion tier 558
+  to 556 unconnected, strict passes 24 to 25 (CompassTag), worse 0.
+  LAYOUT_CHANGELOG_PLACEHOLDER
+- **Identity**: switch off, the fingerprints identical to the nightly's,
+  route mode on the five boards byte for byte x1884's rows.
+- Tests: `a_crossing_pair_is_resolved_by_one_dive` (a six-pad row, two
+  crossing nets, one of them dives beyond the tips, all complete) and
+  `a_dive_that_closes_nothing_keeps_the_state` (the control: the far pad
+  walled in, the trials run, the board kept branch for branch).
+
 ## Committed on 2026-11-04 (check mode places as without it)
 
 Branch check-mode-identity (build/bin/pcb-maker-chk1-*).

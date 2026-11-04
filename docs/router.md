@@ -5262,6 +5262,141 @@ ways and the rows' crossers, a diagnostic of a board's fine-pitch rows
 on its own.
 
 
+## Crossings decided in the repair (2026-11-03)
+
+"Fan-out before negotiation" above ended with the rows' problem put as a
+topology: two nets of one fine-pitch row whose targets lie on opposite
+sides cannot both leave on the layer, one of them needs a via beyond the
+neighbours' tips, and nothing decides which. This decides it inside the
+trouble repair, after the negotiation, as a move of its own
+(router/dive.rs).
+
+**The census** (`PCB_ROUTER_TROUBLE_WHY`, with the switch on or off; no
+work charged). After the repair, for every signal net still open: each
+of its open dense pads (the fan-out's dense pads, `fanout_plan` on the
+statics, of which no branch of the net ends at the pad), its straight
+ways out (the runs along the axes), the nets whose copper closes each
+(closer to the run than both half widths and the clearance; a via by its
+radius), by a via or a track, and whether that net has a pad in the same
+row (part, layer and outward side, within 1.5 mm along it) whose target
+crosses this one's (the pads' order along the row against their
+targets'): a *crossing pair*. Open nets without an open dense pad are
+named as such. The nine open items of the five boards (route mode on the
+night's placements, the 2026-11-03 sweep's; the switch off, which routes
+as x1884; the census of the router whose rung was kept):
+
+| Board | Open item | Its pad | What closes it | Crossing pair |
+| --- | --- | --- | --- | --- |
+| Quanta75_BareRP2040 | GPIO24 (U1.36) | RP2040 QFN-56, 0.4 mm, B.Cu | both straight ways: +3V3's track (U1.33) and REB's (U1.35), both targets on the other side | yes |
+| | XIN (U1.20) | the same | one of two: +3V3's via (U1.22) | yes |
+| | Column5 (U1.14) | the same | one of three: Column6's track (U1.13) | yes |
+| OpenAirScope | CMD (U14.11), SD_CMD (U14.6) | CM1624 UDFN-16, 0.4 mm | no straight way 0.5 mm deep on the statics | no (no way, no via site) |
+| jetson-nano-baseboard | Net-(IC7-VBUS_DET) (IC7.5) | dense, one way | its one way free | no |
+| | CAM_I2C_SDA | no dense pad | - | no |
+| laptop keyboard | VSS_PA (U2.F23) | nRF aQFN inner pad | no straight way out (the control) | no |
+| | RESET | no dense pad | - | no |
+| k30-SBC | none (0 open, a strict pass) | U10 pad 8 is a pour net's pad: not in the census | - | - |
+
+So 3 of the 9 items are crossing pairs, all on Quanta75's RP2040 row,
+as the fan-out table had it (four items on the 2026-10-27 placement,
+three on this one); OpenAirScope's two pads have no straight way out on
+this placement and the keyboard's VSS_PA has none either: no dive
+reaches them (no via site), as it should not.
+
+**The move** (`Config::crossing_dive`, router setting `crossing_dive`,
+`PCB_ROUTER_CROSSING_DIVE`; off). In the repair's rounds (and its last
+pass), once an open net's exchange is refused:
+
+- *Detection* (`crossing_pairs`): an open dense pad P of the net A, a row
+  neighbour Q of a net B whose target crosses A's, and B's copper
+  closing one of P's straight ways out.
+- *Trials*: both assignments (A dives and B stays; B dives and A stays) at
+  each of the diver's via sites (the fan-out's: on the outward axis,
+  beyond the neighbours' runs, two at most), each stub once, at most 8
+  trials a trouble-maker. A trial: the diver loses its branches at the
+  row's pad (and what hangs on them alone) and takes a stub, the lattice
+  line from the pad's last terminal node on the run to the site and a
+  via there to the furthest other layer where that is legal on the
+  statics (`dive_stub`; a free end, as the escape stubs). The nets the
+  stub overlaps lose the branches it crosses; what its own conflicts
+  still name (a wider class's clearance) goes whole; more victims than
+  the exchange allows, or a pour net among them, refuses the trial.
+  Then, hard, as the exchange routes its victims (their corridors first,
+  their windows for those left worse, and for the pair any still open):
+  the net that stays on the layer, the other victims, the diver from its
+  via. Where the diver's route does not take the via (the stayer's
+  reroute freed its way on the layer), the stub goes, or its part beyond
+  the furthest node the route joins; the nets still in conflict lose
+  those branches and are routed hard once more (the exchange's
+  one-sided case).
+- *Judge*: the trial whose nets end with the fewest open terminals,
+  fewer than before and none in conflict, is kept (replayed from its
+  saved state); else the board is as it was. Its work (the plan's nodes
+  once a pass, the detection's nodes, the trials' searches) is on the
+  work clock inside the repair's budget.
+
+`PCB_ROUTER_TROUBLE_WHY` logs every dive tried: each trial, its open
+terminals before and after and the nets left open, and the one kept.
+
+**Measured** (off: x1884, the nightly of 2026-11-04 on 688b59ca for the
+tier and the fingerprints, the router of x1882 to x1889; on: the
+switch on, `build/bin/pcb-maker-cross1-c` to `-f`, one code but for the
+logging and each stub tried once; tasks v7, the reference work rate;
+KiCad unconnected / strict pass / new strict findings / vias / work s).
+
+*Route mode on the night's placements* (5 x 2, the task budgets):
+
+| Board | off (x1884) | on (cross1-c) | dives tried, kept (all rungs) |
+| --- | --- | --- | --- |
+| jetson-nano-baseboard | 2 / no / items_not_allowed 1 / 623 / 1258 | the same board | 62, 10 |
+| laptop keyboard | 2 / no / 0 / 189 / 781 | 2 / no / 0 / 180 / 831 | 7, 1 |
+| OpenAirScope | 2 (CMD, SD_CMD) / no / 0 / 268 / 576 | 2 (CMD, SD_DAT3) / no / 0 / 268 / 576 | 7, 2 |
+| Quanta75_BareRP2040 | 3 / no / starved_thermal 2 / 199 / 749 | the same board, work 837 | 42, 0 |
+| k30-SBC | 0, pass / 0 / 246 / 553 | the same board | 0, 0 |
+
+Dives are kept, but in rungs the ladder does not keep (jetson's
+continued probe saw 2 open terminals and no crossing pair; the dives
+closed connections in the other rungs, 9 to 2 on HDMI_PWR's IC6, 9 to 0
+on #SHUTDOWN_REQ's IC12, 2 to 0 on USBC_SCL's IC7), or in the kept rung
+on pairs that were not left open at the end anyway (the keyboard's nRF
+aQFN: Net-(U2-DCCH) at U2.AB2 and Col_8 at U2.L24, each 1 open to 0;
+the routes move, 9 vias fewer). On Quanta75, the one board whose items
+are crossing pairs, every trial in the kept rung closes the crossing
+and opens another net: GPIO24 diving leaves REB and REA open; REB diving
+leaves Row6 open (1 to 1); XIN diving leaves XIN itself open, +3V3
+diving Row2; Column5 diving Column4. The via beyond the RP2040's row
+lands where the key matrix's rows run on the other side (Row2, Row5,
+Row6 on F.Cu), and their reroute finds no other way: the same trade the
+exchanges refuse, one net further on. Routing the diver before the
+other victims (an experiment, x cross1-f with `_DIVER_FIRST`) gave the
+same board; looking further along the axis for sites where a via meets
+no copper yet (cross1-g) found none within 3 mm on any of the three
+pads. Both are not kept.
+
+*The expansion tier* (route mode, 46 boards, 30 s; off the nightly of
+2026-11-04, on cross1-d): unconnected 558 to 556, strict passes 24 to 25,
+new errors 1 and 1 (strict 0 and 0), vias 4256 to 4264, work 1140 to
+1134 s; better 2, same 44, worse 0. Moved: tag-designs CompassTag 1 to
+0 and a strict pass (dives kept, 3 of 32 trials), EwoudVV ducktop2 bms
+7 to 6 (1 of 4 kept); rpi_cm5_dronecarrier (vias 157 to 161), pdlc (29
+to 28) and ED052TC4-Adapter (length +0.1 mm) with the same counts and no
+dive kept: the trials' work on the work clock moves the later phases'
+budgets.
+
+LAYOUT_AND_DENSE_PLACEHOLDER
+
+*Identity*: with the switch off the fingerprints (Castor, k30-SBC,
+jetson, Sisu; route mode from v16, 1 x 4, budget scale 0.25) are
+identical to the nightly's of 2026-11-04 line by line, and every row the
+same; route mode on the five boards above gives x1884's rows byte for
+byte. With the switch on (cross1-f): Castor, k30-SBC and
+jetson identical (jetson's trials all undone, 1.8 s more work), Sisu
+29 to 28 unconnected and 373 to 371 vias (its fingerprints part after
+the repair: a dive kept).
+
+**Default: off.** DEFAULT_PLACEHOLDER
+
+
 ## Known limits / next steps
 
 - Through vias only: inner layers are routed (and take the automatic

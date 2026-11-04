@@ -205,11 +205,22 @@ ladder's judge), 5, then the rest.
    CMD for DAT3) and lost passes elsewhere (the expansion tier 558 to 510
    unconnected but strict 24 to 23). k30's U10 pad 8 is a pour net's,
    which the step leaves out; the old repair (`free_thermal_spokes`)
-   moves 2 of 10 nets there. Left: the crossing decided as a topology in
-   the negotiation (which net of a crossing pair dives, the via placed
-   there, not reserved before it). Found on the way and fixed on
+   moves 2 of 10 nets there. Found on the way and fixed on
    2026-11-03 (x1882): the layout's moves rebuild the pin-row gaps
-   (docs/router.md, "Pin-row cost").
+   (docs/router.md, "Pin-row cost"). The crossing decided in the repair
+   is built, measured and off (`crossing_dive`; docs/router.md,
+   "Crossings decided in the repair (2026-11-03)"): where an open net's
+   exchange is refused and a row neighbour whose target crosses closes
+   its pad's way out, one net of the pair takes a via at a fan-out via
+   site beyond the row and the other stays, both tried, the best kept.
+   The census (`PCB_ROUTER_TROUBLE_WHY`) puts 3 of the five boards' 9
+   open items down to crossing pairs, all Quanta75's RP2040 row; there
+   every dive closes the crossing and opens a third net (the via lands
+   on the key matrix's rows on the other layer: "1 open to 1"), so the
+   trade moved one net further on. Left: the via's landing chosen with
+   the other layer's routes (a site priced by what it displaces there,
+   or the displaced net's own dive), and OpenAirScope's UDFN and the
+   keyboard's aQFN pads, which have no straight way out at all.
 3. **The ladder's judge.** On 21 boards with every rung continued to its
    final (2026-10-13), today's judge (unfinished nets after the probe)
    picks the best rung 16 times; no other count does better, and a class
