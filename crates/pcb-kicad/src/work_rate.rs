@@ -563,6 +563,7 @@ fn canned_placement() -> placer::Problem {
         },
         far_side: Vec::new(),
         far_copper: Vec::new(),
+        far_open: Default::default(),
         far_courtyard: Vec::new(),
         hollow: Vec::new(),
         tight: None,

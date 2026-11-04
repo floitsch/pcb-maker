@@ -431,6 +431,21 @@ pub struct KiCadBoardPlacerConfig {
     /// (docs/placer.md, "Length maxima and the far side of vias in pads
     /// (2026-10-28)"). Nothing changes on a board without such a footprint.
     pub via_in_pad_far_side: bool,
+    /// Room around grid arrays (off): around each grid array the router's
+    /// fan-out detects (BGA, LGA, aQFN: balls in four or more rows and
+    /// columns at 1.27 mm or finer) with balls of a net deeper than the
+    /// tracks between the balls serve (an array whose every ball leaves on
+    /// the surface keeps no room), other
+    /// parts keep off a band on the array's side for the outer rings'
+    /// surface escapes (the rings that leave on the surface, a track and
+    /// a clearance each, then the class via and its clearances), and off
+    /// the far side under the array and a band beyond it for the via
+    /// ring (a track and a clearance per ring deeper than the surface
+    /// rings), where only the array's own decoupling capacitors may sit,
+    /// outside the fan-out's via sites. Fixed parts stay where they are
+    /// (reported). Nothing changes on a board without a grid array
+    /// (docs/placer.md, "Room around grid arrays (2026-11-04)").
+    pub bga_room: bool,
     /// Length maxima (on): for each net with a `length` rule and a
     /// maximum (the project's `.kicad_dru`, as the router reads it), every
     /// two of its pins on different parts are kept within 0.8 times the
@@ -519,6 +534,7 @@ impl Default for KiCadBoardPlacerConfig {
             pair_rows: false,
             guidance_router: None,
             via_in_pad_far_side: true,
+            bga_room: false,
             length_maxima: true,
             router_rules: None,
         }

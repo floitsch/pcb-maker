@@ -55,6 +55,9 @@ pub(crate) struct LoweredPlacement {
     pub attached_report: Vec<String>,
     /// The pair rows (`pair_rows`): each one's first part and the other.
     pub pair_rows: Vec<(usize, usize)>,
+    /// The room kept around grid arrays (`bga_room`), said: per array its
+    /// bands and the parts they let in or leave alone.
+    pub array_rooms: Vec<String>,
 }
 
 /// `*` matches any run of characters, `?` one character, and a backslash
@@ -221,6 +224,7 @@ fn rule_area_obstacle(
         angle_options: vec![0.0],
         far_side: Vec::new(),
         far_copper: Vec::new(),
+        far_open: Default::default(),
         far_courtyard: Vec::new(),
         hollow: Vec::new(),
         tight: None,
@@ -1180,6 +1184,7 @@ pub(crate) fn lower_placement(
                 Vec::new()
             },
             far_copper,
+            far_open: Default::default(),
             far_courtyard: if artwork {
                 Vec::new()
             } else {
@@ -1328,6 +1333,7 @@ pub(crate) fn lower_placement(
             angle_options: vec![0.0],
             far_side: Vec::new(),
             far_copper: Vec::new(),
+            far_open: Default::default(),
             far_courtyard: Vec::new(),
             hollow: Vec::new(),
             tight: None,
@@ -1415,6 +1421,7 @@ pub(crate) fn lower_placement(
             angle_options: vec![0.0],
             far_side: Vec::new(),
             far_copper: Vec::new(),
+            far_open: Default::default(),
             far_courtyard: Vec::new(),
             hollow: Vec::new(),
             tight: None,
@@ -1831,10 +1838,14 @@ pub(crate) fn lower_placement(
             problem.constraints.relations.extend(automatic);
         }
     }
+    let mut array_rooms = Vec::new();
     if let Some(rules) = &config.router_rules {
         if config.via_in_pad_far_side {
             far_side_of_vias_in_pads(pcb, rules, config, &pad_offsets, &mut problem);
             far_side_of_fanouts(pcb, rules, config, &pad_offsets, &mut problem);
+        }
+        if config.bga_room {
+            array_rooms = room_around_arrays(pcb, rules, &pad_offsets, &references, &mut problem);
         }
         if config.length_maxima {
             length_maxima(rules, config, &net_ids, footprint_count, &mut problem);
@@ -1876,6 +1887,7 @@ pub(crate) fn lower_placement(
         poured,
         attached_marks: attached,
         attached_report,
+        array_rooms,
         pair_rows: pair_row_parts,
     })
 }
@@ -1969,6 +1981,166 @@ fn far_side_of_fanouts(
             }
         }
     }
+}
+
+/// The room an array's outer rings' surface escapes take beyond its ball
+/// field on its own side (`bga_room`): the surface rings' tracks, a track
+/// and a clearance each, turning along the edge, then a row of the class's
+/// vias with a clearance on both sides (Glasgow's U30: 2 x 0.3 + 0.6 + 0.3
+/// = 1.5 mm; its designer keeps the nearest movable part's pads 1.28 mm
+/// from the field and nine in ten balls' channels 1.66 mm free).
+pub(super) fn surface_band(room: &crate::board_router::ArrayRoom) -> f64 {
+    room.surface_rings as f64 * (room.track + room.clearance) + room.via + 2.0 * room.clearance
+}
+
+/// The room beyond the ball field on the far side the via ring's tracks
+/// take (`bga_room`): a track and a clearance per ring deeper than the
+/// surface rings that holds a ball of a net (Glasgow's U30: rings 2 to 5,
+/// 4 x 0.3 = 1.2 mm); none where every ball leaves on the surface, and
+/// then the array keeps no room at all.
+pub(super) fn far_band(room: &crate::board_router::ArrayRoom) -> f64 {
+    (room.deepest + 1).saturating_sub(room.surface_rings) as f64 * (room.track + room.clearance)
+}
+
+/// The box `[min x, min y, max x, max y]` of `inner` and `outer`.
+fn union_box(inner: [f64; 4], outer: [f64; 4]) -> [f64; 4] {
+    [
+        inner[0].min(outer[0]),
+        inner[1].min(outer[1]),
+        inner[2].max(outer[2]),
+        inner[3].max(outer[3]),
+    ]
+}
+
+/// Room around grid arrays (`bga_room`; docs/placer.md, "Room around grid
+/// arrays (2026-11-04)"). Per array the router's detection finds
+/// (`array_rooms`, the fan-out's `board_arrays`), in its own frame from
+/// its ball field (the box of the ball centres grown by half a pitch):
+///
+/// - its own side: its body (and its tight body) grows to the field and
+///   the surface band (`surface_band`), so no part's body comes nearer at
+///   any level; the edge inset grows by as much, so the array's copper
+///   keeps the edge margin it kept;
+/// - the far side: the field and the far band (`far_band`) join its
+///   `far_side` boxes, letting in only the array's own decoupling
+///   capacitors (`Component::far_open`), which keep off the via sites
+///   (the fan-out's and the vias in pads, the boxes before).
+///
+/// An array whose every ball of a net leaves on the surface keeps no room.
+/// Fixed parts are not moved: a free array keeps its room from them as
+/// from any part, and a fixed array's report names the fixed parts in its
+/// room. Returns the report lines.
+fn room_around_arrays(
+    pcb: &Expr,
+    rules: &KiCadBoardRouterConfig,
+    pad_offsets: &[BTreeMap<String, [f64; 2]>],
+    references: &[String],
+    problem: &mut core::Problem,
+) -> Vec<String> {
+    let mut report = Vec::new();
+    for room in crate::board_router::array_rooms(pcb, rules) {
+        let Some(offsets) = pad_offsets.get(room.footprint) else {
+            continue;
+        };
+        let balls: Vec<[f64; 2]> = room
+            .balls
+            .iter()
+            .filter_map(|ball| offsets.get(ball).copied())
+            .collect();
+        let Some(centres) = balls
+            .iter()
+            .map(|at| [at[0], at[1], at[0], at[1]])
+            .reduce(union_box)
+        else {
+            continue;
+        };
+        let half = room.pitch / 2.0;
+        let field = [
+            centres[0] - half,
+            centres[1] - half,
+            centres[2] + half,
+            centres[3] + half,
+        ];
+        let grow = |b: [f64; 4], by: f64| [b[0] - by, b[1] - by, b[2] + by, b[3] + by];
+        let (top, far) = (surface_band(&room), far_band(&room));
+        // An array whose every ball of a net leaves on the surface (vd-rd's
+        // DDR3 BGA-96: each ball faces the outside or the empty middle)
+        // has no via ring crowding its outer rings' escapes: no room (the
+        // band cost vd-rd 3 connections and 2 findings, measured).
+        if far <= 0.0 {
+            continue;
+        }
+        let component = &mut problem.components[room.footprint];
+        let body = [
+            component.body_center[0] - component.body_size[0] / 2.0,
+            component.body_center[1] - component.body_size[1] / 2.0,
+            component.body_center[0] + component.body_size[0] / 2.0,
+            component.body_center[1] + component.body_size[1] / 2.0,
+        ];
+        let grown = union_box(body, grow(field, top));
+        let least = [
+            body[0] - grown[0],
+            body[1] - grown[1],
+            grown[2] - body[2],
+            grown[3] - body[3],
+        ]
+        .into_iter()
+        .fold(f64::INFINITY, f64::min);
+        component.body_center = [(grown[0] + grown[2]) / 2.0, (grown[1] + grown[3]) / 2.0];
+        component.body_size = [grown[2] - grown[0], grown[3] - grown[1]];
+        component.edge_inset += least.max(0.0);
+        if let Some(tight) = component.tight {
+            component.tight = Some(union_box(tight, grow(field, top)));
+        }
+        let from = component.far_side.len();
+        component.far_side.push(grow(field, far));
+        component.far_open = core::FarOpen {
+            from,
+            parts: room.decoupling.clone(),
+        };
+        let letting: Vec<String> = room
+            .decoupling
+            .iter()
+            .map(|part| references[*part].clone())
+            .collect();
+        let mut line = format!(
+            "{}: pitch {:.3} mm, surface rings {}, deepest ring {}; own side {:.3} mm, far side {:.3} mm beyond the field",
+            references[room.footprint], room.pitch, room.surface_rings, room.deepest, top, far,
+        );
+        if !letting.is_empty() {
+            line += &format!("; under it only its decoupling {}", letting.join(" "));
+        }
+        let fixed = fixed_in_room(problem, room.footprint, references);
+        if !fixed.is_empty() {
+            line += &format!("; fixed parts left in its room: {}", fixed.join(" "));
+        }
+        report.push(line);
+    }
+    report
+}
+
+/// For a fixed array (`room_around_arrays`), the fixed parts whose bodies
+/// meet its grown body on its side or its far-side room, at their poses:
+/// the room cannot move them.
+fn fixed_in_room(problem: &core::Problem, array: usize, references: &[String]) -> Vec<String> {
+    if !problem.components[array].fixed {
+        return Vec::new();
+    }
+    // The legality test leaves two fixed parts alone: ask it of the array
+    // as if it moved, where it lies on the board.
+    let mut probe = problem.clone();
+    probe.components[array].fixed = false;
+    let at = probe.poses[array];
+    if !core::legal::is_legal(&probe, &probe.poses, array, at, std::iter::empty()) {
+        return Vec::new();
+    }
+    (0..problem.components.len())
+        .filter(|other| *other != array && problem.components[*other].fixed)
+        .filter(|other| {
+            !core::legal::is_legal(&probe, &probe.poses, array, at, [*other].into_iter())
+        })
+        .map(|other| references[other].clone())
+        .collect()
 }
 
 /// The share of a net's length maximum its pins are kept within before

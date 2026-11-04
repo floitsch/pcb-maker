@@ -766,28 +766,31 @@ pub(crate) struct FarSideArray {
     pub inner: Vec<String>,
 }
 
-/// The balls of the board's grid arrays that take a dog-bone, judged by
-/// the footprint alone (its balls and their nets' rules; not the board's
-/// other parts, which the placer moves), with the largest via size whose
-/// copper and drill keep their clearances from the four balls around a
-/// diagonal gap: each via goes through the board, so the far side under
-/// it is no place for another part's pads (the placer's
-/// `via_in_pad_far_side`). Empty with the fan-out off.
-pub(crate) fn far_side_balls(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Vec<FarSideArray> {
-    if !bga_fanout_on(config) {
-        return Vec::new();
-    }
-    let Ok((footprints, pads)) = via_in_pad::board_pads(pcb, config) else {
-        return Vec::new();
-    };
-    let (predefined, minimums) = config
-        .project_rules
-        .as_ref()
-        .map_or((Vec::new(), [0.0; 3]), |report| {
-            (report.via_sizes.clone(), report.via_minimums)
-        });
-    let mut balls = Vec::new();
-    for footprint in 0..footprints.len() {
+/// A grid array as its footprint alone shows it (`board_arrays`): its
+/// balls (the SMD pads of one copper layer but the exposed pad), the grid
+/// in the router's frame, the narrowest class of its balls' nets, the
+/// balls' half width from their centres and the tracks of that class that
+/// pass between two adjacent balls.
+struct BoardArray<'a> {
+    footprint: usize,
+    own: Vec<&'a via_in_pad::BoardPad>,
+    grid: Grid,
+    narrow: &'a KiCadConnectionRoutingRules,
+    half: f64,
+    tracks: usize,
+}
+
+/// The board's grid arrays as the plan finds them (`grid_of` on each
+/// footprint's balls), judged by the footprint alone: one detection for
+/// the router's plan's placer side (`far_side_balls`) and the placer's
+/// room around the array (`array_rooms`).
+fn board_arrays<'a>(
+    footprints: usize,
+    pads: &'a [via_in_pad::BoardPad],
+    config: &'a KiCadBoardRouterConfig,
+) -> Vec<BoardArray<'a>> {
+    let mut arrays = Vec::new();
+    for footprint in 0..footprints {
         let own: Vec<&via_in_pad::BoardPad> = pads
             .iter()
             .filter(|pad| pad.footprint == footprint && pad.smd && pad.layers.count_ones() == 1)
@@ -823,7 +826,7 @@ pub(crate) fn far_side_balls(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Vec
             .iter()
             .filter_map(|pad| via_in_pad::rules_of(config, pad.net.as_deref()))
             .collect();
-        let Some(narrow) = rules.iter().min_by(|a, b| {
+        let Some(narrow) = rules.into_iter().min_by(|a, b| {
             (a.trace_width_mm + a.clearance_mm).total_cmp(&(b.trace_width_mm + b.clearance_mm))
         }) else {
             continue;
@@ -847,6 +850,48 @@ pub(crate) fn far_side_balls(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Vec
             + 1.0e-6)
             .floor()
             .max(0.0) as usize;
+        arrays.push(BoardArray {
+            footprint,
+            own,
+            grid,
+            narrow,
+            half,
+            tracks,
+        });
+    }
+    arrays
+}
+
+/// The balls of the board's grid arrays that take a dog-bone, judged by
+/// the footprint alone (its balls and their nets' rules; not the board's
+/// other parts, which the placer moves), with the largest via size whose
+/// copper and drill keep their clearances from the four balls around a
+/// diagonal gap: each via goes through the board, so the far side under
+/// it is no place for another part's pads (the placer's
+/// `via_in_pad_far_side`). Empty with the fan-out off.
+pub(crate) fn far_side_balls(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Vec<FarSideArray> {
+    if !bga_fanout_on(config) {
+        return Vec::new();
+    }
+    let Ok((footprints, pads)) = via_in_pad::board_pads(pcb, config) else {
+        return Vec::new();
+    };
+    let (predefined, minimums) = config
+        .project_rules
+        .as_ref()
+        .map_or((Vec::new(), [0.0; 3]), |report| {
+            (report.via_sizes.clone(), report.via_minimums)
+        });
+    let mut balls = Vec::new();
+    for array in board_arrays(footprints.len(), &pads, config) {
+        let BoardArray {
+            footprint,
+            own,
+            grid,
+            narrow,
+            half,
+            tracks,
+        } = array;
         // The room from a diagonal gap's centre to the balls around it.
         let room = grid.pitch / std::f64::consts::SQRT_2 - half;
         let mut sizes = predefined.clone();
@@ -893,6 +938,92 @@ pub(crate) fn far_side_balls(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Vec
         }
     }
     balls
+}
+
+/// A grid array's escapes as the placer keeps room for them
+/// (`array_rooms`; the placer's `bga_room`, docs/placer.md, "Room around
+/// grid arrays (2026-11-04)").
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ArrayRoom {
+    /// Index of the footprint in the board's order.
+    pub footprint: usize,
+    pub pitch: f64,
+    /// The array's balls (pad numbers).
+    pub balls: Vec<String>,
+    /// The routable nets on its balls.
+    pub nets: BTreeSet<String>,
+    /// Rings 0 to this less one leave on the surface (the tracks of the
+    /// narrowest class between two adjacent balls, plus one).
+    pub surface_rings: usize,
+    /// The deepest ring holding a ball of a routable net.
+    pub deepest: usize,
+    /// The narrowest class of the balls' nets: track, clearance, via
+    /// diameter.
+    pub track: f64,
+    pub clearance: f64,
+    pub via: f64,
+    /// The array's own decoupling capacitors (footprint indices, sorted):
+    /// a `C` part of two pads between a ground net and a net of a ball.
+    pub decoupling: Vec<usize>,
+}
+
+/// The board's grid arrays (`board_arrays`, the plan's detection) with the
+/// numbers the placer sizes their room from. Independent of the fan-out
+/// switch: the outer rings leave on the surface either way.
+pub(crate) fn array_rooms(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Vec<ArrayRoom> {
+    let Ok((footprints, pads)) = via_in_pad::board_pads(pcb, config) else {
+        return Vec::new();
+    };
+    let capacitor = |reference: &str| {
+        reference
+            .strip_prefix('C')
+            .is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()))
+    };
+    board_arrays(footprints.len(), &pads, config)
+        .into_iter()
+        .filter_map(|array| {
+            let nets: BTreeSet<String> =
+                array.own.iter().filter_map(|pad| pad.net.clone()).collect();
+            let decoupling = (0..footprints.len())
+                .filter(|footprint| capacitor(&footprints[*footprint].0))
+                .filter(|footprint| {
+                    let own: Vec<Option<&str>> = pads
+                        .iter()
+                        .filter(|pad| pad.footprint == *footprint)
+                        .map(|pad| pad.net.as_deref())
+                        .collect();
+                    let [Some(a), Some(b)] = own[..] else {
+                        return false;
+                    };
+                    let supplies = |rail: &str, return_: &str| {
+                        crate::quality::ground(return_)
+                            && !crate::quality::ground(rail)
+                            && nets.contains(rail)
+                    };
+                    supplies(a, b) || supplies(b, a)
+                })
+                .collect();
+            let deepest = array
+                .own
+                .iter()
+                .enumerate()
+                .filter(|(_, pad)| pad.net.is_some())
+                .map(|(position, _)| array.grid.rings[position])
+                .max()?;
+            Some(ArrayRoom {
+                footprint: array.footprint,
+                pitch: array.grid.pitch,
+                balls: array.own.iter().map(|pad| pad.number.clone()).collect(),
+                nets,
+                surface_rings: array.tracks + 1,
+                deepest,
+                track: array.narrow.trace_width_mm,
+                clearance: array.narrow.clearance_mm,
+                via: array.narrow.via_size_mm,
+                decoupling,
+            })
+        })
+        .collect()
 }
 
 /// Prints each distinct plan once a process (`PCB_ROUTER_BGA_FANOUT_WHY`).
@@ -1335,6 +1466,11 @@ mod tests {
     /// the east; tracks 0.15, clearance 0.15, the class's via 0.6/0.3 and
     /// the project's 0.4/0.2.
     fn bga_board() -> (Expr, KiCadBoardRouterConfig) {
+        bga_board_with("")
+    }
+
+    /// `bga_board` with more footprints (`extra`).
+    fn bga_board_with(extra: &str) -> (Expr, KiCadBoardRouterConfig) {
         let mut pads = String::new();
         let mut ends = String::new();
         for row in 0..6 {
@@ -1356,7 +1492,8 @@ mod tests {
             r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
                  (gr_rect (start 0 0) (end 30 20) (layer "Edge.Cuts"))
                  (footprint "BGA-36" (at 8 10) (property "Reference" "U1") {pads})
-                 (footprint "J" (at 20 1) (property "Reference" "J1") {ends}))"#
+                 (footprint "J" (at 20 1) (property "Reference" "J1") {ends})
+                 {extra})"#
         ))
         .unwrap();
         let config = KiCadBoardRouterConfig {
@@ -1477,5 +1614,47 @@ mod tests {
         let count = |name: &str| nets.iter().find(|n| n.connection == name).unwrap().vias;
         assert_eq!(count("NC3"), 1);
         assert_eq!(count("NC4"), 0);
+    }
+
+    #[test]
+    fn array_rooms_find_the_plans_grids_their_rings_class_and_own_decoupling() {
+        // C1 decouples a ball's net (NC3) to ground; C2 joins two balls'
+        // nets, R1 a ball's net to ground, C3 ground to a net off the
+        // array: none of those three.
+        let part = |kind: &str, reference: &str, a: &str, b: &str, x: f64| {
+            format!(
+                r#"(footprint "{kind}" (layer "B.Cu") (at {x} 15) (property "Reference" "{reference}")
+                     (pad "1" smd rect (at -0.5 0) (size 0.5 0.5) (layers "B.Cu") (net "{a}"))
+                     (pad "2" smd rect (at 0.5 0) (size 0.5 0.5) (layers "B.Cu") (net "{b}")))"#
+            )
+        };
+        let extra = [
+            part("C_0402", "C1", "NC3", "GND", 2.0),
+            part("C_0402", "C2", "NA1", "NA2", 4.0),
+            part("R_0402", "R1", "NC4", "GND", 6.0),
+            part("C_0402", "C3", "VX", "GND", 8.0),
+            part("R_0402", "R2", "VX", "Y", 10.0),
+        ]
+        .concat();
+        let (pcb, config) = bga_board_with(&extra);
+        let rooms = array_rooms(&pcb, &config);
+        assert_eq!(rooms.len(), 1, "{rooms:?}");
+        let room = &rooms[0];
+        assert_eq!(room.footprint, 0);
+        assert!((room.pitch - 0.8).abs() < 1.0e-9);
+        assert_eq!(room.balls.len(), 36);
+        // One track between two balls: rings 0 and 1 on the surface; the
+        // middle 2 x 2 is ring 2.
+        assert_eq!((room.surface_rings, room.deepest), (2, 2));
+        assert_eq!((room.track, room.clearance, room.via), (0.15, 0.15, 0.6));
+        assert_eq!(room.decoupling, [2]);
+        assert!(room.nets.contains("NC3") && !room.nets.contains("GND"));
+        // The detection is the plan's, the fan-out switch aside.
+        let off = KiCadBoardRouterConfig {
+            bga_fanout: Some(false),
+            ..config.clone()
+        };
+        assert_eq!(array_rooms(&pcb, &off), rooms);
+        assert_eq!(far_side_balls(&pcb, &config)[0].balls, room.balls);
     }
 }

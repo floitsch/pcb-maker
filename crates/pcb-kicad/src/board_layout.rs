@@ -1301,6 +1301,7 @@ pub fn layout_placer_config(
             || crate::board_router::bga_fanout_on(router_config)))
         || (placer_config.length_maxima
             && crate::board_router::length_bounded_nets(router_config).is_some())
+        || placer_config.bga_room
     {
         placer_config.router_rules = Some(std::sync::Arc::new(router_config.clone()));
     }

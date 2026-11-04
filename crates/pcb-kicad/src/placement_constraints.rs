@@ -2133,6 +2133,8 @@ fn apply_rows(
             f64::NEG_INFINITY,
         ];
         let mut carried = problem.components[leader].clone();
+        // The members' far-side boxes join the row's: none lets a part in.
+        carried.far_open = Default::default();
         // Where a member blocks with shaped boxes (`hollow`), the row
         // blocks with every member's: its own boxes, or its whole body.
         let shaped = members
@@ -3128,6 +3130,7 @@ mod tests {
             angle_options: vec![0.0, 90.0, 180.0, 270.0],
             far_side: Vec::new(),
             far_copper: Vec::new(),
+            far_open: Default::default(),
             far_courtyard: Vec::new(),
             hollow: Vec::new(),
             tight: None,

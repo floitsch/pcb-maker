@@ -2468,7 +2468,7 @@ fn far_side_overlap_turned(
             return false;
         }
         let other = &problem.components[body];
-        let (far_count, copper_count) = (component.far_side.len(), component.far_copper.len());
+        let (far_count, copper_count) = (component.far_count_for(body), component.far_copper.len());
         *work += list_work(far_count) + list_work(copper_count);
         let mut turned = facts.turned.borrow_mut();
         turned.fill(problem, holes, pose_holes, Kind::FarSide);
@@ -2488,7 +2488,7 @@ fn far_side_overlap_turned(
             None => turned.get(body, Kind::Pads),
         };
         let (far, copper) = (
-            turned.get(holes, Kind::FarSide),
+            &turned.get(holes, Kind::FarSide)[..far_count],
             turned.get(holes, Kind::FarCopper),
         );
         let pad_count = pads.len();
@@ -2747,9 +2747,10 @@ fn far_side_overlap(
             return false;
         }
         let other = &problem.components[body];
-        let far = turned(&component.far_side, pose_holes, 0.0);
+        let far_count = component.far_count_for(body);
+        let far = turned(&component.far_side[..far_count], pose_holes, 0.0);
         let copper = turned(&component.far_copper, pose_holes, 0.0);
-        let (far_count, copper_count) = (component.far_side.len(), component.far_copper.len());
+        let copper_count = component.far_copper.len();
         *work += list_work(far_count) + list_work(copper_count);
         // The other part's copper: its pads, or all of it where it has
         // none (artwork, a copper graphic, a rule area).
@@ -4723,6 +4724,7 @@ pub(crate) mod tests {
             angle_options: vec![0.0],
             far_side: Vec::new(),
             far_copper: Vec::new(),
+            far_open: Default::default(),
             far_courtyard: Vec::new(),
             hollow: Vec::new(),
             tight: None,
@@ -4989,6 +4991,14 @@ pub(crate) mod tests {
                     part.fixed = next() < 0.2;
                     if next() < 0.3 {
                         part.far_side = vec![[-0.5, -0.5, 0.5, 0.5]];
+                        if number % 3 == 0 {
+                            // A room under it that lets some parts in.
+                            part.far_side.push([-2.0, -1.5, 2.0, 1.5]);
+                            part.far_open = crate::problem::FarOpen {
+                                from: 1,
+                                parts: (0..parts).filter(|other| other % 2 == 1).collect(),
+                            };
+                        }
                     }
                     if next() < 0.2 {
                         part.far_copper = vec![[-3.0, -0.2, -2.0, 0.2]];
@@ -5077,6 +5087,14 @@ pub(crate) mod tests {
                 }
                 if next() < 0.3 {
                     part.far_side = vec![[-0.5, -0.5, 0.5, 0.5]];
+                    if number % 3 == 0 {
+                        // A room under it that lets some parts in.
+                        part.far_side.push([-2.0, -1.5, 2.0, 1.5]);
+                        part.far_open = crate::problem::FarOpen {
+                            from: 1,
+                            parts: (0..parts).filter(|other| other % 2 == 1).collect(),
+                        };
+                    }
                 }
                 if next() < 0.2 {
                     part.far_copper = vec![[-3.0, -0.2, -2.0, 0.2]];
@@ -5803,6 +5821,64 @@ pub(crate) mod tests {
         assert!(!is_legal(&problem, &poses, 1, poses[1], 0..2));
         problem.components[1].pins = vec![pin(-0.7, 1), pin(0.7, 3)];
         assert!(is_legal(&problem, &poses, 1, poses[1], 0..2));
+    }
+
+    #[test]
+    fn a_far_side_room_lets_in_only_its_parts_and_they_keep_off_the_boxes_before_it() {
+        // Part 0 (front) keeps a via box at its centre and a room of 8 x 6
+        // mm beyond it on the back; the room lets part 1 in, not part 2.
+        let (mut problem, mut poses) = pair(0.0, 0.0);
+        problem.components.push(resistor(0.0));
+        poses.push(poses[1]);
+        problem.components[0].far_side = vec![[-0.3, -0.3, 0.3, 0.3], [-4.0, -3.0, 4.0, 3.0]];
+        problem.components[0].far_open = crate::problem::FarOpen {
+            from: 1,
+            parts: vec![1],
+        };
+        for part in [1, 2] {
+            problem.components[part].side = Side::Back;
+        }
+        problem.poses = poses.clone();
+        assert_eq!(problem.components[0].far_count_for(1), 1);
+        assert_eq!(problem.components[0].far_count_for(2), 2);
+        // In the room, clear of the via: part 1 legal, part 2 not.
+        let at = Pose {
+            position: [12.0, 11.5],
+            angle: 0.0,
+        };
+        let others = |part: usize| (0..1).chain(std::iter::once(3 - part));
+        let mut far = poses.clone();
+        far[2].position = [30.0, 30.0];
+        far[1].position = [30.0, 25.0];
+        assert!(is_legal(&problem, &far, 1, at, others(1)));
+        assert!(!is_legal(&problem, &far, 2, at, others(2)));
+        // Over the via: neither.
+        let over = Pose {
+            position: [10.5, 10.0],
+            angle: 0.0,
+        };
+        assert!(!is_legal(&problem, &far, 1, over, others(1)));
+        assert!(!is_legal(&problem, &far, 2, over, others(2)));
+        // Beyond the room: both.
+        let beyond = Pose {
+            position: [16.0, 10.0],
+            angle: 0.0,
+        };
+        assert!(is_legal(&problem, &far, 1, beyond, others(1)));
+        assert!(is_legal(&problem, &far, 2, beyond, others(2)));
+        // The turned boxes' test answers alike.
+        let facts = Facts::new(&problem);
+        let mut work = 0;
+        for (part, pose, legal) in [(1, at, false), (2, at, true), (1, over, true)] {
+            assert_eq!(
+                far_side_overlap_turned(&problem, &facts, 0, far[0], part, pose, &mut work),
+                legal
+            );
+            assert_eq!(
+                far_side_overlap(&problem, 0, far[0], part, pose, &mut work),
+                legal
+            );
+        }
     }
 
     #[test]

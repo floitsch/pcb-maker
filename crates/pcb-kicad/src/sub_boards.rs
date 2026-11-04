@@ -2700,6 +2700,7 @@ pub(crate) fn keep_off_frames(
             angle_options: vec![0.0],
             far_side: Vec::new(),
             far_copper: Vec::new(),
+            far_open: Default::default(),
             far_courtyard: Vec::new(),
             hollow: Vec::new(),
             tight: None,

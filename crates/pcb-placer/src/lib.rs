@@ -21,7 +21,7 @@ pub mod room;
 pub mod view;
 
 pub use global::{Frame, GlobalConfig};
-pub use problem::{Component, Pin, Point, Pose, Problem, Side};
+pub use problem::{Component, FarOpen, Pin, Point, Pose, Problem, Side};
 
 #[derive(Clone, Debug, Default)]
 pub struct Config {

@@ -2412,3 +2412,214 @@ mod net_weights {
         assert!(default.1 != flat.1, "flat placed as steep");
     }
 }
+
+/// A 6 x 6 BGA at 0.8 mm (U1, locked, its courtyard 5.6 mm square) whose
+/// balls join a connector row (J1, locked), A1 on GND and C3 on VDD, and
+/// `parts` (KiCad footprints) besides.
+fn array_room_board(parts: &str) -> Expr {
+    array_room_board_with(parts, true)
+}
+
+/// `array_room_board`, the middle 2 x 2 balls (ring 2) on nets of their
+/// own (no way out needed) unless `inner_nets`.
+fn array_room_board_with(parts: &str, inner_nets: bool) -> Expr {
+    let (mut balls, mut ends) = (String::new(), String::new());
+    for row in 0..6 {
+        for column in 0..6 {
+            let number = format!("{}{}", (b'A' + row as u8) as char, column + 1);
+            let inner = (2..4).contains(&row) && (2..4).contains(&column);
+            let net = match number.as_str() {
+                "A1" => "GND".to_string(),
+                _ if inner && !inner_nets => format!("unconnected-(U1-{number})"),
+                "C3" => "VDD".to_string(),
+                other => format!("N{other}"),
+            };
+            balls.push_str(&format!(
+                r#"(pad "{number}" smd circle (at {} {}) (size 0.35 0.35) (layers "F.Cu" "F.Mask") (net "{net}"))"#,
+                (column as f64 - 2.5) * 0.8,
+                (row as f64 - 2.5) * 0.8
+            ));
+            let end = if inner && !inner_nets {
+                format!("E{number}")
+            } else {
+                net.clone()
+            };
+            ends.push_str(&format!(
+                r#"(pad "{number}" smd rect (at {} 0) (size 0.4 0.4) (layers "F.Cu") (net "{end}"))"#,
+                (row * 6 + column) as f64 * 0.5
+            ));
+        }
+    }
+    parse(&format!(
+        r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+             (gr_rect (start 0 0) (end 60 30) (layer "Edge.Cuts"))
+             (footprint "Package_BGA:BGA-36" (layer "F.Cu") (locked) (at 10 10)
+                 (property "Reference" "U1")
+                 (fp_rect (start -2.8 -2.8) (end 2.8 2.8) (layer "F.CrtYd"))
+                 {balls})
+             (footprint "J" (layer "F.Cu") (locked) (at 30 27) (property "Reference" "J1")
+                 (fp_rect (start -0.5 -0.5) (end 18 0.5) (layer "F.CrtYd"))
+                 {ends})
+             {parts})"#
+    ))
+    .unwrap()
+}
+
+/// A two-pad 0402 on `layer` between nets `a` and `b`.
+fn two_pad(reference: &str, layer: &str, at: [f64; 2], a: &str, b: &str, locked: bool) -> String {
+    let side = &layer[..1];
+    format!(
+        r#"(footprint "R_0402" (layer "{layer}") {} (at {} {}) (property "Reference" "{reference}")
+             (fp_rect (start -0.9 -0.45) (end 0.9 0.45) (layer "{side}.CrtYd"))
+             (pad "1" smd rect (at -0.5 0) (size 0.5 0.5) (layers "{layer}") (net "{a}"))
+             (pad "2" smd rect (at 0.5 0) (size 0.5 0.5) (layers "{layer}") (net "{b}")))"#,
+        if locked { "(locked)" } else { "" },
+        at[0],
+        at[1]
+    )
+}
+
+/// `array_room_board`'s rules: tracks and clearances 0.15, the class via
+/// 0.6/0.3, the project's 0.4/0.2 (the fan-out's in a diagonal gap).
+fn array_room_rules() -> KiCadBoardRouterConfig {
+    KiCadBoardRouterConfig {
+        default_rules: Some(KiCadConnectionRoutingRules {
+            trace_width_mm: 0.15,
+            clearance_mm: 0.15,
+            via_size_mm: 0.6,
+            via_drill_mm: 0.3,
+        }),
+        hole_clearance_mm: 0.25,
+        hole_to_hole_clearance_mm: 0.25,
+        bga_fanout: Some(true),
+        project_rules: Some(crate::project_rules::KiCadProjectRulesReport {
+            via_sizes: vec![[0.4, 0.2]],
+            via_minimums: [0.4, 0.2, 0.05],
+            ..Default::default()
+        }),
+        ..KiCadBoardRouterConfig::default()
+    }
+}
+
+#[test]
+fn the_room_around_a_grid_array_keeps_its_bands_and_lets_only_its_decoupling_under_it() {
+    // C1 decouples VDD (ball C3) to GND, R2 is another back part, R3 a
+    // front part, FID1 a locked front part 4.2 mm off U1's centre on both axes.
+    let parts = [
+        two_pad("C1", "B.Cu", [40.0, 15.0], "VDD", "GND", false),
+        two_pad("R2", "B.Cu", [45.0, 15.0], "NB2", "GND", false),
+        two_pad("R3", "F.Cu", [50.0, 15.0], "NB3", "X", false),
+        two_pad("FID1", "F.Cu", [14.2, 14.2], "NB4", "Y", true),
+        two_pad("R4", "F.Cu", [55.0, 15.0], "X", "Y", false),
+    ]
+    .concat();
+    let pcb = array_room_board(&parts);
+    // No routing halos: the bodies' own gaps (the 0.5 mm spacing).
+    let config = |on: bool| KiCadBoardPlacerConfig {
+        bga_room: on,
+        halo_scale: 0.0,
+        ..far_side_config(Some(array_room_rules()))
+    };
+    let off = lower_placement(&pcb, &config(false)).unwrap();
+    let on = lower_placement(&pcb, &config(true)).unwrap();
+    let index = |name: &str| on.references.iter().position(|r| r == name).unwrap();
+    let (u1, c1, r2, r3) = (index("U1"), index("C1"), index("R2"), index("R3"));
+    let (before, after) = (&off.problem.components[u1], &on.problem.components[u1]);
+    // The ball field is the centres' box grown by half a pitch (2.4 mm
+    // each way); the own side's band 2 x (0.15 + 0.15) + 0.6 + 0.3 = 1.5
+    // mm beyond it: the body grows from 2.8 to 3.9 mm each way, the edge
+    // inset by 1.1 mm.
+    assert!(
+        before
+            .body_size
+            .iter()
+            .all(|side| (side - 5.6).abs() < 1.0e-9),
+        "{:?}",
+        before.body_size
+    );
+    assert!(
+        after
+            .body_size
+            .iter()
+            .all(|side| (side - 7.8).abs() < 1.0e-9),
+        "{:?}",
+        after.body_size
+    );
+    assert!(after.body_center.iter().all(|v| v.abs() < 1.0e-9));
+    assert!((after.edge_inset - before.edge_inset - 1.1).abs() < 1.0e-9);
+    // The far side: the fan-out's four via sites, then the room under the
+    // array, the field and one ring's track and clearance (rings 0 and 1
+    // leave on the surface, ring 2 is the deepest): 2.7 mm each way, which
+    // lets C1 in.
+    assert_eq!(before.far_side.len(), 4, "{:?}", before.far_side);
+    assert_eq!(after.far_side[..4], before.far_side[..]);
+    let room = after.far_side[4];
+    assert!(
+        room.iter()
+            .zip([-2.7, -2.7, 2.7, 2.7])
+            .all(|(a, b)| (a - b).abs() < 1.0e-9),
+        "{room:?}"
+    );
+    assert_eq!(
+        after.far_open,
+        core::FarOpen {
+            from: 4,
+            parts: vec![c1]
+        }
+    );
+    assert_eq!(before.far_open, core::FarOpen::default());
+    assert_eq!(on.array_rooms.len(), 1, "{:?}", on.array_rooms);
+    assert!(on.array_rooms[0].contains("only its decoupling C1"));
+    assert!(
+        on.array_rooms[0].contains("fixed parts left in its room: FID1"),
+        "{:?}",
+        on.array_rooms
+    );
+    assert!(off.array_rooms.is_empty());
+    // Legality at the poses: under the array clear of the vias, C1 is
+    // legal and R2 is not; over a via neither; R3 4.6 mm right of U1's
+    // centre on the front is in the band only with the room.
+    let legal = |lowered: &LoweredPlacement, part: usize, at: [f64; 2]| {
+        let problem = &lowered.problem;
+        let mut poses = problem.poses.clone();
+        poses[part].position = at;
+        let fid = index("FID1");
+        core::legal::is_legal(
+            problem,
+            &poses,
+            part,
+            poses[part],
+            (0..poses.len()).filter(|other| *other != part && *other != fid),
+        )
+    };
+    let under = [10.0, 7.85];
+    let over = [10.8, 9.2];
+    assert!(legal(&off, c1, under) && legal(&off, r2, under));
+    assert!(legal(&on, c1, under));
+    assert!(!legal(&on, r2, under));
+    assert!(!legal(&on, c1, over) && !legal(&off, c1, over));
+    assert!(legal(&off, r3, [14.6, 10.0]));
+    assert!(!legal(&on, r3, [14.6, 10.0]));
+    // An array whose every ball of a net leaves on the surface (rings 0
+    // and 1 here) keeps no room.
+    let surface = array_room_board_with(&parts, false);
+    let (off, on) = (
+        lower_placement(&surface, &config(false)).unwrap(),
+        lower_placement(&surface, &config(true)).unwrap(),
+    );
+    assert_eq!(format!("{:?}", off.problem), format!("{:?}", on.problem));
+    assert!(on.array_rooms.is_empty());
+    // Without a grid array the switch changes nothing.
+    let plain = parse(&format!(
+        r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+             (gr_rect (start 0 0) (end 60 30) (layer "Edge.Cuts"))
+             {parts})"#
+    ))
+    .unwrap();
+    let (off, on) = (
+        lower_placement(&plain, &config(false)).unwrap(),
+        lower_placement(&plain, &config(true)).unwrap(),
+    );
+    assert_eq!(format!("{:?}", off.problem), format!("{:?}", on.problem));
+    assert!(on.array_rooms.is_empty());
+}

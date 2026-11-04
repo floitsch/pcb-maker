@@ -160,6 +160,11 @@ pub struct KiCadBoardPlacerResult {
     /// layer and anchor, and the part.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attached_marks: Vec<String>,
+    /// The room kept around grid arrays (`bga_room`): per array its bands
+    /// beyond the ball field on its side and the far side, the parts let
+    /// under it, and fixed parts left in its room.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub array_rooms: Vec<String>,
     /// The same, as (the mark's place among the board's marks, the part).
     #[serde(skip)]
     pub attached_mark_pairs: Vec<(usize, usize)>,

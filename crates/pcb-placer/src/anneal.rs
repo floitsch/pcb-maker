@@ -677,14 +677,14 @@ impl State<'_> {
                 );
             } else {
                 if !component.far_side.is_empty() {
-                    for far in &cache[index].far {
+                    for far in &cache[index].far[..component.far_count_for(other)] {
                         *total += area(*far, (body.center, body.half));
                     }
                 }
                 if !other_component.far_side.is_empty() {
                     self.fresh_boxes(cache, other);
                     booked(cache[other].far.len());
-                    for far in &cache[other].far {
+                    for far in &cache[other].far[..other_component.far_count_for(index)] {
                         *total += area(*far, (rect.center, rect.half));
                     }
                 }
@@ -825,10 +825,10 @@ impl State<'_> {
                 lists + (mine.unwrap_or(1) * theirs.unwrap_or(1)) as u64
             }
         } else if component.side.opposite(other_component.side) {
-            let mut work = component.far_side.len() as u64;
+            let mut work = component.far_count_for(other) as u64;
             if !other_component.far_side.is_empty() {
-                work +=
-                    list(other_component.far_side.len()) + other_component.far_side.len() as u64;
+                work += list(other_component.far_side.len())
+                    + other_component.far_count_for(index) as u64;
             }
             work
         } else {
@@ -880,7 +880,10 @@ impl State<'_> {
         let min_spacing = self.problem.min_spacing;
         if self.problem.far_side_pads_only {
             let pads = pads();
-            let mut boxes = built(component.far_boxes(holes_pose));
+            let mut boxes = built(component.boxes_of(
+                &component.far_side[..component.far_count_for(body)],
+                holes_pose,
+            ));
             boxes.extend(built(component.boxes_of(&component.far_copper, holes_pose)));
             for far in grow(boxes, min_spacing) {
                 for pad in &pads {
@@ -891,7 +894,13 @@ impl State<'_> {
         }
         if !component.far_side.is_empty() {
             let margin = (self.problem.spacing - share).max(0.0);
-            for far in grow(built(component.far_boxes(holes_pose)), margin) {
+            for far in grow(
+                built(component.boxes_of(
+                    &component.far_side[..component.far_count_for(body)],
+                    holes_pose,
+                )),
+                margin,
+            ) {
                 total += area(far, (body_rect.center, body_rect.half));
             }
         }

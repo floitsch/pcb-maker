@@ -547,6 +547,7 @@ pub(super) fn mark_obstacle(mark: &BoardMark) -> (core::Component, core::Pose) {
         angle_options: vec![0.0],
         far_side: Vec::new(),
         far_copper: Vec::new(),
+        far_open: Default::default(),
         far_courtyard: Vec::new(),
         hollow: local.clone(),
         tight: None,

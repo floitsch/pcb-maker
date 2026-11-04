@@ -138,6 +138,22 @@ pub struct Component {
     /// boxes) may meet them, other parts' copper keeps the edge margin
     /// from them, and they may not meet a board cutout.
     pub slots: Vec<[f64; 4]>,
+    /// Parts that may meet the part's `far_side` boxes from
+    /// `FarOpen::from` on: the room kept under a grid array on the far
+    /// side lets the array's own decoupling capacitors in, not other parts
+    /// (docs/placer.md, "Room around grid arrays (2026-11-04)"). Default:
+    /// none, every box blocks every part.
+    pub far_open: FarOpen,
+}
+
+/// Which parts the trailing `far_side` boxes of a part let in
+/// (`Component::far_open`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct FarOpen {
+    /// The first of the boxes that let `parts` in.
+    pub from: usize,
+    /// The parts let in (indices, sorted).
+    pub parts: Vec<usize>,
 }
 
 /// At most this share of another part's courtless body (`Component::
@@ -334,6 +350,17 @@ impl Component {
     /// (`far_copper` meets only copper: the legality test's business).
     pub fn far_boxes(&self, pose: Pose) -> Vec<(Point, Point)> {
         self.boxes(&self.far_side, pose)
+    }
+
+    /// How many of the `far_side` boxes (the first ones) keep part `other`
+    /// off: all of them, or those before `far_open.from` for a part
+    /// `far_open` lets in.
+    pub fn far_count_for(&self, other: usize) -> usize {
+        if self.far_open.parts.binary_search(&other).is_ok() {
+            self.far_open.from.min(self.far_side.len())
+        } else {
+            self.far_side.len()
+        }
     }
 
     /// Board-space boxes (centre, half extent) of the pads at a pose.
