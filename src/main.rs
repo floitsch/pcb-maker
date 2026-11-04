@@ -284,10 +284,6 @@ const ENVIRONMENT_HELP: &[(&str, &str)] = &[
         "no connection-width neck repair after the final DRC; default unset.",
     ),
     (
-        "PCB_ROUTER_ISLAND_STUBS",
-        "pads get straight tracks into fill islands their spokes reach (silences\nKiCad's isolated-island finding); default unset (off).",
-    ),
-    (
         "PCB_MAKER_CACHE_DIR",
         "root of the DRC cache; default $XDG_CACHE_HOME/pcb-maker or ~/.cache/pcb-maker.",
     ),

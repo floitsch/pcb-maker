@@ -385,12 +385,10 @@ impl Router {
                 };
                 let statics = &self.statics[class];
                 let trace = self.map_index(class, layer);
-                // The shortest straight track into a kept piece, and into
-                // one of the pad's islands.
                 // Every straight track into kept fill, the shortest first
-                // when they are tried.
+                // when they are tried (a track that reaches one of the
+                // pad's islands first stops there).
                 let mut candidates: Vec<Vec<Node>> = Vec::new();
-                let mut best_island: Option<Vec<Node>> = None;
                 // The net's own copper: a track that meets it on the way is
                 // cut there into segments, and KiCad's DRC tests the
                 // segment from the pad, which then ends at the junction
@@ -487,12 +485,6 @@ impl Router {
                             if ((piece != 0 && islands.contains(&piece)) || along_sliver())
                                 && probe.fill_at(layer, self.grid.center_of(cell))
                             {
-                                if best_island
-                                    .as_ref()
-                                    .is_none_or(|best| path.len() < best.len())
-                                {
-                                    best_island = Some(path.clone());
-                                }
                                 break;
                             }
                             (x, y) = (next_x, next_y);
@@ -585,26 +577,6 @@ impl Router {
                         added += 1;
                         continue;
                     }
-                }
-                // Else the pad's own track into its island: two items in it.
-                if self.config.island_stubs
-                    && let Some(nodes) = best_island
-                {
-                    if self.config.verbose {
-                        eprintln!(
-                            "island stub: {label} on layer {layer}, {} nodes",
-                            nodes.len()
-                        );
-                    }
-                    self.nets[net as usize].branches.push(Branch {
-                        nodes,
-                        start_terminal: record.terminal as u16,
-                        end_terminal: PLANE_TERMINAL,
-                    });
-                    self.stamp(net);
-                    added += 1;
-                    self.island_stubs += 1;
-                    continue;
                 }
                 if std::env::var_os("PCB_ROUTER_SPOKE_DEBUG").is_some() {
                     eprintln!(

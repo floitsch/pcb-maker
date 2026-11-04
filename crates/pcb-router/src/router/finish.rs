@@ -392,7 +392,6 @@ impl Router {
             expansions: self.scratch.expansions,
             searches: self.scratch.searches,
             grid: self.grid.clone(),
-            island_stubs: self.island_stubs,
             manual_spokes_work: self.manual_spokes_work,
             first_iteration_expansions: self.first_iteration_expansions,
             negotiation_stop: self.negotiation_stop,

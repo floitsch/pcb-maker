@@ -608,8 +608,9 @@ def objectives_line(o, label="objectives"):
         if o["first_rows"] != o["rows"]:
             text += f" ({o['first_rows']} rows)"
     if o.get("repair_rows"):
-        stubs = "not counted" if o["island_stubs"] is None else o["island_stubs"]
-        text += (f", repairs: {o['neck_tracks']} neck tracks ({o['neck_track_mm']:.2f} mm), island stubs {stubs}, "
+        # Island stubs: counted by binaries before 2026-11-04 (removed).
+        stubs = "" if o["island_stubs"] is None else f", island stubs {o['island_stubs']}"
+        text += (f", repairs: {o['neck_tracks']} neck tracks ({o['neck_track_mm']:.2f} mm){stubs}, "
                  f"{o['pours_as_tracks']} kept with pours as tracks")
         if o["repair_rows"] != o["rows"]:
             text += f" ({o['repair_rows']} rows)"

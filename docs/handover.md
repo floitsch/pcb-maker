@@ -632,7 +632,6 @@ User-facing (`pcb-maker --help` lists them):
 - `PCB_KICAD_TIMEOUT`: seconds one kicad-cli report may take before it is killed (default 900).
 - `PCB_MIN_CONNECTION_FLOOR`: `errors`: floor the router's track widths at the board's minimum connection width (and a custom `connection_width` rule's) only when KiCad rates connection_width an error; `off`: never (default since 2026-10-24: at error and warning severity).
 - `PCB_KICAD_NO_NECK_REPAIR`: no connection-width neck repair after the final DRC.
-- `PCB_ROUTER_ISLAND_STUBS`: turns the router's island stubs on (`island_stubs`, off since 2026-10-21): a pad's straight track into a fill island its spokes reach, which only silences KiCad's isolated-island finding.
 - `PCB_MAKER_CACHE_DIR`: root of the DRC cache and of the library-free kicad-cli configuration (default `$XDG_CACHE_HOME/pcb-maker`, else `~/.cache/pcb-maker`).
 - `PCB_MAKER_NO_CACHE`: anything but `0`: no DRC cache (both sides of a CPU pair).
 - `PCB_MAKER_KICAD_USER_LIBS`: anything but `0`: kicad-cli's DRC and ERC run with the user's KiCad configuration (global libraries) instead of empty library tables.
@@ -761,7 +760,8 @@ pcb-router") and the layout's, ladder's and placer's
 `PCB_LAYOUT_OLD_FIRST_ROUTE_BUDGET`, `PCB_LAYOUT_NARROW_CONTINUATION` and
 `_FLOOR`, `PCB_PLACER_CHANNEL_SELF`, `PCB_JACOBI_BATCH`; changelog.md,
 "quality: pcb-kicad"). `PCB_ROUTER_NO_ISLAND_STUBS` became
-`PCB_ROUTER_ISLAND_STUBS` when the island stubs went off on 2026-10-21.
+`PCB_ROUTER_ISLAND_STUBS` when the island stubs went off on 2026-10-21,
+and went on 2026-11-04 ("Removed experiments (2026-11-04)" below).
 
 ## Removed experiments (2026-11-04)
 
@@ -821,6 +821,16 @@ details are:
   experiment"; docs/router.md, "Capacitated corridors (2026-10-24)". The
   search counters stay (the verdict's `corridors`, without its `band`
   and learning fields).
+- `island_stubs` (router, `PCB_ROUTER_ISLAND_STUBS`; off since
+  2026-10-21): a pad whose spokes reach only a fill island got its own
+  straight track into it, which changes no connection and only silences
+  KiCad's isolated-island finding (Florian, 2026-10-21). k30's tracks
+  rung 14 starved thermals to 1, mackerel-30's 19 to 3 when it was on.
+  Changelog 2026-10-21, "starved thermals at scale"; docs/router.md,
+  "Thermal spokes as KiCad counts them" (the island vias stay on). The verdict's
+  `repairs.island_stubs`, board-router.json's `island_stubs` and the
+  environment echo go with it; compare.py prints the count only for rows
+  of older binaries.
 
 ## Gotchas
 

@@ -27,8 +27,9 @@ one footprint (`footprint_own`); since rule 2 (`strict_rule`) neither a solder m
 of our tracks and a designer's mask opening that bridges on the stripped
 or the designer's own board already (`strict_mask_openings`, README.md
 "How to measure"). `clean_without_subtraction` says the result has no error that counts
-before any subtraction. `repairs` is the binary's verdict's (island stubs,
-connection-width repair tracks, the pour mode kept).
+before any subtraction. `repairs` is the binary's verdict's (the
+connection-width repair tracks, the pour mode kept; island stubs from
+binaries before 2026-11-04).
 
 Each row records the board's peak memory: `peak_rss_mb` for the process
 tree (kicad-cli's DRC included, 2.2 GB on any board) and `layout_rss_mb` for

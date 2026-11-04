@@ -84,20 +84,6 @@ pub struct Config {
     /// straight track into the main piece of its pour, which KiCad's DRC
     /// counts as a spoke (`add_manual_spokes`, after the stitching).
     pub manual_spokes: bool,
-    /// A pad whose spokes on a layer reach only fill pieces nothing else
-    /// of the net touches (KiCad's "spokes connected to isolated island")
-    /// and that neither a straight manual spoke nor a stitching via from
-    /// the island to the net's main piece on another layer joins to a kept
-    /// piece gets a straight track of the pad on the island's layer into
-    /// the island (`add_manual_spokes`): KiCad's connectivity joins the
-    /// track to the piece it overlaps, the piece has two items and is no
-    /// island, and the DRC counts its spokes and the track. It changes no
-    /// connection (the island was the pad's already); k30 and mackerel-30's
-    /// tracks rungs, whose inner planes the signals cut into islands around
-    /// through-hole pads. Off since 2026-10-21 (Florian: it only silences
-    /// KiCad's isolated-island finding; the island vias stay on);
-    /// `PCB_ROUTER_ISLAND_STUBS=1` turns it on.
-    pub island_stubs: bool,
     /// A pad the spoke model finds with no spoke at all into a pour it
     /// lies in, and no track of its own into the fill, gets one straight
     /// track into kept fill all the same (`add_manual_spokes`): the model
@@ -376,7 +362,6 @@ impl Default for Config {
             spoke_clearance: true,
             kicad_spokes: true,
             manual_spokes: true,
-            island_stubs: std::env::var_os("PCB_ROUTER_ISLAND_STUBS").is_some(),
             spokeless_tracks: std::env::var_os("PCB_ROUTER_NO_SPOKELESS_TRACKS").is_none(),
             apart_trees: std::env::var_os("PCB_ROUTER_NO_APART_TREES").is_none(),
             lost_spoke_repair: std::env::var_os("PCB_ROUTER_NO_LOST_SPOKES").is_none(),

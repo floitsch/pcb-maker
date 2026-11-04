@@ -373,7 +373,6 @@ impl Router {
             skip_resolve: false,
             in_probe: false,
             cut_iteration: None,
-            island_stubs: 0,
             manual_spokes_work: 0.0,
             build_work: 0.0,
             first_iteration_expansions: 0,

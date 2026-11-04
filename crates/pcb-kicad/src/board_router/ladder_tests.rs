@@ -206,7 +206,6 @@ fn report(open: usize, work: f64, pitch: f64) -> KiCadBoardRouterResult {
         work_bound_seconds: None,
         memory_limits: String::new(),
         attempts_failed: Vec::new(),
-        island_stubs: 0,
         manual_spokes_work_seconds: 0.0,
         first_iteration_expansions: 0,
         pour_work_seconds: 0.0,

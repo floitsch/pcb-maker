@@ -122,11 +122,6 @@ pub struct KiCadBoardRouterResult {
     /// ladder went on without them (`Ladder`, "fault isolation").
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub attempts_failed: Vec<String>,
-    /// The island stubs the kept attempt's router added (pcb-router's
-    /// `RoutingResult::island_stubs`; none unless `PCB_ROUTER_ISLAND_STUBS`
-    /// is set): the verdict's `repairs.island_stubs`.
-    #[serde(default)]
-    pub island_stubs: usize,
     /// The work of the router's manual spokes (pcb-router's
     /// `RoutingResult::manual_spokes_work`, seconds of an idle machine):
     /// beside the search expansions, route mode's ladder counts it.

@@ -1681,9 +1681,6 @@ pub struct Router {
     /// The rest of the iteration a probe's work limit cut (`probe`), for
     /// `resume` to finish first.
     cut_iteration: Option<negotiate::CutIteration>,
-    /// Island stubs `add_manual_spokes` added (`Config::island_stubs`),
-    /// over every finish of this router: `RoutingResult::island_stubs`.
-    island_stubs: usize,
     /// `RoutingResult::manual_spokes_work`.
     manual_spokes_work: f64,
     /// `RoutingResult::build_work`: this router's build, modelled

@@ -1248,11 +1248,6 @@ pub fn split_findings_strict(ours: &[DrcFinding], reference: &[DrcFinding]) -> S
 /// that change no connection.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct KiCadRepairs {
-    /// A pad's own straight track into its pour island (the kept
-    /// attempt's `island_stubs` in board-router.json; off unless
-    /// `PCB_ROUTER_ISLAND_STUBS` is set); `null`: not counted (a run
-    /// without a routed board).
-    pub island_stubs: Option<usize>,
     /// Tracks the connection-width repair kept (`neck_repair`), and their
     /// length.
     pub neck_tracks: usize,
@@ -1268,7 +1263,6 @@ impl KiCadRepairs {
     pub fn of(result: &crate::KiCadBoardRouterResult) -> Self {
         let neck = result.neck_repair.as_ref().filter(|repair| repair.kept);
         Self {
-            island_stubs: Some(result.island_stubs),
             neck_tracks: neck.map_or(0, |repair| repair.tracks),
             neck_track_mm: neck.map_or(0.0, |repair| repair.track_mm),
             pour_mode: result.pours.clone(),
@@ -1280,13 +1274,12 @@ impl KiCadRepairs {
 /// Environment variables that change what a run does or reports (the
 /// router's seed and switches, KiCad's check and its repairs, the budgets'
 /// guards), echoed into the verdict when set.
-pub const RESULT_ENVIRONMENT: [&str; 19] = [
+pub const RESULT_ENVIRONMENT: [&str; 18] = [
     "PCB_ROUTER_SEED",
     "PCB_ROUTER_DIFF_PAIRS",
     "PCB_ROUTER_LENGTH_MATCHING",
     "PCB_ROUTER_PIN_ROW_COST",
     "PCB_ROUTER_SEEDS",
-    "PCB_ROUTER_ISLAND_STUBS",
     "PCB_ROUTER_NO_WALL_GUARD",
     "PCB_SKIP_NATIVE",
     "PCB_MIN_CONNECTION_FLOOR",

@@ -133,11 +133,6 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "turns the router's straightening off (`straighten`, on since 2026-10-23): after the via reduction and the thermal spoke repairs, stair-steps and jogs taken out of the signal nets' paths where the clearance allows (docs/router.md, \"Straightening\"; for attributing rows).",
     ),
     (
-        "PCB_ROUTER_ISLAND_STUBS",
-        Kind::User,
-        "turns the router's island stubs on (`island_stubs`, off since 2026-10-21): a pad's straight track into a fill island its spokes reach, which only silences KiCad's isolated-island finding.",
-    ),
-    (
         "PCB_MAKER_CACHE_DIR",
         Kind::User,
         "root of the DRC cache and of the library-free kicad-cli configuration (default `$XDG_CACHE_HOME/pcb-maker`, else `~/.cache/pcb-maker`).",

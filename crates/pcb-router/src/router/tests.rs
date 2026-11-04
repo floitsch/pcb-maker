@@ -2064,18 +2064,17 @@ fn a_track_meets_a_spoke_beside_a_large_plated_hole() {
 }
 
 #[test]
-fn a_pad_in_an_island_gets_a_track_into_it_with_island_stubs() {
+fn a_pad_in_an_island_gets_no_track_into_it() {
     // Layer 0's island holds only P.1, and its track on layer 1 counts
     // as a spoke, so the island's spokes do not: a starved thermal. No
     // straight track reaches kept fill and no other layer has a pour to
-    // stitch to: P.1 gets a track on layer 0 into its island, the
-    // island holds two items and its spokes count.
+    // stitch to: nothing is added (the island stubs that silenced KiCad's
+    // isolated-island finding were removed on 2026-11-04).
     let board = island_board(false);
     let mut router = Router::new(
         &board,
         &Config {
             pitches: vec![0.1],
-            island_stubs: true,
             ..Config::default()
         },
     );
@@ -2084,30 +2083,8 @@ fn a_pad_in_an_island_gets_a_track_into_it_with_island_stubs() {
     let before = island_record(&router);
     assert_eq!(before.tracks, 1);
     assert!(Router::spokes_short(&before) > 0, "{before:?}");
-    assert_eq!(router.add_manual_spokes(), 1);
-    let added = router.nets[0].branches.last().unwrap().clone();
-    assert_eq!(
-        (added.start_terminal, added.end_terminal),
-        (0, PLANE_TERMINAL)
-    );
-    assert!(added.nodes.iter().all(|node| node.layer == 0));
-    assert!(router.branch_is_legal(0, &added));
-    assert_eq!(Router::spokes_short(&island_record(&router)), 0);
-    // The result reports it (the verdict's `repairs.island_stubs`).
-    assert_eq!(router.snapshot().island_stubs, 1);
-    // Without island stubs (the default) nothing helps.
-    assert!(!Config::default().island_stubs);
-    let mut router = Router::new(
-        &board,
-        &Config {
-            pitches: vec![0.1],
-            ..Config::default()
-        },
-    );
-    router.nets[0].branches = vec![layer_one_track(&router)];
-    router.stamp(0);
     assert_eq!(router.add_manual_spokes(), 0);
-    assert_eq!(router.snapshot().island_stubs, 0);
+    assert_eq!(router.nets[0].branches.len(), 1);
 }
 
 #[test]

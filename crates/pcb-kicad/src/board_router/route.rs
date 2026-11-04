@@ -1036,7 +1036,6 @@ pub(crate) fn finish_routed_board(
         work_bound_seconds: None,
         memory_limits: String::new(),
         attempts_failed: Vec::new(),
-        island_stubs: result.island_stubs,
         manual_spokes_work_seconds: result.manual_spokes_work,
         first_iteration_expansions: result.first_iteration_expansions,
         pour_work_seconds: result.pour_work,
