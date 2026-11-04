@@ -2595,9 +2595,13 @@ fn next_actions(
         } else {
             "board-layout.json"
         };
-        actions.push(format!(
+        let mut action = format!(
             "constraints missed ({report}'s constraints[] has violation_mm for each): relax them or give the parts room"
-        ));
+        );
+        if let Some(note) = facts.room.as_ref().and_then(one_side_crowded_note) {
+            action.push_str(&format!("; {note}"));
+        }
+        actions.push(action);
     }
     if facts.routes && status != KiCadRunStatus::Complete && !facts.unmodelled_rules.is_empty() {
         actions.push(unmodelled_rules_action(&facts.unmodelled_rules));
@@ -3832,6 +3836,36 @@ fn frames_and_tabs_note(sub: &crate::sub_boards::KiCadSubBoardsReport) -> Option
             sub.cut_by.join(", ")
         )
     })
+}
+
+/// One side fuller than the target while the other holds little (under
+/// half the target) and has room: the parts the design allows there are a
+/// lever beside the outline. Fresh-agent trial 6's eurorack-pmod place
+/// check: the front 121 % full, the back empty, eight `near` entries missed
+/// by up to 8.4 mm, and the action said only "relax them or give the parts
+/// room" (the designer's board has 27 parts on the back).
+fn one_side_crowded_note(room: &crate::placement_room::KiCadRoom) -> Option<String> {
+    let target = room.target_utilization;
+    let sides = ["front", "back"];
+    let full = (0..2).find(|side| room.utilization[*side] > target)?;
+    let other = 1 - full;
+    if room.utilization[other] >= target / 2.0 || room.usable_mm2[other] <= 0.0 {
+        return None;
+    }
+    Some(format!(
+        "the {} side is {:.0} % full and the {} {:.0} % (room.utilization; the target {:.0} %): put the parts the design allows there on the {} (\"{}\": [...] in constraints.json) or give the board the room (room.smallest_outline_mm {:.1} x {:.1} mm; now {:.1} x {:.1})",
+        sides[full],
+        room.utilization[full] * 100.0,
+        sides[other],
+        room.utilization[other] * 100.0,
+        target * 100.0,
+        sides[other],
+        sides[other],
+        room.smallest_outline_mm[0],
+        room.smallest_outline_mm[1],
+        room.outline_mm[0],
+        room.outline_mm[1],
+    ))
 }
 
 pub fn room_action(room: &crate::placement_room::KiCadRoom, size: [f64; 2]) -> String {
@@ -5915,6 +5949,42 @@ mod tests {
         let verdict = judge(&facts);
         assert_eq!(verdict.exit_code, EXIT_INCOMPLETE);
         assert!(verdict.next_actions[0].contains("92 %"));
+    }
+
+    #[test]
+    fn missed_constraints_on_a_full_side_beside_an_empty_one_name_the_other_side() {
+        // Fresh-agent trial 6, eurorack-pmod's place check: the front 121 %
+        // full, the back empty, eight near entries missed.
+        let mut facts = KiCadRunFacts::new("place-kicad-board");
+        facts.routes = false;
+        facts.constraints_missed = vec!["near C17 U5 (8.43 mm)".into()];
+        let room = |utilization: [f64; 2]| crate::placement_room::KiCadRoom {
+            outline_mm: [32.0, 110.0],
+            usable_mm2: [1629.1, 3376.3],
+            parts_mm2: [1968.5, 0.0],
+            utilization,
+            target_utilization: 0.7,
+            missing_mm2: [1183.1, 0.0],
+            smallest_outline_mm: [37.5, 127.5],
+            suggested_outline_mm: None,
+            limits: Vec::new(),
+        };
+        facts.room = Some(room([1.208, 0.0]));
+        let verdict = judge(&facts);
+        let action = verdict
+            .next_actions
+            .iter()
+            .find(|action| action.starts_with("constraints missed (board-placer.json's"))
+            .unwrap();
+        assert!(
+            action.ends_with("; the front side is 121 % full and the back 0 % (room.utilization; the target 70 %): put the parts the design allows there on the back (\"back\": [...] in constraints.json) or give the board the room (room.smallest_outline_mm 37.5 x 127.5 mm; now 32.0 x 110.0)"),
+            "{action}"
+        );
+        // Both sides in use: the action stays as it was.
+        facts.room = Some(room([1.047, 0.4]));
+        let verdict = judge(&facts);
+        assert!(verdict.next_actions.iter().any(|action| action
+            == "constraints missed (board-placer.json's constraints[] has violation_mm for each): relax them or give the parts room"));
     }
 
     #[test]

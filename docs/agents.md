@@ -753,7 +753,12 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
      their tightest bodies, or that cannot lie side by side in strips of
      the board, are a no in seconds (exit 1, `"overfull": true` in
      `board-placer.json`). Either way `verdict.json` has `room`: what is
-     missing, and an outline to try. A board that is merely crowded is
+     missing, and an outline to try. Constraints missed on a side fuller
+     than the target (70 %) while the other holds under half of it add
+     both sides' shares and the `back` (or `front`) lever to their action
+     (since 2026-11-04; trial 6's eurorack-pmod: the front 121 % full, the
+     back empty, eight `near` entries missed by up to 8.4 mm; the
+     designer's board has 27 parts on the back). A board that is merely crowded is
      the slow case: the placer tries looser levels before it reports
      parts as unplaced, up to the layout's placement budget (600 s of
      work per seed by default; urchin's 80 parts on 80 x 40 mm without
