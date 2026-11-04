@@ -2750,6 +2750,8 @@ pub(crate) fn apply_to_placer(
     references: &mut Vec<String>,
     source_at: &mut Vec<[f64; 3]>,
     poured: &mut Vec<bool>,
+    net_weight: crate::board_placer::KiCadNetWeight,
+    net_names: &[String],
 ) -> PlacerApplied {
     let mut applied = PlacerApplied::default();
     // Most parts' boards unknown: no part is held (tab keepouts alone
@@ -2814,9 +2816,13 @@ pub(crate) fn apply_to_placer(
             pin_counts[pin.net] += 1;
         }
     }
+    let named_rail = |net: usize| {
+        net_names
+            .get(net)
+            .is_some_and(|name| crate::board_placer::KiCadNetWeight::named_rail(name))
+    };
     let base = |net: usize, weights: &[f64]| {
-        let pins = pin_counts[net] as f64;
-        weights[net] / (3.0 / (pins - 1.0).max(1.0)).min(1.0)
+        weights[net] / net_weight.weight(pin_counts[net], named_rail(net))
     };
     for &net in &sub.split {
         let mut ids: BTreeMap<usize, usize> = BTreeMap::new();
@@ -2851,8 +2857,10 @@ pub(crate) fn apply_to_placer(
                 *counts.entry(id).or_default() += 1;
             }
         }
+        // A piece's net is the split net's: its name, its rail.
+        let rail = named_rail(net);
         for (id, count) in counts {
-            problem.net_weights[id] = scale * (3.0 / (count as f64 - 1.0).max(1.0)).min(1.0);
+            problem.net_weights[id] = scale * net_weight.weight(count, rail);
         }
         applied.nets_split += 1;
     }
@@ -3556,6 +3564,8 @@ mod tests {
             &mut placed.references,
             &mut placed.source_at,
             &mut placed.poured,
+            crate::board_placer::KiCadNetWeight::Steep,
+            &placed.net_names,
         );
         let report = KiCadSubBoardsReport::of(
             &sub,
@@ -3748,6 +3758,8 @@ mod tests {
             &mut lowered.references,
             &mut lowered.source_at,
             &mut lowered.poured,
+            crate::board_placer::KiCadNetWeight::Steep,
+            &lowered.net_names,
         );
         assert_eq!(applied.held, 0, "one sub-board: nothing to hold");
         assert!(applied.tabs > 0);
@@ -3827,6 +3839,8 @@ mod tests {
                 &mut lowered.references,
                 &mut lowered.source_at,
                 &mut lowered.poured,
+                crate::board_placer::KiCadNetWeight::Steep,
+                &lowered.net_names,
             );
             (lowered, applied)
         };
@@ -4061,6 +4075,8 @@ mod tests {
             &mut lowered.references,
             &mut lowered.source_at,
             &mut lowered.poured,
+            crate::board_placer::KiCadNetWeight::Steep,
+            &lowered.net_names,
         );
         assert_eq!(applied.held, 4);
         let problem = &lowered.problem;
@@ -4249,6 +4265,8 @@ mod tests {
             &mut lowered.references,
             &mut lowered.source_at,
             &mut lowered.poured,
+            crate::board_placer::KiCadNetWeight::Steep,
+            &lowered.net_names,
         );
         assert_eq!((applied.held, applied.nets_split), (4, 2));
         assert!(applied.tabs >= 1);

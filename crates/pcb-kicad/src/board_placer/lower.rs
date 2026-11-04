@@ -1448,7 +1448,8 @@ pub(crate) fn lower_placement(
             pin_counts[pin.net] += 1;
         }
     }
-    // Large nets (power) would otherwise dominate and collapse the layout.
+    // Large nets (power) would otherwise dominate and collapse the layout
+    // (`net_weight`: how steeply; `steep` by default).
     // Nets designers keep short count three times: a switcher's switch
     // node, feedback and bootstrap, RF and antenna feeds, crystal pins (by
     // the pin function KiCad puts in the net's name, "Net-(U9-FB)"; Sisu's
@@ -1462,7 +1463,9 @@ pub(crate) fn lower_placement(
         .iter()
         .zip(&names)
         .map(|(pins, name)| {
-            let weight = (3.0 / (*pins as f64 - 1.0).max(1.0)).min(1.0);
+            let weight = config
+                .net_weight
+                .weight(*pins, KiCadNetWeight::named_rail(name));
             if keep_short(name) {
                 3.0 * weight
             } else {
