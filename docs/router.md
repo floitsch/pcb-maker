@@ -5306,7 +5306,13 @@ So 3 of the 9 items are crossing pairs, all on Quanta75's RP2040 row,
 as the fan-out table had it (four items on the 2026-10-27 placement,
 three on this one); OpenAirScope's two pads have no straight way out on
 this placement and the keyboard's VSS_PA has none either: no dive
-reaches them (no via site), as it should not.
+reaches them (no via site), as it should not. (A straight way is the
+fan-out's notion, not the router's: asked whether any lattice path from
+the pad's legal nodes leaves its neighbourhood, reaches a via site or
+another pad of its net, neither board has a closed pad on the nightly
+placements of 2026-11-03 and 2026-11-04: VSS_PA's pocket reaches 1 mm
+beyond the pad, and the CM1624's pads TODO; the placer's `pad_exits` asks that question of every placement:
+placer.md, "Pads without a way out (2026-11-04)".)
 
 **The move** (`Config::crossing_dive`, router setting `crossing_dive`,
 `PCB_ROUTER_CROSSING_DIVE`; off). In the repair's rounds (and its last

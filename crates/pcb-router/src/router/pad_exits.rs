@@ -83,10 +83,13 @@ impl ClosedPad {
                 .then(b.nodes.cmp(&a.nodes))
                 .then(a.label.cmp(&b.label))
         });
-        blockers
-            .into_iter()
-            .map(|blocker| blocker.label.clone())
-            .collect()
+        let mut names: Vec<String> = Vec::new();
+        for blocker in blockers {
+            if !names.contains(&blocker.label) {
+                names.push(blocker.label.clone());
+            }
+        }
+        names
     }
 }
 
@@ -134,6 +137,11 @@ pub struct ProbeCounts {
     /// Nodes the pockets took, and obstacles measured at their rims.
     pub pocket_nodes: u64,
     pub measures: u64,
+    /// Pads tested, and of them those without a legal node of their own
+    /// (the router leaves them by its escape stubs, which the probe does
+    /// not judge: never reported closed).
+    pub pads: u64,
+    pub escape_pads: u64,
 }
 
 /// Reference nanoseconds per item of a probe built, per obstacle a map
@@ -415,7 +423,15 @@ impl ExitProbe {
                     }
                 }
             }
+            counts.pads += 1;
             if queue.is_empty() {
+                counts.escape_pads += 1;
+                if std::env::var_os("PCB_PAD_EXITS_WHY").is_some() {
+                    eprintln!(
+                        "pad exits: {} has no legal node of its own (the router's escape stubs, not judged)",
+                        terminal.label
+                    );
+                }
                 continue;
             }
             let pad_box = pad.shape.aabb();
@@ -429,6 +445,7 @@ impl ExitProbe {
             // point between.
             let mut rim: Vec<crate::geometry::Point> = Vec::new();
             let mut open = false;
+            let mut opened_by = "";
             while let Some(cell) = queue.pop() {
                 pocket.push(cell);
                 let point = grid.center_of(cell);
@@ -443,12 +460,20 @@ impl ExitProbe {
                         || others.iter().any(|shape| shape.contains(point))
                     {
                         open = true;
+                        opened_by = if outside {
+                            "beyond the pad"
+                        } else if others.iter().any(|shape| shape.contains(point)) {
+                            "another pad of its net"
+                        } else {
+                            "a via site"
+                        };
                         break;
                     }
                 } else if board.layer_count > 1 && statics[&node_class].via_allowed(cell, net) {
                     // A via in the pad itself (where its net's via may
                     // stand there).
                     open = true;
+                    opened_by = "a via in the pad";
                     break;
                 }
                 let (blocked, owner) = statics[&node_class].edges_at(layer, cell);
@@ -479,7 +504,7 @@ impl ExitProbe {
             if open {
                 if std::env::var_os("PCB_PAD_EXITS_WHY").is_some() {
                     eprintln!(
-                        "pad exits: {} open after {} nodes, at ({:.3}, {:.3})",
+                        "pad exits: {} open after {} nodes ({opened_by}), at ({:.3}, {:.3})",
                         terminal.label,
                         pocket.len(),
                         grid.center_of(*pocket.last().unwrap())[0],
@@ -581,6 +606,8 @@ impl ExitProbe {
         total.steps += counts.steps;
         total.pocket_nodes += counts.pocket_nodes;
         total.measures += counts.measures;
+        total.pads += counts.pads;
+        total.escape_pads += counts.escape_pads;
         closed
     }
 }

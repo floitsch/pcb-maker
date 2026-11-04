@@ -882,8 +882,10 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
                 println!("{} {} {}: {}", pad.pad, pad.net, pad.layer, pad.reason);
             }
             println!(
-                "{} pads without a way out on {} parts ({} by other parts or the edge); work {:.3} s (lowering {:.3}, probe {:.3}), cpu lowering {:.3} s, probe {:.3} s",
+                "{} pads without a way out of {} pads tested ({} left by escape stubs, not judged) on {} parts ({} by other parts or the edge); work {:.3} s (lowering {:.3}, probe {:.3}), cpu lowering {:.3} s, probe {:.3} s",
                 census.closed.len(),
+                census.pads,
+                census.escape_pads,
                 census.parts,
                 census
                     .closed

@@ -784,7 +784,24 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
      key on a key), `a slot of one meets the other` (a footprint's own
      Edge.Cuts hole under another part, its copper or a board cutout),
      `bodies overlap`, `shaped or hollow boxes`, `pads in a cutout or
-     pad keepout`, `far side`, or `the outline or a hard constraint`. Its first line counts parts:
+     pad keepout`, `far side`, or `the outline or a hard constraint`.
+     With the placer's `pad_exits` on (off by default;
+     `{"placer": {"pad_exits": {}}}` or `PCB_PLACER_PAD_EXITS=1`; since
+     2026-11-04) it also has `pad_exits`: `closed` lists the pads of the
+     placement that no route can connect (the router's lattice, on the
+     fixed copper alone, has no path out of the pad's pocket at its class's
+     width), each with `reason` (`pad U1.21 has no way out (blocked by
+     C29.1, U1.20, U1.22, U1.57)`), `blocked_by` (other parts' items
+     first) and `footprint_only` (its own footprint walls it in: only a
+     via in the pad or another footprint helps); `moves` the parts the
+     placer moved or turned after each seed to open such pads. A place
+     check with a pad another part or the edge closes is `incomplete`
+     (`N pads without a way out (...)`) and its next actions name the
+     parts to turn or move; a layout's next actions name a closed pad
+     whose net is left open. `pcb-maker pad-exits-kicad-board <dir> <id>
+     [router.json|auto] [--repair] [--out <report.json>]` gives the census
+     of a board as it is placed (and with `--repair` what the placer's
+     repair would move). Its first line counts parts:
      `placed 37 of 38 parts (1 kept where they are; 14 board marks and
      rule areas kept clear of), 29 nets` (lpc1311-target-v1; until
      2026-10-26 "placed 38 of 52 components", the board's own texts and

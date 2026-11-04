@@ -287,6 +287,10 @@ pub(super) fn exits_report(
 pub struct KiCadPadExitsCensus {
     pub board_id: String,
     pub parts: usize,
+    /// The pads tested, and of them those without a legal node of their
+    /// own (the router's escape stubs leave them: not judged).
+    pub pads: usize,
+    pub escape_pads: usize,
     pub closed: Vec<KiCadClosedPad>,
     /// The test's work (seconds of the reference machine: the lowering at
     /// the placer's rate, the probe's maps and pockets), and the CPU time
@@ -391,6 +395,7 @@ pub fn pad_exits_kicad_board(
             board.obstacles.len(),
         );
     }
+    let counts = probe.counts();
     let probe_work_seconds = probe.take_work_seconds();
     let lower_work_seconds = lowering_units(&base) as f64 / core::work_per_second();
     let work_seconds = probe_work_seconds + lower_work_seconds;
@@ -406,6 +411,8 @@ pub fn pad_exits_kicad_board(
     Ok(KiCadPadExitsCensus {
         board_id: board_id.to_string(),
         parts: parts.len(),
+        pads: counts.pads as usize,
+        escape_pads: counts.escape_pads as usize,
         closed,
         work_seconds,
         lower_work_seconds,
