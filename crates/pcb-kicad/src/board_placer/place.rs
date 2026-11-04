@@ -342,8 +342,6 @@ pub fn place_kicad_board(
                 &mut lowered.references,
                 &mut lowered.source_at,
                 &mut lowered.poured,
-                config.net_weight,
-                &lowered.net_names,
             );
             let report = crate::sub_boards::KiCadSubBoardsReport::of(
                 &sub,

@@ -6718,6 +6718,11 @@ from a file).
 
 ### Net weights (2026-11-04)
 
+**The switch removed on 2026-11-04** (`net_weight`'s `sqrt`, `flat` and
+`rail`; `steep` is the one weighting, `board_placer::net_weight`;
+docs/handover.md, "Removed experiments (2026-11-04)"). The measurements
+are kept as they were.
+
 The next hypothesis the ranking left: our nets are longer than the
 designer's in every size class (half perimeter 1.19 for two pins, 1.13
 for 3 to 8, 1.22 for nine or more not poured), and the placer counts a

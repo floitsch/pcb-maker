@@ -29,57 +29,15 @@ pub enum KiCadPlacerLegality {
     Kicad,
 }
 
-/// How a net's weight in the placer's wirelength falls with its pin count
-/// (`net_weight`; docs/placer.md, "The designer as teacher (2026-11-04)",
-/// "Net weights"). The nets designers keep short (`keep_short`) count three
-/// times on top, whichever weighting.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum KiCadNetWeight {
-    /// `min(1, 3 / (pins - 1))`: a net of up to four pins counts 1, a
-    /// 20-pin rail 0.16 (the placer since its start).
-    #[default]
-    Steep,
-    /// `min(1, 3 / sqrt(pins - 1))`: up to ten pins count 1, a 20-pin rail
-    /// 0.69.
-    Sqrt,
-    /// Every net counts 1.
-    Flat,
-    /// Steep for signals, 1 for the rails and buses: nets of
-    /// `RAIL_PINS` pins or more and those whose name is a supply's or
-    /// ground's (`quality::rail_name`, `quality::ground`).
-    Rail,
-}
-
-/// The pin count from which the `rail` weighting counts a net as a rail
-/// or a bus whatever its name (the nets of nine or more pins the
-/// diagnosis found 1.22 times the designer's length).
-pub const RAIL_PINS: usize = 9;
-
-impl KiCadNetWeight {
-    /// The weight of a net of `pins` pins (before `keep_short`); `named_rail`:
-    /// its name is a supply's or ground's.
-    pub fn weight(self, pins: usize, named_rail: bool) -> f64 {
-        let steep = (3.0 / (pins as f64 - 1.0).max(1.0)).min(1.0);
-        match self {
-            KiCadNetWeight::Steep => steep,
-            KiCadNetWeight::Sqrt => (3.0 / (pins as f64 - 1.0).max(1.0).sqrt()).min(1.0),
-            KiCadNetWeight::Flat => 1.0,
-            KiCadNetWeight::Rail => {
-                if named_rail || pins >= RAIL_PINS {
-                    1.0
-                } else {
-                    steep
-                }
-            }
-        }
-    }
-
-    /// Whether a net's name is a supply's or ground's (what `rail` counts
-    /// as a rail whatever its pin count).
-    pub fn named_rail(name: &str) -> bool {
-        crate::quality::ground(name) || crate::quality::rail_name(name)
-    }
+/// A net's weight in the placer's wirelength by its pin count, the same
+/// weight in the global placement, the anneal, the legaliser, the
+/// refinement and the relation repair: `min(1, 3 / (pins - 1))`, a net of
+/// up to four pins 1, a 20-pin rail 0.16 (the placer since its start; the
+/// nets designers keep short count three times on top). The other
+/// weightings measured (`net_weight`: `sqrt`, `flat`, `rail`) were removed
+/// on 2026-11-04 (docs/placer.md, "Net weights (2026-11-04)").
+pub fn net_weight(pins: usize) -> f64 {
+    (3.0 / (pins as f64 - 1.0).max(1.0)).min(1.0)
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -283,15 +241,6 @@ pub struct KiCadBoardPlacerConfig {
     /// What the levels whose spacing is the rules' least call legal:
     /// `"model"` (the default) or `"kicad"` (`KiCadPlacerLegality`).
     pub legality: KiCadPlacerLegality,
-    /// How a net's weight in the wirelength falls with its pin count, the
-    /// same weight in the global placement, the anneal, the legaliser, the
-    /// refinement and the relation repair: `"steep"` (the default,
-    /// `min(1, 3 / (pins - 1))`), `"sqrt"` (`min(1, 3 / sqrt(pins - 1))`),
-    /// `"flat"` (every net 1) or `"rail"` (steep for signals, 1 for nets of
-    /// nine pins or more and those named as a supply or ground); the nets
-    /// designers keep short count three times on top (docs/placer.md, "The
-    /// designer as teacher (2026-11-04)", "Net weights").
-    pub net_weight: KiCadNetWeight,
     /// The board's own texts (header pin names, a title) and silkscreen
     /// graphics (a logo, a frame around a group) stay where the input put
     /// them: each is a placement obstacle on its side with a keepout's
@@ -560,7 +509,6 @@ impl Default for KiCadBoardPlacerConfig {
             placement_seeds: 3,
             orientation_search: true,
             legality: KiCadPlacerLegality::Model,
-            net_weight: KiCadNetWeight::Steep,
             keep_board_marks: true,
             attached_marks: None,
             global_guidance: None,

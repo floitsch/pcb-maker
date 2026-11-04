@@ -896,6 +896,18 @@ details are:
   docs/placer.md, "Where the order is decided: the anneal and the global
   placement (2026-10-25)". The anneal's large-part peers keep its pin
   thresholds (`REORDER_PINS`, `REORDER_PIN_SHARE`).
+- `net_weight` (placer; `"steep"`, the default and now the only
+  weighting, `board_placer::net_weight`): `sqrt`, `flat` (every net 1)
+  and `rail` (1 for nets of nine pins or more and those named as a
+  supply or ground). Stage 0 shortened the large nets (the 9+ pin nets'
+  excess over the designer's 24 % steep, 18 % sqrt, 16 % flat, 14 %
+  rail); stage 1 (five seed pairs on the dense boards, the first route's
+  open terminals): `rail` **+5.6 %** (p on better 0.953), `flat`
+  **+4.0 %** (0.883): both fail. Changelog 2026-11-04, "net weights: the
+  rails and buses counted more, a switch; stage 1 fails"; docs/placer.md,
+  "Net weights (2026-11-04)". The `net_weight` key goes from the placer
+  settings; experiments/placement-gap's `place.py` variants that set it
+  need a binary before the removal.
 
 ## Gotchas
 

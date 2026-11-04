@@ -2355,56 +2355,16 @@ mod net_weights {
     use super::*;
 
     #[test]
-    fn the_weightings_fall_with_the_pin_count_as_named() {
-        use KiCadNetWeight::*;
+    fn the_weight_falls_with_the_pin_count() {
         let close = |a: f64, b: f64| (a - b).abs() < 1e-12;
         for pins in [0, 1, 2, 3, 4] {
-            for weighting in [Steep, Sqrt, Flat, Rail] {
-                assert_eq!(weighting.weight(pins, false), 1.0, "{weighting:?} {pins}");
-            }
+            assert_eq!(net_weight(pins), 1.0, "{pins}");
         }
-        assert!(close(Steep.weight(5, false), 0.75));
-        assert!(close(Steep.weight(20, false), 3.0 / 19.0));
-        assert!(close(Steep.weight(20, true), 3.0 / 19.0));
-        assert_eq!(Sqrt.weight(10, false), 1.0);
-        assert!(close(Sqrt.weight(20, false), 3.0 / 19f64.sqrt()));
-        assert!(close(Sqrt.weight(101, false), 0.3));
-        assert_eq!(Flat.weight(200, false), 1.0);
-        // Rail: steep for a signal below nine pins, 1 from nine or by name.
-        assert!(close(Rail.weight(8, false), 3.0 / 7.0));
-        assert_eq!(Rail.weight(RAIL_PINS, false), 1.0);
-        assert_eq!(Rail.weight(165, false), 1.0);
-        assert_eq!(Rail.weight(6, true), 1.0);
-        // Never heavier than a two-pin net, and no steeper than today's.
-        for pins in 2..300 {
-            let steep = Steep.weight(pins, false);
-            for weighting in [Sqrt, Flat, Rail] {
-                let weight = weighting.weight(pins, pins % 2 == 0);
-                assert!(weight <= 1.0 && weight >= steep, "{weighting:?} {pins}");
-            }
-        }
-        for name in ["+3V3", "/power/VDD", "GND", "/Supply/5V", "VBUS", "AGND"] {
-            assert!(KiCadNetWeight::named_rail(name), "{name}");
-        }
-        for name in ["/SDA", "Net-(U1-PA3)", "/D0", "VSYNC_OUT"] {
-            assert!(!KiCadNetWeight::named_rail(name), "{name}");
-        }
-    }
-
-    #[test]
-    fn the_weighting_is_a_named_option_steep_by_default() {
+        assert!(close(net_weight(5), 0.75));
+        assert!(close(net_weight(20), 3.0 / 19.0));
+        // The removed weightings' key is no setting any more.
         let parse = |text: &str| serde_json::from_str::<KiCadBoardPlacerConfig>(text);
-        assert_eq!(parse("{}").unwrap().net_weight, KiCadNetWeight::Steep);
-        for (text, weighting) in [
-            ("steep", KiCadNetWeight::Steep),
-            ("sqrt", KiCadNetWeight::Sqrt),
-            ("flat", KiCadNetWeight::Flat),
-            ("rail", KiCadNetWeight::Rail),
-        ] {
-            let config = parse(&format!(r#"{{"net_weight": "{text}"}}"#)).unwrap();
-            assert_eq!(config.net_weight, weighting);
-        }
-        assert!(parse(r#"{"net_weight": "steeper"}"#).is_err());
+        assert!(parse(r#"{"net_weight": "steep"}"#).is_err());
     }
 
     /// Fourteen resistors: pad 1 of R1 to R12 on BUS (12 pins), pad 2 of
@@ -2450,109 +2410,27 @@ mod net_weights {
     }
 
     #[test]
-    fn the_lowering_weights_each_net_by_the_weighting_once() {
+    fn the_lowering_weights_each_net_once() {
         let pcb = parse(&board()).unwrap();
-        let expected = |weighting: KiCadNetWeight| -> [(&str, f64); 5] {
-            match weighting {
-                KiCadNetWeight::Steep => [
-                    ("BUS", 3.0 / 11.0),
-                    ("+3V3", 0.6),
-                    ("S", 0.6),
-                    ("Net-(U1-FB)", 3.0),
-                    ("A", 1.0),
-                ],
-                KiCadNetWeight::Sqrt => [
-                    ("BUS", 3.0 / 11f64.sqrt()),
-                    ("+3V3", 1.0),
-                    ("S", 1.0),
-                    ("Net-(U1-FB)", 3.0),
-                    ("A", 1.0),
-                ],
-                KiCadNetWeight::Flat => [
-                    ("BUS", 1.0),
-                    ("+3V3", 1.0),
-                    ("S", 1.0),
-                    ("Net-(U1-FB)", 3.0),
-                    ("A", 1.0),
-                ],
-                KiCadNetWeight::Rail => [
-                    ("BUS", 1.0),
-                    ("+3V3", 1.0),
-                    ("S", 0.6),
-                    ("Net-(U1-FB)", 3.0),
-                    ("A", 1.0),
-                ],
-            }
-        };
-        for weighting in [
-            KiCadNetWeight::Steep,
-            KiCadNetWeight::Sqrt,
-            KiCadNetWeight::Flat,
-            KiCadNetWeight::Rail,
+        let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default()).unwrap();
+        for (name, weight) in [
+            ("BUS", 3.0 / 11.0),
+            ("+3V3", 0.6),
+            ("S", 0.6),
+            ("Net-(U1-FB)", 3.0),
+            ("A", 1.0),
         ] {
-            let config = KiCadBoardPlacerConfig {
-                net_weight: weighting,
-                ..KiCadBoardPlacerConfig::default()
-            };
-            let lowered = lower_placement(&pcb, &config).unwrap();
-            for (name, weight) in expected(weighting) {
-                let net = lowered
-                    .net_names
-                    .iter()
-                    .position(|net| net == name)
-                    .unwrap_or_else(|| panic!("{name}: {:?}", lowered.net_names));
-                let got = lowered.problem.net_weights[net];
-                assert!(
-                    (got - weight).abs() < 1e-12,
-                    "{weighting:?} {name}: {got} against {weight}"
-                );
-            }
+            let net = lowered
+                .net_names
+                .iter()
+                .position(|net| net == name)
+                .unwrap_or_else(|| panic!("{name}: {:?}", lowered.net_names));
+            let got = lowered.problem.net_weights[net];
+            assert!(
+                (got - weight).abs() < 1e-12,
+                "{name}: {got} against {weight}"
+            );
         }
-    }
-
-    #[test]
-    fn steep_places_as_the_default_and_another_weighting_otherwise() {
-        let nonce = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let root = std::env::temp_dir().join(format!(
-            "pcb-maker-net-weight-{}-{nonce}",
-            std::process::id()
-        ));
-        let source = root.join("source");
-        fs::create_dir_all(&source).unwrap();
-        fs::write(source.join("board.kicad_pcb"), board()).unwrap();
-        let place = |name: &str, config: KiCadBoardPlacerConfig| {
-            let output = root.join(name);
-            let result = place_kicad_board(&source, "board", &output, &config).unwrap();
-            (
-                result.wirelength_final_mm,
-                fs::read_to_string(output.join("board.kicad_pcb")).unwrap(),
-            )
-        };
-        let base = KiCadBoardPlacerConfig {
-            placement_seeds: 1,
-            ..KiCadBoardPlacerConfig::default()
-        };
-        let default = place("default", base.clone());
-        let steep: KiCadBoardPlacerConfig =
-            serde_json::from_str(r#"{"placement_seeds": 1, "net_weight": "steep"}"#).unwrap();
-        let steep = place("steep", steep);
-        let flat = place(
-            "flat",
-            KiCadBoardPlacerConfig {
-                net_weight: KiCadNetWeight::Flat,
-                ..base
-            },
-        );
-        let _ = fs::remove_dir_all(&root);
-        assert_eq!(default.0, steep.0);
-        assert!(
-            default.1 == steep.1,
-            "steep placed otherwise than the default"
-        );
-        assert!(default.1 != flat.1, "flat placed as steep");
     }
 }
 
