@@ -7387,6 +7387,8 @@ rails under it):
 | --- | --- | --- |
 | MIDAS-MK1 | 1 / no / 0 / 254 / 3859 / 2011; 1; a GND zone island; U106's five vias in pads, B2 among them | 1 / no / 0 / 198 / 4627 / 2604; 11; U106's K5 (MEM_RST_N) open; the five vias, B2 among them |
 | MIDAS-MK1.1 | 2 / no / 0 / 191 / 5070 / 2252; 12; U106's K5 open and U301's pad 5; the five vias | **0 / pass** / 0 / 193 / 5214 / 1774; 4; the five vias |
+| MIDAS-MK1, seed 101 | **0 / pass** / 0 / 222 / 5984 / 923; 2; the five vias | 1 / no / 0 / 228 / 3985 / 1775; 10; a GND zone island; the five vias |
+| MIDAS-MK1, seed 301 | 3 / no / 0 / 258 / 5101 / 1403; 10; a GND zone island, U106's H5 and K5; the five vias | 1 / no / 0 / 212 / 5766 / 1466; 5; U301's pad 4; the five vias |
 
 B2 holds its via in pad on all four (the far side under it is kept by
 `via_in_pad_far_side` already: the nightly's MIDAS-MK1 placed all five
@@ -7395,6 +7397,14 @@ does not take as enclosed) opens on one side of each pair: MK1 off
 closed, on open; MK1.1 the other way round. Summed: 3 -> 1 unconnected,
 0 -> 1 strict pass, vias 445 -> 391, length 8929 -> 9841 mm (+10 %), the
 first routes 13 -> 15 open terminals.
+
+MIDAS-MK1 at seeds 101 and 301 besides (the coordinator's open point:
+is its seed-1 row noise?; `--expected-gb 1.0`, the seed-1 rows' peaks
+956 and 538 MB): over its three seeds 4 -> 3 unconnected (1 / 0 / 3
+against 1 / 1 / 1), but **its one strict pass is lost** (seed 101: off
+complete, on a GND zone island); U106's open balls 2 -> 1 (seed 301 off
+left H5 and K5), vias 734 -> 638, length 14944 -> 14378 mm, the first
+routes 13 -> 26 open terminals, CPU 4337 -> 5845 s.
 
 **Stage 1 on Glasgow** (the first route's open terminals, the five seed
 pairs of the placer protocol; seeds 1, 101 and 301 from the layouts
@@ -7434,20 +7444,26 @@ switch is bga2-a's board byte for byte (MIDAS's U106 keeps its room: the
 deepest ring 1 against one surface ring). The rows above stand for
 bga2-c.
 
-**Decision: off** (`bga_room` unset). The rule (on where the array
-boards gain on every measure, nothing else moves and no strict pass is
-lost): Glasgow gains on every seed by KiCad's count (343 -> 262 over
-three) and by the first route (all five seeds), MIDAS-MK1.1 gains its
-strict pass (2 -> 0), nothing without a grid array moves, no strict pass
-is lost; but MIDAS-MK1 does not gain (1 -> 1, its first route 1 -> 11,
-the open item now U106's K5 where off it was a GND island), and the
-length grows on all five array runs (Glasgow +4.8 %, MIDAS +10 %). Close:
-summed over the array boards 346 -> 263 unconnected and one strict pass
-more, at fewer vias (1604 -> 1513); MIDAS's K5 flips between the two
-boards with either side, one seed each.
+**Decision: off** (`bga_room` unset), by the coordinator's rule for
+the open point: on if over three seeds MIDAS-MK1 loses no KiCad
+connection in sum and no strict pass. It loses none in sum (4 -> 3) but
+loses its strict pass at seed 101 (0 open off, a GND island on), so the
+room stays off. What it buys elsewhere stands: Glasgow better on every
+seed (343 -> 262) and on all five first routes (-20 %), MIDAS-MK1.1's
+strict pass, no other board moving; MIDAS-MK1's first routes are worse
+on two of three seeds (1 -> 11, 2 -> 10; 10 -> 5 at 301), and length
+grows on Glasgow (+4.8 %). Turn it on per board where a BGA's outer
+balls stay open with parts against its courtyard (agents.md).
 
-Left: MIDAS at more seeds (is K5 noise?); the rails' capacitors the far
-side lets in are every capacitor of a rail the array is on (45 on
+Left: why MIDAS-MK1 loses its pass. With the room its open items are
+U106's K5 (seed 1), a GND zone island (101) and U301's pad 4 (301);
+without, a GND island (1), none (101) and a GND island with U106's H5
+and K5 (301): two of the three are not U106's escapes but where the room
+moved the board's other parts (not measured further). U106's inner
+balls leave by vias in pads, not by a via ring outside them; an
+own-side band only where the inner balls take dog-bones (Glasgow's
+case) is the next variant to try. Also left: the rails' capacitors the
+far side lets in are every capacitor of a rail the array is on (45 on
 MIDAS's U106, among them other ICs' on +3V3), not the array's own by
 its supply pins; the parts pile up at the band's edge on Glasgow (15
 within 1.5 to 2 mm, the designer 3), where the designer's channels run

@@ -550,7 +550,9 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     on the other side only the array's own decoupling capacitors under
     it, off the fan-out's vias; board-placer.json's `array_rooms` says
     each band and which parts it let in. Try it where KiCad's open items
-    sit at a BGA's outer balls with parts packed against its courtyard.
+    sit at a BGA's outer balls with parts packed against its courtyard
+    (Glasgow: 343 -> 262 unconnected over three seeds); it is off because
+    it cost MIDAS-MK1 its strict pass at one of three seeds.
   - `automatic_planes` (default true): a board with four or more copper
     layers and no pours gets ground as a plane on the first inner layer
     and the supply rail with the most pads on the last inner layer, as a

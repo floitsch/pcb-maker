@@ -37,10 +37,13 @@ escapes (docs/placer.md, "Room around grid arrays (2026-11-04)").
   101, 301 (every seed better), the first route better on all five
   protocol seeds (716 -> 571), the outer rings' open balls 125 -> 89;
   MIDAS-MK1.1 0 / strict pass (off 2), MIDAS-MK1 1 -> 1 (its first route
-  1 -> 11); vd-rd lost with the band alone (3 -> 6, findings 1 -> 3)
-  before arrays whose balls all leave on the surface were left out; the
-  other ten dense boards and the designer tier byte for byte. Off by the
-  rule (MIDAS-MK1 does not gain); close.
+  1 -> 11; over seeds 1, 101 and 301 4 -> 3 unconnected, but its strict
+  pass at seed 101 lost); vd-rd lost with the band alone (3 -> 6,
+  findings 1 -> 3) before arrays whose balls all leave on the surface
+  were left out; the other ten dense boards and the designer tier byte
+  for byte. Off: the coordinator's rule for the open point (on if
+  MIDAS-MK1 loses no connection in sum and no strict pass over three
+  seeds) fails on the strict pass.
 
 ## Committed on 2026-11-04 (net weights: the rails and buses counted more, a switch; stage 1 fails)
 

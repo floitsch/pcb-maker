@@ -279,8 +279,8 @@ ladder's judge), 5, then the rest.
    262 unconnected over seeds 1, 101 and 301 (each seed better, the
    outer rings' open balls 125 to 89) and its first route is better on
    all five protocol seeds (716 to 571); MIDAS-MK1.1 gains its strict
-   pass, MIDAS-MK1 stays at 1 (its first route 1 to 11), so the rule
-   keeps it off: a close call for the coordinator. Boards without a
+   pass, but MIDAS-MK1 over seeds 1, 101 and 301 (4 to 3 unconnected)
+   loses its one strict pass (seed 101), so it stays off. Boards without a
    grid array, or whose every ball leaves on the surface (vd-rd), place
    byte for byte as off. In flight on
    2026-11-03: the designer as teacher on the largest-gap boards, placer
@@ -574,6 +574,11 @@ its doc comment):
   (stub and via of the project's sizes) before routing, written where the
   route uses it; the placer keeps the far side free under those vias.
   Only Glasgow's U30 among the task boards takes a plan.
+- `bga_room` (placer): **off**, decided 2026-11-04 (docs/placer.md,
+  "Room around grid arrays"): a band around a grid array whose inner
+  balls need vias, and only its decoupling under it on the far side.
+  Glasgow 343 -> 262 unconnected over three seeds, MIDAS-MK1.1 gains its
+  strict pass, but MIDAS-MK1 loses its strict pass at seed 101.
 - `fanout` (router): **off** (`PCB_ROUTER_FANOUT`): measured on
   2026-10-28, it traded which pad of a crossing pair stays open.
 - `last_connections` (router): **0, off** (`PCB_ROUTER_LAST_CONNECTIONS`):
