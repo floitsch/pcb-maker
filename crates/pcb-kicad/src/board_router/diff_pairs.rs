@@ -2469,25 +2469,6 @@ pub(crate) struct PairCopper {
 }
 
 impl PairCopper {
-    /// The copper of the nets `keep` names (a layout's routes kept for its
-    /// final route: `final_route_from_state`).
-    pub(crate) fn of_nets(&self, keep: &dyn Fn(&str) -> bool) -> PairCopper {
-        PairCopper {
-            items: self
-                .items
-                .iter()
-                .filter(|item| keep(&item.0))
-                .cloned()
-                .collect(),
-            patterns: self
-                .patterns
-                .iter()
-                .filter(|meander| keep(&meander.net))
-                .cloned()
-                .collect(),
-        }
-    }
-
     /// The copper as routes (tracks and vias of no net in particular), for
     /// what keeps off copper (`place_copper_texts`).
     pub(crate) fn routes(&self) -> Vec<core::NetRoute> {

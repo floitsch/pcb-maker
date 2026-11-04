@@ -106,14 +106,6 @@ pub struct KiCadBoardLayoutConfig {
     /// from complete. `PCB_LAYOUT_MOVE_DESCENT` overrides (`0` off).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub move_descent: Option<crate::move_descent::KiCadMoveDescent>,
-    /// Routes survive moves: the final route (the ladder, or the
-    /// narrow-signal attempt standing in for it) starts from the router's
-    /// state after the first route and the moves, its complete and legal
-    /// nets without a pour kept as the board's own copper, and routes the
-    /// rest; from scratch only when its first attempt leaves more open
-    /// than the first route did. False: from scratch, as before.
-    /// `PCB_LAYOUT_FINAL_FROM_STATE` (0 or 1) overrides.
-    pub final_route_from_state: bool,
     /// The race's route probe (docs/placer.md, "The race's route probe
     /// (2026-10-25)"; off when absent, `{}` for the defaults): the race
     /// probes its `seeds` best-ranked placements for `share` of
@@ -488,7 +480,6 @@ impl Default for KiCadBoardLayoutConfig {
             free_dimension: None,
             silkscreen: KiCadSilkscreenConfig::default(),
             move_descent: None,
-            final_route_from_state: false,
             race_probe: None,
             stop_after_first_route: false,
             race_count: KiCadRaceCount::default(),
@@ -901,77 +892,6 @@ pub(crate) fn without_copper_texts(pcb: &Expr, keep: bool) -> Expr {
             .cloned()
             .collect(),
     )
-}
-
-/// The share of the work left the final route from the router's state
-/// may take before the route from scratch (half took DSP-ADAU1452's
-/// continuation: 275 s of 759 s for 129 to 111 open, the attempt from
-/// scratch then had too little left for the other pour mode).
-pub(crate) const KEPT_SHARE: f64 = 0.3;
-
-/// How far around a terminal the router's state left open the final
-/// route from that state frees the room (`kept_state_nets`).
-pub(crate) const KEPT_FREE_RADIUS_MM: f64 = 1.0;
-
-/// The nets of the router's state whose copper the final route keeps
-/// (`final_route_from_state`): every net with copper in no violation of
-/// the router's own check, complete or not (the pieces of an open net
-/// stay), except the nets with copper within `radius` of a terminal left
-/// open (`open`): kept as walls, the open nets found no way out (4in1-mini:
-/// 20 of 28 open nets without any path; DSP-ADAU1452 30 of 41); 1.5 mm
-/// freed nearly the whole board (4in1-mini kept 59 of 152 nets). A pour
-/// net's copper is kept too (its stitching vias and spokes): the final
-/// route connects the pours as the state did.
-pub(crate) fn kept_state_nets(
-    board: &core::Board,
-    result: &core::RoutingResult,
-    open: &[core::Point],
-    radius: f64,
-) -> Vec<bool> {
-    let near = |point: core::Point, reach: f64| {
-        open.iter()
-            .any(|anchor| distance_squared(*anchor, point) <= reach * reach)
-    };
-    let near_segment = |segment: &core::Segment| {
-        let reach = radius + 0.5 * segment.width;
-        let (dx, dy) = (
-            segment.end[0] - segment.start[0],
-            segment.end[1] - segment.start[1],
-        );
-        let length = dx * dx + dy * dy;
-        open.iter().any(|anchor| {
-            let t = if length > 0.0 {
-                (((anchor[0] - segment.start[0]) * dx + (anchor[1] - segment.start[1]) * dy)
-                    / length)
-                    .clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            let closest = [segment.start[0] + t * dx, segment.start[1] + t * dy];
-            distance_squared(*anchor, closest) <= reach * reach
-        })
-    };
-    let mut kept: Vec<bool> = result
-        .routes
-        .iter()
-        .map(|route| {
-            !(route.segments.is_empty() && route.vias.is_empty())
-                && !route.segments.iter().any(near_segment)
-                && !route
-                    .vias
-                    .iter()
-                    .any(|via| near(via.at, radius + 0.5 * via.diameter))
-        })
-        .collect();
-    for violation in core::verify(board, &result.routes) {
-        let others = violation.other_segment.map(|(other, _)| other);
-        for net in std::iter::once(violation.net).chain(others) {
-            if let Some(kept) = kept.get_mut(net as usize) {
-                *kept = false;
-            }
-        }
-    }
-    kept
 }
 
 /// The open count past which a board the narrow-signal step applies to
@@ -2839,14 +2759,6 @@ pub fn layout_kicad_board(
             router.restore_saved(saved_router);
         }
     }
-    // The terminals the router's state leaves open: the final route from
-    // that state frees the room around them (`kept_state_nets`). (On the
-    // board as routed: with the pairs, before their links go.)
-    let open_anchors: Vec<core::Point> = router
-        .unconnected()
-        .into_iter()
-        .map(|(net, terminal)| board.nets[net as usize].terminals[terminal].anchor)
-        .collect();
     // The pairs' links into the pairs' copper (`finish_pairs`), as route
     // mode writes an attempt: what a link left open is routed for the
     // pair's nets with everything else kept (the fallback), with its share
@@ -3168,10 +3080,6 @@ pub fn layout_kicad_board(
     } else {
         None
     };
-    let final_from_state = match std::env::var("PCB_LAYOUT_FINAL_FROM_STATE") {
-        Ok(value) => value.trim() != "0",
-        Err(_) => config.final_route_from_state,
-    } && current.0 > 0;
     let final_ladder_budget_seconds = fallback_config
         .as_ref()
         .map(|_| (work_deadline - work - pool_excess).max(0.0));
@@ -3210,186 +3118,47 @@ pub fn layout_kicad_board(
         // (below): its attempts are compared as KiCad found them.
         fallback_config.solid_starved_thermals = Some(false);
         // The work of the attempts after the layout's own board (the ladder
-        // on the kept routes, the ladder from scratch, the narrow-signal
-        // attempt and what follows it) counts whether the layout keeps
-        // them or not.
+        // from scratch, the narrow-signal attempt and what follows it)
+        // counts whether the layout keeps them or not.
         let mut after_work = 0.0;
         let mut best_quality = current;
         // The pour mode of the last attempt (the continuation varies it)
         // and the project it routed.
-        let mut fallback_pours = String::new();
-        let mut attempt_source = placed_directory.clone();
-        // Routes survive moves (`final_route_from_state`): the final
-        // route starts from the router's state, its legal copper kept as
-        // the board's own; the ladder connects what is open, with at most
-        // `KEPT_SHARE` of the work left. From scratch after it: at once when its
-        // first attempt left more open than the layout's first route (a
-        // fresh first attempt) did, else with the work it left while
-        // connections stay open.
-        let mut gave_up = false;
-        let kept_nets = if final_from_state {
-            kept_state_nets(&board, &result, &open_anchors, KEPT_FREE_RADIUS_MM)
+        let attempt_source = placed_directory.clone();
+        // The final ladder from scratch on the final placement (the start
+        // from the router's state, `final_route_from_state`, was removed on
+        // 2026-11-04).
+        let mut fallback_config = fallback_config.clone();
+        fallback_config.kicad_kept = Some((
+            (
+                crate::board_router::router_open(&routed),
+                routed.vias,
+                routed.length_mm,
+            ),
+            best_quality,
+        ));
+        let fallback = route_kicad_board(
+            &placed_directory,
+            board_id,
+            &fallback_directory,
+            &fallback_config,
+        )?;
+        // (Its checks are in its work already.)
+        checks_charged.add(fallback.kicad_checks_charged);
+        after_work += fallback.work_seconds;
+        let fallback_pours = fallback.pours.clone();
+        let fallback_quality = quality(&fallback, &fallback_directory);
+        // A ladder board KiCad did not check (past the deadline, it could
+        // not beat the board kept) is never kept.
+        if checked(&fallback) && fallback_quality < best_quality {
+            fs::remove_dir_all(&result_directory).map_err(|error| error.to_string())?;
+            fs::rename(&fallback_directory, &result_directory)
+                .map_err(|error| error.to_string())?;
+            routed = fallback;
+            best_quality = fallback_quality;
+            solid_tried = false;
         } else {
-            Vec::new()
-        };
-        let kept_count = kept_nets.iter().filter(|kept| **kept).count();
-        if kept_count > 0 {
-            let kept_directory = output_directory.join("placed-kept");
-            if kept_directory.exists() {
-                fs::remove_dir_all(&kept_directory).map_err(|error| error.to_string())?;
-            }
-            crate::fs_util::copy_directory_tree(&placed_directory, &kept_directory)?;
-            let mut kept_pcb = placed_pcb.clone();
-            let mut kept_result = result.clone();
-            for (route, kept) in kept_result.routes.iter_mut().zip(&kept_nets) {
-                if !kept {
-                    route.segments.clear();
-                    route.vias.clear();
-                }
-            }
-            emit_routes(&mut kept_pcb, &board, &kept_result, &layer_names, false)?;
-            // The pairs' copper of the nets kept.
-            if let Some(copper) = &pair_copper {
-                let kept_names: BTreeSet<&str> = board
-                    .nets
-                    .iter()
-                    .zip(&kept_nets)
-                    .filter(|(_, kept)| **kept)
-                    .map(|(net, _)| net.name.as_str())
-                    .collect();
-                crate::board_router::write_pair_copper(
-                    &mut kept_pcb,
-                    &copper.of_nets(&|name| kept_names.contains(name)),
-                    &layer_names,
-                )?;
-            }
-            fs::write(
-                kept_directory.join(format!("{board_id}.kicad_pcb")),
-                format!("{}\n", encode(&kept_pcb)),
-            )
-            .map_err(|error| format!("failed to write the kept routes: {error}"))?;
-            eprintln!(
-                "layout: the final route starts from the router's state: {kept_count} of {} nets kept, the rest routed (a fresh first attempt left {})",
-                board.nets.len(),
-                first.0
-            );
-            let mut kept_config = fallback_config.clone();
-            kept_config.fresh_open = Some(first.0);
-            // At most `KEPT_SHARE` of the work left; the attempt after
-            // the narrow-signal attempt varies the one from scratch.
-            let share = KEPT_SHARE * (work_deadline - work - pool_excess).max(0.0);
-            kept_config.deadline_work = Some(share);
-            kept_config.ladder_budget_seconds = kept_config
-                .ladder_budget_seconds
-                .map(|budget| budget.min(share.max(120.0)));
-            kept_config.keep_for_continuation = false;
-            if direct_narrow {
-                let (negotiation, cleanup) = direct_narrow_budget(share);
-                kept_config.negotiation_seconds = Some(negotiation);
-                kept_config.cleanup_seconds = Some(cleanup);
-            }
-            // The pour nets' copper is kept with the rest: their pours
-            // connect as they did in the router's state (a rung routing
-            // them as tracks between the kept copper left 248 open on
-            // 4in1-mini where the state had 61).
-            if has_pours {
-                kept_config.pours = if connect {
-                    KiCadPourMode::Connect
-                } else {
-                    KiCadPourMode::Tracks
-                };
-            }
-            kept_config.kicad_kept = Some((
-                (
-                    crate::board_router::router_open(&routed),
-                    routed.vias,
-                    routed.length_mm,
-                ),
-                best_quality,
-            ));
-            let kept_output = output_directory.join("result-kept");
-            let kept = route_kicad_board(&kept_directory, board_id, &kept_output, &kept_config)?;
-            checks_charged.add(kept.kicad_checks_charged);
-            after_work += kept.work_seconds;
-            gave_up = kept
-                .skipped
-                .iter()
-                .any(|why| why.starts_with(crate::board_router::KEPT_GAVE_UP));
-            fallback_pours = kept.pours.clone();
-            let kept_quality = quality(&kept, &kept_output);
-            eprintln!(
-                "layout: the final route on the kept routes: {} open, {} starved, {} vias, work {:.0} s ({} open, {} starved before){}",
-                kept_quality.0,
-                kept_quality.1,
-                kept.vias,
-                kept.work_seconds,
-                best_quality.0,
-                best_quality.1,
-                if gave_up { "; from scratch next" } else { "" }
-            );
-            if checked(&kept) && kept_quality < best_quality {
-                fs::remove_dir_all(&result_directory).map_err(|error| error.to_string())?;
-                fs::rename(&kept_output, &result_directory).map_err(|error| error.to_string())?;
-                routed = kept;
-                best_quality = kept_quality;
-                solid_tried = false;
-            } else {
-                fs::remove_dir_all(&kept_output).map_err(|error| error.to_string())?;
-            }
-            attempt_source = kept_directory;
-        }
-        let scratch_left = work_deadline - work - pool_excess - after_work;
-        if after_work == 0.0
-            || gave_up
-            || (best_quality.0 > 0 && scratch_left >= NARROW_CONTINUATION_FLOOR)
-        {
-            attempt_source = placed_directory.clone();
-            let mut fallback_config = fallback_config.clone();
-            if after_work > 0.0 {
-                // What the attempts on the kept routes left.
-                let left = (work_deadline - work - pool_excess - after_work).max(0.0);
-                fallback_config.deadline_work = Some(left);
-                fallback_config.ladder_budget_seconds = fallback_config
-                    .ladder_budget_seconds
-                    .map(|budget| budget.min(left.max(120.0)));
-                if direct_narrow {
-                    let (negotiation, cleanup, keeps) = narrow_with_continuation(left);
-                    fallback_config.negotiation_seconds = Some(negotiation);
-                    fallback_config.cleanup_seconds = Some(cleanup);
-                    fallback_config.keep_for_continuation = keeps;
-                }
-            }
-            fallback_config.kicad_kept = Some((
-                (
-                    crate::board_router::router_open(&routed),
-                    routed.vias,
-                    routed.length_mm,
-                ),
-                best_quality,
-            ));
-            let fallback = route_kicad_board(
-                &placed_directory,
-                board_id,
-                &fallback_directory,
-                &fallback_config,
-            )?;
-            // (Its checks are in its work already.)
-            checks_charged.add(fallback.kicad_checks_charged);
-            after_work += fallback.work_seconds;
-            fallback_pours = fallback.pours.clone();
-            let fallback_quality = quality(&fallback, &fallback_directory);
-            // A ladder board KiCad did not check (past the deadline, it could
-            // not beat the board kept) is never kept.
-            if checked(&fallback) && fallback_quality < best_quality {
-                fs::remove_dir_all(&result_directory).map_err(|error| error.to_string())?;
-                fs::rename(&fallback_directory, &result_directory)
-                    .map_err(|error| error.to_string())?;
-                routed = fallback;
-                best_quality = fallback_quality;
-                solid_tried = false;
-            } else {
-                fs::remove_dir_all(&fallback_directory).map_err(|error| error.to_string())?;
-            }
+            fs::remove_dir_all(&fallback_directory).map_err(|error| error.to_string())?;
         }
         // After the narrow-signal attempt run alone, the work it left (Hub
         // ended at 577 of 1500 s) goes to one more attempt when there is

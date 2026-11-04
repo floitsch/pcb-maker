@@ -367,10 +367,6 @@ struct StepWork {
     kept_routing: f64,
 }
 
-/// How a ladder on a kept router state that gave up after its first
-/// attempt (`fresh_open`) begins its note in `skipped`.
-pub(crate) const KEPT_GAVE_UP: &str = "the attempts on the kept routes stopped after the first";
-
 /// The attempt ladder's state (see the module).
 pub(crate) struct Ladder<'a> {
     config: &'a KiCadBoardRouterConfig,
@@ -418,10 +414,6 @@ pub(crate) struct Ladder<'a> {
     reserve_share: f64,
     reserve_cap: f64,
     reserve_set: bool,
-    /// The first attempt left more open by the router's count than a
-    /// fresh first attempt (`fresh_open`): nothing more runs.
-    pub(crate) gave_up: bool,
-    first_judged: bool,
     /// What the ladder's first attempt negotiated (its budget, in work).
     first_negotiation: f64,
     /// Route mode: whether an attempt's manual spokes count in the
@@ -612,8 +604,6 @@ impl<'a> Ladder<'a> {
                 }
             }),
             reserve_set: false,
-            gave_up: false,
-            first_judged: false,
             first_negotiation: 0.0,
             charges_spokes: work_bound.is_some()
                 && std::env::var_os("PCB_LADDER_SEARCH_ONLY").is_none(),
@@ -702,41 +692,15 @@ impl<'a> Ladder<'a> {
     pub(crate) fn run<R: LadderRunner>(&mut self, runner: &R) -> Result<(), String> {
         crate::mem_profile::phase("probes");
         self.probes(runner)?;
-        if !self.gave_up {
-            crate::mem_profile::phase("rungs");
-            self.rungs(runner)?;
-        }
+        crate::mem_profile::phase("rungs");
+        self.rungs(runner)?;
         // Probes whose leader finished the board leave their maps unused.
         self.carried.clear();
         self.clear_rung_directories()?;
-        if self.gave_up {
-            return Ok(());
-        }
         crate::mem_profile::phase("seeds");
         self.seed_rounds(runner)?;
         crate::mem_profile::phase("steps");
         self.steps(runner)
-    }
-
-    /// After the ladder's first attempt (`router_open` of its board): a
-    /// ladder on a kept router state (`fresh_open`) gives up when the
-    /// attempt left more open than a fresh first attempt did.
-    fn judge_first(&mut self, router_open: usize) {
-        if self.first_judged {
-            return;
-        }
-        self.first_judged = true;
-        if let Some(fresh) = self.config.fresh_open
-            && router_open > fresh
-        {
-            eprintln!(
-                "ladder: the first attempt on the kept routes left {router_open} open, a fresh first attempt {fresh}: no further attempts on them"
-            );
-            self.skipped.push(format!(
-                "{KEPT_GAVE_UP}: it left {router_open} open, a fresh first attempt {fresh}"
-            ));
-            self.gave_up = true;
-        }
     }
 
     /// The ladder's work as the budget counts it: the work, or the wall
@@ -1779,7 +1743,6 @@ impl<'a> Ladder<'a> {
         self.last_attempt_work = attempt_work;
         self.last_attempt_pitch = result.grid_pitch_mm;
         self.keep_reserves(opens, attempt_work, probe_seconds + resumed);
-        self.judge_first(router_open(&result));
         self.probe_complete = opens.0 == 0;
         self.best = Some((opens, result));
         self.best_attempt = Some((attempt.clone(), connect));
@@ -2011,9 +1974,6 @@ impl<'a> Ladder<'a> {
         let mut ran: Vec<Option<Result<Result<KiCadBoardRouterResult, String>, String>>> =
             (0..modes.len()).map(|_| None).collect();
         for (position, &mode) in candidates.iter().enumerate() {
-            if self.gave_up {
-                return Ok(Flow::Stop);
-            }
             let (connect, skeleton, exclusive, plane_stubs) = modes[mode];
             // With work kept for the narrow-signal step, the rung's work
             // as projected from the last attempt (on a finer lattice, by
@@ -2147,11 +2107,9 @@ impl<'a> Ladder<'a> {
             // connecting the pours often finishes the board (olimex-c3,
             // stickhub and interf-u spent 40-130 s on seeds of rungs a
             // later one beat); the best rung gets them at the end.
-            // A ladder on kept routes judges its first attempt before any
-            // seeds; one that keeps work for the layout's attempt after it
-            // keeps it before the seeds too (DSP-ADAU1452: the rung's four
+            // A ladder that keeps work for the layout's attempt after it
+            // keeps it before the seeds (DSP-ADAU1452: the rung's four
             // seeds took the 244 s its continuation needed).
-            self.judge_first(router_open(&result));
             if self.config.keep_for_continuation {
                 self.keep_reserves(
                     opens,
@@ -2161,7 +2119,6 @@ impl<'a> Ladder<'a> {
             }
             let mut seeds_tried = false;
             if opens.0 > 0
-                && !self.gave_up
                 && retry > 0
                 && attempt.seeds.unwrap_or(1) <= 1
                 && attempt.first_seed.unwrap_or(0) == 0

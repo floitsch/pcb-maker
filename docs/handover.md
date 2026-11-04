@@ -651,7 +651,6 @@ Switches and experiment hooks (change the result):
 - `PCB_ROUTER_EXACT_ESCAPES`: overrides the router's `exact_escape_stubs` (`0` off, anything else on; on by default since 2026-10-26): escape stubs stamp exactly (along a lattice line as lattice nodes, oblique ones by their measured footprint) and a pad leaves by straight stubs along a lattice line where it has any; off, the stubs stamp the lattice's discs grown by the snapping error (docs/router.md, "Fine-pitch escapes").
 - `PCB_ROUTER_BGA_FANOUT`: overrides the router's `bga_fanout` (`0` off, anything else on; on by default): before routing, the inner balls of every grid array (those no track between the outer balls serves) whose net's own via does not fit a diagonal gap get a stub and a through via in a diagonal gap, the largest of the class's and the project's via sizes that keeps every clearance, as fixed copper of the ball's net that its route may end on; written only where the route uses it; the placer keeps the far side free under those vias (docs/router.md, "Prepared fan-outs for BGAs (2026-11-04)").
 - `PCB_LAYOUT_MOVE_DESCENT`: overrides the layout's `move_descent` (`0` off, anything else on with layout.json's settings or the defaults): the move descent after the first route (docs/experiments/move-descent.md).
-- `PCB_LAYOUT_FINAL_FROM_STATE`: overrides the layout's `final_route_from_state` (`0` off, anything else on): the final route starts from the router's state, its complete and legal nets kept (docs/placer.md, "Routes survive moves").
 - `PCB_ROUTER_TROUBLE_PRESENT`: the trouble-makers' repair: the price of sharing a node in the trouble-maker's search (default 20).
 - `PCB_ROUTER_TROUBLE_SHARE`: the trouble-makers' repair: its work as a share of the attempt's negotiation (default 0.5, at least 30 s).
 - `PCB_ROUTER_TROUBLE_ROUNDS`: the trouble-makers' repair: rounds over the open nets (default 3).
@@ -920,6 +919,17 @@ details are:
   (`core::Config::kicad_last_level`, always on from the KiCad layer);
   `legality_census.py --legality` and `legality-kicad-board --placer
   '{"legality": ...}'` go.
+- `final_route_from_state` (layout, `PCB_LAYOUT_FINAL_FROM_STATE`; off):
+  the final route started from the router's state after the first route
+  and the moves, its legal nets kept as the board's own copper, the
+  ladder on the rest within 0.3 of the work left, from scratch when its
+  first attempt left more open than the first route. Measured (x1741):
+  the eleven dense boards 973 to 979 KiCad unconnected with the descent
+  off (better 0, worse 3), 988 to 998 with it on; the short tier the
+  same (22 / 22, passes 6 / 6). Changelog 2026-10-23, "routes survive
+  moves; the narrow step's bound"; docs/placer.md, "Routes survive moves
+  (2026-10-23)". The ladder's `fresh_open` give-up, used only by it,
+  goes too; route mode's kept routes of a designer (`kept.rs`) stay.
 
 ## Gotchas
 

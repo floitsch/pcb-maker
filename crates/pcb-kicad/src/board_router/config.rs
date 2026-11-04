@@ -276,13 +276,6 @@ pub struct KiCadBoardRouterConfig {
     /// layout, not read from a file).
     #[serde(skip)]
     pub keep_for_continuation: bool,
-    /// The router's open count of a fresh first attempt (the layout's
-    /// first route): a ladder routing the remainder of a kept router state
-    /// stops after its first attempt when that leaves more open, and the
-    /// layout routes from scratch instead (set by the layout, not read
-    /// from a file).
-    #[serde(skip)]
-    pub fresh_open: Option<usize>,
     /// The work at which a router of this attempt stops as at the
     /// deadline (router `deadline_work`, its own work counted from zero;
     /// set by the ladder from `deadline_work`, not read from a file).

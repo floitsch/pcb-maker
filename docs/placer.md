@@ -1326,6 +1326,13 @@ byte-identical. Logs `build/fix3-{dense,dense2,short,cb}-x{1754,1780}`.
 
 ## Routes survive moves (2026-10-23)
 
+**Removed on 2026-11-04** (`final_route_from_state`,
+`PCB_LAYOUT_FINAL_FROM_STATE`, with the ladder's give-up on kept routes,
+`fresh_open`; docs/handover.md, "Removed experiments (2026-11-04)"). The
+coupled loop's own reuse of routes across moves (`Router::update`, the
+move descent's `update_nets`) is unchanged; the design and the
+measurements below are kept as they were.
+
 Florian's idea 2: "make it easier to move components without losing all
 existing traces: moving something to make space shouldn't require a
 full reroute". Inside the coupled loop that already holds (a move trial
