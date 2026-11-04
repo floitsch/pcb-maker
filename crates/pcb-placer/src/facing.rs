@@ -312,6 +312,7 @@ mod tests {
             far_side: Vec::new(),
             far_copper: Vec::new(),
             far_courtyard: Vec::new(),
+            far_open: Default::default(),
             hollow: Vec::new(),
             tight: None,
             edge_inset: 0.0,
