@@ -51,7 +51,14 @@ less copper); on PIC and the hierarchy board the automatic one is.
    one too, against parts on either side. A hollow part (a shield outline) blocks only with its
    pads, and with its courtyard against parts with holes, since KiCad
    forbids holes in a courtyard unless the courtyard is malformed and
-   KiCad skips it. A board cutout keeps only copper away: a connector body
+   KiCad skips it. A footprint without a courtyard blocks with its copper
+   against parts with one, and against another without one also with the
+   box of its pads, copper and fabrication (else silkscreen) outline,
+   unless one is at most a quarter of the other's (a diode under its key);
+   a footprint's own closed Edge.Cuts loops (a switch's peg holes) move
+   with it and keep other bodies, copper and the board's cutouts off
+   ("Footprints without a courtyard, and their slots (2026-11-04)",
+   below). A board cutout keeps only copper away: a connector body
    may reach over its peg holes. A footprint's own mask graphics (an RF
    modulator's exposed 22 x 32 mm area) are part of its body, also where
    it blocks with its courtyard's shape (`mask_openings`, below), and so
@@ -6596,6 +6603,174 @@ Scripts: `experiments/placement-gap/metrics.py` (and its tests),
 (stage 1 for a placer switch: five seed pairs, eleven dense boards,
 `stop_after_first_route`, one run.py per row at 2 threads, its slots
 from a file).
+
+## Footprints without a courtyard, and their slots (2026-11-04)
+
+Fresh agent trial 4 (docs/reviews/2026-11-04-fresh-agent-trial-4.md,
+frictions 2 and the open point "silent panel"): on Goga64's ULK keyboard
+from its schematic the placer laid the left thumb row on the grid's last
+row (SW19 at y 74.93, SW15 at 73.66, both 16 mm keys), `illegal` stayed
+empty, and the layout came back with 15 `copper_edge_clearance` findings
+(keys' and diodes' pads in other keys' peg holes) and an
+`invalid_outline` (SW10's peg hole across a mounting hole). The PG1316
+footprint has no courtyard: such a part was hollow, blocking with its
+pads alone (so that hackclub keyboar_'s diodes could sit between a
+socket's pads), and two rows of them interleave with every pad clear of
+every other. Its two peg holes are Edge.Cuts circles of the footprint,
+which the lowering made fixed cutouts at the footprint's input pose (the
+stack), not holes that move with the key.
+
+**The rule** (`Component::courtless`, `Component::slots`; legaliser,
+anneal, refinement and the place check alike, through `clear_of_one`
+and the anneal's overlap sum):
+
+- A footprint without any courtyard gets the body a courtyard would
+  give it: the box of its pads, its copper and mask graphics and its
+  fabrication outline on its side (else its silkscreen outline), KiCad's
+  courtyard clearance being 0 (no board of the benchmark sets a
+  `courtyard_clearance` rule). Two such parts may not overlap these boxes
+  (touching is legal, as for courtyards); a row carries one per member.
+  A part with a courtyard is judged against one without as before (the
+  courtless part blocks with its pads).
+- The smaller of two such bodies may lie under the larger where it takes
+  at most a quarter of its area (`COURTLESS_UNDER_SHARE`): designers put a
+  key's diode under the switch (ULK's every D3_SMD_v2 inside its
+  PG1316's 16 mm square, a twentieth of it; a first version without the
+  share sent ULK's diodes up to 86 mm from their keys).
+- A footprint's own closed Edge.Cuts loops (circles, rectangles,
+  polygons; `BoardLoops::cutout_owners`) are its slots: on a movable part
+  (or a held part a `place` entry put elsewhere) they move with it and
+  its cutout at the input pose is no hole of the board; no other part's
+  body (a hollow part's blocking boxes and courtless body) may meet them,
+  on either side, other parts' copper keeps the edge margin from them,
+  and they may not meet a board cutout. A held part at its input pose
+  keeps its slots as the fixed cutouts they were.
+- `board-placer.json`'s `unplaced_parts` gives an illegal part's
+  `reason` at the placement's level: `bodies overlap (no courtyard) with
+  SW15`, `a slot of one meets the other`, or the other tests' names.
+
+A first version grew the bodies by KLC's 0.25 mm courtyard margin and
+kept the spacing between them: on the designers' own placements
+(`legality-kicad-board --poses`, the 109 tasks) the tightest level's
+illegal movable parts rose 1301 -> 1760 (hackrf 5 -> 154, the molecules'
+AtomConnect rows 0 -> 48 and 60, DSP-ADAU1452 2 -> 37), and on ULK every
+left-grid diode left its key. Without the margin, touching legal and the
+quarter share: 1301 -> 1326 on 5 boards (hackrf 5 -> 19, LEDs whose
+fabrication outlines overlap; DSP-ADAU1452 2 -> 10, its 0805s' silkscreen
+outlines, the footprints having no fabrication layer; capybully 8 -> 10,
+its capacitive pads; eternal-keypad 0 -> 1, MX35 over the stabilizer;
+0xcb-static 16 -> 16 with another cause), the loosest level 14087 ->
+14099. Census reports in the scratch of the branch's agent; the tool is
+`benchmarks/agent-tasks/legality_census.py`.
+
+**Which boards may change.** Of the 109 tasks' 22 231 footprints with
+pads, 3815 on 91 boards have no courtyard, 2109 of them movable (pads on
+a net, not locked, not fixed by the task) on 68 boards; 62 boards have a
+movable one and another (a pair the rule can judge). No task has a
+movable footprint with its own Edge.Cuts loops (37 boards have such
+footprints, all held), so the slot rule changes no task. Of the short
+tier: WLED_Matrix (69 movable without courtyard), eternal-keypad (76),
+USB_Keypad (1, beside 2 held), OpenFC (69), urchin (15); the others have
+none or one alone. Of the eleven dense boards: the 4in1-mini and the 4in1
+(34 each, the MOSFETs, QFNs and inductors of their own libraries),
+split72_left (1), video (1), DSP-ADAU1452 (366 of 377), the 0xCB panel
+(4), protoesp (5), MegaDrive (5); Glasgow, SmartSpin2k and SNSP-CPU-01
+have none movable.
+
+**ULK** (the trial's inputs, `--reference` the designer's board, x1885
+against this branch):
+
+| input | off | on |
+| --- | --- | --- |
+| the trial's layout (`ulk3`: rows from the starter, the stack moved inside, the designer's Edge.Cuts) | place check "constraints missed: relative SW19 SW1 (12.73 mm)", `illegal []`; 12 pairs of 16 mm key squares overlap; layout 70/70, 0 unconnected, `copper_edge_clearance` 15 and `invalid_outline` 1 | no key on a key; "1 parts without a legal place (SW1)": the straight 6 x 3 grid and its thumb row do not fit the left half, cut to the designer's column stagger (the trial's step 10 found the same on the true outline); the layout stops at the placement |
+| the same without the thumb rows' `relative` | "complete", 10 pairs of key squares overlap (the thumb row 0.63 mm below the grid's last row) | no pair overlaps; SW1 and U1 without a legal place |
+| the keys at the designer's poses (`place`), diodes movable within 3 mm of their keys | 70/70, 0 unconnected, `copper_edge_clearance` 6 (D3, D21, D23 and D24's pads in their keys' peg holes, RSW2's and U3's pads in SW31's and SW2's): exit 1 | 70/70, 0 unconnected, no new DRC error: complete (exit 0) |
+
+**The short tier** (its third of the budget, two boards a side in
+flight, x1887 against this branch's legal2-f, `build/legal2-short-{off,on}`):
+the seven boards the census leaves out (MIDAS-MK1.1, reCamera,
+1337-v4.0, USB_Cable_Tester, spell_tome, framework_mobo, Blue_Line) and
+USB_Keypad (its one movable part without a courtyard has only held
+ones beside it) are byte for byte x1887's, placed and result boards; the
+four that change are the census's:
+
+| board | unconnected off / on | strict pass | vias | work s | first route open |
+| --- | ---: | --- | ---: | ---: | ---: |
+| WLED_Matrix | 14 / 13 | no / no | 198 / 233 | 654 / 587 | 24 / 22 |
+| OpenFC | 0 / 0 | yes / yes | 164 / 158 | 197 / 231 | 0 / 0 |
+| eternal-keypad | 0 / 0 | yes / yes | 34 / 30 | 79 / 74 | 0 / 0 |
+| urchin | 0 / 0 | yes / yes | 41 / 41 | 59 / 62 | 0 / 0 |
+| sum (12 boards) | 22 / 21 | 7 / 7 | | | |
+
+No new DRC finding on either side (USB_Keypad's 5 connection_width on
+both).
+
+**The eleven dense boards** (seed 1, task budgets, two a side in
+flight, x1887 against legal2-f, `build/legal2-dense-s1-{off,on}`; the
+9-seed range is dense-noise.json's, older binaries):
+
+| board | unconnected off / on | 9-seed range | new DRC errors on | first route open | placer wirelength mm |
+| --- | ---: | ---: | --- | ---: | ---: |
+| 4in1-mini | 78 / 77 | 76-105 | | 120 / 149 | 534 / 564 |
+| 4in1 | 88 / 119 | 106-155 | | 176 / 174 | 802 / 815 |
+| split72_left | 7 / 20 | 21-38 | clearance 3 (tracks 0.146 mm apart against 0.15 under the RP2040) | 11 / 30 | 9090 / 8993 |
+| video | 202 / 210 | 134-327 | | 230 / 304 | 31715 / 27217 |
+| DSP-ADAU1452 | 5 / 3 | 7-28 | | 49 / 38 | 3648 / 3629 |
+| 0xCB panel | 0 / 0 | 0 | | 0 / 0 | 4402 / 4402 |
+| protoesp | 49 / 81 | 56-89 | clearance 1 (CN34's pad 0.187 mm from the copper text "Mom, look,") | 68 / 145 | 4357 / 4640 |
+| MegaDrive | 118 / 125 | 86-169 | | 190 / 161 | 22306 / 23153 |
+| Glasgow, SmartSpin2k, SNSP-CPU-01 | 127, 105, 97 both | | | | |
+| sum | 876 / 964 | | | | |
+
+Glasgow, SmartSpin2k and SNSP-CPU-01, which have no movable part without
+a courtyard, are byte for byte x1887's; the other eight change, as the
+census says they may. No placement on either side has an illegal or
+unplaced part. The sum rises 876 -> 964 on this one seed, carried by the
+4in1 (+31), protoesp (+32) and split72_left (+13). The off side's seed 1
+lies below its nine-seed range on all three (88 against 106-155, 49
+against 56-89, 7 against 21-38), and the on side lies in it or below
+it. One pair cannot separate the rule from the seed's draw (placer_ab.py's
+protocol asks for five). The four new clearance findings are no overlap
+the rule allows: three are the router's tracks 4 um short of the
+clearance, and one is a pad of a part without a courtyard beside the
+board's copper text, which the off side's draw does not bring there.
+Where the rule acts on placement, it acts through the eight boards'
+courtless parts: protoesp's five connectors' fabrication outlines are
+kept apart now (the placer's wirelength +6.5 %), DSP-ADAU1452's 366
+passives by their silkscreen outlines (-0.5 %).
+
+**Verdict.** The rule stays on, as the brief asks (a correctness fix:
+two footprints' bodies on each other were legal, and KiCad cannot see
+it without courtyards). It costs routing on this seed's draw, which the
+seed pairs would have to confirm or refute.
+
+### Sub-boards from the outline alone
+
+Without a reference a netlist import's panel (every part stacked off its
+pieces) reported `sub_boards: null`: `detect_for_placer` found the
+pieces, but no part on any, and `place-kicad-board` dropped it (fewer
+than two boards, no frame). Now such a report is kept
+(`KiCadSubBoardsReport::of_outline`): `count` 0, `pieces`, `tabs`,
+`cut_by`, `frames` by their shape (`Pieces::outline_frames`: a piece
+spanning nine tenths of the panel along a side with at most a fifth of
+its area; ULK's rails take 0.07 and 0.17, its halves 0.38 each; the 4in1
+panel's boards 0.64 and 0.36 and neither spans so), the other pieces as
+`sub_boards` without parts, `parts_assigned` 0 and every movable part
+`unassigned`. Nothing is held or kept off, so the placement is the one
+without it; the verdict's first next action, where more than a tenth of
+the movable parts have no board and the parts tell fewer than two, is
+"give --reference or a region per board: the outline falls into N pieces
+(cut by ...) and M of the M movable parts lie on no board ...".
+`describe-kicad-board` reports the same as `sub_boards` (`frames_by`
+`parts` or `shape`; parts sharing an origin, a stack, count on no
+piece). Measured: ULK's import with the designer's Edge.Cuts and no
+`place` or reference (4 pieces cut by mouse bites, 2 rails, 58 movable
+parts) and the OpenESC 4in1 panel's task board with its held parts freed
+(2 pieces, a narrow outline, 404 movable parts): x1887 says nothing of
+the pieces, the branch leads with the line above. With `--reference`
+(or held parts on the pieces) the report and the placement are as
+before; the report has three more fields (`pieces`, `movable`,
+`parts_assigned`).
 
 ## What went wrong on the way (kept as lessons)
 

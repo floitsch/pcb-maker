@@ -11,6 +11,51 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-04 (footprints without a courtyard keep their bodies apart; a footprint's slots move with it; sub-boards from the outline alone)
+
+Branch legality-no-courtyard (build/bin/pcb-maker-legal2-*), fresh agent
+trial 4's friction 2 and its open "silent panel" (docs/placer.md,
+"Footprints without a courtyard, and their slots (2026-11-04)").
+
+- Two footprints without a courtyard may not overlap the box of their
+  pads, copper and fabrication (else silkscreen) outline
+  (`Component::courtless`), in the legaliser, the anneal and the place
+  check, unless the smaller takes at most a quarter of the larger's area
+  (a diode under its key); against a part with a courtyard as before.
+  Goga64 ULK's thumb rows lay on the grids' last rows (12 pairs of 16 mm
+  keys overlapping, `illegal []`); now none does, and where the straight
+  grid and its thumb row do not fit the staggered half the place check
+  says "1 parts without a legal place (SW1)".
+- A footprint's own closed Edge.Cuts loops are its slots
+  (`Component::slots`, `BoardLoops::cutout_owners`): on a movable part
+  they move with it (its cutout at the input pose goes), no other body
+  or copper may meet them, nor a board cutout. ULK with its keys at the
+  designer's poses: `copper_edge_clearance` 6 (diodes' pads in their
+  keys' peg holes) -> 0, complete. No task has a movable footprint with
+  slots.
+- `unplaced_parts[].reason` for illegal parts (`bodies overlap (no
+  courtyard) with SW15`, `a slot of one meets the other`, ...).
+- `sub_boards` from the outline alone where no part lies on any piece
+  (a netlist import's stack without `--reference`): `count` 0, `pieces`,
+  `tabs`, `frames` by their shape, the boards' boxes, `parts_assigned` 0;
+  the first next action "give --reference or a region per board: ...";
+  `describe-kicad-board`'s `sub_boards`. ULK's import and the 4in1 panel
+  with its held parts freed: silent before, reported now; with a
+  reference unchanged.
+- Census (109 tasks): 3815 of 22 231 footprints with pads have no
+  courtyard (91 boards), 2109 movable (68 boards); 62 boards have a pair
+  the rule judges. The designers' placements at the tightest level:
+  1301 -> 1326 illegal movable parts, on 5 boards.
+
+- Short tier (x1887 against legal2-f): 8 of 12 byte for byte, the four
+  the census names (WLED_Matrix 14 -> 13 unconnected, OpenFC,
+  eternal-keypad, urchin 0 -> 0) change; 22 -> 21, 7 -> 7 strict passes,
+  no new finding. Dense (seed 1): Glasgow, SmartSpin2k, SNSP-CPU-01 byte
+  for byte; the sum 876 -> 964 (4in1 88 -> 119, protoesp 49 -> 81 with 1
+  new clearance, split72_left 7 -> 20 with 3 new track clearances; the
+  off side's seed 1 below its nine-seed range on all three); one pair,
+  not resolved.
+
 ## Committed on 2026-11-04 (the fourth placer round: the anneal's overlap sums and crossings, the legaliser's crossings, the race's rip-up; the same placements, 1.4 % cheaper)
 
 Branch placer-profile-4 (fourteen commits, rebased on main 67ad67a2,
