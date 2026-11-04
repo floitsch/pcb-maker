@@ -1576,6 +1576,11 @@ impl<'a> Ladder<'a> {
             .into_iter()
             .map(|(key, hold)| (key, Box::new(hold) as Box<dyn std::any::Any + Send>))
             .collect();
+        // The probes' search arrays (a set for every search that ran side
+        // by side) stay with their lattice while the leader lives: idle
+        // from here, the leader's continuation takes what it needs again.
+        let idle = core::router::release_idle_search_arrays();
+        crate::mem_profile::note("the probes' idle search arrays freed:", idle);
         if let Some((_, mode, router, board, mut attempt)) = leader {
             // The continuation and the attempts that vary it count their
             // search (the ladder's shares by the proportion of search).

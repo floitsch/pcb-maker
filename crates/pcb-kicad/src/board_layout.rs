@@ -2094,6 +2094,11 @@ pub fn layout_kicad_board(
             }
             next += wave.len();
         }
+        // The probes' search arrays (as many sets as searches ran side by
+        // side) are idle from here: the ripped count searches nothing and
+        // the kept router's route takes what it needs again.
+        let idle = core::router::release_idle_search_arrays();
+        crate::mem_profile::note("the race's idle search arrays freed:", idle);
         // Every probe that ran is charged.
         let probe_work: Vec<f64> = probed
             .iter()

@@ -1342,6 +1342,27 @@ impl SearchArrays {
     }
 }
 
+/// Frees the process's idle search arrays (`IDLE_ARRAYS`), of every
+/// lattice, and returns the bytes they held. The next search of a lattice
+/// allocates its arrays again (`Scratch::ensure`): a search reads only
+/// marks of its own generation, so fresh arrays search as the idle ones
+/// would. For the points where the searches that ran side by side are
+/// over and fewer run next (the placement race's probes before the ripped
+/// count and the kept route): the idle arrays stayed with the lattice as
+/// long as any router of it lived, as many sets as searches ever ran at
+/// once (three probes on two threads: five).
+pub fn release_idle_search_arrays() -> usize {
+    let idle = std::mem::take(
+        &mut *IDLE_ARRAYS
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner()),
+    );
+    let bytes = idle.iter().map(SearchArrays::bytes).sum();
+    // Freed outside the lock.
+    drop(idle);
+    bytes
+}
+
 /// A router's claim on its lattice's idle search arrays (`IDLE_ARRAYS`):
 /// counted while the router lives, its copies too.
 struct LatticeUser((usize, usize));

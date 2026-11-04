@@ -5588,3 +5588,29 @@ fn a_net_over_its_length_maximum_takes_the_short_way_from_the_net_in_it() {
         );
     }
 }
+
+/// Freeing the process's idle search arrays (`release_idle_search_arrays`,
+/// the placement race after its probes, the ladder after its probes)
+/// changes no search: a router that routes after them with new arrays
+/// routes as one that takes arrays an earlier search left behind (their
+/// marks of other generations).
+#[test]
+fn freed_idle_search_arrays_route_as_reused_ones() {
+    let mut first = crossed_net();
+    let mut reused = crossed_net();
+    let mut fresh = crossed_net();
+    // Arrays of this lattice with marks of an earlier search, idle.
+    first.run_in_place();
+    reused.run_in_place();
+    super::release_idle_search_arrays();
+    fresh.run_in_place();
+    assert_eq!(fresh.fingerprint(), reused.fingerprint());
+    assert_eq!(fresh.fingerprint(), first.fingerprint());
+    assert_eq!(fresh.expansions(), reused.expansions());
+    // Freed again while the routers of the lattice live: none of their
+    // arrays are idle afterwards, and a route still finds its way.
+    super::release_idle_search_arrays();
+    let mut again = crossed_net();
+    again.run_in_place();
+    assert_eq!(again.fingerprint(), first.fingerprint());
+}
