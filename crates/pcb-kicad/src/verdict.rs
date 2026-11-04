@@ -2620,15 +2620,33 @@ pub(crate) fn fold_observations(observations: &[String]) -> Vec<String> {
             .filter(|entry| entry.0 == kind)
             .collect()
     };
+    // Equal names (a panel's copies repeat their references: SmartSpin2k's
+    // "C2 and U1 (courtyards)" five times over, trial 5) are named once
+    // with how many times they occur.
     let named = |kind: ObservationKind| -> String {
         let all = of_kind(kind);
-        let mut names: Vec<String> = all
+        let mut distinct: Vec<(&str, usize)> = Vec::new();
+        for entry in &all {
+            match distinct.iter_mut().find(|(name, _)| *name == entry.1) {
+                Some((_, count)) => *count += 1,
+                None => distinct.push((&entry.1, 1)),
+            }
+        }
+        let mut names: Vec<String> = distinct
             .iter()
             .take(FOLDED_NAMED)
-            .map(|entry| entry.1.clone())
+            .map(|(name, count)| match count {
+                1 => name.to_string(),
+                count => format!("{name} {count} times"),
+            })
             .collect();
-        if all.len() > FOLDED_NAMED {
-            names.push(format!("and {} more", all.len() - FOLDED_NAMED));
+        let rest: usize = distinct
+            .iter()
+            .skip(FOLDED_NAMED)
+            .map(|(_, count)| count)
+            .sum();
+        if rest > 0 {
+            names.push(format!("and {rest} more"));
         }
         names.join(", ")
     };
@@ -6182,6 +6200,22 @@ mod tests {
         assert!(
             one[0].contains("their pads are apart, so it costs no connection"),
             "{one:?}"
+        );
+        // A panel's copies repeat their pairs: each named once, counted.
+        let copies: Vec<String> = (0..9)
+            .map(|_| crate::placement_constraints::overlap_warning("C2", "U1", "courtyards"))
+            .chain([crate::placement_constraints::overlap_warning(
+                "C3",
+                "U1",
+                "courtyards",
+            )])
+            .collect();
+        let folded = fold_observations(&copies);
+        assert!(
+            folded[0].starts_with(
+                "10 pairs of fixed parts overlap (C2 and U1 (courtyards) 9 times, C3 and U1 (courtyards)):"
+            ),
+            "{folded:?}"
         );
         // Courtyards alone (jetson-nano-baseboard's parts under its
         // SO-DIMM socket, trial 5): no connection lost.
