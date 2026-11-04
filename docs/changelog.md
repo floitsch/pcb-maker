@@ -242,6 +242,48 @@ router/tests.rs; with and without the fan-out: marks at the new place,
 none at the old, the work booked, the reroute goes round the row; fails
 on the old `update`).
 
+## Committed on 2026-11-04 (the designer as teacher: what the designers' placements do that ours do not; rows of repeated parts, a switch)
+
+Branch placement-gap-diagnosis on main 951b610a (x1889); the screen ran
+on main 3d20d0a8 (x1882 off, `build/bin/pcb-maker-teach1-rows5` on).
+docs/placer.md, "The designer as teacher (2026-11-04)", has the tables.
+
+- **The fifteen boards with the largest placement gap** (nightly
+  2026-11-03, panels of copies and the two panels of different boards
+  left out), both placements measured (`experiments/placement-gap/metrics.py`,
+  tests `test_metrics.py`) and both first-routed alike, every part fixed
+  and `stop_after_first_route` at the sweep's budget on x1881
+  (`firstroute.py`): the designer's placement leaves fewer open
+  terminals on 14 of 15 (median ratio 3.4).
+- **Ranked**: wirelength (ours longer on 12 of 15, median 1.10; Spearman
+  with the first route +0.43 over the 30 placements, +0.45 over the
+  paired differences), packing courtyard to courtyard (12 of 15; -0.38,
+  -0.13), ratsnest pin-row crossings (10 of 15, median 1.39; +0.35,
+  +0.29), connectors farther from the edge (11 of 13, 1.20; +0.36,
+  +0.25), rows and orientation of repeated parts (the most consistent:
+  13 and 12 of 15; -0.30 and -0.33 over the placements, +0.07 and +0.14
+  paired). Ratsnest crossings no longer separate (8 / 7); decoupling,
+  density per region, exits facing a body and the far side do not.
+- **`align_rows`** (placer option, off by default): parts of one kind
+  pay in the anneal for standing out of line with the nearest of their
+  kind (the smaller centre offset, the cap more when turned otherwise),
+  exactly per move; after the refinement they line up where that stays
+  legal and costs at most 0.5 mm of wire. Placement alone: Glasgow's
+  moved parts in a row 0.22 to 0.46 (the designer's 0.78), the 4in1's
+  0.38 to 0.46, at 4 to 10 % more wire. Tests in
+  `crates/pcb-placer/tests/align.rs` and `align.rs`.
+- **Stage 1 of the protocol** (five seed pairs on the dense boards,
+  `stop_after_first_route`, x1882 against the snapshot with
+  `{"align_rows": {}}`, `experiments/placement-gap/screen.py`):
+  weighted change of the first route's open terminals **+4.2 %**
+  (p on better 0.79 / 0.82) at four seed pairs (seed 401 still running
+  when written): **stage 1 fails**, the switch stays off. Glasgow
+  better on all four seeds (-8.6 %), the 4in1-mini (+12 %), protoesp
+  (+23 %) and video worse. The term lines parts up (the 4in1-mini's
+  share in a row 0.38 to 0.67, Glasgow's 0.27 to 0.40) and pays in wire
+  (up on 8 of 11) and crossings (up on 7); among our own placements the
+  rows do not order the first route (Spearman +0.06).
+
 ## Committed on 2026-11-03 (the race ranks its probes by the ripped count by default)
 
 Branch race-ripped-count on main 1a005be4 (x1880); snapshots x15191 (the

@@ -6294,6 +6294,309 @@ its switch off the lowered problem is the same) and
 `a_length_relation_measures_turned_pins_octilinearly_and_steers_the_legaliser`
 (pcb-placer legal.rs).
 
+## The designer as teacher (2026-11-04)
+
+Placement is 76 % of the gap between our layouts and the designer's
+placement routed by us (nightly of 2026-11-03, `compare.py --gap
+--targets`: layout open 1435 against 351 on the designer's placement).
+What do the designers do that we do not, on the boards where we lose
+most? Measured, not looked at first.
+
+**The boards.** The fifteen target boards with the largest placement gap
+in that night's `gap.txt` (layout open less designer-route open), less
+the panels of copies (SmartSpin2k_Panelized +115, the 0xCB-1337
+pcb-panel +62) and the two whose gap is the input's: Business-Cards
+Batch_1 (+153) and katia (+25) are panels of different boards whose
+parts the layout cannot tell apart without the designer's project
+("the panel's boards' parts are mixed": `--reference` decides it, the
+sweep passes none). Left: video +201, SNSP-CPU-01 +76, OpenESC 4in1
++73, Glasgow revC3 +72, protoesp +65, OpenESC 4in1-mini +54, MegaDrive
++47, poly_kybd_split72_right +27, ATAT1800 +22, poly_corne_split42_right
++21, split42_left +17, the laptop's power +14 and motherboard +10,
+WLED_Matrix +9 and link +9 (835 of the 1084).
+
+**Method.** `experiments/placement-gap/metrics.py` reads both
+placements with KiCad's pcbnew (the designer tier's `placed` board and
+the sweep's `layout/placed` board, the poses its final route had) and
+measures each (the metrics and their definitions in its docstring;
+tests `test_metrics.py`, no KiCad needed). Parts at the same pose in
+both are the fixed ones; the metrics of choices (orientation, rows,
+spacing, connectors, the far side) count the 123 to 429 moved parts.
+The first route: `experiments/placement-gap/firstroute.py` lays out
+both placements alike, every part fixed (`--placer '{"fixed_patterns":
+["*"]}'`) and `stop_after_first_route`, at the sweep's budget, x1881,
+2 threads, through run.py and the ledger (`build/teach1-fr`): the race
+has one placement and the first route the same budget on both sides, so
+its open terminals are the placement's alone (ours are within 10
+terminals of the nightly's own first route on 12 of 15 boards; video
+253 against 230, MegaDrive 148 against 190, split72_right 23 against
+34: the nightly's first route had what its placement left of the
+budget). The summary per
+metric: on how many boards ours is above or below the designer's, the
+median ratio, and two Spearman correlations with the first route's open
+terminals per connection, one over the 30 placements (each metric over
+its board's mean of the two, so that board size drops out) and one over
+the 15 boards' paired differences (ours less the designer's). With 30
+placements a Spearman's noise is about 0.19, with 15 pairs about 0.27.
+Output `build/teach1-gap/{tables.md,metrics.json}`, the renders
+`build/teach1-gap/render/*-side-by-side.png`.
+
+**The first route separates the placements**: the designer's leaves
+fewer open terminals on 14 of 15 boards (median ratio ours / designer
+3.4; video 1 against 253, protoesp 10 against 124, the 4in1 33 against
+166); ATAT1800 is the exception (50 against 47: its gap opens later).
+
+Per board, designer's / ours:
+
+| Board | open: layout / designer route | moved | first-route open | octilinear mm | crossings | pin-row crossings | in a row | at the common angle | gap median mm | gaps under 0.25 mm | connector to edge mm | decoupling within 3 mm |
+| --- | --- | ---: | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| video | 202 / 1 | 167 | 1 / 253 | 29101 / 40723 | 8763 / 14532 | 243 / 510 | 0.60 / 0.46 | 0.80 / 0.69 | 0.72 / 0.73 | 0.23 / 0.04 | 5.1 / 9.0 | 0.20 / 0.14 |
+| SNSP-CPU-01 | 111 / 35 | 372 | 23 / 111 | 17739 / 19233 | 5076 / 4453 | 211 / 254 | 0.57 / 0.66 | 0.75 / 0.58 | 0.40 / 1.77 | 0.35 / 0.00 | 1.8 / 3.4 | 0.16 / 0.26 |
+| OpenESC 4in1 | 88 / 15 | 195 | 33 / 166 | 1054 / 1297 | 242 / 211 | 70 / 97 | 0.86 / 0.44 | 0.59 / 0.54 | 0.00 / 0.00 | 0.97 / 0.98 | 0.1 / 0.0 | 0.39 / 0.11 |
+| Glasgow | 127 / 55 | 237 | 59 / 133 | 3134 / 3254 | 815 / 626 | 283 / 338 | 0.78 / 0.22 | 0.75 / 0.58 | 0.00 / 0.00 | 0.83 / 0.85 | 9.7 / 9.9 | 0.46 / 0.40 |
+| protoesp | 66 / 1 | 124 | 10 / 124 | 3041 / 5089 | 373 / 793 | 230 / 444 | 0.74 / 0.62 | 0.66 / 0.66 | 0.00 / 0.88 | 0.67 / 0.08 | 0.7 / 1.4 | 0.18 / 0.09 |
+| OpenESC 4in1-mini | 91 / 37 | 187 | 105 / 113 | 879 / 722 | 279 / 78 | 200 / 141 | 0.95 / 0.42 | 0.49 / 0.53 | 0.00 / 0.00 | 0.93 / 0.97 | - / - | 0.33 / 0.29 |
+| MegaDrive | 118 / 71 | 248 | 78 / 148 | 28356 / 28483 | 7931 / 7458 | 125 / 121 | 0.50 / 0.35 | 0.61 / 0.72 | 0.93 / 1.07 | 0.29 / 0.03 | 3.5 / 4.2 | 0.06 / 0.07 |
+| split72_right | 28 / 1 | 429 | 5 / 23 | 13888 / 14467 | 2993 / 3140 | 325 / 218 | 0.81 / 0.51 | 0.78 / 0.56 | 0.04 / 0.45 | 0.79 / 0.41 | 20.2 / 22.2 | 0.25 / 0.28 |
+| ATAT1800 | 22 / 0 | 123 | 50 / 47 | 14898 / 14211 | 1257 / 1136 | 59 / 103 | 0.56 / 0.28 | 0.83 / 0.72 | 0.08 / 1.32 | 0.54 / 0.10 | - / - | 0.44 / 0.12 |
+| split42_right | 22 / 1 | 429 | 2 / 40 | 13899 / 15315 | 2986 / 3691 | 400 / 391 | 0.81 / 0.48 | 0.78 / 0.56 | 0.04 / 0.46 | 0.79 / 0.38 | 20.2 / 20.8 | 0.25 / 0.38 |
+| split42_left | 17 / 0 | 269 | 2 / 17 | 7307 / 8185 | 1513 / 1798 | 56 / 92 | 0.66 / 0.46 | 0.77 / 0.55 | 0.03 / 0.42 | 0.88 / 0.40 | 11.7 / 14.1 | 0.14 / 0.19 |
+| laptop power | 14 / 0 | 174 | 5 / 17 | 1579 / 2582 | 220 / 500 | 42 / 105 | 0.61 / 0.32 | 0.65 / 0.54 | 0.05 / 0.05 | 0.97 / 0.95 | 4.0 / 7.7 | 0.26 / 0.09 |
+| laptop motherboard | 25 / 15 | 246 | 25 / 27 | 6835 / 8684 | 1573 / 1956 | 122 / 181 | 0.53 / 0.59 | 0.69 / 0.64 | 0.07 / 0.45 | 0.89 / 0.27 | 3.6 / 2.6 | 0.35 / 0.15 |
+| WLED_Matrix | 10 / 1 | 138 | 12 / 23 | 1198 / 1814 | 189 / 236 | 22 / 78 | 0.91 / 0.87 | 0.81 / 0.52 | 0.28 / 0.60 | 0.46 / 0.06 | 1.9 / 5.1 | 0.47 / 0.18 |
+| link | 10 / 1 | 359 | 6 / 20 | 7019 / 6343 | 1648 / 1194 | 113 / 77 | 0.60 / 0.48 | 0.69 / 0.62 | 0.00 / 0.42 | 0.81 / 0.19 | 18.6 / 22.1 | 0.25 / 0.17 |
+
+Over the fifteen boards:
+
+| metric | ours above / below / equal | median ours / designer | Spearman, 30 placements | Spearman, 15 paired differences |
+| --- | --- | ---: | ---: | ---: |
+| first-route open terminals | 14 / 1 / 0 | 3.40 | - | - |
+| half perimeter, all nets | 11 / 4 / 0 | 1.11 | +0.42 | +0.45 |
+| half perimeter, 2-pin nets | 10 / 5 / 0 | 1.19 | +0.28 | +0.23 |
+| half perimeter, 3-8 pins | 12 / 3 / 0 | 1.13 | +0.39 | +0.24 |
+| half perimeter, 9+ pins | 11 / 4 / 0 | 1.22 | +0.37 | +0.17 |
+| half perimeter, pour nets | 8 / 7 / 0 | 1.01 | -0.03 | -0.12 |
+| octilinear spanning trees | 12 / 3 / 0 | 1.10 | +0.43 | +0.45 |
+| ratsnest crossings | 8 / 7 / 0 | 1.05 | +0.24 | +0.16 |
+| ratsnest pin-row crossings | 10 / 5 / 0 | 1.39 | +0.35 | +0.29 |
+| density, p90 of the cells | 5 / 8 / 2 | 1.00 | -0.14 | -0.06 |
+| density, the fullest cell | 6 / 6 / 3 | 1.00 | +0.07 | +0.03 |
+| density, cv over the cells | 9 / 6 / 0 | 1.01 | +0.04 | -0.23 |
+| moved connectors to the edge (median) | 11 / 2 / 0 | 1.20 | +0.36 | +0.25 |
+| decoupling capacitor to its pin (median) | 9 / 6 / 0 | 1.08 | -0.17 | -0.19 |
+| decoupling within 3 mm | 5 / 10 / 0 | 0.70 | -0.20 | +0.01 |
+| orientation agreement | 3 / 12 / 0 | 0.86 | -0.33 | +0.14 |
+| row alignment | 2 / 13 / 0 | 0.69 | -0.30 | +0.07 |
+| moved parts on the back | 0 / 0 / 15 | 1.00 | - | - |
+| gap to the nearest body (median) | 12 / 0 / 3 | 2.14 | +0.35 | -0.41 |
+| gap, 10th percentile | 8 / 0 / 7 | 1.00 | +0.37 | +0.14 |
+| gaps under 0.25 mm (share) | 3 / 12 / 0 | 0.30 | -0.38 | -0.13 |
+| gaps under 1 mm (share) | 1 / 11 / 3 | 0.94 | -0.20 | +0.24 |
+| pads facing a body within 1 mm | 7 / 8 / 0 | 0.96 | -0.02 | +0.33 |
+
+The renders (front side, designer left, ours right: video, SNSP-CPU-01,
+protoesp, Glasgow, the 4in1):
+
+- **video**: the designer stacks the eight 75-pad memory parts in one
+  column, each a row of pins parallel to the next, the two QFP hubs and
+  the two PLCCs together at the right end; ours spreads the bank over
+  the board's length in staggered pairs and puts the QFPs between them.
+- **the 4in1**: the designer's four ESCs are four copies of one
+  arrangement: the MOSFETs in two columns against the motor pads, all
+  turned alike, their gate resistors and capacitors in a grid of rows
+  beside them; ours is a cloud of passives at every angle with the
+  MOSFETs turned four ways.
+- **Glasgow**: the designer keeps the passives in regular columns beside
+  the level shifters and the FPGA's decoupling in rows under the BGA;
+  ours packs them in a disc around the BGA.
+- **SNSP-CPU-01**: ours leaves the right-hand strip nearly empty and
+  brings its through-hole parts onto the main board's lower edge; the
+  designer's two pin columns on the left are scattered in ours.
+- **protoesp**: the designer puts each module's headers along the
+  module's own edge (the slots between the modules); ours turns several
+  and puts two header rows in the middle, across module borders.
+
+What the five have in common is regularity: repeated parts in rows and
+columns, turned alike, packed close.
+
+**The ranked hypotheses** (separation first, then the first route):
+
+1. **Wirelength.** Ours is longer on 12 of 15 boards (octilinear
+   spanning trees, median 1.10; half perimeter 1.11 over all nets, 1.19
+   for two-pin nets, 1.13 for 3 to 8 pins, 1.22 for nine or more not
+   carried by a pour, mostly unpoured supply rails), and the longer it
+   is the more the first route leaves open: Spearman +0.43 over the
+   placements, +0.45 over the paired differences, the strongest pair of
+   any metric. Not a new term: the anneal and the refinement already
+   minimise it. The excess is what our model adds to the designer's
+   (halos, the 0.5 mm spacing, the crossings term, which buys crossings
+   with wire: "Under the placer-default protocol (2026-10-27)"), and the
+   levers on that were measured before: no halos shortens the gap
+   boards' wire 22 % and loses routing ("Where the wirelength goes"),
+   `shared_halos` and a 0.2 mm spacing did not ship.
+2. **Packing courtyard to courtyard.** The designer has more parts
+   within 0.25 mm of a neighbour on 12 of 15 boards (median ratio of the
+   share 0.30) and a median gap that is no larger on any board (ours
+   larger on 12; SNSP-CPU-01 1.77 mm against 0.40, ATAT1800 1.32
+   against 0.08); Spearman -0.38 over the placements (more tight gaps,
+   fewer open), -0.13 paired, while the median gap's paired differences
+   go the other way (-0.41: where our gaps are widest against the
+   designer's, ATAT1800 and SNSP-CPU-01, the first route's excess is
+   not the largest; ATAT1800's is none). The same story as 1 (designers' parts are
+   illegal at our full level: "Where the wirelength goes"), and the
+   halos are the knob, measured.
+3. **Pin-row crossings of the ratsnest** (another net's spanning-tree
+   line between two adjacent SMD pads): ours more on 10 of 15 (median
+   1.39; video 510 against 243, protoesp 444 against 230); +0.35 and
+   +0.29. A term would be the crossings machinery against pad pairs;
+   the router already charges such steps (`pin_row_cost`).
+4. **Connectors farther from the edge**: the moved connectors' median
+   body-to-outline distance is larger on 11 of 13 boards (median 1.20;
+   WLED_Matrix 5.1 mm against 1.9, the laptop's power 7.7 against 4.0);
+   +0.36 and +0.25. On protoesp the edge is a module's slot.
+5. **Rows and orientation of repeated parts.** The most consistent
+   separation of all: of the moved parts of one footprint, those that
+   share an x or a y with another of their footprint, lower in ours on 13
+   of 15 boards (median 0.69; Glasgow 0.22 against 0.78, the 4in1-mini
+   0.42 against 0.95), and those at their footprint's most common angle
+   lower on 12 (median 0.86); Spearman -0.30 and -0.33 over the
+   placements (the more in line, the fewer open), but +0.07 and +0.14
+   over the paired differences: the boards where we lose most are not
+   the ones where our rows are worst. It is what the renders show first
+   and what the designers' tight packing (2) rests on; nothing in the
+   placer does it (`align_orientations` turns parts of a kind alike
+   after the refinement where that costs at most 0.5 mm of wire; the
+   `row` constraint is the user's).
+6. **Ratsnest crossings** no longer separate (ours above on 8, below on
+   7, median 1.05): the crossings in the anneal closed that gap; video
+   (14532 against 8763) and protoesp (793 against 373) are where they
+   still do.
+
+Not separating: decoupling (the capacitors within 3 mm of a supply
+pin: ours lower on 10 of 15 but -0.20 and +0.01; the median distance
+9 / 6), density per region (p90, max and cv about 1.00), exits facing
+a body within 1 mm (7 / 8), and the far side: the placer never changes
+a part's side, so the moved parts' sides are the designer's on every
+board (0 / 0 / 15).
+
+**The term built: rows of repeated parts** (`align_rows`, placer
+option, off by default; `crates/pcb-placer/src/align.rs`,
+`legal::align_rows`, the anneal in `anneal.rs`). Hypotheses 1 and 2
+are the anneal's objective and the halo knobs, measured before;
+3 would be a second crossings machine; 5 is the first that is a new
+term the anneal carries cheaply and the most consistent separation. A
+part's *kind* is its body size, pin count and side (as
+`align_orientations` groups them); its cost is the smaller of its body
+centre's x and y offsets from the nearest of its kind within the reach
+(`reach_mm`, 5 mm, or one and a half times the kind's larger body
+side), plus `cap_mm` (1 mm) where the two are turned otherwise
+(two-pin parts modulo half a turn), at most `cap_mm`; a part alone in
+its kind costs nothing. The anneal pays `weight` (1) mm of wire per
+millimetre over the moved parts and their kind's parts within reach of
+the old or the new centre (`AlignState`: the centres and costs at the
+poses kept, the change exact: a unit test checks it against the
+energy over 400 random moves and swaps); after the refinement
+(`finish`, on) each part out of line moves up to `cap_mm` along one
+axis onto a partner's line where that stays legal, costs at most 0.5
+mm of its nets' wire and misses no relation more. Work: two units per
+part of a kind looked at (the 4in1's anneal took 2.2 times the CPU at
+1.6 times the work booked at one unit, measured with
+`PCB_PLACER_DEBUG`).
+
+Placement alone (place-kicad-board, three seeds, the sweep's prepared
+sources, x1881's code with and without `{"align_rows": {}}`,
+`build/teach1-place`), the moved parts in line / at their footprint's
+angle / half-perimeter / crossings:
+
+| board | off | on | designer's |
+| --- | --- | --- | --- |
+| OpenESC 4in1 | 0.38 / 0.46 / 1323 / 156 | 0.46 / 0.49 / 1451 / 212 | 0.86 / 0.59 / 1190 / 242 |
+| Glasgow | 0.22 / 0.58 / 3651 / 626 | 0.46 / 0.67 / 3786 / 721 | 0.78 / 0.75 / 3641 / 815 |
+| video | 0.46 / 0.67 / 43710 / 18641 | 0.48 / 0.61 / 45557 / 18925 | 0.60 / 0.80 / 30912 / 8763 |
+
+The term moves what it meant to move (Glasgow's rows twice as many, the
+4in1's a fifth more) and pays in wire and crossings (+4 to +10 % wire,
++2 to +36 % crossings); on video, whose memory bank is the case that
+matters, the term is met the cheap way: the eight 116 mm wide parts
+(the designer's column at x 234.4, 8.9 mm apart) are all in each
+other's reach, and a pair sharing a y 118 mm apart (U16 and U17 at y
+61.6) costs nothing, so the bank stays scattered. Lining up with one
+partner is not a row. The finish
+moved 0 or 1 parts a placement: at the levels where these boards place,
+a part out of line by less than a millimetre has no legal spot on the
+line.
+
+**Stage 1 of the placer protocol** (benchmarks.md, "The ladder of
+placer measurements"): the eleven dense boards at the task budgets
+(tasks v7, pinned rates) with `stop_after_first_route`, placer seeds 1,
+101, 201, 301, 401, off x1882 (main 3d20d0a8) against the same main with
+the switch (`build/bin/pcb-maker-teach1-rows5`, `--placer '{"seed": N,
+"align_rows": {}}'`), one run.py per row at 2 threads, six in flight
+through the ledger (`build/teach1-scr`, `screen.py`), 2026-11-03 22:47
+to 2026-11-04 05:50 beside the nightly from 02:00. (Main moved to x1883
+to x1889 during the run; the dense boards place alike on all of them but
+the 0xCB panel and SmartSpin2k, which carry 0 and 3 of the weight.)
+When this was written seed 401 had one row and video's seed 301 none;
+the pool goes on (`placer_ab.py compare --metric first_open --off
+build/teach1-scr/dense-s*-off-* --on build/teach1-scr/dense-s*-on-*`).
+First-route open terminals, off / on:
+
+| Board | s1 | s101 | s201 | s301 | mean change | relative (weight) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| OpenESC 4in1 | 176 / 171 | 208 / 130 | 123 / 154 | 129 / 221 | +10.0 | +5.5 % (48) |
+| OpenESC 4in1-mini | 120 / 159 | 122 / 160 | 140 / 167 | 151 / 116 | +17.2 | +12.0 % (99) |
+| DSP-ADAU1452 | 49 / 65 | 34 / 29 | 64 / 35 | 76 / 73 | -5.2 | -8.0 % (29) |
+| MegaDrive | 190 / 146 | 86 / 107 | 149 / 132 | 118 / 142 | -4.0 | -2.6 % (21) |
+| 0xCB panel | 0 / 0 | 1 / 0 | 0 / 0 | 0 / 0 | -0.2 | (weight 0) |
+| split72_left | 11 / 26 | 20 / 36 | 34 / 19 | 29 / 19 | +1.5 | +3.7 % (18) |
+| protoesp | 68 / 111 | 110 / 106 | 134 / 153 | 68 / 113 | +25.8 | +23.3 % (30) |
+| Glasgow | 133 / 125 | 136 / 120 | 185 / 157 | 139 / 133 | -14.5 | -8.6 % (70) |
+| SmartSpin2k | 127 / 77 | 61 / 64 | 36 / 39 | 68 / 28 | -21.0 | -45.3 % (3) |
+| SNSP-CPU-01 | 107 / 117 | 65 / 115 | 78 / 60 | 66 / 82 | +14.5 | +13.8 % (4) |
+| video | 230 / 434 | 163 / 163 | 337 / 257 | - | +41.3 | +13.3 % (12) |
+
+`placer_ab.py compare --metric first_open`: weighted relative change
+**+4.2 %** (90 % from the noise file -3.0 to +11.4 %), p (on better)
+0.791 sign-flip / 0.819 noise file; sum of medians 1091 to 1180; 5
+boards better, 6 worse. **Stage 1 fails**: it passes a lever whose
+change is negative at p <= 0.25, and this one is positive at four
+seeds (at one seed +14.0 %, two +9.4 %, three +5.6 %). Glasgow (the
+largest weight, the board whose rows the term doubles) is better on all
+four seeds (-8.6 %), the 4in1-mini (the next weight, rows 0.38 to 0.67)
+worse on three, protoesp worse on three.
+
+**The lever moved what it meant to move** (stage 0, the screen's placed
+boards counted by `metrics.py`, every part, the mean over the seeds
+off / on): parts in a row 0.38 to 0.67 on the 4in1-mini, 0.27 to 0.40
+on Glasgow, 0.38 to 0.47 on MegaDrive, 0.40 to 0.52 on video, about
+equal on the other seven; half-perimeter wire up on 8 of 11 (video
+37379 to 43573), ratsnest crossings up on 7 (video 12646 to 18524, the
+4in1-mini 74 to 96). Over our own placements of each board (the 8 rows
+of seeds 1 to 301, off and on), the Spearman of the share in a row with
+the first route's open terminals is +0.06 on the mean (-0.43 to +0.57
+by board), of the crossings +0.27, of the octilinear wire +0.18: among
+our placements the rows do not order the routing.
+
+**Judgement.** Rows of repeated parts are what separates the designers'
+placements from ours most consistently, but lining parts up as a cost
+of the anneal buys the rows with wire and crossings and does not route
+better. The designers' rows come with their tight packing and their
+shorter nets (hypotheses 1 and 2); a term that lines parts up one
+partner at a time reaches neither (video's bank lines up in far pairs,
+the scattered order stays). The switch stays off. What the ranking
+points at next: the wirelength the designers save, by net size the
+supply rails and buses of nine pins or more (median ratio 1.22) and the
+3- to 8-pin nets (1.13), which the placer weights down
+(`3 / (pins - 1)`) and the halos spread; and the arrangement of a bank
+as a whole (bus-group moves, off, placed a bank side by side but
+judged by crossings and wire alone: "Bus-group moves (2026-10-26)").
+
+Scripts: `experiments/placement-gap/metrics.py` (and its tests),
+`firstroute.py` (both placements' first routes alike), `screen.py`
+(stage 1 for a placer switch: five seed pairs, eleven dense boards,
+`stop_after_first_route`, one run.py per row at 2 threads, its slots
+from a file).
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a
