@@ -74,9 +74,16 @@ pub struct KiCadNetlistImport {
 /// footprint name: designers put 90 % of USB and RF connectors and all
 /// audio jacks and card edges of 616 open-source boards at an edge.
 pub(crate) fn edge_connector(footprint_name: &str) -> bool {
-    let name = footprint_name.to_ascii_lowercase();
-    let name = name.rsplit(':').next().unwrap_or(&name);
+    let full = footprint_name.to_ascii_lowercase();
+    let library = full.rsplit_once(':').map_or("", |(library, _)| library);
+    let name = full.rsplit(':').next().unwrap_or(&full);
     if name.contains("u.fl") {
+        return false;
+    }
+    // A diode's package is no connector: KiCad's `Diode_SMD:D_SMA` (the
+    // SMA package of DO-214AC, not the coax connector; ducktop2's right_io
+    // had its B340A clamp D2090 in the starter's edge list, trial 5).
+    if library.starts_with("diode") || name.starts_with("d_") {
         return false;
     }
     // Short names as whole words (`USB_C`, `USB2`, `SMA_Amphenol`, not
@@ -2295,6 +2302,9 @@ mod tests {
             "Connector_Coaxial:U.FL_Hirose_U.FL-R-SMT-1_Vertical",
             "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical",
             "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm",
+            "Diode_SMD:D_SMA",
+            "D_SMA_Handsoldering",
+            "Diode_SMD:D_SMA-SMB_Universal_Handsoldering",
         ] {
             assert!(!edge_connector(name), "{name}");
         }
