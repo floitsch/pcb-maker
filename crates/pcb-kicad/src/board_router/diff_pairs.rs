@@ -5217,6 +5217,9 @@ mod tests {
   (segment (start 0 0.4) (end 15 0.4) (width 0.2) (layer "F.Cu") (net "/D-")))"#,
         )
         .unwrap();
+        // Production callers note the board's net names before measuring;
+        // the test does the same (`normalize_net` asserts it in debug).
+        crate::note_net_names(&pcb);
         // A via from F.Cu to B.Cu counts the whole stack, its copper
         // included (KiCad 10, `copper_heights`).
         let heights = copper_heights(&pcb);
