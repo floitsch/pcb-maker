@@ -4250,7 +4250,18 @@ routes, 9 to 12 % less CPU. The second round (2026-10-27) prefetched the
 rest of an expansion's maps and the next pop's node; the third gave the
 search's open list a decrease-key (`SearchHeap`, the slot in the node:
 no stale pops) and the restamp one decode a stamp list: identical
-routes, 1.3 to 6.8 % less CPU.
+routes, 1.3 to 6.8 % less CPU. The fourth (2026-11-04) profiled what
+came since (the length and neck repairs, vias in BGA pads, the trouble
+repair's extra reroute, the pin-row gaps after moves, the race's
+copies): of it only the via-in-pad plan cost (node_v6_0_0's route 59 %,
+jetson's 9.5 %: every lowering flooded each large footprint's pad field
+again); it keeps each footprint's enclosed pads by their exact inputs.
+The pour analyses (a third of the pour boards' routes) visit the windows
+around a pad's nodes nearest first and only for the pieces near the
+pad, and label the pour map by runs: identical routes, 11.9 % less
+router CPU as the geometric mean of twelve boards in route mode (node_v6
+-45 %, nrf24_remote -31 %, the busboard -20 %, brickpico -12 %, the
+fingerprint boards -2.2 %), 1.5 % less in four dense layouts.
 
 ## Determinism and the wall clock (2026-10-14)
 

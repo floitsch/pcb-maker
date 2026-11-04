@@ -11,6 +11,41 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-04 (the fourth router round: the via-in-pad plan cached, the pour analyses' windows and labelling; the same routes, 11.9 % less router CPU)
+
+Branch router-profile-4 (five commits); the head built as
+`build/bin/pcb-maker-rprof4-final` (on main 951b610a), measured against
+x1889; docs/profiling.md, "The fourth router round (2026-11-04)", has the
+profile and the tables.
+
+- **The profile** (a throwaway timing build, thread CPU per category;
+  callgrind on short routes): of what the router gained since the third
+  round only the via-in-pad plan costs (node_v6_0_0 59 % of its route,
+  jetson 9.5 %, Sisu 2.4 %, protoesp's layout 2 %: every lowering, report
+  and measure flooded each large footprint's pad field again); the
+  length repair (oro's layout 0.4 %), the neck repair (5 s of router CPU
+  beside 290 to 330 s of KiCad's checks on WLED_Matrix and USB_Keypad),
+  the trouble repair's victim lists and extra reroute, `graphic_stubs`,
+  `mark_pin_rows`, the race's copies and rip-ups are a hundredth of a
+  percent to 0.4 %. The pour analyses were a third of the pour boards'
+  routes (nrf24_remote, brickpico, the MusicBrain busboard), two thirds
+  of them the window scans around every pad's nodes.
+- **The changes**: the enclosed pads of a footprint kept by their exact
+  inputs (`enclosed_of`); the analyses' windows visited nearest first and
+  left early (`NearOrder`, `piece_near_ordered`, `pieces_near_ordered`),
+  only for the pieces near a solid pad; the free mask's bits read once a
+  layer; the pour map labelled by runs. Each with a unit test against the
+  direct computation.
+- **Measured** (pinned pairs on SMT siblings): route mode -11.9 % as the
+  geometric mean of twelve boards (node_v6_0_0 -45.5 %, nrf24_remote
+  -30.7 %, the busboard -20.0 %, brickpico -12.4 %, Castor -5.0 %, Sisu
+  -4.2 %, jetson -3.8 %; k30-SBC +4.5 % in four pairs with 5.7 % fewer
+  instructions: the pairs' spread), layouts of four dense boards -1.5 %
+  (their routing part -1.0 to -2.9 %).
+- **Identical**: every pair's routed boards and fingerprint lines; each
+  commit on six boards; the expansion tier 46 of 46 boards against the
+  nightly of 2026-11-04; the work booked the same by construction.
+
 ## Committed on 2026-11-04 (footprints without a courtyard keep their bodies apart; a footprint's slots move with it; sub-boards from the outline alone)
 
 Branch legality-no-courtyard (build/bin/pcb-maker-legal2-*), fresh agent

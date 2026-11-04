@@ -22,7 +22,13 @@ third placer round of 2026-10-28 ("The third placer round" at the end:
 branch placer-profile-3, measured on main's x1874, 39fc92d6) took the
 legaliser's and the refinement's legality tests, queries and crossings:
 the placement 4 to 52 % cheaper again (24.5 % as the geometric mean of the
-same fifteen boards, 29.4 % of the eleven dense ones). The fourth placer
+same fifteen boards, 29.4 % of the eleven dense ones). The fourth
+router round of 2026-11-04 ("The fourth router round" below: branch
+router-profile-4, measured against main's x1889, 951b610a) profiled
+what the router gained since the third (the length and neck repairs,
+vias in BGA pads, the race's copies) and took the via-in-pad plan's
+floods and the pour analysis's window scans and labelling: the same
+routes in less CPU. The fourth placer
 round of 2026-11-04 ("The fourth placer round" at the end: branch
 placer-profile-4, measured against main's x1885, 6a95300a) took the
 anneal's overlap sums and crossings, the legaliser's crossings, the
@@ -774,6 +780,333 @@ rate.
   `Vec::push`'s capacity test a byte would be the next small step.
 - The steps' counts and the prefetch of the next pop's rows (the second
   round's list) remain.
+
+## The fourth router round (2026-11-04)
+
+What the router gained since the third round (2026-10-27) without a CPU
+profile: the length repair after the clean-up, the neck-gap repair with
+its bridges and extra KiCad checks, graphic-stub filtering in
+`emit_routes`, the trouble repair's extra hard reroute of one-sided
+conflicts, vias in BGA pads (the via-in-pad plan at every lowering),
+pin-row gaps rebuilt on every layout move, and the race's router copy
+per probe (the ripped count). Branch router-profile-4: five code
+commits and this note, measured on main 951b610a (x1889; x1888 to x1891
+route as x1882), the head built there as
+`build/bin/pcb-maker-rprof4-final`, then rebased on main 4eed451a (no
+router change between); each commit's binary before the rebases
+`build/bin/pcb-maker-rprof4-k1` to `-k5`; outputs in `build/rprof4/`.
+
+### How
+
+perf was not installable again. Three ways, as the placer rounds:
+
+- **Categories** (a throwaway build, branch router-profile-4-attr, not
+  for merging: `pcb_router::attr`, thread CPU time per category from
+  `CLOCK_THREAD_CPUTIME_ID` around a function or a block, summed over
+  the threads and printed at the end with `PCB_ROUTER_ATTR`): the search,
+  the stamping, the negotiation, the hard repair, the trouble repair and
+  its parts (the priced search, the victim lists, the victims' reroutes,
+  the extra reroute of one-sided conflicts, the saved states), the
+  clean-up, the length repair (and its victim list), the via reduction,
+  the spoke repairs, the straightening, the stitching, the manual
+  spokes, the lowering (and in it the via-in-pad plan), `Router::new`,
+  `mark_pin_rows`, `Router::update`, the race's copies and
+  `rip_up_standing`, `emit_routes` and `graphic_stubs`, the attempt's
+  write, the meanders, the verification, the board's parse, the final
+  pour measure (`measured_board`, and in it the parse, the lowering,
+  `Router::new`, the adoption and the report), the neck repair (CPU and
+  wall) and every KiCad check's wall; a second and third build split the
+  pour analysis (the free mask, the cuts, the labelling, the solid pads'
+  windows, `kicad_spokes`, the refresh). The categories nest (a search
+  inside the trouble repair is in both); shares of the process's CPU.
+- **Callgrind** (valgrind 3.25) on short routes (10 s of work, one
+  thread, pinned rates, `PCB_ROUTER_NO_WALL_GUARD=1`): nrf24_remote
+  with the collection toggled on `analyze_pours_uncounted`, before and
+  after the window change; pdlc whole, and its `Router::stamp` with the
+  profiling build of "How to profile" for the lines; brickpico's
+  analyses after the changes.
+- **Pinned pairs**: route mode on the four fingerprint boards (v16
+  placements, a quarter budget: 300 s of work, two search threads) and
+  the expansion tier's eight heaviest boards (the nightlies of
+  2026-11-01 to 03 by the median CPU: node_v6_0_0, brickpico,
+  anthracite-bottom, the power-manifold backplane, nrf24_remote, Wonkle,
+  pdlc, the MusicBrain busboard; their nightly sources and router
+  settings, 30 s of work, one search thread, the intake's 90 s wall
+  deadline left out so that no wall cut can differ); layouts of four
+  dense boards (protoesp, SmartSpin2k_Panelized, MegaDrive, 4in1-mini;
+  the placer rounds' task sources, seed 1, two threads). Each pair: the
+  off binary on two CPUs, the on binary on their SMT siblings, started
+  together inside one reservation of the memory ledger for both
+  (`PCB_MAKER_LEDGER_INSIDE`, the boards' measured estimates), pinned
+  rates, `PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`; the
+  second orientation (CPUs swapped) at the same time on two other cores;
+  the router process's own CPU (utime + stime at its exit, kicad-cli
+  left out). The harness is `build/rprof4/pairs.py` (scratch).
+
+### Where a route's CPU goes (main 688b59ca, the categories)
+
+Route mode, one run per board under the timing build (unpinned, the
+machine's load 24 to 38; shares of the router process's CPU, the
+categories nested as the code nests them; "-" where the category did
+not run):
+
+| category (% of the route's CPU) | Castor | k30-SBC | jetson | Sisu | node_v6 | brickpico | anthracite | backplane | nrf24 | Wonkle | pdlc | busboard |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| route CPU s (the timing build) | 314 | 344 | 580 | 515 | 87 | 81 | 58 | 61 | 81 | 63 | 46 | 52 |
+| search | 77.2 | 83.5 | 76.8 | 76.2 | 30.8 | 48.4 | 56.3 | 65.6 | 50.9 | 61.2 | 62.0 | 51.1 |
+| stamping (`stamp`, `unstamp`) | 7.5 | 4.9 | 2.6 | 9.4 | 1.4 | 6.2 | 12.3 | 3.8 | 4.8 | 5.8 | 20.2 | 10.1 |
+| pour analyses (the log's seconds) | 5.9 | 0.0 | 0.0 | 0.0 | 0.0 | 28.1 | 0.0 | 0.0 | 32.6 | 6.8 | 3.5 | 22.3 |
+| hard repair (`resolve_remaining`) | 0.0 | 1.3 | 4.7 | 12.3 | 7.9 | 0.0 | 0.0 | 2.9 | 2.4 | 27.0 | 3.3 | 2.2 |
+| trouble repair | 0.0 | 0.0 | 3.0 | 4.9 | 0.0 | 0.0 | 0.0 | 1.9 | 0.6 | 0.0 | 0.9 | 0.0 |
+| of it: priced searches | - | - | 0.3 | 0.3 | - | - | - | 0.3 | 0.2 | - | 0.3 | - |
+| of it: victim lists | - | - | 0.01 | 0.00 | - | - | - | 0.00 | 0.00 | - | 0.00 | - |
+| of it: the victims' reroutes | - | - | 2.6 | 4.4 | - | - | - | 1.5 | 0.3 | - | 0.3 | - |
+| of it: the extra reroute (one-sided conflicts) | - | - | 0.00 | 0.00 | - | - | - | 0.00 | 0.00 | - | 0.00 | - |
+| clean-up | 27.5 | 14.5 | 8.1 | 8.4 | 0.0 | 22.7 | 15.4 | 17.1 | 29.9 | 0.9 | 37.1 | 30.4 |
+| length repair | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+| via reduction | 25.6 | 21.9 | 0.0 | 0.0 | 0.0 | 38.5 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+| spoke repairs, straightening, stitching, manual spokes | 7.4 | 1.8 | 0.2 | 0.5 | 0.2 | 1.1 | 6.0 | 6.2 | 9.6 | 11.2 | 3.2 | 4.1 |
+| lowering (`lower`) | 0.04 | 0.02 | 7.3 | 1.7 | 44.6 | 0.13 | 0.36 | 0.26 | 0.08 | 0.38 | 0.12 | 0.14 |
+| via-in-pad plan (in the lowering, the reports, the measure) | 0.00 | 0.00 | 9.5 | 2.4 | 58.9 | 0.01 | 0.05 | 0.25 | 0.03 | 0.08 | 0.02 | 0.02 |
+| pin-row gaps (`mark_pin_rows`) | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 | 0.00 |
+| `emit_routes` (with `graphic_stubs`) | 0.00 | 0.00 | 0.01 | 0.00 | 0.01 | 0.00 | 0.03 | 0.01 | 0.06 | 0.06 | 0.05 | 0.04 |
+| the attempt's write (encode, the report's plan) | 0.02 | 0.01 | 1.2 | 0.4 | 6.0 | 0.02 | 0.17 | 0.06 | 0.27 | 0.28 | 0.28 | 0.11 |
+| the final pour measure (`measured_board`) | 0.4 | 0.3 | 1.6 | 2.3 | 8.9 | 1.7 | 7.4 | 3.5 | 0.1 | 6.3 | 0.7 | 5.1 |
+| verification, the board's parse | 0.06 | 0.02 | 0.9 | 0.1 | 0.2 | 0.1 | 0.4 | 0.1 | 0.4 | 0.8 | 0.4 | 0.2 |
+
+- **The via-in-pad plan** (vias in BGA pads, 2026-10-28) is the largest
+  new cost: `plan` runs at every lowering (each rung, each attempt), for
+  the report of each board written (`finish_routed_board`, on the board
+  without its vias) and in the final measure, and judges every
+  footprint's enclosed pads (`enclosed_pads`: a flood of the pad field
+  on a raster of 5 to 25 microns, once per net of the candidates)
+  whether the rule admits it or not, for the report's closed pads.
+  node_v6_0_0: 59 % of its route (the lowering 45 %, the write 6 %, the
+  measure 9 %), jetson 9.5 %, Sisu 2.4 %, protoesp's layout 2 %.
+- **The pour analyses** (not new, the pour boards' second largest
+  cost): nrf24_remote 33 to 37 %, brickpico 28 to 34 %, the busboard 22
+  %. Callgrind (nrf24_remote, 10 s of work, the analyses only): the
+  window scans around the solid pads' nodes (`pieces_near`, 38 % of the
+  analyses' instructions) and around every pad's nodes for the spokes'
+  items (`piece_near` from `kicad_spokes`, 27 %): a pad's hundreds of
+  nodes at a 0.05 mm pitch each looked at the 33 x 33 nodes of its
+  window; the labelling (`PourMap::build`, 14 %; a tenth of brickpico's
+  and the busboard's routes), the free mask (7 %), the fill probe (5 %).
+- **The rest is small**: the trouble repair 0 to 5 % (its victim lists
+  0.01 % at most, the extra reroute below the timer's resolution; the
+  victims' reroutes are searches), the length repair 0 (no board here
+  has a length rule; oro's layout below), `mark_pin_rows` at most 3 ms a
+  run, `emit_routes` and `graphic_stubs` at most 0.06 %, the race's
+  copies 0.01 to 0.14 s and `rip_up_standing` 0.24 to 0.50 s a layout
+  (protoesp, SmartSpin2k, 4in1-mini, USB_Keypad), `Router::update` 1 to
+  6 s a layout.
+- **Stamping** 2.6 to 20 % (pdlc's seven classes: each stamp marks its
+  footprints once per querying class): callgrind's lines of
+  `Router::stamp` spread over the varint decode (15 %), the look-ahead
+  ring (8 %), the marks (10 %), the encode (6 %) and the counts: no
+  single line to take.
+- **The final pour measure** (`measured_board`, counted as no work): on
+  anthracite 6.0 s, of it `Router::new` 3.4 s (two builds of the full
+  lattice: the measure's board is the written one, its tracks fixed
+  copper, so the route's held static maps do not fit it) and the report
+  2.4 s.
+
+**Layouts** (the timing build, the layout's budget, seed 1, two threads;
+shares of the layout process's CPU; seconds where marked):
+
+| category (% of the layout's CPU) | protoesp | SmartSpin2k | MegaDrive | 4in1-mini | USB_Keypad | WLED_Matrix | oro link |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| layout CPU s | 1719 | 1522 | 1916 | 1274 | 879 | 1349 | 3162 |
+| search | 79.2 | 85.8 | 66.9 | 61.6 | 49.4 | 50.8 | 56.9 |
+| stamping | 2.9 | 1.6 | 7.3 | 2.5 | 5.5 | 6.1 | 8.8 |
+| hard repair | 17.8 | 26.5 | 10.1 | 10.5 | 1.7 | 3.7 | 3.8 |
+| trouble repair (of it the victims' reroutes) | 1.0 (0.3) | 0.5 (0.4) | 3.3 (1.7) | 6.4 (4.4) | 0.3 (0.1) | 0.7 (0.4) | 0.2 (0.3) |
+| pour analyses | 1.3 | - | 1.6 | 1.6 | 5.1 | 7.4 | 12.7 |
+| lowering / via-in-pad plan | 1.9 / 2.1 | 0.1 / 0.1 | 0.0 / 0.0 | 0.0 / 0.0 | 0.4 / 0.4 | 0.3 / 0.3 | 0.2 / 0.2 |
+| length repair, meanders (s) | - | - | - | 0, 0 | 0, 0 | 0, 0 | 12.6, 0.3 |
+| the race's copies, `rip_up_standing` (s) | 0.07, 0.35 | 0.14, 0.27 | 0.38, 5.16 | 0.03, 0.50 | 0.01, 0.24 | 0.02, 0.34 | 0.80, 3.37 |
+| `Router::update`, the moves' rebuilds (s) | 6.1 | 1.3 | 7.0 | - | 1.0 | 2.1 | 96.6 |
+| the neck repair: router CPU s / wall s | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 5.3 / 326 | 4.9 / 291 | 0 / 0 |
+| KiCad's checks, wall s | - | 13 | - | - | 345 (24 checks) | 324 | 22 |
+
+The layouts' CPU is the search and the placement (not timed here: the
+placer rounds'). The length repair is oro's 0.4 %, the meanders 0.01 %;
+the moves' rebuilds (`Router::update`, with the pin-row gaps since
+2026-11-03: `mark_pin_rows` 1 to 3 ms a layout) 3 % of oro's layout,
+below 0.4 % elsewhere; the ripped count's copies and rip-ups 0.3 % of
+MegaDrive's at most (main's x1889 since picks the rip-up from a heap).
+The neck repair's cost is KiCad's: USB_Keypad's 24 checks took 345 s of
+wall clock (kicad-cli, a child: not the router's CPU) against 5.3 s of
+the router's own (the board's parse, the lowering, the trials'
+encodings; the raster `find_necks` 1 ms). Its
+trials are sequential by construction (each half's check carries the
+tracks the halves before it kept), so they cannot run side by side and
+keep the same checks.
+
+### The changes (bit-identical)
+
+Five commits, each the same computation: the same answers in the same
+order, the same work booked (the pour analyses book their model's
+units, the fill probe its questions, neither changed), each with a unit
+test against the direct computation.
+
+1. **The via-in-pad plan's enclosed pads kept by their exact inputs**
+   (via_in_pad.rs `enclosed_of`, `enclosed_key`, `ENCLOSED`). A
+   footprint of nine pads or more (fewer hold no enclosed pad) is judged
+   once per process for the same inputs: the key is every word
+   `enclosed_pads` reads (each pad's number, centre, shape, layers,
+   kind, net and clearance as bits, and each net's track, clearance and
+   via), compared whole; the answer is kept as positions among the
+   footprint's pads. A layout's moves make every pose of a large part a
+   new key: the cache is emptied at 64 MB of keys. Test
+   `the_enclosed_pads_are_kept_by_their_exact_inputs` (the cached
+   answers against `enclosed_pads`, a ball moved by a nanometre and
+   rules narrow enough to pass between the balls are other keys with
+   other answers).
+2. **The pour analysis's windows nearest first** (pour.rs `NearOrder`,
+   `piece_near_ordered`, `pieces_near_ordered`, `pieces_in_box`). A
+   window's nodes in the order of their distance, ties in the window's
+   row-major order: the first labelled node met is `piece_near`'s
+   answer (the scan kept a strictly nearer node, so of the nearest the
+   first in row-major order), each piece's first node its nearest in
+   `pieces_near`'s sense; the spokes' items stop at the first, the
+   solid pads' windows once every piece the box of the pad's windows
+   holds was met. Tests `the_ordered_windows_find_what_the_scans_find`
+   (four label maps, reaches 0 to 16, every node, against the scans),
+   `the_order_is_nearest_first_then_row_major`.
+3. **The free mask reads its map's bits once** (`OwnStamps::bits_of`):
+   the slot lookup and its assertion once a layer instead of once a
+   node.
+4. **The pour map labelled by runs** (`PourMap::build`). The flood
+   node by node became runs of solid nodes along the rows, joined to
+   the runs above that overlap them (side by side) and to the run above
+   that ends just before a run's start or begins just after its end
+   (diagonally: there both common neighbours are free of the pour by
+   construction, and they are the only diagonal steps the flood asked
+   `diagonal` about); a piece is numbered at its first run in the
+   lattice's order, where the flood started it. Test
+   `the_pieces_by_runs_are_the_floods` (seven maps, a deterministic half
+   of the diagonal steps allowed and all of them, against the flood,
+   kept as the test's reference).
+5. **A solid pad's windows look only for the pieces that can join it**.
+   A piece's candidate is its node nearest the pad among the nodes'
+   windows' nearest; `solid_fill_reaches` refuses a candidate farther
+   than the brush and two pitches before it asks the probe anything, so
+   only pieces with a node within that of the pad can join it: the
+   windows look for the pieces in the pad's box grown by the brush and
+   three pitches (none: no window at all), and `pieces_near_ordered`
+   keeps the pieces it is given. Test: subsets of the pieces against the
+   full answer.
+
+Not taken: the stamp lists (no line above 5 % of `Router::stamp`; the
+third round's notes stand), the final pour measure's two lattice builds
+(the written board's tracks are fixed copper there: the route's held
+maps do not fit; a third of anthracite's 6 s), the work-rate
+calibration at the start of every run with pinned rates (8 % of pdlc's
+instructions at 10 s of work, a few CPU seconds a run: the measured
+rate goes into the report and the wall guard's stretch, so dropping it
+changes what a run reports), the trouble repair's victim lists and the
+race's copies (below a hundredth of a percent and 0.2 s a layout), the
+neck repair's checks (KiCad's wall clock, sequential by construction).
+
+### Measured (2026-11-04)
+
+**Route mode** (pinned pairs as in "How": x1889, main 951b610a,
+against the head, `build/bin/pcb-maker-rprof4-final`, on 951b610a; the
+two orientations each its own series of reservations, one after the
+other on CPUs 0, 1 and 8, 9 and their siblings; the machine's load 8 to
+45; 04:25 to 07:34). Cells: each pair's CPU seconds of the router
+process (x1889 on the first CPUs first, then swapped); the change, the
+geometric mean of the pairs' ratios; peak resident size (MB); the
+routed board and the fingerprint lines:
+
+| board | budget | x1889 CPU s | head CPU s | CPU | x1889 MB | head MB | identical |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Castor | 300 | 340.2 / 414.0 | 314.8 / 404.1 | -5.0 % | 600 / 602 | 591 / 598 | yes (2 pairs, 6 fingerprint lines) |
+| k30-SBC | 300 | 445.6 / 513.7 / 515.3 / 428.0 | 461.5 / 508.7 / 532.0 / 482.1 | +4.5 % | 908 / 889 / 893 / 892 | 890 / 896 / 888 / 894 | yes (4 pairs, 5 fingerprint lines) |
+| jetson | 300 | 620.4 / 514.6 | 583.1 / 507.2 | -3.8 % | 1207 / 1213 | 1210 / 1216 | yes (2 pairs, 5 fingerprint lines) |
+| Sisu | 300 | 724.1 / 531.7 | 700.5 / 504.0 | -4.2 % | 1424 / 1422 | 1425 / 1432 | yes (2 pairs, 5 fingerprint lines) |
+| node_v6_0_0 | 30 | 127.3 / 57.1 | 64.4 / 33.6 | -45.5 % | 356 / 366 | 342 / 342 | yes (2 pairs, 5 fingerprint lines) |
+| brickpico | 30 | 97.1 / 95.8 | 81.2 / 87.9 | -12.4 % | 524 / 526 | 533 / 526 | yes (2 pairs, 6 fingerprint lines) |
+| anthracite-bottom | 30 | 79.5 / 83.6 / 63.1 / 82.2 | 80.1 / 82.0 / 68.0 / 80.9 | +1.2 % | 491 / 496 / 484 / 490 | 492 / 511 / 489 / 492 | yes (4 pairs, 5 fingerprint lines) |
+| backplane | 30 | 81.3 / 68.2 | 76.5 / 68.7 | -2.7 % | 381 / 372 | 369 / 371 | yes (2 pairs, 5 fingerprint lines) |
+| nrf24_remote | 30 | 79.1 / 79.5 | 55.1 / 54.9 | -30.7 % | 134 / 135 | 134 / 138 | yes (2 pairs, 71 fingerprint lines) |
+| Wonkle | 30 | 73.0 / 78.8 | 68.2 / 76.5 | -4.7 % | 592 / 590 | 590 / 586 | yes (2 pairs, 6 fingerprint lines) |
+| pdlc | 30 | 66.9 / 64.1 / 64.6 / 63.7 | 61.5 / 60.5 / 64.7 / 62.6 | -3.9 % | 252 / 260 / 254 / 257 | 263 / 258 / 237 / 260 | yes (4 pairs, 59 fingerprint lines) |
+| musicbrain-busboard | 30 | 76.9 / 61.0 | 61.1 / 49.0 | -20.0 % | 473 / 472 | 474 / 471 | yes (2 pairs, 6 fingerprint lines) |
+
+Over the twelve boards the router's CPU falls 11.9 % as the geometric
+mean (the eight expansion boards 16.4 %, the four fingerprint boards
+2.2 %). Where the profile pointed: node_v6_0_0
+-45 % (its plan), nrf24_remote -31 % and the busboard -20 % (the
+windows, the labelling), brickpico -12 % (the labelling; its windows
+still a large share, below), Castor -5 %, jetson -4 % (the plan), Sisu
+-4 %. Where little it runs changed, the pairs give the noise:
+backplane -2.7 %, Wonkle -4.7 %, pdlc -3.9 % and anthracite +1.2 % (four
+pairs each for these two: +0.8, -1.9, +7.8, -1.6 %), and k30-SBC
++4.5 % (four pairs: +3.6, -1.0, +3.2, +12.6 %), though callgrind counts
+5.7 % fewer instructions for k30-SBC's route on the head at 10 s of work
+(190 G against 179 G: the pour analyses 22.2 G to 12.2 G, the search
+105.5 G on both): its CPU in the pairs is the pairs' spread (the third
+round's jetson orientations: -2.4 and -15.1 %) or the code's placement,
+not more work.
+
+**Layouts** (`layout-kicad-board`, the task's budget, seed 1, two
+threads, one orientation a reservation; the layout's CPU, the
+placement's to `layout: placed`, the rest from there; peak RSS; the
+placed and the result boards and the fingerprint lines):
+
+| board | x1889 CPU s | head CPU s | CPU | x1889 placement | head | placement | x1889 routing | head | routing | x1889 MB | head MB | identical |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| protoesp | 1904.7 / 2252.8 | 1845.9 / 2202.6 | -2.7 % | 309 / 370 | 303 / 368 | -1.2 % | 1596 / 1882 | 1543 / 1834 | -2.9 % | 411 / 415 | 404 / 394 | yes (2 pairs, 35 fingerprint lines) |
+| SmartSpin2k_Panelized | 1642.4 / 1658.0 | 1609.6 / 1622.7 | -2.1 % | 214 / 242 | 213 / 238 | -1.1 % | 1429 / 1416 | 1396 / 1385 | -2.2 % | 1217 / 1221 | 1216 / 1222 | yes (2 pairs, 8 fingerprint lines) |
+| MegaDrive | 2439.4 / 2231.9 | 2371.4 / 2238.1 | -1.3 % | 395 / 379 | 390 / 382 | -0.3 % | 2044 / 1852 | 1981 / 1856 | -1.5 % | 2016 / 2021 | 2019 / 1995 | yes (2 pairs, 20 fingerprint lines) |
+| 4in1-mini | 1531.8 / 1000.9 | 1520.8 / 1010.1 | +0.1 % | 450 / 362 | 448 / 379 | +2.1 % | 1082 / 639 | 1073 / 631 | -1.0 % | 257 / 262 | 257 / 259 | yes (2 pairs, 11 fingerprint lines) |
+
+The layouts move by +0.1 to -2.7 % (-1.5 % as the geometric mean of the
+four): their CPU is the search and the placement, which this round did
+not change. The routing part (from `layout: placed` on) falls 1.0 to
+2.9 % on every board (seven of the eight pairs), most on protoesp (its
+via-in-pad plan was 2 % of its layout, and its pours); the placements
+move by -1.2 to +2.1 % with nothing of the placer changed: the pairs'
+spread.
+
+**Identical.** Every pair above: the routed (or placed and result)
+board's SHA-256 and every fingerprint line (as a sorted set). Each
+commit on its own (`-k1` to `-k5`, built before the last rebases, the
+same router code), unpinned, against x1888 (which routes as x1889) on
+node_v6_0_0, nrf24_remote, brickpico, the busboard, Wonkle and
+anthracite: the same boards and fingerprint lines from all six
+binaries. The expansion tier (46 boards, route mode, 8 x 1, 30 s,
+`run.py --tier expansion` with the head) against the nightly of
+2026-11-04 (main 688b59ca, the same router): 46 of 46 routed boards
+byte-identical, the rows' routed counts, vias, KiCad findings, passes
+and verdicts identical, 558 unconnected, 24 strict passes, 4256 vias
+both, no wall cut (its CPU 1735 against the nightly's 2318 s: unpinned,
+other loads; no measurement). `scripts/check.sh --fast` passes (clippy
+with warnings as errors).
+
+**The work clock**: unchanged by construction. The cache, the windows
+and the labelling compute what was computed before; the pour analyses
+book their model's units (nodes inside the pour, stamps) and the fill
+probe its questions, both the same.
+
+### What is next
+
+- **brickpico's pour analyses** after the changes (callgrind, 10 s of
+  work, the analyses only): the solid pads' windows are still 45 % of
+  its analyses (its pads have pieces near them that their inner nodes'
+  windows lack, so the windows are walked to their end), `kicad_spokes`
+  27 %, the free mask 12 %. An exact bound on where a window's nearest
+  node of a piece can lie closer than the brush and two pitches to the
+  pad would let the walk stop early.
+- **The search** is again 50 to 85 % of every route and layout (74 % of
+  nrf24_remote's route after the changes); the third round's list
+  stands.
+- **Stamping** (2 to 20 %; pdlc's seven classes): spread over the varint
+  decode, the ring, the marks and the encode.
+- **The final pour measure's lattice** (anthracite 3.4 s of 6 s): a
+  build of the written board's maps, which nothing shares.
 
 ## The layout round (2026-10-25)
 
