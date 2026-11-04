@@ -7391,6 +7391,136 @@ A panel whose constraints name no relation places as before: SmartSpin2k's
 place check is byte for byte the trial's. Tests:
 `a_constraint_on_any_copys_parts_holds_in_every_copy`,
 `a_near_on_a_panels_copy_anchors_in_the_parts_own_copy`.
+## Pads without a way out (2026-11-04)
+
+The crossing dive's census (router.md, "Crossings decided in the
+repair") ended on pads the router cannot reach at all: OpenAirScope's
+CM1624 UDFN-16 and the laptop keyboard's nRF aQFN inner pad VSS_PA had no
+straight way out on the statics at the class width, so no move of the
+router opens them; only turning or moving a part does. Nothing in the
+placer looked: the agent saw an open connection and no lever. The
+rule: a pad whose every way out the fixed copper around its placed part
+closes is a placement defect, found at placement time and repaired by
+the placer.
+
+**The test** (`ExitProbe`, pcb-router's router/pad_exits.rs; the
+placement lowered as the layout routes it, pours added, the router's
+classes with their neck variants and the lattice `Grid::choose` takes
+for the board). Per single-layer pad of a net with another pad that no
+connected pour carries: from the router's terminal nodes (legal nodes
+well inside the pad, `prepare_net`'s), a flood over legal nodes and steps
+on the pad's layer at the net's class (its neck class within the neck
+zones). The pad is *open* when the flood reaches 1 mm beyond the pad's
+box (`ESCAPE`), another pad of its net, or a node where its net's via may
+stand (a via in the pad included, where the board admits one); else it
+is *closed*, and every rim node of its pocket names the item with the
+least slack there (another net's obstacle on the layer, a keepout, or the
+board edge). A pad without a legal node of its own is left to the
+router's escape stubs and not judged (never closed). A closed pad is the
+*footprint's* when only its own part's items close it (no placement
+opens it: a via in the pad or another footprint), else the
+*placement's*. The maps are built on windows of the board's lattice (a
+window per 4 mm tile of tested pads, the pads' boxes and 1 mm plus three
+pitches around them): the router's maps there.
+
+The fan-out's straight ways (from the node at the pad's centre along the
+eight directions, the first idea) are not the router's question: on the
+2026-11-04 placements they called 60 of DSP-ADAU1452's LFCSP pads closed
+(55 connected in the night's result), 30 of Glasgow's (10 connected) and
+the CM1624's four by its own footprint, where the router enters the pads
+off their centre lines or leaves them by escape stubs. The flood asks
+what the router can do on the same maps.
+
+**The premise** (`pad-exits-kicad-board`, the nightly placements of
+2026-11-03 and 2026-11-04, `placed/` of the sweep, the task's router
+configuration; "open" is a pad among KiCad's unconnected items of the
+night's result):
+
+| Board | pads tested (escape stubs) | closed, 11-04 | of them open in the result | closed, 11-03 | open |
+| --- | --- | --- | --- | --- | --- |
+| OpenAirScope | 569 (9) | 0 | - | 0 | - |
+| laptop keyboard | 444 (2) | 0 | - | 0 | - |
+| Quanta75_BareRP2040 | 383 (66) | 0 | - | 0 | - |
+| k30-SBC | 314 (0) | 0 | - | 0 | - |
+| jetson-nano-baseboard | 939 (5) | 0 | - | 0 | - |
+| 0xCB-1337 panel | 480 (0) | 0 | - | 0 | - |
+| protoesp | 289 (0) | 1 (the footprint's: U1.6) | 1 | 1 | 1 |
+| glasgow revC3 | 653 (5) | 4 | 4 | 4 | 4 |
+| video | 806 (0) | 0 | - | 0 | - |
+| OpenESC 4in1-mini | 470 (0) | 5 | 5 | 9 | 9 |
+| OpenESC 4in1 | 519 (0) | 9 | 9 | 9 | 9 |
+| SmartSpin2k_Panelized | 2052 (0) | 60 | 60 | 81 | 81 |
+| DSP-ADAU1452 | 502 (63) | 0 | - | 0 | - |
+| MegaDrive | 516 (0) | 0 | - | 0 | - |
+| SNSP-CPU-01 | 1102 (0) | 0 | - | 0 | - |
+| poly_kybd_split72_left | 1555 (1) | 2 | 2 | 2 | 2 |
+
+So the two boards the rule was proposed for have no closed pad on these
+placements: VSS_PA's pocket reaches beyond 1 mm (it has no straight way
+but a bent one), and the CM1624's pads that had no straight way have no
+legal node of their own either (narrower than their track and clearance
+from the neighbours: the router leaves them by escape stubs, which the
+test does not judge). The rule is not a no-op elsewhere: on five of the
+eleven dense boards the placer leaves pads that another part closes,
+every one of them open in the night's result (44 of 44 outside the
+panel over the two nights, 185 of 185 with the SmartSpin2k panel's): a passive's pad walled by its
+neighbours' pads (the OpenESCs' 0402 resistors among the FETs' gate
+drivers), a QFN's pad whose tip a capacitor or a diode faces at the
+courtyards' distance (Glasgow's U1, the CY7C68013A, against C29, D7, R46
+and D14), a shift register's pads against a key switch's pad
+(split72's U4 against SW_K_18).
+
+**The repair** (`Config::pad_exits`, pcb-placer's exits.rs; placer
+settings `pad_exits`, `{"reach_mm": 1, "candidates": 16}` when on,
+`PCB_PLACER_PAD_EXITS`; off). After each seed's placement (the routing
+room's anneal included, before the illegal parts are judged): a session
+of the test lowers the placement once and carries every later move into
+that board rigidly (`move_descent::apply`); every placed part is asked.
+For each part with a closed pad that is the placement's, the movers are
+the part and the movable parts that close the pad (not fixed, not a row's
+leader or follower); each mover's candidates are its orientations at its
+body's centre and every grid step within `reach_mm`, legal at the
+placement's level (`is_legal`) and keeping its relations, ordered by the
+wire of its nets (to a micrometre, then by distance), the cheapest pose
+of each mover and orientation first (a turn is tried where many cheaper
+shifts are: a pad facing its neighbour stays closed under them). The
+first `candidates` are asked about the part and the placed parts within
+4 mm of the mover's two spots; the first that leaves fewer of their pads
+closed by the placement is kept. The pads left closed are reported, and
+count after the illegal parts in the seeds' ranking. Panels of copies and
+held sub-boards are placed piece by piece and get no repair (the test
+names parts by the board's indices; their repeated references would
+merge copies).
+
+The report (board-placer.json `pad_exits`): `closed_before`, `closed`
+(each pad with `reason`, `pad U1.21 has no way out (blocked by C29.1,
+U1.20, U1.22, U1.57)`, its net, layer, `blocked_by` and
+`footprint_only`), `moves` (the part, from, to, the pads opened), `tried`
+and `work_seconds`. The verdict: a place check with a closed pad that is
+the placement's is `incomplete` (`N pads without a way out (...)`) and
+says which parts to turn or move; a layout names a closed pad whose net
+it left open (its next action after "connections are open"); a
+footprint's own closed pad names a via in the pad or another footprint.
+`pad-exits-kicad-board <dir> <id> [router.json|auto] [--repair] [--out
+f]` is the census of a board as placed, and with `--repair` the repair at
+the loosest level where every movable part is legal as placed.
+
+**Work.** The session's lowering at 100 reference ns an expression of
+the board (the census's lowerings after a process's first: 80 to 270 ns
+on the pour boards, beside route mode's 26 ns model), the probe at the
+router's build prices of its maps, 60 ns for each obstacle a window's map
+build passes, 40 ns a pocket node and 60 ns an obstacle measured at a rim,
+times 2.5 (the CPU over that price on the sixteen boards' censuses, 1.5
+to 3.8; one thread on the shared machine). Booked apart from the seed's
+own work (`ExitOutcome::work`; `place` takes it back from the seed's
+count), so the seeds a race keeps do not depend on the switch, and
+charged to the layout's clock as the reference pool runs it beside the
+seeds (`pool_work_seconds`, `seeds_work_seconds`). Per seed and board (the
+census, one test of every pad): 0.08 s (k30-SBC) to 3.4 s (jetson), 0.3
+to 1.0 s on most dense boards; a repair adds its candidates' questions
+(the night's 4in1: 3.6 s for 8 closed pads, 7 moves, 43 candidates).
+
+<!-- pad-exits results -->
 
 ## Room around grid arrays (2026-11-04)
 

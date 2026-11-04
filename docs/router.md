@@ -5311,7 +5311,10 @@ fan-out's notion, not the router's: asked whether any lattice path from
 the pad's legal nodes leaves its neighbourhood, reaches a via site or
 another pad of its net, neither board has a closed pad on the nightly
 placements of 2026-11-03 and 2026-11-04: VSS_PA's pocket reaches 1 mm
-beyond the pad, and the CM1624's pads TODO; the placer's `pad_exits` asks that question of every placement:
+beyond the pad, and the CM1624's pads without a straight way have no
+legal node of their own (narrower than track and clearance from their
+neighbours: the router's escape stubs leave them, which that test does
+not judge); the placer's `pad_exits` asks that question of every placement:
 placer.md, "Pads without a way out (2026-11-04)".)
 
 **The move** (`Config::crossing_dive`, router setting `crossing_dive`,
