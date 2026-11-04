@@ -2126,9 +2126,16 @@ fn apply_rows(
         };
         // Only a row that lies exactly so (members within 0.01 mm of their
         // places) turns the frame: parts anywhere else keep the leader's.
+        // A row turned a quarter (its first part's rotation: trial 6's
+        // jacks down a eurorack board) lies so after the placement too: its
+        // layout lowered the placed board again with the row along the
+        // board's x axis, 114.7 mm on a 110 mm board, and failed (exit 4).
         let exact = 1.0e-4 * members.len() as f64;
-        let turn = if mismatch(0.0) > exact && mismatch(180.0) <= exact {
-            180.0
+        let turn = if mismatch(0.0) > exact {
+            [180.0, 90.0, 270.0]
+                .into_iter()
+                .find(|turn| mismatch(*turn) <= exact)
+                .unwrap_or(0.0)
         } else {
             0.0
         };
@@ -4101,6 +4108,48 @@ mod tests {
         assert!(
             (center[0] - 8.5).abs() < 1.0e-9 && (center[1] - 10.0).abs() < 1.0e-9,
             "{center:?}"
+        );
+    }
+
+    #[test]
+    fn a_row_turned_a_quarter_keeps_its_members() {
+        // Trial 6: a row along x whose first part has rotation 90 (eight
+        // jacks down a eurorack board), placed; the layout lowers the placed
+        // board again. C1 at 90 degrees, C2 three millimetres above it.
+        let (mut problem, references, pads) = problem();
+        problem.poses[1] = core::Pose {
+            position: [10.0, 10.0],
+            angle: 90.0,
+        };
+        problem.poses[2] = core::Pose {
+            position: [10.0, 7.0],
+            angle: 90.0,
+        };
+        let constraints: KiCadPlacementConstraints =
+            serde_json::from_str(r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 3}]}"#)
+                .unwrap();
+        apply_constraints(
+            &mut problem,
+            &references,
+            &pads,
+            &[Vec::new(), Vec::new(), Vec::new()],
+            &[None, None, None],
+            &[None, None, None],
+            &[false, false, false],
+            &[None, None, None],
+            &constraints,
+            10.0,
+        )
+        .unwrap();
+        // The row's body in its first part's frame: the two 2 x 1 mm parts
+        // 3 mm apart along it, as when it was built from the stack.
+        assert_eq!(problem.components[1].body_size, [5.0, 1.0]);
+        let mut poses = problem.poses.clone();
+        problem.sync_followers(&mut poses);
+        let at = poses[2].position;
+        assert!(
+            (at[0] - 10.0).abs() < 1.0e-9 && (at[1] - 7.0).abs() < 1.0e-9,
+            "{at:?}"
         );
     }
 
