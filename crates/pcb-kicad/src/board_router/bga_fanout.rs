@@ -132,8 +132,10 @@ struct Grid {
     local: Vec<[f64; 2]>,
     /// The frame's box of the pad centres.
     bounds: [f64; 4],
-    /// Per pad its ring: its distance from the box in pitches.
+    /// Per pad its ring (`rings_of`).
     rings: Vec<usize>,
+    /// Per pad the side of the nearer way out along each axis (`rings_of`).
+    toward: Vec<[f64; 2]>,
 }
 
 impl Grid {
@@ -186,6 +188,51 @@ fn half_extent(shape: &core::Shape, center: [f64; 2], direction: [f64; 2], limit
         }
     }
     inside
+}
+
+/// Per ball of an axis-aligned grid (`local`: centres, `pitch`): its ring,
+/// the steps along the axes to the nearest place without a ball (outside
+/// the array or a depopulated middle) less one, so the outer ring and the
+/// balls beside an empty middle are ring 0; and per axis the side where
+/// that place is nearer (-1 or 1, 0 where both are as near). One pure
+/// function of the centres, so the placer's frame and the router's agree.
+pub(crate) fn rings_of(local: &[[f64; 2]], pitch: f64) -> (Vec<usize>, Vec<[f64; 2]>) {
+    let Some(origin) = local
+        .iter()
+        .copied()
+        .reduce(|a, b| [a[0].min(b[0]), a[1].min(b[1])])
+    else {
+        return (Vec::new(), Vec::new());
+    };
+    let cell = |p: [f64; 2]| {
+        (
+            ((p[0] - origin[0]) / pitch).round() as i64,
+            ((p[1] - origin[1]) / pitch).round() as i64,
+        )
+    };
+    let occupied: BTreeSet<(i64, i64)> = local.iter().map(|p| cell(*p)).collect();
+    let steps = |(x, y): (i64, i64), (dx, dy): (i64, i64)| {
+        let mut n = 1;
+        while occupied.contains(&(x + n * dx, y + n * dy)) {
+            n += 1;
+        }
+        n
+    };
+    let side = |minus: i64, plus: i64| match minus.cmp(&plus) {
+        std::cmp::Ordering::Less => -1.0,
+        std::cmp::Ordering::Greater => 1.0,
+        std::cmp::Ordering::Equal => 0.0,
+    };
+    local
+        .iter()
+        .map(|p| {
+            let at = cell(*p);
+            let [left, right, up, down] =
+                [(-1, 0), (1, 0), (0, -1), (0, 1)].map(|direction| steps(at, direction));
+            let ring = (left.min(right).min(up).min(down) - 1) as usize;
+            (ring, [side(left, right), side(up, down)])
+        })
+        .unzip()
 }
 
 /// The part's ball grid (`pads`: centre and copper of its SMD pads but the
@@ -261,6 +308,7 @@ fn grid_of(pads: &[([f64; 2], &core::Shape)], work: &mut u64) -> Option<Grid> {
         local: Vec::new(),
         bounds: [0.0; 4],
         rings: Vec::new(),
+        toward: Vec::new(),
     };
     grid.local = pads
         .iter()
@@ -279,18 +327,9 @@ fn grid_of(pads: &[([f64; 2], &core::Shape)], work: &mut u64) -> Option<Grid> {
     grid.columns = columns.len();
     grid.rows = rows.len();
     grid.bounds = [xs[0], ys[0], xs[xs.len() - 1], ys[ys.len() - 1]];
-    let b = grid.bounds;
-    grid.rings = grid
-        .local
-        .iter()
-        .map(|p| {
-            let edge = (p[0] - b[0])
-                .min(b[2] - p[0])
-                .min(p[1] - b[1])
-                .min(b[3] - p[1]);
-            (edge / pitch).round().max(0.0) as usize
-        })
-        .collect();
+    let (rings, toward) = rings_of(&grid.local, pitch);
+    grid.rings = rings;
+    grid.toward = toward;
     if grid.rings.iter().all(|ring| *ring == 0) {
         return None;
     }
@@ -559,10 +598,6 @@ pub(crate) fn plan(
             .map(|(index, _)| index)
             .collect();
         work += obstacles.len() as u64 / 8;
-        let center = [
-            (grid.bounds[0] + grid.bounds[2]) / 2.0,
-            (grid.bounds[1] + grid.bounds[3]) / 2.0,
-        ];
         // The outer rings first: their balls take their own gaps.
         let mut order: Vec<usize> = (0..pads.len())
             .filter(|&position| grid.rings[position] >= surface_rings)
@@ -601,17 +636,19 @@ pub(crate) fn plan(
                     ]
                 }
             };
-            let sign = |offset: f64, toward: f64| {
-                if offset.abs() > 0.25 * grid.pitch {
-                    offset.signum()
+            // Toward the nearer way out along each axis (away from the
+            // array's middle on a full grid), else toward the net's pads.
+            let sign = |nearer: f64, toward: f64| {
+                if nearer != 0.0 {
+                    nearer
                 } else if toward < 0.0 {
                     -1.0
                 } else {
                     1.0
                 }
             };
-            let su = sign(local[0] - center[0], target[0]);
-            let sv = sign(local[1] - center[1], target[1]);
+            let su = sign(grid.toward[position][0], target[0]);
+            let sv = sign(grid.toward[position][1], target[1]);
             let class = classes[nets[net as usize].class];
             let mut widths = vec![class.trace_width];
             if let Some(neck) = neck.filter(|neck| *neck < class.trace_width) {
@@ -675,6 +712,138 @@ pub(crate) fn plan(
         plan.parts.push(summary);
     }
     plan
+}
+
+/// A grid array whose inner balls take dog-bones, as the placer keeps the
+/// far side free under them (`far_side_balls`).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FarSideArray {
+    /// Index of the footprint in the board's order.
+    pub footprint: usize,
+    pub pitch: f64,
+    pub diameter: f64,
+    pub drill: f64,
+    /// The array's balls (pad numbers): the placer finds their rings and
+    /// sides in its own frame (`rings_of`).
+    pub balls: Vec<String>,
+    /// Those that take a dog-bone.
+    pub inner: Vec<String>,
+}
+
+/// The balls of the board's grid arrays that take a dog-bone, judged by
+/// the footprint alone (its balls and their nets' rules; not the board's
+/// other parts, which the placer moves), with the largest via size whose
+/// copper and drill keep their clearances from the four balls around a
+/// diagonal gap: each via goes through the board, so the far side under
+/// it is no place for another part's pads (the placer's
+/// `via_in_pad_far_side`). Empty with the fan-out off.
+pub(crate) fn far_side_balls(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Vec<FarSideArray> {
+    if !bga_fanout_on(config) {
+        return Vec::new();
+    }
+    let Ok((footprints, pads)) = via_in_pad::board_pads(pcb, config) else {
+        return Vec::new();
+    };
+    let (predefined, minimums) = config
+        .project_rules
+        .as_ref()
+        .map_or((Vec::new(), [0.0; 3]), |report| {
+            (report.via_sizes.clone(), report.via_minimums)
+        });
+    let mut balls = Vec::new();
+    for footprint in 0..footprints.len() {
+        let own: Vec<&via_in_pad::BoardPad> = pads
+            .iter()
+            .filter(|pad| pad.footprint == footprint && pad.smd && pad.layers.count_ones() == 1)
+            .collect();
+        if own.len() < MIN_PADS {
+            continue;
+        }
+        let boxes: Vec<PadBox> = own
+            .iter()
+            .map(|pad| {
+                let bounds = pad.shape.aabb();
+                PadBox {
+                    number: pad.number.clone(),
+                    center: pad.center,
+                    smd: true,
+                    bounds: [bounds.minimum, bounds.maximum],
+                }
+            })
+            .collect();
+        let exposed = exposed_pad(&boxes);
+        let own: Vec<&via_in_pad::BoardPad> = own
+            .into_iter()
+            .enumerate()
+            .filter(|(index, _)| !exposed.contains(index))
+            .map(|(_, pad)| pad)
+            .collect();
+        let shapes: Vec<([f64; 2], &core::Shape)> =
+            own.iter().map(|pad| (pad.center, &pad.shape)).collect();
+        let Some(grid) = grid_of(&shapes, &mut 0) else {
+            continue;
+        };
+        let rules: Vec<&KiCadConnectionRoutingRules> = own
+            .iter()
+            .filter_map(|pad| via_in_pad::rules_of(config, pad.net.as_deref()))
+            .collect();
+        let Some(narrow) = rules.iter().min_by(|a, b| {
+            (a.trace_width_mm + a.clearance_mm).total_cmp(&(b.trace_width_mm + b.clearance_mm))
+        }) else {
+            continue;
+        };
+        let (cos, sin) = (grid.axis[0], grid.axis[1]);
+        let mut halves: Vec<f64> = shapes
+            .iter()
+            .map(|(center, shape)| {
+                half_extent(shape, *center, [cos, sin], grid.pitch).max(half_extent(
+                    shape,
+                    *center,
+                    [-sin, cos],
+                    grid.pitch,
+                ))
+            })
+            .collect();
+        halves.sort_by(f64::total_cmp);
+        let half = halves[halves.len() / 2];
+        let gap = grid.pitch - 2.0 * half;
+        let tracks = ((gap - narrow.clearance_mm) / (narrow.trace_width_mm + narrow.clearance_mm)
+            + 1.0e-6)
+            .floor()
+            .max(0.0) as usize;
+        // The room from a diagonal gap's centre to the balls around it.
+        let room = grid.pitch / std::f64::consts::SQRT_2 - half;
+        let mut sizes = predefined.clone();
+        sizes.push([narrow.via_size_mm, narrow.via_drill_mm]);
+        sizes.retain(|&[diameter, drill]| {
+            drill > 0.0
+                && diameter > drill
+                && diameter + 1.0e-9 >= minimums[0]
+                && drill + 1.0e-9 >= minimums[1]
+                && diameter / 2.0 + narrow.clearance_mm + SAFETY <= room
+                && drill / 2.0 + config.hole_clearance_mm + SAFETY <= room
+        });
+        let Some(&[diameter, drill]) = sizes.iter().max_by(|a, b| a[0].total_cmp(&b[0])) else {
+            continue;
+        };
+        let inner: Vec<String> = own
+            .iter()
+            .enumerate()
+            .filter(|(position, pad)| grid.rings[*position] > tracks && pad.net.is_some())
+            .map(|(_, pad)| pad.number.clone())
+            .collect();
+        if !inner.is_empty() {
+            balls.push(FarSideArray {
+                footprint,
+                pitch: grid.pitch,
+                diameter,
+                drill,
+                balls: own.iter().map(|pad| pad.number.clone()).collect(),
+                inner,
+            });
+        }
+    }
+    balls
 }
 
 /// Prints each distinct plan once a process (`PCB_ROUTER_BGA_FANOUT_WHY`).
@@ -992,6 +1161,26 @@ mod tests {
     }
 
     #[test]
+    fn a_ball_beside_a_depopulated_middle_is_on_the_outer_ring() {
+        // Two blocks of three columns with three empty columns between
+        // (a DDR3 BGA-96's): the third and fourth columns face the gap.
+        let mut local = Vec::new();
+        for row in 0..8 {
+            for column in [0, 1, 2, 6, 7, 8] {
+                local.push([column as f64 * 0.8, row as f64 * 0.8]);
+            }
+        }
+        let (rings, toward) = rings_of(&local, 0.8);
+        // Row 3, columns 0 to 2 and 6 to 8.
+        let row: Vec<usize> = (18..24).map(|index| rings[index]).collect();
+        assert_eq!(row, [0, 1, 0, 0, 1, 0]);
+        // Column 2 leaves toward the gap, column 1 has both sides alike.
+        assert_eq!(toward[20][0], 1.0);
+        assert_eq!(toward[19][0], 0.0);
+        assert_eq!(toward[18][0], -1.0);
+    }
+
+    #[test]
     fn a_ball_holding_a_via_in_its_pad_keeps_it_and_a_fine_pitch_array_gets_none() {
         let (parts, obstacles, nets, no_via) = array(10, 0.8, 0.35);
         // The ball at row 4, column 4 has a via in its pad (`via_in_pad`).
@@ -1124,6 +1313,14 @@ mod tests {
         };
         let plain = lower(&pcb, &off, false).unwrap();
         let lowered = lower(&pcb, &config, false).unwrap();
+        // The placer keeps the far side free under the same four balls'
+        // vias (judged by the footprint alone); nothing with the fan-out off.
+        let far = far_side_balls(&pcb, &config);
+        assert_eq!(far.len(), 1);
+        assert_eq!(far[0].inner, ["C3", "C4", "D3", "D4"]);
+        assert_eq!(far[0].balls.len(), 36);
+        assert_eq!((far[0].diameter, far[0].drill), (0.4, 0.2));
+        assert!(far_side_balls(&pcb, &off).is_empty());
         // Off, nothing planned and nothing charged.
         assert!(fanouts_of(&plain.board).is_empty());
         assert_eq!(plain.fanout_work, 0);

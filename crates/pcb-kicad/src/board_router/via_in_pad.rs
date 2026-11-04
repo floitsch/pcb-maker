@@ -244,15 +244,15 @@ pub(crate) struct ViaInPadPlan {
 
 /// A pad of the board as the plan sees it.
 #[derive(Clone)]
-struct BoardPad {
-    footprint: usize,
-    number: String,
-    center: [f64; 2],
-    shape: core::Shape,
-    layers: core::LayerMask,
-    smd: bool,
+pub(super) struct BoardPad {
+    pub(super) footprint: usize,
+    pub(super) number: String,
+    pub(super) center: [f64; 2],
+    pub(super) shape: core::Shape,
+    pub(super) layers: core::LayerMask,
+    pub(super) smd: bool,
     /// The routable net (as the router names it).
-    net: Option<String>,
+    pub(super) net: Option<String>,
     /// The clearance other copper keeps from it: its override, else its
     /// net class's.
     clearance: f64,
@@ -282,7 +282,7 @@ pub(crate) fn plan(pcb: &Expr, config: &KiCadBoardRouterConfig) -> ViaInPadPlan 
 }
 
 /// A net's routing rules (its class's, else the default's).
-fn rules_of<'a>(
+pub(super) fn rules_of<'a>(
     config: &'a KiCadBoardRouterConfig,
     name: Option<&str>,
 ) -> Option<&'a KiCadConnectionRoutingRules> {
@@ -291,12 +291,12 @@ fn rules_of<'a>(
 }
 
 /// The board's footprints (reference, footprint name) and pads.
-type BoardPads = (Vec<(String, String)>, Vec<BoardPad>);
+pub(super) type BoardPads = (Vec<(String, String)>, Vec<BoardPad>);
 
 /// The board's footprints (reference, footprint name) and pads as the
 /// plan sees them, a net of one pad left without a net (it needs no way
 /// out).
-fn board_pads(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Result<BoardPads, String> {
+pub(super) fn board_pads(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Result<BoardPads, String> {
     let names = NetNames::of(pcb);
     let layers = LayerTable::from_pcb(pcb)?;
     let rules_of = |name: Option<&str>| rules_of(config, name);

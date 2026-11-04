@@ -1287,7 +1287,8 @@ pub fn layout_placer_config(
     // The router's rules the placer keeps (the far side under vias in
     // pads, length maxima), only where one applies.
     if (placer_config.via_in_pad_far_side
-        && crate::board_router::admits_vias_in_pads(router_config))
+        && (crate::board_router::admits_vias_in_pads(router_config)
+            || crate::board_router::bga_fanout_on(router_config)))
         || (placer_config.length_maxima
             && crate::board_router::length_bounded_nets(router_config).is_some())
     {

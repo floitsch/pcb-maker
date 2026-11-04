@@ -1777,6 +1777,7 @@ pub(crate) fn lower_placement(
     if let Some(rules) = &config.router_rules {
         if config.via_in_pad_far_side {
             far_side_of_vias_in_pads(pcb, rules, config, &pad_offsets, &mut problem);
+            far_side_of_fanouts(pcb, rules, config, &pad_offsets, &mut problem);
         }
         if config.length_maxima {
             length_maxima(rules, config, &net_ids, footprint_count, &mut problem);
@@ -1846,6 +1847,62 @@ fn far_side_of_vias_in_pads(
             center[0] + half,
             center[1] + half,
         ]);
+    }
+}
+
+/// The far side under the dog-bones of the router's prepared fan-outs
+/// (`bga_fanout`, `far_side_balls`): each inner ball's via sits half a
+/// pitch off along both axes of the footprint, toward the nearer way out
+/// (`rings_of`; both ways along an axis where both sides are as near),
+/// and goes through the board as a via in a pad does. Nothing with the
+/// fan-out off.
+fn far_side_of_fanouts(
+    pcb: &Expr,
+    rules: &KiCadBoardRouterConfig,
+    config: &KiCadBoardPlacerConfig,
+    pad_offsets: &[BTreeMap<String, [f64; 2]>],
+    problem: &mut core::Problem,
+) {
+    let copper = config.copper_clearance_mm.unwrap_or(0.2);
+    let hole = config.hole_clearance_mm.unwrap_or(rules.hole_clearance_mm);
+    for array in crate::board_router::far_side_balls(pcb, rules) {
+        let Some(offsets) = pad_offsets.get(array.footprint) else {
+            continue;
+        };
+        let balls: Vec<(&str, [f64; 2])> = array
+            .balls
+            .iter()
+            .filter_map(|ball| offsets.get(ball).map(|at| (ball.as_str(), *at)))
+            .collect();
+        let local: Vec<[f64; 2]> = balls.iter().map(|(_, at)| *at).collect();
+        let (_, toward) = crate::board_router::rings_of(&local, array.pitch);
+        let half = (array.diameter / 2.0).max(array.drill / 2.0 + hole - copper);
+        let signs = |side: f64| {
+            if side == 0.0 {
+                vec![-1.0, 1.0]
+            } else {
+                vec![side]
+            }
+        };
+        for (position, (ball, at)) in balls.iter().enumerate() {
+            if !array.inner.iter().any(|inner| inner == ball) {
+                continue;
+            }
+            for sx in signs(toward[position][0]) {
+                for sy in signs(toward[position][1]) {
+                    let center = [
+                        at[0] + sx * array.pitch / 2.0,
+                        at[1] + sy * array.pitch / 2.0,
+                    ];
+                    problem.components[array.footprint].far_side.push([
+                        center[0] - half,
+                        center[1] - half,
+                        center[0] + half,
+                        center[1] + half,
+                    ]);
+                }
+            }
+        }
     }
 }
 

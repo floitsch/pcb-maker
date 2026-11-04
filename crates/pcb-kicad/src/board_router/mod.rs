@@ -29,7 +29,9 @@ mod tests;
 mod tools;
 mod via_in_pad;
 
-pub(crate) use self::bga_fanout::{fanout_used, fanouts_of};
+pub(crate) use self::bga_fanout::{
+    bga_fanout_on, fanout_used, fanouts_of, far_side_balls, rings_of,
+};
 pub(crate) use self::diff_pairs::{
     finish_pairs, measure_uncoupled, plan_pairs, with_pairs, write_pair_copper,
 };
