@@ -2419,7 +2419,15 @@ fn next_actions(
     observations.extend(footprint_findings_note(footprint, &dru));
     observations.extend(input_findings_note(input, &dru, false));
     if !facts.constraints_missed.is_empty() {
-        actions.push("constraints missed (constraints[] has violation_mm for each): relax them or give the parts room".into());
+        // Which report holds them (trial 5: "constraints[]" named no file).
+        let report = if facts.command == "place-kicad-board" {
+            "board-placer.json"
+        } else {
+            "board-layout.json"
+        };
+        actions.push(format!(
+            "constraints missed ({report}'s constraints[] has violation_mm for each): relax them or give the parts room"
+        ));
     }
     if facts.routes && status != KiCadRunStatus::Complete && !facts.unmodelled_rules.is_empty() {
         actions.push(unmodelled_rules_action(&facts.unmodelled_rules));
@@ -5535,7 +5543,14 @@ mod tests {
         let mut facts = routed(DrcTally::default());
         facts.command = "layout-kicad-board".into();
         facts.constraints_missed = vec!["near C1".into()];
-        assert_eq!(judge(&facts).exit_code, EXIT_INCOMPLETE);
+        let verdict = judge(&facts);
+        assert_eq!(verdict.exit_code, EXIT_INCOMPLETE);
+        assert!(
+            verdict.next_actions.iter().any(|action| action
+                .starts_with("constraints missed (board-layout.json's constraints[]")),
+            "{:?}",
+            verdict.next_actions
+        );
         let mut facts = KiCadRunFacts::new("place-kicad-board");
         facts.routes = false;
         assert_eq!(judge(&facts).exit_code, EXIT_COMPLETE);
