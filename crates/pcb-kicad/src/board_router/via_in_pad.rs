@@ -243,6 +243,7 @@ pub(crate) struct ViaInPadPlan {
 }
 
 /// A pad of the board as the plan sees it.
+#[derive(Clone)]
 struct BoardPad {
     footprint: usize,
     number: String,
@@ -440,13 +441,19 @@ pub(crate) fn admits_any(config: &KiCadBoardRouterConfig) -> bool {
 }
 
 /// The enclosed pads of footprint `footprint` (`enclosed_pads` with the
-/// nets' rules).
+/// nets' rules). A footprint of nine pads or more is answered from
+/// `ENCLOSED` where the same pads with the same rules were judged before
+/// in this process: every lowering of a board plans its vias again (a
+/// route's rungs and attempts, the report of each board written, the
+/// final measure), and the flood of a large pad field at 5 to 25 microns
+/// was most of node_v6's route (its plan 59 % of the route's CPU,
+/// 2026-11-04). The answer is a function of the key's inputs alone.
 fn enclosed_of(config: &KiCadBoardRouterConfig, pads: &[BoardPad], footprint: usize) -> Vec<usize> {
     let neck = config.neck_width_mm.unwrap_or(f64::INFINITY);
     let own: Vec<usize> = (0..pads.len())
         .filter(|index| pads[*index].footprint == footprint)
         .collect();
-    enclosed_pads(pads, &own, &|net: &str| {
+    let class = |net: &str| {
         rules_of(config, Some(net)).map_or((neck.min(0.2), 0.0, 0.6), |rules| {
             (
                 neck.min(rules.trace_width_mm),
@@ -454,7 +461,142 @@ fn enclosed_of(config: &KiCadBoardRouterConfig, pads: &[BoardPad], footprint: us
                 rules.via_size_mm,
             )
         })
-    })
+    };
+    // Fewer than nine pads hold no enclosed pad (`enclosed_pads`): not
+    // worth a key.
+    if own.len() < 9 {
+        return enclosed_pads(pads, &own, &class);
+    }
+    let key = enclosed_key(pads, &own, &class);
+    if let Some(positions) = ENCLOSED.lookup(&key) {
+        return positions.iter().map(|&position| own[position]).collect();
+    }
+    let enclosed = enclosed_pads(pads, &own, &class);
+    // Positions in `own` (sorted as `pads` is: `own` is in its order).
+    let positions = enclosed
+        .iter()
+        .map(|index| {
+            own.binary_search(index)
+                .expect("an enclosed pad is the footprint's")
+        })
+        .collect();
+    ENCLOSED.store(key, positions);
+    enclosed
+}
+
+/// Everything `enclosed_pads` reads of a footprint's pads (`own`) and of
+/// their nets' rules (`class`), as exact words: the pads' numbers, centres,
+/// shapes, layers, kinds, nets and clearances in order, and each net's
+/// track, clearance and via. Two keys are equal only where those are.
+fn enclosed_key(
+    pads: &[BoardPad],
+    own: &[usize],
+    class: &dyn Fn(&str) -> (f64, f64, f64),
+) -> Vec<u64> {
+    fn text(key: &mut Vec<u64>, value: &str) {
+        key.push(value.len() as u64);
+        for chunk in value.as_bytes().chunks(8) {
+            let mut word = [0u8; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            key.push(u64::from_le_bytes(word));
+        }
+    }
+    fn shape(key: &mut Vec<u64>, value: &core::Shape) {
+        match value {
+            core::Shape::Circle { center, radius } => {
+                key.extend([
+                    0,
+                    center[0].to_bits(),
+                    center[1].to_bits(),
+                    radius.to_bits(),
+                ]);
+            }
+            core::Shape::Capsule { start, end, radius } => key.extend([
+                1,
+                start[0].to_bits(),
+                start[1].to_bits(),
+                end[0].to_bits(),
+                end[1].to_bits(),
+                radius.to_bits(),
+            ]),
+            core::Shape::Polygon { points } => {
+                key.extend([2, points.len() as u64]);
+                for point in points {
+                    key.extend([point[0].to_bits(), point[1].to_bits()]);
+                }
+            }
+            core::Shape::Union { parts } => {
+                key.extend([3, parts.len() as u64]);
+                for part in parts {
+                    shape(key, part);
+                }
+            }
+        }
+    }
+    let mut key = vec![own.len() as u64];
+    for &index in own {
+        let pad = &pads[index];
+        text(&mut key, &pad.number);
+        key.extend([
+            pad.center[0].to_bits(),
+            pad.center[1].to_bits(),
+            pad.layers as u64,
+            pad.smd as u64,
+            pad.clearance.to_bits(),
+        ]);
+        shape(&mut key, &pad.shape);
+        match &pad.net {
+            None => key.push(0),
+            Some(net) => {
+                key.push(1);
+                text(&mut key, net);
+                let (width, clearance, via) = class(net);
+                key.extend([width.to_bits(), clearance.to_bits(), via.to_bits()]);
+            }
+        }
+    }
+    key
+}
+
+/// The answers of `enclosed_of` so far, by key; emptied when its keys
+/// reach `ENCLOSED_WORDS` words (a layout moves parts: every pose of a
+/// large footprint is another key).
+struct EnclosedCache {
+    entries: std::sync::Mutex<EnclosedEntries>,
+}
+
+/// The answers by key (positions in the footprint's pads) and the keys'
+/// words in all.
+type EnclosedEntries = (BTreeMap<Vec<u64>, Vec<usize>>, usize);
+
+/// 64 MB of keys.
+const ENCLOSED_WORDS: usize = 8 << 20;
+
+static ENCLOSED: EnclosedCache = EnclosedCache {
+    entries: std::sync::Mutex::new((BTreeMap::new(), 0)),
+};
+
+impl EnclosedCache {
+    fn lookup(&self, key: &[u64]) -> Option<Vec<usize>> {
+        let entries = self
+            .entries
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        entries.0.get(key).cloned()
+    }
+
+    fn store(&self, key: Vec<u64>, positions: Vec<usize>) {
+        let mut entries = self
+            .entries
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if entries.1 + key.len() > ENCLOSED_WORDS {
+            entries.0.clear();
+            entries.1 = 0;
+        }
+        entries.1 += key.len();
+        entries.0.insert(key, positions);
+    }
 }
 
 /// A via the rule will put in a pad wherever its part is placed, for the
@@ -1190,6 +1332,79 @@ mod tests {
         assert_eq!((opted.vias[4].diameter, opted.vias[4].drill), (0.35, 0.2));
         assert!(opted.report.closed.is_empty());
         assert_eq!(opted.report.footprints[2].rule, "via_in_pad: [\"U3\"]");
+    }
+
+    #[test]
+    fn the_enclosed_pads_are_kept_by_their_exact_inputs() {
+        let pcb = board("");
+        let config = config(None, &pcb);
+        let (footprints, pads) = board_pads(&pcb, &config).unwrap();
+        // The direct answer: `enclosed_pads` with the rules as
+        // `enclosed_of` reads them.
+        let direct = |config: &KiCadBoardRouterConfig, pads: &[BoardPad], footprint: usize| {
+            let own: Vec<usize> = (0..pads.len())
+                .filter(|index| pads[*index].footprint == footprint)
+                .collect();
+            let neck = config.neck_width_mm.unwrap_or(f64::INFINITY);
+            enclosed_pads(pads, &own, &|net: &str| {
+                rules_of(config, Some(net)).map_or((neck.min(0.2), 0.0, 0.6), |rules| {
+                    (
+                        neck.min(rules.trace_width_mm),
+                        rules.clearance_mm,
+                        rules.via_size_mm,
+                    )
+                })
+            })
+        };
+        let key_of = |config: &KiCadBoardRouterConfig, pads: &[BoardPad], footprint: usize| {
+            let own: Vec<usize> = (0..pads.len())
+                .filter(|index| pads[*index].footprint == footprint)
+                .collect();
+            let neck = config.neck_width_mm.unwrap_or(f64::INFINITY);
+            enclosed_key(pads, &own, &|net: &str| {
+                rules_of(config, Some(net)).map_or((neck.min(0.2), 0.0, 0.6), |rules| {
+                    (
+                        neck.min(rules.trace_width_mm),
+                        rules.clearance_mm,
+                        rules.via_size_mm,
+                    )
+                })
+            })
+        };
+        for footprint in 0..footprints.len() {
+            let expected = direct(&config, &pads, footprint);
+            // Judged, then answered from the cache: the same pads.
+            assert_eq!(enclosed_of(&config, &pads, footprint), expected);
+            let own = pads.iter().filter(|pad| pad.footprint == footprint).count();
+            if own >= 9 {
+                assert!(
+                    ENCLOSED
+                        .lookup(&key_of(&config, &pads, footprint))
+                        .is_some()
+                );
+            }
+            assert_eq!(enclosed_of(&config, &pads, footprint), expected);
+        }
+        // U1 and U2 are one footprint in two places: two keys.
+        assert_ne!(key_of(&config, &pads, 0), key_of(&config, &pads, 1));
+        // A ball moved, or the rules changed, is another key, judged anew.
+        let mut moved = pads.clone();
+        let index = moved
+            .iter()
+            .position(|pad| pad.footprint == 0 && pad.number == "B2")
+            .unwrap();
+        moved[index].center[0] += 1.0e-9;
+        assert_ne!(key_of(&config, &moved, 0), key_of(&config, &pads, 0));
+        assert_eq!(enclosed_of(&config, &moved, 0), direct(&config, &moved, 0));
+        // Tracks narrow enough to pass between the balls: none enclosed.
+        let mut narrow = config.clone();
+        narrow.neck_width_mm = Some(0.01);
+        let rules = narrow.default_rules.as_mut().unwrap();
+        (rules.trace_width_mm, rules.clearance_mm) = (0.01, 0.01);
+        assert_ne!(key_of(&narrow, &pads, 0), key_of(&config, &pads, 0));
+        assert_eq!(enclosed_of(&narrow, &pads, 0), direct(&narrow, &pads, 0));
+        assert!(direct(&narrow, &pads, 0).is_empty());
+        assert!(!direct(&config, &pads, 0).is_empty());
     }
 
     #[test]
