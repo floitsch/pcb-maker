@@ -98,6 +98,21 @@ pair's CPU seconds are the router process's own (utime + stime from
 separate physical cores (0, 1 against 2, 3) differed by up to 6 % between
 the two orientations on this machine under load; the siblings did not.
 
+**Check mode** (`PCB_PLACER_CHECK_OVERLAP=1`, `PCB_ROUTER_CHECK_RIP_UP=1`:
+every cache and shortcut against its direct computation at every use) is
+observationally identical: a check books no work (it takes back what its
+direct computation booked), draws no random number and leaves every
+cache as the unchecked path leaves it, so the placement, its booked work
+and the routes are those without it, only slower. Until 2026-11-04 the
+anneal's overlap check booked its full recount (eternal-keypad placed
+otherwise in check mode, 139 s of work against 22 s). The placer's
+`check_mode_places_as_without_it` tests (crates/pcb-placer/src/lib.rs:
+random boards of every kind of part, the crossings and escape terms on,
+check mode off and on on one thread) and the fixture test
+`the_place_check_places_alike_in_check_mode` (tests/fixtures.rs:
+`place-kicad-board` of F1 both ways, the placed board byte for byte and
+board-placer.json's work) hold it; a new check must pass them.
+
 ## Where the route's CPU goes (main, 2026-10-25)
 
 Route mode, one run per board under perf (x1820's code, 23f629e),
