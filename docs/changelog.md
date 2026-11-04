@@ -11,6 +11,47 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-05 (a race over skeletons, off: stage 1 passes, video breaks)
+
+Branch skeleton-race; binaries `build/bin/pcb-maker-skel1-{d,e,f}`
+(`-e` measured, `-f` the rebased head); docs/placer.md, "A race over
+skeletons (2026-11-04)", has the tables.
+
+- **The switch** `skeleton_race` (placer option, off; `{}` for the
+  defaults `room` 1, `work_share` 0.5, `join_pins` 8): each seed of the
+  race places the skeleton first (every part but the free passives:
+  two-pad R, C, L, FB, F parts by reference or footprint and resistor
+  or capacitor arrays, `skeleton_passive`; diodes and LEDs stay, as
+  `partialcopy.py`'s `nonpassive` pinned them), the passives absent, the
+  skeleton parts' bodies grown by their passives' tight area, the nets
+  through two-pin passives joined; then the passives around the held
+  skeleton from its relaxation level on (`Config::first_level`). A
+  skeleton that leaves parts out, or passives without room, fall back to
+  the whole placement with the work left. The race ranks the seeds as
+  before; the seeds' work is the sum of their phases'.
+  `board-placer.json`'s `skeleton_race` reports the classes, the kept
+  seed's skeleton and every kept seed's work by phase.
+- **Stage 0** (video, the 4in1, Glasgow; seeds 1 and 101): the 4in1 178
+  to 139.5 and Glasgow 147.5 to 110 first-route open terminals (spreads
+  8 and 3; the designer's non-passives pinned 90 and 82), video
+  unchanged (its skeletons fall back). Placements toward the designer's:
+  the 4in1's wire -10 %, crossings halved, decoupling within 3 mm 0.15 to
+  0.31; Glasgow's connectors at the edge.
+- **Stage 1** (eleven dense boards, five seed pairs, 23.7 CPU hours):
+  weighted -12.4 %, sign-flip and noise-file p 0.001, sum of medians
+  1148 to 990; the 4in1 -19.9 %, DSP-ADAU1452 -48 %, protoesp -46.7 %,
+  Glasgow -18.1 %, split72_left +28.8 %, SNSP-CPU-01 +11.6 %. Video's
+  seed 301 refused (three memory modules without a legal place: the
+  skeleton took half the work at full halos, the fallback the rest), and
+  the comparison leaves that seed out. **The switch stays off**; next:
+  a skeleton that fails should cost less than half the budget, the
+  4in1-mini's passives' room, then the full protocol.
+- **Identity**: off, place checks of DSP-ADAU1452 and split72_left
+  byte-identical to x1898 and, rebased, to x1905.
+- Tests: the class rule, the absent parts, the joined nets, the room and
+  the growth, the held-skeleton placement, the race's key, an end-to-end
+  placement with the report.
+
 ## Committed on 2026-11-05 (a layout's own routes plan the differential pairs; pair_rows stays off)
 
 Branch pairs-in-layout (`build/bin/pcb-maker-pairs3-a`, `-b`). With the

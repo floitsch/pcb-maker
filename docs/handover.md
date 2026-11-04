@@ -254,6 +254,14 @@ ladder's judge), 5, then the rest.
    SmartSpin2k_Panelized +115 (115 / 0), SNSP-CPU-01 +76 (111 / 35), the
    OpenESC 4in1 +73 (88 / 15). The share was 52 to 57 % up to the nightly
    of 2026-10-28 (69 to 73 % without Batch_1) and 74 to 76 % since.
+   A race over skeletons (`skeleton_race`, off; placer.md, "A race over
+   skeletons (2026-11-04)": each seed places the non-passive parts alone,
+   then the passives around them held) passes stage 1 by the statistic
+   (first route -12.4 %, p 0.001; the 4in1, Glasgow, DSP-ADAU1452 and
+   protoesp better on every seed, split72_left and SNSP-CPU-01 worse) but
+   left video's seed 301 without a legal placement: its skeleton does
+   not fit within its half of the work and the fallback gets the rest;
+   fix that before the full protocol.
    The week's levers judged by the protocol: crossings in the anneal
    BETTER (on), the race's ripped count BETTER at nine pairs (on); judged
    before it and not taken: bus-group moves (the objective falls, routing

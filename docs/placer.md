@@ -7082,6 +7082,255 @@ with `stop_after_first_route`, about 48 CPU hours.
 Script: `experiments/placement-gap/partialcopy.py` (`prepare`, `run`,
 `table`; the rules in its docstring), tests `test_partialcopy.py`.
 
+## A race over skeletons (2026-11-04)
+
+The experiment "Which placement decisions matter" named: the designer's
+non-passive parts pinned recover a median 0.92 of the designer's
+first-route advantage, and our objective accepts that arrangement, so
+the search does not reach it. `skeleton_race` (placer option, off by
+default; `{}` for the defaults; code `crates/pcb-placer/src/skeleton.rs`,
+the class rule `crates/pcb-kicad/src/board_placer/skeleton.rs`) places
+each seed of the race in two phases and lets the layout's race rank the
+seeds' placements as it ranks any (RUDY, the three best probed, the
+ripped count).
+
+**The class rule** (`skeleton_passive`, the one place it lives):
+`partialcopy.py`'s rule with the pads counted. A passive is never a
+connector (`metrics.py`'s test: J, P, CN, USB, CON, X or a connector's
+word in the footprint's name); with at most two pads it has a passive's
+reference prefix (R, C, L, FB, F, FL, FER) or a passive's footprint
+(a `Resistor_*`, `Capacitor_*`, `Inductor_*`, `Fuse`, ferrite library,
+or a name like `R_0603`, `C_0402`, `CP_1206`, `L_1206`, `FB_0805`,
+whatever the reference); with more pads, an array's prefix (RN, RA, RR,
+CN_ARRAY). Diodes and LEDs stay in the skeleton, as `partialcopy.py`'s
+`nonpassive` rule pinned them (the 0.92 is with them pinned), and so do a
+three-pad trimmer and a four-pad choke. Of the passives, those a user's
+constraint names (an edge, region, overhang, row or relation) or that
+are fixed stay in the skeleton too; the tool's own decoupling relations
+do not keep a capacitor there.
+
+**Phase 1, the skeleton alone.** The absent passives keep their indices
+but lose their pins, body (no side), halo and relations; the two nets of
+a two-pin passive are one net in the skeleton where both have at most 8
+pins (`join_pins`), no pour carries either and the part is no decoupling
+capacitor (a series resistor keeps its two ends' parts together; a
+joined net weighs as its lightest member). Each skeleton part's body
+grows on every side by the room of the passives it owns (`room` 1 times
+their tight bodies, else bodies, with the least spacing): a passive a
+decoupling relation ties to parts is owned by those parts, any other by
+the skeleton parts on its net with the fewest pins, a passive among
+passives by its neighbour's owners; a part held to its exact body (an
+edge, region, overhang or row, a hollow part, a courtyard of several
+shapes) does not grow and its passives' area is unowned. Halos were the
+first idea and do not hold the room: the levels drop them on the dense
+boards. The skeleton takes at most `work_share` 0.5 of the seed's work.
+
+**Phase 2, the passives around the held skeleton.** The skeleton's
+placed parts are fixed at their poses (as `partialcopy.py`'s `place`
+entries held the designer's) and the whole problem is placed from the
+skeleton's relaxation level on (`Config::first_level`): the levels only
+loosen, so the held skeleton is legal at the passives' level. The placement's relaxation gives each held part
+the smaller of its two phases' halos; illegal parts, constraints and
+wirelength are judged on the whole problem. Where the skeleton leaves
+parts without a legal place, the seed is placed whole with the work
+left (the fallback); where the passives find none around the skeleton,
+too, and the better by the race's key kept. The seed's work is the sum of its
+phases', so the race's budget (the seeds kept while their work is under
+the placement's, three at least) is the layout's as before.
+`board-placer.json`'s `skeleton_race` reports the class counts, the kept
+seed's skeleton (parts, held, nets joined, parts grown and their room,
+the area no part owns, both levels, the skeleton's wirelength, the
+fallback) and every kept seed's work by phase. Not on panels of copies or
+sub-boards (their own placement runs).
+
+The design was settled on the place check (`place-kicad-board`, the
+nightly's prepared sources, `build/skel1-place`):
+
+- With the room as the passives' bodies with the full spacing and their
+  halos, the 4in1's 176 passives asked for 2494 mm² on a 30 x 30 mm
+  board and its skeleton fit only at the last level with 10 parts
+  without a place; video's 39 grown parts took 3875 mm² and its skeleton
+  found no place for one or two memory modules at full halos within its
+  share. The tight bodies with the least spacing: 586 mm² on the 4in1
+  (98 owned, 488 unowned: its fixed and edge-held parts' passives), 2206
+  on video.
+- Parts without a courtyard grow too (the 4in1's 33 MOSFETs are
+  courtless: with them left out only 1 of its 45 skeleton parts grew).
+
+- The skeleton leaves parts without a place on video: at full halos its
+  grown bodies seat all but one to three of the eight memory modules
+  before the skeleton's share of the work runs out (5 of 6 skeletons),
+  and the passives' placement with those movable from the next level
+  failed on all 5 (no legal placement at seed 101). Such a seed is now
+  placed whole with the work left, and that placement is the seed's
+  plain one: the plain placement converges within the half of the work
+  it gets (video's seed 101: the same wirelength, 30644.5 mm).
+
+**Stage 0** (video, the OpenESC 4in1 and Glasgow revC3; the sweep's
+layout at budget scale 1 with `stop_after_first_route`, the v7 task with
+`partialcopy.py`'s `ours` constraints, run.py at 2 threads, at most two in
+flight beside the nightly's pools, `build/skel1-s0`). Off and on are one
+binary, `build/bin/pcb-maker-skel1-e` (d9b1a6f7 on ac8cf07d; the 4in1's
+and Glasgow's on rows ran on `-d`, whose only difference is the
+fallback of a skeleton that leaves parts out, which neither took: their
+seed 1 on `-e` wrote the same placement digests). The reference
+rows (`build/teach3-pc`, x1892): ours, the designer's non-passives
+pinned, the designer's placement. First-route open terminals:
+
+| board | off s1 / s101 | on s1 / s101 | mean change | off spread | x1892 ours s1 / s101 | non-passives pinned | designer |
+| --- | --- | --- | ---: | ---: | --- | ---: | ---: |
+| video | 304 / 247 | 314 / 229 | -4 | 57 | 304 / 247 | 1 | 1 |
+| OpenESC 4in1 | 174 / 182 | 124 / 155 | -38.5 | 8 | 174 / 182 | 90 | 33 |
+| Glasgow revC3 | 149 / 146 | 107 / 113 | -37.5 | 3 | 133 / 136 | 82 | 68 |
+
+(Glasgow's off rows are above x1892's: the BGA fan-out, on since
+c23b63fc, came between.) The 4in1 and Glasgow move by five and twelve
+times their seed spread toward the pinned non-passives' count, 44 % and
+57 % of the way from off to it (the 4in1: 178 to 139.5 of 90; Glasgow:
+147.5 to 110 of 82). Video does not move: on both seeds the race kept a
+placement that is the plain seed's (seed 1: the same wirelength as off,
+27216.9 mm; seed 101 the fallback's, 30644.5 mm), and the first route
+differs by the race's other placements (its probes), 304 to 314 and 247
+to 229, inside video's spread of 57. By the rule set for it (a board
+moved beyond its spread toward the designer's count, none away) stage 0
+passes: stage 1 below.
+
+The placements, by `metrics.py` against the designer's (the moved
+parts; designer / off / on, the mean of the two seeds):
+
+| board | half perimeter mm | crossings | pin-row crossings | decoupling within 3 mm | connector to edge mm | orientation agreement |
+| --- | --- | --- | --- | --- | --- | --- |
+| OpenESC 4in1 | 1190 / 1393 / 1257 | 242 / 213 / 110 | 70 / 109 / 80 | 0.39 / 0.15 / 0.31 | 0.05 / 0.10 / 0.17 | 0.59 / 0.45 / 0.49 |
+| Glasgow revC3 | 3641 / 3854 / 3833 | 815 / 719 / 825 | 283 / 358 / 332 | 0.46 / 0.32 / 0.40 | 9.7 / 1.4 / 6.6 | 0.75 / 0.59 / 0.65 |
+| video, seed 1 | 30912 / 38061 / 38061 | 8763 / 16905 / 16905 | 243 / 673 / 673 | 0.20 / 0.28 / 0.28 | 5.1 / 0.8 / 0.8 | 0.80 / 0.75 / 0.75 |
+
+On the 4in1 the half perimeter falls 10 % (seed 1: 1489 to 1181, the
+designer's 1190), the ratsnest crossings by half, the pin-row crossings
+to near the designer's, and twice the decoupling capacitors lie within
+3 mm of a supply pin. On Glasgow the connectors go to the edge (1.4 to
+6.6 mm from it, the designer's 9.7; seed 1 9.5) and the decoupling and
+pin-row crossings move toward the designer's; the wire is about equal.
+Rows of repeated parts do not change (in a row: 0.44 to 0.47 on the 4in1,
+0.22 to 0.23 on Glasgow): the skeleton is not the designer's regular
+arrangement, but it routes better. (Video's on placement at seed 1 is
+the plain one, so its row equals off.)
+
+**The work split** (`board-placer.json`'s `skeleton_race`, the kept
+seeds, seconds of work): the 4in1 121 and 60 s of skeleton against 1680
+and 1689 of passives (the skeleton 3 to 7 %: its 45 parts place at level
+4 or 5 in 16 to 56 s a seed, the passives walk to level 7 with the rest);
+Glasgow 416 and 426 against 814 and 1039 (29 to 34 %: level 7 both);
+video 806 and 910 of skeletons, 416 and 0 of passives, 540 and 729 of
+fallbacks. The race's budget is the layout's as before: three seeds on
+all three boards, `pool_work_seconds` 600 to 609 on and off (video's off
+345 and 507: its plain seeds take less than the budget). Stage 0 took
+4.1 CPU hours (16 layouts, 620 to 1680 CPU s each; the four reruns on
+`-e` included), the place checks 1.2.
+
+**Identity.** With the switch off the placement is main's: place checks
+(`place-kicad-board`, 100 s of work, the nightly's sources) of
+DSP-ADAU1452 and split72_left by main's x1898 and by `-d` wrote
+byte-identical boards; off, the race over skeletons runs no code but the
+level counter (`Config::first_level` 0 skips nothing).
+
+**Stage 1** (docs/benchmarks.md, "The ladder of placer measurements"):
+the eleven dense boards at the task budgets (tasks v7) with
+`stop_after_first_route`, placer seeds 1, 101, 201, 301 and 401, off and
+on one binary (`-e`, `--on '{"skeleton_race": {}}'`), one run.py per row
+at 2 threads, four in flight beside the nightly's and three other pools
+(`experiments/placement-gap/screen.py --slots 4`, `build/skel1-scr`),
+2026-11-04 19:39 to 2026-11-05 00:40; 85200 CPU seconds (23.7 CPU hours:
+off 12.4, on 11.3). Main moved during the run (x1899 to x1906, among them
+`bga_room` on since x1900, which changes Glasgow's placement only):
+both sides are without those changes, so the comparison stands; the
+identity was checked again on the rebased head (x1905 against
+`pcb-maker-skel1-f`, the same place checks: byte-identical).
+`placer_ab.py compare --metric first_open`, first-route open terminals:
+
+| Board | s1 | s101 | s201 | s301 | s401 | median | relative (weight) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| OpenESC 4in1 | 174 / 124 | 182 / 155 | 151 / 117 | 207 / 176 | 176 / 139 | 176 / 139 | -19.9 % (48) |
+| OpenESC 4in1-mini | 149 / 149 | 145 / 173 | 132 / 113 | 108 / 129 | 123 / 115 | 132 / 129 | +3.1 % (99) |
+| DSP-ADAU1452 | 38 / 24 | 54 / 28 | 81 / 32 | 71 / 22 | 43 / 23 | 54 / 24 | -48.0 % (29) |
+| MegaDrive | 161 / 130 | 120 / 160 | 149 / 129 | 118 / 199 | 171 / 117 | 149 / 130 | +2.0 % (21) |
+| 0xCB panel | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | (weight 0) |
+| split72_left | 30 / 42 | 35 / 25 | 21 / 30 | 24 / 35 | 5 / 41 | 24 / 35 | +28.8 % (18) |
+| protoesp | 145 / 70 | 102 / 35 | 80 / 29 | 103 / 56 | 120 / 102 | 103 / 56 | -46.7 % (30) |
+| Glasgow revC3 | 149 / 107 | 146 / 113 | 146 / 136 | 130 / 111 | 145 / 96 | 146 / 111 | -18.1 % (70) |
+| SmartSpin2k | 51 / 51 | 43 / 43 | 33 / 33 | 46 / 46 | 90 / 90 | 46 / 46 | 0 (3) |
+| SNSP-CPU-01 | 107 / 179 | 65 / 96 | 78 / 74 | 66 / 85 | 153 / 96 | 78 / 96 | +11.6 % (4) |
+| video | 304 / 314 | 247 / 229 | 172 / 220 | 205 / **none** | 233 / 121 | 240 / 224 | -5.8 % (12) |
+
+- **By the statistic, BETTER**: weighted relative change -12.4 % (the
+  noise file's 90 % interval -18.7 to -6.2 %), sign-flip p 0.001, the
+  noise file's p 0.001; sum of medians 1148 to 990 (-13.7 %); every pair
+  sum falls (1308 to 1190, 1139 to 1057, 1043 to 913, 1259 to 940); five
+  boards better, four worse, two equal. The rule's stage 1 asks for a
+  negative change at p <= 0.25: it passes, far inside it.
+- **But one row has no placement**: video's seed 301 on refused, "3
+  parts without a legal place (U19, U12, U14)" (the memory modules), and
+  `placer_ab.py` leaves the seed out of every board's pairs (four pairs,
+  not five). All three seeds' skeletons left modules out at full halos,
+  and the fallbacks, placed whole with the half of the work left, did not
+  seat them either. That is a layout the switch breaks; with the switch
+  as it is, it may not be a default. Video's skeleton fell back on 14 of
+  its 15 kept seeds: on video the race over skeletons is the plain race
+  at half the budget.
+- **Where it wins** are the boards whose skeleton places cheaply and
+  holds: the 4in1 (-19.9 %, better on all five seeds, its skeleton 4 % of
+  the work), DSP-ADAU1452 (-48 %, all five; 11 %), protoesp (-46.7 %,
+  all five; the skeleton 82 % of its work, 31 to 124 s of passives),
+  Glasgow (-18.1 %, all five; 29 %). Where it loses: split72_left
+  (+28.8 %, four of five: the keyboard, whose bank of key connectors is
+  `connectors` in "Which placement decisions matter" and recovers 0.78
+  pinned, but placed alone ours is worse), SNSP-CPU-01 (+11.6 %, three of
+  five) and MegaDrive (+2.0 %, two of five, by large swings: 118 to 199,
+  171 to 117). The 4in1-mini's passives found no room around 13 of its 15
+  skeletons (its 0402s on a 20 x 20 mm board at the tight levels) and its
+  seeds fell back to the plain placement at a fraction of the budget
+  (+3.1 %).
+- **The work split** (the kept seeds' work, on): the skeleton 3 to 11 %
+  on the 4in1 boards and DSP-ADAU1452, 28 to 29 % on Glasgow,
+  split72_left and SNSP-CPU-01, 46 to 82 % on video, MegaDrive and
+  protoesp; the fallbacks 27 % on the 4in1-mini and 30 % on video, under
+  6 % elsewhere. The race kept as many seeds as before within the
+  budget (15 to 15 on the 4in1 and Glasgow; DSP-ADAU1452 29 against 20,
+  split72_left 24 against 16: their seeds are cheaper; protoesp 38
+  against 47).
+
+**Judgement.** The skeleton is the lever the partial copy said it is:
+placed alone, the active parts' arrangement routes better on four of
+the nine boards it changes, on every seed (the 4in1, Glasgow,
+DSP-ADAU1452, protoesp), and the placements move toward the designer's
+in wire, crossings, decoupling and connectors at the edge (stage 0). It
+is not ready for the full protocol: on video (and the 4in1-mini, whose
+passives find no room) the skeleton does not fit within its share and
+the fallback gets half the budget, which on video's seed 301 left three
+modules without a place. The switch stays off; what is left before the
+full five-pair protocol (layout mode, KiCad unconnected):
+
+1. A skeleton that leaves parts out should cost less than half the
+   budget: stop the skeleton at the first level whose anneal leaves
+   parts without room and the stuck-first passes run (video's level 0
+   took the whole share), or let the skeleton start at the level the
+   whole placement reached before (the seeds' first placement), so that
+   the fallback keeps most of the budget; or a fallback to the plain
+   seed placement charged at its full cost (the race then keeps fewer
+   seeds).
+2. The passives' room on the 4in1-mini: of its passives' 310 mm² only
+   80 are owned by parts that may grow (the rest by fixed or edge-held
+   parts), and around 13 of its 15 skeletons the passives found no
+   legal spot.
+3. split72_left and SNSP-CPU-01 lose, both with large skeletons placed
+   at full halos (154 and 167 parts, 84 and 83 nets joined through
+   passives, 1256 and 2109 mm² of room in 116 and 72 grown bodies; the
+   passives at level 0 too). Which of the three (the joined nets, the
+   grown bodies, the skeleton's half of the work) costs there is not
+   measured; the 4in1-mini's skeleton, by contrast, is 44 parts with 80
+   mm² of room and 231 unowned.
+4. Then the full protocol (five pairs in layout mode, KiCad
+   unconnected, the short tier's strict passes).
+
 ## Footprints without a courtyard, and their slots (2026-11-04)
 
 Fresh agent trial 4 (docs/reviews/2026-11-04-fresh-agent-trial-4.md,
