@@ -11,6 +11,49 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-04 (pads without a way out: the router's test at placement time, off)
+
+Branch pad-exits (`build/bin/pcb-maker-exit1-e` to `-g`; off side the
+switch off on the same base, byte for byte x1894's placement). The
+crossing dive's census left pads no router move reaches; this asks the
+router's question of every placement (placer.md, "Pads without a way out
+(2026-11-04)").
+
+- **The test** (`ExitProbe`, pcb-router router/pad_exits.rs): from a
+  pad's terminal nodes, a flood over legal nodes and steps on the statics
+  at its class (the neck class in its zones); open where it reaches 1 mm
+  beyond the pad, another pad of its net or a via site, else closed, each
+  rim node naming what closes it; the footprint's where only its own part
+  does. Maps on windows of the board's lattice. The fan-out's straight
+  ways were tried first and dropped: they called 55 connected LFCSP pads
+  of DSP-ADAU1452 closed.
+- **The repair** (`pad_exits`, placer setting and `PCB_PLACER_PAD_EXITS`;
+  off): after each seed, a session of the test (one lowering, later moves
+  carried rigidly); per part with a pad the placement closes, the part and
+  the parts that close it tried at their orientations and grid steps
+  within 1 mm, the cheapest in wire first, the first that leaves fewer
+  pads closed kept; closed pads count after the illegal parts in the
+  seeds' ranking; its work booked apart from the seeds' and charged as a
+  pool beside them. Panels of copies and held sub-boards: none.
+- **The report**: board-placer.json and board-layout.json `pad_exits`
+  (the latter the race's pick), the place check `incomplete` with "N pads
+  without a way out", the verdict's next action naming the parts to turn
+  or move; `pad-exits-kicad-board [--repair]`, the census of a placed
+  board.
+- **Census** (the nightly placements of 2026-11-03 and 2026-11-04):
+  OpenAirScope and the laptop keyboard have no closed pad (VSS_PA has a
+  bent way; the CM1624's are the escape stubs'); Glasgow, the two OpenESCs,
+  split72_left and the SmartSpin2k panel have 2 to 81, all open in the
+  night's results (185 of 185).
+- **Measured**: the four named boards and the short tier the same rows;
+  the eleven dense boards 964 to 958 unconnected, eight the same rows, the
+  three with closed pads moved (Glasgow 127 to 128, 4in1-mini 77 to 77,
+  4in1 119 to 112); the first-route stage on the four boards with closed
+  pads, five seed pairs: -3.0 % weighted, p 0.228, EXTEND. Work: 0.08 to
+  3.4 s a seed for the test, a repair a few seconds more.
+- **Default: off**, pending the full protocol: the opened pads mostly stay
+  open in the routes, and the race does not rank by closed pads.
+
 ## Committed on 2026-11-04 (fresh-agent trial 6: a schematic start, length rules, an authored outline)
 
 Branch fresh-agent-trial-6 (`build/bin/pcb-maker-ux11-a` to `-f`).

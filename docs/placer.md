@@ -7520,7 +7520,89 @@ census, one test of every pad): 0.08 s (k30-SBC) to 3.4 s (jetson), 0.3
 to 1.0 s on most dense boards; a repair adds its candidates' questions
 (the night's 4in1: 3.6 s for 8 closed pads, 7 moves, 43 candidates).
 
-<!-- pad-exits results -->
+**Measured** (tasks v7, the sweep's budgets and seeds, `--quality`, 2
+jobs x 2 threads; on: `{"pad_exits": {}}`, build/bin/pcb-maker-exit1-e
+for the four boards, -f for the dense boards and the short tier; off:
+the switch off on the same base, `pcb-maker-exit1-g`, whose placement is
+x1894's byte for byte (k30-SBC's place check), and the short tier's x1892
+rows; KiCad unconnected / strict pass / vias / first route's open
+terminals). The night's rows are no off side: every dense board's
+placement on main differs from the 2026-11-04 nightly's (688b59ca), the
+0xCB panel's too, where the switch does nothing.
+
+| Board | off | on | what the switch did |
+| --- | --- | --- | --- |
+| OpenAirScope | 1 (SD_CK) / no / 276 / 2 (the nightly's, the same placement) | 1 (SD_CK) / no / 277 / 2 | nothing closed; the placement byte for byte, the route by the work booked |
+| laptop keyboard | 2 / no / 254 / 6 (the nightly's) | the same row | nothing closed |
+| Quanta75_BareRP2040 | 3 / no / 295 / 6 | the same row | nothing closed |
+| k30-SBC | 0 / no (1 strict) / 455 / 0 (the nightly's) | the same row | nothing closed |
+
+The eleven dense boards (seed 1 as the sweep's):
+
+| Board | off | on | the kept placement's repair |
+| --- | --- | --- | --- |
+| 0xCB-1337 panel | 0, pass / 357 / 0 | the same row | a panel of copies: no repair |
+| protoesp | 81 / no / 331 / 145 | the same row | 1 closed, the footprint's (U1.6) |
+| glasgow revC3 | 127 / no / 340 / 133 | 128 / no / 356 / 157 | 4 closed; R43 shifted 0.1 mm, D7 turned (U1.25 opened); U1.21 (C29) and U1.42 (R46, D14) left: no candidate opens them |
+| video | 210 / no / 1418 / 304 | the same row | nothing closed |
+| OpenESC 4in1-mini | 77 / no / 116 / 149 | 77 / no / 122 / 139 | 1 closed, R14 moved; the pad it opened stays open in the result |
+| OpenESC 4in1 | 119 / no / 145 / 174 | 112 / no / 190 / 192 | 8 closed, 7 moves (C58, C66, R75, R20, R13, R74, Q12), 5 of the 7 pads opened still open in the result; the race kept another seed's placement (3 closed there) |
+| SmartSpin2k_Panelized | 105 / no / 766 / 109 | the same row | a panel of copies: no repair |
+| DSP-ADAU1452 | 3 / no / 368 / 38 | the same row | nothing closed |
+| MegaDrive | 125 / no / 2156 / 161 | the same row | nothing closed |
+| SNSP-CPU-01 | 97 / no / 1768 / 107 | the same row | nothing closed |
+| poly_kybd_split72_left | 20 / no / 1012 / 30 | the same row | the routed placement has none closed |
+
+Sum 964 to 958 unconnected, passes 1 and 1, no new finding. Eight boards
+give the same row (video and MegaDrive 1 to 2 s of work apart: the
+test's own); the three the switch moves are the boards with closed pads
+at every seed (Glasgow, the two OpenESCs). The short tier (12 boards):
+every placement byte for byte, every row the same (framework_mobo_lefthalf,
+whose two closed pads behind its USB-C no candidate opens, 0.5 s of work
+less). framework's two pads are connected in the result all the same: a
+narrower rung of the router reaches what the first lattice at the
+class's width does not, so the verdict says "no track of its class
+leaves it", not "no route".
+
+**The first-route stage** (benchmarks.md, "The ladder of placer
+measurements"; `--layout '{"stop_after_first_route": true}'`, the four
+boards with closed pads on the night's placements, seeds 1, 101, 201, 301, 401, both sides on
+`pcb-maker-exit1-g`; `placer_ab.py compare --metric first_open` against
+dense-noise.json; `build/exit1-first-s<N>-{off,on}`):
+
+| Board | s1 | s101 | s201 | s301 | s401 | median | relative (weight) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4in1 | 174 / 192 | 182 / 169 | 151 / 135 | 207 / 156 | 176 / 156 | 176 / 156 | -9.1 % (48) |
+| 4in1-mini | 149 / 139 | 145 / 127 | 132 / 141 | 108 / 111 | 123 / 119 | 132 / 127 | -2.8 % (99) |
+| split72_left | 30 / 30 | 35 / 35 | 21 / 21 | 24 / 24 | 5 / 5 | 24 / 24 | 0 (18) |
+| glasgow revC3 | 133 / 157 | 136 / 135 | 185 / 173 | 139 / 135 | 150 / 145 | 139 / 145 | +0.2 % (70) |
+
+Weighted -3.0 % (the noise file's 90 % interval -9.4 to +3.7 %, p
+0.228; sign-flip p 0.085), sum of medians 471 to 452, pair sums 486 to
+518, 498 to 466, 489 to 470, 478 to 426, 454 to 425: the stage passes
+(negative at p <= 0.25), the tool's verdict EXTEND (to nine pairs). The
+one losing pair, seed 1, is the full layouts' seed: there the finals go
+the other way (the 4in1 119 to 112, Glasgow 127 to 128), so the first
+route's loss does not reach the result. The seven other dense boards had
+no closed pad at any seed looked at (the x1890 placements of seeds 1, 101
+and 201) and keep their rows at seed 1.
+
+**Default: off.** The rule does what it is for: it finds the pads no
+track of their class can leave, every one of them open in the night's
+results, says which part to move in the place check and the verdict,
+and the repair opens most of them (`--repair` on the night's
+placements: 16 of the 18 on Glasgow and the two OpenESCs, none of
+split72's 2). It changes only the
+boards that have such pads, and the stage-1 screen passes (-3.0 %, p
+0.228), but the routes do not connect the opened pads (on the 4in1 five
+of seven stay open: what closed them was the neighbours' copper, what
+keeps them open is the congestion around them), the race may keep
+another seed's placement with pads still closed (the race does not rank
+by them), and the two boards it was proposed for have none. Stage 2 (the
+full protocol on the same seeds) decides the default; next steps there:
+the race ranking its candidates by closed pads, a wider reach for
+Glasgow's two, and the escape-stub pads judged.
+
 
 ## Room around grid arrays (2026-11-04)
 
