@@ -6586,7 +6586,9 @@ board (0 / 0 / 15).
 
 **The term built: rows of repeated parts** (`align_rows`, placer
 option, off by default; `crates/pcb-placer/src/align.rs`,
-`legal::align_rows`, the anneal in `anneal.rs`). Hypotheses 1 and 2
+`legal::align_rows`, the anneal in `anneal.rs`; removed on 2026-11-04,
+docs/handover.md, "Removed experiments (2026-11-04)"; the measurements
+below are kept as they were). Hypotheses 1 and 2
 are the anneal's objective and the halo knobs, measured before;
 3 would be a second crossings machine; 5 is the first that is a new
 term the anneal carries cheaply and the most consistent separation. A
@@ -6688,7 +6690,8 @@ of the anneal buys the rows with wire and crossings and does not route
 better. The designers' rows come with their tight packing and their
 shorter nets (hypotheses 1 and 2); a term that lines parts up one
 partner at a time reaches neither (video's bank lines up in far pairs,
-the scattered order stays). The switch stays off. What the ranking
+the scattered order stays). The switch stays off (removed on
+2026-11-04). What the ranking
 points at next: the wirelength the designers save, by net size the
 supply rails and buses of nine pins or more (median ratio 1.22) and the
 3- to 8-pin nets (1.13), which the placer weights down

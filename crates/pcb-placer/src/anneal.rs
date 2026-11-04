@@ -49,10 +49,6 @@ pub struct AnnealConfig {
     /// units, judged with the crossings of their nets. Off (`None`) by
     /// default.
     pub bus_groups: Option<std::sync::Arc<crate::groups::BusGroups>>,
-    /// Rows of repeated parts (`crate::align`, `Config::align`): every
-    /// move pays for the parts of its kind it leaves out of line and earns
-    /// for those it lines up. Off (`None`) by default.
-    pub align: Option<std::sync::Arc<crate::align::Align>>,
 }
 
 impl Default for AnnealConfig {
@@ -67,7 +63,6 @@ impl Default for AnnealConfig {
             legal_far_side: false,
             guidance: None,
             bus_groups: None,
-            align: None,
         }
     }
 }
@@ -1444,13 +1439,6 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
     } else {
         Vec::new()
     };
-    // Rows of repeated parts (`crate::align`).
-    let mut align = config
-        .align
-        .as_deref()
-        .filter(|align| !align.is_empty())
-        .map(|align| crate::align::AlignState::new(problem, align, &state.poses));
-    let align_before = align.as_ref().map(|align| align.total());
     let mut tally = Tally {
         crossings_before: crossings.as_ref().map(|state| state.total()),
         ..Default::default()
@@ -1607,11 +1595,7 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                     + penalty
                         * (state.overlap(index, state.rects[index])
                             + state.overlap(other, state.rects[other]));
-                let aligned = match align.as_mut() {
-                    Some(align) => align.change(problem, &state.poses, &[index, other]),
-                    None => 0.0,
-                };
-                let delta = after - before + aligned;
+                let delta = after - before;
                 let rejected = match crossings.as_mut() {
                     Some(crossings) => !judge_with_crossings(
                         crossings,
@@ -1631,9 +1615,6 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                     state.set_rect(other, saved.1);
                 } else {
                     state.keep_lengths(&nets, &terms);
-                    if let Some(align) = align.as_mut() {
-                        align.keep();
-                    }
                     if let Some(guide) = guide.as_mut() {
                         guide.accepted += 1;
                     }
@@ -1678,11 +1659,7 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
             let after = state.wirelength_terms(&state.incident[index], &mut terms)
                 + state.constraint_cost(index)
                 + penalty * state.overlap(index, state.rects[index]);
-            let aligned = match align.as_mut() {
-                Some(align) => align.change(problem, &state.poses, &[index]),
-                None => 0.0,
-            };
-            let delta = after - before + aligned;
+            let delta = after - before;
             let rejected = match crossings.as_mut() {
                 Some(crossings) => !judge_with_crossings(
                     crossings,
@@ -1703,9 +1680,6 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                 let incident = std::mem::take(&mut state.incident[index]);
                 state.keep_lengths(&incident, &terms);
                 state.incident[index] = incident;
-                if let Some(align) = align.as_mut() {
-                    align.keep();
-                }
                 if let Some(guide) = guide.as_mut() {
                     guide.accepted += 1;
                 }
@@ -1728,9 +1702,6 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
             );
             // Its moves keep their own sums: the cache again.
             state.refresh_lengths();
-            if let Some(align) = align.as_mut() {
-                align.refresh(problem, &state.poses);
-            }
         }
         let stage_work = work + state.work.replace(0);
         anneal_work += stage_work;
@@ -1783,16 +1754,6 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
                 .as_ref()
                 .map(|state| state.total())
                 .or(tally.crossings_after),
-        );
-    }
-    if let Some(align) = align.as_ref()
-        && std::env::var_os("PCB_PLACER_DEBUG").is_some()
-    {
-        eprintln!(
-            "anneal: rows of repeated parts: {} kinds, energy {:.1} -> {:.1} mm",
-            align.align.kinds.len(),
-            align_before.unwrap_or(0.0),
-            align.total()
         );
     }
     *poses = state.poses.clone();

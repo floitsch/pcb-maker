@@ -831,6 +831,18 @@ details are:
   `repairs.island_stubs`, board-router.json's `island_stubs` and the
   environment echo go with it; compare.py prints the count only for rows
   of older binaries.
+- `align_rows` (placer; off): rows of repeated parts, parts of one kind
+  paying in the anneal for standing out of line with the nearest of
+  their kind and lined up after the refinement where it cost at most
+  0.5 mm of wire. Stage 1 of the placer protocol (five seed pairs on the
+  dense boards, the first route's open terminals): **+4.2 %** (p on
+  better 0.79 / 0.82), fails; Glasgow better (-8.6 %), the 4in1-mini
+  (+12 %), protoesp (+23 %) and video worse; the rows bought with wire
+  (up on 8 of 11) and crossings. Changelog 2026-11-04, "the designer as
+  teacher"; docs/placer.md, "The designer as teacher (2026-11-04)".
+  `legal::align_orientations` (on) stays. experiments/placement-gap's
+  scripts that pass `{"align_rows": {}}` need a binary before the
+  removal.
 
 ## Gotchas
 
