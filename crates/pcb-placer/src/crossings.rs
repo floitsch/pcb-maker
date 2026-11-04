@@ -460,6 +460,9 @@ pub struct CrossingState<'a> {
     /// `twin_epoch` is that epoch: the grid at `twin_version` and the
     /// moved nets `twin_nets`.
     twin_counts: Vec<(u64, u32, u32)>,
+    /// Per net, its kept lines by their ends as of a change of the grid
+    /// (`kept_twin`).
+    twin_index: Vec<(u64, Vec<TwinKey>)>,
     twin_epoch: u64,
     twin_version: u64,
     twin_nets: Vec<usize>,
@@ -541,6 +544,13 @@ fn tail_place(places: &mut Vec<Vec<u32>>, fresh: usize, rank: usize) -> u32 {
     places[fresh][rank]
 }
 
+/// A kept line's ends (their bits) and its place in its net's list.
+type TwinKey = ([u64; 4], u32);
+
+/// Nets of up to this many kept lines find a fresh line's twin by a scan
+/// (`CrossingState::kept_twin`).
+const TWIN_SCAN: usize = 8;
+
 /// A pending move's new lines up to this many are counted against each
 /// other directly and enter the grid only when the move is kept: the
 /// anneal rejects most moves, and a rejected one then never touches the
@@ -605,6 +615,7 @@ impl<'a> CrossingState<'a> {
             kept_version: 0,
             kept_nets: Vec::new(),
             twin_counts: Vec::new(),
+            twin_index: Vec::new(),
             twin_epoch: 1,
             twin_version: 0,
             twin_nets: Vec::new(),
@@ -831,13 +842,48 @@ impl<'a> CrossingState<'a> {
 
     /// The kept line of `line`'s net with `line`'s ends, bit for bit (the
     /// same cells, lines met and crossings).
-    fn kept_twin(&self, line: &Line) -> Option<u32> {
+    /// A net of more than `TWIN_SCAN` kept lines finds a twin in its lines
+    /// sorted by their ends (`twin_index`, kept while the grid does not
+    /// change): a scan of its lines for every fresh line was quadratic in
+    /// the net (a power net's hundreds of lines at every spot and
+    /// candidate: DSP-ADAU1452's placement 10 % slower, 2026-11-04).
+    fn kept_twin(&mut self, line: &Line) -> Option<u32> {
         let bits = |point: Point| [point[0].to_bits(), point[1].to_bits()];
-        let (a, b) = (bits(line.a), bits(line.b));
-        self.net_lines[line.net].iter().copied().find(|&kept| {
-            let kept = &self.lines[kept as usize];
-            bits(kept.a) == a && bits(kept.b) == b
-        })
+        let key = |line: &Line| {
+            let (a, b) = (bits(line.a), bits(line.b));
+            [a[0], a[1], b[0], b[1]]
+        };
+        let wanted = key(line);
+        let kept = &self.net_lines[line.net];
+        if kept.len() <= TWIN_SCAN {
+            return kept
+                .iter()
+                .copied()
+                .find(|&id| key(&self.lines[id as usize]) == wanted);
+        }
+        if self.twin_index.len() < self.net_lines.len() {
+            self.twin_index
+                .resize_with(self.net_lines.len(), || (u64::MAX, Vec::new()));
+        }
+        let version = self.grid.version;
+        let (at, index) = &mut self.twin_index[line.net];
+        if *at != version {
+            index.clear();
+            index.extend(
+                kept.iter()
+                    .enumerate()
+                    .map(|(at, &id)| (key(&self.lines[id as usize]), at as u32)),
+            );
+            // By ends, then by place in the net's list: the first of equal
+            // ends is the one the scan finds.
+            index.sort_unstable();
+            *at = version;
+        }
+        let at = index.partition_point(|(ends, _)| *ends < wanted);
+        index
+            .get(at)
+            .filter(|(ends, _)| *ends == wanted)
+            .map(|(_, at)| kept[*at as usize])
     }
 
     /// `count(ids, &[])` of the kept lines of the nets `nets` (the
@@ -2138,6 +2184,25 @@ mod tests {
                 state.total() as i64 + after as i64 - before as i64,
                 expected as i64
             );
+            // A kept line's twin is the first of its net's lines with its
+            // ends (by the index on nets of many lines, by a scan else).
+            if step % 10 == 0 {
+                for net in 0..nets {
+                    for at in 0..state.net_lines[net].len() {
+                        let line = state.lines[state.net_lines[net][at] as usize];
+                        let first = state.net_lines[net].iter().copied().find(|&id| {
+                            let kept = &state.lines[id as usize];
+                            kept.a == line.a && kept.b == line.b
+                        });
+                        assert_eq!(state.kept_twin(&line), first);
+                    }
+                    let mut away =
+                        state.lines[state.net_lines[net].first().copied().unwrap_or(0) as usize];
+                    away.net = net;
+                    away.a[0] += 1000.0;
+                    assert_eq!(state.kept_twin(&away), None);
+                }
+            }
             // The anneal's three steps give the same change; `before`, which
             // records its lines' counts, gives `count`'s count and work.
             let ids: Vec<u32> = state
