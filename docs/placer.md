@@ -4108,6 +4108,24 @@ of a layout under 60 % within 3 mm says both. Open: a pull that keeps the
 few-capacitor boards (a tolerance that grows with the capacitors a pin
 shares was tried in placement only on DSP-ADAU1452: no clear change).
 
+**Protectors (2026-11-04).** The same file pulls each ESD or surge
+protector (a value word starting TVS, ESD, USBLC, PESD, SMAJ, TPD, ...)
+to within 3 mm of the connector pads of its nets. A capacitor, resistor,
+inductor or ferrite bead whose value names the protector it serves
+(ducktop2 right_io's C1771 "1u TPD1S514 VBUS_POWER stability", C2040
+and C2041 "... TPD4S201 ...") was taken for one and pulled to the
+connector instead of its IC; the score had stopped listing them in trial
+5, the placer had not. One rule now (`quality::esd_protector`, the
+reference's letters and the value) serves both. Of the task boards
+(tasks/v7 and the expansion tier) only OpenAirScope holds such a part,
+`l1` "ESD-Logo" without pads: place checks (200 s of work, four threads,
+the reference's rates) of OpenAirScope, video and jetson-nano-baseboard
+byte for byte x1902's. right_io (not a tier board; move_all only):
+moved, final wirelength 2230 to 2113 mm, capacitors within 3 mm of a
+supply pin 0.42 to 0.52, the protectors a median 4.75 to 3.86 mm from
+their connector pins (test
+`a_capacitor_named_after_its_protector_is_pulled_to_its_ic_not_the_connector`).
+
 ## Panel copies (2026-10-26)
 
 Panelised boards (several copies of one circuit in one outline, joined

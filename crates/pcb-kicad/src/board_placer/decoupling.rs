@@ -121,7 +121,7 @@ pub(super) fn decoupling_relations(
             .and_then(|item| item.children().get(2).and_then(Expr::atom))
             .unwrap_or("")
             .to_ascii_uppercase();
-        let protector = crate::quality::esd_protector(&value)
+        let protector = crate::quality::esd_protector(&reference, &value)
             && !problem.components[index].fixed
             && !named.contains(&index);
         if matches!(

@@ -367,9 +367,23 @@ impl Part {
     }
 }
 
-/// Whether a part's value names an ESD or surge protector (TVS diodes,
-/// USBLC6, TPD4E001, ...): a word of the value starts with a known name.
-pub(crate) fn esd_protector(value: &str) -> bool {
+/// Whether a part is an ESD or surge protector (TVS diodes, USBLC6,
+/// TPD4E001, ...): a word of its value starts with a known name and it is
+/// no capacitor, resistor, inductor or ferrite bead, whose value may name
+/// the protector it serves ("1u TPD1S514 VBUS_POWER stability": ducktop2
+/// right_io's C1771, fresh-agent trial 5). The score's `esd` list and the
+/// placer's pull to a connector both ask this.
+pub(crate) fn esd_protector(reference: &str, value: &str) -> bool {
+    let letters = reference.trim_end_matches(|c: char| c.is_ascii_digit() || c == '_');
+    !matches!(
+        letters.to_ascii_uppercase().as_str(),
+        "C" | "R" | "L" | "FB"
+    ) && esd_value(value)
+}
+
+/// Whether a value names an ESD or surge protector: a word of it starts
+/// with a known name.
+fn esd_value(value: &str) -> bool {
     const NAMES: [&str; 12] = [
         "TVS", "ESD", "USBLC", "PESD", "SMAJ", "SMBJ", "PRTR", "TPD", "SP05", "IP4", "RCLAMP",
         "SRV05",
@@ -1263,13 +1277,9 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         });
     }
     let mut esd = Vec::new();
-    // A capacitor or resistor whose value names the protector it serves
-    // ("1u TPD1S514 VBUS_POWER stability": ducktop2 right_io's C1771,
-    // trial 5) is no protector.
-    let passive = |part: &Part| matches!(part.prefix(), "C" | "R" | "L" | "FB");
     for part in parts
         .iter()
-        .filter(|part| esd_protector(&part.value) && !passive(part))
+        .filter(|part| esd_protector(&part.reference, &part.value))
     {
         let mut nearest: Option<f64> = None;
         for pad in part
@@ -1439,10 +1449,17 @@ mod tests {
             "TPD4E001",
             "IP4220CZ6",
         ] {
-            assert!(esd_protector(value), "{value}");
+            assert!(esd_protector("D1", value), "{value}");
         }
         for value in ["CONN_02X20_DIP40", "100n", "ATmega328P"] {
-            assert!(!esd_protector(value), "{value}");
+            assert!(!esd_protector("U1", value), "{value}");
+        }
+        for (reference, value) in [
+            ("C1771", "1u TPD1S514 VBUS"),
+            ("R4", "ESD 10k"),
+            ("FB2", "TVS"),
+        ] {
+            assert!(!esd_protector(reference, value), "{reference} {value}");
         }
         for net in ["GND", "/AGND", "GNDA", "VSS", "/power/GND"] {
             assert!(ground(net), "{net}");

@@ -1689,6 +1689,66 @@ fn a_decoupling_capacitor_is_near_every_supply_pin_of_its_rail_with_decoupling_n
 }
 
 #[test]
+fn a_capacitor_named_after_its_protector_is_pulled_to_its_ic_not_the_connector() {
+    // J1 (USB, VBUS), U1 a TPD1S514 on VBUS, C1 "1u TPD1S514 stability"
+    // between VBUS and GND (fresh-agent trial 5's ducktop2 right_io C1771),
+    // U2 a regulator fed from VBUS: U1 is the protector pulled to J1; C1
+    // decouples U2's supply pin, as the score says (`esd_protector`, one
+    // rule for both).
+    let pcb = parse(
+        r#"(kicad_pcb
+        (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+        (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+        (footprint "USB" (layer "F.Cu") (at 2 10) (property "Reference" "J1") (property "Value" "USB_C")
+            (fp_rect (start -1 -1) (end 1 2) (layer "F.CrtYd"))
+            (pad "1" smd rect (at 0 0) (size 0.6 0.7) (layers "F.Cu") (net 1 "VBUS"))
+            (pad "2" smd rect (at 0 1) (size 0.6 0.7) (layers "F.Cu") (net 2 "GND")))
+        (footprint "SOT-23" (layer "F.Cu") (at 20 10) (property "Reference" "U1") (property "Value" "TPD1S514")
+            (fp_rect (start -1.5 -1.5) (end 1.5 1.5) (layer "F.CrtYd"))
+            (pad "1" smd rect (at -1 0) (size 0.6 0.7) (layers "F.Cu") (net 1 "VBUS") (pintype "power_in"))
+            (pad "2" smd rect (at 1 0) (size 0.6 0.7) (layers "F.Cu") (net 2 "GND"))
+            (pad "3" smd rect (at 0 1) (size 0.6 0.7) (layers "F.Cu") (net 3 "VOUT")))
+        (footprint "C_0603" (layer "F.Cu") (at 30 10) (property "Reference" "C1") (property "Value" "1u TPD1S514 stability")
+            (fp_rect (start -1 -0.5) (end 1 0.5) (layer "F.CrtYd"))
+            (pad "1" smd rect (at -0.5 0) (size 0.5 0.5) (layers "F.Cu") (net 1 "VBUS"))
+            (pad "2" smd rect (at 0.5 0) (size 0.5 0.5) (layers "F.Cu") (net 2 "GND")))
+        (footprint "SOT-223" (layer "F.Cu") (at 36 10) (property "Reference" "U2") (property "Value" "AMS1117")
+            (fp_rect (start -2 -2) (end 2 2) (layer "F.CrtYd"))
+            (pad "1" smd rect (at -1 0) (size 0.6 0.7) (layers "F.Cu") (net 1 "VBUS") (pintype "power_in"))
+            (pad "2" smd rect (at 1 0) (size 0.6 0.7) (layers "F.Cu") (net 2 "GND"))
+            (pad "3" smd rect (at 0 1) (size 0.6 0.7) (layers "F.Cu") (net 4 "+3V3"))))"#,
+    )
+    .unwrap();
+    let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default()).unwrap();
+    let pulls: Vec<(usize, Vec<usize>)> = lowered
+        .problem
+        .constraints
+        .relations
+        .iter()
+        .filter_map(|relation| match relation {
+            core::constraints::Relation::NearAny { part, anchors, .. } => Some((
+                *part,
+                anchors
+                    .iter()
+                    .map(|anchor| match anchor {
+                        core::constraints::Anchor::Point(to, _) => *to,
+                        other => panic!("{other:?}"),
+                    })
+                    .collect(),
+            )),
+            _ => None,
+        })
+        .collect();
+    // C1 (2) near U2 (3), U1 near J1 (0); nothing pulls C1 to J1.
+    assert!(pulls.contains(&(2, vec![3])), "{pulls:?}");
+    assert!(pulls.contains(&(1, vec![0])), "{pulls:?}");
+    assert!(
+        !pulls.iter().any(|(part, to)| *part == 2 && to.contains(&0)),
+        "{pulls:?}"
+    );
+}
+
+#[test]
 fn pads_keep_the_hole_clearance_from_a_non_plated_hole() {
     // A mouse bite (0.5 mm holes in a 0.7 mm courtyard) and a capacitor
     // whose courtyard may touch others (`tight_bodies`): OpenRX's panel,
