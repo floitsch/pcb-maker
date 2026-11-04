@@ -89,6 +89,10 @@ impl Router {
             }
         }
         let reach = (0.8 / pitch).ceil() as usize;
+        // Each window nearest first, left at its first labelled node
+        // (`piece_near` looked at every node of it, for every node of every
+        // pad: a quarter of nrf24_remote's pour analyses).
+        let near = crate::pour::NearOrder::new(reach);
         for (terminal, nodes) in state.terminal_nodes.iter().enumerate() {
             if isolated(terminal) {
                 continue;
@@ -98,9 +102,12 @@ impl Router {
                 .iter()
                 .filter(|node| solid[node.layer as usize] || solid_pad(terminal))
             {
-                if let Some(piece) =
-                    pours.piece_near(&self.grid, node.layer as usize, node.cell as usize, reach)
-                    && !seen.contains(&piece)
+                if let Some(piece) = pours.piece_near_ordered(
+                    &self.grid,
+                    node.layer as usize,
+                    node.cell as usize,
+                    &near,
+                ) && !seen.contains(&piece)
                 {
                     seen.push(piece);
                 }
