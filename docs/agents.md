@@ -541,18 +541,17 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     false to route without; run with `PCB_ROUTER_BGA_FANOUT_WHY=1` to see
     each array's plan (the balls planned, kept, and refused where a part
     on the other side or a neighbour's copper takes the gap). The
-    placer's `bga_room` (layout.json `{"placer": {"bga_room": true}}`,
-    off by default; since 2026-11-04, docs/placer.md "Room around grid
-    arrays") keeps room around such an array whose inner balls need a
-    via for its escapes: no part
-    within a band on its side (the outer rings' tracks and a row of the
-    class's vias: 1.5 mm beyond the balls at Glasgow's 0.8 mm pitch), and
-    on the other side only the array's own decoupling capacitors under
-    it, off the fan-out's vias; board-placer.json's `array_rooms` says
-    each band and which parts it let in. Try it where KiCad's open items
-    sit at a BGA's outer balls with parts packed against its courtyard
-    (Glasgow: 343 -> 262 unconnected over three seeds); it is off because
-    it cost MIDAS-MK1 its strict pass at one of three seeds.
+    placer's `bga_room` (default true since 2026-11-04; layout.json
+    `{"placer": {"bga_room": false}}` turns it off; docs/placer.md "Room
+    around grid arrays") keeps room around an array whose inner balls
+    take those dog-bones: no part within a band on its side (the outer
+    rings' tracks and a row of the class's vias: 1.5 mm beyond the balls
+    at Glasgow's 0.8 mm pitch), and on the other side only the array's
+    own decoupling capacitors under it, off the fan-out's vias;
+    board-placer.json's `array_rooms` says each band and which parts it
+    let in (Glasgow: 343 -> 262 unconnected over three seeds). Arrays
+    whose inner balls leave by vias in their pads or on the surface keep
+    no room.
   - `automatic_planes` (default true): a board with four or more copper
     layers and no pours gets ground as a plane on the first inner layer
     and the supply rail with the most pads on the last inner layer, as a

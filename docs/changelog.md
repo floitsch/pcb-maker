@@ -11,10 +11,10 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
-## Committed on 2026-11-04 (room around grid arrays, off)
+## Committed on 2026-11-04 (room around grid arrays, on for the dog-boned)
 
 Branch bga-placement-room; binaries `build/bin/pcb-maker-bga2-a` to
-`-c`; outputs `build/bga2/runs`. The leftover of the prepared fan-outs:
+`-d`; outputs `build/bga2/runs`. The leftover of the prepared fan-outs:
 on Glasgow our passives ring U30 and close its outer rings' surface
 escapes (docs/placer.md, "Room around grid arrays (2026-11-04)").
 
@@ -24,26 +24,25 @@ escapes (docs/placer.md, "Room around grid arrays (2026-11-04)").
   the median 6.6), ours 0.25 mm (nine parts within 0.5 mm, the channels'
   median 0.35); under the array both keep U30's decoupling, the designer
   1.5 to 4 mm beyond it on the back empty.
-- **`bga_room`** (placer option, off): per grid array the router's
-  fan-out detects (one detection, `board_arrays`, now shared by
-  `far_side_balls` and `array_rooms`) that has balls beyond its surface
-  rings, its body grows by the surface band (the surface rings' tracks
-  and a row of the class's vias, 1.5 mm on Glasgow) and its far side
-  under the field and a band beyond (a track and a clearance per deeper
-  ring, 1.2 mm on Glasgow) keeps every part off but its own decoupling
-  capacitors (`Component::far_open`), which keep off the via sites.
-  board-placer.json's `array_rooms` reports it.
+- **`bga_room`** (placer option, **on**): per grid array whose inner
+  balls the fan-out serves with dog-bones (one detection, `board_arrays`,
+  now shared by `far_side_balls` and `array_rooms`; Glasgow's U30), its
+  body grows by the surface band (the surface rings' tracks and a row of
+  the class's vias, 1.5 mm on Glasgow) and its far side under the field
+  and a band beyond (a track and a clearance per deeper ring, 1.2 mm on
+  Glasgow) keeps every part off but its own decoupling capacitors
+  (`Component::far_open`), which keep off the via sites. board-placer.json's
+  `array_rooms` reports it.
 - **Measured**: Glasgow's layouts 343 -> 262 unconnected over seeds 1,
   101, 301 (every seed better), the first route better on all five
-  protocol seeds (716 -> 571), the outer rings' open balls 125 -> 89;
-  MIDAS-MK1.1 0 / strict pass (off 2), MIDAS-MK1 1 -> 1 (its first route
-  1 -> 11; over seeds 1, 101 and 301 4 -> 3 unconnected, but its strict
-  pass at seed 101 lost); vd-rd lost with the band alone (3 -> 6,
-  findings 1 -> 3) before arrays whose balls all leave on the surface
-  were left out; the other ten dense boards and the designer tier byte
-  for byte. Off: the coordinator's rule for the open point (on if
-  MIDAS-MK1 loses no connection in sum and no strict pass over three
-  seeds) fails on the strict pass.
+  protocol seeds (716 -> 571), the outer rings' open balls 125 -> 89.
+  Rooms for other arrays were measured and left out: MIDAS's U106 (vias
+  in pads) gained MK1.1's strict pass but cost MK1's at seed 101 (4 -> 3
+  unconnected over three seeds), vd-rd's U200 (every ball on the
+  surface) went 3 -> 6 with findings 1 -> 3. With the room for dog-boned
+  arrays only, MIDAS-MK1, MK1.1 and vd-rd place byte for byte as off and
+  Glasgow's seed-1 placement is the measured one's; the other ten dense
+  boards and the designer tier byte for byte.
 
 ## Committed on 2026-11-04 (net weights: the rails and buses counted more, a switch; stage 1 fails)
 

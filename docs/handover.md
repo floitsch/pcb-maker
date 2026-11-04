@@ -269,20 +269,20 @@ ladder's judge), 5, then the rest.
    rather than pin count, seeded orientation starts in the race. The back
    is kept free under a BGA's enclosed pads (`via_in_pad_far_side`, on
    since 2026-10-28; MIDAS-MK1's B2 holds its via with the room below
-   on and off), and since 2026-11-04 the room around a
-   grid array is built and **off** (`bga_room`; docs/placer.md, "Room
-   around grid arrays (2026-11-04)"): on Glasgow the designer keeps
-   U30's outer rings' surface escapes 1.3 mm and more free on its side
-   (nine in ten channels 1.66 mm, the median 6.6) where ours packed parts
-   0.25 mm from the ball field; with a band of 1.5 mm on its side and
-   the back under it for its own decoupling, Glasgow's layouts go 343 to
-   262 unconnected over seeds 1, 101 and 301 (each seed better, the
-   outer rings' open balls 125 to 89) and its first route is better on
-   all five protocol seeds (716 to 571); MIDAS-MK1.1 gains its strict
-   pass, but MIDAS-MK1 over seeds 1, 101 and 301 (4 to 3 unconnected)
-   loses its one strict pass (seed 101), so it stays off. Boards without a
-   grid array, or whose every ball leaves on the surface (vd-rd), place
-   byte for byte as off. In flight on
+   on and off), and since 2026-11-04 the room around a grid array whose
+   inner balls take the fan-out's dog-bones is **on** (`bga_room`;
+   docs/placer.md, "Room around grid arrays (2026-11-04)"): on Glasgow
+   the designer keeps U30's outer rings' surface escapes 1.3 mm and more
+   free on its side (nine in ten channels 1.66 mm, the median 6.6) where
+   ours packed parts 0.25 mm from the ball field; with a band of 1.5 mm
+   on its side and the back under it for its own decoupling, Glasgow's
+   layouts go 343 to 262 unconnected over seeds 1, 101 and 301 (each
+   seed better, the outer rings' open balls 125 to 89) and its first
+   route is better on all five protocol seeds (716 to 571). A room for
+   MIDAS's U106 too (vias in pads) gained MK1.1's strict pass and cost
+   MK1's at one of three seeds; it is left out, as is vd-rd's U200
+   (every ball on the surface: 3 to 6 open with a band). Every other
+   board places byte for byte as before. In flight on
    2026-11-03: the designer as teacher on the largest-gap boards, placer
    rules, panels of copies' frames (left out on 2026-10-28: SmartSpin2k
    118 to 89, but the 0xCB panel lost its strict pass), placer round 4.
@@ -574,11 +574,13 @@ its doc comment):
   (stub and via of the project's sizes) before routing, written where the
   route uses it; the placer keeps the far side free under those vias.
   Only Glasgow's U30 among the task boards takes a plan.
-- `bga_room` (placer): **off**, decided 2026-11-04 (docs/placer.md,
-  "Room around grid arrays"): a band around a grid array whose inner
-  balls need vias, and only its decoupling under it on the far side.
-  Glasgow 343 -> 262 unconnected over three seeds, MIDAS-MK1.1 gains its
-  strict pass, but MIDAS-MK1 loses its strict pass at seed 101.
+- `bga_room` (placer): **on** since 2026-11-04 (docs/placer.md, "Room
+  around grid arrays"): around a grid array whose inner balls take the
+  fan-out's dog-bones (Glasgow's U30, the only one among the task
+  boards), a band on its side for the outer rings' surface escapes and
+  only its own decoupling under it on the far side. Glasgow 343 -> 262
+  unconnected over three seeds, its first route -20 % over five; nothing
+  else moves. `"bga_room": false` turns it off.
 - `fanout` (router): **off** (`PCB_ROUTER_FANOUT`): measured on
   2026-10-28, it traded which pad of a crossing pair stays open.
 - `last_connections` (router): **0, off** (`PCB_ROUTER_LAST_CONNECTIONS`):

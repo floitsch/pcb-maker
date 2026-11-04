@@ -7318,7 +7318,7 @@ level: bodies of pads and fabrication outline, 0.15 mm apart), and on
 the back the designer keeps 1.5 to 4 mm beyond the field empty. The
 decoupling under the array is the designer's too.
 
-**The lever** (`bga_room`, placer option, **off**; board_placer/lower.rs
+**The lever** (`bga_room`, placer option, **on** since bga2-d, below; board_placer/lower.rs
 `room_around_arrays`, the router's `array_rooms`). Per grid array the
 router's fan-out detects (`board_arrays` in board_router/bga_fanout.rs,
 one detection for the fan-out's far side and this; at least 16 SMD pads
@@ -7444,30 +7444,51 @@ switch is bga2-a's board byte for byte (MIDAS's U106 keeps its room: the
 deepest ring 1 against one surface ring). The rows above stand for
 bga2-c.
 
-**Decision: off** (`bga_room` unset), by the coordinator's rule for
-the open point: on if over three seeds MIDAS-MK1 loses no KiCad
-connection in sum and no strict pass. It loses none in sum (4 -> 3) but
-loses its strict pass at seed 101 (0 open off, a GND island on), so the
-room stays off. What it buys elsewhere stands: Glasgow better on every
-seed (343 -> 262) and on all five first routes (-20 %), MIDAS-MK1.1's
-strict pass, no other board moving; MIDAS-MK1's first routes are worse
-on two of three seeds (1 -> 11, 2 -> 10; 10 -> 5 at 301), and length
-grows on Glasgow (+4.8 %). Turn it on per board where a BGA's outer
-balls stay open with parts against its courtyard (agents.md).
+*The first decision* (bga2-c): off, by the coordinator's rule for the
+open point: on if over three seeds MIDAS-MK1 loses no KiCad connection
+in sum and no strict pass. It loses none in sum (4 -> 3) but loses its
+strict pass at seed 101 (0 open off, a GND island on). With the room its
+open items are U106's K5 (seed 1), a GND zone island (101) and U301's
+pad 4 (301); without, a GND island (1), none (101) and a GND island
+with U106's H5 and K5 (301): two of the three are not U106's escapes but
+where the room moved the board's other parts.
 
-Left: why MIDAS-MK1 loses its pass. With the room its open items are
-U106's K5 (seed 1), a GND zone island (101) and U301's pad 4 (301);
-without, a GND island (1), none (101) and a GND island with U106's H5
-and K5 (301): two of the three are not U106's escapes but where the room
-moved the board's other parts (not measured further). U106's inner
-balls leave by vias in pads, not by a via ring outside them; an
-own-side band only where the inner balls take dog-bones (Glasgow's
-case) is the next variant to try. Also left: the rails' capacitors the
-far side lets in are every capacitor of a rail the array is on (45 on
-MIDAS's U106, among them other ICs' on +3V3), not the array's own by
-its supply pins; the parts pile up at the band's edge on Glasgow (15
-within 1.5 to 2 mm, the designer 3), where the designer's channels run
-6.6 mm (the median) before a part; blind and micro vias.
+**Only arrays the fan-out dog-bones** (bga2-d). The room answers a via
+ring crowding the outer rings' surface escapes, which an array has only
+where the fan-out puts dog-bones in its diagonal gaps
+(`far_side_balls`): Glasgow's U30. MIDAS's U106 (0.5 mm, no via fits a
+gap: its enclosed balls take vias in their pads) and vd-rd's U200 (every
+ball leaves on the surface) have none, so now they keep no room, and
+neither does any array with the fan-out off (unit test
+`an_array_whose_inner_balls_leave_by_vias_in_their_pads_keeps_no_room`).
+Checked with build/bin/pcb-maker-bga2-d (place checks, 2 threads, the
+layouts' router configs, the switch on by default against
+`"bga_room": false`): MIDAS-MK1, MIDAS-MK1.1 and vd-rd byte for byte the
+switch off's board, no `array_rooms`; Glasgow's seed-1 placement byte for
+byte bga2-a's with the switch on, so its three-seed layouts and the
+five-seed stage 1 above stand for bga2-d; the ten other dense boards
+have no grid array (shown above) and do not move.
+
+**Decision: on** (since bga2-d; `"bga_room": false` turns it off). The
+rule (on where the array boards gain on every measure, nothing else
+moves and no strict pass is lost) holds for the room as it is now: its
+only array board among the task boards is Glasgow, better on every seed
+by KiCad's count (343 -> 262 over seeds 1, 101 and 301) and on all five
+first routes (716 -> 571, -20 %), no new strict finding in its layouts;
+MIDAS and vd-rd, the other arrays, place as before; no other board
+moves. The cost is length on Glasgow (+4.8 %), at fewer vias (1159 ->
+1122). MIDAS-MK1.1's strict pass with the earlier room (bga2-b) is not
+kept: with no room it places as the switch off.
+
+Left: a room for fine-pitch arrays whose inner balls leave by vias in
+their pads (MIDAS's U106: a band on its side gained MK1.1's strict pass
+and cost MK1's at one seed of three: measure at more seeds before
+reviving it); the rails' capacitors the far side lets in are every
+capacitor of a rail the array is on (52 on Glasgow's U30, among them
+other ICs' on +3V3), not the array's own by its supply pins; the parts
+pile up at the band's edge on Glasgow (15 within 1.5 to 2 mm, the
+designer 3), where the designer's channels run 6.6 mm (the median)
+before a part; blind and micro vias.
 
 ## What went wrong on the way (kept as lessons)
 
