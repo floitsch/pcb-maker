@@ -1393,7 +1393,12 @@ that the net routes under these rules on this placement), else "the
 designer's own placement" (a layout's: `connected` then shows that the
 net routes there, not on this placement, and no route of the designer's
 on this placement exists); `parts_in_place` of `parts` and
-`connected_means` say it in numbers and a sentence. For a layout,
+`connected_means` say it in numbers and a sentence. `reference_tracks`
+counts the reference board's tracks and arcs: 0 (an unrouted board, such
+as a benchmark task's stripped input; trial 5's ducktop2 right_io) makes
+every net's `connected` false where no zone joins it, which says nothing
+about routing, and `connected_means` says so and asks for the designer's
+routed board. For a layout,
 `evidence_for_this_placement` points at the layout's own routes of its
 placement instead (board-layout.json and verdict.json): its first route
 (`first_route_unconnected_terminals`, `first_route_vias`,

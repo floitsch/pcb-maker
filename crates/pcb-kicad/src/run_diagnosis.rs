@@ -278,6 +278,11 @@ pub struct KiCadReferencePlacement {
     /// same position, rotation and side), and its parts.
     pub parts_in_place: usize,
     pub parts: usize,
+    /// The reference board's tracks and arcs, every net's. None (a task
+    /// input or a netlist import, stripped or never routed: trial 5's
+    /// ducktop2 right_io) makes `connected` false wherever no zone joins a
+    /// net, which says nothing about whether the net routes.
+    pub reference_tracks: usize,
     /// What `nets[].reference.connected` shows, in a sentence.
     pub connected_means: String,
     /// A layout's own routes of its placement (board-layout.json): the
@@ -335,7 +340,14 @@ fn reference_placement(
             "kicad_unconnected_items": verdict.map_or(serde_json::Value::Null, |verdict| verdict["kicad_unconnected_items"].clone()),
         })
     });
-    let connected_means = if same {
+    let reference_tracks = reference
+        .children()
+        .iter()
+        .filter(|item| matches!(item.head(), Some("segment" | "arc")))
+        .count();
+    let connected_means = if reference_tracks == 0 {
+        "the reference board has no tracks or arcs (an unrouted board: a task input or a stripped copy), so reference.connected is false wherever no zone joins a net and says nothing about whether it routes, on any placement; give --reference the designer's routed board".to_string()
+    } else if same {
         format!(
             "the designer's route on {ON_THIS_PLACEMENT}: every part of this run's board lies where the reference has it, so where reference.connected is true the net routes under these rules on this placement, and density is not shown to be why it stayed open"
         )
@@ -361,6 +373,7 @@ fn reference_placement(
         .to_string(),
         parts_in_place: items.kept_parts,
         parts: items.parts,
+        reference_tracks,
         connected_means,
         evidence_for_this_placement: evidence,
     }
@@ -1550,6 +1563,18 @@ mod tests {
             same.connected_means
         );
         assert!(same.evidence_for_this_placement.is_none());
+        assert_eq!(same.reference_tracks, 2);
+        // An unrouted reference (a stripped task input) shows nothing.
+        let bare = parse(&BOARD.replace("(segment ", "(gr_line ")).unwrap();
+        let unrouted = reference_placement("/designer", &bare, &reference, None, None);
+        assert_eq!(unrouted.reference_tracks, 0);
+        assert!(
+            unrouted
+                .connected_means
+                .starts_with("the reference board has no tracks or arcs"),
+            "{}",
+            unrouted.connected_means
+        );
         let moved = parse(&BOARD.replace("(at 16 10)", "(at 15 11)")).unwrap();
         let layout = serde_json::json!({
             "first_unconnected_terminals": 8, "first_vias": 314, "first_length_mm": 10480.8,
