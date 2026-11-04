@@ -5542,8 +5542,8 @@ puts no via in the field at all (0 dog-bones on both our boards), the
 inner balls stay open (28 of 36 in our layout, 22 on the designer's
 placement), and the designer's board shows the answer: 29 of 32 inner
 signal balls on dog-bones of 0.4/0.2 mm, one of the project's predefined
-via sizes, every one in its diagonal gap (stubs 0.566 mm), 31 of 33
-leaving on B.Cu. The 100 nets on U30 take 74 % of the route's search
+via sizes, 32 of its 33 signal dog-bones in a diagonal gap (stubs 0.566
+mm), 31 leaving on B.Cu. The 100 nets on U30 take 74 % of the route's search
 work on our placement (route mode, `PCB_ROUTER_NET_WORK`), the 34 nets
 of its inner rings 47 % (1.4 % a net against 0.18 % for the board's
 other nets): the search spends most of the board's work looking for
@@ -5560,8 +5560,8 @@ other nets. A prepared fan-out is then not an efficiency but the only way
 out.
 
 **The design** (`bga_fanout`, router settings, `PCB_ROUTER_BGA_FANOUT`;
-board_router/bga_fanout.rs; on since this section, see the decision). In the lowering, once the board's
-copper, holes and rule areas are obstacles:
+board_router/bga_fanout.rs; on, see the decision). In the lowering, once
+the board's copper, holes and rule areas are obstacles:
 
 - *Grid arrays*: a footprint's SMD pads (the exposed pad left out), at
   least 16, three quarters of them round or square and of one size, at
