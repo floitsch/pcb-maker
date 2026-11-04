@@ -266,10 +266,10 @@ ladder's judge), 5, then the rest.
    BETTER (on), the race's ripped count BETTER at nine pairs (on); judged
    before it and not taken: bus-group moves (the objective falls, routing
    does not), `legality: "kicad"`, `decoupling_near`; built and off
-   earlier: `shared_halos`,
-   `anneal_far_side_gaps`; removed on 2026-10-16: `replicate_channels`,
+   earlier: `anneal_far_side_gaps`; removed on 2026-10-16: `replicate_channels`,
    `supply_via_room`, `bus_rows`; removed on 2026-11-04 (below,
-   "Removed experiments (2026-11-04)"): `routing_demand`, `routing_room`. The legaliser is not the lever (4 %);
+   "Removed experiments (2026-11-04)"): `routing_demand`, `routing_room`,
+   `shared_halos`. The legaliser is not the lever (4 %);
    removing halos loses routing; more seeds do not close it (the
    designer's placement routes the OpenESC 4in1 to 15 open where ours
    leaves 88). Untested: exit blockage (the fan-out assignment) as a placement
@@ -864,6 +864,16 @@ details are:
   scripts experiments/routing-room/. The race's `routing_room_failed`
   rank goes with it; the per-part halos (`Relaxation::halos`) stay, the
   skeleton race sets them.
+- `shared_halos` (placer; off): neighbours kept the larger of their two
+  halos between them, not the sum. Measured 2026-10-14: six gap boards'
+  median final wirelength -6 %; the quick tier (with the annealer's
+  gaps, x700) passes 19 to 20, unconnected 30 to 24, starved thermals 17
+  to 9, vias -5 %, but zpn_devboard lost its pass (a mask bridge, vias
+  299 to 348) and hackrf's vias went 429 to 673. docs/placer.md, "Where
+  the wirelength goes (measured 2026-10-14)"; changelog 2026-10-14, "the
+  legaliser agent, x701 / x711". `Problem::shared_halos` and its branches
+  in the anneal, the global placement, the halo budget and the legality
+  test go.
 
 ## Gotchas
 

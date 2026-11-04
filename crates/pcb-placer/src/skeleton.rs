@@ -817,7 +817,6 @@ mod tests {
             edge_margin: 0.5,
             min_spacing: 0.2,
             far_side_pads_only: false,
-            shared_halos: false,
             escape: None,
             crossings: None,
             pieces: Vec::new(),

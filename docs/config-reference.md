@@ -34,7 +34,7 @@ The environment variables are indexed in the hand-over
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 13 | - | 4 | 13 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 69 | - | 0 | 69 | - |
-| [Placer settings](#placer-settings) | 60 | 53 | 7 | 60 | 35 |
+| [Placer settings](#placer-settings) | 59 | 52 | 7 | 59 | 34 |
 | [Layout settings](#layout-settings) | 22 | 22 | 0 | 22 | 14 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 2 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 4 |
@@ -382,7 +382,6 @@ The placer config file of `place-kicad-board`, and the `placer` object of the la
 | `solid_pin_rows` | `bool` | `true` | - | A footprint without a courtyard whose pads stand in rows of pins (three or more at most 2.6 mm apart, holding three quarters of its pads: a QFP, an SOIC, a header, a card slot) blocks with the whole box of its pads, as a body there would; other courtyard-less footprints (a key switch, a hot-swap socket) block with their pads alone. On: hackrf's header and SOIC sat inside a turned LQFP-144's pad ring, homebrew_486's second ISA slot between the first's rows. |
 | `mask_openings` | `bool` | `true` | placer.md | A footprint's solder-mask openings on its own side (graphics on F.Mask or B.Mask) keep other footprints' pads and bodies off also where the footprint blocks with its courtyard's shape rather than its whole body (the body's box holds them; a courtyard-less part blocks with them already): SNSP-CPU-01's J2 (a 12 x 5 courtyard around four pins, a 22 x 32 mm F.Mask polygon beside it) held T1 and C61, and KiCad reported solder_mask_bridge for each of their pads. They keep the bodies' spacing (at least the copper clearance) or KiCad's mask margin where that is larger (`mask_opening_growth`). On. |
 | `solder_mask_to_copper_mm` | `Option<f64>` | unset | router.md | The project's `solder_mask_to_copper_clearance`: covered copper keeps it from a mask opening. Read from the project when not given. |
-| `shared_halos` | `bool` | `false` | placer.md | Neighbours keep the larger of their routing halos between them, not the sum (`core::Problem::shared_halos`). |
 | `anneal_far_side_gaps` | `bool` | `false` | placer.md | The annealer keeps the legality test's gaps across the board (`core::anneal::AnnealConfig::legal_far_side`). Off by default. |
 | `placement_seeds` | `usize` | `3` | placer.md | Placements tried with different seeds (in parallel); the best is kept: fewest illegal parts, least missed constraints, least wire. |
 | `orientation_search` | `bool` | `true` | placer.md | The placement's orientation search starts from a canonical pose (`core::orient`): every movable part that may turn at the first of its angle options (in a fixed order), so that the placement is the same whether the board holds 0 degrees (an import from a schematic) or the designer's angles (a stack). On; off: the parts start at the angles the board holds. |

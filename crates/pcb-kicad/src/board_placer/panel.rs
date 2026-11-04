@@ -2167,7 +2167,6 @@ mod tests {
             min_spacing: 0.1,
             constraints: Default::default(),
             far_side_pads_only: false,
-            shared_halos: false,
             pieces: Vec::new(),
             escape: None,
             crossings: None,

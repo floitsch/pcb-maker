@@ -1520,7 +1520,6 @@ pub(crate) fn lower_placement(
         edge_margin: config.edge_margin_mm,
         min_spacing: config.copper_clearance_mm.unwrap_or(0.2),
         far_side_pads_only: false,
-        shared_halos: config.shared_halos,
         escape: None,
         crossings: None,
         pieces: loops.pieces.clone(),

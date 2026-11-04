@@ -681,20 +681,6 @@ fn clear_of_one(
                     bare(other, poses[other]),
                     body_spacing(problem, index, other),
                 )
-            } else if problem.shared_halos {
-                // The larger halo between them, as spacing between the
-                // bodies (growing one body instead is not symmetric where
-                // a disc meets a rectangle's corner).
-                let (mine, theirs) = (
-                    problem.components[index].halo,
-                    problem.components[other].halo,
-                );
-                let gap = body_spacing(problem, index, other) + mine.max(theirs);
-                overlaps(
-                    body.grown(-mine),
-                    rect(problem, other, poses[other]).grown(-theirs),
-                    gap,
-                )
             } else {
                 overlaps(
                     body,
@@ -4664,7 +4650,6 @@ pub(crate) mod tests {
             min_spacing: 0.2,
             constraints: Default::default(),
             far_side_pads_only: false,
-            shared_halos: false,
             pieces: Vec::new(),
             escape: None,
             crossings: None,
@@ -5019,7 +5004,6 @@ pub(crate) mod tests {
         problem.outline = vec![[0.0, 0.0], [30.0, 0.0], [30.0, 30.0], [0.0, 30.0]];
         problem.constraints.pad_clearance = round % 2 == 1;
         problem.constraints.courtyard_spacing = round % 3 == 1;
-        problem.shared_halos = round % 4 == 2;
         problem.far_side_pads_only = round % 5 == 3;
         problem.constraints.pad_mask_gap = if round % 3 == 2 { 0.3 } else { 0.0 };
         problem.net_weights = vec![1.0; 3];

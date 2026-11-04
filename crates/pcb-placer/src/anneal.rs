@@ -593,14 +593,6 @@ impl State<'_> {
                         (rect.center, [rect.half[0] - mine, rect.half[1] - mine]),
                         (body.center, [body.half[0] - theirs, body.half[1] - theirs]),
                     );
-                } else if self.problem.shared_halos {
-                    // The larger halo between them.
-                    let (mine, theirs) = (component.halo, other_component.halo);
-                    let grow = mine.max(theirs) - mine;
-                    *total += area(
-                        (rect.center, [rect.half[0] + grow, rect.half[1] + grow]),
-                        (body.center, [body.half[0] - theirs, body.half[1] - theirs]),
-                    );
                 } else {
                     *total += area((rect.center, rect.half), (body.center, body.half));
                 }
@@ -2258,7 +2250,7 @@ mod tests {
     /// The overlap sums with far pairs taken from `far_work` give the
     /// direct sums' bits and work: random boards of every kind of part
     /// (hollow, far sides and courtyards, cutouts with and without
-    /// outlines, copper graphics, marks, linked pairs, shared halos), at
+    /// outlines, copper graphics, marks, linked pairs), at
     /// both far-side models, parts moving between the sums.
     #[test]
     fn far_pairs_sum_and_book_as_the_direct_sums() {

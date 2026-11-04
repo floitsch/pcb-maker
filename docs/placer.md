@@ -251,7 +251,8 @@ OpenESC boards, both SNSPs and zpn (the kept seed, x652's placer):
   thermals 12 to 17, vias -4 %) and worse on two crowded boards (video
   240 to 315 unconnected, OpenESC 4in1 120 to 132; SNSP-CPU-01 239 to
   224 and mask bridges 22 to 5).
-- `shared_halos` (placer option, off): neighbours keep the larger of their
+- `shared_halos` (placer option, off; removed on 2026-11-04, docs/handover.md,
+  "Removed experiments (2026-11-04)"): neighbours keep the larger of their
   two halos between them instead of the sum; the halo budget and the
   global placement's charge count one halo per gap. Six gap boards' median
   final wirelength -6 %. Quick tier (with the annealer's gaps, x700):

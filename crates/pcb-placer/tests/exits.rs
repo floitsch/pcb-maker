@@ -91,7 +91,6 @@ fn board() -> Problem {
         edge_margin: 0.0,
         min_spacing: 0.0,
         far_side_pads_only: false,
-        shared_halos: false,
         escape: None,
         crossings: None,
         pieces: Vec::new(),

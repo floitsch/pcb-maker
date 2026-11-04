@@ -103,7 +103,6 @@ fn chain(parts: usize) -> Problem {
         edge_margin: 0.0,
         min_spacing: 0.0,
         far_side_pads_only: false,
-        shared_halos: false,
         escape: None,
         crossings: None,
         pieces: Vec::new(),
@@ -440,7 +439,6 @@ fn tight_bodies_are_the_last_resort() {
         edge_margin: 0.0,
         min_spacing: 0.2,
         far_side_pads_only: false,
-        shared_halos: false,
         escape: None,
         crossings: None,
         pieces: Vec::new(),
@@ -717,7 +715,6 @@ fn a_part_held_at_the_top_of_an_l_keeps_to_its_step() {
         edge_margin: 0.0,
         min_spacing: 0.2,
         far_side_pads_only: false,
-        shared_halos: false,
         escape: None,
         crossings: None,
         pieces: Vec::new(),
@@ -789,7 +786,6 @@ fn apart_keeps_connected_parts_away_from_each_other() {
         edge_margin: 0.5,
         min_spacing: 0.2,
         far_side_pads_only: false,
-        shared_halos: false,
         escape: None,
         crossings: None,
         pieces: Vec::new(),
@@ -874,7 +870,6 @@ fn parts_of_a_kind_are_turned_alike() {
         edge_margin: 0.5,
         min_spacing: 0.2,
         far_side_pads_only: false,
-        shared_halos: false,
         escape: None,
         crossings: None,
         pieces: Vec::new(),
@@ -960,7 +955,6 @@ fn a_part_held_at_an_edge_keeps_to_its_own_piece() {
         edge_margin: 0.0,
         min_spacing: 0.2,
         far_side_pads_only: false,
-        shared_halos: false,
         escape: None,
         crossings: None,
         pieces: vec![[0.0, 0.0, 20.0, 20.0], [30.0, 0.0, 50.0, 20.0]],
@@ -1132,77 +1126,6 @@ fn the_annealer_can_keep_the_gaps_across_the_board_the_legality_test_asks_for() 
     let clear = at(40.0, 34.0);
     assert!(is_legal(&problem, &clear, 1, clear[1], 0..2));
     assert_eq!(overlaps(&problem, &clear, &legal)[1], 0.0);
-}
-
-#[test]
-fn shared_halos_keep_the_larger_halo_between_neighbours() {
-    use pcb_placer::legal::is_legal;
-    let mut problem = across_the_board();
-    for component in &mut problem.components {
-        component.side = Side::Front;
-        component.far_side.clear();
-        component.far_copper.clear();
-        component.body_size = [2.0, 1.0];
-        component.pads.clear();
-        component.halo = 0.65;
-    }
-    problem.components[1].halo = 0.3;
-    // Bodies 1.2 mm apart: the halos' sum and the spacing want 1.45, the
-    // larger halo and the spacing 1.15.
-    let poses = vec![
-        Pose {
-            position: [40.0, 25.0],
-            angle: 0.0,
-        },
-        Pose {
-            position: [43.2, 25.0],
-            angle: 0.0,
-        },
-    ];
-    assert!(!is_legal(&problem, &poses, 1, poses[1], 0..2));
-    problem.shared_halos = true;
-    assert!(is_legal(&problem, &poses, 1, poses[1], 0..2));
-    assert!(is_legal(&problem, &poses, 0, poses[0], 0..2));
-    // 1.1 mm apart is too close either way.
-    let closer = vec![
-        poses[0],
-        Pose {
-            position: [43.1, 25.0],
-            angle: 0.0,
-        },
-    ];
-    assert!(!is_legal(&problem, &closer, 1, closer[1], 0..2));
-    // A disc beside a rectangle's corner: the same answer from either side
-    // (growing one body by the halo instead of the gap was not).
-    problem.components[1].round = true;
-    problem.components[1].body_size = [2.0, 2.0];
-    for step in 0..40 {
-        let offset = 1.5 + 0.02 * step as f64;
-        let poses = vec![
-            poses[0],
-            Pose {
-                position: [40.0 + 1.0 + offset * 0.7, 25.0 + 0.5 + offset * 0.7],
-                angle: 0.0,
-            },
-        ];
-        assert_eq!(
-            is_legal(&problem, &poses, 0, poses[0], 0..2),
-            is_legal(&problem, &poses, 1, poses[1], 0..2),
-            "offset {offset}"
-        );
-    }
-}
-
-#[test]
-fn a_placement_with_shared_halos_is_legal() {
-    let mut problem = chain(12);
-    for component in &mut problem.components {
-        component.halo = if component.fixed { 0.0 } else { 0.65 };
-    }
-    problem.shared_halos = true;
-    let placement = place(&problem, &Config::new());
-    assert!(placement.unplaced.is_empty());
-    assert!(placement.illegal.is_empty(), "{:?}", placement.illegal);
 }
 
 /// Two back-mounted hot-swap switches: on the back a 9 x 6 mm socket, on
@@ -1422,7 +1345,6 @@ fn parts_without_room_go_first_until_none_takes_anothers_place() {
         edge_margin: 0.0,
         min_spacing: 0.2,
         far_side_pads_only: false,
-        shared_halos: false,
         escape: None,
         crossings: None,
         pieces: Vec::new(),
@@ -1504,7 +1426,6 @@ fn pads_of_a_part_held_by_its_copper_keep_the_copper_to_edge_clearance_on_every_
         edge_margin: 0.5,
         min_spacing: 0.2,
         far_side_pads_only: false,
-        shared_halos: false,
         escape: None,
         crossings: None,
         pieces: Vec::new(),
@@ -1664,7 +1585,6 @@ fn eviction_finds_a_held_part_s_narrow_window_in_a_tab() {
         edge_margin: 0.5,
         min_spacing: 0.2,
         far_side_pads_only: false,
-        shared_halos: false,
         escape: None,
         crossings: None,
         pieces: Vec::new(),

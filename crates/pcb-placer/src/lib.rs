@@ -545,9 +545,7 @@ fn fit_halos(problem: &Problem, limit: f64) -> (Problem, [f64; 2]) {
             if component.fixed || component.copper_only || component.side == Side::Neither {
                 continue;
             }
-            // Shared halos: each gap holds one halo, half of it per part.
-            let sides = if problem.shared_halos { 1.0 } else { 2.0 };
-            let margin = sides * scale_of(component, scales) * component.halo + problem.spacing;
+            let margin = 2.0 * scale_of(component, scales) * component.halo + problem.spacing;
             let area = if component.hollow.is_empty() {
                 (component.body_size[0] + margin) * (component.body_size[1] + margin)
             } else {
@@ -1753,7 +1751,7 @@ mod check_mode_tests {
     }
 
     #[test]
-    fn check_mode_places_as_without_it_with_shared_halos() {
+    fn check_mode_places_as_without_it_with_pad_mask_gaps() {
         places_as_without_it(2);
     }
 

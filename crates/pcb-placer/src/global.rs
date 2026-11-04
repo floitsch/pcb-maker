@@ -308,16 +308,6 @@ pub struct GlobalResult {
     pub overflow: f64,
 }
 
-/// How far a movable body's charge reaches beyond it: its halo, or half
-/// of it where neighbours share their halos (one halo per gap).
-fn halo_charge(problem: &Problem, component: &crate::problem::Component) -> f64 {
-    if problem.shared_halos {
-        component.halo / 2.0
-    } else {
-        component.halo
-    }
-}
-
 pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
     let bounds = problem.bounds();
     let mut field = Field::new(config.bins, bounds);
@@ -417,7 +407,7 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         .map(|index| {
             let component = &problem.components[*index];
             let half = component.half_extent(poses[*index].angle);
-            let halo = halo_charge(problem, component);
+            let halo = component.halo;
             Body {
                 component: Some(*index),
                 half: [half[0] + halo, half[1] + halo],
@@ -819,7 +809,7 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
             for (body, index) in movable.iter().enumerate() {
                 let component = &problem.components[*index];
                 let half = component.half_extent(poses[*index].angle);
-                let halo = halo_charge(problem, component);
+                let halo = component.halo;
                 bodies[body].half = [half[0] + halo, half[1] + halo];
                 bodies[body].bare = half;
                 bodies[body].angle = poses[*index].angle;

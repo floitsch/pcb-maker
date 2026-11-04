@@ -270,9 +270,6 @@ pub struct KiCadBoardPlacerConfig {
     /// The project's `solder_mask_to_copper_clearance`: covered copper
     /// keeps it from a mask opening. Read from the project when not given.
     pub solder_mask_to_copper_mm: Option<f64>,
-    /// Neighbours keep the larger of their routing halos between them,
-    /// not the sum (`core::Problem::shared_halos`).
-    pub shared_halos: bool,
     /// The annealer keeps the legality test's gaps across the board
     /// (`core::anneal::AnnealConfig::legal_far_side`). Off by default.
     pub anneal_far_side_gaps: bool,
@@ -563,7 +560,6 @@ impl Default for KiCadBoardPlacerConfig {
             solid_pin_rows: true,
             mask_openings: true,
             solder_mask_to_copper_mm: None,
-            shared_halos: false,
             anneal_far_side_gaps: false,
             placement_seeds: 3,
             orientation_search: true,
