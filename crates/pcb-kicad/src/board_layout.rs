@@ -1871,7 +1871,6 @@ pub fn layout_kicad_board(
                     legalise: false,
                     refine: false,
                     anneal: false,
-                    global: false,
                 };
                 pool.iter()
                     .map(|(poses, _)| placer::crossings::total(&problem.problem, &fact, poses))

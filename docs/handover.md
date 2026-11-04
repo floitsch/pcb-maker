@@ -885,6 +885,17 @@ details are:
   wirelength goes (measured 2026-10-14)"; changelog 2026-10-14, "the
   legaliser agent, x701 / x711". `State::far_overlap` goes;
   `anneal::overlaps` takes no configuration.
+- `ratsnest_crossings.global` (placer; off; the other parts of
+  `ratsnest_crossings` stay, `anneal` on since 2026-10-28): after the
+  global placement the parts of 16 pins or more traded places and
+  turned where wire plus crossings fell (`crossings::reorder`). On
+  MegaDrive it traded in two of three seeds' global placements, but the
+  placed board came out the same (seed 1: 8135 crossings with and
+  without); on Glasgow it found nothing; not measured in layouts.
+  Changelog 2026-10-25, "ratsnest crossings in the anneal";
+  docs/placer.md, "Where the order is decided: the anneal and the global
+  placement (2026-10-25)". The anneal's large-part peers keep its pin
+  thresholds (`REORDER_PINS`, `REORDER_PIN_SHARE`).
 
 ## Gotchas
 

@@ -36,9 +36,6 @@ pub struct Crossings {
     /// The anneal pays for the crossings of a move, and a swap's partner
     /// is often a part like it (`anneal::peers`).
     pub anneal: bool,
-    /// After the global placement, the parts with many pins trade places
-    /// and turn where that saves wirelength plus crossings (`reorder`).
-    pub global: bool,
 }
 
 /// The minimum spanning tree of `points` by straight distance (Prim's
@@ -1590,207 +1587,13 @@ impl<'a> CrossingState<'a> {
     }
 }
 
-/// The least share of a part's pins its trading partner in `reorder`
-/// has (QFP-128 and QFP-160: 0.8).
+/// The least share of a part's pins a swap partner of its kind in the
+/// anneal has (`anneal::peers`; QFP-128 and QFP-160: 0.8).
 pub const REORDER_PIN_SHARE: f64 = 0.5;
 
-/// Parts with at least this many pins take part in `reorder`.
+/// Parts with at least this many pins are each other's swap partners in
+/// the anneal (`anneal::peers`).
 pub const REORDER_PINS: usize = 16;
-
-/// Passes of `reorder` at most.
-const REORDER_PASSES: usize = 4;
-
-/// What `reorder` did.
-#[derive(Clone, Debug, Default)]
-pub struct Reordered {
-    pub parts: usize,
-    pub swaps: usize,
-    pub turns: usize,
-    pub crossings_before: u64,
-    pub crossings_after: u64,
-}
-
-/// After the global placement: the movable parts with many pins
-/// (`REORDER_PINS`) trade places (each to the other's body centre, angles
-/// kept) and turn (about their body centre) where that lowers the
-/// weighted half-perimeter wirelength of their nets plus `weight` times
-/// their nets' crossings: each candidate in turn, taken when it improves,
-/// in passes until one improves nothing (at most `REORDER_PASSES`; trades
-/// only between parts on one side, the one with fewer pins having at
-/// least `REORDER_PIN_SHARE` of the other's). The order
-/// of large parts along a bus (MegaDrive's QFPs) is a decision the anneal
-/// starts from cold and the legaliser and the refinement can only repair
-/// locally; here it is a handful of parts against each other. Overlaps
-/// the trade makes are the anneal's to resolve; a trade or turn that
-/// breaks a placement constraint or relation of the part is not taken.
-/// Measured on MegaDrive and Glasgow it changed little (docs/placer.md,
-/// "Ratsnest crossings where the order is decided"); off by default.
-pub fn reorder(problem: &Problem, crossings: &Crossings, poses: &mut [Pose]) -> Reordered {
-    let large: Vec<usize> = (0..problem.components.len())
-        .filter(|index| {
-            let component = &problem.components[*index];
-            !component.fixed && component.pins.len() >= REORDER_PINS
-        })
-        .collect();
-    let mut result = Reordered {
-        parts: large.len(),
-        ..Default::default()
-    };
-    if large.is_empty() {
-        return result;
-    }
-    let nets = problem.net_weights.len();
-    let mut members: Vec<Vec<(usize, usize)>> = vec![Vec::new(); nets];
-    for (index, component) in problem.components.iter().enumerate() {
-        for (pin, description) in component.pins.iter().enumerate() {
-            members[description.net].push((index, pin));
-        }
-    }
-    let incident: Vec<Vec<usize>> = problem
-        .components
-        .iter()
-        .map(|component| {
-            let mut nets: Vec<usize> = component.pins.iter().map(|pin| pin.net).collect();
-            nets.sort_unstable();
-            nets.dedup();
-            nets
-        })
-        .collect();
-    let wirelength = |poses: &[Pose], nets: &[usize]| -> f64 {
-        crate::add_work(
-            crate::PIN_WORK * nets.iter().map(|net| members[*net].len()).sum::<usize>() as u64,
-        );
-        nets.iter()
-            .filter(|net| members[**net].len() >= 2)
-            .map(|net| {
-                let mut bounds = [
-                    f64::INFINITY,
-                    f64::INFINITY,
-                    f64::NEG_INFINITY,
-                    f64::NEG_INFINITY,
-                ];
-                for (part, pin) in &members[*net] {
-                    let component = &problem.components[*part];
-                    let at = component.pin_position(&component.pins[*pin], poses[*part]);
-                    bounds[0] = bounds[0].min(at[0]);
-                    bounds[1] = bounds[1].min(at[1]);
-                    bounds[2] = bounds[2].max(at[0]);
-                    bounds[3] = bounds[3].max(at[1]);
-                }
-                problem.net_weights[*net] * ((bounds[2] - bounds[0]) + (bounds[3] - bounds[1]))
-            })
-            .sum()
-    };
-    // A part's constraints, kept or not: a trade or turn may not make them
-    // worse.
-    let held = |poses: &[Pose], part: usize| -> f64 {
-        if problem.constraints.is_empty() {
-            0.0
-        } else {
-            crate::constraints::relation_penalty(problem, poses, Some(part))
-                + 1000.0 * crate::constraints::hard_violation(problem, part, poses[part])
-        }
-    };
-    let mut state = CrossingState::new(problem, crossings, poses);
-    result.crossings_before = state.total();
-    let weight = crossings.weight;
-    // Whether `changes` lower the cost; taken if so.
-    let mut try_change = |poses: &mut [Pose], changes: &[(usize, Pose)]| -> bool {
-        let parts: Vec<usize> = changes.iter().map(|(part, _)| *part).collect();
-        let mut nets: Vec<usize> = parts
-            .iter()
-            .flat_map(|part| incident[*part].iter().copied())
-            .collect();
-        nets.sort_unstable();
-        nets.dedup();
-        let old: Vec<(usize, Pose)> = parts.iter().map(|part| (*part, poses[*part])).collect();
-        let held_before: f64 = parts.iter().map(|part| held(poses, *part)).sum();
-        let length_before = wirelength(poses, &nets);
-        let crossings_before = state.before(&parts);
-        for (part, pose) in changes {
-            poses[*part] = *pose;
-        }
-        let held_after: f64 = parts.iter().map(|part| held(poses, *part)).sum();
-        let mut better = false;
-        let mut change = 0;
-        if held_after <= held_before + 1.0e-9 {
-            let crossings_after = state.after(poses);
-            change = crossings_after as i64 - crossings_before as i64;
-            let delta = wirelength(poses, &nets) - length_before + weight * change as f64;
-            better = delta < -1.0e-9;
-        }
-        state.settle(poses, &parts, better, change);
-        if !better {
-            for (part, pose) in old {
-                poses[part] = pose;
-            }
-        }
-        better
-    };
-    for _ in 0..REORDER_PASSES {
-        let mut improved = false;
-        for (position, &a) in large.iter().enumerate() {
-            if crate::out_of_work(0) {
-                break;
-            }
-            let first = &problem.components[a];
-            // Turns about the body centre.
-            for &angle in &first.angle_options {
-                if (angle - poses[a].angle).abs() < 1.0e-9 {
-                    continue;
-                }
-                let center = first.center(poses[a]);
-                let pose = Pose {
-                    position: first.position_for_center(center, angle),
-                    angle,
-                };
-                if try_change(poses, &[(a, pose)]) {
-                    result.turns += 1;
-                    improved = true;
-                }
-            }
-            for &b in &large[position + 1..] {
-                let second = &problem.components[b];
-                let first = &problem.components[a];
-                let (fewer, more) = (
-                    first.pins.len().min(second.pins.len()),
-                    first.pins.len().max(second.pins.len()),
-                );
-                if first.side != second.side || (fewer as f64) < REORDER_PIN_SHARE * more as f64 {
-                    continue;
-                }
-                let (pose_a, pose_b) = (poses[a], poses[b]);
-                let traded = [
-                    (
-                        a,
-                        Pose {
-                            position: first
-                                .position_for_center(second.center(pose_b), pose_a.angle),
-                            angle: pose_a.angle,
-                        },
-                    ),
-                    (
-                        b,
-                        Pose {
-                            position: second
-                                .position_for_center(first.center(pose_a), pose_b.angle),
-                            angle: pose_b.angle,
-                        },
-                    ),
-                ];
-                if try_change(poses, &traded) {
-                    result.swaps += 1;
-                    improved = true;
-                }
-            }
-        }
-        if !improved {
-            break;
-        }
-    }
-    result.crossings_after = state.total();
-    result
-}
 
 #[cfg(test)]
 mod tests {
@@ -1968,7 +1771,6 @@ mod tests {
             legalise: true,
             refine: true,
             anneal: false,
-            global: false,
         };
         let mut state = CrossingState::new(&problem, &crossings, &poses);
         assert_eq!(state.total(), 0);
@@ -2027,7 +1829,6 @@ mod tests {
             legalise: true,
             refine: true,
             anneal: false,
-            global: false,
         };
         assert_eq!(total(&problem, &crossings, &poses), 1);
         problem.crossings = Some(std::sync::Arc::new(crossings.clone()));
@@ -2081,7 +1882,6 @@ mod tests {
             legalise: false,
             refine: false,
             anneal: true,
-            global: false,
         };
         assert_eq!(total(&problem, &crossings, &poses), 1);
         problem.crossings = Some(std::sync::Arc::new(crossings.clone()));
@@ -2138,7 +1938,6 @@ mod tests {
             legalise: true,
             refine: true,
             anneal: false,
-            global: false,
         };
         let mut state = CrossingState::new(&problem, &crossings, &poses);
         state.check = false;
@@ -2255,50 +2054,5 @@ mod tests {
             "{} new lines from kept counts",
             state.fresh_hits
         );
-    }
-
-    /// Two parts of 16 pins whose buses to a fixed connector cross trade
-    /// places after the global placement.
-    #[test]
-    fn reorder_trades_two_large_parts_along_a_bus() {
-        let pins = |first_net: usize| -> Vec<Pin> {
-            (0..16)
-                .map(|index| Pin {
-                    offset: [index as f64 * 0.5 - 3.75, 0.0],
-                    net: first_net + index,
-                })
-                .collect()
-        };
-        let mut connector = part(
-            "J",
-            (0..32)
-                .map(|index| Pin {
-                    offset: [index as f64 * 1.0, 0.0],
-                    net: index,
-                })
-                .collect(),
-        );
-        connector.fixed = true;
-        let components = vec![part("A", pins(0)), part("B", pins(16)), connector];
-        // A (nets 0-15) above the connector's right half, B (16-31) above
-        // its left: every line of A crosses B's.
-        let mut poses = vec![pose(24.0, 40.0), pose(8.0, 40.0), pose(0.0, 20.0)];
-        let problem = problem(components, 32, poses.clone());
-        let crossings = Crossings {
-            counted: vec![true; 32],
-            weight: 3.0,
-            legalise: false,
-            refine: false,
-            anneal: false,
-            global: true,
-        };
-        let before = total(&problem, &crossings, &poses);
-        assert!(before > 0);
-        let result = reorder(&problem, &crossings, &mut poses);
-        assert_eq!(result.swaps, 1);
-        assert_eq!(result.crossings_before, before);
-        assert_eq!(result.crossings_after, total(&problem, &crossings, &poses));
-        assert!(result.crossings_after < before);
-        assert!(poses[0].position[0] < poses[1].position[0]);
     }
 }

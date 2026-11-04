@@ -2125,7 +2125,9 @@ placer-default protocol: "Under the placer-default protocol
   out the same (`place-kicad-board`, seed 1: 8135 crossings without
   either switch, 8135 with `global`, 6831 with the uncapped `anneal`,
   6831 with both); on Glasgow (3 such parts) it found nothing. Not
-  measured in layouts; it stays off.
+  measured in layouts; it stays off (removed on 2026-11-04, with
+  `crossings::reorder`: docs/handover.md, "Removed experiments
+  (2026-11-04)").
 
 **The anneal's work per move** (`PCB_PLACER_DEBUG`'s `anneal:` line,
 `place-kicad-board` at the default budget, three seeds; placer units,
@@ -2296,7 +2298,8 @@ term stayed off (on since 2026-10-28, under the placer-default rule:
 below): the summed medians are flat (926 to 927), seed 201's
 sum rises, the short tier loses a pass and 10 connections, and
 MegaDrive's 110 to 105 is within one route's noise there (sd 12.7).
-`global` stays off (no effect on the placed boards). What the step
+`global` stays off (no effect on the placed boards; removed on
+2026-11-04). What the step
 showed: the anneal can take the crossings below the designer's counts
 on MegaDrive and Glasgow at a bounded cost (the term's work at most
 half the anneal's), but fewer crossings alone do not route better on

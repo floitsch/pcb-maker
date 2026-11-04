@@ -1090,28 +1090,6 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         eprintln!("placer: global {:.1}s", started.elapsed().as_secs_f64());
     }
     let mut global_poses = global.poses;
-    // Ratsnest crossings after the global placement (`Crossings::global`):
-    // the parts with many pins trade places and turn where that saves
-    // wirelength plus crossings.
-    if let Some(crossings) = problem
-        .crossings
-        .as_deref()
-        .filter(|crossings| crossings.global)
-    {
-        let reorder_mark = mark();
-        let reordered = crossings::reorder(problem, crossings, &mut global_poses);
-        phase_line(debug, "reorder", reorder_mark);
-        if debug {
-            eprintln!(
-                "placer: reorder: {} parts with many pins, {} trades, {} turns, crossings {} -> {}",
-                reordered.parts,
-                reordered.swaps,
-                reordered.turns,
-                reordered.crossings_before,
-                reordered.crossings_after
-            );
-        }
-    }
     // Bus groups: the banks' order and arrangement (`groups::arrange`).
     if let Some(groups) = bus_groups
         .as_deref()
@@ -1685,7 +1663,6 @@ mod check_mode_tests {
             legalise: true,
             refine: true,
             anneal: true,
-            global: false,
         }));
         problem.escape = Some(std::sync::Arc::new(escape::Escape {
             pitch: 0.5,

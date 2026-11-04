@@ -663,10 +663,6 @@ pub struct KiCadRatsnestCrossings {
     /// seed, checked at the five seeds: 4 strict passes on, 3 off;
     /// docs/placer.md).
     pub anneal: bool,
-    /// After the global placement, the parts with 16 pins or more trade
-    /// places and turn where that saves wirelength plus crossings. Off by
-    /// default (no effect on the placed boards of MegaDrive and Glasgow).
-    pub global: bool,
     /// A guard (off by default): the weight scales by two over the
     /// routing layers (unchanged on two layers, two thirds on three, half
     /// on four): with more layers a crossing costs a via and a layer
@@ -683,7 +679,6 @@ impl Default for KiCadRatsnestCrossings {
             refine: true,
             rank_seeds: true,
             anneal: true,
-            global: false,
             per_layer: false,
         }
     }

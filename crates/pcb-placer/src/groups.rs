@@ -1171,7 +1171,6 @@ mod tests {
             legalise: true,
             refine: true,
             anneal: false,
-            global: false,
         }));
         let fact = problem.crossings.clone().unwrap();
         let before = crate::crossings::total(&problem, &fact, &problem.poses);
