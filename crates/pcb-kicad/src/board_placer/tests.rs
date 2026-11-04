@@ -2623,3 +2623,30 @@ fn the_room_around_a_grid_array_keeps_its_bands_and_lets_only_its_decoupling_und
     assert_eq!(format!("{:?}", off.problem), format!("{:?}", on.problem));
     assert!(on.array_rooms.is_empty());
 }
+
+#[test]
+fn an_array_whose_inner_balls_leave_by_vias_in_their_pads_keeps_no_room() {
+    // `far_side_board`'s U1 (5 x 5 at 0.5 mm, MIDAS's case): a grid array
+    // with inner balls on nets, but no via fits a diagonal gap, so its
+    // enclosed balls take vias in their pads and the fan-out plans none.
+    let pcb = far_side_board("");
+    let rules = far_side_rules(true);
+    let rooms = crate::board_router::array_rooms(&pcb, &rules);
+    assert_eq!(rooms.len(), 1, "{rooms:?}");
+    assert!(rooms[0].deepest >= rooms[0].surface_rings);
+    assert!(crate::board_router::far_side_balls(&pcb, &rules).is_empty());
+    let config = |on: bool| KiCadBoardPlacerConfig {
+        bga_room: on,
+        ..far_side_config(Some(rules.clone()))
+    };
+    let (off, on) = (
+        lower_placement(&pcb, &config(false)).unwrap(),
+        lower_placement(&pcb, &config(true)).unwrap(),
+    );
+    // The vias in pads keep the far side as before; nothing more.
+    assert!(!on.problem.components[0].far_side.is_empty());
+    assert_eq!(format!("{:?}", off.problem), format!("{:?}", on.problem));
+    assert!(on.array_rooms.is_empty());
+    // On by default.
+    assert!(KiCadBoardPlacerConfig::default().bga_room);
+}

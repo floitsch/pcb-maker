@@ -2026,7 +2026,12 @@ fn union_box(inner: [f64; 4], outer: [f64; 4]) -> [f64; 4] {
 ///   capacitors (`Component::far_open`), which keep off the via sites
 ///   (the fan-out's and the vias in pads, the boxes before).
 ///
-/// An array whose every ball of a net leaves on the surface keeps no room.
+/// Only an array whose inner balls the fan-out serves with dog-bones in
+/// the diagonal gaps (`far_side_balls`, Glasgow's U30) keeps room: one
+/// whose inner balls leave by vias in their pads (MIDAS's U106, no gap
+/// fits a via; the room cost MIDAS-MK1 its strict pass at one seed of
+/// three) or whose every ball leaves on the surface (vd-rd's U200: 3 to 6
+/// open) keeps none, nor does any array with the fan-out off.
 /// Fixed parts are not moved: a free array keeps its room from them as
 /// from any part, and a fixed array's report names the fixed parts in its
 /// room. Returns the report lines.
@@ -2038,7 +2043,14 @@ fn room_around_arrays(
     problem: &mut core::Problem,
 ) -> Vec<String> {
     let mut report = Vec::new();
+    let dog_boned: BTreeSet<usize> = crate::board_router::far_side_balls(pcb, rules)
+        .iter()
+        .map(|array| array.footprint)
+        .collect();
     for room in crate::board_router::array_rooms(pcb, rules) {
+        if !dog_boned.contains(&room.footprint) {
+            continue;
+        }
         let Some(offsets) = pad_offsets.get(room.footprint) else {
             continue;
         };

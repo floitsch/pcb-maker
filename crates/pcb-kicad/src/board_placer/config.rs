@@ -431,11 +431,11 @@ pub struct KiCadBoardPlacerConfig {
     /// (docs/placer.md, "Length maxima and the far side of vias in pads
     /// (2026-10-28)"). Nothing changes on a board without such a footprint.
     pub via_in_pad_far_side: bool,
-    /// Room around grid arrays (off): around each grid array the router's
-    /// fan-out detects (BGA, LGA, aQFN: balls in four or more rows and
-    /// columns at 1.27 mm or finer) with balls of a net deeper than the
-    /// tracks between the balls serve (an array whose every ball leaves on
-    /// the surface keeps no room), other
+    /// Room around grid arrays (on): around each grid array whose inner
+    /// balls the router's fan-out serves with dog-bones in the diagonal
+    /// gaps (`bga_fanout`; a BGA at 0.8 mm or coarser whose class via is
+    /// too large for a gap: Glasgow's U30; none where the inner balls leave
+    /// by vias in their pads or every ball on the surface), other
     /// parts keep off a band on the array's side for the outer rings'
     /// surface escapes (the rings that leave on the surface, a track and
     /// a clearance each, then the class via and its clearances), and off
@@ -534,7 +534,7 @@ impl Default for KiCadBoardPlacerConfig {
             pair_rows: false,
             guidance_router: None,
             via_in_pad_far_side: true,
-            bga_room: false,
+            bga_room: true,
             length_maxima: true,
             router_rules: None,
         }
