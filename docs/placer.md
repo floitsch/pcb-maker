@@ -6744,7 +6744,7 @@ two footprints' bodies on each other were legal, and KiCad cannot see
 it without courtyards). It costs routing on this seed's draw, which the
 seed pairs would have to confirm or refute.
 
-### The stage-1 screen (2026-11-05)
+### The stage-1 screen (2026-11-04)
 
 Stage 1 of the placer ladder for the rule: the eleven dense boards with
 `stop_after_first_route`, five seed pairs (1, 101, 201, 301, 401), x1890
