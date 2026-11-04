@@ -600,21 +600,13 @@ impl Router {
         if victims.contains(&stayer) || !self.nets[stayer as usize].complete {
             routed.push(stayer);
         }
-        // `PCB_ROUTER_DIVE_DIVER_FIRST` (an experiment): the diver right
-        // after the stayer, before the other victims.
-        let diver_first = std::env::var_os("PCB_ROUTER_DIVE_DIVER_FIRST").is_some();
-        if diver_first {
-            routed.push(diver);
-        }
         routed.extend(
             victims
                 .iter()
                 .copied()
                 .filter(|victim| *victim != stayer && *victim != diver),
         );
-        if !diver_first {
-            routed.push(diver);
-        }
+        routed.push(diver);
         for net in &routed {
             self.dive_route(*net, settings.local, work);
         }
