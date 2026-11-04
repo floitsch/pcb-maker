@@ -776,17 +776,29 @@ const ROOM: f64 = 1.0;
 const ROOM_COST: f64 = 5.0;
 
 /// Where the part of a terminal (`REF.pad`) sits: the middle of its pads'
-/// copper, when it has more than the two given.
-fn part_middle(board: &core::Board, label: &str) -> Option<Point> {
-    let reference = label.rsplit_once('.').map(|(part, _)| part)?;
-    let prefix = format!("{reference}.");
+/// copper, when it has more than the two given. For a pair point of two
+/// parts (`series_parts`: the pads `p` and `n` of two two-pad parts side
+/// by side), the middle of both parts' pads: the launch leaves the parts on
+/// the pads' side, not through the bodies towards their other pads (a
+/// pair row's source side launched toward a far end beside the row, across
+/// the parts and past the other pair's pads: right_io's C150 and C151).
+fn part_middle(board: &core::Board, label: &str, other: &str) -> Option<Point> {
+    let reference = |label: &str| label.rsplit_once('.').map(|(part, _)| part.to_string());
+    let mut prefixes = vec![format!("{}.", reference(label)?)];
+    if let Some(second) = reference(other)
+        && format!("{second}.") != prefixes[0]
+    {
+        prefixes.push(format!("{second}."));
+    }
     let (mut sum, mut count) = ([0.0, 0.0], 0usize);
     for obstacle in &board.obstacles {
         if obstacle.kind == core::ObstacleKind::Copper
-            && obstacle
-                .label
-                .strip_prefix(&prefix)
-                .is_some_and(|pad| !pad.contains(' '))
+            && prefixes.iter().any(|prefix| {
+                obstacle
+                    .label
+                    .strip_prefix(prefix.as_str())
+                    .is_some_and(|pad| !pad.contains(' '))
+            })
         {
             let bounds = obstacle.shape.aabb();
             sum = add(sum, scale(add(bounds.minimum, bounds.maximum), 0.5));
@@ -1052,7 +1064,7 @@ fn launch(
 ) -> Option<Launch> {
     let middle = scale(add(p.anchor, n.anchor), 0.5);
     let mut normal = left(unit(sub(n.anchor, p.anchor)));
-    let away = part_middle(board, &p.label)
+    let away = part_middle(board, &p.label, &n.label)
         .map(|part| dot(normal, sub(middle, part)))
         .filter(|along| along.abs() > 0.1);
     if away.unwrap_or_else(|| dot(normal, sub(toward, middle))) < 0.0 {
@@ -4689,6 +4701,69 @@ mod tests {
         // J1's rows and U2 as before, and the capacitors: three links.
         assert_eq!(labels.len(), 4, "{labels:?}");
         assert_eq!(pair.links.len(), 2);
+    }
+
+    /// A pair row's side launches out of the parts, away from their other
+    /// pads, wherever the link's far end lies: J1 north-east of the
+    /// capacitors' D side (the source of right_io's HDMI pairs beside their
+    /// row), whose normal pointing "toward" it went north through the
+    /// bodies past the X pair's pads.
+    #[test]
+    fn a_series_pair_point_launches_away_from_its_parts() {
+        let board_text = r#"(kicad_pcb (version 20241229) (generator "pcbnew")
+  (general (thickness 1.6)) (paper "A4")
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+  (gr_rect (start 0 0) (end 40 30) (stroke (width 0.05) (type default)) (layer "Edge.Cuts"))
+  (footprint "test" (layer "F.Cu") (at 30 9.5)
+    (property "Reference" "J1" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0 0) (size 0.3 1) (layers "F.Cu") (net "/D+"))
+    (pad "2" smd rect (at 0.5 0) (size 0.3 1) (layers "F.Cu") (net "/D-")))
+  (footprint "test" (layer "F.Cu") (at 20 20) (property "Reference" "C1" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0 0.48) (size 0.62 0.56) (layers "F.Cu") (net "/D+"))
+    (pad "2" smd rect (at 0 -0.48) (size 0.62 0.56) (layers "F.Cu") (net "/X+")))
+  (footprint "test" (layer "F.Cu") (at 20.93 20) (property "Reference" "C2" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0 0.48) (size 0.62 0.56) (layers "F.Cu") (net "/D-"))
+    (pad "2" smd rect (at 0 -0.48) (size 0.62 0.56) (layers "F.Cu") (net "/X-")))
+  (footprint "test" (layer "F.Cu") (at 10 10)
+    (property "Reference" "J2" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0 0) (size 0.3 1) (layers "F.Cu") (net "/X+"))
+    (pad "2" smd rect (at 0.5 0) (size 0.3 1) (layers "F.Cu") (net "/X-"))))
+"#;
+        let pcb = parse(board_text).unwrap();
+        let (_, config) = lowered();
+        let mut board = lower(&pcb, &config, true).unwrap().board;
+        plan_pairs(&mut board, &config);
+        let plan = board
+            .attachment
+            .0
+            .clone()
+            .unwrap()
+            .downcast::<PairPlan>()
+            .unwrap();
+        // The D pair's link: its end at the capacitors' D pads (y 20.48)
+        // launches south, out of the row; the X pair's (y 19.52) north.
+        let mut seen = 0;
+        for link in &plan.links {
+            for end in 0..2 {
+                let pads = link.pads[end];
+                let middle = scale(add(pads[0], pads[1]), 0.5);
+                if (middle[0] - 20.465).abs() > 0.01 {
+                    continue;
+                }
+                let outward = sub(link.starts[end], middle);
+                let south = middle[1] > 20.0;
+                assert!(
+                    if south {
+                        outward[1] > 0.0
+                    } else {
+                        outward[1] < 0.0
+                    },
+                    "the end at {middle:?} launches along {outward:?}"
+                );
+                seen += 1;
+            }
+        }
+        assert_eq!(seen, 2);
     }
 
     #[test]

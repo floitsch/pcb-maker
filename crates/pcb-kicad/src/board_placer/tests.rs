@@ -2650,3 +2650,123 @@ fn an_array_whose_inner_balls_leave_by_vias_in_their_pads_keeps_no_room() {
     // On by default.
     assert!(KiCadBoardPlacerConfig::default().bga_room);
 }
+
+/// A pair's AC-coupling capacitors (`pair_rows`) between a source
+/// connector on the left and a destination connector on the right, both
+/// capacitors standing turned a quarter (their pads up and down): the row
+/// is placed and turned so that its source side faces the source, and
+/// `constraints[]` says the pitch and that it faces the pair's ends.
+#[test]
+fn a_pair_row_faces_its_pairs_two_ends() {
+    let board = r#"(kicad_pcb (version 20240108)
+        (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+        (net 0 "") (net 1 "TX_P") (net 2 "TX_N") (net 3 "HDMI_P") (net 4 "HDMI_N")
+        (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+        (footprint "Lib:J" (layer "F.Cu") (at 3 10) (locked yes)
+            (property "Reference" "J1")
+            (fp_rect (start -1.5 -1.5) (end 1.5 1.5) (layer "F.CrtYd"))
+            (pad "1" smd rect (at 0 -0.5) (size 1 0.4) (layers "F.Cu") (net 1 "TX_P"))
+            (pad "2" smd rect (at 0 0.5) (size 1 0.4) (layers "F.Cu") (net 2 "TX_N")))
+        (footprint "Lib:J" (layer "F.Cu") (at 37 10) (locked yes)
+            (property "Reference" "J2")
+            (fp_rect (start -1.5 -1.5) (end 1.5 1.5) (layer "F.CrtYd"))
+            (pad "1" smd rect (at 0 -0.5) (size 1 0.4) (layers "F.Cu") (net 3 "HDMI_P"))
+            (pad "2" smd rect (at 0 0.5) (size 1 0.4) (layers "F.Cu") (net 4 "HDMI_N")))
+        (footprint "Capacitor_SMD:C_0402_1005Metric" (layer "F.Cu") (at 20 5 90)
+            (property "Reference" "C1")
+            (fp_rect (start -0.91 -0.46) (end 0.91 0.46) (layer "F.CrtYd"))
+            (pad "1" smd roundrect (at -0.48 0 90) (size 0.56 0.62) (layers "F.Cu") (net 1 "TX_P"))
+            (pad "2" smd roundrect (at 0.48 0 90) (size 0.56 0.62) (layers "F.Cu") (net 3 "HDMI_P")))
+        (footprint "Capacitor_SMD:C_0402_1005Metric" (layer "F.Cu") (at 25 15 90)
+            (property "Reference" "C2")
+            (fp_rect (start -0.91 -0.46) (end 0.91 0.46) (layer "F.CrtYd"))
+            (pad "1" smd roundrect (at -0.48 0 90) (size 0.56 0.62) (layers "F.Cu") (net 2 "TX_N"))
+            (pad "2" smd roundrect (at 0.48 0 90) (size 0.56 0.62) (layers "F.Cu") (net 4 "HDMI_N"))))"#;
+    // The row's leader faces with the TX nets on one side, the HDMI nets
+    // on the other.
+    let lowered = lower_placement(
+        &parse(board).unwrap(),
+        &KiCadBoardPlacerConfig {
+            pair_rows: true,
+            ..KiCadBoardPlacerConfig::default()
+        },
+    )
+    .unwrap();
+    let facing = &lowered.problem.constraints.facing;
+    assert_eq!(facing.len(), 1);
+    let c1 = lowered.references.iter().position(|r| r == "C1").unwrap();
+    assert_eq!(facing[0].part, c1);
+    let names = |nets: &[usize]| -> Vec<&str> {
+        nets.iter()
+            .map(|net| lowered.net_names[*net].as_str())
+            .collect()
+    };
+    assert_eq!(names(&facing[0].nets[0]), ["TX_P", "TX_N"]);
+    assert_eq!(names(&facing[0].nets[1]), ["HDMI_P", "HDMI_N"]);
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root =
+        std::env::temp_dir().join(format!("pcb-maker-pair-row-{}-{nonce}", std::process::id()));
+    let source = root.join("source");
+    fs::create_dir_all(&source).unwrap();
+    fs::write(source.join("board.kicad_pcb"), board).unwrap();
+    let config = KiCadBoardPlacerConfig {
+        pair_rows: true,
+        placement_seeds: 1,
+        ..KiCadBoardPlacerConfig::default()
+    };
+    let output = root.join("placed");
+    let result = place_kicad_board(&source, "board", &output, &config).unwrap();
+    assert!(result.unplaced.is_empty() && result.illegal.is_empty());
+    let row = result
+        .constraints
+        .iter()
+        .find(|status| status.kind == "pair_row")
+        .expect("a pair row");
+    assert_eq!(
+        (row.part.as_str(), row.other.as_deref()),
+        ("C1", Some("C2"))
+    );
+    let detail = row.detail.as_deref().unwrap_or_default();
+    assert!(
+        detail.starts_with("pitch 0.93 mm") && detail.contains("faces the pair's two ends"),
+        "{detail}"
+    );
+    // Each capacitor's TX pad lies left of its HDMI pad, the two side by
+    // side across the row.
+    let placed = parse(&fs::read_to_string(output.join("board.kicad_pcb")).unwrap()).unwrap();
+    let pad_x = |reference: &str, number: &str| {
+        let footprint = placed
+            .children()
+            .iter()
+            .find(|item| crate::kicad_nets::footprint_reference(item).as_deref() == Some(reference))
+            .unwrap();
+        let at = form_at(footprint).unwrap();
+        let pad = footprint
+            .children()
+            .iter()
+            .find(|item| {
+                item.head() == Some("pad")
+                    && item.children().get(1).and_then(Expr::atom) == Some(number)
+            })
+            .unwrap();
+        let local = form_at(pad).unwrap();
+        let (sin, cos) = (-at[2]).to_radians().sin_cos();
+        [
+            at[0] + local[0] * cos - local[1] * sin,
+            at[1] + local[0] * sin + local[1] * cos,
+        ]
+    };
+    let _ = fs::remove_dir_all(&root);
+    for reference in ["C1", "C2"] {
+        let (tx, hdmi) = (pad_x(reference, "1"), pad_x(reference, "2"));
+        assert!(
+            tx[0] < hdmi[0] - 0.5,
+            "{reference}: TX at {tx:?}, HDMI at {hdmi:?}"
+        );
+    }
+    let (c1, c2) = (pad_x("C1", "1"), pad_x("C2", "1"));
+    assert!((c1[0] - c2[0]).abs() < 0.01 && ((c1[1] - c2[1]).abs() - 0.93).abs() < 0.01);
+}

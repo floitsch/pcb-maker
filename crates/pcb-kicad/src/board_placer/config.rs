@@ -412,12 +412,16 @@ pub struct KiCadBoardPlacerConfig {
     /// footprint with two pads each, whose pads of one number lie on the
     /// two nets of a pair KiCad pairs by name (`TX_P` and `TX_N`: a pair's
     /// AC-coupling capacitors or series resistors) and that no constraint
-    /// names, are placed as a `row` of two, side by side across their pads
-    /// at their bodies' width, so that the pair's pads at them lie side by
-    /// side and the router can couple the pair through them (router.md,
-    /// "Pair points and links"). The row may turn by any quarter turn.
-    /// `constraints[]` reports each as `pair_row`. Boards without such
-    /// parts place as with it off.
+    /// names, are placed as a `row` of two, side by side across their pads,
+    /// so that the pair's pads at them lie side by side and the router can
+    /// couple the pair through them (router.md, "Pair points and links").
+    /// The pitch is the pair's track width plus gap (its rules' or net
+    /// class's), at least the courtyards' width and the pads' clearance;
+    /// the row turns so that each side faces its own nets' far pins (the
+    /// pair's source and destination), any quarter turn where they tell no
+    /// direction. `constraints[]` reports each as `pair_row` with its pitch
+    /// and how it faces (`detail`). Boards without such parts place as with
+    /// it off.
     pub pair_rows: bool,
     /// The router's configuration the guidance lowers with (set by the
     /// layout; the default otherwise).
@@ -460,6 +464,21 @@ pub struct KiCadBoardPlacerConfig {
     /// either applies.
     #[serde(skip)]
     pub router_rules: Option<std::sync::Arc<KiCadBoardRouterConfig>>,
+    /// The differential pairs' track widths and gaps by positive net, for
+    /// the pair rows' pitch (`pair_rows`; set by the layout and the place
+    /// check from the router's rules where the switch is on).
+    #[serde(skip)]
+    pub pair_geometry: std::collections::BTreeMap<String, PairGeometry>,
+}
+
+/// A differential pair's track width and gap where its coupled run is (the
+/// custom rules' or the net class's, as the router takes them) and the
+/// larger clearance of its two nets, millimetres.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PairGeometry {
+    pub width: f64,
+    pub gap: f64,
+    pub clearance: f64,
 }
 
 impl KiCadBoardPlacerConfig {
@@ -537,6 +556,7 @@ impl Default for KiCadBoardPlacerConfig {
             bga_room: true,
             length_maxima: true,
             router_rules: None,
+            pair_geometry: Default::default(),
         }
     }
 }

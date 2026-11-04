@@ -286,6 +286,10 @@ pub struct Constraints {
     /// A panel's frames and tabs (the sub-boards of a panel): the
     /// keepouts over them and the parts that may reach over those.
     pub frames: Frames,
+    /// Parts whose two sides face two ways (a differential pair's series
+    /// parts as a row, `pair_rows`): after the refinement each turns to
+    /// face its sides' far pins where that stays legal (`facing::face`).
+    pub facing: Vec<crate::facing::Facing>,
 }
 
 /// A panel's frames and tabs as the placement keeps them (`Constraints::

@@ -71,6 +71,16 @@ pub(crate) fn prepare_board(
                 .and_then(|rules| rules.solder_mask_to_copper_mm);
         }
     }
+    // The pairs' widths and gaps, for the pair rows' pitch (the layout's
+    // and the place check's configuration has them).
+    if config.pair_rows && config.pair_geometry.is_empty() {
+        config.pair_geometry = project_rules::resolve_project_rules(
+            &source_directory.join(format!("{board_id}.kicad_pro")),
+            &source_board,
+        )
+        .map(|rules| pair_geometry(&rules))
+        .unwrap_or_default();
+    }
     if config.tight_bodies.is_none() {
         config.tight_bodies = Some(courtyards_may_overlap(
             &source_directory.join(format!("{board_id}.kicad_pro")),
@@ -775,7 +785,12 @@ pub fn place_kicad_board(
         unplaced_parts,
         constraints: constraint_report(&lowered.problem, &placement.poses, &lowered.references)
             .into_iter()
-            .chain(pair_row_statuses(&lowered.pair_rows, &lowered.references))
+            .chain(pair_row_statuses(
+                &lowered.pair_rows,
+                &lowered.problem,
+                &placement.poses,
+                &lowered.references,
+            ))
             .collect(),
         constraint_warnings: lowered.constraint_warnings.clone(),
         outline_mm: outline_size,

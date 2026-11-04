@@ -1305,6 +1305,10 @@ pub fn layout_placer_config(
     {
         placer_config.router_rules = Some(std::sync::Arc::new(router_config.clone()));
     }
+    // The pairs' widths and gaps, for the pair rows' pitch.
+    if placer_config.pair_rows && placer_config.pair_geometry.is_empty() {
+        placer_config.pair_geometry = crate::board_placer::pair_geometry(router_config);
+    }
     Ok(placer_config)
 }
 
@@ -3406,6 +3410,8 @@ pub fn layout_kicad_board(
         .into_iter()
         .chain(crate::board_placer::pair_row_statuses(
             &problem.pair_rows,
+            &problem.problem,
+            &problem.problem.poses,
             &problem.references,
         ))
         .collect(),

@@ -3820,7 +3820,17 @@ pub fn align_orientations(problem: &Problem, poses: &mut [Pose], tolerance: f64)
         Default::default();
     for index in 0..count {
         let component = &problem.components[index];
-        if !component.fixed && component.pins.len() >= 2 && component.angle_options.len() > 1 {
+        // A pair's series parts turn to face the pair's ends instead
+        // (`facing::face`).
+        if !component.fixed
+            && component.pins.len() >= 2
+            && component.angle_options.len() > 1
+            && !problem
+                .constraints
+                .facing
+                .iter()
+                .any(|facing| facing.part == index)
+        {
             kinds.entry(key(index)).or_default().push(index);
         }
     }

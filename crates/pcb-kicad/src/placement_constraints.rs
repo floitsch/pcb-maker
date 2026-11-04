@@ -489,6 +489,10 @@ pub struct KiCadConstraintStatus {
     pub other: Option<String>,
     pub satisfied: bool,
     pub violation_mm: f64,
+    /// What the entry is beyond kept or missed (a pair row's pitch and how
+    /// it faces the pair's ends).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
 }
 
 pub fn read_placement_constraints(path: &Path) -> Result<KiCadPlacementConstraints, String> {
@@ -3099,6 +3103,7 @@ pub(super) fn constraint_report(
                 .map(|other| references[other].clone()),
             satisfied: status.satisfied,
             violation_mm: (status.violation * 1000.0).round() / 1000.0,
+            detail: None,
         })
         .collect()
 }

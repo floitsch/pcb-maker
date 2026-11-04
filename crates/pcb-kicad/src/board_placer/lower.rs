@@ -53,8 +53,9 @@ pub(crate) struct LoweredPlacement {
     pub attached_marks: Vec<(usize, usize)>,
     /// The same, said: the mark, its layer and anchor, and the part.
     pub attached_report: Vec<String>,
-    /// The pair rows (`pair_rows`): each one's first part and the other.
-    pub pair_rows: Vec<(usize, usize)>,
+    /// The pair rows (`pair_rows`): each one's first part and the other,
+    /// its facing and its pitch's detail.
+    pub pair_rows: Vec<super::LoweredPairRow>,
     /// The room kept around grid arrays (`bga_room`), said: per array its
     /// bands and the parts they let in or leave alone.
     pub array_rooms: Vec<String>,
@@ -579,7 +580,7 @@ pub(crate) fn lower_placement(
     let mut pad_offsets: Vec<BTreeMap<String, [f64; 2]>> = Vec::new();
     // Every pad with a net (number, net, centre) and the footprint's
     // library name, for the pair rows (`pair_rows`).
-    let mut pad_nets: Vec<Vec<(String, String, [f64; 2])>> = Vec::new();
+    let mut pad_nets: Vec<Vec<super::PadNet>> = Vec::new();
     let mut library_names: Vec<String> = Vec::new();
     let mut pad_boxes: Vec<Vec<[f64; 4]>> = Vec::new();
     let mut keepout_boxes: Vec<Option<[f64; 4]>> = Vec::new();
@@ -857,7 +858,12 @@ pub(crate) fn lower_placement(
             let next = net_ids.len();
             let pad_at = form_at(pad)?;
             if let Some(name) = pad.children().get(1).and_then(Expr::atom) {
-                own_pad_nets.push((name.to_string(), net.to_string(), [pad_at[0], pad_at[1]]));
+                own_pad_nets.push((
+                    name.to_string(),
+                    net.to_string(),
+                    [pad_at[0], pad_at[1]],
+                    pad_box,
+                ));
             }
             let net = *net_ids.entry(net.to_string()).or_insert(next);
             pins.push(core::Pin {
@@ -1561,6 +1567,7 @@ pub(crate) fn lower_placement(
             &library_names,
             &pad_nets,
             user_constraints,
+            &config.pair_geometry,
         )
     } else {
         Vec::new()
@@ -1572,7 +1579,9 @@ pub(crate) fn lower_placement(
                 ..Default::default()
             }
         });
-        constraints.row.extend(pair_rows.iter().cloned());
+        constraints
+            .row
+            .extend(pair_rows.iter().map(|pair_row| pair_row.row.clone()));
         constraints
     });
     let constraint_warnings = match (&config.constraints, &with_pairs) {
@@ -1870,12 +1879,12 @@ pub(crate) fn lower_placement(
     for (name, id) in &net_ids {
         net_names_by_id[*id] = name.clone();
     }
-    let pair_row_parts = pair_rows
+    let pair_row_parts = super::lowered_pair_rows(&pair_rows, &references, &net_ids);
+    // Each pair row turns to face its pair's two ends after the
+    // refinement (`pcb_placer::facing`).
+    problem.constraints.facing = pair_row_parts
         .iter()
-        .filter_map(|row| {
-            let index = |reference: &String| references.iter().position(|r| r == reference);
-            Some((index(&row.parts[0])?, index(&row.parts[1])?))
-        })
+        .filter_map(|row| row.facing.clone())
         .collect();
     Ok(LoweredPlacement {
         problem,

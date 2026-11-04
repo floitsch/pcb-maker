@@ -1308,6 +1308,9 @@ fn reference_problem(
     constraints
         .followers
         .retain(|follower| active.contains(&follower.leader));
+    constraints
+        .facing
+        .retain(|facing| active.contains(&facing.part));
     // The other copies' relations among their own parts, carried to this
     // copy's parts, after the user's.
     let user = constraints.relations.len() - constraints.automatic;

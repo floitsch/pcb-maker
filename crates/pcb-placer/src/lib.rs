@@ -11,6 +11,7 @@ mod buckets;
 pub mod constraints;
 pub mod crossings;
 pub mod escape;
+pub mod facing;
 pub mod global;
 pub mod groups;
 pub mod guidance;
@@ -823,6 +824,16 @@ fn finish(
     }
     // Parts of a kind turned alike where it costs next to nothing.
     legal::align_orientations(problem, poses, 0.5);
+    // A pair's series parts facing the pair's two ends.
+    if !problem.constraints.facing.is_empty() {
+        let faces = facing::face(problem, poses);
+        if debug {
+            eprintln!(
+                "placer: pair rows: {} turned to face their pairs' ends, {} without room to",
+                faces.turned, faces.held
+            );
+        }
+    }
     // Rows of repeated parts: lined up where it costs next to nothing.
     if let Some(align) = align.filter(|align| align.settings.finish) {
         let lined = legal::align_rows(problem, poses, align, 0.5);
@@ -1422,6 +1433,10 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         let level_started = std::time::Instant::now();
         let anneal_mark = mark();
         anneal::anneal(&relaxed, &mut poses, &anneal_config);
+        // A pair's series parts turned to face the pair's ends before the
+        // legaliser seats them (`facing`; the refinement's turn finds no
+        // room where neighbours sit tight).
+        facing::turn_to_face(&mut relaxed, &mut poses);
         phase_line(debug, "anneal", anneal_mark);
         let annealed = poses.clone();
         let annealed_for_trace = annealed.clone();
@@ -1585,6 +1600,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         let mut reheated = anneal_config.clone();
         reheated.initial_radius = reheated.initial_radius.min(0.02);
         anneal::anneal(&roomy, &mut again, &reheated);
+        facing::turn_to_face(&mut roomy, &mut again);
         let annealed = again.clone();
         let mut failed = legal::legalize(&roomy, &mut again);
         if !failed.is_empty() {
