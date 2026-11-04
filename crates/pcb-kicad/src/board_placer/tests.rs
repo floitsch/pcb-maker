@@ -2770,3 +2770,85 @@ fn a_pair_row_faces_its_pairs_two_ends() {
     let (c1, c2) = (pad_x("C1", "1"), pad_x("C2", "1"));
     assert!((c1[0] - c2[0]).abs() < 0.01 && ((c1[1] - c2[1]).abs() - 0.93).abs() < 0.01);
 }
+
+/// A fine-pitch part U1 (three 0.3 x 1.0 mm pads at 0.5 mm pitch over an
+/// exposed pad) at `angle`, J9's pad 0.15 mm above its middle pad's tip,
+/// and each net's other pad far off.
+fn walled_board(angle: f64) -> String {
+    let far = |reference: &str, x: f64, y: f64, net: usize, name: &str| {
+        format!(
+            r#"(footprint "Lib:TP" (layer "F.Cu") (at {x} {y})
+            (property "Reference" "{reference}")
+            (pad "1" smd rect (at 0 0) (size 0.8 0.8) (layers "F.Cu") (net {net} "{name}")))"#
+        )
+    };
+    format!(
+        r#"(kicad_pcb (version 20240108)
+        (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+        (net 0 "") (net 1 "A") (net 2 "B") (net 3 "C") (net 4 "G") (net 5 "X")
+        (gr_rect (start 0 0) (end 40 40) (layer "Edge.Cuts"))
+        (footprint "Lib:QFN" (layer "F.Cu") (at 20 20 {angle})
+            (property "Reference" "U1")
+            (pad "1" smd rect (at -0.5 0 {angle}) (size 0.3 1.0) (layers "F.Cu") (net 1 "A"))
+            (pad "2" smd rect (at 0 0 {angle}) (size 0.3 1.0) (layers "F.Cu") (net 2 "B"))
+            (pad "3" smd rect (at 0.5 0 {angle}) (size 0.3 1.0) (layers "F.Cu") (net 3 "C"))
+            (pad "4" smd rect (at 0 1.0 {angle}) (size 1.6 0.5) (layers "F.Cu") (net 4 "G")))
+        (footprint "Lib:R" (layer "F.Cu") (at 20 19.2)
+            (property "Reference" "J9")
+            (pad "1" smd rect (at 0 0) (size 0.8 0.3) (layers "F.Cu") (net 5 "X")))
+        {} {} {} {} {})"#,
+        far("R1", 3.0, 3.0, 1, "A"),
+        far("R2", 37.0, 3.0, 2, "B"),
+        far("R3", 3.0, 37.0, 3, "C"),
+        far("R4", 37.0, 37.0, 4, "G"),
+        far("R5", 20.0, 37.0, 5, "X"),
+    )
+}
+
+#[test]
+fn a_pad_another_parts_pad_walls_in_has_no_way_out_until_its_part_turns() {
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("pcb-maker-exits-{}-{nonce}", std::process::id()));
+    let mut closed_at = Vec::new();
+    for angle in [0.0, 90.0] {
+        let source = root.join(format!("{angle}"));
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("board.kicad_pcb"), walled_board(angle)).unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(crate::KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let census = pad_exits_kicad_board(&source, "board", &config, None).unwrap();
+        let middle: Vec<&KiCadClosedPad> = census
+            .closed
+            .iter()
+            .filter(|pad| pad.pad == "U1.2")
+            .collect();
+        if let Some(pad) = middle.first() {
+            // Another part's pad closes it: the placement's doing, with
+            // the reason the place check and the verdict give.
+            assert_eq!(pad.blocked_by[0], "J9.1", "{pad:?}");
+            assert!(!pad.footprint_only);
+            assert!(
+                pad.reason
+                    .starts_with("pad U1.2 has no way out (blocked by J9.1")
+            );
+        }
+        assert!(census.work_seconds > 0.0);
+        closed_at.push(!middle.is_empty());
+    }
+    let _ = fs::remove_dir_all(&root);
+    assert_eq!(
+        closed_at,
+        [true, false],
+        "closed at 0 degrees, open after the turn"
+    );
+}

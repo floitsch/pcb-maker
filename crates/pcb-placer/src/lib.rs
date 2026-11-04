@@ -84,7 +84,7 @@ pub struct Config {
     pub kicad_last_level: bool,
     /// Pads without a way out (`exits`, docs/placer.md "Pads without a
     /// way out (2026-11-04)"): after the placement, the router's test of
-    /// every pad's straight ways out on the statics, and moves or turns
+    /// every pad's way out on the statics, and moves or turns
     /// of the parts whose pads another part or the edge closes. Off
     /// (`None`) by default.
     pub pad_exits: Option<exits::PadExits>,

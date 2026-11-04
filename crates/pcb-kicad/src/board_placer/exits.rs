@@ -2,8 +2,8 @@
 
 //! Pads without a way out (`pad_exits`, off by default; docs/placer.md
 //! "Pads without a way out (2026-11-04)"): the placement lowered as the
-//! layout routes it, and the router's test of each pad's straight ways out
-//! on the statics (`pcb_router::router::ExitProbe`) for the placer's
+//! layout routes it, and the router's test of each pad's way out on the
+//! statics (`pcb_router::router::ExitProbe`) for the placer's
 //! repair (`pcb_placer::exits`), the place check's report and the
 //! census command (`pad-exits-kicad-board`).
 
@@ -282,7 +282,7 @@ pub(super) fn exits_report(
 }
 
 /// `pad-exits-kicad-board`'s report: every pad of the board as placed
-/// with no straight way out on the statics.
+/// with no way out on the statics.
 #[derive(Clone, Debug, Serialize)]
 pub struct KiCadPadExitsCensus {
     pub board_id: String,

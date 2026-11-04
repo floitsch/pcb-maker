@@ -333,6 +333,21 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "the fan-out step (`fanout`) prints every dense pad with its ways out, their costs, the one chosen and the pads left short.",
     ),
     (
+        "PCB_PLACER_PAD_EXITS",
+        Kind::Switch,
+        "overrides the placer's `pad_exits` (`1` on with the defaults where the config has none, `0` off; off by default): after each seed's placement the router's test of every pad's way out on the statics, the parts whose pads another part or the edge closes moved or turned, the pads left closed in board-placer.json's `pad_exits` and the verdict (docs/placer.md, \"Pads without a way out (2026-11-04)\").",
+    ),
+    (
+        "PCB_PAD_EXITS_WHY",
+        Kind::Diagnostic,
+        "the pad-exits test prints, per closed pad, every rim node of its pocket and the item that closes it, and per open pad where its pocket opened.",
+    ),
+    (
+        "PCB_PAD_EXITS_COUNTS",
+        Kind::Diagnostic,
+        "pad-exits-kicad-board prints the probe's counts beside the CPU time of the lowering and the probe (for calibrating the test's work).",
+    ),
+    (
         "PCB_ROUTER_DIFF_PAIRS",
         Kind::Switch,
         "turns differential pairs on (1) or off (0) where the settings name none (`diff_pairs`; unset, route mode turns them on where the project's custom rules ask for pairs, else off): route mode routes the pairs KiCad names (`_P`/`_N`, `+`/`-`, `P`/`N`) as coupled runs at the rules' width and gap, each link a net of the route negotiated with the others (docs/router.md, \"Differential pairs\").",

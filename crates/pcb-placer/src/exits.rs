@@ -1,15 +1,17 @@
 // Copyright (C) 2026 Toit contributors.
 
 //! Pads without a way out (`Config::pad_exits`, off by default;
-//! docs/placer.md "Pads without a way out (2026-11-04)"): a pad whose
-//! every straight way out is closed by fixed copper, a keepout or the
-//! board edge around it can be connected by no route. Where another
+//! docs/placer.md "Pads without a way out (2026-11-04)"): a pad that
+//! lies in a pocket of the router's lattice closed by fixed copper, a
+//! keepout or the board edge around it (no legal path from its nodes
+//! leaves, reaches a via site or another pad of its net) can be connected
+//! by no route. Where another
 //! part's copper or the edge closes it, the placement is to blame and only
 //! moving or turning a part opens it; where the pad's own part alone
 //! walls it in, the footprint is (no placement opens it).
 //!
-//! The test is the router's (pcb-router's `ExitProbe`, the fan-out's ways
-//! out on the statics at the class width): the placer asks it through a
+//! The test is the router's (pcb-router's `ExitProbe`, on the statics at
+//! the class width): the placer asks it through a
 //! session (`ExitSession`) of the caller, which lowers the placement as
 //! the layout routes it. After a seed's placement, `repair` asks it of
 //! every part; for each part with a pad another part or the edge closes,

@@ -470,10 +470,10 @@ pub struct KiCadBoardPlacerConfig {
     #[serde(skip)]
     pub pair_geometry: std::collections::BTreeMap<String, PairGeometry>,
     /// Pads without a way out (off; docs/placer.md "Pads without a way
-    /// out (2026-11-04)"): after each seed's placement, every pad's
-    /// straight ways out are tested as the router's fan-out sees them (the
-    /// statics at the class width, the placement lowered as the layout
-    /// routes it); a part with a pad another part, a keepout or the board
+    /// out (2026-11-04)"): after each seed's placement, every pad is
+    /// tested for a way out as the router sees the board (a legal lattice
+    /// path from its nodes on the statics at the class width, the placement
+    /// lowered as the layout routes it); a part with a pad another part, a keepout or the board
     /// edge closes is moved or turned (it or the parts that close the pad,
     /// within `reach_mm`, the cheapest of `candidates` poses in wirelength
     /// that leaves fewer pads closed around it), and the pads left closed

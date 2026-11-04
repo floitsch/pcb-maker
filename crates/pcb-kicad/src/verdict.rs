@@ -6809,6 +6809,90 @@ mod tests {
     }
 
     /// A layout with three open connections (trial 4's Quanta75 run 1).
+    fn closed_pad(
+        pad: &str,
+        net: &str,
+        blocked_by: &[&str],
+        footprint_only: bool,
+    ) -> crate::KiCadClosedPad {
+        let blocked_by: Vec<String> = blocked_by.iter().map(|item| item.to_string()).collect();
+        crate::KiCadClosedPad {
+            reason: crate::board_placer::closed_pad_reason(pad, &blocked_by, footprint_only),
+            pad: pad.into(),
+            net: net.into(),
+            layer: "F.Cu".into(),
+            blocked_by,
+            footprint_only,
+        }
+    }
+
+    #[test]
+    fn a_place_check_with_a_pad_another_part_closes_is_incomplete_and_names_it() {
+        let mut facts = KiCadRunFacts::new("place-kicad-board");
+        facts.routes = false;
+        facts.closed_pads = vec![
+            closed_pad("U14.10", "SD_DAT3", &["C51.1", "U14.17", "U14.9"], false),
+            closed_pad("U2.F23", "VSS_PA", &["U2.E22", "U2.EP"], true),
+        ];
+        let verdict = judge(&facts);
+        assert_eq!(verdict.status, KiCadRunStatus::Incomplete);
+        assert!(
+            verdict.reason.contains("1 pads without a way out (U14.10)"),
+            "{}",
+            verdict.reason
+        );
+        let action = verdict
+            .next_actions
+            .iter()
+            .find(|action| action.starts_with("pad U14.10 has no way out"))
+            .expect("the closed pad's action");
+        assert!(
+            action.contains("(blocked by C51.1, U14.17, U14.9) (net SD_DAT3)"),
+            "{action}"
+        );
+        assert!(action.contains("turn or move U14 or C51"), "{action}");
+        // The footprint's own: said, but it is not the placement's.
+        let own = verdict
+            .next_actions
+            .iter()
+            .find(|action| action.starts_with("pad U2.F23 has no way out"))
+            .expect("the footprint's pad");
+        assert!(own.contains("its own footprint walls it in"), "{own}");
+        assert!(own.contains("via_in_pad"), "{own}");
+        // Without closed pads, neither.
+        facts.closed_pads.clear();
+        let verdict = judge(&facts);
+        assert!(!verdict.reason.contains("way out"));
+        assert!(
+            !verdict
+                .next_actions
+                .iter()
+                .any(|action| action.contains("no way out"))
+        );
+    }
+
+    #[test]
+    fn a_layout_names_a_closed_pad_only_where_its_net_is_open() {
+        let mut facts = open_layout();
+        facts.closed_pads = vec![
+            closed_pad("U1.23", "+1V1", &["C7.2", "U1.24"], false),
+            closed_pad("U1.40", "Row2", &["C8.1", "U1.41"], false),
+        ];
+        let verdict = judge(&facts);
+        let named: Vec<&String> = verdict
+            .next_actions
+            .iter()
+            .filter(|action| action.contains("has no way out"))
+            .collect();
+        assert_eq!(named.len(), 1, "{named:?}");
+        assert!(named[0].starts_with(
+            "pad U1.23 has no way out (blocked by C7.2, U1.24) (net +1V1) on this placement"
+        ));
+        assert!(named[0].contains("turn or move U1 or C7"));
+        // A routed layout's reason is KiCad's, not the pads'.
+        assert!(!verdict.reason.contains("way out"));
+    }
+
     fn open_layout() -> KiCadRunFacts {
         let report = json!({
             "violations": [],

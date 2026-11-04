@@ -28,6 +28,8 @@ mod seed_race;
 mod tests;
 mod trace;
 
+#[cfg(test)]
+pub(crate) use self::exits::closed_pad_reason;
 pub(crate) use self::exits::pad_exits_settings;
 pub(crate) use self::guidance::{attribution, reference_index};
 #[cfg(test)]
