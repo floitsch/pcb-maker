@@ -5688,22 +5688,24 @@ middle), MIDAS's U106, BAGEL's LGA-77, the aQFN-73s and the WLCSP-9s
 (under 16 pads) plan nothing (no via fits a gap at 0.4 to 0.5 mm; the
 vias in pads stay the way out there), the dense boards but Glasgow have
 no grid array. *The expansion tier* (46 boards, route mode, 30 s, 4 x 1
-here; the same rows at any thread count): with the switch on every row
-equals the nightly's of 2026-11-04 (558 unconnected, 24 strict passes,
-4256 vias, work 1140 s) but ZSWatch with bga1-d (the only array planned:
-M601's two inner balls, 2 to 4 open), which bga1-e leaves to the search
-(its class's via fits): then all 46 the same. *The eleven dense boards*:
-only Glasgow has an array (the layout rows above are seed 1, the dense
-set's seed); the other ten lower, place and route as off.
+here; the same rows at any thread count): with the switch on every
+routed board equals the nightly's of 2026-11-04 byte for byte (558
+unconnected, 24 strict passes, 4256 vias, work 1140 s) but ZSWatch with
+bga1-d (the only array planned: M601's two inner balls, 2 to 4 open),
+which bga1-e leaves to the search (its class's via fits): then all 46
+byte for byte. *The eleven dense boards*: only Glasgow has an array
+(the layout rows above are seed 1, the dense set's seed); the other ten
+lower, place and route as off.
 
-*Identity*: with the switch off Glasgow's layout (127 / 340 / 1501 s), its
-designer-tier route (55) and the expansion tier equal the nightly's
-rows; the fingerprints (Castor, k30-SBC, jetson, Sisu; route mode from
+*Identity*: with the switch off Glasgow's layout (127 / 340 / 1501 s)
+and its designer-tier route (55) are the nightly's boards byte for
+byte; the fingerprints (Castor, k30-SBC, jetson, Sisu; route mode from
 v16, 1 x 4, budget scale 0.25) are identical to the nightly's line by
 line with the switch off and with it on (none of the four has a grid
-array), and every row the same (42 unconnected, 1562 vias, work 1074 s). bga1-e routes Glasgow's designer
-placement byte for byte as bga1-d (the plan the same: 45 planned, 4
-refused, 43 used and written, 2 dropped).
+array), and every row the same (42 unconnected, 1562 vias, work 1074
+s). bga1-e routes Glasgow's designer placement byte for byte as bga1-d
+(the plan the same: 45 planned, 4 refused, 43 used and written, 2
+dropped).
 
 **Decision: on** (since this section; bga1-f, `bga_fanout` unset). The
 rule (on if the BGA boards gain and nothing loses) holds: Glasgow gains
