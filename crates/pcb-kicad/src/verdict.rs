@@ -1960,6 +1960,14 @@ pub struct KiCadVerdict {
     pub skipped: Vec<String>,
     /// What to do next, if anything; factual.
     pub next_actions: Vec<String>,
+    /// The input's own observations (fixed parts on the board's texts,
+    /// fixed parts on top of each other, the footprints' and the input's
+    /// own findings, schematic parity, the reference's findings the
+    /// release refuses), each in full and untagged: next_actions ends with
+    /// them tagged (`INPUT_TAG`), those of one kind folded into one line
+    /// with a count and the first parts named (`fold_observations`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub input_observations: Vec<String>,
     /// The room on the board as numbers: utilization per side, the area
     /// missing, the smallest outline that holds the parts, and an outline
     /// to try when parts found no place (`null` for a route).
@@ -2174,7 +2182,7 @@ fn next_actions(
     unknown: &[String],
     footprint: &[&DrcFinding],
     input: &[&DrcFinding],
-) -> Vec<String> {
+) -> (Vec<String>, Vec<String>) {
     let mut actions = Vec::new();
     // First, ahead of the input's warnings: on a panel whose parts' boards
     // are unknown nothing after it is about the boards as designed (the
@@ -2458,8 +2466,7 @@ fn next_actions(
             )
         });
     }
-    actions.extend(observations.into_iter().map(input_tagged));
-    actions
+    (actions, observations)
 }
 
 /// The tag that starts a next action which is the input's own observation
@@ -2484,6 +2491,122 @@ fn input_tagged(observation: String) -> String {
 pub(crate) fn input_observation(warning: &str) -> bool {
     (warning.starts_with("fixed part ") && warning.contains("stay where the input put them"))
         || (warning.starts_with("fixed parts ") && warning.contains(" overlap"))
+}
+
+/// The parts a folded observation names (`fold_observations`); the
+/// others are counted.
+pub const FOLDED_NAMED: usize = 5;
+
+/// The kinds of the input's observations that repeat per part and fold
+/// into one line (`fold_observations`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ObservationKind {
+    /// `fixed_on_marks_warning`: a fixed part on the board's own texts.
+    OnMarks,
+    /// `overlap_warning` and the placer's bare "fixed parts A and B
+    /// overlap": fixed parts on top of each other.
+    Overlap,
+}
+
+/// An observation's kind and what the folded line names of it: the part
+/// and its marks' count (`J3 on 2`), or the pair and what overlaps
+/// (`C17 and U1 (courtyards)`), with the marks it counts (0 for a pair).
+fn observation_entry(observation: &str) -> Option<(ObservationKind, String, usize)> {
+    if let Some(rest) = observation.strip_prefix("fixed parts ") {
+        let end = rest.find(" overlap")?;
+        let pair = &rest[..end];
+        let after = &rest[end + " overlap".len()..];
+        let what = after
+            .strip_prefix(" (")
+            .and_then(|tail| tail.find("):").map(|close| &tail[..close]));
+        return Some((
+            ObservationKind::Overlap,
+            match what {
+                Some(what) => format!("{pair} ({what})"),
+                None => pair.to_string(),
+            },
+            0,
+        ));
+    }
+    let rest = observation.strip_prefix("fixed part ")?;
+    if !input_observation(observation) {
+        return None;
+    }
+    let end = rest.find(" lies on ")?;
+    let (part, after) = (&rest[..end], &rest[end + " lies on ".len()..]);
+    let marks = if after.starts_with("the board's ") {
+        1
+    } else {
+        after.split_whitespace().next()?.parse().ok()?
+    };
+    Some((
+        ObservationKind::OnMarks,
+        format!("{part} on {marks}"),
+        marks,
+    ))
+}
+
+/// The input's observations with those of one kind that repeat per part
+/// folded into one line at the first one's place: a count, the first
+/// `FOLDED_NAMED` parts and how many more (`input_observations` keeps
+/// each). Trial 4's ULK had 15 lines "fixed parts SW19 and SW20 overlap"
+/// before the false ones were fixed; a board with many fixed parts on its
+/// texts or many of the designer's overlaps still had one line each.
+pub(crate) fn fold_observations(observations: &[String]) -> Vec<String> {
+    let entries: Vec<Option<(ObservationKind, String, usize)>> = observations
+        .iter()
+        .map(|observation| observation_entry(observation))
+        .collect();
+    let of_kind = |kind: ObservationKind| -> Vec<&(ObservationKind, String, usize)> {
+        entries
+            .iter()
+            .flatten()
+            .filter(|entry| entry.0 == kind)
+            .collect()
+    };
+    let named = |kind: ObservationKind| -> String {
+        let all = of_kind(kind);
+        let mut names: Vec<String> = all
+            .iter()
+            .take(FOLDED_NAMED)
+            .map(|entry| entry.1.clone())
+            .collect();
+        if all.len() > FOLDED_NAMED {
+            names.push(format!("and {} more", all.len() - FOLDED_NAMED));
+        }
+        names.join(", ")
+    };
+    let mut folded = Vec::new();
+    let mut said: Vec<ObservationKind> = Vec::new();
+    for (observation, entry) in observations.iter().zip(&entries) {
+        let Some((kind, _, _)) = entry else {
+            folded.push(observation.clone());
+            continue;
+        };
+        let all = of_kind(*kind);
+        if all.len() < 2 {
+            folded.push(observation.clone());
+            continue;
+        }
+        if said.contains(kind) {
+            continue;
+        }
+        said.push(*kind);
+        folded.push(match kind {
+            ObservationKind::OnMarks => format!(
+                "{} fixed parts lie on {} of the board's texts and silkscreen graphics ({}): all stay where the input put them (input_observations has each part's marks)",
+                all.len(),
+                all.iter().map(|entry| entry.2).sum::<usize>(),
+                named(*kind)
+            ),
+            ObservationKind::Overlap => format!(
+                "{} pairs of fixed parts overlap ({}): the placer keeps both of each pair where the input has them and their pads cannot both be connected; give one of each pair its own place (place, or free it from fixed and fixed_patterns) (input_observations has each)",
+                all.len(),
+                named(*kind)
+            ),
+        });
+    }
+    folded
 }
 
 /// What the open connections' action says of the evidence for density
@@ -3434,7 +3557,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
     let footprint_findings = by_kind(&footprint);
     let input_findings = by_kind(&input);
     let (status, reason) = decide(facts, &strict.new);
-    let mut actions = next_actions(
+    let (mut actions, mut observations) = next_actions(
         facts,
         status,
         &strict.new,
@@ -3470,7 +3593,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
             let mut parts: Vec<&str> = parts.into_iter().collect();
             parts.sort_by(|a, b| crate::canonical_order::natural_cmp(a, b));
             // The input's own findings: last, with the observations.
-            actions.push(input_tagged(format!(
+            observations.push(format!(
                 "{} of the findings the reference has at the same place are between two nets ({}{}): not judged here, but fab-kicad-board, which judges the board on its own, refuses them: fix them in the input, or release with --allow-findings knowingly",
                 blocking.len(),
                 counts(&by_kind(&blocking)),
@@ -3479,9 +3602,17 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
                 } else {
                     format!("; parts {}", parts.join(", "))
                 }
-            )));
+            ));
         }
     }
+    // The input's own observations last, tagged, those of one kind folded
+    // into one line (`fold_observations`); every one in full in
+    // `input_observations`.
+    actions.extend(
+        fold_observations(&observations)
+            .into_iter()
+            .map(input_tagged),
+    );
     KiCadVerdict {
         status,
         exit_code: status.exit_code(),
@@ -3495,6 +3626,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         kicad_checked: facts.native.is_some(),
         kicad_unconnected_items: facts.native.as_ref().map(|native| native.unconnected),
         next_actions: actions,
+        input_observations: observations,
         footprint_findings,
         input_findings,
         clean_without_subtraction: facts
@@ -5557,6 +5689,79 @@ mod tests {
                 "nothing to do (the input's): schematic parity findings (missing_footprint 1, net_conflict 1",
             )
         }));
+    }
+
+    #[test]
+    fn repeated_input_observations_fold_into_one_line() {
+        // Seven fixed switches on the board's texts and three pairs of the
+        // designer's overlapping parts: one line each kind, the first five
+        // named and the rest counted; input_observations keeps all ten.
+        let mut facts = KiCadRunFacts::new("layout-kicad-board");
+        facts.routable_connections = 10;
+        facts.routed_connections = 10;
+        facts.native = Some(tally_drc(
+            &json!({"violations": [], "unconnected_items": []}),
+        ));
+        for index in 1..=7 {
+            let marks: Vec<String> = (0..index.min(2))
+                .map(|mark| format!("text \"K{mark}\" (F.SilkS at {index}.00, 1.00)"))
+                .collect();
+            facts
+                .input_warnings
+                .push(crate::board_placer::fixed_on_marks_warning(
+                    &format!("SW{index}"),
+                    &marks,
+                ));
+            if index == 3 {
+                facts.input_warnings.push(
+                    "keepout 1 (x 0..10, y 0..10) meets the courtyards of parts the placer keeps where they are (J1): its rule area is written with footprints allowed".into(),
+                );
+            }
+        }
+        facts
+            .input_warnings
+            .push(crate::placement_constraints::overlap_warning(
+                "C8",
+                "U2",
+                "courtyards",
+            ));
+        facts
+            .input_warnings
+            .push(crate::placement_constraints::overlap_warning(
+                "C16",
+                "U2",
+                "pads on F.Cu",
+            ));
+        facts
+            .input_warnings
+            .push("fixed parts M1 and U2 overlap".into());
+        let verdict = judge(&facts);
+        let actions = &verdict.next_actions;
+        assert_eq!(actions.len(), 3, "{actions:#?}");
+        assert!(actions[0].starts_with("keepout 1 "), "{actions:#?}");
+        assert_eq!(
+            actions[1],
+            "nothing to do (the input's): 7 fixed parts lie on 13 of the board's texts and silkscreen graphics (SW1 on 1, SW2 on 2, SW3 on 2, SW4 on 2, SW5 on 2, and 2 more): all stay where the input put them (input_observations has each part's marks)"
+        );
+        assert_eq!(
+            actions[2],
+            "nothing to do (the input's): 3 pairs of fixed parts overlap (C8 and U2 (courtyards), C16 and U2 (pads on F.Cu), M1 and U2): the placer keeps both of each pair where the input has them and their pads cannot both be connected; give one of each pair its own place (place, or free it from fixed and fixed_patterns) (input_observations has each)"
+        );
+        assert_eq!(verdict.input_observations.len(), 10);
+        assert!(verdict.input_observations[6].starts_with("fixed part SW7 lies on 2 "));
+        assert_eq!(
+            verdict.input_observations[9],
+            "fixed parts M1 and U2 overlap"
+        );
+        let value = serde_json::to_value(&verdict).unwrap();
+        assert_eq!(value["input_observations"].as_array().unwrap().len(), 10);
+        // One of a kind stays as it is.
+        let one = vec![crate::placement_constraints::overlap_warning(
+            "C17",
+            "U1",
+            "courtyards",
+        )];
+        assert_eq!(fold_observations(&one), one);
     }
 
     #[test]
