@@ -1987,9 +1987,12 @@ pub fn layout_kicad_board(
             Some(probe) => probe.share.max(0.0) * config.total_seconds.max(0.0),
             None => shortened.unwrap_or(router_config.probe_seconds.unwrap_or(75.0)),
         };
-        // The other seeds' placements, lowered, in seed order.
-        let mut candidates = Vec::new();
-        for (poses, relaxation) in others {
+        // The other seeds' placements, lowered, in seed order. A
+        // placement's board is written again for the one the race keeps
+        // (the same footprints written at the same poses): the race held a
+        // copy of the parsed board per placement until 2026-11-04 (link:
+        // a 10 MB board).
+        let posed = |pcb: &Expr, poses: &[placer::Pose]| -> Result<Expr, String> {
             let mut candidate = pcb.clone();
             {
                 let mut footprints = footprint_items(&mut candidate)?;
@@ -1997,13 +2000,17 @@ pub fn layout_kicad_board(
                     write_footprint_pose(footprint, *pose)?;
                 }
             }
+            Ok(candidate)
+        };
+        let mut candidates = Vec::new();
+        for (poses, relaxation) in others {
             let candidate_board = lower(
-                &without_copper_texts(&candidate, config.placer.keep_board_marks),
+                &without_copper_texts(&posed(&pcb, poses)?, config.placer.keep_board_marks),
                 router_config,
                 connect,
             )?
             .board;
-            candidates.push((candidate, candidate_board, relaxation));
+            candidates.push((poses, candidate_board, relaxation));
         }
         // The placements are probed side by side, each a router of its own,
         // as many at once as fit half the memory available (the first
@@ -2246,11 +2253,11 @@ pub fn layout_kicad_board(
         let mut kept = probed[chosen].take().expect("the chosen placement's probe");
         drop(probed);
         if chosen > 0 {
-            let (candidate, candidate_board, relaxation) = candidates
+            let (poses, candidate_board, relaxation) = candidates
                 .into_iter()
                 .nth(chosen - 1)
                 .expect("a candidate per probe");
-            pcb = candidate;
+            pcb = posed(&pcb, poses)?;
             board = candidate_board;
             kept.config_mut().verbose = core_config.verbose;
             placer_config.tight_bodies = Some(relaxation.tight);
