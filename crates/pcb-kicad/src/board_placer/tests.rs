@@ -484,6 +484,29 @@ fn board_marks_give_way_when_nothing_else_seats_a_part() {
     let _ = fs::remove_dir_all(&root);
     assert!(result.unplaced.is_empty() && result.illegal.is_empty());
     assert_eq!(result.parts_on_marks, ["R1"]);
+    // How full a side is, in the room's numbers (trial 4: the hint's 99 %
+    // beside room.utilization 0.135).
+    assert_eq!(result.utilization, result.room.utilization);
+}
+
+#[test]
+fn the_full_side_hint_says_what_it_measures_in_the_rooms_terms() {
+    // Trial 4's ULK panel: "the front side is 99 % full" counted every
+    // component (fixed keys, the board's marks, the frames' keepouts) over
+    // the outline's gross area, while room.utilization said 0.135. The
+    // hint now is the room's number, and says what it is.
+    let hint = super::place::room_hint("front", 0.923, 3080.0);
+    assert!(
+        hint.starts_with(
+            "the front side is 92 % full (room.utilization 0.923: the movable parts' bodies with spacing over its 3080 mm2 usable, the outline less its edge band, its cutouts and the fixed parts)"
+        ),
+        "{hint}"
+    );
+    let none = super::place::room_hint("back", 99.0, 0.0);
+    assert!(
+        none.starts_with("the back side has no usable area left"),
+        "{none}"
+    );
 }
 
 #[test]

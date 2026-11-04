@@ -638,38 +638,21 @@ pub fn place_kicad_board(
             .map(|index| lowered.references[*index].clone())
             .collect()
     };
-    // How full each side is, and what to change when parts did not fit.
+    // How full each side is, in the room's numbers (`placement_room::room`:
+    // the movable parts' bodies with spacing over the usable area, the
+    // outline less its edge band, its cutouts and the fixed parts' bodies),
+    // and what to change when parts did not fit. Until 2026-11-04 the hint
+    // and `utilization` counted every component (fixed parts, the board's
+    // marks, rule areas, a panel's kept-clear frames, each with spacing)
+    // over the outline's gross area: trial 4's ULK panel was "99 % full"
+    // beside room.utilization 0.135.
     let problem = &lowered.problem;
-    let outline_area = {
-        let outline = &problem.outline;
-        (0..outline.len())
-            .map(|index| {
-                let (a, b) = (outline[index], outline[(index + 1) % outline.len()]);
-                a[0] * b[1] - b[0] * a[1]
-            })
-            .sum::<f64>()
-            .abs()
-            / 2.0
-    };
-    let mut used = [0.0f64; 2];
-    for (index, component) in problem.components.iter().enumerate() {
-        let half = component.half_extent(placement.poses[index].angle);
-        let area = if component.hollow.is_empty() {
-            (2.0 * half[0] + problem.spacing) * (2.0 * half[1] + problem.spacing)
-        } else {
-            component.blocking_area()
-        };
-        match component.side {
-            core::Side::Front => used[0] += area,
-            core::Side::Back => used[1] += area,
-            core::Side::Both => {
-                used[0] += area;
-                used[1] += area;
-            }
-            core::Side::Neither => {}
-        }
-    }
-    let utilization = used.map(|used| (used / outline_area.max(1.0e-9) * 1000.0).round() / 1000.0);
+    let room = crate::placement_room::room(
+        problem,
+        &lowered.references,
+        !placement.unplaced.is_empty() || !placement.illegal.is_empty(),
+    );
+    let utilization = room.utilization;
     let repeated_references = {
         let mut seen = BTreeSet::new();
         let mut repeated = BTreeSet::new();
@@ -689,12 +672,12 @@ pub fn place_kicad_board(
     );
     let mut hints = Vec::new();
     if !placement.unplaced.is_empty() || !placement.illegal.is_empty() {
-        for (side, share) in ["front", "back"].iter().zip(utilization) {
-            if share > 0.7 {
-                hints.push(format!(
-                    "the {side} side is {:.0} % full: enlarge the outline, move parts to the other side, or fix fewer parts",
-                    share * 100.0
-                ));
+        for (side, (share, usable)) in ["front", "back"]
+            .iter()
+            .zip(room.utilization.iter().zip(room.usable_mm2))
+        {
+            if *share > crate::placement_room::TARGET_UTILIZATION {
+                hints.push(room_hint(side, *share, usable));
             }
         }
         // Fixed parts are only illegal where a part that found no place
@@ -725,11 +708,6 @@ pub fn place_kicad_board(
         hints.sort();
         hints.dedup();
     }
-    let room = crate::placement_room::room(
-        problem,
-        &lowered.references,
-        !placement.unplaced.is_empty() || !placement.illegal.is_empty(),
-    );
     let result = KiCadBoardPlacerResult {
         alternatives,
         tight_bodies: placement.relaxation.tight,
@@ -804,6 +782,21 @@ pub fn place_kicad_board(
     )
     .map_err(|error| format!("failed to write {}: {error}", report_path.display()))?;
     Ok(result)
+}
+
+/// The placement hint for a side fuller than the room's target
+/// (`placement_room::TARGET_UTILIZATION`), in the room's terms: `share`
+/// is `room.utilization` of the side, `usable` its `room.usable_mm2`.
+pub(crate) fn room_hint(side: &str, share: f64, usable: f64) -> String {
+    if usable <= 0.0 {
+        return format!(
+            "the {side} side has no usable area left (room.usable_mm2 0: the edge band, the cutouts and the fixed parts' bodies cover the outline): enlarge the outline, move parts to the other side, or fix fewer parts"
+        );
+    }
+    format!(
+        "the {side} side is {:.0} % full (room.utilization {share:.3}: the movable parts' bodies with spacing over its {usable:.0} mm2 usable, the outline less its edge band, its cutouts and the fixed parts): enlarge the outline, move parts to the other side, or fix fewer parts",
+        share * 100.0
+    )
 }
 
 /// The movable parts without a legal place, each once (unplaced first),

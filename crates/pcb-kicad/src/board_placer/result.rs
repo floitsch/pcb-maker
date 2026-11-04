@@ -113,8 +113,9 @@ pub struct KiCadBoardPlacerResult {
     /// The board size a constraints outline set (automatic or given).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub outline_mm: Option<[f64; 2]>,
-    /// Share of the board the parts' bodies (with spacing) take, front and
-    /// back.
+    /// How full each side is, front and back: `room.utilization` (the
+    /// movable parts' bodies with spacing over the usable area); the hints
+    /// call a side full above `room.target_utilization`.
     pub utilization: [f64; 2],
     /// Whether the placement needed bodies without their courtyard margin.
     pub tight_bodies: bool,
