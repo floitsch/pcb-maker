@@ -22,7 +22,13 @@ third placer round of 2026-10-28 ("The third placer round" at the end:
 branch placer-profile-3, measured on main's x1874, 39fc92d6) took the
 legaliser's and the refinement's legality tests, queries and crossings:
 the placement 4 to 52 % cheaper again (24.5 % as the geometric mean of the
-same fifteen boards, 29.4 % of the eleven dense ones).
+same fifteen boards, 29.4 % of the eleven dense ones). The fourth placer
+round of 2026-11-04 ("The fourth placer round" at the end: branch
+placer-profile-4, measured against main's x1885, 6a95300a) took the
+anneal's overlap sums and crossings, the legaliser's crossings, the
+cutouts' outlines and the race's ripped count: the same placements,
+the placement 1.4 % cheaper in CPU (geometric mean of the fifteen; video
+13.6 %), short of the round's target of 15 %.
 
 ## How to profile
 
@@ -1929,3 +1935,422 @@ change books what the computation it replaces booked).
 - **The refinement's swaps' and the alignment's legality** (`is_legal`
   against every part, 96 to 98 % of the pairs apart by boxes): below 0.2 %
   of a placement; not changed.
+
+## The fourth placer round (2026-11-04)
+
+The anneal after the third round, whose "candidates not taken" named it
+(two thirds of the fingerprint boards' placement, its crossings term on
+by default since 2026-10-28), the 0xCB panel's slot edges, video's
+crossing tests and the race's ripped count (each probe's router copied
+and ripped up since 2026-11-03). Branch placer-profile-4: fourteen commits, the measured head
+`build/bin/pcb-maker-prof6-r13` (thirteen commits on main 6a95300a, x1885,
+the pairs' off side, whose placements are x1884's), the fourteenth (it
+takes the third back) measured on its own as `-r14`, the branch rebased
+on main 67ad67a2 (x1888) as `-final`; the commits' binaries on their way
+`-c1` to `-c6` (on 84ba6893, x1881), `-r1b`, `-r9` to `-r12` (on
+9d6844aa, x1884); outputs in `build/prof6/`.
+
+### How
+
+As in the third round (perf could not be installed):
+
+- **Categories**: a throwaway build (branch placer-profile-4-attr, not
+  for merging: `attr.rs`, a time-stamp counter per category and thread,
+  printed with each `PCB_PLACER_DEBUG` phase line under
+  `PCB_PLACER_ATTR`) times the anneal's wirelength terms, relations,
+  overlap sums and the crossings term's three steps (`before`, `after`,
+  `settle`), the legality tests, the cutouts' polygon tests (inside the
+  tests), the bucket queries, the escape term and its measurements and the
+  crossings (`involving`, `involving_kept`, `kept`) by phase; each phase's
+  thread CPU split by its categories' ticks; `place-kicad-board` at the
+  layout's budget on x1881's code (main 84ba6893), two threads, pinned
+  rates, one run a board (shares, not CPU changes). The same build
+  counted the new lines that are a kept line again, bit for bit (the
+  anneal's `after` and the legaliser's `involving`).
+- **Callgrind** of the release binaries (they keep their symbols) on
+  short placements (`PCB_PLACER_WORK_SECONDS=10`, one thread) with the
+  collection on one phase (`--toggle-collect='*anneal*anneal*'` or
+  `'*legalize_keeping*'`): MegaDrive's and DSP-ADAU1452's anneal, video's
+  legaliser, each change against the binary before it (the same work, so
+  the same steps: instructions compare).
+- **CPU pairs** as the rounds before (pinned on SMT siblings, one binary
+  on two CPUs, the other on their siblings, then swapped; two threads,
+  pinned rates, `PCB_ROUTER_NO_WALL_GUARD=1 PCB_ROUTER_FINGERPRINT=1
+  PCB_MAKER_NO_CACHE=1`; the process's own CPU from /proc, read at its
+  exit before it is reaped, kicad-cli left out; at most three
+  `place-kicad-board` in flight, each reserving KiCad's check in the
+  memory ledger): `build/prof6/pairs.py`, `summary.py`.
+
+### Where the placement's CPU goes (x1881's code, 84ba6893)
+
+Shares of the placement's CPU (the timing build, `place-kicad-board` at
+the layout's budget; `build/prof6/profile`, `build/prof6/attr_table.py`;
+the "anneal: crossings" rows are the term's three steps, the legaliser's
+"crossings" `involving`'s fresh trees and `kept`):
+
+| category (% of the placement's CPU) | 0xCB panel | protoesp | video | 4in1-mini | glasgow | SmartSpin2k | DSP | 4in1 | MegaDrive | split72_left | Castor | SNSP-CPU-01 | k30-SBC | jetson | Sisu |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| placement CPU s (2 threads, the timing build) | 66 | 290 | 460 | 265 | 531 | 255 | 278 | 573 | 362 | 386 | 163 | 477 | 150 | 434 | 431 |
+| global placement | 35.9 | 7.2 | 1.7 | 0.9 | 0.6 | 5.5 | 0.5 | 0.3 | 0.2 | 0.6 | 3.9 | 0.6 | 2.4 | 0.6 | 0.8 |
+| anneal: wirelength | 4.3 | 1.8 | 2.3 | 2.1 | 5.4 | 0.9 | 11.3 | 2.7 | 3.1 | 11.8 | 8.1 | 5.5 | 9.8 | 5.8 | 10.9 |
+| anneal: relations | 1.2 | 0.6 | 1.6 | 0.2 | 7.6 | 0.8 | 0.8 | 0.7 | 0.9 | 4.0 | 4.4 | 1.7 | 12.7 | 1.5 | 3.2 |
+| anneal: overlap | 13.9 | 13.9 | 2.6 | 21.9 | 11.4 | 2.4 | 34.1 | 18.4 | 38.8 | 10.2 | 25.8 | 29.2 | 12.6 | 16.9 | 24.1 |
+| anneal: crossings before | 4.5 | 5.1 | 3.2 | 5.0 | 10.0 | 1.3 | 16.8 | 5.7 | 11.1 | 11.1 | 14.7 | 12.4 | 11.0 | 14.6 | 19.3 |
+| anneal: crossings after | 0.9 | 3.1 | 4.7 | 2.8 | 7.4 | 0.7 | 7.9 | 5.0 | 11.6 | 6.5 | 11.5 | 9.9 | 14.8 | 9.1 | 13.5 |
+| anneal: crossings settle | 0.1 | 0.1 | 0.7 | 0.4 | 0.5 | 0.1 | 0.6 | 0.5 | 1.4 | 0.2 | 0.6 | 0.8 | 1.8 | 0.3 | 0.8 |
+| anneal: the rest | 3.9 | 2.3 | 1.1 | 1.7 | 1.8 | 1.1 | 5.7 | 1.6 | 1.8 | 2.5 | 8.1 | 3.7 | 6.6 | 2.8 | 4.2 |
+| legaliser: crossings | 0.6 | 0.4 | 57.3 | 2.7 | 14.2 | 3.2 | 0.3 | 2.8 | 4.4 | 3.3 | 0.5 | 0.6 | 3.9 | 0.4 | 0.2 |
+| legaliser: legality (cutouts excl.) | 5.9 | 36.1 | 11.1 | 15.6 | 5.2 | 0.6 | 0.5 | 26.4 | 5.0 | 0.3 | 0.9 | 0.4 | 0.5 | 4.3 | 0.2 |
+| legaliser: cutouts' polygon tests | 9.4 | 6.3 | 0.0 | 0.0 | 0.0 | 0.1 | 0.0 | 0.0 | 1.7 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 | 0.0 |
+| legaliser: bucket query | 2.3 | 14.8 | 5.9 | 1.3 | 1.1 | 0.1 | 0.1 | 3.6 | 2.7 | 0.1 | 0.4 | 0.2 | 0.3 | 0.5 | 0.0 |
+| legaliser: escape term | 0.0 | 0.0 | 1.8 | 0.8 | 1.6 | 0.3 | 0.0 | 0.6 | 0.2 | 0.1 | 0.1 | 0.0 | 0.2 | 0.1 | 0.0 |
+| legaliser: the rest | 4.9 | 5.4 | 3.7 | 1.0 | 0.7 | 0.2 | 0.0 | 2.5 | 0.7 | 0.0 | 0.2 | 0.1 | 0.2 | 0.2 | 0.0 |
+| refinement: crossings | 0.6 | 0.7 | 0.5 | 2.6 | 6.8 | 6.0 | 3.4 | 0.9 | 3.5 | 16.4 | 3.0 | 14.2 | 1.0 | 2.8 | 1.0 |
+| refinement: legality | 2.1 | 0.7 | 0.0 | 20.6 | 3.6 | 3.8 | 2.2 | 5.9 | 1.1 | 1.1 | 1.3 | 1.4 | 0.4 | 2.3 | 1.0 |
+| refinement: escape term | 0.0 | 0.0 | 0.2 | 16.0 | 5.8 | 10.0 | 2.3 | 10.6 | 0.6 | 1.2 | 2.7 | 1.5 | 2.1 | 1.7 | 1.9 |
+| refinement: escape measurements | 0.0 | 0.0 | 1.0 | 0.2 | 0.4 | 0.3 | 2.3 | 1.6 | 1.0 | 2.0 | 2.6 | 6.0 | 2.9 | 17.6 | 8.1 |
+| refinement: the rest | 0.6 | 0.4 | 0.3 | 3.9 | 12.1 | 4.2 | 3.1 | 2.9 | 1.0 | 2.6 | 2.5 | 2.4 | 3.2 | 1.4 | 1.6 |
+| repair and align | 3.7 | 0.5 | 0.1 | 0.0 | 3.5 | 56.7 | 7.5 | 7.1 | 9.1 | 25.1 | 7.6 | 8.8 | 12.4 | 15.8 | 8.7 |
+| outside the phases | 5.4 | 0.6 | 0.2 | 0.4 | 0.3 | 1.8 | 0.7 | 0.2 | 0.3 | 1.1 | 1.1 | 0.4 | 1.0 | 1.3 | 0.5 |
+
+- **The anneal** is 22 to 74 % of every board but video and the
+  SmartSpin2k panel: its overlap sums (up to 39 %, MegaDrive; 34 % DSP,
+  29 % SNSP-CPU-01, 26 % Castor) and the crossings term (`before` and
+  `after`: up to 26 %, Castor; 25 % DSP, 23 % MegaDrive and Sisu).
+  Inside (callgrind, 10 s of work, one thread): MegaDrive's anneal is the
+  crossings' `count` (43 % of its instructions), the overlap sum's
+  bucket query (`Grid::scan`, 28 %: the query reaches as far as the
+  largest far-side part's boxes, hundreds of cells) and the sum itself
+  (10 %, `Constraints::bare`'s binary searches 3 % more); DSP-ADAU1452's
+  the sum (29 %, its 354 hollow parts' boxes), the count (24 %), the
+  wirelength terms after a move (17 %) and the query (9 %).
+- **video's legaliser is its crossings** still (57 % of its placement;
+  80 % of the legaliser's instructions are `involving`). Half of the
+  fresh lines a spot builds (Glasgow 55 to 70 %, video 45 to 60 %) are
+  one of their net's kept lines bit for bit, and so are half of the
+  anneal's new lines in `after` (MegaDrive 1.5 of 2.8 million).
+- **The 0xCB panel's polygon tests**: 9 % of its placement (its global
+  placement 36 %); protoesp's 6 %.
+- **The legality tests** (protoesp 36 % with its bucket queries 15 %,
+  4in1 26 %, 4in1-mini 16 % and 21 % in the refinement) and **the
+  refinement's escape term** (4in1-mini 16 %, 4in1 11 %, SmartSpin2k
+  10 %) are the third round's ground; **the relation repair** with its
+  refinements is 57 % of SmartSpin2k's placement (books 3.3 units a CPU
+  unit: cheap work, much of it).
+- **The race's ripped count** (each probe's router copied and ripped
+  up, after the placement; seed 1 of the dense tier, x1880 with the
+  count on): the copies 0.03 to 0.81 s a race (16 to 267 MB), the
+  rip-ups 0.18 to 10.9 s (MegaDrive 10.9 s, split72_left 8.0 s,
+  SNSP-CPU-01 4.9 s, the 0xCB panel 3.1 s): the rip-up, not the copy, is
+  the race's cost, and it is the scan of every net's conflicts after
+  every rip-up.
+
+### The changes (bit-identical)
+
+Each its own commit, each the same computation: the same values in the
+same order and the same work booked, a unit test against the direct
+computation each (mutation-checked: the tests fail with a unit of work
+more, a margin dropped, a box left out of a reach, a version or a
+subtraction left out), and, where a cache or a shortcut is new, checked
+against the direct computation at every use with
+`PCB_PLACER_CHECK_OVERLAP=1` (debug builds always).
+
+1. **The anneal's overlap sums take far pairs by their boxes**
+   (anneal.rs `far_work`, `extents_apart`, `pair`). A pair of the sum
+   compares boxes (rectangles, pads, hollow boxes, courtyards, far
+   sides, far courtyards, a panel frame's pass), each grown by at most
+   a margin (the edge margin, half the spacing, a halo, a share of the
+   spacing: `far_grow`). Where the part's box around all of them (at its
+   pose, `PartBoxes::extent`, with its rectangle) and the other part's
+   reach about its body centre (`reaches`: its rectangle and boxes at any
+   pose, once per part; the ninth commit) lie farther apart than twice
+   that and 10^-6 mm, every comparison gives 0.0, and 0.0 added to the
+   sum leaves its bits; the work the pair books (a unit per comparison,
+   its lists' lengths) depends on the two parts alone and is booked from
+   them (`far_work`, the same branches as the sum). The pair's sum is
+   added box by box to the running sum as before (a first version added
+   the pair's own subtotal: another rounding, caught by the placement
+   identity on the 0xCB panel). Not for opposite sides with
+   `anneal_far_side_gaps`. With main's frames rule (x1883) the frame pass
+   is in the pair too (its whole bodies' comparison and the connector's
+   list). Test: random boards of every kind of part (hollow, far sides
+   and courtyards, cutouts with outlines, copper graphics, marks, linked
+   pairs, shared halos, frames, boxes far beyond the body), both
+   far-side models, parts moving: sums and work against the sums with
+   the skip off.
+2. **The race's rip-up from a heap of upper bounds**
+   (pcb-router coarse.rs `rip_up_most_conflicted`). `rip_up_standing`
+   looked for the most conflicted net by counting every net's conflicts
+   after every rip-up (up to 11 s a race on MegaDrive, 8 s on
+   split72_left, 2026-10-28). A rip-up takes branches away, so the
+   occupancy only falls and no net's count rises: each net's last count
+   is an upper bound, the top is counted again and, still at its bound,
+   is the most conflicted (ties to the larger net id, the scan's
+   maximum of (count, net)). The same nets in the same order. Checked
+   against the scan at every rip-up in debug builds and with
+   `PCB_ROUTER_CHECK_RIP_UP`; test: lattices of crossing nets after short
+   negotiations, the nets ripped and the standing against the scan.
+3. **The cutouts' and the board's outlines by cells in both axes** (taken
+   back by the fourteenth)
+   (legal.rs `Outline`). The third round's bands of y became a grid (about
+   an edge a cell, as square as the outline's box): an edge in every cell
+   its box touches; the near and corner tests from the cells of the box's
+   range; the even-odd ray from the point's row, from its column on, each
+   edge counted in the first column of its box from there. The same
+   answers, the work booked by the outline's length as before. Tests: the
+   third round's ragged and lattice rings and board outlines against the
+   pass over every edge.
+4. **The kept lines' counts kept across moves** (taken back by the
+   tenth): per line its cells, lines met and crossings with other nets as
+   of the grid's last change in its cells, the anneal's `before` and
+   `kept`'s count from them less the crossings among the lines. The
+   counts rarely held from one move of a part to its next (the anneal's
+   long lines pass many cells, and its kept moves change some of them),
+   and the crossings among the moved lines were tested pair by pair:
+   MegaDrive's anneal took 10 % more instructions (121.2 G against
+   109.8 G).
+5. **The anneal's new lines that are a kept line again** (crossings.rs
+   `count_fresh`, `kept_twin`). Half of `after`'s new lines have the ends
+   of one of their net's kept lines, bit for bit (the tree's edges away
+   from the moved pins: MegaDrive 1.5 of 2.8 million): such a line walks
+   the same cells, meets the same lines and crosses the same ones; from
+   the fourth commit's counts here (the tenth: from `before`'s records).
+6. **The legaliser's and the refinement's fresh twins** (`involving`): a
+   fresh line that is a kept one again took its kept lines' part of the
+   count from the kept count less the other moved nets' kept lines it
+   crosses. That subtraction tested every twin against every kept line of
+   the other moved nets (the legaliser counts every net, video's large
+   ones too): video's legaliser took 35 % more instructions (80.2 G
+   against 59.3 G); replaced by the tenth.
+7. **The race's copies without the negotiation's history** (coarse.rs
+   `copy_for_rip_up`, board_layout.rs). The history (per layer and cell,
+   per tile) is read by the searches, the negotiation, the finish and the
+   reports, not by the rip-up or the standing; the copy is made with it
+   moved out of the probe's router and back. Test: the copy's ripped
+   standing is the router's, the router's history unchanged.
+8. **The anneal's pair lookups from per-part flags** (anneal.rs
+   `PairFlags`): `lies_on`, `bare`, `halo_free`, binary searches of the
+   constraints' lists (3 % of MegaDrive's anneal); the lists' own answers
+   where one is not ascending. Test: every pair of random boards.
+9. **The config reference** (`PCB_ROUTER_CHECK_RIP_UP`; the round's checks
+   under `PCB_PLACER_CHECK_OVERLAP`), regenerated.
+10. **`before` records its lines' counts for `after`, and the
+    legaliser's twins keep theirs per search** (`count_kept`,
+    `kept_counts`, `twin_counts`; takes the fourth back, replaces the
+    sixth). `before` counts as `count` did (the same tests) and records
+    per kept line its cells, the lines it met and its crossings with the
+    lines outside the moved nets; `after`'s twins take those while the
+    grid and the moved nets are as `before` left them. In `involving` a
+    fresh twin's kept-lines part of the count (lines met, crossings
+    outside the moved nets) is counted once and kept per kept line while
+    the grid and the moved nets stay (a part's spot search, a part's
+    candidates); the fresh lines among themselves as before. Tests: the
+    exactness test with `after` in check mode (count and work against
+    `count`), `involving` against `involving_direct`, mutations of the
+    records' validity and the twins' counts.
+11. **The far test from the other part's reach** (anneal.rs `reach`):
+    bringing every near part's boxes to its pose for the first commit's
+    test was 9 % of DSP-ADAU1452's anneal; a part's reach about its body
+    centre (its rectangle, and each box's centre distance and half sides)
+    is the same at every pose, once per part. Test: the first commit's,
+    with boxes reaching far beyond the body (a reach without them fails
+    it).
+12. **The pair sum generic in its closures and inlined**: the first
+    commit's `pair` took its comparisons through `dyn Fn`, an indirect
+    call a comparison; DSP-ADAU1452's anneal 88.9 G instructions with
+    it, 82.8 G without (92.7 G on x1884).
+
+13. **A twin among a large net's kept lines by their ends**
+    (crossings.rs `kept_twin`, `twin_index`): the sixth and tenth
+    commits scanned a fresh line's net's kept lines for one with its
+    ends; the legaliser and the refinement count every net, and a power
+    net's hundreds of lines were scanned for each of its hundreds of fresh
+    lines at every spot and candidate: DSP-ADAU1452's placement took 10 %
+    more CPU in the layout pairs of the head before this commit (r11:
+    395 / 401 s against 433 / 443 s, the layouts' placement). Nets of more
+    than 8 kept lines keep them sorted by their ends (and their place in
+    the net's list: the first of equal ends, as the scan) while the grid
+    does not change. Test: the index against the scan on every net of
+    the exactness test's boards.
+
+14. **The outlines by bands of y again** (reverts the third): by cells,
+    the even-odd ray walked every column of the point's row from the
+    point on (`Outline::inside`: 0.56 G instructions of protoesp's
+    legaliser against 0.32 G by bands), and the near tests took as long
+    as by bands (0.23 G against 0.25 G): protoesp's legaliser 1 % more
+    instructions, the 0xCB panel's polygon tests no cheaper in its pair
+    (below).
+
+The instructions of the phases (callgrind, 10 s of work, one thread,
+release binaries; the same work, so the same steps):
+
+| phase | x1881 / x1884 / x1885 | after the fifth and sixth commits (r7) | before the twelfth (r11) | before the thirteenth (r12) |
+| --- | ---: | ---: | ---: | ---: |
+| MegaDrive's anneal | 109.8 G | 121.2 G (+10 %) | 105.8 G (-3.6 %) | |
+| DSP-ADAU1452's anneal | 92.7 G | 95.8 G (+3 %) | 88.9 G (-4.1 %) | 82.8 G (-10.6 %) |
+| video's legaliser | 59.3 G | 80.2 G (+35 %) | 47.7 G (-19.5 %) | |
+| protoesp's legaliser | 12.48 G | | | 12.61 G (r13, +1.0 %) |
+
+### Measured (2026-11-04)
+
+**The placement** (`place-kicad-board` of the task, the race's 16 seeds
+and the layout's 600 s of work; pinned pairs on SMT siblings, CPUs 8 and
+9 against 24 and 25, one orientation after the other, two threads,
+pinned rates, `PCB_ROUTER_NO_WALL_GUARD=1 PCB_ROUTER_FINGERPRINT=1
+PCB_MAKER_NO_CACHE=1`, from 01:10 to 03:30 with the nightly from 02:00 and
+four other agents: the machine's load 25 to 52). x1885 against the head
+(`-r13`): CPU seconds of both orientations, the change (the geometric
+mean of the orientations' ratios), peak RSS (MB), the placed board
+identical in all four runs:
+
+| board | x1885 CPU s | head CPU s | CPU | x1885 MB | head MB | identical |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| DSP-ADAU1452 | 374 / 373 | 370 / 366 | -1.4 % | 88 / 88 | 97 / 86 | yes |
+| video | 631 / 553 | 545 / 478 | -13.6 % | 83 / 85 | 85 / 86 | yes |
+| 0xCB panel | 110 / 112 | 107 / 111 | -1.9 % | 161 / 162 | 162 / 164 | yes |
+| protoesp | 355 / 365 | 358 / 369 | +0.9 % | 68 / 72 | 70 / 71 | yes |
+| glasgow | 753 / 736 | 726 / 717 | -3.1 % | 102 / 102 | 101 / 101 | yes |
+| 4in1-mini | 457 / 442 | 462 / 448 | +1.2 % | 86 / 86 | 77 / 76 | yes |
+| 4in1 | 703 / 607 | 705 / 618 | +1.0 % | 78 / 78 | 79 / 79 | yes |
+| SmartSpin2k | 214 / 207 | 209 / 203 | -1.9 % | 172 / 177 | 173 / 178 | yes |
+| MegaDrive | 378 / 412 | 370 / 404 | -2.0 % | 83 / 83 | 84 / 84 | yes |
+| SNSP-CPU-01 | 526 / 414 | 518 / 433 | +1.5 % | 170 / 153 | 170 / 172 | yes |
+| split72_left | 398 / 382 | 383 / 369 | -3.5 % | 555 / 553 | 556 / 554 | yes |
+| Castor | 169 / 164 | 173 / 168 | +2.1 % | 112 / 130 | 113 / 114 | yes |
+| k30-SBC | 147 / 137 | 146 / 135 | -0.7 % | 58 / 53 | 54 / 55 | yes |
+| jetson | 388 / 371 | 391 / 371 | +0.5 % | 1149 / 1150 | 1149 / 1149 | yes |
+| Sisu | 446 / 437 | 453 / 445 | +1.7 % | 199 / 214 | 199 / 214 | yes |
+
+The placement's CPU falls 2.2 % as the geometric mean of the eleven
+dense boards, rises 0.9 % on the four fingerprint boards: -1.4 % over
+the fifteen. **The round's target (-15 %) is not met.** video falls
+13.6 % (its legaliser's fresh twins: the legaliser's instructions -19.5 %),
+split72_left 3.5 %, Glasgow 3.1 %, MegaDrive, SmartSpin2k, the 0xCB
+panel and DSP-ADAU1452 1.4 to 2.0 %; the anneal-heavy fingerprint boards
+and the legality-heavy boards (protoesp, the 4in1 boards) move by -0.7
+to +2.1 %: the anneal's instructions fell 4 to 11 % at 10 s of work
+(above), a third to a half of the boards' placement, and the outline
+commit cost protoesp and the 4in1 boards about 1 % (the fourteenth
+takes it back: below). Pairs of these boards differ by up to 2 % from
+orientation to orientation and run to run on the loaded machine
+(protoesp +0.5 % and +2.4 % in two earlier pairs of intermediate heads).
+The peak resident size moves by a few megabytes (the twins' records).
+
+**Taking the outline commit back** (`-r14`, against `-r13`; the same
+pinned pairs): 
+
+| board | r13 CPU s | r14 CPU s | CPU | r13 MB | r14 MB | identical |
+| --- | ---: | ---: | ---: | ---: | ---: | --- |
+| protoesp | 340 / 365 | 339 / 358 | -1.1 % | 72 / 70 | 67 / 70 | yes |
+| 4in1 | 724 / 717 | 712 / 698 | -2.2 % | 80 / 79 | 76 / 76 | yes |
+| 4in1-mini | 400 / 362 | 405 / 359 | +0.1 % | 77 / 77 | 74 / 74 | yes |
+| 0xCB panel | 94 / 98 | 94 / 101 | +1.6 % | 161 / 161 | 158 / 159 | yes |
+
+-0.4 % as the geometric mean of the four, within the pairs' noise
+(protoesp -1.1 %, 4in1 -2.2 %, the 0xCB panel +1.6 %); the fourteenth
+commit is kept for the instructions (protoesp's legaliser) and the
+simpler index, not for a measured gain, and the panel's polygon tests
+stay the next step for a 2-D index (one that keeps the bands' rows for
+the even-odd ray).
+
+**The layout** (`layout-kicad-board`, the task's 1500 s of work; both
+orientations at once on CPUs 2-7, 10, 11 and their siblings; the head
+`-r13` against x1885): the layout's CPU, the placement's (the process's
+CPU from `layout: placing` to `layout: placed`), peak RSS, the placed
+board, the result board and every fingerprint line (as a set: their
+order between the parallel stages differs from run to run on either
+binary) identical in all four runs:
+
+| board | x1885 CPU s | head CPU s | CPU | x1885 placement CPU s | head | placement | x1885 MB | head MB | identical |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| MegaDrive | 2759 / 2717 | 2705 / 2741 | -0.5 % | 429 / 414 | 395 / 415 | -4.0 % | 2029 / 2022 | 2011 / 2019 | yes |
+| DSP-ADAU1452 | 3842 / 3914 | 3814 / 3891 | -0.7 % | 372 / 391 | 396 / 398 | +4.2 % | 1301 / 1296 | 1289 / 1288 | yes |
+| glasgow | 1970 / 1909 | 1922 / 1916 | -1.0 % | 747 / 713 | 721 / 691 | -3.2 % | 533 / 532 | 527 / 525 | yes |
+| split72_left | 4897 / 4853 | 4895 / 4788 | -0.7 % | 430 / 425 | 416 / 410 | -3.3 % | 2738 / 2735 | 2674 / 2739 | yes |
+| SNSP-CPU-01 | 2478 / 2431 | 2468 / 2515 | +1.5 % | 544 / 536 | 528 / 528 | -2.2 % | 1870 / 1884 | 1831 / 1819 | yes |
+| SmartSpin2k | 1765 / 1824 | 1701 / 1851 | -1.1 % | 248 / 248 | 241 / 243 | -2.5 % | 1261 / 1152 | 1220 / 1121 | yes |
+| video | 2071 / 2072 | 1901 / 2022 | -5.3 % | 606 / 618 | 518 / 529 | -14.5 % | 2111 / 2076 | 2065 / 2038 | yes |
+
+The layout's placement falls 2.2 to 14.5 % on six of the seven (-3.8 %
+as the geometric mean: video -14.5 %, MegaDrive -4.0 %, Glasgow and
+split72_left -3.2 and -3.3 %, SmartSpin2k -2.5 %, SNSP-CPU-01 -2.2 %)
+and rises 4.2 % on DSP-ADAU1452 (+6.5 and +1.8 %: its placement pair
+above falls 1.4 %; the layouts' placement spans are shorter and noisier
+under the load); the layout 1.1 % (video -5.3 %).
+
+The race's ripped count (each layout's `placement race: the ripped
+count` line, wall clock under the load): the copies' largest growth falls
+by the history's share, 10 to 29 % (video 422 to 381 MB, split72_left 272
+to 227 MB, MegaDrive 265 to 233 MB, SmartSpin2k 155 to 110 MB), their
+time stays 0.07 to 0.7 s; the rip-ups (0.3 to 8.8 s) move within the
+load's noise (video 3.99 / 3.15 s off, 2.80 / 1.61 s on; split72_left
+8.80 / 7.86 and 8.24 / 7.96 s): the scan of every net after every rip-up
+was not their cost; the restamps of the ripped nets and the standing
+are. Wall clock only: no work is charged, the layouts' budgets do not
+move.
+
+**Identical.** Every placement of the pairs (fifteen boards, all four
+runs) and of the layout pairs (placed and result boards, fingerprint
+lines). The head against x1884 at 60 s of work on all fifteen boards (and
+the head before the thirteenth commit, `-r12`, and `-r11`'s on six at
+30 s): the same placements. Each commit on its own: `-c1` to `-c6`
+(the first six on main 84ba6893) against x1881, `-r1b` (the first on
+main 9d6844aa, with the frames rule of x1883 in its pair sum), `-r9`,
+`-r10`, `-r11` against x1884, placements at 30 s of work of the 0xCB
+panel, SmartSpin2k, protoesp, video, DSP-ADAU1452 and MegaDrive: the
+same board from all of them (the router commits change no placement).
+In check mode (`PCB_PLACER_CHECK_OVERLAP=1 PCB_ROUTER_CHECK_RIP_UP=1`)
+on the 0xCB panel, protoesp, Glasgow, video, DSP-ADAU1452, MegaDrive and
+SmartSpin2k at 60 s: no difference, and the placements those of x1885 in
+check mode. The route-mode fingerprints (Castor, k30-SBC, jetson, Sisu
+from build/github-layout-v16, a quarter budget, two threads): every fingerprint line
+and the routed boards identical on x1884 and `-r11` (Castor's still
+dad3a6cb3787; route mode places nothing and runs no race).
+The rebased head (`-final`, on 67ad67a2) against x1888 at 30 s on the six
+boards: the same placements. `scripts/check.sh --fast` passes.
+
+**The work clock**: the work booked is the same by construction (each
+change books what the computation it replaces booked).
+
+### Candidates not taken
+
+- **The anneal's bucket query** (MegaDrive: a quarter of its anneal's
+  instructions after the changes, `Grid::scan`; DSP-ADAU1452 9 %): its
+  reach is the largest far-side part's, so every query spans hundreds of
+  cells. With the far pairs adding 0.0, only the near pairs' order
+  matters, and it can be rebuilt from each item's first cell in the
+  query's row-major scan and its place in that cell's list; but the work
+  books the distinct items of the whole range and the far pairs' work by
+  their kinds, which needs counts of the items by kind over the range
+  (2-D prefix counts kept through every move, by inclusion and exclusion
+  of the four sides). Not tried this round; the next step for the anneal.
+- **The kept lines' counts across moves** (the fourth commit, taken back):
+  see above. Counts that hold across the anneal's moves would need the
+  grid to change less than it does.
+- **The outlines by cells in both axes** (the third commit, taken back by
+  the fourteenth): the even-odd ray then walks every column of a row; a
+  grid for the near and corner tests beside the bands' rows for the ray
+  would keep both, but the near tests took as long by cells as by bands
+  on protoesp, and the 0xCB panel's placement did not move with either
+  (the panel's frames rule of x1883 changed its placement and its share
+  of polygon tests since the profile). Not tried.
+- **The race's rip-up beyond its scan**: the heap removed the scan of
+  every net after every rip-up, and the rip-ups' wall clock did not move
+  measurably (3 to 9 s on the largest boards, under the load): their cost
+  is the ripped nets' restamps and the standing's pour analysis. Not
+  measured further (wall clock only, no work charged).
+- **A twin's count less the other moved nets' lines** (the sixth
+  commit, replaced by the tenth): the subtraction
+  tested every twin against every kept line of the other moved nets;
+  video's legaliser took 35 % more instructions (80.2 G against 59.3 G).
+- **Copy-on-write of the race's routers**: the probes' routers route on
+  (the kept one) or are dropped; a copy that shares the occupancy until
+  the rip-up writes it would need the occupancy, the stamp lists and the
+  nets' branches behind shared pointers in every router. The copies
+  without the history (the seventh commit) and the rip-up from a heap
+  (the second) are the cheap part of it.
+- **The anneal's wirelength terms after a move** (DSP-ADAU1452 17 % of
+  its anneal's instructions, `net_length`): the pins of the moved part's
+  nets turned to their poses; the other parts' pins could be folded once
+  per net as the refinement's `MovingNets` does, but the anneal's nets
+  change with every kept move. Not tried.

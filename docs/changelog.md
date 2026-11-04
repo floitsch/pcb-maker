@@ -11,6 +11,54 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-04 (the fourth placer round: the anneal's overlap sums and crossings, the legaliser's crossings, the race's rip-up; the same placements, 1.4 % cheaper)
+
+Branch placer-profile-4 (fourteen commits, rebased on main 67ad67a2,
+x1888); binaries `build/bin/pcb-maker-prof6-r13` (the measured head on
+6a95300a), `-r14` (with the fourteenth commit), `-final` (rebased),
+`-c1` to `-c6`, `-r1b`, `-r9` to `-r12` (commits on their way); outputs
+in `build/prof6/`. docs/profiling.md, "The fourth placer round
+(2026-11-04)", has the profile, the changes and the tables.
+
+- **The profile** (fifteen boards at the layout's budget, a throwaway
+  build's per-category timing; callgrind of the phases): the anneal is 22
+  to 74 % of every board but video and SmartSpin2k, its overlap sums up
+  to 39 % (MegaDrive, where a quarter of the anneal is the sum's bucket
+  query: its reach is the largest far-side part's) and its crossings term
+  up to 26 %; video's legaliser is its crossings (57 %); half the fresh
+  lines of the anneal and the legaliser are a kept line again, bit for
+  bit; the race's ripped count costs its rip-ups (up to 11 s), not its
+  copies (under 1 s).
+- **The changes, each the same computation and the same work booked**:
+  the anneal's far pairs by their boxes and the parts' reaches, its pair
+  sum inlined, its pair lookups from flags; `before`'s records for
+  `after`'s new lines that are a kept line again; the legaliser's and the
+  refinement's fresh twins counted once a search (large nets' lines found
+  by their ends); the race's rip-up from a heap of upper bounds, its
+  copies without the negotiation's history. Three were taken back or
+  replaced, measured worse: kept counts across the anneal's moves (+10 %
+  of MegaDrive's anneal instructions), a twin's count less the other
+  moved nets' lines (+35 % of video's legaliser), the outlines by cells in
+  both axes (+1 % of protoesp's legaliser). Unit tests against the direct
+  computation (mutation-checked); `PCB_PLACER_CHECK_OVERLAP=1` and the new
+  `PCB_ROUTER_CHECK_RIP_UP=1` check them at every use.
+- **Measured** (pinned pairs on SMT siblings against x1885): the
+  placement's CPU -1.4 % over the fifteen boards (-2.2 % the eleven dense,
+  +0.9 % the four fingerprint boards; video -13.6 %, split72_left -3.5 %,
+  Glasgow -3.1 %, the others -2 to +2 %): **the round's target of -15 % is
+  not met**. Instructions at 10 s of work: video's legaliser -19.5 %,
+  DSP-ADAU1452's anneal -10.6 %, MegaDrive's -3.6 %. In seven layout pairs
+  the placement -3.8 % (video -14.5 %, DSP-ADAU1452 +4.2 %), the layout
+  -1.1 % (video -5.3 %); the race's copies 10 to 29 % smaller, its
+  rip-ups within the load's noise.
+- **Identical**: every placement of the pairs and every placed board,
+  result board and fingerprint line (as a set) of the layout pairs; the
+  head against x1884 on all fifteen boards at 60 s; each commit's binary
+  on six boards at 30 s; check mode on seven boards at 60 s; the
+  route-mode fingerprints of Castor, k30-SBC, jetson and Sisu (Castor's
+  still dad3a6cb3787); the rebased head against x1888 on six boards.
+  `scripts/check.sh --fast` passes.
+
 ## Committed on 2026-11-04 (trial 4's leftovers: the verdict's order and wording)
 
 Branch trial4-leftovers: what [the trial](reviews/2026-11-04-fresh-agent-trial-4.md)
