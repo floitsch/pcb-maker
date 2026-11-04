@@ -1483,7 +1483,7 @@ fn fab(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     } else {
         (Vec::new(), 0)
     };
-    let lines = pcb_kicad::fab_verdict_lines(&manifest, kept, kept_count);
+    let lines = pcb_kicad::fab_verdict_lines(&manifest, kept, kept_count, input_project.is_some());
     verdict.reason = lines.reason;
     verdict.next_actions = lines.next_actions;
     verdict.input_observations = lines.input_observations;

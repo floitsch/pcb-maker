@@ -2262,7 +2262,7 @@ fn next_actions(
         if let Some(room) = &facts.room
             && let Some(size) = room.suggested_outline_mm
         {
-            let mut action = room_action(room, size);
+            let mut action = room_action_beside(room, size, &facts.placement_hints);
             if let Some(note) = facts.sub_boards.as_ref().and_then(frames_and_tabs_note) {
                 action.push_str(&format!("; {note}"));
             }
@@ -2365,7 +2365,30 @@ fn next_actions(
                 };
                 format!("{}: {how}", parts.join(", "))
             });
-            let mut action = finding_action(kind, *count, &findings, kept.as_deref());
+            // Where only some findings lie between kept parts, those are
+            // said apart from the run's own (trial 4's leftovers: "move
+            // those nets' parts apart" for all of them); route mode moves
+            // no part at all.
+            let partly = if kept.is_none() && ELECTRICAL_KINDS.contains(&kind.as_str()) {
+                let between: Vec<&DrcFinding> = findings
+                    .iter()
+                    .copied()
+                    .filter(|finding| kept_parts_of(&[finding], facts.input.as_ref()).is_some())
+                    .collect();
+                kept_parts_of(&between, facts.input.as_ref()).map(|mut parts| {
+                    parts.sort_by(|a, b| crate::canonical_order::natural_cmp(a, b));
+                    (between.len(), format!("{}: fixed", parts.join(", ")))
+                })
+            } else {
+                None
+            };
+            let context = match (&kept, &partly) {
+                (Some(parts), _) => KeptParts::All(parts),
+                (None, Some((count, parts))) => KeptParts::Some(*count, parts),
+                (None, None) if facts.command.starts_with("route") => KeptParts::RouteMode,
+                (None, None) => KeptParts::Unknown,
+            };
+            let mut action = finding_action(kind, *count, &findings, context);
             if matches!(kind.as_str(), "length_out_of_range" | "skew_out_of_range")
                 && let Some(summary) = lengths_summary(&facts.lengths)
             {
@@ -3011,11 +3034,26 @@ fn top_counts(map: &BTreeMap<String, usize>, limit: usize) -> String {
 /// One finding type's next action: what KiCad found (the rule, the nets
 /// or the items of the type's findings) and the setting or step that
 /// addresses it, where there is one.
+/// What of a finding type's findings lies between parts the run kept
+/// where the input has them (`kept_parts_of`), for `finding_action`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum KeptParts<'a> {
+    /// Not known, or none of them (a layout's placed parts).
+    Unknown,
+    /// Every finding: the parts, with how they were kept (`J1, R31:
+    /// fixed`).
+    All(&'a str),
+    /// This many of them, between these parts.
+    Some(usize, &'a str),
+    /// Route mode, which keeps every part: none is the run's to move.
+    RouteMode,
+}
+
 fn finding_action(
     kind: &str,
     count: usize,
     findings: &[&DrcFinding],
-    kept: Option<&str>,
+    kept: KeptParts<'_>,
 ) -> String {
     // The rule as KiCad states it: the first parenthesis of the first
     // finding's description ("Clearance violation (netclass 'Default'
@@ -3100,8 +3138,20 @@ fn finding_action(
         // (framework_mobo_lefthalf's fixed R31 and R32 under J1's pads, as
         // the designer put them): "move the parts apart" is not the
         // run's to do.
-        (None, Some(parts)) if ELECTRICAL_KINDS.contains(&kind) => format!(
+        (None, KeptParts::All(parts)) if ELECTRICAL_KINDS.contains(&kind) => format!(
             "every finding lies between parts kept where the input has them ({parts}), copper this run neither placed nor routed, but between two nets, so it counts and fab-kicad-board refuses it; move one of the parts in the input (or free it from fixed so the placer does), or accept it knowingly (a KiCad exclusion, fab-kicad-board --allow-findings); the designer's board as --reference makes it pre-existing where that board has it, which the release still refuses"
+        ),
+        (None, KeptParts::Some(between, parts)) if ELECTRICAL_KINDS.contains(&kind) => format!(
+            "{between} of them lie between parts kept where the input has them ({parts}), copper this run neither placed nor routed: those are the input's, not the run's to move (move one of the parts in the input, or free it from fixed so the placer does; the designer's board as --reference makes them pre-existing where it has them, which the release still refuses); the other {}: {step}",
+            count.saturating_sub(between)
+        ),
+        (None, KeptParts::RouteMode) if ELECTRICAL_KINDS.contains(&kind) => format!(
+            "route mode keeps every part where the input has it, so none is the route's to move: a finding with a track or via of this route is the router's ({}), one between the input's parts alone is the input's (move a part in the input, or lay the board out with layout-kicad-board; the input as --reference, route mode's default, makes it pre-existing)",
+            if kind.starts_with("hole") {
+                "the project's min_hole_clearance and min_hole_to_hole (Board Setup) set the rule"
+            } else {
+                "check whether the rule is one the router does not keep: rules.unmodelled and rules.custom_rules in board-router.json"
+            }
         ),
         (None, _) if kind == "copper_edge_clearance" && !part_cutout_pairs(findings).is_empty() => {
             format!(
@@ -3168,7 +3218,12 @@ pub fn kept_parts_actions(facts: &KiCadRunFacts) -> (Vec<String>, usize) {
         if let Some(mut parts) = kept_parts_of(&findings, facts.input.as_ref()) {
             parts.sort_by(|a, b| crate::canonical_order::natural_cmp(a, b));
             let kept = format!("{}: unchanged from the input", parts.join(", "));
-            actions.push(finding_action(kind, findings.len(), &findings, Some(&kept)));
+            actions.push(finding_action(
+                kind,
+                findings.len(),
+                &findings,
+                KeptParts::All(&kept),
+            ));
             total += findings.len();
         }
     }
@@ -3450,16 +3505,43 @@ fn frames_and_tabs_note(sub: &crate::sub_boards::KiCadSubBoardsReport) -> Option
 }
 
 pub fn room_action(room: &crate::placement_room::KiCadRoom, size: [f64; 2]) -> String {
+    room_action_beside(room, size, &[])
+}
+
+/// `room_action` after the placement's `hints`: a side whose hint already
+/// says how full it is (`room_hint`: "the front side is 97 % full
+/// (room.utilization ...)") gets only the area it is short of, so that
+/// "% full" reads once (trial 4's ULK: the hint and the outline's advice
+/// both said it).
+fn room_action_beside(
+    room: &crate::placement_room::KiCadRoom,
+    size: [f64; 2],
+    hints: &[String],
+) -> String {
+    let said = |side: &str| {
+        let start = format!("the {side} side ");
+        hints.iter().any(|hint| {
+            hint.starts_with(&start)
+                && (hint.contains(" % full (room.utilization") || hint.contains("no usable area"))
+        })
+    };
     let full: Vec<String> = ["front", "back"]
         .iter()
         .zip(room.utilization.iter().zip(room.missing_mm2))
         .filter(|(_, (_, missing))| *missing > 0.0)
         .map(|(side, (share, missing))| {
-            format!(
-                "the {side} side is {:.0} % full, {missing:.0} mm2 short of {:.0} %",
-                share * 100.0,
-                room.target_utilization * 100.0
-            )
+            if said(side) {
+                format!(
+                    "the {side} side is {missing:.0} mm2 short of {:.0} %",
+                    room.target_utilization * 100.0
+                )
+            } else {
+                format!(
+                    "the {side} side is {:.0} % full, {missing:.0} mm2 short of {:.0} %",
+                    share * 100.0,
+                    room.target_utilization * 100.0
+                )
+            }
         })
         .collect();
     let mut why = full;
@@ -4113,6 +4195,57 @@ mod tests {
             .find(|action| action.starts_with("clearance 2"))
             .unwrap();
         assert!(action.contains("move those nets' parts apart"), "{action}");
+        // R31's finding between kept parts, R32's of a part the run
+        // placed: the one said to be the input's, the other the run's
+        // (they were both "move those nets' parts apart").
+        let mut r31 = between("R31", "B6", "Net-(J1-CC2)");
+        r31["items"][0]["uuid"] = "r31-kept".into();
+        let mut mixed = routed(tally_drc(&report(vec![
+            r31,
+            between("R32", "B7", "Net-(J1-SBU2)"),
+        ])));
+        mixed.command = "layout-kicad-board".into();
+        mixed.input = Some(KiCadInputItems {
+            uuids: ["r31-kept".to_string(), "B6".to_string(), "B7".to_string()]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        });
+        let verdict = judge(&mixed);
+        let action = verdict
+            .next_actions
+            .iter()
+            .find(|action| action.starts_with("clearance 2"))
+            .unwrap();
+        assert!(
+            action.contains(
+                "1 of them lie between parts kept where the input has them (J1, R31: fixed)"
+            ) && action.contains("those are the input's, not the run's to move")
+                && action.contains("--reference")
+                && action.contains("the other 1: move those nets' parts apart"),
+            "{action}"
+        );
+        // Route mode keeps every part: never "move the parts apart".
+        let mut route = routed(tally_drc(&report(vec![
+            between("R31", "B6", "Net-(J1-CC2)"),
+            json!({"type": "hole_clearance", "severity": "error",
+                   "description": "Hole clearance violation (board setup constraints hole clearance 0.2500 mm; actual 0.2000 mm)",
+                   "items": [{"description": "Via [GND] on F.Cu - B.Cu", "uuid": "v1", "pos": {"x": 3.0, "y": 1.0}},
+                             {"description": "PTH pad 1 [VCC] of J2", "uuid": "j2-1", "pos": {"x": 3.3, "y": 1.0}}]}),
+        ])));
+        route.routed_connections = 54;
+        let actions = judge(&route).next_actions;
+        for kind in ["clearance 1", "hole_clearance 1"] {
+            let action = actions
+                .iter()
+                .find(|action| action.starts_with(kind))
+                .unwrap();
+            assert!(
+                action.contains("route mode keeps every part where the input has it, so none is the route's to move")
+                    && !action.contains("parts apart"),
+                "{action}"
+            );
+        }
         // The fab gate with --input: the same findings, said per type.
         facts.command = "fab-kicad-board".into();
         facts.input = Some(kept(&["J1", "R31", "R32"]));
@@ -5456,7 +5589,7 @@ mod tests {
             "{actions}"
         );
         assert!(
-            actions.contains("clearance 2 (netclass 'Default' clearance 0.2000 mm; actual 0.1500 mm; nets GND and /SDA (2)): move those nets' parts apart"),
+            actions.contains("clearance 2 (netclass 'Default' clearance 0.2000 mm; actual 0.1500 mm; nets GND and /SDA (2)): route mode keeps every part where the input has it, so none is the route's to move: a finding with a track or via of this route is the router's (check whether the rule is one the router does not keep: rules.unmodelled and rules.custom_rules in board-router.json)"),
             "{actions}"
         );
         // The router counted no starved pad: the type's own action says
@@ -5477,7 +5610,7 @@ mod tests {
             ..DrcFinding::default()
         };
         assert!(
-            finding_action("connection_width", 1, &[&finding], None).starts_with(
+            finding_action("connection_width", 1, &[&finding], KeptParts::Unknown).starts_with(
                 "connection_width 1 (board setup constraints minimum connection width 0.1270 mm; actual 0.1137 mm): "
             )
         );
@@ -5487,7 +5620,7 @@ mod tests {
             ..DrcFinding::default()
         };
         assert!(
-            finding_action("clearance", 1, &[&finding], None)
+            finding_action("clearance", 1, &[&finding], KeptParts::Unknown)
                 .starts_with("clearance 1 (clearance 0.1270 mm; actual 0.0000 mm): ")
         );
         // A part's copper at another part's own Edge.Cuts hole (trial 4's
@@ -5502,7 +5635,12 @@ mod tests {
             ],
             ..DrcFinding::default()
         };
-        let action = finding_action("copper_edge_clearance", 1, &[&at_cutout], None);
+        let action = finding_action(
+            "copper_edge_clearance",
+            1,
+            &[&at_cutout],
+            KeptParts::Unknown,
+        );
         assert!(action.contains("(SW13 at SW20's cutout)"), "{action}");
         assert!(!action.contains("edge constraint's max_mm"), "{action}");
         // The board's own edge keeps the edge advice.
@@ -5514,7 +5652,7 @@ mod tests {
             ..at_cutout.clone()
         };
         assert!(
-            finding_action("copper_edge_clearance", 1, &[&at_edge], None)
+            finding_action("copper_edge_clearance", 1, &[&at_edge], KeptParts::Unknown)
                 .contains("edge constraint's max_mm")
         );
         // A footprint's own pad and hole (the schematic trial's USB-C
@@ -5529,7 +5667,7 @@ mod tests {
         }
         };
         let (a1, b1) = (own("A1"), own("B1"));
-        let action = finding_action("hole_clearance", 2, &[&a1, &b1], None);
+        let action = finding_action("hole_clearance", 2, &[&a1, &b1], KeptParts::Unknown);
         assert!(
             action.contains("between items of one footprint (J1)")
                 && action.contains("--allow-findings")
@@ -5541,7 +5679,8 @@ mod tests {
             ..own("A1")
         };
         assert!(
-            finding_action("hole_clearance", 1, &[&apart], None).contains("move the parts apart")
+            finding_action("hole_clearance", 1, &[&apart], KeptParts::Unknown)
+                .contains("move the parts apart")
         );
     }
 
@@ -5560,7 +5699,7 @@ mod tests {
             ],
             ..DrcFinding::default()
         };
-        let action = finding_action("solder_mask_bridge", 1, &[&finding], None);
+        let action = finding_action("solder_mask_bridge", 1, &[&finding], KeptParts::Unknown);
         assert!(
             action.contains("no route keeps a zone's fill out")
                 && action.contains("(Rectangle of J6 on B.Mask)")
@@ -5576,7 +5715,7 @@ mod tests {
             ],
             ..finding.clone()
         };
-        let action = finding_action("solder_mask_bridge", 1, &[&pad], None);
+        let action = finding_action("solder_mask_bridge", 1, &[&pad], KeptParts::Unknown);
         assert!(
             action.contains("the router keeps its tracks and vias"),
             "{action}"
@@ -5699,6 +5838,36 @@ mod tests {
                 "nothing to do (the input's): schematic parity findings (missing_footprint 1, net_conflict 1",
             )
         }));
+    }
+
+    #[test]
+    fn how_full_a_side_is_reads_once() {
+        // Trial 4's ULK: the placement's hint ("the front side is 97 %
+        // full (room.utilization ...)") and the outline's advice ("the
+        // front side is 97 % full, ... mm2 short of 70 %") said it twice.
+        let mut facts = KiCadRunFacts::new("place-kicad-board");
+        facts.unplaced = vec!["SW1".into()];
+        facts.placement_hints = vec![crate::board_placer::room_hint("front", 0.97, 3080.0)];
+        facts.room = Some(crate::placement_room::KiCadRoom {
+            outline_mm: [80.0, 40.0],
+            utilization: [0.97, 0.75],
+            target_utilization: 0.7,
+            missing_mm2: [1188.0, 220.0],
+            suggested_outline_mm: Some([118.0, 107.5]),
+            ..Default::default()
+        });
+        let actions = judge(&facts).next_actions.join("\n");
+        assert_eq!(actions.matches("97 % full").count(), 1, "{actions}");
+        assert!(
+            actions.contains("try an outline of 118.0 x 107.5 mm (room.suggested_outline_mm; now 80.0 x 40.0): the front side is 1188 mm2 short of 70 %; the back side is 75 % full, 220 mm2 short of 70 %"),
+            "{actions}"
+        );
+        // Without the hint (an input error's room) the advice says both.
+        let room = facts.room.clone().unwrap();
+        assert!(
+            room_action(&room, [118.0, 107.5])
+                .contains("the front side is 97 % full, 1188 mm2 short of 70 %")
+        );
     }
 
     #[test]

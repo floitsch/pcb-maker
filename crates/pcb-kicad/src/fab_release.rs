@@ -926,6 +926,7 @@ pub fn fab_verdict_lines(
     manifest: &KiCadFabRelease,
     kept: Vec<String>,
     kept_count: usize,
+    input_given: bool,
 ) -> KiCadFabVerdictLines {
     let drc = &manifest.drc;
     let errors: usize = drc.errors.values().sum();
@@ -992,7 +993,15 @@ pub fn fab_verdict_lines(
             manifest.zip.as_deref().unwrap_or("no zip")
         )
     } else {
-        if kept.is_empty() {
+        if kept.is_empty() && !input_given {
+            // Judged on its own the board's parts are all its own: which of
+            // them a layout or a route kept where its input has them (the
+            // input's to move, not the run's) only --input tells.
+            actions.push(
+                "fix the findings (route the open connections, move what is too close) and release again; --allow-findings exports anyway; for a board pcb-maker laid out or routed, --input <the project it came from> names the findings between parts kept where that project has them, which are the input's to move, not the run's (and the layout's or route's --reference <the designer's project> counts the designer's own as pre-existing)"
+                    .into(),
+            );
+        } else if kept.is_empty() {
             actions.push(
                 "fix the findings (route the open connections, move what is too close) and release again; --allow-findings exports anyway"
                     .into(),
@@ -1244,7 +1253,7 @@ mod tests {
             skipped: Vec::new(),
             findings: vec!["clearance: Pad 1 [A] of R31 on F.Cu at (1.00, 2.00); Pad 2 [B] of J1 on F.Cu at (1.10, 2.00)".into()],
         };
-        let refused = fab_verdict_lines(&manifest, Vec::new(), 0);
+        let refused = fab_verdict_lines(&manifest, Vec::new(), 0, false);
         assert_eq!(
             refused.reason,
             "refused: KiCad's DRC: 2 errors (clearance 2), 1 unconnected items, 0 warnings, 0 cosmetic, 8 within one footprint each (not blocking), 8 the board's own, not electrical (not blocking); nothing was exported"
@@ -1252,6 +1261,15 @@ mod tests {
         let actions = &refused.next_actions;
         assert_eq!(actions.len(), 4, "{actions:#?}");
         assert!(actions[0].starts_with("fix the findings"), "{actions:#?}");
+        // Judged on its own: --input names the parts a run kept.
+        assert!(
+            actions[0].contains(
+                "--input <the project it came from> names the findings between parts kept"
+            ),
+            "{actions:#?}"
+        );
+        let with_input = fab_verdict_lines(&manifest, Vec::new(), 0, true);
+        assert!(!with_input.next_actions[0].contains("--input"));
         assert!(
             actions[1].starts_with("clearance: Pad 1 [A] of R31"),
             "{actions:#?}"
@@ -1269,6 +1287,7 @@ mod tests {
             &manifest,
             vec!["clearance 2 (...): every finding lies between parts kept where the input has them (J1, R31: unchanged from the input)".into()],
             2,
+            true,
         );
         assert!(
             kept.next_actions[0].starts_with("2 of the errors lie between parts the layout kept")
@@ -1283,7 +1302,7 @@ mod tests {
         manifest.released = true;
         manifest.drc.errors.clear();
         manifest.drc.unconnected_items = 0;
-        let released = fab_verdict_lines(&manifest, Vec::new(), 0);
+        let released = fab_verdict_lines(&manifest, Vec::new(), 0, false);
         assert!(
             released
                 .reason
