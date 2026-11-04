@@ -106,7 +106,10 @@ unconnected, exit 0 (`"total_seconds": 30`).
 
 The report lists what needs a look:
 - `missing`: footprints not found in any library (the board leaves them
-  out), or unreadable, each with where it was looked for: no library of
+  out), or unreadable, one line per footprint and reason with the parts
+  that share it (`8 parts: D27, D29, ... (LLP1006-2M:VISHAY-LLP1006-2M
+  not found: ...)`, a single part's `R2 (...)`; since 2026-11-04,
+  `missing_parts` counts the parts), each with where it was looked for: no library of
   that name (add it to the schematic project's `fp-lib-table`, or put its
   `.pretty` folder in the schematic's folder or in `<project-dir>`, the
   output), a table entry whose folder is not there (the message names the

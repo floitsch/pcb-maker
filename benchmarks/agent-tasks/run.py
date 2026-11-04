@@ -2137,7 +2137,7 @@ def schematic_admitted(task, arguments, token):
         schematic.append_items(board, shapes + pours + copies)
     except Exception as error:  # noqa: BLE001
         return stop("constraints", f"{type(error).__name__}: {error}")
-    row.update(missing=len(report["missing"]), substituted=len(report["substituted"]),
+    row.update(missing=report.get("missing_parts", len(report["missing"])), substituted=len(report["substituted"]),
                unmatched_pins=len(report["unmatched_pins"]),
                from_board=len(report.get("footprints_from_board") or []),
                board_versions=report.get("board_versions") or 0,
@@ -2204,7 +2204,7 @@ def schematic_admitted(task, arguments, token):
     # compare.passes_strict: the row's `missing`, set above), not again here.
     # Where the flow stopped: the first stage that fell short.
     if report["missing"]:
-        row.update(stopped="import", why=f"{len(report['missing'])} footprints missing: "
+        row.update(stopped="import", why=f"{report.get('missing_parts', len(report['missing']))} footprints missing: "
                    + "; ".join(report["missing"][:3])[:300])
     elif code == 2:
         row.update(stopped="constraints", why=verdict.get("reason", row.get("error", ""))[:300])

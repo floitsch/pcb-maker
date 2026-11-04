@@ -14,8 +14,14 @@ pub struct KiCadNetlistImport {
     pub footprints: usize,
     pub nets: usize,
     /// Components without a footprint field, or whose footprint was not
-    /// found in the libraries (left out of the board).
+    /// found in the libraries (left out of the board): one line per
+    /// footprint and reason, the parts that share it folded into it
+    /// (`8 parts: D27, D29, ... (LLP1006-2M:VISHAY-LLP1006-2M not found:
+    /// ...)`; a single part's line is `R2 (...)`).
     pub missing: Vec<String>,
+    /// The parts `missing` leaves out of the board (its lines fold parts
+    /// of one footprint).
+    pub missing_parts: usize,
     /// Footprints not in the library the schematic names, taken from
     /// another library, under KiCad 9's name, under KiCad 10's (a vendor
     /// prefix: `Texas_DSG0008A_WSON-8-...`) or from an add-on library under
@@ -1743,7 +1749,8 @@ pub fn import_kicad_netlist_with(
         board: board_path,
         footprints,
         nets,
-        missing,
+        missing_parts: missing.len(),
+        missing: fold_missing(&missing),
         substituted,
         add_on_libraries: add_on,
         relocated_libraries: library_notes.relocated.clone(),
@@ -2289,6 +2296,29 @@ fn own_pad_gaps(
 }
 
 /// The import report's `starter.why` where no key matrix is found among
+/// The missing parts' lines (`<reference> (<why>)`, one per part) folded
+/// by their reason, which names the footprint: `<n> parts: <references>
+/// (<why>)` where several parts share one, in the order of their first
+/// part (trials 4 and 6: the ULK's 90 lines were two footprints,
+/// eurorack-pmod's 19 three).
+fn fold_missing(lines: &[String]) -> Vec<String> {
+    let mut groups: Vec<(&str, Vec<&str>)> = Vec::new();
+    for line in lines {
+        let (reference, why) = line.split_once(' ').unwrap_or((line.as_str(), ""));
+        match groups.iter_mut().find(|(other, _)| *other == why) {
+            Some((_, references)) => references.push(reference),
+            None => groups.push((why, vec![reference])),
+        }
+    }
+    groups
+        .into_iter()
+        .map(|(why, references)| match references.as_slice() {
+            [one] => format!("{one} {why}"),
+            many => format!("{} parts: {} {why}", many.len(), many.join(", ")),
+        })
+        .collect()
+}
+
 /// `switches` switch-like parts on the board, `missing` parts left out of
 /// it: the matrix is found from the parts on the board, so with parts
 /// missing it says that first (trial 4's ULK: 88 of 92 footprints missing,
@@ -2309,6 +2339,69 @@ fn no_matrix_why(switches: usize, missing: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn missing_parts_fold_by_their_footprint() {
+        // Trial 6's eurorack-pmod: two holes without a footprint and eight
+        // diodes of one library the fp-lib-table names on the designer's
+        // machine, one line per part before.
+        let why = "(LLP1006-2M:VISHAY-LLP1006-2M not found: the fp-lib-table names \"LLP1006-2M\" at /home/seb/libs/LLP1006-2M.pretty, which is not there)";
+        let mut lines = vec![
+            "H1 (no footprint)".to_string(),
+            "H2 (no footprint)".to_string(),
+        ];
+        lines.extend(
+            ["D27", "D29", "D28"]
+                .iter()
+                .map(|reference| format!("{reference} {why}")),
+        );
+        lines.push("J3 (ffc:FH12 unreadable: no footprint form)".to_string());
+        assert_eq!(
+            fold_missing(&lines),
+            vec![
+                "2 parts: H1, H2 (no footprint)".to_string(),
+                format!("3 parts: D27, D29, D28 {why}"),
+                "J3 (ffc:FH12 unreadable: no footprint form)".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_import_folds_the_missing_parts_of_one_footprint() {
+        let directory = std::env::temp_dir().join(format!(
+            "pcb-maker-netlist-fold-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let netlist = directory.join("test.net");
+        fs::write(
+            &netlist,
+            r#"(export (version "E")
+              (components
+                (comp (ref "D27") (value "ESD") (footprint "LLP1006-2M:VISHAY-LLP1006-2M") (sheetpath (names "/") (tstamps "/")) (tstamps "1111"))
+                (comp (ref "H1") (value "hole") (sheetpath (names "/") (tstamps "/")) (tstamps "2222"))
+                (comp (ref "D28") (value "ESD") (footprint "LLP1006-2M:VISHAY-LLP1006-2M") (sheetpath (names "/") (tstamps "/")) (tstamps "3333")))
+              (nets
+                (net (code "1") (name "A") (node (ref "D27") (pin "1") (pintype "passive")) (node (ref "D28") (pin "1") (pintype "passive")))))"#,
+        )
+        .unwrap();
+        let report = import_kicad_netlist(&netlist, &directory.join("out"), "test", 2).unwrap();
+        fs::remove_dir_all(&directory).ok();
+        assert_eq!(report.missing_parts, 3);
+        assert_eq!(report.missing.len(), 2, "{:?}", report.missing);
+        assert!(
+            report.missing[0].starts_with(
+                "2 parts: D27, D28 (LLP1006-2M:VISHAY-LLP1006-2M not found: no library \"LLP1006-2M\""
+            ),
+            "{:?}",
+            report.missing
+        );
+        assert_eq!(report.missing[1], "H1 (no footprint)");
+    }
 
     #[test]
     fn no_matrix_with_parts_missing_says_the_parts_are_missing() {

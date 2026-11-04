@@ -164,7 +164,8 @@ def import_schematic(binary, record, work, board_id, layers, footprints_from=Non
     if code not in (0, 1) or not stdout.strip():
         return None, steps, (stderr.strip().splitlines() or ["no output"])[-1][:300]
     report = json.loads(stdout)
-    steps["missing_first"] = len(report["missing"])
+    # Parts, not lines: a line folds the parts of one footprint (2026-11-04).
+    steps["missing_first"] = report.get("missing_parts", len(report["missing"]))
     if report["missing"] and record.get("library_fixes"):
         # What an agent does with `missing` (docs/agents.md, section 0): the
         # library goes into the project's fp-lib-table, then import again
