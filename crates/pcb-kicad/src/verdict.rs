@@ -281,21 +281,27 @@ pub enum KiCadReference {
         errors: BTreeMap<String, usize>,
         /// The findings one by one, for the strict rule.
         findings: Vec<DrcFinding>,
+        /// KiCad's unconnected items on the reference board: how far the
+        /// designer's route of the designer's placement got.
+        unconnected: usize,
     },
     /// KiCad could not check the reference; every error counts.
     Failed { from: PathBuf, error: String },
 }
 
-/// KiCad's DRC errors on `project`'s board, counted as the benchmarks
-/// count the designer's board: zones refilled, errors only; by type and
-/// one by one. The report is kept at `report` (see `kicad_drc_report`).
+/// KiCad's DRC of `project`'s board, counted as the benchmarks count the
+/// designer's board: zones refilled; its errors by type and one by one
+/// and its unconnected items are what the reference holds
+/// (`KiCadReference::Findings`). The report is kept at `report` (see
+/// `kicad_drc_report`).
 pub fn reference_findings(
     project: &Path,
     board_id: &str,
     report: &Path,
-) -> Result<(BTreeMap<String, usize>, Vec<DrcFinding>), String> {
-    let tally = tally_drc(&kicad_drc_report(project, board_id, report, true)?);
-    Ok((tally.errors, tally.findings))
+) -> Result<DrcTally, String> {
+    Ok(tally_drc(&kicad_drc_report(
+        project, board_id, report, true,
+    )?))
 }
 
 /// KiCad's DRC of `project`'s board, every severity, zones refilled when
@@ -2082,8 +2088,9 @@ fn next_actions(
             ));
         }
         actions.push(format!(
-            "connections are open: {}; `pcb-maker inspect-routing-run` on this output names each open net's pads, rules and KiCad's pairs and each hot spot's pads and nets (--reference: the designer's route of the net): read it before changing the design. Where the designer's board routes those nets on this placement under these rules (reference.connected), density is not shown to be the reason and more room, layers or narrower classes are not called for; without that evidence they are hypotheses to test (classes never below the board's minimum)",
-            if where_.is_empty() { "the router's count; drc.json lists KiCad's unconnected items".to_string() } else { where_.join(", ") }
+            "connections are open: {}; `pcb-maker inspect-routing-run` on this output names each open net's pads, rules and KiCad's pairs and each hot spot's pads and nets (--reference: the designer's route of the net): read it before changing the design. {}",
+            if where_.is_empty() { "the router's count; drc.json lists KiCad's unconnected items".to_string() } else { where_.join(", ") },
+            open_evidence(facts)
         ));
     }
     if facts.routes
@@ -2259,6 +2266,36 @@ fn input_tagged(observation: String) -> String {
 pub(crate) fn input_observation(warning: &str) -> bool {
     (warning.starts_with("fixed part ") && warning.contains("stay where the input put them"))
         || (warning.starts_with("fixed parts ") && warning.contains(" overlap"))
+}
+
+/// What the open connections' action says of the evidence for density
+/// (more room, layers, narrower classes). Route mode routes the input's
+/// placement, so the designer's route of a net (inspect-routing-run's
+/// `reference.connected`) is of this placement; a layout's placement is
+/// its own, and the designer's route is of the designer's placement
+/// (trial 4: the Quanta75's and the oro link's advice asked for evidence
+/// that cannot exist for a layout). No run is asked for that the tool
+/// could make: a layout's evidence is its own routes (`moves`).
+fn open_evidence(facts: &KiCadRunFacts) -> String {
+    if !facts.command.starts_with("layout") {
+        return "Where the designer's board routes those nets on this placement under these rules (reference.connected), density is not shown to be the reason and more room, layers or narrower classes are not called for; without that evidence they are hypotheses to test (classes never below the board's minimum)".into();
+    }
+    let designer = match &facts.reference {
+        KiCadReference::Findings { unconnected, .. } => format!(
+            " (KiCad finds {unconnected} unconnected items on the designer's board, the --reference)"
+        ),
+        _ => String::new(),
+    };
+    let own = match &facts.moves {
+        Some(moves) if moves.confirmed > 0 => format!(
+            ": its move descent routed {} moves of its parts and kept {}, from {} open terminals to {} (verdict.moves)",
+            moves.confirmed, moves.kept, moves.open_before, moves.open_after
+        ),
+        _ => String::new(),
+    };
+    format!(
+        "This placement is the layout's, not the designer's: reference.connected is the designer's route on the designer's placement{designer}, which shows that the nets route under these rules there, not on this placement, and no route of the designer's on this placement exists; the evidence for this placement is the layout's own routes{own}. More room, layers or narrower classes are hypotheses to test (classes never below the board's minimum)"
+    )
 }
 
 /// The next action for a pour in many pieces: `keep_whole` under the
@@ -2896,6 +2933,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
             from,
             errors: reference,
             findings: reference_findings,
+            ..
         } => (
             split_findings(&errors, reference).0,
             split_findings_strict(&findings, reference_findings),
@@ -3336,6 +3374,7 @@ mod tests {
             from: "designer".into(),
             errors: tally.errors,
             findings: tally.findings,
+            unconnected: tally.unconnected,
         }
     }
 
@@ -5056,5 +5095,70 @@ mod tests {
             )
         ));
         assert!(!input_observation(&actions[0]));
+    }
+
+    /// A layout with three open connections (trial 4's Quanta75 run 1).
+    fn open_layout() -> KiCadRunFacts {
+        let report = json!({
+            "violations": [],
+            "unconnected_items": [
+                {"items": [{"description": "Pad 23 [+1V1] of U1 on F.Cu"}, {"description": "Pad 1 [+1V1] of C9 on F.Cu"}]},
+                {"items": [{"description": "Pad 50 [+1V1] of U1 on F.Cu"}, {"description": "Pad 1 [+1V1] of C9 on F.Cu"}]},
+                {"items": [{"description": "Pad 27 [Row1] of U1 on F.Cu"}, {"description": "Pad 2 [Row1] of D3 on F.Cu"}]}
+            ],
+            "schematic_parity": []
+        });
+        let mut facts = KiCadRunFacts::new("layout-kicad-board");
+        facts.routable_connections = 172;
+        facts.routed_connections = 170;
+        facts.hot_spots = 10;
+        facts.native = Some(tally_drc(&report));
+        facts
+    }
+
+    #[test]
+    fn a_layouts_open_connections_are_not_judged_by_the_designers_placement() {
+        // Trial 4: the advice asked, for a layout, for the designer's route
+        // "on this placement", which cannot exist (the layout placed U1
+        // and its capacitors anew).
+        let mut facts = open_layout();
+        facts.moves = Some(crate::KiCadMovesFact {
+            trials: 40,
+            confirmed: 10,
+            kept: 1,
+            parts_moved: vec!["C25".into()],
+            open_before: 71,
+            open_after: 8,
+        });
+        facts.reference = KiCadReference::Findings {
+            from: "designer".into(),
+            errors: BTreeMap::new(),
+            findings: Vec::new(),
+            unconnected: 0,
+        };
+        let verdict = judge(&facts);
+        let action = verdict
+            .next_actions
+            .iter()
+            .find(|action| action.starts_with("connections are open"))
+            .unwrap();
+        assert!(
+            action.contains("This placement is the layout's, not the designer's: reference.connected is the designer's route on the designer's placement (KiCad finds 0 unconnected items on the designer's board, the --reference)"),
+            "{action}"
+        );
+        assert!(
+            action.contains("its move descent routed 10 moves of its parts and kept 1, from 71 open terminals to 8 (verdict.moves)"),
+            "{action}"
+        );
+        assert!(
+            !action.contains("on this placement under these rules"),
+            "{action}"
+        );
+        // Route mode routes the input's placement: the designer's route of
+        // a net is evidence there.
+        facts.command = "route-kicad-board".into();
+        let verdict = judge(&facts);
+        assert!(verdict.next_actions.iter().any(|action| action.starts_with("connections are open")
+            && action.contains("Where the designer's board routes those nets on this placement under these rules (reference.connected)")));
     }
 }

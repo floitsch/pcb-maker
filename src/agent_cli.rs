@@ -376,10 +376,11 @@ fn check_reference(
         project.display()
     );
     facts.reference = match pcb_kicad::reference_findings(project, board_id, report) {
-        Ok((errors, findings)) => KiCadReference::Findings {
+        Ok(tally) => KiCadReference::Findings {
             from: project.to_path_buf(),
-            errors,
-            findings,
+            errors: tally.errors,
+            findings: tally.findings,
+            unconnected: tally.unconnected,
         },
         Err(error) => KiCadReference::Failed {
             from: project.to_path_buf(),
