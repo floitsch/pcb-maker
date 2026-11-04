@@ -47,6 +47,133 @@ impl PourMap {
             }
             solid.push(result);
         }
+        // The pieces by runs of solid nodes along the rows (until
+        // 2026-11-04 a flood node by node: a tenth of brickpico's and the
+        // MusicBrain busboard's routes). A run joins the runs of the row
+        // above it overlaps, and diagonally the run there that ends just
+        // before its start or begins just after its end: there both
+        // common neighbours are free of the pour by construction, the
+        // flood's only diagonal steps. A piece is numbered at its first
+        // run in the lattice's order, the node the flood started it from:
+        // the same labels.
+        let mut label: Vec<Vec<u32>> = solid.iter().map(|layer| vec![0; layer.len()]).collect();
+        let mut pieces = 0;
+        // Runs: (start, end) cells, inclusive, of one layer.
+        let mut runs: Vec<(usize, usize)> = Vec::new();
+        let mut parent: Vec<u32> = Vec::new();
+        fn root(parent: &mut [u32], mut run: u32) -> u32 {
+            while parent[run as usize] != run {
+                let next = parent[run as usize];
+                parent[run as usize] = parent[next as usize];
+                run = next;
+            }
+            run
+        }
+        for layer in 0..solid.len() {
+            let solid = &solid[layer];
+            if solid.is_empty() {
+                continue;
+            }
+            runs.clear();
+            parent.clear();
+            let mut above = 0..0;
+            for y in 1..ny.saturating_sub(1) {
+                let row = runs.len();
+                let mut x = 1;
+                while x + 1 < nx {
+                    if !solid[y * nx + x] {
+                        x += 1;
+                        continue;
+                    }
+                    let first = x;
+                    while x + 1 < nx && solid[y * nx + x] {
+                        x += 1;
+                    }
+                    runs.push((y * nx + first, y * nx + x - 1));
+                    parent.push(parent.len() as u32);
+                }
+                let here = row..runs.len();
+                // Join the runs of this row with those of the row above.
+                let mut index = above.start;
+                for run in here.clone() {
+                    let (a, b) = (runs[run].0 - y * nx, runs[run].1 - y * nx);
+                    // Runs above ending before the node before `a` are
+                    // behind this run and the ones after it.
+                    while index < above.end && runs[index].1 - (y - 1) * nx + 1 < a {
+                        index += 1;
+                    }
+                    let mut other = index;
+                    while other < above.end {
+                        let (c, d) = (runs[other].0 - (y - 1) * nx, runs[other].1 - (y - 1) * nx);
+                        if c > b + 1 {
+                            break;
+                        }
+                        let joined = if d + 1 == a {
+                            // Up-left of the run's start: the step from the
+                            // run above's end towards +x +y.
+                            diagonal(layer, runs[other].1, 0)
+                        } else if c == b + 1 {
+                            // Up-right of the run's end: the step from it
+                            // towards +x -y.
+                            diagonal(layer, runs[run].1, 1)
+                        } else {
+                            true
+                        };
+                        if joined {
+                            let (p, q) = (
+                                root(&mut parent, run as u32),
+                                root(&mut parent, other as u32),
+                            );
+                            if p != q {
+                                parent[p.max(q) as usize] = p.min(q);
+                            }
+                        }
+                        other += 1;
+                    }
+                }
+                above = here;
+            }
+            // Numbered in the runs' order, each piece at its first run.
+            let mut numbers: Vec<u32> = vec![0; runs.len()];
+            let label = &mut label[layer];
+            for run in 0..runs.len() {
+                let top = root(&mut parent, run as u32) as usize;
+                if numbers[top] == 0 {
+                    pieces += 1;
+                    numbers[top] = pieces as u32;
+                }
+                let number = numbers[top];
+                label[runs[run].0..=runs[run].1].fill(number);
+            }
+        }
+        Self {
+            solid,
+            label,
+            pieces,
+        }
+    }
+
+    #[cfg(test)]
+    fn build_by_flood(
+        grid: &Grid,
+        free: &[Vec<bool>],
+        diagonal: &dyn Fn(usize, usize, usize) -> bool,
+    ) -> Self {
+        let (nx, ny) = (grid.nx, grid.ny);
+        // `free` already says that the pour's brush fits, so every free node
+        // is solid copper; the rim is left out to keep neighbour access safe.
+        let mut solid = Vec::new();
+        for layer in free {
+            let mut result = vec![false; layer.len()];
+            if !layer.is_empty() {
+                for y in 1..ny.saturating_sub(1) {
+                    for x in 1..nx.saturating_sub(1) {
+                        result[y * nx + x] = layer[y * nx + x];
+                    }
+                }
+            }
+            solid.push(result);
+        }
         let mut label: Vec<Vec<u32>> = solid.iter().map(|layer| vec![0; layer.len()]).collect();
         let mut pieces = 0;
         let mut stack = Vec::new();
@@ -368,6 +495,58 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    #[test]
+    fn the_pieces_by_runs_are_the_floods() {
+        for (nx, ny, seed, density) in [
+            (23, 17, 1, 2),
+            (40, 9, 7, 3),
+            (9, 31, 11, 2),
+            (64, 64, 3, 4),
+            (3, 3, 5, 2),
+            (1, 5, 5, 2),
+            (50, 50, 9, 6),
+        ] {
+            let mut state: u64 = seed | 1;
+            let mut next = || {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                state
+            };
+            let free: Vec<Vec<bool>> = (0..3)
+                .map(|layer| {
+                    if layer == 1 {
+                        Vec::new()
+                    } else {
+                        (0..nx * ny)
+                            .map(|_| !next().is_multiple_of(density))
+                            .collect()
+                    }
+                })
+                .collect();
+            let grid = Grid {
+                origin: [0.0, 0.0],
+                pitch: 0.1,
+                nx,
+                ny,
+            };
+            // A diagonal step allowed by its start and orientation alone,
+            // about half of them.
+            let diagonal = |layer: usize, start: usize, orientation: usize| {
+                !(start.wrapping_mul(2654435761) ^ (layer * 7 + orientation)).is_multiple_of(3)
+            };
+            let runs = PourMap::build(&grid, &free, &diagonal);
+            let flood = PourMap::build_by_flood(&grid, &free, &diagonal);
+            assert_eq!(runs.pieces, flood.pieces, "{nx} x {ny}, seed {seed}");
+            assert_eq!(runs.label, flood.label, "{nx} x {ny}, seed {seed}");
+            assert_eq!(runs.solid, flood.solid);
+            // Every diagonal allowed: the same too.
+            let all = PourMap::build(&grid, &free, &|_, _, _| true);
+            let all_flood = PourMap::build_by_flood(&grid, &free, &|_, _, _| true);
+            assert_eq!(all.label, all_flood.label);
         }
     }
 
