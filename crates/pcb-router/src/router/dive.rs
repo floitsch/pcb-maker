@@ -600,13 +600,21 @@ impl Router {
         if victims.contains(&stayer) || !self.nets[stayer as usize].complete {
             routed.push(stayer);
         }
+        // `PCB_ROUTER_DIVE_DIVER_FIRST` (an experiment): the diver right
+        // after the stayer, before the other victims.
+        let diver_first = std::env::var_os("PCB_ROUTER_DIVE_DIVER_FIRST").is_some();
+        if diver_first {
+            routed.push(diver);
+        }
         routed.extend(
             victims
                 .iter()
                 .copied()
                 .filter(|victim| *victim != stayer && *victim != diver),
         );
-        routed.push(diver);
+        if !diver_first {
+            routed.push(diver);
+        }
         for net in &routed {
             self.dive_route(*net, settings.local, work);
         }
@@ -704,6 +712,8 @@ impl Router {
             )
         };
         let mut trials = 0;
+        // A diver's stub at a site is tried once, whichever pair named it.
+        let mut tried: HashSet<(usize, usize)> = HashSet::new();
         let mut reasons: Vec<String> = Vec::new();
         // The best trial: open after, the nets as they were, as it left them, and what it was.
         let mut best: Option<(usize, Vec<Saved>, Vec<Saved>, String)> = None;
@@ -724,6 +734,9 @@ impl Router {
                     reasons.push(format!("{} has no via site", name(self, diver_pad)));
                 }
                 for run in sites {
+                    if !tried.insert((diver_pad, run)) {
+                        continue;
+                    }
                     if trials >= DIVE_TRIALS {
                         break 'pairs;
                     }
@@ -747,8 +760,20 @@ impl Router {
                             let before = open_saved(&saved);
                             let after = open_now(self, &saved);
                             let is_clean = clean(self, &saved);
+                            let open: Vec<String> = saved
+                                .iter()
+                                .filter(|entry| self.open_measure(entry.0) > 0)
+                                .map(|entry| {
+                                    format!(
+                                        "{} {}",
+                                        self.board.nets[entry.0 as usize].name,
+                                        self.open_measure(entry.0)
+                                    )
+                                })
+                                .collect();
                             reasons.push(format!(
-                                "{what}: {before} open to {after}, clean {is_clean}"
+                                "{what}: {before} open to {after} [{}], clean {is_clean}",
+                                open.join(", ")
                             ));
                             if is_clean
                                 && after < before
