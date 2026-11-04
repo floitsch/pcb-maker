@@ -4245,6 +4245,144 @@ pins within 0.8 of the maximum (`length_maxima`; docs/placer.md, "Length
 maxima and the far side of vias in pads (2026-10-28)"): oro's layout
 12 -> 5 `length_out_of_range`, seven ULPI nets met at 31.500 mm.
 
+## Length minima: the placer's share and the reroute (2026-11-04)
+
+Fresh-agent trial 6's firestarter `compute` (docs/reviews/2026-11-04-fresh-agent-trial-6.md):
+`DVP_Bus_Length_Matching` asks 25 to 27 mm of ten nets from the camera
+FPC J2 to the ESP32-S3 module U2; the layout put J2 so near U2 that the
+routes were a third of the minimum, and route mode on the designer's
+placement left six of ten short. Two levers, so that an agent need not
+keep the designer's tracks by hand: the placer keeps a minimum's two
+parts apart (`length_minima`, docs/placer.md, "Length minima
+(2026-11-04)"), and the router routes a net still short after its
+meanders again with room beside it (`length_reroute`). Both are
+measured below and both stay off: the reroute met a length only with
+the placer's floor, and the floor cost the firestarter connections.
+
+**Census** (the nightly of 2026-11-04, main 688b59ca; the intake's
+`.kicad_dru` files grepped for `length` and `skew` constraints; the
+board setup: 27 projects carry KiCad 10's `tuning_profiles`, every one
+empty, and no net class names one, so the custom rules are the only
+length rules):
+
+| board | where | rule | bound | nets | the nightly's result (within / under / over / no copper the rule counts; KiCad's findings) |
+| --- | --- | --- | --- | --- | --- |
+| oro-os link | tasks v7: the sweep, the designer tier | `ULPI_exact_length`, `length` | 31.4 to 31.6 mm (a window) | 12 ULPI | sweep layout 8 / 1 / 3 / 0, 4 `length_out_of_range`; designer route 11 / 0 / 1 / 0, 1 |
+| Sisu_SSE-9 | tasks v7: the sweep, the designer tier, the fingerprints | `USB 90 ohm differential geometry on L2 and L5`, `skew` on In1.Cu and In4.Cu (a matched group) | 0.5 mm | 11 USB | sweep 4 / 0 / 0 / 7, none; designer 4 / 0 / 0 / 7, none |
+| hstarmans firestarter `compute` | the intake (the expansion data's quick run; trial 6) | `DVP_Bus_Length_Matching`, `length` | 25 to 27 mm | 10 DVP | x1902 here: layout seed 1 5 / 4 / 1 / 0, seed 101 4 / 6 / 0 / 0; route mode on the designer's placement 3 / 6 / 1 / 0 |
+| KiCad QA length_calculations (two copies) | the intake | `CASE_1` to `CASE_8`, `length` | windows of 0.0002 to 0.021 mm | 6, 8 | not lowered: the classes are assigned but not defined in the project (item (5) of "What is left" above) |
+| KiCad QA time_calculations, issue24772 fw16_MCIO8i | the intake | `length` and `skew` in ps | - | - | unmodelled (no bound in lengths) |
+| OpenAIO-Whoop | the intake | two `skew` 5 mm | - | 2 pairs | rated warnings by the project: not lowered |
+| jorisplusplus pcdock base_board | the intake | nine `length` with an opt only | none | - | no bound: KiCad has no finding, nothing to do |
+| QA skew_group_matched_drc, skew_within_diff_pairs_drc | the intake | `skew` 3 mil | - | - | the undefined class again; within pairs |
+
+The short tier and the expansion tier (46 boards) have no length rule.
+Of the task boards only oro and Sisu carry one; oro's has a minimum
+(31.4 mm), Sisu's skew a relative one (the group's longest less 0.5 mm),
+which the placer does not hold (a group's minimum moves with its
+longest net) and the reroute does.
+
+**What a meander adds** (route mode on the designer's placement, x1902,
+`route-off` below). The route between two pins is 1.02 to 1.04 times
+their octilinear distance (DVP_Y2 12.57 mm for 12.34, Y3 10.39 for
+10.00, Y4 9.35 for 8.97, Y5 11.48 for 11.03). The bumps at full height
+(1 mm, 0.45 mm apart at 0.25 mm wide and 0.2 mm clearance) add 2.2 mm a
+millimetre of straight track; on this bus the meanders added 0.97 of
+the route on Y3, 0.69 on Y4, about half on PCLK, Y7 and Y8 (the last
+two reached the target), and nothing on Y5 and Y6 and 0.35 mm on Y2,
+which run inside the bus with a neighbour at the clearance on either
+side. So a net whose pins lie closer than half its minimum is short
+whatever the route does with room beside it; that is the placer's
+share. The meanders already spread over the net's straight tracks (the
+work list of `meander_net`: the longest first, as many bumps as hold
+the rest, fewer where not, what is left of a split track tried again;
+`meanders_spread_over_the_nets_straight_tracks` pins it): where they
+fall short the tracks have no room, not too few tracks.
+
+**The reroute** (`length_reroute`, `PCB_ROUTER_LENGTH_REROUTE`, off by
+default; in
+`match_lengths`, so in route mode, every written attempt and a layout's
+own routes). The nets still below their minimum after their meanders
+(or below their skew group's) lose their routes and meanders and are
+routed again by a router of their own (`reroute_with_room`, the pairs'
+fallback's way): every other net's tracks and vias kept as copper, those
+farther than 1.5 mm from the rerouted nets' pads kept off by the
+clearance plus half a meander's full height (else a quarter), so that
+the route leaves room for bumps on either side; the escapes from a
+fine-pitch connector keep the plain clearance. One net at a time, the
+most short first, so that a bus's short nets fan out from each other
+into the lanes the others left; a short net keeps its escapes (its
+route within 1.5 mm of its pads) until its turn; those that find no
+route with room go together at the clearance. Then each is meandered
+again, and all are kept when every one connects and the sum of their
+misses from their windows is smaller; else, one at a time, each alone
+with the other routes as they are, kept where it ends nearer its
+window. Its work (1 % of the ladder's budget a net, at least 1 s) is
+charged to the ladder and the layout. The verdict's `lengths` gives per
+net `rerouted_mm` (before and after, where kept) and
+`reroute_work_seconds`; the length action says how much meander was
+added, how many reroutes were kept and how much is still missing, then
+the lever.
+
+**Measured.** *Route mode on the designer's placement* (the expansion
+tier's stripped copy, the router's default budget, two threads; off
+x1902, on `-k` and `-m`, the reroute's two stages): the same board, 0
+unconnected, 7 `length_out_of_range` (6 under, DVP_Y9 over), 3 of 10
+within, CPU 455 s off and 381 to 409 on (the machine's load; work 294 s
+off, 304 on). The six short nets (Y2 to Y7) all found a route together at
+the full budget (Y2, Y4 and Y6 with room, Y3, Y5 and Y7 only at the
+clearance), but their meanders then added 17.1 mm where they had added
+24.9: undone; alone, with the bus around them, none found a route with
+room. At a 60 s ladder (the probes before) the routers' 1 s each was too
+little for the last nets. The bus's inner nets need the whole bus spread,
+or the inner layer: the designer runs Y2 to Y7 on In2.Cu, which our
+route keeps for the GND pour.
+
+*Layouts* (the firestarter, the placer's `length_minima` off as by
+default, the reroute on, `-p`, against x1902; KiCad unconnected /
+`length_out_of_range` (under, over) / nets within / CPU s):
+
+| seed | off (x1902) | the reroute on (`-p`) |
+| --- | --- | --- |
+| 1 | 5 / 5 (4, 1) / 5 of 10 / 2055 | 5 / 5 (4, 1) / 5 / 2006: DVP_Y5 8.83 to 9.72 mm |
+| 101 | 11 / 6 (6, 0) / 4 / 1361 | 12 / 6 (6, 0) / 4 / 1373: DVP_PCLK 15.7 to 17.6 mm |
+
+The placements are byte for byte the same; the reroute ran in every
+written attempt and on the layout's own routes (four to six nets each
+time; the group's reroute found no route for all of them on four of six
+tries, kept everything on one, and alone it kept one to three nets), but
+no net crossed its minimum: the same length findings, a little more
+meander (44.8 against 43.9 mm, 55.9 against 54.0), KiCad one unconnected
+item more at seed 101 (the work it charged, 14 s, changed the ladder's
+later attempts: the router's own count is 11 both).
+
+With `length_minima` on as well (docs/placer.md, "Length minima
+(2026-11-04)") the reroute kept DVP_Y4 (14.1 mm and 7.6 of meander to
+13.6 and 8.1, still short at 21.7) and, alone, DVP_Y6 (16.7 and 6.6 to
+20.4 and 5.6: 26.0, within) at seed 101; at seed 1 it tried DVP_Y9 and
+undid it.
+
+*Identity*: the reroute runs only for a net below a rule's minimum after
+its meanders. Castor_and_Pollux's mainboard (no length rule) routed in
+route mode from the nightly's placement at the short tier's budget (400
+s, two threads) gives byte for byte the same board with x1902 and `-n`
+(work 164.16 s both).
+
+Default: **off** (`length_reroute`, `PCB_ROUTER_LENGTH_REROUTE=1` turns it
+on): on no board did a length finding go, in route mode the board is the
+same at more work, and in a layout it costs work and once a connection.
+With the placer's floor it met one net more (DVP_Y6, above), so it stays
+as the switch to try with `length_minima`.
+
+Unit tests: `meanders_spread_over_the_nets_straight_tracks`,
+`a_net_short_in_a_bus_is_routed_again_with_room_for_its_meanders` (a net
+between two neighbours at 0.5 mm, 30 mm for a 40 mm minimum: no bump
+fits; the reroute takes it out of the bus and meanders it within, every
+clearance kept, the neighbours untouched; off, it stays short),
+`a_track_is_cut_where_it_enters_a_pads_reach` (board_router/lengths.rs)
+and `length_findings_say_which_nets_are_unrouted_and_which_over_by_what`
+(verdict.rs: what was added, the reroutes kept, what is missing).
+
 ## CPU profile (2026-10-25)
 
 Where a route's CPU goes and how to profile it: [profiling.md](profiling.md).

@@ -264,9 +264,17 @@ ladder's judge), 5, then the rest.
    removing halos loses routing; more seeds do not close it (the
    designer's placement routes the OpenESC 4in1 to 15 open where ours
    leaves 88). Untested: exit blockage (the fan-out assignment) as a placement
-   cost, length maxima known to the placer (oro link's D5 and D6 are over
-   their maximum by their pads' distance), routing room from congestion
-   rather than pin count, seeded orientation starts in the race. The back
+   cost, routing room from congestion
+   rather than pin count, seeded orientation starts in the race. Length
+   rules are the placer's since 2026-10-28 (maxima, `length_maxima`) and
+   2026-11-04 (minima, `length_minima`, off: a two-part net's pins at least
+   half the minimum apart, the firestarter's lengths met and its
+   connections lost; docs/placer.md, "Length minima (2026-11-04)"); open:
+   a floor that keeps the firestarter's connections, and
+   room for the meanders inside a dense bus on a fixed placement (the
+   reroute, `length_reroute`, finds the firestarter's inner DVP nets no
+   route with room: the bus would have to spread as a whole, or use the
+   inner layer the designer used and our pours keep). The back
    is kept free under a BGA's enclosed pads (`via_in_pad_far_side`, on
    since 2026-10-28; MIDAS-MK1's B2 holds its via with the room below
    on and off), and since 2026-11-04 the room around a grid array whose
@@ -668,6 +676,7 @@ Switches and experiment hooks (change the result):
 - `PCB_ROUTER_DIFF_PAIRS_SKEW`: differential pairs: `0` turns off the meanders that match a coupled pair's two lengths to the rules' skew (else the pair's gap) or length (the skew is still measured and reported; docs/router.md, "Skew and length").
 - `PCB_ROUTER_DIFF_PAIRS_RETURN_VIAS`: differential pairs: `0` turns off the return vias of the reference net (GND) beside a coupled run's vias, `1` turns them on (default on; the settings' `diff_pair_return_vias` wins; docs/router.md, "Return vias").
 - `PCB_ROUTER_LENGTH_MATCHING`: turns the length and skew rules' meanders off (0) or on (1) where the settings name none (`length_matching`; unset, on): a net shorter than a custom rule's `length` minimum, or further than a `skew` maximum below the longest net of its rule, gets a meander on a straight track of its route, written as a KiCad tuning pattern (in route mode and on a layout's own routes), and the verdict's `lengths` reports each such net; a net over a `length` maximum is routed again the short way where the nets in its way can go round (`PCB_ROUTER_LENGTH_REPAIR_PRESENT`) (off: none of it; docs/router.md, "Length and skew rules").
+- `PCB_ROUTER_LENGTH_REROUTE`: turns the length reroute on (1) or off (0) where the settings name none (`length_reroute`; unset, off): a net still short of its `length` minimum (or its `skew` group's) after the meanders is routed again alone, the other nets' tracks kept and kept off by half a meander's height more than the clearance beyond 1.5 mm of its pads, meandered again and kept where it ends nearer its window (docs/router.md, "Length minima: the placer's share and the reroute (2026-11-04)").
 - `PCB_ROUTER_LENGTH_REPAIR_PRESENT`: the price of sharing a node for the length repair's search (default 2): a net longer than its custom `length` rule's maximum is routed again through the nets in its way, which then go round (docs/router.md, "Length and skew rules").
 - `PCB_ROUTER_BUS_BUNDLES`: sets the router's `bus_bundles` (an experiment, off): buses of four or more nets joining the same footprints route first, in pad order, inside one corridor, side by side (docs/experiments/bus-bundles.md).
 - `PCB_ROUTER_BUS_LANE`: the router's `bus_lane_cost`: the factor on a bus member's step off the lane beside its neighbours (default 1.5).
@@ -703,7 +712,7 @@ Diagnostics (stderr unless said; the result does not change):
 - `PCB_ROUTER_FANOUT_WHY`: the fan-out step (`fanout`) prints every dense pad with its ways out, their costs, the one chosen and the pads left short.
 - `PCB_PAD_EXITS_WHY`: the pad-exits test prints, per closed pad, every rim node of its pocket and the item that closes it, and per open pad where its pocket opened.
 - `PCB_PAD_EXITS_COUNTS`: pad-exits-kicad-board prints the probe's counts beside the CPU time of the lowering and the probe (for calibrating the test's work).
-- `PCB_ROUTER_LENGTH_DEBUG`: the length repair: prints per net over its maximum what the priced search found, the victims and why the exchange was kept or undone.
+- `PCB_ROUTER_LENGTH_DEBUG`: the length repair: prints per net over its maximum what the priced search found, the victims and why the exchange was kept or undone; the length reroute: its router's log and per net the route's status.
 - `PCB_ROUTER_DIFF_PAIRS_DEBUG`: differential pairs: prints each launch, each link's path, the copper refused with the reason, each stub straightened or not, and the fallback's work.
 - `PCB_ROUTER_BUS_WHY`: bus bundles: prints every bus found and every member broken out of its bundle.
 - `PCB_ROUTER_DEBUG`: the router's verbose lines (failed searches, the resolution, what blocks a stub, lattice details).

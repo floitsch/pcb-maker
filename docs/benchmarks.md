@@ -2210,6 +2210,12 @@ To measure a change (short tier, route mode from fixed placements, spliced
 reruns, the objectives line), see benchmarks/agent-tasks/README.md, "How to
 measure".
 
+Length rules (2026-11-04): of the task boards only oro's link (a `length`
+window on 12 ULPI nets) and Sisu_SSE-9 (a `skew` group) carry one; the
+census of the intake's `.kicad_dru` files and what the nightly makes of
+them is in docs/router.md, "Length minima: the placer's share and the
+reroute (2026-11-04)".
+
 From the schematic (2026-10-15): `harvest_schematics.py` fetched the
 schematics and project libraries of 79 of the 109 boards; the schematic
 tier (`run.py --tier schematic`, benchmarks/agent-tasks/README.md, "The

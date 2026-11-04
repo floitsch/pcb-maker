@@ -139,6 +139,13 @@ Route critical traces by hand (or through KiCad's API), then
 (`kept_copper` in `board-router.json`). `--strip` routes from nothing.
 `strip-kicad-tracks <board> <out> --keep-nets 'DVP_*'` keeps only those nets' tracks
 (a designer's length-matched bus, which route mode then keeps and routes around).
+A `length` rule's minimum in a layout: the router meanders; `{"placer":
+{"length_minima": true}}` also holds the net's two parts at least half the minimum
+apart (off by default: more lengths met, connections lost on the one board measured;
+board-placer.json's `length_rules` says where the pins ended), and the router's
+`length_reroute` (off) routes a net still short again with room for its meanders. Keep a designer's bus (`--keep-nets`) for
+a dense bus on a fixed placement whose inner nets have no room beside them (route
+mode; the `length_out_of_range` action says when).
 A layout always strips (it moves parts).
 
 ## Fab release

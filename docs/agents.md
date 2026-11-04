@@ -706,16 +706,31 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     aside, where that opens nothing (no hard bound: a placement that puts
     the net's pads further apart than the maximum leaves it over). The
     verdict's `lengths` says per net what came of it. Only where the
-    project has such a rule; elsewhere nothing changes. In a layout the
-    placer keeps every two pins of such a net within 0.8 of the maximum
-    (`length_maxima`, on by default: docs/config-reference.md); it knows no
-    minimum, so it may put the parts closer than the meanders have room
-    for (trial 6's firestarter, DVP_BUS 25 to 27 mm: the camera connector
-    9 mm from the module, 4 of 10 nets short). A minimum the meanders do
-    not reach: route those nets by hand and route again (the board's own
-    tracks are kept), or keep the designer's with `strip-kicad-tracks
-    --keep-nets` (Other commands); the `length_out_of_range` action says
-    which.
+    project has such a rule; elsewhere nothing changes. With
+    `length_reroute` (off by default: on the firestarter it met no more
+    lengths) a net still below its minimum after the meanders is routed
+    again with room beside it for the bumps and meandered again, kept
+    where it ends nearer the rule (docs/router.md, "Length minima: the
+    placer's share and the reroute (2026-11-04)").
+    In a layout the placer keeps every two pins of such a net within 0.8
+    of the maximum (`length_maxima`, on); with `length_minima` (off by
+    default: on trial 6's firestarter it met more lengths and lost
+    connections) it also keeps a two-part net's pins at least half the
+    minimum apart: closer, no route with meanders makes up the minimum.
+    board-placer.json's `length_rules` says per net what the placer held
+    and where the pins ended (with either switch), and the constraints
+    template names the rule with its nets and parts. A minimum the layout
+    leaves short: lay out again with `{"placer": {"length_minima": true}}`
+    and compare, or hold the parts apart with an `apart` entry
+    (docs/constraints.md). What still needs `strip-kicad-tracks
+    --keep-nets` (Other commands) or tracks routed by hand: a dense bus on
+    a fixed placement whose inner nets have a neighbour at the clearance
+    on either side (route mode on the firestarter's designer placement:
+    the reroute finds them no room, six of ten stay short), and a minimum
+    that needs a layer the route keeps for a plane (the designer's DVP
+    tracks run on In2.Cu, ours keep it for the GND pour). The
+    `length_out_of_range` action says what the meanders added, what is
+    missing and which lever is left.
 - **Router options in layout mode.** The same file goes in the router
   config position:
   `pcb-maker layout-kicad-board <dir> <id> <out> router.json layout.json`.

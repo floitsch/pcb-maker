@@ -113,6 +113,45 @@ router's question of every placement (placer.md, "Pads without a way out
 - **Default: off**, pending the full protocol: the opened pads mostly stay
   open in the routes, and the race does not rank by closed pads.
 
+## Committed on 2026-11-04 (length minima: the placer's floor, the length reroute)
+
+Branch length-minima (`build/bin/pcb-maker-len1-a` to `-p`). Trial 6's
+firestarter (`DVP_Bus_Length_Matching`, 25 to 27 mm on ten nets) asked
+for a lever on a length rule's minimum in the placer and the router
+(docs/router.md, "Length minima: the placer's share and the reroute
+(2026-11-04)"; docs/placer.md, "Length minima (2026-11-04)").
+
+- **Census**: of the task boards only oro's link (a `length` window,
+  31.4 to 31.6 mm on 12 ULPI nets) and Sisu_SSE-9 (a `skew` group) carry
+  a length rule; the intake adds the firestarter, KiCad's QA boards
+  (undefined classes, ps), OpenAIO-Whoop (warnings) and pcdock (an opt
+  only); no project defines a tuning profile.
+- **Placer**: `length_minima` holds a two-part net's pins at least half
+  the minimum apart (`Relation::Within`'s floor; the anneal, the
+  legaliser, the refinement, no global placement force). Measured: the
+  lengths gain on both boards (`length_out_of_range` 17 to 9 summed over
+  the firestarter's seeds 1 and 101 and oro's seed 1), oro's
+  connections too (8 to 3), the firestarter loses 22 over two seeds:
+  **off**. board-placer.json's `length_rules` (per net the window, the
+  parts, where the pins ended) with either length switch; the
+  constraints template names each length rule with its nets and parts.
+- **Router**: the meanders already spread over the net's straight tracks
+  (now pinned by a test); where they fall short the tracks have no room.
+  `length_reroute` routes the nets still below a minimum again with room
+  for the bumps (other nets' tracks kept off by half a meander's height
+  beyond 1.5 mm of the pads; one by one, then alone), meanders them
+  again and keeps them where they end nearer the window. Route mode on
+  the firestarter's designer placement: no change (the bus's inner nets
+  find no room); layouts at seeds 1 and 101 (the placer's floor off):
+  the same length findings, one KiCad item more at 101: **off** (with the
+  floor on it met one net more at seed 101). The verdict's `lengths` has
+  `rerouted_mm` and `reroute_work_seconds`; the length action says how
+  much meander was added, how many reroutes were kept, what is missing,
+  then the lever.
+- **Identity**: the place checks of protoesp and OpenESC 4in1-mini and a
+  route of Castor_and_Pollux at the short tier's budget byte for byte
+  x1902's.
+
 ## Committed on 2026-11-04 (fresh-agent trial 6: a schematic start, length rules, an authored outline)
 
 Branch fresh-agent-trial-6 (`build/bin/pcb-maker-ux11-a` to `-f`).

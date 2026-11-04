@@ -6319,6 +6319,86 @@ its switch off the lowered problem is the same) and
 `a_length_relation_measures_turned_pins_octilinearly_and_steers_the_legaliser`
 (pcb-placer legal.rs).
 
+## Length minima (2026-11-04)
+
+`length_minima` (off by default: the measurement below; KiCadBoardPlacerConfig, read like `length_maxima` from
+the router's reading of the project's rules, `length_floor_nets`). A
+`length` rule's minimum can only be met where the net's route and the
+meanders on its straight tracks reach it: the route runs about the
+pins' octilinear distance (1.02 to 1.04 times on the firestarter's
+bus), and the meanders add at most about as much again where the
+tracks have room (0.97 of the route on DVP_Y3), nothing inside a bus
+whose neighbours run at the clearance (docs/router.md, "Length minima:
+the placer's share and the reroute (2026-11-04)"). So for a net with a
+minimum whose pins lie on two parts, the two parts' pins are kept at
+least `LENGTH_FLOOR_SHARE` (0.5) of the minimum apart, octilinearly: the
+`Relation::Within` of the maximum gets a `floor`, missed by the distance
+short of it (a net with a minimum and no maximum gets the relation with
+no upper bound). A net of three parts or more is not held (its tree's
+length is not one pair's distance); its note says so. The floor is
+priced in the anneal, the legaliser (every spot of either part), the
+refinement and the relation repair (the movable part moved out along
+the line between the pins); the global placement gets no force from it:
+with one, the firestarter's placement turned as a whole (J2 pushed off
+the module from the stacked start, 115 of 122 parts more than 2 mm
+elsewhere, wirelength +51 %, 7 constraints missed against 4); without,
++5 to +14 %.
+
+board-placer.json's `length_rules` (the place check and the layout's
+`placed`): per net of such a rule its `min_mm`, `max_mm`, what the
+placer held (`apart_mm`, half the minimum; `within_mm`, 0.8 of the
+maximum; `held`: `apart`, `together`, `both` or `none`), the parts, the
+nearest and farthest of its pins across parts after the placement, and
+`kept`, with a note where the pins lie closer than the floor or beyond
+the maximum. The constraints template names the rule, its nets and
+their parts (`describe-kicad-board --constraints-template`).
+
+**Measured** (layout mode, the firestarter from trial 6's input: the
+designer's routed board with the constraints template's 2 `edge` and 47
+`near` entries and `move_all`, `--reference` the designer's project; oro
+link from tasks v7 through run.py; two threads, rates pinned at the
+reference's; off `build/bin/pcb-maker-x1902`, on `build/bin/pcb-maker-len1-n`
+= this branch with `length_minima` and the reroute on, the floor at the
+full relation weight; `-o` the floor at a fifth of it. KiCad unconnected
+/ `length_out_of_range` (under, over) / nets within / CPU s; no other
+new finding on any row):
+
+| board, seed | off | on | on, the floor at a fifth |
+| --- | --- | --- | --- |
+| firestarter, 1 | 5 / 5 (4, 1) / 5 of 10 / 2055 | 18 / 2 (0, 2) / 8 / 1146 | 14 / 5 (4, 1) / 5 / 1339 |
+| firestarter, 101 | 11 / 6 (6, 0) / 4 / 1361 | 20 / 4 (1, 3) / 6 / 1446 | 17 / 7 (6, 1) / 3 / 1128 |
+| oro link, 1 | 8 / 6 (2, 1; 3 not routed) / 6 of 12 / 1750 | 3 / 3 (2, 1) / 9 / 1876 | - |
+
+The lengths gain on both boards (findings 17 to 9 summed), and oro
+gains connections too; the firestarter loses 22 connections over the two
+seeds (its first route 4 and 11 open off, 18 and 20 on), beyond the
+seeds' spread (5 and 11 off). The place checks say where: seed 1's kept
+placement off misses 4 `near` entries at 2303 mm of wirelength, on 11 at
+2617 mm (a fifth: 11 at 2673); seed 101 7 at 2284, on 6 at 2389 (a fifth:
+6 at 2489). Holding J2 12.5 mm and more off the module turns the
+connector and moves its neighbours: the decoupling of the camera's
+regulators, the board's dense middle. A fifth of the weight keeps fewer
+nets apart (9 and 4 of 10 against 9 and 7) without saving the
+connections, so the full weight stays for the switch. Default **off**:
+the evidence rule wants every length-rule board to gain without losing
+connections beyond the seeds' spread, and the firestarter loses them. An
+agent with a minimum the layout leaves short turns it on
+(`{"placer": {"length_minima": true}}`) and compares, or holds the parts
+apart with an `apart` entry.
+
+**Identity**: on boards without a length rule the lowered problem is
+the one before (the switch only adds relations for the rule's nets):
+the place checks of protoesp and OpenESC 4in1-mini (the nightly's task
+inputs and router settings, two threads) wrote byte for byte the same
+placed boards with x1902 and with `-n` (the switch on), board-placer.json
+the same but for its timings. Unit tests:
+`a_length_floor_holds_two_pins_apart_and_moves_the_part_out` (pcb-placer
+legal.rs: the violation, no global force, the repair's target, the
+legaliser) and `a_length_minimums_two_parts_are_held_apart_and_reported`
+(board_placer/tests.rs: the relation, the refinement holding R5 off J1,
+board-placer.json's `length_rules`, the switches off giving the problem
+without the rule).
+
 ## The designer as teacher (2026-11-04)
 
 Placement is 76 % of the gap between our layouts and the designer's
