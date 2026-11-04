@@ -11,6 +11,59 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-05 (the failed-experiment switches removed)
+
+Branch prune-switches, measured on main 52a6b639 (x1906, `build/bin/pcb-maker-prune1-a`) and rebased onto 32cd79f8 (x1907, `build/bin/pcb-maker-prune1-b`) and 00dad210 (x1908).
+Florian's call of 2026-11-04: the placer and router carried a dozen
+off-by-default switches from levers that lost or were null under their
+measurement; they cost agents and maintainers and buy nothing. One commit
+per switch, so that each can be reverted; what each measured is in
+handover.md, "Removed experiments (2026-11-04)", with the changelog entry
+that has its details, and the measurement sections of router.md and
+placer.md stay, headed as removed.
+
+- **Router**: `crossing_dive` (the crossing census under
+  `PCB_ROUTER_TROUBLE_WHY` stays), `fanout` with `fanout_cost`,
+  `fanout_depth` and `PCB_ROUTER_FANOUT`, `_COST`, `_DEPTH`, `_FREE`,
+  `_VIAS`, `_WHY` (the plan's dense pads and straight ways out stay for
+  the census), `last_connections`, `capacitated_corridors` with
+  `_retries`, `_stuck`, `_growth` and their variables (the router's plan,
+  its learning and pcb-global's `CorridorPlan`; the search counters stay
+  as `pcb_router::search_counts`), `island_stubs` (the verdict's
+  `repairs.island_stubs` and its environment echo with it).
+- **Placer**: `align_rows`, `routing_demand`, `routing_room` with its
+  four knobs (`room.rs`; `Relaxation::halos` stays, the skeleton race
+  sets it), `shared_halos`,
+  `anneal_far_side_gaps`, `ratsnest_crossings.global`
+  (`crossings::reorder`), `net_weight`'s `sqrt`, `flat`, `rail` (steep is
+  `board_placer::net_weight`), `legality`'s `"kicad"` and `"strict"`.
+- **Layout**: `final_route_from_state` (`PCB_LAYOUT_FINAL_FROM_STATE`,
+  the ladder's `fresh_open` give-up with it).
+- **Kept**: everything on by default (`exact_escape_stubs`, `bga_fanout`,
+  `bga_room`, the anneal's crossings, ...), the agent-facing levers with
+  a documented use (`decoupling_near`, `via_in_pad`, `pad_exits`,
+  `pair_rows`, `length_minima`, `length_reroute`, `diff_pairs`),
+  `stop_after_first_route`, the trouble repair's knobs as one family, the
+  diagnostics.
+- 6 989 lines of Rust removed, 485 added (the census test, the reduced
+  tests of kept behaviour, the slimmer corridors fact); the config
+  reference regenerated.
+
+- **Identity** (the default path byte for byte, against x1906): the
+  fingerprints (Castor, k30-SBC, jetson, Sisu; route mode from v16, 1 x
+  4, budget scale 0.25) identical line by line with the routed boards; the
+  short tier (3 x 2, its budget) all 12 placed and result boards
+  identical; place checks (`place-kicad-board` on the dense boards'
+  prepared sources: video, Quanta75, Glasgow, the OpenESC 4in1,
+  SmartSpin2k_Panelized) byte for byte. Rebased onto x1907: the short
+  tier again 12 of 12 placed and result boards identical to x1907's, the
+  place checks byte for byte. Outputs `build/prune1/`.
+- Output formats: the verdict's `repairs` loses `island_stubs` (compare.py
+  prints it only for older rows), its `corridors` the `band` searches and
+  the capacitated learning's fields; board-router.json loses
+  `island_stubs`; the placer, router and layout settings no longer accept
+  the removed keys (the structs deny unknown fields).
+
 ## Committed on 2026-11-05 (a race over skeletons, off: stage 1 passes, video breaks)
 
 Branch skeleton-race; binaries `build/bin/pcb-maker-skel1-{d,e,f}`
