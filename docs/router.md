@@ -3281,8 +3281,12 @@ launches face each other). A pair with no link falls back.
 
 **Launches.** Per link end the search goes out from between the two pads
 along the pads' normal, turned away from the part's middle (the middle
-of its pads' copper; toward the link's other end where the part does
-not say), and turned from it by up to a right angle in 15° steps, in
+of its pads' copper; for a pair point of two series parts the middle of
+both parts' pads, so that the launch leaves the parts on the pads' side,
+2026-11-04; toward the link's other end where the parts do not say:
+before, a series pair point went toward the far end, and right_io's
+C150 and C151, a pair row whose source lay beside it, launched across
+their bodies past the other pair's pads), and turned from it by up to a right angle in 15° steps, in
 0.05 mm steps up to 4 mm; per direction the first *run start* where the
 stubs' ends beside it (an offset to either side, each clear of every
 other net's copper and of both pads by the pair's gap: at a crossed end
