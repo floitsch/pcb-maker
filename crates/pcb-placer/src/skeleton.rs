@@ -49,9 +49,9 @@ impl Default for Settings {
 pub struct Report {
     /// The movable parts placed in the skeleton.
     pub skeleton_parts: usize,
-    /// Of them, those held while the passives were placed (the others
-    /// found no legal place in the skeleton and were placed with the
-    /// passives).
+    /// Of them, those held while the passives were placed (all, or none
+    /// where the skeleton left parts without a place and the seed was
+    /// placed whole).
     pub held: usize,
     /// The passives left out of the skeleton.
     pub absent: usize,
@@ -73,8 +73,9 @@ pub struct Report {
     pub level: usize,
     /// The skeleton's wirelength (its own nets) when placed.
     pub skeleton_wirelength: f64,
-    /// The passives found no legal place around the skeleton and the
-    /// part was placed whole (the better of the two kept).
+    /// The skeleton or the passives around it left parts without a legal
+    /// place and the seed was placed whole with the work left (where the
+    /// passives did, the better of the two kept: `fallback_kept`).
     pub fallback: bool,
     pub fallback_kept: bool,
 }
@@ -555,8 +556,9 @@ fn key(placement: &Placement) -> (usize, f64, f64) {
 /// them). The placement is of `problem`: its relaxation keeps both phases
 /// legal (from the skeleton's level on, each held part's halo the smaller
 /// of the two phases'), its illegal parts and constraints judged on it.
-/// Where the passives find no legal place around the skeleton, the part is
-/// placed whole with the work left, and the better kept.
+/// Where the skeleton leaves parts without a legal place, the seed is
+/// placed whole with the work left; where the passives find none around
+/// the skeleton, too, and the better kept.
 pub fn place_skeleton(
     problem: &Problem,
     config: &Config,
@@ -597,8 +599,13 @@ pub fn place_skeleton(
             .work_limit
             .map(|limit| limit.saturating_sub(used).max(1))
     };
-    // An overfull skeleton: the whole problem is no better off.
-    if skeleton.overfull {
+    // A skeleton with parts left without a legal place (an overfull one,
+    // or one whose share of the work ran out before a level seated them):
+    // the seed is placed whole with the work left. Video's skeletons at
+    // full halos left one or two memory modules without a place on 5 of
+    // 6 seeds, and the passives' placement with them movable from the next
+    // level on failed on all 5 (docs/placer.md, "A race over skeletons").
+    if skeleton.overfull || !skeleton.unplaced.is_empty() || !skeleton.illegal.is_empty() {
         let mut whole = config.clone();
         whole.work_limit = left(skeleton.work);
         let mut placement = place(problem, &whole);
@@ -610,14 +617,8 @@ pub fn place_skeleton(
         placement.skeleton = Some(report);
         return placement;
     }
-    let failed: std::collections::BTreeSet<usize> = skeleton
-        .unplaced
-        .iter()
-        .chain(&skeleton.illegal)
-        .copied()
-        .collect();
     let held: Vec<bool> = (0..problem.components.len())
-        .map(|index| !absent[index] && !problem.components[index].fixed && !failed.contains(&index))
+        .map(|index| !absent[index] && !problem.components[index].fixed)
         .collect();
     report.held = held.iter().filter(|held| **held).count();
     let mut holding = problem.clone();
@@ -629,9 +630,8 @@ pub fn place_skeleton(
     }
     let mut second = config.clone();
     second.work_limit = left(skeleton.work);
-    // From the skeleton's level on; where the skeleton left parts without
-    // a place there, from the next (they found none at that level).
-    second.first_level = skeleton.level + usize::from(!failed.is_empty());
+    // From the skeleton's level on: the held skeleton is legal there.
+    second.first_level = skeleton.level;
     let passives = place(&holding, &second);
     report.passive_work = passives.work;
     if std::env::var_os("PCB_PLACER_DEBUG").is_some() {

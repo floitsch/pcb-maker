@@ -418,8 +418,9 @@ pub struct KiCadBoardPlacerConfig {
     /// at most `join_pins` pins and no pour carries either; then holds the
     /// skeleton and places the passives around it, from the skeleton's
     /// relaxation level on. The skeleton takes at most `work_share` of the
-    /// seed's work, the passives the rest; where the passives find no
-    /// legal place the seed is placed whole with the work left. The race
+    /// seed's work, the passives the rest; where the skeleton or the
+    /// passives leave parts without a legal place the seed is placed whole
+    /// with the work left. The race
     /// ranks the seeds' placements as it ranks any. Not on panels of
     /// copies or sub-boards. Defaults: `room` 1, `work_share` 0.5,
     /// `join_pins` 8.
