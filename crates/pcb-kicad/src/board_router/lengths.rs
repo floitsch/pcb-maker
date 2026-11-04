@@ -63,6 +63,18 @@ pub struct KiCadNetLength {
     /// Why it is not matched, when it is not.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub note: String,
+    /// The length reroute (`length_reroute`): its length before the
+    /// reroute and after it (before its meanders), where the rerouted
+    /// net was kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rerouted_mm: Option<[f64; 2]>,
+    /// The reroute's work (seconds of an idle machine), kept or not.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub reroute_work_seconds: f64,
+}
+
+fn is_zero(value: &f64) -> bool {
+    *value == 0.0
 }
 
 /// A single net's meander, written as a KiCad tuning pattern
@@ -113,6 +125,11 @@ pub(crate) fn with_lengths(config: &KiCadBoardRouterConfig) -> KiCadBoardRouterC
             )
         })
         .collect();
+    let rerouted = if config.length_reroute_on() {
+        ", then routed again with room for it where that falls short (length_reroute)"
+    } else {
+        ""
+    };
     if let Some(report) = copy.project_rules.as_mut() {
         for entry in &mut report.custom_rules {
             let Some(&bounded) = used.get(&(entry.rule.as_str(), entry.constraint.as_str())) else {
@@ -123,13 +140,19 @@ pub(crate) fn with_lengths(config: &KiCadBoardRouterConfig) -> KiCadBoardRouterC
             }
             if entry.constraint == "skew" {
                 entry.status = "applied".into();
-                entry.detail = "length matching (length_matching): the nets matched to the longest of the rule by meanders after the route".into();
+                entry.detail = format!(
+                    "length matching (length_matching): the nets matched to the longest of the rule by meanders after the route{rerouted}"
+                );
             } else if bounded {
                 entry.status = "approximated".into();
-                entry.detail = "length matching (length_matching): a net below the minimum gets a meander after the route; a net over the maximum is routed again the short way where the nets in its way can go round, the maximum checked (the verdict's lengths), no hard bound".into();
+                entry.detail = format!(
+                    "length matching (length_matching): a net below the minimum gets a meander after the route{rerouted}; a net over the maximum is routed again the short way where the nets in its way can go round, the maximum checked (the verdict's lengths), no hard bound"
+                );
             } else {
                 entry.status = "applied".into();
-                entry.detail = "length matching (length_matching): a net below the minimum gets a meander after the route".into();
+                entry.detail = format!(
+                    "length matching (length_matching): a net below the minimum gets a meander after the route{rerouted}"
+                );
             }
             let prefix = format!("{} ('{}'", entry.constraint, entry.rule);
             report.unmodelled.retain(|line| !line.starts_with(&prefix));
@@ -319,6 +342,8 @@ pub(crate) fn match_lengths(
             .collect()
     };
     let mut patterns: Vec<LengthPattern> = Vec::new();
+    // The nets still short after their meanders (the length reroute's).
+    let mut shorts: Vec<Short> = Vec::new();
     let mut report: Vec<KiCadNetLength> = Vec::new();
     // Per rule's member: the layers it counts, by the router's index.
     let counted_of = |member: &KiCadLengthMember| -> Vec<bool> {
@@ -420,14 +445,11 @@ pub(crate) fn match_lengths(
                     entry.note = "not completely routed: no meander".into();
                 } else if short && let Some(id) = id {
                     let need = target - length;
-                    let (added, made) = meander_net(
-                        board,
-                        &mut result.routes,
-                        id,
-                        need,
-                        &counted_of(member),
-                        [target, min.unwrap_or(0.0), max.unwrap_or(f64::INFINITY)],
-                    );
+                    let bounds = [target, min.unwrap_or(0.0), max.unwrap_or(f64::INFINITY)];
+                    let counted = counted_of(member);
+                    let routed = result.routes[id as usize].clone();
+                    let (added, made) =
+                        meander_net(board, &mut result.routes, id, need, &counted, bounds);
                     entry.meander_mm = added;
                     patterns.extend(made);
                     if need - added > ENOUGH {
@@ -435,9 +457,48 @@ pub(crate) fn match_lengths(
                             "no straight track with room for all of it ({added:.3} of {need:.3} mm added)"
                         );
                     }
+                    // Below the minimum still (short of the target inside
+                    // the bounds is no finding).
+                    if length + added < min.unwrap_or(target) - ON_BOUND {
+                        shorts.push(Short {
+                            entry: report.len(),
+                            net: id,
+                            member,
+                            bounds,
+                            counted,
+                            length,
+                            added,
+                            routed,
+                        });
+                    }
                 }
                 report.push(entry);
             }
+        }
+    }
+    // Still short: routed again with room beside them for the meanders
+    // (`length_reroute`), one at a time, each kept where it ends nearer
+    // its window.
+    if !shorts.is_empty() && config.length_reroute_on() {
+        let together = reroute_shorts(
+            board,
+            result,
+            config,
+            &shorts,
+            &mut patterns,
+            &mut report,
+            |member, routes| length_of(member, routes),
+        );
+        if !together {
+            reroute_each(
+                board,
+                result,
+                config,
+                &shorts,
+                &mut patterns,
+                &mut report,
+                |member, routes| length_of(member, routes),
+            );
         }
     }
     // The lengths as the routes are written, a skew rule's bounds from its
@@ -497,6 +558,496 @@ pub(crate) fn match_lengths(
         }
     }
     (patterns, report)
+}
+
+/// A net still short of its rule after its meanders (`match_lengths`):
+/// its entry in the report, the rule's member, the target and bounds, the
+/// layers counted, its length before the meanders and what they added.
+struct Short<'a> {
+    entry: usize,
+    net: core::NetId,
+    member: &'a KiCadLengthMember,
+    bounds: [f64; 3],
+    counted: Vec<bool>,
+    length: f64,
+    added: f64,
+    /// Its route before the meanders.
+    routed: core::NetRoute,
+}
+
+/// The length reroute (`length_reroute`): the nets of `shorts` (still
+/// short after their meanders) lose their routes and meanders and are
+/// routed again, every other route kept: one by one, the most short
+/// first, each kept off the other nets' tracks beyond its pads' reach by
+/// half a meander's height, else a quarter (`reroute_with_room`; the nets
+/// rerouted before it among the others, so that a bus's short nets fan
+/// out from each other into the room their neighbours left), and those
+/// that found no such route together at the clearance alone; then each
+/// is meandered again. Kept, all of them, when every one connects and
+/// the sum of their misses from their windows (`window_miss`) is smaller;
+/// else the routes, the patterns and the report are as before. The work
+/// is in the entries.
+fn reroute_shorts(
+    board: &core::Board,
+    result: &mut core::RoutingResult,
+    config: &KiCadBoardRouterConfig,
+    shorts: &[Short],
+    patterns: &mut Vec<LengthPattern>,
+    report: &mut [KiCadNetLength],
+    length_of: impl Fn(&KiCadLengthMember, &[core::NetRoute]) -> f64,
+) -> bool {
+    let order = by_need(shorts);
+    let before: f64 = order
+        .iter()
+        .map(|short| window_miss(short.length + short.added, short.bounds))
+        .sum();
+    // Until its turn, a short net keeps its route's escapes from its pads
+    // (within `REROUTE_PAD_REACH`), so that the nets rerouted before it do
+    // not close them; the rest of its route is free.
+    let mut routes = result.routes.clone();
+    for short in &order {
+        let pads: Vec<Point> = board.nets[short.net as usize]
+            .terminals
+            .iter()
+            .map(|terminal| terminal.anchor)
+            .collect();
+        let route = &mut routes[short.net as usize];
+        let stubs: Vec<core::Segment> = short
+            .routed
+            .segments
+            .iter()
+            .flat_map(|segment| {
+                pad_pieces(segment.start, segment.end, &pads)
+                    .into_iter()
+                    .filter(|piece| piece.2)
+                    .map(|(start, end, _)| core::Segment {
+                        start,
+                        end,
+                        ..segment.clone()
+                    })
+            })
+            .collect();
+        route.segments = stubs;
+        route.vias.clear();
+    }
+    let mut work = 0.0;
+    let mut left = Vec::new();
+    for short in &order {
+        routes[short.net as usize] = core::NetRoute::default();
+        let mut found = false;
+        for share in REROUTE_ROOM_SHARES {
+            let (mut route, spent) = reroute_with_room(board, &routes, &[short.net], config, share);
+            work += spent;
+            if let Some(route) = route.pop().flatten() {
+                routes[short.net as usize] = route;
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            left.push(short.net);
+        }
+    }
+    let mut complete = true;
+    if !left.is_empty() {
+        let (found, spent) = reroute_with_room(board, &routes, &left, config, 0.0);
+        work += spent;
+        for (&net, route) in left.iter().zip(found) {
+            match route {
+                Some(route) => routes[net as usize] = route,
+                None => complete = false,
+            }
+        }
+    }
+    // The work, spread over the nets' entries.
+    for short in &order {
+        report[short.entry].reroute_work_seconds = work / order.len() as f64;
+    }
+    if !complete {
+        eprintln!(
+            "length reroute: {} nets short of their minimum, no complete route for all of them ({work:.1} s of work): undone",
+            order.len()
+        );
+        for short in &order {
+            report[short.entry].note = format!(
+                "routed again with room for meanders, no complete route for all the rule's short nets (undone); {}",
+                report[short.entry].note
+            );
+        }
+        return false;
+    }
+    let mut made = Vec::new();
+    let mut after = Vec::new();
+    for short in &order {
+        let again = length_of(short.member, &routes);
+        let need = short.bounds[0] - again;
+        let (more, more_made) = if need > ENOUGH {
+            meander_net(
+                board,
+                &mut routes,
+                short.net,
+                need,
+                &short.counted,
+                short.bounds,
+            )
+        } else {
+            (0.0, Vec::new())
+        };
+        made.extend(more_made);
+        after.push((again, more));
+    }
+    let missed: f64 = order
+        .iter()
+        .zip(&after)
+        .map(|(short, (again, more))| window_miss(again + more, short.bounds))
+        .sum();
+    let kept = missed + ON_BOUND < before;
+    for (short, (again, more)) in order.iter().zip(&after) {
+        eprintln!(
+            "length reroute {}: {:.2} mm and {:.2} of meander before; routed again {again:.2} mm and {more:.2} of meander: {}",
+            short.member.net,
+            short.length,
+            short.added,
+            if kept { "kept" } else { "undone" }
+        );
+    }
+    if !kept {
+        for short in &order {
+            report[short.entry].note = format!(
+                "routed again with room for meanders, not nearer the minimum (undone); {}",
+                report[short.entry].note
+            );
+        }
+        return false;
+    }
+    let nets: BTreeSet<core::NetId> = order.iter().map(|short| short.net).collect();
+    patterns.retain(|pattern| !nets.contains(&pattern.net));
+    patterns.extend(made);
+    for (short, (again, more)) in order.iter().zip(&after) {
+        result.routes[short.net as usize] = std::mem::take(&mut routes[short.net as usize]);
+        let entry = &mut report[short.entry];
+        entry.meander_mm = *more;
+        entry.rerouted_mm = Some([short.length, *again]);
+        let need = short.bounds[0] - again;
+        entry.note = if need - more > ENOUGH {
+            format!(
+                "routed again with room for meanders ({:.2} to {again:.2} mm before them), then no straight track with room for all of it ({more:.3} of {need:.3} mm added)",
+                short.length
+            )
+        } else {
+            String::new()
+        };
+    }
+    true
+}
+
+/// `shorts` the most short first.
+fn by_need<'a, 'b>(shorts: &'b [Short<'a>]) -> Vec<&'b Short<'a>> {
+    let mut order: Vec<&Short> = shorts.iter().collect();
+    order.sort_by(|a, b| {
+        let need = |short: &Short| short.bounds[0] - short.length - short.added;
+        need(b).total_cmp(&need(a)).then(a.net.cmp(&b.net))
+    });
+    order
+}
+
+/// The length reroute one net at a time (where `reroute_shorts` kept
+/// nothing): each net of `shorts`, the most short first, routed again
+/// alone with every other route as it is, kept off them by half a
+/// meander's height, else a quarter, beyond its pads' reach, meandered
+/// again, and kept where it ends nearer its window, else as before.
+fn reroute_each(
+    board: &core::Board,
+    result: &mut core::RoutingResult,
+    config: &KiCadBoardRouterConfig,
+    shorts: &[Short],
+    patterns: &mut Vec<LengthPattern>,
+    report: &mut [KiCadNetLength],
+    length_of: impl Fn(&KiCadLengthMember, &[core::NetRoute]) -> f64,
+) {
+    for short in by_need(shorts) {
+        let id = short.net as usize;
+        let before = std::mem::take(&mut result.routes[id]);
+        let mut rerouted = None;
+        let mut work = 0.0;
+        for share in REROUTE_ROOM_SHARES {
+            let (mut route, spent) =
+                reroute_with_room(board, &result.routes, &[short.net], config, share);
+            work += spent;
+            if let Some(route) = route.pop().flatten() {
+                rerouted = Some(route);
+                break;
+            }
+        }
+        report[short.entry].reroute_work_seconds += work;
+        let Some(route) = rerouted else {
+            result.routes[id] = before;
+            continue;
+        };
+        result.routes[id] = route;
+        let again = length_of(short.member, &result.routes);
+        let need = short.bounds[0] - again;
+        let (more, made) = if need > ENOUGH {
+            meander_net(
+                board,
+                &mut result.routes,
+                short.net,
+                need,
+                &short.counted,
+                short.bounds,
+            )
+        } else {
+            (0.0, Vec::new())
+        };
+        let kept = window_miss(again + more, short.bounds) + ON_BOUND
+            < window_miss(short.length + short.added, short.bounds);
+        eprintln!(
+            "length reroute {} alone: {:.2} mm and {:.2} of meander before; routed again {again:.2} mm and {more:.2} of meander, {work:.1} s of work: {}",
+            short.member.net,
+            short.length,
+            short.added,
+            if kept { "kept" } else { "undone" }
+        );
+        if !kept {
+            result.routes[id] = before;
+            continue;
+        }
+        patterns.retain(|pattern| pattern.net != short.net);
+        patterns.extend(made);
+        let entry = &mut report[short.entry];
+        entry.meander_mm = more;
+        entry.rerouted_mm = Some([short.length, again]);
+        entry.note = if need - more > ENOUGH {
+            format!(
+                "routed again with room for meanders ({:.2} to {again:.2} mm before them), then no straight track with room for all of it ({more:.3} of {need:.3} mm added)",
+                short.length
+            )
+        } else {
+            String::new()
+        };
+    }
+}
+
+/// How far a length lies outside the window `[target, min, max]`, and
+/// within it how far from the target, a thousandth as much (a net within
+/// its bounds beats any outside them).
+fn window_miss(length: f64, [target, min, max]: [f64; 3]) -> f64 {
+    let outside = (min - length).max(0.0) + (length - max).max(0.0);
+    outside + 1.0e-3 * (length - target).abs()
+}
+
+/// Other nets' tracks and vias farther than this from a rerouted net's
+/// pads keep the meander room from it (`reroute_with_room`); nearer, only
+/// the clearance (a bus's escapes from a fine-pitch connector).
+const REROUTE_PAD_REACH: f64 = 1.5;
+
+/// The room a rerouted net keeps from other nets' tracks beyond the
+/// clearance, as shares of a meander's full height, tried in turn (the
+/// nets that find no route with either go together at the clearance).
+const REROUTE_ROOM_SHARES: [f64; 2] = [0.5, 0.25];
+
+/// The length reroute's work: this share of the ladder's budget a net, at
+/// least `REROUTE_MINIMUM_WORK` seconds.
+const REROUTE_WORK_SHARE: f64 = 0.01;
+const REROUTE_MINIMUM_WORK: f64 = 1.0;
+
+/// The track from `a` to `b` cut where it enters and leaves the reach
+/// (`REROUTE_PAD_REACH`) of any of `pads`: its pieces in order, each with
+/// whether it lies within that reach.
+fn pad_pieces(a: Point, b: Point, pads: &[Point]) -> Vec<(Point, Point, bool)> {
+    let length = core::geometry::distance(a, b);
+    if length < 1.0e-9 {
+        let near = pads
+            .iter()
+            .any(|&pad| core::geometry::distance(pad, a) < REROUTE_PAD_REACH);
+        return vec![(a, b, near)];
+    }
+    let along = [(b[0] - a[0]) / length, (b[1] - a[1]) / length];
+    // Per pad the stretch of the track within its reach (a disc's chord).
+    let mut near: Vec<(f64, f64)> = pads
+        .iter()
+        .filter_map(|&pad| {
+            let offset = [pad[0] - a[0], pad[1] - a[1]];
+            let middle = offset[0] * along[0] + offset[1] * along[1];
+            let across = (offset[0] * along[1] - offset[1] * along[0]).abs();
+            (across < REROUTE_PAD_REACH).then(|| {
+                let half = (REROUTE_PAD_REACH * REROUTE_PAD_REACH - across * across).sqrt();
+                ((middle - half).max(0.0), (middle + half).min(length))
+            })
+        })
+        .filter(|(from, to)| from < to)
+        .collect();
+    near.sort_by(|x, y| x.0.total_cmp(&y.0));
+    let at = |t: f64| [a[0] + along[0] * t, a[1] + along[1] * t];
+    let mut pieces = Vec::new();
+    let mut done = 0.0;
+    for (from, to) in near {
+        if from > done {
+            pieces.push((at(done), at(from), false));
+        }
+        if to > done {
+            pieces.push((at(from.max(done)), at(to), true));
+            done = to;
+        }
+    }
+    if done < length {
+        pieces.push((at(done), b, false));
+    }
+    if pieces.is_empty() {
+        pieces.push((a, b, false));
+    }
+    pieces
+}
+
+/// Routes `nets` again (the length reroute, `length_reroute`), they alone:
+/// every other net's route of `routes` kept as copper, its tracks and
+/// vias farther than `REROUTE_PAD_REACH` from the pads of `nets` kept
+/// off by the clearance plus `share` of a meander's full height (room for
+/// the bumps either side), the planes of `nets` only. Returns per net its
+/// new route where it connects every pad, and the work.
+fn reroute_with_room(
+    board: &core::Board,
+    routes: &[core::NetRoute],
+    nets: &[core::NetId],
+    config: &KiCadBoardRouterConfig,
+    share: f64,
+) -> (Vec<Option<core::NetRoute>>, f64) {
+    let routing = |index: usize| nets.contains(&(index as core::NetId));
+    let room = nets
+        .iter()
+        .map(|&net| {
+            let class = board.classes[board.nets[net as usize].class];
+            class.clearance + share * MAX_AMPLITUDE.max(3.0 * class.trace_width)
+        })
+        .fold(0.0, f64::max);
+    let pads: Vec<Point> = nets
+        .iter()
+        .flat_map(|&net| board.nets[net as usize].terminals.iter())
+        .map(|terminal| terminal.anchor)
+        .collect();
+    let near_pads = |a: Point, b: Point| {
+        pads.iter()
+            .any(|&pad| core::geometry::point_segment_distance(pad, a, b) < REROUTE_PAD_REACH)
+    };
+    let mut alone = board.clone();
+    for (other, route) in routes.iter().enumerate() {
+        if routing(other) {
+            continue;
+        }
+        for segment in &route.segments {
+            // The pieces within the reach of the pads keep the clearance
+            // only, the rest the room as well.
+            for (start, end, near) in pad_pieces(segment.start, segment.end, &pads) {
+                alone.obstacles.push(core::Obstacle {
+                    shape: core::Shape::Capsule {
+                        start,
+                        end,
+                        radius: segment.width / 2.0,
+                    },
+                    layers: 1 << segment.layer,
+                    kind: core::ObstacleKind::Copper,
+                    net: Some(other as core::NetId),
+                    clearance: if near { 0.0 } else { room },
+                    clearance_override: None,
+                    blocks_tracks: true,
+                    blocks_vias: true,
+                    label: "existing track".into(),
+                });
+            }
+        }
+        for via in &route.vias {
+            alone.obstacles.push(core::Obstacle {
+                shape: core::Shape::Circle {
+                    center: via.at,
+                    radius: via.diameter / 2.0,
+                },
+                layers: alone.all_layers(),
+                kind: core::ObstacleKind::Copper,
+                net: Some(other as core::NetId),
+                clearance: if near_pads(via.at, via.at) { 0.0 } else { room },
+                clearance_override: None,
+                blocks_tracks: true,
+                blocks_vias: true,
+                label: "existing via".into(),
+            });
+            alone.obstacles.push(core::Obstacle {
+                shape: core::Shape::Circle {
+                    center: via.at,
+                    radius: via.drill / 2.0,
+                },
+                layers: alone.all_layers(),
+                kind: core::ObstacleKind::Hole,
+                net: Some(other as core::NetId),
+                clearance: 0.0,
+                clearance_override: None,
+                blocks_tracks: true,
+                blocks_vias: true,
+                label: "existing via hole".into(),
+            });
+        }
+    }
+    keep_existing_copper(&mut alone, true);
+    for (index, other) in alone.nets.iter_mut().enumerate() {
+        if !routing(index) {
+            other.terminals.clear();
+        }
+    }
+    let mut router_config = core_config(config);
+    // An exclusive plane of another net still keeps the nets' tracks off
+    // its layer, as the attempt did.
+    if router_config.exclusive_planes {
+        for plane in alone
+            .planes
+            .iter()
+            .filter(|plane| plane.exclusive && !routing(plane.net as usize))
+        {
+            alone.obstacles.push(core::Obstacle {
+                shape: core::Shape::Polygon {
+                    points: plane.polygon.clone(),
+                },
+                layers: 1 << plane.layer,
+                kind: core::ObstacleKind::Keepout,
+                net: None,
+                clearance: 0.0,
+                clearance_override: None,
+                blocks_tracks: true,
+                blocks_vias: false,
+                label: "exclusive plane".into(),
+            });
+        }
+    }
+    alone.planes.retain(|plane| routing(plane.net as usize));
+    let debug = std::env::var_os("PCB_ROUTER_LENGTH_DEBUG").is_some();
+    router_config.verbose = debug;
+    router_config.length_bounded = None;
+    router_config.deadline_work = Some(
+        (REROUTE_WORK_SHARE * config.ladder_budget_seconds.unwrap_or(1200.0))
+            .max(REROUTE_MINIMUM_WORK)
+            * nets.len() as f64,
+    );
+    router_config.run_work = None;
+    let rerouted = core::route(&alone, &router_config);
+    let work = rerouted.expansions as f64 / core::router::expansions_per_second()
+        + rerouted.build_work
+        + rerouted.pour_work;
+    let mut all = rerouted.routes;
+    let found = nets
+        .iter()
+        .map(|&net| {
+            let complete = rerouted.status[net as usize] == core::NetStatus::Routed;
+            if debug {
+                eprintln!(
+                    "length reroute {}: status {:?}, {} segments, {} vias, room {room:.2} mm",
+                    board.nets[net as usize].name,
+                    rerouted.status[net as usize],
+                    all[net as usize].segments.len(),
+                    all[net as usize].vias.len()
+                );
+            }
+            complete.then(|| std::mem::take(&mut all[net as usize]))
+        })
+        .collect();
+    (found, work)
 }
 
 /// Adds meanders of `need` millimetres in all to the route of `net`, on
@@ -1097,5 +1648,161 @@ mod tests {
         );
         assert!(patterns.is_empty() && lengths.is_empty());
         assert_eq!(again.routes.len(), before.len());
+    }
+
+    #[test]
+    fn meanders_spread_over_the_nets_straight_tracks() {
+        // /A routed by hand as two straight legs of 10 mm; 30 mm more than
+        // either leg's bumps hold (about 24 mm at full height) is spread
+        // over both.
+        let pcb = parse(BOARD).unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, true).unwrap().board;
+        let a = board.nets.iter().position(|net| net.name == "A").unwrap();
+        let mut routes = vec![core::NetRoute::default(); board.nets.len()];
+        let leg = |start: Point, end: Point| core::Segment {
+            layer: 0,
+            start,
+            end,
+            width: 0.2,
+        };
+        routes[a].segments = vec![leg([4.0, 5.0], [14.0, 5.0]), leg([14.0, 5.0], [14.0, 15.0])];
+        let (added, patterns) = meander_net(
+            &board,
+            &mut routes,
+            a as core::NetId,
+            30.0,
+            &[true, true],
+            [50.0, 49.0, 51.0],
+        );
+        assert!((added - 30.0).abs() < 0.01, "{added}");
+        let horizontal = patterns
+            .iter()
+            .filter(|pattern| pattern.points.iter().all(|point| point[0] <= 14.0 + 1.0e-9))
+            .filter(|pattern| {
+                pattern
+                    .points
+                    .iter()
+                    .any(|point| (point[1] - 5.0).abs() < 1.0e-9)
+            })
+            .count();
+        assert!(
+            horizontal >= 1 && horizontal < patterns.len(),
+            "{patterns:?}"
+        );
+        let total: f64 = patterns.iter().map(|pattern| pattern.added).sum();
+        assert!((total - added).abs() < 1.0e-6);
+        assert!(core::verify(&board, &routes).is_empty());
+    }
+
+    /// Three nets side by side at 0.5 mm from J1 to U1, /A in the middle:
+    /// no bump fits beside it.
+    const BUS: &str = r#"(kicad_pcb (version 20241229) (generator "pcbnew")
+  (general (thickness 1.6)) (paper "A4")
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+  (gr_rect (start 0 0) (end 40 20) (stroke (width 0.05) (type default)) (layer "Edge.Cuts"))
+  (footprint "test" (layer "F.Cu") (at 6 9.5)
+    (property "Reference" "J1" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0 0) (size 0.3 0.3) (layers "F.Cu") (net "/B"))
+    (pad "2" smd rect (at 0 0.5) (size 0.3 0.3) (layers "F.Cu") (net "/A"))
+    (pad "3" smd rect (at 0 1) (size 0.3 0.3) (layers "F.Cu") (net "/C")))
+  (footprint "test" (layer "F.Cu") (at 34 9.5)
+    (property "Reference" "U1" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0 0) (size 0.3 0.3) (layers "F.Cu") (net "/B"))
+    (pad "2" smd rect (at 0 0.5) (size 0.3 0.3) (layers "F.Cu") (net "/A"))
+    (pad "3" smd rect (at 0 1) (size 0.3 0.3) (layers "F.Cu") (net "/C"))))
+"#;
+
+    #[test]
+    fn a_net_short_in_a_bus_is_routed_again_with_room_for_its_meanders() {
+        let pcb = parse(BUS).unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            length_rules: vec![KiCadLengthRule {
+                rule: "long".into(),
+                constraint: "length".into(),
+                min: Some(40.0),
+                max: Some(42.0),
+                nets: vec![member("A")],
+                ..KiCadLengthRule::default()
+            }],
+            length_reroute: Some(false),
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, true).unwrap().board;
+        let routed = core::route(&board, &core_config(&config));
+        let names: Vec<String> = vec!["F.Cu".into(), "B.Cu".into()];
+        // Without the reroute: /A between /B and /C gets no meander.
+        let mut off = routed.clone();
+        let (_, lengths) = match_lengths(
+            &board,
+            &mut off,
+            &config,
+            &[0.0, 1.6],
+            &names,
+            &BTreeSet::new(),
+        );
+        let before = lengths[0].clone();
+        assert!(!before.within && before.rerouted_mm.is_none(), "{before:?}");
+        assert!(before.meander_mm < 1.0, "{before:?}");
+        // With it: routed again away from its neighbours, meandered, kept
+        // within its bounds, every clearance kept.
+        let on = KiCadBoardRouterConfig {
+            length_reroute: Some(true),
+            ..config.clone()
+        };
+        let mut again = routed.clone();
+        let (patterns, lengths) = match_lengths(
+            &board,
+            &mut again,
+            &on,
+            &[0.0, 1.6],
+            &names,
+            &BTreeSet::new(),
+        );
+        let after = &lengths[0];
+        assert!(
+            after.rerouted_mm.is_some() && after.reroute_work_seconds > 0.0,
+            "{after:?}"
+        );
+        assert!(after.within, "{after:?}");
+        assert!(!patterns.is_empty());
+        assert!(core::verify(&board, &again.routes).is_empty());
+        // The other nets keep their routes.
+        let a = board.nets.iter().position(|net| net.name == "A").unwrap();
+        for (index, route) in again.routes.iter().enumerate() {
+            if index != a {
+                assert_eq!(route.segments.len(), routed.routes[index].segments.len());
+            }
+        }
+    }
+
+    #[test]
+    fn a_track_is_cut_where_it_enters_a_pads_reach() {
+        let pieces = pad_pieces([0.0, 0.0], [10.0, 0.0], &[[0.0, 0.5], [10.0, 3.0]]);
+        let near: Vec<bool> = pieces.iter().map(|piece| piece.2).collect();
+        assert_eq!(near, [true, false]);
+        let reach = (REROUTE_PAD_REACH * REROUTE_PAD_REACH - 0.25).sqrt();
+        assert!((pieces[0].1[0] - reach).abs() < 1.0e-9, "{pieces:?}");
+        assert_eq!(pieces[1].1, [10.0, 0.0]);
+        // A pad in the middle: three pieces.
+        let middle = pad_pieces([0.0, 0.0], [10.0, 0.0], &[[5.0, 0.0]]);
+        assert_eq!(
+            middle.iter().map(|piece| piece.2).collect::<Vec<_>>(),
+            [false, true, false]
+        );
     }
 }

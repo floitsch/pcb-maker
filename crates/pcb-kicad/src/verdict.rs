@@ -3325,10 +3325,31 @@ fn lengths_summary(lengths: &[crate::KiCadNetLength], route_mode: bool) -> Optio
                 nets.join(",")
             )
         } else {
-            "the placer keeps a length rule's pins within 0.8 of its maximum (length_maxima) and knows no minimum, so the parts may lie closer than the meanders have room for: hold them further apart (an apart entry between the nets' parts, docs/constraints.md), or route these nets by hand on the result and route it again (route-kicad-board keeps them)".to_string()
+            "lay out again with the placer's length_minima (layout.json {\"placer\": {\"length_minima\": true}}, off by default: it holds a length rule's two parts at least half the minimum apart; board-placer.json's length_rules says where their pins ended), or hold the parts apart (an apart entry between the nets' parts, docs/constraints.md), or route these nets by hand on the result and route it again (route-kicad-board keeps them)".to_string()
+        };
+        // What the meanders and the reroute added, and what is missing.
+        let added: f64 = under.iter().map(|entry| entry.meander_mm).sum();
+        let missing: f64 = under
+            .iter()
+            .filter_map(|entry| entry.min_mm.map(|min| (min - entry.length_mm).max(0.0)))
+            .sum();
+        let rerouted = under
+            .iter()
+            .filter(|entry| entry.rerouted_mm.is_some())
+            .count();
+        let tried = under
+            .iter()
+            .filter(|entry| entry.reroute_work_seconds > 0.0)
+            .count();
+        let reroute = if tried > 0 {
+            format!(
+                ", {rerouted} of the {tried} routed again with room for meanders kept (length_reroute)"
+            )
+        } else {
+            String::new()
         };
         parts.push(format!(
-            "{} under the minimum ({}): no straight track of the route had room for the whole meander; {lever}",
+            "{} under the minimum ({}): no straight track of the route had room for the whole meander ({added:.1} mm of meander added{reroute}, {missing:.1} mm still missing in all); {lever}",
             under.len(),
             names(&under, true)
         ));
@@ -5837,6 +5858,7 @@ mod tests {
             meander_mm: 0.0,
             within: false,
             note: note.into(),
+            ..Default::default()
         };
         let lengths = vec![
             entry("ULPI_CK", 0.0, "no copper the rule counts (not routed)"),
@@ -5879,14 +5901,35 @@ mod tests {
         )];
         let route = lengths_summary(&short, true).unwrap();
         assert!(
-            route.contains("1 under the minimum (DVP_Y5 11.48 mm, min 31.40): no straight track of the route had room for the whole meander; route them by hand (KiCad's length tuning) and route again")
+            route.contains("1 under the minimum (DVP_Y5 11.48 mm, min 31.40): no straight track of the route had room for the whole meander (0.0 mm of meander added, 19.9 mm still missing in all); route them by hand (KiCad's length tuning) and route again")
                 && route.contains("--keep-nets DVP_Y5` strips all other tracks"),
             "{route}"
         );
         let layout = lengths_summary(&short, false).unwrap();
         assert!(
-            layout.contains("knows no minimum") && layout.contains("an apart entry"),
+            layout.contains("{\"placer\": {\"length_minima\": true}}")
+                && layout.contains("at least half the minimum apart")
+                && layout.contains("an apart entry"),
             "{layout}"
+        );
+        // What the meanders and the reroute added and what is missing.
+        let rerouted = vec![
+            crate::KiCadNetLength {
+                meander_mm: 4.0,
+                rerouted_mm: Some([11.48, 16.0]),
+                reroute_work_seconds: 2.0,
+                ..entry("DVP_Y5", 20.0, "")
+            },
+            crate::KiCadNetLength {
+                meander_mm: 1.5,
+                reroute_work_seconds: 2.0,
+                ..entry("DVP_Y6", 30.0, "")
+            },
+        ];
+        let summary = lengths_summary(&rerouted, true).unwrap();
+        assert!(
+            summary.contains("(5.5 mm of meander added, 1 of the 2 routed again with room for meanders kept (length_reroute), 12.8 mm still missing in all)"),
+            "{summary}"
         );
     }
 

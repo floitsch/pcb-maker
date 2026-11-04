@@ -234,6 +234,17 @@ pub struct KiCadBoardRouterConfig {
     /// settings name none.
     #[serde(default)]
     pub length_matching: Option<bool>,
+    /// The length reroute (with `length_matching`): a net still below its
+    /// `length` minimum after the meanders is routed again alone, every
+    /// other net's tracks kept and kept off by half a meander's height
+    /// more than the clearance away from its pads, and meandered again;
+    /// kept where it comes out nearer its target, complete and clean.
+    /// `PCB_ROUTER_LENGTH_REROUTE=1` (or `0`) decides where the settings
+    /// name none; off by default (measured on the firestarter: no length
+    /// finding fewer; docs/router.md, "Length minima: the placer's share
+    /// and the reroute (2026-11-04)").
+    #[serde(default)]
+    pub length_reroute: Option<bool>,
     /// The project's `length` and `skew` rules with the nets they hold for
     /// (set by the project's rules, not read from a file).
     #[serde(skip)]
@@ -769,6 +780,19 @@ impl KiCadBoardRouterConfig {
         match std::env::var("PCB_ROUTER_LENGTH_MATCHING") {
             Ok(value) if !value.is_empty() => value != "0",
             _ => true,
+        }
+    }
+
+    /// Whether a net short of its minimum is routed again for room
+    /// (`length_reroute`): the settings' value, else
+    /// `PCB_ROUTER_LENGTH_REROUTE` (`1` on), else off.
+    pub fn length_reroute_on(&self) -> bool {
+        if let Some(on) = self.length_reroute {
+            return on;
+        }
+        match std::env::var("PCB_ROUTER_LENGTH_REROUTE") {
+            Ok(value) if !value.is_empty() => value != "0",
+            _ => false,
         }
     }
 

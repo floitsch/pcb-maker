@@ -880,10 +880,19 @@ impl<'a> Ladder<'a> {
     }
 
     /// Counts the differential pairs' fallback router's work of an
-    /// attempt written (`finish_pairs`) as search.
+    /// attempt written (`finish_pairs`) and the length reroute's
+    /// (`match_lengths`) as search.
     fn charge_pairs(&mut self, result: &KiCadBoardRouterResult) {
         if let Some(pairs) = &result.diff_pairs {
             self.charge(pairs.work_seconds, 0.0, 0.0, 0.0);
+        }
+        let rerouted: f64 = result
+            .lengths
+            .iter()
+            .map(|entry| entry.reroute_work_seconds)
+            .sum();
+        if rerouted > 0.0 {
+            self.charge(rerouted, 0.0, 0.0, 0.0);
         }
     }
 
