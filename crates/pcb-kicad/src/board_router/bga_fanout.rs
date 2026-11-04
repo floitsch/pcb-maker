@@ -105,6 +105,8 @@ pub(crate) struct PartPlan {
     pub planned: usize,
     /// Inner balls that hold a via already (in the pad, or the board's).
     pub kept: usize,
+    /// Inner balls whose net's own via fits a diagonal gap: the search's.
+    pub searched: usize,
     /// Inner balls no gap and size fits, by label.
     pub refused: Vec<String>,
     /// Planned vias by size.
@@ -334,6 +336,22 @@ fn grid_of(pads: &[([f64; 2], &core::Shape)], work: &mut u64) -> Option<Grid> {
         return None;
     }
     Some(grid)
+}
+
+/// Whether a via of `diameter` and `drill` keeps `clearance` and the hole
+/// clearance from the balls around a diagonal gap of an array at `pitch`
+/// with balls `half` wide from their centres (the footprint alone).
+fn search_via_fits(
+    pitch: f64,
+    half: f64,
+    diameter: f64,
+    drill: f64,
+    clearance: f64,
+    config: &KiCadBoardRouterConfig,
+) -> bool {
+    let room = pitch / std::f64::consts::SQRT_2 - half;
+    diameter / 2.0 + clearance + SAFETY <= room
+        && drill / 2.0 + config.hole_clearance_mm + SAFETY <= room
 }
 
 /// The via sizes to try, largest first: the class's and the project's
@@ -615,6 +633,21 @@ pub(crate) fn plan(
                 summary.kept += 1;
                 continue;
             }
+            // Where the net's own via fits a diagonal gap, the search puts
+            // its dog-bone there itself (ZSWatch's NORA-B106 at 1.1 mm,
+            // vd-rd's BGA-96): the plan prepares only what it cannot.
+            let own = classes[nets[net as usize].class];
+            if search_via_fits(
+                grid.pitch,
+                half,
+                own.via_diameter,
+                own.via_drill,
+                own.clearance,
+                config,
+            ) {
+                summary.searched += 1;
+                continue;
+            }
             let layer = obstacle.layers.trailing_zeros() as usize;
             let local = grid.local[position];
             // Where the net's other pads lie, in the frame (a ball on a
@@ -829,7 +862,20 @@ pub(crate) fn far_side_balls(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Vec
         let inner: Vec<String> = own
             .iter()
             .enumerate()
-            .filter(|(position, pad)| grid.rings[*position] > tracks && pad.net.is_some())
+            .filter(|(position, pad)| {
+                grid.rings[*position] > tracks
+                    && pad.net.is_some()
+                    && via_in_pad::rules_of(config, pad.net.as_deref()).is_some_and(|rules| {
+                        !search_via_fits(
+                            grid.pitch,
+                            half,
+                            rules.via_size_mm,
+                            rules.via_drill_mm,
+                            rules.clearance_mm,
+                            config,
+                        )
+                    })
+            })
             .map(|(_, pad)| pad.number.clone())
             .collect();
         if !inner.is_empty() {
@@ -854,7 +900,7 @@ pub(crate) fn report(plan: &FanoutPlan) {
     static SEEN: std::sync::Mutex<BTreeSet<String>> = std::sync::Mutex::new(BTreeSet::new());
     for part in &plan.parts {
         let line = format!(
-            "bga fan-out {}: pitch {:.3} mm, {} x {}, surface rings {}, inner balls {}, planned {} {:?}, kept {}, refused {} {:?}",
+            "bga fan-out {}: pitch {:.3} mm, {} x {}, surface rings {}, inner balls {}, planned {} {:?}, kept {}, the search's (its via fits a gap) {}, refused {} {:?}",
             part.reference,
             part.pitch,
             part.rows,
@@ -864,6 +910,7 @@ pub(crate) fn report(plan: &FanoutPlan) {
             part.planned,
             part.sizes,
             part.kept,
+            part.searched,
             part.refused.len(),
             part.refused
         );
@@ -1158,6 +1205,31 @@ mod tests {
         // Every inner ring takes part: rings 2, 3 and 4.
         let rings: BTreeSet<usize> = plan.fanouts.iter().map(|f| f.ring).collect();
         assert_eq!(rings, BTreeSet::from([2, 3, 4]));
+    }
+
+    #[test]
+    fn an_array_whose_class_via_fits_a_gap_is_left_to_the_search() {
+        // The class's own via 0.4/0.2 fits the diagonal gaps at 0.8 mm:
+        // the search puts the dog-bones there itself, the plan none.
+        let (parts, obstacles, nets, no_via) = array(10, 0.8, 0.35);
+        let small = core::RuleClass {
+            via_diameter: 0.4,
+            via_drill: 0.2,
+            ..class()
+        };
+        let plan = super::plan(
+            &parts,
+            &obstacles,
+            &nets,
+            &[small],
+            &no_via,
+            &BTreeSet::new(),
+            &config(),
+        );
+        assert_eq!(plan.parts[0].inner, 36);
+        assert_eq!(plan.parts[0].searched, 36);
+        assert!(plan.fanouts.is_empty());
+        assert_eq!(plan.work, 0);
     }
 
     #[test]
