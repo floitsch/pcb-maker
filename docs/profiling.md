@@ -104,8 +104,9 @@ observationally identical: a check books no work (it takes back what its
 direct computation booked), draws no random number and leaves every
 cache as the unchecked path leaves it, so the placement, its booked work
 and the routes are those without it, only slower. Until 2026-11-04 the
-anneal's overlap check booked its full recount (eternal-keypad placed
-otherwise in check mode, 139 s of work against 22 s). The placer's
+anneal's overlap check booked its full recount (x1891 in check mode:
+eternal-keypad and protoesp placed otherwise, eternal-keypad's placement
+139 s of work against 22 s). The placer's
 `check_mode_places_as_without_it` tests (crates/pcb-placer/src/lib.rs:
 random boards of every kind of part, the crossings and escape terms on,
 check mode off and on on one thread) and the fixture test

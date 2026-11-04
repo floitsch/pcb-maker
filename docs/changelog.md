@@ -11,6 +11,35 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-04 (check mode places as without it)
+
+Branch check-mode-identity (build/bin/pcb-maker-chk1-*).
+
+- `PCB_PLACER_CHECK_OVERLAP=1` changed the placement it checks: the
+  anneal's overlap check (each bucketed sum against the sum over every
+  part) booked its recount's work into the anneal's, which moved its
+  stages, the placement's stops and the race's seeds (eternal-keypad on
+  x1891: 139 s of placement work against 22 s, another board). The check
+  now takes its work back, as every other check did; check mode is one
+  switch (`check_mode`, `checking`), and the tests set it per thread.
+  Tests: `check_mode_places_as_without_it` (four random boards of every
+  kind of part, the crossings and escape terms on, off and on: the same
+  poses bit for bit and the same work; they fail with any check's work
+  left booked) and the fixture test
+  `the_place_check_places_alike_in_check_mode` (F1's place check both
+  ways: the placed board byte for byte, board-placer.json's work).
+  `PCB_ROUTER_CHECK_RIP_UP` was already identical (its scan reads only).
+  Measured (`place-kicad-board` at the layout's budget, pinned rates, two
+  threads): eternal-keypad, protoesp, 4in1-mini and the 0xCB panel in
+  check mode give x1891's plain placements byte for byte and its booked
+  work to the bit (x1891 in check mode: eternal-keypad and protoesp placed
+  otherwise, the panel booked twice the work); check mode off is x1891's.
+  video's layout on x1892 with `PCB_ROUTER_CHECK_RIP_UP=1`: the placed
+  and result boards and the fingerprint lines of the run without it, and
+  the branch with both checks on gives the same three. The
+  short tier (3 x 2), the branch against x1892: all twelve placed and
+  result boards identical. docs/profiling.md, "How to profile".
+
 ## Committed on 2026-11-04 (the fourth router round: the via-in-pad plan cached, the pour analyses' windows and labelling; the same routes, 11.9 % less router CPU)
 
 Branch router-profile-4 (five commits); the head built as
