@@ -1814,8 +1814,7 @@ Score the designer's board and yours side by side.
   warnings between the two footprints, each part and level counts the
   parts KiCad agrees on (`kicad_agrees`: an error against what it meets)
   and those where the placer is stricter than KiCad (`model_stricter`).
-  `--placer` with `{"legality": "kicad"}` judges the levels as that
-  setting would. `benchmarks/agent-tasks/legality_census.py` runs it on
+  `benchmarks/agent-tasks/legality_census.py` runs it on
   every task's designer placement.
 
 - `pcb-maker probe-trouble-placement <placed.kicad_pcb> [router-config.json|auto] (--trouble-from <run-dir|board-router.json|probe.json> | --trouble <names.txt> | --auto)... [--nets N] [--background none|stubs|global|full] [--share 0.05] [--total-seconds 1500] [--work-seconds S] [--stub-mm 1.0] [--global-weight 2.0] [--out report.json]`

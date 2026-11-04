@@ -3676,6 +3676,12 @@ long parts that picks the members' turn before it stacks them.
 
 ## The legality model against KiCad (2026-10-26)
 
+**The setting removed on 2026-11-04** (`legality`: `"kicad"` and
+`"strict"` go; the last level judges by KiCad's legality, as `"model"`
+did; docs/handover.md, "Removed experiments (2026-11-04)"). The census
+(`legality-kicad-board`, `legality_census.py` without `--legality`) and
+the measurements stay as they were.
+
 The second ablation found 107 of protoesp's 122 movable designer parts
 illegal "in the placer's tightest model", 128 on the 4x4 molecule, and
 our SNSP-CPU-01 placement spaced wider than the designer's. The

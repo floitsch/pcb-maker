@@ -56,14 +56,8 @@ pub struct Config {
     /// passives move, turn, trade places and reorder as units in the
     /// anneal and the refinement. Off (`None`) by default.
     pub bus_groups: Option<groups::Settings>,
-    /// KiCad's legality at the levels whose spacing is the rules' least
-    /// (`Constraints::pad_clearance`): what KiCad's DRC accepts of a
-    /// designer's placement there, rather than bodies kept the copper
-    /// clearance apart. Off by default (docs/placer.md, "The legality
-    /// model against KiCad").
-    pub kicad_legality: bool,
-    /// KiCad's legality at the last level (where courtyards may touch),
-    /// whatever `kicad_legality` says: courtyards touch where the pads
+    /// KiCad's legality at the last level (where courtyards may touch):
+    /// courtyards touch where the pads
     /// keep the copper clearance pad to pad, an unheld part's pads keep
     /// the edge margin, the board's silkscreen marks the project does not
     /// rate an error over a part are no obstacle, and a lead through the
@@ -94,7 +88,6 @@ impl Config {
             work_limit: None,
             orientation_search: true,
             bus_groups: None,
-            kicad_legality: false,
             kicad_last_level: false,
             pad_exits: None,
             first_level: 0,
@@ -937,11 +930,9 @@ fn relaxation_levels(problem: &Problem) -> (Vec<Level>, usize) {
 }
 
 /// Whether level `level` judges by KiCad's legality
-/// (`Constraints::pad_clearance`): every level whose spacing is the rules'
-/// least with `kicad_legality`, the last with `kicad_last_level`.
-fn kicad_level(config: &Config, level: usize, courtyard_level: usize, spacing_scale: f64) -> bool {
-    (config.kicad_legality && spacing_scale == 0.0)
-        || (config.kicad_last_level && level == courtyard_level)
+/// (`Constraints::pad_clearance`): the last with `kicad_last_level`.
+fn kicad_level(config: &Config, level: usize, courtyard_level: usize) -> bool {
+    config.kicad_last_level && level == courtyard_level
 }
 
 /// The problem at level `level` of `relaxation_levels`: its halos,
@@ -960,7 +951,7 @@ fn relax_level(
     relaxed.constraints.courtyard_spacing = level == courtyard_level;
     // KiCad's legality where the spacing is the rules' least, or at the
     // last level.
-    if kicad_level(config, level, courtyard_level, spacing_scale) {
+    if kicad_level(config, level, courtyard_level) {
         relaxed.constraints.courtyard_spacing = true;
         relaxed.constraints.pad_clearance = true;
         relaxed.pass_marks();
@@ -1258,7 +1249,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 edge_copper,
                 edge_rule,
                 courtyard_spacing: level == courtyard_level,
-                pad_clearance: kicad_level(config, level, courtyard_level, spacing_scale),
+                pad_clearance: kicad_level(config, level, courtyard_level),
                 halos: None,
                 on_marks: relaxed.constraints.on_marks.clone(),
             });
@@ -1353,7 +1344,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                     edge_copper,
                     edge_rule,
                     courtyard_spacing: level == courtyard_level,
-                    pad_clearance: kicad_level(config, level, courtyard_level, spacing_scale),
+                    pad_clearance: kicad_level(config, level, courtyard_level),
                     halos: None,
                     on_marks: relaxed.constraints.on_marks.clone(),
                 });
@@ -1471,7 +1462,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 edge_copper,
                 edge_rule,
                 courtyard_spacing: level == courtyard_level,
-                pad_clearance: kicad_level(config, level, courtyard_level, spacing_scale),
+                pad_clearance: kicad_level(config, level, courtyard_level),
                 halos: None,
                 on_marks: relaxed.constraints.on_marks.clone(),
             });

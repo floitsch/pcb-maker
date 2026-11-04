@@ -5,30 +5,6 @@
 use super::*;
 use pcb_placer as core;
 
-/// What the placer's tightest levels call legal (`legality`).
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum KiCadPlacerLegality {
-    /// The placer's own model: bodies (courtyard and pads) keep the copper
-    /// clearance apart; at the last level KiCad's legality (courtyards
-    /// touch where the pads keep the copper clearance pad to pad, the
-    /// board's silkscreen marks the project does not rate an error no
-    /// obstacle, leads keep the copper clearance from the other side's
-    /// pads).
-    #[default]
-    Model,
-    /// The model before 2026-10-27: at the last level, too, bodies keep
-    /// the clearance their copper's least inset needs, the marks are
-    /// obstacles and leads keep off the other side's bodies.
-    Strict,
-    /// What KiCad's DRC accepts, at the levels whose spacing is the rules'
-    /// least: courtyards may touch where the pads keep the copper
-    /// clearance pad to pad, and a body may come to the edge where its
-    /// pads keep the edge margin (docs/placer.md, "The legality model
-    /// against KiCad").
-    Kicad,
-}
-
 /// A net's weight in the placer's wirelength by its pin count, the same
 /// weight in the global placement, the anneal, the legaliser, the
 /// refinement and the relation repair: `min(1, 3 / (pins - 1))`, a net of
@@ -238,9 +214,6 @@ pub struct KiCadBoardPlacerConfig {
     /// or the designer's angles (a stack). On; off: the parts start at
     /// the angles the board holds.
     pub orientation_search: bool,
-    /// What the levels whose spacing is the rules' least call legal:
-    /// `"model"` (the default) or `"kicad"` (`KiCadPlacerLegality`).
-    pub legality: KiCadPlacerLegality,
     /// The board's own texts (header pin names, a title) and silkscreen
     /// graphics (a logo, a frame around a group) stay where the input put
     /// them: each is a placement obstacle on its side with a keepout's
@@ -508,7 +481,6 @@ impl Default for KiCadBoardPlacerConfig {
             solder_mask_to_copper_mm: None,
             placement_seeds: 3,
             orientation_search: true,
-            legality: KiCadPlacerLegality::Model,
             keep_board_marks: true,
             attached_marks: None,
             global_guidance: None,

@@ -265,7 +265,7 @@ ladder's judge), 5, then the rest.
    The week's levers judged by the protocol: crossings in the anneal
    BETTER (on), the race's ripped count BETTER at nine pairs (on); judged
    before it and not taken: bus-group moves (the objective falls, routing
-   does not), `legality: "kicad"`, `decoupling_near`; built and off
+   does not), `legality: "kicad"` (removed on 2026-11-04), `decoupling_near`; built and off
    earlier and removed on 2026-11-04 (below, "Removed experiments
    (2026-11-04)"): `routing_demand`, `routing_room`, `shared_halos`,
    `anneal_far_side_gaps`; removed on 2026-10-16: `replicate_channels`,
@@ -908,6 +908,18 @@ details are:
   "Net weights (2026-11-04)". The `net_weight` key goes from the placer
   settings; experiments/placement-gap's `place.py` variants that set it
   need a binary before the removal.
+- `legality` (placer; `"model"`): `"kicad"` (KiCad's legality at every
+  level whose spacing is the rules' least) and `"strict"` (the model
+  before 2026-10-27, bodies the copper's inset apart at the last level
+  too). `"kicad"` judged on 2026-10-26: the dense sum of medians 967 to
+  934, but two of three seed pairs rose (seed 1 +37, seed 101 +89), so it
+  failed the flip's conditions; the short tier 7 to 7 strict passes,
+  unconnected 22 to 24. Changelog 2026-10-26, "the placer's legality
+  against KiCad's"; docs/placer.md, "The legality model against KiCad
+  (2026-10-26)". The last level keeps KiCad's legality
+  (`core::Config::kicad_last_level`, always on from the KiCad layer);
+  `legality_census.py --legality` and `legality-kicad-board --placer
+  '{"legality": ...}'` go.
 
 ## Gotchas
 

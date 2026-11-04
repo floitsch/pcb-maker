@@ -746,8 +746,7 @@ pub fn legality_kicad_board(
     let mut placer_config = core::Config::new();
     placer_config.maximum_utilization = config.maximum_utilization;
     placer_config.overlap_far_side_pads = config.overlap_far_side_pads;
-    placer_config.kicad_legality = config.legality == KiCadPlacerLegality::Kicad;
-    placer_config.kicad_last_level = config.legality != KiCadPlacerLegality::Strict;
+    placer_config.kicad_last_level = true;
     let levels = core::level_problems(problem, &placer_config);
     let poses = problem.poses.clone();
     let shapes = footprint_shapes(pcb, lowered)?;

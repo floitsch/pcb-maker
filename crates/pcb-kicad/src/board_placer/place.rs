@@ -433,8 +433,7 @@ pub fn place_kicad_board(
     placer_config.overlap_far_side_pads = config.overlap_far_side_pads;
     placer_config.orientation_search = config.orientation_search;
     placer_config.bus_groups = config.bus_groups.as_ref().map(KiCadBusGroups::settings);
-    placer_config.kicad_legality = config.legality == KiCadPlacerLegality::Kicad;
-    placer_config.kicad_last_level = config.legality != KiCadPlacerLegality::Strict;
+    placer_config.kicad_last_level = true;
     if let Some(guidance) = &config.global_guidance {
         let router_config = config.guidance_router.clone().unwrap_or_default();
         placer_config.anneal.guidance = Some(core::guidance::Guidance {
