@@ -1579,7 +1579,7 @@ fn lower_constraint(
                 "no length tuning or via counts in the router".into()
             }
             "diff_pair_gap" | "diff_pair_uncoupled" => {
-                "differential pairs route coupled only with `diff_pairs` (off)".into()
+                "differential pairs route coupled only with the router setting `diff_pairs`, off here (a layout's routes keep it off unless the router config sets \"diff_pairs\": true; route mode turns it on where such a rule holds)".into()
             }
             "physical_clearance" | "physical_hole_clearance" => {
                 "physical clearances (also within a net) are not modelled".into()

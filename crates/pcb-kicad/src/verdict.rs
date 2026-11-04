@@ -1360,6 +1360,10 @@ pub struct KiCadRunFacts {
     /// Route mode with `diff_pairs`: the differential pairs found and what
     /// became of them (`KiCadDiffPairs`, less the per-pair list).
     pub diff_pairs: Option<crate::KiCadDiffPairs>,
+    /// Why the pairs' links fell back, each reason with the pairs it holds
+    /// for (`KiCadDiffPair::why` less its "link N: "), for the
+    /// `diff_pair_*` findings' action.
+    pub diff_pair_why: BTreeMap<String, usize>,
     /// The length and skew rules' nets after the route (`KiCadNetLength`).
     pub lengths: Vec<crate::KiCadNetLength>,
     /// The project's routing rules the router does not keep
@@ -1794,6 +1798,7 @@ impl KiCadRunFacts {
             room: None,
             repairs: None,
             diff_pairs: None,
+            diff_pair_why: BTreeMap::new(),
             lengths: Vec::new(),
             unmodelled_rules: Vec::new(),
             custom_rules: Vec::new(),
@@ -2393,6 +2398,12 @@ fn next_actions(
                 && let Some(summary) = lengths_summary(&facts.lengths)
             {
                 action.push_str(&format!("; {summary}"));
+            }
+            if kind.starts_with("diff_pair_") {
+                action.push_str(&format!(
+                    "; {}",
+                    pairs_summary(facts.diff_pairs.as_ref(), &facts.diff_pair_why)
+                ));
             }
             actions.push(action);
         }
@@ -3031,6 +3042,59 @@ fn top_counts(map: &BTreeMap<String, usize>, limit: usize) -> String {
     text.join(", ")
 }
 
+/// Why the pairs' links fell back (`KiCadDiffPair::why`), each reason
+/// counted once per pair, its "link N: " left out.
+fn diff_pair_why(pairs: Option<&crate::KiCadDiffPairs>) -> BTreeMap<String, usize> {
+    let mut why = BTreeMap::new();
+    for pair in pairs.into_iter().flat_map(|pairs| pairs.pairs.iter()) {
+        let reasons: BTreeSet<&str> = pair
+            .why
+            .iter()
+            .map(|reason| match reason.split_once(": ") {
+                Some((link, rest)) if link.starts_with("link ") => rest,
+                _ => reason.as_str(),
+            })
+            .collect();
+        for reason in reasons {
+            *why.entry(reason.to_string()).or_default() += 1;
+        }
+    }
+    why
+}
+
+/// What became of the differential pairs, for a `diff_pair_*` finding's
+/// action (trial 5's ducktop2 right_io: a layout's 54
+/// diff_pair_gap_out_of_range said "see drc.json", with the pairs routed
+/// as ordinary nets and no word of `diff_pairs`; route mode's 69 said
+/// nothing of the 19 pairs that fell back, or why).
+fn pairs_summary(pairs: Option<&crate::KiCadDiffPairs>, why: &BTreeMap<String, usize>) -> String {
+    const SIDE_BY_SIDE: &str = "fewer than two parts with the pair's pads side by side";
+    let Some(pairs) = pairs.filter(|pairs| pairs.on) else {
+        return "the pairs were routed as two ordinary nets each (diff_pairs off: a layout's routes keep it off unless the router config sets it; route mode turns it on where the project's rules ask for pairs): \"diff_pairs\": true in the router config couples them (layout-kicad-board <project-dir> <id> <out> router.json layout.json), and verdict.diff_pairs then says which pairs coupled and why the others fell back".to_string();
+    };
+    let mut text = format!(
+        "diff_pairs: {} of {} pairs coupled, {} partly, {} routed as two nets",
+        pairs.coupled, pairs.found, pairs.partly_coupled, pairs.fallen_back
+    );
+    if !why.is_empty() {
+        let mut reasons: Vec<(&String, &usize)> = why.iter().collect();
+        reasons.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+        let listed: Vec<String> = reasons
+            .iter()
+            .take(4)
+            .map(|(reason, count)| format!("{reason} ({count})"))
+            .collect();
+        text.push_str(&format!(
+            "; why, per pair (board-router.json diff_pairs.pairs[].why): {}",
+            listed.join(", ")
+        ));
+    }
+    if why.contains_key(SIDE_BY_SIDE) {
+        text.push_str("; a pair couples only between two parts whose pads of the pair lie side by side (at most 3 mm apart): in a layout keep each pair's series or AC-coupling parts side by side (a row of the two, constraints.md)");
+    }
+    text
+}
+
 /// One finding type's next action: what KiCad found (the rule, the nets
 /// or the items of the type's findings) and the setting or step that
 /// addresses it, where there is one.
@@ -3123,6 +3187,9 @@ fn finding_action(
         }
         "connection_width" | "track_width" => {
             "the project's min_connection and the classes' widths (Board Setup) set the rule"
+        }
+        "diff_pair_gap_out_of_range" | "diff_pair_uncoupled_length_too_long" => {
+            "the pair's two tracks run apart where no coupled run of the pair was routed"
         }
         _ => "see drc.json",
     };
@@ -3860,6 +3927,7 @@ pub fn route_facts(
     }
     facts.repairs = Some(KiCadRepairs::of(result));
     facts.corridors = Some(crate::KiCadCorridors::now());
+    facts.diff_pair_why = diff_pair_why(result.diff_pairs.as_ref());
     facts.diff_pairs = result.diff_pairs.clone().map(|mut pairs| {
         pairs.pairs.clear();
         pairs
@@ -5358,6 +5426,70 @@ mod tests {
         );
         assert!(!summary.contains("ULPI_D1"), "{summary}");
         assert_eq!(lengths_summary(&lengths[4..]), None);
+    }
+
+    /// A `diff_pair_*` finding's action says what became of the pairs:
+    /// with `diff_pairs` off (a layout's default) the setting that couples
+    /// them; on, the counts and why the links fell back (trial 5's
+    /// ducktop2 right_io: 19 of 21 pairs fell back, 13 for want of their
+    /// AC-coupling parts side by side, and the verdict said "see drc.json").
+    #[test]
+    fn diff_pair_findings_say_what_became_of_the_pairs() {
+        let off = pairs_summary(None, &BTreeMap::new());
+        assert!(
+            off.contains("\"diff_pairs\": true in the router config couples them"),
+            "{off}"
+        );
+        let pair = |why: &[&str]| crate::KiCadDiffPair {
+            why: why.iter().map(|reason| reason.to_string()).collect(),
+            ..Default::default()
+        };
+        let pairs = crate::KiCadDiffPairs {
+            on: true,
+            found: 3,
+            coupled: 1,
+            fallen_back: 2,
+            pairs: vec![
+                pair(&[]),
+                pair(&["fewer than two parts with the pair's pads side by side"]),
+                pair(&[
+                    "link 1: the coupled run was not routed (the hard repair found no room)",
+                    "link 2: the coupled run was not routed (the hard repair found no room)",
+                ]),
+            ],
+            ..Default::default()
+        };
+        let why = diff_pair_why(Some(&pairs));
+        assert_eq!(why.len(), 2);
+        assert_eq!(
+            why["the coupled run was not routed (the hard repair found no room)"],
+            1
+        );
+        let on = pairs_summary(Some(&pairs), &why);
+        assert!(
+            on.starts_with(
+                "diff_pairs: 1 of 3 pairs coupled, 0 partly, 2 routed as two nets; why, per pair"
+            ),
+            "{on}"
+        );
+        assert!(
+            on.contains("fewer than two parts with the pair's pads side by side (1)"),
+            "{on}"
+        );
+        assert!(on.contains("a row of the two"), "{on}");
+        let finding = DrcFinding {
+            kind: "diff_pair_gap_out_of_range".into(),
+            ..Default::default()
+        };
+        assert!(
+            finding_action(
+                "diff_pair_gap_out_of_range",
+                1,
+                &[&finding],
+                KeptParts::Unknown
+            )
+            .contains("no coupled run of the pair was routed")
+        );
     }
 
     #[test]

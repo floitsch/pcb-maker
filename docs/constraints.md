@@ -488,9 +488,14 @@ part the board does not have (an input error that says to import again).
 
 - Choosing sides automatically: parts stay on their side unless `back` or
   `front` names them.
-- Routing intent: differential pairs, length matching. Track widths and
-  clearances come from the project's KiCad net classes, or from the router
-  config's `net_classes` ([agents.md](agents.md)).
+- Routing intent in the constraints: differential pairs and length
+  matching come from the project's custom rules and the router config
+  (`diff_pairs`, `length_matching`; [agents.md](agents.md)), not from
+  `constraints.json`; the placer knows no pair. Where a pair runs through
+  AC-coupling or series parts, a `row` of each pair's two parts keeps
+  them side by side so that the router can couple the pair between them.
+  Track widths and clearances come from the project's KiCad net classes,
+  or from the router config's `net_classes` ([agents.md](agents.md)).
 
 ## From a netlist to a board
 
