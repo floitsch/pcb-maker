@@ -2043,10 +2043,28 @@ pub fn layout_kicad_board(
                 candidates.len() + 1
             );
         }
-        let mut probed: Vec<(usize, core::router::Router)> = Vec::new();
+        let mut probed: Vec<(usize, core::router::ParkedRouter)> = Vec::new();
         let mut standings: Vec<core::router::ProbeStanding> = Vec::new();
         let mut results: Vec<Option<core::RoutingResult>> = Vec::new();
         let repair = race_probe.is_some_and(|probe| probe.repair);
+        // The ripped count (`race_count: "ripped"`): each probe's router's
+        // nets in conflict stripped of their conflicted branches and the
+        // board's open terminals counted, the router then put back as it
+        // negotiated (the kept one routes on). One router at a time, in
+        // the ranking's order, as each wave of probes ends: deterministic.
+        // No search runs: nothing is charged to the work clock.
+        let ripped = config.race_count == KiCadRaceCount::Ripped && !repair;
+        if config.race_count == KiCadRaceCount::Ripped && repair {
+            eprintln!(
+                "placement race: race_count \"ripped\" does not apply with race_probe.repair (each probe's count is its first route's)"
+            );
+        }
+        let mut ripped_counts: Vec<(usize, usize)> = Vec::new();
+        let mut cost = KiCadRaceRippedCost {
+            copy_seconds: 0.0,
+            rip_seconds: 0.0,
+            copy_mb: 0.0,
+        };
         let mut first = Some(first);
         let mut next = 0;
         while next <= candidates.len() {
@@ -2095,73 +2113,56 @@ pub fn layout_kicad_board(
                     .map(|handle| handle.join().expect("probe thread"))
                     .collect()
             });
-            for (index, unfinished, standing, repaired, router) in routers {
-                probed.push((index, router));
+            // The wave's search arrays (as many sets as searches ran side
+            // by side) are idle from here: the ripped count searches
+            // nothing, and the next wave and the kept router's route take
+            // what they need again.
+            let idle = core::router::release_idle_search_arrays();
+            crate::mem_profile::note("the race's idle search arrays freed:", idle);
+            for (index, unfinished, standing, repaired, mut router) in routers {
+                if ripped {
+                    crate::ledger::reserve_at_least(
+                        crate::board_router::resident_mb() + router_mb,
+                        "the race's ripped count",
+                    );
+                    crate::mem_profile::phase("race ripped count");
+                    let before_mb = crate::board_router::resident_mb();
+                    let started = std::time::Instant::now();
+                    // The probe's router ripped in place and put back:
+                    // what it saves to go back to is a fraction of a copy.
+                    let saved = router.saved_for_rip_up();
+                    cost.copy_seconds += started.elapsed().as_secs_f64();
+                    cost.copy_mb = cost
+                        .copy_mb
+                        .max(crate::board_router::resident_mb() - before_mb);
+                    let started = std::time::Instant::now();
+                    let (nets, standing) = router.rip_up_standing();
+                    router.restore_after_rip_up(saved);
+                    cost.rip_seconds += started.elapsed().as_secs_f64();
+                    ripped_counts.push((standing.open_terminals, nets));
+                }
+                // Parked until the race picks: only the kept one is built
+                // whole again.
+                probed.push((index, router.park()));
                 race.push(unfinished);
                 standings.push(standing);
                 results.push(repaired);
             }
             next += wave.len();
         }
-        // The probes' search arrays (as many sets as searches ran side by
-        // side) are idle from here: the ripped count searches nothing and
-        // the kept router's route takes what it needs again.
-        let idle = core::router::release_idle_search_arrays();
-        crate::mem_profile::note("the race's idle search arrays freed:", idle);
         // Every probe that ran is charged.
         let probe_work: Vec<f64> = probed
             .iter()
             .map(|(_, router)| router.expansions() as f64 / core::router::expansions_per_second())
             .collect();
         work += probe_work.iter().sum::<f64>();
-        // The ripped count (`race_count: "ripped"`): each probe's router
-        // copied, the copy's nets in conflict stripped of their conflicted
-        // branches and the board's open terminals counted; the probe's
-        // own router stays as it negotiated (the kept one routes on). One
-        // copy at a time, in the ranking's order, after every probe ran:
-        // deterministic, and at most one router's memory beside them. No
-        // search runs: nothing is charged to the work clock.
-        let ripped = config.race_count == KiCadRaceCount::Ripped && !repair;
-        if config.race_count == KiCadRaceCount::Ripped && repair {
-            eprintln!(
-                "placement race: race_count \"ripped\" does not apply with race_probe.repair (each probe's count is its first route's)"
-            );
-        }
-        let mut ripped_counts: Vec<(usize, usize)> = Vec::new();
-        let mut ripped_cost = None;
-        if ripped {
-            let mut cost = KiCadRaceRippedCost {
-                copy_seconds: 0.0,
-                rip_seconds: 0.0,
-                copy_mb: 0.0,
-            };
-            for (_, router) in probed.iter_mut() {
-                crate::ledger::reserve_at_least(
-                    crate::board_router::resident_mb() + router_mb,
-                    "the race's ripped count",
-                );
-                crate::mem_profile::phase("race ripped count");
-                let before_mb = crate::board_router::resident_mb();
-                let started = std::time::Instant::now();
-                // The probe's router ripped in place and put back: what
-                // it saves to go back to is a fraction of a copy.
-                let saved = router.saved_for_rip_up();
-                cost.copy_seconds += started.elapsed().as_secs_f64();
-                cost.copy_mb = cost
-                    .copy_mb
-                    .max(crate::board_router::resident_mb() - before_mb);
-                let started = std::time::Instant::now();
-                let (nets, standing) = router.rip_up_standing();
-                router.restore_after_rip_up(saved);
-                cost.rip_seconds += started.elapsed().as_secs_f64();
-                ripped_counts.push((standing.open_terminals, nets));
-            }
+        let ripped_cost = ripped.then(|| {
             eprintln!(
                 "placement race: the ripped count: copies {:.2} s (at most {:.0} MB), rip-ups {:.2} s",
                 cost.copy_seconds, cost.copy_mb, cost.rip_seconds
             );
-            ripped_cost = Some(cost);
-        }
+            cost
+        });
         // What the race did until 2026-10-25 (the 40 % gate, its probes
         // uncharged), for the report: whether each probe would have been
         // dropped, and the placement it would have kept.
@@ -2250,10 +2251,11 @@ pub fn layout_kicad_board(
             "placement race: placement {} kept: {reason}",
             labels[chosen]
         );
-        let mut probed: Vec<Option<core::router::Router>> =
+        let mut probed: Vec<Option<core::router::ParkedRouter>> =
             probed.into_iter().map(|(_, router)| Some(router)).collect();
-        let mut kept = probed[chosen].take().expect("the chosen placement's probe");
+        let parked = probed[chosen].take().expect("the chosen placement's probe");
         drop(probed);
+        let mut kept = parked.unpark();
         if chosen > 0 {
             let (poses, candidate_board, relaxation) = candidates
                 .into_iter()

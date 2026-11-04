@@ -15,6 +15,43 @@ use super::*;
 /// only to go back to.
 pub struct RipUpSaved(pub(super) Router);
 
+/// A probe's router while the race's other probes run (`Router::park`):
+/// without what `unpark` builds again from the rest (the search records,
+/// the occupancy and the tiles' claims, the stamp marks). Its work so far
+/// can be read; it routes only once unparked.
+pub struct ParkedRouter {
+    router: Router,
+    /// The occupancy's maps (`Occupancy::len`).
+    maps: usize,
+}
+
+impl ParkedRouter {
+    /// The router's search expansions so far (`Router::expansions`).
+    pub fn expansions(&self) -> u64 {
+        self.router.expansions()
+    }
+
+    /// The router as it was parked: the occupancy and the tiles' claims
+    /// counted again from the nets' stamps (the counts are their sum,
+    /// whatever the order), the stamp marks clear (as between stamps),
+    /// the search records built again (`build_hot`, as `restore_saved`).
+    pub fn unpark(self) -> Router {
+        let Self { mut router, maps } = self;
+        let cells = router.grid.cells();
+        router.occupancy = Occupancy::new(maps, cells);
+        router.stamp_mark = vec![0; cells.div_ceil(64) * maps];
+        router.tile_claimed = vec![vec![0; router.tiles_x * router.tiles_y]; maps];
+        for net in 0..router.nets.len() {
+            let stamped = std::mem::take(&mut router.nets[net].stamped);
+            router.add_stamps(&stamped);
+            router.nets[net].stamped = stamped;
+        }
+        router.build_hot();
+        router.mem_update();
+        router
+    }
+}
+
 impl Router {
     /// The negotiation iterations so far and why the last negotiation
     /// ended (`RoutingResult::negotiation_stop`).
@@ -33,6 +70,21 @@ impl Router {
     /// occupancy and the search records as well. Not a router to route on.
     pub fn saved_for_rip_up(&mut self) -> RipUpSaved {
         RipUpSaved(self.saved_without(true))
+    }
+
+    /// The router parked while the race's other probes run (`ParkedRouter`):
+    /// a finished probe's search records, occupancy, tiles' claims and stamp
+    /// marks are built again only for the probe the race keeps. Until
+    /// 2026-11-04 every probe's router stayed whole until the last probe
+    /// ended (katia's three: 4.1 GB with the search arrays).
+    pub fn park(mut self) -> ParkedRouter {
+        let maps = self.occupancy.len();
+        self.hot = Vec::new();
+        self.occupancy = Occupancy::default();
+        self.stamp_mark = Vec::new();
+        self.tile_claimed = Vec::new();
+        self.mem_update();
+        ParkedRouter { router: self, maps }
     }
 
     /// Goes back to the router `saved` (`saved_for_rip_up`) after its

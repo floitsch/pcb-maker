@@ -5695,3 +5695,41 @@ fn a_saved_copy_restores_as_a_whole_copy() {
         assert_eq!(ours.status, theirs.status);
     }
 }
+
+/// A probe's router parked through the race's other probes (`park`) and
+/// unparked as the one kept is the router it was: routes, occupancy,
+/// tiles' claims, search records and counters, and it routes on alike.
+#[test]
+fn a_parked_router_unparks_as_it_was() {
+    for (rows, columns, iterations) in [(3, 3, 1), (6, 7, 2)] {
+        let mut router = lattice_of_crossings(rows, columns);
+        router.config.max_iterations = iterations;
+        router.probe(1.0);
+        let mut whole = router.clone();
+        let parked = router.park();
+        let mut router = parked.unpark();
+        assert_eq!(restored_state(&router), restored_state(&whole));
+        assert_eq!(router.hot_of, whole.hot_of);
+        assert_eq!(router.hot_pours, whole.hot_pours);
+        assert_eq!(router.expansions(), whole.expansions());
+        assert_eq!(router.probe_standing(), whole.probe_standing());
+        let ours = router.resume_polished(1.0, true);
+        let theirs = whole.resume_polished(1.0, true);
+        assert_eq!(router.fingerprint(), whole.fingerprint());
+        assert_eq!(router.expansions(), whole.expansions());
+        assert_eq!(ours.status, theirs.status);
+    }
+    let config = Config {
+        pitches: vec![0.05],
+        pin_row_cost: 5.0,
+        ..Config::default()
+    };
+    let mut router = Router::new(&pin_row_board(7.0, 2.0), &config);
+    router.run_in_place();
+    let whole = router.clone();
+    let parked = router.park();
+    assert_eq!(parked.expansions(), whole.expansions());
+    let router = parked.unpark();
+    assert_eq!(restored_state(&router), restored_state(&whole));
+    assert_eq!(router.hot_pours, whole.hot_pours);
+}
