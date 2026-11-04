@@ -11,6 +11,16 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-04 (a held sub-board's problem cuts the frame and tab keepouts to its region)
+
+Branch held-keepouts (build/bin/pcb-maker-copies1b-a, -b). The
+`place_sub_boards` region problem counted every keepout whole against a
+sub-board's area, as the copies' problem did before 2026-11-03: now cut
+to the region (`sub_boards::cut_keepouts`, shared). ULK, jiran and katia
+byte for byte; ULK_sl's halves, overfull at every level but the last
+before, are placed with halos: a strict pass both, 86 to 113 vias
+(docs/placer.md, "Frames on panels of copies").
+
 ## Committed on 2026-11-04 (fresh agent trial 4: a keyboard panel from the netlist, a dense 2-layer RP2040 board, a length rule)
 
 Branch fresh-agent-trial-4; the trial is

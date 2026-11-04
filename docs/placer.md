@@ -4909,10 +4909,21 @@ piece: nothing of this applies). The nine dense boards without copies
 (seed 1; protoesp, glasgow, video, 4in1-mini, 4in1, DSP-ADAU1452,
 MegaDrive, SNSP-CPU-01, split72_left) byte for byte.
 
-Left open: held sub-boards (`place_sub_boards`'s region problem) still
-count every keepout whole against a sub-board's area, as a copy's did;
-on the ULK and jiran (large halves) no level is overfull by it, so it
-was left.
+Held sub-boards (`place_sub_boards`'s region problem) counted every
+keepout whole against a sub-board's area, as a copy's did; since
+2026-11-03 their problem cuts the keepouts to the sub-board's region too
+(`sub_boards::cut_keepouts`, shared with the copies; unit test
+`a_held_sub_boards_problem_cuts_the_keepouts_to_its_region`: two halves
+beside a 9 x 45 mm rail, placed at the last level only before, with full
+halos now). Measured (layout, sweep budget and seed, off x1883, on
+build/bin/pcb-maker-copies1b-a; `build/copies1b/four-{off,on}`): the
+ULK, jiran-ble-lite and katia byte for byte (no level was overfull;
+katia's parts are not held); ULK_sl_PG1316s moved: x1883's place check
+found both halves overfull at every level but the last (the frames'
+6422 mm2 against a half), so they were placed without halos; now with
+them: still a strict pass, 0 unconnected, 86 to 113 vias, 187 to 237 s of
+work. The place checks of urchin and woagboard are byte for byte
+x1883's (koeg-board and Batch_1: no overfull level either).
 
 ## The place check is the layout's placement (2026-10-27)
 
