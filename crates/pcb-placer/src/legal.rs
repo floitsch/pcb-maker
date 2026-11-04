@@ -284,8 +284,8 @@ fn segments_cross(a: Point, b: Point, c: Point, d: Point) -> bool {
 }
 
 /// Whether `body` lies inside the board's outline: its corners inside
-/// (from the outline's edges by cells, `board`, where there is one: the
-/// edges a ray from a corner crosses lie in its row), no outline edge
+/// (from the outline's edges by bands, `board`, where there is one: the
+/// edges a ray from a corner crosses lie in its band), no outline edge
 /// crossing a side. An edge with all four corners on one side of its line
 /// crosses no side (`segments_cross`'s second condition, the same
 /// orientations): its sides' orientations are not taken (the fit test of
@@ -301,7 +301,7 @@ fn inside_outline(problem: &Problem, body: Rect, board: Option<&Outline>) -> boo
                 assert_eq!(
                     inside,
                     point_in_polygon(*corner, outline),
-                    "{corner:?} inside the outline by cells against the pass over every edge"
+                    "{corner:?} inside the outline by bands against the pass over every edge"
                 );
             }
             inside
@@ -783,7 +783,7 @@ pub(crate) struct Apart {
     /// The searched part's body and box at one angle, but for the
     /// position (`spot`).
     frame: Option<Frame>,
-    /// The board's outline by cells for the fit tests (an outline of
+    /// The board's outline by bands for the fit tests (an outline of
     /// more than a few edges).
     board: Option<Outline>,
     /// Every skipped test checked against the direct one.
@@ -1750,26 +1750,19 @@ fn crosses_ray(a: [f64; 2], b: [f64; 2], point: [f64; 2]) -> bool {
 }
 
 /// A cutout's outline for the first pass of the polygon test
-/// (`rect_meets_outline`): its box, and its edges by the cells of a grid
-/// over it, each edge in every cell its box touches. A box's edges near it
-/// lie in the cells of its range, the edges a ray from a point towards +x
-/// crosses in the point's row from the point's column on. The pass over
-/// every edge of a tabbed panel's slots (thousands of points around whole
-/// copies), for every pad against them, was two thirds of the 0xCB panel's
-/// legalisation (2026-10-28); by bands of y alone a third of it was still
-/// the polygon test (about 30 edges a band, 2026-11-04).
+/// (`rect_meets_outline`): its box, and its edges by bands of y, each edge
+/// in every band its y range touches. A box's edges near it lie in the
+/// bands of its y range, the edges a ray from a point crosses in the band
+/// of the point's y: the pass over every edge of a tabbed panel's slots
+/// (thousands of points around whole copies), for every pad against them,
+/// was two thirds of the 0xCB panel's legalisation (2026-10-28).
 pub(crate) struct Outline {
     extent: [f64; 4],
-    /// Cells per millimetre of x and y.
-    scale: [f64; 2],
-    columns: usize,
-    rows: usize,
-    /// Per cell (row by row), the start of its edges in `edges` (and the
-    /// end of the cell before); edge `i` runs from point `i` to the next.
-    starts: Vec<u32>,
-    edges: Vec<u32>,
-    /// Per edge, the first column of its box.
-    first_column: Vec<u32>,
+    low: f64,
+    /// Bands per millimetre of y.
+    scale: f64,
+    /// Per band, the edges (edge `i` from point `i` to the next).
+    bands: Vec<Vec<u32>>,
     /// Every first pass checked against the pass over every edge (debug
     /// builds and `PCB_PLACER_CHECK_OVERLAP`).
     check: bool,
@@ -1784,82 +1777,34 @@ const BOARD_INDEX_EDGES: usize = 12;
 impl Outline {
     fn new(polygon: &[[f64; 2]]) -> Self {
         let extent = outline_extent(polygon);
-        let (width, height) = (extent[2] - extent[0], extent[3] - extent[1]);
-        // About an edge a cell (a quarter of the edges' cells by bands of
-        // y until 2026-11-04), as square as the box allows.
-        let cells = (polygon.len() as f64).clamp(1.0, (1 << 16) as f64);
-        let aspect = if width > 0.0 && height > 0.0 {
-            height / width
+        let count = (polygon.len() / 4).clamp(1, 1 << 14);
+        let height = extent[3] - extent[1];
+        let scale = if height > 0.0 {
+            count as f64 / height
         } else {
-            1.0
+            0.0
         };
-        let rows = ((cells * aspect).sqrt().round() as usize).clamp(1, polygon.len().max(1));
-        let columns = ((cells / rows as f64).round() as usize).clamp(1, polygon.len().max(1));
-        let per = |size: f64, count: usize| if size > 0.0 { count as f64 / size } else { 0.0 };
         let mut outline = Outline {
             extent,
-            scale: [per(width, columns), per(height, rows)],
-            columns,
-            rows,
-            starts: Vec::new(),
-            edges: Vec::new(),
-            first_column: Vec::with_capacity(polygon.len()),
+            low: extent[1],
+            scale,
+            bands: vec![Vec::new(); count],
             check: cfg!(debug_assertions) || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
         };
-        // Each edge's cells: counted, then placed.
-        let ranges: Vec<[usize; 4]> = (0..polygon.len())
-            .map(|index| {
-                let (a, b) = (polygon[index], polygon[(index + 1) % polygon.len()]);
-                [
-                    outline.column(a[0].min(b[0])),
-                    outline.row(a[1].min(b[1])),
-                    outline.column(a[0].max(b[0])),
-                    outline.row(a[1].max(b[1])),
-                ]
-            })
-            .collect();
-        let mut counts = vec![0u32; columns * rows + 1];
-        for range in &ranges {
-            outline.first_column.push(range[0] as u32);
-            for row in range[1]..=range[3] {
-                for column in range[0]..=range[2] {
-                    counts[row * columns + column + 1] += 1;
-                }
+        for index in 0..polygon.len() {
+            let (a, b) = (polygon[index], polygon[(index + 1) % polygon.len()]);
+            let (low, high) = (outline.band(a[1].min(b[1])), outline.band(a[1].max(b[1])));
+            for band in low..=high {
+                outline.bands[band].push(index as u32);
             }
         }
-        for cell in 1..counts.len() {
-            counts[cell] += counts[cell - 1];
-        }
-        let mut next = counts.clone();
-        let mut edges = vec![0u32; counts[columns * rows] as usize];
-        for (index, range) in ranges.iter().enumerate() {
-            for row in range[1]..=range[3] {
-                for column in range[0]..=range[2] {
-                    let cell = row * columns + column;
-                    edges[next[cell] as usize] = index as u32;
-                    next[cell] += 1;
-                }
-            }
-        }
-        outline.starts = counts;
-        outline.edges = edges;
         outline
     }
 
-    /// The column of `x` (monotonic in `x`; NaN and left of the outline 0).
-    fn column(&self, x: f64) -> usize {
-        crate::buckets::cell_index((x - self.extent[0]) * self.scale[0]).min(self.columns - 1)
-    }
-
-    /// The row of `y` (monotonic in `y`; NaN and below the outline 0).
-    fn row(&self, y: f64) -> usize {
-        crate::buckets::cell_index((y - self.extent[1]) * self.scale[1]).min(self.rows - 1)
-    }
-
-    /// The edges of the cell at `row` and `column`.
-    fn cell(&self, row: usize, column: usize) -> &[u32] {
-        let cell = row * self.columns + column;
-        &self.edges[self.starts[cell] as usize..self.starts[cell + 1] as usize]
+    /// The band of `y` (monotonic in `y`; NaN and below the outline 0).
+    fn band(&self, y: f64) -> usize {
+        let at = (y - self.low) * self.scale;
+        crate::buckets::cell_index(at).min(self.bands.len() - 1)
     }
 
     fn edge(polygon: &[[f64; 2]], index: u32) -> ([f64; 2], [f64; 2]) {
@@ -1867,67 +1812,48 @@ impl Outline {
         (polygon[index], polygon[(index + 1) % polygon.len()])
     }
 
-    /// Whether any edge of the cells the box around `rect` (with
-    /// `POLYGON_SLACK`) touches passes `test`.
-    fn any_near(&self, rect: &Rect, test: impl Fn(u32) -> bool) -> bool {
-        let (low_x, high_x) = (
-            self.column(rect.center[0] - rect.half[0] - POLYGON_SLACK),
-            self.column(rect.center[0] + rect.half[0] + POLYGON_SLACK),
-        );
-        let (low_y, high_y) = (
-            self.row(rect.center[1] - rect.half[1] - POLYGON_SLACK),
-            self.row(rect.center[1] + rect.half[1] + POLYGON_SLACK),
-        );
-        (low_y..=high_y).any(|row| {
-            (low_x..=high_x).any(|column| self.cell(row, column).iter().any(|&edge| test(edge)))
-        })
-    }
-
     /// Whether an edge comes near the box around `rect`
-    /// (`rect_meets_polygon`'s `near`): such an edge's box and the box
-    /// share a point, whose cell holds the edge.
+    /// (`rect_meets_polygon`'s `near`).
     fn near(&self, rect: &Rect, polygon: &[[f64; 2]]) -> bool {
-        self.any_near(rect, |edge| {
-            let (a, b) = Self::edge(polygon, edge);
-            !box_apart(rect, edge_extent(a, b), POLYGON_SLACK)
+        let low = self.band(rect.center[1] - rect.half[1] - POLYGON_SLACK);
+        let high = self.band(rect.center[1] + rect.half[1] + POLYGON_SLACK);
+        self.bands[low..=high].iter().any(|band| {
+            band.iter().any(|&edge| {
+                let (a, b) = Self::edge(polygon, edge);
+                !box_apart(rect, edge_extent(a, b), POLYGON_SLACK)
+            })
         })
     }
 
     /// Whether a polygon corner passes `in_box` (true only inside the box
-    /// around `rect`): the corners in the cells of the box's range (each
-    /// edge's first point, in the cells of the edge's box), a hair wider
-    /// for the rounding.
+    /// around `rect`): the corners in the bands of the box's y range (each
+    /// edge's first point; a band holds every edge whose y range touches
+    /// it), a hair wider for the rounding.
     fn any_corner(
         &self,
         rect: &Rect,
         polygon: &[[f64; 2]],
         in_box: impl Fn(&[f64; 2]) -> bool,
     ) -> bool {
-        self.any_near(rect, |edge| in_box(&polygon[edge as usize]))
+        let low = self.band(rect.center[1] - rect.half[1] - POLYGON_SLACK);
+        let high = self.band(rect.center[1] + rect.half[1] + POLYGON_SLACK);
+        self.bands[low..=high]
+            .iter()
+            .any(|band| band.iter().any(|&edge| in_box(&polygon[edge as usize])))
     }
 
     /// Whether `point` lies inside by the even-odd rule
-    /// (`rect_meets_polygon`'s `inside` where no edge is near). An edge the
-    /// ray crosses spans the point's y and reaches right of the point's x
-    /// (its crossing lies within the edge's box, rounding aside: a hair to
-    /// the left too); it is counted once, in the first column of its box
-    /// from the point's column on.
+    /// (`rect_meets_polygon`'s `inside` where no edge is near).
     fn inside(&self, point: [f64; 2], polygon: &[[f64; 2]]) -> bool {
-        let row = self.row(point[1]);
-        let from = self.column(point[0] - POLYGON_SLACK);
-        let mut inside = false;
-        for column in from..self.columns {
-            for &edge in self.cell(row, column) {
-                if (self.first_column[edge as usize] as usize).max(from) != column {
-                    continue;
-                }
+        self.bands[self.band(point[1])]
+            .iter()
+            .filter(|&&edge| {
                 let (a, b) = Self::edge(polygon, edge);
-                if crosses_ray(a, b, point) {
-                    inside = !inside;
-                }
-            }
-        }
-        inside
+                crosses_ray(a, b, point)
+            })
+            .count()
+            % 2
+            == 1
     }
 }
 
@@ -2009,7 +1935,7 @@ impl Facts {
 }
 
 /// Whether a box (turned or not) meets a polygon (overlap or touch), its
-/// first pass from the outline's edges by cells
+/// first pass from the outline's edges by bands
 /// (`indexed`, the polygon's `Outline`) where there is one: the same
 /// answer and the same work.
 fn rect_meets_outline(
@@ -2019,16 +1945,16 @@ fn rect_meets_outline(
     work: &mut u64,
 ) -> bool {
     if indexed.is_some_and(|indexed| indexed.check) {
-        let (mut indexed_work, mut plain_work) = (0, 0);
-        let by_cells = rect_meets_outline_once(rect, polygon, indexed, &mut indexed_work);
+        let (mut banded_work, mut plain_work) = (0, 0);
+        let banded = rect_meets_outline_once(rect, polygon, indexed, &mut banded_work);
         let plain = rect_meets_outline_once(rect, polygon, None, &mut plain_work);
         assert_eq!(
-            (by_cells, indexed_work),
+            (banded, banded_work),
             (plain, plain_work),
-            "{rect:?}: (meets, work) by cells against the passes over every edge"
+            "{rect:?}: (meets, work) by bands against the passes over every edge"
         );
-        *work += indexed_work;
-        return by_cells;
+        *work += banded_work;
+        return banded;
     }
     rect_meets_outline_once(rect, polygon, indexed, work)
 }
@@ -2073,8 +1999,8 @@ fn rect_meets_outline_once(
         return inside;
     }
     *work += 9 * edge_work(polygon.len());
-    // The full test (an outline by cells: the corners' sides from their
-    // rows, the polygon's corners from the cells of the box's range,
+    // The full test (an outline by bands: the corners' sides from their
+    // bands, the polygon's corners from the bands of the box's y range,
     // an edge's sides' orientations only where the box's corners lie on
     // both sides of it; the same answer).
     let in_polygon = |corner: &[f64; 2]| match indexed {
@@ -4967,7 +4893,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_outline_by_cells_answers_and_books_as_the_pass_over_every_edge() {
+    fn an_outline_by_bands_answers_and_books_as_the_pass_over_every_edge() {
         let mut state = 0x51F1_5E7A_C0DE_1234u64;
         let mut next = move || {
             state ^= state << 13;
@@ -4981,7 +4907,7 @@ pub(crate) mod tests {
         for round in 0..30 {
             let points = [40, 64, 333, 1200][round % 4];
             // A ragged ring around (20, 20), some stretches flat and on a
-            // lattice (edges along the cells' borders, repeated values).
+            // lattice (edges along the bands' borders, repeated y values).
             let polygon: Vec<[f64; 2]> = (0..points)
                 .map(|index| {
                     let angle = index as f64 / points as f64 * std::f64::consts::TAU;
@@ -5112,7 +5038,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn the_outline_test_by_cells_answers_as_the_pass_over_every_edge() {
+    fn the_outline_test_by_bands_answers_as_the_pass_over_every_edge() {
         let mut state = 0x0BAD_5EED_1234_ABCDu64;
         let mut next = move || {
             state ^= state << 13;
@@ -5125,7 +5051,7 @@ pub(crate) mod tests {
         for round in 0..24 {
             let points = [12, 13, 40, 150][round % 4];
             // A rounded rectangle, a ragged ring, or one on a lattice
-            // (edges along the cells' borders, corners on its edges).
+            // (edges along the bands' borders, corners on its edges).
             problem.outline = (0..points)
                 .map(|index| {
                     let angle = index as f64 / points as f64 * std::f64::consts::TAU;
