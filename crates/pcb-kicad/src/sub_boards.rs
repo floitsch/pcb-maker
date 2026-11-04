@@ -316,6 +316,62 @@ fn v_cut_lines(pcb: &Expr) -> Vec<[[f64; 2]; 2]> {
     lines
 }
 
+/// The tabs of V-cuts (`members`: the cells of the tab components with a
+/// scored cell, of a raster `columns` wide at `origin` with cells of
+/// `cell` mm): on a panel a grid of cut lines, whose components' boxes
+/// reach over the boards (trial 5's SmartSpin2k: one tab `[15, 15, 204.5,
+/// 219.9]`). The tabs are the cut lines instead: per line of `lines` that
+/// passes them, the box of their cells within `NECK_RADIUS_MM` of the line
+/// (the line and the erosion's fringe beside it). `None` where no line
+/// passes them.
+fn cut_line_tabs(
+    members: &[usize],
+    columns: usize,
+    origin: [f64; 2],
+    cell: f64,
+    lines: &[[[f64; 2]; 2]],
+) -> Option<Vec<[f64; 4]>> {
+    let centre = |at: usize| {
+        [
+            origin[0] + ((at % columns) as f64 + 0.5) * cell,
+            origin[1] + ((at / columns) as f64 + 0.5) * cell,
+        ]
+    };
+    let mut boxes = Vec::new();
+    for [a, b] in lines {
+        let along = [b[0] - a[0], b[1] - a[1]];
+        let length = along[0].hypot(along[1]);
+        if length <= 0.0 {
+            continue;
+        }
+        let mut found = [
+            f64::INFINITY,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NEG_INFINITY,
+        ];
+        for at in members {
+            let point = centre(*at);
+            let t = (((point[0] - a[0]) * along[0] + (point[1] - a[1]) * along[1])
+                / (length * length))
+                .clamp(0.0, 1.0);
+            let near = [a[0] + t * along[0], a[1] + t * along[1]];
+            if (point[0] - near[0]).hypot(point[1] - near[1]) <= NECK_RADIUS_MM {
+                found = [
+                    found[0].min(point[0] - cell / 2.0),
+                    found[1].min(point[1] - cell / 2.0),
+                    found[2].max(point[0] + cell / 2.0),
+                    found[3].max(point[1] + cell / 2.0),
+                ];
+            }
+        }
+        if found[0].is_finite() {
+            boxes.push(found);
+        }
+    }
+    (!boxes.is_empty()).then_some(boxes)
+}
+
 /// The outline's pieces without its tabs (module comment): a raster of
 /// the board, each cell labelled with its piece.
 #[derive(Clone, Debug)]
@@ -577,6 +633,9 @@ impl Pieces {
         // two pieces.
         let mut seen = vec![false; columns * rows];
         let mut tabs = Vec::new();
+        // The cells of the tabs V-cuts make, which the cut lines report
+        // (`cut_line_tabs`).
+        let mut scored_members: Vec<usize> = Vec::new();
         for start in 0..columns * rows {
             if !inside[start] || labels[start] != NONE || seen[start] {
                 continue;
@@ -625,12 +684,23 @@ impl Pieces {
                     labels[at] = piece;
                 }
             } else if touching.len() >= 2 {
-                tabs.push([
-                    origin[0] + b[0] as f64 * cell,
-                    origin[1] + b[1] as f64 * cell,
-                    origin[0] + (b[2] + 1) as f64 * cell,
-                    origin[1] + (b[3] + 1) as f64 * cell,
-                ]);
+                let to_mm = |b: [usize; 4]| {
+                    [
+                        origin[0] + b[0] as f64 * cell,
+                        origin[1] + b[1] as f64 * cell,
+                        origin[0] + (b[2] + 1) as f64 * cell,
+                        origin[1] + (b[3] + 1) as f64 * cell,
+                    ]
+                };
+                // A grid of V-cuts makes components whose boxes reach
+                // over the boards (trial 5's SmartSpin2k: one tab [15,
+                // 15, 204.5, 219.9]): their cut lines are the tabs
+                // (`cut_line_tabs`), one each, not merged below.
+                if members.iter().any(|at| scored[*at]) {
+                    scored_members.extend(members);
+                } else {
+                    tabs.push(to_mm(b));
+                }
             }
         }
         // The pieces of a row of mouse bites (between the holes, at its
@@ -653,6 +723,9 @@ impl Pieces {
             }
             merged.push(tab);
         }
+        merged.extend(
+            cut_line_tabs(&scored_members, columns, origin, cell, &cuts.lines).unwrap_or_default(),
+        );
         let tabs = merged;
         // What cut each tab: a hole or a V-cut within the neck radius of
         // its box, else the outline's own narrowing.
@@ -2073,13 +2146,24 @@ pub(crate) fn describe_pieces(pcb: &Expr) -> Result<Option<KiCadDescribedPieces>
             .zip(&frames)
             .zip(&parts)
             .filter(|((_, frame), _)| !**frame)
-            .map(|((b, _), parts)| KiCadSubBoard {
+            .map(|((b, _), parts)| KiCadDescribedSubBoard {
                 region: round(b),
                 parts: *parts,
-                movable: 0,
             })
             .collect(),
     }))
+}
+
+/// A sub-board as `describe-kicad-board` reports it: its box and the
+/// parts with pins whose origin lies on it (a stack off every piece
+/// counts on none). Which of them the placement moves is the place
+/// check's (`sub_boards.sub_boards[].movable` of board-placer.json): a
+/// description knows no constraints (trial 5's SmartSpin2k read `movable:
+/// 0` on every board, with 630 parts to place).
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadDescribedSubBoard {
+    pub region: [f64; 4],
+    pub parts: usize,
 }
 
 /// `describe-kicad-board`'s `sub_boards` (`describe_pieces`).
@@ -2100,8 +2184,8 @@ pub struct KiCadDescribedPieces {
     /// board).
     pub parts_assigned: usize,
     /// The other pieces, the boards: each one's box (a region for its
-    /// parts) and the parts on it (`movable` is not judged here: 0).
-    pub sub_boards: Vec<KiCadSubBoard>,
+    /// parts) and the parts on it.
+    pub sub_boards: Vec<KiCadDescribedSubBoard>,
 }
 
 /// The sub-boards the placer found (`detect_for_placer`).
@@ -3570,6 +3654,47 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn a_grid_of_v_cuts_is_reported_strip_by_strip() {
+        // Trial 5's SmartSpin2k: nine copies on one outline cut by a grid
+        // of V-cuts, reported as one tab over the whole panel. Here four
+        // boards of 20 x 20 mm on one 41 x 41 mm outline, a V-cut across
+        // each way.
+        let outline =
+            r#"(gr_poly (pts (xy 0 0) (xy 41 0) (xy 41 41) (xy 0 41)) (layer "Edge.Cuts"))"#;
+        // Each labelled 3 mm before its start, on its axis.
+        let cut = |start: [f64; 2], end: [f64; 2], label: [f64; 2]| {
+            format!(
+                r#"(gr_line (start {} {}) (end {} {}) (stroke (width 0.4) (type default)) (layer "Cmts.User")) (gr_text "V-CUT" (at {} {} 0) (layer "Cmts.User"))"#,
+                start[0], start[1], end[0], end[1], label[0], label[1]
+            )
+        };
+        let pcb = crate::kicad_sexpr::parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user)) {outline} {} {})"#,
+            cut([-1.0, 20.5], [42.0, 20.5], [-4.0, 20.5]),
+            cut([20.5, -1.0], [20.5, 42.0], [20.5, -4.0])
+        ))
+        .unwrap();
+        let pieces = Pieces::of_board(&pcb).unwrap().expect("pieces");
+        assert_eq!(pieces.count(), 4, "{:?}", pieces.boxes);
+        assert_eq!(pieces.cut_by, vec!["V-cuts"]);
+        // Two strips, each along the panel and a cell or two across.
+        assert_eq!(pieces.tabs.len(), 2, "{:?}", pieces.tabs);
+        for tab in &pieces.tabs {
+            let (width, height) = (tab[2] - tab[0], tab[3] - tab[1]);
+            assert!(
+                width.max(height) > 35.0 && width.min(height) <= 2.0 + 1.0e-9,
+                "{tab:?}"
+            );
+        }
+        // The description says no `movable` per board: it knows no
+        // constraints.
+        let described = describe_pieces(&pcb).unwrap().expect("pieces");
+        let text = serde_json::to_string(&described).unwrap();
+        assert!(!text.contains("movable"), "{text}");
+        assert_eq!(described.tabs.len(), 2);
     }
 
     #[test]
