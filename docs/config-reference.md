@@ -24,7 +24,7 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 106 | 87 | 19 | 106 | 47 |
+| [Router settings](#router-settings) | 107 | 88 | 19 | 107 | 47 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 2 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 1 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
@@ -130,6 +130,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `exact_escape_stubs` | `Option<bool>` | unset | router.md | Escape stubs stamped exactly, straight ones along a lattice line first (router `exact_escape_stubs`; docs/router.md, "Fine-pitch escapes"): unset, the router's default (on since 2026-10-26); `PCB_ROUTER_EXACT_ESCAPES` overrides this. |
 | `fanout` | `Option<bool>` | unset | router.md | The fan-out step before the negotiation (router `fanout`; docs/router.md, "Fan-out before negotiation"): every pad of a dense row gets one straight way out, chosen jointly with its neighbours, that other nets pay to cross. Unset, the router's default (off); `PCB_ROUTER_FANOUT` overrides this. |
 | `crossing_dive` | `Option<bool>` | unset | router.md | The crossing dive in the trouble repair (router `crossing_dive`; docs/router.md, "Crossings decided in the repair (2026-11-03)"): one net of a crossing pair at a fine-pitch row takes a via beyond the row. Unset, the router's default (off); `PCB_ROUTER_CROSSING_DIVE` overrides this. |
+| `bga_fanout` | `Option<bool>` | unset | - | Prepared fan-outs for BGAs (board_router/bga_fanout.rs; docs/router.md, "Prepared fan-outs for BGAs (2026-11-04)"): before routing, every ball of a grid array's inner rings (those no track between the outer balls serves) gets a stub and a via in a diagonal gap, the largest of the class's and the project's via sizes that keeps every clearance, fixed copper of the ball's net that its route may end on, on any layer; written only where the net's route uses it. Unset: off; `PCB_ROUTER_BGA_FANOUT` overrides this. |
 | `fixed_plane_stubs` | `Option<bool>` | unset | router.md | Connect every pour-net pad to its plane by a fixed stub and via before the signals route (router `fixed_plane_stubs`). |
 | `trouble_repair` | `Option<bool>` | unset | router.md | The trouble-makers' repair after the hard repair (router `trouble_repair`; docs/experiments/human-level-routing.md): unset, the router's default; `PCB_ROUTER_TROUBLE` overrides this. |
 | `last_connections` | `Option<usize>` | unset | router.md | The trouble repair's last pass (router `last_connections`; docs/router.md, "The last connections"): once its rounds leave at most this many open terminals, ejection chains and board-wide victims; unset, the router's default (0, off); `PCB_ROUTER_LAST_CONNECTIONS` overrides this. |

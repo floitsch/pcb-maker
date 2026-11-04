@@ -203,6 +203,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "overrides the router's `crossing_dive` (`0` off, anything else on; off by default): where the trouble repair's exchange for an open net is refused and the net has a pad of a fine-pitch row whose straight way out a row neighbour's copper closes while their targets cross, one net of the pair takes a via at a fan-out via site beyond the row (docs/router.md, \"Crossings decided in the repair (2026-11-03)\").",
     ),
     (
+        "PCB_ROUTER_BGA_FANOUT",
+        Kind::Switch,
+        "overrides the router's `bga_fanout` (`0` off, anything else on; off by default): before routing, the inner balls of every grid array (those no track between the outer balls serves) get a stub and a through via in a diagonal gap, the largest of the class's and the project's via sizes that keeps every clearance, as fixed copper of the ball's net that its route may end on; written only where the route uses it; the placer keeps the far side free under those vias (docs/router.md, \"Prepared fan-outs for BGAs (2026-11-04)\").",
+    ),
+    (
         "PCB_ROUTER_FANOUT_COST",
         Kind::Switch,
         "the router's `fanout_cost` in millimetres (default 6; with `fanout`): what another net pays to cross a reserved fan-out run or to put a via within reach of it.",
@@ -311,6 +316,16 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "PCB_ROUTER_TROUBLE_WHY",
         Kind::Diagnostic,
         "the trouble-makers' repair prints every exchange's outcome (kept, or why refused; a refusal names the nets left in conflict and what their conflicts name).",
+    ),
+    (
+        "PCB_ROUTER_BGA_FANOUT_WHY",
+        Kind::Diagnostic,
+        "the prepared fan-outs (`bga_fanout`) print each grid array's plan once a process: pitch, rows and columns, the rings that leave on the surface, the inner balls, the dog-bones planned by via size, the balls kept (a via in the pad) and those no gap fits.",
+    ),
+    (
+        "PCB_ROUTER_NET_WORK",
+        Kind::Diagnostic,
+        "`<file>`: the search expansions per net over the process (every router, every phase), written to the file as JSON at each router's finish; the last write holds the whole run (docs/router.md, \"Prepared fan-outs for BGAs (2026-11-04)\").",
     ),
     (
         "PCB_ROUTER_FANOUT_WHY",
