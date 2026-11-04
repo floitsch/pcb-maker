@@ -971,13 +971,21 @@ struct FloodGrid {
     origin: [f64; 2],
     step: f64,
     size: [usize; 2],
-    /// Per cell: `None` free, `Some(Some(pad))` blocked by pads of one net
-    /// only (that pad's), `Some(None)` blocked by pads of several nets or
-    /// of none.
-    blocked: Vec<Option<Option<usize>>>,
+    /// Per cell: `FREE`, a pad's index plus one where pads of one net only
+    /// (that pad's) block it, `SHARED` where pads of several nets or of
+    /// none do. Four bytes a cell (sixteen as an `Option<Option<usize>>`
+    /// until 2026-11-04: a fine-pitch footprint's field at 5 um steps took
+    /// 770 MB on Neotron-Pico, two lowerings side by side in the placer's
+    /// seeds).
+    blocked: Vec<u32>,
     /// Per cell: whether a via fits there (its clearance from every pad).
     via_fits: Vec<bool>,
 }
+
+/// `FloodGrid::blocked` of a cell no pad blocks.
+const FREE: u32 = 0;
+/// `FloodGrid::blocked` of a cell pads of several nets (or of none) block.
+const SHARED: u32 = u32::MAX;
 
 impl FloodGrid {
     fn new(pads: &[BoardPad], on_layer: &[usize], width: f64, clearance: f64, via: f64) -> Self {
@@ -1017,10 +1025,14 @@ impl FloodGrid {
             ((bounds[2] + margin - origin[0]) / step).ceil() as usize + 1,
             ((bounds[3] + margin - origin[1]) / step).ceil() as usize + 1,
         ];
-        let mut blocked: Vec<Option<Option<usize>>> = vec![None; size[0] * size[1]];
+        let mut blocked: Vec<u32> = vec![FREE; size[0] * size[1]];
         let mut via_fits = vec![true; size[0] * size[1]];
         for &index in on_layer {
             let pad = &pads[index];
+            let own_code = u32::try_from(index + 1)
+                .ok()
+                .filter(|code| *code != SHARED)
+                .expect("a pad index in 32 bits");
             let reach = reach_of(index);
             let via_reach = via_reach_of(index);
             let aabb = pad.shape.aabb().inflated(reach.max(via_reach));
@@ -1045,13 +1057,14 @@ impl FloodGrid {
                     }
                     let cell = &mut blocked[y * size[0] + x];
                     *cell = match (*cell, &pad.net) {
-                        (None, Some(_)) => Some(Some(index)),
-                        (Some(Some(other)), Some(net))
-                            if pads[other].net.as_deref() == Some(net.as_str()) =>
+                        (FREE, Some(_)) => own_code,
+                        (SHARED, _) => SHARED,
+                        (other, Some(net))
+                            if pads[other as usize - 1].net.as_deref() == Some(net.as_str()) =>
                         {
-                            Some(Some(other))
+                            other
                         }
-                        _ => Some(None),
+                        _ => SHARED,
                     };
                 }
             }
@@ -1065,15 +1078,87 @@ impl FloodGrid {
         }
     }
 
+    /// Whether a track of `net` may pass `cell`.
+    fn free(&self, pads: &[BoardPad], net: &str, cell: usize) -> bool {
+        match self.blocked[cell] {
+            FREE => true,
+            SHARED => false,
+            pad => pads[pad as usize - 1].net.as_deref() == Some(net),
+        }
+    }
+
     /// The cells a track of `net` reaches from outside the pad field or
-    /// from a cell where a via fits (eight neighbours).
+    /// from a cell where a via fits (eight neighbours). A cell is marked
+    /// as it is found and found once, and each seed's flood ends before the
+    /// next seed's begins, so the stack holds one flood's frontier, each
+    /// cell at most once. Until 2026-11-04 a queue took every
+    /// via cell and every neighbour of every reached cell, found or not:
+    /// up to eight entries of eight bytes a cell, 1 GB of queue for one
+    /// net of Neotron-Pico's. The cells reached are the same: those joined
+    /// to a free seed through free cells, whatever the order.
     fn flood(&self, pads: &[BoardPad], net: &str) -> Vec<bool> {
         let [width, height] = self.size;
-        let free = |cell: usize| match self.blocked[cell] {
-            None => true,
-            Some(Some(pad)) => pads[pad].net.as_deref() == Some(net),
-            Some(None) => false,
+        assert!(
+            width * height <= u32::MAX as usize,
+            "a pad field of {width} x {height} cells"
+        );
+        let mut reached = vec![false; width * height];
+        let mut stack: Vec<u32> = Vec::new();
+        // Each seed's cells to the end before the next seed: the stack
+        // holds one flood's frontier.
+        let mut from = |seed: usize, reached: &mut [bool]| {
+            if reached[seed] || !self.free(pads, net, seed) {
+                return;
+            }
+            reached[seed] = true;
+            stack.push(seed as u32);
+            while let Some(cell) = stack.pop() {
+                let cell = cell as usize;
+                let (x, y) = ((cell % width) as isize, (cell / width) as isize);
+                for (dx, dy) in [
+                    (1, 0),
+                    (-1, 0),
+                    (0, 1),
+                    (0, -1),
+                    (1, 1),
+                    (1, -1),
+                    (-1, 1),
+                    (-1, -1),
+                ] {
+                    let (nx, ny) = (x + dx, y + dy);
+                    if nx >= 0 && ny >= 0 && (nx as usize) < width && (ny as usize) < height {
+                        let next = ny as usize * width + nx as usize;
+                        if !reached[next] && self.free(pads, net, next) {
+                            reached[next] = true;
+                            stack.push(next as u32);
+                        }
+                    }
+                }
+            }
         };
+        for x in 0..width {
+            for y in [0, height - 1] {
+                from(y * width + x, &mut reached);
+            }
+        }
+        for y in 0..height {
+            for x in [0, width - 1] {
+                from(y * width + x, &mut reached);
+            }
+        }
+        for cell in 0..width * height {
+            if self.via_fits[cell] {
+                from(cell, &mut reached);
+            }
+        }
+        reached
+    }
+
+    /// `flood` as it was until 2026-11-04 (a queue of every seed and every
+    /// neighbour): the tests' reference.
+    #[cfg(test)]
+    fn flood_by_queue(&self, pads: &[BoardPad], net: &str) -> Vec<bool> {
+        let [width, height] = self.size;
         let mut reached = vec![false; width * height];
         let mut queue = std::collections::VecDeque::new();
         for x in 0..width {
@@ -1088,7 +1173,7 @@ impl FloodGrid {
         }
         queue.extend((0..width * height).filter(|cell| self.via_fits[*cell]));
         while let Some(cell) = queue.pop_front() {
-            if reached[cell] || !free(cell) {
+            if reached[cell] || !self.free(pads, net, cell) {
                 continue;
             }
             reached[cell] = true;
@@ -1465,5 +1550,122 @@ mod tests {
         assert!(!statics.trace_allowed(1, cell, net("Y")));
         let free = grid.nearest_node([5.0, 10.0]).unwrap();
         assert!(statics.trace_allowed(1, free, net("Y")));
+    }
+
+    /// The pad field's raster in four bytes a cell and its flood by a
+    /// stack (2026-11-04) say what the raster of `Option<Option<usize>>`
+    /// and the flood by a queue said: every cell free for the same nets,
+    /// the same cells reached for every net. Ball fields of several
+    /// pitches, nets (some pads without one, some sharing one) and
+    /// clearances, the pads jittered so that reaches overlap unevenly.
+    #[test]
+    fn the_compact_raster_and_its_flood_reach_what_the_queue_reached() {
+        let mut state = 0x2545_f491_4f6c_dd1du64;
+        let mut random = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        for (pitch, side, nets, clearance) in [
+            (0.5, 5, 3, 0.1),
+            (0.4, 7, 5, 0.075),
+            (0.8, 6, 2, 0.15),
+            (0.65, 8, 9, 0.1),
+        ] {
+            let mut pads = Vec::new();
+            for row in 0..side {
+                for column in 0..side {
+                    let center = [
+                        column as f64 * pitch + 0.03 * (random() - 0.5),
+                        row as f64 * pitch + 0.03 * (random() - 0.5),
+                    ];
+                    let net = match (random() * (nets + 1) as f64) as usize {
+                        0 => None,
+                        net => Some(format!("N{net}")),
+                    };
+                    pads.push(BoardPad {
+                        footprint: 0,
+                        number: format!("{row}-{column}"),
+                        center,
+                        shape: core::Shape::Circle {
+                            center,
+                            radius: pitch * (0.25 + 0.1 * random()),
+                        },
+                        layers: 1,
+                        smd: true,
+                        net,
+                        clearance: clearance * (0.5 + random()),
+                        hole: None,
+                    });
+                }
+            }
+            let on_layer: Vec<usize> = (0..pads.len()).collect();
+            let (width, via) = (0.1, 0.3);
+            let grid = FloodGrid::new(&pads, &on_layer, width, clearance, via);
+            // The raster as it was built until 2026-11-04.
+            let [columns, rows] = grid.size;
+            let mut old: Vec<Option<Option<usize>>> = vec![None; columns * rows];
+            for &index in &on_layer {
+                let pad = &pads[index];
+                let reach = width / 2.0 + clearance.max(pad.clearance);
+                let via_reach = via / 2.0 + clearance.max(pad.clearance);
+                let aabb = pad.shape.aabb().inflated(reach.max(via_reach));
+                let x0 = ((aabb.minimum[0] - grid.origin[0]) / grid.step)
+                    .floor()
+                    .max(0.0) as usize;
+                let y0 = ((aabb.minimum[1] - grid.origin[1]) / grid.step)
+                    .floor()
+                    .max(0.0) as usize;
+                let x1 = (((aabb.maximum[0] - grid.origin[0]) / grid.step).ceil() as usize)
+                    .min(columns - 1);
+                let y1 = (((aabb.maximum[1] - grid.origin[1]) / grid.step).ceil() as usize)
+                    .min(rows - 1);
+                for y in y0..=y1 {
+                    for x in x0..=x1 {
+                        let point = [
+                            grid.origin[0] + x as f64 * grid.step,
+                            grid.origin[1] + y as f64 * grid.step,
+                        ];
+                        if pad.shape.distance_to_point(point) + grid.step >= reach {
+                            continue;
+                        }
+                        let cell = &mut old[y * columns + x];
+                        *cell = match (*cell, &pad.net) {
+                            (None, Some(_)) => Some(Some(index)),
+                            (Some(Some(other)), Some(net))
+                                if pads[other].net.as_deref() == Some(net.as_str()) =>
+                            {
+                                Some(Some(other))
+                            }
+                            _ => Some(None),
+                        };
+                    }
+                }
+            }
+            let mut names: Vec<String> = (1..=nets).map(|net| format!("N{net}")).collect();
+            names.push(String::new());
+            assert!(old.iter().any(|cell| matches!(cell, Some(Some(_)))));
+            assert!(old.iter().any(|cell| matches!(cell, Some(None))));
+            for name in &names {
+                for (cell, before) in old.iter().enumerate() {
+                    let free_before = match before {
+                        None => true,
+                        Some(Some(pad)) => pads[*pad].net.as_deref() == Some(name.as_str()),
+                        Some(None) => false,
+                    };
+                    assert_eq!(
+                        grid.free(&pads, name, cell),
+                        free_before,
+                        "{pitch} mm, {name}, cell {cell}"
+                    );
+                }
+                assert_eq!(
+                    grid.flood(&pads, name),
+                    grid.flood_by_queue(&pads, name),
+                    "{pitch} mm, {name}"
+                );
+            }
+        }
     }
 }
