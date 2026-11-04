@@ -595,12 +595,12 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_PLACER_CHECK_OVERLAP",
         Kind::Diagnostic,
-        "the annealer checks its incremental overlap against a full recount, and the placer its caches against the direct computation at every use (the anneal's wirelength terms, the escape term's prepared pads, the relation repair's sweep, the bucket grids' kept answers, the legality tests' parts apart by their boxes and their kept facts, the outlines by bands, the crossings of fresh trees beside the grid, the anneal's far pairs by their boxes, the kept lines' crossing counts and the new lines that are a kept one again; docs/profiling.md, \"The second placer round\", \"The third placer round\", \"The fourth placer round\").",
+        "the annealer checks its incremental overlap against a full recount, and the placer its caches against the direct computation at every use (the anneal's wirelength terms, the escape term's prepared pads, the relation repair's sweep, the bucket grids' kept answers, the legality tests' parts apart by their boxes and their kept facts, the outlines by bands, the crossings of fresh trees beside the grid, the anneal's far pairs by their boxes, the kept lines' crossing counts and the new lines that are a kept one again; docs/profiling.md, \"The second placer round\", \"The third placer round\", \"The fourth placer round\"). The checks book no work, draw no random number and leave the caches as the unchecked path does: the placement is the one without them (docs/profiling.md, \"How to profile\").",
     ),
     (
         "PCB_ROUTER_CHECK_RIP_UP",
         Kind::Diagnostic,
-        "the race's ripped count checks the most conflicted net its heap finds against the scan of every net at every rip-up (docs/profiling.md, \"The fourth placer round\"; debug builds always do).",
+        "the race's ripped count checks the most conflicted net its heap finds against the scan of every net at every rip-up (docs/profiling.md, \"The fourth placer round\"; debug builds always do); the routes are the ones without it.",
     ),
     (
         "PCB_LADDER_STATS",

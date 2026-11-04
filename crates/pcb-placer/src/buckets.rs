@@ -56,7 +56,7 @@ impl Answers {
             slots: vec![(0, 0, 0, 0); ANSWER_SLOTS],
             items: Vec::new(),
             generation: 1,
-            check: cfg!(debug_assertions) || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
+            check: crate::checking(),
         }
     }
 

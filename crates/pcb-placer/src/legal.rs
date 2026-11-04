@@ -872,7 +872,7 @@ impl Apart {
             frame: None,
             board: (problem.outline.len() >= BOARD_INDEX_EDGES)
                 .then(|| Outline::new(&problem.outline)),
-            check: cfg!(debug_assertions) || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
+            check: crate::checking(),
         }
     }
 
@@ -1291,8 +1291,7 @@ impl Sweep {
         area: [f64; 4],
     ) -> Self {
         let count = problem.components.len();
-        let check =
-            cfg!(debug_assertions) || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some();
+        let check = crate::checking();
         if problem.components[index].copper_only {
             return Sweep {
                 index,
@@ -1920,7 +1919,7 @@ impl Outline {
             low: extent[1],
             scale,
             bands: vec![Vec::new(); count],
-            check: cfg!(debug_assertions) || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
+            check: crate::checking(),
         };
         for index in 0..polygon.len() {
             let (a, b) = (polygon[index], polygon[(index + 1) % polygon.len()]);

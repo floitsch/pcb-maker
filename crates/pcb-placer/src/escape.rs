@@ -426,8 +426,7 @@ impl<'a> EscapeState<'a> {
             near: Vec::new(),
             scratch: Vec::new(),
             targets: None,
-            check_targets: cfg!(debug_assertions)
-                || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
+            check_targets: crate::checking(),
             scale: vec![1.0; count],
             session: None,
             kept: 0,

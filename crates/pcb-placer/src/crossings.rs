@@ -651,7 +651,7 @@ impl<'a> CrossingState<'a> {
             prim: Prim::default(),
             edges: Vec::new(),
             nets: Vec::new(),
-            check: cfg!(debug_assertions) || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
+            check: crate::checking(),
         };
         let cells = state.grid.cells.len();
         state.cell_stamp = vec![0; cells];

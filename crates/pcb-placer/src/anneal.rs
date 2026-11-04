@@ -285,7 +285,11 @@ impl State<'_> {
     fn overlap(&self, index: usize, rect: Rect) -> f64 {
         let fast = self.overlap_with(index, rect, false);
         if self.check_overlap {
+            // The check's own work is not the anneal's: booked, it would
+            // move the anneal's stages and the placement's stops.
+            let before = self.work.get();
             let full = self.overlap_with(index, rect, true);
+            self.work.set(before);
             assert!(
                 (fast - full).abs() <= 1.0e-9 * full.abs().max(1.0),
                 "part {index}: bucketed {fast}, full {full}"
@@ -1179,7 +1183,7 @@ fn build_state<'a>(problem: &'a Problem, poses: &[Pose], legal_far_side: bool) -
             },
         visit_work: (1.0 + (problem.constraints.linked.len() as f64 + 1.0).log2() / 2.0).round()
             as u64,
-        check_overlap: std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
+        check_overlap: crate::check_mode(),
         far_grow: far_grow(problem),
         skip_far: true,
         reaches: Vec::new(),
@@ -1188,8 +1192,7 @@ fn build_state<'a>(problem: &'a Problem, poses: &[Pose], legal_far_side: bool) -
         field: None,
         lengths: Vec::new(),
         relations: constraints::PartRelations::new(problem),
-        check_lengths: cfg!(debug_assertions)
-            || std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some(),
+        check_lengths: crate::checking(),
     };
     state.rects = (0..problem.components.len())
         .map(|index| state.rect(index, state.poses[index]))

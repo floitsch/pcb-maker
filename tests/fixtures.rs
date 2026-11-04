@@ -94,6 +94,8 @@ fn binary(threads: usize) -> Command {
         "PCB_ROUTER_NO_SHARED_STATICS",
         "PCB_KICAD_NO_NECK_REPAIR",
         "PCB_ROUTER_SPOKE_DEBUG",
+        "PCB_PLACER_CHECK_OVERLAP",
+        "PCB_ROUTER_CHECK_RIP_UP",
     ] {
         command.env_remove(variable);
     }
@@ -1426,6 +1428,53 @@ fn the_place_check_pins_the_reference_rates_unless_told_to_measure() {
     assert!(pinned["work_rate_measured"].as_f64().is_some());
     let measured = place("measured", &["--measure-work-rate"]);
     assert_eq!(measured["work_rate_source"], "measured", "{measured}");
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn the_place_check_places_alike_in_check_mode() {
+    // Check mode (`PCB_PLACER_CHECK_OVERLAP`: every cache of the placer
+    // against its direct computation at every use) must not change the
+    // placement it verifies: the same placed board, byte for byte, and
+    // the same work booked (the work decides the anneal's stages, the
+    // stops and the race's seeds).
+    let root = scratch("place-check-mode");
+    let source = project("f1", &root);
+    let layout = root.join("layout.json");
+    fs::write(
+        &layout,
+        json!({"total_seconds": 20, "placer": {}}).to_string(),
+    )
+    .unwrap();
+    let place = |name: &str, check: bool| {
+        let out = root.join(name);
+        let mut command = binary(2);
+        if check {
+            command.env("PCB_PLACER_CHECK_OVERLAP", "1");
+        }
+        let output = command
+            .args([
+                "place-kicad-board",
+                &source.display().to_string(),
+                "f1",
+                &out.display().to_string(),
+                &layout.display().to_string(),
+            ])
+            .output()
+            .unwrap();
+        assert!(matches!(code(&output), 0 | 1), "{}", stderr(&output));
+        let placed = fs::read(out.join("f1.kicad_pcb")).unwrap();
+        let report = read_json(&out.join("board-placer.json"));
+        let work: Vec<Value> = ["work_seconds", "seeds_work_seconds", "pool_work_seconds"]
+            .iter()
+            .map(|key| report[*key].clone())
+            .collect();
+        (placed, work)
+    };
+    let (plain, plain_work) = place("plain", false);
+    let (checked, checked_work) = place("checked", true);
+    assert_eq!(plain_work, checked_work, "the work booked");
+    assert!(plain == checked, "the placed boards differ");
     fs::remove_dir_all(root).unwrap();
 }
 

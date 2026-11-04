@@ -589,6 +589,38 @@ thread_local! {
     static WORK: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
+thread_local! {
+    /// The tests' choice of check mode on this thread (`with_check_mode`),
+    /// or None: `PCB_PLACER_CHECK_OVERLAP`'s.
+    static CHECK_MODE: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// Check mode (`PCB_PLACER_CHECK_OVERLAP`): every cache and shortcut is
+/// checked against its direct computation at every use. A check books no
+/// work, draws no random number and leaves every cache as the unchecked
+/// path leaves it, so that a placement in check mode is the placement
+/// without it (`check_mode_places_as_without_it`).
+pub(crate) fn check_mode() -> bool {
+    CHECK_MODE
+        .with(|mode| mode.get())
+        .unwrap_or_else(|| std::env::var_os("PCB_PLACER_CHECK_OVERLAP").is_some())
+}
+
+/// Whether the caches are checked: in check mode and in debug builds.
+pub(crate) fn checking() -> bool {
+    cfg!(debug_assertions) || check_mode()
+}
+
+/// Runs `body` with check mode on or off on this thread (the tests: the
+/// environment is the process's).
+#[cfg(test)]
+pub(crate) fn with_check_mode<T>(on: bool, body: impl FnOnce() -> T) -> T {
+    let before = CHECK_MODE.with(|mode| mode.replace(Some(on)));
+    let result = body();
+    CHECK_MODE.with(|mode| mode.set(before));
+    result
+}
+
 /// Placement work one thread does per second on the reference (the 5950X
 /// idle, docs/placer.md, "Placement work against the CPU"). The rate a
 /// process turns its budgets in seconds into work limits at is
@@ -1699,5 +1731,119 @@ mod level_tests {
         assert!(!skip_to_tight(9, 482, 10, 164, 2));
         // No level ran yet.
         assert!(!skip_to_tight(27, 482, 10, 0, 2));
+    }
+}
+
+#[cfg(test)]
+mod check_mode_tests {
+    use super::*;
+
+    /// `legal`'s random boards (parts of every kind the legality test
+    /// knows, cutouts with outlines, marks, linked pairs) on a board of
+    /// sixteen edges, their pins on ten nets, with the crossings and the
+    /// escape terms on: every cache that check mode checks is in use.
+    fn board(round: usize) -> Problem {
+        let mut state = 0x5DEE_CE66_D1CE_4E5Bu64 ^ round as u64;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            (state >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let (mut problem, _) = crate::legal::tests::random_board(round, &mut next);
+        let nets = 10;
+        for component in &mut problem.components {
+            for pin in &mut component.pins {
+                pin.net = (next() * nets as f64) as usize;
+            }
+        }
+        problem.net_weights = vec![1.0; nets];
+        // A ragged outline (the board's `Outline` by bands from 12 edges).
+        problem.outline = (0..16)
+            .map(|index| {
+                let angle = index as f64 / 16.0 * std::f64::consts::TAU;
+                let radius = if index % 2 == 0 { 24.0 } else { 21.0 };
+                [15.0 + radius * angle.cos(), 15.0 + radius * angle.sin()]
+            })
+            .collect();
+        problem.crossings = Some(std::sync::Arc::new(crossings::Crossings {
+            counted: vec![true; nets],
+            weight: 2.0,
+            legalise: true,
+            refine: true,
+            anneal: true,
+            global: false,
+        }));
+        problem.escape = Some(std::sync::Arc::new(escape::Escape {
+            pitch: 0.5,
+            layers: 2.0,
+            counted: vec![true; nets],
+            weight: 1.0,
+            inflate: 1.0,
+            turn_tolerance: 0.05,
+            measured: None,
+            measure_every: 0,
+        }));
+        problem
+    }
+
+    /// Places `board(round)` with check mode off and on (on this thread
+    /// alone: the tests of each round run side by side): the same poses,
+    /// bit for bit, and the same work booked. A verification mode must not
+    /// change what it verifies: a check that booked its direct
+    /// computation's work moved the anneal's stages and the placement's
+    /// stops (eternal-keypad, 2026-11-04).
+    fn places_as_without_it(round: usize) {
+        let problem = board(round);
+        let mut config = Config::new();
+        // Through the anneal, the legaliser and the refinement (the
+        // escape term's prepared pads among its candidates).
+        config.work_limit = Some(400_000_000);
+        config.anneal.seed = round as u64 + 1;
+        let plain = with_check_mode(false, || place(&problem, &config));
+        let checked = with_check_mode(true, || place(&problem, &config));
+        let bits = |placement: &Placement| {
+            placement
+                .poses
+                .iter()
+                .map(|pose| {
+                    (
+                        pose.position[0].to_bits(),
+                        pose.position[1].to_bits(),
+                        pose.angle.to_bits(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(plain.work, checked.work, "round {round}: work booked");
+        let moved = (0..problem.components.len())
+            .filter(|part| bits(&plain)[*part] != bits(&checked)[*part])
+            .count();
+        assert_eq!(moved, 0, "round {round}: parts placed otherwise");
+        assert_eq!(
+            (plain.unplaced, plain.illegal),
+            (checked.unplaced, checked.illegal),
+            "round {round}"
+        );
+    }
+
+    #[test]
+    fn check_mode_places_as_without_it() {
+        places_as_without_it(0);
+    }
+
+    #[test]
+    fn check_mode_places_as_without_it_with_courtyard_spacing() {
+        places_as_without_it(1);
+    }
+
+    #[test]
+    fn check_mode_places_as_without_it_with_shared_halos() {
+        places_as_without_it(2);
+    }
+
+    #[test]
+    fn check_mode_places_as_without_it_with_far_side_pads_only() {
+        places_as_without_it(3);
     }
 }
