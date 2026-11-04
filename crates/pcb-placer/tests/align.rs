@@ -182,7 +182,11 @@ fn the_finish_lines_a_part_up_where_it_costs_next_to_nothing() {
             part(2, [2.0, 1.0], false),
             part(4, [2.0, 1.0], false),
         ],
-        vec![at(10.0, 10.0, 0.0), at(14.0, 10.4, 0.0), at(18.0, 10.0, 0.0)],
+        vec![
+            at(10.0, 10.0, 0.0),
+            at(14.0, 10.4, 0.0),
+            at(18.0, 10.0, 0.0),
+        ],
     );
     let align = Align::new(&p, Settings::default());
     let mut poses = p.poses.clone();
@@ -190,7 +194,11 @@ fn the_finish_lines_a_part_up_where_it_costs_next_to_nothing() {
     assert!((align.total(&p, &poses) - 1.2).abs() < 1e-9);
     // R1 lines up with R2, then R3 does.
     assert_eq!(align_rows(&p, &mut poses, &align, 0.5), 2);
-    assert!(poses.iter().all(|pose| (pose.position[1] - 10.4).abs() < 1e-9));
+    assert!(
+        poses
+            .iter()
+            .all(|pose| (pose.position[1] - 10.4).abs() < 1e-9)
+    );
     assert_eq!(align.lined_up(&p, &poses), Some(1.0));
     assert_eq!(align.total(&p, &poses), 0.0);
 }
