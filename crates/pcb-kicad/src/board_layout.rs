@@ -1499,6 +1499,7 @@ pub fn layout_kicad_board(
     )?;
     let placed_directory = output_directory.join("placed");
     eprintln!("layout: placing ({:.0} s, work {work:.0} s)", elapsed());
+    crate::mem_profile::phase("placing");
     // What sizing the outline left of the placement budget (a little at
     // least: without any, placement would not anneal at all).
     placer_config.work_seconds = Some((placement_budget - work).max(0.1 * placement_budget));
@@ -1815,6 +1816,7 @@ pub fn layout_kicad_board(
                 .iter()
                 .map(|(poses, relaxation)| ((*poses).clone(), (*relaxation).clone())),
         );
+        crate::mem_profile::phase("pre-ranking");
         let ranked = crate::congestion_rank::rank_placements(
             &without_copper_texts(&pcb, config.placer.keep_board_marks),
             &pool,
@@ -2010,6 +2012,7 @@ pub fn layout_kicad_board(
         // the ranking's order, each counted and charged, the fewest
         // unfinished nets kept, a tie to the earlier one. A probe's
         // budget is work, so what runs beside it does not change it.
+        crate::mem_profile::phase("race probes");
         let before_mb = crate::board_router::resident_mb();
         let first = core::router::Router::new(&board, &core_config);
         let router_mb = (crate::board_router::resident_mb() - before_mb).max(1.0);
@@ -2123,6 +2126,7 @@ pub fn layout_kicad_board(
                     crate::board_router::resident_mb() + router_mb,
                     "the race's ripped count",
                 );
+                crate::mem_profile::phase("race ripped count");
                 let before_mb = crate::board_router::resident_mb();
                 let started = std::time::Instant::now();
                 let mut copy = router.copy_for_rip_up();
@@ -2285,12 +2289,14 @@ pub fn layout_kicad_board(
                 );
             }
             let before = kept.expansions();
+            crate::mem_profile::phase("first route");
             let result = kept.resume_polished(seconds, false);
             work += kept.expansions().saturating_sub(before) as f64
                 / core::router::expansions_per_second();
             (kept, result)
         }
     } else {
+        crate::mem_profile::phase("first route");
         let (router, result, first_work) = route_once(&board);
         work += first_work;
         (router, result)
@@ -2320,6 +2326,7 @@ pub fn layout_kicad_board(
         );
         stop.end_after_first_route();
     }
+    crate::mem_profile::phase("moves");
     let move_started = std::time::Instant::now();
     let move_work_started = work;
     let mut moves = Vec::new();
@@ -2684,6 +2691,7 @@ pub fn layout_kicad_board(
             // A resume that ends worse (MokyaLora: 21 open to 89) must
             // not leave its state behind for the polish: the router is
             // restored with the result.
+            crate::mem_profile::phase("resume");
             let saved_router = router.clone();
             let expansions_before = router.expansions();
             arm(&mut router, work + pool_excess);
@@ -2742,6 +2750,7 @@ pub fn layout_kicad_board(
         && polish_left >= 240.0
         && stop.allows(LayoutStep::Polish)
     {
+        crate::mem_profile::phase("polish");
         let saved_router = router.clone();
         let expansions_before = router.expansions();
         {
@@ -2795,6 +2804,7 @@ pub fn layout_kicad_board(
         shrink: true,
         hide_when_blocked: config.silkscreen.hide_when_blocked,
     };
+    crate::mem_profile::phase("labels and the board kept");
     let mut labels = crate::labels::place_labels(
         &mut pcb,
         keep_marks,
@@ -2914,6 +2924,7 @@ pub fn layout_kicad_board(
         .map(|(net, terminal)| board.nets[net as usize].terminals[terminal].anchor)
         .collect();
     drop(router);
+    crate::mem_profile::phase("layout ladder");
     eprintln!("layout: routed ({:.0} s, work {work:.0} s)", elapsed());
     // Past the wall-clock guard the ladder would only lower the board and
     // ask KiCad again (link ended 106 s past it, 44 s before the
