@@ -1415,6 +1415,47 @@ pub struct KiCadRunFacts {
     /// The hot spot the open connections' action names, with the parts
     /// nearest it (`hot_spot_note`), when connections are open.
     pub hot_spot: Option<KiCadHotSpotNote>,
+    /// The pads KiCad finds short of thermal spokes, each as `REF.NUMBER`
+    /// with its layer and advice (`diagnostics.starved_thermals`).
+    pub starved_pads: Vec<KiCadStarvedPad>,
+    /// What `solid_starved_thermals` did on the board written, when it ran
+    /// on it.
+    pub solid_starved: Option<crate::board_router::KiCadSolidStarved>,
+}
+
+/// A pad KiCad finds short of thermal spokes, for the verdict's line.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KiCadStarvedPad {
+    /// `REF.NUMBER` (`U1.57`), as `solid_starved.pads` names pads.
+    pub pad: String,
+    pub layer: String,
+    pub advice: String,
+}
+
+/// A starved thermal of `diagnostics.starved_thermals` for the verdict's
+/// line: its pad as `REF.NUMBER`, the name `solid_starved.pads` gives it
+/// (a pad KiCad names without a number, "Pad [GND] of M12", as KiCad
+/// names it).
+pub(crate) fn starved_pad(finding: &crate::board_router::KiCadStarvedThermal) -> KiCadStarvedPad {
+    let pad = crate::board_router::solid_pads_of_findings(std::slice::from_ref(finding))
+        .first()
+        .filter(|pad| !pad.number.is_empty() && !pad.number.contains(['[', ' ']))
+        .map_or_else(
+            || {
+                finding
+                    .pad
+                    .split(" on ")
+                    .next()
+                    .unwrap_or(&finding.pad)
+                    .to_string()
+            },
+            |pad| format!("{}.{}", pad.reference, pad.number),
+        );
+    KiCadStarvedPad {
+        pad,
+        layer: finding.layer.clone(),
+        advice: finding.advice.clone(),
+    }
 }
 
 /// A part near a hot spot: its reference, its side (`front`, `back`) and
@@ -1773,6 +1814,8 @@ impl KiCadRunFacts {
             vias_in_pads: None,
             open_nets: Vec::new(),
             hot_spot: None,
+            starved_pads: Vec::new(),
+            solid_starved: None,
         }
     }
 
@@ -2254,10 +2297,7 @@ fn next_actions(
     }
     let thermal_action = facts.starved_thermals > 0 && new_findings.contains_key("starved_thermal");
     if thermal_action {
-        actions.push(format!(
-            "{} pads are short of thermal spokes (diagnostics.starved_thermals has advice for each); \"solid_starved_thermals\" (on unless false in the router config) connects them solid",
-            facts.starved_thermals
-        ));
+        actions.push(thermal_action_text(facts));
     }
     let other: BTreeMap<String, usize> = new_findings
         .iter()
@@ -2506,6 +2546,105 @@ fn hot_spot_action(note: &KiCadHotSpotNote, command: &str) -> String {
         "{spot}: the parts nearest it on {} are {} (side, distance from the point to the body or a pad on that layer); {lever}",
         note.layer,
         parts.join(", ")
+    )
+}
+
+/// The starved thermals' next action: the pads by name with KiCad's
+/// layer, what `solid_starved_thermals` did for them on the board written
+/// (tried and undone, kept, or not tried on this board), and the per-pad
+/// advice of `diagnostics.starved_thermals`. Trial 4's Quanta75: two of
+/// U1's pads stayed starved while the line said the setting connects them
+/// solid.
+fn thermal_action_text(facts: &KiCadRunFacts) -> String {
+    let shown = 4;
+    let mut named: Vec<String> = facts
+        .starved_pads
+        .iter()
+        .take(shown)
+        .map(|pad| format!("{} on {}", pad.pad, pad.layer))
+        .collect();
+    if facts.starved_pads.len() > shown {
+        named.push(format!("{} more", facts.starved_pads.len() - shown));
+    }
+    let pads = if named.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", named.join(", "))
+    };
+    let tried: BTreeSet<&str> = facts
+        .solid_starved
+        .iter()
+        .flat_map(|solid| solid.pads.iter().map(String::as_str))
+        .collect();
+    let starved: BTreeSet<&str> = facts
+        .starved_pads
+        .iter()
+        .map(|pad| pad.pad.as_str())
+        .collect();
+    let solid = match &facts.solid_starved {
+        Some(solid) if !solid.kept && !starved.is_empty() && starved.is_subset(&tried) => format!(
+            "solid_starved_thermals connected them solid and KiCad's check undid it: solid, {} unconnected items and {} findings, with spokes {} and {} (solid_starved in board-router.json), so they keep their spokes",
+            solid.unconnected[1], solid.findings[1], solid.unconnected[0], solid.findings[0]
+        ),
+        Some(solid) if !solid.kept => format!(
+            "solid_starved_thermals connected {} solid and KiCad's check undid it (solid, {} unconnected items and {} findings; with spokes {} and {}); {} it did not try",
+            solid.pads.join(", "),
+            solid.unconnected[1],
+            solid.findings[1],
+            solid.unconnected[0],
+            solid.findings[0],
+            starved
+                .difference(&tried)
+                .copied()
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Some(solid) => {
+            let again: Vec<&str> = starved.intersection(&tried).copied().collect();
+            let untried: Vec<&str> = starved.difference(&tried).copied().collect();
+            let mut said = vec![format!(
+                "solid_starved_thermals connected {} solid and KiCad's check kept it",
+                solid.pads.join(", ")
+            )];
+            if !again.is_empty() {
+                said.push(format!("{} still starved solid", again.join(", ")));
+            }
+            if !untried.is_empty() {
+                said.push(format!(
+                    "{} starved only on the board after that try (not tried)",
+                    untried.join(", ")
+                ));
+            }
+            said.join("; ")
+        }
+        None => "solid_starved_thermals did not try them on this board (false in the router config, KiCad's check skipped, or the run's end near)".into(),
+    };
+    // Where the solid connection was tried and undone for the pad, the
+    // advice's own "or give the pad a solid zone connection" is no lever.
+    let undone = |pad: &str| {
+        facts
+            .solid_starved
+            .as_ref()
+            .is_some_and(|solid| !solid.kept && tried.contains(pad))
+    };
+    let advice = facts
+        .starved_pads
+        .first()
+        .map(|pad| {
+            let advice = if undone(&pad.pad) {
+                pad.advice.replace(
+                    ", or give the pad a solid zone connection (its zone_connect 2)",
+                    "",
+                )
+            } else {
+                pad.advice.clone()
+            };
+            format!("; {}: {advice}", pad.pad)
+        })
+        .unwrap_or_default();
+    format!(
+        "{} pads are short of thermal spokes{pads}: {solid}{advice} (diagnostics.starved_thermals has advice for each)",
+        facts.starved_thermals
     )
 }
 
@@ -3509,6 +3648,13 @@ pub fn route_facts(
             .and_then(|text| crate::parse(&text).ok());
         facts.hot_spot = hot_spot_note(&result.diagnostics.hot_spots, &open, board.as_ref());
     }
+    facts.starved_pads = result
+        .diagnostics
+        .starved_thermals
+        .iter()
+        .map(starved_pad)
+        .collect();
+    facts.solid_starved = result.solid_starved.clone();
     facts.cut = result.cut.clone();
     facts.skipped = result.skipped.clone();
     facts.unmodelled_rules = result.rules.project.unmodelled.clone();
@@ -5587,5 +5733,62 @@ mod tests {
         // Without any open net in a hot spot: the worst one.
         let none = hot_spot_note(&spots, &BTreeSet::new(), None).unwrap();
         assert_eq!((none.index, none.parts.len()), (0, 0));
+    }
+
+    #[test]
+    fn starved_thermals_say_what_the_solid_connection_did_for_each_pad() {
+        // Trial 4's Quanta75 run 2: U1's exposed pad starved on two layers
+        // while the line said solid_starved_thermals connects them solid.
+        let report = json!({
+            "violations": [
+                {"type": "starved_thermal", "severity": "error", "description": "Thermal relief connection to zone incomplete (layer F.Cu; zone GND; actual 2; spoke count 4)",
+                 "items": [{"description": "Pad 57 [GND] of U1 on F.Cu", "uuid": "p", "pos": {"x": 1.0, "y": 1.0}}]},
+                {"type": "starved_thermal", "severity": "error", "description": "Thermal relief connection to zone incomplete (layer B.Cu; zone GND; actual 1; spoke count 4)",
+                 "items": [{"description": "Pad 57 [GND] of U1 on F.Cu", "uuid": "p", "pos": {"x": 1.0, "y": 1.0}}]}
+            ],
+            "unconnected_items": [],
+            "schematic_parity": []
+        });
+        let mut facts = routed(tally_drc(&report));
+        facts.command = "layout-kicad-board".into();
+        facts.starved_thermals = 2;
+        facts.starved_pads = ["F.Cu", "B.Cu"]
+            .iter()
+            .map(|layer| KiCadStarvedPad {
+                pad: "U1.57".into(),
+                layer: layer.to_string(),
+                advice: "only 2 of 4 spokes reach the fill: keep other copper off the pad's sides, or give the pad a solid zone connection (its zone_connect 2)".into(),
+            })
+            .collect();
+        facts.solid_starved = Some(crate::board_router::KiCadSolidStarved {
+            pads: vec!["U1.57".into()],
+            kept: false,
+            unconnected: [8, 9],
+            findings: [3, 2],
+        });
+        let thermal = |facts: &KiCadRunFacts| {
+            judge(facts)
+                .next_actions
+                .into_iter()
+                .find(|action| action.contains("short of thermal spokes"))
+                .unwrap()
+        };
+        let action = thermal(&facts);
+        assert!(
+            action.starts_with("2 pads are short of thermal spokes (U1.57 on F.Cu, U1.57 on B.Cu): solid_starved_thermals connected them solid and KiCad's check undid it: solid, 9 unconnected items and 2 findings, with spokes 8 and 3"),
+            "{action}"
+        );
+        assert!(action.contains("U1.57: only 2 of 4 spokes reach the fill: keep other copper off the pad's sides (diagnostics"), "{action}");
+        assert!(!action.contains("connects them solid"), "{action}");
+        facts.solid_starved = None;
+        let action = thermal(&facts);
+        assert!(
+            action.contains("solid_starved_thermals did not try them on this board"),
+            "{action}"
+        );
+        assert!(
+            action.contains("or give the pad a solid zone connection"),
+            "{action}"
+        );
     }
 }

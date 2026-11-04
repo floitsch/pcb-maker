@@ -1056,6 +1056,7 @@ pub(crate) fn finish_routed_board(
         pour_loss: None,
         predicted_starved_thermals: Vec::new(),
         solid_by_model: Vec::new(),
+        solid_starved: None,
         negotiation_stop: result.negotiation_stop.to_string(),
         attempts: Vec::new(),
     };
@@ -1370,6 +1371,27 @@ pub(crate) fn solidify_starved_thermals(
             // Kept when KiCad finds no more unconnected items and fewer
             // findings (the starved thermals gone, nothing new).
             let better = solid_kept(before.as_ref(), &after);
+            let counts = |report: Option<&crate::verification::VerificationReport>| {
+                report.map_or([0, 0], |report| {
+                    [
+                        report.selected_net_unconnected_items,
+                        report.drc_design_violations,
+                    ]
+                })
+            };
+            let (spokes, solid) = (counts(before.as_ref()), counts(Some(&after)));
+            result.solid_starved = Some(KiCadSolidStarved {
+                // As the verdict names the starved pads (`starved_pad`).
+                pads: starved_before
+                    .iter()
+                    .map(|finding| crate::verdict::starved_pad(finding).pad)
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .into_iter()
+                    .collect(),
+                kept: better,
+                unconnected: [spokes[0], solid[0]],
+                findings: [spokes[1], solid[1]],
+            });
             if better {
                 result.native = Some(after);
                 result.diagnostics.starved_thermals = starved_thermal_diagnostics(output_directory);
