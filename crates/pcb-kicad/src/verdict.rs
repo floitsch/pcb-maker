@@ -1995,7 +1995,22 @@ fn next_actions(
             sub.unassigned_parts.join(", ")
         ));
     }
-    actions.extend(facts.input_warnings.iter().cloned());
+    // The input check's and the placement's warnings about what the agent
+    // gave (a keepout over a held part, a keep_whole region, a value below
+    // the project's minimum, a missing kicad-cli, copper on a layer the
+    // stack lacks) come with this run's actions; the input's own
+    // observations (`input_observation`: the designer's marks under fixed
+    // parts, fixed parts on top of each other) go last, tagged. Trial 4:
+    // on all three boards they led the list (four marks under the
+    // Quanta75's fixed parts before its open connections).
+    let mut observations: Vec<String> = Vec::new();
+    for warning in &facts.input_warnings {
+        if input_observation(warning) {
+            observations.push(warning.clone());
+        } else {
+            actions.push(warning.clone());
+        }
+    }
     if !facts.attempts_failed.is_empty() {
         actions.push(format!(
             "{} attempts of the router's ladder failed (a panic; attempts_failed in board-router.json has each message): the board is the best of the other attempts; report the panic ({})",
@@ -2136,8 +2151,14 @@ fn next_actions(
             None => "the board's .kicad_dru".to_string(),
         },
     );
-    actions.extend(footprint_findings_note(footprint, &dru));
-    actions.extend(input_findings_note(input, &dru, false));
+    observations.extend(footprint_findings_note(footprint, &dru));
+    observations.extend(input_findings_note(input, &dru, false));
+    if !facts.constraints_missed.is_empty() {
+        actions.push("constraints missed (constraints[] has violation_mm for each): relax them or give the parts room".into());
+    }
+    if facts.routes && status != KiCadRunStatus::Complete && !facts.unmodelled_rules.is_empty() {
+        actions.push(unmodelled_rules_action(&facts.unmodelled_rules));
+    }
     if !facts.board_mark_overlaps.is_empty() {
         let shown = 6;
         let mut listed: Vec<String> = facts
@@ -2169,9 +2190,16 @@ fn next_actions(
             listed.join("; ")
         ));
     }
-    if !facts.constraints_missed.is_empty() {
-        actions.push("constraints missed (constraints[] has violation_mm for each): relax them or give the parts room".into());
+    for pour in facts.pours.iter().filter(|pour| pour.in_many_pieces()) {
+        actions.push(pour_action(pour));
     }
+    actions.extend(facts.decoupling.as_ref().and_then(|decoupling| {
+        decoupling_action(
+            decoupling,
+            facts.decoupling_near,
+            &facts.decoupling_constrained,
+        )
+    }));
     if !unknown.is_empty() {
         actions.push(format!(
             "the reference board has {} at KiCad's cap of {KICAD_FINDING_CAP} findings: only the findings at the same place are subtracted (preexisting_unknown)",
@@ -2183,12 +2211,18 @@ fn next_actions(
             "the reference board could not be checked ({error}): every DRC error counted as new"
         ));
     }
+    if facts.routes && facts.native.is_none() {
+        actions.push("KiCad's check did not run (PCB_SKIP_NATIVE or skip_native_verification): the router's own count is no verdict; run KiCad's DRC (pcb-maker drc-kicad-board) before using the board".into());
+    }
+    if status != KiCadRunStatus::Complete {
+        actions.extend(facts.skipped.iter().cloned());
+    }
     if let Some(native) = facts
         .native
         .as_ref()
         .filter(|native| native.schematic_parity > 0)
     {
-        actions.push(if native.schematic_parity_pins_only {
+        observations.push(if native.schematic_parity_pins_only {
             format!(
                 "nothing to do for the {} schematic parity findings: each is a symbol pin the footprint has no pad for (net_conflict \"No pad found for pin\"), a no-connect pin on KiCad's unconnected-(...) net when import-kicad-netlist listed it in unmatched_pins",
                 native.schematic_parity
@@ -2201,26 +2235,30 @@ fn next_actions(
             )
         });
     }
-    if facts.routes && status != KiCadRunStatus::Complete && !facts.unmodelled_rules.is_empty() {
-        actions.push(unmodelled_rules_action(&facts.unmodelled_rules));
-    }
-    for pour in facts.pours.iter().filter(|pour| pour.in_many_pieces()) {
-        actions.push(pour_action(pour));
-    }
-    actions.extend(facts.decoupling.as_ref().and_then(|decoupling| {
-        decoupling_action(
-            decoupling,
-            facts.decoupling_near,
-            &facts.decoupling_constrained,
-        )
-    }));
-    if facts.routes && facts.native.is_none() {
-        actions.push("KiCad's check did not run (PCB_SKIP_NATIVE or skip_native_verification): the router's own count is no verdict; run KiCad's DRC (pcb-maker drc-kicad-board) before using the board".into());
-    }
-    if status != KiCadRunStatus::Complete {
-        actions.extend(facts.skipped.iter().cloned());
-    }
+    actions.extend(observations.into_iter().map(input_tagged));
     actions
+}
+
+/// The tag that starts a next action which is the input's own observation
+/// (`input_tagged`): nothing this run did or can change, said after every
+/// action of the run.
+pub const INPUT_TAG: &str = "input: ";
+
+/// A next action that is the input's own observation, tagged
+/// (`INPUT_TAG`).
+fn input_tagged(observation: String) -> String {
+    format!("{INPUT_TAG}{observation}")
+}
+
+/// Whether a warning of the input check or the placement is the input's
+/// own observation: a fixed part on the board's own marks
+/// (`fixed_on_marks_warning`: "fixed part J3 lies on ... stay where the
+/// input put them") or fixed parts on top of each other
+/// (`overlap_warning`, the placer's "fixed parts C1 and C2 overlap"),
+/// rather than a warning about what the agent gave.
+pub(crate) fn input_observation(warning: &str) -> bool {
+    (warning.starts_with("fixed part ") && warning.contains("stay where the input put them"))
+        || (warning.starts_with("fixed parts ") && warning.contains(" overlap"))
 }
 
 /// The next action for a pour in many pieces: `keep_whole` under the
@@ -2953,7 +2991,8 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
                 .collect();
             let mut parts: Vec<&str> = parts.into_iter().collect();
             parts.sort_by(|a, b| crate::canonical_order::natural_cmp(a, b));
-            actions.push(format!(
+            // The input's own findings: last, with the observations.
+            actions.push(input_tagged(format!(
                 "{} of the findings the reference has at the same place are between two nets ({}{}): not judged here, but fab-kicad-board, which judges the board on its own, refuses them: fix them in the input, or release with --allow-findings knowingly",
                 blocking.len(),
                 counts(&by_kind(&blocking)),
@@ -2962,7 +3001,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
                 } else {
                     format!("; parts {}", parts.join(", "))
                 }
-            ));
+            )));
         }
     }
     KiCadVerdict {
@@ -3321,7 +3360,7 @@ mod tests {
                 action.contains("fab-kicad-board, which judges the board on its own, refuses them")
             })
             .unwrap();
-        assert!(action.starts_with("1 of the findings the reference has at the same place are between two nets (clearance 1; parts J1, R31)"), "{action}");
+        assert!(action.starts_with("input: 1 of the findings the reference has at the same place are between two nets (clearance 1; parts J1, R31)"), "{action}");
         // Without a reference: no such line.
         facts.reference = KiCadReference::None;
         assert!(
@@ -4278,7 +4317,9 @@ mod tests {
     fn a_panel_without_its_parts_boards_says_so_first() {
         let mut facts = KiCadRunFacts::new("place-kicad-board");
         facts.routes = false;
-        facts.input_warnings = vec!["fixed part U3 lies on 13 of the board's texts".into()];
+        facts.input_warnings = vec![
+            "fixed part U3 lies on 13 of the board's texts and silkscreen graphics (...): all stay where the input put them".into(),
+        ];
         facts.sub_boards = Some(crate::sub_boards::KiCadSubBoardsReport {
             count: 2,
             unassigned: 392,
@@ -4292,7 +4333,14 @@ mod tests {
             verdict.next_actions
         );
         assert!(verdict.next_actions[0].contains("--reference <project-dir>"));
-        assert!(verdict.next_actions[1].starts_with("fixed part U3"));
+        // The input's own observation comes last, tagged.
+        assert!(
+            verdict
+                .next_actions
+                .last()
+                .unwrap()
+                .starts_with("input: fixed part U3")
+        );
     }
 
     #[test]
@@ -4924,20 +4972,89 @@ mod tests {
             verdict.schematic_parity_by_type,
             map(&[("net_conflict", 2)])
         );
-        assert!(
-            verdict
-                .next_actions
-                .iter()
-                .any(|action| action
-                    .starts_with("nothing to do for the 2 schematic parity findings"))
-        );
+        assert!(verdict.next_actions.iter().any(|action| {
+            action.starts_with("input: nothing to do for the 2 schematic parity findings")
+        }));
         // A footprint missing is something to look at.
         let report = json!({"schematic_parity": [pin, {"type": "missing_footprint", "description": "Missing footprint R3"}]});
         let tally = tally_drc(&report);
         assert!(!tally.schematic_parity_pins_only);
         let verdict = judge(&routed(tally));
         assert!(verdict.next_actions.iter().any(|action| {
-            action.starts_with("schematic parity findings (missing_footprint 1, net_conflict 1")
+            action.starts_with(
+                "input: schematic parity findings (missing_footprint 1, net_conflict 1",
+            )
         }));
+    }
+
+    #[test]
+    fn the_runs_actions_come_before_the_inputs_own_observations() {
+        // Trial 4 (2026-11-04): on all three boards the input's no-action
+        // warnings led next_actions; on the Quanta75 four marks under its
+        // fixed parts came before its open connections.
+        let report = json!({
+            "violations": [
+                {"type": "clearance", "severity": "error",
+                 "description": "Clearance violation (netclass 'Default' clearance 0.2000 mm; actual 0.1186 mm)",
+                 "items": [{"description": "Pad 1 [+3V3] of J3 on F.Cu", "uuid": "a", "pos": {"x": 1.0, "y": 1.0}},
+                           {"description": "Track [GND] on F.Cu", "uuid": "b", "pos": {"x": 1.1, "y": 1.0}}]},
+                {"type": "annular_width", "severity": "error", "description": "Annular width",
+                 "items": [{"description": "Pad 1 [GND] of J1 on F.Cu", "uuid": "c", "pos": {"x": 5.0, "y": 5.0}},
+                           {"description": "Pad 2 [GND] of J1 on F.Cu", "uuid": "d", "pos": {"x": 5.5, "y": 5.0}}]}
+            ],
+            "unconnected_items": [
+                {"items": [{"description": "Pad 23 [+1V1] of U1 on F.Cu"}, {"description": "Pad 1 [+1V1] of C9 on F.Cu"}]}
+            ],
+            "schematic_parity": []
+        });
+        let mut facts = KiCadRunFacts::new("layout-kicad-board");
+        facts.routable_connections = 172;
+        facts.routed_connections = 171;
+        facts.native = Some(tally_drc(&report));
+        facts.input_warnings = vec![
+            "fixed part J3 lies on 2 of the board's texts and silkscreen graphics (text \"GND\" (B.SilkS at 175.49, 89.18); text \"3V3\" (B.SilkS at 172.62, 89.00)): all stay where the input put them".into(),
+            crate::placement_constraints::overlap_warning("C17", "U1", "courtyards"),
+            "keepout 1 (x 0..10, y 0..10) meets the courtyards of parts the placer keeps where they are (J1): its rule area is written with footprints allowed".into(),
+        ];
+        facts.unmodelled_rules = vec!["length ('ULPI') ...".into()];
+        let verdict = judge(&facts);
+        let actions = &verdict.next_actions;
+        let position = |prefix: &str| {
+            actions
+                .iter()
+                .position(|action| action.starts_with(prefix))
+                .unwrap_or_else(|| panic!("no action {prefix:?}: {actions:#?}"))
+        };
+        // What the agent gave and this run's results first, in that order.
+        assert_eq!(position("keepout 1 "), 0, "{actions:#?}");
+        let open = position("connections are open");
+        let clearance = position("clearance 1 ");
+        let rules = position("the project has rules the router does not keep");
+        assert!(open < clearance && clearance < rules, "{actions:#?}");
+        // The input's own observations last, each tagged.
+        let marks = position("input: fixed part J3 lies on 2 of the board's texts");
+        let overlap = position("input: fixed parts C17 and U1 overlap (courtyards)");
+        let footprint = position("input: 1 DRC findings lie within one footprint each");
+        assert!(
+            rules < marks && marks < overlap && overlap < footprint,
+            "{actions:#?}"
+        );
+        let first_input = actions
+            .iter()
+            .position(|action| action.starts_with(INPUT_TAG))
+            .unwrap();
+        assert!(
+            actions[first_input..]
+                .iter()
+                .all(|action| action.starts_with(INPUT_TAG)),
+            "{actions:#?}"
+        );
+        assert!(input_observation(
+            &crate::board_placer::fixed_on_marks_warning(
+                "SW42",
+                &["text \"ISO ENTER\" (F.SilkS at 312.74, 161.13)".to_string()]
+            )
+        ));
+        assert!(!input_observation(&actions[0]));
     }
 }
