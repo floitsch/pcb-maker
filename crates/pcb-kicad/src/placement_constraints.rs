@@ -1777,14 +1777,37 @@ pub(crate) fn without_parts_placed_elsewhere(
     if placed.is_empty() {
         return held;
     }
-    for (index, footprint) in pcb
+    let references: Vec<String> = pcb
         .children()
         .iter()
         .filter(|item| item.head() == Some("footprint"))
-        .enumerate()
-    {
-        let reference = footprint_reference(footprint).unwrap_or_default();
-        if placed.contains(reference.as_str())
+        .map(|footprint| footprint_reference(footprint).unwrap_or_default())
+        .collect();
+    // A row whose first part is placed carries its other parts there too
+    // (trial 6: eight jacks in a row led by a placed J4 gave 21 warnings
+    // "fixed parts J5 and J6 overlap" for the import's stack).
+    let mut carried: BTreeSet<&str> = BTreeSet::new();
+    for row in &constraints.row {
+        let mut members: Vec<&str> = Vec::new();
+        for pattern in &row.parts {
+            let mut matched: Vec<&str> = references
+                .iter()
+                .filter(|reference| glob_matches(pattern, reference))
+                .map(String::as_str)
+                .collect();
+            matched.sort_by_key(|reference| natural(reference));
+            for reference in matched {
+                if !members.contains(&reference) {
+                    members.push(reference);
+                }
+            }
+        }
+        if members.first().is_some_and(|first| placed.contains(first)) {
+            carried.extend(members);
+        }
+    }
+    for (index, reference) in references.iter().enumerate() {
+        if (placed.contains(reference.as_str()) || carried.contains(reference.as_str()))
             && let Some(slot) = held.0.get_mut(index)
         {
             *slot = false;
@@ -4587,6 +4610,15 @@ mod tests {
         let constraints: KiCadPlacementConstraints =
             serde_json::from_str(r#"{"version": 1, "place": [{"part": "C2", "x": 25, "y": 15}]}"#)
                 .unwrap();
+        let held = held_parts(&pcb, &config).unwrap();
+        let held = without_parts_placed_elsewhere(&pcb, held, &constraints);
+        assert!(held_parts_overlapping(&pcb, &held).unwrap().is_empty());
+        // In a row whose first part is placed so, C2 goes with the row
+        // (trial 6: eight jacks in a row led by a placed J4, 21 warnings).
+        let constraints: KiCadPlacementConstraints = serde_json::from_str(
+            r#"{"version": 1, "place": [{"part": "C3", "x": 25, "y": 15}], "row": [{"parts": ["C3", "C2"], "pitch_mm": 3}]}"#,
+        )
+        .unwrap();
         let held = held_parts(&pcb, &config).unwrap();
         let held = without_parts_placed_elsewhere(&pcb, held, &constraints);
         assert!(held_parts_overlapping(&pcb, &held).unwrap().is_empty());
