@@ -673,10 +673,11 @@ pub fn hot_spot_links(
                     radius: segment.width / 2.0,
                 })
         }) || route.vias.iter().any(|via| {
-            reaches(&core::Shape::Circle {
-                center: via.at,
-                radius: via.diameter / 2.0,
-            })
+            via.on_layer(layer)
+                && reaches(&core::Shape::Circle {
+                    center: via.at,
+                    radius: via.diameter / 2.0,
+                })
         });
         if crosses && let Some(name) = net_name(net as core::NetId) {
             nets.insert(name);

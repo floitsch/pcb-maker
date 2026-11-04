@@ -193,6 +193,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "overrides the router's `bga_fanout` (`0` off, anything else on; on by default): before routing, the inner balls of every grid array (those no track between the outer balls serves) whose net's own via does not fit a diagonal gap get a stub and a through via in a diagonal gap, the largest of the class's and the project's via sizes that keeps every clearance, as fixed copper of the ball's net that its route may end on; written only where the route uses it; the placer keeps the far side free under those vias (docs/router.md, \"Prepared fan-outs for BGAs (2026-11-04)\").",
     ),
     (
+        "PCB_ROUTER_BLIND_VIAS",
+        Kind::Switch,
+        "overrides the router's `blind_vias` (`0` off, anything else on; off by default): where the board allows via spans short of the stack (`via_spans`, the designer's blind, buried and micro vias, a KiCad 6 or 7 project's switches), a via takes the shortest allowed span holding the two layers it joins, copper and a hole only there, written as KiCad's blind, buried or micro via; a BGA's dog-bone takes the shortest span to a routable layer (docs/router.md, \"Blind, buried and micro vias (2026-11-05)\").",
+    ),
+    (
         "PCB_LAYOUT_MOVE_DESCENT",
         Kind::Switch,
         "overrides the layout's `move_descent` (`0` off, anything else on with layout.json's settings or the defaults): the move descent after the first route (docs/experiments/move-descent.md).",
