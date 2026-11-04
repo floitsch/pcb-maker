@@ -43,14 +43,11 @@ pub(super) struct TroubleSettings {
     /// turn; 1: not.
     pub depth: usize,
     /// Pour nets take part (`PCB_ROUTER_TROUBLE_POURS`, an experiment,
-    /// off): as trouble-makers and as victims, their open terminals
-    /// counted as the pads off their pour's main piece (the pour
-    /// analysed again after the exchange).
+    /// off): as trouble-makers and as victims (their pour reconnects what
+    /// a victim's reroute leaves), their open terminals counted as the
+    /// pads off their pour's main piece (the pour analysed again after the
+    /// exchange).
     pub pours: bool,
-    /// Pour nets may be victims (their pour reconnects what a victim's
-    /// reroute leaves; their open measure is their pads off the pour's
-    /// main piece): with `pours`, and in the last connections.
-    pub pour_victims: bool,
     /// The victims are routed again on their corridors first
     /// (`PCB_ROUTER_TROUBLE_LOCAL`, on), and a victim left with more open
     /// terminals than it had then in its window (the terminals' box and
@@ -78,25 +75,6 @@ pub(super) enum TroubleOrder {
 
 /// The repair's default (`Config::trouble_repair`).
 pub const TROUBLE_REPAIR_DEFAULT: bool = true;
-
-/// The last connections' default (`Config::last_connections`): the most
-/// open terminals for which the repair's last pass runs; 0, off. Measured
-/// at 8 on 2026-10-27 (docs/router.md, "The last connections"): no near-miss
-/// layout of the nightly closed a connection more, so it stays an option.
-pub const LAST_CONNECTIONS_DEFAULT: usize = 0;
-
-/// How deep an ejection chain of the last pass goes: the trouble-maker
-/// displaces its victims, a victim left open displaces nets in turn, and
-/// so on, this many levels in all.
-const LAST_CONNECTIONS_DEPTH: usize = 3;
-
-/// `PCB_ROUTER_LAST_CONNECTIONS`: unset, the configuration decides; a
-/// number replaces it (`0` off).
-pub fn last_connections_override() -> Option<usize> {
-    std::env::var("PCB_ROUTER_LAST_CONNECTIONS")
-        .ok()
-        .and_then(|value| value.trim().parse().ok())
-}
 
 /// `PCB_ROUTER_TROUBLE`: unset, the configuration decides; `0` or empty
 /// off; anything else on. It overrides the configuration either way.
@@ -129,7 +107,6 @@ impl TroubleSettings {
             },
             depth: read("PCB_ROUTER_TROUBLE_DEPTH", 1),
             pours: read("PCB_ROUTER_TROUBLE_POURS", 0) != 0,
-            pour_victims: read("PCB_ROUTER_TROUBLE_POURS", 0) != 0,
             local: read("PCB_ROUTER_TROUBLE_LOCAL", 1) != 0,
             early: read("PCB_ROUTER_TROUBLE_EARLY", 1) != 0,
         }
@@ -231,18 +208,10 @@ impl Router {
     }
 
     /// The repair (see the module). Returns the open terminals it closed.
-    ///
-    /// Then the last connections (`Config::last_connections`): where the
-    /// rounds leave at most that many open terminals on the signal nets
-    /// and work is left, a last pass with ejection chains three deep
-    /// (`LAST_CONNECTIONS_DEPTH`) and the victims routed board-wide
-    /// (`local` off), within the same work. The rounds' exchanges are
-    /// pure trades on such boards (the trouble-maker closes its terminal,
-    /// its one victim finds no other way: "1 open to 1"); the chain lets
-    /// the victim push a third net aside, and the board-wide search lets
-    /// it take a detour the corridors and the window do not hold.
     pub(super) fn repair_trouble(&mut self, order: &[NetId], settings: TroubleSettings) -> usize {
-        let closed = self.repair_trouble_passes(order, settings);
+        let budget = (self.negotiation_seconds * settings.share).max(30.0);
+        let clock = self.clock();
+        let closed = self.trouble_pass(order, settings, &clock, budget, "trouble");
         // `PCB_ROUTER_TROUBLE_WHY`: the fine-pitch rows' open pads and what
         // closes them (router/dive.rs), on or off; no work charged.
         if std::env::var_os("PCB_ROUTER_TROUBLE_WHY").is_some()
@@ -254,47 +223,6 @@ impl Router {
             let dive = super::dive::DivePlan::new(self.fanout_plan());
             self.crossing_census(&dive, order, "after the repair");
         }
-        closed
-    }
-
-    fn repair_trouble_passes(&mut self, order: &[NetId], settings: TroubleSettings) -> usize {
-        let budget = (self.negotiation_seconds * settings.share).max(30.0);
-        let clock = self.clock();
-        let mut closed = self.trouble_pass(order, settings, &clock, budget, "trouble");
-        let last = self.config.last_connections;
-        if last == 0 || self.spent(&clock, budget) {
-            return closed;
-        }
-        // Open terminals of the nets not complete: a signal net's
-        // unconnected ones, a pour net's pads off its pour's main piece (a
-        // stranded ground pad is as open as a signal's: the OpenAirScope's
-        // last item). A complete board analyses no pour here.
-        let open: usize = order
-            .iter()
-            .copied()
-            .filter(|net| {
-                let state = &self.nets[*net as usize];
-                state.routable && !state.complete
-            })
-            .map(|net| self.open_measure(net))
-            .sum();
-        if open == 0 || open > last {
-            return closed;
-        }
-        // The chain may close what a victim leaves open: no early undo
-        // (it counts the victims' terminals before the chain runs); a pour
-        // net with pads off its main piece is a trouble-maker too, and a
-        // pour net may give way (GND and the supplies are the victims of
-        // most refusals on four-layer boards: jetson-nano's CSI nets).
-        let escalated = TroubleSettings {
-            depth: settings.depth.max(LAST_CONNECTIONS_DEPTH),
-            local: false,
-            early: false,
-            pours: true,
-            pour_victims: true,
-            ..settings
-        };
-        closed += self.trouble_pass(order, escalated, &clock, budget, "last connections");
         closed
     }
 
@@ -493,9 +421,7 @@ impl Router {
         } else {
             victims
                 .iter()
-                .find(|victim| {
-                    !settings.pour_victims && !self.nets[**victim as usize].plane.is_empty()
-                })
+                .find(|victim| !settings.pours && !self.nets[**victim as usize].plane.is_empty())
                 .map(|pour| {
                     format!(
                         "a pour net among the victims ({})",
@@ -722,9 +648,7 @@ impl Router {
         } else {
             victims
                 .iter()
-                .find(|victim| {
-                    !settings.pour_victims && !self.nets[**victim as usize].plane.is_empty()
-                })
+                .find(|victim| !settings.pours && !self.nets[**victim as usize].plane.is_empty())
                 .map(|pour| {
                     format!(
                         "a pour net among the victims ({})",
@@ -762,9 +686,7 @@ impl Router {
             } else {
                 others
                     .iter()
-                    .find(|other| {
-                        !settings.pour_victims && !self.nets[**other as usize].plane.is_empty()
-                    })
+                    .find(|other| !settings.pours && !self.nets[**other as usize].plane.is_empty())
                     .map(|pour| {
                         format!(
                             "a pour net in its way ({})",
@@ -834,7 +756,7 @@ impl Router {
             before.saturating_sub(1)
         };
         // The open measure of a pour net moves with other nets' copper.
-        let early = settings.early && !settings.pour_victims;
+        let early = settings.early && !settings.pours;
         let before_of = |victim: NetId| {
             saved
                 .iter()

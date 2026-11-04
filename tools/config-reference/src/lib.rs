@@ -278,11 +278,6 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "the trouble-makers' repair: `1` undoes an exchange as soon as the victims routed so far leave it no way to pass (default 1; `0` routes every victim first).",
     ),
     (
-        "PCB_ROUTER_LAST_CONNECTIONS",
-        Kind::Switch,
-        "overrides the router's `last_connections` (a number; `0` off, the default): once the trouble repair's rounds leave at most that many open terminals, a last pass with ejection chains three deep, the victims routed board-wide and pour nets taking part (docs/router.md, \"The last connections\").",
-    ),
-    (
         "PCB_ROUTER_TROUBLE_WHY",
         Kind::Diagnostic,
         "the trouble-makers' repair prints every exchange's outcome (kept, or why refused; a refusal names the nets left in conflict and what their conflicts name), and after the repair the crossing census: every open pad of a fine-pitch row, what closes its straight ways out, and whether a row neighbour's target crosses its own (docs/router.md, \"Crossings decided in the repair (2026-11-03)\").",

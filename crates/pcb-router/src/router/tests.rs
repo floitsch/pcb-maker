@@ -925,36 +925,6 @@ fn every_conflict_names_its_blockers() {
     assert_eq!(blockers, vec![1, 2]);
 }
 
-/// The last connections (`Config::last_connections`, off by default; 8 as
-/// measured on 2026-10-27) run only where the rounds leave few open
-/// terminals, and keep an exchange only where it closes terminals: with it
-/// on, the board ends with no more open terminals than with it off.
-#[test]
-fn the_last_connections_never_open_more_than_the_rounds() {
-    let open_after = |last: usize| {
-        let mut router = crossed_net();
-        router.config.last_connections = last;
-        for net in 0..3 {
-            router.route_net_seq(net, 0.0, false, 1.0);
-            router.stamp(net);
-        }
-        router.resolve_remaining(&[0, 1, 2]);
-        let settings = super::trouble::TroubleSettings::from_env();
-        router.repair_trouble(&[0, 1, 2], settings);
-        assert!((0..3).all(|net| router.conflicts(net).is_empty()));
-        (0..3)
-            .map(|net| {
-                router.nets[net]
-                    .connected
-                    .iter()
-                    .filter(|connected| !**connected)
-                    .count()
-            })
-            .sum::<usize>()
-    };
-    assert!(open_after(8) <= open_after(0));
-}
-
 #[test]
 fn the_hard_repair_keeps_the_branches_out_of_conflict() {
     let mut router = crossed_net();

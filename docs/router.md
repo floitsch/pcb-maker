@@ -183,8 +183,9 @@ model) and `tests`.
    lost MegaDrive's designer route, whose victims need the detour.
    Since 2026-10-27 a refusal's blockers are looked up in the map that
    counts each conflict, nets left in a one-sided conflict after the
-   victims' reroute are routed again once, and a last pass with
-   ejection chains exists, off ("The last connections" below).
+   victims' reroute are routed again once; a last pass with ejection
+   chains was built, off, and removed on 2026-11-04 ("The last
+   connections" below).
 8. **Cleanup.** Each net is rerouted alone with pure geometric cost and a high
    via cost; the result is kept only if strictly cheaper.
    After the via reduction and the spoke repairs, the straightening
@@ -5194,7 +5195,9 @@ exchange.
 clean, the nets left in conflict and what their conflicts name.
 
 **The last pass** (`Config::last_connections`, router config
-`last_connections`, `PCB_ROUTER_LAST_CONNECTIONS`; off by default).
+`last_connections`, `PCB_ROUTER_LAST_CONNECTIONS`; off by default;
+removed on 2026-11-04, docs/handover.md, "Removed experiments
+(2026-11-04)"; the measurements below are kept as they were).
 Once the trouble repair's rounds leave at most that many open terminals
 (a signal net's unconnected ones, a pour net's pads off its main piece;
 only nets not complete are counted, so a complete board analyses no
@@ -5277,7 +5280,8 @@ vias, work 1455.4 s): the move is the placer's, not the router's.
 **Default: off.** The last pass closed no connection on the 12 boards
 it was built for, and on the expansion tier it moved three connections
 and one router-check violation, mostly through the ladder's timing; it
-stays a switch for experiments. The two faults' fixes are on. What
+stayed a switch for experiments until 2026-11-04 (removed). The two
+faults' fixes are on. What
 would close these boards is not a deeper rip-up: the placement's mouse-
 bite tabs as cuts (`sub_boards` taking a row of NPTH holes across a neck
 as one), a via in a BGA's pad where the project's designer used one

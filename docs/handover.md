@@ -13,7 +13,7 @@ used to be here; code comments and docs that cite `docs/handover.md,
 - main 3d20d0a8 (x1882). The nightly of 2026-11-03 (main 5657f45, before the race's count flip, x1881, and the pin-row gaps after a move, x1882): sweep v30 **62 of 109 strict** (62 since v25 on 2026-10-29), matched designer tier 68 strict, the gap over its 100 target boards placement 76 % / routing 24 %, expansion 24/46, short 8/12, fingerprints identical.
 - Two placer defaults won by the placer-default protocol: crossings in the anneal (-10.8 %, p 0.002; on since 2026-10-28) and the race's ripped count (nine pairs, -5.6 %, p 0.014; `race_count` `"ripped"` since 2026-11-03).
 - Built and on: panels of different boards with mouse-bite and V-cut tabs and frames kept clear (`sub_boards`), filled and capped vias in BGA pads where the designer's board has vias there (`via_in_pad`), length and skew rules on a layout's own routes, the input's own findings set apart without a reference, the place check placing as the layout does, `drc-kicad-board` / `fab-kicad-board --input`.
-- Built, measured and off: the last connections' ejection chains (`last_connections`), frames as keepouts on panels of copies; the fan-out step (`fanout`) and the crossing dive (`crossing_dive`) were removed on 2026-11-04 (below, "Removed experiments (2026-11-04)").
+- Built, measured and off: frames as keepouts on panels of copies; the fan-out step (`fanout`), the crossing dive (`crossing_dive`) and the last connections' ejection chains (`last_connections`) were removed on 2026-11-04 (below, "Removed experiments (2026-11-04)").
 - Cheaper with the same results: the placement -22.6 % and -29.4 % CPU (two placer rounds, dense geometric means), the router -3.9 % (round 3).
 - Measuring: the ladder of placer measurements (stage 1 the first route, `stop_after_first_route`; the quarter budget rejected, condensed boards a no-go), run.py `--reuse`, the memory ledger draining past its bound.
 - In flight: panels of copies' frames, placer rules, the designer as teacher on the largest-gap boards (the placement gap's diagnosis), placer round 4.
@@ -387,7 +387,7 @@ ladder's judge), 5, then the rest.
     passes; woagboard 4 to 1, its designer's own GND island), vias in BGA
     pads (MIDAS-MK1.1 5 to 0, a pass), two faults of the trouble repair.
     `last_connections` (ejection chains three deep, board-wide victims)
-    closed none and is off. Left: the fine-pitch rows (problem 2), the
+    closed none (removed on 2026-11-04). Left: the fine-pitch rows (problem 2), the
     keyboard's RESET (open on the designer's placement too), MIDAS-MK1's
     B2 (its via refused: our placement put an 0603 under it on the back).
     The next diagnosis takes the night's list, not 2026-10-27's.
@@ -597,8 +597,6 @@ its doc comment):
   only its own decoupling under it on the far side. Glasgow 343 -> 262
   unconnected over three seeds, its first route -20 % over five; nothing
   else moves. `"bga_room": false` turns it off.
-- `last_connections` (router): **0, off** (`PCB_ROUTER_LAST_CONNECTIONS`):
-  it closed none of the near misses' connections.
 - `via_in_pad` (router): **unset, the evidence rule** since 2026-10-28: a
   filled and capped via goes only into the enclosed pads (no track at
   the neck width leaves between the neighbours) of a footprint whose
@@ -668,7 +666,6 @@ Switches and experiment hooks (change the result):
 - `PCB_ROUTER_TROUBLE_POURS`: the trouble-makers' repair: `1` lets pour nets take part, as trouble-makers and as victims, weighed by their pads off the pour's main piece (an experiment, off).
 - `PCB_ROUTER_TROUBLE_LOCAL`: the trouble-makers' repair: `1` routes an exchange's victims again on their corridors first, and a victim left with more open terminals than it had in its window (not grown, never board-wide) while that could still make the exchange pass (default 1; `0` the full hard search for every victim).
 - `PCB_ROUTER_TROUBLE_EARLY`: the trouble-makers' repair: `1` undoes an exchange as soon as the victims routed so far leave it no way to pass (default 1; `0` routes every victim first).
-- `PCB_ROUTER_LAST_CONNECTIONS`: overrides the router's `last_connections` (a number; `0` off, the default): once the trouble repair's rounds leave at most that many open terminals, a last pass with ejection chains three deep, the victims routed board-wide and pour nets taking part (docs/router.md, "The last connections").
 - `PCB_PLACER_PAD_EXITS`: overrides the placer's `pad_exits` (`1` on with the defaults where the config has none, `0` off; off by default): after each seed's placement the router's test of every pad's way out on the statics, the parts whose pads another part or the edge closes moved or turned, the pads left closed in board-placer.json's `pad_exits` and the verdict (docs/placer.md, "Pads without a way out (2026-11-04)").
 - `PCB_ROUTER_DIFF_PAIRS`: turns differential pairs on (1) or off (0) where the settings name none (`diff_pairs`; unset, route mode turns them on where the project's custom rules ask for pairs, else off): route mode routes the pairs KiCad names (`_P`/`_N`, `+`/`-`, `P`/`N`) as coupled runs at the rules' width and gap, each link a net of the route negotiated with the others (docs/router.md, "Differential pairs").
 - `PCB_ROUTER_DIFF_PAIRS_WORK`: differential pairs: the fallback router's work deadline in seconds, which routes what the coupled runs left open (default 0.05 of the ladder's budget, at least 1 s; for experiments).
@@ -802,6 +799,17 @@ details are:
   negotiation: diagnosed, built, off"; docs/router.md, "Fan-out before
   negotiation (2026-10-28)". The plan's dense pads and straight ways out
   stay for the census (`fanout_plan`, axes only, no costs or via sites).
+- `last_connections` (router, `PCB_ROUTER_LAST_CONNECTIONS`; 0, off): once
+  the trouble repair's rounds left at most that many open terminals, a
+  last pass with ejection chains three deep, board-wide victims and pour
+  nets taking part. At 8 it closed no connection on the 12 near-miss
+  boards (layout mode, 34 to 34 KiCad unconnected); the expansion tier
+  558 to 555 unconnected with one router-check violation more
+  (nervous-ecg, by the ladder's timing). Changelog 2026-10-27, "the last
+  connections: why the near-misses stay open"; docs/router.md, "The last
+  connections (2026-10-27)". The two trouble-repair fixes of that package
+  stay on; the ejection chain itself stays reachable through
+  `PCB_ROUTER_TROUBLE_DEPTH`.
 
 ## Gotchas
 
