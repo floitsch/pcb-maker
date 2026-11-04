@@ -44,6 +44,8 @@ pub(crate) fn name_of(id: &str) -> &str {
 pub(crate) struct BoardFootprints {
     pub file: PathBuf,
     pub footprints: Vec<BoardFootprint>,
+    /// The board's copper layers (its `layers` list's `.Cu` entries).
+    pub copper_layers: usize,
 }
 
 /// How a schematic symbol's footprint was found on the board.
@@ -100,9 +102,18 @@ impl BoardFootprints {
                 expr: footprint.clone(),
             })
             .collect();
+        let copper_layers = board.child("layers").map_or(0, |layers| {
+            layers
+                .children()
+                .iter()
+                .filter_map(|layer| layer.children().get(1).and_then(Expr::atom))
+                .filter(|name| name.ends_with(".Cu"))
+                .count()
+        });
         Ok(Self {
             file: file.to_path_buf(),
             footprints,
+            copper_layers,
         })
     }
 

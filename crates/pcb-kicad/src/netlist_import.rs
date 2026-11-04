@@ -34,6 +34,10 @@ pub struct KiCadNetlistImport {
     /// is not here; used <checkout>/hardware/libs/custom/AudioJacksFixed.pretty`.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub relocated_libraries: Vec<String>,
+    /// The board's copper layers and where the count came from: `--layers`,
+    /// else the `--footprints-from` board's, else the default of 2.
+    pub copper_layers: usize,
+    pub copper_layers_from: String,
     /// Symbol pins on a net that the footprint has no pad for (`J1: M1
     /// (GND)`): the footprint does not match the symbol. A pin on no net
     /// (KiCad's `unconnected-(...)`) loses no connection, but KiCad's
@@ -846,10 +850,40 @@ pub fn import_kicad_netlist_from(
     layers: usize,
     footprints_from: Option<&Path>,
 ) -> Result<KiCadNetlistImport, String> {
+    import_kicad_netlist_with(input, output, board_id, Some(layers), footprints_from)
+}
+
+/// `import_kicad_netlist_from` with the copper layers optional (the
+/// command line's `--layers`): without them the `--footprints-from` board's
+/// count, else 2. Fresh-agent trial 6's eurorack-pmod came out on two layers
+/// from a six-layer designer's board, which the report did not say.
+pub fn import_kicad_netlist_with(
+    input: &Path,
+    output: &Path,
+    board_id: &str,
+    layers: Option<usize>,
+    footprints_from: Option<&Path>,
+) -> Result<KiCadNetlistImport, String> {
     check_board_id(board_id)?;
     let designer = footprints_from
         .map(crate::board_footprints::BoardFootprints::read)
         .transpose()?;
+    let board_layers = designer
+        .as_ref()
+        .map(|designer| designer.copper_layers)
+        .filter(|count| *count >= 2 && count % 2 == 0);
+    let (layers, copper_layers_from) = match (layers, board_layers) {
+        (Some(count), Some(board)) if board != count => (
+            count,
+            format!("--layers (the --footprints-from board has {board})"),
+        ),
+        (Some(count), _) => (count, "--layers".to_string()),
+        (None, Some(board)) => (
+            board,
+            "the --footprints-from board's (--layers sets another)".to_string(),
+        ),
+        (None, None) => (2, "the default (--layers sets another)".to_string()),
+    };
     let project = input.parent().unwrap_or(Path::new(".")).to_path_buf();
     fs::create_dir_all(output)
         .map_err(|error| format!("failed to create {}: {error}", output.display()))?;
@@ -1713,6 +1747,8 @@ pub fn import_kicad_netlist_from(
         substituted,
         add_on_libraries: add_on,
         relocated_libraries: library_notes.relocated.clone(),
+        copper_layers: layers,
+        copper_layers_from,
         unmatched_pins,
         clearances,
         edge_connectors,
@@ -2676,6 +2712,87 @@ mod tests {
         assert_eq!(again.kept, vec!["constraints.json", "layout.json"]);
         fs::remove_dir_all(&directory).unwrap();
     }
+    #[test]
+    fn the_footprints_board_gives_the_copper_layers_unless_layers_does() {
+        // Fresh-agent trial 6: eurorack-pmod's designer's board has six
+        // copper layers, the import made two and the report did not say.
+        let directory = std::env::temp_dir().join(format!(
+            "pcb-maker-netlist-import-layers-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let board = directory.join("designer.kicad_pcb");
+        fs::write(
+            &board,
+            r#"(kicad_pcb (version 20221018) (generator pcbnew)
+              (layers (0 "F.Cu" signal) (4 "In1.Cu" signal) (6 "In2.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+              (footprint "personal:SOT_Mine" (layer "F.Cu") (tstamp 11111111-0000-4000-8000-000000000002) (at 30 20 180)
+                (path "/2222")
+                (fp_text reference "U1" (at 0 -2 180) (layer "F.SilkS") (effects (font (size 1 1) (thickness 0.15))))
+                (pad "1" smd rect (at -1 1 180) (size 0.6 0.8) (layers "F.Cu" "F.Mask") (net 2 "GND"))
+                (pad "2" smd rect (at 1 1 180) (size 0.6 0.8) (layers "F.Cu" "F.Mask") (net 1 "/VIN"))))"#,
+        )
+        .unwrap();
+        let netlist = directory.join("test.net");
+        fs::write(
+            &netlist,
+            r#"(export (version "E")
+              (components
+                (comp (ref "U1") (value "X") (footprint "personal:SOT_Mine") (sheetpath (names "/") (tstamps "/")) (tstamps "2222")))
+              (nets
+                (net (code "1") (name "/VIN") (node (ref "U1") (pin "2") (pintype "passive")))
+                (net (code "2") (name "GND") (node (ref "U1") (pin "1") (pintype "passive")))))"#,
+        )
+        .unwrap();
+        let inner = |report: &KiCadNetlistImport| {
+            parse(&fs::read_to_string(&report.board).unwrap())
+                .unwrap()
+                .child("layers")
+                .unwrap()
+                .children()
+                .iter()
+                .filter(|layer| {
+                    layer
+                        .children()
+                        .get(1)
+                        .and_then(Expr::atom)
+                        .is_some_and(|name| name.starts_with("In"))
+                })
+                .count()
+        };
+        let report =
+            import_kicad_netlist_with(&netlist, &directory.join("a"), "test", None, Some(&board))
+                .unwrap();
+        assert_eq!(report.copper_layers, 4);
+        assert_eq!(
+            report.copper_layers_from,
+            "the --footprints-from board's (--layers sets another)"
+        );
+        assert_eq!(inner(&report), 2);
+        let report = import_kicad_netlist_with(
+            &netlist,
+            &directory.join("b"),
+            "test",
+            Some(2),
+            Some(&board),
+        )
+        .unwrap();
+        assert_eq!(report.copper_layers, 2);
+        assert_eq!(
+            report.copper_layers_from,
+            "--layers (the --footprints-from board has 4)"
+        );
+        assert_eq!(inner(&report), 0);
+        let report =
+            import_kicad_netlist_with(&netlist, &directory.join("c"), "test", None, None).unwrap();
+        assert_eq!(report.copper_layers, 2);
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
     #[test]
     fn footprints_come_from_the_board_where_no_library_has_them_and_the_board_version_wins() {
         let directory = std::env::temp_dir().join(format!(

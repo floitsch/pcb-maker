@@ -689,16 +689,18 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             let output = arguments.next().ok_or_else(|| usage.to_string())?;
             let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
             pcb_kicad::check_board_id(&board_id)?;
-            let mut layers = 2;
+            let mut layers = None;
             let mut footprints_from = None;
             while let Some(argument) = arguments.next() {
                 match argument.as_str() {
                     "--layers" => {
-                        layers = arguments
-                            .next()
-                            .and_then(|value| value.parse::<usize>().ok())
-                            .filter(|value| *value >= 2 && value % 2 == 0)
-                            .ok_or_else(|| usage.to_string())?;
+                        layers = Some(
+                            arguments
+                                .next()
+                                .and_then(|value| value.parse::<usize>().ok())
+                                .filter(|value| *value >= 2 && value % 2 == 0)
+                                .ok_or_else(|| usage.to_string())?,
+                        );
                     }
                     "--footprints-from" => {
                         footprints_from = Some(std::path::PathBuf::from(
@@ -708,7 +710,7 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
                     _ => return Err(usage.into()),
                 }
             }
-            let report = pcb_kicad::import_kicad_netlist_from(
+            let report = pcb_kicad::import_kicad_netlist_with(
                 Path::new(&input),
                 Path::new(&output),
                 &board_id,

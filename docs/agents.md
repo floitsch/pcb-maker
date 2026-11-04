@@ -28,7 +28,11 @@ and a netlist's import go on without it, with a warning in the verdict
 pcb-maker import-kicad-netlist <project>/<name>.kicad_sch <project-dir> <board-id> [--layers 4]
 ```
 
-does what KiCad's "Update PCB from Schematic" does for a new board:
+does what KiCad's "Update PCB from Schematic" does for a new board, on
+`--layers` copper layers (default: the `--footprints-from` board's count,
+below, else 2; the report's `copper_layers` and `copper_layers_from` say
+which, since 2026-11-04: trial 6's eurorack-pmod came out on two layers
+from a six-layer designer's board without a word):
 - every symbol's footprint from the project's and the user's
   `fp-lib-table` (KiCad's own libraries without one), with its fields (an
   `LCSC` field ends up in the BOM) and its DNP and BOM flags. The user's
