@@ -7,9 +7,12 @@ import time
 from pathlib import Path
 import tempfile
 import os
+import select
+import signal
 import sys
 from types import SimpleNamespace
 import unittest
+from unittest import mock
 
 # The tests' own memory ledger, not the machine's (harness_common.Ledger;
 # their subprocesses inherit it).
@@ -103,36 +106,82 @@ class PendingConversionTests(unittest.TestCase):
         MODULE.append_outcome(path, {'source_id': 'x', 'status': 'new'})
         self.assertEqual(MODULE.journal(path)['x']['status'], 'new')
 
+    @unittest.skipUnless(hasattr(os, 'pidfd_open'), 'needs pidfd_open (Linux 5.3+)')
     def test_whole_job_timeout_kills_native_child_and_grandchild(self):
+        """The whole-job timeout kills the native tree, and the job ends wall_timeout.
+
+        The race this test used to lose under load (load 25-50, and
+        reproduced every time with 32 busy loops pinned to the test's CPU):
+        the job's 1 s of wall started before the worker's interpreter, which
+        then runs `kicad-cli version` and `kicad-cli pcb import` (three
+        Python start-ups in all) before the fake CLI spawns its grandchild
+        and writes the marker. That took 0.2 s idle and 2 s under the pinned
+        load, so the timeout fired first, the process group died before the
+        native tree existed, and `marker.exists()` failed. The 2026-10-27
+        loosening (the wall bound, the /proc poll) waited longer for a kill
+        of processes that were never started. The runner was right all
+        along: the worker runs in its own session and the timeout SIGKILLs
+        the whole process group (os.killpg), grandchild included.
+
+        Now the job's clock (the runner's time.monotonic) stands still until
+        the fake CLI has published both PIDs (atomically), then jumps past
+        the timeout: the timeout fires with both alive, every time. Both
+        PIDs are held as pidfds opened while they are alive (no PID reuse),
+        and the test waits for them to exit without a timing bound (300 s is
+        a hang guard only). Both sleep an hour and the stage timeout is an
+        hour, so only the runner's kill of the process group can end them.
+        """
         marker = self.data / 'native-pids.json'
         fake = self.data / 'fake-kicad'
         fake.write_text('#!' + sys.executable + '\n' +
             'import json,os,subprocess,sys,time\n' +
             'if sys.argv[1:] == ["version"]: print("10.0.7"); sys.exit(0)\n' +
-            'child = subprocess.Popen([sys.executable,"-c","import time; time.sleep(30)"])\n' +
-            'open(' + repr(str(marker)) + ',"w").write(json.dumps([os.getpid(),child.pid]))\n' +
-            'time.sleep(30)\n')
+            'child = subprocess.Popen([sys.executable,"-c","import time; time.sleep(3600)"])\n' +
+            'open(' + repr(str(marker) + '.tmp') + ',"w").write(json.dumps([os.getpid(),child.pid]))\n' +
+            'os.replace(' + repr(str(marker) + '.tmp') + ',' + repr(str(marker)) + ')\n' +
+            'time.sleep(3600)\n')
         fake.chmod(0o755)
-        args = SimpleNamespace(stage_timeout=30, job_timeout=1, kicad_cli=str(fake))
+        job_timeout = 1
+        pidfds = []
+        state = {'started': None}
+
+        def monotonic():
+            now = time.monotonic()
+            if state['started'] is None:
+                state['started'] = now
+            if not pidfds and marker.exists():
+                pidfds.extend(os.pidfd_open(pid) for pid in json.loads(marker.read_text()))
+            # Hang guard only: without the marker the job still ends, and
+            # the marker assertion below fails.
+            if pidfds or now - state['started'] > 300:
+                return state['started'] + job_timeout
+            return state['started']
+
+        def release():
+            # A failing run must not leave the hour-long sleepers behind.
+            for fd in pidfds:
+                try:
+                    signal.pidfd_send_signal(fd, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                os.close(fd)
+        self.addCleanup(release)
+        clock = SimpleNamespace(monotonic=monotonic, sleep=time.sleep, time=time.time)
+        args = SimpleNamespace(stage_timeout=3600, job_timeout=job_timeout, kicad_cli=str(fake))
         MODULE.STOP = False
-        outcome = MODULE.convert_job(self.row, self.data, 'converter', '10.0.7', args)
+        with mock.patch.object(MODULE, 'time', clock):
+            outcome = MODULE.convert_job(self.row, self.data, 'converter', '10.0.7', args)
         self.assertEqual(outcome['status'], 'wall_timeout')
-        # The timeout fires after 1 s of wall; under a loaded machine the
-        # interpreter's start-up and the kill take longer, so the bound is
-        # loose. Wall must not decide a test (docs/benchmarks.md).
-        self.assertLess(outcome['wall_seconds'], 10)
-        self.assertTrue(marker.exists())
-        for pid in json.loads(marker.read_text()):
-            state = Path(f'/proc/{pid}/stat')
-            # A killed orphan can briefly remain a zombie until PID 1 reaps
-            # it, and under load the kill itself takes a moment: poll.
-            deadline = time.monotonic() + 10
-            while time.monotonic() < deadline:
-                if not state.exists() or state.read_text().split()[2] == 'Z':
-                    break
-                time.sleep(0.05)
-            self.assertTrue(not state.exists() or state.read_text().split()[2] == 'Z',
-                            f'pid {pid} still alive after the job timeout')
+        self.assertEqual(outcome['reason'], 'whole conversion process group terminated')
+        self.assertTrue(marker.exists(), 'the native tree never started')
+        self.assertEqual(len(pidfds), 2)
+        # A pidfd turns readable when its process has exited (zombie or
+        # reaped); they would sleep an hour on their own.
+        waiting, deadline = set(pidfds), time.monotonic() + 300
+        while waiting and time.monotonic() < deadline:
+            ready, _, _ = select.select(list(waiting), [], [], deadline - time.monotonic())
+            waiting.difference_update(ready)
+        self.assertFalse(waiting, 'the native child or grandchild outlived the job timeout')
 
     def test_manual_sources_include_pinned_original_without_native_overwrite(self):
         p = self.data / 'non-kicad' / 'example'
