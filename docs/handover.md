@@ -1,4 +1,4 @@
-# Hand-over (state as of 2026-11-03; measured by layout sweep v30, the nightly of 2026-11-03 on main 5657f45)
+# Hand-over (state as of 2026-11-04; measured by layout sweep v31, the nightly of 2026-11-04 on main 688b59c)
 
 What the tool does today, which benchmarks count, what is known to be
 wrong, where everything is and how to work on it. What each round of work
@@ -80,7 +80,7 @@ The newest nightly measurement of main (scripts/nightly.sh; the table of
 the last 14 nights is in [benchmarks.md](benchmarks.md#nightly)):
 
 <!-- nightly-state:begin -->
-**Nightly** 2026-11-03 (main 5657f451024a, `build/nightly/2026-11-03/summary.md`): fingerprints identical; expansion 24/46 (strict 24), 558 open; short 8/12 (strict 8), 23 open; sweep 62/109 (strict 62), 2658 open; designer 71/109 (strict 68), 2759 open at 0.675; gap placement 76%, routing 24%.
+**Nightly** 2026-11-04 (main 688b59ca8682, `build/nightly/2026-11-04/summary.md`): fingerprints identical; expansion 24/46 (strict 24), 558 open; short 7/12 (strict 7), 22 open; sweep 61/109 (strict 61), 2514 open; designer 71/109 (strict 68), 2759 open at 0.675; gap placement 73%, routing 27%.
 <!-- nightly-state:end -->
 
 What main does now, by the nightly of 2026-11-03 (main 5657f45; it ran
@@ -102,18 +102,19 @@ identical, WLED_Matrix 16 to 14 unconnected; the pin-row gaps after a
 move (`pcb-maker-gaps1-a`) against x1877: 23 unconnected and 8 strict
 passes on both sides (changelog, 2026-11-03).
 
-**Layout sweep v30** (the nightly of 2026-11-03, main 5657f45, written
-by the nightly): **62 of 109 pass the strict rule** (62 the per-type
-rule), 2658 unconnected in all, strict errors 40, no row cut or killed,
-2 without a result; medians against the designer's board: vias x0.68,
-length x1.04, open 0.000 (mean 0.100), bends x1.12, stair-steps +56,
-crossings +1. Against the nightly of 2026-11-02: better 0, same 107,
-worse 0, strict passes 62 -> 62. The matched designer tier on the same
+**Layout sweep v31** (the nightly of 2026-11-04, main 688b59c, written
+by the nightly): **61 of 109 pass the strict rule** (61 the per-type
+rule), 2514 unconnected in all, strict errors 35, no row cut or killed,
+2 without a result; medians against the designer's board: vias x0.69,
+length x1.04, open 0.000 (mean 0.094), bends x1.12, stair-steps +50,
+crossings +1. Against the nightly of 2026-11-03: better 9, same 94,
+worse 4, strict passes 62 -> 61 (gained 0xCB-1337 pcb-panel; lost
+MIDAS-MK1.1-revA, OpenAirScope). The matched designer tier on the same
 binary (budget scale 0.675): 68 strict passes (71 per type); over the
-100 target boards placement 76 %, routing 24 % of the open connections.
-`build/nightly/2026-11-03/`; table, gap split, the costliest placements
+100 target boards placement 73 %, routing 27 % of the open connections.
+`build/nightly/2026-11-04/`; table, gap split, the costliest placements
 and the losers in
-[benchmarks.md](benchmarks.md#layout-sweep-v30-2026-11-03).
+[benchmarks.md](benchmarks.md#layout-sweep-v31-2026-11-04).
 
 The sweeps before (v16 to v21 by hand, v22 to v29 written by the
 nightly), their tables, gap splits and triage are in

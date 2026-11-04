@@ -11,6 +11,29 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-11-04 (nightly: layout sweep v31, matched designer tier)
+
+Written by the nightly from `build/nightly/2026-11-04/` (main 688b59c;
+[benchmarks.md](benchmarks.md#layout-sweep-v31-2026-11-04)). The guard
+held: every stage ran, no row was cut or killed, the sweep has at least
+100 rows with a result.
+
+- **Layout sweep v31**: **61 of 109 pass the strict rule** (61 per
+  type), 2514 unconnected in all, strict errors 35, 2 without a result.
+  Against the nightly of 2026-11-03: better 9, same 94, worse 4, strict
+  passes 62 -> 61 (gained 0xCB-1337 pcb-panel; lost MIDAS-MK1.1-revA,
+  OpenAirScope).
+- **Medians against the designer's**: vias x0.69, length x1.04, open
+  0.000 (mean 0.094), bends x1.12, stair-steps +50, crossings +1.
+- **Matched designer tier** (budget scale 0.675): 68 strict passes (71
+  per type); over the 100 target boards placement 73 %, routing 27 % of
+  the open connections.
+- **Placement costs most** on video (+201: 202 / 1), Batch_1 (+137: 140
+  / 3), SmartSpin2k_Panelized (+105: 105 / 0), OpenESC-30x30 4in1 (+73:
+  88 / 15), glasgow revC3 (+72: 127 / 55).
+- **Worse beyond noise**: MIDAS-MK1.1-revA 0 -> 2, OpenAirScope 0 -> 1,
+  poly_corne_split42_left 17 -> 18.
+
 ## Committed on 2026-11-04 (the crossing dive in the trouble repair, off)
 
 Branch crossing-dive; binaries `build/bin/pcb-maker-cross1-c` to `-f`
