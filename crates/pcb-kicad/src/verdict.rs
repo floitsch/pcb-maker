@@ -2565,7 +2565,8 @@ fn next_actions(
             };
             let mut action = finding_action(kind, *count, &findings, context);
             if matches!(kind.as_str(), "length_out_of_range" | "skew_out_of_range")
-                && let Some(summary) = lengths_summary(&facts.lengths)
+                && let Some(summary) =
+                    lengths_summary(&facts.lengths, facts.command.starts_with("route"))
             {
                 action.push_str(&format!("; {summary}"));
             }
@@ -3152,7 +3153,7 @@ fn part_cutout_pairs(findings: &[&DrcFinding]) -> Vec<String> {
 /// oro link had 9 of its 12 ULPI nets unrouted and one over by the
 /// route, all ten one line "see drc.json". At most six nets named a
 /// group.
-fn lengths_summary(lengths: &[crate::KiCadNetLength]) -> Option<String> {
+fn lengths_summary(lengths: &[crate::KiCadNetLength], route_mode: bool) -> Option<String> {
     let out: Vec<&crate::KiCadNetLength> = lengths.iter().filter(|entry| !entry.within).collect();
     if out.is_empty() {
         return None;
@@ -3230,8 +3231,21 @@ fn lengths_summary(lengths: &[crate::KiCadNetLength]) -> Option<String> {
         ));
     }
     if !under.is_empty() {
+        // What to do about it (fresh-agent trial 6's firestarter, DVP_BUS
+        // 25 to 27 mm: the layout's placer had the camera connector 9 mm
+        // from the module, route mode left 6 of 10 short on the designer's
+        // placement; the designer's own tracks, kept, met all ten).
+        let nets: Vec<&str> = under.iter().map(|entry| entry.net.as_str()).collect();
+        let lever = if route_mode {
+            format!(
+                "route them by hand (KiCad's length tuning) and route again: route-kicad-board keeps a board's own tracks and routes the rest; to keep a designer's, `pcb-maker strip-kicad-tracks <designer.kicad_pcb> <input.kicad_pcb> --keep-nets {}` strips all other tracks",
+                nets.join(",")
+            )
+        } else {
+            "the placer keeps a length rule's pins within 0.8 of its maximum (length_maxima) and knows no minimum, so the parts may lie closer than the meanders have room for: hold them further apart (an apart entry between the nets' parts, docs/constraints.md), or route these nets by hand on the result and route it again (route-kicad-board keeps them)".to_string()
+        };
         parts.push(format!(
-            "{} under the minimum ({}): no straight track of the route had room for the whole meander",
+            "{} under the minimum ({}): no straight track of the route had room for the whole meander; {lever}",
             under.len(),
             names(&under, true)
         ));
@@ -5726,7 +5740,7 @@ mod tests {
                 ..entry("ULPI_D1", 31.5, "")
             },
         ];
-        let summary = lengths_summary(&lengths).unwrap();
+        let summary = lengths_summary(&lengths, false).unwrap();
         assert!(
             summary.contains("2 not routed (ULPI_CK, ULPI_D0)"),
             "{summary}"
@@ -5740,7 +5754,24 @@ mod tests {
             "{summary}"
         );
         assert!(!summary.contains("ULPI_D1"), "{summary}");
-        assert_eq!(lengths_summary(&lengths[4..]), None);
+        assert_eq!(lengths_summary(&lengths[4..], false), None);
+        // Under the minimum: the lever by mode (fresh-agent trial 6).
+        let short = vec![entry(
+            "DVP_Y5",
+            11.48,
+            "no straight track with room for all of it (0.000 of 14.525 mm added)",
+        )];
+        let route = lengths_summary(&short, true).unwrap();
+        assert!(
+            route.contains("1 under the minimum (DVP_Y5 11.48 mm, min 31.40): no straight track of the route had room for the whole meander; route them by hand (KiCad's length tuning) and route again")
+                && route.contains("--keep-nets DVP_Y5` strips all other tracks"),
+            "{route}"
+        );
+        let layout = lengths_summary(&short, false).unwrap();
+        assert!(
+            layout.contains("knows no minimum") && layout.contains("an apart entry"),
+            "{layout}"
+        );
     }
 
     /// A clearance between the board's own copper graphic and a zone
