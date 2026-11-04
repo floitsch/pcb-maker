@@ -767,6 +767,7 @@ mod tests {
             copper_graphics: Vec::new(),
             courtless: Vec::new(),
             slots: Vec::new(),
+            far_open: Default::default(),
         }
     }
 
