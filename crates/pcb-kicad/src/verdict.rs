@@ -544,7 +544,23 @@ pub fn footprint_own(finding: &DrcFinding) -> bool {
 /// otherwise, and no placement or route changes it; a short within one
 /// footprint is the schematic's nets on its pads, which stays judged.
 pub fn footprint_own_unreferenced(finding: &DrcFinding) -> bool {
-    (finding.kind != "shorting_items" && footprint_own(finding)) || pad_own(finding)
+    (finding.kind != "shorting_items" && footprint_own(finding))
+        || pad_own(finding)
+        || footprint_shape_own(finding)
+}
+
+/// Whether a finding is a footprint's own drawing on its one item, the
+/// footprint: a courtyard that is no closed shape (`malformed_courtyard`,
+/// "Footprint U5"), as its library draws it wherever it is placed. Trial 6's
+/// laptop power: its ESP32-S2-MINI-1's courtyard, on the designer's board
+/// too, failed the layout as a new error.
+pub fn footprint_shape_own(finding: &DrcFinding) -> bool {
+    finding.kind == "malformed_courtyard"
+        && finding.items.len() == 1
+        && finding
+            .item_descriptions
+            .first()
+            .is_some_and(|description| description.starts_with("Footprint "))
 }
 
 /// Why a finding of a result judged without a reference does not count.
@@ -1078,11 +1094,9 @@ fn board_minimum_setting(kind: &str) -> &'static str {
 pub fn footprint_findings_note(findings: &[&DrcFinding], dru: &str) -> Option<String> {
     let mut groups: BTreeMap<(String, String), OwnGroup> = BTreeMap::new();
     for finding in findings {
-        let Some(owner) = finding
-            .item_descriptions
-            .first()
-            .and_then(|description| pad_footprint(description))
-        else {
+        let Some(owner) = finding.item_descriptions.first().and_then(|description| {
+            pad_footprint(description).or_else(|| description.strip_prefix("Footprint "))
+        }) else {
             continue;
         };
         let entry = groups
@@ -4739,6 +4753,39 @@ mod tests {
         assert_eq!(verdict.status, KiCadRunStatus::Complete);
         assert!(verdict.footprint_findings.is_empty());
         assert_eq!(verdict.preexisting_findings, map(&[("hole_clearance", 1)]));
+    }
+
+    #[test]
+    fn a_footprints_malformed_courtyard_does_not_fail_a_layout_without_a_reference() {
+        // Trial 6's laptop power: its ESP32-S2-MINI-1's courtyard is no
+        // closed shape, on the designer's board too; the layout without a
+        // reference failed on it as a new error.
+        let courtyard = json!({"type": "malformed_courtyard", "severity": "error",
+            "description": "Footprint has malformed courtyard (not a closed shape)",
+            "items": [{"description": "Footprint U5", "uuid": "a4ff24f2", "pos": {"x": 173.99, "y": 142.3}}]});
+        let mut facts = routed(tally_drc(&report(vec![courtyard])));
+        facts
+            .outputs
+            .insert("board".into(), "out/result/board.kicad_pcb".into());
+        let verdict = judge(&facts);
+        assert_eq!(
+            verdict.status,
+            KiCadRunStatus::Complete,
+            "{}",
+            verdict.reason
+        );
+        assert_eq!(
+            verdict.footprint_findings,
+            map(&[("malformed_courtyard", 1)])
+        );
+        assert!(
+            verdict
+                .next_actions
+                .iter()
+                .any(|action| action.contains("U5: malformed_courtyard 1")),
+            "{:?}",
+            verdict.next_actions
+        );
     }
 
     #[test]

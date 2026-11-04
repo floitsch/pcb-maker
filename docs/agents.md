@@ -1019,7 +1019,10 @@ and does not fail on them. Since 2026-10-27 a finding on one pad alone
 that is the pad's own geometry against a board-wide minimum counts as its
 footprint's too (`pad_own`): its annular ring (`annular_width`), its hole
 (`drill_out_of_range`) or its padstack (`padstack`: a hole that leaves no
-copper, an SMD pad with copper on both sides). The nightly of 2026-10-27
+copper, an SMD pad with copper on both sides); so does, since
+2026-11-04, a footprint's courtyard that is no closed shape
+(`malformed_courtyard` on "Footprint U5": trial 6's ESP32-S2-MINI-1, on
+the designer's board too, failed the layout as a new error). The nightly of 2026-10-27
 laid out ten boards complete and clean but for such findings (the RP2040's
 thermal-via pads with a 0.10 mm ring under 0xCB-1337's 0.13 mm minimum,
 the 7805's 0.0875 mm on the mackerel boards, hackrf's fiducials), each on
