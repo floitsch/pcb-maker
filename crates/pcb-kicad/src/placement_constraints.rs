@@ -2619,9 +2619,12 @@ pub(super) fn apply_constraints(
                 None => edge(&entry.edge)?,
             };
             let local = keepouts[index].ok_or_else(|| {
+                // Trial 6's laptop power: KiCad's ESP32-S2-MINI-1 footprint
+                // draws its antenna without a keepout; the cookbook's
+                // overhang was refused with no way on.
                 format!(
-                    "edge constraint for {}: overhang needs a keepout zone in the footprint (the part that sticks out)",
-                    entry.part
+                    "edge constraint for {}: overhang needs a keepout zone in the footprint (the part that sticks out), and this footprint has none: drop the overhang and keep the antenna end at the edge with the edge entry alone (\"flush\": true) and a rotation that turns that end to it (\"rotation\": [{{\"part\": \"{}\", \"angle\": ...}}]), or draw the keepout in the footprint",
+                    entry.part, entry.part
                 )
             })?;
             // Only orientations that point the keepout at that edge.
@@ -4011,6 +4014,19 @@ mod tests {
             .map(|status| (status.kind, status.satisfied))
             .collect();
         assert_eq!(statuses, vec![("back".to_string(), true)]);
+    }
+
+    #[test]
+    fn an_overhang_without_a_keepout_says_how_to_keep_the_antenna_at_the_edge() {
+        // Trial 6: an ESP32 module's footprint without an antenna keepout.
+        let error = apply(
+            r#"{"version": 1, "edge": [{"part": "J1", "edge": "bottom", "flush": true, "overhang": {"edge": "bottom"}}]}"#,
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("edge constraint for J1: overhang needs a keepout zone in the footprint (the part that sticks out), and this footprint has none: drop the overhang and keep the antenna end at the edge with the edge entry alone"),
+            "{error}"
+        );
     }
 
     #[test]
