@@ -35,6 +35,33 @@ pub(crate) fn emit_routes(
             layers: ["F.Cu".into(), "B.Cu".into()],
         }));
     }
+    // The prepared fan-outs (`bga_fanout`) the routes use: stub and via
+    // written as the net's copper; one not used is dropped.
+    for fanout in fanouts_of(board) {
+        let net = fanout.net as usize;
+        if !result
+            .routes
+            .get(net)
+            .is_some_and(|route| fanout_used(board, &fanout, route))
+        {
+            continue;
+        }
+        pad_vias[net] += 1;
+        items.push(supplemental_segment_expr(&SupplementalSegment {
+            connection: board.nets[net].name.clone(),
+            start: nanometres(fanout.start),
+            end: nanometres(fanout.end),
+            width: fanout.width,
+            layer: layer_names[fanout.layer].clone(),
+        }));
+        items.push(supplemental_via_expr(&SupplementalVia {
+            connection: board.nets[net].name.clone(),
+            at: nanometres(fanout.end),
+            size: fanout.diameter,
+            drill: fanout.drill,
+            layers: ["F.Cu".into(), "B.Cu".into()],
+        }));
+    }
     let mut nets = Vec::new();
     for (net, route) in result.routes.iter().enumerate() {
         let description = &board.nets[net];
@@ -198,6 +225,7 @@ pub(super) fn route_kicad_board_lowered(
             let Lowered {
                 mut board,
                 expressions,
+                ..
             } = lower(&pcb, config, connect_pours)?;
             let kept = keep_existing_copper(&mut board, false);
             if config.diff_pairs_on() && config.engine.as_deref() != Some("topological") {

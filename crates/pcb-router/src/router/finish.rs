@@ -374,6 +374,7 @@ impl Router {
         }
         let diagnostics = self.diagnostics();
         self.profile.emit += emit_started.elapsed().as_secs_f64();
+        write_net_work();
         if self.config.verbose {
             eprintln!(
                 "{}",

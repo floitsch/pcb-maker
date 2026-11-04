@@ -197,6 +197,9 @@ pub(crate) struct Lowered {
     /// The board file's expressions (`expression_count`): its lowering's
     /// work is `lowering_work_of` them.
     pub expressions: u64,
+    /// The prepared fan-outs' plan work (`bga_fanout::plan`), in
+    /// expressions of the same cost: charged with the lowering.
+    pub fanout_work: u64,
 }
 
 static LOWER_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -265,7 +268,8 @@ pub(crate) fn lower(
     let lowered = lower_board(pcb, config, connect_pours);
     LOWER_CALLS.fetch_add(1, Relaxed);
     LOWER_NANOS.fetch_add(started.elapsed().as_nanos() as u64, Relaxed);
-    let expressions = expression_count(pcb);
+    let expressions =
+        expression_count(pcb) + lowered.as_ref().map_or(0, |lowered| lowered.fanout_work);
     LOWER_WORK_NANOS.fetch_add((lowering_work_of(expressions) * 1.0e9) as u64, Relaxed);
     // What the lowering refuses is the board's fault (a form it cannot
     // read, a layer stack it cannot hold), as is a board the router's maps
@@ -359,6 +363,12 @@ fn lower_board(
     // every layer and the pad's terminal there (`via_in_pad`).
     // (A panel repeats references: a via is its pad's by place too.)
     let mut pad_vias: BTreeMap<String, Vec<PlannedVia>> = BTreeMap::new();
+    // With prepared fan-outs (`bga_fanout`): every footprint's SMD pads,
+    // for the plan once the board's copper is lowered.
+    let fanout_on = bga_fanout::bga_fanout_on(config);
+    let mut fanout_parts: Vec<bga_fanout::FanoutPart> = Vec::new();
+    // The pads holding a via already (`pad_vias`).
+    let mut holding_vias: BTreeSet<usize> = BTreeSet::new();
     for via in plan_vias_in_pads(pcb, config).vias {
         pad_vias.entry(via.label.clone()).or_default().push(via);
     }
@@ -971,6 +981,7 @@ fn lower_board(
                         })
                         .filter(|_| net.is_some());
                     if let Some(via) = pad_via {
+                        holding_vias.insert(pad_obstacle);
                         let ring = core::Shape::Circle {
                             center: via.at,
                             radius: via.diameter / 2.0,
@@ -1198,6 +1209,19 @@ fn lower_board(
                         })
                         .collect::<Vec<_>>(),
                 ));
+                if fanout_on && footprint_pads.iter().filter(|pad| pad.smd).count() >= 16 {
+                    let exposed = exposed_pad(&footprint_pads);
+                    fanout_parts.push(bga_fanout::FanoutPart {
+                        reference: reference.to_string(),
+                        pads: footprint_pads
+                            .iter()
+                            .zip(&footprint_copper)
+                            .enumerate()
+                            .filter(|(_, (pad, _))| pad.smd)
+                            .map(|(index, (_, copper))| (copper[0], exposed.contains(&index)))
+                            .collect(),
+                    });
+                }
                 if config.via_in_pad != Some(KiCadViaInPad::All(true)) {
                     let exposed = exposed_pad(&footprint_pads);
                     for (index, pad) in footprint_pads.iter().enumerate() {
@@ -1920,6 +1944,117 @@ fn lower_board(
     if classes.is_empty() {
         return Err("the board has no routable connections".into());
     }
+    // Prepared fan-outs (`bga_fanout`): the dog-bones of the grid arrays'
+    // inner balls, fixed copper of their nets, each via the ball's
+    // terminal on the layers off the ball's.
+    let mut fanout_work = 0;
+    if fanout_on && !fanout_parts.is_empty() {
+        // A ball with a via of the board's own in its copper keeps it.
+        for item in pcb
+            .children()
+            .iter()
+            .filter(|item| item.head() == Some("via"))
+        {
+            if let Ok(at) = form_at(item) {
+                for part in &fanout_parts {
+                    for &(index, _) in &part.pads {
+                        if obstacles[index].shape.distance_to_point([at[0], at[1]]) <= 0.0 {
+                            holding_vias.insert(index);
+                        }
+                    }
+                }
+            }
+        }
+        let plan = bga_fanout::plan(
+            &fanout_parts,
+            &obstacles,
+            &nets,
+            &classes,
+            &no_via_pads,
+            &holding_vias,
+            config,
+        );
+        bga_fanout::report(&plan);
+        fanout_work = plan.work;
+        let all = layers.all();
+        for fanout in plan.fanouts {
+            let net = Some(fanout.net);
+            let ball = 1 << fanout.layer;
+            let copper =
+                |shape: core::Shape, layers: core::LayerMask, suffix: &str| core::Obstacle {
+                    shape,
+                    layers,
+                    kind: core::ObstacleKind::Copper,
+                    net,
+                    clearance: 0.0,
+                    clearance_override: None,
+                    blocks_tracks: true,
+                    blocks_vias: true,
+                    label: format!("{} {suffix}", fanout.label),
+                };
+            let ring = core::Shape::Circle {
+                center: fanout.via,
+                radius: fanout.diameter / 2.0,
+            };
+            obstacles.push(copper(
+                core::Shape::Capsule {
+                    start: fanout.start,
+                    end: fanout.via,
+                    radius: fanout.width / 2.0,
+                },
+                ball,
+                "fan-out stub",
+            ));
+            obstacles.push(copper(ring.clone(), ball, "fan-out via ring"));
+            let other = obstacles.len();
+            if all & !ball != 0 {
+                obstacles.push(copper(ring, all & !ball, "fan-out via"));
+            }
+            obstacles.push(core::Obstacle {
+                shape: core::Shape::Circle {
+                    center: fanout.via,
+                    radius: fanout.drill / 2.0,
+                },
+                layers: all,
+                kind: core::ObstacleKind::Hole,
+                net,
+                clearance: 0.0,
+                clearance_override: None,
+                blocks_tracks: true,
+                blocks_vias: true,
+                label: format!("{} fan-out hole", fanout.label),
+            });
+            if all & !ball == 0 {
+                continue;
+            }
+            // The via is the ball's terminal on the other layers (the
+            // terminal the ball was merged into, if it was), solid to a
+            // pour there.
+            solid_pad_obstacles.push(other);
+            let terminals = &nets[fanout.net as usize].terminals;
+            let host = terminals
+                .iter()
+                .position(|terminal| terminal.pad == fanout.pad)
+                .map(|host| (host, terminals[host].anchor))
+                .or_else(|| {
+                    merged_pads
+                        .iter()
+                        .find(|merged| merged.net == fanout.net && merged.pad == fanout.pad)
+                        .map(|merged| (merged.host, merged.anchor))
+                });
+            if let Some((host, anchor)) = host {
+                nets[fanout.net as usize].terminals[host].layers = all;
+                merged_pads.push(core::MergedPad {
+                    net: fanout.net,
+                    host,
+                    pad: other,
+                    anchor,
+                    layers: all & !ball,
+                    padstack: true,
+                });
+            }
+        }
+    }
     let mut lowered = Lowered {
         board: core::Board {
             layer_count: layers.len(),
@@ -1965,6 +2100,7 @@ fn lower_board(
             attachment: Default::default(),
         },
         expressions: 0,
+        fanout_work,
     };
     // A panel of different boards: a net per sub-board where no copper
     // joins them (`sub_boards::split_router_nets`).

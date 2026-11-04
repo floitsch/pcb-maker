@@ -9,6 +9,7 @@
 use super::*;
 
 mod attempt;
+mod bga_fanout;
 mod budget;
 mod config;
 mod diff_pairs;
@@ -28,6 +29,7 @@ mod tests;
 mod tools;
 mod via_in_pad;
 
+pub(crate) use self::bga_fanout::{fanout_used, fanouts_of};
 pub(crate) use self::diff_pairs::{
     finish_pairs, measure_uncoupled, plan_pairs, with_pairs, write_pair_copper,
 };

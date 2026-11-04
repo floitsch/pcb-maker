@@ -58,6 +58,47 @@ pub(super) fn search_rate_enabled() -> bool {
     *ENABLED.get_or_init(|| std::env::var_os("PCB_ROUTER_SEARCH_RATE").is_some())
 }
 
+/// `PCB_ROUTER_NET_WORK=<file>`: the search expansions per net name over
+/// the process (every router, every phase), written to `<file>` as JSON
+/// at each router's finish (the last write holds the whole run). A
+/// diagnostic: it counts, nothing reads it (docs/router.md, "Prepared
+/// fan-outs for BGAs (2026-11-04)").
+pub(super) fn net_work_path() -> Option<&'static std::path::Path> {
+    static PATH: std::sync::OnceLock<Option<std::path::PathBuf>> = std::sync::OnceLock::new();
+    PATH.get_or_init(|| std::env::var_os("PCB_ROUTER_NET_WORK").map(std::path::PathBuf::from))
+        .as_deref()
+}
+
+/// The expansions per net name (`net_work_path`).
+pub(super) static NET_WORK: std::sync::Mutex<std::collections::BTreeMap<String, u64>> =
+    std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// Adds a search's expansions to its net's (`net_work_path`).
+pub(super) fn note_net_work(name: &str, expansions: u64) {
+    if let Ok(mut work) = NET_WORK.lock() {
+        *work.entry(name.to_string()).or_default() += expansions;
+    }
+}
+
+/// Writes the expansions per net so far to `net_work_path`.
+pub(super) fn write_net_work() {
+    let Some(path) = net_work_path() else {
+        return;
+    };
+    let Ok(work) = NET_WORK.lock() else {
+        return;
+    };
+    let mut text = String::from("{");
+    for (index, (name, expansions)) in work.iter().enumerate() {
+        if index > 0 {
+            text.push(',');
+        }
+        text.push_str(&format!("\n {:?}: {expansions}", name));
+    }
+    text.push_str("\n}\n");
+    let _ = std::fs::write(path, text);
+}
+
 pub(super) static BUILD_CALLS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 pub(super) static BUILD_NANOS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);

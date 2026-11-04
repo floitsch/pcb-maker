@@ -668,6 +668,12 @@ impl Router {
                 .search_expansions
                 .fetch_add(scratch.expansions - expansions_before, Relaxed);
         }
+        if net_work_path().is_some() {
+            note_net_work(
+                &self.board.nets[net as usize].name,
+                scratch.expansions - expansions_before,
+            );
+        }
         if scratch.corridor.is_none() {
             scratch.open_searches += 1;
             scratch.open_expansions += scratch.expansions - expansions_before;

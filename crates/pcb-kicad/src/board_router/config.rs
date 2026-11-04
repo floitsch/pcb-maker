@@ -413,6 +413,16 @@ pub struct KiCadBoardRouterConfig {
     /// overrides this.
     #[serde(default)]
     pub crossing_dive: Option<bool>,
+    /// Prepared fan-outs for BGAs (board_router/bga_fanout.rs; docs/router.md,
+    /// "Prepared fan-outs for BGAs (2026-11-04)"): before routing, every
+    /// ball of a grid array's inner rings (those no track between the outer
+    /// balls serves) gets a stub and a via in a diagonal gap, the largest of
+    /// the class's and the project's via sizes that keeps every clearance,
+    /// fixed copper of the ball's net that its route may end on, on any
+    /// layer; written only where the net's route uses it. Unset: off;
+    /// `PCB_ROUTER_BGA_FANOUT` overrides this.
+    #[serde(default)]
+    pub bga_fanout: Option<bool>,
     /// Connect every pour-net pad to its plane by a fixed stub and via
     /// before the signals route (router `fixed_plane_stubs`).
     #[serde(default)]
