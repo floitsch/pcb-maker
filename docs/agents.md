@@ -564,13 +564,11 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     neighbours, which other nets pay to cross. It did not gain on the
     measured boards; try it where KiCad's open items sit at a QFN's or
     connector's pads boxed in by the neighbours' vias and tracks.
-  - `crossing_dive` (default false; an experiment, docs/router.md
-    "Crossings decided in the repair"): after the routing, where an open
-    connection's pad in a fine-pitch row is boxed in by a neighbour whose
-    route must cross it, one of the two takes a via beyond the row and
-    the other stays, kept only where fewer connections stay open. Run
-    with `PCB_ROUTER_TROUBLE_WHY=1` in the environment to see which open
-    pads are such crossing pairs (the log's `crossing census` lines).
+  - Open connections at a fine-pitch row: run with
+    `PCB_ROUTER_TROUBLE_WHY=1` in the environment to see which open pads
+    are boxed in by a neighbour whose route must cross theirs (the log's
+    `crossing census` lines; docs/router.md "Crossings decided in the
+    repair").
   - `bga_fanout` (default true; docs/router.md "Prepared fan-outs for
     BGAs"): a ball grid array's inner balls, which no track between the
     outer balls serves and whose net's via is too large for the diagonal

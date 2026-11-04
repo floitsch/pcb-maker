@@ -417,13 +417,6 @@ pub struct KiCadBoardRouterConfig {
     /// `PCB_ROUTER_FANOUT` overrides this.
     #[serde(default)]
     pub fanout: Option<bool>,
-    /// The crossing dive in the trouble repair (router `crossing_dive`;
-    /// docs/router.md, "Crossings decided in the repair (2026-11-03)"): one
-    /// net of a crossing pair at a fine-pitch row takes a via beyond the
-    /// row. Unset, the router's default (off); `PCB_ROUTER_CROSSING_DIVE`
-    /// overrides this.
-    #[serde(default)]
-    pub crossing_dive: Option<bool>,
     /// Prepared fan-outs for BGAs (board_router/bga_fanout.rs; docs/router.md,
     /// "Prepared fan-outs for BGAs (2026-11-04)"): before routing, every
     /// ball of a grid array's inner rings (those no track between the outer

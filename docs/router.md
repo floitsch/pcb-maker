@@ -5465,6 +5465,10 @@ on its own.
 
 ## Crossings decided in the repair (2026-11-03)
 
+**Removed on 2026-11-04** (the move, `crossing_dive`, which was off;
+docs/handover.md, "Removed experiments (2026-11-04)"). The census below
+stays (`PCB_ROUTER_TROUBLE_WHY`); the measurements are kept as they were.
+
 "Fan-out before negotiation" above ended with the rows' problem put as a
 topology: two nets of one fine-pitch row whose targets lie on opposite
 sides cannot both leave on the layer, one of them needs a via beyond the
@@ -5472,8 +5476,8 @@ neighbours' tips, and nothing decides which. This decides it inside the
 trouble repair, after the negotiation, as a move of its own
 (router/dive.rs).
 
-**The census** (`PCB_ROUTER_TROUBLE_WHY`, with the switch on or off; no
-work charged). After the repair, for every signal net still open: each
+**The census** (`PCB_ROUTER_TROUBLE_WHY`; no work charged; router/dive.rs,
+`crossing_census`). After the repair, for every signal net still open: each
 of its open dense pads (the fan-out's dense pads, `fanout_plan` on the
 statics, of which no branch of the net ends at the pad), its straight
 ways out (the runs along the axes), the nets whose copper closes each
@@ -5514,7 +5518,7 @@ not judge); the placer's `pad_exits` asks that question of every placement:
 placer.md, "Pads without a way out (2026-11-04)".)
 
 **The move** (`Config::crossing_dive`, router setting `crossing_dive`,
-`PCB_ROUTER_CROSSING_DIVE`; off). In the repair's rounds (and its last
+`PCB_ROUTER_CROSSING_DIVE`; off, removed on 2026-11-04). In the repair's rounds (and its last
 pass), once an open net's exchange is refused:
 
 - *Detection* (`crossing_pairs`): an open dense pad P of the net A, a row
@@ -5643,7 +5647,7 @@ jetson identical (jetson's trials all undone, 1.8 s more work), Sisu
 29 to 28 unconnected and 373 to 371 vias (its fingerprints part after
 the repair: a dive kept).
 
-**Default: off.** The move works where it is a move: it closes crossing
+**Default: off; removed on 2026-11-04.** The move works where it is a move: it closes crossing
 pairs inside the repair (jetson's IC6, IC7 and IC12, the keyboard's nRF
 aQFN, OpenAirScope's U1 and U5, the tier's CompassTag and bms, Sisu),
 and the switch off changes nothing. But on the five boards it was built

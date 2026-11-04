@@ -2,67 +2,27 @@
 // Use of this source code is governed by an MIT-style license that can be
 // found in the LICENSE file.
 
-//! The crossing dive (`Config::crossing_dive`, off by default): a move of
-//! the trouble repair for two nets of one fine-pitch row whose targets lie
-//! on opposite sides (their routes must cross) where the one left open has
-//! a straight way out closed by the other's copper at its tip (a via just
-//! beyond it, a track turning across it). On one layer the two cannot both
-//! leave; one of them has to dive, and in a 0.4 or 0.5 mm row a via fits
-//! only beyond the neighbours' tips (docs/router.md, "Fan-out before
-//! negotiation (2026-10-28)", the diagnosis).
-//!
-//! The move tries both assignments: the diver loses its branches at the
-//! row's pad and takes a fixed stub from the pad straight out to one of the
-//! via sites the fan-out computes for that pad (`fanout_plan`, the sites
-//! beyond the neighbours' runs) and a via there; the nets the stub then
-//! overlaps lose the branches it crosses; the other net of the pair (the
-//! one that stays on the layer) is routed again first, hard, then the other
-//! nets displaced, then the diver from its via, as the trouble exchange
-//! routes its victims. A trial counts where the diver's route takes the
-//! via. The assignment kept is the one that leaves the nets involved with
-//! the fewest open terminals, fewer than before and none in conflict; else
-//! the board is as it was. Every search is the router's own, on the work
-//! clock.
+//! The crossing census (`PCB_ROUTER_TROUBLE_WHY`, router/trouble.rs):
+//! after the trouble repair, every open dense pad of a signal net still
+//! open (a pad of the fan-out plan, `fanout_plan`), its straight ways out
+//! and what closes each (a neighbour's via or track), and whether that
+//! neighbour's pad in the row has a target on the other side along the
+//! row: a crossing pair, where on one layer the two nets cannot both
+//! leave and one of them has to dive (docs/router.md, "Fan-out before
+//! negotiation (2026-10-28)", the diagnosis). Analysis only: nothing is
+//! changed and no work is charged. The crossing dive that acted on the
+//! pairs (`crossing_dive`, off) was removed on 2026-11-04 (docs/handover.md,
+//! "Removed experiments (2026-11-04)").
 
 use super::fanout::{DensePad, FanoutPlan};
-use super::trouble::{Exchange, Saved, TroubleSettings, TroubleWork, clean, open_now, open_saved};
 use super::*;
-
-/// `Config::crossing_dive`'s default: off. Measured on 2026-11-04
-/// (docs/router.md, "Crossings decided in the repair"): on the five boards
-/// it was built for, the same open items (Quanta75's crossing pairs trade
-/// the crossing for a net on the other layer); the expansion tier 558 to
-/// 556 unconnected and a strict pass more; the dense boards 876 to 878.
-pub const CROSSING_DIVE_DEFAULT: bool = false;
-
-/// `PCB_ROUTER_CROSSING_DIVE` when set: overrides `Config::crossing_dive`
-/// (`0` or empty off, anything else on).
-pub fn crossing_dive_override() -> Option<bool> {
-    let value = std::env::var("PCB_ROUTER_CROSSING_DIVE").ok()?;
-    Some(!(value.is_empty() || value == "0"))
-}
-
-/// The most dive trials for one trouble-maker (pairs, assignments and via
-/// sites together).
-const DIVE_TRIALS: usize = 8;
 
 /// A row neighbour lies at most this far along the row from the pad
 /// (centre to centre), mm: two or three pads of a 0.4 to 0.5 mm row.
 const ROW_REACH: f64 = 1.5;
 
-/// A crossing pair at a fine-pitch row: `open`, a dense pad (an index of
-/// the fan-out plan's pads) of a net not complete; `other`, a dense pad of
-/// another net in the same row (part, layer and outward side) whose copper
-/// closes one of `open`'s straight ways out and whose target lies on the
-/// other side of `open`'s along the row.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct CrossingPair {
-    pub(super) open: usize,
-    pub(super) other: usize,
-}
-
 /// The fan-out plan (the dense pads, their ways out and via sites, on the
-/// statics) and its pads by net and by row, for the dives.
+/// statics) and its pads by net and by row, for the census.
 pub(super) struct DivePlan {
     pub(super) plan: FanoutPlan,
     by_net: HashMap<NetId, Vec<usize>>,
@@ -239,31 +199,6 @@ impl Router {
         pads * targets < -1.0e-9
     }
 
-    /// The crossing pairs of `net` (its open dense pads, nearest neighbour
-    /// first) and the work of finding them (nodes looked at).
-    pub(super) fn crossing_pairs(&self, dive: &DivePlan, net: NetId) -> (Vec<CrossingPair>, u64) {
-        let mut pairs = Vec::new();
-        let mut work = 0;
-        for &open in dive.by_net.get(&net).map_or(&[][..], Vec::as_slice) {
-            let pad = &dive.plan.pads[open];
-            if !self.pad_open(pad) {
-                continue;
-            }
-            for other in self.row_neighbours(dive, open) {
-                let neighbour = &dive.plan.pads[other];
-                if !self.targets_cross(pad, neighbour) {
-                    continue;
-                }
-                let mut blocks = Vec::new();
-                work += self.tip_blocks(pad, &mut std::iter::once(neighbour.net), &mut blocks);
-                if !blocks.is_empty() {
-                    pairs.push(CrossingPair { open, other });
-                }
-            }
-        }
-        (pairs, work)
-    }
-
     /// `PCB_ROUTER_TROUBLE_WHY`: every open dense pad (`pad_open`) of a signal net still open,
     /// its straight ways out and what closes each (the net, by a via or a
     /// track, and whether that net has a pad in the row whose target
@@ -374,452 +309,6 @@ impl Router {
             "crossing census {label}: {open_nets} signal nets open ({without} without an open dense pad), {pads} open dense pads of theirs, {boxed} with every straight way closed, {paired} in a crossing pair, {no_way} without a straight way out"
         );
     }
-
-    /// The diver's stub for `pad`'s way out `run` (a via site): the lattice
-    /// nodes from the last of the pad's terminal nodes on the run's line to
-    /// the site on the pad's layer, and a via there to another layer (the
-    /// furthest first) where the branch is legal on the statics.
-    fn dive_stub(&self, pad: &DensePad, run: usize) -> Option<Branch> {
-        let run = &pad.runs[run];
-        let anchor = self.pad_anchor(pad);
-        let centre = self.grid.nearest_node(anchor)?;
-        let site = self.grid.nearest_node(run.end)?;
-        let own: HashSet<Node> = self.nets[pad.net as usize].terminal_nodes[pad.terminal]
-            .iter()
-            .copied()
-            .collect();
-        let (dx, dy) = DIRECTIONS[run.direction];
-        let (mut x, mut y) = {
-            let (x, y) = self.grid.xy(centre);
-            (x as i64, y as i64)
-        };
-        let layer = pad.layer as u8;
-        let mut nodes: Vec<Node> = Vec::new();
-        for _ in 0..4096 {
-            if x < 0 || y < 0 || x >= self.grid.nx as i64 || y >= self.grid.ny as i64 {
-                return None;
-            }
-            let cell = self.grid.index(x as usize, y as usize) as u32;
-            let node = Node { layer, cell };
-            if own.contains(&node) {
-                nodes.clear();
-            }
-            nodes.push(node);
-            if cell as usize == site {
-                break;
-            }
-            x += dx as i64;
-            y += dy as i64;
-        }
-        if nodes.last()?.cell as usize != site || !own.contains(&nodes[0]) || nodes.len() < 2 {
-            return None;
-        }
-        let mut others: Vec<usize> = (0..self.board.layer_count)
-            .filter(|other| *other != pad.layer)
-            .collect();
-        others.sort_by_key(|other| (std::cmp::Reverse(other.abs_diff(pad.layer)), *other));
-        for other in others {
-            let mut path = nodes.clone();
-            path.push(Node {
-                layer: other as u8,
-                cell: site as u32,
-            });
-            let branch = Branch {
-                nodes: path,
-                start_terminal: pad.terminal as u16,
-                end_terminal: FREE_END,
-            };
-            if self.branch_is_legal(pad.net, &branch) {
-                return Some(branch);
-            }
-        }
-        None
-    }
-
-    /// Removes `net`'s branches that end at its terminal `terminal` and
-    /// what hangs on them alone (a junction left without its host); the
-    /// fixed branches stay.
-    fn drop_pad_branches(&mut self, net: NetId, terminal: usize) {
-        let terminal = terminal as u16;
-        let state = &self.nets[net as usize];
-        let branches = &state.branches;
-        let mut keep: Vec<bool> = branches
-            .iter()
-            .enumerate()
-            .map(|(index, branch)| {
-                index < state.fixed
-                    || (branch.start_terminal != terminal && branch.end_terminal != terminal)
-            })
-            .collect();
-        loop {
-            let hosts = junction_hosts(branches, &keep);
-            let mut changed = false;
-            for (index, branch) in branches.iter().enumerate() {
-                if !keep[index] || index < state.fixed {
-                    continue;
-                }
-                let dangling = (branch.start_terminal == NO_TERMINAL
-                    && !hosts.contains_key(&branch.nodes[0]))
-                    || (branch.end_terminal == NO_TERMINAL
-                        && !hosts.contains_key(branch.nodes.last().unwrap()));
-                if dangling {
-                    keep[index] = false;
-                    changed = true;
-                }
-            }
-            if !changed {
-                break;
-            }
-        }
-        let mut keep = keep.into_iter();
-        let state = &mut self.nets[net as usize];
-        state.branches.retain(|_| keep.next().unwrap());
-        state.connected.fill(false);
-        state.complete = false;
-        self.stamp(net);
-    }
-
-    /// Routes `net` again hard: on its corridors first with `local` (as
-    /// the trouble exchange's victims), else in full.
-    fn dive_route(&mut self, net: NetId, local: bool, work: &mut TroubleWork) {
-        let started = self.budget_work();
-        self.nets[net as usize].hopeless_searches = 0;
-        if local {
-            self.hard_scope = HardScope::Corridors;
-        }
-        self.route_net_seq(net, 0.0, true, 4.0);
-        self.hard_scope = HardScope::Full;
-        self.stamp(net);
-        work.routed += 1;
-        work.victims += self.budget_work() - started;
-    }
-
-    /// One trial: the dense pad `diver_pad` dives at its via site `run`,
-    /// `stayer` (the other net of the pair) stays on the layer; `trouble`
-    /// is the open net the move is for. Returns the nets changed as they
-    /// were (`trouble` first) with the board as the trial left it, or,
-    /// restored, why not.
-    #[allow(clippy::too_many_arguments)]
-    fn dive_trial(
-        &mut self,
-        dive: &DivePlan,
-        diver_pad: usize,
-        run: usize,
-        stayer: NetId,
-        trouble: NetId,
-        order: &[NetId],
-        settings: TroubleSettings,
-        work: &mut TroubleWork,
-    ) -> Result<Vec<Saved>, String> {
-        let pad = dive.plan.pads[diver_pad].clone();
-        let diver = pad.net;
-        let Some(stub) = self.dive_stub(&pad, run) else {
-            return Err("no legal stub to the via site".into());
-        };
-        let conflicted_before: HashSet<NetId> = order
-            .iter()
-            .copied()
-            .filter(|net| !self.conflicts(*net).is_empty())
-            .collect();
-        let mut saved = vec![self.save_net(trouble)];
-        saved.push(self.save_net(if diver == trouble { stayer } else { diver }));
-        let limit = settings.victim_limit(saved[0].4);
-        self.drop_pad_branches(diver, pad.terminal);
-        self.nets[diver as usize].branches.push(stub.clone());
-        self.stamp(diver);
-        // The nets the stub overlaps lose the branches it crosses; what its
-        // own conflicts still name (a wider class's clearance) goes whole.
-        let victims: Vec<NetId> = order
-            .iter()
-            .copied()
-            .filter(|net| {
-                *net != diver
-                    && !conflicted_before.contains(net)
-                    && !self.conflicts(*net).is_empty()
-            })
-            .collect();
-        let refusal = if victims.len() > limit {
-            Some(format!(
-                "{} victims, more than allowed ({limit})",
-                victims.len()
-            ))
-        } else {
-            victims
-                .iter()
-                .find(|victim| {
-                    !settings.pour_victims && !self.nets[**victim as usize].plane.is_empty()
-                })
-                .map(|pour| {
-                    format!(
-                        "a pour net among the victims ({})",
-                        self.board.nets[*pour as usize].name
-                    )
-                })
-        };
-        if let Some(reason) = refusal {
-            self.restore_nets(saved);
-            return Err(reason);
-        }
-        let mut victims = victims;
-        for victim in &victims {
-            if !saved.iter().any(|entry| entry.0 == *victim) {
-                saved.push(self.save_net(*victim));
-            }
-            self.rip_up_conflicted(*victim);
-        }
-        if !self.conflicts(diver).is_empty() {
-            let others: Vec<NetId> = self
-                .blockers(diver)
-                .into_iter()
-                .filter(|other| *other != diver)
-                .collect();
-            let pour = others.iter().find(|other| {
-                !settings.pour_victims && !self.nets[**other as usize].plane.is_empty()
-            });
-            if let Some(pour) = pour {
-                let reason = format!(
-                    "a pour net at the via site ({})",
-                    self.board.nets[*pour as usize].name
-                );
-                self.restore_nets(saved);
-                return Err(reason);
-            }
-            for other in others {
-                if !saved.iter().any(|entry| entry.0 == other) {
-                    saved.push(self.save_net(other));
-                }
-                if !victims.contains(&other) {
-                    victims.push(other);
-                }
-                self.rip_up(other);
-            }
-            if !self.conflicts(diver).is_empty() || victims.len() > limit {
-                self.restore_nets(saved);
-                return Err("fixed copper at the via site, or too many victims".into());
-            }
-        }
-        // The net that stays on the layer first, then the others displaced,
-        // then the diver from its via.
-        let mut routed: Vec<NetId> = Vec::new();
-        if victims.contains(&stayer) || !self.nets[stayer as usize].complete {
-            routed.push(stayer);
-        }
-        routed.extend(
-            victims
-                .iter()
-                .copied()
-                .filter(|victim| *victim != stayer && *victim != diver),
-        );
-        routed.push(diver);
-        for net in &routed {
-            self.dive_route(*net, settings.local, work);
-        }
-        if settings.local {
-            let started = self.budget_work();
-            for net in &routed {
-                let before = saved
-                    .iter()
-                    .find(|entry| entry.0 == *net)
-                    .map_or(0, |entry| entry.4);
-                let open = self.open_measure(*net);
-                let pair = *net == diver || *net == stayer;
-                if open > before || (pair && open > 0) {
-                    self.nets[*net as usize].hopeless_searches = 0;
-                    self.hard_scope = HardScope::Window;
-                    self.route_net_seq(*net, 0.0, true, 1.0);
-                    self.hard_scope = HardScope::Full;
-                    self.stamp(*net);
-                    work.retries += 1;
-                }
-            }
-            work.retried += self.budget_work() - started;
-        }
-        // Where the diver's route does not take its via (the stayer's
-        // reroute freed its way on the layer), the stub goes, or its part
-        // beyond the furthest node the route joins: no copper hangs off
-        // the pad unused. The trial is judged as it stands.
-        let state = &self.nets[diver as usize];
-        let joined = state
-            .branches
-            .iter()
-            .filter(|branch| branch.nodes != stub.nodes)
-            .flat_map(|branch| [branch.nodes[0], *branch.nodes.last().unwrap()])
-            .filter_map(|node| stub.nodes.iter().position(|stub_node| *stub_node == node))
-            .max();
-        if joined != Some(stub.nodes.len() - 1) {
-            let state = &mut self.nets[diver as usize];
-            if let Some(at) = state
-                .branches
-                .iter()
-                .position(|branch| branch.nodes == stub.nodes)
-            {
-                match joined {
-                    Some(last) if last > 0 => state.branches[at].nodes.truncate(last + 1),
-                    _ => {
-                        state.branches.remove(at);
-                    }
-                }
-                self.stamp(diver);
-            }
-        }
-        // A conflict one side of a pair of classes sees (as in the
-        // exchange): the nets in conflict lose those branches and are
-        // routed again hard, once.
-        let conflicted: Vec<NetId> = saved
-            .iter()
-            .map(|entry| entry.0)
-            .filter(|net| !self.conflicts(*net).is_empty())
-            .collect();
-        for net in conflicted {
-            self.rip_up_conflicted(net);
-            self.dive_route(net, false, work);
-        }
-        Ok(saved)
-    }
-
-    /// The dives for the crossing pairs of the open net `trouble`: each
-    /// pair's two assignments at each of the diver's via sites
-    /// (`DIVE_TRIALS` at most, within the pass's work), the best kept (see
-    /// the module). Returns what was done and why.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn crossing_dives(
-        &mut self,
-        dive: &DivePlan,
-        trouble: NetId,
-        order: &[NetId],
-        settings: TroubleSettings,
-        clock: &(f64, std::time::Instant),
-        budget: f64,
-        work: &mut TroubleWork,
-    ) -> (Exchange, String) {
-        let started = self.budget_work();
-        let (pairs, found) = self.crossing_pairs(dive, trouble);
-        self.scratch.expansions += found.div_ceil(8);
-        if pairs.is_empty() {
-            work.dive_work += self.budget_work() - started;
-            return (Exchange::default(), "no crossing pair".into());
-        }
-        let name = |router: &Self, pad: usize| {
-            let pad = &dive.plan.pads[pad];
-            format!(
-                "{} ({})",
-                router.pad_label(pad),
-                router.board.nets[pad.net as usize].name
-            )
-        };
-        let mut trials = 0;
-        // A diver's stub at a site is tried once, whichever pair named it.
-        let mut tried: HashSet<(usize, usize)> = HashSet::new();
-        let mut reasons: Vec<String> = Vec::new();
-        // The best trial: open after, the nets as they were, as it left them, and what it was.
-        let mut best: Option<(usize, Vec<Saved>, Vec<Saved>, String)> = None;
-        'pairs: for pair in pairs {
-            let (open_net, other_net) = (
-                dive.plan.pads[pair.open].net,
-                dive.plan.pads[pair.other].net,
-            );
-            for (diver_pad, stayer) in [(pair.open, other_net), (pair.other, open_net)] {
-                let sites: Vec<usize> = dive.plan.pads[diver_pad]
-                    .runs
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, run)| run.via)
-                    .map(|(index, _)| index)
-                    .collect();
-                if sites.is_empty() {
-                    reasons.push(format!("{} has no via site", name(self, diver_pad)));
-                }
-                for run in sites {
-                    if !tried.insert((diver_pad, run)) {
-                        continue;
-                    }
-                    if trials >= DIVE_TRIALS {
-                        break 'pairs;
-                    }
-                    if self.spent(clock, budget) {
-                        reasons.push("out of work".into());
-                        break 'pairs;
-                    }
-                    trials += 1;
-                    work.dive_trials += 1;
-                    let site = dive.plan.pads[diver_pad].runs[run].end;
-                    let what = format!(
-                        "{} dives at ({:.2}, {:.2})",
-                        name(self, diver_pad),
-                        site[0],
-                        site[1]
-                    );
-                    match self
-                        .dive_trial(dive, diver_pad, run, stayer, trouble, order, settings, work)
-                    {
-                        Ok(saved) => {
-                            let before = open_saved(&saved);
-                            let after = open_now(self, &saved);
-                            let is_clean = clean(self, &saved);
-                            let open: Vec<String> = saved
-                                .iter()
-                                .filter(|entry| self.open_measure(entry.0) > 0)
-                                .map(|entry| {
-                                    format!(
-                                        "{} {}",
-                                        self.board.nets[entry.0 as usize].name,
-                                        self.open_measure(entry.0)
-                                    )
-                                })
-                                .collect();
-                            reasons.push(format!(
-                                "{what}: {before} open to {after} [{}], clean {is_clean}",
-                                open.join(", ")
-                            ));
-                            if is_clean
-                                && after < before
-                                && best.as_ref().is_none_or(|(open, ..)| after < *open)
-                            {
-                                let left: Vec<Saved> =
-                                    saved.iter().map(|entry| self.save_net(entry.0)).collect();
-                                best = Some((after, saved.clone(), left, what));
-                            }
-                            self.restore_nets(saved);
-                        }
-                        Err(reason) => reasons.push(format!("{what}: {reason}")),
-                    }
-                }
-            }
-        }
-        let outcome = match best {
-            Some((after, saved, left, what)) => {
-                let before = open_saved(&saved);
-                self.restore_nets(left);
-                if open_now(self, &saved) == after && clean(self, &saved) {
-                    work.dives_kept += 1;
-                    (
-                        Exchange {
-                            kept: true,
-                            closed: before - after,
-                            displaced: saved.len() - 1,
-                        },
-                        format!(
-                            "kept: {what}, {before} open to {after} ({} nets changed); {}",
-                            saved.len(),
-                            reasons.join("; ")
-                        ),
-                    )
-                } else {
-                    self.restore_nets(saved);
-                    (
-                        Exchange::default(),
-                        format!("refused: {what} did not replay; {}", reasons.join("; ")),
-                    )
-                }
-            }
-            None => (
-                Exchange::default(),
-                format!("refused: {}", reasons.join("; ")),
-            ),
-        };
-        work.dive_work += self.budget_work() - started;
-        outcome
-    }
 }
 
 #[cfg(test)]
@@ -864,10 +353,8 @@ mod tests {
     /// the top wall in the row's order but N2 and N3, whose targets
     /// cross (N2's at x 6.5, N3's at 4.0). Walls on both layers below the
     /// row and above the far pads: every net's track splits the space
-    /// between them, so N2 and N3 cannot both stay on the top. With
-    /// `enclosed`, N2's far pad is walled in on both layers (no route
-    /// reaches it).
-    fn crossing_row(enclosed: bool) -> Router {
+    /// between them, so N2 and N3 cannot both stay on the top.
+    fn crossing_row() -> Router {
         let class = RuleClass {
             trace_width: 0.2,
             clearance: 0.2,
@@ -936,14 +423,7 @@ mod tests {
                 )],
             });
         }
-        let mut walls = vec![(0.0, 0.0, 11.0, 4.3), (0.0, 9.4, 11.0, 10.0)];
-        if enclosed {
-            walls.extend([
-                (5.8, 8.0, 6.05, 9.4),
-                (6.95, 8.0, 7.2, 9.4),
-                (5.8, 8.0, 7.2, 8.55),
-            ]);
-        }
+        let walls = [(0.0, 0.0, 11.0, 4.3), (0.0, 9.4, 11.0, 10.0)];
         for (x0, y0, x1, y1) in walls {
             obstacles.push(obstacle(
                 rectangle(x0, y0, x1, y1),
@@ -978,7 +458,6 @@ mod tests {
         };
         let config = Config {
             pitches: vec![0.1],
-            crossing_dive: true,
             ..Config::default()
         };
         Router::new(&board, &config)
@@ -1040,89 +519,31 @@ mod tests {
         }
     }
 
-    fn vias(router: &Router, net: NetId) -> Vec<crate::geometry::Point> {
-        router.nets[net as usize]
-            .branches
-            .iter()
-            .flat_map(|branch| {
-                branch
-                    .nodes
-                    .windows(2)
-                    .filter(|pair| pair[0].cell == pair[1].cell)
-                    .map(|pair| router.grid.center_of(pair[0].cell as usize))
-                    .collect::<Vec<_>>()
-            })
-            .collect()
-    }
-
-    fn dive(router: &mut Router) -> (Exchange, String, usize) {
+    /// N2 and N3 cross at the row: the census's facts name the pair. N2's
+    /// pad is open, N3's pad is its row neighbour, their targets cross, and
+    /// N3's track closes one of N2's straight ways out at its tip.
+    #[test]
+    fn the_census_finds_the_crossing_pair() {
+        let mut router = crossing_row();
+        routed_with_n2_open(&mut router);
         let plan = DivePlan::new(router.fanout_plan());
         router.crossing_census(&plan, &[0, 1, 2, 3, 4, 5], "test");
-        let (pairs, _) = router.crossing_pairs(&plan, OPEN);
-        let order: Vec<NetId> = (0..6).collect();
-        let settings = TroubleSettings::from_env();
-        let clock = router.clock();
-        let mut work = TroubleWork::default();
-        let (exchange, reason) =
-            router.crossing_dives(&plan, OPEN, &order, settings, &clock, 1.0e9, &mut work);
-        (exchange, reason, pairs.len())
-    }
-
-    /// N2 and N3 cross at the row: the move finds the pair, one of the two
-    /// takes a via beyond the row's tips (the other none), and every net is
-    /// complete without a conflict.
-    #[test]
-    fn a_crossing_pair_is_resolved_by_one_dive() {
-        let mut router = crossing_row(false);
-        routed_with_n2_open(&mut router);
-        let (exchange, reason, pairs) = dive(&mut router);
-        assert_eq!(pairs, 1, "{reason}");
-        assert!(exchange.kept, "{reason}");
-        assert_eq!(exchange.closed, 1, "{reason}");
-        for net in 0..6 {
-            assert!(router.nets[net].complete, "N{net}: {reason}");
-            assert!(
-                router.conflicts(net as NetId).is_empty(),
-                "N{net}: {reason}"
-            );
-        }
-        let (open_vias, other_vias) = (vias(&router, OPEN), vias(&router, OTHER));
-        assert!(
-            open_vias.is_empty() != other_vias.is_empty(),
-            "exactly one dives: {open_vias:?} {other_vias:?}; {reason}"
-        );
-        // The diver's first via lies beyond the row's tips (5.5) by more
-        // than a via's radius and clearance.
-        let first = open_vias.first().or(other_vias.first()).unwrap();
-        assert!(first[1] > 6.0, "{first:?}; {reason}");
-    }
-
-    /// The control: N2's far pad is walled in, so no dive closes it; the
-    /// trials run and the board is as it was, branch for branch.
-    #[test]
-    fn a_dive_that_closes_nothing_keeps_the_state() {
-        let mut router = crossing_row(true);
-        routed_with_n2_open(&mut router);
-        let before: Vec<Vec<Vec<Node>>> = router
-            .nets
+        let open: Vec<usize> = plan.by_net[&OPEN]
             .iter()
-            .map(|state| state.branches.iter().map(|b| b.nodes.clone()).collect())
+            .copied()
+            .filter(|index| router.pad_open(&plan.plan.pads[*index]))
             .collect();
-        let complete: Vec<bool> = router.nets.iter().map(|state| state.complete).collect();
-        let (exchange, reason, pairs) = dive(&mut router);
-        assert_eq!(pairs, 1, "{reason}");
-        assert!(!exchange.kept, "{reason}");
-        assert!(reason.contains("dives at"), "trials ran: {reason}");
-        let after: Vec<Vec<Vec<Node>>> = router
-            .nets
-            .iter()
-            .map(|state| state.branches.iter().map(|b| b.nodes.clone()).collect())
+        assert_eq!(open.len(), 1);
+        let pad = &plan.plan.pads[open[0]];
+        let crossing: Vec<usize> = router
+            .row_neighbours(&plan, open[0])
+            .into_iter()
+            .filter(|other| plan.plan.pads[*other].net == OTHER)
+            .filter(|other| router.targets_cross(pad, &plan.plan.pads[*other]))
             .collect();
-        assert_eq!(before, after);
-        let now: Vec<bool> = router.nets.iter().map(|state| state.complete).collect();
-        assert_eq!(complete, now);
-        for net in 0..6 {
-            assert!(router.conflicts(net).is_empty());
-        }
+        assert_eq!(crossing.len(), 1);
+        let mut blocks = Vec::new();
+        router.tip_blocks(pad, &mut std::iter::once(OTHER), &mut blocks);
+        assert!(!blocks.is_empty(), "N3 closes a way out of U1.2");
     }
 }

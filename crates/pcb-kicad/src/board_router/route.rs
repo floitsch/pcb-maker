@@ -857,11 +857,6 @@ pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     {
         router_config.fanout = fanout;
     }
-    if let Some(dive) = config.crossing_dive
-        && core::router::crossing_dive_override().is_none()
-    {
-        router_config.crossing_dive = dive;
-    }
     if let Some(fixed) = config.fixed_plane_stubs {
         router_config.fixed_plane_stubs = fixed;
     }

@@ -209,7 +209,7 @@ ladder's judge), 5, then the rest.
    moves 2 of 10 nets there. Found on the way and fixed on
    2026-11-03 (x1882): the layout's moves rebuild the pin-row gaps
    (docs/router.md, "Pin-row cost"). The crossing decided in the repair
-   is built, measured and off (`crossing_dive`; docs/router.md,
+   was built, measured and removed on 2026-11-04 (`crossing_dive`; docs/router.md,
    "Crossings decided in the repair (2026-11-03)"): where an open net's
    exchange is refused and a row neighbour whose target crosses closes
    its pad's way out, one net of the pair takes a via at a fan-out via
@@ -654,7 +654,6 @@ Switches and experiment hooks (change the result):
 - `PCB_ROUTER_TROUBLE`: overrides the router's `trouble_repair` (`0` off, anything else on): the trouble-makers' repair after the hard repair (an open net routed through others at a price, the nets it displaces routed again hard, kept when the open terminals drop; docs/experiments/human-level-routing.md).
 - `PCB_ROUTER_EXACT_ESCAPES`: overrides the router's `exact_escape_stubs` (`0` off, anything else on; off by default): escape stubs stamp exactly (along a lattice line as lattice nodes, oblique ones by their measured footprint) and a pad leaves by straight stubs along a lattice line where it has any; off, the stubs stamp the lattice's discs grown by the snapping error (docs/router.md, "Fine-pitch escapes").
 - `PCB_ROUTER_FANOUT`: overrides the router's `fanout` (`0` off, anything else on; off by default): before the negotiation every pad of a dense row gets one straight way out, chosen jointly with its neighbours, that other nets pay `fanout_cost` to cross or to put a via beside (docs/router.md, "Fan-out before negotiation").
-- `PCB_ROUTER_CROSSING_DIVE`: overrides the router's `crossing_dive` (`0` off, anything else on; off by default): where the trouble repair's exchange for an open net is refused and the net has a pad of a fine-pitch row whose straight way out a row neighbour's copper closes while their targets cross, one net of the pair takes a via at a fan-out via site beyond the row (docs/router.md, "Crossings decided in the repair (2026-11-03)").
 - `PCB_ROUTER_BGA_FANOUT`: overrides the router's `bga_fanout` (`0` off, anything else on; on by default): before routing, the inner balls of every grid array (those no track between the outer balls serves) whose net's own via does not fit a diagonal gap get a stub and a through via in a diagonal gap, the largest of the class's and the project's via sizes that keeps every clearance, as fixed copper of the ball's net that its route may end on; written only where the route uses it; the placer keeps the far side free under those vias (docs/router.md, "Prepared fan-outs for BGAs (2026-11-04)").
 - `PCB_ROUTER_FANOUT_COST`: the router's `fanout_cost` in millimetres (default 6; with `fanout`): what another net pays to cross a reserved fan-out run or to put a via within reach of it.
 - `PCB_ROUTER_FANOUT_DEPTH`: the router's `fanout_depth` in millimetres (default 0.5; with `fanout`): how far beyond its pad a fan-out run reaches.
@@ -714,7 +713,7 @@ Switches and experiment hooks (change the result):
 
 Diagnostics (stderr unless said; the result does not change):
 
-- `PCB_ROUTER_TROUBLE_WHY`: the trouble-makers' repair prints every exchange's outcome (kept, or why refused; a refusal names the nets left in conflict and what their conflicts name).
+- `PCB_ROUTER_TROUBLE_WHY`: the trouble-makers' repair prints every exchange's outcome (kept, or why refused; a refusal names the nets left in conflict and what their conflicts name), and after the repair the crossing census: every open pad of a fine-pitch row, what closes its straight ways out, and whether a row neighbour's target crosses its own (docs/router.md, "Crossings decided in the repair (2026-11-03)").
 - `PCB_ROUTER_BGA_FANOUT_WHY`: the prepared fan-outs (`bga_fanout`) print each grid array's plan once a process: pitch, rows and columns, the rings that leave on the surface, the inner balls, the dog-bones planned by via size, the balls kept (a via in the pad) and those no gap fits.
 - `PCB_ROUTER_NET_WORK`: `<file>`: the search expansions per net over the process (every router, every phase), written to the file as JSON at each router's finish; the last write holds the whole run (docs/router.md, "Prepared fan-outs for BGAs (2026-11-04)").
 - `PCB_ROUTER_FANOUT_WHY`: the fan-out step (`fanout`) prints every dense pad with its ways out, their costs, the one chosen and the pads left short.
@@ -777,6 +776,27 @@ pcb-router") and the layout's, ladder's and placer's
 `_FLOOR`, `PCB_PLACER_CHANNEL_SELF`, `PCB_JACOBI_BATCH`; changelog.md,
 "quality: pcb-kicad"). `PCB_ROUTER_NO_ISLAND_STUBS` became
 `PCB_ROUTER_ISLAND_STUBS` when the island stubs went off on 2026-10-21.
+
+## Removed experiments (2026-11-04)
+
+Switches of levers that lost or were null under their measurement and
+that nothing in the agent flow used, removed on 2026-11-04 (Florian: they
+cost agents and maintainers and buy nothing; branch prune-switches, one
+commit each). The default path is byte for byte as before (the
+fingerprints, the short tier, the place checks; changelog.md, "the
+failed-experiment switches removed"). What each measured, and where the
+details are:
+
+- `crossing_dive` (router, `PCB_ROUTER_CROSSING_DIVE`; off): in the trouble
+  repair, one net of a crossing pair at a fine-pitch row took a via
+  beyond the row. Route mode on the five near-miss boards: the same KiCad
+  counts (Quanta75's dives traded the crossing for a key-matrix row on
+  the other layer); the expansion tier 558 to 556 unconnected, strict
+  passes 24 to 25; layout mode on the five boards the same open items;
+  the eleven dense boards 876 to 878 (SNSP-CPU-01 97 to 90, MegaDrive
+  118 to 125). Changelog 2026-11-04, "the crossing dive in the trouble
+  repair, off"; docs/router.md, "Crossings decided in the repair
+  (2026-11-03)". The crossing census (`PCB_ROUTER_TROUBLE_WHY`) stays.
 
 ## Gotchas
 

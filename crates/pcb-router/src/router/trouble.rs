@@ -176,11 +176,6 @@ pub(super) struct TroubleWork {
     /// The budget work (`Router::budget_work`) at which the pass's work
     /// is spent: an ejection chain starts no further step past it.
     stop_at: f64,
-    /// The crossing dives (`Config::crossing_dive`): trials run, dives
-    /// kept, and their work (the detection's and the trials').
-    pub(super) dive_trials: usize,
-    pub(super) dives_kept: usize,
-    pub(super) dive_work: f64,
 }
 
 /// A net's state as an exchange may have to restore it, and its open
@@ -327,9 +322,6 @@ impl Router {
             stop_at: clock.0 + budget,
             ..TroubleWork::default()
         };
-        // The fan-out plan for the crossing dives, made once a pass when
-        // the first dive is tried (the statics' dense pads and via sites).
-        let mut dives: Option<super::dive::DivePlan> = None;
         for round in 0..settings.rounds {
             let mut trouble: Vec<NetId> = order
                 .iter()
@@ -388,30 +380,7 @@ impl Router {
                 }
                 tried += 1;
                 let started = self.budget_work();
-                let mut exchange = self.trouble_exchange(net, order, settings, &mut work);
-                // The crossing dive (`Config::crossing_dive`) where the
-                // exchange was refused: a net of a crossing pair at a
-                // fine-pitch row takes a via beyond the row, or the other
-                // does (router/dive.rs).
-                if !exchange.kept && self.config.crossing_dive && !self.spent(&clock, budget) {
-                    if dives.is_none() {
-                        let plan = self.fanout_plan();
-                        self.scratch.expansions += plan.work.div_ceil(8);
-                        dives = Some(super::dive::DivePlan::new(plan));
-                    }
-                    let dive = dives.as_ref().unwrap();
-                    let (outcome, reason) =
-                        self.crossing_dives(dive, net, order, settings, &clock, budget, &mut work);
-                    if why {
-                        eprintln!(
-                            "crossing dive {}: {reason}",
-                            self.board.nets[net as usize].name
-                        );
-                    }
-                    if outcome.kept {
-                        exchange = outcome;
-                    }
-                }
+                let exchange = self.trouble_exchange(net, order, settings, &mut work);
                 if exchange.kept {
                     work.kept += self.budget_work() - started;
                     closed_round += exchange.closed;
@@ -462,12 +431,6 @@ impl Router {
                 work.kept,
                 work.early,
             );
-            if self.config.crossing_dive {
-                eprintln!(
-                    "{label}: crossing dives: {} trials, {} kept, {:.1} s of work",
-                    work.dive_trials, work.dives_kept, work.dive_work
-                );
-            }
         }
         closed
     }

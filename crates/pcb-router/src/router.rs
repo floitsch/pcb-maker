@@ -70,7 +70,6 @@ pub use build::{
 };
 pub use coarse::{ParkedRouter, RipUpSaved};
 pub use config::Config;
-pub use dive::{CROSSING_DIVE_DEFAULT, crossing_dive_override};
 pub use escapes::exact_escapes_override;
 pub use fanout::{FANOUT_DEFAULT, fanout_override};
 pub use pad_exits::{ClosedPad, ExitBlocker, ExitProbe, ProbeCounts, label_part, work_nanos};
