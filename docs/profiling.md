@@ -2703,3 +2703,235 @@ change books what the computation it replaces booked).
   nets turned to their poses; the other parts' pins could be folded once
   per net as the refinement's `MovingNets` does, but the anneal's nets
   change with every kept move. Not tried.
+
+## Memory, the second round (2026-11-04)
+
+Where a layout's peak resident size goes on the ten boards with the
+largest peaks of the sweep (the nightly's sidecar estimates of
+2026-11-03), and eight commits that lower it with the same placements,
+routes, fingerprints and work. Branch memory-round-2; binaries
+`build/bin/pcb-maker-mem2-prof` (main 951b610a, x1889's code, with the
+layout's phase labels: the profile's off side), `-mem2-c1` to `-c5` (the
+commits one by one), `-mem2-on` (the first six), `-mem2-cap` (the
+seventh too), `-mem2-park` (all eight), all on 951b610a; `-mem2-final`
+the branch rebased on main f949a6df (x1903). Outputs in `build/mem2/`.
+The first round: "Memory (2026-10-26)" above (route mode, the rung
+probes).
+
+### How
+
+As the first round (`PCB_ROUTER_MEM_PROFILE=1`: the sampler's `rss high`
+lines, the live heap from the counting allocator, the routers' parts),
+with the layout's own phases as the sampler's labels (the first commit:
+`placing`, `pre-ranking`, `race probes`, `race ripped count`, `first
+route`, `moves`, `resume`, `polish`, `labels and the board kept`, `layout
+ladder`, then the ladder's `probes`, `rungs`, `write-back`, `check`,
+`seeds`, `steps`, `pour measure`). The ten boards through run.py at the
+sweep's budget (tasks/v7, `--quality`, two threads, pinned rates,
+`PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`, `--timeout 7200`,
+`--estimates build/nightly/estimates.json`: each board declared at its
+measured peak times 1.25), one or two boards at a time beside the
+nightly and four other agents (the ledger had 10 to 36 waiters all day;
+load 18 to 26 on 16 cores). The profile changes nothing a layout
+computes; its peaks are the run's `layout_rss_mb` (kicad-cli's checks,
+outside the process, were never the tree's peak on these boards:
+`peak_rss_mb` equals `layout_rss_mb` within 2 MB). Where the profile
+named no router, a placement alone (`place-kicad-board`,
+`PCB_PLACER_WORK_SECONDS=5`, one thread) with phase marks inside the
+escape demand's measurement and the lowering (a throwaway build) found
+the allocation.
+
+### Where the peak goes (x1889's code)
+
+MB at the peak; "routers" are the routers alive with their parts (as
+round one: capacities at their last report).
+
+| board | peak MB | when (s of the layout) | phase | what holds it |
+| --- | ---: | --- | --- | --- |
+| katia | 5160 | 229 of 1325 | race ripped count | 3 probes and a copy (5012 MB): search records 1459, static maps 1029 (each probe its own placement's), occupancy 741, search arrays 732 |
+| link | 4837 | 627 of 2516 | race ripped count | 3 probes and a copy (4584): records 1648, statics 701, occupancy 590, arrays 745 |
+| Neotron-Pico | 4824 | 106 of 1596 | placing | no router: two seeds' escape-demand measurements lowering their boards at once, each the via-in-pad plan's pad-field raster (770 MB) and flood queue (up to 1 GB): 6.0 GB of heap |
+| osprey | 4668 | 1261 of 1267 | the ladder's seed retry at 0.05 mm | 4 seeds side by side (3857): arrays 1269, records 622, history 466, occupancy 408, statics 196 (shared); 1.2 GB of heap more as they finish |
+| CyberKeeb2040 | 3775 | 87 of 684 | moves | a move trial's lowering (the via-in-pad flood, 2.5 GB) beside the router and its whole saved copy (2 routers, 1232) |
+| sbc_allwinner_a13 module | 3376 | 410 of 4944 | placing | no router: the escape measurement's lowering, the flood of the A13's pad field (3.3 GB of heap); 18 lowerings took 1905 s of the sweep's layout |
+| ATAT1800 | 2891 | 416 of 1592 | race ripped count | 3 probes and a copy (2732): arrays 600, statics 463, occupancy 385, records 379 |
+| SUMEC_MK_IV | 2695 | 527 of 947 | the ladder's rungs (a check beside them) | 4 routers (2101): records 706, arrays 373, occupancy 251 |
+| split72_left | 2657 | 3159 of 3777 | the ladder's probes | 4 probes (1832): arrays 583, records 287, history 180 |
+| 0xCB-1337 pcb-panel | 1858 | 1024 of 1675 | the ladder's probes | 4 probes (1543): arrays 468, records 236, pour masks 177 |
+
+Three kinds of peak: the via-in-pad plan's flood inside a lowering
+(Neotron, module, CyberKeeb; any board with a fine-pitch field of nine
+pads or more), the placement race's probes kept whole to the end with a
+copy beside them for the ripped count (katia, link, ATAT1800), and
+routers side by side beyond the search threads (osprey's seeds, the
+ladder's probes and rungs). The parsed board (link's 10 MB file) and the
+lowered boards are small beside them; after the race, with one router
+alive, no board here peaked.
+
+### The changes (bit-identical)
+
+Each its own commit, each the same computation:
+
+1. **The layout's phases as the profile's labels** (board_layout.rs):
+   nothing computed changes.
+2. **The idle search arrays freed after the probes**
+   (`release_idle_search_arrays`, router.rs; the race after each wave,
+   the ladder after its probes): the process's idle search arrays of a
+   lattice stayed while any router of it lived, a set for every search
+   that ever ran at once (three probes on two threads: five sets, link
+   745 MB, katia 732), through the ripped count and the kept router's
+   whole route. A search reads only marks of its own generation, so new
+   arrays search as reused ones. Test: a route after the release is the
+   route with reused arrays.
+3. **The saved routers of the move trials, the resume and the polish
+   without what is rebuilt** (`saved_copy`, `restore_saved`, vias.rs):
+   a whole `clone` before each trial held a second router; the copy now
+   leaves out the search records, the occupancy, the tiles' claims and
+   the stamp marks (the static maps shared, the counters kept), and the
+   way back takes the changed nets' stamps off the occupancy and puts the
+   copy's on, then builds the records again: the router as the whole copy
+   put back. Test: after a move's update and reroute and after a polish,
+   the state and the routes on are the whole copy's.
+4. **The race's ripped count in place** (`saved_for_rip_up`,
+   `restore_after_rip_up`, coarse.rs): each probe's router ripped and put
+   back from a copy without its history, records, occupancy, claims and
+   marks, instead of ripping a copy without the history alone. Test: the
+   same counts, the router as it was (history, records, counts).
+5. **The via-in-pad raster in four bytes a cell and its flood by a
+   stack** (via_in_pad.rs `FloodGrid`): the pad field's raster (5 to 25
+   um cells) was an `Option<Option<usize>>` of sixteen bytes a cell, its
+   flood a queue of every via cell and every neighbour of every reached
+   cell (eight bytes, up to eight a cell); now a pad's index plus one in
+   a `u32` and a stack where each cell is marked as found and each seed's
+   flood ends before the next. The same cells reached (the flood's set
+   does not depend on the order). Neotron's placement (5 s of work, one
+   thread) 2482 to 474 MB, module's 1706 to 339 MB, the same placed
+   boards; the flood's time falls with it (module's placement 496 to 282
+   s of wall clock). Main's cache of the enclosed pads (aeed40ff, the
+   fourth router round) answers a footprint's repeated lowerings; each
+   miss (every new pose of the placer's measurements) still floods.
+   Test: the old raster and queue as the reference on four ball fields.
+6. **The race keeps poses, not boards** (board_layout.rs): each other
+   placement's parsed board was copied for the race and held through its
+   probes; now its poses and lowered board, and the kept one's board is
+   written again from the poses.
+7. **Routers side by side at most the search threads**
+   (`at_most_the_threads`, memory.rs; the race's probes, the ladder's
+   probes, rungs and seeds): only the memory decided, and the sweep's two
+   threads ran four seeds of osprey or four probes of split72 at once,
+   each with its own maps, finishing no sooner on two threads' share.
+   The outcome counts the routers one after the other whatever their
+   number (what lets the memory decide it), so it is the same. Wall
+   clock: one more wave where the threads bind (see the measures).
+   Test: two threads give two, one gives one, never none.
+8. **The race parks its finished probes** (`Router::park`,
+   `ParkedRouter::unpark`, coarse.rs): once a wave's probes end and their
+   ripped counts are taken, each router drops its records, occupancy,
+   claims and marks; only the kept one is unparked (the occupancy and
+   claims counted again from the nets' stamps, the records built). With
+   two probes at a time the third ran beside two whole routers. Test: a
+   parked router unparks as it was and routes on alike.
+
+### Measured (2026-11-04)
+
+The ten boards at the sweep's budget as above, each side's peak its
+`layout_rss_mb` (the process tree's `peak_rss_mb` the same within 3 MB):
+x1889's code with the labels (`-mem2-prof`) against the first six
+commits (`-mem2-on`), the seventh (`-mem2-cap`) and the eighth
+(`-mem2-park`; on the four boards whose peak lies outside the race,
+osprey, module, SUMEC and split72's probes aside, the race phases of
+`-mem2-cap` are below their peak and the eighth changes only the race:
+their final column is `-mem2-cap`'s; split72 ran with `-mem2-park`).
+Wall clock and CPU under the day's load (load 18 to 26).
+
+| board | x1889 MB | six commits | + the threads | + parking | saving | where the peak is now | identical |
+| --- | ---: | ---: | ---: | ---: | ---: | --- | --- |
+| katia | 5160 | 4549 | 4188 | 3156 | -39 % | race probes, 2 whole routers | yes |
+| link | 4837 | 3944 | 3884 | 2829 | -42 % | the ladder's probes, 3 routers | yes |
+| Neotron-Pico | 4824 | 2611 | 2448 | 1811 | -62 % | race probes, 2 routers | yes |
+| osprey | 4668 | 4615 | 2755 | (2755) | -41 % | the seed retry, 2 seeds | yes |
+| CyberKeeb2040 | 3775 | 1580 | 1592 | 1589 | -58 % | race probes, 2 routers | yes |
+| module | 3376 | 715 | 702 | (702) | -79 % | the board kept, 1 router | yes |
+| ATAT1800 | 2891 | 2647 | 2364 | 1915 | -34 % | race probes, 2 routers | yes |
+| SUMEC_MK_IV | 2695 | 2672 | 1600 | (1600) | -41 % | the ladder's rungs, 2 routers | yes |
+| split72_left | 2657 | 2591 | | 1718 | -35 % | the ladder's probes, 2 routers | yes |
+| 0xCB pcb-panel | 1858 | 1853 | 1371 | 1295 | -30 % | the ladder's probes, 3 routers | yes |
+
+The geometric mean of the ten peaks falls by 48.8 % (the target was 20
+%); the largest from 5160 to 3156 MB. The race's idle arrays freed: 164
+to 745 MB a race. What the six commits did on their own: the flood
+(Neotron, module, CyberKeeb: -46 to -79 %), the ripped count in place and
+the arrays (katia -12 %, link -18 %, ATAT1800 -8 %); osprey, SUMEC,
+split72 and the panel peaked where only the threads cap and the parking
+reach.
+
+**Identical.** On every board and every binary: the placed and result
+boards' SHA-256, every fingerprint line (as a multiset), the placement
+digest and the work booked (`work_seconds` to the tenth). The
+route-mode fingerprints (Castor, k30-SBC, jetson, Sisu from
+build/github-layout-v16, a quarter budget, four threads, x1889 against
+`-mem2-cap`): the same lines and boards (Castor's still dad3a6cb3787),
+peaks within 3 % (route mode on the designer's placements runs no race
+and its probes fit four threads). The short tier (twelve boards, one at a
+time, two threads, `-mem2-cap`): identical, peaks 27 % lower as the
+geometric mean (eternal-keypad 1431 to 529 MB: its via-in-pad flood). Each
+commit on its own (`-c1` to `-c5`, `-cap`, `-park`) against x1889 on
+four small sweep boards at the sweep's budget (spell_tome_bottom,
+MotionCubeViewAllForces, E-Fidget-Lite, reCamera_S101: two race picks of
+a placement other than the first, rejected move trials, a resume, the
+ladder's probes and their leader): the same boards, prints and work. The
+branch rebased on main f949a6df (`-mem2-final`) against x1903 on the same
+four: the same (and on ce8c346a against x1898). Placements with the flood alone (Neotron and module, 5 s of
+placement): the same placed boards. `cargo test` of pcb-kicad,
+pcb-router and pcb-placer in debug mode and `scripts/check.sh --fast`
+pass.
+
+**CPU** (pinned pairs: each binary on two logical CPUs, the other on
+their SMT siblings, both orientations, two threads, pinned rates,
+`PCB_MAKER_NO_CACHE=1`, a fifth of the layout's budget: 300 s of work;
+x1889 against `-mem2-cap`; `build/mem2/pairs.py`): CyberKeeb2040 382 /
+355 s against 365 / 350 (-4.5, -1.5 %), Neotron-Pico 757 / 498 against
+696 / 554 (-8.0, +11.3 %), osprey 464 / 437 against 446 / 442 (-3.9,
++1.3 %), ATAT1800 701 / 604 against 664 / 602 (-5.2, -0.3 %): -1.5 % as
+the geometric mean of the eight, from -8.0 to +11.3 % (Neotron's
+orientations 34 % apart under the load). The memory work costs no CPU
+measurably; the flood's own time falls (module's placement above). katia
+at a fifth of its budget ended in an input error on both sides (its two
+sub-boards without the designer's reference) and is not counted. Wall
+clock at the full budget moved within the load's noise either way (the
+threads cap adds a wave where it binds: osprey 1267 s, 1293 with six
+commits, 1628 with the cap; the panel 1675, 1417, 1889, 1131 with the
+parking).
+
+**The ledger.** The nightly's sidecar (build/nightly/estimates.json,
+refreshed 2026-11-04) declares these ten at 3398 to 6494 MB; from the
+final peaks times its margin of 1.25 they would be 878 to 3945 MB: all
+ten fall (katia 6494 to 3945, Neotron 6129 to 2264, link 6092 to 3536,
+osprey 5842 to 3444, CyberKeeb 4763 to 1986, the panel 4248 to 1619,
+module 4215 to 878, ATAT1800 3660 to 2394, split72 3429 to 2148, SUMEC
+3398 to 2000), the sweep's sum of 109 estimates from 187 102 to 163 046
+MB (-12.9 %, the other 99 boards as they are: boards with a fine-pitch
+pad field fall too, as eternal-keypad's), the largest from 6494 to 3945
+MB. The estimates follow the measured rows (`tier_estimates.py
+--refresh`: the newest three sources' largest peak), so the nightly's
+sidecar takes them within three nights of the binary; the committed
+`benchmarks/agent-tasks/estimates.json` (2026-10-26's rows) is not
+refreshed here: these runs' rows would be one source in three, and the
+older two decide its maximum (`build/mem2/ledger_effect.py`).
+
+### Not taken, and what is next
+
+- **The search records without the history** (`hot`: the history beside
+  the static value, katia's three probes 1094 MB, link 1145): the
+  search's step reads one packed record; the history from its own map
+  would be a second load a step (the first round's note). Not tried.
+- **The race's probes one at a time**: the parked probes and the threads
+  cap leave two whole routers at once on two threads; one at a time would
+  halve the race's peak again for a second wave's wall clock.
+- **The seeds' finish** (osprey's seed retry: 1.2 GB of heap beyond the
+  routers' parts as the seeds finish, the spokes and pour analyses of
+  each): not profiled further.
+- **The via-in-pad raster in two bytes** (an index into the field's own
+  pads: Neotron's raster 193 to 96 MB) and its cells' distance tests
+  (module's placement still 282 s for 5 s of work, most of it the
+  raster): the next lowering cost.

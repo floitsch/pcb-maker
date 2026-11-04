@@ -11,6 +11,36 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-04 (memory, the second round: the layout's peaks -49 %)
+
+Branch memory-round-2; binaries `build/bin/pcb-maker-mem2-*` against
+x1889; outputs in `build/mem2/`. docs/profiling.md, "Memory, the second
+round (2026-11-04)", has the profile, the commits and the tables.
+
+- **Where the layout's peak goes** on the ten largest-peak boards of the
+  sweep (the profile's new layout phases): the via-in-pad plan's flood in
+  a lowering (Neotron-Pico, the A13 module, CyberKeeb2040: two placer
+  seeds' escape measurements at once, up to 6.0 GB of heap), the race's
+  probes kept whole to its end with a copy beside them for the ripped
+  count (katia, link, ATAT1800), and routers side by side beyond the
+  search threads (osprey's four seeds, the ladder's four probes or rungs).
+- **Eight commits, each bit-identical**: the layout's phases as profile
+  labels; the idle search arrays freed after the race's waves and the
+  ladder's probes; the move trials', resume's and polish's saved routers
+  without what is rebuilt (`saved_copy`, `restore_saved`); the ripped
+  count in place (`saved_for_rip_up`); the via-in-pad raster in four
+  bytes a cell and its flood by a stack; the race's other placements as
+  poses, not parsed boards; routers side by side at most the search
+  threads (`at_most_the_threads`); the race's finished probes parked
+  (`Router::park`, `ParkedRouter::unpark`).
+- **Measured**: peaks -30 to -79 % on the ten (geometric mean -48.8 %,
+  the largest 5160 to 3156 MB), the short tier -27 %, route mode's four
+  fingerprint boards within 3 %; placements, boards, fingerprint lines
+  and work identical on all of them and per commit; CPU in pinned pairs
+  -1.5 % (four boards, both orientations). The nightly's estimates of
+  the ten fall by 35 to 79 % once three nights carry the binary (the
+  sweep's sum -12.9 %, its largest 6494 to 3945 MB).
+
 ## Committed on 2026-11-04 (small leftovers of trials 4 to 6: the placer's protectors, the missing list, an RF module's antenna, the import's near entries)
 
 Branch small-leftovers (`build/bin/pcb-maker-ux12-esd`, `-fold`,

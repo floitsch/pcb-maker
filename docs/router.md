@@ -374,7 +374,9 @@ rung with the fewest unfinished nets (conflicted or incomplete) is resumed
 with `Router::resume` for a third of what is left, then finished and
 polished. A probe that finishes everything stops the probing, and only the
 leading router stays in memory. The probes run side by side (as many as
-fit the memory, judged by the first router's maps: "Memory limits" below), with
+fit the memory, judged by the first router's maps: "Memory limits" below,
+and since 2026-11-04 no more than the search threads, `at_most_the_threads`;
+docs/profiling.md, "Memory, the second round"), with
 the outcome of probing one after the other: a probe's budget is work, the
 fewest unfinished nets lead, a tie goes to the earlier rung, and only the
 probes up to a rung that finishes everything count. The layout's placement
@@ -1324,7 +1326,8 @@ upper bound.
 ### Memory limits (2026-10-21)
 
 How many routers the ladder runs side by side (the rung probes, the rungs
-after its first attempt, the seeds) follows the tightest of the process's
+after its first attempt, the seeds; since 2026-11-04 at most the search
+threads, `RAYON_NUM_THREADS`) follows the tightest of the process's
 limits (`MemoryLimits` in board_router/memory.rs): its address space
 (RLIMIT_AS, against its virtual size), its cgroup's memory.max (cgroup
 v2, every level up to the root; v1's memory.limit_in_bytes; against the
