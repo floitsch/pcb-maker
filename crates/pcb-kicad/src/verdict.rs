@@ -1386,6 +1386,11 @@ pub struct KiCadRunFacts {
     pub pours: Vec<crate::board_router::KiCadPourQuality>,
     /// A layout's move descent, when it ran.
     pub moves: Option<crate::move_descent::KiCadMovesFact>,
+    /// A layout whose first route left too little work for anything after
+    /// it (no move, no final ladder, nothing cut): the work up to the end
+    /// of the first route and the budget (`first_route_work_seconds`,
+    /// `total_seconds` of board-layout.json).
+    pub first_route_spent: Option<[f64; 2]>,
     /// Where the lattice searches went and what the capacitated
     /// corridors learned (`KiCadCorridors`), when the run routed.
     pub corridors: Option<crate::KiCadCorridors>,
@@ -1419,6 +1424,9 @@ pub struct KiCadRunFacts {
     /// The hot spot the open connections' action names, with the parts
     /// nearest it (`hot_spot_note`), when connections are open.
     pub hot_spot: Option<KiCadHotSpotNote>,
+    /// The parts a layout's placement kept where they are (board-placer
+    /// json's `footprints[].fixed`): no `near` brings them anywhere.
+    pub fixed_parts: BTreeSet<String>,
     /// The pads KiCad finds short of thermal spokes, each as `REF.NUMBER`
     /// with its layer and advice (`diagnostics.starved_thermals`).
     pub starved_pads: Vec<KiCadStarvedPad>,
@@ -1486,6 +1494,130 @@ pub struct KiCadHotSpotNote {
     pub open_nets: Vec<String>,
     pub conflicted_nets: Vec<String>,
     pub parts: Vec<KiCadNearPart>,
+    /// An open connection of one of `open_nets` as KiCad names it
+    /// (`open_link_of`), whose far end may lie elsewhere.
+    pub open_link: Option<KiCadOpenLink>,
+}
+
+/// An open connection KiCad names (an unconnected item): its net, its two
+/// ends (each a part's reference and pad), how far apart they lie, and
+/// each end's part's pad count on the board written (the smaller part is
+/// the one to bring to the other).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KiCadOpenLink {
+    pub net: String,
+    pub ends: [(String, String); 2],
+    pub distance_mm: f64,
+    pub pads: [usize; 2],
+}
+
+/// A pad as KiCad's report names it ("Pad 11 [/Display/TMDS_D0_C_N] of J1
+/// on F.Cu"): its number and its footprint's reference.
+fn report_pad(description: &str) -> Option<(String, String)> {
+    let rest = description.strip_prefix("Pad ")?;
+    let (number, rest) = rest.split_once(" [")?;
+    let (_, rest) = rest.rsplit_once("] of ")?;
+    let reference = rest.split(" on ").next()?;
+    (!number.is_empty() && !reference.is_empty())
+        .then(|| (reference.to_string(), number.to_string()))
+}
+
+/// The first of KiCad's unconnected items (`report`, its drc.json) between
+/// two parts' pads on one of `nets` (taken in their order), with the pad
+/// counts of its parts on `board`.
+pub fn open_link_of(
+    report: &Value,
+    nets: &[String],
+    board: Option<&crate::Expr>,
+) -> Option<KiCadOpenLink> {
+    let links: Vec<KiCadOpenLink> = report["unconnected_items"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let items = item["items"].as_array()?;
+            let [first, second] = &items[..] else {
+                return None;
+            };
+            let end = |item: &Value| -> Option<((String, String), [f64; 2], String)> {
+                let description = item["description"].as_str()?;
+                let pad = report_pad(description)?;
+                let at = [item["pos"]["x"].as_f64()?, item["pos"]["y"].as_f64()?];
+                Some((pad, at, item_net(description)?))
+            };
+            let (a, a_at, net) = end(first)?;
+            let (b, b_at, other) = end(second)?;
+            (net == other && a.0 != b.0).then(|| KiCadOpenLink {
+                net: bare_net(&net).to_string(),
+                ends: [a, b],
+                distance_mm: distance(a_at, b_at),
+                pads: [0, 0],
+            })
+        })
+        .collect();
+    let mut link = nets
+        .iter()
+        .find_map(|net| links.iter().find(|link| link.net == bare_net(net)).cloned())?;
+    for (index, (reference, _)) in link.ends.clone().iter().enumerate() {
+        link.pads[index] = board
+            .map(crate::Expr::children)
+            .unwrap_or_default()
+            .iter()
+            .filter(|item| item.head() == Some("footprint"))
+            .find(|footprint| {
+                crate::kicad_nets::footprint_reference(footprint).as_deref()
+                    == Some(reference.as_str())
+            })
+            .map_or(0, |footprint| {
+                footprint
+                    .children()
+                    .iter()
+                    .filter(|child| child.head() == Some("pad"))
+                    .count()
+            });
+    }
+    Some(link)
+}
+
+/// What the hot spot's action says of its open link (`KiCadOpenLink`): its
+/// ends and distance, and which part to bring to the other with a `near`
+/// entry to paste (the free one, of two free the one with fewer pads); in
+/// route mode, which keeps every part, the input to change. Trial 5's
+/// jetson: the hot spot named J1 and its neighbours, not R8, whose pad lay
+/// 10.4 mm from J1:11.
+fn open_link_text(link: &KiCadOpenLink, command: &str, fixed: &BTreeSet<String>) -> String {
+    let pin = |index: usize| format!("{}:{}", link.ends[index].0, link.ends[index].1);
+    let head = format!(
+        "its open link on {} runs from {} to {}, {:.1} mm apart (KiCad's unconnected item)",
+        link.net,
+        pin(0),
+        pin(1),
+        link.distance_mm
+    );
+    let free: Vec<usize> = (0..2)
+        .filter(|index| !fixed.contains(&link.ends[*index].0))
+        .collect();
+    let mover = match free[..] {
+        [] => None,
+        [one] => Some(one),
+        _ => Some(if link.pads[1] <= link.pads[0] { 1 } else { 0 }),
+    };
+    let Some(mover) = mover else {
+        return format!(
+            "{head}: both {} and {} are fixed, so only freeing one of them brings it nearer",
+            link.ends[0].0, link.ends[1].0
+        );
+    };
+    let part = &link.ends[mover].0;
+    let anchor = pin(1 - mover);
+    if command.starts_with("route") {
+        return format!(
+            "{head}: route mode keeps every part; bring {part} nearer {anchor} in the input, or lay the board out with a near constraint for it ({{\"part\": \"{part}\", \"pin_of\": \"{anchor}\", \"max_mm\": 2}})"
+        );
+    }
+    format!(
+        "{head}: bring {part} to {anchor} with a near constraint (constraints.json's near: {{\"part\": \"{part}\", \"pin_of\": \"{anchor}\", \"max_mm\": 2}})"
+    )
 }
 
 /// How many parts a hot spot's note names.
@@ -1599,6 +1731,7 @@ pub fn hot_spot_note(
         open_nets: open_in(spot),
         conflicted_nets: spot.links.conflicted_nets.clone(),
         parts,
+        open_link: None,
     })
 }
 
@@ -1807,6 +1940,7 @@ impl KiCadRunFacts {
             silkscreen: None,
             pours: Vec::new(),
             moves: None,
+            first_route_spent: None,
             corridors: None,
             race: None,
             rule_overrides: Vec::new(),
@@ -1819,6 +1953,7 @@ impl KiCadRunFacts {
             vias_in_pads: None,
             open_nets: Vec::new(),
             hot_spot: None,
+            fixed_parts: BTreeSet::new(),
             starved_pads: Vec::new(),
             solid_starved: None,
         }
@@ -1939,10 +2074,16 @@ pub struct KiCadVerdict {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lattice_work_seconds: Option<f64>,
     pub wall_seconds: f64,
+    /// The part of `wall_seconds` the run waited in the machine's memory
+    /// ledger for its reservations (`ledger::waited_seconds`): neither its
+    /// work nor its load (trial 5: three runs waited 5 minutes each, and
+    /// nothing in the verdict said so).
+    pub ledger_wait_seconds: f64,
     /// `work_seconds` over `wall_seconds`: about 1 where the work rates
     /// fit the machine (they are measured at the start unless pinned),
     /// lower where the wall clock ran ahead of the work (load, KiCad's
-    /// checks beyond their model, a pinned rate faster than the machine).
+    /// checks beyond their model, a pinned rate faster than the machine,
+    /// the waits in the memory ledger: `ledger_wait_seconds`).
     pub work_wall_ratio: Option<f64>,
     /// The search expansions a second of work stood for (`work_rate`).
     pub work_rate: f64,
@@ -2179,8 +2320,13 @@ pub fn decide(
     }
 }
 
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the verdict's findings split by kind, each its own slice"
+)]
 fn next_actions(
     facts: &KiCadRunFacts,
+    rate: &crate::work_rate::KiCadWorkRate,
     status: KiCadRunStatus,
     new_findings: &BTreeMap<String, usize>,
     own: &[&DrcFinding],
@@ -2275,7 +2421,7 @@ fn next_actions(
         }
     }
     if !facts.unplaced.is_empty()
-        && let Some(action) = placement_rates_action(&facts.command, &crate::work_rate::work_rate())
+        && let Some(action) = placement_rates_action(&facts.command, rate)
     {
         actions.push(action);
     }
@@ -2289,6 +2435,24 @@ fn next_actions(
         .native
         .as_ref()
         .map_or(facts.unconnected_terminals, |native| native.unconnected);
+    // A search at under half the reference's rate whose first route took
+    // the whole budget (no move, no final ladder ran): the rate decided
+    // the open connections, and its action comes before them (trial 5's
+    // SmartSpin2k: 475 unconnected at 0.39 of the reference's rate, 51 at
+    // the reference's; the rate's action came third, after the hot spot's
+    // parts to move).
+    let rate_action = (facts.routes && open > 0)
+        .then(|| search_rate_action(&facts.command, rate))
+        .flatten();
+    let spent = facts.first_route_spent.map(|[work, budget]| {
+        format!(
+            "the placement and the first route used {work:.0} of the {budget:.0} s of work the layout's budget counts (total_seconds), so no move and no final ladder ran"
+        )
+    });
+    let rate_first = rate_action.is_some() && spent.is_some();
+    if rate_first && let (Some(action), Some(spent)) = (&rate_action, &spent) {
+        actions.push(format!("{action}; {spent}"));
+    }
     if facts.routes && open > 0 {
         let mut where_ = Vec::new();
         if facts.hot_spots > 0 {
@@ -2313,8 +2477,17 @@ fn next_actions(
                 top_counts(&native.unconnected_nets, 8)
             ));
         }
+        // Where the rate is no reason, that nothing ran after the first
+        // route is still said: a larger budget gives the moves and the
+        // ladder their time.
+        let spent = match (&spent, rate_first) {
+            (Some(spent), false) => format!(
+                " ({spent}: a larger total_seconds in the layout config gives them their time)"
+            ),
+            _ => String::new(),
+        };
         actions.push(format!(
-            "connections are open: {}; `pcb-maker inspect-routing-run` on this output names each open net's pads, rules and KiCad's pairs and each hot spot's pads and nets (--reference: the designer's route of the net): read it before changing the design. {}",
+            "connections are open{spent}: {}; `pcb-maker inspect-routing-run` on this output names each open net's pads, rules and KiCad's pairs and each hot spot's pads and nets (--reference: the designer's route of the net): read it before changing the design. {}",
             if where_.is_empty() { "the router's count; drc.json lists KiCad's unconnected items".to_string() } else { where_.join(", ") },
             open_evidence(facts)
         ));
@@ -2322,13 +2495,10 @@ fn next_actions(
             facts
                 .hot_spot
                 .as_ref()
-                .map(|note| hot_spot_action(note, &facts.command)),
+                .map(|note| hot_spot_action(note, &facts.command, &facts.fixed_parts)),
         );
     }
-    if facts.routes
-        && open > 0
-        && let Some(action) = search_rate_action(&facts.command, &crate::work_rate::work_rate())
-    {
+    if !rate_first && let Some(action) = rate_action {
         actions.push(action);
     }
     if facts.routes && open > 0 {
@@ -2735,7 +2905,17 @@ fn open_evidence(facts: &KiCadRunFacts) -> String {
 /// The next action naming the hot spot of the open connections and the
 /// parts nearest it (`hot_spot_note`), with what moves them: a layout's
 /// constraints, or in route mode (which keeps every part) the input.
-fn hot_spot_action(note: &KiCadHotSpotNote, command: &str) -> String {
+fn hot_spot_action(note: &KiCadHotSpotNote, command: &str, fixed: &BTreeSet<String>) -> String {
+    let action = hot_spot_parts_action(note, command);
+    match &note.open_link {
+        Some(link) => format!("{action}; {}", open_link_text(link, command, fixed)),
+        None => action,
+    }
+}
+
+/// The hot spot and the parts nearest it (`hot_spot_action` less its open
+/// link).
+fn hot_spot_parts_action(note: &KiCadHotSpotNote, command: &str) -> String {
     let nets = if !note.open_nets.is_empty() {
         format!(", on the open nets {}", note.open_nets.join(", "))
     } else if !note.conflicted_nets.is_empty() {
@@ -3726,7 +3906,16 @@ pub fn no_connect_parity_only(report: &Value) -> Option<usize> {
 
 /// The verdict of a finished run.
 pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
-    let rate = crate::work_rate::work_rate();
+    let mut verdict = judge_at(facts, &crate::work_rate::work_rate());
+    verdict.ledger_wait_seconds = (crate::ledger::waited_seconds() * 10.0).round() / 10.0;
+    verdict
+}
+
+/// `judge` at the work rates `rate` (the run's, `work_rate`).
+pub(crate) fn judge_at(
+    facts: &KiCadRunFacts,
+    rate: &crate::work_rate::KiCadWorkRate,
+) -> KiCadVerdict {
     let errors = facts
         .native
         .as_ref()
@@ -3805,6 +3994,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
     let (status, reason) = decide(facts, &strict.new);
     let (actions, mut observations) = next_actions(
         facts,
+        rate,
         status,
         &strict.new,
         &own,
@@ -3902,6 +4092,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
         pour_work_seconds: facts.pour_work_seconds,
         lattice_work_seconds: facts.lattice_work_seconds,
         wall_seconds: facts.wall_seconds,
+        ledger_wait_seconds: 0.0,
         work_wall_ratio: work_wall_ratio(facts.work_seconds, facts.wall_seconds),
         work_rate: rate.expansions_per_second,
         placer_work_rate: rate.placer_work_per_second,
@@ -4050,6 +4241,13 @@ pub fn route_facts(
             .ok()
             .and_then(|text| crate::parse(&text).ok());
         facts.hot_spot = hot_spot_note(&result.diagnostics.hot_spots, &open, board.as_ref());
+        if let Some(note) = facts.hot_spot.as_mut()
+            && let Some(report) = fs::read_to_string(directory.join("drc.json"))
+                .ok()
+                .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        {
+            note.open_link = open_link_of(&report, &note.open_nets, board.as_ref());
+        }
     }
     facts.starved_pads = result
         .diagnostics
@@ -5638,6 +5836,65 @@ mod tests {
     }
 
     #[test]
+    fn a_slow_search_whose_first_route_took_the_budget_leads_with_the_rate() {
+        // Trial 5's SmartSpin2k: 0.39 of the reference's rate, the first
+        // route took the budget (no move, no final ladder), 475
+        // unconnected where the reference's rates left 51; the rate's
+        // action came third, after the hot spot's parts to move.
+        let slow = crate::work_rate::KiCadWorkRate {
+            expansions_per_second: 1.2193e6,
+            placer_work_per_second: 6.4965e7,
+            source: "measured".into(),
+            measured: None,
+        };
+        let mut facts = open_layout();
+        let position = |actions: &[String], start: &str| {
+            actions
+                .iter()
+                .position(|action| action.starts_with(start))
+                .unwrap_or_else(|| panic!("no {start:?} in {actions:#?}"))
+        };
+        // The first route left room for moves or a ladder: the open
+        // connections first, the rate after them.
+        let verdict = judge_at(&facts, &slow);
+        assert!(
+            position(&verdict.next_actions, "connections are open")
+                < position(&verdict.next_actions, "this run searched at 0.39")
+        );
+        facts.first_route_spent = Some([1502.0, 1500.0]);
+        let verdict = judge_at(&facts, &slow);
+        let rate = position(&verdict.next_actions, "this run searched at 0.39");
+        assert!(rate < position(&verdict.next_actions, "connections are open"));
+        assert!(
+            verdict.next_actions[rate].ends_with("; the placement and the first route used 1502 of the 1500 s of work the layout's budget counts (total_seconds), so no move and no final ladder ran"),
+            "{}",
+            verdict.next_actions[rate]
+        );
+        assert_eq!(
+            verdict
+                .next_actions
+                .iter()
+                .filter(|action| action.starts_with("this run searched"))
+                .count(),
+            1
+        );
+        // At the reference's rate the open connections lead and say that
+        // nothing ran after the first route.
+        let verdict = judge_at(&facts, &crate::work_rate::KiCadWorkRate::reference());
+        let open = &verdict.next_actions[position(&verdict.next_actions, "connections are open")];
+        assert!(
+            open.starts_with("connections are open (the placement and the first route used 1502 of the 1500 s of work the layout's budget counts (total_seconds), so no move and no final ladder ran: a larger total_seconds in the layout config gives them their time): "),
+            "{open}"
+        );
+        assert!(
+            !verdict
+                .next_actions
+                .iter()
+                .any(|action| action.starts_with("this run searched"))
+        );
+    }
+
+    #[test]
     fn placements_and_layouts_answer_for_their_constraints() {
         let mut facts = routed(DrcTally::default());
         facts.command = "layout-kicad-board".into();
@@ -6497,7 +6754,7 @@ mod tests {
         // A hot spot farther than HOT_SPOT_REACH_MM from every part: no
         // part to move.
         let far = hot_spot_note(&spots, &BTreeSet::new(), Some(&board)).unwrap();
-        let far = hot_spot_action(&far, "layout-kicad-board");
+        let far = hot_spot_action(&far, "layout-kicad-board", &BTreeSet::new());
         assert!(
             far.contains("no part's body or pad on B.Cu lies within 5 mm of it"),
             "{far}"
@@ -6505,6 +6762,101 @@ mod tests {
         // Without any open net in a hot spot: the worst one.
         let none = hot_spot_note(&spots, &BTreeSet::new(), None).unwrap();
         assert_eq!((none.index, none.parts.len()), (0, 0));
+    }
+
+    #[test]
+    fn the_hot_spots_open_link_names_its_far_end_with_a_near_to_paste() {
+        // Trial 5's jetson: hot spot 0 at J1 named J1, D11, D4, R37 and
+        // R2; the open link's other end, R8, lay 10.4 mm from J1:11, and
+        // the near for it was in no action.
+        let report = json!({
+            "violations": [],
+            "unconnected_items": [
+                {"items": [{"description": "Pad 3 [GND] of C1 on F.Cu", "pos": {"x": 0.0, "y": 0.0}},
+                           {"description": "Pad 1 [GND] of C2 on F.Cu", "pos": {"x": 1.0, "y": 0.0}}]},
+                {"items": [{"description": "Pad 11 [/Display/TMDS_D0_C_N] of J1 on F.Cu", "pos": {"x": 108.0074, "y": 122.63101}},
+                           {"description": "Pad 2 [/Display/TMDS_D0_C_N] of R8 on F.Cu", "pos": {"x": 109.855, "y": 112.24}}]}
+            ],
+            "schematic_parity": []
+        });
+        let pad = |number: usize| {
+            format!("(pad \"{number}\" smd rect (at 0 0) (size 1 1) (layers \"F.Cu\"))")
+        };
+        let board = crate::parse(&format!(
+            "(kicad_pcb (footprint \"J\" (layer \"F.Cu\") (at 108 122) (property \"Reference\" \"J1\") {}) (footprint \"R\" (layer \"F.Cu\") (at 110 112) (property \"Reference\" \"R8\") {} {}))",
+            (1..=20).map(pad).collect::<Vec<_>>().join(" "),
+            pad(1),
+            pad(2)
+        ))
+        .unwrap();
+        let link =
+            open_link_of(&report, &["Display/TMDS_D0_C_N".to_string()], Some(&board)).unwrap();
+        assert_eq!(link.net, "Display/TMDS_D0_C_N");
+        assert_eq!(
+            link.ends,
+            [
+                ("J1".to_string(), "11".to_string()),
+                ("R8".to_string(), "2".to_string())
+            ]
+        );
+        assert_eq!(link.pads, [20, 2]);
+        assert!((link.distance_mm - 10.554).abs() < 0.01, "{link:?}");
+        // An open net without an unconnected item: no link.
+        assert_eq!(
+            open_link_of(&report, &["+5V".to_string()], Some(&board)),
+            None
+        );
+        let mut facts = open_layout();
+        facts.hot_spot = Some(KiCadHotSpotNote {
+            index: 0,
+            layer: "F.Cu".into(),
+            at: [108.45, 122.58],
+            open_nets: vec!["Display/TMDS_D0_C_N".into()],
+            conflicted_nets: Vec::new(),
+            parts: vec![KiCadNearPart {
+                reference: "J1".into(),
+                side: "front".into(),
+                distance_mm: 0.0,
+            }],
+            open_link: Some(link),
+        });
+        let action = |facts: &KiCadRunFacts| {
+            judge(facts)
+                .next_actions
+                .into_iter()
+                .find(|action| action.starts_with("hot spot 0 "))
+                .unwrap()
+        };
+        // R8, the smaller part, comes to J1's pin.
+        let text = action(&facts);
+        assert!(
+            text.ends_with("; its open link on Display/TMDS_D0_C_N runs from J1:11 to R8:2, 10.6 mm apart (KiCad's unconnected item): bring R8 to J1:11 with a near constraint (constraints.json's near: {\"part\": \"R8\", \"pin_of\": \"J1:11\", \"max_mm\": 2})"),
+            "{text}"
+        );
+        // With R8 fixed, J1 comes to it; with both fixed, neither.
+        facts.fixed_parts = ["R8".to_string()].into();
+        assert!(
+            action(&facts).contains("bring J1 to R8:2 with a near constraint"),
+            "{}",
+            action(&facts)
+        );
+        facts.fixed_parts = ["R8".to_string(), "J1".to_string()].into();
+        assert!(
+            action(&facts).ends_with(
+                "both J1 and R8 are fixed, so only freeing one of them brings it nearer"
+            ),
+            "{}",
+            action(&facts)
+        );
+        // Route mode keeps every part: the input changes.
+        facts.command = "route-kicad-board".into();
+        facts.fixed_parts.clear();
+        assert!(
+            action(&facts)
+                .contains("route mode keeps every part; bring R8 nearer J1:11 in the input"),
+            "{}",
+            action(&facts)
+        );
     }
 
     #[test]

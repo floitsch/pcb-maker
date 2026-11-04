@@ -17,6 +17,7 @@ mod guidance;
 mod legality;
 mod lower;
 mod marks;
+mod pair_rows;
 mod panel;
 mod place;
 mod result;
@@ -29,7 +30,7 @@ mod trace;
 pub(crate) use self::guidance::{attribution, reference_index};
 #[cfg(test)]
 pub(crate) use self::place::room_hint;
-pub(crate) use self::{bodies::*, lower::*, marks::*, rules::*, seed_race::*};
+pub(crate) use self::{bodies::*, lower::*, marks::*, pair_rows::*, rules::*, seed_race::*};
 pub use self::{
     config::*,
     guidance::KiCadGlobalGuidance,

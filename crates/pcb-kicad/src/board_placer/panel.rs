@@ -1238,7 +1238,18 @@ fn make_inert(component: &mut core::Component) {
 /// region; its movable parts are the copy's, held in that region; the other movable parts take no room and pull no net; fixed
 /// parts away from the region keep their bodies but pull no net (the other
 /// copies' pins of a shared net would pull the copy across the board).
-fn reference_problem(problem: &core::Problem, copies: &PanelCopies, copy: usize) -> core::Problem {
+///
+/// A user's near, relative or apart constraint between two parts of one
+/// of the copies `from` (those that take this copy's placement) holds in
+/// this copy too, between the same parts of the circuit (`carried_relations`):
+/// a constraint on any copy's parts holds in every copy that copies the
+/// placement (docs/agents.md, "Panels of copies").
+fn reference_problem(
+    problem: &core::Problem,
+    copies: &PanelCopies,
+    copy: usize,
+    from: &[usize],
+) -> core::Problem {
     let region = copies.regions[copy];
     let active: BTreeSet<usize> = copies.members[copy]
         .iter()
@@ -1297,9 +1308,16 @@ fn reference_problem(problem: &core::Problem, copies: &PanelCopies, copy: usize)
     constraints
         .followers
         .retain(|follower| active.contains(&follower.leader));
+    // The other copies' relations among their own parts, carried to this
+    // copy's parts, after the user's.
+    let user = constraints.relations.len() - constraints.automatic;
+    let carried = carried_relations(&constraints.relations[..user], copies, copy, from);
+    let user = user + carried.len();
+    let automatic_relations = constraints.relations.split_off(user - carried.len());
+    constraints.relations.extend(carried);
+    constraints.relations.extend(automatic_relations);
     // Relations among the parts that still count; the automatic ones are
     // the last.
-    let user = constraints.relations.len() - constraints.automatic;
     let mut relations = Vec::new();
     let mut automatic = 0;
     for (index, relation) in constraints.relations.drain(..).enumerate() {
@@ -1529,6 +1547,139 @@ fn carried(
     (poses, relaxation, illegal)
 }
 
+/// The user's `relations` (near, relative, apart) between parts of one
+/// copy of `from` other than `copy`, carried to `copy`'s parts of the same
+/// ranks; those `copy` holds already, once.
+fn carried_relations(
+    relations: &[core::constraints::Relation],
+    copies: &PanelCopies,
+    copy: usize,
+    from: &[usize],
+) -> Vec<core::constraints::Relation> {
+    use core::constraints::{Anchor, Relation};
+    let place: BTreeMap<usize, (usize, usize)> = copies
+        .members
+        .iter()
+        .enumerate()
+        .flat_map(|(copy, parts)| {
+            parts
+                .iter()
+                .enumerate()
+                .map(move |(rank, part)| (*part, (copy, rank)))
+        })
+        .collect();
+    let mut carried: Vec<Relation> = Vec::new();
+    for relation in relations {
+        let parts: Vec<usize> = match relation {
+            Relation::Near { part, anchor, .. } => match anchor {
+                Anchor::Area(leader, member, ..) => vec![*part, *leader, *member],
+                other => vec![*part, other.part()],
+            },
+            Relation::Beside { part, anchor, .. } | Relation::Apart { part, anchor, .. } => {
+                vec![*part, *anchor]
+            }
+            _ => continue,
+        };
+        let Some(&(source, _)) = place.get(&parts[0]) else {
+            continue;
+        };
+        if source == copy
+            || !from.contains(&source)
+            || !parts
+                .iter()
+                .all(|part| place.get(part).is_some_and(|(of, _)| *of == source))
+        {
+            continue;
+        }
+        let to = |part: usize| copies.members[copy][place[&part].1];
+        let mapped = match relation {
+            Relation::Near { part, anchor, max } => Relation::Near {
+                part: to(*part),
+                anchor: match anchor {
+                    Anchor::Body(index) => Anchor::Body(to(*index)),
+                    Anchor::Point(index, point) => Anchor::Point(to(*index), *point),
+                    Anchor::Area(leader, member, centre, half) => {
+                        Anchor::Area(to(*leader), to(*member), *centre, *half)
+                    }
+                },
+                max: *max,
+            },
+            Relation::Beside {
+                part,
+                anchor,
+                side,
+                max_gap,
+            } => Relation::Beside {
+                part: to(*part),
+                anchor: to(*anchor),
+                // The copy's frame is turned from the other's: the side
+                // turns with it.
+                side: turned_edge(
+                    *side,
+                    copies.transforms[source].angle - copies.transforms[copy].angle,
+                ),
+                max_gap: *max_gap,
+            },
+            Relation::Apart { part, anchor, min } => Relation::Apart {
+                part: to(*part),
+                anchor: to(*anchor),
+                min: *min,
+            },
+            _ => continue,
+        };
+        if !relations.contains(&mapped) && !carried.contains(&mapped) {
+            carried.push(mapped);
+        }
+    }
+    carried
+}
+
+/// `edge` seen from a frame turned by `angle` degrees (a quarter turn's
+/// multiple; the placer's convention: a pose's angle grows by it).
+fn turned_edge(edge: core::constraints::Edge, angle: f64) -> core::constraints::Edge {
+    let direction = core::problem::rotate(edge_direction(edge), angle);
+    let edges = [
+        core::constraints::Edge::Left,
+        core::constraints::Edge::Top,
+        core::constraints::Edge::Right,
+        core::constraints::Edge::Bottom,
+    ];
+    edges
+        .into_iter()
+        .max_by(|a, b| {
+            let dot = |edge: core::constraints::Edge| {
+                let other = edge_direction(edge);
+                other[0] * direction[0] + other[1] * direction[1]
+            };
+            dot(*a).total_cmp(&dot(*b))
+        })
+        .unwrap_or(edge)
+}
+
+/// The movable parts of the copies (not in `illegal`) that a user's near,
+/// relative or apart constraint misses at the replicated `poses`, in
+/// ascending order.
+fn unkept_relations(
+    problem: &core::Problem,
+    copies: &PanelCopies,
+    poses: &[core::Pose],
+    illegal: &[usize],
+) -> Vec<usize> {
+    let movable: BTreeSet<usize> = copies.movable(problem).into_iter().collect();
+    let mut unkept: BTreeSet<usize> = BTreeSet::new();
+    for status in core::constraints::report(problem, poses) {
+        if status.satisfied || !matches!(status.kind, "near" | "relative" | "apart") {
+            continue;
+        }
+        for part in std::iter::once(status.part).chain(status.other) {
+            if movable.contains(&part) && !illegal.contains(&part) {
+                unkept.insert(part);
+            }
+        }
+    }
+    unkept.into_iter().collect()
+}
+
 /// Places a panel by its copies (the module's comment): one seed's
 /// placement of the whole board.
 pub(crate) fn place_copies(
@@ -1539,7 +1690,8 @@ pub(crate) fn place_copies(
     let debug = std::env::var_os("PCB_PLACER_DEBUG").is_some();
     let started = core::work();
     // The first copy, with three quarters of the budget.
-    let sub = reference_problem(problem, copies, 0);
+    let all: Vec<usize> = (0..copies.members.len()).collect();
+    let sub = reference_problem(problem, copies, 0, &all);
     let mut first_config = config.clone();
     first_config.work_limit = config.work_limit.map(|limit| limit / 4 * 3);
     let first = core::place(&sub, &first_config);
@@ -1606,7 +1758,10 @@ pub(crate) fn place_copies(
                 .work_limit
                 .map(|limit| (limit / 4 * 3).saturating_sub(used).max(limit / 10) / left as u64);
             left -= 1;
-            let placed = core::place(&reference_problem(problem, copies, rep), &class_config);
+            let placed = core::place(
+                &reference_problem(problem, copies, rep, &class.copies),
+                &class_config,
+            );
             if debug {
                 eprintln!(
                     "panel copies: class of copies {:?} ({} constraints, {} outline pieces, {} obstacles) placed from copy {rep}: {} unplaced{}",
@@ -1649,6 +1804,16 @@ pub(crate) fn place_copies(
             "many replicated parts are not legal where they land",
         );
     }
+    // A copy's part that a near, relative or apart constraint of its own
+    // does not let stay where its copy put it (a constraint on another
+    // copy's part than the first's, or towards a shared part) is placed
+    // again with the rest, in its copy's region, as a part a hard
+    // constraint holds is (it is not legal there): a constraint holds in
+    // the copy whose part it names (docs/agents.md, "Panels of copies").
+    // Until 2026-11-04 the replication overrode them unseen. These do not
+    // count towards the share of illegal parts above.
+    let unkept = unkept_relations(problem, copies, &replicated, &illegal);
+    illegal.extend(unkept);
     let (poses, relaxation, unplaced, overfull, rest_work) =
         if illegal.is_empty() && shared.is_empty() {
             (
@@ -2084,6 +2249,67 @@ mod tests {
     }
 
     #[test]
+    fn a_constraint_on_any_copys_parts_holds_in_every_copy() {
+        // A near between the second copy's R1 and C2 (none on the first
+        // copy's): the first copy is placed with it carried to its own R1
+        // and C2, and the replication gives it to the second. Within
+        // 0.6 mm (the bodies' spacing is 0.5).
+        let near = |part: usize, anchor: core::constraints::Anchor, max: f64| {
+            core::constraints::Relation::Near { part, anchor, max }
+        };
+        let with = |relations: Vec<core::constraints::Relation>| {
+            let mut problem = panel(false);
+            problem.constraints.relation_weight = 50.0;
+            problem.constraints.relations = relations;
+            problem.constraints.link_pairs();
+            problem
+        };
+        let (r1, c2) = (6, 9);
+        let problem = with(vec![near(r1, core::constraints::Anchor::Body(c2), 0.6)]);
+        assert_eq!(
+            (
+                problem.components[r1].name.as_str(),
+                problem.components[c2].name.as_str()
+            ),
+            ("R1", "C2")
+        );
+        let copies = detect(&problem, problem.components.len()).expect("copies");
+        let mut config = core::Config::new();
+        config.global.seed = 1;
+        let placement = place_copies(&problem, &copies, &config);
+        let kept = |relation: core::constraints::Relation, poses: &[core::Pose]| {
+            core::constraints::report(&with(vec![relation]), poses)
+                .into_iter()
+                .find(|status| status.kind == "near")
+                .unwrap()
+                .satisfied
+        };
+        let first = near(1, core::constraints::Anchor::Body(4), 0.6);
+        assert!(kept(
+            near(r1, core::constraints::Anchor::Body(c2), 0.6),
+            &placement.poses
+        ));
+        assert!(kept(first.clone(), &placement.poses));
+        // Without it, the copies' R1 and C2 lie farther apart.
+        let alone = place_copies(&panel(false), &copies, &config);
+        assert!(!kept(first, &alone.poses));
+        // A near towards another copy's part is not carried: the part is
+        // placed again after the replication, in its own copy's region
+        // (the second copy's R1 within 25 mm of the first copy's J1).
+        let across = near(r1, core::constraints::Anchor::Body(0), 25.0);
+        let problem = with(vec![across.clone()]);
+        let placement = place_copies(&problem, &copies, &config);
+        assert!(!kept(across.clone(), &alone.poses));
+        assert!(kept(across, &placement.poses));
+        let region = copies.regions[1];
+        let at = placement.poses[r1].position;
+        assert!(
+            at[0] >= region[0] && at[0] <= region[2],
+            "{at:?} {region:?}"
+        );
+    }
+
+    #[test]
     fn copies_keep_their_geometry_off_every_copys_frame() {
         // A rail along the first copy's left edge (x 0 to 6, a keepout)
         // and its image along the second copy's right edge (turned half a
@@ -2151,7 +2377,7 @@ mod tests {
             problem.poses.push(pose);
         }
         problem.constraints.frames.keepouts = vec![first, first + 1];
-        let sub = reference_problem(&problem, &copies, 0);
+        let sub = reference_problem(&problem, &copies, 0, &[0]);
         let rail = &sub.components[first];
         let pose = sub.poses[first];
         let (center, half) = (rail.center(pose), rail.half_extent(pose.angle));

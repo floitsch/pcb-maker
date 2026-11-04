@@ -53,6 +53,8 @@ pub(crate) struct LoweredPlacement {
     pub attached_marks: Vec<(usize, usize)>,
     /// The same, said: the mark, its layer and anchor, and the part.
     pub attached_report: Vec<String>,
+    /// The pair rows (`pair_rows`): each one's first part and the other.
+    pub pair_rows: Vec<(usize, usize)>,
 }
 
 /// `*` matches any run of characters, `?` one character, and a backslash
@@ -571,6 +573,10 @@ pub(crate) fn lower_placement(
     // Every pad by name, for constraints that point at a pin, and the
     // footprint's own keepout zones (an antenna), for overhang constraints.
     let mut pad_offsets: Vec<BTreeMap<String, [f64; 2]>> = Vec::new();
+    // Every pad with a net (number, net, centre) and the footprint's
+    // library name, for the pair rows (`pair_rows`).
+    let mut pad_nets: Vec<Vec<(String, String, [f64; 2])>> = Vec::new();
+    let mut library_names: Vec<String> = Vec::new();
     let mut pad_boxes: Vec<Vec<[f64; 4]>> = Vec::new();
     let mut keepout_boxes: Vec<Option<[f64; 4]>> = Vec::new();
     let mut mouths: Vec<Option<[f64; 2]>> = Vec::new();
@@ -697,6 +703,7 @@ pub(crate) fn lower_placement(
         let mut hole_rings: Vec<[f64; 4]> = Vec::new();
         let mut pin_centers: Vec<[f64; 2]> = Vec::new();
         let mut named = BTreeMap::new();
+        let mut own_pad_nets = Vec::new();
         // The copper layer of the side the part is not on: an edge-mount
         // connector's SMD pads there occupy that side too.
         let other_copper = if back { "F.Cu" } else { "B.Cu" };
@@ -844,8 +851,11 @@ pub(crate) fn lower_placement(
                 continue;
             };
             let next = net_ids.len();
-            let net = *net_ids.entry(net.to_string()).or_insert(next);
             let pad_at = form_at(pad)?;
+            if let Some(name) = pad.children().get(1).and_then(Expr::atom) {
+                own_pad_nets.push((name.to_string(), net.to_string(), [pad_at[0], pad_at[1]]));
+            }
+            let net = *net_ids.entry(net.to_string()).or_insert(next);
             pins.push(core::Pin {
                 offset: [pad_at[0], pad_at[1]],
                 net,
@@ -1205,6 +1215,15 @@ pub(crate) fn lower_placement(
         uuids.push(footprint_uuid(footprint));
         source_at.push(at);
         pad_offsets.push(named);
+        pad_nets.push(own_pad_nets);
+        library_names.push(
+            footprint
+                .children()
+                .get(1)
+                .and_then(Expr::atom)
+                .unwrap_or_default()
+                .to_string(),
+        );
         pad_boxes.push(own_pads);
         keepout_boxes.push(footprint_keepout_box(footprint, at)?);
         mouths.push(connector_mouth(footprint)?);
@@ -1523,8 +1542,31 @@ pub(crate) fn lower_placement(
         Some(KiCadConstraintsSource::Inline(constraints)) => Some(constraints),
         _ => None,
     };
-    let constraint_warnings = match &config.constraints {
-        Some(KiCadConstraintsSource::Inline(constraints)) => apply_constraints(
+    // A differential pair's two series parts as a row of two
+    // (`pair_rows`): added to the user's rows, where any pair has them.
+    let pair_rows = if config.pair_rows {
+        implicit_pair_rows(
+            &problem,
+            &references[..footprint_count],
+            &library_names,
+            &pad_nets,
+            user_constraints,
+        )
+    } else {
+        Vec::new()
+    };
+    let with_pairs = (!pair_rows.is_empty()).then(|| {
+        let mut constraints = user_constraints.cloned().unwrap_or_else(|| {
+            crate::placement_constraints::KiCadPlacementConstraints {
+                version: 1,
+                ..Default::default()
+            }
+        });
+        constraints.row.extend(pair_rows.iter().cloned());
+        constraints
+    });
+    let constraint_warnings = match (&config.constraints, &with_pairs) {
+        (_, Some(constraints)) => apply_constraints(
             &mut problem,
             &references,
             &pad_offsets,
@@ -1536,8 +1578,20 @@ pub(crate) fn lower_placement(
             constraints,
             config.constraint_weight,
         )?,
-        None => Vec::new(),
-        Some(KiCadConstraintsSource::File(path)) => {
+        (Some(KiCadConstraintsSource::Inline(constraints)), None) => apply_constraints(
+            &mut problem,
+            &references,
+            &pad_offsets,
+            &pad_boxes,
+            &keepout_boxes,
+            &mouths,
+            &locked,
+            &uuids,
+            constraints,
+            config.constraint_weight,
+        )?,
+        (None, None) => Vec::new(),
+        (Some(KiCadConstraintsSource::File(path)), None) => {
             return Err(format!(
                 "constraints file {} was not resolved",
                 path.display()
@@ -1802,6 +1856,13 @@ pub(crate) fn lower_placement(
     for (name, id) in &net_ids {
         net_names_by_id[*id] = name.clone();
     }
+    let pair_row_parts = pair_rows
+        .iter()
+        .filter_map(|row| {
+            let index = |reference: &String| references.iter().position(|r| r == reference);
+            Some((index(&row.parts[0])?, index(&row.parts[1])?))
+        })
+        .collect();
     Ok(LoweredPlacement {
         problem,
         net_names: net_names_by_id,
@@ -1812,6 +1873,7 @@ pub(crate) fn lower_placement(
         poured,
         attached_marks: attached,
         attached_report,
+        pair_rows: pair_row_parts,
     })
 }
 

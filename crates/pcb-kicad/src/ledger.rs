@@ -1583,11 +1583,88 @@ pub fn too_large_ends(
     ))
 }
 
+/// The wall clock spent waiting in the ledger for reservations (`hold`):
+/// the waits ended, the threads waiting now, and since when one has
+/// waited. Two threads waiting at once count once.
+struct WaitClock {
+    ended: f64,
+    waiting: usize,
+    since: Option<Instant>,
+}
+
+impl WaitClock {
+    const fn new() -> Self {
+        Self {
+            ended: 0.0,
+            waiting: 0,
+            since: None,
+        }
+    }
+
+    fn begin(&mut self, now: Instant) {
+        if self.waiting == 0 {
+            self.since = Some(now);
+        }
+        self.waiting += 1;
+    }
+
+    fn end(&mut self, now: Instant) {
+        self.waiting = self.waiting.saturating_sub(1);
+        if self.waiting == 0
+            && let Some(since) = self.since.take()
+        {
+            self.ended += now.saturating_duration_since(since).as_secs_f64();
+        }
+    }
+
+    fn total(&self, now: Instant) -> f64 {
+        self.ended
+            + self.since.map_or(0.0, |since| {
+                now.saturating_duration_since(since).as_secs_f64()
+            })
+    }
+}
+
+static WAITS: Mutex<WaitClock> = Mutex::new(WaitClock::new());
+
+fn waits() -> std::sync::MutexGuard<'static, WaitClock> {
+    WAITS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// A thread's wait in the ledger, from its first refusal to its end.
+struct Waiting;
+
+impl Waiting {
+    fn begin() -> Self {
+        waits().begin(Instant::now());
+        Waiting
+    }
+}
+
+impl Drop for Waiting {
+    fn drop(&mut self) {
+        waits().end(Instant::now());
+    }
+}
+
+/// How long this process has waited in the memory ledger for its
+/// reservations, in seconds of wall clock (the waits of several threads
+/// at once counted once): part of a run's `wall_seconds` that is neither
+/// its work nor its load (the verdict's `ledger_wait_seconds`). A run
+/// past its reservation that runs on while it waits for room does not
+/// wait here.
+pub fn waited_seconds() -> f64 {
+    waits().total(Instant::now())
+}
+
 /// Holds `base_mb` and `extra_mb`, waiting while the ledger has no room,
 /// and says so in the log (`why`: what the memory is for).
 fn hold(base_mb: f64, extra_mb: f64, why: &str) {
     let started = Instant::now();
     let mut reported: Option<Instant> = None;
+    let mut waiting: Option<Waiting> = None;
     loop {
         match try_hold(base_mb, extra_mb, true) {
             Try::Held | Try::Unarmed => break,
@@ -1597,6 +1674,7 @@ fn hold(base_mb: f64, extra_mb: f64, why: &str) {
                 behind,
                 floor,
             } => {
+                waiting.get_or_insert_with(Waiting::begin);
                 if reported.is_none_or(|at| at.elapsed() >= WAIT_REPORT) {
                     let capacity = capacity_mb().unwrap_or(f64::INFINITY);
                     eprintln!(
@@ -1633,6 +1711,7 @@ fn hold(base_mb: f64, extra_mb: f64, why: &str) {
             }
         }
     }
+    drop(waiting);
     if reported.is_some() {
         eprintln!(
             "memory ledger: reserved {:.0} MB for {why} after waiting {:.0} s",
@@ -2277,6 +2356,26 @@ mod tests {
 
     fn refs(all: &[Reservation]) -> Vec<&Reservation> {
         all.iter().collect()
+    }
+
+    #[test]
+    fn waits_of_threads_at_once_count_once() {
+        let at = Instant::now();
+        let second = |seconds: u64| at + Duration::from_secs(seconds);
+        let mut clock = WaitClock::new();
+        assert_eq!(clock.total(second(5)), 0.0);
+        // One thread waits from 10 to 40 s, another from 20 to 30 s: 30 s.
+        clock.begin(second(10));
+        clock.begin(second(20));
+        assert_eq!(clock.total(second(25)), 15.0);
+        clock.end(second(30));
+        clock.end(second(40));
+        assert_eq!(clock.total(second(100)), 30.0);
+        // A later wait adds, and counts while it lasts.
+        clock.begin(second(100));
+        assert_eq!(clock.total(second(110)), 40.0);
+        clock.end(second(120));
+        assert_eq!(clock.total(second(200)), 50.0);
     }
 
     #[test]

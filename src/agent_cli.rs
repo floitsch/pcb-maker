@@ -997,6 +997,20 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         .move_descent
         .as_ref()
         .map(pcb_kicad::KiCadMoveDescentReport::fact);
+    // Nothing ran after the first route: no move, no final ladder, nothing
+    // stopped or cut it (trial 5's SmartSpin2k: the verdict said neither).
+    if result.first_unconnected_terminals > 0
+        && result.moves.is_empty()
+        && result
+            .move_descent
+            .as_ref()
+            .is_none_or(|descent| descent.trials == 0)
+        && result.final_ladder_budget_seconds.is_none()
+        && !result.stopped_after_first_route
+        && result.cut.is_empty()
+    {
+        facts.first_route_spent = Some([result.first_route_work_seconds, result.total_seconds]);
+    }
     facts.silkscreen = Some(result.labels.silkscreen.clone());
     facts.race = result.race.clone();
     facts.decoupling = result
@@ -1020,6 +1034,13 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     facts.bus_groups = serde_json::from_value(placed["bus_groups"].clone()).ok();
     facts.panel_copies = serde_json::from_value(placed["panel_copies"].clone()).ok();
     facts.sub_boards = serde_json::from_value(placed["sub_boards"].clone()).ok();
+    facts.fixed_parts = placed["footprints"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|footprint| footprint["fixed"].as_bool() == Some(true))
+        .filter_map(|footprint| footprint["reference"].as_str().map(str::to_string))
+        .collect();
     facts.input_warnings = constraint_warnings(input_warnings, &placed);
     facts.cut = result.cut.clone();
     facts.work_seconds = Some(result.work_seconds + result.routed.work_seconds);

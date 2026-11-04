@@ -759,12 +759,7 @@ pub fn place_kicad_board(
         overfull: placement.overfull,
         board_id: board_id.into(),
         components: lowered.problem.components.len(),
-        movable: lowered
-            .problem
-            .components
-            .iter()
-            .filter(|component| !component.fixed)
-            .count(),
+        movable: placed_count(&lowered.problem),
         nets: lowered.problem.net_weights.len(),
         global_iterations: placement.global_iterations,
         global_overflow: placement.global_overflow,
@@ -775,7 +770,10 @@ pub fn place_kicad_board(
         unplaced: names(&placement.unplaced),
         illegal: names(&placement.illegal),
         unplaced_parts,
-        constraints: constraint_report(&lowered.problem, &placement.poses, &lowered.references),
+        constraints: constraint_report(&lowered.problem, &placement.poses, &lowered.references)
+            .into_iter()
+            .chain(pair_row_statuses(&lowered.pair_rows, &lowered.references))
+            .collect(),
         constraint_warnings: lowered.constraint_warnings.clone(),
         outline_mm: outline_size,
         edges_chosen,
@@ -991,4 +989,28 @@ fn unplaced_parts(
         });
     }
     parts
+}
+
+/// The parts the placer placed: the free ones and a row's other parts,
+/// which move with its first (fixed in the problem only because their
+/// leader carries them; trial 5's right_io counted its six row followers
+/// as "kept where they are", 17 where 11 were fixed).
+pub(crate) fn placed_count(problem: &core::Problem) -> usize {
+    let free = problem
+        .components
+        .iter()
+        .filter(|component| !component.fixed)
+        .count();
+    let carried = problem
+        .constraints
+        .followers
+        .iter()
+        .filter(|follower| {
+            problem
+                .components
+                .get(follower.leader)
+                .is_some_and(|leader| !leader.fixed)
+        })
+        .count();
+    free + carried
 }

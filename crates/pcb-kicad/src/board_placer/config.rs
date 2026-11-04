@@ -345,6 +345,18 @@ pub struct KiCadBoardPlacerConfig {
     /// Defaults: `weight` 1, `cap_mm` 1, `reach_mm` 5, `finish` true.
     #[serde(default)]
     pub align_rows: Option<KiCadAlignRows>,
+    /// Differential pairs' series parts as rows of two (off by default;
+    /// docs/placer.md, "Pair rows (2026-11-04)"): two free parts of one
+    /// footprint with two pads each, whose pads of one number lie on the
+    /// two nets of a pair KiCad pairs by name (`TX_P` and `TX_N`: a pair's
+    /// AC-coupling capacitors or series resistors) and that no constraint
+    /// names, are placed as a `row` of two, side by side across their pads
+    /// at their bodies' width, so that the pair's pads at them lie side by
+    /// side and the router can couple the pair through them (router.md,
+    /// "Pair points and links"). The row may turn by any quarter turn.
+    /// `constraints[]` reports each as `pair_row`. Boards without such
+    /// parts place as with it off.
+    pub pair_rows: bool,
     /// The router's configuration the guidance lowers with (set by the
     /// layout; the default otherwise).
     #[serde(skip)]
@@ -441,6 +453,7 @@ impl Default for KiCadBoardPlacerConfig {
             ratsnest_crossings: default_ratsnest_crossings(),
             bus_groups: None,
             align_rows: None,
+            pair_rows: false,
             guidance_router: None,
             via_in_pad_far_side: true,
             length_maxima: true,

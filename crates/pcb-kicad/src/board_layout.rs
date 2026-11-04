@@ -525,6 +525,16 @@ pub struct KiCadBoardLayoutResult {
     pub kicad_check_work_seconds: f64,
     pub placement_seconds: f64,
     pub first_route_seconds: f64,
+    /// The work up to the end of the first route (sizing, placement and
+    /// the first route), and the layout's budget (`total_seconds`): where
+    /// the first route left too little for anything after it, no move and
+    /// no final ladder ran (the verdict says so).
+    pub first_route_work_seconds: f64,
+    pub total_seconds: f64,
+    /// The wall clock the layout waited in the machine's memory ledger for
+    /// its reservations (`ledger::waited_seconds`), part of its wall clock
+    /// and none of its work.
+    pub ledger_wait_seconds: f64,
     pub first_unconnected_terminals: usize,
     pub first_vias: usize,
     pub first_length_mm: f64,
@@ -2264,6 +2274,7 @@ pub fn layout_kicad_board(
     };
     let mut best = score(&result, &board);
     let first_route_seconds = first_started.elapsed().as_secs_f64();
+    let first_route_work_seconds = work + pool_excess;
     let first = (
         best.0,
         result
@@ -3368,6 +3379,9 @@ pub fn layout_kicad_board(
         kicad_check_work_seconds,
         placement_seconds: placement.seconds,
         first_route_seconds,
+        first_route_work_seconds,
+        total_seconds: config.total_seconds,
+        ledger_wait_seconds: (crate::ledger::waited_seconds() * 10.0).round() / 10.0,
         first_unconnected_terminals: first.0,
         first_vias: first.1,
         first_length_mm: first.2,
@@ -3387,7 +3401,13 @@ pub fn layout_kicad_board(
             &problem.problem,
             &problem.problem.poses,
             &problem.references,
-        ),
+        )
+        .into_iter()
+        .chain(crate::board_placer::pair_row_statuses(
+            &problem.pair_rows,
+            &problem.references,
+        ))
+        .collect(),
         routed,
         cut: core::router::wall_cuts(),
     };
@@ -3399,7 +3419,7 @@ pub fn layout_kicad_board(
     .map_err(|error| format!("failed to write {}: {error}", report_path.display()))?;
     let drc_cache = crate::drc_cache_counts();
     eprintln!(
-        "layout: done ({:.0} s, work {work:.0} s, {:.0} s in all; work over wall {} at {:.4e} expansions/s, {:.4e} placer units/s, {}); KiCad checks {} ({} from the DRC cache, {} of the neck repair), {} skipped by the router's count; check work {} x {check_seconds:.1} s = {kicad_check_work_seconds:.0} s{}",
+        "layout: done ({:.0} s, work {work:.0} s, {:.0} s in all; work over wall {} at {:.4e} expansions/s, {:.4e} placer units/s, {}{}); KiCad checks {} ({} from the DRC cache, {} of the neck repair), {} skipped by the router's count; check work {} x {check_seconds:.1} s = {kicad_check_work_seconds:.0} s{}",
         elapsed(),
         work + routed_work,
         crate::verdict::work_wall_ratio(Some(work + routed_work), elapsed())
@@ -3407,6 +3427,14 @@ pub fn layout_kicad_board(
         core::router::expansions_per_second(),
         placer::work_per_second(),
         crate::work_rate::work_rate().source,
+        if layout.ledger_wait_seconds > 0.0 {
+            format!(
+                "; {:.0} s of the wall clock waiting in the memory ledger",
+                layout.ledger_wait_seconds
+            )
+        } else {
+            String::new()
+        },
         drc_cache.calls,
         drc_cache.hits,
         crate::board_router::neck_checks(),

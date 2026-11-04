@@ -242,6 +242,10 @@ pub struct KiCadRowConstraint {
     pub columns: Option<usize>,
     #[serde(default)]
     pub row_pitch_mm: Option<f64>,
+    /// A differential pair's two series parts (`pair_rows`, not the
+    /// user's): the row may turn by any quarter turn, not only a half.
+    #[serde(skip)]
+    pub pair: bool,
 }
 
 /// Parts kept together: each one's body within `max_mm` of the central
@@ -1976,6 +1980,48 @@ pub(super) fn natural(reference: &str) -> (String, u64, String) {
     )
 }
 
+/// The footprint of `reference` a near or relative constraint about
+/// `part` anchors to: the only one, or of several (a panel's copies) the
+/// one sharing the most nets with `part` (its own copy's: KiKit names
+/// each copy's nets apart), the first of those in board order. Until
+/// 2026-11-04 the first in board order (by reference, then uuid), which on
+/// a panel of copies could be another copy's than the part's.
+fn anchor_in_copy(
+    problem: &core::Problem,
+    references: &[String],
+    footprints: usize,
+    reference: &str,
+    part: usize,
+) -> Option<usize> {
+    let candidates: Vec<usize> = (0..footprints)
+        .filter(|index| references[*index] == reference)
+        .collect();
+    if candidates.len() < 2 {
+        return candidates.first().copied();
+    }
+    let nets: BTreeSet<usize> = problem.components[part]
+        .pins
+        .iter()
+        .map(|pin| pin.net)
+        .collect();
+    let shared = |candidate: usize| {
+        problem.components[candidate]
+            .pins
+            .iter()
+            .map(|pin| pin.net)
+            .collect::<BTreeSet<usize>>()
+            .intersection(&nets)
+            .count()
+    };
+    let most = candidates
+        .iter()
+        .map(|candidate| shared(*candidate))
+        .max()?;
+    candidates
+        .into_iter()
+        .find(|candidate| shared(*candidate) == most)
+}
+
 /// What `apply_rows` returns: each follower's leader, each row member's
 /// place, and the rows' first parts.
 type AppliedRows = (
@@ -2224,8 +2270,12 @@ fn apply_rows(
         carried.tight = None;
         carried.courtyards.clear();
         carried.holes_inside = false;
-        // Turning the row by a half turn keeps it along its axis.
+        // Turning the row by a half turn keeps it along its axis; a pair's
+        // two parts stay side by side whichever way the row turns.
         carried.angle_options.retain(|option| {
+            if row.pair {
+                return true;
+            }
             let turn = (option - angle).rem_euclid(360.0);
             turn.abs() < 1.0e-6 || (turn - 180.0).abs() < 1.0e-6
         });
@@ -2731,11 +2781,11 @@ pub(super) fn apply_constraints(
     for entry in &constraints.near {
         let part = find(&entry.part)?;
         // The anchor may be a part a row carries (a keyboard's diode at its
-        // switch): its place in the row, on the row's first part.
+        // switch): its place in the row, on the row's first part. Of a
+        // reference several footprints share (a panel's copies), the one
+        // of the part's copy (`anchor_in_copy`).
         let any = |reference: &str| -> Result<usize, String> {
-            references[..footprints]
-                .iter()
-                .position(|candidate| candidate == reference)
+            anchor_in_copy(problem, references, footprints, reference, part)
                 .ok_or_else(|| format!("constraint names unknown part {reference:?}"))
         };
         let anchor = match (&entry.part_of, &entry.pin_of) {
@@ -2866,9 +2916,13 @@ pub(super) fn apply_constraints(
             ));
         }
         let (other, side) = named[0];
+        let other = other.as_deref().expect("named");
+        find(other)?;
+        let anchor = anchor_in_copy(problem, references, footprints, other, part)
+            .ok_or_else(|| format!("constraint names unknown part {other:?}"))?;
         problem.constraints.relations.push(Relation::Beside {
             part,
-            anchor: find(other.as_deref().expect("named"))?,
+            anchor,
             side: *side,
             max_gap: entry.max_gap_mm.unwrap_or(5.0).max(0.0),
         });
@@ -3052,6 +3106,14 @@ mod tests {
     use super::*;
 
     type PadNames = Vec<BTreeMap<String, [f64; 2]>>;
+
+    fn problem_only() -> core::Problem {
+        problem().0
+    }
+
+    fn references() -> Vec<String> {
+        problem().1
+    }
 
     fn problem() -> (core::Problem, Vec<String>, PadNames) {
         let part = |fixed: bool| core::Component {
@@ -3709,6 +3771,66 @@ mod tests {
     }
 
     #[test]
+    fn a_near_on_a_panels_copy_anchors_in_the_parts_own_copy() {
+        // Two copies' U1 (references repeat), and the second copy's C1 on
+        // the second copy's net: its near to U1:1 holds to that copy's U1,
+        // not the first U1 in board order (trial 5's panel of copies).
+        let (mut problem, _, _) = problem();
+        problem.components[0].pins = vec![core::Pin {
+            offset: [0.5, 0.0],
+            net: 0,
+        }];
+        problem.components[2].pins = vec![core::Pin {
+            offset: [0.5, 0.0],
+            net: 1,
+        }];
+        problem.components[2].fixed = true;
+        problem.components[1].pins = vec![core::Pin {
+            offset: [0.0, 0.0],
+            net: 1,
+        }];
+        let references = vec!["U1".to_string(), "C1".to_string(), "U1".to_string()];
+        let pads = vec![
+            BTreeMap::from([("1".to_string(), [0.5, 0.0])]),
+            BTreeMap::new(),
+            BTreeMap::from([("1".to_string(), [0.5, 0.0])]),
+        ];
+        let constraints: KiCadPlacementConstraints = serde_json::from_str(
+            r#"{"version": 1, "near": [{"part": "C1", "pin_of": "U1:1", "max_mm": 1}], "relative": [{"part": "C1", "below": "U1"}]}"#,
+        )
+        .unwrap();
+        apply_constraints(
+            &mut problem,
+            &references,
+            &pads,
+            &[Vec::new(), Vec::new(), Vec::new()],
+            &[None, None, None],
+            &[None, None, None],
+            &[false, false, false],
+            &[None, None, None],
+            &constraints,
+            10.0,
+        )
+        .unwrap();
+        assert_eq!(
+            problem.constraints.relations[0],
+            Relation::Near {
+                part: 1,
+                anchor: Anchor::Point(2, [0.5, 0.0]),
+                max: 1.0
+            }
+        );
+        assert!(matches!(
+            problem.constraints.relations[1],
+            Relation::Beside {
+                part: 1,
+                anchor: 2,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn a_row_is_placed_as_its_first_part() {
         let (problem, _) =
             apply(r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 3}]}"#).unwrap();
@@ -3728,6 +3850,31 @@ mod tests {
         assert_eq!(problem.poses[2].position, [13.0, 10.0]);
         // Only half turns keep the row along its axis.
         assert_eq!(problem.components[1].angle_options, vec![0.0, 180.0]);
+        // A row's other parts are placed, with it: J1 alone is kept where
+        // it is (trial 5's right_io counted its six row followers as
+        // "kept where they are").
+        assert_eq!(crate::board_placer::placed_count(&problem), 2);
+        // A pair row (`pair_rows`) turns any quarter turn.
+        let mut problem = problem_only();
+        let (_, _, _) = apply_rows(
+            &mut problem,
+            &references(),
+            3,
+            &[Vec::new(), Vec::new(), Vec::new()],
+            &[KiCadRowConstraint {
+                parts: vec!["C1".into(), "C2".into()],
+                pitch_mm: 1.0,
+                axis: Some("y".into()),
+                columns: None,
+                row_pitch_mm: None,
+                pair: true,
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            problem.components[1].angle_options,
+            vec![0.0, 90.0, 180.0, 270.0]
+        );
         // Two lines of one: C2 below C1.
         let (problem, _) =
             apply(r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 3, "columns": 1, "row_pitch_mm": 4}]}"#).unwrap();
