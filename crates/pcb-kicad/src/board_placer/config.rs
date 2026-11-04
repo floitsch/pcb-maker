@@ -300,12 +300,6 @@ pub struct KiCadBoardPlacerConfig {
     /// Placements tried with different seeds (in parallel); the best is
     /// kept: fewest illegal parts, least missed constraints, least wire.
     pub placement_seeds: usize,
-    /// Routing demand as charge in the global placement: every net's
-    /// estimated wire area (half perimeter times the track pitch, over its
-    /// signal layers) spreads over its bounding box and pushes parts apart
-    /// where the wires will run, scaled by this (0: off).
-    #[serde(default)]
-    pub routing_demand: f64,
     /// The placement's orientation search starts from a canonical pose
     /// (`core::orient`): every movable part that may turn at the first of
     /// its angle options (in a fixed order), so that the placement is the
@@ -598,7 +592,6 @@ impl Default for KiCadBoardPlacerConfig {
             routing_room_most: default_routing_room_most(),
             routing_room_all_parts: default_routing_room_all_parts(),
             placement_seeds: 3,
-            routing_demand: 0.0,
             orientation_search: true,
             legality: KiCadPlacerLegality::Model,
             net_weight: KiCadNetWeight::Steep,

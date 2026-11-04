@@ -191,7 +191,8 @@ schema in `constraints.json` / the router config before any algorithm.
   part unplaced with a side 78-93 % full. The hint tells the agent to move
   parts to the other side; the placer does not choose sides by itself.
 - **Crowded boards (OpenESC, SNSP-CPU-01).** `supply_via_room`,
-  `routing_demand` and `replicate_channels` are built as options; none wins
+  `routing_demand` and `replicate_channels` were built as options (all
+  three removed since: 2026-10-16 and 2026-11-04); none wins
   on ESC mini within the seed noise, and the channel macros never get
   seated (the legalizer cannot seat big rigid blocks). SNSP lost 24 routed
   connections when J2's 22 x 32 mm mask opening became part of its body.

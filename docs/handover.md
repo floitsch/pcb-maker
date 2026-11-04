@@ -266,9 +266,10 @@ ladder's judge), 5, then the rest.
    BETTER (on), the race's ripped count BETTER at nine pairs (on); judged
    before it and not taken: bus-group moves (the objective falls, routing
    does not), `legality: "kicad"`, `decoupling_near`; built and off
-   earlier: `routing_demand`, `routing_room`, `shared_halos`,
+   earlier: `routing_room`, `shared_halos`,
    `anneal_far_side_gaps`; removed on 2026-10-16: `replicate_channels`,
-   `supply_via_room`, `bus_rows`. The legaliser is not the lever (4 %);
+   `supply_via_room`, `bus_rows`; removed on 2026-11-04 (below,
+   "Removed experiments (2026-11-04)"): `routing_demand`. The legaliser is not the lever (4 %);
    removing halos loses routing; more seeds do not close it (the
    designer's placement routes the OpenESC 4in1 to 15 open where ours
    leaves 88). Untested: exit blockage (the fan-out assignment) as a placement
@@ -843,6 +844,14 @@ details are:
   `legal::align_orientations` (on) stays. experiments/placement-gap's
   scripts that pass `{"align_rows": {}}` need a binary before the
   removal.
+- `routing_demand` (placer, a factor; 0, off): every net's estimated wire
+  area (half perimeter times the track pitch, over its signal layers)
+  as charge over its box in the global placement. Measured when it was
+  built (2026-10-07, commit 8e133a08): the ESC mini's wirelength 433 at
+  1.0, 446 at 3.0, 446 without; no win within the seed noise there
+  (docs/todo.md, "Crowded boards"), and it did not move the dense boards
+  (docs/benchmarks.md, the placement gap). The global placement's
+  `routing_layers` and `track_pitch`, read only by it, go too.
 
 ## Gotchas
 

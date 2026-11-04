@@ -34,7 +34,7 @@ The environment variables are indexed in the hand-over
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 13 | - | 4 | 13 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 69 | - | 0 | 69 | - |
-| [Placer settings](#placer-settings) | 66 | 59 | 7 | 66 | 38 |
+| [Placer settings](#placer-settings) | 65 | 58 | 7 | 65 | 38 |
 | [Layout settings](#layout-settings) | 22 | 22 | 0 | 22 | 14 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 2 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 4 |
@@ -42,7 +42,7 @@ The environment variables are indexed in the hand-over
 | [Layout settings: race_probe](#layout-settings-race_probe) | 3 | 3 | 0 | 3 | 3 |
 | [Layout settings: move_descent](#layout-settings-move_descent) | 7 | 7 | 0 | 7 | 0 |
 | [Placer core](#placer-core) | 13 | - | 0 | 13 | - |
-| [Placer core: global](#placer-core-global) | 12 | - | 0 | 12 | - |
+| [Placer core: global](#placer-core-global) | 9 | - | 0 | 9 | - |
 | [Placer core: anneal](#placer-core-anneal) | 9 | - | 0 | 9 | - |
 
 ## Router settings
@@ -390,7 +390,6 @@ The placer config file of `place-kicad-board`, and the `placer` object of the la
 | `routing_room_most` | `f64` | `2.0` | - | The largest factor on a part's pin-count halo. |
 | `routing_room_all_parts` | `bool` | `true` | placer.md | Every part's pin-count halo is scaled by its demand, also where the level left it none (`core::room::RoutingRoom::all_parts`); false: only the halos the level kept are redistributed. |
 | `placement_seeds` | `usize` | `3` | placer.md | Placements tried with different seeds (in parallel); the best is kept: fewest illegal parts, least missed constraints, least wire. |
-| `routing_demand` | `f64` | `0.0` | - | Routing demand as charge in the global placement: every net's estimated wire area (half perimeter times the track pitch, over its signal layers) spreads over its bounding box and pushes parts apart where the wires will run, scaled by this (0: off). |
 | `orientation_search` | `bool` | `true` | placer.md | The placement's orientation search starts from a canonical pose (`core::orient`): every movable part that may turn at the first of its angle options (in a fixed order), so that the placement is the same whether the board holds 0 degrees (an import from a schematic) or the designer's angles (a stack). On; off: the parts start at the angles the board holds. |
 | `legality` | `KiCadPlacerLegality` | `"model"` | placer.md | What the levels whose spacing is the rules' least call legal: `"model"` (the default) or `"kicad"` (`KiCadPlacerLegality`). |
 | `net_weight` | `KiCadNetWeight` | `"steep"` | placer.md | How a net's weight in the wirelength falls with its pin count, the same weight in the global placement, the anneal, the legaliser, the refinement and the relation repair: `"steep"` (the default, `min(1, 3 / (pins - 1))`), `"sqrt"` (`min(1, 3 / sqrt(pins - 1))`), `"flat"` (every net 1) or `"rail"` (steep for signals, 1 for nets of nine pins or more and those named as a supply or ground); the nets designers keep short count three times on top (docs/placer.md, "The designer as teacher (2026-11-04)", "Net weights"). |
@@ -535,9 +534,6 @@ The `move_descent` object of the layout settings (an experiment, off when absent
 | `global.rotation_net_limit` | `usize` | `24` | - | Nets with more pins are ignored when choosing rotations. |
 | `global.frame_interval` | `usize` | `5` | - | Every this many iterations the poses are kept as a frame (for animations); 0 keeps none but the last. |
 | `global.seed` | `u64` | `1` | `seed` | Seed of the start's noise: the parts start near the fixed parts' pin centroid (or the board's centre), the fillers anywhere. |
-| `global.routing_demand` | `f64` | `0.0` | `routing_demand` | Routing demand as charge: every net's wire area (its half perimeter times `track_pitch`, over `routing_layers`) spreads over its bounding box and counts like body area there, so parts leave room where the wires will run. 0 turns it off; 1 counts the wires once. |
-| `global.routing_layers` | `f64` | `2.0` | the KiCad layer | Signal layers the routing demand spreads over (at least 1). |
-| `global.track_pitch` | `f64` | `0.65` | `track_pitch_mm` | Track pitch of the routing demand's wire area, in mm. |
 
 ## Placer core: anneal
 

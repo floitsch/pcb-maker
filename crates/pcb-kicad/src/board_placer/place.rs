@@ -427,9 +427,6 @@ pub fn place_kicad_board(
     }
     let mut placer_config = core::Config::new();
     placer_config.global.whitespace_fill = config.whitespace_fill;
-    placer_config.global.routing_demand = config.routing_demand;
-    placer_config.global.routing_layers = lowered.routing_layers;
-    placer_config.global.track_pitch = config.track_pitch_mm;
     placer_config.maximum_utilization = config.maximum_utilization;
     placer_config.global.seed = config.seed;
     placer_config.anneal.deadline = config.deadline;
