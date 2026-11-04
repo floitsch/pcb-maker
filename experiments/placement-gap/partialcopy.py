@@ -43,7 +43,10 @@ of the board written (`native.unconnected`), the placer's final
 wirelength (`wirelength_final_mm`), the placement digest, and whether
 every pinned part kept the designer's pose; per subset the share of the
 designer's advantage it recovers, (ours - subset) / (ours - designer)
-over the means of the two seeds of each end.
+over the means of the two seeds of each end. The summary over the
+boards counts those whose designer's first route is below both of our
+seeds (`counted`); `seed_spread` is our two seeds' difference as a share
+of the advantage. A layout without a legal placement gives its error.
 """
 
 import argparse
@@ -434,11 +437,15 @@ def run(arguments):
 
 
 def unit_result(out, board, name):
-    """The unit's numbers, or None before it finished."""
+    """The unit's numbers, or None before it finished; a layout that
+    stopped before its route (no legal placement) gives its error."""
     task = v7_tasks()[board]
     base = out / "runs" / f"{short(board)}-{name}"
     report = base / board / "layout/board-layout.json"
     if not report.exists():
+        verdict = base / board / "layout/verdict.json"
+        if verdict.exists():
+            return {"error": json.loads(verdict.read_text()).get("error", "no report"), "board_id": task["board_id"]}
         return None
     layout = json.loads(report.read_text())
     rows = json.loads((base / "results.json").read_text()) if (base / "results.json").exists() else []
@@ -481,8 +488,26 @@ def board_summary(out, board):
     ours, designer = end("ours"), end("designer")
     shares = {rule: recovery(ours, designer, (results.get(f"{rule}-s{SUBSET_SEED}") or {}).get("first_open"))
               for rule in RULES}
+    seeds = [(results.get(f"ours-s{seed}") or {}).get("first_open") for seed in END_SEEDS]
     return {"board": board, "movable": rules["movable"], "pinned": rules["pinned"], "aliases": rules["aliases"],
-            "results": results, "ours": ours, "designer": designer, "recovery": shares}
+            "results": results, "ours": ours, "designer": designer, "recovery": shares,
+            "counted": counted(seeds, designer), "seed_spread": spread(seeds, ours, designer)}
+
+
+def counted(ours_seeds, designer):
+    """Whether a board has a designer's advantage to recover: the
+    designer's first route below both of our seeds."""
+    values = [v for v in ours_seeds if v is not None]
+    return bool(values) and designer is not None and designer < min(values)
+
+
+def spread(ours_seeds, ours, designer):
+    """Our two seeds' difference as a share of the designer's advantage:
+    the recovery's noise at one seed is about half of it."""
+    values = [v for v in ours_seeds if v is not None]
+    if len(values) < 2 or ours is None or designer is None or ours == designer:
+        return None
+    return abs(values[0] - values[1]) / abs(ours - designer)
 
 
 def fmt(value, digits=0):
@@ -503,21 +528,29 @@ def tables(summaries):
             r = s["results"].get(name) or {}
             same = f" (= {s['aliases'][rule]})" if rule in s["aliases"] else ""
             share = s["recovery"].get(rule) if rule in RULES else None
-            out.append(f"| {name}{same} | {s['pinned'].get(rule, '-')} | {fmt(r.get('first_open'))} "
+            first = "no legal placement" if r.get("error") else fmt(r.get("first_open"))
+            out.append(f"| {name}{same} | {s['pinned'].get(rule, '-')} | {first} "
                        f"| {fmt(share, 2)} | {fmt(r.get('unconnected'))} | {fmt(r.get('wirelength_mm'))} "
                        f"| {r.get('pinned_kept', '-')}/{r.get('pinned', '-')} | {(r.get('digest') or '-')[:12]} |")
         out.append("")
     out.append("### Recovery, board by subset\n")
-    out.append("| board | ours (s1, s101) | designer (s1, s101) | " + " | ".join(RULES) + " |")
-    out.append("| --- | --- | --- | " + " | ".join("---:" for _ in RULES) + " |")
+    out.append("| board | ours (s1, s101) | designer (s1, s101) | seed spread | " + " | ".join(RULES) + " |")
+    out.append("| --- | --- | --- | ---: | " + " | ".join("---:" for _ in RULES) + " |")
     for s in summaries:
         def pair(rule):
             return ", ".join(fmt((s["results"].get(f"{rule}-s{seed}") or {}).get("first_open"))
                              for seed in END_SEEDS)
-        cells = [f"{fmt(s['recovery'][rule], 2)} ({s['pinned'].get(rule, '-')})" for rule in RULES]
-        out.append(f"| {short(s['board'])} | {pair('ours')} | {pair('designer')} | " + " | ".join(cells) + " |")
+        def cell(rule):
+            if (s["results"].get(f"{rule}-s{SUBSET_SEED}") or {}).get("error"):
+                return f"unplaced ({s['pinned'].get(rule, '-')})"
+            return f"{fmt(s['recovery'][rule], 2)} ({s['pinned'].get(rule, '-')})"
+        name = short(s["board"]) + ("" if s["counted"] else " (no advantage)" if s["ours"] is not None
+                                    else " (not run)")
+        out.append(f"| {name} | {pair('ours')} | {pair('designer')} | {fmt(s['seed_spread'], 2)} | "
+                   + " | ".join(cell(rule) for rule in RULES) + " |")
     out.append("")
-    out.append("### Over the boards\n")
+    summaries = [s for s in summaries if s["counted"]]
+    out.append(f"### Over the {len(summaries)} boards with an advantage to recover\n")
     out.append("| subset | boards | median recovered | mean recovered | median share of movable pinned |")
     out.append("| --- | ---: | ---: | ---: | ---: |")
     for rule in RULES:

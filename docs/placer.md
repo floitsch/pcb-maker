@@ -6604,6 +6604,182 @@ Scripts: `experiments/placement-gap/metrics.py` (and its tests),
 `stop_after_first_route`, one run.py per row at 2 threads, its slots
 from a file).
 
+## Which placement decisions matter (2026-11-04)
+
+The designer's placement leaves fewer first-route open terminals than
+ours on 14 of 15 large-gap boards ("The designer as teacher"), and the
+metrics there say how the placements differ, not which of the
+designer's decisions carry the difference. Copying part of the
+designer's placement answers that directly: pin a subset of the movable
+parts at the designer's poses, let the placer place the rest, route.
+
+**Method.** `experiments/placement-gap/partialcopy.py` (tests
+`test_partialcopy.py`, no KiCad needed). The movable parts are those
+run.py's unplace stacks: a pad on a net, not locked, not named by the
+task's `fixed`. A subset is pinned with `place` entries (the
+designer's footprint origin with `"origin": "absolute"`, its angle; the
+side needs no entry, since the placer never changes it), added to the
+task's own constraints (tasks v7). Each unit is the sweep's layout
+(budget scale 1, x1892, 2 threads, through run.py and the ledger, at
+most four in flight) with `stop_after_first_route`; output in
+`build/teach3-pc` (`tables.md` holds every unit's row). The subsets,
+1 to 3 each containing the one before:
+
+1. `connectors`: connectors and mechanical parts (metrics.py's
+   connector test, which also takes X references, the crystals; mounting
+   holes, fiducials);
+2. `anchors`: and the three largest ICs by pin count;
+3. `bus_ics`: and every IC with a pin on a net of nine pins or more that
+   no pour carries;
+4. `displaced`: the control, the tenth of the movable parts farthest
+   (origin to origin) from the designer's in our seed-1 placement;
+5. `nonpassive`: every movable part but the passives (R, C, L, FB, F
+   and their arrays).
+
+The ends: `ours` (nothing pinned) and `designer` (every movable part
+pinned), at placer seeds 1 and 101; the subsets at seed 1. A subset
+whose parts equal an earlier one's is that one's row. Every pinned part
+kept its pose in every unit (board-layout.json's `place` constraints,
+all satisfied). The share recovered is (ours − subset) / (ours −
+designer) over the ends' two-seed means: 0 is ours, 1 the designer's.
+
+**The boards.** The 2026-11-04 nightly's boards where the designer tier
+passes strictly and the sweep does not are ten: SmartSpin2k (a panel of
+copies, left out as in "The designer as teacher"), five with 1 or 2
+open (USB_Keypad, framework_mobo_lefthalf, MIDAS-MK1, MIDAS-MK1.1,
+capybully: a gap no share can resolve) and four with a gap: the
+laptop's power (14 open), ATAT1800 (22), poly_corne_split42_left (18),
+poly_kybd_split72_left (7). Run: those four, capybully as one of the
+small ones, and video, SNSP-CPU-01, OpenESC 4in1 and Glasgow revC3 from
+the diagnosis list. Nine boards, 78 first-route layouts (three subsets
+were aliases), 17.3 CPU hours, a median 550 s of wall a layout.
+
+First-route open terminals, each subset with its pinned parts and the
+share recovered:
+
+| board | movable | ours s1 / s101 | designer | connectors | anchors | bus_ics | displaced | nonpassive |
+| --- | ---: | --- | ---: | --- | --- | --- | --- | --- |
+| video | 167 | 304 / 247 | 1 | 356 (10): −0.29 | no legal placement (13) | 0 (26): 1.00 | 213 (17): 0.23 | 1 (44): 1.00 |
+| SNSP-CPU-01 | 372 | 107 / 65 | 23 | 140 (7): −0.86 | 79 (10): 0.11 | = anchors | 62 (37): 0.38 | 28 (168): 0.92 |
+| OpenESC 4in1 | 221 | 174 / 182 | 33 | 201 (1): −0.16 | 152 (4): 0.18 | 180 (7): −0.01 | 155 (22): 0.16 | 90 (47): 0.61 |
+| Glasgow revC3 | 235 | 133 / 136 | 68 | 119 (5): 0.23 | 163 (8): −0.43 | 133 (12): 0.02 | 120 (24): 0.22 | 82 (73): 0.79 |
+| split72_left | 452 | 30 / 35 | 1 | 8 (50): 0.78 | 5 (53): 0.87 | 2 (72): 0.97 | 38 (45): −0.17 | 0 (154): 1.03 |
+| split42_left | 268 | 17 / 27 | 2 | 19 (26): 0.15 | 0 (29): 1.10 | 1 (45): 1.05 | 24 (27): −0.10 | 0 (74): 1.10 |
+| laptop power | 174 | 15 / 17 | 5 | 22 (10): −0.55 | 17 (13): −0.09 | 12 (14): 0.36 | 9 (17): 0.64 | 11 (42): 0.45 |
+| ATAT1800 | 123 | 36 / 35 | 50 | = ours (0) | 51 (3) | 51 (10) | 41 (12) | 42 (72) |
+| capybully | 84 | 0 / 0 | 0 | 0 (2) | 0 (5) | = anchors | 0 (8) | 0 (54) |
+
+ATAT1800 and capybully have no advantage to recover: the designer's
+placement leaves more open terminals in our first route on ATAT1800 (50
+against 36 and 35; teach1 measured 50 against 47) and none on either
+side on capybully. Their gaps open after the first route. Over the
+other seven:
+
+| subset | boards | median recovered | mean recovered | median share of the movable parts pinned |
+| --- | ---: | ---: | ---: | ---: |
+| connectors | 7 | −0.16 | −0.10 | 0.06 |
+| anchors | 6 | 0.15 | 0.29 | 0.07 |
+| bus_ics | 7 | 0.36 | 0.50 | 0.08 |
+| displaced (control) | 7 | 0.22 | 0.19 | 0.10 |
+| nonpassive | 7 | 0.92 | 0.84 | 0.28 |
+
+The placer's final wirelength (mm) with the same pins:
+
+| board | ours s1 / s101 | designer | nonpassive | connectors | displaced |
+| --- | --- | ---: | ---: | ---: | ---: |
+| video | 27217 / 30645 | 22696 | 24027 | 40401 | 28797 |
+| SNSP-CPU-01 | 15692 / 15410 | 15307 | 15458 | 16857 | 15775 |
+| OpenESC 4in1 | 815 / 815 | 762 | 733 | 835 | 882 |
+| Glasgow revC3 | 2827 / 2945 | 2918 | 2872 | 2595 | 3063 |
+| split72_left | 8993 / 8998 | 9199 | 9192 | 7990 | 9894 |
+| split42_left | 5678 / 5830 | 4896 | 5797 | 6579 | 6122 |
+| laptop power | 1889 / 1780 | 1458 | 1566 | 1971 | 2007 |
+
+**The noise.** The designer's end is one placement at both seeds
+(every part pinned: one digest, one first route). Our two seeds differ
+by 0.05 to 0.21 of the advantage on five boards, by 0.50 on
+split42_left (17 and 27) and 0.67 on SNSP-CPU-01 (107 and 65): a
+single-seed share is good to about a tenth on the first five and a
+third on those two. On the laptop's power one open terminal is 0.09.
+
+**Ranked conclusion.**
+
+1. **Everything but the passives recovers most of the advantage**:
+   median 0.92 (0.45 on the laptop's power, 0.61 on the 4in1, 0.79 on
+   Glasgow, 0.92 to 1.10 on the other four), pinning a median 28 % of
+   the movable parts. The other 72 %, the passives placed by us around
+   the designer's other parts, cost about a tenth. It is the subset that
+   recovers most on six of seven boards (the laptop's power: the
+   control, 0.64 against 0.45, within its noise of one or two
+   terminals).
+2. **Where the gap is a bank, the bank is the gap, and a few pins
+   recover it.** On video the 26 `bus_ics` parts (the three 160-pin
+   QFPs, the TQFP, the eight SIM72 memory modules, four 74LS245 buffers
+   and the connectors and crystals) recover 1.00 with 16 % of the parts;
+   on the two keyboards the per-key FPC connectors are `connectors`
+   (36 of split72_left's 50, 20 of split42_left's 26) and with the RP2040
+   and the two 74HC595s (`anchors`) recover 0.87 and 1.10 with 12 % and
+   11 %. Three of seven boards are recovered by at most a sixth of their
+   parts, each a repeated arrangement on a bus.
+3. **Elsewhere a few anchors do not help, and alone they hurt.** The
+   connectors alone are worse than ours on four of seven boards (video
+   356 against 275, SNSP-CPU-01 140 against 86, the laptop's power 22
+   against 16; median −0.16): the designer's anchors with the rest
+   arranged by us route worse than our own consistent arrangement. With
+   the three largest ICs (median 0.15) no better on the 4in1, Glasgow,
+   SNSP-CPU-01 and the laptop's power; on video it leaves two of the
+   eight memory modules no legal spot (U17, U19: the QFPs where the
+   designer has them, our halos, the bank does not fit around them), a
+   first route never ran. On the 4in1 and Glasgow even every IC on a
+   bus recovers about nothing (−0.01, 0.02).
+4. **The displacement control does as well as the structured anchor
+   sets** off the banks (median 0.22 with a tenth of the parts; on the
+   4in1, Glasgow and SNSP-CPU-01 0.16 to 0.38 against −0.43 to 0.18),
+   and worse on the banks (−0.17 and −0.10 on the keyboards, 0.23 on
+   video): which parts we misplace most is not which parts matter, and
+   connectors and large ICs are not the structure that matters
+   off the banks either.
+5. **Our objective does not reject the designer's arrangement**: with
+   the non-passives pinned, our placer's final wirelength is lower than
+   on its own placements on video (24027 against 27217 and 30645 mm),
+   the 4in1 (733 against 815) and the laptop's power (1566 against
+   1889 and 1780), equal within 2 % on SNSP-CPU-01, Glasgow and
+   split42_left, 2 % higher on split72_left. The arrangement of the
+   active parts the designer chose is not one our wire term pays for;
+   our search does not reach it.
+
+By the rule this experiment was set up with: connectors and large ICs
+do not recover the advantage on most boards, so it is not the global
+arrangement of a few anchors, except where the anchors are a bank (video,
+the keyboards); the displacement control matches the anchor subsets off
+the banks, so the structure hypothesis for small anchor sets is weak;
+everything except the passives recovers it on six of seven boards. So
+the lever is the arrangement of the active parts as a whole (ICs,
+transistors, diodes, LEDs, crystals: about a quarter of the parts), with
+banks of repeated parts as its sharpest case; not the fine arrangement
+of the passives, which we place well enough around a good skeleton. In
+the terms set up in advance this is "the fine arrangement" only in the
+sense that it takes many parts, not a few; the passives' local terms are
+not where the advantage is.
+
+**The next experiment: a race over skeletons.** Place the non-passive
+parts alone first (the passives left out, each net kept between its
+non-passive pins), from several seeds and orientation starts; place the
+passives around each skeleton with the skeleton held; keep the one
+with the lowest objective (or the race's probe) and route it. Point 5
+says the objective can tell a better skeleton when it sees one; points
+1 and 2 say the skeleton is where the gap is; point 3 says an anchored
+partial skeleton is not enough. It is a placer option (not this
+package), measured under the ladder: stage 0 first on video, the 4in1
+and Glasgow (the largest advantages with quiet seeds), the skeleton's
+wirelength and placer objective against this table's `nonpassive`
+rows, then their first routes (about 9 first-route layouts, 2 CPU
+hours); then stage 1, the five seed pairs on the eleven dense boards
+with `stop_after_first_route`, about 48 CPU hours.
+
+Script: `experiments/placement-gap/partialcopy.py` (`prepare`, `run`,
+`table`; the rules in its docstring), tests `test_partialcopy.py`.
+
 ## Footprints without a courtyard, and their slots (2026-11-04)
 
 Fresh agent trial 4 (docs/reviews/2026-11-04-fresh-agent-trial-4.md,

@@ -151,6 +151,16 @@ class Recovery(unittest.TestCase):
         self.assertIsNone(partialcopy.recovery(20, 20, 30))
         self.assertIsNone(partialcopy.recovery(100, None, 30))
 
+    def test_a_board_counts_where_the_designer_beats_both_seeds(self):
+        self.assertTrue(partialcopy.counted([30, 35], 1))
+        self.assertFalse(partialcopy.counted([36, 35], 50))
+        self.assertFalse(partialcopy.counted([0, 0], 0))
+        self.assertFalse(partialcopy.counted([None, None], 1))
+
+    def test_the_seed_spread_is_a_share_of_the_advantage(self):
+        self.assertAlmostEqual(partialcopy.spread([107, 65], 86, 23), 42 / 63)
+        self.assertIsNone(partialcopy.spread([0, 0], 0, 0))
+
     def test_unit_names_put_the_ends_first(self):
         names = partialcopy.unit_names("a__b")
         self.assertEqual(names[:4], ["ours-s1", "ours-s101", "designer-s1", "designer-s101"])

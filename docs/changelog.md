@@ -11,6 +11,42 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-11-04 (which placement decisions matter: the designer's placement copied in part)
+
+Branch placement-partial-copy (a measurement package: no placer or
+router change); docs/placer.md, "Which placement decisions matter
+(2026-11-04)", has the tables.
+
+- **The experiment**: `experiments/placement-gap/partialcopy.py` pins a
+  subset of the movable parts at the designer's poses (`place` entries
+  with x, y, angle, `"origin": "absolute"`, added to the task's
+  constraints), lets the placer place the rest and routes with
+  `stop_after_first_route` at the sweep's budget (x1892). Subsets:
+  connectors and mechanical parts; and the three largest ICs; and every
+  IC on a net of nine pins or more; the tenth of the parts we put
+  farthest from the designer's (a control); everything but the
+  passives. The ends at seeds 1 and 101. Nine boards (the 2026-11-04
+  nightly's designer-pass and sweep-fail boards with a gap, capybully,
+  and video, SNSP-CPU-01, OpenESC 4in1 and Glasgow), 78 first-route
+  layouts, 17.3 CPU hours; tests `test_partialcopy.py`.
+- **Measured**: over the seven boards where the designer's placement
+  routes better at the first route, everything but the passives
+  recovers a median 0.92 of the advantage (0.45 to 1.10) with 28 % of
+  the parts pinned; connectors alone −0.16 (worse than ours on four),
+  with the three largest ICs 0.15 (on video no legal placement), with
+  the bus ICs 0.36 (1.00 on video, 0.97 and 1.05 on the keyboards, about
+  0 on the 4in1, Glasgow and SNSP-CPU-01), the displacement control
+  0.22. With the designer's non-passives pinned our placer's wire is
+  lower or within 2 % of its own on six of seven boards.
+- **Reading**: the advantage is the arrangement of the active parts as a
+  whole (banks of repeated parts on a bus its sharpest case: a sixth of
+  the parts recovers video and the keyboards), not a few anchors and not
+  the passives; our objective accepts the designer's arrangement, our
+  search does not reach it. Next: a race over skeletons (the
+  non-passives placed alone from several starts, the passives around
+  each), stage 0 on video, the 4in1 and Glasgow (about 2 CPU hours),
+  then stage 1 (about 48).
+
 ## Committed on 2026-11-04 (the courtless rule's stage-1 screen)
 
 Branch legality-screen, docs only (docs/placer.md, "The stage-1 screen
