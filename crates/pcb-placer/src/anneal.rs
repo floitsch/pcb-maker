@@ -107,6 +107,8 @@ struct PartBoxes {
     far_courtyard: Boxes,
     hollow: Boxes,
     courtyards: Boxes,
+    courtless: Boxes,
+    slots: Boxes,
     /// The box around every list above and the body (centre and half
     /// extent) at the pose: [min x, min y, max x, max y] (`far_work`).
     extent: [f64; 4],
@@ -514,6 +516,34 @@ impl State<'_> {
             *total += least;
             return;
         }
+        // A footprint's own slots meet bodies and copper on either side,
+        // and cutouts (`legal::slots_meet`).
+        if !component.slots.is_empty() || !other_component.slots.is_empty() {
+            self.fresh_boxes(cache, other);
+            *total += self.slot_overlap(cache, index, other, booked, area)
+                + self.slot_overlap(cache, other, index, booked, area);
+        }
+        // Two parts without courtyards keep the bodies a courtyard would
+        // give them apart (`legal::courtless_overlap`).
+        if !component.courtless.is_empty()
+            && !other_component.courtless.is_empty()
+            && side.collides(other_component.side)
+        {
+            self.fresh_boxes(cache, other);
+            let (mine, theirs) = (&cache[index].courtless, &cache[other].courtless);
+            booked(mine.len());
+            booked(theirs.len());
+            for ((center, half), own) in mine.iter().zip(&component.courtless) {
+                for ((other_center, other_half), their) in
+                    theirs.iter().zip(&other_component.courtless)
+                {
+                    if crate::problem::courtless_under(own, their) {
+                        continue;
+                    }
+                    *total += area((*center, *half), (*other_center, *other_half));
+                }
+            }
+        }
         if side.collides(other_component.side) {
             if component.copper_only || other_component.copper_only {
                 // A cutout keeps only copper away.
@@ -664,6 +694,55 @@ impl State<'_> {
     /// the two parts alone, not from where they are. Not for parts on
     /// opposite sides with `legal_far_side`.
     fn far_work(&self, index: usize, other: usize) -> u64 {
+        let base = self.far_work_base(index, other);
+        if self.flags.lies_on(self.problem, index, other)
+            || self.problem.constraints.frames.pass(index, other).is_some()
+        {
+            return base;
+        }
+        // The slots' and the courtless bodies' comparisons (`pair`).
+        let list = |boxes: usize| 8 + 2 * boxes as u64;
+        let components = &self.problem.components;
+        let slots = |part: usize, against: usize| -> u64 {
+            let (part, against) = (&components[part], &components[against]);
+            if part.slots.is_empty() || against.side == crate::problem::Side::Neither {
+                return 0;
+            }
+            let solid = if against.copper_only || against.hollow.is_empty() {
+                1
+            } else {
+                against.hollow.len() + against.courtless.len()
+            };
+            let copper = if against.copper_only {
+                0
+            } else {
+                against.pads.len() + against.copper_graphics.len()
+            };
+            list(part.slots.len()) + (part.slots.len() * (solid + copper)) as u64
+        };
+        let mut work = base;
+        let (mine, theirs) = (&components[index], &components[other]);
+        if !mine.slots.is_empty() || !theirs.slots.is_empty() {
+            work += slots(index, other) + slots(other, index);
+        }
+        if !mine.courtless.is_empty()
+            && !theirs.courtless.is_empty()
+            && mine.side.collides(theirs.side)
+        {
+            work += list(mine.courtless.len()) + list(theirs.courtless.len());
+            for own in &mine.courtless {
+                for their in &theirs.courtless {
+                    if !crate::problem::courtless_under(own, their) {
+                        work += 1;
+                    }
+                }
+            }
+        }
+        work
+    }
+
+    /// `far_work` without the slots and the courtless bodies.
+    fn far_work_base(&self, index: usize, other: usize) -> u64 {
         let component = &self.problem.components[index];
         let other_component = &self.problem.components[other];
         let list = |boxes: usize| 8 + 2 * boxes as u64;
@@ -865,6 +944,48 @@ impl State<'_> {
         total
     }
 
+    /// How much part `part`'s own slots overlap part `other` (both boxes
+    /// fresh in `cache`): its body without the halo (a hollow part's
+    /// blocking boxes and courtless bodies), its copper grown by the edge
+    /// margin, a cutout's box.
+    fn slot_overlap(
+        &self,
+        cache: &[PartBoxes],
+        part: usize,
+        other: usize,
+        booked: &impl Fn(usize),
+        area: &impl Fn((Point, Point), (Point, Point)) -> f64,
+    ) -> f64 {
+        let slots = &cache[part].slots;
+        let component = &self.problem.components[other];
+        if slots.is_empty() || component.side == crate::problem::Side::Neither {
+            return 0.0;
+        }
+        let pose = self.poses[other];
+        let boxes = &cache[other];
+        let mut total = 0.0;
+        booked(slots.len());
+        for slot in slots {
+            if component.copper_only || component.hollow.is_empty() {
+                total += area(
+                    *slot,
+                    (component.center(pose), component.half_extent(pose.angle)),
+                );
+            } else {
+                for b in boxes.hollow.iter().chain(&boxes.courtless) {
+                    total += area(*slot, *b);
+                }
+            }
+            if !component.copper_only {
+                let margin = self.problem.edge_margin;
+                for (center, half) in boxes.pads.iter().chain(&boxes.graphics) {
+                    total += area(*slot, (*center, [half[0] + margin, half[1] + margin]));
+                }
+            }
+        }
+        total
+    }
+
     /// Brings part `part`'s boxes in `cache` to its pose of now.
     fn fresh_boxes(&self, cache: &mut [PartBoxes], part: usize) {
         let pose = self.poses[part];
@@ -880,6 +1001,8 @@ impl State<'_> {
         component.boxes_into(&component.far_courtyard, pose, &mut entry.far_courtyard);
         component.boxes_into(&component.hollow, pose, &mut entry.hollow);
         component.boxes_into(&component.courtyards, pose, &mut entry.courtyards);
+        component.boxes_into(&component.courtless, pose, &mut entry.courtless);
+        component.boxes_into(&component.slots, pose, &mut entry.slots);
         let body = (component.center(pose), component.half_extent(pose.angle));
         let mut extent = extent_with(
             [
@@ -897,6 +1020,8 @@ impl State<'_> {
             &entry.far_courtyard,
             &entry.hollow,
             &entry.courtyards,
+            &entry.courtless,
+            &entry.slots,
         ] {
             for &one in boxes.iter() {
                 extent = extent_with(extent, one);
@@ -1154,6 +1279,8 @@ fn reach(component: &crate::problem::Component, margin: f64) -> f64 {
         &component.far_courtyard,
         &component.hollow,
         &component.courtyards,
+        &component.courtless,
+        &component.slots,
     ] {
         for local in boxes.iter() {
             let center = [

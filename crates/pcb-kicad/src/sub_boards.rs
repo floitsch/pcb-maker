@@ -115,6 +115,12 @@ pub(crate) const TAB_MARGIN_MM: f64 = 1.5;
 /// pieces parts lie on (the ULK panels' frames: about a sixth).
 const MOST_FRAME_SHARE: f64 = 0.5;
 
+/// A piece spanning this share of the panel along a side, holding at most
+/// `RAIL_AREA_SHARE` of its area, is a rail or frame by the outline alone
+/// (`Pieces::outline_frames`).
+const RAIL_SPAN: f64 = 0.9;
+const RAIL_AREA_SHARE: f64 = 0.2;
+
 /// No piece: the cell's label where the opened area does not reach.
 const NONE: u16 = u16::MAX;
 
@@ -1066,6 +1072,53 @@ impl Pieces {
         frames
     }
 
+    /// The pieces that look like a frame or rails by the outline alone,
+    /// where no part says which pieces hold boards (a netlist import's
+    /// stack): a piece whose box spans at least `RAIL_SPAN` of the
+    /// panel's along one side and that holds at most `RAIL_AREA_SHARE`
+    /// of its area (Goga64 ULK's top and bottom rails: 0.07 and 0.17 of
+    /// the area, the full width; its halves 0.38 each). Reported, not
+    /// kept off: the placer keeps parts off frames only where parts tell
+    /// them (`frames`).
+    pub(crate) fn outline_frames(&self) -> Vec<bool> {
+        let none = vec![false; self.count()];
+        if self.count() < 2 || self.boxed() {
+            return none;
+        }
+        let all = self.boxes.iter().fold(
+            [
+                f64::INFINITY,
+                f64::INFINITY,
+                f64::NEG_INFINITY,
+                f64::NEG_INFINITY,
+            ],
+            |a, b| {
+                [
+                    a[0].min(b[0]),
+                    a[1].min(b[1]),
+                    a[2].max(b[2]),
+                    a[3].max(b[3]),
+                ]
+            },
+        );
+        let total: f64 = self.areas.iter().sum();
+        let frames: Vec<bool> = self
+            .boxes
+            .iter()
+            .zip(&self.areas)
+            .map(|(b, area)| {
+                let spans = (b[2] - b[0]) >= RAIL_SPAN * (all[2] - all[0])
+                    || (b[3] - b[1]) >= RAIL_SPAN * (all[3] - all[1]);
+                spans && *area <= RAIL_AREA_SHARE * total
+            })
+            .collect();
+        // Some piece must be a board.
+        if frames.iter().all(|frame| *frame) {
+            return none;
+        }
+        frames
+    }
+
     /// Whether two pieces' boxes overlap (an L-shaped board beside
     /// another): a pour cut to one box would reach into the other.
     pub(crate) fn boxes_overlap(&self) -> bool {
@@ -1943,6 +1996,114 @@ pub fn describe_sub_boards(board: &Path) -> Result<serde_json::Value, String> {
     }))
 }
 
+/// The outline's pieces as `describe-kicad-board` reports them
+/// (`sub_boards`), None for a board of one piece: the pieces, what cut
+/// them, the tabs, the parts with pins on each by their places (a part
+/// sharing its origin with another, a stack, counts on none:
+/// `parts_assigned` 0 for a netlist import's stack), the frames (pieces
+/// no part lies on, or where none does, by their shape:
+/// `Pieces::outline_frames`) and the boards (the other pieces).
+pub(crate) fn describe_pieces(pcb: &Expr) -> Result<Option<KiCadDescribedPieces>, String> {
+    let loops = outline::board_loops(pcb)?;
+    let Some(pieces) = Pieces::of_loops(&loops.piece_loops, &loops.cutouts, &Cuts::of_board(pcb))
+    else {
+        return Ok(None);
+    };
+    let round = |b: &[f64; 4]| b.map(|v| (v * 1000.0).round() / 1000.0);
+    let codes = crate::kicad_nets::net_codes(pcb);
+    // The parts with pins by their places; a stack (parts sharing one
+    // origin, as an import or a task leaves them) tells no board.
+    let places: Vec<[f64; 2]> = pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+        .filter(|footprint| {
+            footprint
+                .children()
+                .iter()
+                .filter(|child| child.head() == Some("pad"))
+                .any(|pad| crate::kicad_nets::item_net(pad, &codes).is_some())
+        })
+        .filter_map(|footprint| form_at(footprint).ok().map(|at| [at[0], at[1]]))
+        .collect();
+    let key = |at: &[f64; 2]| {
+        (
+            (at[0] * 100.0).round() as i64,
+            (at[1] * 100.0).round() as i64,
+        )
+    };
+    let mut seen: BTreeMap<(i64, i64), usize> = BTreeMap::new();
+    for at in &places {
+        *seen.entry(key(at)).or_default() += 1;
+    }
+    let mut parts = vec![0usize; pieces.count()];
+    for at in places.iter().filter(|at| seen[&key(at)] == 1) {
+        if let Some(piece) = pieces.piece_at(*at) {
+            parts[piece] += 1;
+        }
+    }
+    let occupied: BTreeSet<usize> = (0..pieces.count())
+        .filter(|piece| parts[*piece] > 0)
+        .collect();
+    let frames = if occupied.is_empty() {
+        pieces.outline_frames()
+    } else {
+        pieces.frames(&occupied)
+    };
+    Ok(Some(KiCadDescribedPieces {
+        pieces: pieces.count(),
+        cut_by: pieces.cut_by.iter().map(|kind| kind.to_string()).collect(),
+        tabs: pieces.tabs.iter().map(round).collect(),
+        frames: pieces
+            .boxes
+            .iter()
+            .zip(&frames)
+            .filter(|(_, frame)| **frame)
+            .map(|(b, _)| round(b))
+            .collect(),
+        frames_by: if occupied.is_empty() {
+            "shape"
+        } else {
+            "parts"
+        },
+        parts_assigned: parts.iter().sum(),
+        sub_boards: pieces
+            .boxes
+            .iter()
+            .zip(&frames)
+            .zip(&parts)
+            .filter(|((_, frame), _)| !**frame)
+            .map(|((b, _), parts)| KiCadSubBoard {
+                region: round(b),
+                parts: *parts,
+                movable: 0,
+            })
+            .collect(),
+    }))
+}
+
+/// `describe-kicad-board`'s `sub_boards` (`describe_pieces`).
+#[derive(Clone, Debug, Serialize)]
+pub struct KiCadDescribedPieces {
+    /// The outline's pieces without its tabs, and what cut them
+    /// (`narrow outline`, `mouse bites`, `V-cuts`).
+    pub pieces: usize,
+    pub cut_by: Vec<String>,
+    pub tabs: Vec<[f64; 4]>,
+    /// The pieces that are a frame or rails: by the parts (no part with
+    /// pins lies on them) or, where no part lies on any piece (a netlist
+    /// import's stack), by their shape (`frames_by`: `parts`, `shape`).
+    pub frames: Vec<[f64; 4]>,
+    pub frames_by: &'static str,
+    /// Parts with pins whose origin lies on a piece: 0 where nothing says
+    /// which parts go on which board (give `--reference` or a region per
+    /// board).
+    pub parts_assigned: usize,
+    /// The other pieces, the boards: each one's box (a region for its
+    /// parts) and the parts on it (`movable` is not judged here: 0).
+    pub sub_boards: Vec<KiCadSubBoard>,
+}
+
 /// The sub-boards the placer found (`detect_for_placer`).
 #[derive(Clone, Debug)]
 pub(crate) struct PlacerSubBoards {
@@ -2467,6 +2628,8 @@ pub(crate) fn keep_off_frames(
             tight_hollow: Vec::new(),
             hole_rings: Vec::new(),
             copper_graphics: Vec::new(),
+            courtless: Vec::new(),
+            slots: Vec::new(),
         });
         problem.poses.push(pcb_placer::Pose {
             position: [(tab[0] + tab[2]) / 2.0, (tab[1] + tab[3]) / 2.0],
@@ -2674,6 +2837,19 @@ pub struct KiCadSubBoardsReport {
     /// Each sub-board: its region and parts (with pins), of them the
     /// movable ones.
     pub sub_boards: Vec<KiCadSubBoard>,
+    /// The outline's pieces without its tabs (boards and frames alike).
+    #[serde(default)]
+    pub pieces: usize,
+    /// The movable parts with pins, and the parts with pins the evidence
+    /// put on a piece: 0 where no part lies on any (a netlist import's
+    /// stack without `--reference`): then `sub_boards` lists every piece
+    /// but the frames, with no parts, and `frames` are the pieces that
+    /// look like a frame or rails by the outline alone; nothing is held
+    /// or kept off.
+    #[serde(default)]
+    pub movable: usize,
+    #[serde(default)]
+    pub parts_assigned: usize,
 }
 
 fn is_zero(count: &usize) -> bool {
@@ -2718,7 +2894,17 @@ impl KiCadSubBoardsReport {
             }
         }
         sub_boards.retain(|board| board.parts > 0);
+        let (movable, _) = sub.unassigned(problem);
+        let parts_assigned = sub
+            .part_piece
+            .iter()
+            .enumerate()
+            .filter(|(part, piece)| piece.is_some() && !problem.components[*part].pins.is_empty())
+            .count();
         KiCadSubBoardsReport {
+            pieces: sub.pieces.count(),
+            movable,
+            parts_assigned,
             count: sub.count(problem),
             from: sub.from.iter().map(|kind| kind.to_string()).collect(),
             split_nets: sub.split.len(),
@@ -2758,6 +2944,85 @@ impl KiCadSubBoardsReport {
             keepout_margin_mm: applied.margin_mm,
             sub_boards,
         }
+    }
+}
+
+impl KiCadSubBoardsReport {
+    /// The pieces and frames found from the outline alone, where no part
+    /// lies on any piece (`parts_assigned` 0: a netlist import's stack
+    /// without `--reference`): the pieces but the frames as sub-boards
+    /// without parts, the frames by their shape (`Pieces::outline_frames`),
+    /// the tabs, every movable part unassigned. The placement is as
+    /// without it (nothing held, nothing kept off).
+    pub(crate) fn of_outline(
+        sub: &PlacerSubBoards,
+        problem: &pcb_placer::Problem,
+        names: &[String],
+    ) -> KiCadSubBoardsReport {
+        let round = |b: &[f64; 4]| b.map(|v| (v * 1000.0).round() / 1000.0);
+        let (movable, unassigned) = sub.unassigned(problem);
+        let frames = sub.pieces.outline_frames();
+        KiCadSubBoardsReport {
+            count: 0,
+            from: Vec::new(),
+            split_nets: 0,
+            unassigned: unassigned.len(),
+            unassigned_parts: unassigned
+                .iter()
+                .take(20)
+                .map(|part| names.get(*part).cloned().unwrap_or_default())
+                .collect(),
+            conflicts: 0,
+            held: false,
+            tabs: sub.pieces.tabs.iter().map(round).collect(),
+            cut_by: sub
+                .pieces
+                .cut_by
+                .iter()
+                .map(|kind| kind.to_string())
+                .collect(),
+            frames: sub
+                .pieces
+                .boxes
+                .iter()
+                .zip(&frames)
+                .filter(|(_, frame)| **frame)
+                .map(|(b, _)| round(b))
+                .collect(),
+            kept_clear_mm2: 0.0,
+            overhang_connectors: 0,
+            overhang_designer: 0,
+            copies: false,
+            keepout_margin_mm: None,
+            sub_boards: sub
+                .pieces
+                .boxes
+                .iter()
+                .zip(&frames)
+                .filter(|(_, frame)| !**frame)
+                .map(|(b, _)| KiCadSubBoard {
+                    region: round(b),
+                    parts: 0,
+                    movable: 0,
+                })
+                .collect(),
+            pieces: sub.pieces.count(),
+            movable,
+            parts_assigned: 0,
+        }
+    }
+
+    /// Whether most parts' boards are unknown on an outline of several
+    /// pieces: more than a tenth of the movable parts have none, and the
+    /// parts tell fewer than two boards (a netlist import's stack without
+    /// `--reference`). `boards_mixed` covers two boards or more.
+    pub fn boards_unknown(&self) -> bool {
+        self.pieces >= 2
+            && self.count < 2
+            && !self.copies
+            && !self.held
+            && self.unassigned as f64
+                > crate::sub_boards::MOST_UNASSIGNED_SHARE * self.movable as f64
     }
 }
 
@@ -3131,6 +3396,127 @@ mod tests {
         format!(
             r#"(footprint "Panelization:mouse-bites" (at {x} 22.5) (property "Reference" "MB") {pads})"#
         )
+    }
+
+    #[test]
+    fn sub_boards_are_reported_from_the_outline_alone_with_no_part_on_any_piece() {
+        // The panel's two boards with their four parts stacked off the
+        // board (a netlist import), no reference: nothing tells which part
+        // goes where, and the report says the pieces anyway.
+        let board = |places: [[f64; 2]; 4]| {
+            let parts: String = ["R1", "R2", "R3", "R4"]
+                .iter()
+                .zip(places)
+                .map(|(name, at)| {
+                    format!(
+                        r#"(footprint "R" (at {} {}) (uuid "uuid-{name}") (property "Reference" "{name}") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "GND")) (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net "SIG-{name}")))"#,
+                        at[0], at[1]
+                    )
+                })
+                .collect();
+            two_pieces(1.5, 20.0, &parts)
+        };
+        let pcb = board([[-30.0, -30.0]; 4]);
+        let config = crate::board_placer::KiCadBoardPlacerConfig::default();
+        let mut lowered = crate::board_placer::lower_placement(&pcb, &config).unwrap();
+        // Off the board they are held by default; `move_all` frees them.
+        for component in &mut lowered.problem.components[..4] {
+            component.fixed = false;
+        }
+        let sub = detect_for_placer(&pcb, &lowered.problem, 4, None)
+            .unwrap()
+            .expect("pieces");
+        assert_eq!(sub.count(&lowered.problem), 0);
+        assert!(!sub.has_frames());
+        let report = KiCadSubBoardsReport::of_outline(&sub, &lowered.problem, &lowered.references);
+        assert_eq!(
+            (
+                report.count,
+                report.pieces,
+                report.parts_assigned,
+                report.unassigned
+            ),
+            (0, 2, 0, 4)
+        );
+        assert!(!report.cut_by.is_empty());
+        assert!(!report.tabs.is_empty());
+        assert_eq!(report.sub_boards.len(), 2);
+        assert!(report.sub_boards.iter().all(|board| board.parts == 0));
+        assert!(!report.held && report.kept_clear_mm2 == 0.0);
+        assert!(report.boards_unknown());
+        // describe-kicad-board says the same of the board.
+        let described = describe_pieces(&pcb).unwrap().expect("pieces");
+        assert_eq!(
+            (
+                described.pieces,
+                described.parts_assigned,
+                described.frames_by
+            ),
+            (2, 0, "shape")
+        );
+        assert_eq!(described.sub_boards.len(), 2);
+        // With a reference (the parts at their places): as before, two
+        // sub-boards from it, every part on one, no lead action.
+        let reference = board([[3.0, 5.0], [13.0, 5.0], [3.0, 35.0], [13.0, 35.0]]);
+        let sub = detect_for_placer(&pcb, &lowered.problem, 4, Some(&reference))
+            .unwrap()
+            .expect("pieces");
+        assert_eq!(sub.count(&lowered.problem), 2);
+        let mut placed = crate::board_placer::lower_placement(&pcb, &config).unwrap();
+        for component in &mut placed.problem.components[..4] {
+            component.fixed = false;
+        }
+        let applied = apply_to_placer(
+            &sub,
+            &mut placed.problem,
+            &mut placed.references,
+            &mut placed.source_at,
+            &mut placed.poured,
+        );
+        let report = KiCadSubBoardsReport::of(
+            &sub,
+            &placed.problem,
+            &placed.references,
+            &lowered.references,
+            &applied,
+        );
+        assert_eq!(
+            (report.count, report.unassigned, report.parts_assigned),
+            (2, 0, 4)
+        );
+        assert_eq!(report.from, vec!["reference board"]);
+        assert!(!report.boards_unknown());
+    }
+
+    #[test]
+    fn rails_are_frames_by_their_shape_alone() {
+        // Two boards between a top and a bottom rail spanning the panel.
+        let pieces = Pieces {
+            origin: [0.0, 0.0],
+            cell: 1.0,
+            columns: 1,
+            rows: 1,
+            labels: vec![0],
+            inside: vec![true],
+            boxes: vec![
+                [0.0, 0.0, 100.0, 8.0],
+                [0.0, 10.0, 48.0, 60.0],
+                [52.0, 10.0, 100.0, 60.0],
+                [0.0, 62.0, 100.0, 70.0],
+            ],
+            tabs: Vec::new(),
+            areas: vec![800.0, 2400.0, 2400.0, 800.0],
+            cut_by: vec!["mouse bites"],
+        };
+        assert_eq!(pieces.outline_frames(), vec![true, false, false, true]);
+        // Two boards side by side, one spanning the panel's height: no
+        // frame (each holds half the area).
+        let pieces = Pieces {
+            boxes: vec![[0.0, 0.0, 48.0, 60.0], [52.0, 0.0, 100.0, 60.0]],
+            areas: vec![2880.0, 2880.0],
+            ..pieces
+        };
+        assert_eq!(pieces.outline_frames(), vec![false, false]);
     }
 
     #[test]

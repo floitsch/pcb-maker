@@ -2089,6 +2089,10 @@ fn apply_rows(
         carried.far_copper.clear();
         carried.far_courtyard.clear();
         carried.pads.clear();
+        // Members without courtyards keep the bodies a courtyard would
+        // give them, and every member's own slots go with the row.
+        carried.courtless.clear();
+        carried.slots.clear();
         for (place, member) in members.iter().enumerate() {
             if leaders.contains_key(member) || leaders.values().any(|leader| leader == member) {
                 return Err(format!("{} is in two rows", references[*member]));
@@ -2137,6 +2141,8 @@ fn apply_rows(
                 .far_courtyard
                 .extend(shift(&component.far_courtyard));
             carried.pads.extend(shift(&pad_boxes[*member]));
+            carried.courtless.extend(shift(&component.courtless));
+            carried.slots.extend(shift(&component.slots));
             if shaped {
                 if component.hollow.is_empty() {
                     let half = [component.body_size[0] / 2.0, component.body_size[1] / 2.0];
@@ -2197,6 +2203,8 @@ fn apply_rows(
             component.far_copper.clear();
             component.far_courtyard.clear();
             component.pads.clear();
+            component.courtless.clear();
+            component.slots.clear();
             component.halo = 0.0;
             component.body_size = [0.01, 0.01];
         }
@@ -3031,6 +3039,8 @@ mod tests {
             tight_hollow: Vec::new(),
             hole_rings: Vec::new(),
             copper_graphics: Vec::new(),
+            courtless: Vec::new(),
+            slots: Vec::new(),
         };
         let problem = core::Problem {
             outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],

@@ -635,6 +635,13 @@ fn clear_of_one(
         };
         return frame_clear(problem, part, part_pose, keepout, keepout_pose, pass, work);
     }
+    // A footprint's own slots go through the board: they meet bodies and
+    // copper on either side, and cutouts.
+    if (!problem.components[index].slots.is_empty() || !problem.components[other].slots.is_empty())
+        && slots_meet(problem, index, pose, other, poses[other], work, facts)
+    {
+        return false;
+    }
     let other_side = problem.components[other].side;
     if side.collides(other_side) {
         let (mine, theirs) = (&problem.components[index], &problem.components[other]);
@@ -696,6 +703,9 @@ fn clear_of_one(
                 )
             }
         } {
+            return false;
+        }
+        if courtless_overlap(problem, index, pose, other, poses[other], work) {
             return false;
         }
         if !hollow
@@ -825,6 +835,8 @@ impl Apart {
                     .chain(&component.hollow)
                     .chain(&component.courtyards)
                     .chain(&component.hole_rings)
+                    .chain(&component.courtless)
+                    .chain(&component.slots)
                     .fold(None, |union: Option<[f64; 4]>, b| {
                         Some(match union {
                             None => *b,
@@ -1220,6 +1232,8 @@ impl Reach {
                     .chain(&component.tight_hollow)
                     .chain(&component.hole_rings)
                     .chain(&component.copper_graphics)
+                    .chain(&component.courtless)
+                    .chain(&component.slots)
                     .chain(component.tight.as_ref())
                     .map(corner)
                     .fold(body, f64::max)
@@ -1438,8 +1452,15 @@ pub fn conflict_kind(
     if problem.constraints.frames.pass(index, other).is_some() {
         return Some("over a panel's frame or tab");
     }
+    if slots_meet(problem, index, pose, other, poses[other], &mut work, None) {
+        return Some("a slot of one meets the other");
+    }
     Some(if mine.side.collides(theirs.side) {
-        if mine.copper_only || theirs.copper_only {
+        if !(mine.copper_only || theirs.copper_only)
+            && courtless_overlap(problem, index, pose, other, poses[other], &mut work)
+        {
+            "bodies overlap (no courtyard)"
+        } else if mine.copper_only || theirs.copper_only {
             "pads in a cutout or pad keepout"
         } else if pads_in_hole_rings(problem, index, pose, other, poses[other], &mut work) {
             "pads in a hole's clearance"
@@ -1650,6 +1671,116 @@ fn copper_meets_cutout(
     let hole = rect(problem, hole, pose_hole);
     *work += pad_count as u64;
     pads.into_iter().any(|pad| overlaps(pad, hole, 0.0))
+}
+
+/// Whether two parts without courtyards meet by the bodies a courtyard
+/// would give them (`Component::courtless`): as KiCad's courtyards, their
+/// boxes may touch, not overlap (the spacing between parts stays their
+/// copper's, `hollow`). A part with a courtyard has none, and is judged
+/// against them as before.
+fn courtless_overlap(
+    problem: &Problem,
+    a: usize,
+    pose_a: Pose,
+    b: usize,
+    pose_b: Pose,
+    work: &mut u64,
+) -> bool {
+    let (mine, theirs) = (&problem.components[a], &problem.components[b]);
+    if mine.courtless.is_empty() || theirs.courtless.is_empty() {
+        return false;
+    }
+    *work += list_work(mine.courtless.len())
+        + list_work(theirs.courtless.len())
+        + (mine.courtless.len() * theirs.courtless.len()) as u64;
+    with_rects(turned(&theirs.courtless, pose_b, 0.0), |turned_theirs| {
+        turned(&mine.courtless, pose_a, 0.0)
+            .zip(&mine.courtless)
+            .any(|(rect, own)| {
+                turned_theirs
+                    .iter()
+                    .zip(&theirs.courtless)
+                    .any(|(other, their)| {
+                        !crate::problem::courtless_under(own, their) && overlaps(rect, *other, 0.0)
+                    })
+            })
+    })
+}
+
+/// Whether part `a`'s own slots (`Component::slots`, holes through the
+/// board) meet part `b`, on either side: its body without the halo (a
+/// hollow part's blocking boxes and the body a courtyard would give it),
+/// its copper within the edge margin, or, for a cutout, the hole.
+fn slots_meet_one(
+    problem: &Problem,
+    a: usize,
+    pose_a: Pose,
+    b: usize,
+    pose_b: Pose,
+    work: &mut u64,
+    facts: Option<&Facts>,
+) -> bool {
+    let slots = &problem.components[a].slots;
+    let other = &problem.components[b];
+    if slots.is_empty() || other.side == crate::problem::Side::Neither {
+        return false;
+    }
+    *work += list_work(slots.len());
+    let mine = turned(slots, pose_a, 0.0);
+    if other.copper_only {
+        let outline = &other.cutout_outline;
+        if outline.len() >= 3 {
+            let indexed = facts.and_then(|facts| facts.outlines[b].as_ref());
+            let extent = indexed.map_or_else(|| outline_extent(outline), |indexed| indexed.extent);
+            *work += edge_work(outline.len());
+            for slot in mine {
+                *work += 1;
+                if !box_apart(&slot, extent, POLYGON_SLACK)
+                    && rect_meets_outline(&slot, outline, indexed, work)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+        let hole = bare(problem, b, pose_b, 0.0);
+        *work += slots.len() as u64;
+        return mine.into_iter().any(|slot| overlaps(slot, hole, 0.0));
+    }
+    let margin = problem.edge_margin;
+    let solid: Vec<Rect> = if other.hollow.is_empty() {
+        vec![bare(problem, b, pose_b, 0.0)]
+    } else {
+        turned(&other.hollow, pose_b, 0.0)
+            .chain(turned(&other.courtless, pose_b, 0.0))
+            .collect()
+    };
+    let copper: Vec<Rect> = turned(&other.pads, pose_b, margin)
+        .chain(turned(&other.copper_graphics, pose_b, margin))
+        .collect();
+    *work += list_work(solid.len())
+        + list_work(copper.len())
+        + (slots.len() * (solid.len() + copper.len())) as u64;
+    mine.into_iter().any(|slot| {
+        solid
+            .iter()
+            .chain(copper.iter())
+            .any(|other| overlaps(slot, *other, 0.0))
+    })
+}
+
+/// `slots_meet_one` either way round.
+fn slots_meet(
+    problem: &Problem,
+    a: usize,
+    pose_a: Pose,
+    b: usize,
+    pose_b: Pose,
+    work: &mut u64,
+    facts: Option<&Facts>,
+) -> bool {
+    slots_meet_one(problem, a, pose_a, b, pose_b, work, facts)
+        || slots_meet_one(problem, b, pose_b, a, pose_a, work, facts)
 }
 
 /// Whether a part's body (without its halo) meets a cutout the user cut
@@ -4608,6 +4739,8 @@ pub(crate) mod tests {
             tight_hollow: Vec::new(),
             hole_rings: Vec::new(),
             copper_graphics: Vec::new(),
+            courtless: Vec::new(),
+            slots: Vec::new(),
         }
     }
 
@@ -4639,6 +4772,148 @@ pub(crate) mod tests {
             crossings: None,
         };
         (problem, poses)
+    }
+
+    /// A key switch without a courtyard: 14 mm of pads in its corners
+    /// (hollow: it blocks with them), a 16 mm square fabrication outline
+    /// (`courtless`) and a peg hole (`slots`) at its left.
+    fn key() -> Component {
+        let mut part = resistor(0.0);
+        part.name = "SW".into();
+        part.body_size = [14.0, 14.0];
+        part.pads = vec![
+            [-7.0, -7.0, -5.7, -5.0],
+            [5.7, -7.0, 7.0, -5.0],
+            [-7.0, 5.0, -5.7, 7.0],
+            [5.7, 5.0, 7.0, 7.0],
+        ];
+        part.hollow = part.pads.clone();
+        part.holes_inside = true;
+        part.courtless = vec![[-8.0, -8.0, 8.0, 8.0]];
+        part.slots = vec![[-6.3, 2.25, -5.3, 3.25]];
+        part
+    }
+
+    fn keys(offset: Point) -> (Problem, Vec<Pose>) {
+        let (mut problem, mut poses) = pair(0.0, 0.0);
+        problem.outline = vec![[0.0, 0.0], [80.0, 0.0], [80.0, 60.0], [0.0, 60.0]];
+        problem.components = vec![key(), key()];
+        poses[0].position = [30.0, 30.0];
+        poses[1].position = [30.0 + offset[0], 30.0 + offset[1]];
+        problem.poses = poses.clone();
+        (problem, poses)
+    }
+
+    #[test]
+    fn two_parts_without_courtyards_overlapping_are_illegal_and_one_is_moved() {
+        // The thumb row on the grid's last row (Goga64 ULK): 9.5 mm apart
+        // across, 0.6 mm along, the pads clear of each other.
+        let (mut problem, mut poses) = keys([9.5, 0.6]);
+        // The slots aside (one lies in the other's square too).
+        for component in &mut problem.components {
+            component.slots.clear();
+        }
+        let mut work = 0;
+        assert!(!hollow_overlap(
+            &problem, 0, poses[0], 1, poses[1], &mut work
+        ));
+        assert!(!is_legal(&problem, &poses, 1, poses[1], 0..2));
+        assert_eq!(
+            conflict_kind(&problem, &poses, 1, poses[1], 0),
+            Some("bodies overlap (no courtyard)")
+        );
+        assert_eq!(illegal_components(&problem, &poses), vec![0, 1]);
+        // Before the rule (no courtless bodies) the pads alone judged it.
+        let mut before = problem.clone();
+        for component in &mut before.components {
+            component.courtless.clear();
+            component.slots.clear();
+        }
+        assert!(is_legal(&before, &poses, 1, poses[1], 0..2));
+        // The legaliser moves one: the squares then touch at most.
+        problem.components[0].fixed = true;
+        assert!(legalize(&problem, &mut poses).is_empty());
+        let apart = [
+            (poses[1].position[0] - poses[0].position[0]).abs(),
+            (poses[1].position[1] - poses[0].position[1]).abs(),
+        ];
+        assert!(
+            apart[0] >= 16.0 - 1.0e-6 || apart[1] >= 16.0 - 1.0e-6,
+            "{poses:?}"
+        );
+        // Squares touching are legal, as courtyards touching are.
+        let (mut problem, poses) = keys([16.0, 0.0]);
+        problem.components[1].slots.clear();
+        assert!(is_legal(&problem, &poses, 1, poses[1], 0..2));
+    }
+
+    #[test]
+    fn a_small_part_without_courtyard_may_lie_under_a_large_one() {
+        // A key's diode between its pads (a twentieth of its square).
+        let (mut problem, mut poses) = keys([0.0, 0.0]);
+        let mut diode = resistor(0.0);
+        diode.courtless = vec![[-1.5, -0.8, 1.5, 0.8]];
+        diode.hollow = diode.pads.clone();
+        diode.holes_inside = true;
+        problem.components[1] = diode;
+        poses[1].position = [30.0, 27.0];
+        assert!(is_legal(&problem, &poses, 1, poses[1], 0..2));
+        assert_eq!(conflict_kind(&problem, &poses, 1, poses[1], 0), None);
+    }
+
+    #[test]
+    fn a_part_with_a_courtyard_keeps_todays_rule_against_one_without() {
+        // A resistor with a courtyard inside the key's square, between its
+        // pads: legal, as before (it blocks the key's pads only).
+        let (mut problem, mut poses) = keys([0.0, 0.0]);
+        problem.components[1] = resistor(0.0);
+        poses[1].position = [30.0, 27.0];
+        assert!(is_legal(&problem, &poses, 1, poses[1], 0..2));
+        // On a pad it is not.
+        poses[1].position = [24.0, 24.0];
+        assert!(!is_legal(&problem, &poses, 1, poses[1], 0..2));
+    }
+
+    #[test]
+    fn a_parts_slot_crossing_a_cutout_or_a_body_is_illegal() {
+        // The key alone with a round cutout (a mounting hole) at its peg
+        // hole: illegal; 3 mm away, legal.
+        let (mut problem, mut poses) = keys([40.0, 0.0]);
+        problem.components.truncate(1);
+        poses.truncate(1);
+        let mut hole = resistor(0.0);
+        hole.name = "cutout".into();
+        hole.body_size = [1.0, 1.0];
+        hole.pads.clear();
+        hole.copper_only = true;
+        hole.fixed = true;
+        hole.side = Side::Both;
+        hole.cutout_outline = vec![[23.6, 32.3], [24.6, 32.3], [24.6, 33.3], [23.6, 33.3]];
+        problem.components.push(hole);
+        poses.push(Pose {
+            position: [24.1, 32.8],
+            angle: 0.0,
+        });
+        problem.poses = poses.clone();
+        assert!(!is_legal(&problem, &poses, 0, poses[0], 0..2));
+        assert_eq!(
+            conflict_kind(&problem, &poses, 0, poses[0], 1),
+            Some("a slot of one meets the other")
+        );
+        let moved = Pose {
+            position: [33.0, 30.0],
+            angle: 0.0,
+        };
+        assert!(is_legal(&problem, &poses, 0, moved, 0..2));
+        // Another part's body over the slot, on either side: illegal.
+        let (mut problem, mut poses) = keys([40.0, 0.0]);
+        let mut resistor = resistor(0.0);
+        resistor.side = Side::Back;
+        problem.components[1] = resistor;
+        poses[1].position = [24.2, 32.75];
+        assert!(!is_legal(&problem, &poses, 1, poses[1], 0..2));
+        poses[1].position = [24.2, 36.0];
+        assert!(is_legal(&problem, &poses, 1, poses[1], 0..2));
     }
 
     #[test]

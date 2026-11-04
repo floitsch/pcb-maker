@@ -121,6 +121,39 @@ pub struct Component {
     /// too, as it checks pads (osprey's AE1: its B.Cu polygon over the
     /// battery cutout's edge, 0.0 mm against 0.25).
     pub copper_graphics: Vec<[f64; 4]>,
+    /// For a footprint without a courtyard: its body as a courtyard would
+    /// give it, the box of its pads, copper graphics and fabrication
+    /// outline (else its silkscreen outline), KiCad's courtyard clearance
+    /// being 0 ([min x, min y, max x, max y], own frame); a row carries one
+    /// per member. Two parts that both have one may not overlap them, as
+    /// courtyards may not (Goga64 ULK's PG1316 switches have none:
+    /// a thumb row lay on the grid's last row, its pads between theirs);
+    /// against a part with a courtyard the part blocks with `hollow` as
+    /// before (a diode between a socket's pads). Empty: the part has a
+    /// courtyard.
+    pub courtless: Vec<[f64; 4]>,
+    /// The footprint's own closed Edge.Cuts loops (a key switch's peg
+    /// holes), boxes in its own frame: holes through the board that move
+    /// with the part. No other part's body (a hollow part's blocking
+    /// boxes) may meet them, other parts' copper keeps the edge margin
+    /// from them, and they may not meet a board cutout.
+    pub slots: Vec<[f64; 4]>,
+}
+
+/// At most this share of another part's courtless body (`Component::
+/// courtless`), a part without a courtyard may lie under it as before,
+/// between its pads: designers put a key's diode under the switch (Goga64
+/// ULK: each D3_SMD_v2 inside its PG1316's 16 mm square, a twentieth
+/// of it; a key beside a key is a share of 1).
+pub const COURTLESS_UNDER_SHARE: f64 = 0.25;
+
+/// Whether two courtless bodies (own-frame boxes) are exempt from being
+/// kept apart: the smaller takes at most `COURTLESS_UNDER_SHARE` of the
+/// larger's area.
+pub fn courtless_under(a: &[f64; 4], b: &[f64; 4]) -> bool {
+    let area = |b: &[f64; 4]| (b[2] - b[0]) * (b[3] - b[1]);
+    let (a, b) = (area(a), area(b));
+    a.min(b) <= COURTLESS_UNDER_SHARE * a.max(b)
 }
 
 /// Position of the component origin and its rotation in degrees. Following
@@ -458,6 +491,8 @@ impl Problem {
                     .chain(&component.hollow)
                     .chain(&component.courtyards)
                     .chain(&component.tight_hollow)
+                    .chain(&component.courtless)
+                    .chain(&component.slots)
                     .map(move |far| {
                         let farthest = [
                             [far[0], far[1]],

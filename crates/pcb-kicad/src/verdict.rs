@@ -2188,6 +2188,32 @@ fn next_actions(
             sub.unassigned_parts.join(", ")
         ));
     }
+    // The same where the parts tell no boards at all (a netlist import's
+    // stack without a reference: Goga64 ULK's panel, every part at the
+    // origin, and nothing said the outline had pieces).
+    if facts.boards_mixed().is_none()
+        && let Some(sub) = facts.sub_boards.as_ref().filter(|sub| sub.boards_unknown())
+    {
+        let frames = if sub.frames.is_empty() {
+            String::new()
+        } else {
+            format!(
+                ", {} of them frames or rails by their shape",
+                sub.frames.len()
+            )
+        };
+        actions.push(format!(
+            "give --reference or a region per board: the outline falls into {} pieces (cut by {}{frames}) and {} of the {} movable parts lie on no board, so nothing tells which parts go on which; give the designer's placed board with --reference <project-dir> (its places say each part's board), or hold each part in its board with region constraints (sub_boards.sub_boards has each board's box), before acting on the room or the connections below",
+            sub.pieces,
+            if sub.cut_by.is_empty() {
+                "narrow outline".to_string()
+            } else {
+                sub.cut_by.join(", ")
+            },
+            sub.unassigned,
+            sub.movable
+        ));
+    }
     // The input check's and the placement's warnings about what the agent
     // gave (a keepout over a held part, a keep_whole region, a value below
     // the project's minimum, a missing kicad-cli, copper on a layer the
@@ -4846,6 +4872,46 @@ mod tests {
                 .last()
                 .unwrap()
                 .starts_with("nothing to do (the input's): fixed part U3")
+        );
+    }
+
+    #[test]
+    fn a_panel_whose_parts_lie_on_no_piece_leads_with_the_reference() {
+        // Goga64 ULK from its schematic: every part stacked at the origin,
+        // the outline in four pieces at mouse bites, no reference. The
+        // status is the placement's; the first action says what to give.
+        let mut facts = KiCadRunFacts::new("place-kicad-board");
+        facts.routes = false;
+        facts.input_warnings = vec!["fixed parts MB1 and MB2 overlap".into()];
+        facts.sub_boards = Some(crate::sub_boards::KiCadSubBoardsReport {
+            pieces: 4,
+            movable: 58,
+            unassigned: 58,
+            cut_by: vec!["mouse bites".into()],
+            frames: vec![[10.7, 12.0, 286.2, 21.8], [10.7, 83.3, 286.2, 117.6]],
+            ..Default::default()
+        });
+        let verdict = judge(&facts);
+        assert_eq!(verdict.exit_code, 0, "{}", verdict.reason);
+        assert!(
+            verdict.next_actions[0].starts_with(
+                "give --reference or a region per board: the outline falls into 4 pieces (cut by mouse bites, 2 of them frames or rails by their shape) and 58 of the 58 movable parts lie on no board"
+            ),
+            "{:?}",
+            verdict.next_actions
+        );
+        // A tenth or fewer without a board: no such line.
+        if let Some(sub) = &mut facts.sub_boards {
+            sub.unassigned = 5;
+        }
+        let verdict = judge(&facts);
+        assert!(
+            !verdict
+                .next_actions
+                .iter()
+                .any(|action| action.starts_with("give --reference")),
+            "{:?}",
+            verdict.next_actions
         );
     }
 

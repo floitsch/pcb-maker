@@ -887,7 +887,10 @@ pub fn legality_kicad_board(
                 format!("meets a {}", lowered.references[other])
             } else if test == "far side" {
                 "far side: a hole, lead or courtyard under a part on the other side".into()
-            } else if test == "pads in a cutout or pad keepout" {
+            } else if test == "pads in a cutout or pad keepout"
+                || test == "bodies overlap (no courtyard)"
+                || test == "a slot of one meets the other"
+            {
                 test.to_string()
             } else if pads.is_some_and(|(gap, clearance)| gap < clearance - TOUCH) {
                 "pads closer than their clearance".into()

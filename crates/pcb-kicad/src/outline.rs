@@ -19,6 +19,11 @@ pub(super) struct BoardLoops {
     /// Per cutout: drawn by the board's own graphics, not a footprint's (a
     /// slot a connector brings): the cutouts an `outline` constraint cut.
     pub board_cutouts: Vec<bool>,
+    /// Per cutout: the footprint (its place among the board's footprints)
+    /// whose own closed graphic it is (a switch's peg hole), which moves
+    /// with that footprint; None for the board's and for loops chained
+    /// from segments.
+    pub cutout_owners: Vec<Option<usize>>,
 }
 
 /// The largest extent a board outline may have, in millimetres. KiCad
@@ -528,23 +533,31 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
     let mut open: Vec<Vec<[f64; 2]>> = Vec::new();
     // Whether each loop and open piece is the board's own graphics.
     let mut loop_on_board: Vec<bool> = Vec::new();
+    // The footprint each loop is a closed graphic of.
+    let mut loop_owner: Vec<Option<usize>> = Vec::new();
     let mut open_on_board: Vec<bool> = Vec::new();
     // Footprints may carry part of the outline (card-edge notches); their
     // graphics are in the footprint frame.
     let identity = [0.0, 0.0, 0.0];
-    let items: Vec<(&Expr, [f64; 3])> = pcb
+    let mut footprints = 0;
+    let items: Vec<(&Expr, [f64; 3], Option<usize>)> = pcb
         .children()
         .iter()
-        .flat_map(|item| -> Vec<(&Expr, [f64; 3])> {
+        .flat_map(|item| -> Vec<(&Expr, [f64; 3], Option<usize>)> {
             if item.head() == Some("footprint") {
                 let at = form_at(item).unwrap_or(identity);
-                item.children().iter().map(|child| (child, at)).collect()
+                footprints += 1;
+                let owner = Some(footprints - 1);
+                item.children()
+                    .iter()
+                    .map(|child| (child, at, owner))
+                    .collect()
             } else {
-                vec![(item, identity)]
+                vec![(item, identity, None)]
             }
         })
         .collect();
-    for (item, frame) in items {
+    for (item, frame, owner) in items {
         if form_atom(item, "layer", 1) != Some("Edge.Cuts") {
             continue;
         }
@@ -620,6 +633,7 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
             _ => {}
         }
         loop_on_board.resize(loops.len(), on_board);
+        loop_owner.resize(loops.len(), owner);
         open_on_board.resize(open.len(), on_board);
     }
 
@@ -636,6 +650,7 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
     for (chain, on_board) in chained {
         loops.push(chain);
         loop_on_board.push(on_board);
+        loop_owner.push(None);
     }
     if loops.is_empty() {
         return Err("the board has no Edge.Cuts outline".into());
@@ -646,7 +661,12 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
     // zero-width bridge between their closest vertices, so that one
     // polygon is their union (as the even-odd test and the edge distances
     // read it).
-    let mut loops: Vec<(Vec<[f64; 2]>, bool)> = loops.into_iter().zip(loop_on_board).collect();
+    let mut loops: Vec<(Vec<[f64; 2]>, bool, Option<usize>)> = loops
+        .into_iter()
+        .zip(loop_on_board)
+        .zip(loop_owner)
+        .map(|((points, on_board), owner)| (points, on_board, owner))
+        .collect();
     loops.sort_by(|a, b| {
         polygon_area(&b.0)
             .abs()
@@ -657,7 +677,8 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
     let mut board_piece = false;
     let mut cutouts: Vec<Vec<[f64; 2]>> = Vec::new();
     let mut board_cutouts = Vec::new();
-    for (candidate, on_board) in loops {
+    let mut cutout_owners = Vec::new();
+    for (candidate, on_board, owner) in loops {
         // Inside a piece when most of its vertices are: a cutout touching
         // the board's edge has vertices on that edge, which the even-odd
         // test may count either way.
@@ -671,6 +692,7 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
         if pieces.iter().any(inside) {
             cutouts.push(candidate);
             board_cutouts.push(on_board);
+            cutout_owners.push(owner);
         } else if !on_board && board_piece {
             // A footprint's own closed loop (a key switch's or a slide
             // switch's slot) outside every piece the board draws belongs
@@ -740,6 +762,7 @@ pub(super) fn board_loops(pcb: &Expr) -> Result<BoardLoops, String> {
         piece_loops,
         cutouts: loops,
         board_cutouts,
+        cutout_owners,
     })
 }
 

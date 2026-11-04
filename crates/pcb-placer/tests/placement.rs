@@ -35,6 +35,8 @@ fn chain(parts: usize) -> Problem {
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
         copper_graphics: Vec::new(),
+        courtless: Vec::new(),
+        slots: Vec::new(),
     };
     components.push(connector("J1", 0));
     poses.push(Pose {
@@ -80,6 +82,8 @@ fn chain(parts: usize) -> Problem {
             tight_hollow: Vec::new(),
             hole_rings: Vec::new(),
             copper_graphics: Vec::new(),
+            courtless: Vec::new(),
+            slots: Vec::new(),
         });
         // A deliberately bad start: everything piled in one corner.
         poses.push(Pose {
@@ -269,6 +273,8 @@ fn a_through_hole_part_leaves_the_far_side_free_but_for_its_holes() {
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
         copper_graphics: Vec::new(),
+        courtless: Vec::new(),
+        slots: Vec::new(),
     };
     let mut problem = chain(1);
     problem.components = vec![
@@ -335,6 +341,8 @@ fn parts_sit_inside_a_hollow_part_but_off_its_pads() {
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
         copper_graphics: Vec::new(),
+        courtless: Vec::new(),
+        slots: Vec::new(),
     };
     // A shield outline over the whole board with one header pad at its
     // left end.
@@ -408,6 +416,8 @@ fn tight_bodies_are_the_last_resort() {
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
         copper_graphics: Vec::new(),
+        courtless: Vec::new(),
+        slots: Vec::new(),
     };
     let mut problem = Problem {
         outline: vec![[0.0, 0.0], [7.0, 0.0], [7.0, 4.0], [0.0, 4.0]],
@@ -474,6 +484,8 @@ fn a_body_may_reach_over_a_cutout_but_its_pads_keep_away() {
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
         copper_graphics: Vec::new(),
+        courtless: Vec::new(),
+        slots: Vec::new(),
     };
     // A 2 mm hole in the board, and a 10 mm connector with a pad at its
     // left end.
@@ -546,6 +558,8 @@ fn a_cutout_the_user_cut_keeps_bodies_off() {
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
         copper_graphics: Vec::new(),
+        courtless: Vec::new(),
+        slots: Vec::new(),
     };
     // A triangular window (its box 4 x 4 mm) and a 2 mm part.
     let window = vec![[23.0, 23.0], [27.0, 23.0], [23.0, 27.0]];
@@ -666,6 +680,8 @@ fn a_part_held_at_the_top_of_an_l_keeps_to_its_step() {
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
         copper_graphics: Vec::new(),
+        courtless: Vec::new(),
+        slots: Vec::new(),
     };
     let mut problem = Problem {
         outline,
@@ -745,6 +761,8 @@ fn apart_keeps_connected_parts_away_from_each_other() {
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
         copper_graphics: Vec::new(),
+        courtless: Vec::new(),
+        slots: Vec::new(),
     };
     let mut problem = Problem {
         outline: vec![[0.0, 0.0], [60.0, 0.0], [60.0, 40.0], [0.0, 40.0]],
@@ -820,6 +838,8 @@ fn parts_of_a_kind_are_turned_alike() {
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
         copper_graphics: Vec::new(),
+        courtless: Vec::new(),
+        slots: Vec::new(),
     };
     let problem = Problem {
         outline: vec![[0.0, 0.0], [40.0, 0.0], [40.0, 30.0], [0.0, 30.0]],
@@ -889,6 +909,8 @@ fn a_part_held_at_an_edge_keeps_to_its_own_piece() {
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
         copper_graphics: Vec::new(),
+        courtless: Vec::new(),
+        slots: Vec::new(),
     };
     let mut problem = Problem {
         outline: vec![
@@ -967,6 +989,8 @@ fn parts_turned_by_odd_angles_meet_as_turned_rectangles() {
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
         copper_graphics: Vec::new(),
+        courtless: Vec::new(),
+        slots: Vec::new(),
     };
     let mut problem = chain(1);
     problem.components = vec![bar.clone(), bar];
@@ -1032,6 +1056,8 @@ fn across_the_board() -> Problem {
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
         copper_graphics: Vec::new(),
+        courtless: Vec::new(),
+        slots: Vec::new(),
     };
     let mut problem = chain(1);
     problem.components = vec![
@@ -1281,6 +1307,8 @@ fn courtyards_on_the_far_side_of_parts_on_one_side_keep_apart() {
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
         copper_graphics: Vec::new(),
+        courtless: Vec::new(),
+        slots: Vec::new(),
     };
     let mut problem = chain(1);
     problem.components = vec![switch.clone(), switch.clone()];
@@ -1432,6 +1460,8 @@ fn parts_without_room_go_first_until_none_takes_anothers_place() {
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
         copper_graphics: Vec::new(),
+        courtless: Vec::new(),
+        slots: Vec::new(),
     };
     let at = |x: f64, y: f64| Pose {
         position: [x, y],
@@ -1524,6 +1554,8 @@ fn pads_of_a_part_held_by_its_copper_keep_the_copper_to_edge_clearance_on_every_
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
         copper_graphics: Vec::new(),
+        courtless: Vec::new(),
+        slots: Vec::new(),
     };
     let mut problem = Problem {
         outline: vec![[0.0, 0.0], [20.0, 0.0], [20.0, 20.0], [0.0, 20.0]],
@@ -1672,6 +1704,8 @@ fn eviction_finds_a_held_part_s_narrow_window_in_a_tab() {
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
         copper_graphics: Vec::new(),
+        courtless: Vec::new(),
+        slots: Vec::new(),
     };
     let mut problem = Problem {
         outline: vec![

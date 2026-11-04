@@ -39,6 +39,11 @@ pub struct KiCadUnplacedPart {
     /// `overhang top`): loosening one gives it more room.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub held_by: Vec<String>,
+    /// For an illegal part, why, at the placement's level: what it meets
+    /// first and the test that turns it down (`bodies overlap (no
+    /// courtyard) with SW15`, `outline or hard constraint`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 /// The bus groups of a placement (`bus_groups` in the placer's

@@ -231,6 +231,8 @@ fn rule_area_obstacle(
         tight_hollow: Vec::new(),
         hole_rings: Vec::new(),
         copper_graphics: Vec::new(),
+        courtless: Vec::new(),
+        slots: Vec::new(),
     };
     let pose = core::Pose {
         position: [
@@ -1084,6 +1086,58 @@ pub(crate) fn lower_placement(
                 }
             }
         }
+        // Without a courtyard, the body a courtyard would give the part:
+        // its pads, copper and mask graphics and its fabrication outline
+        // (else its silkscreen outline) on its side; KiCad's courtyard
+        // clearance is 0 (no board of the benchmark sets a
+        // `courtyard_clearance` rule). Two such parts may not overlap them
+        // (`Component::courtless`): Goga64 ULK's PG1316 switches have no
+        // courtyard, and a thumb row lay on the grid's last row with its
+        // pads between theirs.
+        let courtless_body = if courtless {
+            let outline_boxes = |suffix: &str| -> Result<Vec<[f64; 4]>, String> {
+                let mut boxes = Vec::new();
+                for child in footprint.children() {
+                    if form_atom(child, "layer", 1).is_some_and(|layer| {
+                        layer.starts_with(own_prefix) && layer.ends_with(suffix)
+                    }) && let Some(graphic) = graphic_box(child)?
+                    {
+                        boxes.push(graphic);
+                    }
+                }
+                Ok(boxes)
+            };
+            let mut outline = outline_boxes(".Fab")?;
+            if outline.is_empty() {
+                outline = outline_boxes(".SilkS")?;
+            }
+            own_pads
+                .iter()
+                .chain(&own_graphic_boxes)
+                .chain(&outline)
+                .copied()
+                .reduce(|a, b| {
+                    [
+                        a[0].min(b[0]),
+                        a[1].min(b[1]),
+                        a[2].max(b[2]),
+                        a[3].max(b[3]),
+                    ]
+                })
+        } else {
+            None
+        };
+        // The footprint's own closed Edge.Cuts loops (a switch's peg
+        // holes): holes that move with it (`Component::slots`).
+        let mut slots = Vec::new();
+        for child in footprint.children() {
+            if matches!(child.head(), Some("fp_circle" | "fp_rect" | "fp_poly"))
+                && form_atom(child, "layer", 1) == Some("Edge.Cuts")
+                && let Some(graphic) = graphic_box(child)?
+            {
+                slots.push(graphic);
+            }
+        }
         connector.push(through && pins.len() >= 4);
         locked.push(
             footprint.child("locked").is_some()
@@ -1140,6 +1194,8 @@ pub(crate) fn lower_placement(
             tight_hollow: Vec::new(),
             hole_rings: hole_rings.clone(),
             copper_graphics,
+            courtless: courtless_body.into_iter().collect(),
+            slots,
         });
         poses.push(core::Pose {
             position: [at[0], at[1]],
@@ -1265,6 +1321,8 @@ pub(crate) fn lower_placement(
             tight_hollow: Vec::new(),
             hole_rings: Vec::new(),
             copper_graphics: Vec::new(),
+            courtless: Vec::new(),
+            slots: Vec::new(),
         });
         poses.push(core::Pose {
             position: [
@@ -1302,6 +1360,9 @@ pub(crate) fn lower_placement(
     // it replaced) keep bodies off as well.
     let outline_given = matches!(&config.constraints, Some(KiCadConstraintsSource::Inline(constraints)) if constraints.outline.is_some());
     let mut solid_cutouts = Vec::new();
+    // The cutouts that are a footprint's own closed graphic, with that
+    // footprint: they go with the part where it moves.
+    let mut owned_cutouts: Vec<(usize, usize)> = Vec::new();
     for (number, cutout) in loops.cutouts.iter().enumerate() {
         let (mut minimum, mut maximum) = ([f64::INFINITY; 2], [f64::NEG_INFINITY; 2]);
         for point in cutout {
@@ -1315,6 +1376,9 @@ pub(crate) fn lower_placement(
         }
         if outline_given && loops.board_cutouts.get(number).copied().unwrap_or(false) {
             solid_cutouts.push(components.len());
+        }
+        if let Some(Some(owner)) = loops.cutout_owners.get(number) {
+            owned_cutouts.push((components.len(), *owner));
         }
         // The hole itself: the copper keeps the edge margin from it in the
         // legality test, which looser levels bring down to the rules'
@@ -1344,6 +1408,8 @@ pub(crate) fn lower_placement(
             tight_hollow: Vec::new(),
             hole_rings: Vec::new(),
             copper_graphics: Vec::new(),
+            courtless: Vec::new(),
+            slots: Vec::new(),
         });
         poses.push(core::Pose {
             position: [
@@ -1478,6 +1544,40 @@ pub(crate) fn lower_placement(
             ));
         }
     };
+    // A footprint's own slots (`Component::slots`) move with it: a
+    // movable part's slot at its input pose is no hole of the board, and
+    // the part carries it. A fixed part's at its input pose stays the
+    // cutout it was, and the part carries none (as before: bodies may
+    // reach over a held part's slot, copper keeps the edge margin from
+    // it).
+    let leader_of = |problem: &core::Problem, part: usize| {
+        problem
+            .constraints
+            .followers
+            .iter()
+            .find(|follower| follower.part == part)
+            .map_or(part, |follower| follower.leader)
+    };
+    // A fixed part a `place` entry put elsewhere carries its slots too.
+    let carried = |problem: &core::Problem, part: usize| {
+        let leader = leader_of(problem, part);
+        let pose = problem.poses[leader];
+        let at = source_at[leader];
+        !problem.components[leader].fixed
+            || (pose.position[0] - at[0]).abs() > 1.0e-6
+            || (pose.position[1] - at[1]).abs() > 1.0e-6
+            || (pose.angle - at[2]).abs() > 1.0e-6
+    };
+    for &(cutout, owner) in &owned_cutouts {
+        if owner < footprint_count && carried(&problem, owner) {
+            problem.components[cutout].side = core::Side::Neither;
+        }
+    }
+    for index in 0..footprint_count {
+        if !carried(&problem, index) {
+            problem.components[index].slots.clear();
+        }
+    }
     // A polygon outline: parts held at an edge keep to the nearest side of
     // the polygon that faces it.
     if user_constraints

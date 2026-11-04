@@ -31,6 +31,13 @@ pub struct KiCadBoardDescription {
     /// admits them; docs/agents.md, "Vias in BGA pads").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vias_in_pads: Option<crate::KiCadViaInPadReport>,
+    /// Where the outline falls into pieces at tabs, narrow necks or
+    /// V-cuts (a panel): the pieces, tabs, frames and boards from the
+    /// outline and the parts' places (`parts_assigned` 0 for a netlist
+    /// import's stack: give `--reference` or a region per board). Absent
+    /// for a board of one piece.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sub_boards: Option<crate::sub_boards::KiCadDescribedPieces>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -680,6 +687,7 @@ pub fn describe_kicad_board(
         .ok()
         .map(|config| crate::board_router::plan_vias_in_pads(&pcb, &config).report)
         .filter(|report| *report != crate::KiCadViaInPadReport::default()),
+        sub_boards: crate::sub_boards::describe_pieces(&pcb).ok().flatten(),
     })
 }
 

@@ -232,13 +232,35 @@ pub fn place_kicad_board(
             }
             None => None,
         };
-        let sub = crate::sub_boards::detect_for_placer(
+        let detected = crate::sub_boards::detect_for_placer(
             &pcb,
             &lowered.problem,
             footprint_count,
             reference.as_ref(),
-        )?
-        .filter(|sub| sub.count(&lowered.problem) >= 2 || sub.has_frames());
+        )?;
+        // No part on any piece (a netlist import's stack without
+        // `--reference`): the pieces, tabs and frames from the outline
+        // alone are reported, nothing else changes.
+        if copies.is_none()
+            && let Some(sub) = &detected
+            && sub.count(&lowered.problem) == 0
+            && !sub.has_frames()
+        {
+            let report = crate::sub_boards::KiCadSubBoardsReport::of_outline(
+                sub,
+                &lowered.problem,
+                &lowered.references,
+            );
+            eprintln!(
+                "placer: sub-boards: the outline falls into {} pieces (cut by {}; {} frames or rails by their shape) and no part lies on any: {} movable parts without a board (give --reference or a region per board)",
+                report.pieces,
+                report.cut_by.join(", "),
+                report.frames.len(),
+                report.unassigned
+            );
+            sub_boards_report = Some(report);
+        }
+        let sub = detected.filter(|sub| sub.count(&lowered.problem) >= 2 || sub.has_frames());
         if let (Some(copies), Some(sub)) = (&copies, &sub) {
             // A panel of copies keeps its parts off its frames and tabs
             // too, each copy off the images of every copy's (one
@@ -898,6 +920,26 @@ fn unplaced_parts(
     let constraints = &problem.constraints;
     let mut seen = BTreeSet::new();
     let mut parts = Vec::new();
+    // The illegal parts' reasons, judged at the placement's level.
+    let relaxed = (!placement.illegal.is_empty()).then(|| {
+        let mut relaxed = problem.clone();
+        placement.relaxation.apply(&mut relaxed);
+        relaxed
+    });
+    let reason = |index: usize| -> Option<String> {
+        let relaxed = relaxed.as_ref()?;
+        let poses = &placement.poses;
+        // The pair tests book no placement work (`is_legal` would).
+        Some(
+            (0..relaxed.components.len())
+                .filter(|other| *other != index)
+                .find_map(|other| {
+                    core::legal::conflict_kind(relaxed, poses, index, poses[index], other)
+                        .map(|kind| format!("{kind} with {}", references[other]))
+                })
+                .unwrap_or_else(|| "the outline or a hard constraint".into()),
+        )
+    };
     for (index, status) in placement
         .unplaced
         .iter()
@@ -941,6 +983,11 @@ fn unplaced_parts(
             status,
             at: [pose.position[0], pose.position[1], pose.angle],
             held_by,
+            reason: if status == "illegal" {
+                reason(index)
+            } else {
+                None
+            },
         });
     }
     parts

@@ -1294,7 +1294,9 @@ fn a_header_without_a_courtyard_keeps_parts_from_between_its_rows() {
         !core::legal::illegal_components(problem, &poses).contains(&1)
     };
     assert!(!interleaved(&KiCadBoardPlacerConfig::default()));
-    assert!(interleaved(&KiCadBoardPlacerConfig {
+    // Off, the two headers' bodies without courtyards (their pads' box)
+    // still may not overlap (2026-11-04: `Component::courtless`).
+    assert!(!interleaved(&KiCadBoardPlacerConfig {
         solid_pin_rows: false,
         ..KiCadBoardPlacerConfig::default()
     }));
@@ -2109,4 +2111,97 @@ fn a_length_bounded_nets_pins_are_kept_within_its_maximum() {
     off.length_maxima = false;
     let off = lower_placement(&pcb, &off).unwrap();
     assert_eq!(format!("{:?}", off.problem), format!("{:?}", none.problem));
+}
+
+/// A PG1316-like key without a courtyard (Goga64 ULK): pads in its
+/// corners, a 16 mm fabrication square, a peg hole on Edge.Cuts.
+fn courtless_key(reference: &str, x: f64, y: f64) -> String {
+    format!(
+        r#"(footprint "PG1316" (layer "F.Cu") (at {x} {y})
+        (property "Reference" "{reference}")
+        (fp_rect (start -8 -8) (end 8 8) (layer "F.Fab") (stroke (width 0.1)))
+        (fp_circle (center -5.8 2.75) (end -5.3 2.75) (layer "Edge.Cuts") (stroke (width 0.05)))
+        (pad "1" smd rect (at -2.5 2.65) (size 1 1) (layers "F.Cu") (net 1 "A"))
+        (pad "2" smd rect (at 2.5 2.65) (size 1 1) (layers "F.Cu") (net 2 "B"))
+        (pad "3" smd rect (at -6.35 -6) (size 1.3 2) (layers "F.Cu"))
+        (pad "3" smd rect (at 6.35 6) (size 1.3 2) (layers "F.Cu")))"#
+    )
+}
+
+#[test]
+fn rows_of_keys_without_courtyards_may_not_lie_on_each_other_and_carry_their_slots() {
+    // Two rows of two keys; the second row 1.27 mm below the first, 9.5
+    // mm across (the trial's thumb row on the grid's last row).
+    let pcb = parse(&format!(
+        r#"(kicad_pcb
+        (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+        (gr_rect (start 0 0) (end 100 60) (layer "Edge.Cuts"))
+        {} {} {} {})"#,
+        courtless_key("SW1", 20.0, 20.0),
+        courtless_key("SW2", 39.05, 20.0),
+        courtless_key("SW3", 29.5, 21.27),
+        courtless_key("SW4", 48.55, 21.27),
+    ))
+    .unwrap();
+    let constraints: crate::placement_constraints::KiCadPlacementConstraints =
+        serde_json::from_str(
+            r#"{"version": 1, "row": [{"parts": ["SW1", "SW2"], "pitch_mm": 19.05}, {"parts": ["SW3", "SW4"], "pitch_mm": 19.05}]}"#,
+        )
+        .unwrap();
+    let config = KiCadBoardPlacerConfig {
+        constraints: Some(KiCadConstraintsSource::Inline(constraints)),
+        ..KiCadBoardPlacerConfig::default()
+    };
+    let lowered = lower_placement(&pcb, &config).unwrap();
+    let problem = &lowered.problem;
+    // The row leaders carry each member's fabrication square and slot.
+    assert_eq!(problem.components[0].courtless.len(), 2);
+    assert_eq!(problem.components[0].slots.len(), 2);
+    assert_eq!(
+        problem.components[0].courtless[0],
+        [-8.05, -8.05, 8.05, 8.05]
+    );
+    // The keys' own slots are no fixed holes of the board: they move.
+    assert!(
+        problem
+            .components
+            .iter()
+            .filter(|component| component.copper_only)
+            .all(|cutout| cutout.side == core::Side::Neither)
+    );
+    let illegal = core::legal::illegal_components(problem, &problem.poses);
+    assert!(illegal.contains(&0) && illegal.contains(&2), "{illegal:?}");
+    // (Each row's slot lies in the other's square as well.)
+    assert!(matches!(
+        core::legal::conflict_kind(problem, &problem.poses, 2, problem.poses[2], 0),
+        Some("bodies overlap (no courtyard)" | "a slot of one meets the other")
+    ));
+    // A row below the other by a key's height is legal.
+    let mut poses = problem.poses.clone();
+    poses[2].position[1] = 20.0 + 16.1;
+    problem.sync_followers(&mut poses);
+    assert!(core::legal::illegal_components(problem, &poses).is_empty());
+    // A placed board of held keys keeps its slots as cutouts, as before.
+    let held = KiCadBoardPlacerConfig {
+        fixed: ["SW1", "SW2", "SW3", "SW4"]
+            .map(String::from)
+            .into_iter()
+            .collect(),
+        ..KiCadBoardPlacerConfig::default()
+    };
+    let lowered = lower_placement(&pcb, &held).unwrap();
+    assert!(
+        lowered.problem.components[..4]
+            .iter()
+            .all(|c| c.slots.is_empty())
+    );
+    assert_eq!(
+        lowered
+            .problem
+            .components
+            .iter()
+            .filter(|c| c.copper_only && c.side == core::Side::Both)
+            .count(),
+        4
+    );
 }
