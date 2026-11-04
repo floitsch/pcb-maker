@@ -3238,6 +3238,12 @@ fn finding_action(
                 "check whether the rule is one the router does not keep: rules.unmodelled and rules.custom_rules in board-router.json"
             }
         ),
+        (None, _) if ELECTRICAL_KINDS.contains(&kind) && !board_items_only(findings).is_empty() => {
+            format!(
+                "every finding lies between the board's own copper graphics and zones ({}), no part, track or via: no placement or route moves them (jetson-nano-baseboard's two copper circles drawn on In4.Cu inside its GND zone); move or delete the graphic, give it the zone's net, or keep the zone's fill off it in the input; the designer's board as --reference makes it pre-existing where that board has it",
+                board_items_only(findings).join("; ")
+            )
+        }
         (None, _) if kind == "copper_edge_clearance" && !part_cutout_pairs(findings).is_empty() => {
             format!(
                 "the edge is a part's own Edge.Cuts (a switch's or connector's hole or slot that its footprint brings) with another part's copper at it ({}): the parts lie too close or on each other, which no edge constraint or clearance setting changes; give them room (a looser row or relative, the outline), keep them apart (apart), or place them where they belong",
@@ -3259,6 +3265,47 @@ fn finding_action(
     } else {
         format!("{kind} {count} ({}): {step}", what.join("; "))
     }
+}
+
+/// The items of findings whose every item is a zone or a copper graphic
+/// of no net (KiCad's "Zone [GND] on In4.Cu, priority 0", "Arc [<no
+/// net>] on In4.Cu"): neither a part's nor the router's, so "move those
+/// nets' parts apart" does not apply. Empty when any item is a pad, a
+/// track, a via, or a graphic of a net (an arc track has one).
+fn board_items_only(findings: &[&DrcFinding]) -> Vec<String> {
+    let board_item = |item: &str| {
+        item.starts_with("Zone ")
+            || (item.contains("[<no net>]")
+                && [
+                    "Arc ",
+                    "Line ",
+                    "Segment ",
+                    "Polygon ",
+                    "Rectangle ",
+                    "Circle ",
+                    "Bezier ",
+                ]
+                .iter()
+                .any(|shape| item.starts_with(shape)))
+    };
+    let mut items: Vec<String> = Vec::new();
+    for finding in findings {
+        if finding.item_descriptions.is_empty()
+            || !finding
+                .item_descriptions
+                .iter()
+                .all(|item| board_item(item))
+        {
+            return Vec::new();
+        }
+        for item in &finding.item_descriptions {
+            if !items.contains(item) {
+                items.push(item.clone());
+            }
+        }
+    }
+    items.truncate(4);
+    items
 }
 
 /// The footprints' mask graphics among the findings' items, as KiCad names
@@ -5444,6 +5491,40 @@ mod tests {
         );
         assert!(!summary.contains("ULPI_D1"), "{summary}");
         assert_eq!(lengths_summary(&lengths[4..]), None);
+    }
+
+    /// A clearance between the board's own copper graphic and a zone
+    /// names them and no part to move (trial 5's jetson-nano-baseboard:
+    /// "clearance 2 (...; nets GND (2)): move those nets' parts apart" for
+    /// two no-net circles on In4.Cu inside its GND zone).
+    #[test]
+    fn a_clearance_between_board_graphics_and_a_zone_names_no_part() {
+        let finding = DrcFinding {
+            kind: "clearance".into(),
+            nets: vec!["GND".into()],
+            item_descriptions: vec![
+                "Arc [<no net>] on In4_GND.Cu".into(),
+                "Zone [GND] on In4_GND.Cu, priority 0".into(),
+            ],
+            ..Default::default()
+        };
+        let action = finding_action("clearance", 1, &[&finding], KeptParts::Unknown);
+        assert!(
+            action.contains("between the board's own copper graphics and zones (Arc [<no net>] on In4_GND.Cu; Zone [GND]")
+                && !action.contains("move those nets' parts apart"),
+            "{action}"
+        );
+        let track = DrcFinding {
+            item_descriptions: vec![
+                "Track [GND] on F.Cu".into(),
+                "Zone [GND] on F.Cu, priority 0".into(),
+            ],
+            ..finding.clone()
+        };
+        assert!(
+            finding_action("clearance", 1, &[&track], KeptParts::Unknown)
+                .contains("move those nets' parts apart")
+        );
     }
 
     /// A `diff_pair_*` finding's action says what became of the pairs:
