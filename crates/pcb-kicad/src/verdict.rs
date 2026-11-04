@@ -2482,6 +2482,20 @@ fn input_tagged(observation: String) -> String {
     format!("{INPUT_TAG}{observation}")
 }
 
+/// `actions` (the run's own, in their order) followed by the input's own
+/// `observations`, folded (`fold_observations`) and tagged
+/// (`INPUT_TAG`): the order of every verdict's next_actions, the layout's,
+/// the route's, the placement's and fab-kicad-board's, and of
+/// drc-kicad-board's `next:` lines.
+pub fn with_input_observations(mut actions: Vec<String>, observations: &[String]) -> Vec<String> {
+    actions.extend(
+        fold_observations(observations)
+            .into_iter()
+            .map(input_tagged),
+    );
+    actions
+}
+
 /// Whether a warning of the input check or the placement is the input's
 /// own observation: a fixed part on the board's own marks
 /// (`fixed_on_marks_warning`: "fixed part J3 lies on ... stay where the
@@ -3557,7 +3571,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
     let footprint_findings = by_kind(&footprint);
     let input_findings = by_kind(&input);
     let (status, reason) = decide(facts, &strict.new);
-    let (mut actions, mut observations) = next_actions(
+    let (actions, mut observations) = next_actions(
         facts,
         status,
         &strict.new,
@@ -3608,11 +3622,7 @@ pub fn judge(facts: &KiCadRunFacts) -> KiCadVerdict {
     // The input's own observations last, tagged, those of one kind folded
     // into one line (`fold_observations`); every one in full in
     // `input_observations`.
-    actions.extend(
-        fold_observations(&observations)
-            .into_iter()
-            .map(input_tagged),
-    );
+    let actions = with_input_observations(actions, &observations);
     KiCadVerdict {
         status,
         exit_code: status.exit_code(),

@@ -1257,14 +1257,20 @@ fn drc(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     let own = apart(pcb_kicad::Apart::Footprint);
     let board_own = apart(pcb_kicad::Apart::Input);
     let dru = path_text(&Path::new(source).join(format!("{board_id}.kicad_dru")));
-    if let Some(note) = pcb_kicad::footprint_findings_note(&own, &dru) {
-        println!("footprint: {note}");
-    }
-    if let Some(note) = pcb_kicad::input_findings_note(&board_own, &dru, input_project.is_none()) {
-        println!("input: {note}");
-    }
+    // The order of a verdict's next_actions: what to act on first, the
+    // input's own observations (the footprints' and the board's own
+    // findings, which do not fail the check) last, tagged.
+    let observations: Vec<String> = pcb_kicad::footprint_findings_note(&own, &dru)
+        .into_iter()
+        .chain(pcb_kicad::input_findings_note(
+            &board_own,
+            &dru,
+            input_project.is_none(),
+        ))
+        .collect();
     let failed =
         tally.errors.values().sum::<usize>() > own.len() + board_own.len() || tally.unconnected > 0;
+    let mut actions = Vec::new();
     if failed
         && let Ok(config) = pcb_kicad::resolve_project_rules(
             &Path::new(source).join(format!("{board_id}.kicad_pro")),
@@ -1273,10 +1279,13 @@ fn drc(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         && let Some(project) = config.project_rules
         && !project.unmodelled.is_empty()
     {
-        println!(
-            "next: the project has rules the router does not keep, which KiCad checks: {}",
+        actions.push(format!(
+            "the project has rules the router does not keep, which KiCad checks: {}",
             project.unmodelled.join("; ")
-        );
+        ));
+    }
+    for line in pcb_kicad::with_input_observations(actions, &observations) {
+        println!("next: {line}");
     }
     Ok(if !failed {
         KiCadRunStatus::Complete
@@ -1459,39 +1468,6 @@ fn fab(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     facts.wall_seconds = started.elapsed().as_secs_f64();
     let mut verdict = pcb_kicad::judge(&facts);
     let drc = &manifest.drc;
-    let errors: usize = drc.errors.values().sum();
-    let counts = format!(
-        "KiCad's DRC: {errors} errors{}, {} unconnected items, {} warnings, {} cosmetic",
-        if drc.errors.is_empty() {
-            String::new()
-        } else {
-            format!(
-                " ({})",
-                drc.errors
-                    .iter()
-                    .map(|(kind, count)| format!("{kind} {count}"))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            )
-        },
-        drc.unconnected_items,
-        drc.warnings,
-        drc.cosmetic
-    ) + &if drc.footprint_own.is_empty() {
-        String::new()
-    } else {
-        format!(
-            ", {} within one footprint each (not blocking)",
-            drc.footprint_own.values().sum::<usize>()
-        )
-    } + &if drc.input_own.is_empty() {
-        String::new()
-    } else {
-        format!(
-            ", {} the board's own, not electrical (not blocking)",
-            drc.input_own.values().sum::<usize>()
-        )
-    };
     let status = if manifest.released {
         KiCadRunStatus::Complete
     } else {
@@ -1499,68 +1475,18 @@ fn fab(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
     };
     verdict.status = status;
     verdict.exit_code = status.exit_code();
-    verdict.next_actions.clear();
-    // A footprint's own findings: not blocking, said first.
-    verdict
-        .next_actions
-        .extend(drc.footprint_note.iter().cloned());
-    verdict.next_actions.extend(drc.input_note.iter().cloned());
-    if manifest.released {
-        verdict.reason = format!(
-            "released{}: {} files, {}; {counts}",
-            if drc.findings_allowed {
-                " with findings (--allow-findings)"
-            } else {
-                ""
-            },
-            manifest.files.len(),
-            manifest.zip.as_deref().unwrap_or("no zip")
-        );
-        if drc.findings_allowed {
-            verdict.next_actions.push(format!(
-                "the release went ahead with KiCad's findings (--allow-findings): {counts}; make sure the fab accepts them"
-            ));
-            verdict
-                .next_actions
-                .extend(manifest.findings.iter().cloned());
-        }
-        if !manifest.without_lcsc.is_empty() {
-            let shown = manifest.without_lcsc.len().min(10);
-            verdict.next_actions.push(format!(
-                "{} parts have no LCSC part number, which JLCPCB's assembly needs (an LCSC field on the symbol, then Update PCB from Schematic): {}{} (fab-manifest.json's without_lcsc lists them)",
-                manifest.without_lcsc.len(),
-                manifest.without_lcsc[..shown].join(", "),
-                if shown < manifest.without_lcsc.len() { ", ..." } else { "" }
-            ));
-        }
-        verdict.next_actions.push(
-            "check the rotations of polarised parts in the fab's placement preview: library orientations differ between KiCad and assemblers".into(),
-        );
+    // With the board it was laid out from: the findings between parts the
+    // layout kept where the input has them are not the layout's to move
+    // (as its verdict says).
+    let (kept, kept_count) = if !manifest.released && input_project.is_some() {
+        pcb_kicad::kept_parts_actions(&facts)
     } else {
-        verdict.reason = format!("refused: {counts}; nothing was exported");
-        // With the board it was laid out from: the findings between parts
-        // the layout kept where the input has them are not the layout's
-        // to move (as its verdict says).
-        let (kept, kept_count) = if input_project.is_some() {
-            pcb_kicad::kept_parts_actions(&facts)
-        } else {
-            (Vec::new(), 0)
-        };
-        if kept.is_empty() {
-            verdict.next_actions.push(
-                "fix the findings (route the open connections, move what is too close) and release again; --allow-findings exports anyway"
-                    .into(),
-            );
-        } else {
-            verdict.next_actions.push(format!(
-                "{kept_count} of the errors lie between parts the layout kept where the input has them (below): they are the input's, not the layout's to move; fix the others (route the open connections, move what the layout put too close) and release again; --allow-findings exports anyway"
-            ));
-            verdict.next_actions.extend(kept);
-        }
-        verdict
-            .next_actions
-            .extend(manifest.findings.iter().cloned());
-    }
+        (Vec::new(), 0)
+    };
+    let lines = pcb_kicad::fab_verdict_lines(&manifest, kept, kept_count);
+    verdict.reason = lines.reason;
+    verdict.next_actions = lines.next_actions;
+    verdict.input_observations = lines.input_observations;
     for skipped in &manifest.skipped {
         println!("skipped: {skipped}");
     }
@@ -2063,7 +1989,7 @@ pub const AGENT_COMMANDS: [(&str, &str, &str); 14] = [
     (
         "drc-kicad-board",
         "runs KiCad's DRC on a board (cached) and writes its JSON report",
-        "usage: pcb-maker drc-kicad-board <project-dir> <board-id> <report.json> [--no-refill] [--input <project-dir>]\n\n  <project-dir>  the KiCad project directory holding <board-id>.kicad_pcb.\n  <board-id>     the board's file stem.\n  <report.json>  where KiCad's DRC report (JSON, every severity) goes; its directory is created.\n  --no-refill    check the zones as stored; default: refilled first, as KiCad's fab outputs do.\n  --input <dir>  the project the board was laid out or routed from: only the parts still where\n                 its board has them, and its zones and board graphics, are the input's;\n                 default: every part, zone and board graphic is the board's own.\n\nThe board and its rules (.kicad_pro, .kicad_dru) are checked without the schematic, as the\nreference board is. The DRC cache answers a board it has seen (docs/agents.md). Exits 0 when\nKiCad finds no error that counts (warnings, excluded and cosmetic findings do not, nor errors\nthat lie within one footprint each: a line \"footprint: ...\" names them with the custom rule\nthat accepts them, nor the input's own edge clearances, solder mask bridges and courtyards,\nwith no track or via in them: a line \"input: ...\" names them, docs/agents.md section 4) and\nno unconnected item, 1 when it does; one line on stdout counts them, and\nwhen it does and the project has rules the router does not keep (creepage, lengths, rules on\nareas), a line \"next: ...\" names them.",
+        "usage: pcb-maker drc-kicad-board <project-dir> <board-id> <report.json> [--no-refill] [--input <project-dir>]\n\n  <project-dir>  the KiCad project directory holding <board-id>.kicad_pcb.\n  <board-id>     the board's file stem.\n  <report.json>  where KiCad's DRC report (JSON, every severity) goes; its directory is created.\n  --no-refill    check the zones as stored; default: refilled first, as KiCad's fab outputs do.\n  --input <dir>  the project the board was laid out or routed from: only the parts still where\n                 its board has them, and its zones and board graphics, are the input's;\n                 default: every part, zone and board graphic is the board's own.\n\nThe board and its rules (.kicad_pro, .kicad_dru) are checked without the schematic, as the\nreference board is. The DRC cache answers a board it has seen (docs/agents.md). Exits 0 when\nKiCad finds no error that counts (warnings, excluded and cosmetic findings do not, nor errors\nthat lie within one footprint each, nor the input's own edge clearances, solder mask bridges\nand courtyards with no track or via in them, docs/agents.md section 4) and no unconnected\nitem, 1 when it does; one line on stdout counts them. Then \"next: ...\" lines, in a verdict's\norder: when it fails and the project has rules the router does not keep (creepage, lengths,\nrules on areas), a line names them; last the input's own findings, each line starting\n\"next: nothing to do (the input's): \" (the footprints' own with the custom rule that accepts\nthem, then the board's own; until 2026-11-04 the lines \"footprint: ...\" and \"input: ...\").",
     ),
     (
         "inspect-routing-run",

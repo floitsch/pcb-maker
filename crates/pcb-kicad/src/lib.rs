@@ -88,7 +88,7 @@ pub use verdict::{
     input_items, input_own, is_cosmetic, is_input_error, judge, kept_parts_actions,
     kicad_drc_report, load_drc_tally, noted_input_actions, read_drc_tally, reference_findings,
     room_action, route_facts, set_build_version, split_findings, tally_drc, unreferenced_apart,
-    wall_cuts,
+    wall_cuts, with_input_observations,
 };
 mod work_rate;
 pub use work_rate::{
@@ -114,7 +114,7 @@ pub use fab_export::{KiCadFabExport, export_kicad_fab};
 mod fab_release;
 pub use fab_release::{
     KiCadFabDrc, KiCadFabErc, KiCadFabFile, KiCadFabOptions, KiCadFabProfile, KiCadFabRelease,
-    fab_kicad_board,
+    KiCadFabVerdictLines, fab_kicad_board, fab_verdict_lines,
 };
 mod board_footprints;
 mod key_matrix;

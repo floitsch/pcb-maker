@@ -899,6 +899,126 @@ pub fn fab_kicad_board(
     Ok(manifest)
 }
 
+/// What fab-kicad-board's verdict says (`fab_verdict_lines`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KiCadFabVerdictLines {
+    /// The verdict's reason: released (with findings) or refused, with
+    /// KiCad's counts.
+    pub reason: String,
+    /// The release's own actions first, then the input's own observations
+    /// tagged (`with_input_observations`).
+    pub next_actions: Vec<String>,
+    /// The input's own observations in full: the footprints' own findings'
+    /// note and the board's own findings' note.
+    pub input_observations: Vec<String>,
+}
+
+/// fab-kicad-board's verdict lines from its manifest, in the order of a
+/// layout's verdict: the release's own actions first (on a refusal what to
+/// fix, with `--input` the findings between parts the layout kept where
+/// the input has them (`kept`, `kept_count` of them:
+/// `kept_parts_actions`) in their place after it, then the findings that
+/// block; on a release the findings it went ahead with, the parts without
+/// an LCSC number, the rotations to check), the footprints' own and the
+/// board's own findings that do not block last, tagged. Until 2026-11-04
+/// those notes came first, ahead of the refusal's findings.
+pub fn fab_verdict_lines(
+    manifest: &KiCadFabRelease,
+    kept: Vec<String>,
+    kept_count: usize,
+) -> KiCadFabVerdictLines {
+    let drc = &manifest.drc;
+    let errors: usize = drc.errors.values().sum();
+    let counts = format!(
+        "KiCad's DRC: {errors} errors{}, {} unconnected items, {} warnings, {} cosmetic",
+        if drc.errors.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " ({})",
+                drc.errors
+                    .iter()
+                    .map(|(kind, count)| format!("{kind} {count}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )
+        },
+        drc.unconnected_items,
+        drc.warnings,
+        drc.cosmetic
+    ) + &if drc.footprint_own.is_empty() {
+        String::new()
+    } else {
+        format!(
+            ", {} within one footprint each (not blocking)",
+            drc.footprint_own.values().sum::<usize>()
+        )
+    } + &if drc.input_own.is_empty() {
+        String::new()
+    } else {
+        format!(
+            ", {} the board's own, not electrical (not blocking)",
+            drc.input_own.values().sum::<usize>()
+        )
+    };
+    let mut actions = Vec::new();
+    let reason = if manifest.released {
+        if drc.findings_allowed {
+            actions.push(format!(
+                "the release went ahead with KiCad's findings (--allow-findings): {counts}; make sure the fab accepts them"
+            ));
+            actions.extend(manifest.findings.iter().cloned());
+        }
+        if !manifest.without_lcsc.is_empty() {
+            let shown = manifest.without_lcsc.len().min(10);
+            actions.push(format!(
+                "{} parts have no LCSC part number, which JLCPCB's assembly needs (an LCSC field on the symbol, then Update PCB from Schematic): {}{} (fab-manifest.json's without_lcsc lists them)",
+                manifest.without_lcsc.len(),
+                manifest.without_lcsc[..shown].join(", "),
+                if shown < manifest.without_lcsc.len() { ", ..." } else { "" }
+            ));
+        }
+        actions.push(
+            "check the rotations of polarised parts in the fab's placement preview: library orientations differ between KiCad and assemblers".into(),
+        );
+        format!(
+            "released{}: {} files, {}; {counts}",
+            if drc.findings_allowed {
+                " with findings (--allow-findings)"
+            } else {
+                ""
+            },
+            manifest.files.len(),
+            manifest.zip.as_deref().unwrap_or("no zip")
+        )
+    } else {
+        if kept.is_empty() {
+            actions.push(
+                "fix the findings (route the open connections, move what is too close) and release again; --allow-findings exports anyway"
+                    .into(),
+            );
+        } else {
+            actions.push(format!(
+                "{kept_count} of the errors lie between parts the layout kept where the input has them (below): they are the input's, not the layout's to move; fix the others (route the open connections, move what the layout put too close) and release again; --allow-findings exports anyway"
+            ));
+            actions.extend(kept);
+        }
+        actions.extend(manifest.findings.iter().cloned());
+        format!("refused: {counts}; nothing was exported")
+    };
+    let observations: Vec<String> = drc
+        .footprint_note
+        .iter()
+        .chain(drc.input_note.iter())
+        .cloned()
+        .collect();
+    KiCadFabVerdictLines {
+        reason,
+        next_actions: crate::verdict::with_input_observations(actions, &observations),
+        input_observations: observations,
+    }
+}
+
 /// The kind of an exported file, by where it is and its name.
 fn file_kind(relative: &str) -> &'static str {
     let name = relative.rsplit('/').next().unwrap_or(relative);
@@ -1091,6 +1211,90 @@ mod tests {
                 1
             );
         }
+    }
+
+    #[test]
+    fn the_releases_actions_come_before_the_boards_own_findings() {
+        // The release's own actions first, the notes that do not block
+        // last and tagged; with --input the kept parts' findings keep
+        // their place after the refusal's first line. Until 2026-11-04 the
+        // footprints' and the board's own notes led the list.
+        let mut manifest = KiCadFabRelease {
+            schema_version: 1,
+            board_id: "b".into(),
+            profile: KiCadFabProfile::Kicad,
+            kicad_version: None,
+            released: false,
+            drc: KiCadFabDrc {
+                errors: BTreeMap::from([("clearance".to_string(), 2)]),
+                footprint_own: BTreeMap::from([("hole_clearance".to_string(), 8)]),
+                footprint_note: Some("8 DRC findings lie within one footprint each (J1: hole_clearance 8)".into()),
+                input_own: BTreeMap::from([("copper_edge_clearance".to_string(), 8)]),
+                input_note: Some("8 DRC findings are the input's (copper_edge_clearance 8)".into()),
+                unconnected_items: 1,
+                ..Default::default()
+            },
+            erc: None,
+            layers: Vec::new(),
+            bom_source: None,
+            lcsc_field: None,
+            without_lcsc: Vec::new(),
+            zip: None,
+            files: Vec::new(),
+            skipped: Vec::new(),
+            findings: vec!["clearance: Pad 1 [A] of R31 on F.Cu at (1.00, 2.00); Pad 2 [B] of J1 on F.Cu at (1.10, 2.00)".into()],
+        };
+        let refused = fab_verdict_lines(&manifest, Vec::new(), 0);
+        assert_eq!(
+            refused.reason,
+            "refused: KiCad's DRC: 2 errors (clearance 2), 1 unconnected items, 0 warnings, 0 cosmetic, 8 within one footprint each (not blocking), 8 the board's own, not electrical (not blocking); nothing was exported"
+        );
+        let actions = &refused.next_actions;
+        assert_eq!(actions.len(), 4, "{actions:#?}");
+        assert!(actions[0].starts_with("fix the findings"), "{actions:#?}");
+        assert!(
+            actions[1].starts_with("clearance: Pad 1 [A] of R31"),
+            "{actions:#?}"
+        );
+        assert_eq!(
+            actions[2],
+            "nothing to do (the input's): 8 DRC findings lie within one footprint each (J1: hole_clearance 8)"
+        );
+        assert!(
+            actions[3].starts_with("nothing to do (the input's): 8 DRC findings are the input's")
+        );
+        assert_eq!(refused.input_observations.len(), 2);
+        // --input: the kept parts' findings after the first line.
+        let kept = fab_verdict_lines(
+            &manifest,
+            vec!["clearance 2 (...): every finding lies between parts kept where the input has them (J1, R31: unchanged from the input)".into()],
+            2,
+        );
+        assert!(
+            kept.next_actions[0].starts_with("2 of the errors lie between parts the layout kept")
+        );
+        assert!(
+            kept.next_actions[1]
+                .starts_with("clearance 2 (...): every finding lies between parts kept")
+        );
+        assert!(kept.next_actions[2].starts_with("clearance: Pad 1"));
+        assert!(kept.next_actions[3].starts_with(crate::verdict::INPUT_TAG));
+        // Released: the release's lines, then the notes.
+        manifest.released = true;
+        manifest.drc.errors.clear();
+        manifest.drc.unconnected_items = 0;
+        let released = fab_verdict_lines(&manifest, Vec::new(), 0);
+        assert!(
+            released
+                .reason
+                .starts_with("released: 0 files, no zip; KiCad's DRC: 0 errors")
+        );
+        assert!(released.next_actions[0].starts_with("check the rotations"));
+        assert!(
+            released.next_actions[1..]
+                .iter()
+                .all(|action| action.starts_with(crate::verdict::INPUT_TAG))
+        );
     }
 
     #[test]
