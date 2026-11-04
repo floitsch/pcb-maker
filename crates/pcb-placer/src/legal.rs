@@ -4948,6 +4948,7 @@ pub(crate) mod tests {
             other_pin: [-1.0, 0.0],
             soft: 0.0,
             max: 2.4,
+            floor: 0.0,
         };
         // 1 mm along x; turned a quarter, the left pad lies 1 mm along y.
         assert!((relation_violation(&problem, &poses, &relation) - 1.0).abs() < 1.0e-9);
@@ -4977,6 +4978,62 @@ pub(crate) mod tests {
             relation_violation(&problem, &bound, &relation)
                 < relation_violation(&problem, &free, &relation) - 0.4
         );
+    }
+
+    #[test]
+    fn a_length_floor_holds_two_pins_apart_and_moves_the_part_out() {
+        use crate::constraints::{
+            Relation, add_relation_gradient, relation_target, relation_violation,
+        };
+        // Part 0 fixed, part 1 beside it: their centre pins 2 mm apart; a
+        // net's minimum asks 6 mm at least (no maximum).
+        let (mut problem, poses) = pair(0.0, 0.0);
+        problem.components[0].fixed = true;
+        let relation = Relation::Within {
+            part: 1,
+            pin: [0.0, 0.0],
+            other: 0,
+            other_pin: [0.0, 0.0],
+            soft: f64::INFINITY,
+            max: f64::INFINITY,
+            floor: 6.0,
+        };
+        // Missed by the distance short of the floor (times its weight);
+        // beyond it nothing.
+        let short = crate::constraints::WITHIN_FLOOR_WEIGHT * 4.0;
+        assert!((relation_violation(&problem, &poses, &relation) - short).abs() < 1.0e-9);
+        let mut far = poses.clone();
+        far[1].position[0] = 17.0;
+        assert_eq!(relation_violation(&problem, &far, &relation), 0.0);
+        // No force in the global placement (it would reshuffle the board):
+        // the anneal, the legaliser and the refinement price it.
+        problem.constraints.relations.push(relation.clone());
+        let mut gradient = vec![[0.0; 2]; 1];
+        add_relation_gradient(&problem, &poses, &[usize::MAX, 0], &mut gradient, 1.0);
+        assert_eq!(gradient[0], [0.0, 0.0]);
+        // The relation repair's target puts the pin at the floor.
+        let target = relation_target(&problem, &poses, &relation);
+        assert!((target[0] - 16.0).abs() < 1.0e-9, "{target:?}");
+        // The legaliser keeps part 1 out where it can.
+        problem.constraints.relation_weight = 50.0;
+        let mut moved = poses.clone();
+        moved[1].position = [11.0, 10.0];
+        assert!(legalize(&problem, &mut moved).is_empty());
+        assert!(
+            relation_violation(&problem, &moved, &relation) < short,
+            "{moved:?}"
+        );
+        // Without a floor the relation is the maximum's alone.
+        let plain = Relation::Within {
+            part: 1,
+            pin: [0.0, 0.0],
+            other: 0,
+            other_pin: [0.0, 0.0],
+            soft: 1.0,
+            max: 3.0,
+            floor: 0.0,
+        };
+        assert!((relation_violation(&problem, &poses, &plain) - 1.0).abs() < 1.0e-9);
     }
 
     #[test]

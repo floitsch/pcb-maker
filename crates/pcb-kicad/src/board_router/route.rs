@@ -747,6 +747,31 @@ pub(crate) fn length_bounded_nets(
     (!nets.is_empty()).then(|| std::sync::Arc::new(nets))
 }
 
+/// The nets of the project's `length` rules with a minimum, each with the
+/// largest minimum of its rules (`KiCadBoardRouterConfig::length_rules`,
+/// with `length_matching`): `None` without one.
+pub(crate) fn length_floor_nets(
+    config: &KiCadBoardRouterConfig,
+) -> Option<std::sync::Arc<BTreeMap<String, f64>>> {
+    if !config.length_matching_on() {
+        return None;
+    }
+    let mut nets: BTreeMap<String, f64> = BTreeMap::new();
+    for rule in &config.length_rules {
+        let (true, Some(min)) = (rule.constraint == "length", rule.min) else {
+            continue;
+        };
+        if min <= 0.0 {
+            continue;
+        }
+        for member in &rule.nets {
+            let bound = nets.entry(member.net.clone()).or_insert(min);
+            *bound = bound.max(min);
+        }
+    }
+    (!nets.is_empty()).then(|| std::sync::Arc::new(nets))
+}
+
 pub(crate) fn core_config(config: &KiCadBoardRouterConfig) -> core::Config {
     // The global route the capacitated corridors come from (a router
     // with the switch off never asks for it).

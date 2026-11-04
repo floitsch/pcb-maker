@@ -519,6 +519,61 @@ fn turns_to_edges(direction: [f64; 2], angle: f64) -> String {
         .join(", ")
 }
 
+/// The template's comment on the project's `length` and `skew` rules (as
+/// the router reads them, `project_rules::length_rules`): per rule its
+/// bounds, its nets and the parts their pins lie on, and what the layout's
+/// placer holds of it (fresh-agent trial 6: neither the description nor
+/// the template named the firestarter's DVP rule).
+fn length_rule_comments(
+    directory: &Path,
+    board_id: &str,
+    pcb: &Path,
+    parts: &[Part],
+) -> Vec<String> {
+    let Ok(rules) = crate::project_rules::resolve_project_rules(
+        &directory.join(format!("{board_id}.kicad_pro")),
+        pcb,
+    ) else {
+        return Vec::new();
+    };
+    rules
+        .length_rules
+        .iter()
+        .map(|rule| {
+            let nets: BTreeSet<&str> = rule.nets.iter().map(|member| member.net.as_str()).collect();
+            let on: BTreeSet<&str> = parts
+                .iter()
+                .filter(|part| {
+                    part.pads
+                        .iter()
+                        .any(|(_, net, ..)| net.as_deref().is_some_and(|net| nets.contains(net)))
+                })
+                .map(|part| part.reference.as_str())
+                .collect();
+            let mut named: Vec<&str> = nets.iter().copied().take(6).collect();
+            let more = nets.len().saturating_sub(6);
+            let more = if more > 0 { format!(", {more} more") } else { String::new() };
+            let bound = |value: Option<f64>| value.map_or("-".to_string(), |v| format!("{v:.2}"));
+            let held = if rule.constraint == "length" {
+                "the layout's placer holds two parts' pins of such a net within 0.8 of the maximum (length_maxima) and, with {\"placer\": {\"length_minima\": true}} in layout.json, at least half the minimum apart; board-placer.json's length_rules says where they ended; an apart or near entry between the parts holds them more"
+            } else {
+                "a skew: the router matches the group's nets by meanders; the placer holds nothing of it"
+            };
+            named.sort();
+            format!(
+                "{} rule '{}' (min {}, max {} mm) on {} nets ({}{more}) between {}: {held}.",
+                rule.constraint,
+                rule.rule,
+                bound(rule.min),
+                bound(rule.max),
+                nets.len(),
+                named.join(", "),
+                on.iter().copied().collect::<Vec<_>>().join(", ")
+            )
+        })
+        .collect()
+}
+
 /// The starter constraints for `directory/<board_id>.kicad_pcb`
 /// (`describe-kicad-board --constraints-template`): docs/agents.md, "Starter
 /// constraints for a board".
@@ -785,6 +840,7 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
             widened.join(", ")
         ));
     }
+    comment.extend(length_rule_comments(directory, board_id, &path, &parts));
     comment.push("To fill in: parts that must not move (fixed), keepouts (antennas, mounting hardware), regions, the outline if the board has none (docs/constraints.md).".into());
     let mut template = serde_json::json!({
         "version": 1,
@@ -1024,6 +1080,21 @@ mod tests {
         );
         let comments = template["comment"].to_string();
         assert!(comments.contains("J2"), "{comments}");
+        assert!(!comments.contains("length rule"), "{comments}");
+        // A length rule of the project: named with its nets and parts.
+        fs::write(
+            dir.join("t.kicad_dru"),
+            "(version 1)\n(rule \"bus\" (constraint length (min 20mm) (max 22mm)) (condition \"A.NetName == '+3V3'\"))\n",
+        )
+        .unwrap();
+        let ruled = constraints_template(&dir, "t").unwrap();
+        let comments = ruled["comment"].to_string();
+        assert!(
+            comments.contains("length rule 'bus' (min 20.00, max 22.00 mm) on 1 nets (+3V3) between C1, C2, J1, J2, U1")
+                && comments.contains("length_minima\\\": true}} in layout.json, at least half the minimum apart"),
+            "{comments}"
+        );
+        fs::remove_file(dir.join("t.kicad_dru")).unwrap();
         // It reads as constraints.
         let path = dir.join("constraints.json");
         fs::write(&path, template.to_string()).unwrap();

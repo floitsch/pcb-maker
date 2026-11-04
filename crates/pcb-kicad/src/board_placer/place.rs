@@ -816,6 +816,7 @@ pub fn place_kicad_board(
         on_marks: placement.relaxation.on_marks.clone(),
         attached_marks: lowered.attached_report.clone(),
         array_rooms: lowered.array_rooms.clone(),
+        length_rules: super::lower::length_rule_report(&lowered, &placement.poses),
         attached_mark_pairs: lowered.attached_marks.clone(),
         halos: placement.relaxation.halos.clone(),
         utilization,

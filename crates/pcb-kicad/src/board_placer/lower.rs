@@ -59,6 +59,30 @@ pub(crate) struct LoweredPlacement {
     /// The room kept around grid arrays (`bga_room`), said: per array its
     /// bands and the parts they let in or leave alone.
     pub array_rooms: Vec<String>,
+    /// The nets of `length` rules the placer holds (`length_maxima`,
+    /// `length_minima`): per net its window and its relations' range in
+    /// `problem.constraints.relations` (board-placer.json's
+    /// `length_rules`).
+    pub length_rules: Vec<LoweredLengthRule>,
+}
+
+/// A net of a `length` rule as the placer holds it (`length_windows`).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct LoweredLengthRule {
+    pub net: String,
+    pub min: Option<f64>,
+    pub max: Option<f64>,
+    /// The share of the minimum its pins keep apart (0: none), and of the
+    /// maximum they keep within (infinite: none).
+    pub floor: f64,
+    pub soft: f64,
+    /// The parts its pins lie on, by index.
+    pub parts: Vec<usize>,
+    /// Its relations in `problem.constraints.relations`.
+    pub relations: std::ops::Range<usize>,
+    /// Why the placer holds less than the rule (a floor on a net of more
+    /// than two parts, both parts fixed, too many pins).
+    pub note: String,
 }
 
 /// `*` matches any run of characters, `?` one character, and a backslash
@@ -1848,6 +1872,7 @@ pub(crate) fn lower_placement(
         }
     }
     let mut array_rooms = Vec::new();
+    let mut length_rules = Vec::new();
     if let Some(rules) = &config.router_rules {
         if config.via_in_pad_far_side {
             far_side_of_vias_in_pads(pcb, rules, config, &pad_offsets, &mut problem);
@@ -1856,8 +1881,8 @@ pub(crate) fn lower_placement(
         if config.bga_room {
             array_rooms = room_around_arrays(pcb, rules, &pad_offsets, &references, &mut problem);
         }
-        if config.length_maxima {
-            length_maxima(rules, config, &net_ids, footprint_count, &mut problem);
+        if config.length_maxima || config.length_minima {
+            length_rules = length_windows(rules, config, &net_ids, footprint_count, &mut problem);
         }
     }
     if config.keep_on_pieces {
@@ -1898,6 +1923,7 @@ pub(crate) fn lower_placement(
         attached_report,
         array_rooms,
         pair_rows: pair_row_parts,
+        length_rules,
     })
 }
 
@@ -2172,24 +2198,49 @@ pub(super) const LENGTH_SOFT_SHARE: f64 = 0.8;
 /// bus's nets join two or three pins).
 const LENGTH_MOST_PINS: usize = 16;
 
-/// Length maxima (`length_maxima`): for each net of a `length` rule with a
-/// maximum (`length_bounded_nets`), every two of its pins on different
-/// parts, not both fixed, keep within `LENGTH_SOFT_SHARE` of the maximum
-/// octilinearly, and pay steeply beyond it (`Relation::Within`, automatic
-/// relations: not reported as the user's constraints). The part that moves
-/// in the relation repair is the movable one, the smaller of two movable.
-fn length_maxima(
+/// The share of a net's length minimum its pins are kept apart at least
+/// (`length_minima`, `Relation::Within`'s floor): the route between two
+/// pins is about their octilinear distance, and the meanders on its
+/// straight tracks add at most about as much again where a bus runs at
+/// its clearance (the firestarter's DVP bus on the designer's placement:
+/// docs/placer.md, "Length minima (2026-11-04)").
+pub(super) const LENGTH_FLOOR_SHARE: f64 = 0.5;
+
+/// Length windows (`length_maxima`, `length_minima`): for each net of a
+/// `length` rule with a maximum (`length_bounded_nets`), every two of its
+/// pins on different parts, not both fixed, keep within
+/// `LENGTH_SOFT_SHARE` of the maximum octilinearly, and pay steeply beyond
+/// it; for each net with a minimum (`length_floor_nets`) whose pins lie on
+/// two parts, they keep `LENGTH_FLOOR_SHARE` of the minimum apart at
+/// least (`Relation::Within`, automatic relations: not reported as the
+/// user's constraints). The part that moves in the relation repair is the
+/// movable one, the smaller of two movable. Returns per net what it holds.
+fn length_windows(
     rules: &KiCadBoardRouterConfig,
     config: &KiCadBoardPlacerConfig,
     net_ids: &BTreeMap<String, usize>,
     footprint_count: usize,
     problem: &mut core::Problem,
-) {
-    let Some(bounded) = crate::board_router::length_bounded_nets(rules) else {
-        return;
-    };
+) -> Vec<LoweredLengthRule> {
+    let maxima = config
+        .length_maxima
+        .then(|| crate::board_router::length_bounded_nets(rules))
+        .flatten();
+    let minima = config
+        .length_minima
+        .then(|| crate::board_router::length_floor_nets(rules))
+        .flatten();
+    let mut nets: BTreeSet<&String> = BTreeSet::new();
+    nets.extend(maxima.iter().flat_map(|bounded| bounded.keys()));
+    nets.extend(minima.iter().flat_map(|floors| floors.keys()));
+    let mut report = Vec::new();
     let mut relations = Vec::new();
-    for (net, max) in bounded.iter() {
+    let first = problem.constraints.relations.len();
+    for net in nets {
+        let max = maxima
+            .as_ref()
+            .and_then(|bounded| bounded.get(net).copied());
+        let min = minima.as_ref().and_then(|floors| floors.get(net).copied());
         let Some(&id) = net_ids.get(net) else {
             continue;
         };
@@ -2202,44 +2253,165 @@ fn length_maxima(
                     .map(move |pin| (index, pin.offset))
             })
             .collect();
+        let mut parts: Vec<usize> = pins.iter().map(|(index, _)| *index).collect();
+        parts.dedup();
+        let mut entry = LoweredLengthRule {
+            net: net.clone(),
+            min,
+            max,
+            soft: f64::INFINITY,
+            parts: parts.clone(),
+            ..LoweredLengthRule::default()
+        };
         if pins.len() > LENGTH_MOST_PINS {
+            entry.note = format!("{} pins: not held (at most {LENGTH_MOST_PINS})", pins.len());
+            entry.relations = first + relations.len()..first + relations.len();
+            report.push(entry);
             continue;
         }
-        for (position, &(a, pin_a)) in pins.iter().enumerate() {
-            for &(b, pin_b) in &pins[position + 1..] {
-                let (fixed_a, fixed_b) = (problem.components[a].fixed, problem.components[b].fixed);
-                if a == b || (fixed_a && fixed_b) {
-                    continue;
+        let (soft, max_bound) = max.map_or((f64::INFINITY, f64::INFINITY), |max| {
+            (LENGTH_SOFT_SHARE * max, max)
+        });
+        let floor = match min {
+            Some(min) if parts.len() == 2 => (LENGTH_FLOOR_SHARE * min).min(soft),
+            Some(_) => {
+                entry.note = format!(
+                    "its pins lie on {} parts: the minimum is not held apart (two parts only)",
+                    parts.len()
+                );
+                0.0
+            }
+            None => 0.0,
+        };
+        entry.soft = soft;
+        entry.floor = floor;
+        let start = first + relations.len();
+        if max.is_some() || floor > 0.0 {
+            for (position, &(a, pin_a)) in pins.iter().enumerate() {
+                for &(b, pin_b) in &pins[position + 1..] {
+                    let (fixed_a, fixed_b) =
+                        (problem.components[a].fixed, problem.components[b].fixed);
+                    if a == b || (fixed_a && fixed_b) {
+                        continue;
+                    }
+                    let area = |index: usize| {
+                        let size = problem.components[index].body_size;
+                        size[0] * size[1]
+                    };
+                    let first = fixed_b || (!fixed_a && area(a) <= area(b));
+                    let ((part, pin), (other, other_pin)) = if first {
+                        ((a, pin_a), (b, pin_b))
+                    } else {
+                        ((b, pin_b), (a, pin_a))
+                    };
+                    relations.push(core::constraints::Relation::Within {
+                        part,
+                        pin,
+                        other,
+                        other_pin,
+                        soft,
+                        max: max_bound,
+                        floor,
+                    });
                 }
-                let area = |index: usize| {
-                    let size = problem.components[index].body_size;
-                    size[0] * size[1]
-                };
-                let first = fixed_b || (!fixed_a && area(a) <= area(b));
-                let ((part, pin), (other, other_pin)) = if first {
-                    ((a, pin_a), (b, pin_b))
-                } else {
-                    ((b, pin_b), (a, pin_a))
-                };
-                relations.push(core::constraints::Relation::Within {
-                    part,
-                    pin,
-                    other,
-                    other_pin,
-                    soft: LENGTH_SOFT_SHARE * max,
-                    max: *max,
-                });
             }
         }
+        entry.relations = start..first + relations.len();
+        if entry.relations.is_empty() && entry.note.is_empty() && parts.len() >= 2 {
+            entry.note = "its parts are fixed: nothing to hold".into();
+        }
+        report.push(entry);
     }
     if relations.is_empty() {
-        return;
+        return report;
     }
     if problem.constraints.relation_weight == 0.0 {
         problem.constraints.relation_weight = config.constraint_weight;
     }
     problem.constraints.automatic += relations.len();
     problem.constraints.relations.extend(relations);
+    report
+}
+
+/// board-placer.json's `length_rules`: per net the placer held
+/// (`LoweredPlacement::length_rules`), its window and its pins' nearest
+/// and farthest octilinear distance across parts at `poses`.
+pub(crate) fn length_rule_report(
+    lowered: &LoweredPlacement,
+    poses: &[core::Pose],
+) -> Vec<super::KiCadLengthRuleReport> {
+    let problem = &lowered.problem;
+    let round = |value: f64| (value * 1000.0).round() / 1000.0;
+    lowered
+        .length_rules
+        .iter()
+        .map(|rule| {
+            let id = lowered.net_names.iter().position(|name| *name == rule.net);
+            let pins: Vec<(usize, [f64; 2])> = rule
+                .parts
+                .iter()
+                .flat_map(|&index| {
+                    let component = &problem.components[index];
+                    component
+                        .pins
+                        .iter()
+                        .filter(move |pin| Some(pin.net) == id)
+                        .map(move |pin| (index, component.pin_position(pin, poses[index])))
+                })
+                .collect();
+            let (mut closest, mut farthest) = (f64::INFINITY, 0.0f64);
+            for (position, &(a, at_a)) in pins.iter().enumerate() {
+                for &(b, at_b) in &pins[position + 1..] {
+                    if a != b {
+                        let distance = core::constraints::octilinear(at_a, at_b);
+                        closest = closest.min(distance);
+                        farthest = farthest.max(distance);
+                    }
+                }
+            }
+            if !closest.is_finite() {
+                closest = 0.0;
+            }
+            let held_apart = rule.floor > 0.0 && !rule.relations.is_empty();
+            let held_within = rule.max.is_some() && !rule.relations.is_empty();
+            let held = match (held_apart, held_within) {
+                (true, true) => "both",
+                (true, false) => "apart",
+                (false, true) => "together",
+                (false, false) => "none",
+            };
+            let kept = (!held_apart || closest + 1.0e-6 >= rule.floor)
+                && (!held_within || farthest <= rule.soft + 1.0e-6);
+            let mut note = rule.note.clone();
+            if held_apart && !kept && closest + 1.0e-6 < rule.floor {
+                note = format!(
+                    "its pins lie {:.2} mm apart, closer than half the minimum ({:.2} mm): the route and its meanders may not make up the minimum (give the parts room, or an apart entry, docs/constraints.md)",
+                    closest, rule.floor
+                );
+            } else if held_within && !kept && rule.max.is_some_and(|max| farthest > max) {
+                note = format!(
+                    "its pins lie {farthest:.2} mm apart, beyond the maximum: no route of the net meets it"
+                );
+            }
+            super::KiCadLengthRuleReport {
+                net: rule.net.clone(),
+                min_mm: rule.min,
+                max_mm: rule.max,
+                apart_mm: held_apart.then(|| round(rule.floor)),
+                within_mm: held_within.then(|| round(rule.soft)),
+                parts: rule
+                    .parts
+                    .iter()
+                    .map(|&index| lowered.references[index].clone())
+                    .collect(),
+                closest_mm: round(closest),
+                farthest_mm: round(farthest),
+                held: held.into(),
+                kept,
+                note,
+            }
+        })
+        .collect()
 }
 
 /// How far a pad's mask opening on the side `mask` (the side its part is

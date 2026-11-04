@@ -459,6 +459,16 @@ pub struct KiCadBoardPlacerConfig {
     /// router cannot make a net shorter than its pads lie apart). Nothing
     /// changes on a board without such a rule.
     pub length_maxima: bool,
+    /// Length minima (off; measured on the firestarter and oro's link,
+    /// docs/placer.md, "Length minima (2026-11-04)"): for each net with a `length` rule and a
+    /// minimum whose pins lie on two parts (the project's `.kicad_dru`, as
+    /// the router reads it), the two parts' pins are kept at least half
+    /// the minimum apart, octilinearly, by a penalty in the global
+    /// placement, the anneal, the legaliser and the refinement: closer,
+    /// the route and the meanders on its straight tracks cannot make up
+    /// the minimum. Reported per net in board-placer.json's
+    /// `length_rules`. Nothing changes on a board without such a rule.
+    pub length_minima: bool,
     /// The router's rules the two above read (via-in-pad admissions, net
     /// classes and via sizes; the length rules), set by the layout where
     /// either applies.
@@ -569,6 +579,7 @@ impl Default for KiCadBoardPlacerConfig {
             via_in_pad_far_side: true,
             bga_room: true,
             length_maxima: true,
+            length_minima: false,
             router_rules: None,
             pair_geometry: Default::default(),
             pad_exits: None,

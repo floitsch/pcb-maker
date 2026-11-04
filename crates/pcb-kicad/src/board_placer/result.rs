@@ -94,6 +94,38 @@ impl KiCadBusGroupsReport {
     }
 }
 
+/// A net of a `length` rule as the placement left it (board-placer.json's
+/// `length_rules`; `length_maxima`, `length_minima`): the window the
+/// placer held its pins in and where they ended.
+#[derive(Clone, Debug, Default, Serialize, serde::Deserialize, PartialEq)]
+pub struct KiCadLengthRuleReport {
+    pub net: String,
+    /// The rule's bounds, millimetres.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_mm: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_mm: Option<f64>,
+    /// What the placer held: its pins at least `apart_mm` apart (half the
+    /// minimum) and within `within_mm` (0.8 of the maximum), octilinearly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apart_mm: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub within_mm: Option<f64>,
+    /// The parts its pins lie on.
+    pub parts: Vec<String>,
+    /// The nearest and the farthest two of its pins on different parts
+    /// after the placement, octilinearly.
+    pub closest_mm: f64,
+    pub farthest_mm: f64,
+    /// `apart` (held apart for the minimum), `together` (within for the
+    /// maximum), `both`, or `none` (see `note`).
+    pub held: String,
+    /// Whether the pins lie where the placer held them.
+    pub kept: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub note: String,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub struct KiCadBoardPlacerResult {
     pub board_id: String,
@@ -165,6 +197,11 @@ pub struct KiCadBoardPlacerResult {
     /// under it, and fixed parts left in its room.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub array_rooms: Vec<String>,
+    /// The nets of the project's `length` rules the placer held
+    /// (`length_maxima`, `length_minima`): their window and where their
+    /// pins ended.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub length_rules: Vec<KiCadLengthRuleReport>,
     /// The same, as (the mark's place among the board's marks, the part).
     #[serde(skip)]
     pub attached_mark_pairs: Vec<(usize, usize)>,

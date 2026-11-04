@@ -98,6 +98,12 @@ pub enum Relation {
     /// the far side of vias in pads (2026-10-28)"). Missed by the distance
     /// beyond `soft`, and `WITHIN_STEEPNESS` times the distance beyond
     /// `max` besides: no wirelength pays for a pad pair beyond the maximum.
+    /// `floor` (0: none) is a net's length minimum's share the pins keep
+    /// apart at least: closer than it, no meander on the route between
+    /// them makes up the minimum (docs/placer.md, "Length minima
+    /// (2026-11-04)"); missed by `WITHIN_FLOOR_WEIGHT` times the distance
+    /// short of it. A rule with a
+    /// minimum and no maximum has `soft` and `max` infinite.
     Within {
         part: usize,
         pin: Point,
@@ -105,12 +111,19 @@ pub enum Relation {
         other_pin: Point,
         soft: f64,
         max: f64,
+        floor: f64,
     },
 }
 
 /// How much more a millimetre of a `Within` relation beyond its maximum
 /// costs than a millimetre between its soft bound and its maximum.
 pub const WITHIN_STEEPNESS: f64 = 20.0;
+
+/// What a millimetre short of a `Within` relation's floor costs against a
+/// millimetre of any other relation missed (a fifth was measured on the
+/// firestarter: no fewer connections lost, the lengths no better;
+/// docs/placer.md, "Length minima (2026-11-04)").
+pub const WITHIN_FLOOR_WEIGHT: f64 = 1.0;
 
 /// The octilinear distance of two points: the length of the shortest
 /// track of 45-degree steps between them.
@@ -1167,10 +1180,16 @@ fn raw_relation_violation(problem: &Problem, poses: &[Pose], relation: &Relation
             other_pin,
             soft,
             max,
+            floor,
         } => {
             let (a, b) = within_pins(problem, poses, *part, *pin, *other, *other_pin);
             let distance = octilinear(a, b);
-            (distance - soft).max(0.0) + WITHIN_STEEPNESS * (distance - max).max(0.0)
+            let beyond = (distance - soft).max(0.0) + WITHIN_STEEPNESS * (distance - max).max(0.0);
+            if *floor > 0.0 {
+                beyond + WITHIN_FLOOR_WEIGHT * (floor - distance).max(0.0)
+            } else {
+                beyond
+            }
         }
     }
 }
@@ -1442,13 +1461,23 @@ pub fn add_relation_gradient(
                 other,
                 other_pin,
                 max,
+                floor,
                 ..
             } => {
                 let (a, b) = within_pins(problem, poses, *part, *pin, *other, *other_pin);
                 let delta = [a[0] - b[0], a[1] - b[1]];
                 let length = delta[0].hypot(delta[1]).max(1.0e-9);
-                // Beyond the maximum the steeper slope.
-                let slope = if octilinear(a, b) > *max {
+                let distance = octilinear(a, b);
+                // Closer than the floor no force: the global placement
+                // forms the board's structure, which a part pushed off its
+                // neighbours there reshuffles (the firestarter: J2 pushed
+                // off the module turned the whole board, its wirelength
+                // +51 %); the anneal, the legaliser and the refinement
+                // price the floor. Beyond the maximum the steeper slope.
+                if distance < *floor {
+                    continue;
+                }
+                let slope = if distance > *max {
                     1.0 + WITHIN_STEEPNESS
                 } else {
                     1.0
@@ -1725,15 +1754,22 @@ pub fn relation_target(problem: &Problem, poses: &[Pose], relation: &Relation) -
             other,
             other_pin,
             soft,
+            floor,
             ..
         } => {
             // The body moved along the line between the pins until its pin
-            // lies `soft` from the other's.
+            // lies `soft` from the other's, or `floor` where it lies closer
+            // (pins at one spot: along x).
             let (a, b) = within_pins(problem, poses, *part, *pin, *other, *other_pin);
             let (center, _) = body(problem, *part, poses[*part]);
             let distance = octilinear(a, b);
+            if distance < *floor && distance <= 1.0e-9 {
+                return [center[0] - floor, center[1]];
+            }
             let share = if distance > *soft {
                 1.0 - soft / distance
+            } else if distance < *floor {
+                1.0 - floor / distance
             } else {
                 0.0
             };

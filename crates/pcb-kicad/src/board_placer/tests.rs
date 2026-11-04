@@ -2173,6 +2173,102 @@ fn a_length_bounded_nets_pins_are_kept_within_its_maximum() {
     assert_eq!(format!("{:?}", off.problem), format!("{:?}", none.problem));
 }
 
+#[test]
+fn a_length_minimums_two_parts_are_held_apart_and_reported() {
+    // J1 locked at the left; R5 joined to it by X (a length rule of 20 to
+    // 22 mm) and by three more nets that pull it right beside J1.
+    let pcb = parse(
+        r#"(kicad_pcb (layers (0 "F.Cu") (31 "B.Cu") (44 "Edge.Cuts" user))
+             (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+             (footprint "J" (layer "F.Cu") (locked) (at 5 10) (property "Reference" "J1")
+                 (fp_rect (start -0.5 -0.5) (end 3.5 0.5) (layer "F.CrtYd"))
+                 (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net "X"))
+                 (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net "W1"))
+                 (pad "3" smd rect (at 2 0) (size 0.6 0.6) (layers "F.Cu") (net "W2"))
+                 (pad "4" smd rect (at 3 0) (size 0.6 0.6) (layers "F.Cu") (net "W3")))
+             (footprint "R" (layer "F.Cu") (at 10 12) (property "Reference" "R5")
+                 (fp_rect (start -0.5 -0.5) (end 3.5 0.5) (layer "F.CrtYd"))
+                 (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net "X"))
+                 (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net "W1"))
+                 (pad "3" smd rect (at 2 0) (size 0.6 0.6) (layers "F.Cu") (net "W2"))
+                 (pad "4" smd rect (at 3 0) (size 0.6 0.6) (layers "F.Cu") (net "W3"))))"#,
+    )
+    .unwrap();
+    let mut rules = length_rules(22.0);
+    rules.length_rules[0].min = Some(20.0);
+    let (j1, r5) = (0, 1);
+    let mut on = far_side_config(Some(rules.clone()));
+    on.length_minima = true;
+    let lowered = lower_placement(&pcb, &on).unwrap();
+    let problem = &lowered.problem;
+    // One relation: R5's X pin at least half the minimum (10 mm) from
+    // J1's, within 0.8 of the maximum (17.6 mm).
+    let relations: Vec<(usize, usize, f64, f64, f64)> = problem
+        .constraints
+        .relations
+        .iter()
+        .map(|relation| match relation {
+            core::constraints::Relation::Within {
+                part,
+                other,
+                soft,
+                max,
+                floor,
+                ..
+            } => (*part, *other, *soft, *max, *floor),
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(relations, [(r5, j1, 0.8 * 22.0, 22.0, 10.0)]);
+    let x_apart = |problem: &core::Problem, poses: &[core::Pose]| {
+        let at = |index: usize| {
+            let component = &problem.components[index];
+            let pin = &component.pins[0];
+            component.pin_position(pin, poses[index])
+        };
+        core::constraints::octilinear(at(r5), at(j1))
+    };
+    // The refinement: without the minimum R5 sits by J1, with it its X
+    // pin keeps about 10 mm off (the floor's price
+    // against the three other nets' pull).
+    let mut maxima_only = far_side_config(Some(rules.clone()));
+    maxima_only.length_minima = false;
+    let maxima_only = lower_placement(&pcb, &maxima_only).unwrap();
+    let mut near = maxima_only.problem.poses.clone();
+    core::legal::refine(&maxima_only.problem, &mut near, 8);
+    let mut apart = problem.poses.clone();
+    core::legal::refine(problem, &mut apart, 8);
+    assert!(
+        x_apart(&maxima_only.problem, &near) < 10.0,
+        "{:?}",
+        near[r5]
+    );
+    assert!(
+        x_apart(problem, &apart) >= 9.0
+            && x_apart(problem, &apart) > x_apart(&maxima_only.problem, &near) + 3.0,
+        "{:?}",
+        apart[r5]
+    );
+    // board-placer.json's length_rules says what was held and where the
+    // pins ended.
+    let report = super::lower::length_rule_report(&lowered, &apart);
+    assert_eq!(report.len(), 1);
+    assert_eq!(report[0].net, "X");
+    assert_eq!(report[0].held, "both");
+    assert_eq!(report[0].apart_mm, Some(10.0));
+    assert_eq!(report[0].parts, ["J1", "R5"]);
+    let close = super::lower::length_rule_report(&lowered, &near);
+    assert!(!close[0].kept && close[0].note.contains("closer than half the minimum"));
+    // Both switches off, or no rule: the problem without the relation.
+    let none = lower_placement(&pcb, &far_side_config(None)).unwrap();
+    let mut off = far_side_config(Some(rules));
+    off.length_minima = false;
+    off.length_maxima = false;
+    let off = lower_placement(&pcb, &off).unwrap();
+    assert_eq!(format!("{:?}", off.problem), format!("{:?}", none.problem));
+    assert!(off.length_rules.is_empty());
+}
+
 /// A PG1316-like key without a courtyard (Goga64 ULK): pads in its
 /// corners, a 16 mm fabrication square, a peg hole on Edge.Cuts.
 fn courtless_key(reference: &str, x: f64, y: f64) -> String {
