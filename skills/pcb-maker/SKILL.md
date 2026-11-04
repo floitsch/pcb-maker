@@ -59,7 +59,9 @@ Every run writes `<out>/verdict.json`; the exit code says the same.
 
 Fields to read: `reason` (one line), `next_actions` (what to do, in
 order: this run's actions first; the input's own observations last, each
-starting with `nothing to do (the input's): `), `kicad_unconnected_items` and `new_findings_strict` (they decide),
+starting with `nothing to do (the input's): `, those of one kind folded
+into one line, each in full in `input_observations`; fab-kicad-board's and
+drc-kicad-board's `next:` lines in the same order), `kicad_unconnected_items` and `new_findings_strict` (they decide),
 `constraints_missed`, `unplaced`, `room` (`suggested_outline_mm`: an
 outline that fits), `outputs` (absolute paths), `cut`, `free_dimension`,
 `fab_release`; `custom_rules` (each `.kicad_dru` constraint: `applied`,
@@ -71,7 +73,10 @@ where the input has them (`input_findings`) do not count; `next_actions`
 gives the custom rule or the exclusion that makes KiCad accept them.
 Clearances and shorts between fixed parts always count.
 
-On exit 1: for open connections run `inspect-routing-run` first (above);
+On exit 1: for open connections run `inspect-routing-run` first (above;
+with `--reference` its `reference.placement` says whether the designer's
+route is on this placement or, for a layout, on the designer's own, with
+the layout's own routes as `evidence_for_this_placement`);
 too little room is a hypothesis, not a finding (`routed.diagnostics.hot_spots`
 in `board-layout.json` says where nets fought, not why), so enlarge the
 outline, move parts apart or add layers only where the reference does not

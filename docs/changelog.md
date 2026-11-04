@@ -11,6 +11,52 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-04 (the verdict's leftovers, round 2: folded observations, whose placement, fab and drc order)
+
+Branch verdict-leftovers-2 (`build/bin/pcb-maker-ux8-b`; off side x1893).
+What [trial 4](reviews/2026-11-04-fresh-agent-trial-4.md) and the first
+leftovers round left open. Wording and order only: placement and routing
+unchanged (the fixture goldens; oro link's place check byte for byte
+against x1893).
+
+- **The input's observations fold**: repeated lines of one kind (fixed
+  parts on the board's texts; pairs of fixed parts overlapping, the
+  placer's bare line among them) become one line at the first one's
+  place, with a count, the first five parts and "and N more";
+  `verdict.input_observations` keeps each in full, untagged.
+- **inspect-routing-run's reference**: `nets[].reference.placement` and a
+  top-level `reference` block say "the designer's route on the
+  designer's own placement" (parts of the run's board elsewhere on the
+  reference: a layout's) or "on this placement" (route mode's), with
+  `parts_in_place` of `parts`; for a layout, `evidence_for_this_placement`:
+  the first route's open terminals, vias and length, the move descent's
+  routed and kept moves and open terminals, the result's open terminals
+  and KiCad's unconnected items.
+- **fab-kicad-board and drc-kicad-board in the verdict's order**: the
+  release's own actions first (with `--input` the kept parts' findings in
+  their place after the refusal's line), the footprints' own and the
+  board's own notes last, tagged (they came first); the refusal reasons
+  unchanged; drc-kicad-board's `footprint:` and `input:` lines are now
+  its last `next: nothing to do (the input's): ...` lines, after the
+  unmodelled rules.
+- **Wording**: the outline's advice no longer repeats the hint's "% full"
+  ("the front side is 1188 mm2 short of 70 %"); where only some findings
+  of a type lie between kept parts they are said to be the input's apart
+  from the run's own; route mode never says "move the parts apart" (none
+  is the route's to move); fab's refusal without `--input` names it.
+- **Re-judged** (a temporary test module rebuilding the facts from the
+  stored files: drc.json, board-layout.json, board-placer.json, the
+  input check on `source/`; hot spot, decoupling and custom rules left
+  out on both sides) six layouts of the nightly of 2026-11-04 before and
+  after: ULK 4 actions to 3 (its two marks lines one), Quanta75 BareRP2040
+  11 to 8 (four marks lines one: "4 fixed parts lie on 12 of the board's
+  texts ... (6.25u stabilizer on 8, J3 on 2, SW42 on 1, M2.5 on 1)"),
+  framework_mobo_lefthalf 10 to 9, Batch_1 16 to 14 (three overlap lines
+  one; its shorting_items 4 "1 of them lie between parts kept where the
+  input has them (HC1: fixed) ... the other 3: move those nets' parts
+  apart"), oro link 13 to 12 (two overlap lines one), Sisu unchanged (no
+  observations). The heads (the run's actions) are unchanged on all six.
+
 ## Measured on 2026-11-04 (nightly: layout sweep v31, matched designer tier)
 
 Written by the nightly from `build/nightly/2026-11-04/` (main 688b59c;

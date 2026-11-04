@@ -876,8 +876,8 @@ hole_clearance" (constraint hole_clearance (min 0.19mm)) (condition
 "A.memberOfFootprint('J1') && B.memberOfFootprint('J1')"))` (a new file
 starts with `(version 1)`), or a KiCad exclusion for a type no custom
 rule sets. `fab-kicad-board` releases with them (`footprint_own` and
-`footprint_note` in fab-manifest.json, the note first in the verdict's
-next_actions), and `drc-kicad-board` prints them on a `footprint:` line
+`footprint_note` in fab-manifest.json, the note last in the verdict's
+next_actions, tagged, since 2026-11-04; first before), and `drc-kicad-board` prints them on its last `next:` lines
 and does not fail on them. Since 2026-10-27 a finding on one pad alone
 that is the pad's own geometry against a board-wide minimum counts as its
 footprint's too (`pad_own`): its annular ring (`annular_width`), its hole
@@ -928,7 +928,14 @@ type: two fixed parts of two nets too close still fail the run and
 refuse the release (framework_mobo_lefthalf's R31 and R32 at J1). Their
 next action says that the parts are kept where the input has them, and to
 move one in the input (or free it from `fixed`) or accept the finding
-knowingly, not "move the parts apart" (since 2026-10-27). The
+knowingly, not "move the parts apart" (since 2026-10-27). Where only some
+of a type's findings lie between such parts, those are said to be the
+input's and the others the run's (`1 of them lie between parts kept where
+the input has them (HC1: fixed) ...; the other 3: move those nets' parts
+apart`, Batch_1's shorts; since 2026-11-04 they all read "move those
+nets' parts apart"), and route mode, which keeps every part, says that
+none is the route's to move: a finding with a track or via of the route
+is the router's, one between the input's parts alone the input's. The
 nightly of 2026-10-27 (109 layouts without a reference): 113
 `copper_edge_clearance` findings, 96 of them fixed parts' pads, 16
 Batch_1's own GND ring of `gr_line`/`gr_arc`, none a track, via or zone
@@ -1050,7 +1057,8 @@ A finished run also carries it as `verdict` in its report:
 | `pour_work_seconds`, `lattice_work_seconds` | `route-kicad-board`: the parts of `work_seconds` that are the pour analyses and fill probes (every phase's: the negotiation's pour refresh, the clean-up's and the via reduction's pour checks, the manual spokes) and the routers' lattice builds with the board's lowerings, each modelled from what it counted, the same on every machine; the rest is search. Since 2026-10-21 route mode's budget counts all of them (a 30 s budget used to buy 30 s of search and leave the pour work, up to 47 s on a panel, on top). |
 | `skipped` | Steps of the router's attempt ladder that did not run while the board was incomplete, with why (`the narrow-signal step (signals at 0.15 mm) did not run: the ladder's budget was used (ladder_budget_seconds)`). |
 | `outputs` | Absolute paths: `project`, `board`, `drc`, `report`, `verdict`, `placement`. |
-| `next_actions` | What to do next, factual, in this order (since 2026-11-04; before, the input's own observations led the list on all three boards of trial 4): (1) on a panel whose parts' boards nothing tells (`sub_boards.unassigned`), the call for `--reference` (since 2026-10-27); (2) the input check's and the placement's warnings about what you gave (a keepout over a held part, a `keep_whole` region, a value below the project's minimum, a missing kicad-cli where the run went on without it, copper on a layer the stack lacks); (3) what this run left to act on: parts without a place and the outline to try, the wall clock's cut, open connections (where nets fought, which pads no track enters, the nets KiCad finds unconnected, what the evidence for density is, below) followed by the hot spot with the parts nearest it, a search at a loaded machine's rate, pads no via fits, starved thermals, the new DRC errors by type (the largest four each with KiCad's rule, the nets or items, and the setting or step for that type), constraints missed, the project's rules the router does not keep, parts on the board's texts, silkscreen fields without a clean spot, pours in many pieces, decoupling, the reference's capped or failed check, a skipped KiCad check, the steps that did not run; (4) last, the input's own observations, each starting with `nothing to do (the input's): ` (its tag: nothing this run did or can change; a complete run's list holds only lines that start with "nothing to do"): fixed parts on the board's own texts and silkscreen graphics, fixed parts on top of each other, the findings within one footprint (`footprint_findings`) and the input's own (`input_findings`), schematic parity, and with `--reference` the reference's findings between two nets that the release still refuses. **Open connections in a layout**: the placement is the layout's, so `inspect-routing-run --reference`'s `reference.connected` (the designer's route on the designer's placement) is no evidence for it; the action says so, with KiCad's unconnected items on the designer's board where the reference was checked, and the layout's own routes of its placement (the move descent's open terminals before and after, `moves`); in route mode (the input's placement) the designer's route is the evidence, as before. **The hot spot** (since 2026-11-04): the worst of `diagnostics.hot_spots` on an open net (else the worst), its layer, point and open nets, and the five parts nearest its point on its layer, each with its side and the distance from the point to what of it is on that layer (`over it` inside): its pads on the layer (a through-hole pad on every layer) and, on an outer layer, its body (courtyard, else the pads' box) when it lies on that side, so that a key switch on the front over a back-side MCU's hot spot counts by its pins only: `hot spot 2 (diagnostics.hot_spots[2]: B.Cu at 202.75, 149.46, on the open nets +1V1): the parts nearest it on B.Cu are C16 (back, 0.7 mm), U1 (back, 0.8 mm), ...`, then what moves them (in a layout `place`, `apart` or a `keepout`; in route mode the input). **Starved thermals** name the pads (`U1.57 on F.Cu`) and say what `solid_starved_thermals` did for them on the board written: connected solid and undone by KiCad's check (its unconnected items and findings solid and with spokes; `solid_starved` in board-router.json), kept, or not tried on this board; then the first pad's advice (without the solid connection where it was undone). A layout whose decoupling capacitors lie far from their pins (under 60 % of them within 3 mm of a supply pin, the share designers reach; score-kicad-board's `capacitors_within_3mm`, three capacitors or more) gets one, complete or not: `decoupling: 14 % of the decoupling capacitors lie within 3 mm of a supply pin (designers 60 % or more), a median 6.3 mm; supply pins farthest from a capacitor: U3:5 21.7 mm, U4:5 16.1 mm, ...: give the capacitors of those pins a near constraint (...), or turn on the placer's decoupling_near (...)` (since 2026-10-26; the trial's rp2350-dual-usb was complete with 7 % and no word of it). It names a pin only where a capacitor that counts for it (1 uF or less on its rail; at a regulator's pin its rail's bulk ones too) is free of a near constraint, its example is such a capacitor at that pin, and it offers `decoupling_near` only when that is off and a free capacitor exists; where every capacitor of those rails is held at another pin it says so ("no placement brings one nearer, and one at them is a schematic change": the schematic trial followed `decoupling_near` on such a board and got the same board). `describe-kicad-board --constraints-template` writes the near constraints; `decoupling_near` (off by default) pulls every capacitor to the nearest supply pin of its rail (measured: nearer on most boards, routing within the noise, farther on a few boards with four capacitors) ([placer.md](placer.md#decoupling-at-the-pins-2026-10-26)). |
+| `next_actions` | What to do next, factual, in this order (since 2026-11-04; before, the input's own observations led the list on all three boards of trial 4): (1) on a panel whose parts' boards nothing tells (`sub_boards.unassigned`), the call for `--reference` (since 2026-10-27); (2) the input check's and the placement's warnings about what you gave (a keepout over a held part, a `keep_whole` region, a value below the project's minimum, a missing kicad-cli where the run went on without it, copper on a layer the stack lacks); (3) what this run left to act on: parts without a place and the outline to try, the wall clock's cut, open connections (where nets fought, which pads no track enters, the nets KiCad finds unconnected, what the evidence for density is, below) followed by the hot spot with the parts nearest it, a search at a loaded machine's rate, pads no via fits, starved thermals, the new DRC errors by type (the largest four each with KiCad's rule, the nets or items, and the setting or step for that type), constraints missed, the project's rules the router does not keep, parts on the board's texts, silkscreen fields without a clean spot, pours in many pieces, decoupling, the reference's capped or failed check, a skipped KiCad check, the steps that did not run; (4) last, the input's own observations, each starting with `nothing to do (the input's): ` (its tag: nothing this run did or can change; a complete run's list holds only lines that start with "nothing to do"): fixed parts on the board's own texts and silkscreen graphics, fixed parts on top of each other, the findings within one footprint (`footprint_findings`) and the input's own (`input_findings`), schematic parity, and with `--reference` the reference's findings between two nets that the release still refuses. Observations of one kind that repeat per part fold into one line at the first one's place (since 2026-11-04; the Quanta75's four lines of fixed parts on its texts, Batch_1's three of overlapping fixed parts): `nothing to do (the input's): 4 fixed parts lie on 12 of the board's texts and silkscreen graphics (6.25u stabilizer on 8, J3 on 2, SW42 on 1, M2.5 on 1): all stay where the input put them (input_observations has each part's marks)`, `3 pairs of fixed parts overlap (C8 and U2 (courtyards), C16 and U2 (courtyards), M1 and U2): ...`, the first five named and the rest counted (`and 7 more`). **Open connections in a layout**: the placement is the layout's, so `inspect-routing-run --reference`'s `reference.connected` (the designer's route on the designer's placement) is no evidence for it; the action says so, with KiCad's unconnected items on the designer's board where the reference was checked, and the layout's own routes of its placement (the move descent's open terminals before and after, `moves`); in route mode (the input's placement) the designer's route is the evidence, as before. **The hot spot** (since 2026-11-04): the worst of `diagnostics.hot_spots` on an open net (else the worst), its layer, point and open nets, and the five parts nearest its point on its layer, each with its side and the distance from the point to what of it is on that layer (`over it` inside): its pads on the layer (a through-hole pad on every layer) and, on an outer layer, its body (courtyard, else the pads' box) when it lies on that side, so that a key switch on the front over a back-side MCU's hot spot counts by its pins only: `hot spot 2 (diagnostics.hot_spots[2]: B.Cu at 202.75, 149.46, on the open nets +1V1): the parts nearest it on B.Cu are C16 (back, 0.7 mm), U1 (back, 0.8 mm), ...`, then what moves them (in a layout `place`, `apart` or a `keepout`; in route mode the input). **Starved thermals** name the pads (`U1.57 on F.Cu`) and say what `solid_starved_thermals` did for them on the board written: connected solid and undone by KiCad's check (its unconnected items and findings solid and with spokes; `solid_starved` in board-router.json), kept, or not tried on this board; then the first pad's advice (without the solid connection where it was undone). A layout whose decoupling capacitors lie far from their pins (under 60 % of them within 3 mm of a supply pin, the share designers reach; score-kicad-board's `capacitors_within_3mm`, three capacitors or more) gets one, complete or not: `decoupling: 14 % of the decoupling capacitors lie within 3 mm of a supply pin (designers 60 % or more), a median 6.3 mm; supply pins farthest from a capacitor: U3:5 21.7 mm, U4:5 16.1 mm, ...: give the capacitors of those pins a near constraint (...), or turn on the placer's decoupling_near (...)` (since 2026-10-26; the trial's rp2350-dual-usb was complete with 7 % and no word of it). It names a pin only where a capacitor that counts for it (1 uF or less on its rail; at a regulator's pin its rail's bulk ones too) is free of a near constraint, its example is such a capacitor at that pin, and it offers `decoupling_near` only when that is off and a free capacitor exists; where every capacitor of those rails is held at another pin it says so ("no placement brings one nearer, and one at them is a schematic change": the schematic trial followed `decoupling_near` on such a board and got the same board). `describe-kicad-board --constraints-template` writes the near constraints; `decoupling_near` (off by default) pulls every capacitor to the nearest supply pin of its rail (measured: nearer on most boards, routing within the noise, farther on a few boards with four capacitors) ([placer.md](placer.md#decoupling-at-the-pins-2026-10-26)). |
+| `input_observations` | The input's own observations of `next_actions` (4) each in full and untagged, before the folding (since 2026-11-04; absent when there are none): every fixed part on the board's texts with its marks, every overlapping pair, the footprints' and the input's own findings' notes, schematic parity, the reference's findings the release refuses. |
 | `drc_cache` | `{calls, hits}`: KiCad DRC runs the process asked for (its attempts, the reference) and how many the DRC cache answered (see below). |
 | `room` | Placement and layout (also an input error that a constraint needs more room than the outline has): the room as numbers, below. Absent for a route. |
 | `panel_copies` | Placement and layout with the placer's `panel_copies` on (the default; `false` turns it off) where the board holds copies of one circuit (docs/placer.md, "Panel copies (2026-10-26)"): `count`, `parts_per_copy`, `movable_per_copy`, `detected_by` (`net islands`, `numbered references`, `repeated references`), `regions_from` (`fixed parts`, `outline pieces`, `slices`), `replicated` (false: the seed kept placed the board as a whole, the copies' surroundings differing), `shared_parts` (movable parts in no copy, placed after the copies), `moved_after_replication`, `cell_classes` (the copies grouped by their surroundings, the most constrained first: per class its `copies`, the first the one placed for it, and its counts of `constraints`, `outline_pieces` and `obstacles`; docs/placer.md "Cell classes (2026-10-27)"), `by_cell_classes` (each class was placed from its own copy), and per copy its `region`, `rotation` and `offset` from the first and its `references` in the first copy's order: the mapping (the r-th reference of every copy is the same part of the circuit; where references repeat, the region tells the instances apart). Since 2026-11-04 also where the outline falls into two pieces or more and no part lies on any (a netlist import's stack without `--reference`, every part off the pieces): `count` 0, `pieces`, `tabs`, `cut_by`, `frames` by their shape (pieces spanning nine tenths of the panel along a side with at most a fifth of its area: a frame or rails), `sub_boards` the other pieces' boxes with no parts, `parts_assigned` 0 and every movable part in `unassigned`; nothing is held or kept off (the placement is the one without it), and the first next action is "give --reference or a region per board: the outline falls into N pieces (cut by ...) and M of the M movable parts lie on no board ..." (where more than a tenth of the movable parts have no board and the parts tell fewer than two). `pieces`, `movable` and `parts_assigned` are in every report. Absent otherwise; also in `placed/board-placer.json`. |
@@ -1163,7 +1171,10 @@ input errors and 4 on internal errors.
   component, fixed parts, the board's marks and a panel's kept-clear
   frames included, over the outline's gross area: trial 4's ULK panel was
   "99 % full" beside `room.utilization` 0.135, and its parts lacked a
-  place for the column stagger, not for area.
+  place for the column stagger, not for area. The outline's advice after
+  the hints says how full a side is only where no hint said it (since
+  2026-11-04: `try an outline of 118.0 x 107.5 mm (...): the front side
+  is 1188 mm2 short of 70 %`; it repeated the hint's "% full").
   Before giving up, the placer shrinks the halos and the spacing (down to
   the copper clearance) and retries legalization with the stuck parts
   first. As a last resort it lets courtyards overlap: bodies shrink to
@@ -1216,6 +1227,17 @@ is a fab release gated by KiCad's DRC:
   under J1's pads) are named per type first, as the layout's verdict
   names them: the input's, not the layout's to move, with what to do;
   the rest are the layout's ("move what the layout put too close").
+  Without `--input` the board is judged on its own and every part is its
+  own, so the refusal's first action names `--input <the project it came
+  from>` for a board pcb-maker laid out or routed (since 2026-11-04).
+  The order of `next_actions` is the layout verdict's (since 2026-11-04;
+  before, the notes below led it): the release's own actions first (on a
+  refusal what to fix, with `--input` the kept parts' findings after that
+  line, then the blocking findings; released, the findings it went ahead
+  with, the parts without an LCSC number, the rotations to check), last
+  the footprints' own and the board's own findings that do not block,
+  tagged `nothing to do (the input's): `; `verdict.input_observations`
+  holds those two notes. The refusal's `reason` is unchanged.
   Warnings,
   excluded and cosmetic findings (silkscreen, text, library) do not block.
   `--allow-findings` releases anyway and lists the findings it allowed.
@@ -1298,13 +1320,17 @@ Without it the pads a pour joins count as unconnected: the schematic
 trial's board routed on the designer's placement, 0 unconnected with the
 refill, 24 without.
 Exit 0 when no error counts (warnings, excluded and cosmetic findings do
-not, nor a footprint's own findings, on a `footprint:` line, and the
-board's own edge clearances, mask bridges and courtyards with no track or
-via in them, on an `input:` line with the rules that accept them: section
-4, "The input's own findings"; `--input <project-dir>`: the input is that
+not, nor a footprint's own findings and the board's own edge clearances,
+mask bridges and courtyards with no track or via in them: section 4, "The
+input's own findings"; `--input <project-dir>`: the input is that
 project's board, and only the parts still where it has them, and its zones
 and graphics, are the input's) and no item is unconnected, 1 otherwise, 2 for a missing project or
-board, 4 when KiCad fails. The benchmark runners (`run.py`'s designer
+board, 4 when KiCad fails. After the count, `next:` lines in a verdict's
+order (since 2026-11-04): the project's rules the router does not keep
+where the check fails, then, last, the footprints' own findings with the
+custom rule that accepts them and the board's own with theirs, each
+`next: nothing to do (the input's): ...` (until then a `footprint:` and
+an `input:` line ahead of the rest). The benchmark runners (`run.py`'s designer
 check, `freerouting.py`) use it when the binary has it.
 
 ## Which nets stayed open: `inspect-routing-run`
@@ -1346,7 +1372,8 @@ Per net:
   (`class_track_width_mm`), the run's `overrides`, and the widths the
   board has on the net (`emitted_track_widths_mm`).
 - `reference` (with `--reference`): the designer's route of the net:
-  `connected`, `components`, segments, vias, layers, widths, length.
+  `placement` (whose placement it is on, below), `connected`,
+  `components`, segments, vias, layers, widths, length.
   `connected` is `true` when its tracks, arcs and vias join every pad,
   `false` when they do not and the net has no zone there, `null` (with
   `connected_reason` and `pour_layers`) when a zone of the net may join
@@ -1357,6 +1384,26 @@ Per net:
   still in conflict there): observations from board-router.json.
 - `access` and `cause`: `unknown` (nothing here measures them; a hot spot
   near a pad is no cause).
+
+With `--reference`, the top-level `reference` (since 2026-11-04) says
+whose placement those routes are on, in the layout verdict's words:
+`placement` is "this placement" where every part of the run's board lies
+where the reference has it (route mode's: the designer's route there shows
+that the net routes under these rules on this placement), else "the
+designer's own placement" (a layout's: `connected` then shows that the
+net routes there, not on this placement, and no route of the designer's
+on this placement exists); `parts_in_place` of `parts` and
+`connected_means` say it in numbers and a sentence. For a layout,
+`evidence_for_this_placement` points at the layout's own routes of its
+placement instead (board-layout.json and verdict.json): its first route
+(`first_route_unconnected_terminals`, `first_route_vias`,
+`first_route_length_mm`), its move descent (`moves`: `routed`, `kept`,
+`open_before`, `open_after`, `parts_moved`; a report before the descent's
+record counts its moves), the result's `unconnected_terminals` and
+KiCad's `kicad_unconnected_items`. The Quanta75's nightly layout
+(2026-11-04) with its input as `--reference`: "the designer's own
+placement", 35 of 276 parts in place, first route 8 open terminals and
+314 vias, 9 moves routed and 1 kept, 4 open at the end.
 
 At the top: `checks` (`router`; `native`: `not_run`, `passed` or
 `failed`, the pairs, `capped` when KiCad's report stopped at 499 items,
