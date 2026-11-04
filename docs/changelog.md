@@ -141,6 +141,41 @@ pairs: video and MegaDrive place checks and EMG_DAQ's route byte for
 byte against x1902; the expansion tier's 25 boards with pairs in route
 mode at 30 s with `diff_pairs` on byte for byte against x1902.
 
+## Committed on 2026-11-04 (where the arrangement is lost: the global placement)
+
+Branch placement-stages; binaries `build/bin/pcb-maker-diag1-*`; outputs
+in `build/diag1-stages/`. docs/placer.md, "Where the arrangement is lost
+(2026-11-04)", has the method, the tables and the recommendation.
+
+- **Instruments, no behaviour change with them off** (place checks of the
+  4in1 and Glasgow byte for byte x1904's and x1905's): the placer's
+  trace (`PCB_PLACER_TRACE`) gives per seed its number, whether it was
+  kept, every part's pose after each stage, the objective split by term
+  (`anneal::objective`) and the global placement's overflow at each
+  stage's poses and the designer's; a diagnostic start
+  (`PCB_PLACER_START`, `_STAGE` global / anneal / legalize, `_PARTS`;
+  `Config::start`) runs the stages from given poses;
+  `experiments/placement-gap/stages.py` measures the active parts'
+  arrangement against the designer's (displacement after the best rigid
+  motion, pairwise rank correlation, neighbours) and lays out first
+  routes of pinned stage results.
+- **Measured** on video, the 4in1, Glasgow and SNSP-CPU-01 at seeds 1
+  and 101 (40 place checks, 18 848 CPU s; FIRSTROUTE_CPU): the global
+  placement leaves the active parts a shuffle's distance from the
+  designer's (share 0.77 to 1.14, pairwise 0.03 to 0.36) and the seeds
+  disagree with each other as much; the anneal, the legaliser and the
+  refinement keep what they are given (the designer's arrangement is
+  the legaliser's fixed point, the anneal keeps it within 0.17 to
+  0.32). Started from the designer's active parts alone, the pipeline
+  ends 0.26 to 0.45 / 0.66 to 0.86 from it at 0.78 to 1.00 of our
+  objective; the designer's arrangement legalised and refined costs
+  0.55 to 1.05 of ours (cheaper on video and the 4in1, equal on Glasgow
+  and SNSP). FIRSTROUTE_SUMMARY
+- **Recommendation**: a start for the active parts (the skeleton race,
+  through `Config::start`), not a new legaliser or race ranking; video's
+  global placement never meets its stop (a density defect for parts
+  much larger than the bins) wants its own fix.
+
 ## Committed on 2026-11-04 (memory, the second round: the layout's peaks -49 %)
 
 Branch memory-round-2; binaries `build/bin/pcb-maker-mem2-*` against
