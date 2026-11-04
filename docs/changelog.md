@@ -11,6 +11,37 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-04 (room around grid arrays, off)
+
+Branch bga-placement-room; binaries `build/bin/pcb-maker-bga2-a` to
+`-c`; outputs `build/bga2/runs`. The leftover of the prepared fan-outs:
+on Glasgow our passives ring U30 and close its outer rings' surface
+escapes (docs/placer.md, "Room around grid arrays (2026-11-04)").
+
+- **The diagnosis** (`experiments/bga-fanout/room.py`): the designer
+  keeps U30's own side clear 1.28 mm and more from the ball field (the
+  nearest movable pad; nine in ten outer balls' channels 1.66 mm free,
+  the median 6.6), ours 0.25 mm (nine parts within 0.5 mm, the channels'
+  median 0.35); under the array both keep U30's decoupling, the designer
+  1.5 to 4 mm beyond it on the back empty.
+- **`bga_room`** (placer option, off): per grid array the router's
+  fan-out detects (one detection, `board_arrays`, now shared by
+  `far_side_balls` and `array_rooms`) that has balls beyond its surface
+  rings, its body grows by the surface band (the surface rings' tracks
+  and a row of the class's vias, 1.5 mm on Glasgow) and its far side
+  under the field and a band beyond (a track and a clearance per deeper
+  ring, 1.2 mm on Glasgow) keeps every part off but its own decoupling
+  capacitors (`Component::far_open`), which keep off the via sites.
+  board-placer.json's `array_rooms` reports it.
+- **Measured**: Glasgow's layouts 343 -> 262 unconnected over seeds 1,
+  101, 301 (every seed better), the first route better on all five
+  protocol seeds (716 -> 571), the outer rings' open balls 125 -> 89;
+  MIDAS-MK1.1 0 / strict pass (off 2), MIDAS-MK1 1 -> 1 (its first route
+  1 -> 11); vd-rd lost with the band alone (3 -> 6, findings 1 -> 3)
+  before arrays whose balls all leave on the surface were left out; the
+  other ten dense boards and the designer tier byte for byte. Off by the
+  rule (MIDAS-MK1 does not gain); close.
+
 ## Committed on 2026-11-04 (net weights: the rails and buses counted more, a switch; stage 1 fails)
 
 Branch net-weights on main 0aa632b2 (x1890), rebased onto ac8cf07d; the

@@ -540,7 +540,17 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     placer keeps the board's other side free under those vias. Set it to
     false to route without; run with `PCB_ROUTER_BGA_FANOUT_WHY=1` to see
     each array's plan (the balls planned, kept, and refused where a part
-    on the other side or a neighbour's copper takes the gap).
+    on the other side or a neighbour's copper takes the gap). The
+    placer's `bga_room` (layout.json `{"placer": {"bga_room": true}}`,
+    off by default; since 2026-11-04, docs/placer.md "Room around grid
+    arrays") keeps room around such an array whose inner balls need a
+    via for its escapes: no part
+    within a band on its side (the outer rings' tracks and a row of the
+    class's vias: 1.5 mm beyond the balls at Glasgow's 0.8 mm pitch), and
+    on the other side only the array's own decoupling capacitors under
+    it, off the fan-out's vias; board-placer.json's `array_rooms` says
+    each band and which parts it let in. Try it where KiCad's open items
+    sit at a BGA's outer balls with parts packed against its courtyard.
   - `automatic_planes` (default true): a board with four or more copper
     layers and no pours gets ground as a plane on the first inner layer
     and the supply rail with the most pads on the last inner layer, as a

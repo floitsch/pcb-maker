@@ -7286,6 +7286,173 @@ place check is byte for byte the trial's. Tests:
 `a_constraint_on_any_copys_parts_holds_in_every_copy`,
 `a_near_on_a_panels_copy_anchors_in_the_parts_own_copy`.
 
+## Room around grid arrays (2026-11-04)
+
+The prepared fan-out (docs/router.md, "Prepared fan-outs for BGAs")
+closes Glasgow's inner rings in layout mode (U30, a BGA-121 at 0.8 mm:
+28 to 10 open signal balls on seed 1) but the outer rings get worse (44
+to 49), while the same code routes the designer's placement to 15 open.
+What room does the designer keep around U30 that ours does not?
+
+**Measured** (`experiments/bga-fanout/room.py`, KiCad's pcbnew; U30's
+frame, from its ball field: the box of the ball centres grown by half a
+pitch, 8.8 mm square; U30 on F.Cu; "ours" is the nightly's layout with
+the fan-out on, build/bin/pcb-maker-bga1-d seed 1, the far-side rule
+keeping the planned vias free; pad distances from the field):
+
+| | designer | ours (fan-out on, seed 1) |
+| --- | --- | --- |
+| F.Cu (U30's side): the nearest other part's pad | 0.64 mm (FID8, a fixed fiducial); the nearest movable 1.28 (R45), 1.42 (U32) | 0.25 mm (RN7), nine parts within 0.5 mm (resistor arrays, level shifters, LEDs, the fixed FX2's QFN at 0.35) |
+| F.Cu: parts by pad distance 0-0.5 / 0.5-1 / 1-1.5 / 1.5-2 / 2-3 mm | 0 / 1 / 2 / 3 / 2 | 9 / 6 / 2 / 4 / 5 |
+| F.Cu: U30's decoupling within 4 mm | none | none |
+| the outer rings' channels (72 balls of rings 0 and 1, straight out from the field within half a pitch, free length on F.Cu before a pad or courtyard) | median 6.57 mm, p10 1.66; 1 under 1 mm, 11 under 2 | median 0.35 mm, p10 0; 66 under 1 mm, 72 under 2 |
+| the outer rings' nets: their first via outside the field | p10 0.90 mm, median 3.65 | p10 0.13, median 5.40 |
+| B.Cu under the field | 14 parts, all U30's decoupling (C18 to C81: +1V2, +3V3, VIO_AUX, the PLLs' filtered rails), in rows between the dog-bones: each inner ball keeps a free diagonal gap | 15 parts: 13 capacitors and R31, R32 (the PLLs' filter resistors); none over a planned via |
+| B.Cu beyond the field, 0-1.5 mm / 1.5-4 mm | 4 (R31 0.62, C14 0.70, C85 1.38, R32 1.43) / none | 7 / 14 |
+
+So the difference is the array's own side: the designer leaves the
+outer rings' surface escapes 1.3 mm and more before the first movable
+part (nine in ten channels 1.66 mm or more, the median 6.6), where ours
+packs parts against U30's courtyard (Glasgow places at the tight
+level: bodies of pads and fabrication outline, 0.15 mm apart), and on
+the back the designer keeps 1.5 to 4 mm beyond the field empty. The
+decoupling under the array is the designer's too.
+
+**The lever** (`bga_room`, placer option, **off**; board_placer/lower.rs
+`room_around_arrays`, the router's `array_rooms`). Per grid array the
+router's fan-out detects (`board_arrays` in board_router/bga_fanout.rs,
+one detection for the fan-out's far side and this; at least 16 SMD pads
+of one size, four rows and columns of three, the pitch at most 1.27 mm,
+some ball beyond the outer ring), from the ball field in the part's own
+frame:
+
+- *Its side*: the body and the tight body grow to the field and the
+  surface band, `s (w + c) + v + 2c` beyond it: the s rings that leave
+  on the surface (the tracks of the balls' narrowest class between two
+  balls, plus one), a track w and clearance c each, then a row of the
+  class's vias v with a clearance either side. Glasgow: 2 x 0.3 + 0.6 +
+  0.3 = 1.5 mm. No part's body comes nearer at any level; the edge inset
+  grows as much, so the array's copper keeps the edge margin it kept.
+- *The far side*: the field and a band of `(deepest + 1 - s)(w + c)`
+  beyond it (a track and a clearance per ring deeper than the surface
+  rings that holds a ball of a net; Glasgow's rings 2 to 5: 1.2 mm) join
+  the array's far-side boxes after its via sites, and only the array's
+  own decoupling capacitors may meet them (`Component::far_open`: a `C`
+  part of two pads between a ground net and a net of a ball); they keep
+  off the via sites (the fan-out's, the vias in pads), which are the
+  boxes before. An array with no ball beyond the surface rings keeps no
+  far-side room.
+- *Fixed parts* stay: a free array keeps its room from them as from any
+  part (Glasgow's FX2, U1, is fixed); a fixed array's report names the
+  fixed parts in its room. board-placer.json's `array_rooms` gives per
+  array its bands, the parts let under it and those fixed parts.
+
+The place check (seed 1, the layout's placement, the reference rates)
+places all 237 movable parts with the room: on F.Cu the nearest pad
+1.65 mm from the field (none within 1.5 mm, 15 at 1.5 to 2), the
+channels' median 1.46 mm and p10 1.36 (none under 1 mm), the placer's
+wirelength 2820 -> 2892 mm (+2.6 %); 9 parts under the field on the
+back, all capacitors of U30's rails.
+
+**Measured: Glasgow** (layout, tasks v7, the sweep's budget, pinned
+rates, one run.py a row at 2 threads through the ledger; off and on are
+build/bin/pcb-maker-bga2-b, the branch on main x1898, `{"seed": N}` and
+`{"seed": N, "bga_room": true}`; the off rows are bga1-d's (the fan-out
+on) byte for byte; KiCad unconnected / strict pass / new strict
+findings / vias / length mm / CPU s; the first route's open terminals;
+U30's open signal balls by ring 0 / 1 / 2 / 3 from census.py's
+classification; outputs `build/bga2/runs`):
+
+| seed | off | on |
+| --- | --- | --- |
+| 1 | 124 / no / 0 / 380 / 5026 / 1767; 149; 25 / 24 / 4 / 6 | **87** / no / 0 / 388 / 5336 / 1860; 129; 11 / 17 / 1 / 6 |
+| 101 | 125 / no / 0 / 389 / 4926 / 2028; 146; 23 / 15 / 4 / 7 | **86** / no / 0 / 349 / 4949 / 1882; 111; 20 / 9 / 6 / 5 |
+| 301 | 94 / no / 0 / 390 / 5516 / 2170; 130; 16 / 22 / 1 / 6 | **89** / no / 0 / 385 / 5931 / 2040; 122; 5 / 27 / 3 / 6 |
+| sum | 343 / 0 / 0 / 1159 / 15468 / 5965; 425; 64 / 61 / 9 / 19 | **262** / 0 / 0 / 1122 / 16216 / 5782; 362; 36 / 53 / 10 / 17 |
+
+On every seed KiCad's count falls (37, 39, 5) and so does the first
+route's (20, 35, 8); the outer rings' open balls fall from 125 to 89
+(the room's purpose), the inner rings' stay (28 to 27); vias 37 fewer,
+length 4.8 % more, the CPU 3 % less. On F.Cu the nearest pad is 1.65 mm
+from the field on all three (off 0.25), the channels' median 1.49,
+1.65 and 1.58 mm (off 0.35, 0.16, 0.19).
+
+**Measured: MIDAS** (the same runs, seed 1, run.py's estimates for the
+peaks; U106, a TFBGA-153 at 0.5 mm: one surface ring, the deepest ring
+of a net 1 by the router's rings, so a band of 1.16 mm on F.Cu and 0.18
+mm beyond the field on the back; the report lets 45 capacitors of its
+rails under it):
+
+| board | off | on |
+| --- | --- | --- |
+| MIDAS-MK1 | 1 / no / 0 / 254 / 3859 / 2011; 1; a GND zone island; U106's five vias in pads, B2 among them | 1 / no / 0 / 198 / 4627 / 2604; 11; U106's K5 (MEM_RST_N) open; the five vias, B2 among them |
+| MIDAS-MK1.1 | 2 / no / 0 / 191 / 5070 / 2252; 12; U106's K5 open and U301's pad 5; the five vias | **0 / pass** / 0 / 193 / 5214 / 1774; 4; the five vias |
+
+B2 holds its via in pad on all four (the far side under it is kept by
+`via_in_pad_far_side` already: the nightly's MIDAS-MK1 placed all five
+too). K5 (MEM_RST_N, a ball the designer put a via in that our rule
+does not take as enclosed) opens on one side of each pair: MK1 off
+closed, on open; MK1.1 the other way round. Summed: 3 -> 1 unconnected,
+0 -> 1 strict pass, vias 445 -> 391, length 8929 -> 9841 mm (+10 %), the
+first routes 13 -> 15 open terminals.
+
+**Stage 1 on Glasgow** (the first route's open terminals, the five seed
+pairs of the placer protocol; seeds 1, 101 and 301 from the layouts
+above, 201 and 401 with `stop_after_first_route`): off 149 / 146 / 146
+/ 130 / 145, on 129 / 111 / 108 / 122 / 101: better on all five (summed 716 -> 571, -20 %). The seed-401 first-route board with the switch has one strict finding the full layouts do not (a starved thermal at J3's GND pin 14 on In1.Cu, far from U30; a first route has no final repairs).
+**The other ten dense boards** have no grid array: their place checks
+(the layout's placement, `place-kicad-board` with the task's
+layout.json, 2 threads) are byte for byte the same board with the
+switch on and off (MegaDrive, DSP-ADAU1452, the 0xCB panel, protoesp,
+video, the 4in1-mini, the 4in1, SmartSpin2k, SNSP-CPU-01,
+split72_left; board-placer.json differs in its wall seconds and paths
+only), so their layouts and first routes are the switch off's and stage
+1 over the dense set is Glasgow's alone. **The designer tier** (route
+mode on the designer's placement, Glasgow, scale 0.675, 1 x 1): the
+same board byte for byte with the switch on and off (15 unconnected,
+281 vias), and bga1-d's: route mode does not place.
+
+**Which boards it touches.** Of the task boards with a grid array by
+census.py, the router's detection gives a room to Glasgow's U30, the
+two MIDAS boards' U106 and vd-rd's U200 (a DDR3 BGA-96 whose balls
+beside the empty middle are ring 1 by `rings_of`'s steps, its DDR class
+two tracks between balls: every ball leaves on the surface); the laptop keyboard's and
+osprey's aQFN-73s, BAGEL's LGA-77s and the laptop motherboard's
+WLCSP-9s are no grid to it (place checks with the switch on report no
+`array_rooms`, so they place as off).
+
+*vd-rd* with the band on its own side alone (1.21 mm, no far-side room,
+build/bin/pcb-maker-bga2-b, seed 1): 3 / no / 1 items_not_allowed / 424
+/ 5905 / 2062; 46 off against 6 / no / 3 items_not_allowed / 379 / 6216
+/ 2269; 77 on: worse on every measure. Its balls need no via, so no via
+ring crowds its outer rings and the band only takes room. Since then
+(bga2-c) an array whose every ball of a net leaves on the surface keeps
+no room (the far band is 0): vd-rd's place check with the switch reports
+no `array_rooms` and its lowering is the switch off's (a unit test
+checks the lowered problem equal), and Glasgow's place check with the
+switch is bga2-a's board byte for byte (MIDAS's U106 keeps its room: the
+deepest ring 1 against one surface ring). The rows above stand for
+bga2-c.
+
+**Decision: off** (`bga_room` unset). The rule (on where the array
+boards gain on every measure, nothing else moves and no strict pass is
+lost): Glasgow gains on every seed by KiCad's count (343 -> 262 over
+three) and by the first route (all five seeds), MIDAS-MK1.1 gains its
+strict pass (2 -> 0), nothing without a grid array moves, no strict pass
+is lost; but MIDAS-MK1 does not gain (1 -> 1, its first route 1 -> 11,
+the open item now U106's K5 where off it was a GND island), and the
+length grows on all five array runs (Glasgow +4.8 %, MIDAS +10 %). Close:
+summed over the array boards 346 -> 263 unconnected and one strict pass
+more, at fewer vias (1604 -> 1513); MIDAS's K5 flips between the two
+boards with either side, one seed each.
+
+Left: MIDAS at more seeds (is K5 noise?); the rails' capacitors the far
+side lets in are every capacitor of a rail the array is on (45 on
+MIDAS's U106, among them other ICs' on +3V3), not the array's own by
+its supply pins; the parts pile up at the band's edge on Glasgow (15
+within 1.5 to 2 mm, the designer 3), where the designer's channels run
+6.6 mm (the median) before a part; blind and micro vias.
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a

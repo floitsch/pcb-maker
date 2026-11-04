@@ -266,8 +266,23 @@ ladder's judge), 5, then the rest.
    leaves 88). Untested: exit blockage (the fan-out assignment) as a placement
    cost, length maxima known to the placer (oro link's D5 and D6 are over
    their maximum by their pads' distance), routing room from congestion
-   rather than pin count, seeded orientation starts in the race, the back
-   kept free under a BGA's enclosed pads (MIDAS-MK1's B2). In flight on
+   rather than pin count, seeded orientation starts in the race. The back
+   is kept free under a BGA's enclosed pads (`via_in_pad_far_side`, on
+   since 2026-10-28; MIDAS-MK1's B2 holds its via with the room below
+   on and off), and since 2026-11-04 the room around a
+   grid array is built and **off** (`bga_room`; docs/placer.md, "Room
+   around grid arrays (2026-11-04)"): on Glasgow the designer keeps
+   U30's outer rings' surface escapes 1.3 mm and more free on its side
+   (nine in ten channels 1.66 mm, the median 6.6) where ours packed parts
+   0.25 mm from the ball field; with a band of 1.5 mm on its side and
+   the back under it for its own decoupling, Glasgow's layouts go 343 to
+   262 unconnected over seeds 1, 101 and 301 (each seed better, the
+   outer rings' open balls 125 to 89) and its first route is better on
+   all five protocol seeds (716 to 571); MIDAS-MK1.1 gains its strict
+   pass, MIDAS-MK1 stays at 1 (its first route 1 to 11), so the rule
+   keeps it off: a close call for the coordinator. Boards without a
+   grid array, or whose every ball leaves on the surface (vd-rd), place
+   byte for byte as off. In flight on
    2026-11-03: the designer as teacher on the largest-gap boards, placer
    rules, panels of copies' frames (left out on 2026-10-28: SmartSpin2k
    118 to 89, but the 0xCB panel lost its strict pass), placer round 4.
