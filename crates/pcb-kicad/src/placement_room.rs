@@ -500,7 +500,7 @@ pub fn room(problem: &core::Problem, references: &[String], wanting: bool) -> Ki
 pub fn outline_holds(
     problem: &core::Problem,
     references: &[String],
-    rows: &[usize],
+    rows: &[(usize, [f64; 2])],
 ) -> Vec<String> {
     let mut errors = Vec::new();
     if problem.outline.len() < 3 {
@@ -508,7 +508,7 @@ pub fn outline_holds(
     }
     let bounds = problem.bounds();
     let outline = [bounds[2] - bounds[0], bounds[3] - bounds[1]];
-    for leader in rows {
+    for (leader, member) in rows {
         let component = &problem.components[*leader];
         // A row held at an edge needs only its copper on the board at the
         // last level, and an overhanging one reaches beyond it.
@@ -529,9 +529,30 @@ pub fn outline_holds(
                 .iter()
                 .filter(|follower| follower.leader == *leader)
                 .count();
+            // The members keep, within the row, the angle they have on the
+            // board; parts that must stand a quarter turn from the row's
+            // line (trial 6's eurorack jacks, 12 x 18.2 mm, down a 110 mm
+            // board at 13.79 mm: 114.73 mm as they stood, 108.5 turned) are
+            // a row along the other axis whose first part turns a quarter.
+            let row = component.body_size;
+            let along = usize::from(row[1] > row[0]);
+            let size = [
+                row[along] - member[along] + member[1 - along],
+                member[along],
+            ];
+            let quarter = (size[0] <= outline[0] + 1.0e-6 && size[1] <= outline[1] + 1.0e-6)
+                || (size[1] <= outline[0] + 1.0e-6 && size[0] <= outline[1] + 1.0e-6);
             errors.push(format!(
-                "the row of {} ({members} parts) cannot fit the outline: the row is {:.2} x {:.2} mm (turned as it may be), the outline {:.2} x {:.2} mm: give the board more room (room.suggested_outline_mm in verdict.json) or the row a smaller pitch or more lines",
-                references[*leader], component.body_size[0], component.body_size[1], outline[0], outline[1]
+                "the row of {} ({members} parts) cannot fit the outline: the row is {:.2} x {:.2} mm (turned as it may be), the outline {:.2} x {:.2} mm: give the board more room (room.suggested_outline_mm in verdict.json) or the row a smaller pitch or more lines{}",
+                references[*leader], component.body_size[0], component.body_size[1], outline[0], outline[1],
+                if quarter {
+                    format!(
+                        "; its parts keep the angle they have on the board and turn with the row as one, and turned a quarter from its line they fit: give the row the other axis and {} a rotation a quarter turn from its angle now (a row along x whose first part has \"rotation\": [{{\"part\": \"{}\", \"angle\": 90}}] runs down the board, its parts turned)",
+                        references[*leader], references[*leader]
+                    )
+                } else {
+                    String::new()
+                }
             ));
         }
     }

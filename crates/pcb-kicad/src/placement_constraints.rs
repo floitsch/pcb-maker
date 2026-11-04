@@ -2028,10 +2028,13 @@ fn anchor_in_copy(
 
 /// What `apply_rows` returns: each follower's leader, each row member's
 /// place, and the rows' first parts.
+/// The followers' leaders, their places, and the user's rows: each
+/// leader with a member's own body size (before the members' bodies go to
+/// the leader), for the outline's test.
 type AppliedRows = (
     BTreeMap<usize, usize>,
     BTreeMap<usize, RowPlace>,
-    Vec<usize>,
+    Vec<(usize, [f64; 2])>,
 );
 
 /// Turns every row into one part: the first part carries the others' bodies,
@@ -2090,7 +2093,7 @@ fn apply_rows(
             ));
         }
         let leader = members[0];
-        user_rows.push(leader);
+        user_rows.push((leader, problem.components[members[1]].body_size));
         let side = problem.components[leader].side;
         // The row's frame: the leader's angle, or that angle turned by a
         // half turn when the members lie exactly
@@ -4021,6 +4024,15 @@ mod tests {
             error.contains(
                 "the row of C1 (2 parts) cannot fit the outline: the row is 42.00 x 1.00 mm"
             ),
+            "{error}"
+        );
+        assert!(!error.contains("turned a quarter"), "{error}");
+        // 28.5 apart: 30.5 mm as they stand, 29.5 turned a quarter each
+        // (trial 6's jacks down a eurorack board): the refusal says how.
+        let error =
+            apply(r#"{"version": 1, "row": [{"parts": ["C*"], "pitch_mm": 28.5}]}"#).unwrap_err();
+        assert!(
+            error.contains("; its parts keep the angle they have on the board and turn with the row as one, and turned a quarter from its line they fit: give the row the other axis and C1 a rotation a quarter turn from its angle now"),
             "{error}"
         );
         // The room it would need is noted for the verdict (other tests may

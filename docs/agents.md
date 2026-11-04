@@ -356,6 +356,7 @@ Unknown keys, parts or pads are errors, not silently ignored.
 | "The connector must match the enclosure cut-out" | `"place": [{"part": "J3", "x": 12, "y": 0, "angle": 90}]` |
 | "Status LED in the top-right corner" | `"place": [{"part": "D1", "at": "top-right"}]` |
 | "Eight LEDs in a row, 5 mm apart, along the top" | `"row": [{"parts": ["D1", "D2", ..., "D8"], "pitch_mm": 5}]`, `"place": [{"part": "D1", "at": "top"}]` |
+| "The eight jacks down the left side, 13.79 mm apart" (vertical jacks on a narrow board) | `"row": [{"parts": ["J4", ..., "J11"], "pitch_mm": 13.79, "axis": "x"}]`, `"rotation": [{"part": "J4", "angle": 90}]`, `"place": [{"part": "J4", "x": 6.8, "y": 6}]`: a row's parts keep their angle within it, so a row of parts turned a quarter from its line is the other axis turned ([constraints.md](constraints.md)) |
 | "It's a keyboard" (a key matrix in the schematic) | copy `constraints.starter.json` to `constraints.json`, give it an `outline`, then decide what its `comment` asks (pitch, stagger, thumbs, the controller's edge) |
 | "This half on the left of the board" | `"region": [{"parts": ["SW1", "U1"], "at": "left-half"}]` (`right-half`, `top-half`, `bottom-half`, `center`: on any outline) |
 | "A 4 x 4 key matrix, 19.05 mm pitch" | `"row": [{"parts": ["SW*"], "pitch_mm": 19.05, "columns": 4}]` |
