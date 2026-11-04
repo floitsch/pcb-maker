@@ -1033,8 +1033,13 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
         .unwrap_or_default();
     facts.room = serde_json::from_value(placed["room"].clone()).ok();
-    facts.closed_pads =
-        serde_json::from_value(placed["pad_exits"]["closed"].clone()).unwrap_or_default();
+    // The routed placement's (the race may keep another than the
+    // placer's first-ranked).
+    facts.closed_pads = result
+        .pad_exits
+        .as_ref()
+        .map(|exits| exits.closed.clone())
+        .unwrap_or_default();
     facts.bus_groups = serde_json::from_value(placed["bus_groups"].clone()).ok();
     facts.panel_copies = serde_json::from_value(placed["panel_copies"].clone()).ok();
     facts.sub_boards = serde_json::from_value(placed["sub_boards"].clone()).ok();

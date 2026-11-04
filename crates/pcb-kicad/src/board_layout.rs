@@ -583,6 +583,11 @@ pub struct KiCadBoardLayoutResult {
     /// race did not run).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub race: Option<KiCadRaceReport>,
+    /// Pads without a way out (`pad_exits`, absent when off) of the
+    /// placement routed (the race's pick; placed/board-placer.json's are
+    /// the placer's first-ranked one's).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pad_exits: Option<crate::board_placer::KiCadPadExitsReport>,
     pub pin_swaps: Option<KiCadPinSwapResult>,
     /// Every placement constraint with whether the final placement keeps it.
     pub constraints: Vec<KiCadConstraintStatus>,
@@ -1757,12 +1762,18 @@ pub fn layout_kicad_board(
     // The placements a congestion model scores (the kept one first).
     let mut pool: Vec<(Vec<placer::Pose>, placer::Relaxation)> = Vec::new();
     let mut others: Vec<(&Vec<placer::Pose>, &placer::Relaxation)> = Vec::new();
+    // Per placement of the pool (the kept one, then `others` in their
+    // order), its pads without a way out (`pad_exits`; `None` off): the
+    // report follows the placement the race keeps.
+    let mut pool_exits = vec![placement.pad_exits.clone()];
     {
         let mut seen = vec![problem.problem.poses.clone()];
-        for (poses, relaxation, other_missed) in &placement.alternatives {
+        for (index, (poses, relaxation, other_missed)) in placement.alternatives.iter().enumerate()
+        {
             if *other_missed <= missed + 1.0e-6 && !seen.iter().any(|known| alike(known, poses)) {
                 seen.push(poses.clone());
                 others.push((poses, relaxation));
+                pool_exits.push(placement.alternative_exits.get(index).cloned().flatten());
             }
         }
     }
@@ -1955,6 +1966,9 @@ pub fn layout_kicad_board(
             }
         }
     }
+    // The pool index of the placement routed: the first-ranked, unless the
+    // race keeps another.
+    let mut routed_pool_index = labels[0];
     let mut race = Vec::new();
     let mut race_report = None;
     let (mut router, mut result) = if seeds == 1
@@ -2233,6 +2247,7 @@ pub fn layout_kicad_board(
             relaxation.apply(&mut problem.problem);
         }
         let kept_result = chosen;
+        routed_pool_index = labels[chosen];
         race_report = Some(KiCadRaceReport {
             probe: scores,
             kept: labels[chosen],
@@ -3402,6 +3417,7 @@ pub fn layout_kicad_board(
         placement_race: race,
         congestion,
         race: race_report,
+        pad_exits: pool_exits.get(routed_pool_index).cloned().flatten(),
         labels,
         quality: crate::quality::score_kicad_board(&output_directory.join("result"), board_id).ok(),
         pin_swaps,

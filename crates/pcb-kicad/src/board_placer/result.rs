@@ -176,6 +176,10 @@ pub struct KiCadBoardPlacerResult {
     /// they miss the constraints in all), next best first.
     #[serde(skip)]
     pub alternatives: Vec<(Vec<core::Pose>, core::Relaxation, f64)>,
+    /// Per alternative, its pads without a way out (`pad_exits`; `None`
+    /// off).
+    #[serde(skip)]
+    pub alternative_exits: Vec<Option<super::exits::KiCadPadExitsReport>>,
     /// What to change when parts found no legal place.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub hints: Vec<String>,

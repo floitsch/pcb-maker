@@ -610,7 +610,7 @@ pub fn place_kicad_board(
         .map(|copies| KiCadPanelCopiesReport::of(&lowered.problem, copies, &placement));
     // The other legal placements, for layout to race when the best one by
     // wirelength does not route: wirelength is not routability.
-    let alternatives = placements
+    let (alternatives, alternative_exits): (Vec<_>, Vec<_>) = placements
         .into_iter()
         .filter(|other| other.unplaced.is_empty() && other.illegal.is_empty())
         .map(|other| {
@@ -619,9 +619,13 @@ pub fn place_kicad_board(
                 .iter()
                 .map(|status| status.violation)
                 .sum();
-            (other.poses, other.relaxation, missed)
+            let exits = other
+                .exits
+                .as_ref()
+                .map(|outcome| self::exits::exits_report(outcome, &lowered.references, &pcb));
+            ((other.poses, other.relaxation, missed), exits)
         })
-        .collect();
+        .unzip();
 
     let Expr::List(items) = &mut pcb else {
         return Err("PCB root is not a list".into());
@@ -792,6 +796,7 @@ pub fn place_kicad_board(
     }
     let result = KiCadBoardPlacerResult {
         alternatives,
+        alternative_exits,
         tight_bodies: placement.relaxation.tight,
         spacing_mm: placement.relaxation.spacing,
         grid_mm: placement.relaxation.grid,
