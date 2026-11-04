@@ -3430,7 +3430,8 @@ and the board the layout writes from its own router's state finishes
 them (`finish_pairs` before the labels, the copper texts keeping off the
 pairs' copper, the length rules' meanders leaving the coupled nets
 alone, the pair copper written into the result board, the kept nets'
-pair copper into the routes kept for `final_route_from_state`). Its
+pair copper into the routes kept for `final_route_from_state` until
+that was removed on 2026-11-04). Its
 fallback gets its share of the layout's work left (`work_budget` of it,
 as a ladder of that budget: 5 %, at least 1 s), booked to the layout's
 work; where the budget is spent the fallback runs at its minimum and
