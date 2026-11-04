@@ -1530,6 +1530,11 @@ fn counted_penalty(problem: &Problem, poses: &[Pose], index: usize) -> f64 {
     constraints::relation_penalty(problem, poses, Some(index))
 }
 
+/// `counted_penalty` for the pad-exits repair (`crate::exits`).
+pub(crate) fn relation_penalty_counted(problem: &Problem, poses: &[Pose], index: usize) -> f64 {
+    counted_penalty(problem, poses, index)
+}
+
 /// `counted_penalty` from the relations each part is in (`PartRelations`):
 /// the same value and the same work.
 fn counted_penalty_of(

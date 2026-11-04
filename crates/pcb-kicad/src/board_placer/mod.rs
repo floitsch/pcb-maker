@@ -13,6 +13,7 @@ mod config;
 mod courtyards;
 mod decoupling;
 mod edges;
+mod exits;
 mod guidance;
 mod legality;
 mod lower;
@@ -27,12 +28,17 @@ mod seed_race;
 mod tests;
 mod trace;
 
+pub(crate) use self::exits::pad_exits_settings;
 pub(crate) use self::guidance::{attribution, reference_index};
 #[cfg(test)]
 pub(crate) use self::place::room_hint;
 pub(crate) use self::{bodies::*, lower::*, marks::*, pair_rows::*, rules::*, seed_race::*};
 pub use self::{
     config::*,
+    exits::{
+        KiCadClosedPad, KiCadExitMove, KiCadPadExits, KiCadPadExitsCensus, KiCadPadExitsReport,
+        pad_exits_kicad_board, pad_exits_override,
+    },
     guidance::KiCadGlobalGuidance,
     legality::*,
     panel::{KiCadPanelCellClass, KiCadPanelCopiesReport, KiCadPanelCopy},

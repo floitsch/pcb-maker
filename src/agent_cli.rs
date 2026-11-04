@@ -833,6 +833,8 @@ fn placement_facts(command: &str, report: &serde_json::Value) -> KiCadRunFacts {
         }
     }
     facts.placement_hints = strings("hints");
+    facts.closed_pads =
+        serde_json::from_value(report["pad_exits"]["closed"].clone()).unwrap_or_default();
     let constraints: Vec<pcb_kicad::KiCadConstraintStatus> =
         serde_json::from_value(report["constraints"].clone()).unwrap_or_default();
     facts.constraints_missed = missed_constraints(&constraints);
@@ -1031,6 +1033,8 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
         .unwrap_or_default();
     facts.room = serde_json::from_value(placed["room"].clone()).ok();
+    facts.closed_pads =
+        serde_json::from_value(placed["pad_exits"]["closed"].clone()).unwrap_or_default();
     facts.bus_groups = serde_json::from_value(placed["bus_groups"].clone()).ok();
     facts.panel_copies = serde_json::from_value(placed["panel_copies"].clone()).ok();
     facts.sub_boards = serde_json::from_value(placed["sub_boards"].clone()).ok();

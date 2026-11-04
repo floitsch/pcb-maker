@@ -1291,7 +1291,10 @@ pub fn layout_placer_config(
     // layout depended on the load).
     placer_config.deadline = router_config.deadline;
     placer_config.work_seconds = Some(placement_budget(config));
-    if placer_config.global_guidance.is_some() || placer_config.escape_demand.is_some() {
+    if placer_config.global_guidance.is_some()
+        || placer_config.escape_demand.is_some()
+        || crate::board_placer::pad_exits_settings(&placer_config).is_some()
+    {
         placer_config.guidance_router = Some(router_config.clone());
     }
     // The router's rules the placer keeps (the far side under vias in

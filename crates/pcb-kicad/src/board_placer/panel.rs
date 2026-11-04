@@ -1942,6 +1942,7 @@ pub(crate) fn place_copies(
         routing_room_failed: first.routing_room_failed,
         overfull: first.overfull || overfull,
         poses,
+        exits: None,
     }
 }
 

@@ -11,6 +11,7 @@ mod buckets;
 pub mod constraints;
 pub mod crossings;
 pub mod escape;
+pub mod exits;
 pub mod facing;
 pub mod global;
 pub mod groups;
@@ -81,6 +82,12 @@ pub struct Config {
     /// board keeps the copper clearance from the far side's pads
     /// (docs/placer.md, "The legality model against KiCad", the molecules).
     pub kicad_last_level: bool,
+    /// Pads without a way out (`exits`, docs/placer.md "Pads without a
+    /// way out (2026-11-04)"): after the placement, the router's test of
+    /// every pad's straight ways out on the statics, and moves or turns
+    /// of the parts whose pads another part or the edge closes. Off
+    /// (`None`) by default.
+    pub pad_exits: Option<exits::PadExits>,
 }
 
 impl Config {
@@ -98,6 +105,7 @@ impl Config {
             align: None,
             kicad_legality: false,
             kicad_last_level: false,
+            pad_exits: None,
         }
     }
 }
@@ -134,6 +142,9 @@ pub struct Placement {
     /// Even the tightest bodies need more area than a side has: no
     /// packing places every part, and the placer said so at once.
     pub overfull: bool,
+    /// What the pad-exits repair found and did (`Config::pad_exits`;
+    /// `None`: off, or its session could not answer).
+    pub exits: Option<exits::ExitOutcome>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1677,6 +1688,32 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         }
         phase_line(debug, "routing room", room_mark);
     }
+    // Pads without a way out: the router's test of the placement, and
+    // the moves that open the pads other parts close.
+    let exits = config.pad_exits.as_ref().and_then(|exits| {
+        let exits_mark = mark();
+        let before = work();
+        let mut outcome = exits::repair(&relaxed, &mut poses, &unplaced, exits);
+        // Its work is the outcome's, not the seed's: the caller charges it
+        // to the clock beside the seeds' (`ExitOutcome::work`), so that
+        // the seeds a race keeps do not depend on the switch.
+        let spent = work() - before;
+        add_work_back(spent);
+        if let Some(outcome) = outcome.as_mut() {
+            outcome.work = spent;
+        }
+        if debug && let Some(outcome) = &outcome {
+            eprintln!(
+                "placer: pad exits: {} closed pads, {} moves ({} candidates), {} still closed",
+                outcome.closed_before,
+                outcome.moves.len(),
+                outcome.tried,
+                outcome.closed.len()
+            );
+        }
+        phase_line(debug, "pad exits", exits_mark);
+        outcome
+    });
     let problem = &relaxed;
     let wirelength_final = problem.wirelength(&poses);
     frames.push(Frame {
@@ -1728,6 +1765,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         stage_poses,
         routing_room_failed,
         overfull: overfull_sides,
+        exits,
     }
 }
 

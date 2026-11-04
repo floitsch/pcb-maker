@@ -139,7 +139,7 @@ pub(crate) fn attribution(
 /// The board as the layout routes a placement (tracks stripped, planned
 /// pours added, copper texts as the layout keeps them), whether its pours
 /// connect, and the parts' references by index.
-fn routed_base(
+pub(super) fn routed_base(
     pcb: &Expr,
     router_config: &KiCadBoardRouterConfig,
     keep_board_marks: bool,
@@ -163,7 +163,7 @@ fn routed_base(
 }
 
 /// `base` with the footprints at `poses`, lowered as the layout routes it.
-fn lowered_at(
+pub(super) fn lowered_at(
     base: &Expr,
     poses: &[core::Pose],
     router_config: &KiCadBoardRouterConfig,

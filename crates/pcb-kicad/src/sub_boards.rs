@@ -3413,6 +3413,7 @@ pub(crate) fn place_sub_boards(
         routing_room_failed,
         overfull,
         poses,
+        exits: None,
     }
 }
 

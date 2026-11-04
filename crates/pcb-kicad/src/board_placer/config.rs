@@ -469,6 +469,20 @@ pub struct KiCadBoardPlacerConfig {
     /// check from the router's rules where the switch is on).
     #[serde(skip)]
     pub pair_geometry: std::collections::BTreeMap<String, PairGeometry>,
+    /// Pads without a way out (off; docs/placer.md "Pads without a way
+    /// out (2026-11-04)"): after each seed's placement, every pad's
+    /// straight ways out are tested as the router's fan-out sees them (the
+    /// statics at the class width, the placement lowered as the layout
+    /// routes it); a part with a pad another part, a keepout or the board
+    /// edge closes is moved or turned (it or the parts that close the pad,
+    /// within `reach_mm`, the cheapest of `candidates` poses in wirelength
+    /// that leaves fewer pads closed around it), and the pads left closed
+    /// are reported (`pad_exits` in board-placer.json, the verdict's next
+    /// actions). Needs the router's configuration (the layout and the
+    /// place check give it). `PCB_PLACER_PAD_EXITS=1` turns it on with
+    /// the defaults (`reach_mm` 1, `candidates` 16), `0` off.
+    #[serde(default)]
+    pub pad_exits: Option<KiCadPadExits>,
 }
 
 /// A differential pair's track width and gap where its coupled run is (the
@@ -557,6 +571,7 @@ impl Default for KiCadBoardPlacerConfig {
             length_maxima: true,
             router_rules: None,
             pair_geometry: Default::default(),
+            pad_exits: None,
         }
     }
 }

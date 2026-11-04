@@ -1280,7 +1280,7 @@ impl KiCadRepairs {
 /// Environment variables that change what a run does or reports (the
 /// router's seed and switches, KiCad's check and its repairs, the budgets'
 /// guards), echoed into the verdict when set.
-pub const RESULT_ENVIRONMENT: [&str; 18] = [
+pub const RESULT_ENVIRONMENT: [&str; 19] = [
     "PCB_ROUTER_SEED",
     "PCB_ROUTER_DIFF_PAIRS",
     "PCB_ROUTER_LENGTH_MATCHING",
@@ -1294,6 +1294,7 @@ pub const RESULT_ENVIRONMENT: [&str; 18] = [
     "PCB_KICAD_TIMEOUT",
     "PCB_MAKER_KICAD_USER_LIBS",
     "PCB_PLACER_WORK_SECONDS",
+    "PCB_PLACER_PAD_EXITS",
     "PCB_NARROW_RESERVE",
     "PCB_PROBES_SIDE_BY_SIDE",
     "PCB_LADDER_STATS",
@@ -1351,6 +1352,9 @@ pub struct KiCadRunFacts {
     pub constraints_missed: Vec<String>,
     pub unplaced: Vec<String>,
     pub placement_hints: Vec<String>,
+    /// Pads without a way out at the placement (`pad_exits` in
+    /// board-placer.json; empty with the switch off).
+    pub closed_pads: Vec<crate::board_placer::KiCadClosedPad>,
     pub cut: Vec<String>,
     pub work_seconds: Option<f64>,
     /// The part of `work_seconds` that is KiCad's checks (a layout's).
@@ -1932,6 +1936,7 @@ impl KiCadRunFacts {
             constraints_missed: Vec::new(),
             unplaced: Vec::new(),
             placement_hints: Vec::new(),
+            closed_pads: Vec::new(),
             cut: Vec::new(),
             work_seconds: None,
             kicad_check_work_seconds: None,
@@ -2240,6 +2245,54 @@ fn counts(map: &BTreeMap<String, usize>) -> String {
         .join(", ")
 }
 
+/// The next actions for pads without a way out (`pad_exits`): a place
+/// check names every one; a route only those whose net is open (`open`
+/// connections in all), with what closes it and the parts to move.
+fn closed_pad_actions(facts: &KiCadRunFacts, open: usize) -> Vec<String> {
+    let open_nets: BTreeSet<&str> = facts
+        .native
+        .as_ref()
+        .map(|native| {
+            native
+                .unconnected_nets
+                .keys()
+                .map(String::as_str)
+                .collect::<BTreeSet<_>>()
+        })
+        .unwrap_or_default()
+        .into_iter()
+        .chain(facts.open_nets.iter().map(String::as_str))
+        .collect();
+    facts
+        .closed_pads
+        .iter()
+        .filter(|pad| !facts.routes || (open > 0 && open_nets.contains(pad.net.as_str())))
+        .map(|pad| {
+            let part = pcb_router::router::label_part(&pad.pad);
+            if pad.footprint_only {
+                format!(
+                    "{} (net {}): no route can connect it on any placement; a via in the pad (via_in_pad in the router config) or a footprint whose pad has a way out",
+                    pad.reason, pad.net
+                )
+            } else {
+                let mut parts: Vec<&str> = vec![part];
+                for item in &pad.blocked_by {
+                    let other = pcb_router::router::label_part(item);
+                    if item != "the board edge" && !parts.contains(&other) {
+                        parts.push(other);
+                    }
+                }
+                format!(
+                    "{} (net {}) on this placement: no route can connect it; turn or move {} (a region, near or place constraint) and lay out again",
+                    pad.reason,
+                    pad.net,
+                    parts.join(" or ")
+                )
+            }
+        })
+        .collect()
+}
+
 /// The status of a finished run, and the one-line reason.
 pub fn decide(
     facts: &KiCadRunFacts,
@@ -2260,6 +2313,21 @@ pub fn decide(
             "{} parts without a legal place ({})",
             facts.unplaced.len(),
             facts.unplaced.join(", ")
+        ));
+    }
+    // A place check's pads that another part or the edge closes: no route
+    // can connect them, the placement must change (`pad_exits`).
+    let closed: Vec<&str> = facts
+        .closed_pads
+        .iter()
+        .filter(|pad| !pad.footprint_only)
+        .map(|pad| pad.pad.as_str())
+        .collect();
+    if !facts.routes && !closed.is_empty() {
+        problems.push(format!(
+            "{} pads without a way out ({})",
+            closed.len(),
+            closed.join(", ")
         ));
     }
     if facts.routes {
@@ -2512,6 +2580,7 @@ fn next_actions(
                 .map(|note| hot_spot_action(note, &facts.command, &facts.fixed_parts)),
         );
     }
+    actions.extend(closed_pad_actions(facts, open));
     if !rate_first && let Some(action) = rate_action {
         actions.push(action);
     }

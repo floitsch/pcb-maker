@@ -503,6 +503,7 @@ const RESEARCH_USAGE: &[&str] = &[
     "export-congestion-sample <source-directory> <board-id> <output-directory> [job.json] [router-config.json|auto]",
     "score-congestion-sample <sample.json> <model.onnx>",
     "score-congestion <source-directory> <board-id> <model.onnx> [router-config.json|auto]",
+    "pad-exits-kicad-board <project-dir> <board-id> [router-config.json|auto] [--out <report.json>] [--repair]",
     "legality-kicad-board <project-dir> <board-id> <report.json> [--poses <board.kicad_pcb>] [--drc <drc.json>] [--placer <placer.json>]",
     "ablate-kicad-placement <designer.kicad_pcb> <placed-directory> <board-id> <output-directory> [ablation.json] [router-config.json|auto]",
     "global-route-kicad-board <source-directory> <board-id> [router-config.json|auto] [--global <global.json>] [--probe <work-seconds>] [--corridors <out.json>]",
@@ -848,6 +849,87 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
                 "{}",
                 serde_json::to_string_pretty(&connections).map_err(|error| error.to_string())?
             );
+            Ok(())
+        }
+        "pad-exits-kicad-board" => {
+            let usage = "usage: pcb-maker pad-exits-kicad-board <project-dir> <board-id> [router-config.json|auto] [--out <report.json>] [--repair]";
+            let source = arguments.next().ok_or_else(|| usage.to_string())?;
+            let board_id = arguments.next().ok_or_else(|| usage.to_string())?;
+            pcb_kicad::check_board_id(&board_id)?;
+            let mut router_path = None;
+            let mut out = None;
+            let mut repair = false;
+            while let Some(argument) = arguments.next() {
+                if argument == "--repair" {
+                    repair = true;
+                } else if argument == "--out" {
+                    out = Some(arguments.next().ok_or_else(|| usage.to_string())?);
+                } else if router_path.is_none() {
+                    router_path = Some(argument);
+                } else {
+                    return Err(usage.into());
+                }
+            }
+            let router = board_router_config(router_path.as_deref(), &source, &board_id)?;
+            let settings = pcb_kicad::KiCadPadExits::default();
+            let census = pcb_kicad::pad_exits_kicad_board(
+                Path::new(&source),
+                &board_id,
+                &router,
+                repair.then_some(&settings),
+            )?;
+            for pad in &census.closed {
+                println!("{} {} {}: {}", pad.pad, pad.net, pad.layer, pad.reason);
+            }
+            println!(
+                "{} pads without a way out on {} parts ({} by other parts or the edge); work {:.3} s (lowering {:.3}, probe {:.3}), cpu lowering {:.3} s, probe {:.3} s",
+                census.closed.len(),
+                census.parts,
+                census
+                    .closed
+                    .iter()
+                    .filter(|pad| !pad.footprint_only)
+                    .count(),
+                census.work_seconds,
+                census.lower_work_seconds,
+                census.probe_work_seconds,
+                census.lower_seconds,
+                census.probe_seconds
+            );
+            if let Some(repaired) = &census.repaired {
+                for moved in &repaired.moves {
+                    println!(
+                        "repair: {} from ({:.2}, {:.2}, {}) to ({:.2}, {:.2}, {}) opens {}",
+                        moved.part,
+                        moved.from[0],
+                        moved.from[1],
+                        moved.from[2],
+                        moved.to[0],
+                        moved.to[1],
+                        moved.to[2],
+                        moved.opened.join(", ")
+                    );
+                }
+                println!(
+                    "repair: {} closed before, {} after ({} by other parts or the edge), {} moves, {} candidates, work {:.3} s",
+                    repaired.closed_before,
+                    repaired.closed.len(),
+                    repaired
+                        .closed
+                        .iter()
+                        .filter(|pad| !pad.footprint_only)
+                        .count(),
+                    repaired.moves.len(),
+                    repaired.tried,
+                    repaired.work_seconds
+                );
+            }
+            if let Some(out) = out {
+                let text =
+                    serde_json::to_string_pretty(&census).map_err(|error| error.to_string())?;
+                std::fs::write(&out, format!("{text}\n"))
+                    .map_err(|error| format!("failed to write {out}: {error}"))?;
+            }
             Ok(())
         }
         "score-congestion" => {

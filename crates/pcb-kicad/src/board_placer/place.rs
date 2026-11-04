@@ -460,6 +460,28 @@ pub fn place_kicad_board(
             bias: guidance.bias,
         });
     }
+    // Pads without a way out (`pad_exits`): the router's test after each
+    // seed's placement, with the router's configuration the layout and the
+    // place check give.
+    if let Some(settings) = self::exits::pad_exits_settings(config) {
+        match &config.guidance_router {
+            Some(router_config) => {
+                placer_config.pad_exits = Some(core::exits::PadExits {
+                    factory: self::exits::exit_factory(
+                        &pcb,
+                        &lowered.references,
+                        router_config,
+                        config.keep_board_marks,
+                    )?,
+                    reach: settings.reach_mm,
+                    candidates: settings.candidates,
+                });
+            }
+            None => eprintln!(
+                "placer: pad exits: no router configuration (the layout and the place check give one): not tested"
+            ),
+        }
+    }
     // Several seeds, in parallel; the placement with the fewest illegal
     // parts, then the least missed constraints, then the least wirelength
     // wins. Placement takes seconds; the constraints are what the user asked
@@ -491,6 +513,12 @@ pub fn place_kicad_board(
                 let mut seeded = placer_config.clone();
                 seeded.global.seed = config.seed + offset;
                 seeded.anneal.seed = seeded.anneal.seed.wrapping_add(offset);
+                // The pad-exits repair is a whole board's (its test
+                // names parts by the board's indices): not inside a
+                // panel's copies or a held sub-board.
+                if copies.is_some() || held_sub_boards.is_some() {
+                    seeded.pad_exits = None;
+                }
                 match (&copies, &held_sub_boards) {
                     (Some(copies), _) => self::panel::place_copies(problem, copies, &seeded),
                     (None, Some(sub)) => crate::sub_boards::place_sub_boards(problem, sub, &seeded),
@@ -498,14 +526,27 @@ pub fn place_kicad_board(
                 }
             },
         );
-        pool_work.set(pool_work.get() + race.pool_work);
+        // The pad-exits repair's work (`pad_exits`), booked apart from the
+        // seeds' (the seeds kept do not depend on it): on the clock as the
+        // reference machine's pool runs it beside them.
+        let exits_works: Vec<u64> = race
+            .kept
+            .iter()
+            .filter_map(|(_, placement)| placement.exits.as_ref().map(|outcome| outcome.work))
+            .collect();
+        pool_work.set(
+            pool_work.get()
+                + race.pool_work
+                + self::seed_race::pool_makespan(&exits_works, REFERENCE_THREADS),
+        );
         seeds_work.set(
             seeds_work.get()
                 + race
                     .kept
                     .iter()
                     .map(|(_, placement)| placement.work)
-                    .sum::<u64>(),
+                    .sum::<u64>()
+                + exits_works.iter().sum::<u64>(),
         );
         seeds_run.set(seeds_run.get() + race.run);
         let mut placements: Vec<(u64, core::Placement)> = race
@@ -522,8 +563,14 @@ pub fn place_kicad_board(
                 .iter()
                 .map(|status| status.violation)
                 .sum();
+            // Pads another part or the edge closes (`pad_exits`; none
+            // with it off) count after the illegal parts.
+            let closed = placement.exits.as_ref().map_or(0, |outcome| {
+                outcome.closed.iter().filter(|pad| !pad.own_only).count()
+            });
             (
                 placement.unplaced.len() + placement.illegal.len(),
+                closed,
                 placement.relaxation.courtyard_spacing as usize,
                 placement.relaxation.on_marks.len(),
                 placement.routing_room_failed as usize,
@@ -813,6 +860,10 @@ pub fn place_kicad_board(
         }),
         panel_copies,
         sub_boards: sub_boards_report,
+        pad_exits: placement
+            .exits
+            .as_ref()
+            .map(|outcome| self::exits::exits_report(outcome, &lowered.references, &pcb)),
     };
     let report_path = output_directory.join("board-placer.json");
     fs::write(
