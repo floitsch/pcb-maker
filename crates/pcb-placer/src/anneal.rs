@@ -33,14 +33,6 @@ pub struct AnnealConfig {
     /// No further stage starts once this thread's `crate::work()` reaches
     /// this count.
     pub stop_at_work: Option<u64>,
-    /// Parts across the board meet at the legality test's gaps
-    /// (`State::far_overlap`): holes the full spacing from bodies, far-side
-    /// copper the copper clearance from pads. Without it holes meet bodies
-    /// at half the spacing and far-side copper not at all, and the
-    /// legalizer moves what the annealer could not see (Castor: 33 of 69
-    /// conflicted parts). Off: flat on the quick tier, worse on video
-    /// and OpenESC 4in1 (2026-10-14).
-    pub legal_far_side: bool,
     /// The global route inside the anneal (`crate::guidance`, an
     /// experiment): off (`None`) by default.
     pub guidance: Option<crate::guidance::Guidance>,
@@ -60,7 +52,6 @@ impl Default for AnnealConfig {
             seed: 7,
             deadline: None,
             stop_at_work: None,
-            legal_far_side: false,
             guidance: None,
             bus_groups: None,
         }
@@ -228,8 +219,6 @@ struct State<'a> {
     reaches: Vec<f64>,
     /// The marks and obstacles of the constraints by part (`PairFlags`).
     flags: PairFlags,
-    /// `AnnealConfig::legal_far_side`.
-    legal_far_side: bool,
     /// The last global route's overflow field (`AnnealConfig::guidance`).
     field: Option<crate::guidance::Prepared>,
     /// Per net, its term of `wirelength` at the poses and the field of
@@ -294,15 +283,10 @@ impl State<'_> {
     }
 
     fn overlap_with(&self, index: usize, rect: Rect, everything: bool) -> f64 {
-        let side = self.problem.components[index].side;
         let mut total = 0.0;
         // A box list costs its allocation and transforms (as it did when
         // each was built per pair: the lists now come from `boxes`, the
         // work is the same).
-        let built = |boxes: Vec<(Point, Point)>| {
-            self.work.set(self.work.get() + 8 + 2 * boxes.len() as u64);
-            boxes
-        };
         let booked = |boxes: usize| {
             self.work.set(self.work.get() + 8 + 2 * boxes as u64);
         };
@@ -343,9 +327,7 @@ impl State<'_> {
             // nothing (every box product is 0.0, and 0.0 added to the sum
             // leaves its bits) and books what its comparisons would have
             // booked: work that depends on the two parts alone.
-            if self.skip_far
-                && !(self.legal_far_side && side.opposite(self.problem.components[other].side))
-            {
+            if self.skip_far {
                 // The other part's reach about its body centre at any pose
                 // (`reaches`), without its boxes.
                 let (center, reach) = (self.rects[other].center, self.reaches[other]);
@@ -360,16 +342,7 @@ impl State<'_> {
                     if self.check_overlap {
                         let before = self.work.get();
                         let mut direct = 0.0;
-                        self.pair(
-                            index,
-                            rect,
-                            other,
-                            &mut cache,
-                            &built,
-                            &booked,
-                            &area,
-                            &mut direct,
-                        );
+                        self.pair(index, rect, other, &mut cache, &booked, &area, &mut direct);
                         let booked = self.work.get() - before;
                         self.work.set(before);
                         assert!(
@@ -381,9 +354,7 @@ impl State<'_> {
                     continue;
                 }
             }
-            self.pair(
-                index, rect, other, &mut cache, &built, &booked, &area, &mut total,
-            );
+            self.pair(index, rect, other, &mut cache, &booked, &area, &mut total);
         }
         // Leaving the board is as bad as overlapping something (for an
         // overhanging part, only with what belongs on the board).
@@ -440,24 +411,22 @@ impl State<'_> {
     /// Adds the overlap of part `index` (at `rect`) with part `other` to
     /// `total` box by box, as the sum takes it (the same additions in the
     /// same order: not the pair's own sum added once), the work booked
-    /// through `built`, `booked` and `area`.
+    /// through `booked` and `area`.
     /// Generic in its closures and inlined (as the loop body it was: a call
     /// through `dyn Fn` a box comparison cost the first commit's gain on
     /// DSP-ADAU1452).
     #[allow(clippy::too_many_arguments)]
     #[inline(always)]
-    fn pair<Built, Booked, Area>(
+    fn pair<Booked, Area>(
         &self,
         index: usize,
         rect: Rect,
         other: usize,
         cache: &mut [PartBoxes],
-        built: &Built,
         booked: &Booked,
         area: &Area,
         total: &mut f64,
     ) where
-        Built: Fn(Boxes) -> Boxes,
         Booked: Fn(usize),
         Area: Fn((Point, Point), (Point, Point)) -> f64,
     {
@@ -640,40 +609,17 @@ impl State<'_> {
                 });
             }
         } else if side.opposite(other_component.side) {
-            // Across the board only holes and pads meet bodies, at the
-            // gaps the legality test asks for (`legal::far_side_overlap`).
-            if self.legal_far_side {
-                *total += self.far_overlap(
-                    index,
-                    pose,
-                    &rect,
-                    other,
-                    self.poses[other],
-                    body,
-                    &built,
-                    &area,
-                ) + self.far_overlap(
-                    other,
-                    self.poses[other],
-                    body,
-                    index,
-                    pose,
-                    &rect,
-                    &built,
-                    &area,
-                );
-            } else {
-                if !component.far_side.is_empty() {
-                    for far in &cache[index].far[..component.far_count_for(other)] {
-                        *total += area(*far, (body.center, body.half));
-                    }
+            // Across the board only holes and pads meet bodies.
+            if !component.far_side.is_empty() {
+                for far in &cache[index].far[..component.far_count_for(other)] {
+                    *total += area(*far, (body.center, body.half));
                 }
-                if !other_component.far_side.is_empty() {
-                    self.fresh_boxes(cache, other);
-                    booked(cache[other].far.len());
-                    for far in &cache[other].far[..other_component.far_count_for(index)] {
-                        *total += area(*far, (rect.center, rect.half));
-                    }
+            }
+            if !other_component.far_side.is_empty() {
+                self.fresh_boxes(cache, other);
+                booked(cache[other].far.len());
+                for far in &cache[other].far[..other_component.far_count_for(index)] {
+                    *total += area(*far, (rect.center, rect.half));
                 }
             }
         }
@@ -682,8 +628,7 @@ impl State<'_> {
     /// The work `pair` books for parts `index` and `other` whose boxes lie
     /// apart: every box comparison it makes (one unit each) and every
     /// list it takes (`booked`, `built`), which its branches decide from
-    /// the two parts alone, not from where they are. Not for parts on
-    /// opposite sides with `legal_far_side`.
+    /// the two parts alone, not from where they are.
     fn far_work(&self, index: usize, other: usize) -> u64 {
         let base = self.far_work_base(index, other);
         if self.flags.lies_on(self.problem, index, other)
@@ -821,88 +766,6 @@ impl State<'_> {
         } else {
             0
         }
-    }
-
-    /// The overlap of part `holes`' far-side boxes with part `body` across
-    /// the board, grown to the gaps `legal::far_side_overlap` asks for: its
-    /// holes and pads the spacing from the body (with its halo), its
-    /// copper that only copper may not come near the copper clearance from
-    /// the body's pads.
-    #[allow(clippy::too_many_arguments)]
-    fn far_overlap(
-        &self,
-        holes: usize,
-        holes_pose: Pose,
-        _holes_rect: &Rect,
-        body: usize,
-        body_pose: Pose,
-        body_rect: &Rect,
-        built: &dyn Fn(Boxes) -> Boxes,
-        area: &dyn Fn((Point, Point), (Point, Point)) -> f64,
-    ) -> f64 {
-        let component = &self.problem.components[holes];
-        if component.far_side.is_empty() && component.far_copper.is_empty() {
-            return 0.0;
-        }
-        let other = &self.problem.components[body];
-        let grow = |boxes: Vec<(Point, Point)>, margin: f64| -> Vec<(Point, Point)> {
-            boxes
-                .into_iter()
-                .map(|(center, half)| (center, [half[0] + margin, half[1] + margin]))
-                .collect()
-        };
-        // The body's copper: its pads, or all of it where it has none.
-        let share = self.share(other);
-        let pads = || {
-            if other.pads.is_empty() {
-                vec![(
-                    body_rect.center,
-                    [body_rect.half[0] - share, body_rect.half[1] - share],
-                )]
-            } else {
-                built(other.pad_boxes(body_pose))
-            }
-        };
-        let mut total = 0.0;
-        let min_spacing = self.problem.min_spacing;
-        if self.problem.far_side_pads_only {
-            let pads = pads();
-            let mut boxes = built(component.boxes_of(
-                &component.far_side[..component.far_count_for(body)],
-                holes_pose,
-            ));
-            boxes.extend(built(component.boxes_of(&component.far_copper, holes_pose)));
-            for far in grow(boxes, min_spacing) {
-                for pad in &pads {
-                    total += area(far, *pad);
-                }
-            }
-            return total;
-        }
-        if !component.far_side.is_empty() {
-            let margin = (self.problem.spacing - share).max(0.0);
-            for far in grow(
-                built(component.boxes_of(
-                    &component.far_side[..component.far_count_for(body)],
-                    holes_pose,
-                )),
-                margin,
-            ) {
-                total += area(far, (body_rect.center, body_rect.half));
-            }
-        }
-        if !component.far_copper.is_empty() {
-            let pads = pads();
-            for far in grow(
-                built(component.boxes_of(&component.far_copper, holes_pose)),
-                min_spacing,
-            ) {
-                for pad in &pads {
-                    total += area(far, *pad);
-                }
-            }
-        }
-        total
     }
 
     /// The overlap of part `yard`'s courtyard on the other side with part
@@ -1116,7 +979,7 @@ impl State<'_> {
     }
 }
 
-fn build_state<'a>(problem: &'a Problem, poses: &[Pose], legal_far_side: bool) -> State<'a> {
+fn build_state<'a>(problem: &'a Problem, poses: &[Pose]) -> State<'a> {
     let mut members: Vec<Vec<(usize, usize)>> = vec![Vec::new(); problem.net_weights.len()];
     for (index, component) in problem.components.iter().enumerate() {
         for (pin, description) in component.pins.iter().enumerate() {
@@ -1167,16 +1030,7 @@ fn build_state<'a>(problem: &'a Problem, poses: &[Pose], legal_far_side: bool) -
                 .map(|_| PartBoxes::default())
                 .collect(),
         ),
-        // The legality test's gaps across the board reach farther.
-        reach: problem.edge_margin
-            + 0.5
-            + problem.far_reach()
-            + problem.far_courtyard_reach()
-            + if legal_far_side {
-                problem.spacing + problem.min_spacing
-            } else {
-                0.0
-            },
+        reach: problem.edge_margin + 0.5 + problem.far_reach() + problem.far_courtyard_reach(),
         visit_work: (1.0 + (problem.constraints.linked.len() as f64 + 1.0).log2() / 2.0).round()
             as u64,
         check_overlap: crate::check_mode(),
@@ -1184,7 +1038,6 @@ fn build_state<'a>(problem: &'a Problem, poses: &[Pose], legal_far_side: bool) -
         skip_far: true,
         reaches: Vec::new(),
         flags: PairFlags::new(problem),
-        legal_far_side,
         field: None,
         lengths: Vec::new(),
         relations: constraints::PartRelations::new(problem),
@@ -1312,8 +1165,8 @@ fn far_grow(problem: &Problem) -> f64 {
 }
 
 /// Debugging aid: the overlap the annealer sees for every part at `poses`.
-pub fn overlaps(problem: &Problem, poses: &[Pose], config: &AnnealConfig) -> Vec<f64> {
-    let state = build_state(problem, poses, config.legal_far_side);
+pub fn overlaps(problem: &Problem, poses: &[Pose]) -> Vec<f64> {
+    let state = build_state(problem, poses);
     (0..problem.components.len())
         .map(|index| state.overlap(index, state.rects[index]))
         .collect()
@@ -1335,7 +1188,7 @@ pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -
             poses[*index].angle,
         );
     }
-    let mut state = build_state(problem, poses, config.legal_far_side);
+    let mut state = build_state(problem, poses);
     // Work per move (before and after), besides the parts the overlap
     // test visits (counted there): when the outline is not a rectangle,
     // four corners against it (cheap per edge next to a part's visit);
@@ -2297,9 +2150,8 @@ mod tests {
                     }
                 }
             }
-            let legal_far_side = round % 3 == 2;
-            let mut fast = build_state(&problem, &poses, legal_far_side);
-            let mut direct = build_state(&problem, &poses, legal_far_side);
+            let mut fast = build_state(&problem, &poses);
+            let mut direct = build_state(&problem, &poses);
             fast.check_overlap = false;
             direct.check_overlap = false;
             direct.skip_far = false;

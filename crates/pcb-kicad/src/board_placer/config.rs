@@ -270,9 +270,6 @@ pub struct KiCadBoardPlacerConfig {
     /// The project's `solder_mask_to_copper_clearance`: covered copper
     /// keeps it from a mask opening. Read from the project when not given.
     pub solder_mask_to_copper_mm: Option<f64>,
-    /// The annealer keeps the legality test's gaps across the board
-    /// (`core::anneal::AnnealConfig::legal_far_side`). Off by default.
-    pub anneal_far_side_gaps: bool,
     /// Placements tried with different seeds (in parallel); the best is
     /// kept: fewest illegal parts, least missed constraints, least wire.
     pub placement_seeds: usize,
@@ -560,7 +557,6 @@ impl Default for KiCadBoardPlacerConfig {
             solid_pin_rows: true,
             mask_openings: true,
             solder_mask_to_copper_mm: None,
-            anneal_far_side_gaps: false,
             placement_seeds: 3,
             orientation_search: true,
             legality: KiCadPlacerLegality::Model,

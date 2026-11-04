@@ -1093,8 +1093,12 @@ fn across_the_board() -> Problem {
 }
 
 #[test]
-fn the_annealer_can_keep_the_gaps_across_the_board_the_legality_test_asks_for() {
-    use pcb_placer::anneal::{AnnealConfig, overlaps};
+fn the_annealer_sees_less_across_the_board_than_the_legality_test() {
+    // The annealer's model across the board (holes meet bodies at half the
+    // spacing, far-side copper not at all) leaves the rest to the
+    // legaliser; `anneal_far_side_gaps`, which gave it the legality test's
+    // gaps, was removed on 2026-11-04.
+    use pcb_placer::anneal::overlaps;
     use pcb_placer::legal::is_legal;
     let problem = across_the_board();
     let at = |x: f64, y: f64| {
@@ -1105,27 +1109,18 @@ fn the_annealer_can_keep_the_gaps_across_the_board_the_legality_test_asks_for() 
         };
         poses
     };
-    let old = AnnealConfig::default();
-    let legal = AnnealConfig {
-        legal_far_side: true,
-        ..AnnealConfig::default()
-    };
-    // 0.3 mm from the hole (the spacing is 0.5): the old model sees
-    // nothing closer than half the spacing.
+    // 0.3 mm from the hole (the spacing is 0.5).
     let near_hole = at(42.8, 25.0);
     assert!(!is_legal(&problem, &near_hole, 1, near_hole[1], 0..2));
-    assert_eq!(overlaps(&problem, &near_hole, &old)[1], 0.0);
-    assert!(overlaps(&problem, &near_hole, &legal)[1] > 0.0);
-    // Its pad 0.1 mm from the far side's copper (the clearance is 0.2):
-    // the old model does not see such copper at all.
+    assert_eq!(overlaps(&problem, &near_hole)[1], 0.0);
+    // Its pad 0.1 mm from the far side's copper (the clearance is 0.2).
     let near_copper = at(40.0, 31.6);
     assert!(!is_legal(&problem, &near_copper, 1, near_copper[1], 0..2));
-    assert_eq!(overlaps(&problem, &near_copper, &old)[1], 0.0);
-    assert!(overlaps(&problem, &near_copper, &legal)[1] > 0.0);
-    // Clear of both: legal, and no overlap either way.
+    assert_eq!(overlaps(&problem, &near_copper)[1], 0.0);
+    // Clear of both: legal, and no overlap.
     let clear = at(40.0, 34.0);
     assert!(is_legal(&problem, &clear, 1, clear[1], 0..2));
-    assert_eq!(overlaps(&problem, &clear, &legal)[1], 0.0);
+    assert_eq!(overlaps(&problem, &clear)[1], 0.0);
 }
 
 /// Two back-mounted hot-swap switches: on the back a 9 x 6 mm socket, on
@@ -1134,7 +1129,7 @@ fn the_annealer_can_keep_the_gaps_across_the_board_the_legality_test_asks_for() 
 /// are on the back.
 #[test]
 fn courtyards_on_the_far_side_of_parts_on_one_side_keep_apart() {
-    use pcb_placer::anneal::{AnnealConfig, overlaps};
+    use pcb_placer::anneal::overlaps;
     use pcb_placer::legal::is_legal;
     let square = [-7.0, -7.0, 7.0, 7.0];
     let switch = Component {
@@ -1179,10 +1174,10 @@ fn courtyards_on_the_far_side_of_parts_on_one_side_keep_apart() {
     // 14.5 mm apart the squares keep the spacing.
     assert!(is_legal(&problem, &problem.poses, 1, at(44.5), 0..2));
     // The annealer sees the overlap too.
-    assert!(overlaps(&problem, &problem.poses, &AnnealConfig::default())[1] > 0.0);
+    assert!(overlaps(&problem, &problem.poses)[1] > 0.0);
     let mut apart = problem.poses.clone();
     apart[1] = at(44.5);
-    assert_eq!(overlaps(&problem, &apart, &AnnealConfig::default())[1], 0.0);
+    assert_eq!(overlaps(&problem, &apart)[1], 0.0);
     // Without the far courtyard (a switch whose front holds only its holes)
     // 12 mm apart is fine.
     let mut plain = problem.clone();

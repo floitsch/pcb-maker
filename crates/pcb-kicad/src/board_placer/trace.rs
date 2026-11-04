@@ -54,7 +54,6 @@ fn designer_poses(lowered: &LoweredPlacement, designer: &Path) -> Result<Vec<cor
 pub(super) fn trace_placements(
     lowered: &LoweredPlacement,
     placements: &[core::Placement],
-    anneal: &core::anneal::AnnealConfig,
     path: &Path,
 ) -> Result<(), String> {
     let designer = match std::env::var_os("PCB_PLACER_DESIGNER") {
@@ -179,8 +178,8 @@ pub(super) fn trace_placements(
         let stage_of = |name: &str| stages.iter().position(|(stage, _)| *stage == name);
         // What the annealer itself sees there (a conflict it does not see
         // is a mismatch of the two models).
-        let anneal_overlaps = stage_of("annealed")
-            .map(|stage| core::anneal::overlaps(&relaxed, stages[stage].1, anneal));
+        let anneal_overlaps =
+            stage_of("annealed").map(|stage| core::anneal::overlaps(&relaxed, stages[stage].1));
         let mut parts = Vec::new();
         for index in 0..count {
             let component = &relaxed.components[index];

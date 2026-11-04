@@ -434,7 +434,6 @@ pub fn place_kicad_board(
         .work_seconds
         .map(|seconds| (seconds.max(0.0) * core::work_per_second()) as u64);
     placer_config.overlap_far_side_pads = config.overlap_far_side_pads;
-    placer_config.anneal.legal_far_side = config.anneal_far_side_gaps;
     placer_config.orientation_search = config.orientation_search;
     placer_config.bus_groups = config.bus_groups.as_ref().map(KiCadBusGroups::settings);
     placer_config.kicad_legality = config.legality == KiCadPlacerLegality::Kicad;
@@ -604,12 +603,7 @@ pub fn place_kicad_board(
     let (kept_seeds, mut placements): (Vec<u64>, Vec<core::Placement>) =
         placements.into_iter().unzip();
     if let Some(trace) = std::env::var_os("PCB_PLACER_TRACE") {
-        trace_placements(
-            &lowered,
-            &placements,
-            &placer_config.anneal,
-            Path::new(&trace),
-        )?;
+        trace_placements(&lowered, &placements, Path::new(&trace))?;
     }
     let work_seconds = placements
         .iter()

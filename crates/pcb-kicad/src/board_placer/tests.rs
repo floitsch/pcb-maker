@@ -1018,9 +1018,7 @@ fn a_fixed_parts_mask_opening_keeps_other_parts_pads_out() {
         let mut poses = problem.poses.clone();
         let legal =
             |poses: &[core::Pose]| !core::legal::illegal_components(problem, poses).contains(&c);
-        let seen = |poses: &[core::Pose]| {
-            core::anneal::overlaps(problem, poses, &core::anneal::AnnealConfig::default())[c]
-        };
+        let seen = |poses: &[core::Pose]| core::anneal::overlaps(problem, poses)[c];
         // Where C61 was: deep inside the polygon, 13 mm from the
         // courtyard; and under the small rectangle beside the pins.
         for local in [[0.0, 25.0], [8.0, 15.0], [0.0, 2.0]] {

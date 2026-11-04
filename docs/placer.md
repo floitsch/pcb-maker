@@ -244,7 +244,8 @@ OpenESC boards, both SNSPs and zpn (the kept seed, x652's placer):
   board: a through-hole part's holes meet bodies at half the spacing, and
   its copper-only far-side boxes not at all (Castor: 33 of 69 parts the
   legalizer had to move were invisible to the annealer).
-  `anneal_far_side_gaps` (placer option, off) gives the annealer the
+  `anneal_far_side_gaps` (placer option, off; removed on 2026-11-04,
+  docs/handover.md, "Removed experiments (2026-11-04)") gave the annealer the
   legality test's gaps; it halves the parts legalization moves on Castor
   but wins no wirelength, and on the layout it is flat on the quick tier
   (x700 against x651: 19 passes both, unconnected 29 to 30, starved
