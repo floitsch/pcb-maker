@@ -11,6 +11,35 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-04 (small leftovers of trials 4 to 6: the placer's protectors, the missing list, an RF module's antenna, the import's near entries)
+
+Branch small-leftovers (`build/bin/pcb-maker-ux12-esd`, `-fold`,
+`-near`). Four contained fixes the trials left open. Placement unchanged
+on boards without a capacitor, resistor, inductor or bead named after a
+protector (place checks of OpenAirScope, video and jetson-nano-baseboard
+byte for byte x1902's).
+
+- **The placer's protectors**: one rule with the score
+  (`quality::esd_protector`, reference and value): a passive whose value
+  names a protector is pulled to its IC, not to the connector. Of the
+  task boards only OpenAirScope holds one (a padless "ESD-Logo"); right_io
+  (move_all) moved: capacitors within 3 mm of a pin 0.42 to 0.52
+  ([placer.md](placer.md#decoupling-at-the-pins-2026-10-26)).
+- **The missing list by footprint**: `import-kicad-netlist`'s `missing`
+  folds the parts of one footprint and reason (`8 parts: D27, D29, ...
+  (LLP1006-2M:VISHAY-LLP1006-2M not found: ...)`), `missing_parts` counts
+  them; eurorack-pmod's 10 lines are 2.
+- **An RF module's antenna in the starter**: the constraints template
+  gives an RF module whose footprint draws its antenna keepout an `edge`
+  entry with `overhang`, and one that marks it in text only (laptop
+  power's ESP32-S2-MINI-1) a comment with the rotations that turn the
+  antenna end to each edge.
+- **The import's near entries, measured**: `import-kicad-netlist
+  --near-decoupling` (off) writes the template's decoupling `near`
+  entries; on the schematic tier KiCad unconnected 2 and 2 summed (one
+  board gains two, two lose one), 111 entries missed, 10 passes of 12 to
+  2: left off ([benchmarks.md](benchmarks.md#the-imports-near-entries-on-the-schematic-tier-2026-11-04)).
+
 ## Committed on 2026-11-04 (pads without a way out: the router's test at placement time, off)
 
 Branch pad-exits (`build/bin/pcb-maker-exit1-e` to `-g`; off side the
