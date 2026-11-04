@@ -178,11 +178,13 @@ impl Router {
                     return Vec::new();
                 }
                 let map = self.map_index(state.plane_class[layer], layer);
+                // `own.contains` per node, its map's bits looked up once.
+                let own_bits = own.bits_of(map);
                 (0..mask.len())
                     .map(|cell| {
                         mask[cell]
                             && self.occupancy.get(map, cell) as usize
-                                == own.contains(map, cell) as usize
+                                == ((own_bits[cell / 64] >> (cell % 64)) & 1) as usize
                     })
                     .collect()
             })

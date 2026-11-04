@@ -825,6 +825,18 @@ impl OwnStamps {
         Self { slot, bits }
     }
 
+    /// The bitset of `map` (one of the maps given): `contains` of a cell is
+    /// its bit.
+    #[inline]
+    fn bits_of(&self, map: usize) -> &[u64] {
+        let index = self.slot[map];
+        assert!(
+            index != NO_SLOT,
+            "map {map} is not one of the net's own stamp maps"
+        );
+        &self.bits[index]
+    }
+
     /// Whether the net stamped `cell` of `map` (one of the maps given).
     #[inline]
     fn contains(&self, map: usize, cell: usize) -> bool {
