@@ -198,21 +198,6 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "overrides the router's `bga_fanout` (`0` off, anything else on; on by default): before routing, the inner balls of every grid array (those no track between the outer balls serves) whose net's own via does not fit a diagonal gap get a stub and a through via in a diagonal gap, the largest of the class's and the project's via sizes that keeps every clearance, as fixed copper of the ball's net that its route may end on; written only where the route uses it; the placer keeps the far side free under those vias (docs/router.md, \"Prepared fan-outs for BGAs (2026-11-04)\").",
     ),
     (
-        "PCB_ROUTER_CAPACITATED_CORRIDORS",
-        Kind::Switch,
-        "overrides the router's `capacitated_corridors` (`0` off, anything else on; off by default): the negotiation's corridors from the global route with hard capacities, a search that misses its corridor lowering the capacity of the boundary it failed at and re-planning the nets through it (docs/router.md, \"Capacitated corridors (2026-10-24)\"; an experiment).",
-    ),
-    (
-        "PCB_ROUTER_CAPACITATED_GROWTH",
-        Kind::Switch,
-        "the router's `capacitated_growth` (default 0; with `capacitated_corridors`): the capacitated corridor grows by a plan tile every this many reroutes of the net, as the tile planner's corridors grow; 0 keeps one tile (docs/router.md, \"Capacitated corridors (2026-10-24)\").",
-    ),
-    (
-        "PCB_ROUTER_CAPACITATED_STUCK",
-        Kind::Switch,
-        "the router's `capacitated_stuck` (default 4; with `capacitated_corridors`): a net in conflict for this many iterations running lowers the capacity of its global route's boundary with the most conflicts, every second iteration; 0 turns that learning off (docs/router.md, \"Capacitated corridors (2026-10-24)\").",
-    ),
-    (
         "PCB_LAYOUT_MOVE_DESCENT",
         Kind::Switch,
         "overrides the layout's `move_descent` (`0` off, anything else on with layout.json's settings or the defaults): the move descent after the first route (docs/experiments/move-descent.md).",

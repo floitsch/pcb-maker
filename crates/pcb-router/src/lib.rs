@@ -10,7 +10,6 @@
 //! the emitted copper. No files or external processes are involved.
 
 pub mod board;
-pub mod capacitated;
 pub mod geometry;
 pub(crate) mod global;
 pub mod grid;
@@ -18,6 +17,7 @@ pub mod mem_profile;
 pub mod pour;
 pub mod router;
 pub mod rules;
+pub mod search_counts;
 pub mod verify;
 
 pub use board::{

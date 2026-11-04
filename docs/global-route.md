@@ -485,7 +485,7 @@ build without another reason. `global_guidance` stays as an option
   (phase 2, no-go); left: the legaliser and refinement, halos from the
   field, the global placement's density.
 - Corridors for the detailed router: built and measured as capacitated
-  corridors (2026-10-24, `capacitated_corridors`, off; docs/router.md,
+  corridors (2026-10-24, `capacitated_corridors`, off, removed on 2026-11-04; docs/router.md,
   "Capacitated corridors (2026-10-24)"): the negotiation searches inside
   the global route's corridor, a miss lowers the boundary it failed at
   and the global route plans the nets through it again

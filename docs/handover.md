@@ -650,9 +650,6 @@ Switches and experiment hooks (change the result):
 - `PCB_ROUTER_TROUBLE`: overrides the router's `trouble_repair` (`0` off, anything else on): the trouble-makers' repair after the hard repair (an open net routed through others at a price, the nets it displaces routed again hard, kept when the open terminals drop; docs/experiments/human-level-routing.md).
 - `PCB_ROUTER_EXACT_ESCAPES`: overrides the router's `exact_escape_stubs` (`0` off, anything else on; on by default since 2026-10-26): escape stubs stamp exactly (along a lattice line as lattice nodes, oblique ones by their measured footprint) and a pad leaves by straight stubs along a lattice line where it has any; off, the stubs stamp the lattice's discs grown by the snapping error (docs/router.md, "Fine-pitch escapes").
 - `PCB_ROUTER_BGA_FANOUT`: overrides the router's `bga_fanout` (`0` off, anything else on; on by default): before routing, the inner balls of every grid array (those no track between the outer balls serves) whose net's own via does not fit a diagonal gap get a stub and a through via in a diagonal gap, the largest of the class's and the project's via sizes that keeps every clearance, as fixed copper of the ball's net that its route may end on; written only where the route uses it; the placer keeps the far side free under those vias (docs/router.md, "Prepared fan-outs for BGAs (2026-11-04)").
-- `PCB_ROUTER_CAPACITATED_CORRIDORS`: overrides the router's `capacitated_corridors` (`0` off, anything else on; off by default): the negotiation's corridors from the global route with hard capacities, a search that misses its corridor lowering the capacity of the boundary it failed at and re-planning the nets through it (docs/router.md, "Capacitated corridors (2026-10-24)"; an experiment).
-- `PCB_ROUTER_CAPACITATED_GROWTH`: the router's `capacitated_growth` (default 0; with `capacitated_corridors`): the capacitated corridor grows by a plan tile every this many reroutes of the net, as the tile planner's corridors grow; 0 keeps one tile (docs/router.md, "Capacitated corridors (2026-10-24)").
-- `PCB_ROUTER_CAPACITATED_STUCK`: the router's `capacitated_stuck` (default 4; with `capacitated_corridors`): a net in conflict for this many iterations running lowers the capacity of its global route's boundary with the most conflicts, every second iteration; 0 turns that learning off (docs/router.md, "Capacitated corridors (2026-10-24)").
 - `PCB_LAYOUT_MOVE_DESCENT`: overrides the layout's `move_descent` (`0` off, anything else on with layout.json's settings or the defaults): the move descent after the first route (docs/experiments/move-descent.md).
 - `PCB_LAYOUT_FINAL_FROM_STATE`: overrides the layout's `final_route_from_state` (`0` off, anything else on): the final route starts from the router's state, its complete and legal nets kept (docs/placer.md, "Routes survive moves").
 - `PCB_ROUTER_TROUBLE_PRESENT`: the trouble-makers' repair: the price of sharing a node in the trouble-maker's search (default 20).
@@ -810,6 +807,20 @@ details are:
   connections (2026-10-27)". The two trouble-repair fixes of that package
   stay on; the ejection chain itself stays reachable through
   `PCB_ROUTER_TROUBLE_DEPTH`.
+- `capacitated_corridors` (router, `PCB_ROUTER_CAPACITATED_CORRIDORS`,
+  with `capacitated_retries`, `capacitated_stuck` /
+  `PCB_ROUTER_CAPACITATED_STUCK` and `capacitated_growth` /
+  `PCB_ROUTER_CAPACITATED_GROWTH`; off): the negotiation's corridors from
+  pcb-global's route with hard capacities, a miss lowering the boundary
+  it failed at and re-planning the nets through it. The expansion tier's
+  best variant (`g6`) 616 unconnected against 588 off, one pass more; as
+  designed 667, the misses' learning alone 689; the fingerprints 46
+  against 43; the dense boards 1267 against 1010. The negotiation's
+  corridors seldom miss (0.7 % off, 0.16 % capacitated), so the learning
+  had little to learn from. Changelog 2026-10-24, "capacitated corridors,
+  experiment"; docs/router.md, "Capacitated corridors (2026-10-24)". The
+  search counters stay (the verdict's `corridors`, without its `band`
+  and learning fields).
 
 ## Gotchas
 

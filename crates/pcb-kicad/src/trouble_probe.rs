@@ -400,8 +400,7 @@ pub fn probe_trouble_placement(
         }
         KiCadTroubleBackground::Global => {
             let route = pcb_global::route(&board, &pcb_global::GlobalConfig::default());
-            // pcb-global's work model (docs/router.md, "Capacitated
-            // corridors"): 5 units a capacity test, 30 a state popped,
+            // pcb-global's work model (docs/global-route.md, "Phase 2"): 5 units a capacity test, 30 a state popped,
             // 150e6 units a second.
             global_work_seconds =
                 (route.capacity.work as f64 * 5.0 + route.pops as f64 * 30.0) / 150.0e6;

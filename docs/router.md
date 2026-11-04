@@ -59,8 +59,7 @@ work constants) and the small helpers; `router/` has one file per part of
 `escapes`, `guards` (thermal guards and the spoke repairs
 `free_thermal_spokes`, `free_lost_spokes`), `prepare` (a net's search state),
 `stamping` (occupancy, rip-up, conflicts), `route_net`, `planner` (tile
-corridors), `capacitated` (the capacitated corridors, an experiment),
-`search` (the lattice A*), `update`, `batching`, `global`, `driver`
+corridors), `search` (the lattice A*), `update`, `batching`, `global`, `driver`
 (the phases, budgets and clocks), `fixed`, `negotiate`,
 `pour_refresh`, `vias` (via reduction), `finish`, `pour_analysis`, `fill`
 (the fill probe), `spokes` (KiCad's spoke model), `manual_spokes`,
@@ -1428,6 +1427,15 @@ whole board. This is the "graph layer tells the geometric layer where to go"
 idea; it halved the time on the large boards and reduced vias and copper.
 
 ## Capacitated corridors (2026-10-24)
+
+**Removed on 2026-11-04** (`capacitated_corridors` with
+`capacitated_retries`, `_stuck` and `_growth`,
+`PCB_ROUTER_CAPACITATED_CORRIDORS`, `_GROWTH`, `_STUCK`; off;
+docs/handover.md, "Removed experiments (2026-11-04)"): the router's
+plan, its learning and pcb-global's `CorridorPlan` are gone; the search
+counters stay (`pcb_router::search_counts`, the verdict's `corridors`:
+corridor, window and board searches, `hopeless_skips`). The design and
+the measurements below are kept as they were.
 
 An experiment behind `capacitated_corridors` (router config, off;
 `PCB_ROUTER_CAPACITATED_CORRIDORS` overrides it, `capacitated_corridors`

@@ -1413,8 +1413,8 @@ pub struct KiCadRunFacts {
     /// final ladder, nothing stopped or cut it), its connections open or
     /// not: the board kept is the first route's, and so are its pairs.
     pub first_route_only: bool,
-    /// Where the lattice searches went and what the capacitated
-    /// corridors learned (`KiCadCorridors`), when the run routed.
+    /// Where the lattice searches went (`KiCadCorridors`), when the run
+    /// routed.
     pub corridors: Option<crate::KiCadCorridors>,
     /// A layout's placement race, when it ran.
     pub race: Option<crate::board_layout::KiCadRaceReport>,
@@ -2178,12 +2178,11 @@ pub struct KiCadVerdict {
     /// open terminals before and after. Absent when it did not run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub moves: Option<crate::move_descent::KiCadMovesFact>,
-    /// Where the run's lattice searches went (corridors, the capacitated
-    /// corridors' band, windows, the board; the negotiation's and the hard
-    /// searches' apart, with their work) and what the capacitated
-    /// corridors learned (`capacitated_corridors`: misses, capacities
-    /// lowered, re-plans, retries, fallbacks), summed over every router
-    /// of the run (docs/router.md, "Capacitated corridors (2026-10-24)").
+    /// Where the run's lattice searches went (corridors, windows, the
+    /// board; the negotiation's and the hard searches' apart, with their
+    /// work) and the board-wide fallbacks refused, summed over every
+    /// router of the run (docs/router.md, "Capacitated corridors
+    /// (2026-10-24)").
     #[serde(skip_serializing_if = "Option::is_none")]
     pub corridors: Option<crate::KiCadCorridors>,
     /// A layout's placement race (with or without `race_probe`): every
