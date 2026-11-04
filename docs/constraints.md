@@ -156,7 +156,10 @@ To check them, or to set them per capacitor, write them down:
 `describe-kicad-board <dir> <id> --constraints-template <file>` writes
 each decoupling capacitor's `near` to the closest supply pin of its IC
 (on a placed board; on a stacked one the rail's pins in turn) at 1.5 mm,
-with the plug-in connectors as `edge` entries ([agents.md](agents.md#1-look-at-the-board)).
+with the plug-in connectors as `edge` entries and an RF module whose
+footprint draws its antenna keepout as an `edge` entry with `overhang`
+(without a keepout, a comment with the rotations that turn its antenna
+end to each edge; [agents.md](agents.md#1-look-at-the-board)).
 A layout under 60 % of its capacitors within 3 mm of a pin says so in its
 verdict's next_actions.
 

@@ -291,6 +291,21 @@ starter for a schematic:
   2026-10-26): C7 and C8 (22 uF) at the motor drivers' VM pins U6:1 and
   U5:1, C9 and C10 at U6:8 and U5:8, the designer's pairs (before: C7 at
   the LDO's EN pin U3:3).
+- RF modules (since 2026-11-04; KiCad's `RF_Module:` footprints and
+  footprints named for ESP32, WROOM, WROVER or nRF modules): where the
+  footprint has a keepout zone (KiCad's ESP32 and nRF modules draw the
+  antenna's), an `edge` entry, `flush`, with `overhang` (the keepout
+  beyond the edge, the module inside): on a placed board the edge the
+  keepout faces, else `any` with `"overhang": {}` (the edge chosen). The
+  comment names the rotations that turn the antenna end to each edge,
+  for keeping the keepout on the board instead. Where the footprint marks
+  its antenna only in text ("Antenna", "Keepout Area" on a drawing layer,
+  as laptop power's ESP32-S2-MINI-1 does) no entry, a comment: `U5
+  (RF_Module:ESP32-S2-MINI-1) is an RF module whose footprint marks its
+  antenna in text only (no keepout zone, so no overhang): the antenna end
+  faces the bottom edge at 180 degrees here. To put it at an edge, add an
+  edge entry ("flush": true) and the rotation that turns that end to it:
+  top 0, right 270, bottom 180, left 90.`
 - `move_all`, and a `comment` list saying what was inferred and what to
   decide: connectors whose mouth the footprint does not show (give them a
   `rotation`; the comment names their angle on the board), the other

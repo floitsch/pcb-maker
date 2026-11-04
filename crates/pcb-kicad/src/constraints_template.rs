@@ -391,6 +391,134 @@ fn edge_of(direction: [f64; 2]) -> &'static str {
     }
 }
 
+/// Whether a footprint is an RF module with an antenna of its own (KiCad's
+/// `RF_Module:` library, or named for an ESP32 or nRF module).
+fn rf_module(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.starts_with("rf_module:")
+        || [
+            "esp32", "esp8266", "esp-0", "esp-12", "wroom", "wrover", "nrf52", "nrf53", "nrf91",
+            "mdbt", "nina-b", "bl65",
+        ]
+        .iter()
+        .any(|word| name.contains(word))
+}
+
+/// Where an RF module's antenna is: the direction on the board from its
+/// pads' centre to its footprint's keepout zones (`true`), else to its
+/// texts that say "Antenna" or "Keepout" on a drawing layer (`false`:
+/// trial 6's laptop power, whose ESP32-S2-MINI-1 marks its antenna and
+/// keepout area in text only).
+fn antenna_direction(footprint: &Expr, part: &Part) -> Result<Option<([f64; 2], bool)>, String> {
+    if !rf_module(&part.name) || part.pads.is_empty() {
+        return Ok(None);
+    }
+    let count = part.pads.len() as f64;
+    let pads = part.pads.iter().fold([0.0, 0.0], |sum, pad| {
+        [sum[0] + pad.2[0] / count, sum[1] + pad.2[1] / count]
+    });
+    let mut zone: Option<[f64; 4]> = None;
+    for points in footprint
+        .children()
+        .iter()
+        .filter(|child| child.head() == Some("zone") && child.child("keepout").is_some())
+        .filter_map(|zone| {
+            zone.child("polygon")
+                .and_then(|polygon| polygon.child("pts"))
+        })
+    {
+        for point in points
+            .children()
+            .iter()
+            .filter(|child| child.head() == Some("xy"))
+        {
+            // Zones in a footprint are stored in board coordinates.
+            let [x, y] = form_xy_of(point)?;
+            let bounds = zone.get_or_insert([x, y, x, y]);
+            *bounds = [
+                bounds[0].min(x),
+                bounds[1].min(y),
+                bounds[2].max(x),
+                bounds[3].max(y),
+            ];
+        }
+    }
+    let (target, from_zone) = match zone {
+        Some(bounds) => (
+            [(bounds[0] + bounds[2]) / 2.0, (bounds[1] + bounds[3]) / 2.0],
+            true,
+        ),
+        None => {
+            let marks: Vec<[f64; 2]> = footprint
+                .children()
+                .iter()
+                .filter(|child| {
+                    child.head() == Some("fp_text")
+                        && child.children().get(1).and_then(Expr::atom) == Some("user")
+                        && child
+                            .children()
+                            .get(2)
+                            .and_then(Expr::atom)
+                            .is_some_and(|text| {
+                                let text = text.to_ascii_lowercase();
+                                text.contains("antenna")
+                                    || text.contains("keepout")
+                                    || text.contains("keep-out")
+                                    || text.contains("keep out")
+                            })
+                        && form_atom(child, "layer", 1).is_some_and(|layer| !layer.ends_with(".Cu"))
+                })
+                .filter_map(|text| form_xy(text, "at").ok())
+                .map(|local| {
+                    let offset = crate::geometry::rotate_vector(local, -part.at[2]);
+                    [part.at[0] + offset[0], part.at[1] + offset[1]]
+                })
+                .collect();
+            if marks.is_empty() {
+                return Ok(None);
+            }
+            let count = marks.len() as f64;
+            (
+                marks.iter().fold([0.0, 0.0], |sum, mark| {
+                    [sum[0] + mark[0] / count, sum[1] + mark[1] / count]
+                }),
+                false,
+            )
+        }
+    };
+    let direction = [target[0] - pads[0], target[1] - pads[1]];
+    Ok((direction[0].hypot(direction[1]) >= 0.5).then_some((direction, from_zone)))
+}
+
+/// The point of an `(xy x y)` form.
+fn form_xy_of(point: &Expr) -> Result<[f64; 2], String> {
+    let value = |index: usize| {
+        point
+            .children()
+            .get(index)
+            .and_then(Expr::atom)
+            .and_then(|atom| atom.parse::<f64>().ok())
+            .ok_or_else(|| "a keepout point without its coordinates".to_string())
+    };
+    Ok([value(1)?, value(2)?])
+}
+
+/// The rotations that turn an end of a part (its direction on the board,
+/// the part at `angle`) to each edge: `top 0, right 270, ...`.
+fn turns_to_edges(direction: [f64; 2], angle: f64) -> String {
+    let local = crate::geometry::rotate_vector(direction, angle);
+    ["top", "right", "bottom", "left"]
+        .iter()
+        .filter_map(|edge| {
+            [0.0, 90.0, 180.0, 270.0]
+                .into_iter()
+                .find(|turn| edge_of(crate::geometry::rotate_vector(local, -turn)) == *edge)
+                .map(|turn| format!("{edge} {turn}"))
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// The starter constraints for `directory/<board_id>.kicad_pcb`
 /// (`describe-kicad-board --constraints-template`): docs/agents.md, "Starter
 /// constraints for a board".
@@ -497,6 +625,35 @@ pub fn constraints_template(directory: &Path, board_id: &str) -> Result<serde_js
     }
     if !edges.is_empty() {
         comment.push("edge: the plug-in connectors (USB, jacks, coax, terminal blocks, by footprint name). opening_outwards turns the mouth out of the board; flush puts the body against the edge.".into());
+    }
+    // RF modules: the antenna at an edge, the side the footprint's keepout
+    // (else its "Antenna" text) tells.
+    for (part, footprint) in parts.iter().zip(&footprints) {
+        let Some((direction, from_zone)) = antenna_direction(footprint, part)? else {
+            continue;
+        };
+        let facing = edge_of(direction);
+        let turns = turns_to_edges(direction, part.at[2]);
+        if from_zone {
+            let edge = if has_placement { facing } else { "any" };
+            let overhang = if has_placement {
+                serde_json::json!({"edge": facing})
+            } else {
+                serde_json::json!({})
+            };
+            edges.push(serde_json::json!({
+                "part": part.reference, "edge": edge, "flush": true, "overhang": overhang,
+            }));
+            comment.push(format!(
+                "edge: {} ({}) is an RF module whose footprint draws its antenna keepout (at {} degrees here it faces the {facing} edge): overhang puts the keepout beyond the edge and the module flush inside it, as the module makers' layout guides ask. To keep the keepout on the board instead, drop overhang and give a rotation that turns the antenna end to the edge: {turns}.",
+                part.reference, part.name, part.at[2]
+            ));
+        } else {
+            comment.push(format!(
+                "{} ({}) is an RF module whose footprint marks its antenna in text only (no keepout zone, so no overhang): the antenna end faces the {facing} edge at {} degrees here. To put it at an edge, add an edge entry (\"flush\": true) and the rotation that turns that end to it: {turns}.",
+                part.reference, part.name, part.at[2]
+            ));
+        }
     }
     if !unclear.is_empty() {
         comment.push(format!(
@@ -877,6 +1034,86 @@ mod tests {
         assert_eq!(template["edge"][0]["edge"], "any");
         assert_eq!(template["near"][0]["pin_of"], "U1:1");
         assert_eq!(template["near"][1]["pin_of"], "U1:2");
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// An ESP32 module at (30, 20), turned 90 degrees, with its antenna
+    /// keepout (`zone`) or only an "Antenna" text at the footprint's -y
+    /// end, which faces the left edge at 90 degrees.
+    fn rf_board(dir: &Path, zone: bool, placed: bool) {
+        let (u, r) = if placed {
+            ("(at 30 20 90)", "(at 50 30)")
+        } else {
+            ("(at 30 20 90)", "(at 30 20)")
+        };
+        let marks = if zone {
+            // Board coordinates: x 18 to 23 (left of the module).
+            r#"(zone (net 0) (net_name "") (layer "F.Cu") (hatch edge 0.5) (connect_pads (clearance 0)) (min_thickness 0.25)
+                (keepout (tracks not_allowed) (vias not_allowed) (pads not_allowed) (copperpour not_allowed) (footprints not_allowed))
+                (polygon (pts (xy 18 12) (xy 23 12) (xy 23 28) (xy 18 28))))"#
+        } else {
+            r#"(fp_text user "Antenna" (at 0 -7.5 0) (layer "Cmts.User") (effects (font (size 1 1) (thickness 0.15))))"#
+        };
+        let text = format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+            (gr_rect (start 0 0) (end 60 40) (layer "Edge.Cuts"))
+            (footprint "RF_Module:ESP32-S2-MINI-1" {u} (property "Reference" "U1")
+                (fp_rect (start -7.7 -9.75) (end 7.7 10.25) (layer "F.CrtYd"))
+                (pad "1" smd rect (at -7 0) (size 0.8 0.8) (layers "F.Cu") (net 1 "+3V3"))
+                (pad "2" smd rect (at 7 0) (size 0.8 0.8) (layers "F.Cu") (net 2 "GND"))
+                (pad "3" smd rect (at 0 8) (size 0.8 0.8) (layers "F.Cu") (net 3 "TX"))
+                {marks})
+            (footprint "R_0402" {r} (property "Reference" "R1")
+                (pad "1" smd rect (at -0.5 0) (size 0.5 0.5) (layers "F.Cu") (net 3 "TX"))
+                (pad "2" smd rect (at 0.5 0) (size 0.5 0.5) (layers "F.Cu") (net 2 "GND"))))"#
+        );
+        fs::write(dir.join("t.kicad_pcb"), text).unwrap();
+    }
+
+    #[test]
+    fn an_rf_modules_antenna_keepout_puts_it_at_an_edge_with_overhang() {
+        let dir = std::env::temp_dir().join(format!("ux12-template-rf-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        // A keepout on a placed board: the edge it faces, overhanging it.
+        rf_board(&dir, true, true);
+        let template = constraints_template(&dir, "t").unwrap();
+        assert_eq!(
+            template["edge"],
+            serde_json::json!([{"part": "U1", "edge": "left", "flush": true, "overhang": {"edge": "left"}}])
+        );
+        let comments = template["comment"].to_string();
+        assert!(
+            comments.contains("faces the left edge): overhang puts the keepout beyond the edge"),
+            "{comments}"
+        );
+        assert!(
+            comments.contains("top 0, right 270, bottom 180, left 90"),
+            "{comments}"
+        );
+        let path = dir.join("constraints.json");
+        fs::write(&path, template.to_string()).unwrap();
+        crate::read_placement_constraints(&path).unwrap();
+        // Stacked: any edge; the overhang takes the edge chosen.
+        rf_board(&dir, true, false);
+        let template = constraints_template(&dir, "t").unwrap();
+        assert_eq!(
+            template["edge"],
+            serde_json::json!([{"part": "U1", "edge": "any", "flush": true, "overhang": {}}])
+        );
+        // An "Antenna" text without a keepout: a comment, no entry.
+        rf_board(&dir, false, true);
+        let template = constraints_template(&dir, "t").unwrap();
+        assert!(template.get("edge").is_none(), "{template}");
+        let comments = template["comment"].to_string();
+        assert!(
+            comments.contains("U1 (RF_Module:ESP32-S2-MINI-1) is an RF module whose footprint marks its antenna in text only (no keepout zone, so no overhang): the antenna end faces the left edge at 90 degrees here"),
+            "{comments}"
+        );
+        assert!(
+            comments.contains("top 0, right 270, bottom 180, left 90"),
+            "{comments}"
+        );
         fs::remove_dir_all(&dir).unwrap();
     }
 }
