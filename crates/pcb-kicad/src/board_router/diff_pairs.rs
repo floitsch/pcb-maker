@@ -2491,6 +2491,7 @@ impl PairCopper {
                         at,
                         diameter: *size,
                         drill: *drill,
+                        span: None,
                     })
                     .collect(),
             })
