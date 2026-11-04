@@ -176,6 +176,11 @@ pub struct KiCadNetCopper {
 /// The reference board's route of a net.
 #[derive(Clone, Debug, Serialize)]
 pub struct KiCadReferenceRoute {
+    /// Whose placement the route is on (`KiCadReferencePlacement`): "the
+    /// designer's own placement" (parts lie elsewhere on this run's board:
+    /// a layout's, which `connected` says nothing of) or "this placement"
+    /// (every part where this run's board has it: route mode's).
+    pub placement: String,
     /// Whether its copper joins every pad of the net: `true` when its
     /// tracks, arcs and vias leave one group, `false` when they leave
     /// several and the net has no zone on the reference, `null` when they
@@ -257,6 +262,110 @@ pub struct KiCadNetDiagnosis {
     pub cause: serde_json::Value,
 }
 
+/// Whose placement the reference's routes (`nets[].reference`) are on,
+/// and for a layout what is evidence for this run's placement instead.
+/// Trial 4 (2026-11-04): on a layout `reference.connected` read as the
+/// designer's route "on this placement", which no run of the designer's
+/// is; the layout's verdict says so since, and so does this block.
+#[derive(Clone, Debug, Serialize, PartialEq)]
+pub struct KiCadReferencePlacement {
+    /// The reference project.
+    pub project: String,
+    /// "this placement" (every part of this run's board where the
+    /// reference has it) or "the designer's own placement".
+    pub placement: String,
+    /// The parts of this run's board where the reference has them (the
+    /// same position, rotation and side), and its parts.
+    pub parts_in_place: usize,
+    pub parts: usize,
+    /// What `nets[].reference.connected` shows, in a sentence.
+    pub connected_means: String,
+    /// A layout's own routes of its placement (board-layout.json): the
+    /// first route's open terminals, vias and length, the move descent's
+    /// routed moves and open terminals before and after (`moves`), and the
+    /// result's open terminals and KiCad's unconnected items. Absent for a
+    /// route.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub evidence_for_this_placement: Option<serde_json::Value>,
+}
+
+/// The phrases the layout's verdict uses (`open_evidence`).
+const ON_DESIGNERS_PLACEMENT: &str = "the designer's own placement";
+const ON_THIS_PLACEMENT: &str = "this placement";
+
+/// `KiCadReferencePlacement` of a run's board (`result`) against the
+/// reference's (`reference`, of `project`), with a layout's report
+/// (`layout`: board-layout.json, at `layout_path`) and the run's verdict.
+fn reference_placement(
+    project: &str,
+    reference: &Expr,
+    result: &Expr,
+    layout: Option<(&serde_json::Value, &Path)>,
+    verdict: Option<&serde_json::Value>,
+) -> KiCadReferencePlacement {
+    let items = crate::verdict::input_items_of(reference, result);
+    let same = items.parts > 0 && items.kept_parts == items.parts;
+    let evidence = layout.map(|(report, path)| {
+        let descent = &report["move_descent"];
+        let moves = if descent.is_object() {
+            serde_json::json!({
+                "routed": descent["confirmed"],
+                "kept": descent["kept"],
+                "open_before": descent["open_before"],
+                "open_after": descent["open_after"],
+                "parts_moved": descent["parts_moved"],
+            })
+        } else {
+            let tried = report["moves"].as_array().map_or(0, Vec::len);
+            let kept = report["moves"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|entry| entry["kept"] == true)
+                .count();
+            serde_json::json!({"routed": tried, "kept": kept})
+        };
+        serde_json::json!({
+            "report": path.display().to_string(),
+            "first_route_unconnected_terminals": report["first_unconnected_terminals"],
+            "first_route_vias": report["first_vias"],
+            "first_route_length_mm": report["first_length_mm"],
+            "moves": moves,
+            "unconnected_terminals": report["routed"]["unconnected_terminals"],
+            "kicad_unconnected_items": verdict.map_or(serde_json::Value::Null, |verdict| verdict["kicad_unconnected_items"].clone()),
+        })
+    });
+    let connected_means = if same {
+        format!(
+            "the designer's route on {ON_THIS_PLACEMENT}: every part of this run's board lies where the reference has it, so where reference.connected is true the net routes under these rules on this placement, and density is not shown to be why it stayed open"
+        )
+    } else {
+        format!(
+            "the designer's route on {ON_DESIGNERS_PLACEMENT}: {} of the {} parts of this run's board lie elsewhere on the reference, so reference.connected shows that a net routes under these rules there, not on this placement, and no route of the designer's on this placement exists{}",
+            items.parts - items.kept_parts,
+            items.parts,
+            if evidence.is_some() {
+                "; the evidence for this placement is the layout's own routes (evidence_for_this_placement: its first route and its move descent)"
+            } else {
+                ""
+            }
+        )
+    };
+    KiCadReferencePlacement {
+        project: project.to_string(),
+        placement: if same {
+            ON_THIS_PLACEMENT
+        } else {
+            ON_DESIGNERS_PLACEMENT
+        }
+        .to_string(),
+        parts_in_place: items.kept_parts,
+        parts: items.parts,
+        connected_means,
+        evidence_for_this_placement: evidence,
+    }
+}
+
 /// `inspect-routing-run`'s report.
 #[derive(Clone, Debug, Serialize)]
 pub struct KiCadRunDiagnosis {
@@ -272,6 +381,10 @@ pub struct KiCadRunDiagnosis {
     /// whether the router recorded them or this command read them off the
     /// result board).
     pub hot_spots: Vec<serde_json::Value>,
+    /// With `--reference`: whose placement its routes are on, and a
+    /// layout's own evidence for this placement (`KiCadReferencePlacement`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reference: Option<KiCadReferencePlacement>,
     pub nets: Vec<KiCadNetDiagnosis>,
 }
 
@@ -973,6 +1086,29 @@ pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDi
         }
         None => None,
     };
+    // A layout's report: the run directory's (its board is in result/).
+    let layout_path = [
+        inspection.run.join("board-layout.json"),
+        directory.join("board-layout.json"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file());
+    let layout = layout_path
+        .as_ref()
+        .and_then(|path| read_value(path).ok().map(|value| (value, path.clone())));
+    let reference_placement = match (&inspection.reference, &reference) {
+        (Some(project), Some(board)) => Some(reference_placement(
+            &std::path::absolute(project)
+                .unwrap_or_else(|_| project.clone())
+                .display()
+                .to_string(),
+            &board.pcb,
+            &result.pcb,
+            layout.as_ref().map(|(value, path)| (value, path.as_path())),
+            verdict.as_ref(),
+        )),
+        _ => None,
+    };
     let router_nets: BTreeMap<String, serde_json::Value> = report["nets"]
         .as_array()
         .into_iter()
@@ -1157,6 +1293,9 @@ pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDi
                 )
             };
             KiCadReferenceRoute {
+                placement: reference_placement
+                    .as_ref()
+                    .map_or_else(String::new, |placement| placement.placement.clone()),
                 connected,
                 connected_reason,
                 components: groups,
@@ -1366,6 +1505,7 @@ pub fn inspect_routing_run(inspection: &KiCadRunInspection) -> Result<KiCadRunDi
         checks,
         attempts,
         hot_spots,
+        reference: reference_placement,
         nets,
     })
 }
@@ -1391,6 +1531,67 @@ mod tests {
   (segment (start 10.5 10) (end 16 12) (width 0.2) (layer "F.Cu") (net "B"))
   (segment (start 16 10) (end 17 10) (width 0.15) (layer "F.Cu") (net "A")))
 "#;
+
+    /// The reference's routes are said to be on the designer's own
+    /// placement when a part of the run's board lies elsewhere on it (a
+    /// layout's), with the layout's own routes as the evidence for this
+    /// placement; on this placement when every part is where the reference
+    /// has it (route mode's).
+    #[test]
+    fn the_reference_block_says_whose_placement_it_routes() {
+        let reference = parse(BOARD).unwrap();
+        let same = reference_placement("/designer", &reference, &reference, None, None);
+        assert_eq!(same.placement, "this placement");
+        assert_eq!((same.parts_in_place, same.parts), (2, 2));
+        assert!(
+            same.connected_means
+                .starts_with("the designer's route on this placement: every part"),
+            "{}",
+            same.connected_means
+        );
+        assert!(same.evidence_for_this_placement.is_none());
+        let moved = parse(&BOARD.replace("(at 16 10)", "(at 15 11)")).unwrap();
+        let layout = serde_json::json!({
+            "first_unconnected_terminals": 8, "first_vias": 314, "first_length_mm": 10480.8,
+            "moves": [{"kept": false}, {"kept": true}],
+            "move_descent": {"confirmed": 6, "kept": 2, "open_before": 8, "open_after": 4, "parts_moved": ["C16"]},
+            "routed": {"unconnected_terminals": 4},
+        });
+        let verdict = serde_json::json!({"kicad_unconnected_items": 4});
+        let other = reference_placement(
+            "/designer",
+            &reference,
+            &moved,
+            Some((&layout, Path::new("/run/board-layout.json"))),
+            Some(&verdict),
+        );
+        assert_eq!(other.placement, "the designer's own placement");
+        assert_eq!((other.parts_in_place, other.parts), (1, 2));
+        assert_eq!(
+            other.connected_means,
+            "the designer's route on the designer's own placement: 1 of the 2 parts of this run's board lie elsewhere on the reference, so reference.connected shows that a net routes under these rules there, not on this placement, and no route of the designer's on this placement exists; the evidence for this placement is the layout's own routes (evidence_for_this_placement: its first route and its move descent)"
+        );
+        let evidence = other.evidence_for_this_placement.unwrap();
+        assert_eq!(evidence["first_route_unconnected_terminals"], 8);
+        assert_eq!(evidence["moves"]["routed"], 6);
+        assert_eq!(evidence["moves"]["open_after"], 4);
+        assert_eq!(evidence["kicad_unconnected_items"], 4);
+        // A report before the move descent's record: its moves counted.
+        let mut old = layout.clone();
+        old.as_object_mut().unwrap().remove("move_descent");
+        let other = reference_placement(
+            "/designer",
+            &reference,
+            &moved,
+            Some((&old, Path::new("/run/board-layout.json"))),
+            None,
+        );
+        let evidence = other.evidence_for_this_placement.unwrap();
+        assert_eq!(
+            evidence["moves"],
+            serde_json::json!({"routed": 2, "kept": 1})
+        );
+    }
 
     /// A hot spot's tile names the pads in it, the nets whose copper
     /// crosses it on its layer (the board's own and the router's) and

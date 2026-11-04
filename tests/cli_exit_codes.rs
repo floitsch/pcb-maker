@@ -402,6 +402,11 @@ fn inspect_routing_run_names_the_groups_and_reconciles_the_counts() {
         serde_json::json!([0.25])
     );
     assert_eq!(net["reference"]["connected"], true);
+    // The run's parts where the reference has them: its route is on this
+    // placement.
+    assert_eq!(net["reference"]["placement"], "this placement");
+    assert_eq!(diagnosis["reference"]["placement"], "this placement");
+    assert!(diagnosis["reference"]["evidence_for_this_placement"].is_null());
     assert_eq!(net["reference"]["vias"], 1);
     assert_eq!(
         net["reference"]["track_widths_mm"],
