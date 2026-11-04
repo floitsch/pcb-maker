@@ -48,6 +48,10 @@ pub struct GlobalConfig {
     /// Seed of the start's noise: the parts start near the fixed parts'
     /// pin centroid (or the board's centre), the fillers anywhere.
     pub seed: u64,
+    /// A diagnostic warm start (`crate::Start`): per component, whether
+    /// it starts at its pose's centre without the start's noise. `None`:
+    /// every part from the start point.
+    pub warm: Option<std::sync::Arc<Vec<bool>>>,
 }
 
 impl Default for GlobalConfig {
@@ -62,6 +66,7 @@ impl Default for GlobalConfig {
             rotation_net_limit: 24,
             frame_interval: 5,
             seed: 1,
+            warm: None,
         }
     }
 }
@@ -494,6 +499,13 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         .iter()
         .map(|body| {
             if let Some(index) = body.component {
+                if config.warm.as_ref().is_some_and(|warm| warm[index]) {
+                    // The noise is drawn all the same: the other parts
+                    // start where they would.
+                    random.next();
+                    random.next();
+                    return problem.components[index].center(poses[index]);
+                }
                 let start = starts.get(&index).copied().unwrap_or(start);
                 [
                     start[0] + (random.next() - 0.5) * 0.05 * size[0],

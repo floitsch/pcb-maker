@@ -1172,6 +1172,90 @@ pub fn overlaps(problem: &Problem, poses: &[Pose]) -> Vec<f64> {
         .collect()
 }
 
+/// The placer's objective at `poses`, split by term (a diagnostic:
+/// docs/placer.md, "Where the arrangement is lost (2026-11-04)"). The
+/// anneal judges a move by `wirelength` (all buckets) plus `relations`
+/// plus 1000 times `hard` plus its penalty (0.5 growing to 400 mm a mm²)
+/// times `overlap` plus `crossing_weight` times `crossings_anneal`; the
+/// legaliser and the refinement count `crossings_all` instead.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Objective {
+    /// The anneal's wire term: weighted half perimeters of the nets of
+    /// 2, 3 to 8 and 9 or more pins.
+    pub wirelength: [f64; 3],
+    /// The same half perimeters unweighted.
+    pub half_perimeter: [f64; 3],
+    /// The overlap of the bodies grown by their halos and half the
+    /// spacing (mm²; the movable parts' overlaps summed and halved, as
+    /// `anneal` returns it): the legality term before its factor.
+    pub overlap: f64,
+    /// Movable parts whose grown body meets another's or leaves the board.
+    pub overlapping: usize,
+    /// The relations' weighted violation (`constraints::relation_penalty`).
+    pub relations: f64,
+    /// The hard constraints' violation summed over the movable parts.
+    pub hard: f64,
+    /// Ratsnest crossings among the nets the anneal counts (up to
+    /// `ANNEAL_NET_PINS` pins) and among every counted net; `None`
+    /// without the crossings term.
+    pub crossings_anneal: Option<u64>,
+    pub crossings_all: Option<u64>,
+    /// Millimetres of wire a crossing is worth.
+    pub crossing_weight: f64,
+}
+
+/// `Objective` at `poses` on `problem` (its level: halos, spacing).
+pub fn objective(problem: &Problem, poses: &[Pose]) -> Objective {
+    let state = build_state(problem, poses);
+    let mut result = Objective::default();
+    for (net, pins) in state.members.iter().enumerate() {
+        if pins.len() < 2 {
+            continue;
+        }
+        let bucket = match pins.len() {
+            2 => 0,
+            3..=8 => 1,
+            _ => 2,
+        };
+        let length = state.net_length(net);
+        result.wirelength[bucket] += length;
+        let weight = problem.net_weights[net];
+        if weight > 0.0 {
+            result.half_perimeter[bucket] += length / weight;
+        }
+    }
+    for (index, pose) in poses.iter().enumerate() {
+        if problem.components[index].fixed {
+            continue;
+        }
+        let overlap = state.overlap(index, state.rects[index]);
+        result.overlap += overlap;
+        if overlap > 1.0e-9 {
+            result.overlapping += 1;
+        }
+        result.hard += constraints::hard_violation(problem, index, *pose);
+    }
+    // As `anneal` returns it: the movable parts' sum, halved.
+    result.overlap /= 2.0;
+    result.relations = constraints::relation_penalty(problem, poses, None);
+    if let Some(crossings) = problem.crossings.as_deref() {
+        result.crossing_weight = crossings.weight;
+        result.crossings_all = Some(crate::crossings::total(problem, crossings, poses));
+        let mut fact = crossings.clone();
+        for (net, counted) in fact.counted.iter_mut().enumerate() {
+            if state
+                .members
+                .get(net)
+                .is_some_and(|pins| pins.len() > ANNEAL_NET_PINS)
+            {
+                *counted = false;
+            }
+        }
+        result.crossings_anneal = Some(crate::crossings::total(problem, &fact, poses));
+    }
+    result
+}
+
 /// Improves `poses` in place and returns the remaining overlap area.
 pub fn anneal(problem: &Problem, poses: &mut Vec<Pose>, config: &AnnealConfig) -> f64 {
     let movable: Vec<usize> = (0..problem.components.len())

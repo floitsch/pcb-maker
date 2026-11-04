@@ -434,6 +434,7 @@ pub fn place_kicad_board(
     placer_config.orientation_search = config.orientation_search;
     placer_config.bus_groups = config.bus_groups.as_ref().map(KiCadBusGroups::settings);
     placer_config.kicad_last_level = true;
+    placer_config.start = warm_start(&lowered)?.map(std::sync::Arc::new);
     if let Some(guidance) = &config.global_guidance {
         let router_config = config.guidance_router.clone().unwrap_or_default();
         placer_config.anneal.guidance = Some(core::guidance::Guidance {
@@ -599,7 +600,13 @@ pub fn place_kicad_board(
     let (kept_seeds, mut placements): (Vec<u64>, Vec<core::Placement>) =
         placements.into_iter().unzip();
     if let Some(trace) = std::env::var_os("PCB_PLACER_TRACE") {
-        trace_placements(&lowered, &placements, Path::new(&trace))?;
+        trace_placements(
+            &lowered,
+            &placements,
+            &kept_seeds,
+            &placer_config.anneal,
+            Path::new(&trace),
+        )?;
     }
     let work_seconds = placements
         .iter()

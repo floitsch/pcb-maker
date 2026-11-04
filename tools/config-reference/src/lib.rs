@@ -550,7 +550,22 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_PLACER_TRACE",
         Kind::Diagnostic,
-        "`<file>`: per seed the weighted wirelength after each stage and per part how far each stage moved it.",
+        "`<file>`: per seed (its number, whether it was kept) the weighted wirelength after each stage, the placer's objective at each stage split by term (at the placement's level and without halos; at the designer's poses too with `PCB_PLACER_DESIGNER`), and per part each stage's pose and how far each stage moved it.",
+    ),
+    (
+        "PCB_PLACER_START",
+        Kind::Switch,
+        "`<board>`: a diagnostic start: the placer's stages from `PCB_PLACER_START_STAGE` on start from this board's poses, by reference (docs/placer.md, \"Where the arrangement is lost (2026-11-04)\").",
+    ),
+    (
+        "PCB_PLACER_START_STAGE",
+        Kind::Switch,
+        "with `PCB_PLACER_START`: `global` (default: the global placement starts from the poses), `anneal` (no global placement), `legalize` (no global placement and no anneal: the legaliser seats the poses, the refinement follows).",
+    ),
+    (
+        "PCB_PLACER_START_PARTS",
+        Kind::Switch,
+        "`<file>`: with `PCB_PLACER_START_STAGE=global`, a JSON list of `REF#n` (the n-th footprint of that reference): only these start from the board's poses, the others from the placer's own start.",
     ),
     (
         "PCB_PLACER_DESIGNER",

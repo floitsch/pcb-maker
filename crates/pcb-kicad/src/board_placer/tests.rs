@@ -2873,3 +2873,98 @@ fn a_pad_another_parts_pad_walls_in_has_no_way_out_until_its_part_turns() {
         "closed at 0 degrees, open after the turn"
     );
 }
+
+/// The diagnostic start (`PCB_PLACER_START`) reads the designer's poses
+/// by reference and the parts file by `REF#n`; the trace
+/// (`PCB_PLACER_TRACE`) says each seed's number, whether it was kept, the
+/// objective at every stage and every part's pose at every stage.
+#[test]
+fn the_start_reads_the_designers_poses_and_the_trace_is_well_formed() {
+    let part = |reference: &str, x: f64, nets: (usize, usize)| {
+        format!(
+            r#"(footprint "R_0603" (layer "F.Cu") (at {x} 10)
+            (property "Reference" "{reference}" (at 0 -1) (layer "F.SilkS"))
+            (fp_rect (start -1.5 -0.7) (end 1.5 0.7) (layer "F.CrtYd"))
+            (pad "1" smd rect (at -0.8 0) (size 0.8 0.9) (layers "F.Cu") (net {} "N{}"))
+            (pad "2" smd rect (at 0.8 0) (size 0.8 0.9) (layers "F.Cu") (net {} "N{}")))"#,
+            nets.0, nets.0, nets.1, nets.1
+        )
+    };
+    let board = |xs: [f64; 3]| {
+        format!(
+            r#"(kicad_pcb
+        (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+        (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+        {} {} {})"#,
+            part("R1", xs[0], (1, 2)),
+            part("R2", xs[1], (2, 3)),
+            part("R2", xs[2], (3, 1))
+        )
+    };
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let root = std::env::temp_dir().join(format!("pcb-maker-start-{}-{nonce}", std::process::id()));
+    fs::create_dir_all(&root).unwrap();
+    let designer = root.join("designer.kicad_pcb");
+    fs::write(&designer, board([8.0, 20.0, 32.0])).unwrap();
+    let pcb = parse(&board([20.0, 20.0, 20.0])).unwrap();
+    let lowered = lower_placement(&pcb, &KiCadBoardPlacerConfig::default()).unwrap();
+    let start = start_from(&lowered, &designer, Some("legalize"), None).unwrap();
+    assert_eq!(start.stage, core::StartStage::Legalize);
+    let xs: Vec<f64> = start.poses.iter().map(|pose| pose.position[0]).collect();
+    assert_eq!(
+        xs,
+        vec![8.0, 20.0, 32.0],
+        "by reference, repeated ones in order"
+    );
+    let names = root.join("parts.json");
+    fs::write(&names, r#"["R2#1"]"#).unwrap();
+    let only = start_from(&lowered, &designer, None, Some(&names)).unwrap();
+    assert_eq!(
+        (only.stage, only.parts),
+        (core::StartStage::Global, vec![false, false, true])
+    );
+    fs::write(&names, r#"["R3#0"]"#).unwrap();
+    assert!(start_from(&lowered, &designer, None, Some(&names)).is_err());
+    assert!(start_from(&lowered, &designer, Some("anneal"), Some(&names)).is_err());
+    assert!(start_from(&lowered, &designer, Some("somewhere"), None).is_err());
+
+    let mut config = core::Config::new();
+    config.start = Some(std::sync::Arc::new(start));
+    let placement = core::place(&lowered.problem, &config);
+    let trace = root.join("trace.json");
+    trace_placements(&lowered, &[placement], &[7], &config.anneal, &trace).unwrap();
+    let json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&trace).unwrap()).unwrap();
+    let seed = &json["seeds"][0];
+    assert_eq!(
+        (seed["seed"].as_u64(), seed["kept"].as_bool()),
+        (Some(7), Some(true))
+    );
+    let stages: Vec<&str> = seed["stages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|stage| stage.as_str().unwrap())
+        .collect();
+    assert_eq!(stages, vec!["global", "annealed", "legal", "final"]);
+    for stage in &stages {
+        for objective in ["objective", "objective_bare"] {
+            let terms = &seed[objective][stage];
+            assert_eq!(terms["wirelength"].as_array().unwrap().len(), 3, "{stage}");
+            assert!(terms["overlap"].as_f64().is_some(), "{stage}");
+        }
+    }
+    let parts = seed["parts"].as_array().unwrap();
+    assert_eq!(parts.len(), 3);
+    for part in parts {
+        let poses = part["poses"].as_array().unwrap();
+        assert_eq!(poses.len(), stages.len());
+        assert_eq!(poses[0].as_array().unwrap().len(), 3);
+    }
+    // The start's poses are the global stage's (none ran).
+    assert_eq!(parts[0]["poses"][0][0].as_f64(), Some(8.0));
+    let _ = fs::remove_dir_all(&root);
+}

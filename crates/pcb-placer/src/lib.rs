@@ -75,6 +75,36 @@ pub struct Config {
     /// passives from the skeleton's level on, so that the held skeleton is
     /// legal at theirs (`skeleton`). 0 by default: every level.
     pub first_level: usize,
+    /// A diagnostic start (`PCB_PLACER_START`, docs/placer.md "Where the
+    /// arrangement is lost (2026-11-04)"): the stages from `Start::stage`
+    /// on run from given poses (the designer's). `None` by default: the
+    /// placer's own start.
+    pub start: Option<std::sync::Arc<Start>>,
+}
+
+/// Where a diagnostic start (`Config::start`) enters the pipeline.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StartStage {
+    /// The global placement starts from the poses: the parts of
+    /// `Start::parts` at their centres without the start's noise and at
+    /// their angles, the others from the placer's own start.
+    Global,
+    /// No global placement: each level's anneal starts from the poses.
+    Anneal,
+    /// No global placement and no anneal: each level's legaliser seats
+    /// the poses (its nearest legal spots), the refinement follows.
+    Legalize,
+}
+
+/// A diagnostic start (`Config::start`).
+#[derive(Clone, Debug)]
+pub struct Start {
+    /// Per component, the pose to start from (a fixed part keeps its own).
+    pub poses: Vec<Pose>,
+    /// Per component, whether it starts from `poses` (`StartStage::Global`
+    /// only; the later stages start every movable part there).
+    pub parts: Vec<bool>,
+    pub stage: StartStage,
 }
 
 impl Config {
@@ -91,6 +121,7 @@ impl Config {
             kicad_last_level: false,
             pad_exits: None,
             first_level: 0,
+            start: None,
         }
     }
 }
@@ -1026,6 +1057,23 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     if config.orientation_search {
         orient::canonical_start(&mut fitted);
     }
+    // A diagnostic start: its parts at its poses, angles included (a
+    // panel's copy or a sub-board is a problem of its own: none there).
+    let start = config
+        .start
+        .as_deref()
+        .filter(|start| start.poses.len() == fitted.components.len());
+    if let Some(start) = start {
+        for index in 0..fitted.components.len() {
+            let all = start.stage != StartStage::Global;
+            if !fitted.components[index].fixed && (all || start.parts[index]) {
+                fitted.poses[index] = start.poses[index];
+            }
+        }
+    }
+    // The stages a diagnostic start skips.
+    let skip_global = start.is_some_and(|start| start.stage != StartStage::Global);
+    let skip_anneal = start.is_some_and(|start| start.stage == StartStage::Legalize);
     let problem = &fitted;
     let debug = std::env::var_os("PCB_PLACER_DEBUG").is_some();
     let started = std::time::Instant::now();
@@ -1075,7 +1123,20 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     // 11, 10 and 8 s of a 10 s budget in its first level's passes).
     let _stop = StopGuard::set(anneal_config.stop_at_work);
     let global_mark = mark();
-    let global = global::global_place(problem, &config.global);
+    let global = match start {
+        Some(start) if start.stage == StartStage::Global => {
+            let mut warm = config.global.clone();
+            warm.warm = Some(std::sync::Arc::new(start.parts.clone()));
+            global::global_place(problem, &warm)
+        }
+        _ if skip_global => global::GlobalResult {
+            poses: problem.poses.clone(),
+            frames: Vec::new(),
+            iterations: 0,
+            overflow: 0.0,
+        },
+        _ => global::global_place(problem, &config.global),
+    };
     phase_line(debug, "global", global_mark);
     if debug {
         eprintln!("placer: global {:.1}s", started.elapsed().as_secs_f64());
@@ -1084,7 +1145,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     // Bus groups: the banks' order and arrangement (`groups::arrange`).
     if let Some(groups) = bus_groups
         .as_deref()
-        .filter(|groups| groups.settings.arrange)
+        .filter(|groups| groups.settings.arrange && !skip_global)
     {
         let arrange_mark = mark();
         let arranged = groups::arrange(problem, groups, &mut global_poses);
@@ -1380,11 +1441,13 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         let mut poses = global_poses.clone();
         let level_started = std::time::Instant::now();
         let anneal_mark = mark();
-        anneal::anneal(&relaxed, &mut poses, &anneal_config);
-        // A pair's series parts turned to face the pair's ends before the
-        // legaliser seats them (`facing`; the refinement's turn finds no
-        // room where neighbours sit tight).
-        facing::turn_to_face(&mut relaxed, &mut poses);
+        if !skip_anneal {
+            anneal::anneal(&relaxed, &mut poses, &anneal_config);
+            // A pair's series parts turned to face the pair's ends before
+            // the legaliser seats them (`facing`; the refinement's turn
+            // finds no room where neighbours sit tight).
+            facing::turn_to_face(&mut relaxed, &mut poses);
+        }
         phase_line(debug, "anneal", anneal_mark);
         let annealed = poses.clone();
         let annealed_for_trace = annealed.clone();
@@ -1726,5 +1789,199 @@ mod check_mode_tests {
     #[test]
     fn check_mode_places_as_without_it_with_far_side_pads_only() {
         places_as_without_it(3);
+    }
+}
+
+#[cfg(test)]
+mod start_tests {
+    use super::*;
+    use crate::problem::{Component, Pin, Side};
+
+    fn part(net: usize, fixed: bool) -> Component {
+        Component {
+            name: String::new(),
+            body_center: [0.0, 0.0],
+            body_size: [2.0, 1.0],
+            round: false,
+            halo: 0.0,
+            pins: vec![
+                Pin {
+                    offset: [-0.6, 0.0],
+                    net,
+                },
+                Pin {
+                    offset: [0.6, 0.0],
+                    net: net + 1,
+                },
+            ],
+            side: Side::Front,
+            fixed,
+            angle_options: vec![0.0, 90.0, 180.0, 270.0],
+            far_side: Vec::new(),
+            far_copper: Vec::new(),
+            far_open: Default::default(),
+            far_courtyard: Vec::new(),
+            hollow: Vec::new(),
+            tight: None,
+            edge_inset: 0.0,
+            courtyards: Vec::new(),
+            holes_inside: false,
+            pads: Vec::new(),
+            copper_only: false,
+            cutout_outline: Vec::new(),
+            tight_hollow: Vec::new(),
+            hole_rings: Vec::new(),
+            copper_graphics: Vec::new(),
+            courtless: Vec::new(),
+            slots: Vec::new(),
+        }
+    }
+
+    /// Eight movable parts in a chain of nets (part i on nets i and i + 1)
+    /// and two fixed ones, on 40 x 30 mm, all stacked at the board's
+    /// centre as an import leaves them; and a legal spread arrangement
+    /// on the grid (the designer's, for the tests).
+    fn board() -> (Problem, Vec<Pose>) {
+        let components: Vec<Component> = (0..10).map(|i| part(i, i >= 8)).collect();
+        let stacked: Vec<Pose> = (0..10)
+            .map(|i| Pose {
+                position: if i >= 8 {
+                    [5.0 + 30.0 * (i - 8) as f64, 15.0]
+                } else {
+                    [20.0, 15.0]
+                },
+                angle: 0.0,
+            })
+            .collect();
+        let spread: Vec<Pose> = (0..10)
+            .map(|i| {
+                if i >= 8 {
+                    stacked[i]
+                } else {
+                    Pose {
+                        position: [8.0 + 4.0 * (i % 4) as f64, 9.0 + 6.0 * (i / 4) as f64],
+                        angle: if i % 2 == 0 { 0.0 } else { 90.0 },
+                    }
+                }
+            })
+            .collect();
+        let problem = Problem {
+            outline: vec![[0.0, 0.0], [40.0, 0.0], [40.0, 30.0], [0.0, 30.0]],
+            components,
+            net_weights: vec![1.0; 11],
+            poses: stacked,
+            spacing: 0.5,
+            grid: 0.25,
+            edge_margin: 0.5,
+            min_spacing: 0.2,
+            far_side_pads_only: false,
+            shared_halos: false,
+            escape: None,
+            crossings: None,
+            pieces: Vec::new(),
+            constraints: Default::default(),
+        };
+        (problem, spread)
+    }
+
+    fn stage<'a>(placement: &'a Placement, name: &str) -> &'a [Pose] {
+        &placement
+            .stage_poses
+            .iter()
+            .find(|(stage, _)| *stage == name)
+            .unwrap_or_else(|| panic!("no stage {name}"))
+            .1
+    }
+
+    fn started(stage: StartStage, poses: &[Pose], parts: Vec<bool>) -> Config {
+        let mut config = Config::new();
+        config.start = Some(std::sync::Arc::new(Start {
+            poses: poses.to_vec(),
+            parts,
+            stage,
+        }));
+        config
+    }
+
+    /// Without the global placement the stages after it start from the
+    /// start's poses, angles included; with neither the global placement
+    /// nor the anneal, a legal start is a fixed point of the legaliser.
+    #[test]
+    fn a_start_past_the_global_placement_begins_at_its_poses() {
+        let (problem, spread) = board();
+        for stage_name in [StartStage::Anneal, StartStage::Legalize] {
+            let config = started(stage_name, &spread, vec![true; 10]);
+            let placement = place(&problem, &config);
+            assert_eq!(stage(&placement, "global"), &spread[..], "{stage_name:?}");
+            assert!(placement.illegal.is_empty() && placement.unplaced.is_empty());
+        }
+        let placement = place(
+            &problem,
+            &started(StartStage::Legalize, &spread, vec![true; 10]),
+        );
+        // No anneal: the legaliser's input is the start, and keeps it.
+        assert_eq!(stage(&placement, "annealed"), &spread[..]);
+        assert_eq!(stage(&placement, "legal"), &spread[..]);
+    }
+
+    /// The global placement's warm start: the parts it names begin at
+    /// their centres, the others where they begin without it (the start's
+    /// noise is drawn for every part all the same).
+    #[test]
+    fn the_global_placements_warm_parts_begin_at_their_centres() {
+        let (mut problem, spread) = board();
+        let parts: Vec<bool> = (0..10).map(|i| i % 3 == 0).collect();
+        let cold = global::global_place(
+            &problem,
+            &GlobalConfig {
+                max_iterations: 0,
+                ..GlobalConfig::default()
+            },
+        );
+        for (index, pose) in spread.iter().enumerate() {
+            if parts[index] {
+                problem.poses[index] = *pose;
+            }
+        }
+        let warm = global::global_place(
+            &problem,
+            &GlobalConfig {
+                max_iterations: 0,
+                warm: Some(std::sync::Arc::new(parts.clone())),
+                ..GlobalConfig::default()
+            },
+        );
+        for index in 0..8 {
+            let component = &problem.components[index];
+            let center = component.center(warm.poses[index]);
+            if parts[index] {
+                let expected = component.center(spread[index]);
+                assert!(
+                    (center[0] - expected[0]).abs() < 1.0e-9
+                        && (center[1] - expected[1]).abs() < 1.0e-9,
+                    "part {index}: {center:?} against {expected:?}"
+                );
+                assert_eq!(warm.poses[index].angle, spread[index].angle);
+            } else {
+                assert_eq!(warm.poses[index], cold.poses[index], "part {index}");
+            }
+        }
+    }
+
+    /// The objective's wire terms are the problem's wirelength, and its
+    /// overlap counts only parts that meet.
+    #[test]
+    fn the_objective_splits_the_wirelength_and_sees_overlap() {
+        let (problem, spread) = board();
+        let config = anneal::AnnealConfig::default();
+        let apart = anneal::objective(&problem, &spread);
+        let sum: f64 = apart.wirelength.iter().sum();
+        assert!((sum - problem.wirelength(&spread)).abs() < 1.0e-9);
+        assert_eq!(apart.half_perimeter, apart.wirelength);
+        assert_eq!(apart.wirelength[1] + apart.wirelength[2], 0.0);
+        assert_eq!((apart.overlap, apart.overlapping), (0.0, 0));
+        assert_eq!(apart.crossings_all, None);
+        let stacked = anneal::objective(&problem, &problem.poses);
+        assert!(stacked.overlap > 1.0 && stacked.overlapping == 8);
     }
 }

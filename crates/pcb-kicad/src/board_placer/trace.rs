@@ -44,16 +44,126 @@ fn designer_poses(lowered: &LoweredPlacement, designer: &Path) -> Result<Vec<cor
     Ok(poses)
 }
 
+/// The placer's objective split by term (`core::anneal::objective`), as
+/// JSON.
+fn objective_json(objective: &core::anneal::Objective) -> serde_json::Value {
+    serde_json::json!({
+        "wirelength": objective.wirelength,
+        "half_perimeter": objective.half_perimeter,
+        "overlap": objective.overlap,
+        "overlapping": objective.overlapping,
+        "relations": objective.relations,
+        "hard": objective.hard,
+        "crossings_anneal": objective.crossings_anneal,
+        "crossings_all": objective.crossings_all,
+        "crossing_weight": objective.crossing_weight,
+    })
+}
+
+/// A pose as `[x, y, angle]` (the footprint's origin, degrees).
+fn pose_json(pose: core::Pose) -> serde_json::Value {
+    serde_json::json!([pose.position[0], pose.position[1], pose.angle])
+}
+
+/// Diagnostic start (`PCB_PLACER_START=<designer's .kicad_pcb>`, docs/placer.md
+/// "Where the arrangement is lost (2026-11-04)"): the placer's stages from
+/// `PCB_PLACER_START_STAGE` (`global`, the default; `anneal`; `legalize`)
+/// on run from the designer's poses. With `global`,
+/// `PCB_PLACER_START_PARTS=<file>` (a JSON list of `REF#n`, the n-th
+/// footprint of that reference in board order, as partialcopy.py's
+/// `*.pinned.json`) names the parts that start there; the others start
+/// from the placer's own start. `None` without `PCB_PLACER_START`.
+pub(super) fn warm_start(lowered: &LoweredPlacement) -> Result<Option<core::Start>, String> {
+    let Some(designer) = std::env::var_os("PCB_PLACER_START") else {
+        return Ok(None);
+    };
+    let stage = std::env::var("PCB_PLACER_START_STAGE").ok();
+    let parts = std::env::var_os("PCB_PLACER_START_PARTS");
+    start_from(
+        lowered,
+        Path::new(&designer),
+        stage.as_deref(),
+        parts.as_deref().map(Path::new),
+    )
+    .map(Some)
+}
+
+/// `warm_start` from its settings: the designer's board, the stage
+/// (`None`: `global`), the file naming the parts (`None`: every part).
+pub(super) fn start_from(
+    lowered: &LoweredPlacement,
+    designer: &Path,
+    stage: Option<&str>,
+    parts: Option<&Path>,
+) -> Result<core::Start, String> {
+    let poses = designer_poses(lowered, designer)?;
+    let stage = match stage {
+        None | Some("global") => core::StartStage::Global,
+        Some("anneal") => core::StartStage::Anneal,
+        Some("legalize") => core::StartStage::Legalize,
+        Some(other) => {
+            return Err(format!(
+                "PCB_PLACER_START_STAGE: {other:?} is not global, anneal or legalize"
+            ));
+        }
+    };
+    let count = lowered.references.len();
+    let parts = match parts {
+        None => vec![true; count],
+        Some(file) => {
+            if stage != core::StartStage::Global {
+                return Err(
+                    "PCB_PLACER_START_PARTS: only with PCB_PLACER_START_STAGE=global".to_string(),
+                );
+            }
+            let text =
+                fs::read_to_string(file).map_err(|error| format!("{}: {error}", file.display()))?;
+            let names: BTreeSet<String> = serde_json::from_str(&text)
+                .map_err(|error| format!("{}: {error}", file.display()))?;
+            let mut seen: BTreeMap<&str, usize> = BTreeMap::new();
+            let parts: Vec<bool> = lowered
+                .references
+                .iter()
+                .map(|reference| {
+                    let nth = seen.entry(reference.as_str()).or_default();
+                    let named = names.contains(&format!("{reference}#{nth}"));
+                    *nth += 1;
+                    named
+                })
+                .collect();
+            let found = parts.iter().filter(|part| **part).count();
+            if found != names.len() {
+                return Err(format!(
+                    "{}: {} parts named, {found} of them on the board",
+                    file.display(),
+                    names.len(),
+                ));
+            }
+            parts
+        }
+    };
+    Ok(core::Start {
+        poses,
+        parts,
+        stage,
+    })
+}
+
 /// Measurement aid (`PCB_PLACER_TRACE=<file>`): where the wirelength goes
 /// between the placer's stages, for every seed's placement, as JSON: the
 /// weighted wirelength after global placement, annealing, legalization
 /// and refinement (and at the designer's poses with
 /// `PCB_PLACER_DESIGNER`), the relaxation level, how crowded the global
-/// placement is at that level, and per movable part how far each stage
-/// moved it and what it met where the annealer left it.
+/// placement is at that level, the placer's objective at each stage split
+/// by term (at the level, and with no halos: `objective`, `objective_bare`),
+/// and per movable part each stage's pose, how far each stage moved it and
+/// what it met where the annealer left it. Each seed says its seed
+/// number and whether it is the placement kept (the first).
 pub(super) fn trace_placements(
     lowered: &LoweredPlacement,
     placements: &[core::Placement],
+    seeds: &[u64],
+    anneal: &core::anneal::AnnealConfig,
     path: &Path,
 ) -> Result<(), String> {
     let designer = match std::env::var_os("PCB_PLACER_DESIGNER") {
@@ -107,10 +217,16 @@ pub(super) fn trace_placements(
             nets
         })
         .collect();
-    let mut seeds = Vec::new();
-    for placement in placements {
+    let mut traced = Vec::new();
+    for (rank, placement) in placements.iter().enumerate() {
         let mut relaxed = base.clone();
         placement.relaxation.apply(&mut relaxed);
+        // The level without halos: what the arrangement costs where the
+        // routing room is not counted.
+        let mut bare = relaxed.clone();
+        for component in &mut bare.components {
+            component.halo = 0.0;
+        }
         let stages: Vec<(&str, &Vec<core::Pose>)> = placement
             .stage_poses
             .iter()
@@ -175,6 +291,26 @@ pub(super) fn trace_placements(
                 serde_json::json!({"conflicted": conflicted, "overlap_share": overlap / area.max(1.0e-9)}),
             );
         }
+        let objectives = |problem: &core::Problem| -> serde_json::Map<String, serde_json::Value> {
+            let mut result: serde_json::Map<String, serde_json::Value> = stages
+                .iter()
+                .map(|(name, poses)| {
+                    (
+                        name.to_string(),
+                        objective_json(&core::anneal::objective(problem, poses)),
+                    )
+                })
+                .collect();
+            if let Some(poses) = &designer {
+                result.insert(
+                    "designer".to_string(),
+                    objective_json(&core::anneal::objective(problem, poses)),
+                );
+            }
+            result
+        };
+        let objective = objectives(&relaxed);
+        let objective_bare = objectives(&bare);
         let stage_of = |name: &str| stages.iter().position(|(stage, _)| *stage == name);
         // What the annealer itself sees there (a conflict it does not see
         // is a mismatch of the two models).
@@ -201,10 +337,12 @@ pub(super) fn trace_placements(
                 "edge": relaxed.constraints.edges.iter().any(|(part, _, _)| *part == index),
                 "centers": centers,
                 "angles": stages.iter().map(|(_, poses)| poses[index].angle).collect::<Vec<_>>(),
+                "poses": stages.iter().map(|(_, poses)| pose_json(poses[index])).collect::<Vec<_>>(),
                 "net_cost": lengths.iter().map(|(_, lengths)| cost(lengths)).collect::<Vec<_>>(),
             });
             if let (Some(poses), Some(lengths)) = (&designer, &designer_lengths) {
                 entry["designer_center"] = serde_json::json!(component.center(poses[index]));
+                entry["designer_pose"] = pose_json(poses[index]);
                 entry["designer_net_cost"] = serde_json::json!(cost(lengths));
             }
             // What the part met where the annealer left it.
@@ -248,7 +386,11 @@ pub(super) fn trace_placements(
             parts.push(entry);
         }
         let relaxation = &placement.relaxation;
-        seeds.push(serde_json::json!({
+        traced.push(serde_json::json!({
+            "seed": seeds.get(rank),
+            "kept": rank == 0,
+            "objective": objective,
+            "objective_bare": objective_bare,
             "stages": stages.iter().map(|(name, _)| *name).collect::<Vec<_>>(),
             "wirelength": lengths.iter().map(|(_, lengths)| lengths.iter().sum::<f64>()).collect::<Vec<_>>(),
             "designer_wirelength": designer_lengths.as_ref().map(|lengths| lengths.iter().sum::<f64>()),
@@ -266,7 +408,7 @@ pub(super) fn trace_placements(
             "parts": parts,
         }));
     }
-    let text = serde_json::to_string(&serde_json::json!({"seeds": seeds}))
+    let text = serde_json::to_string(&serde_json::json!({"seeds": traced}))
         .map_err(|error| error.to_string())?;
     fs::write(path, text).map_err(|error| format!("{}: {error}", path.display()))
 }

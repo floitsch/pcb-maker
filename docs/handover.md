@@ -696,6 +696,9 @@ Switches and experiment hooks (change the result):
 - `PCB_ROUTER_NO_SHARED_STATICS`: every router builds its own static maps and pour masks instead of sharing those of routers of the same board, lattice and classes (for attributing rows; the routing is the same).
 - `PCB_ROUTER_LIMITS_BETWEEN_ITERATIONS`: a negotiation's work limits (its own and the work deadline) bind only after a whole iteration, not between its batches too (the rule before 2026-10-22, probe overshoot; for attributing rows).
 - `PCB_PROBES_SIDE_BY_SIDE`: `N`: at most N probes of the probe ladder at once (1: one after the other).
+- `PCB_PLACER_START`: `<board>`: a diagnostic start: the placer's stages from `PCB_PLACER_START_STAGE` on start from this board's poses, by reference (docs/placer.md, "Where the arrangement is lost (2026-11-04)").
+- `PCB_PLACER_START_STAGE`: with `PCB_PLACER_START`: `global` (default: the global placement starts from the poses), `anneal` (no global placement), `legalize` (no global placement and no anneal: the legaliser seats the poses, the refinement follows).
+- `PCB_PLACER_START_PARTS`: `<file>`: with `PCB_PLACER_START_STAGE=global`, a JSON list of `REF#n` (the n-th footprint of that reference): only these start from the board's poses, the others from the placer's own start.
 
 Diagnostics (stderr unless said; the result does not change):
 
@@ -724,7 +727,7 @@ Diagnostics (stderr unless said; the result does not change):
 - `PCB_PLACER_DEBUG`: the placer's progress lines.
 - `PCB_GLOBAL_DEBUG`: the global route's negotiation, a line per iteration (nets to reroute, overflow, search work; docs/global-route.md).
 - `PCB_LAYOUT_DESCENT_CLASSIC`: `<n>`: the move descent's first `n` router trials are also tried and timed as the coupled loop tries a move (a clone, `Router::update`, a reroute without the polish) on a copy; the result does not change.
-- `PCB_PLACER_TRACE`: `<file>`: per seed the weighted wirelength after each stage and per part how far each stage moved it.
+- `PCB_PLACER_TRACE`: `<file>`: per seed (its number, whether it was kept) the weighted wirelength after each stage, the placer's objective at each stage split by term (at the placement's level and without halos; at the designer's poses too with `PCB_PLACER_DESIGNER`), and per part each stage's pose and how far each stage moved it.
 - `PCB_PLACER_DESIGNER`: `<board>`: the designer's poses judged by the placer's model (their wirelength, what each illegal movable part meets), and with `PCB_PLACER_TRACE` in the trace beside ours.
 - `PCB_PLACER_DESIGNER_LEVEL`: `full`: judge the designer's poses at the full spacing; `tight`, `touch`: with tight bodies, and courtyards touching (default: the smallest spacing, no halos).
 - `PCB_PLACER_CROSSINGS_PROFILE`: with `PCB_PLACER_DEBUG`: per placer phase a `placer crossings` line, the wall time inside the ratsnest-crossings count against the work it booked and the rest of the phase's (the booking's calibration); `ops` times each of its operations too (docs/placer.md, "The crossings' work booking").
