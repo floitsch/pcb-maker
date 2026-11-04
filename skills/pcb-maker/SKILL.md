@@ -110,7 +110,11 @@ Router options go in a JSON file in place of `auto`: `add_pours`
 (`track_width_mm`, `clearance_mm` per net), `seeds`, `via_in_pad` (by default a
 filled and capped via goes only into a BGA's enclosed pads where the designer's board,
 the input or `--reference`, has vias in that footprint's pads; `["U106"]` names more
-parts; the verdict names the part when such pads stay open).
+parts; the verdict names the part when such pads stay open), `diff_pairs` (route mode couples
+the pairs where the project's `.kicad_dru` asks for them; a layout only with `"diff_pairs": true`;
+a pair couples between two parts whose pads of the pair lie side by side, so keep a pair's
+AC-coupling or series parts in a `row` of two; `verdict.diff_pairs` says which coupled and why
+the others fell back).
 
 ## Pre-routed nets
 
