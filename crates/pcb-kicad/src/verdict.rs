@@ -1412,6 +1412,149 @@ pub struct KiCadRunFacts {
     /// The nets the router left open (partial or unreachable), as it names
     /// them.
     pub open_nets: Vec<String>,
+    /// The hot spot the open connections' action names, with the parts
+    /// nearest it (`hot_spot_note`), when connections are open.
+    pub hot_spot: Option<KiCadHotSpotNote>,
+}
+
+/// A part near a hot spot: its reference, its side (`front`, `back`) and
+/// the distance from the hot spot's point to what of it lies on the hot
+/// spot's layer: its pads there (a through-hole pad on every layer), and
+/// on an outer layer its body (courtyard, else its pads' box) when on that
+/// side; 0 over it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KiCadNearPart {
+    pub reference: String,
+    pub side: String,
+    pub distance_mm: f64,
+}
+
+/// The hot spot the open connections' action names (`hot_spot_note`): its
+/// index in `diagnostics.hot_spots`, layer and point, the open nets among
+/// its pads' and copper's nets, the nets still in conflict there, and the
+/// parts whose bodies lie nearest its point (`HOT_SPOT_PARTS`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KiCadHotSpotNote {
+    pub index: usize,
+    pub layer: String,
+    pub at: [f64; 2],
+    pub open_nets: Vec<String>,
+    pub conflicted_nets: Vec<String>,
+    pub parts: Vec<KiCadNearPart>,
+}
+
+/// How many parts a hot spot's note names.
+pub const HOT_SPOT_PARTS: usize = 5;
+
+/// Beyond this distance from a hot spot's point no part is called its
+/// neighbour (the open connections' hot spot action).
+pub const HOT_SPOT_REACH_MM: f64 = 5.0;
+
+/// A net's name for matching KiCad's and the router's names (KiCad's
+/// unconnected items carry the root sheet's `/`).
+fn bare_net(net: &str) -> &str {
+    net.trim_start_matches('/')
+}
+
+/// The hot spot to name for open connections: the worst of `hot_spots`
+/// (they come worst first) whose pads, copper or conflicted nets hold an
+/// open net, else the worst; with the `HOT_SPOT_PARTS` parts of `board`
+/// whose bodies lie nearest its point. Trial 4's Quanta75: the hot spot
+/// named nets and a point at the RP2040's right side, and no part an agent
+/// could move.
+pub fn hot_spot_note(
+    hot_spots: &[crate::board_router::KiCadHotSpot],
+    open: &BTreeSet<String>,
+    board: Option<&crate::Expr>,
+) -> Option<KiCadHotSpotNote> {
+    let open: BTreeSet<&str> = open.iter().map(|net| bare_net(net)).collect();
+    let nets_of = |spot: &crate::board_router::KiCadHotSpot| -> BTreeSet<String> {
+        spot.links
+            .pads
+            .iter()
+            .filter_map(|pad| pad.net.clone())
+            .chain(spot.links.nets.iter().cloned())
+            .chain(spot.links.conflicted_nets.iter().cloned())
+            .collect()
+    };
+    let open_in = |spot: &crate::board_router::KiCadHotSpot| -> Vec<String> {
+        nets_of(spot)
+            .into_iter()
+            .filter(|net| open.contains(bare_net(net)))
+            .collect()
+    };
+    let index = hot_spots
+        .iter()
+        .position(|spot| !open_in(spot).is_empty())
+        .or_else(|| (!hot_spots.is_empty()).then_some(0))?;
+    let spot = &hot_spots[index];
+    let mut parts: Vec<KiCadNearPart> = Vec::new();
+    for footprint in board
+        .map(crate::Expr::children)
+        .unwrap_or_default()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+    {
+        let Some(reference) = crate::kicad_nets::footprint_reference(footprint) else {
+            continue;
+        };
+        let side = match crate::kicad_sexpr::form_atom(footprint, "layer", 1) {
+            Some(layer) if layer.starts_with("B.") => "back",
+            _ => "front",
+        };
+        let to = |bounds: [f64; 4]| {
+            let dx = (bounds[0] - spot.at[0])
+                .max(spot.at[0] - bounds[2])
+                .max(0.0);
+            let dy = (bounds[1] - spot.at[1])
+                .max(spot.at[1] - bounds[3])
+                .max(0.0);
+            dx.hypot(dy)
+        };
+        // A body blocks its own outer side only (trial 4's Quanta75: the
+        // key switches above the RP2040 on the back are no obstacle on
+        // B.Cu); pads block their copper layers.
+        let outer = match spot.layer.as_str() {
+            "F.Cu" => Some("front"),
+            "B.Cu" => Some("back"),
+            _ => None,
+        };
+        let outer_pads = |name: &str| {
+            name == "*.Cu" || (outer.is_some() && name == "F&B.Cu") || name == spot.layer
+        };
+        let pads = crate::placement_constraints::pad_boxes(footprint).unwrap_or_default();
+        let mut distance = pads
+            .iter()
+            .filter(|(_, layers, ..)| layers.iter().any(|layer| outer_pads(layer)))
+            .map(|(bounds, ..)| to(*bounds))
+            .fold(f64::INFINITY, f64::min);
+        if outer == Some(side)
+            && let Ok(Some(body)) = crate::placement_constraints::part_box(footprint)
+        {
+            distance = distance.min(to(body));
+        }
+        if distance.is_finite() {
+            parts.push(KiCadNearPart {
+                reference,
+                side: side.into(),
+                distance_mm: distance,
+            });
+        }
+    }
+    parts.sort_by(|a, b| {
+        a.distance_mm
+            .total_cmp(&b.distance_mm)
+            .then_with(|| crate::canonical_order::natural_cmp(&a.reference, &b.reference))
+    });
+    parts.truncate(HOT_SPOT_PARTS);
+    Some(KiCadHotSpotNote {
+        index,
+        layer: spot.layer.clone(),
+        at: spot.at,
+        open_nets: open_in(spot),
+        conflicted_nets: spot.links.conflicted_nets.clone(),
+        parts,
+    })
 }
 
 /// The next actions for open connections at pads no track leaves (a
@@ -1629,6 +1772,7 @@ impl KiCadRunFacts {
             decoupling_constrained: BTreeSet::new(),
             vias_in_pads: None,
             open_nets: Vec::new(),
+            hot_spot: None,
         }
     }
 
@@ -2092,6 +2236,12 @@ fn next_actions(
             if where_.is_empty() { "the router's count; drc.json lists KiCad's unconnected items".to_string() } else { where_.join(", ") },
             open_evidence(facts)
         ));
+        actions.extend(
+            facts
+                .hot_spot
+                .as_ref()
+                .map(|note| hot_spot_action(note, &facts.command)),
+        );
     }
     if facts.routes
         && open > 0
@@ -2294,7 +2444,68 @@ fn open_evidence(facts: &KiCadRunFacts) -> String {
         _ => String::new(),
     };
     format!(
-        "This placement is the layout's, not the designer's: reference.connected is the designer's route on the designer's placement{designer}, which shows that the nets route under these rules there, not on this placement, and no route of the designer's on this placement exists; the evidence for this placement is the layout's own routes{own}. More room, layers or narrower classes are hypotheses to test (classes never below the board's minimum)"
+        "This placement is the layout's, not the designer's: reference.connected is the designer's route on the designer's placement{designer}, which shows that the nets route under these rules there, not on this placement, and no route of the designer's on this placement exists; the evidence for this placement is the layout's own routes{own}. More room, layers or narrower classes are hypotheses to test (classes never below the board's minimum){}",
+        if facts.hot_spot.as_ref().is_some_and(|note| {
+            note.parts
+                .first()
+                .is_some_and(|part| part.distance_mm <= HOT_SPOT_REACH_MM)
+        }) {
+            "; the parts at the hot spot (next) are the ones to move or turn first"
+        } else {
+            ""
+        }
+    )
+}
+
+/// The next action naming the hot spot of the open connections and the
+/// parts nearest it (`hot_spot_note`), with what moves them: a layout's
+/// constraints, or in route mode (which keeps every part) the input.
+fn hot_spot_action(note: &KiCadHotSpotNote, command: &str) -> String {
+    let nets = if !note.open_nets.is_empty() {
+        format!(", on the open nets {}", note.open_nets.join(", "))
+    } else if !note.conflicted_nets.is_empty() {
+        format!(", nets in conflict {}", note.conflicted_nets.join(", "))
+    } else {
+        String::new()
+    };
+    let parts: Vec<String> = note
+        .parts
+        .iter()
+        .map(|part| {
+            if part.distance_mm < 0.05 {
+                format!("{} ({}, over it)", part.reference, part.side)
+            } else {
+                format!(
+                    "{} ({}, {:.1} mm)",
+                    part.reference, part.side, part.distance_mm
+                )
+            }
+        })
+        .collect();
+    let spot = format!(
+        "hot spot {} (diagnostics.hot_spots[{}]: {} at {:.2}, {:.2}{nets})",
+        note.index, note.index, note.layer, note.at[0], note.at[1]
+    );
+    if parts.is_empty() {
+        return format!("{spot}: no part's body or pad lies on its layer");
+    }
+    let lever = if command.starts_with("route") {
+        "route mode keeps every part: move or turn them in the input, or lay the board out (layout-kicad-board) with constraints for them"
+    } else {
+        "move or turn one of them (place with x, y and angle), hold them apart (apart, constraints.md), or keep a box around the point free of bodies (keepout); a part held by fixed or a constraint moves only when that is loosened"
+    };
+    // Farther than a few millimetres the parts are no neighbours to move.
+    if note.parts[0].distance_mm > HOT_SPOT_REACH_MM {
+        return format!(
+            "{spot}: no part's body or pad on {} lies within {HOT_SPOT_REACH_MM:.0} mm of it (the nearest: {}): what crowds it is copper, not parts",
+            note.layer,
+            parts.join(", ")
+        );
+    }
+    format!(
+        "{spot}: the parts nearest it on {} are {} (side, distance from the point to the body or a pad on that layer); {lever}",
+        note.layer,
+        parts.join(", ")
     )
 }
 
@@ -3215,6 +3426,27 @@ pub fn route_facts(
     facts.starved_thermals = result.diagnostics.starved_thermals.len();
     facts.dead_pads = result.diagnostics.dead_pads.len();
     facts.hot_spots = result.diagnostics.hot_spots.len();
+    // The hot spot to name and the parts nearest it, only where
+    // connections are open (the board written parsed once more).
+    let open: BTreeSet<String> = facts
+        .native
+        .as_ref()
+        .map(|native| native.unconnected_nets.keys().cloned().collect())
+        .unwrap_or_default();
+    let open_count = facts
+        .native
+        .as_ref()
+        .map_or(result.unconnected_terminals, |native| native.unconnected);
+    if open_count > 0 && !result.diagnostics.hot_spots.is_empty() {
+        let open: BTreeSet<String> = open
+            .into_iter()
+            .chain(facts.open_nets.iter().cloned())
+            .collect();
+        let board = fs::read_to_string(directory.join(format!("{}.kicad_pcb", result.board_id)))
+            .ok()
+            .and_then(|text| crate::parse(&text).ok());
+        facts.hot_spot = hot_spot_note(&result.diagnostics.hot_spots, &open, board.as_ref());
+    }
     facts.cut = result.cut.clone();
     facts.skipped = result.skipped.clone();
     facts.unmodelled_rules = result.rules.project.unmodelled.clone();
@@ -5160,5 +5392,113 @@ mod tests {
         let verdict = judge(&facts);
         assert!(verdict.next_actions.iter().any(|action| action.starts_with("connections are open")
             && action.contains("Where the designer's board routes those nets on this placement under these rules (reference.connected)")));
+    }
+
+    #[test]
+    fn the_open_connections_hot_spot_names_the_parts_nearest_it() {
+        // Trial 4's Quanta75: hot spot 0 named nets and a point at the
+        // RP2040's right side, no part to move.
+        use crate::board_router::{KiCadHotSpot, KiCadHotSpotLinks, KiCadHotSpotPad};
+        let footprint = |reference: &str, layer: &str, at: [f64; 2], half: f64, pad: &str| {
+            format!(
+                "(footprint \"X\" (layer \"{layer}\") (at {} {}) (property \"Reference\" \"{reference}\") (fp_rect (start -{half} -{half}) (end {half} {half}) (layer \"{}.CrtYd\")) {pad})",
+                at[0],
+                at[1],
+                &layer[..1]
+            )
+        };
+        let tht = "(pad \"1\" thru_hole circle (at 0 5) (size 2 2) (layers \"*.Cu\" \"*.Mask\"))";
+        let smd = "(pad \"1\" smd rect (at 0 0) (size 1 1) (layers \"F.Cu\"))";
+        // The hot spot lies on B.Cu, under SW21 (on the front, its
+        // through-hole pad 3.5 mm off) and beside U1 and its capacitors on
+        // the back; R21 on the front has nothing on B.Cu.
+        let board = crate::parse(&format!(
+            "(kicad_pcb {} {} {} {} {} {} {})",
+            footprint("U1", "B.Cu", [100.0, 100.0], 3.5, ""),
+            footprint("C16", "B.Cu", [105.0, 100.0], 0.8, ""),
+            footprint("C19", "B.Cu", [104.6, 103.0], 0.8, ""),
+            footprint("R21", "F.Cu", [104.5, 100.5], 0.8, smd),
+            footprint("J3", "B.Cu", [140.0, 100.0], 5.0, ""),
+            footprint("C9", "B.Cu", [110.0, 100.0], 0.8, ""),
+            footprint("SW21", "F.Cu", [104.0, 100.0], 7.0, tht),
+        ))
+        .unwrap();
+        let spot = |at: [f64; 2], nets: &[&str], conflicted: &[&str]| KiCadHotSpot {
+            layer: "B.Cu".into(),
+            at,
+            history: 30.0,
+            bounds: [at[0] - 0.8, at[1] - 0.8, at[0] + 0.8, at[1] + 0.8],
+            links: KiCadHotSpotLinks {
+                pads: vec![KiCadHotSpotPad {
+                    reference: "U1".into(),
+                    number: "23".into(),
+                    net: Some(nets[0].into()),
+                    at,
+                }],
+                pads_in_tile: 1,
+                nets: nets.iter().map(|net| net.to_string()).collect(),
+                conflicted_nets: conflicted.iter().map(|net| net.to_string()).collect(),
+            },
+        };
+        // The worst hot spot holds no open net; the second one does.
+        let spots = [
+            spot([20.0, 20.0], &["GND"], &["GND"]),
+            spot([104.5, 100.5], &["+3V3", "+1V1"], &["+3V3"]),
+        ];
+        let open: BTreeSet<String> = ["/+1V1".to_string(), "Row1".to_string()].into();
+        let note = hot_spot_note(&spots, &open, Some(&board)).unwrap();
+        assert_eq!(note.index, 1);
+        assert_eq!(note.open_nets, ["+1V1"]);
+        let named: Vec<(&str, &str)> = note
+            .parts
+            .iter()
+            .map(|part| (part.reference.as_str(), part.side.as_str()))
+            .collect();
+        assert_eq!(
+            named,
+            [
+                ("C16", "back"),
+                ("U1", "back"),
+                ("C19", "back"),
+                ("SW21", "front"),
+                ("C9", "back")
+            ]
+        );
+        assert!((note.parts[3].distance_mm - 3.5).abs() < 1.0e-9);
+        assert_eq!(note.parts[0].distance_mm, 0.0);
+        let mut facts = open_layout();
+        facts.hot_spot = Some(note);
+        let verdict = judge(&facts);
+        let position = |prefix: &str| {
+            verdict
+                .next_actions
+                .iter()
+                .position(|action| action.starts_with(prefix))
+                .unwrap()
+        };
+        let action = &verdict.next_actions[position("hot spot 1 ")];
+        assert_eq!(
+            position("hot spot 1 "),
+            position("connections are open") + 1
+        );
+        assert!(
+            action.starts_with("hot spot 1 (diagnostics.hot_spots[1]: B.Cu at 104.50, 100.50, on the open nets +1V1): the parts nearest it on B.Cu are C16 (back, over it), U1 (back, 1.0 mm), C19 (back, 1.7 mm), SW21 (front, 3.5 mm)"),
+            "{action}"
+        );
+        assert!(
+            action.contains("apart") && action.contains("keepout"),
+            "{action}"
+        );
+        // A hot spot farther than HOT_SPOT_REACH_MM from every part: no
+        // part to move.
+        let far = hot_spot_note(&spots, &BTreeSet::new(), Some(&board)).unwrap();
+        let far = hot_spot_action(&far, "layout-kicad-board");
+        assert!(
+            far.contains("no part's body or pad on B.Cu lies within 5 mm of it"),
+            "{far}"
+        );
+        // Without any open net in a hot spot: the worst one.
+        let none = hot_spot_note(&spots, &BTreeSet::new(), None).unwrap();
+        assert_eq!((none.index, none.parts.len()), (0, 0));
     }
 }

@@ -1481,7 +1481,7 @@ pub fn keepout_warnings(
 /// A pad's box on the board, its copper layers' names and its copper's
 /// exact shape (`copper_geometry::lower_pad`; `None` where that shape
 /// cannot be read, and the box stands for it).
-type PadBox = (
+pub(crate) type PadBox = (
     [f64; 4],
     Vec<String>,
     Option<pcb_router::geometry::Shape>,
@@ -1491,7 +1491,7 @@ type PadBox = (
 /// Pads of a footprint as boxes on the board: [x0, y0, x1, y1], the
 /// copper layers' names (`*.Cu` and `F&B.Cu` stand for both outer sides),
 /// the copper's shape and the pad's net (its name; `None` without one).
-fn pad_boxes(footprint: &Expr) -> Result<Vec<PadBox>, String> {
+pub(crate) fn pad_boxes(footprint: &Expr) -> Result<Vec<PadBox>, String> {
     let at = form_at(footprint)?;
     let mut boxes = Vec::new();
     for pad in footprint
