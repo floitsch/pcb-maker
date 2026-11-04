@@ -6604,6 +6604,210 @@ Scripts: `experiments/placement-gap/metrics.py` (and its tests),
 `stop_after_first_route`, one run.py per row at 2 threads, its slots
 from a file).
 
+
+### Net weights (2026-11-04)
+
+The next hypothesis the ranking left: our nets are longer than the
+designer's in every size class (half perimeter 1.19 for two pins, 1.13
+for 3 to 8, 1.22 for nine or more not poured), and the placer counts a
+net of `p` pins `min(1, 3 / (p - 1))` times (a 20-pin rail 0.16, a 165-pin
+VDD 0.018), so that the rails and buses barely pull their parts together.
+Is the down-weighting too steep?
+
+**The switch** (`net_weight`, placer option, default `"steep"`;
+`KiCadNetWeight` in `board_placer/config.rs`): the weight of a net of `p`
+pins before the threefold of the nets designers keep short
+(`keep_short`), one of
+
+| weighting | weight | 2-4 pins | 9 pins | 20 pins | 100 pins |
+| --- | --- | ---: | ---: | ---: | ---: |
+| `steep` (default) | `min(1, 3 / (p - 1))` | 1 | 0.375 | 0.158 | 0.030 |
+| `sqrt` | `min(1, 3 / sqrt(p - 1))` | 1 | 1 | 0.688 | 0.302 |
+| `flat` | 1 | 1 | 1 | 1 | 1 |
+| `rail` | 1 for nets of 9 pins or more and nets named as a supply or ground (`quality::rail_name`, `quality::ground`), else `steep` | 1 | 1 | 1 | 1 |
+
+The weight is set once, in the lowering (`Problem::net_weights`) and for
+the sub-boards' split nets (each piece weighted for its own pin count, a
+rail by the split net's name); the global placement (its weighted-average
+wirelength), the anneal (`net_length`), the legaliser and the refinement
+(`net_cost`), the rotation choice, the bus groups and the relation repair
+(`Problem::wirelength`) and the reorder of the large parts
+(`crossings.rs`) all read that one weight, so one net has one
+weight everywhere. The halos (by pin count), the crossings (each net's
+tree counts once whatever its weight) and the anneal's crossings limit of
+16 pins do not change. Off (`steep`) the weights are the expressions of
+before, bit for bit.
+
+Tests: `board_placer::tests::net_weights` (the four weightings' values
+and their order, steep <= the others <= 1; the option's names; a board of
+five nets lowered with each weighting, every net's weight as the table
+says, the kept-short net three times; a placement with `"net_weight":
+"steep"` writes the default's board byte for byte, `flat` another), and
+`crates/pcb-placer/tests/net_weights.rs` (a part between two fixed
+connectors on one net to each goes to the heavier net's side in the
+global placement, the anneal, the refinement and the relation repair: the
+four consumers follow the one weight).
+
+
+**Stage 0: the placement alone** (`experiments/placement-gap/place.py`:
+place-kicad-board with each board's layout.json and router.json from the
+nightly of 2026-11-03, so the layout's share of the budget and its seeds,
+2 threads, the pinned rates; the steep side x1890, the others
+`build/bin/pcb-maker-teach2-nw1`; `build/teach2-place`), the fifteen
+diagnosis boards and the four other dense boards (split72_left,
+SmartSpin2k, DSP-ADAU1452, the 0xCB panel), one placement each,
+measured by `metrics.py` against the designer's (`build/teach2-gap`,
+`variants.py`). With `steep` the teach2 binary placed protoesp, the
+4in1-mini and WLED_Matrix byte for byte as x1890. Over the nineteen
+boards, ours over the designer's (geometric mean / median; on how many
+boards above the designer's):
+
+| metric | steep | sqrt | flat | rail |
+| --- | --- | --- | --- | --- |
+| half perimeter, all nets | 1.104 / 1.074 (14) | 1.089 / 1.041 (14) | 1.078 / 1.042 (13) | 1.080 / 1.064 (13) |
+| half perimeter, 2-pin nets | 1.055 / 1.069 (12) | 1.067 / 1.057 (12) | 1.069 / 1.106 (12) | 1.066 / 1.079 (12) |
+| half perimeter, 3-8 pins | 1.200 / 1.090 (16) | 1.161 / 1.075 (16) | 1.156 / 1.075 (16) | 1.171 / 1.121 (14) |
+| half perimeter, 9+ pins | 1.244 / 1.050 (12) | 1.183 / 1.076 (11) | 1.156 / 0.987 (8) | 1.135 / 1.006 (10) |
+| half perimeter, pour nets | 1.027 / 1.003 (10) | 1.014 / 1.002 (10) | 1.013 / 0.999 (8) | 1.010 / 0.998 (7) |
+| octilinear spanning trees | 1.135 / 1.069 (15) | 1.113 / 1.042 (15) | 1.108 / 1.050 (14) | 1.111 / 1.068 (13) |
+| ratsnest crossings | 1.157 / 1.055 (12) | 1.098 / 1.134 (12) | 1.140 / 1.123 (11) | 1.095 / 1.075 (12) |
+| pin-row crossings | 1.208 / 1.194 (12) | 1.210 / 1.145 (13) | 1.190 / 1.200 (11) | 1.219 / 1.168 (13) |
+| connector to edge | 1.112 / 1.082 (11) | 1.195 / 1.069 (11) | 1.423 / 1.370 (12) | 1.166 / 1.028 (10) |
+| gaps under 0.25 mm | 0.449 / 0.535 (6) | 0.501 / 0.516 (6) | 0.469 / 0.524 (6) | 0.497 / 0.530 (5) |
+
+Per board, ours over the designer's, steep / sqrt / flat / rail:
+
+| board | half perimeter | 3-8 pins | 9+ pins | crossings | pin-row crossings | connector to edge |
+| --- | --- | --- | --- | --- | --- | --- |
+| video | 1.41 / 1.15 / 1.18 / 1.12 | 1.22 / 1.11 / 1.07 / 0.99 | 1.59 / 1.45 / 1.36 / 1.26 | 2.13 / 1.62 / 1.62 / 1.74 | 1.90 / 1.65 / 2.33 / 2.23 | 2.15 / 0.88 / 2.43 / 0.97 |
+| SNSP-CPU-01 | 1.02 / 1.02 / 1.02 / 1.02 | 1.02 / 1.00 / 1.01 / 1.00 | 1.22 / 1.17 / 1.15 / 1.12 | 0.88 / 0.79 / 0.93 / 0.84 | 1.17 / 1.13 / 1.37 / 1.31 | 0.29 / 3.87 / 5.54 / 4.87 |
+| 4in1 | 1.11 / 0.98 / 0.94 / 0.94 | 0.94 / 0.84 / 0.91 / 0.91 | 1.22 / 0.96 / 0.87 / 0.87 | 0.64 / 0.56 / 0.51 / 0.51 | 1.41 / 1.19 / 1.20 / 1.20 | 0.00 / 0.00 / 0.00 / 0.00 |
+| revC3 | 1.00 / 1.00 / 1.01 / 1.00 | 1.43 / 1.42 / 1.38 / 1.35 | 1.02 / 1.08 / 0.99 / 1.02 | 0.77 / 0.80 / 0.76 / 0.70 | 1.19 / 1.14 / 1.25 / 1.12 | 1.02 / 0.55 / 0.21 / 0.21 |
+| protoesp | 1.60 / 1.59 / 1.59 / 1.60 | 1.58 / 1.58 / 1.57 / 1.57 | 1.61 / 1.38 / 1.47 / 1.36 | 2.13 / 2.16 / 2.49 / 2.56 | 1.93 / 1.01 / 1.29 / 1.54 | 1.96 / 1.25 / 1.96 / 2.28 |
+| 4in1-mini | 0.80 / 0.83 / 0.83 / 0.83 | 1.23 / 1.14 / 1.22 / 1.22 | 0.89 / 0.86 / 0.86 / 0.86 | 0.30 / 0.28 / 0.36 / 0.36 | 0.77 / 0.67 / 0.90 / 0.90 | - |
+| MegaDrive | 0.98 / 1.10 / 0.96 / 0.99 | 0.98 / 1.08 / 0.93 / 0.93 | 0.96 / 1.00 / 0.89 / 0.88 | 0.94 / 1.24 / 0.99 / 1.01 | 0.97 / 0.93 / 0.96 / 1.00 | 1.20 / 2.36 / 2.44 / 3.19 |
+| poly_kybd_split72_right | 1.04 / 1.04 / 1.06 / 1.07 | 1.06 / 1.05 / 1.08 / 1.12 | 0.94 / 0.93 / 0.93 / 0.93 | 1.05 / 1.13 / 1.21 / 1.16 | 0.67 / 0.87 / 0.89 / 0.65 | 1.10 / 1.08 / 1.02 / 1.00 |
+| ATAT1800 | 0.94 / 0.96 / 0.93 / 0.93 | 1.01 / 1.00 / 1.01 / 0.96 | 1.05 / 1.10 / 0.99 / 1.01 | 1.05 / 0.86 / 0.93 / 0.83 | 1.75 / 1.95 / 1.88 / 1.88 | - |
+| poly_corne_split42_right | 1.07 / 1.03 / 1.04 / 1.06 | 1.09 / 1.06 / 1.03 / 1.12 | 0.95 / 0.92 / 0.92 / 0.92 | 1.13 / 1.05 / 1.10 / 1.07 | 1.01 / 0.88 / 0.90 / 0.80 | 1.02 / 1.10 / 1.04 / 1.01 |
+| poly_corne_split42_left | 1.16 / 1.17 / 1.14 / 1.16 | 1.07 / 0.99 / 1.01 / 1.06 | 0.98 / 1.00 / 0.98 / 0.95 | 1.09 / 1.20 / 1.19 / 1.22 | 1.30 / 1.80 / 1.32 / 1.55 | 1.23 / 1.02 / 1.08 / 0.91 |
+| power | 1.31 / 1.37 / 1.21 / 1.20 | 1.30 / 1.34 / 1.25 / 1.23 | 1.62 / 1.39 / 1.18 / 1.36 | 2.06 / 1.82 / 1.69 / 1.33 | 1.81 / 2.14 / 1.95 / 1.83 | 0.65 / 1.38 / 1.70 / 1.59 |
+| motherboard | 1.22 / 1.21 / 1.20 / 1.19 | 1.08 / 1.05 / 1.10 / 1.09 | 2.95 / 2.33 / 2.25 / 2.14 | 1.24 / 1.25 / 1.20 / 1.17 | 1.48 / 1.39 / 1.42 / 1.39 | 0.73 / 0.79 / 1.61 / 1.09 |
+| WLED_Matrix | 1.48 / 1.49 / 1.51 / 1.57 | 1.80 / 1.76 / 1.83 / 1.89 | 1.59 / 1.37 / 1.46 / 1.44 | 1.26 / 1.23 / 1.46 / 1.33 | 2.45 / 2.55 / 3.00 / 2.95 | 0.80 / 0.48 / 0.82 / 0.57 |
+| link | 0.91 / 0.92 / 0.96 / 0.94 | 1.23 / 1.35 / 1.32 / 1.28 | 2.05 / 2.61 / 2.99 / 2.10 | 0.79 / 0.70 / 0.81 / 0.87 | 0.96 / 1.01 / 0.81 / 1.17 | 1.28 / 1.05 / 0.63 / 0.50 |
+| poly_kybd_split72_left | 1.05 / 1.03 / 1.04 / 1.06 | 1.07 / 1.04 / 1.06 / 1.10 | 0.96 / 0.92 / 0.93 / 1.00 | 1.03 / 1.06 / 1.12 / 1.08 | 0.69 / 0.79 / 0.74 / 0.73 | 1.07 / 1.03 / 1.13 / 1.05 |
+| SmartSpin2k_Panelized | 0.77 / 0.78 / 0.74 / 0.75 | 0.75 / 0.79 / 0.74 / 0.74 | 0.83 / 0.82 / 0.86 / 0.85 | 0.89 / 0.79 / 0.89 / 0.81 | 0.86 / 0.86 / 0.60 / 0.73 | 8.99 / 6.55 / 7.91 / 7.93 |
+| DSP-ADAU1452 | 1.26 / 1.16 / 1.21 / 1.19 | 1.57 / 1.47 / 1.47 / 1.47 | 1.63 / 1.53 / 1.46 / 1.46 | 4.69 / 4.13 / 3.88 / 3.24 | 1.50 / 1.38 / 1.06 / 1.03 | 3.25 / 3.96 / 2.94 / 2.53 |
+| panel | 1.25 / 1.20 / 1.23 / 1.23 | 2.03 / 1.50 / 1.49 / 1.87 | 1.01 / 0.94 / 0.94 / 0.97 | 1.89 / 1.66 / 1.70 / 1.84 | 0.78 / 1.22 / 0.80 / 1.09 | 0.17 / 0.17 / 0.49 / 0.17 |
+
+Every weighting that counts the large nets more shortens them: the 9+
+pin nets' excess over the designer's falls from 24 % (steep) to 18 %
+(sqrt), 16 % (flat) and 14 % (rail), and the 3- to 8-pin nets' from 20
+% to 16-17 %; the total half perimeter from 10.4 % to 7.8-8.9 %. The
+two-pin nets do not get longer (1.055 to 1.066-1.069). The crossings
+fall with sqrt and rail (1.157 to 1.098 and 1.095), less with flat
+(1.140); the pin-row crossings stay where they were (1.19 to 1.22). Flat
+puts the moved connectors farther from the edge (1.112 to 1.423:
+SNSP-CPU-01 5.5 times the designer's, MegaDrive 2.4): every part on a
+big net is pulled towards the middle of that net, and connectors carry
+ground and the supply. One placement a board, so a board's ratio moves
+by its seed as much as by the weighting (video 1.41 to 1.12-1.18 in
+total, protoesp none); the summary over nineteen is the signal. Rail
+moves the separators most (the 9+ nets, the crossings) without the
+connectors' cost of flat, and flat has the shortest total; the two went
+to stage 1, rail first.
+
+On the eleven dense boards of stage 1 alone the picture is the same
+(geometric means, steep / sqrt / flat / rail): half perimeter 1.089 /
+1.059 / 1.049 / 1.047, 9+ pins 1.144 / 1.077 / 1.047 / 1.040, 3-8 pins
+1.211 / 1.150 / 1.138 / 1.154, two-pin nets 1.011 / 0.993 / 1.020 /
+1.024, crossings 1.149 / 1.085 / 1.118 / 1.087, pin-row crossings 1.128
+/ 1.056 / 1.067 / 1.113.
+
+**Stage 1** (benchmarks.md, "The ladder of placer measurements"): the
+eleven dense boards at the task budgets (tasks v7, pinned rates) with
+`stop_after_first_route`, placer seeds 1, 101, 201, 301, 401, one run.py
+per row at 2 threads through the ledger (`screen.py --sides`: one off
+side for both on sides). Off x1890 (main 0aa632b2) in
+`build/teach2-scr`; on `build/bin/pcb-maker-teach2-nw1` with
+`{"net_weight": "rail"}` in `build/teach2-scr-rail` and `{"net_weight":
+"flat"}` in `build/teach2-scr-flat`; six layouts in flight in all,
+2026-11-04 06:36 to 19:08 beside the nightly. First-route open
+terminals with `rail`, off / on:
+
+| Board | s1 off / on | s101 off / on | s201 off / on | s301 off / on | s401 off / on | median off / on | mean change | relative (weight) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4in1 | 176 / 127 | 208 / 132 | 123 / 169 | 129 / 189 | 119 / 122 | 129 / 132 | -3.2 | -1.8 % (48) |
+| 4in1-mini | 120 / 139 | 122 / 136 | 140 / 143 | 151 / 151 | 144 / 149 | 140 / 143 | +8.2 | +5.7 % (99) |
+| DSP-ADAU1452 | 49 / 59 | 34 / 56 | 64 / 65 | 76 / 94 | 75 / 60 | 64 / 60 | +7.2 | +10.9 % (29) |
+| MegaDrive | 190 / 121 | 86 / 109 | 149 / 127 | 118 / 182 | 171 / 189 | 149 / 127 | +2.8 | +1.8 % (21) |
+| panel | 0 / 0 | 0 / 0 | 1 / 0 | 0 / 1 | 0 / 0 | 0 / 0 | +0.0 | +0.0 % (0) |
+| poly_kybd_split72_left | 11 / 33 | 20 / 33 | 34 / 14 | 29 / 31 | 26 / 34 | 26 / 33 | +5.0 | +12.4 % (18) |
+| protoesp | 68 / 112 | 110 / 95 | 134 / 144 | 68 / 144 | 86 / 104 | 86 / 112 | +26.6 | +24.1 % (30) |
+| revC3 | 133 / 158 | 136 / 157 | 185 / 143 | 139 / 160 | 150 / 128 | 139 / 157 | +0.6 | +0.4 % (70) |
+| SmartSpin2k_Panelized | 109 / 105 | 30 / 56 | 29 / 50 | 74 / 30 | 21 / 42 | 30 / 50 | +4.0 | +8.6 % (3) |
+| SNSP-CPU-01 | 107 / 125 | 65 / 77 | 78 / 55 | 66 / 61 | 153 / 106 | 78 / 77 | -9.0 | -8.6 % (4) |
+| video | 230 / 261 | 163 / 258 | 337 / 439 | 354 / 269 | 307 / 233 | 307 / 261 | +13.8 | +4.4 % (12) |
+
+`placer_ab.py compare --metric first_open`: weighted relative change
+**+5.6 %** (90 % from the noise file +0.1 to +11.4 %), p (on better)
+0.951 sign-flip / 0.953 noise file; sum of medians 1148 to 1152; 2
+boards better, 8 worse, the panel equal; the pair sums worse at four of
+five seeds (s101 974 to 1109, s301 1204 to 1312; s401 1252 to 1167
+better). **Rail fails stage 1**: worse, its 90 % interval above zero.
+The 4in1-mini (the largest weight, 99) is worse at four seeds and equal
+at one (+5.7 %), protoesp at four (+24.1 %, the 9+ nets 1.61 to 1.36 of
+the designer's in stage 0), DSP-ADAU1452 +10.9 %; Glasgow (70) is mixed
+(+0.4 %); the 4in1 (-1.8 %) and SNSP-CPU-01 (-8.6 %) are the only boards
+better.
+
+With `flat`, off / on:
+
+| Board | s1 off / on | s101 off / on | s201 off / on | s301 off / on | s401 off / on | median off / on | mean change | relative (weight) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4in1 | 176 / 127 | 208 / 132 | 123 / 169 | 129 / 189 | 119 / 122 | 129 / 132 | -3.2 | -1.8 % (48) |
+| 4in1-mini | 120 / 139 | 122 / 136 | 140 / 143 | 151 / 151 | 144 / 149 | 140 / 143 | +8.2 | +5.7 % (99) |
+| DSP-ADAU1452 | 49 / 64 | 34 / 39 | 64 / 56 | 76 / 65 | 75 / 60 | 64 / 60 | -2.8 | -4.2 % (29) |
+| MegaDrive | 190 / 141 | 86 / 155 | 149 / 147 | 118 / 163 | 171 / 215 | 149 / 155 | +21.4 | +13.7 % (21) |
+| panel | 0 / 0 | 0 / 0 | 1 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | -0.2 | -45.0 % (0) |
+| poly_kybd_split72_left | 11 / 29 | 20 / 24 | 34 / 8 | 29 / 28 | 26 / 28 | 26 / 28 | -0.6 | -1.5 % (18) |
+| protoesp | 68 / 75 | 110 / 143 | 134 / 95 | 68 / 151 | 86 / 103 | 86 / 103 | +20.2 | +18.3 % (30) |
+| revC3 | 133 / 159 | 136 / 137 | 185 / 167 | 139 / 155 | 150 / 158 | 139 / 158 | +6.6 | +3.9 % (70) |
+| SmartSpin2k_Panelized | 109 / 86 | 30 / 49 | 29 / 0 | 74 / 37 | 21 / 72 | 30 / 49 | -3.8 | -8.2 % (3) |
+| SNSP-CPU-01 | 107 / 191 | 65 / 111 | 78 / 85 | 66 / 63 | 153 / 58 | 78 / 85 | +7.8 | +7.4 % (4) |
+| video | 230 / 344 | 163 / 228 | 337 / 217 | 354 / 206 | 307 / 272 | 307 / 228 | -24.8 | -8.0 % (12) |
+
+Weighted relative change **+4.0 %** (90 % from the noise file -1.5 to
++9.8 %), p (on better) 0.890 sign-flip / 0.883 noise file; sum of
+medians 1148 to 1141; 6 boards better, 5 worse; the pair sums worse at
+seeds 1 and 101 (1193 to 1355, 974 to 1154), better at 201 (1274 to
+1087), about equal at 301 and 401. **Flat fails stage 1** as well.
+Protoesp is worse at four seeds (+18.3 %), Glasgow at four (+3.9 %),
+MegaDrive at three (+13.7 %); video is better at three (-8.0 %; its
+large nets 1.59 to 1.36 of the designer's in stage 0). The two OpenESC
+boards place alike with `flat` and `rail`, row for row, in stage 0 as in
+stage 1: both weightings give their nets the same weights (presumably
+every net of five to eight pins on them is a supply or ground by name;
+not checked).
+
+**Judgement.** Counting the rails and buses more does what stage 0 asked
+of it (the 9+ nets' excess over the designer's 24 % to 14 % with `rail`,
+the crossings down, the two-pin nets not longer) and the first route is
+worse. The large nets' length is the weakest of the wirelength
+separators in the diagnosis (Spearman +0.37 over the placements, +0.17
+over the paired differences, against +0.45 for the spanning trees), and
+most of these nets are supplies. A guess, not measured: pulled together,
+the parts on a rail crowd the signal nets that the steep weights kept
+short and that the first route has to finish. The weights stay `steep`;
+the switch stays (off by default, `"steep"`) for the next lever that
+reweights nets. What the ranking leaves: the packing courtyard to
+courtyard (hypothesis 2, the halos' knobs measured before), the pin-row
+crossings (3), and the arrangement of a bank as a whole.
+
+Scripts: `experiments/placement-gap/place.py` (stage 0: the placement
+alone per variant, as the sweep's layout config places),
+`variants.py` (the variants' metrics against the designer's side by
+side), `screen.py --sides` (one off side for several on sides).
+
 ## Which placement decisions matter (2026-11-04)
 
 The designer's placement leaves fewer first-route open terminals than

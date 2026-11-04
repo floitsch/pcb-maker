@@ -11,6 +11,36 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-04 (net weights: the rails and buses counted more, a switch; stage 1 fails)
+
+Branch net-weights on main 0aa632b2 (x1890), rebased onto ac8cf07d; the
+screen ran on x1890 (off) against `build/bin/pcb-maker-teach2-nw1`.
+docs/placer.md, "The designer as teacher (2026-11-04)", "Net weights",
+has the tables.
+
+- **`net_weight`** (placer option, default `"steep"`, the weights of
+  before bit for bit): how a net's weight falls with its pin count,
+  `steep` (`min(1, 3 / (pins - 1))`), `sqrt` (`min(1, 3 / sqrt(pins -
+  1))`), `flat` (1) or `rail` (1 for nets of nine pins or more and those
+  named as a supply or ground, else steep); set once in the lowering and
+  for the sub-boards' split nets, so that every consumer reads one
+  weight. Tests `board_placer::tests::net_weights` (four) and
+  `crates/pcb-placer/tests/net_weights.rs` (four: the global placement,
+  the anneal, the refinement and the relation repair follow the weight).
+- **Stage 0** (the placement alone, nineteen boards, one placement each,
+  `experiments/placement-gap/place.py` and `variants.py`): every
+  weighting that counts the large nets more shortens them; the 9+ pin
+  nets' excess over the designer's 24 % (steep) to 18 % (sqrt), 16 %
+  (flat), 14 % (rail), the crossings 1.157 to 1.095 with rail, the
+  two-pin nets not longer; flat puts the connectors farther from the
+  edge (1.11 to 1.42).
+- **Stage 1** (five seed pairs on the dense boards,
+  `stop_after_first_route`): `rail` **+5.6 %** first-route open
+  terminals (noise-file p on better 0.953), 2 boards better, 8 worse;
+  `flat` **+4.0 %** (0.883), 6 better, 5 worse. **Both fail**; the
+  default stays `steep`. The large nets' length was the weakest of the
+  wirelength separators (paired Spearman +0.17).
+
 ## Measured on 2026-11-04 (which placement decisions matter: the designer's placement copied in part)
 
 Branch placement-partial-copy (a measurement package: no placer or
