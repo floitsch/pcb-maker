@@ -30,7 +30,7 @@
 use super::*;
 use crate::board_layout::{footprint_items, without_copper_texts};
 use crate::board_placer::{LoweredPlacement, write_footprint_pose};
-use crate::board_router::lower;
+use crate::board_router::lower_for_route;
 use pcb_placer as placer;
 use pcb_router as core;
 use pcb_router::geometry::{Aabb, Point, Shape};
@@ -652,15 +652,21 @@ pub(crate) fn descend(
                 }
             }
             let lowered_started = std::time::Instant::now();
-            let trial_board = lower(
+            // With the pairs, their plan (its work the lowering's).
+            let (trial_board, plan_work) = lower_for_route(
                 &without_copper_texts(&trial_pcb, keep_board_marks),
                 router_config,
                 connect,
-            )?
-            .board;
+            )?;
             let lowered = lowered_started.elapsed().as_secs_f64();
-            let lower_work =
-                WORK_PER_OBSTACLE * trial_board.obstacles.len() as f64 / placer::work_per_second();
+            let lower_work = WORK_PER_OBSTACLE * trial_board.obstacles.len() as f64
+                / placer::work_per_second()
+                + plan_work;
+            // A move that changes the pairs' plan (a pair point or a link
+            // gained or lost: the links are nets of the route) changes the
+            // nets the router holds: no trial.
+            let other_plan =
+                |error: &str| plan_work > 0.0 && error == core::router::UPDATE_NEEDS_SAME_NETS;
             if classic_done < classic {
                 classic_done += 1;
                 let clone_started = std::time::Instant::now();
@@ -673,7 +679,7 @@ pub(crate) fn descend(
                     Ok(ripped) => ripped,
                     // A move that takes a part to another sub-board splits
                     // the nets otherwise (`sub_boards`): no trial.
-                    Err(error) if error == crate::sub_boards::OTHER_NETS => 0,
+                    Err(error) if error == crate::sub_boards::OTHER_NETS || other_plan(&error) => 0,
                     Err(error) => return Err(error),
                 };
                 let updated = update_started.elapsed().as_secs_f64();
@@ -699,7 +705,7 @@ pub(crate) fn descend(
                 Ok(ripped) => ripped,
                 // A move that takes a part to another sub-board splits the
                 // nets otherwise (`sub_boards`): not a move to make.
-                Err(error) if error == crate::sub_boards::OTHER_NETS => {
+                Err(error) if error == crate::sub_boards::OTHER_NETS || other_plan(&error) => {
                     *work += lower_work;
                     report.tier_two_work_seconds += lower_work;
                     continue;

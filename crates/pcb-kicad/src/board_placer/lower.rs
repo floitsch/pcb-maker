@@ -1584,7 +1584,7 @@ pub(crate) fn lower_placement(
     };
     // A differential pair's two series parts as a row of two
     // (`pair_rows`): added to the user's rows, where any pair has them.
-    let pair_rows = if config.pair_rows {
+    let pair_rows = if config.pair_rows_on() {
         implicit_pair_rows(
             &problem,
             &references[..footprint_count],

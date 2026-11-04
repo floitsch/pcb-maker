@@ -407,8 +407,9 @@ pub struct KiCadBoardPlacerConfig {
     /// Defaults: `weight` 1, `cap_mm` 1, `reach_mm` 5, `finish` true.
     #[serde(default)]
     pub align_rows: Option<KiCadAlignRows>,
-    /// Differential pairs' series parts as rows of two (off by default;
-    /// docs/placer.md, "Pair rows (2026-11-04)"): two free parts of one
+    /// Differential pairs' series parts as rows of two (off unless set;
+    /// following the router's `diff_pairs` was measured and not taken:
+    /// docs/placer.md, "Pair rows (2026-11-04)", "Following diff_pairs"): two free parts of one
     /// footprint with two pads each, whose pads of one number lie on the
     /// two nets of a pair KiCad pairs by name (`TX_P` and `TX_N`: a pair's
     /// AC-coupling capacitors or series resistors) and that no constraint
@@ -422,7 +423,8 @@ pub struct KiCadBoardPlacerConfig {
     /// direction. `constraints[]` reports each as `pair_row` with its pitch
     /// and how it faces (`detail`). Boards without such parts place as with
     /// it off.
-    pub pair_rows: bool,
+    #[serde(default)]
+    pub pair_rows: Option<bool>,
     /// The router's configuration the guidance lowers with (set by the
     /// layout; the default otherwise).
     #[serde(skip)]
@@ -512,7 +514,32 @@ impl KiCadBoardPlacerConfig {
         self.decoupling_mm
             .unwrap_or(if self.decoupling_near { 1.0 } else { 2.5 })
     }
+
+    /// Whether the pairs' series parts are placed as rows (`pair_rows`;
+    /// unset it is off here: the layout and the place check resolve it,
+    /// `pair_rows_for`).
+    pub fn pair_rows_on(&self) -> bool {
+        self.pair_rows.unwrap_or(false)
+    }
+
+    /// `pair_rows` for a route with `pairs_planned` (the router plans the
+    /// pairs: its `diff_pairs`): the setting where it is given, else
+    /// `follows && pairs_planned` (a row is for the router's coupling and
+    /// costs placement freedom without it). The layout passes
+    /// `PAIR_ROWS_FOLLOW_DIFF_PAIRS`, off: measured 2026-11-04, following
+    /// coupled no more pairs on left_io's seed 101 and cost connections
+    /// on jetson and right_io (docs/placer.md, "Following diff_pairs").
+    pub fn pair_rows_for(&self, pairs_planned: bool, follows: bool) -> bool {
+        self.pair_rows.unwrap_or(follows && pairs_planned)
+    }
 }
+
+/// Whether an unset `pair_rows` follows the router's `diff_pairs`
+/// (`KiCadBoardPlacerConfig::pair_rows_for`): off, by the measurement of
+/// 2026-11-04 (docs/placer.md, "Following diff_pairs").
+pub const PAIR_ROWS_FOLLOW_DIFF_PAIRS: bool = false;
+
+impl KiCadBoardPlacerConfig {}
 
 impl Default for KiCadBoardPlacerConfig {
     fn default() -> Self {
@@ -574,7 +601,7 @@ impl Default for KiCadBoardPlacerConfig {
             ratsnest_crossings: default_ratsnest_crossings(),
             bus_groups: None,
             align_rows: None,
-            pair_rows: false,
+            pair_rows: None,
             guidance_router: None,
             via_in_pad_far_side: true,
             bga_room: true,

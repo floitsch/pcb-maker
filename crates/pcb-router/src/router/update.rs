@@ -49,7 +49,7 @@ impl Router {
             _ => false,
         };
         if neck_of != self.neck_of || !same_rules {
-            return Err("incremental update needs the same nets and rules".into());
+            return Err(UPDATE_NEEDS_SAME_NETS.into());
         }
         if board.nets.len() != self.board.nets.len()
             || board.classes != self.board.classes
@@ -58,7 +58,7 @@ impl Router {
                 new.name != old.name || new.terminals.len() != old.terminals.len()
             })
         {
-            return Err("incremental update needs the same nets and rules".into());
+            return Err(UPDATE_NEEDS_SAME_NETS.into());
         }
         let previous: Vec<NetState> = std::mem::take(&mut self.nets);
         // Occupancy is rebuilt from the retained branches below.

@@ -1311,14 +1311,15 @@ fn refused(
 }
 
 /// `match_lengths` for a board written outside an attempt (the layout's
-/// own routes): the stackup's heights from `pcb`, no coupled pairs (the
-/// layout routes no pair as coupled runs).
+/// own routes): the stackup's heights from `pcb`; `coupled`, the nets of
+/// the pairs coupled (`finish_pairs`: their length is the pairs' own).
 pub(crate) fn finish_lengths(
     pcb: &Expr,
     board: &core::Board,
     result: &mut core::RoutingResult,
     config: &KiCadBoardRouterConfig,
     layer_names: &[String],
+    coupled: &BTreeSet<String>,
 ) -> (Vec<LengthPattern>, Vec<KiCadNetLength>) {
     if config.length_rules.is_empty() || !config.length_matching_on() {
         return (Vec::new(), Vec::new());
@@ -1328,14 +1329,7 @@ pub(crate) fn finish_lengths(
         .iter()
         .map(|name| heights.get(name).copied().unwrap_or(0.0))
         .collect();
-    match_lengths(
-        board,
-        result,
-        config,
-        &heights,
-        layer_names,
-        &BTreeSet::new(),
-    )
+    match_lengths(board, result, config, &heights, layer_names, coupled)
 }
 
 /// Writes the meanders' tuning patterns into `pcb` (after the routes: the
@@ -1511,7 +1505,14 @@ mod tests {
         let names: Vec<String> = vec!["F.Cu".into(), "B.Cu".into()];
         let mut written = core::route(&board, &core_config(&config));
         let mut attempt = written.clone();
-        let (patterns, lengths) = finish_lengths(&pcb, &board, &mut written, &config, &names);
+        let (patterns, lengths) = finish_lengths(
+            &pcb,
+            &board,
+            &mut written,
+            &config,
+            &names,
+            &BTreeSet::new(),
+        );
         let heights = copper_heights(&pcb);
         let heights: Vec<f64> = names
             .iter()
@@ -1544,7 +1545,8 @@ mod tests {
             ..config.clone()
         };
         assert!(crate::board_router::length_bounded_nets(&off).is_none());
-        let (patterns, lengths) = finish_lengths(&pcb, &board, &mut written, &off, &names);
+        let (patterns, lengths) =
+            finish_lengths(&pcb, &board, &mut written, &off, &names, &BTreeSet::new());
         assert!(patterns.is_empty() && lengths.is_empty());
     }
 

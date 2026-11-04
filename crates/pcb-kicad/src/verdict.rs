@@ -1409,6 +1409,10 @@ pub struct KiCadRunFacts {
     /// of the first route and the budget (`first_route_work_seconds`,
     /// `total_seconds` of board-layout.json).
     pub first_route_spent: Option<[f64; 2]>,
+    /// A layout where nothing ran after the first route (no move, no
+    /// final ladder, nothing stopped or cut it), its connections open or
+    /// not: the board kept is the first route's, and so are its pairs.
+    pub first_route_only: bool,
     /// Where the lattice searches went and what the capacitated
     /// corridors learned (`KiCadCorridors`), when the run routed.
     pub corridors: Option<crate::KiCadCorridors>,
@@ -1960,6 +1964,7 @@ impl KiCadRunFacts {
             pours: Vec::new(),
             moves: None,
             first_route_spent: None,
+            first_route_only: false,
             corridors: None,
             race: None,
             rule_overrides: Vec::new(),
@@ -2535,6 +2540,7 @@ fn next_actions(
     if rate_first && let (Some(action), Some(spent)) = (&rate_action, &spent) {
         actions.push(format!("{action}; {spent}"));
     }
+    actions.extend(first_route_pairs_action(facts));
     if facts.routes && open > 0 {
         let mut where_ = Vec::new();
         if facts.hot_spots > 0 {
@@ -3431,6 +3437,39 @@ fn pairs_summary(pairs: Option<&crate::KiCadDiffPairs>, why: &BTreeMap<String, u
         text.push_str("; a pair couples only between two parts whose pads of the pair lie side by side (at most 3 mm apart): in a layout keep each pair's series or AC-coupling parts side by side (a row of the two, constraints.md)");
     }
     text
+}
+
+/// A layout whose first route was all that ran (`first_route_only`) and
+/// left pairs not wholly coupled: one line, with the lever. Where the
+/// budget was spent (`first_route_spent`) more of it gives the moves and
+/// the final ladder their turn; where every connection was routed (the
+/// layout ends there) the pairs' reasons are the lever. (Until 2026-11-04
+/// only the final ladder planned the pairs, and such a run said nothing of
+/// them: jetson's first route stood uncoupled on both seeds.)
+fn first_route_pairs_action(facts: &KiCadRunFacts) -> Option<String> {
+    const SIDE_BY_SIDE: &str = "fewer than two parts with the pair's pads side by side";
+    if !facts.first_route_only {
+        return None;
+    }
+    let pairs = facts.diff_pairs.as_ref().filter(|pairs| pairs.on)?;
+    let short = pairs.fallen_back + pairs.partly_coupled;
+    if short == 0 {
+        return None;
+    }
+    let lever = match facts.first_route_spent {
+        Some([work, budget]) => format!(
+            "the placement and the first route used {work:.0} of the {budget:.0} s of work the layout's budget counts: a larger total_seconds in the layout config gives the moves and the final ladder their time to couple more"
+        ),
+        None if facts.diff_pair_why.contains_key(SIDE_BY_SIDE) => format!(
+            "every connection was routed, so the layout ended there; {} of them lack two parts with the pair's pads side by side: keep each pair's series or AC-coupling parts side by side (\"pair_rows\": true in the placer config, or a row of the two in constraints.md); board-router.json diff_pairs.pairs[].why has the others' reasons",
+            facts.diff_pair_why[SIDE_BY_SIDE]
+        ),
+        None => "every connection was routed, so the layout ended there: board-router.json diff_pairs.pairs[].why says why each fell back".to_string(),
+    };
+    Some(format!(
+        "diff_pairs: only the first route ran and it left {short} of {} pairs not wholly coupled ({} coupled, {} partly): {lever}",
+        pairs.found, pairs.coupled, pairs.partly_coupled
+    ))
 }
 
 /// One finding type's next action: what KiCad found (the rule, the nets
@@ -6057,6 +6096,69 @@ mod tests {
         };
         assert_eq!(search_rate_action("layout-kicad-board", &near), None);
         assert_eq!(search_rate_action("place-kicad-board", &slow), None);
+    }
+
+    /// A layout whose first route was all that ran and left pairs not
+    /// wholly coupled says so in one line, with the lever: more budget
+    /// where the first route took it, the pairs' reasons where it routed
+    /// every connection; nothing where the pairs coupled or a later stage
+    /// ran. A layout with the pairs on never reads as "diff_pairs off"
+    /// (jetson, pairs2: the first route stood uncoupled, verdict.diff_pairs
+    /// null, the action said off).
+    #[test]
+    fn a_first_route_alone_says_its_uncoupled_pairs_in_one_line_with_the_lever() {
+        let pairs = |coupled: usize, fallen_back: usize| crate::KiCadDiffPairs {
+            on: true,
+            found: coupled + fallen_back,
+            coupled,
+            fallen_back,
+            ..Default::default()
+        };
+        let lines = |facts: &KiCadRunFacts| -> Vec<String> {
+            judge_at(facts, &crate::work_rate::KiCadWorkRate::reference())
+                .next_actions
+                .into_iter()
+                .filter(|action| action.starts_with("diff_pairs: only the first route ran"))
+                .collect()
+        };
+        let mut facts = open_layout();
+        facts.diff_pairs = Some(pairs(2, 22));
+        // A later stage ran: no such line.
+        assert!(lines(&facts).is_empty());
+        facts.first_route_only = true;
+        facts.first_route_spent = Some([1502.0, 1500.0]);
+        let found = lines(&facts);
+        assert_eq!(found.len(), 1, "{found:#?}");
+        assert_eq!(
+            found[0],
+            "diff_pairs: only the first route ran and it left 22 of 24 pairs not wholly coupled (2 coupled, 0 partly): the placement and the first route used 1502 of the 1500 s of work the layout's budget counts: a larger total_seconds in the layout config gives the moves and the final ladder their time to couple more"
+        );
+        // Every connection routed: the reasons are the lever.
+        facts.first_route_spent = None;
+        facts.diff_pair_why = BTreeMap::from([(
+            "fewer than two parts with the pair's pads side by side".to_string(),
+            5,
+        )]);
+        let found = lines(&facts);
+        assert_eq!(found.len(), 1, "{found:#?}");
+        assert!(
+            found[0].contains("5 of them lack two parts with the pair's pads side by side")
+                && found[0].contains("\"pair_rows\": true"),
+            "{}",
+            found[0]
+        );
+        // All coupled, or the pairs off: nothing.
+        facts.diff_pairs = Some(pairs(24, 0));
+        assert!(lines(&facts).is_empty());
+        facts.diff_pairs = None;
+        assert!(lines(&facts).is_empty());
+        // On, the finding's action gives the counts, never "off".
+        let summary = pairs_summary(Some(&pairs(2, 22)), &BTreeMap::new());
+        assert!(
+            summary.starts_with("diff_pairs: 2 of 24 pairs coupled"),
+            "{summary}"
+        );
+        assert!(!summary.contains("diff_pairs off"), "{summary}");
     }
 
     #[test]

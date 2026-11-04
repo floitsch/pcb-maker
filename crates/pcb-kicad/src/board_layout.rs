@@ -13,7 +13,7 @@
 use super::*;
 use crate::board_placer::{largest_clearance, lower_placement, write_footprint_pose};
 use crate::board_router::{
-    LayerTable, add_pour_zones, core_config, emit_routes, finish_routed_board, lower,
+    LayerTable, add_pour_zones, core_config, emit_routes, finish_routed_board, lower_for_route,
     planned_pours, pours,
 };
 use crate::pin_swap::{KiCadPinSwapComponent, KiCadPinSwapGroup};
@@ -725,12 +725,12 @@ fn size_outline(
             let layers = LayerTable::from_pcb(&pcb)?;
             let connect =
                 !pours(&pcb, &layers)?.is_empty() && router_config.pours != KiCadPourMode::Tracks;
-            let board = lower(
+            let (board, plan_work) = lower_for_route(
                 &without_copper_texts(&pcb, placer_config.keep_board_marks),
                 router_config,
                 connect,
-            )?
-            .board;
+            )?;
+            *work += plan_work;
             let mut quick = quick.clone();
             quick.deadline_work = Some((work_deadline - *work - *pool_excess).max(0.0));
             let mut router = core::router::Router::new(&board, &quick);
@@ -1315,8 +1315,15 @@ pub fn layout_placer_config(
     {
         placer_config.router_rules = Some(std::sync::Arc::new(router_config.clone()));
     }
-    // The pairs' widths and gaps, for the pair rows' pitch.
-    if placer_config.pair_rows && placer_config.pair_geometry.is_empty() {
+    // The pair rows as the placer config sets them, else following the
+    // router's pairs where `PAIR_ROWS_FOLLOW_DIFF_PAIRS` (off since its
+    // measurement: docs/placer.md, "Following diff_pairs"), with the
+    // pairs' widths and gaps for their pitch.
+    placer_config.pair_rows = Some(placer_config.pair_rows_for(
+        crate::board_router::pairs_planned(router_config),
+        crate::board_placer::PAIR_ROWS_FOLLOW_DIFF_PAIRS,
+    ));
+    if placer_config.pair_rows_on() && placer_config.pair_geometry.is_empty() {
         placer_config.pair_geometry = crate::board_placer::pair_geometry(router_config);
     }
     Ok(placer_config)
@@ -1467,6 +1474,22 @@ pub fn layout_kicad_board(
         ..router_config.clone()
     };
     let router_config = &with_deadline;
+    // Differential pairs (`diff_pairs`): every route of the layout plans
+    // them (`lower_for_route`: the outline's sizing, the first route, the
+    // placement race's probes, the moves) and the board it writes finishes
+    // them (`finish_pairs`), as route mode's attempts do, so that the
+    // board kept is a coupled attempt whichever stage made it; the pairs'
+    // nets route at the pairs' width (`with_pairs`). Until 2026-11-04 only
+    // the final ladder planned them, and where it did not run or its
+    // attempt was not kept the first route stood uncoupled (jetson on both
+    // seeds, ducktop2's left_io on seed 1).
+    let paired_config;
+    let router_config = if crate::board_router::pairs_planned(router_config) {
+        paired_config = crate::board_router::with_pairs(router_config);
+        &paired_config
+    } else {
+        router_config
+    };
     // The layout's end in work, its nominal end: every router of the
     // layout stops there (`arm`), the polish and the final ladder are
     // planned up to it, so that where a run stops does not depend on the
@@ -1686,16 +1709,17 @@ pub fn layout_kicad_board(
     // without fewer conflicted nets end it (OpenAirScope's moves
     // negotiated ~34 iterations, 126-229 s each).
     core_config.stall_patience = core_config.stall_patience.min(8);
-    // A new router of the first route stops where the layout's work ends.
-    core_config.deadline_work = Some((work_deadline - work - pool_excess).max(0.0));
 
     let first_started = std::time::Instant::now();
-    let mut board = lower(
+    // (With the pairs, their plan's work is the first route's.)
+    let (mut board, plan_work) = lower_for_route(
         &without_copper_texts(&pcb, config.placer.keep_board_marks),
         router_config,
         connect,
-    )?
-    .board;
+    )?;
+    work += plan_work;
+    // A new router of the first route stops where the layout's work ends.
+    core_config.deadline_work = Some((work_deadline - work - pool_excess).max(0.0));
     // With seeds, the first route is done several ways at once; the best
     // router state carries the move phase.
     let seeds = router_config.seeds.unwrap_or(1).max(1) as u64;
@@ -1901,12 +1925,13 @@ pub fn layout_kicad_board(
                     write_footprint_pose(footprint, *pose)?;
                 }
             }
-            board = lower(
+            let plan_work;
+            (board, plan_work) = lower_for_route(
                 &without_copper_texts(&candidate, config.placer.keep_board_marks),
                 router_config,
                 connect,
-            )?
-            .board;
+            )?;
+            work += plan_work;
             pcb = candidate;
             placer_config.tight_bodies = Some(relaxation.tight);
             problem = lower_placement(&pcb, &placer_config)?;
@@ -2006,12 +2031,12 @@ pub fn layout_kicad_board(
         };
         let mut candidates = Vec::new();
         for (poses, relaxation) in others {
-            let candidate_board = lower(
+            let (candidate_board, plan_work) = lower_for_route(
                 &without_copper_texts(&posed(&pcb, poses)?, config.placer.keep_board_marks),
                 router_config,
                 connect,
-            )?
-            .board;
+            )?;
+            work += plan_work;
             candidates.push((poses, candidate_board, relaxation));
         }
         // The placements are probed side by side, each a router of its own,
@@ -2622,20 +2647,31 @@ pub fn layout_kicad_board(
                 }
             }
             problem.problem.poses = poses;
-            let trial_board = lower(
+            let (trial_board, plan_work) = lower_for_route(
                 &without_copper_texts(&pcb, config.placer.keep_board_marks),
                 router_config,
                 connect,
-            )?
-            .board;
+            )?;
+            work += plan_work;
             arm(&mut router, work + pool_excess);
             let expansions_before = router.expansions();
             // (An error ends the layout: nothing to restore.) A move that
             // takes a part to another sub-board splits the nets otherwise
-            // (`sub_boards`): not a move to make.
+            // (`sub_boards`), and one that changes the pairs' plan (a pair
+            // point or a link gained or lost: the links are nets of the
+            // route) changes the nets the router holds: not a move to make.
             let rerouted = match router.update(&trial_board) {
                 Ok(rerouted) => rerouted,
-                Err(error) if error == crate::sub_boards::OTHER_NETS => {
+                Err(error)
+                    if error == crate::sub_boards::OTHER_NETS
+                        || (plan_work > 0.0 && error == core::router::UPDATE_NEEDS_SAME_NETS) =>
+                {
+                    if error == core::router::UPDATE_NEEDS_SAME_NETS {
+                        eprintln!(
+                            "layout: a move of {} changes the differential pairs' plan: not tried",
+                            problem.references[index]
+                        );
+                    }
                     router.restore_saved(saved_router);
                     pcb = saved_pcb;
                     problem.problem.poses = saved_poses.clone();
@@ -2804,6 +2840,41 @@ pub fn layout_kicad_board(
             router.restore_saved(saved_router);
         }
     }
+    // The terminals the router's state leaves open: the final route from
+    // that state frees the room around them (`kept_state_nets`). (On the
+    // board as routed: with the pairs, before their links go.)
+    let open_anchors: Vec<core::Point> = router
+        .unconnected()
+        .into_iter()
+        .map(|(net, terminal)| board.nets[net as usize].terminals[terminal].anchor)
+        .collect();
+    // The pairs' links into the pairs' copper (`finish_pairs`), as route
+    // mode writes an attempt: what a link left open is routed for the
+    // pair's nets with everything else kept (the fallback), with its share
+    // of the layout's work left (`work_budget`, its minimum where the
+    // budget is spent: then the facts say so), its work the layout's. The
+    // board from here on is the board as lowered.
+    let pairs_left = (work_deadline - work - pool_excess).max(0.0);
+    let (pair_copper, mut pairs_report) = if crate::board_router::pairs_planned(router_config) {
+        let heights = crate::board_router::copper_heights(&pcb);
+        let heights: Vec<f64> = layers
+            .names
+            .iter()
+            .map(|name| heights.get(name).copied().unwrap_or(0.0))
+            .collect();
+        let mut pairs_config = router_config.clone();
+        pairs_config.ladder_budget_seconds = Some(pairs_left);
+        match crate::board_router::finish_pairs(&board, &mut result, &pairs_config, &heights) {
+            Some((restored, copper, report)) => {
+                board = restored;
+                work += report.work_seconds;
+                (Some(copper), Some(report))
+            }
+            None => (None, None),
+        }
+    } else {
+        (None, None)
+    };
     // Reference labels off pads and other silkscreen; the board's own
     // texts and silkscreen graphics stay where the input put them
     // (`keep_board_marks`), and the parts on them are reported.
@@ -2838,9 +2909,23 @@ pub fn layout_kicad_board(
     let layer_names = layers.names.clone();
     // Copper texts: kept, or else (decoration on copper) moved off the
     // copper and the parts.
+    // (The pairs' copper is copper the texts keep off too.)
+    let with_pair_copper;
+    let copper_routes = match &pair_copper {
+        Some(copper) => {
+            with_pair_copper = result
+                .routes
+                .iter()
+                .cloned()
+                .chain(copper.routes())
+                .collect::<Vec<_>>();
+            &with_pair_copper
+        }
+        None => &result.routes,
+    };
     let copper_texts = crate::labels::place_copper_texts(
         &mut pcb,
-        &result.routes,
+        copper_routes,
         &layer_names,
         keep_marks,
         &fixed,
@@ -2864,17 +2949,33 @@ pub fn layout_kicad_board(
     // whole budget, its rule reported unmodelled and two nets short).
     // The meanders join the routes, so that the final route from the
     // router's state keeps them with the nets' copper.
+    // (The pairs' coupled nets are the pairs' own, as in route mode.)
     let length_config = crate::board_router::with_lengths(router_config);
-    let (patterns, lengths) =
-        crate::board_router::finish_lengths(&pcb, &board, &mut result, router_config, &layer_names);
+    let coupled: BTreeSet<String> = pairs_report
+        .iter()
+        .flat_map(|report| report.pairs.iter())
+        .filter(|pair| pair.links_coupled > 0)
+        .flat_map(|pair| [pair.positive.clone(), pair.negative.clone()])
+        .collect();
+    let (patterns, lengths) = crate::board_router::finish_lengths(
+        &pcb,
+        &board,
+        &mut result,
+        router_config,
+        &layer_names,
+        &coupled,
+    );
     let nets = emit_routes(&mut pcb, &board, &result, &layer_names, false)?;
-    // The tuning patterns go into the board written only: `pcb` is the
-    // placement the ladder routes again, without copper.
+    // The tuning patterns and the pairs' copper go into the board written
+    // only: `pcb` is the placement the ladder routes again, without copper.
     let written;
-    let written_pcb = if patterns.is_empty() {
+    let written_pcb = if patterns.is_empty() && pair_copper.is_none() {
         &pcb
     } else {
         let mut copy = pcb.clone();
+        if let Some(copper) = &pair_copper {
+            crate::board_router::write_pair_copper(&mut copy, copper, &layer_names)?;
+        }
         crate::board_router::write_length_patterns(&mut copy, &board, &patterns, &layer_names)?;
         written = copy;
         &written
@@ -2901,6 +3002,36 @@ pub fn layout_kicad_board(
         .map(|entry| entry.reroute_work_seconds)
         .sum::<f64>();
     routed.lengths = lengths;
+    // The pairs as the board written has them, with the setting (the
+    // verdict's `diff_pairs`: filled whenever the setting is on, so that
+    // it never reads as off).
+    let choice = router_config.diff_pairs_choice();
+    if choice.on {
+        let report = pairs_report.get_or_insert_with(crate::KiCadDiffPairs::default);
+        report.on = choice.on;
+        report.default = choice.default.to_string();
+        report.reason = choice.reason;
+        crate::board_router::measure_uncoupled(report, written_pcb);
+        let fallen = report.fallen_back + report.partly_coupled;
+        eprintln!(
+            "layout: diff pairs on the layout's own routes: {} found, {} coupled, {} partly, {} fallen back ({} of {} links coupled; fallback {:.1} s of work)",
+            report.found,
+            report.coupled,
+            report.partly_coupled,
+            report.fallen_back,
+            report.links_coupled,
+            report.links,
+            report.work_seconds
+        );
+        // The fallback at its minimum: the layout's budget was spent.
+        if fallen > 0 && crate::board_router::pairs_fallback_short(pairs_left) {
+            routed.skipped.push(format!(
+                "the differential pairs' fallback (the nets of the {fallen} pairs not wholly coupled) had only {:.0} s of work: the layout's budget was spent ({pairs_left:.0} s left); a larger total_seconds in the layout config gives it its share",
+                crate::board_router::pairs_fallback_work(pairs_left)
+            ));
+        }
+    }
+    routed.diff_pairs = pairs_report;
     routed.pours = if !has_pours {
         "none"
     } else if connect {
@@ -2941,13 +3072,6 @@ pub fn layout_kicad_board(
     let layout_work = work;
     // The ladder below builds routers of its own (probes side by side,
     // seeds side by side): this one would only hold its memory meanwhile.
-    // The terminals the router's state leaves open: the final route from
-    // that state frees the room around them (`kept_state_nets`).
-    let open_anchors: Vec<core::Point> = router
-        .unconnected()
-        .into_iter()
-        .map(|(net, terminal)| board.nets[net as usize].terminals[terminal].anchor)
-        .collect();
     drop(router);
     crate::mem_profile::phase("layout ladder");
     eprintln!("layout: routed ({:.0} s, work {work:.0} s)", elapsed());
@@ -3125,6 +3249,21 @@ pub fn layout_kicad_board(
                 }
             }
             emit_routes(&mut kept_pcb, &board, &kept_result, &layer_names, false)?;
+            // The pairs' copper of the nets kept.
+            if let Some(copper) = &pair_copper {
+                let kept_names: BTreeSet<&str> = board
+                    .nets
+                    .iter()
+                    .zip(&kept_nets)
+                    .filter(|(_, kept)| **kept)
+                    .map(|(net, _)| net.name.as_str())
+                    .collect();
+                crate::board_router::write_pair_copper(
+                    &mut kept_pcb,
+                    &copper.of_nets(&|name| kept_names.contains(name)),
+                    &layer_names,
+                )?;
+            }
             fs::write(
                 kept_directory.join(format!("{board_id}.kicad_pcb")),
                 format!("{}\n", encode(&kept_pcb)),
@@ -3824,6 +3963,180 @@ mod budget_tests {
         assert!(
             serde_json::from_str::<KiCadBoardLayoutConfig>(r#"{"race_count": "open"}"#).is_err()
         );
+    }
+
+    /// A USB pair from J1 to U2 (diff_pairs.rs's test board without U1).
+    const PAIR_BOARD: &str = r#"(kicad_pcb (version 20241229) (generator "pcbnew")
+  (general (thickness 1.6)) (paper "A4")
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+  (gr_rect (start 0 0) (end 40 20) (stroke (width 0.05) (type default)) (layer "Edge.Cuts"))
+  (footprint "test" (layer "F.Cu") (at 3 10)
+    (property "Reference" "J1" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0 0) (size 1 0.3) (layers "F.Cu") (net "/D+"))
+    (pad "2" smd rect (at 0 0.5) (size 1 0.3) (layers "F.Cu") (net "/D-")))
+  (footprint "test" (layer "F.Cu") (at 34 10)
+    (property "Reference" "U2" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0 0) (size 1 0.3) (layers "F.Cu") (net "/D+"))
+    (pad "2" smd rect (at 0 0.5) (size 1 0.3) (layers "F.Cu") (net "/D-"))))
+"#;
+
+    /// Lays `PAIR_BOARD` out (its parts fixed, so that the placement is
+    /// the input's) with `diff_pairs` as given, the first route alone (no
+    /// move, no final ladder: the board kept is the layout's own).
+    fn pair_layout(diff_pairs: Option<bool>) -> KiCadBoardLayoutResult {
+        pair_layout_with(diff_pairs, true)
+    }
+
+    /// `pair_layout`, its parts fixed or free (then the placer's three
+    /// seeds race).
+    fn pair_layout_with(diff_pairs: Option<bool>, fixed: bool) -> KiCadBoardLayoutResult {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "pcb-maker-layout-pairs-{}-{nonce}-{diff_pairs:?}",
+            std::process::id()
+        ));
+        let source = root.join("source");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("board.kicad_pcb"), PAIR_BOARD).unwrap();
+        let config = KiCadBoardLayoutConfig {
+            total_seconds: 30.0,
+            stop_after_first_route: true,
+            placer: KiCadBoardPlacerConfig {
+                fixed_patterns: if fixed { vec!["*".into()] } else { Vec::new() },
+                placement_seeds: if fixed { 1 } else { 3 },
+                ..KiCadBoardPlacerConfig::default()
+            },
+            congestion_score: "none".into(),
+            // Free parts: the route probe races the seeds' placements.
+            race_probe: (!fixed).then_some(KiCadRaceProbe {
+                seeds: 3,
+                share: 0.1,
+                repair: false,
+            }),
+            ..KiCadBoardLayoutConfig::default()
+        };
+        let router = KiCadBoardRouterConfig {
+            default_rules: Some(crate::KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            diff_pairs,
+            skip_native_verification: true,
+            ..KiCadBoardRouterConfig::default()
+        };
+        let result = layout_kicad_board(&source, "board", &root.join("out"), &config, &router);
+        let written = fs::read_to_string(root.join("out/result/board.kicad_pcb"));
+        fs::remove_dir_all(&root).ok();
+        let result = result.unwrap();
+        // The board written has the pair's copper: tracks of both nets.
+        let written = written.unwrap();
+        for net in ["/D+", "/D-"] {
+            assert!(
+                written.contains(&format!("(net \"{net}\")")) || written.contains(net),
+                "{net}"
+            );
+        }
+        result
+    }
+
+    /// With `diff_pairs` the layout's own first route plans the pairs and
+    /// the board it writes finishes them (`finish_pairs`): the pair is
+    /// coupled without any final ladder, and the report (the verdict's
+    /// `diff_pairs`) says so with the setting; off, as before, nothing.
+    #[test]
+    fn a_layouts_own_first_route_couples_the_pairs() {
+        let on = pair_layout(Some(true));
+        assert!(on.final_ladder_budget_seconds.is_none());
+        assert!(on.moves.is_empty());
+        let pairs = on.routed.diff_pairs.as_ref().expect("the pairs' report");
+        assert!(pairs.on);
+        assert_eq!(pairs.default, "explicit");
+        assert_eq!(pairs.found, 1);
+        assert_eq!(pairs.links, 1);
+        assert_eq!((pairs.coupled, pairs.fallen_back), (1, 0), "{pairs:?}");
+        assert!(pairs.coupled_mm > 20.0, "{pairs:?}");
+        assert_eq!(on.routed.unconnected_terminals, 0);
+        let off = pair_layout(None);
+        assert!(off.routed.diff_pairs.is_none());
+        assert_eq!(off.routed.unconnected_terminals, 0);
+    }
+
+    /// The placement race's probes route boards with the pairs' plan too:
+    /// whichever placement it keeps, the board written finishes its pairs.
+    #[test]
+    fn the_placement_races_probes_plan_the_pairs() {
+        let raced = pair_layout_with(Some(true), false);
+        let race = raced.race.as_ref().expect("the race ran");
+        assert!(race.probe.len() >= 2, "{race:?}");
+        let pairs = raced.routed.diff_pairs.as_ref().expect("the pairs' report");
+        assert_eq!((pairs.found, pairs.links), (1, 1), "{pairs:?}");
+    }
+
+    /// `pair_rows` unset: following the router's pairs (on where the router
+    /// plans them, `diff_pairs`, off otherwise) where the switch says so,
+    /// and the layout's switch is off (measured 2026-11-04): unset it is
+    /// off with the pairs on too; the placer config's true or false wins
+    /// either way.
+    #[test]
+    fn pair_rows_follow_the_routers_diff_pairs_only_where_the_switch_says() {
+        let unset = KiCadBoardPlacerConfig::default();
+        assert!(unset.pair_rows_for(true, true));
+        assert!(!unset.pair_rows_for(false, true));
+        assert!(!unset.pair_rows_for(true, false));
+        let set = |on: bool| KiCadBoardPlacerConfig {
+            pair_rows: Some(on),
+            ..KiCadBoardPlacerConfig::default()
+        };
+        for (planned, follows) in [(false, false), (true, false), (false, true), (true, true)] {
+            assert!(set(true).pair_rows_for(planned, follows));
+            assert!(!set(false).pair_rows_for(planned, follows));
+        }
+        let f1 = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/f1");
+        let router = crate::project_rules::resolve_project_rules(
+            &f1.join("f1.kicad_pro"),
+            &f1.join("f1.kicad_pcb"),
+        )
+        .unwrap();
+        let paired = KiCadBoardRouterConfig {
+            diff_pairs: Some(true),
+            ..router.clone()
+        };
+        let layout = |pair_rows: Option<bool>| KiCadBoardLayoutConfig {
+            total_seconds: 30.0,
+            placer: KiCadBoardPlacerConfig {
+                pair_rows,
+                ..KiCadBoardPlacerConfig::default()
+            },
+            ..Default::default()
+        };
+        let rows = |pair_rows: Option<bool>, router: &KiCadBoardRouterConfig| {
+            layout_placer_config(&layout(pair_rows), router, &f1)
+                .unwrap()
+                .pair_rows
+        };
+        // The layout's: off unset, with the pairs on or off.
+        assert_eq!(rows(None, &router), Some(false));
+        assert_eq!(rows(None, &paired), Some(false));
+        assert_eq!(rows(Some(false), &paired), Some(false));
+        assert_eq!(rows(Some(true), &router), Some(true));
+        assert_eq!(rows(Some(true), &paired), Some(true));
+        // The place check places as the layout does.
+        let check = placement_check_config(&f1, "f1", &layout(None), &paired).unwrap();
+        assert_eq!(check.pair_rows, Some(false));
+        let check = placement_check_config(&f1, "f1", &layout(Some(true)), &paired).unwrap();
+        assert_eq!(check.pair_rows, Some(true));
+        // Unset, it reads and writes as before.
+        let config: KiCadBoardPlacerConfig = serde_json::from_str("{}").unwrap();
+        assert_eq!(config.pair_rows, None);
+        assert!(!config.pair_rows_on());
+        let config: KiCadBoardPlacerConfig =
+            serde_json::from_str(r#"{"pair_rows": true}"#).unwrap();
+        assert_eq!(config.pair_rows, Some(true));
     }
 
     #[test]

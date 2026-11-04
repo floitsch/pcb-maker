@@ -363,6 +363,7 @@ fn find_pairs(board: &core::Board, config: &KiCadBoardRouterConfig) -> Vec<Pair>
     let mut pairs = Vec::new();
     // Per part (its reference): its pads' centres.
     let mut parts: BTreeMap<String, Vec<Point>> = BTreeMap::new();
+    scanned(board.obstacles.len());
     for obstacle in &board.obstacles {
         if obstacle.kind == core::ObstacleKind::Copper
             && let Some((part, pad)) = obstacle.label.rsplit_once('.')
@@ -596,6 +597,7 @@ fn straddles(
         minimum: [a.anchor[0].min(b.anchor[0]), a.anchor[1].min(b.anchor[1])],
         maximum: [a.anchor[0].max(b.anchor[0]), a.anchor[1].max(b.anchor[1])],
     };
+    scanned(board.obstacles.len());
     board.obstacles.iter().any(|obstacle| {
         obstacle.kind == core::ObstacleKind::Copper
             && obstacle.layers & a.layers & b.layers != 0
@@ -625,6 +627,7 @@ fn keep_from(board: &core::Board, obstacle: &core::Obstacle, clearance: f64) -> 
 
 /// The obstacles that block tracks within `reach` of `at`.
 fn obstacles_near(board: &core::Board, at: Point, reach: f64) -> Vec<usize> {
+    scanned(board.obstacles.len());
     board
         .obstacles
         .iter()
@@ -651,6 +654,8 @@ fn clear_layers(
     clearance: f64,
     mask: core::LayerMask,
 ) -> core::LayerMask {
+    // The outline's edges twice (inside, the edge's distance).
+    tested(2 * board.outline.len());
     if !core::geometry::point_in_polygon(at, &board.outline)
         || core::geometry::polygon_edges(&board.outline)
             .map(|(a, b)| core::geometry::point_segment_distance(at, a, b))
@@ -660,6 +665,7 @@ fn clear_layers(
         return 0;
     }
     let mut free = mask;
+    tested(near.len());
     for &index in near {
         let obstacle = &board.obstacles[index];
         if obstacle.layers & free == 0 {
@@ -791,6 +797,7 @@ fn part_middle(board: &core::Board, label: &str, other: &str) -> Option<Point> {
         prefixes.push(format!("{second}."));
     }
     let (mut sum, mut count) = ([0.0, 0.0], 0usize);
+    scanned(board.obstacles.len());
     for obstacle in &board.obstacles {
         if obstacle.kind == core::ObstacleKind::Copper
             && prefixes.iter().any(|prefix| {
@@ -859,6 +866,7 @@ fn stubs_clear(
         return false;
     }
     let nets = [pair.positive, pair.negative];
+    tested(2 * (near.len() + board.outline.len()));
     (0..2).all(|polarity| {
         let (pad, end) = (pads[polarity], ends[polarity]);
         let (own, other) = (nets[polarity], nets[1 - polarity]);
@@ -897,6 +905,7 @@ fn end_clear(
     (at, to): (Point, Point),
     layer: core::LayerMask,
 ) -> bool {
+    tested(near.len());
     near.iter().all(|&index| {
         let obstacle = &board.obstacles[index];
         if obstacle.layers & layer == 0 {
@@ -1400,6 +1409,59 @@ struct PairPlan {
     pairs: Vec<Pair>,
     entries: Vec<KiCadDiffPair>,
     links: Vec<LinkPlan>,
+    /// The plan's work (`plan_work_of` its obstacle tests), booked by the
+    /// stage that lowered the board (`planned_work`).
+    work_seconds: f64,
+}
+
+thread_local! {
+    /// The obstacles the pairs' code looked at on this thread: those of
+    /// board-wide scans (a bounding box or a label each) and those of a
+    /// launch's near lists (a distance each), `plan_pairs`' work model
+    /// (`PLAN_SCAN_NANOS`, `PLAN_TEST_NANOS`).
+    static PLAN_TESTS: std::cell::Cell<[u64; 2]> = const { std::cell::Cell::new([0, 0]) };
+}
+
+/// Counts `count` obstacles of a board-wide scan (`PLAN_TESTS`).
+fn scanned(count: usize) {
+    PLAN_TESTS.with(|tests| {
+        let [scans, near] = tests.get();
+        tests.set([scans + count as u64, near]);
+    });
+}
+
+/// Counts `count` obstacles tested by distance (`PLAN_TESTS`).
+fn tested(count: usize) {
+    PLAN_TESTS.with(|tests| {
+        let [scans, near] = tests.get();
+        tests.set([scans, near + count as u64]);
+    });
+}
+
+/// The obstacles scanned and tested on this thread so far (`PLAN_TESTS`).
+fn tests_so_far() -> [u64; 2] {
+    PLAN_TESTS.with(std::cell::Cell::get)
+}
+
+/// An obstacle of a board-wide scan and one tested by distance (or an
+/// outline edge), in nanoseconds of the reference machine (the work model
+/// of `plan_pairs`, as `LOWERING_EXPRESSION_NANOS` is the lowering's).
+/// Measured 2026-11-04 (one plan, the time over the rate's scale): right_io
+/// 0.15 M scanned and 6.8 M tested in 0.24 s of the reference, 35 ns a
+/// test; left_io 0.52 M and 21.5 M in 0.67 s, 31 ns; jetson 7.9 M and 42.3
+/// M in 0.90 s, about 20 ns (its tests leave sooner: more obstacles on
+/// other layers). The model is off by -20, -10 and +35 % on them
+/// (docs/router.md, "The layout's own routes").
+pub(crate) const PLAN_SCAN_NANOS: f64 = 4.0;
+pub(crate) const PLAN_TEST_NANOS: f64 = 28.0;
+
+/// The modelled work of the obstacles scanned and tested since `before`
+/// (`tests_so_far`), in seconds at this process's rate.
+fn plan_work_since(before: [u64; 2]) -> f64 {
+    let [scans, near] = tests_so_far();
+    ((scans - before[0]) as f64 * PLAN_SCAN_NANOS + (near - before[1]) as f64 * PLAN_TEST_NANOS)
+        / 1.0e9
+        * core::router::reference_time_scale()
 }
 
 /// Merges terminals of `net` into their hosts (`host_of[t]`, the smallest
@@ -1472,6 +1534,8 @@ fn root(parent: &mut [usize], mut item: usize) -> usize {
 /// end there: ordinary routing), the two ends of a link one terminal. The
 /// plan goes into `board.attachment` for `finish_pairs`.
 pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfig) {
+    let tests_before = tests_so_far();
+    let started = std::time::Instant::now();
     let pairs = find_pairs(board, config);
     let mut entries: Vec<KiCadDiffPair> = pairs
         .iter()
@@ -1500,6 +1564,7 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
         pairs: Vec::new(),
         entries: Vec::new(),
         links: Vec::new(),
+        work_seconds: 0.0,
     };
     // A class per layer set: the widest envelope, clearance and via of its
     // pairs (each class builds static maps of the whole board).
@@ -1984,7 +2049,60 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
     }
     plan.pairs = pairs;
     plan.entries = entries;
+    plan.work_seconds = plan_work_since(tests_before);
+    if debug() {
+        let [scans, near] = tests_so_far();
+        eprintln!(
+            "diff pairs plan: {} obstacles scanned, {} tested, {:.4} s, {:.4} s of work modelled (rate scale {:.3})",
+            scans - tests_before[0],
+            near - tests_before[1],
+            started.elapsed().as_secs_f64(),
+            plan.work_seconds,
+            core::router::reference_time_scale()
+        );
+    }
     board.attachment = core::Attachment(Some(std::sync::Arc::new(plan)));
+}
+
+/// Whether a route with `config` plans the pairs (`plan_pairs`): the
+/// router's `diff_pairs` on, and not the topological engine.
+pub(crate) fn pairs_planned(config: &KiCadBoardRouterConfig) -> bool {
+    config.diff_pairs_on() && config.engine.as_deref() != Some("topological")
+}
+
+/// The modelled work of the pairs' plan on `board` (`plan_pairs`), zero
+/// where it has none.
+pub(crate) fn planned_work(board: &core::Board) -> f64 {
+    plan_of(board).map_or(0.0, |plan| plan.work_seconds)
+}
+
+/// The pairs' plan on `board` (`plan_pairs`), if it has one.
+fn plan_of(board: &core::Board) -> Option<std::sync::Arc<PairPlan>> {
+    board
+        .attachment
+        .0
+        .as_ref()
+        .and_then(|any| any.clone().downcast::<PairPlan>().ok())
+}
+
+/// A layout's lowering for a stage that routes the board: `lower`, and
+/// where the router plans the pairs (`pairs_planned`) their plan, so that
+/// every route of a layout (the first route, the placement race's probes,
+/// the moves, the outline's sizing) negotiates the pairs' links as the
+/// final ladder's attempts do. Returns the board and the plan's work
+/// (`planned_work`), which the stage books.
+pub(crate) fn lower_for_route(
+    pcb: &Expr,
+    config: &KiCadBoardRouterConfig,
+    connect: bool,
+) -> Result<(core::Board, f64), String> {
+    let mut board = lower(pcb, config, connect)?.board;
+    if !pairs_planned(config) {
+        return Ok((board, 0.0));
+    }
+    plan_pairs(&mut board, config);
+    let work = planned_work(&board);
+    Ok((board, work))
 }
 
 /// Why a link's net was not routed, from the router's diagnostics: a
@@ -2350,6 +2468,71 @@ pub(crate) struct PairCopper {
     patterns: Vec<Meander>,
 }
 
+impl PairCopper {
+    /// The copper of the nets `keep` names (a layout's routes kept for its
+    /// final route: `final_route_from_state`).
+    pub(crate) fn of_nets(&self, keep: &dyn Fn(&str) -> bool) -> PairCopper {
+        PairCopper {
+            items: self
+                .items
+                .iter()
+                .filter(|item| keep(&item.0))
+                .cloned()
+                .collect(),
+            patterns: self
+                .patterns
+                .iter()
+                .filter(|meander| keep(&meander.net))
+                .cloned()
+                .collect(),
+        }
+    }
+
+    /// The copper as routes (tracks and vias of no net in particular), for
+    /// what keeps off copper (`place_copper_texts`).
+    pub(crate) fn routes(&self) -> Vec<core::NetRoute> {
+        let mut routes: Vec<core::NetRoute> = self
+            .items
+            .iter()
+            .map(|(_, width, size, drill, segments, vias)| core::NetRoute {
+                segments: segments
+                    .iter()
+                    .map(|&(layer, start, end)| core::Segment {
+                        layer,
+                        start,
+                        end,
+                        width: *width,
+                    })
+                    .collect(),
+                vias: vias
+                    .iter()
+                    .map(|&at| core::Via {
+                        at,
+                        diameter: *size,
+                        drill: *drill,
+                    })
+                    .collect(),
+            })
+            .collect();
+        routes.extend(self.patterns.iter().map(|meander| {
+            core::NetRoute {
+                segments: meander
+                    .points
+                    .windows(2)
+                    .map(|pair| core::Segment {
+                        layer: meander.layer,
+                        start: pair[0],
+                        end: pair[1],
+                        width: meander.width,
+                    })
+                    .collect(),
+                vias: Vec::new(),
+            }
+        }));
+        routes
+    }
+}
+
 /// A kept link's run (`match_skew`): its pair, its copper's items in
 /// `PairCopper::items` (positive, negative), their run ranges
 /// (`LinkCopper::run`) and the positive net's side.
@@ -2455,11 +2638,7 @@ pub(crate) fn finish_pairs(
     config: &KiCadBoardRouterConfig,
     heights: &[f64],
 ) -> Option<(core::Board, PairCopper, KiCadDiffPairs)> {
-    let plan = board
-        .attachment
-        .0
-        .as_ref()
-        .and_then(|any| any.clone().downcast::<PairPlan>().ok())?;
+    let plan = plan_of(board)?;
     let mut entries = plan.entries.clone();
     let mut report = KiCadDiffPairs {
         found: plan.pairs.len(),
@@ -4458,6 +4637,18 @@ pub(crate) fn work_budget(budget: f64) -> f64 {
     (WORK_SHARE * budget).max(MINIMUM_WORK)
 }
 
+/// The fallback's work on a layout's own board with `left` seconds of the
+/// layout's work left (`work_budget` of it, as a ladder of that budget).
+pub(crate) fn pairs_fallback_work(left: f64) -> f64 {
+    work_budget(left)
+}
+
+/// Whether that is the fallback's minimum rather than its share: the
+/// layout's budget was spent before its board was written.
+pub(crate) fn pairs_fallback_short(left: f64) -> bool {
+    WORK_SHARE * left < MINIMUM_WORK
+}
+
 /// The settings a route with differential pairs uses: a pair's nets at the
 /// pair's width where a custom rule sets it (KiCad checks it on all their
 /// tracks: the stubs, a pair that falls back; the net class's diff pair
@@ -4818,6 +5009,72 @@ mod tests {
                 assert!(core::geometry::distance(end_point, pad) > 0.5);
             }
         }
+    }
+
+    /// A layout's routed stages lower with `lower_for_route`: with the
+    /// router's `diff_pairs` the board carries the pairs' plan (the link a
+    /// net of the route) and the plan's work is booked by the stage; off
+    /// (a layout's default) the board is `lower`'s alone, no work; the
+    /// topological engine plans none.
+    #[test]
+    fn a_layouts_routed_stages_lower_with_the_pairs_plan_and_book_its_work() {
+        let pcb = parse(BOARD).unwrap();
+        let (plain, config) = lowered();
+        let (board, work) = lower_for_route(&pcb, &config, true).unwrap();
+        assert_eq!(board.nets.len(), plain.nets.len());
+        assert!(plan_of(&board).is_none());
+        assert_eq!(work, 0.0);
+        let on = KiCadBoardRouterConfig {
+            diff_pairs: Some(true),
+            ..config.clone()
+        };
+        assert!(pairs_planned(&on));
+        let (board, work) = lower_for_route(&pcb, &on, true).unwrap();
+        assert_eq!(board.nets.len(), plain.nets.len() + 1);
+        let plan = plan_of(&board).unwrap();
+        assert_eq!(plan.links.len(), 1);
+        assert!(work > 0.0, "{work}");
+        assert_eq!(work, planned_work(&board));
+        // The same board plans the same work (a model of its tests, not
+        // the clock).
+        let (_, again) = lower_for_route(&pcb, &on, true).unwrap();
+        assert_eq!(again, work);
+        let topological = KiCadBoardRouterConfig {
+            engine: Some("topological".into()),
+            ..on
+        };
+        assert!(!pairs_planned(&topological));
+        assert_eq!(lower_for_route(&pcb, &topological, true).unwrap().1, 0.0);
+    }
+
+    /// A move that changes the pairs' plan (here a pair point gone: U2's
+    /// pads apart) changes the nets the router holds: `Router::update`
+    /// refuses the board with `UPDATE_NEEDS_SAME_NETS`, which a layout's
+    /// moves take for a move not to make (not an error of the layout).
+    #[test]
+    fn a_move_that_changes_the_pairs_plan_is_refused_by_the_routers_update() {
+        let (_, config) = lowered();
+        let on = KiCadBoardRouterConfig {
+            diff_pairs: Some(true),
+            ..config
+        };
+        let (board, _) = lower_for_route(&parse(BOARD).unwrap(), &on, true).unwrap();
+        let apart = BOARD.replace(
+            r#"(pad "2" smd rect (at 0 0.5) (size 1 0.3) (layers "F.Cu") (net "/D-")))
+  (footprint "test" (layer "F.Cu") (at 18 4)"#,
+            r#"(pad "2" smd rect (at 0 5.5) (size 1 0.3) (layers "F.Cu") (net "/D-")))
+  (footprint "test" (layer "F.Cu") (at 18 4)"#,
+        );
+        assert_ne!(apart, BOARD);
+        let (moved, _) = lower_for_route(&parse(&apart).unwrap(), &on, true).unwrap();
+        assert_ne!(moved.nets.len(), board.nets.len());
+        let mut router = core::router::Router::new(&board, &core_config(&on));
+        assert_eq!(
+            router.update(&moved).unwrap_err(),
+            core::router::UPDATE_NEEDS_SAME_NETS
+        );
+        // The same plan updates.
+        assert!(router.update(&board).is_ok());
     }
 
     /// A rule disallowing tracks on In1.Cu for the pair's nets (ducktop2's

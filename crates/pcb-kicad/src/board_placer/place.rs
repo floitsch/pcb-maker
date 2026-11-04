@@ -73,7 +73,7 @@ pub(crate) fn prepare_board(
     }
     // The pairs' widths and gaps, for the pair rows' pitch (the layout's
     // and the place check's configuration has them).
-    if config.pair_rows && config.pair_geometry.is_empty() {
+    if config.pair_rows_on() && config.pair_geometry.is_empty() {
         config.pair_geometry = project_rules::resolve_project_rules(
             &source_directory.join(format!("{board_id}.kicad_pro")),
             &source_board,

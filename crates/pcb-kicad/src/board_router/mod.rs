@@ -33,7 +33,8 @@ pub(crate) use self::bga_fanout::{
     ArrayRoom, array_rooms, bga_fanout_on, fanout_used, fanouts_of, far_side_balls, rings_of,
 };
 pub(crate) use self::diff_pairs::{
-    finish_pairs, measure_uncoupled, plan_pairs, with_pairs, write_pair_copper,
+    finish_pairs, lower_for_route, measure_uncoupled, pairs_fallback_short, pairs_fallback_work,
+    pairs_planned, plan_pairs, with_pairs, write_pair_copper,
 };
 pub(crate) use self::kept::{count_tracks, keep_existing_copper, strip_tracks};
 pub(crate) use self::lengths::{

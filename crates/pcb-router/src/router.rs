@@ -160,6 +160,11 @@ pub fn reference_time_scale() -> f64 {
 /// as its work rate says (`guard`).
 pub const GUARD: f64 = 4.0;
 
+/// `Router::update`'s error for a board of other nets or rule classes (a
+/// layout's move that changes the differential pairs' plan: the links are
+/// nets of the route).
+pub const UPDATE_NEEDS_SAME_NETS: &str = "incremental update needs the same nets and rules";
+
 static WALL_STRETCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// How many times longer than its work rate says this machine takes a

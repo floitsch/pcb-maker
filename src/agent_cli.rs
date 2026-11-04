@@ -1001,16 +1001,15 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         .map(pcb_kicad::KiCadMoveDescentReport::fact);
     // Nothing ran after the first route: no move, no final ladder, nothing
     // stopped or cut it (trial 5's SmartSpin2k: the verdict said neither).
-    if result.first_unconnected_terminals > 0
-        && result.moves.is_empty()
+    facts.first_route_only = result.moves.is_empty()
         && result
             .move_descent
             .as_ref()
             .is_none_or(|descent| descent.trials == 0)
         && result.final_ladder_budget_seconds.is_none()
         && !result.stopped_after_first_route
-        && result.cut.is_empty()
-    {
+        && result.cut.is_empty();
+    if result.first_unconnected_terminals > 0 && facts.first_route_only {
         facts.first_route_spent = Some([result.first_route_work_seconds, result.total_seconds]);
     }
     facts.silkscreen = Some(result.labels.silkscreen.clone());

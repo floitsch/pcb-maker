@@ -2843,7 +2843,7 @@ fn a_pair_row_faces_its_pairs_two_ends() {
     let lowered = lower_placement(
         &parse(board).unwrap(),
         &KiCadBoardPlacerConfig {
-            pair_rows: true,
+            pair_rows: Some(true),
             ..KiCadBoardPlacerConfig::default()
         },
     )
@@ -2869,7 +2869,7 @@ fn a_pair_row_faces_its_pairs_two_ends() {
     fs::create_dir_all(&source).unwrap();
     fs::write(source.join("board.kicad_pcb"), board).unwrap();
     let config = KiCadBoardPlacerConfig {
-        pair_rows: true,
+        pair_rows: Some(true),
         placement_seeds: 1,
         ..KiCadBoardPlacerConfig::default()
     };
