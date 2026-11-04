@@ -625,12 +625,22 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     makes those rows itself: two free parts of one footprint with two pads
     each, whose pads of one number lie on the two nets of a pair (the
     pair's AC-coupling capacitors or series resistors) and that no
-    constraint names, become a row of two across their pads at their
-    bodies' width, which may turn by any quarter turn; `constraints[]`
-    lists each as `pair_row` and stderr says `placer: pair rows: ...`.
-    Measured on right_io and left_io (docs/placer.md, "Pair rows
-    (2026-11-04)"): it puts the capacitors side by side, the links then
-    fall back for other reasons as often; one run each, so it stays off. Trial 5's ducktop2 right_io (21 pairs,
+    constraint names, become a row of two across their pads at the
+    pair's track width plus gap where the footprint allows it (else the
+    courtyards' width), turned so that each side faces its own nets' far
+    pins (the pair's source and destination; any quarter turn where they
+    lie to one side); `constraints[]` lists each as `pair_row` with a
+    `detail` (the pitch and why, and whether it faces the pair's ends)
+    and stderr says `placer: pair rows: ...`. Measured on right_io,
+    left_io and jetson, two seeds each (docs/placer.md, "The pair's pitch
+    and the pair's ends"): where the pairs route coupled it couples more
+    (1 -> 4, 0 -> 6, 3 -> 6 pairs), unconnected within the seeds' spread,
+    but `diff_pair_gap_out_of_range` rises, so it stays off. **A layout
+    couples pairs only in its final ladder**: its own first route does
+    not plan them, so where the final ladder does not run or its attempt
+    is worse, the layout keeps the first route and `verdict.diff_pairs`
+    is null (jetson-nano-baseboard at the default budget, both seeds);
+    route mode on the layout's `placed` board plans them. Trial 5's ducktop2 right_io (21 pairs,
     `.kicad_dru` pair rules): the default layout coupled none (54
     `diff_pair_gap_out_of_range`, 12 unconnected); route mode on its
     placement coupled 1 and part of another (19 fell back, 13 of them for

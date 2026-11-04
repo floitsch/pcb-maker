@@ -7256,6 +7256,112 @@ comparable. The switch stays off; what would decide it: the pitch (the
 pair's own `w + g` across the pads' stubs, not the bodies' width), and
 seed pairs on the expansion tier's boards with pairs.
 
+### The pair's pitch and the pair's ends (2026-11-04, branch pair-row-pitch)
+
+What the first measurement left: the rows' new links fell back for "a
+pad's stub does not reach the run" and for run copper on the partner
+capacitor's pads. Two of the causes were the rows' turn, one the
+router's launch:
+
+- **The launch went through the row.** A pair point of two series parts
+  launched along its pads' normal *toward the link's far end* (the
+  parts' middle tells no side for two two-pad parts), so right_io's
+  C150/C151, whose source (FPC104, due west) lay beside the row, launched
+  north across both bodies past the HDMI pair's pads (debug launch
+  outward (-0.71, -0.71), crossed, stubs not straight). Now the middle of
+  both parts' pads says which side is out (`part_middle` in
+  diff_pairs.rs; router.md, "Launches").
+- **The turn was the anneal's.** Wirelength hardly tells a row's turns
+  apart (its pads are a millimetre apart, its far ends centimetres), and
+  `align_orientations` turned all rows of one footprint alike. Now
+  `pcb_placer::facing`: each row's two sides face their own nets' far
+  pins (the centroids of the other parts' pins on the source side's two
+  nets and on the destination side's): the wanted direction is
+  `unit(S - c) - unit(D - c)`; the turn whose source side points along
+  it best wins, those within 0.2 of the best (the ends diagonal) count
+  as facing, and where the ends lie within about 60 degrees of one
+  another (the sum shorter than 1) the row keeps the placement's turn.
+  The rows turn after each anneal, before the legaliser (which then keeps
+  them to the facing turns: their angle options cut in the level's own
+  problem), and again after the refinement about the body's centre or
+  nudged up to 0.5 mm where that is legal; `align_orientations` leaves
+  them alone. On right_io's place check all six rows face their ends
+  (before: two of six "no room" with the turn after the refinement
+  alone, the designer's HDMI cluster tight on the 0.635 mm grid).
+- **The pitch** is the pair's own: its track width plus gap (the custom
+  rules' on the first layer they allow the pair, else the class's, as
+  the router takes them: `pair_geometry`), at least the courtyards'
+  width plus 0.01 mm (the tight bodies where the project lets courtyards
+  overlap) and the pads' extent across plus the pair's clearance. On
+  these boards every pair's `w + g` (0.25 to 0.41 mm) is far below two
+  0402s' courtyards (0.92, 0.94 mm), so the pitch stays 0.93 and 0.95
+  mm, and `constraints[]`'s `pair_row` entry says so in its new
+  `detail`: "pitch 0.93 mm, the courtyards' 0.92 mm across: the pair's
+  track width and gap (0.152 + 0.254 = 0.41 mm) cannot be met by the
+  footprint, the stubs narrow to the run; it faces the pair's two ends".
+  A pair wider than its parts (0201s on a 0.3 + 0.5 mm pair) gets its
+  `w + g` and straight stubs.
+
+Measured with `"diff_pairs": true`, run.py (pinned reference rates,
+`--jobs 1 --threads 4`, two layouts at a time at load 15 to 30),
+binary pairs2-d, seeds 1 and 101; right_io with trial 5's template
+constraints, left_io with none (build/diff1/dev2 sources), jetson the
+v7 task (parts stacked). Pairs: found / coupled / partly / fallen back;
+"side by side" and "stub" the pairs' fall-back reasons "fewer than two
+parts ... side by side" and "a pad's stub does not reach the run"
+(links); CPU seconds of the layout:
+
+| board, seed | pair_rows | pairs | side by side | stub | KiCad unconnected | `diff_pair_gap_out_of_range` | CPU s |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| right_io, 1 | off | 21 / 1 / 2 / 18 | 14 | 4 | 23 | 59 | 2650 |
+| | on | 21 / 4 / 1 / 16 | 5 | 7 | 18 | 109 | 2679 |
+| right_io, 101 | off | 21 / 0 / 2 / 19 | 14 | 6 | 13 | 91 | 2458 |
+| | on | 21 / 6 / 2 / 13 | 5 | 6 | 27 | 63 | 2273 |
+| left_io, 1 | off | 39 / 5 / 6 / 28 | 13 | 15 | 35 | 148 | 1594 |
+| | on | none coupled (the first route kept: no pairs) | - | - | 33 | 199 | 1988 |
+| left_io, 101 | off | 39 / 3 / 3 / 33 | 13 | 15 | 25 | 134 | 1962 |
+| | on | 39 / 6 / 4 / 29 | 3 | 26 | 26 | 153 | 1542 |
+| jetson, 1 | off | none (the first route kept) | - | - | 0 | 0 | 1894 |
+| | on | none (the first route kept) | - | - | 3 | 0 | 2455 |
+| jetson, 101 | off | none (the first route kept) | - | - | 9 | 0 | 1700 |
+| | on | none (the first route kept) | - | - | 4 | 0 | 1688 |
+
+Where the pairs routed, the rows pay now: right_io's TCP2 side couples
+3 of 4 pairs on seed 1 (none before; trial 5's rows by hand, 7 coupled
+at 0.38 of the rate), coupled pairs rise 1 -> 4, 0 -> 6, 3 -> 6, the
+"side by side" failures fall 14 -> 5 and 13 -> 3, and every row faces
+its ends (jetson: 22 and 21 of 24, the others' ends to one side). But a
+layout couples pairs only where its final ladder runs and its attempt
+is kept: the layout's own first route, the placement race and the moves
+lower the board without the pairs' plan (board_layout.rs `lower`, no
+`plan_pairs`), and when the ladder's pairs attempt is worse the first
+route stands, uncoupled (left_io seed 1 on: 80 open in the attempt; both
+jetson seeds: no ladder on seed 1, 248 open on seed 101). Unconnected
+moves -5, +14, -2, +1, +3, -5 on one run each, about the seeds' own
+spread (off: 23 and 13, 35 and 25, 0 and 9); `diff_pair_gap_out_of_range`
+rises on three of four ducktop runs (+50, -28, +51, +19): the fallen-back
+pairs' nets now leave their pads side by side and run parallel at the
+clearance, out of the gap's range. What still fails is the router's:
+"a pad's stub does not reach the run" (26 links on left_io seed 101)
+and the hard repair finding no room.
+
+The switch stays off: coupled pairs do not rise on every board (jetson
+couples none either way; left_io seed 1 lost its five), and the gap
+findings rise. Whether `pair_rows` should follow `diff_pairs`: yes as
+the shape of its default (a row is for the router's coupling and costs
+placement freedom without it; with `diff_pairs` off nothing reads the
+pairs), but only once a layout's own routes plan the pairs, so that the
+rows' coupling does not hang on the final ladder's attempt being kept.
+Placement on boards without pair rows is unchanged: video and MegaDrive
+place checks byte for byte against x1898, with `pair_rows` off and on.
+Tests: `a_pair_row_turns_its_sides_to_the_pairs_two_ends`,
+`a_pair_row_keeps_its_turn_where_the_ends_tell_no_direction`,
+`a_pair_row_turns_off_its_centre_where_a_neighbour_is_close`,
+`a_pair_row_without_room_to_turn_is_held` (pcb-placer facing.rs),
+`a_pair_rows_pitch_is_the_pairs_width_and_gap_where_the_footprint_allows`,
+`a_pair_row_faces_its_pairs_two_ends`,
+`a_series_pair_point_launches_away_from_its_parts`.
+
 ## Constraints on panels of copies (2026-11-04)
 
 Trial 5's SmartSpin2k left open what an agent's constraints do on a

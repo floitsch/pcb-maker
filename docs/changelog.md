@@ -11,6 +11,33 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-04 (pair rows at the pair's pitch, facing the pair's ends; a series pair point launches out of its parts; still off)
+
+Branch pair-row-pitch (`build/bin/pcb-maker-pairs2-d` for the layouts).
+The rows' pitch is the pair's track width plus gap (`pair_geometry`: the
+rules' or the class's, as the router takes them), at least the
+courtyards' width and the pads' clearance; on every pair measured the
+footprint bounds it (0.93, 0.95 mm against `w + g` of 0.25 to 0.41 mm)
+and `constraints[]`'s `pair_row` says so in a new `detail`. The rows turn
+to face their sides' far pins (`pcb_placer::facing`: after each anneal,
+held to the facing turns through the legaliser, and after the refinement
+with nudges up to 0.5 mm; `align_orientations` leaves them alone); all
+six of right_io's, 22 and 21 of jetson's 24. The router: a pair point of
+two series parts launches away from both parts' pads, not toward the
+link's far end (right_io's C150/C151 launched across their bodies); route
+mode on six rule boards' designer placements unchanged on five, left_io
+140 -> 138 open. Layouts with `"diff_pairs": true`, seeds 1 and 101
+(table in placer.md, "The pair's pitch and the pair's ends"): coupled
+pairs 1 -> 4 and 0 -> 6 (right_io), 3 -> 6 (left_io seed 101), the "side
+by side" failures 14 -> 5 and 13 -> 3; but jetson couples no pair either
+way (a layout's first route does not plan pairs, and its final ladder did
+not run or was not kept), left_io seed 1's layout kept its uncoupled
+first route, `diff_pair_gap_out_of_range` rose on three of four ducktop
+runs, unconnected -5, +14, -2, +1, +3, -5 (seed spread). `pair_rows` stays
+off. Placement without pair rows byte for byte (video, MegaDrive place
+checks against x1898, the switch off and on). About 28,700 CPU seconds of
+measurement.
+
 ## Committed on 2026-11-04 (room around grid arrays, on for the dog-boned)
 
 Branch bga-placement-room; binaries `build/bin/pcb-maker-bga2-a` to

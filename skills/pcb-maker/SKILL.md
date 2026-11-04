@@ -122,8 +122,9 @@ parts; the verdict names the part when such pads stay open), `diff_pairs` (route
 the pairs where the project's `.kicad_dru` asks for them; a layout only with `"diff_pairs": true`;
 a pair couples between two parts whose pads of the pair lie side by side, so keep a pair's
 AC-coupling or series parts in a `row` of two (or the placer's `"pair_rows": true`, off by
-default, which rows them itself); `verdict.diff_pairs` says which coupled and why
-the others fell back).
+default, which rows them itself at the pair's pitch, facing the pair's ends); `verdict.diff_pairs`
+says which coupled and why the others fell back; a layout couples them only in its final
+ladder: where `verdict.diff_pairs` is null, route the layout's `placed` board in route mode).
 
 ## Pre-routed nets
 
