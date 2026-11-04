@@ -5689,8 +5689,8 @@ are no grid to the plan, and MIDAS's U106 and the aQFN-73s at 0.5 mm
 have no gap any via size fits (0.354 mm from a gap's centre to a ball's
 centre, less the ball, against a via's radius and clearance), so the
 plan places nothing there and the vias in pads stay the way out; the
-dense boards but Glasgow have no grid array. *The expansion tier* (46 boards, route mode, 30 s, 4 x 1
-here; the same rows at any thread count): with the switch on every
+dense boards but Glasgow have no grid array. *The expansion tier* (46
+boards, route mode, 30 s, 4 x 1 here; the same rows at any thread count): with the switch on every
 routed board equals the nightly's of 2026-11-04 byte for byte (558
 unconnected, 24 strict passes, 4256 vias, work 1140 s) but ZSWatch with
 bga1-d (the only array planned: M601's two inner balls, 2 to 4 open),
