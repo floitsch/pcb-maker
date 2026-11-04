@@ -7460,6 +7460,101 @@ Tests: `a_pair_row_turns_its_sides_to_the_pairs_two_ends`,
 `a_pair_row_faces_its_pairs_two_ends`,
 `a_series_pair_point_launches_away_from_its_parts`.
 
+### Following diff_pairs (2026-11-04, branch pairs-in-layout; not taken)
+
+The condition the previous section set: a layout's own routes now plan
+the pairs (router.md, "The layout's own routes"): the first route, the
+race's probes, the moves and the final ladder, and the board the layout
+writes finishes them. Then `pair_rows` was to follow `diff_pairs` (on
+where the router plans pairs, an explicit setting overriding). Measured
+as pairs2 was (router `{"diff_pairs": true}`, run.py at the pinned
+reference rates, `--jobs 1 --threads 4`, two layouts at a time at load
+17 to 34; binary pairs3-b; right_io seed 1 also with pairs3-a, which
+booked the plan's work in route mode's ladder too: the same rows; outputs
+in build/pairs3/): "before" is pairs2-d (only the final ladder planned the
+pairs), "off" and "on" are `pair_rows` false and following (on). Pairs:
+found / coupled / partly / fallen back; the fall-back reasons per pair
+("side": fewer than two parts side by side; "stub": a pad's stub does
+not reach the run; "no room", "no path": the run not routed by the hard
+repair, in the negotiation); KiCad unconnected; the
+`diff_pair_gap_out_of_range` findings; CPU seconds; the router's open
+terminals after the first route:
+
+| board, seed | run | pairs | reasons (pairs) | unconnected | gap | CPU s | first open |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: |
+| right_io, 1 | before off | 21 / 1 / 2 / 18 | side 14, no room 4, stub 4 | 23 | 59 | 2650 | 56 |
+| | before on | 21 / 4 / 1 / 16 | stub 7, side 5, no room 4 | 18 | 109 | 2679 | 28 |
+| | off | 21 / 1 / 2 / 18 | side 14, no room 4, stub 4 | 23 | 59 | 2026 | 50 |
+| | on | 21 / 5 / 2 / 14 | no room 6, side 5, stub 4 | 17 | 72 | 2190 | 34 |
+| right_io, 101 | before off | 21 / 0 / 2 / 19 | side 14, stub 4, copper 3 | 13 | 91 | 2458 | 31 |
+| | before on | 21 / 6 / 2 / 13 | side 5, no room 5, stub 5 | 27 | 63 | 2272 | 29 |
+| | off | 21 / 1 / 2 / 18 | side 14, stub 5 | 14 | 45 | 1962 | 48 |
+| | on | 21 / 6 / 2 / 13 | side 5, no room 5, stub 5 | 27 | 63 | 1996 | 42 |
+| left_io, 1 | before off | 39 / 5 / 6 / 28 | stub 14, side 13, no room 8 | 35 | 148 | 1594 | 54 |
+| | before on | none (the uncoupled first route kept) | - | 33 | 199 | 1988 | 35 |
+| | off | 39 / 6 / 3 / 30 | stub 13, side 12, no room 6 | 37 | 81 | 2117 | 88 |
+| | on | 39 / 7 / 7 / 25 | stub 18, no path 5, no room 5 | 37 | 89 | 2090 | 105 |
+| left_io, 101 | before off | 39 / 3 / 3 / 33 | stub 14, side 13, copper 5 | 25 | 134 | 1962 | 51 |
+| | before on | 39 / 6 / 4 / 29 | stub 23, no room 4, no path 3 | 26 | 153 | 1542 | 57 |
+| | off | 39 / 6 / 4 / 29 | side 13, stub 13, no room 4 | 30 | 95 | 2712 | 95 |
+| | on | 39 / 6 / 4 / 29 | stub 23, no room 4, no path 3 | 44 | 113 | 1941 | 102 |
+| jetson, 1 | before off | none (the uncoupled first route kept) | - | 0 | 0 | 1894 | 2 |
+| | before on | none (the uncoupled first route kept) | - | 3 | 0 | 2455 | 12 |
+| | off | 75 / 8 / 1 / 66 | side 34, no room 19, stub 5 | 23 | 0 | 1440 | 60 |
+| | on | 75 / 11 / 1 / 63 | no room 32, no path 24, copper 5 | 56 | 0 | 1392 | 85 |
+| jetson, 101 | before off | none (the uncoupled first route kept) | - | 9 | 0 | 1700 | 12 |
+| | before on | none (the uncoupled first route kept) | - | 4 | 0 | 1688 | 17 |
+| | off | 75 / 5 / 3 / 67 | side 35, no room 23, stub 5 | 44 | 0 | 1551 | 110 |
+| | on | 75 / 8 / 2 / 65 | no room 24, no path 23, copper 11 | 64 | 0 | 1531 | 102 |
+
+What the layout's own pair planning did: every run now reports its
+pairs and couples some (jetson 5 to 11 pairs where it coupled none,
+left_io seed 1 on 7 where it kept none), and where the final ladder's
+board was kept before it is kept now (right_io, left_io: the pairs and
+the unconnected as before, within a few). But on jetson the plan costs
+connections: the same placement (seed 1, placement 2 kept by the race
+both times) leaves 60 open after its first route with the pairs' 43
+links as nets of the route, 2 without; the race's ripped count of the
+kept placement goes 76 -> 655; the layout then goes to the
+narrow-signal attempt and keeps 23 unconnected where it had 0 (seed 101:
+44 where it had 9). On left_io the first route leaves 88 to 105 open
+where it left 35 to 57, and the narrow-signal attempt (the pairs planned
+in it before too) comes back to about the same board. 43 to 82 link nets
+at the envelope's width, most of them not routed in the end ("no room",
+"no path": 23 to 56 pairs), are what the negotiation converges around:
+route mode's known cost of the pairs (router.md, "Measured": MSign's
+mainboard 19 -> 75), now in every stage of a layout with `diff_pairs`.
+
+The switch: with `pair_rows` following, coupled pairs rise on five of
+six runs (right_io 1 -> 5, 1 -> 6; left_io 6 -> 7; jetson 8 -> 11, 5 ->
+8) but not on left_io seed 101 (6 -> 6), and unconnected rise beyond
+the seeds' spread on four (right_io seed 101 +13, left_io seed 101 +14,
+jetson +33 and +20; right_io seed 1 -6, left_io seed 1 0); the gap
+findings rise on all four ducktop runs (+13, +18, +8, +18). By the rule
+(coupled up on every pair board, unconnected not up beyond seed noise)
+it fails: **`pair_rows` stays off** unless set. The setting is now an
+option (`"pair_rows"` unset, true or false; `pair_rows_for` and
+`PAIR_ROWS_FOLLOW_DIFF_PAIRS`, false), so following is a one-line change
+once the router's pairs stop costing connections. What would decide it:
+links that cannot route given up early in the negotiation (the "no
+room" and "no path" runs cost the other nets), the "a pad's stub does
+not reach the run" failures (18 to 23 pairs on left_io with rows), and a
+fallback for a layout whose planned first route leaves far more open
+than an unplanned one would (needs a second route; not done). Boards
+without pairs place and route as before: video and MegaDrive place
+checks byte for byte against x1902 with the router's defaults and with
+`diff_pairs` on; route mode on EMG_DAQ_ADS1292 byte for byte; the
+expansion tier's 25 boards with pairs in route mode at 30 s with
+`diff_pairs` on byte for byte against x1902 (unconnected 669; off 524).
+Tests: `a_layouts_routed_stages_lower_with_the_pairs_plan_and_book_its_work`,
+`a_move_that_changes_the_pairs_plan_is_refused_by_the_routers_update`
+(diff_pairs.rs), `a_layouts_own_first_route_couples_the_pairs`,
+`the_placement_races_probes_plan_the_pairs`,
+`pair_rows_follow_the_routers_diff_pairs_only_where_the_switch_says`
+(board_layout.rs),
+`a_first_route_alone_says_its_uncoupled_pairs_in_one_line_with_the_lever`
+(verdict.rs).
+
 ## Constraints on panels of copies (2026-11-04)
 
 Trial 5's SmartSpin2k left open what an agent's constraints do on a

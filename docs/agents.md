@@ -676,12 +676,24 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     left_io and jetson, two seeds each (docs/placer.md, "The pair's pitch
     and the pair's ends"): where the pairs route coupled it couples more
     (1 -> 4, 0 -> 6, 3 -> 6 pairs), unconnected within the seeds' spread,
-    but `diff_pair_gap_out_of_range` rises, so it stays off. **A layout
-    couples pairs only in its final ladder**: its own first route does
-    not plan them, so where the final ladder does not run or its attempt
-    is worse, the layout keeps the first route and `verdict.diff_pairs`
-    is null (jetson-nano-baseboard at the default budget, both seeds);
-    route mode on the layout's `placed` board plans them. Trial 5's ducktop2 right_io (21 pairs,
+    but `diff_pair_gap_out_of_range` rises. **Every route of a layout
+    plans the pairs** (since 2026-11-04: the first route, the placement
+    race's probes, the moves, the final ladder), so the board kept is
+    coupled where coupling is possible whichever stage made it, and
+    `verdict.diff_pairs` is always filled when `diff_pairs` is on: no
+    need to route the layout's `placed` board in route mode for the
+    pairs (before, where the final ladder did not run or was not kept,
+    the first route stood uncoupled with `verdict.diff_pairs` null). A
+    run where only the first route ran and left pairs uncoupled says so
+    in one next action (`diff_pairs: only the first route ran ...`) with
+    the lever. The price: the links are nets of every route, and on a
+    dense board with many pairs they cost connections (jetson-nano-
+    baseboard: 23 and 44 unconnected with `diff_pairs`, 0 and 9 without,
+    5 to 8 of 75 pairs coupled; docs/placer.md, "Following diff_pairs"):
+    compare with a layout without it. `pair_rows` does not follow
+    `diff_pairs` (measured: no more pairs coupled on left_io's seed 101,
+    unconnected up on four of six runs); set it where the rows help.
+    Trial 5's ducktop2 right_io (21 pairs,
     `.kicad_dru` pair rules): the default layout coupled none (54
     `diff_pair_gap_out_of_range`, 12 unconnected); route mode on its
     placement coupled 1 and part of another (19 fell back, 13 of them for

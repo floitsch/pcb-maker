@@ -11,6 +11,41 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-05 (a layout's own routes plan the differential pairs; pair_rows stays off)
+
+Branch pairs-in-layout (`build/bin/pcb-maker-pairs3-a`, `-b`). With the
+router's `diff_pairs` on, a layout coupled pairs only in its final
+ladder: the first route, the race and the moves lowered without
+`plan_pairs` and the write path had no `finish_pairs`, so where the
+ladder did not run or was not kept the uncoupled first route stood,
+`verdict.diff_pairs` null, the `diff_pair_*` action saying "diff_pairs
+off" (pairs2: jetson both seeds, left_io seed 1). Now every routed stage
+lowers with the plan (`lower_for_route`: the outline's sizing, the first
+route, the race's probes and the pre-ranking's first, the moves, the
+move descent), the plan's work booked by the stage (a model of the
+obstacles it tests, `PLAN_SCAN_NANOS` 4 and `PLAN_TEST_NANOS` 28 ns; not
+in route mode's ladder, where booking it moved brickpico at 30 s, 0 ->
+19 unconnected); a move that changes the plan is not tried
+(`UPDATE_NEEDS_SAME_NETS`); the layout's own board is finished
+(`finish_pairs`, its fallback 5 % of the work left, `skipped` saying so
+where that is only its minimum), its pair copper written, kept for
+`final_route_from_state`, and avoided by the copper texts; the length
+meanders leave coupled nets alone. The verdict: `diff_pairs` filled
+from the kept board whenever the setting is on, and a run where only the
+first route ran and left pairs uncoupled says so in one line with the
+lever (`first_route_pairs_action`). `pair_rows` became an option
+(unset, true, false) that could follow `diff_pairs`
+(`PAIR_ROWS_FOLLOW_DIFF_PAIRS`); measured on right_io, left_io and
+jetson at seeds 1 and 101 (docs/placer.md, "Following diff_pairs"),
+following coupled more on five of six runs but not on left_io seed 101
+and raised unconnected beyond the seeds' spread on four (jetson +33,
++20), so it stays off. The planning itself costs jetson connections
+(23 and 44 unconnected where 0 and 9, 5 to 8 pairs coupled where none):
+route mode's price of the pairs, now in every stage. Boards without
+pairs: video and MegaDrive place checks and EMG_DAQ's route byte for
+byte against x1902; the expansion tier's 25 boards with pairs in route
+mode at 30 s with `diff_pairs` on byte for byte against x1902.
+
 ## Committed on 2026-11-04 (memory, the second round: the layout's peaks -49 %)
 
 Branch memory-round-2; binaries `build/bin/pcb-maker-mem2-*` against

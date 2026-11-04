@@ -3409,6 +3409,61 @@ fallback routes only the fallen-back pairs' nets, with everything else
 kept); it costs as much as the route itself, so it is not done. A refused
 or failed link falls back as above instead.
 
+**The layout's own routes (2026-11-04).** With `diff_pairs` on in a
+layout's router config every route of the layout plans the pairs, not
+only the final ladder: the outline's sizing, the first route, the
+placement race's probes (and the candidate the pre-ranking puts first),
+the moves' trials and the move descent's lower the board with the plan
+(`lower_for_route` in diff_pairs.rs: `lower`, then `plan_pairs`, the
+pairs' nets at the pairs' width, `with_pairs`, from the layout's start),
+and the board the layout writes from its own router's state finishes
+them (`finish_pairs` before the labels, the copper texts keeping off the
+pairs' copper, the length rules' meanders leaving the coupled nets
+alone, the pair copper written into the result board, the kept nets'
+pair copper into the routes kept for `final_route_from_state`). Its
+fallback gets its share of the layout's work left (`work_budget` of it,
+as a ladder of that budget: 5 %, at least 1 s), booked to the layout's
+work; where the budget is spent the fallback runs at its minimum and
+the run's `skipped` says so. Until then a layout lowered its own boards
+without the plan and wrote them without `finish_pairs`: where its final
+ladder did not run, or the ladder's pairs attempt was judged worse, the
+uncoupled first route stood with `verdict.diff_pairs` null and the
+`diff_pair_*` action saying "diff_pairs off" (pairs2: jetson on both
+seeds, ducktop2's left_io on seed 1). Now the board kept is a coupled
+attempt whichever stage made it, board-router.json's and the verdict's
+`diff_pairs` are filled from it whenever the setting is on (with `on`,
+`default` and `reason`; stderr `layout: diff pairs on the layout's own
+routes: ...`), and a run where only the first route ran and left pairs
+uncoupled says so in one line with the lever (`diff_pairs: only the
+first route ran ...`: a larger `total_seconds` where the first route
+took the budget, the pairs' reasons where it routed every connection).
+A move whose trial board plans the pairs otherwise (a pair point or a
+link gained or lost: the links are nets of the route, and
+`Router::update` needs the same nets, `UPDATE_NEEDS_SAME_NETS`) is not
+tried, as a move to another sub-board is not. **The plan's work** is
+booked by the layout's stage that lowers (`lower_for_route` returns it):
+a model of the obstacles it looks at, 4 ns per obstacle of a board-wide
+scan and 28 ns per obstacle or outline edge tested by distance at the
+reference's rate (`PLAN_SCAN_NANOS`, `PLAN_TEST_NANOS`; one plan
+measured at 0.24 s of the reference on right_io, 0.67 s on left_io, 0.90
+s on jetson, the model -20, -10 and +35 % off). Route mode's ladder (and
+so a layout's final ladder) still does not book it: booked there with
+the lowering, it moved the expansion tier's route mode at 30 s with the
+pairs on (brickpico: the four rungs' plans took 2 s from the
+continuation's negotiation, 0 -> 19 unconnected and its pass lost;
+tuxkeychain's vias 72 -> 79), so it stays as it was, an open item.
+Without `diff_pairs` nothing changes: no plan, no work, the same boards.
+**Measured** (docs/placer.md, "Following diff_pairs": ducktop2's right_io
+and left_io and jetson-nano-baseboard, seeds 1 and 101): every run now
+reports and couples pairs (jetson 5 to 11 where it coupled none), and
+where the final ladder's board was kept before it is kept now; but the
+links cost connections where the first route used to nearly complete:
+jetson's first route leaves 60 open on the same placement where it left
+2 (43 link nets, most not routed in the end), and the layout keeps 23
+and 44 unconnected where it kept 0 and 9. With `diff_pairs` a layout
+pays route mode's price of the pairs in every stage; the open item is
+the router's (links that cannot route given up early).
+
 **The verdict.** `diff_pairs` in `board-router.json` and the verdict:
 `on`, `default` (`rules`: the project's rules ask; `off`: nothing asks;
 `explicit`: the setting or `PCB_ROUTER_DIFF_PAIRS`), `reason` (the rule
