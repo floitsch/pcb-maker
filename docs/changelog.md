@@ -11,6 +11,43 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-04 (fresh-agent trial 5: pairs in a layout, rows that short, the reference without copper)
+
+Branch fresh-agent-trial-5 (the worktree's `target/release/pcb-maker`).
+[Trial 5](reviews/2026-11-04-fresh-agent-trial-5.md): a new agent laid
+out ducktop2 right_io (21 differential pairs, `.kicad_dru` pair and
+layer rules), jetson-nano-baseboard and the SmartSpin2k panel from the
+documentation alone. Wording, reports and input checks; placement and
+routing unchanged (the walkthrough and the fixtures pass).
+
+- **Pairs**: a `diff_pair_*` finding's next action says what became of
+  the pairs: off (a layout's default) the router setting that couples
+  them (`"diff_pairs": true`, which a layout takes too), on the counts
+  and per pair why the links fell back, with a `row` of a pair's
+  AC-coupling parts where their pads were not side by side. Right_io:
+  the default layout coupled 0 of 21 (54 pair-gap findings, "see
+  drc.json"); route mode on its placement 1; `diff_pairs: true` with
+  rows of the six capacitor pairs 7 and part of an eighth, 9 unconnected
+  against 12. agents.md, constraints.md and the SKILL say so.
+- **Rows**: a `row` whose pitch puts two members' pads on each other is
+  refused before the run (exit 2); right_io's 0402 pair at 1 mm came
+  back shorted.
+- **Custom rules**: a clearance minimum at or below every net's
+  clearance (a hole or edge clearance at or below the board setup's) is
+  `no_effect` whatever its condition: right_io's unmodelled 17 to 11.
+- **inspect-routing-run**: `reference.reference_tracks`; a reference
+  without tracks (a stripped task input) is said to show nothing.
+- **The input's observations**: fixed parts whose courtyards overlap and
+  whose pads are apart cost no connection (jetson's 36 parts under its
+  SO-DIMM socket were "pads cannot both be connected"); a repeated name
+  (a panel's copies) is named once with its count.
+- **Smaller**: a clearance between the board's own copper graphic and a
+  zone names no part to move; the constraints-missed action names its
+  report; a diode's `D_SMA` package is no connector in the starter; a
+  capacitor named after its protector is no ESD protector, and the
+  layout's stdout says "no pin of its nets to measure from", not
+  `null mm`.
+
 ## Committed on 2026-11-04 (the verdict's leftovers, round 2: folded observations, whose placement, fab and drc order)
 
 Branch verdict-leftovers-2 (`build/bin/pcb-maker-ux8-b`; off side x1893).
