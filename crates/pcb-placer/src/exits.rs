@@ -247,7 +247,10 @@ pub fn repair(
                                 continue;
                             }
                             let distance = (dx.abs() + dy.abs()) as f64 * step;
-                            candidates.push((after - before, distance, mover, pose));
+                            // To a micrometre of wire: equal costs go to the
+                            // nearest pose, not to rounding.
+                            let cost = ((after - before) * 1.0e3).round() / 1.0e3;
+                            candidates.push((cost, distance, mover, pose));
                         }
                     }
                 }
@@ -258,6 +261,26 @@ pub fn repair(
                 .then(a.1.total_cmp(&b.1))
                 .then(a.2.cmp(&b.2))
         });
+        // The cheapest pose of each mover and orientation first (a turn
+        // is tried even where many cheaper shifts are: a pad facing a
+        // neighbour stays closed under small shifts), then the rest.
+        let mut firsts = Vec::new();
+        let mut rest = Vec::new();
+        let mut seen_turns: Vec<(usize, i64)> = Vec::new();
+        for candidate in candidates {
+            let key = (
+                candidate.2,
+                candidate.3.angle.rem_euclid(360.0).round() as i64,
+            );
+            if seen_turns.contains(&key) {
+                rest.push(candidate);
+            } else {
+                seen_turns.push(key);
+                firsts.push(candidate);
+            }
+        }
+        firsts.extend(rest);
+        let candidates = firsts;
         for &(_, _, mover, pose) in candidates.iter().take(exits.candidates) {
             outcome.tried += 1;
             let original = poses[mover];
