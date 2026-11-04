@@ -5368,10 +5368,10 @@ diving Row2; Column5 diving Column4. The via beyond the RP2040's row
 lands where the key matrix's rows run on the other side (Row2, Row5,
 Row6 on F.Cu), and their reroute finds no other way: the same trade the
 exchanges refuse, one net further on. Routing the diver before the
-other victims (an experiment, x cross1-f with `_DIVER_FIRST`) gave the
-same board; looking further along the axis for sites where a via meets
-no copper yet (cross1-g) found none within 3 mm on any of the three
-pads. Both are not kept.
+other victims (an experiment on cross1-f) gave the same board; looking
+further along the axis for sites where a via meets no copper yet
+(cross1-g) found none within 3 mm on any of the three pads. Neither is
+kept.
 
 *The expansion tier* (route mode, 46 boards, 30 s; off the nightly of
 2026-11-04, on cross1-d): unconnected 558 to 556, strict passes 24 to 25,
@@ -5383,7 +5383,48 @@ to 28) and ED052TC4-Adapter (length +0.1 mm) with the same counts and no
 dive kept: the trials' work on the work clock moves the later phases'
 budgets.
 
-LAYOUT_AND_DENSE_PLACEHOLDER
+*Layout mode* (the sweep's budgets and seeds, 5 x 2, `--quality`; off
+x1890, whose rows equal the nightly sweep's of 2026-11-04 on 688b59ca
+board for board; on cross1-e, built on 688b59ca):
+
+| Board | off | on | dives tried, kept |
+| --- | --- | --- | --- |
+| jetson-nano-baseboard | 2 / no / items_not_allowed 1 / 623 / 1261 | 2 / no / items_not_allowed 1 / 623 / 1267 | 5, 1 |
+| laptop keyboard | 2 (RESET, VSS_PA) / no / 0 / 254 / 1218 | the same board, work 1080 | 7, 1 |
+| OpenAirScope | 1 (SD_CK) / no / 0 / 276 / 1411 | 1 (SD_CK) / no / 0 / 277 / 1411 | 4, 0 |
+| Quanta75_BareRP2040 | 4 (+1V1, GPIO24, Column11, Column3) / no / 0 / 251 / 1065 | the same board, work 1111 | 31, 0 |
+| k30-SBC | 0 / no / starved_thermal 1 / 455 / 1095 | the same board | 0, 0 |
+
+The same open items on every board; no pass gained or lost, no finding
+new.
+
+*The eleven dense boards* (layout, the sweep's seeds, 2 x 2; off the
+nightly sweep of 2026-11-04 and x1890 for the two it had not reached;
+on cross1-f; not seed 1: the nightly's rows were the off side for free,
+on one base with the on side):
+
+| Board | off | on | dives tried, kept |
+| --- | --- | --- | --- |
+DENSE_ROWS
+
+DENSE_SUMMARY
+
+**Default: off.** The move works where it is a move: it closes crossing
+pairs inside the repair (jetson's IC6, IC7 and IC12, the keyboard's nRF
+aQFN, OpenAirScope's U1 and U5, the tier's CompassTag and bms, Sisu),
+and the switch off changes nothing. But on the five boards it was built
+for it closes none of the items left at the end: of their nine open
+items only Quanta75's three are crossing pairs, and there the dive
+trades the crossing for a key-matrix row on the other layer; the rest
+have no straight way out (no via site) or are no row's. The expansion
+tier gains two connections and a pass with no loss, but layout mode
+moves the dense boards both ways (MegaDrive DENSE_MEGA, SNSP-CPU-01
+DENSE_SNSP) by the trajectory, not by the five boards' items. The rule
+(on only if the five boards gain and nothing loses) keeps it off. What
+the RP2040 row needs next is the dive's via landing judged with the
+other layer's routes: a site priced by the nets it displaces there, or
+the displaced row net's own dive (a chain of two), rather than a third
+net's reroute that fails.
 
 *Identity*: with the switch off the fingerprints (Castor, k30-SBC,
 jetson, Sisu; route mode from v16, 1 x 4, budget scale 0.25) are
@@ -5393,8 +5434,6 @@ byte. With the switch on (cross1-f): Castor, k30-SBC and
 jetson identical (jetson's trials all undone, 1.8 s more work), Sisu
 29 to 28 unconnected and 373 to 371 vias (its fingerprints part after
 the repair: a dive kept).
-
-**Default: off.** DEFAULT_PLACEHOLDER
 
 
 ## Known limits / next steps
