@@ -34,14 +34,14 @@ The environment variables are indexed in the hand-over
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 13 | - | 4 | 13 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 79 | - | 0 | 79 | - |
-| [Placer settings](#placer-settings) | 64 | 57 | 7 | 64 | 36 |
-| [Layout settings](#layout-settings) | 22 | 22 | 0 | 22 | 12 |
+| [Placer settings](#placer-settings) | 65 | 58 | 7 | 65 | 37 |
+| [Layout settings](#layout-settings) | 22 | 22 | 0 | 22 | 14 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 2 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 4 |
 | [Layout settings: silkscreen](#layout-settings-silkscreen) | 1 | 1 | 0 | 1 | 1 |
 | [Layout settings: race_probe](#layout-settings-race_probe) | 3 | 3 | 0 | 3 | 3 |
 | [Layout settings: move_descent](#layout-settings-move_descent) | 7 | 7 | 0 | 7 | 0 |
-| [Placer core](#placer-core) | 12 | - | 0 | 12 | - |
+| [Placer core](#placer-core) | 13 | - | 0 | 13 | - |
 | [Placer core: global](#placer-core-global) | 12 | - | 0 | 12 | - |
 | [Placer core: anneal](#placer-core-anneal) | 10 | - | 0 | 10 | - |
 
@@ -192,7 +192,7 @@ One entry of `add_pours`. Source: `KiCadPourRequest` in [crates/pcb-kicad/src/bo
 
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
-| `add_pours[].net` | `String` | required | router.md | The net, as in the board (`GND` or `/GND`). |
+| `add_pours[].net` | `String` | required | router.md, placer.md | The net, as in the board (`GND` or `/GND`). |
 | `add_pours[].layers` | `Vec<String>` | required | router.md | Copper layers, such as `B.Cu`. |
 | `add_pours[].clearance_mm` | `Option<f64>` | optional | - | Clearance between the pour and other nets (default 0.3 mm). |
 | `add_pours[].plane` | `bool` | optional | router.md | A plane (default false): no track of any net on these layers, only vias through them, so the pour stays whole on every rung of the ladder (exclusive_planes holds only on some). A rule area keeping tracks off each layer (`plane <net> <layer>`) is written beside the zone, also where the board has the zone already, so KiCad checks it too. |
@@ -421,6 +421,7 @@ The placer config file of `place-kicad-board`, and the `placer` object of the la
 | `length_maxima` | `bool` | `true` | router.md, placer.md | Length maxima (on): for each net with a `length` rule and a maximum (the project's `.kicad_dru`, as the router reads it), every two of its pins on different parts are kept within 0.8 times the maximum, octilinearly, by a penalty in the global placement, the anneal, the legaliser and the refinement, and beyond the maximum by a penalty steep enough that no wirelength pays for it (the router cannot make a net shorter than its pads lie apart). Nothing changes on a board without such a rule. |
 | `router_rules` (internal) | `Option<std::sync::Arc<KiCadBoardRouterConfig>>` | unset (internal) | - | The router's rules the two above read (via-in-pad admissions, net classes and via sizes; the length rules), set by the layout where either applies. |
 | `pair_geometry` (internal) | `std::collections::BTreeMap<String, PairGeometry>` | `{}` (internal) | - | The differential pairs' track widths and gaps by positive net, for the pair rows' pitch (`pair_rows`; set by the layout and the place check from the router's rules where the switch is on). |
+| `pad_exits` | `Option<KiCadPadExits>` | unset | router.md, placer.md | Pads without a way out (off; docs/placer.md "Pads without a way out (2026-11-04)"): after each seed's placement, every pad is tested for a way out as the router sees the board (a legal lattice path from its nodes on the statics at the class width, the placement lowered as the layout routes it); a part with a pad another part, a keepout or the board edge closes is moved or turned (it or the parts that close the pad, within `reach_mm`, the cheapest of `candidates` poses in wirelength that leaves fewer pads closed around it), and the pads left closed are reported (`pad_exits` in board-placer.json, the verdict's next actions). Needs the router's configuration (the layout and the place check give it). `PCB_PLACER_PAD_EXITS=1` turns it on with the defaults (`reach_mm` 1, `candidates` 16), `0` off. |
 
 ## Layout settings
 
@@ -428,7 +429,7 @@ The layout config file of `layout-kicad-board`. Unknown keys are rejected; a mis
 
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
-| `moves` | `usize` | `40` | - | Footprint moves to try after the first full route. |
+| `moves` | `usize` | `40` | placer.md | Footprint moves to try after the first full route. |
 | `patience` | `usize` | `12` | - | Stop after this many consecutive moves without improvement. |
 | `steps_mm` | `Vec<f64>` | `[0.5, 1.0, 2.0, 4.0]` | - | Move distances tried, in millimetres, in the four axis directions. |
 | `move_seconds` | `f64` | `600.0` | - | Budget of the move phase, in seconds of work (search expansions and placement units at the run's work rates; docs/router.md, "Determinism and the wall clock"). |
@@ -445,7 +446,7 @@ The layout config file of `layout-kicad-board`. Unknown keys are rejected; a mis
 | `congestion_score` | `String` | `"rudy"` | placer.md | How the race ranks the placements before probing them (the values above, at `congestion_model`). |
 | `free_dimension` | `Option<crate::free_dimension::KiCadFreeDimension>` | unset | - | One edge of a rectangular outline the layout may move, to find the smallest board that comes out clean (docs/constraints.md, "A free dimension"): `layout-kicad-board` then lays the board out at several sizes, `total_seconds` being the whole search's budget. |
 | `silkscreen` | `KiCadSilkscreenConfig` | its own table | placer.md | The footprints' Reference and Value fields on the silkscreen, placed after routing where KiCad's silkscreen checks find nothing. |
-| `move_descent` | `Option<crate::move_descent::KiCadMoveDescent>` | unset | - | The move descent after the first route (an experiment, off when absent; docs/experiments/move-descent.md): single parts nudged, turned or swapped where the incremental global route and then a local reroute say fewer terminals stay open, also on boards far from complete. `PCB_LAYOUT_MOVE_DESCENT` overrides (`0` off). |
+| `move_descent` | `Option<crate::move_descent::KiCadMoveDescent>` | unset | placer.md | The move descent after the first route (an experiment, off when absent; docs/experiments/move-descent.md): single parts nudged, turned or swapped where the incremental global route and then a local reroute say fewer terminals stay open, also on boards far from complete. `PCB_LAYOUT_MOVE_DESCENT` overrides (`0` off). |
 | `final_route_from_state` | `bool` | `false` | placer.md | Routes survive moves: the final route (the ladder, or the narrow-signal attempt standing in for it) starts from the router's state after the first route and the moves, its complete and legal nets without a pour kept as the board's own copper, and routes the rest; from scratch only when its first attempt leaves more open than the first route did. False: from scratch, as before. `PCB_LAYOUT_FINAL_FROM_STATE` (0 or 1) overrides. |
 | `race_probe` | `Option<KiCadRaceProbe>` | unset | placer.md | The race's route probe (docs/placer.md, "The race's route probe (2026-10-25)"; off when absent, `{}` for the defaults): the race probes its `seeds` best-ranked placements for `share` of `total_seconds` of work each, all of them charged to the layout's work clock and none dropped for the final route's minimum share (without it, a probe gets the router's `probe_seconds`, 75 s, and the race probes fewer placements where the final route would keep less than `RACE_MIN_FINAL_SHARE`), ranks them by the probe's open terminals (then its unfinished nets, then its nets in conflict) and routes on with the best. The pre-ranking (`congestion_score`) chooses the probed placements as before, `seeds` of them instead of `congestion_probes`. |
 | `stop_after_first_route` | `bool` | `false` | placer.md | A measurement mode (off by default; docs/benchmarks.md, "The ladder of placer measurements (2026-10-28)"): the layout ends after its first route. Sizing, placement, the race and the first route run as without it (the same work, the same budget), then the move trials, the resume, the polish, the final ladder and the neck repair are skipped and the layout finishes with the first route's board: its labels, KiCad's check and the report, whose `first_unconnected_terminals` is the full layout's at the same `total_seconds`. The report says so (`stopped_after_first_route`). |
@@ -529,6 +530,7 @@ The `move_descent` object of the layout settings (an experiment, off when absent
 | `align` | `Option<align::Settings>` | unset | `align_rows` | Rows of repeated parts (`align`, docs/placer.md "The designer as teacher (2026-11-04)"): parts of one kind pay in the anneal for standing out of line with the others of their kind nearby, and line up after the refinement where it costs next to nothing. Off (`None`) by default. |
 | `kicad_legality` | `bool` | `false` | `legality` | KiCad's legality at the levels whose spacing is the rules' least (`Constraints::pad_clearance`): what KiCad's DRC accepts of a designer's placement there, rather than bodies kept the copper clearance apart. Off by default (docs/placer.md, "The legality model against KiCad"). |
 | `kicad_last_level` | `bool` | `false` | `legality` | KiCad's legality at the last level (where courtyards may touch), whatever `kicad_legality` says: courtyards touch where the pads keep the copper clearance pad to pad, an unheld part's pads keep the edge margin, the board's silkscreen marks the project does not rate an error over a part are no obstacle, and a lead through the board keeps the copper clearance from the far side's pads (docs/placer.md, "The legality model against KiCad", the molecules). |
+| `pad_exits` | `Option<exits::PadExits>` | unset | - | Pads without a way out (`exits`, docs/placer.md "Pads without a way out (2026-11-04)"): after the placement, the router's test of every pad's way out on the statics, and moves or turns of the parts whose pads another part or the edge closes. Off (`None`) by default. |
 
 ## Placer core: global
 
