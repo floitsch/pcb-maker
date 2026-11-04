@@ -788,9 +788,10 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
      With the placer's `pad_exits` on (off by default;
      `{"placer": {"pad_exits": {}}}` or `PCB_PLACER_PAD_EXITS=1`; since
      2026-11-04) it also has `pad_exits`: `closed` lists the pads of the
-     placement that no route can connect (the router's lattice, on the
-     fixed copper alone, has no path out of the pad's pocket at its class's
-     width), each with `reason` (`pad U1.21 has no way out (blocked by
+     placement that no track of their class can leave (the router's
+     lattice, on the fixed copper alone, has no path out of the pad's
+     pocket at the class's width; a narrower rung of the router may still
+     reach one), each with `reason` (`pad U1.21 has no way out (blocked by
      C29.1, U1.20, U1.22, U1.57)`), `blocked_by` (other parts' items
      first) and `footprint_only` (its own footprint walls it in: only a
      via in the pad or another footprint helps); `moves` the parts the

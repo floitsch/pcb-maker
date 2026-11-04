@@ -2271,7 +2271,7 @@ fn closed_pad_actions(facts: &KiCadRunFacts, open: usize) -> Vec<String> {
             let part = pcb_router::router::label_part(&pad.pad);
             if pad.footprint_only {
                 format!(
-                    "{} (net {}): no route can connect it on any placement; a via in the pad (via_in_pad in the router config) or a footprint whose pad has a way out",
+                    "{} (net {}): no track of its class leaves it on any placement; a via in the pad (via_in_pad in the router config) or a footprint whose pad has a way out",
                     pad.reason, pad.net
                 )
             } else {
@@ -2283,7 +2283,7 @@ fn closed_pad_actions(facts: &KiCadRunFacts, open: usize) -> Vec<String> {
                     }
                 }
                 format!(
-                    "{} (net {}) on this placement: no route can connect it; turn or move {} (a region, near or place constraint) and lay out again",
+                    "{} (net {}) on this placement: no track of its class leaves it; turn or move {} (a region, near or place constraint) and lay out again",
                     pad.reason,
                     pad.net,
                     parts.join(" or ")
