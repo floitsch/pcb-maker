@@ -167,7 +167,7 @@ fn announce(verdict: &KiCadVerdict, report: &Path) {
         i32::from(verdict.exit_code),
         std::sync::atomic::Ordering::Relaxed,
     );
-    if let Some(line) = pcb_kicad::custom_rules_line(&verdict.custom_rules) {
+    if let Some(line) = pcb_kicad::custom_rules_line(&verdict.custom_rules, &verdict.lengths) {
         println!("{line}");
     }
     println!(

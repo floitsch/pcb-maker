@@ -2967,11 +2967,21 @@ fn unmodelled_rules_action(rules: &[String]) -> String {
 /// (`unmodelled`), naming the approximated and unmodelled ones; `None`
 /// without custom rules. MokyaLora (2026-10-27): its two area rules were
 /// in board-router.json only, and no output a run prints said a word of
-/// them.
-pub fn custom_rules_line(rules: &[crate::project_rules::KiCadCustomRuleReport]) -> Option<String> {
+/// them. A `length` or `skew` constraint the length matching keeps is
+/// said as what it became, with its bounds from `lengths` (trial 4's oro
+/// link: "approximated: kept more widely than KiCad asks" fits a
+/// clearance, not a length).
+pub fn custom_rules_line(
+    rules: &[crate::project_rules::KiCadCustomRuleReport],
+    lengths: &[crate::KiCadNetLength],
+) -> Option<String> {
     if rules.is_empty() {
         return None;
     }
+    let matched = |rule: &crate::project_rules::KiCadCustomRuleReport| {
+        matches!(rule.constraint.as_str(), "length" | "skew")
+            && matches!(rule.status.as_str(), "applied" | "approximated")
+    };
     let order = [
         "applied",
         "approximated",
@@ -2987,8 +2997,10 @@ pub fn custom_rules_line(rules: &[crate::project_rules::KiCadCustomRuleReport]) 
             .map(|rule| rule.status.as_str())
             .filter(|status| !order.contains(status)),
     ) {
-        let matching: Vec<&crate::project_rules::KiCadCustomRuleReport> =
-            rules.iter().filter(|rule| rule.status == status).collect();
+        let matching: Vec<&crate::project_rules::KiCadCustomRuleReport> = rules
+            .iter()
+            .filter(|rule| rule.status == status && !matched(rule))
+            .collect();
         if matching.is_empty()
             || counts
                 .iter()
@@ -3010,10 +3022,60 @@ pub fn custom_rules_line(rules: &[crate::project_rules::KiCadCustomRuleReport]) 
         };
         counts.push(format!("{status} {}{named}", matching.len()));
     }
+    for rule in rules.iter().filter(|rule| matched(rule)) {
+        let net = lengths
+            .iter()
+            .find(|net| net.rule == rule.rule && net.constraint == rule.constraint);
+        let mm = |value: f64| format!("{value:.2} mm");
+        counts.push(if rule.constraint == "skew" {
+            format!(
+                "{} skew: applied as a skew maximum{} by meanders to the group's longest net after the route",
+                rule.rule,
+                net.and_then(|net| Some(mm(net.max_mm? - net.min_mm?)))
+                    .map_or(String::new(), |max| format!(" of {max}"))
+            )
+        } else {
+            let (min, max) = net.map_or((None, None), |net| (net.min_mm, net.max_mm));
+            let bounded = rule.status == "approximated";
+            let bounds = match (min, max) {
+                (Some(min), Some(max)) => {
+                    format!("a length minimum of {} and maximum of {}", mm(min), mm(max))
+                }
+                (Some(min), None) => format!("a length minimum of {}", mm(min)),
+                (None, Some(max)) => format!("a length maximum of {}", mm(max)),
+                (None, None) if bounded => "a length minimum and maximum".into(),
+                (None, None) => "a length minimum".into(),
+            };
+            format!(
+                "{} length: applied as {bounds} (a meander after the route below the minimum{}; verdict.lengths per net)",
+                rule.rule,
+                if bounded {
+                    ", over the maximum the net routed again the short way and checked, no hard bound"
+                } else {
+                    ""
+                }
+            )
+        });
+    }
+    let mut meanings = Vec::new();
+    if rules
+        .iter()
+        .any(|rule| rule.status == "approximated" && !matched(rule))
+    {
+        meanings.push("approximated: kept more widely than KiCad asks");
+    }
+    if rules.iter().any(|rule| rule.status == "unmodelled") {
+        meanings.push("unmodelled: KiCad checks it, the router does not keep it");
+    }
     Some(format!(
-        "custom rules (.kicad_dru): {} constraints: {}; custom_rules in verdict.json says what each became (approximated: kept more widely than KiCad asks; unmodelled: KiCad checks it, the router does not keep it)",
+        "custom rules (.kicad_dru): {} constraints: {}; custom_rules in verdict.json says what each became{}",
         rules.len(),
-        counts.join(", ")
+        counts.join(", "),
+        if meanings.is_empty() {
+            String::new()
+        } else {
+            format!(" ({})", meanings.join("; "))
+        }
     ))
 }
 
@@ -3651,17 +3713,42 @@ mod tests {
             status: status.into(),
             detail: String::new(),
         };
-        assert_eq!(custom_rules_line(&[]), None);
-        let line = custom_rules_line(&[
-            rule("Shrink_Clearance_In_MCU", "no_effect"),
-            rule("TFT_ZONE_2W_Clearance", "approximated"),
-            rule("Creepage", "unmodelled"),
-        ])
+        assert_eq!(custom_rules_line(&[], &[]), None);
+        let line = custom_rules_line(
+            &[
+                rule("Shrink_Clearance_In_MCU", "no_effect"),
+                rule("TFT_ZONE_2W_Clearance", "approximated"),
+                rule("Creepage", "unmodelled"),
+            ],
+            &[],
+        )
         .unwrap();
         assert!(
             line.starts_with("custom rules (.kicad_dru): 3 constraints: approximated 1 (TFT_ZONE_2W_Clearance clearance), no_effect 1, unmodelled 1 (Creepage clearance); "),
             "{line}"
         );
+        assert!(line.ends_with("(approximated: kept more widely than KiCad asks; unmodelled: KiCad checks it, the router does not keep it)"), "{line}");
+        // Trial 4's oro link: its ULPI length rule was "approximated 1
+        // (ULPI_exact_length length)", explained as kept more widely than
+        // KiCad asks; it is a length minimum and maximum.
+        let length = KiCadCustomRuleReport {
+            constraint: "length".into(),
+            ..rule("ULPI_exact_length", "approximated")
+        };
+        let ulpi = crate::KiCadNetLength {
+            net: "/ULPI_D1".into(),
+            rule: "ULPI_exact_length".into(),
+            constraint: "length".into(),
+            min_mm: Some(31.4),
+            max_mm: Some(31.6),
+            ..Default::default()
+        };
+        let line = custom_rules_line(&[length], &[ulpi]).unwrap();
+        assert_eq!(
+            line,
+            "custom rules (.kicad_dru): 1 constraints: ULPI_exact_length length: applied as a length minimum of 31.40 mm and maximum of 31.60 mm (a meander after the route below the minimum, over the maximum the net routed again the short way and checked, no hard bound; verdict.lengths per net); custom_rules in verdict.json says what each became"
+        );
+        assert!(!line.contains("approximated"), "{line}");
         let mut facts = routed(DrcTally::default());
         facts.custom_rules = vec![rule("TFT_ZONE_2W_Clearance", "approximated")];
         let verdict = serde_json::to_value(judge(&facts)).unwrap();
