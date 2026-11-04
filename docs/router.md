@@ -5344,7 +5344,7 @@ switch on, `build/bin/pcb-maker-cross1-c` to `-f`, one code but for the
 logging and each stub tried once; tasks v7, the reference work rate;
 KiCad unconnected / strict pass / new strict findings / vias / work s).
 
-*Route mode on the night's placements* (5 x 2, the task budgets):
+*Route mode on the night's placements* (2 x 2, the task budgets):
 
 | Board | off (x1884) | on (cross1-c) | dives tried, kept (all rungs) |
 | --- | --- | --- | --- |
@@ -5383,7 +5383,7 @@ to 28) and ED052TC4-Adapter (length +0.1 mm) with the same counts and no
 dive kept: the trials' work on the work clock moves the later phases'
 budgets.
 
-*Layout mode* (the sweep's budgets and seeds, 5 x 2, `--quality`; off
+*Layout mode* (the sweep's budgets and seeds, 2 x 2, `--quality`; off
 x1890, whose rows equal the nightly sweep's of 2026-11-04 on 688b59ca
 board for board; on cross1-e, built on 688b59ca):
 
@@ -5405,9 +5405,33 @@ on one base with the on side):
 
 | Board | off | on | dives tried, kept |
 | --- | --- | --- | --- |
-DENSE_ROWS
+| 0xCB-1337 panel | 0, pass / 0 / 301 / 260 | the same | 0, 0 |
+| protoesp | 49 / no / 0 / 360 / 1215 | 49 / no / 0 / 360 / 1216 | 18, 0 |
+| glasgow revC3 | 127 / no / 0 / 340 / 1501 | the same | 4, 0 |
+| video | 202 / no / 0 / 1396 / 1510 | 204 / no / 0 / 1397 / 1513 | 8, 0 |
+| OpenESC 4in1-mini | 78 / no / 0 / 126 / 955 | 78 / no / 0 / 126 / 961 | 13, 0 |
+| OpenESC 4in1 | 88 / no / 0 / 165 / 1486 | the same | 0, 0 |
+| SmartSpin2k_Panelized | 105 / no / 0 / 766 / 1348 | the same | 0, 0 |
+| DSP-ADAU1452 | 5 / no / 0 / 250 / 1413 | the same | 0, 0 |
+| MegaDrive | 118 / no / 0 / 2018 / 1532 | 125 / no / 0 / 2047 / 1535 | 86, 4 |
+| SNSP-CPU-01 | 97 / no / 0 / 1768 / 1232 | 90 / no / 0 / 1820 / 1226 | 144, 9 |
+| poly_kybd_split72_left | 7 / no / 0 / 1070 / 1464 | 7 / no / 0 / 1070 / 1482 | 21, 0 |
 
-DENSE_SUMMARY
+Sum 876 to 878 unconnected, strict passes 1 and 1, no new finding.
+Moved: SNSP-CPU-01 97 to 90 and MegaDrive 118 to 125 (dives kept in the
+first route and the moves' reroutes, the layouts' trajectories then
+part), video 202 to 204 with no dive kept (the trials' work moves the
+later budgets); the other eight the same counts, five of them the same
+board.
+
+*Identity*: with the switch off the fingerprints (Castor, k30-SBC,
+jetson, Sisu; route mode from v16, 1 x 4, budget scale 0.25) are
+identical to the nightly's of 2026-11-04 line by line, and every row the
+same; route mode on the five boards above gives x1884's rows byte for
+byte. With the switch on (cross1-f): Castor, k30-SBC and
+jetson identical (jetson's trials all undone, 1.8 s more work), Sisu
+29 to 28 unconnected and 373 to 371 vias (its fingerprints part after
+the repair: a dive kept).
 
 **Default: off.** The move works where it is a move: it closes crossing
 pairs inside the repair (jetson's IC6, IC7 and IC12, the keyboard's nRF
@@ -5418,22 +5442,13 @@ items only Quanta75's three are crossing pairs, and there the dive
 trades the crossing for a key-matrix row on the other layer; the rest
 have no straight way out (no via site) or are no row's. The expansion
 tier gains two connections and a pass with no loss, but layout mode
-moves the dense boards both ways (MegaDrive DENSE_MEGA, SNSP-CPU-01
-DENSE_SNSP) by the trajectory, not by the five boards' items. The rule
+moves the dense boards both ways (MegaDrive 118 to 125, SNSP-CPU-01
+97 to 90) by the trajectory, not by the five boards' items. The rule
 (on only if the five boards gain and nothing loses) keeps it off. What
 the RP2040 row needs next is the dive's via landing judged with the
 other layer's routes: a site priced by the nets it displaces there, or
 the displaced row net's own dive (a chain of two), rather than a third
 net's reroute that fails.
-
-*Identity*: with the switch off the fingerprints (Castor, k30-SBC,
-jetson, Sisu; route mode from v16, 1 x 4, budget scale 0.25) are
-identical to the nightly's of 2026-11-04 line by line, and every row the
-same; route mode on the five boards above gives x1884's rows byte for
-byte. With the switch on (cross1-f): Castor, k30-SBC and
-jetson identical (jetson's trials all undone, 1.8 s more work), Sisu
-29 to 28 unconnected and 373 to 371 vias (its fingerprints part after
-the repair: a dive kept).
 
 
 ## Known limits / next steps

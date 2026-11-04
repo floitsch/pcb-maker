@@ -36,7 +36,10 @@ x1884 and the nightly of 2026-11-04 (688b59ca); outputs in
   trades SD_CMD for SD_DAT3); on Quanta75 every dive closes the crossing
   and opens a key-matrix row on the other layer. The expansion tier 558
   to 556 unconnected, strict passes 24 to 25 (CompassTag), worse 0.
-  LAYOUT_CHANGELOG_PLACEHOLDER
+  Layout mode on the five boards: the same open items on every board.
+  The eleven dense boards (the sweep's seeds): 876 to 878 unconnected
+  (SNSP-CPU-01 97 to 90, MegaDrive 118 to 125, video 202 to 204), no
+  pass or finding moved. Default off: the five boards do not gain.
 - **Identity**: switch off, the fingerprints identical to the nightly's,
   route mode on the five boards byte for byte x1884's rows.
 - Tests: `a_crossing_pair_is_resolved_by_one_dive` (a six-pad row, two

@@ -28,7 +28,11 @@ use super::fanout::{DensePad, FanoutPlan};
 use super::trouble::{Exchange, Saved, TroubleSettings, TroubleWork, clean, open_now, open_saved};
 use super::*;
 
-/// `Config::crossing_dive`'s default.
+/// `Config::crossing_dive`'s default: off. Measured on 2026-11-04
+/// (docs/router.md, "Crossings decided in the repair"): on the five boards
+/// it was built for, the same open items (Quanta75's crossing pairs trade
+/// the crossing for a net on the other layer); the expansion tier 558 to
+/// 556 unconnected and a strict pass more; the dense boards 876 to 878.
 pub const CROSSING_DIVE_DEFAULT: bool = false;
 
 /// `PCB_ROUTER_CROSSING_DIVE` when set: overrides `Config::crossing_dive`
