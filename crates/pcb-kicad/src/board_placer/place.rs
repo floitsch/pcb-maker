@@ -502,6 +502,17 @@ pub fn place_kicad_board(
     let pool_work = std::cell::Cell::new(0u64);
     let seeds_work = std::cell::Cell::new(0u64);
     let seeds_run = std::cell::Cell::new(0u64);
+    // The race over skeletons: the passives by the class rule.
+    let skeleton_race = config
+        .skeleton_race
+        .as_ref()
+        .filter(|_| copies.is_none() && held_sub_boards.is_none())
+        .map(|race| {
+            (
+                race.settings(),
+                passive_mask(&pcb, lowered.problem.components.len()),
+            )
+        });
     let place_seeds = |problem: &core::Problem| -> Vec<(u64, core::Placement)> {
         let race = race_seeds(
             seeds,
@@ -522,7 +533,16 @@ pub fn place_kicad_board(
                 match (&copies, &held_sub_boards) {
                     (Some(copies), _) => self::panel::place_copies(problem, copies, &seeded),
                     (None, Some(sub)) => crate::sub_boards::place_sub_boards(problem, sub, &seeded),
-                    (None, None) => core::place(problem, &seeded),
+                    (None, None) => match &skeleton_race {
+                        Some((settings, passive)) => core::skeleton::place_skeleton(
+                            problem,
+                            &seeded,
+                            passive,
+                            &lowered.poured,
+                            settings,
+                        ),
+                        None => core::place(problem, &seeded),
+                    },
                 }
             },
         );
@@ -604,6 +624,13 @@ pub fn place_kicad_board(
         .unwrap_or(0) as f64
         / core::work_per_second();
     let seeds_placed = placements.len();
+    let skeleton_race_report = skeleton_race.as_ref().map(|(_, passive)| {
+        KiCadSkeletonRaceReport::of(
+            passive,
+            &placements[0],
+            &placements.iter().collect::<Vec<_>>(),
+        )
+    });
     let placement = placements.remove(0);
     let panel_copies = copies
         .as_ref()
@@ -870,6 +897,7 @@ pub fn place_kicad_board(
             .exits
             .as_ref()
             .map(|outcome| self::exits::exits_report(outcome, &lowered.references, &pcb)),
+        skeleton_race: skeleton_race_report,
     };
     let report_path = output_directory.join("board-placer.json");
     fs::write(

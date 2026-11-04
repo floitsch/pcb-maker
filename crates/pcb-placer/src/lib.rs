@@ -20,6 +20,7 @@ pub mod legal;
 pub mod orient;
 pub mod problem;
 pub mod room;
+pub mod skeleton;
 pub mod view;
 
 pub use global::{Frame, GlobalConfig};
@@ -88,6 +89,11 @@ pub struct Config {
     /// of the parts whose pads another part or the edge closes. Off
     /// (`None`) by default.
     pub pad_exits: Option<exits::PadExits>,
+    /// The first relaxation level the placement tries (`relaxation_levels`;
+    /// the last if there are fewer): the race over skeletons places the
+    /// passives from the skeleton's level on, so that the held skeleton is
+    /// legal at theirs (`skeleton`). 0 by default: every level.
+    pub first_level: usize,
 }
 
 impl Config {
@@ -106,6 +112,7 @@ impl Config {
             kicad_legality: false,
             kicad_last_level: false,
             pad_exits: None,
+            first_level: 0,
         }
     }
 }
@@ -145,6 +152,12 @@ pub struct Placement {
     /// What the pad-exits repair found and did (`Config::pad_exits`;
     /// `None`: off, or its session could not answer).
     pub exits: Option<exits::ExitOutcome>,
+    /// The relaxation level the placement ended at (its index among
+    /// `relaxation_levels`).
+    pub level: usize,
+    /// The race over skeletons' account of this placement (`skeleton`),
+    /// where it ran.
+    pub skeleton: Option<skeleton::Report>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1178,6 +1191,8 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     let fine = problem.grid.min(0.1);
     let (levels, courtyard_level) = relaxation_levels(problem);
     let mut relaxation = None;
+    // The level `relaxation` is of.
+    let mut best_level = 0;
     // The work of the last level's full legalization: what a pass over
     // every part costs (`seat_on_marks`).
     let mut pass_work = 0;
@@ -1216,6 +1231,11 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         (halo_scale, spacing_scale, grid, inset, tight, edge_copper, edge_rule, small_factor),
     ) in levels.into_iter().enumerate()
     {
+        // From `first_level` on (the race over skeletons: the passives
+        // from the held skeleton's level).
+        if level < config.first_level.min(level_count - 1) {
+            continue;
+        }
         // Past the caller's deadline the best placement so far stands.
         if best.is_some() && out_of_budget() {
             break;
@@ -1303,6 +1323,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
             relaxed.grid = problem.grid;
             let mut poses = global_poses.clone();
             let failed = legal::legalize(&relaxed, &mut poses);
+            best_level = level;
             relaxation = Some(Relaxation {
                 spacing: relaxed.spacing,
                 grid: relaxed.grid,
@@ -1397,6 +1418,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 );
             }
             if failed.len() < known_failed.len() {
+                best_level = level;
                 relaxation = Some(Relaxation {
                     spacing: relaxed.spacing,
                     grid,
@@ -1514,6 +1536,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         });
         let done = failed.is_empty();
         if better {
+            best_level = level;
             relaxation = Some(Relaxation {
                 spacing: relaxed.spacing,
                 grid,
@@ -1766,6 +1789,8 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         routing_room_failed,
         overfull: overfull_sides,
         exits,
+        level: best_level,
+        skeleton: None,
     }
 }
 

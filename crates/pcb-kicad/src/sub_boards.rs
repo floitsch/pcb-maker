@@ -3412,6 +3412,8 @@ pub(crate) fn place_sub_boards(
         stage_poses: vec![("sub-boards", held), ("final", poses.clone())],
         routing_room_failed,
         overfull,
+        level: 0,
+        skeleton: None,
         poses,
         exits: None,
     }

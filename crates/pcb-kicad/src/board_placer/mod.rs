@@ -24,6 +24,7 @@ mod place;
 mod result;
 mod rules;
 mod seed_race;
+mod skeleton;
 #[cfg(test)]
 mod tests;
 mod trace;
@@ -46,5 +47,6 @@ pub use self::{
     panel::{KiCadPanelCellClass, KiCadPanelCopiesReport, KiCadPanelCopy},
     place::*,
     result::*,
+    skeleton::{KiCadSkeletonRace, KiCadSkeletonRaceReport},
 };
-use self::{courtyards::*, decoupling::*, edges::*, trace::*};
+use self::{courtyards::*, decoupling::*, edges::*, skeleton::passive_mask, trace::*};

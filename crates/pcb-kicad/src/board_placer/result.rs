@@ -273,4 +273,7 @@ pub struct KiCadBoardPlacerResult {
     /// closes each, and the parts the repair moved. Absent when off.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pad_exits: Option<super::exits::KiCadPadExitsReport>,
+    /// The race over skeletons (`skeleton_race` on): absent when off.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skeleton_race: Option<KiCadSkeletonRaceReport>,
 }

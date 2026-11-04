@@ -1941,6 +1941,8 @@ pub(crate) fn place_copies(
         ],
         routing_room_failed: first.routing_room_failed,
         overfull: first.overfull || overfull,
+        level: first.level,
+        skeleton: None,
         poses,
         exits: None,
     }
