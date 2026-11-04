@@ -435,6 +435,7 @@ pub fn place_kicad_board(
     placer_config.bus_groups = config.bus_groups.as_ref().map(KiCadBusGroups::settings);
     placer_config.kicad_last_level = true;
     placer_config.start = warm_start(&lowered)?.map(std::sync::Arc::new);
+    placer_config.skip_anneal = std::env::var_os("PCB_PLACER_SKIP_ANNEAL").is_some();
     if let Some(guidance) = &config.global_guidance {
         let router_config = config.guidance_router.clone().unwrap_or_default();
         placer_config.anneal.guidance = Some(core::guidance::Guidance {

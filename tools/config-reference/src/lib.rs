@@ -563,6 +563,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "with `PCB_PLACER_START`: `global` (default: the global placement starts from the poses), `anneal` (no global placement), `legalize` (no global placement and no anneal: the legaliser seats the poses, the refinement follows).",
     ),
     (
+        "PCB_PLACER_SKIP_ANNEAL",
+        Kind::Switch,
+        "a diagnostic: no anneal at any level; each level's legaliser seats the global placement's poses (or `PCB_PLACER_START`'s), the refinement follows (docs/placer.md, \"Where the arrangement is lost (2026-11-04)\").",
+    ),
+    (
         "PCB_PLACER_START_PARTS",
         Kind::Switch,
         "`<file>`: with `PCB_PLACER_START_STAGE=global`, a JSON list of `REF#n` (the n-th footprint of that reference): only these start from the board's poses, the others from the placer's own start.",

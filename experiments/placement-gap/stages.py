@@ -28,7 +28,10 @@ and with a variant's start (`PCB_PLACER_START`):
 - `legalize`: no global placement and no anneal, each level's legaliser
   seats the designer's poses, then the refinement (its `legal` stage is
   the minimal legalisation, its `final` the refinement from there);
-- `off`: `ours` without the trace (the identity check of the dump).
+- `off`: `ours` without the trace (the identity check of the dump);
+- `<variant>-noanneal`: the variant without the anneal
+  (`PCB_PLACER_SKIP_ANNEAL`: each level's legaliser seats the global
+  placement's poses).
 
 `run` writes `<out>/runs/<unit>/` (the placed project, `trace.json`,
 `place.log`, `unit.json`: exit code, wall and CPU seconds). `route` lays
@@ -36,7 +39,8 @@ out first routes with partialcopy.py's machinery (`<out>/firstroute`, the
 layout at seed 1 with `stop_after_first_route` through run.py and the
 ledger): `<board>-designer` (every movable part pinned at the designer's
 pose), `<board>-ours` (nothing pinned) and `<board>-s<seed>-<variant>`
-(every movable part pinned at that place check's kept pose). `table`
+(every movable part pinned at that place check's kept pose; with
+`@<stage>`, at the kept seed's poses after that stage). `table`
 measures every traced unit and writes `<out>/tables.md` and
 `<out>/stages.json`.
 
@@ -83,6 +87,8 @@ VARIANTS = {
     "anneal": {"PCB_PLACER_START_STAGE": "anneal"},
     "legalize": {"PCB_PLACER_START_STAGE": "legalize"},
 }
+# `<variant>-noanneal`: the variant without the anneal (`PCB_PLACER_SKIP_ANNEAL`).
+NO_ANNEAL = "-noanneal"
 STAGES = ("global", "annealed", "legal", "final")
 NEIGHBOURS = 3
 
@@ -299,6 +305,8 @@ def unit_parts(name):
 
 def unit_command(arguments, name):
     board, seed, variant = unit_parts(name)
+    skip = variant.endswith(NO_ANNEAL)
+    variant = variant.removesuffix(NO_ANNEAL)
     inputs = Path(arguments.inputs).resolve()
     source = inputs / f"{board}-s{seed}"
     board_id = next((source / "source").glob("*.kicad_pcb")).stem
@@ -309,6 +317,8 @@ def unit_command(arguments, name):
         env["PCB_PLACER_TRACE"] = str(out / "trace.json")
         env["PCB_PLACER_DESIGNER"] = designer
     env.update(VARIANTS[variant])
+    if skip:
+        env["PCB_PLACER_SKIP_ANNEAL"] = "1"
     if variant not in ("ours", "off"):
         env["PCB_PLACER_START"] = designer
     if variant == "global-active":
@@ -370,7 +380,7 @@ def route_unit(arguments, name):
     if name.endswith(("-designer", "-ours")):
         short, rule = name.rsplit("-", 1)
     else:
-        short, rule = unit_parts(name)[0], name
+        short, rule = unit_parts(name.partition("@")[0])[0], name.replace("@", "-at-")
     board = BOARDS[short]
     task = partialcopy.v7_tasks()[board]
     designer = partialcopy.extracted(partialcopy.designer_board(task), out / "extract" / "designer" / f"{board}.json")
@@ -382,14 +392,49 @@ def route_unit(arguments, name):
     elif rule == "ours":
         source = None
     else:
-        placed = next((Path(arguments.out).resolve() / "runs" / name / "placed").glob("*.kicad_pcb"))
-        source = partialcopy.extracted(placed, out / "extract" / f"{name}.json")
+        unit, _, stage = name.partition("@")
+        placed = next((Path(arguments.out).resolve() / "runs" / unit / "placed").glob("*.kicad_pcb"))
+        source = partialcopy.extracted(placed, out / "extract" / f"{unit}.json")
+        if stage:
+            source = at_stage(source, Path(arguments.out).resolve() / "runs" / unit / "trace.json", stage)
     footprints = ([] if source is None else
                   [f for f in partialcopy.numbered(source["footprints"]) if partialcopy.key(f) in movable])
     if source is not None and len(footprints) != len(movable):
         raise SystemExit(f"{name}: {len(footprints)} of {len(movable)} movable parts found")
     partialcopy.write_unit(out, task, rule, footprints, source or designer)
     return out, partialcopy.unit_command(out, board, f"{rule}-s1", arguments.binary)
+
+
+def others(runs):
+    """The run.py processes laying out into `runs` (any runner's)."""
+    count = 0
+    for cmdline in Path("/proc").glob("[0-9]*/cmdline"):
+        try:
+            args = cmdline.read_bytes().split(b"\0")
+        except OSError:
+            continue
+        if any(a.endswith(b"run.py") for a in args) and any(a.startswith(str(runs).encode()) for a in args):
+            count += 1
+    return count
+
+
+def at_stage(board, trace_path, stage):
+    """The extracted board with its movable footprints at a stage's poses
+    of the trace's kept seed (the trace's parts are the movable ones, in
+    board order: matched by `REF#n`)."""
+    trace = json.loads(Path(trace_path).read_text())
+    seed = next(entry for entry in trace["seeds"] if entry["kept"])
+    index = seed["stages"].index(stage)
+    poses = dict(zip(keyed(seed["parts"]), (part["poses"][index] for part in seed["parts"])))
+    result = json.loads(json.dumps(board))
+    seen = {}
+    for footprint in result["footprints"]:
+        n = seen.get(footprint["reference"], 0)
+        seen[footprint["reference"]] = n + 1
+        pose = poses.get(f"{footprint['reference']}#{n}")
+        if pose is not None:
+            footprint["x"], footprint["y"], footprint["angle"] = pose[0], pose[1], pose[2] % 360.0
+    return result
 
 
 def route(arguments):
@@ -413,6 +458,8 @@ def route(arguments):
                 print(time.strftime("%H:%M:%S"), "done", name, process.returncode, flush=True)
                 del running[name]
         busy = sum(1 for pid in arguments.busy if alive(pid))
+        if arguments.share:
+            busy = max(busy, others(Path(arguments.out).resolve() / "firstroute" / "runs") - len(running))
         while queue and len(running) + busy < arguments.slots:
             name = queue.pop(0)
             out, command = route_unit(arguments, name)
@@ -554,7 +601,8 @@ def summary(results, routes):
               "against ours (the kept seed's final, same board and seed)", "",
               "| board | seed | start | the stage's result | final | final objective / ours |",
               "| --- | --- | --- | --- | --- | ---: |"]
-    own = {"global-all": "global", "global-active": "global", "anneal": "annealed", "legalize": "legal"}
+    own = {"global-all": "global", "global-active": "global", "anneal": "annealed", "legalize": "legal",
+           "ours-noanneal": "legal", "global-all-noanneal": "legal", "global-active-noanneal": "legal"}
     for name, result in results.items():
         if result["variant"] not in own:
             continue
@@ -613,6 +661,8 @@ def main():
     router.add_argument("--slots", type=int, default=2)
     router.add_argument("--busy", type=int, action="append", default=[],
                         help="a process (pid) of runs started elsewhere: it takes a slot while it lives")
+    router.add_argument("--share", action="store_true",
+                        help="count every run.py laying out into this output (another runner's) against the slots")
     router.add_argument("units", nargs="+")
     tabler = commands.add_parser("table")
     tabler.add_argument("--inputs", required=True)

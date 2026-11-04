@@ -80,6 +80,11 @@ pub struct Config {
     /// on run from given poses (the designer's). `None` by default: the
     /// placer's own start.
     pub start: Option<std::sync::Arc<Start>>,
+    /// A diagnostic (`PCB_PLACER_SKIP_ANNEAL`, docs/placer.md "Where the
+    /// arrangement is lost (2026-11-04)"): no anneal at any level, each
+    /// level's legaliser seats the global placement's poses (or the
+    /// start's). Off by default.
+    pub skip_anneal: bool,
 }
 
 /// Where a diagnostic start (`Config::start`) enters the pipeline.
@@ -122,6 +127,7 @@ impl Config {
             pad_exits: None,
             first_level: 0,
             start: None,
+            skip_anneal: false,
         }
     }
 }
@@ -1082,7 +1088,8 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     }
     // The stages a diagnostic start skips.
     let skip_global = start.is_some_and(|start| start.stage != StartStage::Global);
-    let skip_anneal = start.is_some_and(|start| start.stage == StartStage::Legalize);
+    let skip_anneal =
+        config.skip_anneal || start.is_some_and(|start| start.stage == StartStage::Legalize);
     let problem = &fitted;
     let debug = std::env::var_os("PCB_PLACER_DEBUG").is_some();
     let started = std::time::Instant::now();
@@ -1931,6 +1938,20 @@ mod start_tests {
         // No anneal: the legaliser's input is the start, and keeps it.
         assert_eq!(stage(&placement, "annealed"), &spread[..]);
         assert_eq!(stage(&placement, "legal"), &spread[..]);
+    }
+
+    /// Without the anneal the legaliser seats the global placement's
+    /// poses: the annealed stage is the global one.
+    #[test]
+    fn without_the_anneal_the_legaliser_seats_the_global_placement() {
+        let (problem, _) = board();
+        let mut config = Config::new();
+        config.skip_anneal = true;
+        let placement = place(&problem, &config);
+        assert_eq!(stage(&placement, "annealed"), stage(&placement, "global"));
+        assert!(placement.illegal.is_empty() && placement.unplaced.is_empty());
+        let annealed = place(&problem, &Config::new());
+        assert_ne!(stage(&annealed, "annealed"), stage(&annealed, "global"));
     }
 
     /// The global placement's warm start: the parts it names begin at

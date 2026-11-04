@@ -160,7 +160,7 @@ in `build/diag1-stages/`. docs/placer.md, "Where the arrangement is lost
   motion, pairwise rank correlation, neighbours) and lays out first
   routes of pinned stage results.
 - **Measured** on video, the 4in1, Glasgow and SNSP-CPU-01 at seeds 1
-  and 101 (40 place checks, 18 848 CPU s; FIRSTROUTE_CPU): the global
+  and 101 (40 place checks, 17 630 CPU s; FIRSTROUTE_CPU): the global
   placement leaves the active parts a shuffle's distance from the
   designer's (share 0.77 to 1.14, pairwise 0.03 to 0.36) and the seeds
   disagree with each other as much; the anneal, the legaliser and the

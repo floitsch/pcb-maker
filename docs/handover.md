@@ -303,6 +303,13 @@ ladder's judge), 5, then the rest.
    2026-11-03: the designer as teacher on the largest-gap boards, placer
    rules, panels of copies' frames (left out on 2026-10-28: SmartSpin2k
    118 to 89, but the 0xCB panel lost its strict pass), placer round 4.
+   Where the arrangement is lost (2026-11-04, docs/placer.md): in the
+   global placement, whose arrangement of the active parts is its
+   start's noise (a shuffle's distance from the designer's, the seeds
+   no nearer each other); the anneal, the legaliser and the refinement
+   keep a good start, and the designer's active parts as the global's
+   start end below our objective. The bet: a start for the active parts
+   (`Config::start`, the skeleton race).
 5. **Starved thermals as the only failure** on complete boards (rosco,
    Castor, mackerel-30, k30, mackerel-08, Hub, PixelWave, BAGEL; counts
    fell to 0-5 since the spoke model). Since 2026-10-21
@@ -698,6 +705,7 @@ Switches and experiment hooks (change the result):
 - `PCB_PROBES_SIDE_BY_SIDE`: `N`: at most N probes of the probe ladder at once (1: one after the other).
 - `PCB_PLACER_START`: `<board>`: a diagnostic start: the placer's stages from `PCB_PLACER_START_STAGE` on start from this board's poses, by reference (docs/placer.md, "Where the arrangement is lost (2026-11-04)").
 - `PCB_PLACER_START_STAGE`: with `PCB_PLACER_START`: `global` (default: the global placement starts from the poses), `anneal` (no global placement), `legalize` (no global placement and no anneal: the legaliser seats the poses, the refinement follows).
+- `PCB_PLACER_SKIP_ANNEAL`: a diagnostic: no anneal at any level; each level's legaliser seats the global placement's poses (or `PCB_PLACER_START`'s), the refinement follows (docs/placer.md, "Where the arrangement is lost (2026-11-04)").
 - `PCB_PLACER_START_PARTS`: `<file>`: with `PCB_PLACER_START_STAGE=global`, a JSON list of `REF#n` (the n-th footprint of that reference): only these start from the board's poses, the others from the placer's own start.
 
 Diagnostics (stderr unless said; the result does not change):
