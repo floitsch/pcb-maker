@@ -99,6 +99,9 @@ flush on an edge, `opening_outwards`), `near` (`pin_of: "U1:3"`,
 `fixed`, `rotation`, `hollow`, `overhang`, `add` (parts the schematic
 lacks), `outline` (`width`/`height`, `corner_radius`, `polygon`,
 `cutouts`, `pieces`, `shrink`). Unknown keys and parts are errors (exit 2).
+A `row` keeps its parts' angle and runs from its first part along `axis` in that part's
+frame: parts turned a quarter from the row's line are the other axis with the first part's
+`rotation` a quarter turned (docs/constraints.md).
 On a panel of copies (`verdict.panel_copies`) a `near`, `relative` or `apart` between two
 parts of one copy holds in every copy (write it once); an `edge`, `region`, `place` or
 `rotation` entry holds in the copy whose footprint it names (docs/agents.md, "Panels of copies").

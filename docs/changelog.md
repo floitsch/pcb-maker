@@ -11,6 +11,39 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-04 (fresh-agent trial 6: a schematic start, length rules, an authored outline)
+
+Branch fresh-agent-trial-6 (`build/bin/pcb-maker-ux11-a` to `-f`).
+[Trial 6](reviews/2026-11-04-fresh-agent-trial-6.md): a new agent took
+apfaudio's eurorack-pmod from its schematic, hstarmans' firestarter
+`compute` (a `.kicad_dru` length rule of 25 to 27 mm on ten DVP nets)
+through a layout and route mode, and byrantech's laptop `power` from
+stacked parts on an outline of its own, from the documentation alone.
+Imports, refusals, reports and one command option; placement and
+routing unchanged but for a row's second lowering.
+
+- **Imports**: a fp-lib-table entry naming another machine's folder is
+  found by its last folders under the schematic's folder or its parents
+  (`relocated_libraries`; eurorack-pmod 132 footprints to 141); a library
+  found nowhere is named with the table's folder; the output directory's
+  `.pretty` folders are searched; without `--layers` the
+  `--footprints-from` board's copper layer count (`copper_layers_from`).
+- **Lengths**: `strip-kicad-tracks --keep-nets` keeps the named nets'
+  tracks for route mode to keep (the firestarter with the designer's DVP
+  bus kept: complete, all ten within the rule, where route mode's own
+  meanders left six under the minimum); the length action for nets under
+  the minimum gives the lever by mode; agents.md says the placer keeps
+  only maxima (`length_maxima`).
+- **Rows**: a row whose parts turned a quarter would fit says how (the
+  other axis, the first part's rotation); a quarter-turned row is lowered
+  as it lies when the layout lowers its placement again (it failed with
+  exit 4); a `place` that sends a row off the board is refused; a placed
+  row's other parts are not warned of as fixed parts on each other.
+- **Reports**: the constraints-missed action names a full side beside an
+  empty one with the `back` lever and the smallest outline (eurorack-pmod
+  121 % and 0 %); the overhang refusal without a keepout says how to keep
+  an antenna at the edge; a footprint's malformed courtyard is its own
+  without a reference.
 ## Committed on 2026-11-04 (pair rows at the pair's pitch, facing the pair's ends; a series pair point launches out of its parts; still off)
 
 Branch pair-row-pitch (`build/bin/pcb-maker-pairs2-d` for the layouts).
