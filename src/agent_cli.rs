@@ -691,11 +691,18 @@ fn print_layout(result: &pcb_kicad::KiCadBoardLayoutResult) -> Result<(), String
                     serde_json::Value::Array(pair) => (pair[0].clone(), pair[1].clone()),
                     other => (other["reference"].clone(), other["longest_mm"].clone()),
                 };
-                println!(
-                    "{label} {}: {} mm from its pins",
-                    name.as_str().unwrap_or("?"),
-                    distance
-                );
+                match distance.as_f64() {
+                    Some(distance) => println!(
+                        "{label} {}: {distance} mm from its pins",
+                        name.as_str().unwrap_or("?")
+                    ),
+                    // Nothing to measure from (no IC or connector pin on
+                    // its nets): trial 5's "null mm".
+                    None => println!(
+                        "{label} {}: no pin of its nets to measure from",
+                        name.as_str().unwrap_or("?")
+                    ),
+                }
             }
         }
         for hot in report["hot_parts"].as_array().into_iter().flatten() {

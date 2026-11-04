@@ -1263,7 +1263,14 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         });
     }
     let mut esd = Vec::new();
-    for part in parts.iter().filter(|part| esd_protector(&part.value)) {
+    // A capacitor or resistor whose value names the protector it serves
+    // ("1u TPD1S514 VBUS_POWER stability": ducktop2 right_io's C1771,
+    // trial 5) is no protector.
+    let passive = |part: &Part| matches!(part.prefix(), "C" | "R" | "L" | "FB");
+    for part in parts
+        .iter()
+        .filter(|part| esd_protector(&part.value) && !passive(part))
+    {
         let mut nearest: Option<f64> = None;
         for pad in part
             .pads
@@ -1457,6 +1464,31 @@ mod tests {
         for net in ["/SDA", "Net-(U1-Pad3)", "LED1", "V_SENSE"] {
             assert!(!rail_name(net), "{net}");
         }
+    }
+
+    /// A capacitor whose value names the protector it serves is no ESD
+    /// protector (trial 5's ducktop2 right_io: C1771 "1u TPD1S514
+    /// VBUS_POWER stability" was listed at "null mm" from its pins).
+    #[test]
+    fn a_capacitor_named_after_its_protector_is_no_protector() {
+        let board = r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+            (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+            (footprint "USB" (layer "F.Cu") (at 2 10) (property "Reference" "J1") (property "Value" "USB_C")
+              (pad "1" smd rect (at 0 0) (size 0.6 0.7) (layers "F.Cu") (net 2 "VBUS"))
+              (pad "2" smd rect (at 0 1) (size 0.6 0.7) (layers "F.Cu") (net 1 "GND")))
+            (footprint "SOT-23" (layer "F.Cu") (at 6 10) (property "Reference" "U1") (property "Value" "TPD1S514")
+              (pad "1" smd rect (at 0 0) (size 0.6 0.7) (layers "F.Cu") (net 2 "VBUS"))
+              (pad "2" smd rect (at 0 1) (size 0.6 0.7) (layers "F.Cu") (net 1 "GND")))
+            (footprint "C_0603" (layer "F.Cu") (at 9 10) (property "Reference" "C1") (property "Value" "1u TPD1S514 VBUS stability")
+              (pad "1" smd rect (at 0 0) (size 0.6 0.7) (layers "F.Cu") (net 2 "VBUS"))
+              (pad "2" smd rect (at 1 0) (size 0.6 0.7) (layers "F.Cu") (net 1 "GND"))))"#;
+        let directory = std::env::temp_dir().join(format!("pcb-maker-esd-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("b.kicad_pcb"), board).unwrap();
+        let report = score_kicad_board(&directory, "b");
+        fs::remove_dir_all(&directory).ok();
+        let esd = report.unwrap().esd;
+        assert_eq!(esd, vec![("U1".to_string(), Some(4.0))]);
     }
 
     #[test]
