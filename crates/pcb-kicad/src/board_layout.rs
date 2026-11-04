@@ -2028,6 +2028,8 @@ pub fn layout_kicad_board(
                 (available * 0.5 / (router_mb * 1.5)) as usize
             })
             .clamp(1, candidates.len() + 1);
+        // No more than the search threads (`at_most_the_threads`).
+        let side_by_side = crate::board_router::at_most_the_threads(side_by_side);
         // The memory ledger: as many as it has room for, reserved first.
         let side_by_side = crate::ledger::routers_side_by_side(
             0.0,

@@ -1205,7 +1205,17 @@ impl<'a> Ladder<'a> {
         wanted: usize,
     ) -> (usize, String) {
         let limits = runner.memory_limits();
-        let (count, limit) = limits.routers_that_fit(maps_mb, wanted);
+        let (fitting, limit) = limits.routers_that_fit(maps_mb, wanted);
+        // No more than the search threads (`at_most_the_threads`).
+        let count = at_most_the_threads(fitting);
+        let note = if count < fitting {
+            format!(
+                "{}; {count} for {count} search threads",
+                fit_note(maps_mb, limit)
+            )
+        } else {
+            fit_note(maps_mb, limit)
+        };
         // The memory ledger: as many of them as it has room for, at least
         // one, reserved before they are built (`crate::ledger`): the maps
         // estimate of each (`PEAK_RESIDENT_PER_MAPS`) and the fixed
@@ -1220,13 +1230,10 @@ impl<'a> Ladder<'a> {
         if reserved < count {
             return (
                 reserved,
-                format!(
-                    "{}; {reserved} fit the memory ledger",
-                    fit_note(maps_mb, limit)
-                ),
+                format!("{note}; {reserved} fit the memory ledger"),
             );
         }
-        (count, fit_note(maps_mb, limit))
+        (count, note)
     }
 
     /// A rung's name for the log and the failures.

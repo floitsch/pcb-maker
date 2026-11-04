@@ -2651,6 +2651,24 @@ mod memory_limit_tests {
         assert!(limits.too_small_for(5000.0, 2).is_none());
     }
 
+    /// Routers side by side are at most the search threads: four seeds
+    /// with two threads run two at a time, one thread one at a time;
+    /// never none.
+    #[test]
+    fn routers_side_by_side_are_at_most_the_search_threads() {
+        for (threads, wanted, expected) in [(2, 4, 2), (2, 1, 1), (1, 3, 1), (4, 3, 3), (2, 0, 1)] {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap();
+            assert_eq!(
+                pool.install(|| at_most_the_threads(wanted)),
+                expected,
+                "{threads} threads, {wanted} wanted"
+            );
+        }
+    }
+
     #[test]
     fn the_address_space_limit_counts_the_virtual_size() {
         let limits = MemoryLimits::resolve(&MemoryInputs {

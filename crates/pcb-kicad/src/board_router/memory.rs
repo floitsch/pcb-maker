@@ -77,6 +77,19 @@ pub(crate) fn configure_malloc() {
     }
 }
 
+/// At most as many routers side by side (the placement race's probes, the
+/// ladder's probes, rungs and seeds) as the process has search threads
+/// (`RAYON_NUM_THREADS`, every core by default): more than that share the
+/// same cores, each holding its own maps, and finish no sooner than one
+/// after the other would. The outcome is the same however many run at once
+/// (each counts as run one after the other, which is what lets the memory
+/// decide the number); the peak is not. Until 2026-11-04 only the memory
+/// decided: the sweep's two threads ran four seeds of osprey side by side
+/// (3.9 GB of routers) and three race probes of katia (4.5 GB).
+pub(crate) fn at_most_the_threads(count: usize) -> usize {
+    count.min(rayon::current_num_threads().max(1)).max(1)
+}
+
 /// The process's resident size now, in megabytes (Linux; elsewhere 0).
 pub(crate) fn resident_mb() -> f64 {
     status_field("VmRSS:").unwrap_or(0.0)
