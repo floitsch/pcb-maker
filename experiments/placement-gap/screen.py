@@ -46,7 +46,7 @@ def units(arguments):
     result = []
     for seed in SEEDS:
         for board in sorted(DENSE, key=lambda b: -estimate(b)[1]):
-            for side in ("off", "on"):
+            for side in arguments.sides.split(","):
                 placer = {"seed": seed, **(on if side == "on" else {})}
                 name = f"dense-s{seed}-{side}-{board.split('__')[-1]}"
                 binary = arguments.on_binary if side == "on" else arguments.off_binary
@@ -64,6 +64,8 @@ def main():
     parser.add_argument("--off-binary", required=True)
     parser.add_argument("--on-binary", required=True)
     parser.add_argument("--on", required=True, help="the on side's placer settings, as JSON")
+    parser.add_argument("--sides", default="off,on", help="the sides to run: off,on (the default), off or on "
+                        "(one off side for several on sides, each in the off side's directory under its own --out)")
     parser.add_argument("--slots", type=int, default=5)
     parser.add_argument("--slots-file", help="a file holding the slots, read again every 20 s (to share the "
                         "machine's layout limit with other runs)")
