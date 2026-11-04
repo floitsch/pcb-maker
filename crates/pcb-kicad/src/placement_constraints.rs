@@ -1786,10 +1786,20 @@ pub(crate) fn without_parts_placed_elsewhere(
 }
 
 /// The warning for two held parts on top of each other.
+/// Only pads on each other cost a connection: parts in a courtyard of
+/// another on purpose (jetson-nano-baseboard's 36 capacitors and
+/// resistors under its SO-DIMM socket J15, trial 5) were said to have pads
+/// that "cannot both be connected".
 pub(crate) fn overlap_warning(first: &str, second: &str, what: &str) -> String {
-    format!(
-        "fixed parts {first} and {second} overlap ({what}): the placer keeps both where the input has them and their pads cannot both be connected; give one its own place (place, or free it from fixed and fixed_patterns)"
-    )
+    if what.contains("pads") {
+        format!(
+            "fixed parts {first} and {second} overlap ({what}): the placer keeps both where the input has them and their pads cannot both be connected; give one its own place (place, or free it from fixed and fixed_patterns)"
+        )
+    } else {
+        format!(
+            "fixed parts {first} and {second} overlap ({what}): the placer keeps both where the input has them; their pads are apart, so it costs no connection (a part under a socket or module on purpose); where it is a mistake give one its own place (place, or free it from fixed and fixed_patterns)"
+        )
+    }
 }
 
 /// What the input check warns of before a placement runs: keepouts over

@@ -2647,11 +2647,21 @@ pub(crate) fn fold_observations(observations: &[String]) -> Vec<String> {
                 all.iter().map(|entry| entry.2).sum::<usize>(),
                 named(*kind)
             ),
-            ObservationKind::Overlap => format!(
-                "{} pairs of fixed parts overlap ({}): the placer keeps both of each pair where the input has them and their pads cannot both be connected; give one of each pair its own place (place, or free it from fixed and fixed_patterns) (input_observations has each)",
-                all.len(),
-                named(*kind)
-            ),
+            ObservationKind::Overlap => {
+                // Only pads on each other cost a connection
+                // (`overlap_warning`).
+                let pads = all.iter().filter(|entry| entry.1.contains("pads")).count();
+                let pads = match pads {
+                    0 => "; no pair's pads lie on each other, so it costs no connection (parts under a socket or module on purpose); where it is a mistake give one of a pair its own place".to_string(),
+                    count if count == all.len() => " and their pads cannot both be connected; give one of each pair its own place".to_string(),
+                    count => format!("; {count} of the pairs have pads on each other, which cannot both be connected: give one of each such pair its own place"),
+                };
+                format!(
+                    "{} pairs of fixed parts overlap ({}): the placer keeps both of each pair where the input has them{pads} (place, or free it from fixed and fixed_patterns) (input_observations has each)",
+                    all.len(),
+                    named(*kind)
+                )
+            }
         });
     }
     folded
@@ -6056,7 +6066,7 @@ mod tests {
         );
         assert_eq!(
             actions[2],
-            "nothing to do (the input's): 3 pairs of fixed parts overlap (C8 and U2 (courtyards), C16 and U2 (pads on F.Cu), M1 and U2): the placer keeps both of each pair where the input has them and their pads cannot both be connected; give one of each pair its own place (place, or free it from fixed and fixed_patterns) (input_observations has each)"
+            "nothing to do (the input's): 3 pairs of fixed parts overlap (C8 and U2 (courtyards), C16 and U2 (pads on F.Cu), M1 and U2): the placer keeps both of each pair where the input has them; 1 of the pairs have pads on each other, which cannot both be connected: give one of each such pair its own place (place, or free it from fixed and fixed_patterns) (input_observations has each)"
         );
         assert_eq!(verdict.input_observations.len(), 10);
         assert!(verdict.input_observations[6].starts_with("fixed part SW7 lies on 2 "));
@@ -6073,6 +6083,23 @@ mod tests {
             "courtyards",
         )];
         assert_eq!(fold_observations(&one), one);
+        assert!(
+            one[0].contains("their pads are apart, so it costs no connection"),
+            "{one:?}"
+        );
+        // Courtyards alone (jetson-nano-baseboard's parts under its
+        // SO-DIMM socket, trial 5): no connection lost.
+        let courtyards: Vec<String> = ["C10", "C11"]
+            .iter()
+            .map(|part| crate::placement_constraints::overlap_warning(part, "J15", "courtyards"))
+            .collect();
+        let folded = fold_observations(&courtyards);
+        assert_eq!(folded.len(), 1);
+        assert!(
+            folded[0].contains("no pair's pads lie on each other, so it costs no connection")
+                && !folded[0].contains("cannot both be connected"),
+            "{folded:?}"
+        );
     }
 
     #[test]
