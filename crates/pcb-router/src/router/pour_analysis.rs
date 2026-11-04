@@ -333,11 +333,15 @@ impl Router {
             let anchor = description.terminals[terminal].anchor;
             // Per layer and piece, its node nearest the pad.
             let mut candidates: Vec<(usize, u32, usize, f64)> = Vec::new();
-            // Per layer, the pieces the nodes' windows hold (a pad's
-            // hundreds of nodes at a fine pitch each looked at every node
-            // of their window: nrf24_remote's analyses two fifths of its
-            // route; the windows are now visited nearest first and left
-            // once each of these pieces was met).
+            // Per layer, the pieces that can join the pad: those with a
+            // node within the brush and two pitches of its copper, the
+            // farthest `solid_fill_reaches` looks (a piece's candidate is
+            // its node nearest the pad, and a candidate farther joins
+            // nothing and asks the probe nothing). A pad's hundreds of
+            // nodes at a fine pitch each looked at every node of their
+            // window for every piece (nrf24_remote's analyses two fifths
+            // of its route); the windows are now visited nearest first and
+            // left once each of these pieces was met.
             let mut among: Vec<Option<Vec<u32>>> = vec![None; layers];
             for node in nodes
                 .iter()
@@ -345,12 +349,19 @@ impl Router {
             {
                 let layer = node.layer as usize;
                 let among = among[layer].get_or_insert_with(|| {
-                    pours.pieces_in_box(
-                        &self.grid,
-                        layer,
-                        node_box(&self.grid, nodes, layer, near.reach),
-                    )
+                    let reach = probe.brush_half(layer) + 3.0 * self.grid.pitch;
+                    match self.grid.node_range(pad.shape.aabb().inflated(reach)) {
+                        Some((x0, y0, x1, y1)) => pours.pieces_in_box(
+                            &self.grid,
+                            layer,
+                            (x0 as i64, y0 as i64, x1 as i64, y1 as i64),
+                        ),
+                        None => Vec::new(),
+                    }
                 });
+                if among.is_empty() {
+                    continue;
+                }
                 for (piece, cell) in
                     pours.pieces_near_ordered(&self.grid, layer, node.cell as usize, &near, among)
                 {
@@ -659,35 +670,4 @@ impl Router {
             )
         })
     }
-}
-
-/// The box of the nodes of `nodes` on `layer`, grown by `reach` nodes:
-/// (x0, y0, x1, y1), empty (x1 < x0) without such nodes.
-pub(super) fn node_box(
-    grid: &Grid,
-    nodes: &[Node],
-    layer: usize,
-    reach: usize,
-) -> (i64, i64, i64, i64) {
-    let mut bounds = (i64::MAX, i64::MAX, i64::MIN, i64::MIN);
-    for node in nodes.iter().filter(|node| node.layer as usize == layer) {
-        let (x, y) = grid.xy(node.cell as usize);
-        let (x, y) = (x as i64, y as i64);
-        bounds = (
-            bounds.0.min(x),
-            bounds.1.min(y),
-            bounds.2.max(x),
-            bounds.3.max(y),
-        );
-    }
-    let reach = reach as i64;
-    if bounds.2 < bounds.0 {
-        return (0, 0, -1, -1);
-    }
-    (
-        bounds.0 - reach,
-        bounds.1 - reach,
-        bounds.2 + reach,
-        bounds.3 + reach,
-    )
 }

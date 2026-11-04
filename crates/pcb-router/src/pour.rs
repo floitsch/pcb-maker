@@ -316,10 +316,11 @@ impl PourMap {
         None
     }
 
-    /// `pieces_near` where the window can hold only pieces of `among` (a
-    /// sorted list holding every piece the window has): the window visited
-    /// nearest first (`NearOrder`), each piece's first node its nearest,
-    /// until every piece of `among` was met. The same pieces and nodes.
+    /// `pieces_near` for the pieces of `among` (sorted): the window
+    /// visited nearest first (`NearOrder`), each piece's first node its
+    /// nearest, until every piece of `among` was met. The same nodes as
+    /// `pieces_near` for those pieces; the others are left out (all of
+    /// `pieces_near` where `among` holds every piece of the window).
     pub fn pieces_near_ordered(
         &self,
         grid: &Grid,
@@ -343,7 +344,10 @@ impl PourMap {
             }
             let index = (ty * nx + tx) as usize;
             let piece = labels[index];
-            if piece == 0 || found.iter().any(|(other, _)| *other == piece) {
+            if piece == 0
+                || found.iter().any(|(other, _)| *other == piece)
+                || among.binary_search(&piece).is_err()
+            {
                 continue;
             }
             found.push((piece, index));
@@ -493,6 +497,18 @@ mod tests {
                         pours.pieces_near_ordered(&grid, 0, cell, &order, &[1, 2, 3, 4]),
                         expected
                     );
+                    // Some pieces only: theirs of the same answer.
+                    for subset in [&[2u32][..], &[1, 4], &[3, 4], &[]] {
+                        let wanted: Vec<(u32, usize)> = expected
+                            .iter()
+                            .copied()
+                            .filter(|(piece, _)| subset.contains(piece))
+                            .collect();
+                        assert_eq!(
+                            pours.pieces_near_ordered(&grid, 0, cell, &order, subset),
+                            wanted
+                        );
+                    }
                 }
             }
         }
