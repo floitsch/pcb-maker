@@ -108,15 +108,12 @@ impl Router {
         self.covered = vec![Vec::new(); layers];
         self.tile_covered = vec![vec![0.0; tiles]; layers];
         self.mark_covered();
-        // The old via sites' marks go with them (`mark_fanout` marks the
-        // new ones).
-        self.fanout_via.clear();
         self.mark_via_cells();
-        // The pin-row gaps (and the fan-out's reservations, with its
-        // switch) follow the moved parts: the old marks go, the new places
-        // are marked (until 2026-10-28 only with `fanout`; the gaps stayed
-        // where a moved part had been). Its work on the work clock as the
-        // fan-out's: eight nodes a search expansion.
+        // The pin-row gaps follow the moved parts: the old marks go, the
+        // new places are marked (until 2026-10-28 only with the fan-out
+        // step, removed on 2026-11-04; the gaps stayed where a moved part
+        // had been). Its work on the work clock: eight nodes a search
+        // expansion.
         let work = self.mark_pin_rows();
         self.scratch.expansions += work.div_ceil(8);
         self.build_hot();

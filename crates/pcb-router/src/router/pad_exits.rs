@@ -777,7 +777,6 @@ mod tests {
     fn config() -> Config {
         Config {
             pitches: vec![0.1],
-            fanout_depth: 0.5,
             ..Config::default()
         }
     }

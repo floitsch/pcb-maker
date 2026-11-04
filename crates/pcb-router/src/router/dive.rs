@@ -79,8 +79,8 @@ impl Router {
         &self.board.nets[pad.net as usize].terminals[pad.terminal].label
     }
 
-    /// What closes `pad`'s straight ways out (its runs along the axes,
-    /// without a via): per run, the nets of `nets` whose copper comes
+    /// What closes `pad`'s straight ways out (its runs along the axes):
+    /// per run, the nets of `nets` whose copper comes
     /// closer to the run than both half widths and the clearance (a via by
     /// its radius), and whether by a via; into `blocks` as (run, net, via).
     /// Returns the nodes looked at (the work).
@@ -90,12 +90,7 @@ impl Router {
         nets: &mut dyn Iterator<Item = NetId>,
         blocks: &mut Vec<(usize, NetId, bool)>,
     ) -> u64 {
-        let runs: Vec<(usize, &super::fanout::ExitRun)> = pad
-            .runs
-            .iter()
-            .enumerate()
-            .filter(|(_, run)| run.direction % 2 == 0 && !run.via)
-            .collect();
+        let runs: Vec<(usize, &super::fanout::ExitRun)> = pad.runs.iter().enumerate().collect();
         if runs.is_empty() {
             return 0;
         }
@@ -229,13 +224,7 @@ impl Router {
                     continue;
                 }
                 pads += 1;
-                let ways: Vec<usize> = pad
-                    .runs
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, run)| run.direction % 2 == 0 && !run.via)
-                    .map(|(run, _)| run)
-                    .collect();
+                let ways: Vec<usize> = (0..pad.runs.len()).collect();
                 if ways.is_empty() {
                     no_way += 1;
                     eprintln!(

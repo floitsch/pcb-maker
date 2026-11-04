@@ -190,37 +190,12 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_ROUTER_EXACT_ESCAPES",
         Kind::Switch,
-        "overrides the router's `exact_escape_stubs` (`0` off, anything else on; off by default): escape stubs stamp exactly (along a lattice line as lattice nodes, oblique ones by their measured footprint) and a pad leaves by straight stubs along a lattice line where it has any; off, the stubs stamp the lattice's discs grown by the snapping error (docs/router.md, \"Fine-pitch escapes\").",
-    ),
-    (
-        "PCB_ROUTER_FANOUT",
-        Kind::Switch,
-        "overrides the router's `fanout` (`0` off, anything else on; off by default): before the negotiation every pad of a dense row gets one straight way out, chosen jointly with its neighbours, that other nets pay `fanout_cost` to cross or to put a via beside (docs/router.md, \"Fan-out before negotiation\").",
+        "overrides the router's `exact_escape_stubs` (`0` off, anything else on; on by default since 2026-10-26): escape stubs stamp exactly (along a lattice line as lattice nodes, oblique ones by their measured footprint) and a pad leaves by straight stubs along a lattice line where it has any; off, the stubs stamp the lattice's discs grown by the snapping error (docs/router.md, \"Fine-pitch escapes\").",
     ),
     (
         "PCB_ROUTER_BGA_FANOUT",
         Kind::Switch,
         "overrides the router's `bga_fanout` (`0` off, anything else on; on by default): before routing, the inner balls of every grid array (those no track between the outer balls serves) whose net's own via does not fit a diagonal gap get a stub and a through via in a diagonal gap, the largest of the class's and the project's via sizes that keeps every clearance, as fixed copper of the ball's net that its route may end on; written only where the route uses it; the placer keeps the far side free under those vias (docs/router.md, \"Prepared fan-outs for BGAs (2026-11-04)\").",
-    ),
-    (
-        "PCB_ROUTER_FANOUT_COST",
-        Kind::Switch,
-        "the router's `fanout_cost` in millimetres (default 6; with `fanout`): what another net pays to cross a reserved fan-out run or to put a via within reach of it.",
-    ),
-    (
-        "PCB_ROUTER_FANOUT_DEPTH",
-        Kind::Switch,
-        "the router's `fanout_depth` in millimetres (default 0.5; with `fanout`): how far beyond its pad a fan-out run reaches.",
-    ),
-    (
-        "PCB_ROUTER_FANOUT_FREE",
-        Kind::Switch,
-        "with `fanout`: a pad of a row coarser than 0.65 mm takes part when it has at most this many straight ways out along the axes (default 2; 0: fine-pitch rows only; an experiment).",
-    ),
-    (
-        "PCB_ROUTER_FANOUT_VIAS",
-        Kind::Switch,
-        "with `fanout`: `0` charges no via beside a reserved run, only the crossings (an experiment).",
     ),
     (
         "PCB_ROUTER_CAPACITATED_CORRIDORS",
@@ -321,11 +296,6 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "PCB_ROUTER_NET_WORK",
         Kind::Diagnostic,
         "`<file>`: the search expansions per net over the process (every router, every phase), written to the file as JSON at each router's finish; the last write holds the whole run (docs/router.md, \"Prepared fan-outs for BGAs (2026-11-04)\").",
-    ),
-    (
-        "PCB_ROUTER_FANOUT_WHY",
-        Kind::Diagnostic,
-        "the fan-out step (`fanout`) prints every dense pad with its ways out, their costs, the one chosen and the pads left short.",
     ),
     (
         "PCB_PLACER_PAD_EXITS",

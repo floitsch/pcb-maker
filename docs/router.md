@@ -5288,6 +5288,13 @@ before negotiation (open problem 2 in handover.md).
 
 ## Fan-out before negotiation (2026-10-28)
 
+**Removed on 2026-11-04** (the step, `fanout` with `fanout_cost` and
+`PCB_ROUTER_FANOUT`, `_COST`, `_DEPTH`, `_FREE`, `_VIAS`, `_WHY`; it was
+off; docs/handover.md, "Removed experiments (2026-11-04)"). What stays of
+it is the plan's dense pads and their straight ways out
+(`Router::fanout_plan`, router/fanout.rs), which the crossing census
+reads; the measurements are kept as they were.
+
 "The last connections" above put 8 of the 34 open items of the night's
 near misses down to fine-pitch rows: two nets for one exit, every
 trouble exchange a pure trade. The question: does the row have an exit
@@ -5449,7 +5456,7 @@ identical to x1872's line by line, and every row the same.
 router (k30: 21 000 to 33 000, eight to an expansion: about 0.001 s of
 work); the work differences above are the routes'.
 
-**Default: off.** The diagnosis holds (the rows have a way out for
+**Default: off; removed on 2026-11-04.** The diagnosis holds (the rows have a way out for
 every pad; the neighbours' vias and turns take them), but reserving the
 ways before the negotiation does not close the near misses: on the four
 boards it moves which pad of a crossing pair stays open, it cost
@@ -5457,10 +5464,10 @@ OpenAirScope's layout pass and three of the tier's passes, and the dense
 boards end 35 connections worse. What the rows need is the crossing
 decided as a topology inside the negotiation (which net of a crossing
 pair dives, and its via placed where the neighbours leave room), not a
-price on space reserved before any route exists. The step stays as a
-switch with its report: `PCB_ROUTER_FANOUT_WHY` lists every dense pad's
-ways and the rows' crossers, a diagnostic of a board's fine-pitch rows
-on its own.
+price on space reserved before any route exists. The step stayed as a
+switch with its report (`PCB_ROUTER_FANOUT_WHY`, with the switch on)
+until 2026-11-04; the crossing census (`PCB_ROUTER_TROUBLE_WHY`) names
+a board's boxed-in fine-pitch pads instead.
 
 
 ## Crossings decided in the repair (2026-11-03)

@@ -4915,50 +4915,46 @@ fn the_pin_row_cost_keeps_other_nets_out_from_between_a_parts_pads() {
 /// across it (S's first pad moves too, so S is routed again). After the
 /// update the gaps are marked at the new place and nowhere at the old
 /// one, the marking's work is on the work clock, and S's new route pays
-/// the gap cost and goes round the row. With and without the fan-out.
+/// the gap cost and goes round the row.
 #[test]
 fn a_part_moved_by_update_takes_its_pin_row_gaps_along() {
-    for fanout in [false, true] {
-        let config = Config {
-            pitches: vec![0.05],
-            pin_row_cost: 5.0,
-            fanout,
-            ..Config::default()
-        };
-        let mut router = Router::new(&pin_row_board(7.0, 2.0), &config);
-        let first = router.run_in_place();
-        assert_eq!(first.status[3], crate::NetStatus::Routed);
-        let gap_at = |router: &Router, at: [f64; 2]| {
-            router.pin_row_at(0, router.grid.nearest_node(at).unwrap())
-        };
-        let (old, new) = ([7.5, 5.0], [4.5, 5.0]);
-        assert_ne!(gap_at(&router, old), 0);
-        assert_eq!(gap_at(&router, new), 0);
+    let config = Config {
+        pitches: vec![0.05],
+        pin_row_cost: 5.0,
+        ..Config::default()
+    };
+    let mut router = Router::new(&pin_row_board(7.0, 2.0), &config);
+    let first = router.run_in_place();
+    assert_eq!(first.status[3], crate::NetStatus::Routed);
+    let gap_at =
+        |router: &Router, at: [f64; 2]| router.pin_row_at(0, router.grid.nearest_node(at).unwrap());
+    let (old, new) = ([7.5, 5.0], [4.5, 5.0]);
+    assert_ne!(gap_at(&router, old), 0);
+    assert_eq!(gap_at(&router, new), 0);
 
-        let moved = pin_row_board(4.0, 1.8);
-        let before = router.expansions();
-        router.update(&moved).unwrap();
-        assert_eq!(gap_at(&router, old), 0, "fanout {fanout}");
-        for at in [[4.1, 5.0], [4.5, 5.0], [5.5, 5.0], [5.9, 5.0]] {
-            assert_ne!(gap_at(&router, at), 0, "{at:?}, fanout {fanout}");
-        }
-        // Every marked node lies between the new pads.
-        for (cell, _) in &router.pin_row[0] {
-            let at = router.grid.center(
-                *cell as usize % router.grid.nx,
-                *cell as usize / router.grid.nx,
-            );
-            assert!(at[0] >= 4.0 - 1.0e-9 && at[0] <= 6.0 + 1.0e-9, "{at:?}");
-        }
-        let node = router.grid.nearest_node(new).unwrap();
-        assert!(router.pin_row_foreign(3, 0, node));
-        assert!(!router.pin_row_foreign(0, 0, node));
-        assert!(router.expansions() > before, "the marking's work, booked");
-
-        let second = router.reroute(true);
-        assert_eq!(second.status[3], crate::NetStatus::Routed);
-        assert!(!crosses_the_row(&second.routes[3]), "fanout {fanout}");
+    let moved = pin_row_board(4.0, 1.8);
+    let before = router.expansions();
+    router.update(&moved).unwrap();
+    assert_eq!(gap_at(&router, old), 0);
+    for at in [[4.1, 5.0], [4.5, 5.0], [5.5, 5.0], [5.9, 5.0]] {
+        assert_ne!(gap_at(&router, at), 0, "{at:?}");
     }
+    // Every marked node lies between the new pads.
+    for (cell, _) in &router.pin_row[0] {
+        let at = router.grid.center(
+            *cell as usize % router.grid.nx,
+            *cell as usize / router.grid.nx,
+        );
+        assert!(at[0] >= 4.0 - 1.0e-9 && at[0] <= 6.0 + 1.0e-9, "{at:?}");
+    }
+    let node = router.grid.nearest_node(new).unwrap();
+    assert!(router.pin_row_foreign(3, 0, node));
+    assert!(!router.pin_row_foreign(0, 0, node));
+    assert!(router.expansions() > before, "the marking's work, booked");
+
+    let second = router.reroute(true);
+    assert_eq!(second.status[3], crate::NetStatus::Routed);
+    assert!(!crosses_the_row(&second.routes[3]));
 }
 
 /// An oblique stub's measured footprint: every node closer than the radius
@@ -5652,48 +5648,41 @@ fn restored_state(router: &Router) -> RestoredState {
 /// after a polish on the same board; and both route on alike.
 #[test]
 fn a_saved_copy_restores_as_a_whole_copy() {
-    for fanout in [false, true] {
-        let config = Config {
-            pitches: vec![0.05],
-            pin_row_cost: 5.0,
-            fanout,
-            ..Config::default()
-        };
-        let mut router = Router::new(&pin_row_board(7.0, 2.0), &config);
-        router.run_in_place();
-        // A move trial thrown away.
-        let whole = router.clone();
-        let saved = router.saved_copy();
-        assert!(saved.hot.is_empty() && saved.stamp_mark.is_empty());
-        assert_eq!(restored_state(&router), restored_state(&whole));
-        router.update(&pin_row_board(4.0, 1.8)).unwrap();
-        router.reroute(true);
-        assert_ne!(router.fingerprint(), whole.fingerprint());
-        router.restore_saved(saved);
-        assert_eq!(
-            restored_state(&router),
-            restored_state(&whole),
-            "fanout {fanout}"
-        );
-        assert_eq!(router.hot_of, whole.hot_of);
-        assert_eq!(router.hot_pours, whole.hot_pours);
-        assert_eq!(router.expansions(), whole.expansions());
-        assert!(Arc::ptr_eq(&router.statics, &whole.statics));
-        assert!(router.stamp_mark.iter().all(|word| *word == 0));
-        // A polish thrown away, on the same board.
-        let mut whole = whole;
-        let saved = router.saved_copy();
-        let before = restored_state(&router);
-        router.polish();
-        router.restore_saved(saved);
-        assert_eq!(restored_state(&router), before);
-        // Both route on alike: the same routes for the same work.
-        let ours = router.reroute(true);
-        let theirs = whole.reroute(true);
-        assert_eq!(router.fingerprint(), whole.fingerprint());
-        assert_eq!(router.expansions(), whole.expansions());
-        assert_eq!(ours.status, theirs.status);
-    }
+    let config = Config {
+        pitches: vec![0.05],
+        pin_row_cost: 5.0,
+        ..Config::default()
+    };
+    let mut router = Router::new(&pin_row_board(7.0, 2.0), &config);
+    router.run_in_place();
+    // A move trial thrown away.
+    let whole = router.clone();
+    let saved = router.saved_copy();
+    assert!(saved.hot.is_empty() && saved.stamp_mark.is_empty());
+    assert_eq!(restored_state(&router), restored_state(&whole));
+    router.update(&pin_row_board(4.0, 1.8)).unwrap();
+    router.reroute(true);
+    assert_ne!(router.fingerprint(), whole.fingerprint());
+    router.restore_saved(saved);
+    assert_eq!(restored_state(&router), restored_state(&whole));
+    assert_eq!(router.hot_of, whole.hot_of);
+    assert_eq!(router.hot_pours, whole.hot_pours);
+    assert_eq!(router.expansions(), whole.expansions());
+    assert!(Arc::ptr_eq(&router.statics, &whole.statics));
+    assert!(router.stamp_mark.iter().all(|word| *word == 0));
+    // A polish thrown away, on the same board.
+    let mut whole = whole;
+    let saved = router.saved_copy();
+    let before = restored_state(&router);
+    router.polish();
+    router.restore_saved(saved);
+    assert_eq!(restored_state(&router), before);
+    // Both route on alike: the same routes for the same work.
+    let ours = router.reroute(true);
+    let theirs = whole.reroute(true);
+    assert_eq!(router.fingerprint(), whole.fingerprint());
+    assert_eq!(router.expansions(), whole.expansions());
+    assert_eq!(ours.status, theirs.status);
 }
 
 /// A probe's router parked through the race's other probes (`park`) and

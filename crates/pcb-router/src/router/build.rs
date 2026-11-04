@@ -341,8 +341,6 @@ impl Router {
             pin_row: vec![Vec::new(); layers],
             pin_row_nets: Vec::new(),
             pin_row_costs: Vec::new(),
-            fanout_first: usize::MAX,
-            fanout_via: Vec::new(),
             tile_covered: vec![vec![0.0; tiles_x * tiles_y]; layers],
             layer_cut: vec![1.0; layers],
             sever: vec![Vec::new(); layers],
@@ -729,22 +727,17 @@ impl Router {
     /// changes its distance from the line by at most that a step, so every
     /// path across the line between the centres has a node in the band,
     /// one where the line runs along a node row). A node in two gaps keeps
-    /// the first. Nothing with `pin_row_cost` 0. Then the fan-out's
-    /// reserved runs (`mark_fanout`, with `Config::fanout`), whose nodes
-    /// a gap's node keeps. Everything is marked again from the board as it
+    /// the first. Nothing with `pin_row_cost` 0. Everything is marked again from the board as it
     /// is (`update` after a move: the old marks go, the moved parts' gaps
     /// are marked where they now are). Returns the gaps' work: the nodes
-    /// the gaps' boxes visit and the marks sorted (the fan-out books its
-    /// own on the work clock; `update` books this, `Router::new` leaves it
-    /// in the build as before).
+    /// the gaps' boxes visit and the marks sorted (`update` books this,
+    /// `Router::new` leaves it in the build as before).
     pub(super) fn mark_pin_rows(&mut self) -> u64 {
         let layers = self.board.layer_count;
         self.pin_row = vec![Vec::new(); layers];
         self.pin_row_nets.clear();
         self.pin_row_costs.clear();
         let mut work = self.mark_pin_row_gaps();
-        self.fanout_first = self.pin_row_nets.len().max(1);
-        self.mark_fanout();
         for nodes in &mut self.pin_row {
             work += nodes.len() as u64;
             // Stable: of a node's gaps, the first stays.
@@ -837,17 +830,10 @@ impl Router {
         }
         let gap = self.pin_row_at(layer, cell);
         let own = crate::grid::owner(net);
-        (gap != 0
-            && {
-                let (a, b) = self.pin_row_nets[gap as usize];
-                a != own && b != own
-            }
-            // A pour net pays for no reserved fan-out run (`search`).
-            && ((gap as usize) < self.fanout_first
-                || self
-                    .nets
-                    .get(net as usize)
-                    .is_none_or(|state| state.plane.is_empty())))
+        (gap != 0 && {
+            let (a, b) = self.pin_row_nets[gap as usize];
+            a != own && b != own
+        })
         .then_some(gap as usize)
     }
 
@@ -1068,7 +1054,6 @@ impl Router {
             }
         }
         self.via_marks = marks;
-        self.apply_fanout_via_marks();
         // Read only where bit 0 of `via_marks` is set: none without pours
         // (jiran-ble-lite at 0.05 mm: 55 MB).
         if self.covered.iter().all(Vec::is_empty) {

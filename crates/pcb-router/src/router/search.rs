@@ -37,10 +37,6 @@ impl Router {
             self.config.via_cost
         } as f32;
         let bend_cost = self.config.bend_cost as f32;
-        // A pour net pays nothing for the fan-out's reserved runs
-        // (`mark_fanout`): its pads join by spokes and its stubs and vias
-        // keep the pour whole.
-        let pays_fanout = net_state.plane.is_empty();
         // Cleanup and hard reinsertion decide final geometry: search exactly.
         let weight = if self.cleanup || hard {
             0.999
@@ -478,10 +474,7 @@ impl Router {
                             let (guard, covered, gap) = self.hot_pour(hot.pour, layer, target_cell);
                             if gap != 0 {
                                 let (a, b) = self.pin_row_nets[gap as usize];
-                                if a != own
-                                    && b != own
-                                    && (pays_fanout || (gap as usize) < self.fanout_first)
-                                {
+                                if a != own && b != own {
                                     pin_row = self.pin_row_costs[gap as usize];
                                 }
                             }
@@ -601,11 +594,7 @@ impl Router {
                         cut *= self.config.thermal_guard_cost as f32;
                     }
                 }
-                let mut step = via_cost * cut * (1.0 + history) * (1.0 + present * occupied);
-                // Another net's reserved fan-out run within reach.
-                if marks & 4 != 0 && pays_fanout {
-                    step += self.fanout_via_cost(own, cell);
-                }
+                let step = via_cost * cut * (1.0 + history) * (1.0 + present * occupied);
                 let cell_class = if necks { class_xy(x, y) } else { class };
                 let cell_statics = &self.statics[cell_class];
                 let free_layers = cell_statics.free_layers.get(cell);

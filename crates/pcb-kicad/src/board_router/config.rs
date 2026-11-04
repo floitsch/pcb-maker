@@ -410,13 +410,6 @@ pub struct KiCadBoardRouterConfig {
     /// `PCB_ROUTER_EXACT_ESCAPES` overrides this.
     #[serde(default)]
     pub exact_escape_stubs: Option<bool>,
-    /// The fan-out step before the negotiation (router `fanout`;
-    /// docs/router.md, "Fan-out before negotiation"): every pad of a dense
-    /// row gets one straight way out, chosen jointly with its neighbours,
-    /// that other nets pay to cross. Unset, the router's default (off);
-    /// `PCB_ROUTER_FANOUT` overrides this.
-    #[serde(default)]
-    pub fanout: Option<bool>,
     /// Prepared fan-outs for BGAs (board_router/bga_fanout.rs; docs/router.md,
     /// "Prepared fan-outs for BGAs (2026-11-04)"): before routing, every
     /// ball of a grid array's inner rings (those no track between the outer

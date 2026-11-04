@@ -71,7 +71,6 @@ pub use build::{
 pub use coarse::{ParkedRouter, RipUpSaved};
 pub use config::Config;
 pub use escapes::exact_escapes_override;
-pub use fanout::{FANOUT_DEFAULT, fanout_override};
 pub use pad_exits::{ClosedPad, ExitBlocker, ExitProbe, ProbeCounts, label_part, work_nanos};
 pub use pour_report::{PourLayerReport, StarvedThermal};
 pub use profile::{ProcessAccounting, build_totals, process_accounting};
@@ -1630,16 +1629,8 @@ pub struct Router {
     /// entry 0 is no gap.
     pin_row_nets: Vec<(u32, u32)>,
     /// Per entry of `pin_row_nets`: the search's cost of a step into one
-    /// of its nodes by another net (`pin_row_cost` for a pin-row gap, the
-    /// fan-out's per-node share of `fanout_cost` for a reserved run).
+    /// of its nodes by another net (`pin_row_cost`).
     pin_row_costs: Vec<f32>,
-    /// The entries of `pin_row_nets` from this one on are the fan-out's
-    /// reservations (`mark_fanout`), not pin-row gaps.
-    fanout_first: usize,
-    /// The fan-out's via sites (`mark_fanout`): per node, sorted, the net
-    /// (an `owner`) whose reserved run a via there would close; another
-    /// net's via there costs `fanout_cost` (bit 4 of `via_marks`).
-    fanout_via: Vec<(u32, u32)>,
     /// Per layer and tile: share of the tile under some pour.
     tile_covered: Vec<Vec<f32>>,
     /// Per layer: cost factor for cutting a pour there. Relative to the

@@ -557,13 +557,6 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     process, and score-kicad-board's "vias in pads" does not count them
     (`filled_vias_in_pads` does; `vias_in_pads_at` lists every via in a
     small pad, filled or not).
-  - `fanout` (default false; an experiment, docs/router.md "Fan-out
-    before negotiation"): before the routing, every pad of a fine-pitch
-    row (or one with at most two straight ways out) gets one way out,
-    or a via site beyond its neighbours' tips, chosen with its
-    neighbours, which other nets pay to cross. It did not gain on the
-    measured boards; try it where KiCad's open items sit at a QFN's or
-    connector's pads boxed in by the neighbours' vias and tracks.
   - Open connections at a fine-pitch row: run with
     `PCB_ROUTER_TROUBLE_WHY=1` in the environment to see which open pads
     are boxed in by a neighbour whose route must cross theirs (the log's

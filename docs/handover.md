@@ -13,7 +13,7 @@ used to be here; code comments and docs that cite `docs/handover.md,
 - main 3d20d0a8 (x1882). The nightly of 2026-11-03 (main 5657f45, before the race's count flip, x1881, and the pin-row gaps after a move, x1882): sweep v30 **62 of 109 strict** (62 since v25 on 2026-10-29), matched designer tier 68 strict, the gap over its 100 target boards placement 76 % / routing 24 %, expansion 24/46, short 8/12, fingerprints identical.
 - Two placer defaults won by the placer-default protocol: crossings in the anneal (-10.8 %, p 0.002; on since 2026-10-28) and the race's ripped count (nine pairs, -5.6 %, p 0.014; `race_count` `"ripped"` since 2026-11-03).
 - Built and on: panels of different boards with mouse-bite and V-cut tabs and frames kept clear (`sub_boards`), filled and capped vias in BGA pads where the designer's board has vias there (`via_in_pad`), length and skew rules on a layout's own routes, the input's own findings set apart without a reference, the place check placing as the layout does, `drc-kicad-board` / `fab-kicad-board --input`.
-- Built, measured and off: the fan-out step (`fanout`), the last connections' ejection chains (`last_connections`), frames as keepouts on panels of copies.
+- Built, measured and off: the last connections' ejection chains (`last_connections`), frames as keepouts on panels of copies; the fan-out step (`fanout`) and the crossing dive (`crossing_dive`) were removed on 2026-11-04 (below, "Removed experiments (2026-11-04)").
 - Cheaper with the same results: the placement -22.6 % and -29.4 % CPU (two placer rounds, dense geometric means), the router -3.9 % (round 3).
 - Measuring: the ladder of placer measurements (stage 1 the first route, `stop_after_first_route`; the quarter budget rejected, condensed boards a no-go), run.py `--reuse`, the memory ledger draining past its bound.
 - In flight: panels of copies' frames, placer rules, the designer as teacher on the largest-gap boards (the placement gap's diagnosis), placer round 4.
@@ -194,8 +194,8 @@ ladder's judge), 5, then the rest.
    docs/router.md, "KiCad's connection width (necks)").
 2. **Crossings at fine-pitch rows** (re-scoped 2026-10-28; it was "one-spoke
    pads on fine-pitch rows", k30's U10 pad 8). The fan-out step, every
-   pad of a dense row given a way out jointly before the negotiation, is
-   built, measured and off (`fanout`; docs/router.md, "Fan-out before
+   pad of a dense row given a way out jointly before the negotiation, was
+   built, measured and removed on 2026-11-04 (`fanout`; docs/router.md, "Fan-out before
    negotiation"): on the near misses' fine-pitch rows (Quanta75's RP2040
    and USB-C, OpenAirScope's UDFN) every pad has a straight way out on
    the statics and the row's joint assignment serves all of them; what
@@ -597,8 +597,6 @@ its doc comment):
   only its own decoupling under it on the far side. Glasgow 343 -> 262
   unconnected over three seeds, its first route -20 % over five; nothing
   else moves. `"bga_room": false` turns it off.
-- `fanout` (router): **off** (`PCB_ROUTER_FANOUT`): measured on
-  2026-10-28, it traded which pad of a crossing pair stays open.
 - `last_connections` (router): **0, off** (`PCB_ROUTER_LAST_CONNECTIONS`):
   it closed none of the near misses' connections.
 - `via_in_pad` (router): **unset, the evidence rule** since 2026-10-28: a
@@ -652,13 +650,8 @@ Switches and experiment hooks (change the result):
 - `PCB_ROUTER_PIN_ROW_COST`: the router's `pin_row_cost` in millimetres where the settings name none (`pin_row_cost_mm`): the cost of another net's step between two adjacent SMD pads of a part's pin row (docs/router.md, "Pin-row cost"; for measuring other values).
 - `PCB_ROUTER_NO_STRAIGHTEN`: turns the router's straightening off (`straighten`, on since 2026-10-23): after the via reduction and the thermal spoke repairs, stair-steps and jogs taken out of the signal nets' paths where the clearance allows (docs/router.md, "Straightening"; for attributing rows).
 - `PCB_ROUTER_TROUBLE`: overrides the router's `trouble_repair` (`0` off, anything else on): the trouble-makers' repair after the hard repair (an open net routed through others at a price, the nets it displaces routed again hard, kept when the open terminals drop; docs/experiments/human-level-routing.md).
-- `PCB_ROUTER_EXACT_ESCAPES`: overrides the router's `exact_escape_stubs` (`0` off, anything else on; off by default): escape stubs stamp exactly (along a lattice line as lattice nodes, oblique ones by their measured footprint) and a pad leaves by straight stubs along a lattice line where it has any; off, the stubs stamp the lattice's discs grown by the snapping error (docs/router.md, "Fine-pitch escapes").
-- `PCB_ROUTER_FANOUT`: overrides the router's `fanout` (`0` off, anything else on; off by default): before the negotiation every pad of a dense row gets one straight way out, chosen jointly with its neighbours, that other nets pay `fanout_cost` to cross or to put a via beside (docs/router.md, "Fan-out before negotiation").
+- `PCB_ROUTER_EXACT_ESCAPES`: overrides the router's `exact_escape_stubs` (`0` off, anything else on; on by default since 2026-10-26): escape stubs stamp exactly (along a lattice line as lattice nodes, oblique ones by their measured footprint) and a pad leaves by straight stubs along a lattice line where it has any; off, the stubs stamp the lattice's discs grown by the snapping error (docs/router.md, "Fine-pitch escapes").
 - `PCB_ROUTER_BGA_FANOUT`: overrides the router's `bga_fanout` (`0` off, anything else on; on by default): before routing, the inner balls of every grid array (those no track between the outer balls serves) whose net's own via does not fit a diagonal gap get a stub and a through via in a diagonal gap, the largest of the class's and the project's via sizes that keeps every clearance, as fixed copper of the ball's net that its route may end on; written only where the route uses it; the placer keeps the far side free under those vias (docs/router.md, "Prepared fan-outs for BGAs (2026-11-04)").
-- `PCB_ROUTER_FANOUT_COST`: the router's `fanout_cost` in millimetres (default 6; with `fanout`): what another net pays to cross a reserved fan-out run or to put a via within reach of it.
-- `PCB_ROUTER_FANOUT_DEPTH`: the router's `fanout_depth` in millimetres (default 0.5; with `fanout`): how far beyond its pad a fan-out run reaches.
-- `PCB_ROUTER_FANOUT_FREE`: with `fanout`: a pad of a row coarser than 0.65 mm takes part when it has at most this many straight ways out along the axes (default 2; 0: fine-pitch rows only; an experiment).
-- `PCB_ROUTER_FANOUT_VIAS`: with `fanout`: `0` charges no via beside a reserved run, only the crossings (an experiment).
 - `PCB_ROUTER_CAPACITATED_CORRIDORS`: overrides the router's `capacitated_corridors` (`0` off, anything else on; off by default): the negotiation's corridors from the global route with hard capacities, a search that misses its corridor lowering the capacity of the boundary it failed at and re-planning the nets through it (docs/router.md, "Capacitated corridors (2026-10-24)"; an experiment).
 - `PCB_ROUTER_CAPACITATED_GROWTH`: the router's `capacitated_growth` (default 0; with `capacitated_corridors`): the capacitated corridor grows by a plan tile every this many reroutes of the net, as the tile planner's corridors grow; 0 keeps one tile (docs/router.md, "Capacitated corridors (2026-10-24)").
 - `PCB_ROUTER_CAPACITATED_STUCK`: the router's `capacitated_stuck` (default 4; with `capacitated_corridors`): a net in conflict for this many iterations running lowers the capacity of its global route's boundary with the most conflicts, every second iteration; 0 turns that learning off (docs/router.md, "Capacitated corridors (2026-10-24)").
@@ -716,7 +709,6 @@ Diagnostics (stderr unless said; the result does not change):
 - `PCB_ROUTER_TROUBLE_WHY`: the trouble-makers' repair prints every exchange's outcome (kept, or why refused; a refusal names the nets left in conflict and what their conflicts name), and after the repair the crossing census: every open pad of a fine-pitch row, what closes its straight ways out, and whether a row neighbour's target crosses its own (docs/router.md, "Crossings decided in the repair (2026-11-03)").
 - `PCB_ROUTER_BGA_FANOUT_WHY`: the prepared fan-outs (`bga_fanout`) print each grid array's plan once a process: pitch, rows and columns, the rings that leave on the surface, the inner balls, the dog-bones planned by via size, the balls kept (a via in the pad) and those no gap fits.
 - `PCB_ROUTER_NET_WORK`: `<file>`: the search expansions per net over the process (every router, every phase), written to the file as JSON at each router's finish; the last write holds the whole run (docs/router.md, "Prepared fan-outs for BGAs (2026-11-04)").
-- `PCB_ROUTER_FANOUT_WHY`: the fan-out step (`fanout`) prints every dense pad with its ways out, their costs, the one chosen and the pads left short.
 - `PCB_PAD_EXITS_WHY`: the pad-exits test prints, per closed pad, every rim node of its pocket and the item that closes it, and per open pad where its pocket opened.
 - `PCB_PAD_EXITS_COUNTS`: pad-exits-kicad-board prints the probe's counts beside the CPU time of the lowering and the probe (for calibrating the test's work).
 - `PCB_ROUTER_LENGTH_DEBUG`: the length repair: prints per net over its maximum what the priced search found, the victims and why the exchange was kept or undone; the length reroute: its router's log and per net the route's status.
@@ -797,6 +789,19 @@ details are:
   118 to 125). Changelog 2026-11-04, "the crossing dive in the trouble
   repair, off"; docs/router.md, "Crossings decided in the repair
   (2026-11-03)". The crossing census (`PCB_ROUTER_TROUBLE_WHY`) stays.
+- `fanout` (router, `PCB_ROUTER_FANOUT`, with `fanout_cost` and the
+  experiment knobs `PCB_ROUTER_FANOUT_COST`, `_DEPTH`, `_FREE`, `_VIAS`
+  and its report `PCB_ROUTER_FANOUT_WHY`; off): before the negotiation,
+  every pad of a dense row got one way out chosen jointly with its
+  neighbours, reserved against other nets by a cost. Route mode on the
+  five near-miss boards 8 and 8 unconnected (Quanta75's three top-row
+  pads connect, another pad and the ground pour lose; OpenAirScope trades
+  CMD for DAT3); layout mode 8 and 8, a pass each way; the expansion tier
+  558 to 510 unconnected but strict passes 24 to 23; the eleven dense
+  boards 931 to 966. Changelog 2026-10-28, "the fan-out step before
+  negotiation: diagnosed, built, off"; docs/router.md, "Fan-out before
+  negotiation (2026-10-28)". The plan's dense pads and straight ways out
+  stay for the census (`fanout_plan`, axes only, no costs or via sites).
 
 ## Gotchas
 
