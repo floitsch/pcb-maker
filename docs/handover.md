@@ -222,6 +222,19 @@ ladder's judge), 5, then the rest.
    the other layer's routes (a site priced by what it displaces there,
    or the displaced net's own dive), and OpenAirScope's UDFN and the
    keyboard's aQFN pads, which have no straight way out at all.
+   Grid arrays are the other case, measured on 2026-11-04 (docs/router.md,
+   "Prepared fan-outs for BGAs"): where a ball has a way out the search
+   can take (the outer rings, a depopulated middle, a via in the pad) it
+   finds it (vd-rd's BGA-96, MIDAS, the aQFNs); where the class's via
+   does not fit a diagonal gap (Glasgow's U30: 0.6 mm via, 0.8 mm pitch,
+   0.35 mm balls) the inner rings' balls stayed open and their 34 nets
+   took 27 to 47 % of the search. The prepared fan-out (`bga_fanout`,
+   **on**) gives each such ball a stub and a 0.4/0.2 via in its gap
+   before routing, as the designer did: Glasgow on the designer's
+   placement 55 to 15 open, on the night's placement 123 to 107, layout
+   over three seeds 372 to 343, nothing else moves. What stays on
+   Glasgow is its outer rings' surface escapes, ringed by our passives
+   (open problem 4).
 3. **The ladder's judge.** On 21 boards with every rung continued to its
    final (2026-10-13), today's judge (unfinished nets after the probe)
    picks the best rung 16 times; no other count does better, and a class
@@ -540,6 +553,12 @@ its doc comment):
   terminals after the rip-up of the conflicted branches, with a 2 %
   margin over the first-ranked placement; `"unfinished"` is the race
   before.
+- `bga_fanout` (router): **on** since 2026-11-04 (`PCB_ROUTER_BGA_FANOUT`;
+  docs/router.md, "Prepared fan-outs for BGAs"): the inner balls of a
+  grid array whose net's via does not fit a diagonal gap get a dog-bone
+  (stub and via of the project's sizes) before routing, written where the
+  route uses it; the placer keeps the far side free under those vias.
+  Only Glasgow's U30 among the task boards takes a plan.
 - `fanout` (router): **off** (`PCB_ROUTER_FANOUT`): measured on
   2026-10-28, it traded which pad of a crossing pair stays open.
 - `last_connections` (router): **0, off** (`PCB_ROUTER_LAST_CONNECTIONS`):

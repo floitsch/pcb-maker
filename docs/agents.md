@@ -485,6 +485,17 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     the other stays, kept only where fewer connections stay open. Run
     with `PCB_ROUTER_TROUBLE_WHY=1` in the environment to see which open
     pads are such crossing pairs (the log's `crossing census` lines).
+  - `bga_fanout` (default true; docs/router.md "Prepared fan-outs for
+    BGAs"): a ball grid array's inner balls, which no track between the
+    outer balls serves and whose net's via is too large for the diagonal
+    gap between four balls, each get a short track and a via in that gap
+    before routing (the largest of the project's via sizes that keeps its
+    clearances, the canonical dog-bone); the route ends on the via on any
+    layer, and a dog-bone the route does not use is not written. The
+    placer keeps the board's other side free under those vias. Set it to
+    false to route without; run with `PCB_ROUTER_BGA_FANOUT_WHY=1` to see
+    each array's plan (the balls planned, kept, and refused where a part
+    on the other side or a neighbour's copper takes the gap).
   - `automatic_planes` (default true): a board with four or more copper
     layers and no pours gets ground as a plane on the first inner layer
     and the supply rail with the most pads on the last inner layer, as a

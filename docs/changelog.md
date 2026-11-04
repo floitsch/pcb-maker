@@ -11,6 +11,59 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-04 (prepared fan-outs for BGAs, on)
+
+Branch bga-fanout; binaries `build/bin/pcb-maker-bga1-a` to `-f` (one
+plan; -e leaves arrays whose class's via fits a gap to the search, -f
+turns the default on); off side the same binaries with the switch off,
+whose rows equal the nightly's of 2026-11-04 (x1895 routes as x1894);
+outputs in `build/bga1/`. docs/router.md, "Prepared fan-outs for BGAs
+(2026-11-04)", has the census, the design and the tables.
+
+- **The census** (`experiments/bga-fanout/census.py`, pcbnew): the task
+  boards' ten grid arrays on nine boards, every ball's escape on the
+  designer's board, our layout and our route on the designer's
+  placement. Where a ball has a way out the search can take it finds it
+  (vd-rd's BGA-96, MIDAS's TFBGA-153 through its vias in pads, the
+  aQFN-73s, BAGEL's LGA-77). Glasgow's U30 (BGA-121, 0.8 mm, 0.35 mm
+  balls) is the exception: the class's 0.6/0.3 via does not fit a
+  diagonal gap, the search puts no via in the field, 28 of its 36 inner
+  signal balls stay open in our layout (22 on the designer's placement)
+  where the designer dog-bones 29 of 32 with 0.4/0.2 vias; its 34
+  inner-ring nets take 27 to 47 % of the board's search expansions
+  (`PCB_ROUTER_NET_WORK`, new: expansions per net as JSON).
+- **The prepared fan-out** (`bga_fanout`, `PCB_ROUTER_BGA_FANOUT`, on;
+  board_router/bga_fanout.rs): in the lowering, each inner ball (beyond
+  the rings a surface track serves, its net's via too large for a gap)
+  gets a stub and a through via in the diagonal gap toward the nearer way
+  out, the largest of the class's and the project's via sizes that keeps
+  every clearance against the lowered board (the far side's parts, rule
+  areas, holes, the dog-bones before it); fixed copper of the net, the
+  ball's terminal on the other layers; written only where the net's route
+  (or pour) uses it. The placer keeps the far side free under those vias
+  (`via_in_pad_far_side`). `PCB_ROUTER_BGA_FANOUT_WHY` prints each plan.
+- **Measured** on Glasgow (KiCad unconnected, no new strict finding
+  anywhere): the designer's placement (designer tier) 55 to 15, the
+  night's placement in route mode 123 to 107, layout 127 to 124 (seed 1),
+  125 to 125 (101), 120 to 94 (301); vias +57 to +93. The expansion
+  tier: all 46 rows the nightly's (bga1-d moved ZSWatch 2 to 4 with two
+  dog-bones its search places itself; bga1-e leaves those to the
+  search). No other task, tier or dense board has an array the plan
+  touches. Fingerprints (Castor, k30-SBC, jetson, Sisu): identical to the
+  nightly's line by line, switch off and on.
+- Tests: `a_ten_by_ten_array_at_0_8_mm_gets_a_dog_bone_for_every_inner_ball`
+  (rings 0 and 1 on the surface, every one of the 36 inner balls a 0.4/0.2
+  dog-bone in its own diagonal gap, each quadrant's vias toward its
+  corner, none in the outer rings' channels, rings 2 to 4 all served),
+  `a_ball_holding_a_via_in_its_pad_keeps_it_and_a_fine_pitch_array_gets_none`
+  (the via-in-pad case: a ball with a via in its pad keeps it; at 0.5 mm
+  no via fits a gap), `a_part_on_the_back_under_the_array_takes_the_gaps_it_covers`,
+  `an_array_whose_class_via_fits_a_gap_is_left_to_the_search`,
+  `a_ball_beside_a_depopulated_middle_is_on_the_outer_ring` and
+  `the_lowering_makes_a_planned_via_the_balls_terminal_and_drops_one_its_route_does_not_use`
+  (the fallback: a dog-bone its route does not use is not written; the
+  far side's balls; nothing planned or charged with the switch off).
+
 ## Committed on 2026-11-04 (fresh-agent trial 5: pairs in a layout, rows that short, the reference without copper)
 
 Branch fresh-agent-trial-5 (the worktree's `target/release/pcb-maker`).

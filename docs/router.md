@@ -632,7 +632,8 @@ micro vias (the placer keeps the other side free under a BGA's enclosed
 pads since 2026-10-28: docs/placer.md, "Length maxima and the far side of
 vias in pads"), a dogbone fan-out for 0.65 mm and
 coarser BGAs whose balls a track can leave one at a time (the enclosure
-test sees a way out there; capacity is the router's).
+test sees a way out there; capacity is the router's; built on
+2026-11-04: "Prepared fan-outs for BGAs").
 
 A path no longer hops: a via within the hole-to-hole spacing (the drill
 plus `hole_to_hole`) of the previous via of the path being searched is
@@ -5450,6 +5451,278 @@ other layer's routes: a site priced by the nets it displaces there, or
 the displaced row net's own dive (a chain of two), rather than a third
 net's reroute that fails.
 
+
+## Prepared fan-outs for BGAs (2026-11-04)
+
+The question (the owner's): for ball-grid parts that need a fan-out, would
+escapes prepared before routing make routing more efficient, or does the
+search find good ways out anyway? Each ball's escape is found by the search
+per net in negotiation order; the fan-out for fine-pitch rows ("Fan-out
+before negotiation") was negative because rows are not short of exits. A
+grid array is different: an inner ball leaves only through a diagonal gap
+(a stub and a via, the dog-bone) or a via in its pad.
+
+**The census** (`experiments/bga-fanout/census.py`, KiCad's pcbnew on the
+boards; `build/bga1/census/`). The task boards' grid arrays: SMD pads of
+one size, round or square, three rows and columns of three pads or more,
+the pitch (median nearest-neighbour distance) at most 1.27 mm; ten
+footprints on nine boards. Each ball of a net (two pads or more) on three
+boards, classified by the copper at it: the designer's own board, our
+layout (the nightly sweep of 2026-11-04, `layout/result`) and our route on
+the designer's placement (the matched designer tier of that night):
+via in pad, dog-bone (a track to a via inside the ball field, the box of
+the centres grown by half a pitch; diagonal when the via sits half a pitch
+off along both axes), surface (a track leaving the field before any via),
+joined (a track to another ball of the net first), zone, stub (a track to
+nothing), open (no copper). The ring is the ball's distance from the
+field's box in pitches. Signal balls (nets without a pour of 4 mm2 or
+more):
+
+| Board, part | Pitch, grid | Balls (signal) | Board | in pad / dog-bone (diagonal) / surface / joined, zone, stub / open | open inner signal balls (ring 2+) | dog-bone stub median mm | dog-bone exit layers | KiCad unconnected at its pads / on its nets |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| laptop motherboard U7 | 0.4 mm, 3 x 3 | 9 (5) | designer | 1 / 0 (0) / 4 / 0 / 0 | 0 of 0 | - | - | - |
+|  |  |  | our layout | 0 / 0 (0) / 3 / 0 / 3 | 0 of 0 | - | - | 4 / 7 |
+|  |  |  | ours, designer placement | 0 / 0 (0) / 4 / 0 / 2 | 0 of 0 | - | - | 3 / 4 |
+| laptop motherboard U13 | 0.4 mm, 3 x 3 | 9 (5) | designer | 1 / 0 (0) / 4 / 0 / 0 | 0 of 0 | - | - | - |
+|  |  |  | our layout | 0 / 0 (0) / 3 / 0 / 3 | 0 of 0 | - | - | 4 / 8 |
+|  |  |  | ours, designer placement | 0 / 0 (0) / 4 / 0 / 2 | 0 of 0 | - | - | 3 / 3 |
+| vd-rd sbc module U200 | 0.8 mm, 16 x 6 | 91 (51) | designer | 0 / 27 (20) / 24 / 0 / 0 | 0 of 22 | 0.57 | B.Cu 27 | - |
+|  |  |  | our layout | 0 / 18 (5) / 31 / 2 / 0 | 0 of 22 | 1.47 | B.Cu 7, In1.Cu 7, In2.Cu 4 | 0 / 3 |
+|  |  |  | ours, designer placement | 0 / 21 (8) / 29 / 0 / 1 | 0 of 22 | 1.16 | B.Cu 11, In1.Cu 5, In2.Cu 5 | 1 / 1 |
+| BAGEL-MK1.1 U102 | 0.5 mm, 18 x 13 | 74 (20) | designer | 0 / 7 (0) / 11 / 2 / 0 | 0 of 0 | 0.66 | B.Cu 6, In2.Cu 1 | - |
+|  |  |  | our layout | 0 / 5 (0) / 17 / 2 / 0 | 0 of 0 | 1.28 | B.Cu 4, In2.Cu 1 | 0 / 0 |
+|  |  |  | ours, designer placement | 0 / 8 (0) / 14 / 2 / 0 | 0 of 0 | 0.71 | B.Cu 2, In1.Cu 3, In2.Cu 3 | 0 / 0 |
+| BAGEL-MK1 U102 | 0.5 mm, 18 x 13 | 74 (24) | designer | 0 / 9 (0) / 13 / 2 / 0 | 0 of 0 | 0.66 | B.Cu 7, In2.Cu 2 | - |
+|  |  |  | our layout | 0 / 4 (0) / 18 / 2 / 0 | 0 of 0 | 0.73 | B.Cu 3, In1.Cu 1 | 0 / 0 |
+|  |  |  | ours, designer placement | 0 / 6 (0) / 16 / 2 / 0 | 0 of 0 | 0.67 | B.Cu 1, In1.Cu 3, In2.Cu 2 | 0 / 0 |
+| Glasgow revC3 U30 | 0.8 mm, 11 x 11 | 120 (101) | designer | 0 / 33 (32) / 64 / 4 / 0 | 0 of 32 | 0.57 | B.Cu 31, In2.Cu 2 | - |
+|  |  |  | our layout | 0 / 0 (0) / 27 / 6 / 72 | 28 of 36 | - | - | 76 / 103 |
+|  |  |  | ours, designer placement | 0 / 0 (0) / 51 / 6 / 48 | 22 of 36 | - | - | 48 / 53 |
+| MIDAS-MK1 U106 | 0.5 mm, 14 x 14 | 29 (9) | designer | 6 / 0 (0) / 3 / 0 / 0 | 0 of 4 | - | - | - |
+|  |  |  | our layout | 4 / 2 (0) / 3 / 0 / 0 | 0 of 4 | 1.78 | B.Cu 2 | 0 / 1 |
+|  |  |  | ours, designer placement | 4 / 2 (0) / 3 / 0 / 0 | 0 of 4 | 1.01 | B.Cu 1, In2.Cu 1 | 0 / 0 |
+| MIDAS-MK1.1 U106 | 0.5 mm, 14 x 14 | 29 (9) | designer | 6 / 0 (0) / 3 / 0 / 0 | 0 of 4 | - | - | - |
+|  |  |  | our layout | 4 / 1 (0) / 3 / 0 / 1 | 1 of 4 | 2.08 | B.Cu 1 | 1 / 1 |
+|  |  |  | ours, designer placement | 4 / 2 (0) / 3 / 0 / 0 | 0 of 4 | 1.01 | B.Cu 2 | 0 / 0 |
+| laptop keyboard U2 | 0.5 mm, 24 x 24 | 52 (51) | designer | 0 / 1 (0) / 48 / 1 / 1 | 0 of 0 | 0.45 | B.Cu 1 | - |
+|  |  |  | our layout | 0 / 3 (0) / 44 / 3 / 1 | 0 of 0 | 0.50 | B.Cu 3 | 1 / 2 |
+|  |  |  | ours, designer placement | 0 / 0 (0) / 47 / 3 / 1 | 0 of 0 | - | - | 2 / 2 |
+| osprey U1 | 0.5 mm, 24 x 24 | 47 (45) | designer | 0 / 0 (0) / 44 / 0 / 1 | 0 of 0 | - | - | - |
+|  |  |  | our layout | 0 / 3 (0) / 40 / 2 / 0 | 0 of 0 | 1.45 | F.Cu 3 | 0 / 0 |
+|  |  |  | ours, designer placement | 0 / 1 (0) / 41 / 2 / 1 | 0 of 0 | 0.91 | F.Cu 1 | 1 / 1 |
+
+In the census a ring is the distance from the field's box (vd-rd's 22
+"inner" balls face the empty middle). The via_in_pad test's enclosed
+balls (`describe-kicad-board`'s `vias_in_pads`): U200 16 (none on our
+boards open; the designer used no via in a pad), MIDAS's U106 5 (the
+designer's vias, admitted and placed), the laptop's U7 and U13 1 each
+(B2: the designer's 0.5/0.3 via refused, its drill wider than the 0.25
+mm ball), the keyboard's U2 3 (RESET's AC9, AC11, AC13); Glasgow's U30
+none: a track at the neck width leaves every ball, one at a time, which
+is exactly what the search cannot do for all of them at once. No other
+task board has a grid array of 0.8 mm or coarser with balls beyond the
+second ring.
+
+**What the census says.** Where every ball has a way out the search
+finds it: vd-rd's U200 (a DDR3 BGA-96 at 0.8 mm: two blocks of three
+columns either side of three empty ones, so every ball is in the outer
+ring or beside the empty middle) leaves every signal ball connected on
+our layout and all but one on the designer's placement (18 and 21
+dog-bones, against the designer's 27, most of them not in a diagonal
+gap: its DDR classes' 0.2 mm clearance keeps their 0.45 mm via out of
+one), and the fine-pitch parts (MIDAS's TFBGA-153 at 0.5 mm, the
+nRF aQFN-73s, BAGEL's LGA-77) leave on the surface or through the vias
+in pads, as their designers' do. Glasgow's U30 is the exception and the
+one that matters: a BGA-121 at 0.8 mm with 0.35 mm pads, tracks 0.15 and
+clearance 0.1499. One track passes between two balls (0.45 mm of gap
+against 0.4498), so rings 0 and 1 can leave on F.Cu; rings 2 to 5 (36
+signal balls) need a via, and the class's via (0.6/0.3) needs 0.625 mm
+from a gap's centre to a ball's centre where there are 0.566. The search
+puts no via in the field at all (0 dog-bones on both our boards), the
+inner balls stay open (28 of 36 in our layout, 22 on the designer's
+placement), and the designer's board shows the answer: 29 of 32 inner
+signal balls on dog-bones of 0.4/0.2 mm, one of the project's predefined
+via sizes, every one in its diagonal gap (stubs 0.566 mm), 31 of 33
+leaving on B.Cu. The 100 nets on U30 take 74 % of the route's search
+work on our placement (route mode, `PCB_ROUTER_NET_WORK`), the 34 nets
+of its inner rings 47 % (1.4 % a net against 0.18 % for the board's
+other nets): the search spends most of the board's work looking for
+ways out that do not exist at its via size.
+
+So the answer to the owner's question is split. Where the balls have
+ways out the search can take (the outer rings, a depopulated middle, a
+via in the pad), it finds them and its escapes are near the designer's
+(vd-rd, MIDAS, the aQFNs). Where they need a via the search cannot
+place (Glasgow's inner rings, the class's via too large for a diagonal
+gap), no search order finds one, and that is where the work goes: the
+inner rings' nets cost five to eleven times a net's work of the board's
+other nets. A prepared fan-out is then not an efficiency but the only way
+out.
+
+**The design** (`bga_fanout`, router settings, `PCB_ROUTER_BGA_FANOUT`;
+board_router/bga_fanout.rs; on since this section, see the decision). In the lowering, once the board's
+copper, holes and rule areas are obstacles:
+
+- *Grid arrays*: a footprint's SMD pads (the exposed pad left out), at
+  least 16, three quarters of them round or square and of one size, at
+  least four rows and four columns of three pads, the pitch (the median
+  nearest-neighbour distance) at most 1.27 mm; the frame from the
+  neighbours' directions.
+- *Rings* (`rings_of`): a ball's ring is the steps along the axes to the
+  nearest place without a ball, less one: the outer ring and the balls
+  beside a depopulated middle (vd-rd's BGA-96, three columns either side
+  of an empty three) are ring 0. Rings 0 to k leave on the surface, k
+  the number of tracks of the balls' narrowest class that fit between two
+  adjacent balls (Glasgow: one, so rings 0 and 1); every ball of a net in
+  a deeper ring takes a dog-bone, unless its net's own via fits a
+  diagonal gap (the footprint alone: the via's radius and the net's
+  clearance, its drill and the hole clearance, within the room from the
+  gap's centre to the four balls): there the search places the dog-bone
+  itself, and the plan leaves the ball to it (ZSWatch's NORA-B106 at 1.1
+  mm, whose two inner balls the search already left by vias: planning
+  them only moved the 30 s route elsewhere, 2 to 4 open).
+- *The site*: the diagonal gap toward the nearer way out along each axis
+  (away from the middle on a full grid: each quadrant's vias on one
+  grid, the straight channels between the rows of balls and vias left
+  open), toward the net's other pads where both sides are as near; else
+  the other three gaps in turn.
+- *The via*: the largest of the class's via and the project's predefined
+  sizes, within the board's minimums, whose copper keeps the larger
+  clearance from every other net's copper on every layer (the far side's
+  parts too), its drill the hole clearance and the hole-to-hole spacing
+  from every hole, out of every SMD pad of its own net, clear of rule
+  areas that keep vias out, and clear of the dog-bones planned before it
+  (the outer rings first); the stub at the class's width, else the neck,
+  clear on the ball's layer likewise. A ball with a via already (in its
+  pad, `via_in_pad`, or the board's own) keeps it.
+- *The hand-over*: the stub and the via ring on the ball's layer and the
+  via on the others are fixed copper of the ball's net, the drill a hole
+  of the net; on the other layers the via is the ball's terminal (merged
+  as a padstack's copper, solid to a pour), so the search ends on it on
+  any layer and other nets keep clear of it from the start. The vias are
+  through vias: the layer the net leaves on is the search's (no inner
+  layer is designated; designating one would take a via the board does
+  not have, or cut a plane).
+- *The fallback*: `emit_routes` writes a dog-bone only where the net uses
+  it: a route segment of the net touches the via off the ball's layer, or
+  the via or the stub beyond the ball on it, or a route via touches it,
+  or a pour of the net lies at the via on another layer. A dog-bone the
+  routes did not take is dropped from the board; its room was kept from
+  the other nets during the route.
+- *The placer* (`via_in_pad_far_side`, on): with the fan-out on, it keeps
+  the far side free under the planned vias as under a via in a pad
+  (`far_side_balls`: the inner balls by the footprint alone, the via the
+  largest size that fits a gap among the four balls; the site from the
+  same `rings_of` in the footprint's frame, both sides where both are as
+  near).
+- *Work*: the plan's distance tests and the obstacles it visits, one
+  lowering expression each (26 ns of the reference), on the lowering's
+  work, only for a part where it plans a dog-bone: a board the plan
+  leaves alone lowers, works and routes as with the switch off.
+- `PCB_ROUTER_BGA_FANOUT_WHY` prints each array's plan once a process
+  (surface rings, inner balls, planned by via size, kept, refused);
+  `PCB_ROUTER_NET_WORK=<file>` writes the search expansions per net
+  (every router of the process) as JSON, the measure of the nets' share
+  above.
+
+**Measured** (tasks v7, the reference work rate; on: the switch on,
+`PCB_ROUTER_BGA_FANOUT=1`, build/bin/pcb-maker-bga1-d and -e, one plan
+on every board below but ZSWatch; off: the same binaries with the
+switch off, whose rows equal the nightly's of 2026-11-04 on 688b59ca
+board for board (Glasgow's layout 127 / 340 vias / 1501 s, its designer
+tier route 55 unconnected, the expansion tier's 46 rows); KiCad
+unconnected / strict pass / new strict findings / vias / length mm /
+work s; the U30 nets' share of the search expansions; outputs in
+`build/bga1/runs`):
+
+| Glasgow revC3 | off | on |
+| --- | --- | --- |
+| route mode, the designer's placement (designer tier, scale 0.675, 1 x 1) | 55 / no / 0 / 224 / 3755 / 1032; U30's nets 85 %, its inner rings' 39 % | **15** / no / 0 / 281 / 4975 / 995; 78 %, 30 % |
+| route mode, the night's placement (2 threads) | 123 / no / 0 / 318 / 4389 / 1258; 74 %, 47 % | **107** / no / 0 / 359 / 4651 / 1260; 76 %, 46 % |
+| layout, the sweep's budget, seed 1 (2 threads) | 127 / no / 0 / 340 / 4297 / 1501 (first route 133); 70 %, 36 % | 124 / no / 0 / 380 / 5026 / 1500 (first route 149); 63 %, 21 % |
+| layout, seed 101 | 125 / no / 0 / 316 / 4229 / 1502 (first route 136); 68 %, 27 % | 125 / no / 0 / 389 / 4927 / 1500 (146); 66 %, 22 % |
+| layout, seed 301 | 120 / no / 0 / 297 / 4216 / 1293 (139); 68 %, 31 % | **94** / no / 0 / 390 / 5516 / 1500 (130); 73 %, 25 % |
+
+U30's balls on those boards (signal balls; census.py on the results):
+
+| Board | dog-bone / surface / joined / open | open by ring 0 / 1 / 2 / 3 | dog-bone vias by exit layer | unconnected at U30's pads |
+| --- | --- | --- | --- | --- |
+| designer placement, off | 0 / 51 / 6 / 48 | 12 / 14 / 14 / 8 | - | 48 |
+| designer placement, on | 32 / 58 / 4 / 11 | 5 / 2 / 1 / 3 | In1.Cu 17, B.Cu 16, In2.Cu 9 (all dog-bones, pour balls' too) | 12 |
+| night's placement, route, off | 4 / 28 / 2 / 71 | 18 / 24 / 19 / 10 | In1.Cu 3, B.Cu 2, In2.Cu 1 | 77 |
+| night's placement, route, on (22 of 49 planned) | 18 / 22 / 2 / 63 | 17 / 24 / 14 / 8 | In1.Cu 11, B.Cu 5, In2.Cu 4, ... | 64 |
+| layout seed 1, off | 0 / 27 / 6 / 72 | 22 / 22 / 20 / 8 | - | 76 |
+| layout seed 1, on (49 of 49 planned) | 26 / 18 / 2 / 59 | 25 / 24 / 4 / 6 | | 63 |
+
+On the designer's placement the plan does what the designer did: 43 of
+U30's 49 inner balls (signal and pour) leave by their dog-bones, every
+one in its diagonal gap (stubs 0.566 mm), the inner rings' open balls
+fall from 22 to 4, and so do the outer rings' (26 to 7): the inner nets
+no longer search for ways out through the outer rings' channels, and the
+board ends 40 connections better at less work, 57 vias more (the
+designer's board has about 416). On the night's placement 27 of
+the 49 balls have no site: 17 capacitors on B.Cu sit under U30 (the
+placer packed the decoupling there, as the designer does, but over the
+gaps), and the plan refuses those gaps; 16 connections better. In
+layout mode the placer keeps the far side free under the planned vias
+(`far_side_balls`), every inner ball gets its dog-bone and the inner
+rings close (28 to 10 open), but the outer rings do not: the passives
+that were under U30 now ring it (the placement's "disc around the BGA",
+"The designer as teacher"), the outer rings' surface ways out are
+closed by them (44 to 49 open) and the first route ends 16 terminals
+worse; KiCad's count moves 127 to 124, inside the board's seed noise
+(124 to 173 over nine seeds, dense-noise.json). Over three seeds the
+layout gains 29 connections (372 to 343: 127 to 124, 125 to 125, 120
+to 94), no seed worse, at 40 to 93 vias more and 16 to 31 % more
+length; the inner rings' nets' share of the search falls on every one
+(36 to 21 %, 27 to 22 %, 31 to 25 %).
+
+*The other boards.* The plan is a function of the lowered board; where it
+places no dog-bone the lowering, its work and the route are the switch
+off's (`fanout_work` 0, no obstacle added), and the placer's far side is
+untouched where `far_side_balls` finds no array. `PCB_ROUTER_BGA_FANOUT_WHY`
+on route mode at a fiftieth of the budget over the nine boards with grid
+arrays and the eleven dense boards (`build/bga1/runs/plans-d`): vd-rd's
+U200 has no inner ball (every ball faces the outside or the empty
+middle), MIDAS's U106, BAGEL's LGA-77, the aQFN-73s and the WLCSP-9s
+(under 16 pads) plan nothing (no via fits a gap at 0.4 to 0.5 mm; the
+vias in pads stay the way out there), the dense boards but Glasgow have
+no grid array. *The expansion tier* (46 boards, route mode, 30 s, 4 x 1
+here; the same rows at any thread count): with the switch on every row
+equals the nightly's of 2026-11-04 (558 unconnected, 24 strict passes,
+4256 vias, work 1140 s) but ZSWatch with bga1-d (the only array planned:
+M601's two inner balls, 2 to 4 open), which bga1-e leaves to the search
+(its class's via fits): then all 46 the same. *The eleven dense boards*:
+only Glasgow has an array (the layout rows above are seed 1, the dense
+set's seed); the other ten lower, place and route as off.
+
+*Identity*: with the switch off Glasgow's layout (127 / 340 / 1501 s), its
+designer-tier route (55) and the expansion tier equal the nightly's
+rows; the fingerprints (Castor, k30-SBC, jetson, Sisu; route mode from
+v16, 1 x 4, budget scale 0.25) are identical to the nightly's line by
+line with the switch off and with it on (none of the four has a grid
+array), and every row the same (42 unconnected, 1562 vias, work 1074 s). bga1-e routes Glasgow's designer
+placement byte for byte as bga1-d (the plan the same: 45 planned, 4
+refused, 43 used and written, 2 dropped).
+
+**Decision: on** (since this section; bga1-f, `bga_fanout` unset). The
+rule (on if the BGA boards gain and nothing loses) holds: Glasgow gains
+40 connections on the designer's placement (55 to 15), 16 on the
+night's placement in route mode and 29 over three layout seeds with
+none worse, no new finding anywhere, and no other board of the
+sweep's tasks, the expansion tier or the dense set moves. The cost is
+vias and length on Glasgow (the dog-bones and their routes on the other
+layers: 57 to 93 vias more). What is left on Glasgow is the placement's:
+in layout mode the passives that the far-side rule moves out from under
+U30 ring it and close the outer rings' surface escapes (25 and 24 of its
+ring-0 and ring-1 balls open on seed 1), which the designer's placement
+(the decoupling in rows under the array, between the vias) does not;
+open problem 4.
+
+`bga_fanout: false` in the router settings or `PCB_ROUTER_BGA_FANOUT=0`
+turns it off. Open: blind and micro vias (a ring per layer pair, the
+canonical high-density fan-out; the router has through vias only), and
+the placer's room for the outer rings' escapes.
 
 ## Known limits / next steps
 
