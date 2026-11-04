@@ -132,6 +132,8 @@ Route critical traces by hand (or through KiCad's API), then
 `route-kicad-board`: the board's own tracks and vias are kept unchanged
 (never ripped up), pads they join count as connected, and only what is open is routed
 (`kept_copper` in `board-router.json`). `--strip` routes from nothing.
+`strip-kicad-tracks <board> <out> --keep-nets 'DVP_*'` keeps only those nets' tracks
+(a designer's length-matched bus, which route mode then keeps and routes around).
 A layout always strips (it moves parts).
 
 ## Fab release

@@ -4087,3 +4087,51 @@ fn pin_row_gaps_pair_adjacent_smd_pads_of_a_row() {
     assert!(super::lower::footprint_pin_row_gaps(&header).is_empty());
     assert!(super::lower::footprint_pin_row_gaps(&soic[..2]).is_empty());
 }
+
+#[test]
+fn strip_keeps_the_tracks_of_the_nets_it_is_told_to_keep() {
+    // Fresh-agent trial 6, firestarter: route mode on the designer's
+    // placement left 6 of the ten DVP nets under their 25 mm minimum; the
+    // designer's own meandered tracks of those nets, kept, meet it.
+    let directory = std::env::temp_dir().join(format!(
+        "pcb-maker-strip-keep-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    fs::create_dir_all(&directory).unwrap();
+    let source = directory.join("board.kicad_pcb");
+    fs::write(
+        &source,
+        r#"(kicad_pcb (version 20260206) (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+          (net 0 "") (net 1 "/DVP_Y2") (net 2 "GND")
+          (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+          (segment (start 1 1) (end 5 1) (width 0.2) (layer "F.Cu") (net 1))
+          (segment (start 1 2) (end 5 2) (width 0.2) (layer "F.Cu") (net "/DVP_Y2"))
+          (via (at 5 2) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net "/DVP_Y2"))
+          (segment (start 1 3) (end 5 3) (width 0.2) (layer "F.Cu") (net "GND"))
+          (arc (start 1 4) (mid 2 5) (end 3 4) (width 0.2) (layer "F.Cu") (net 2)))"#,
+    )
+    .unwrap();
+    let output = directory.join("kept.kicad_pcb");
+    let counts =
+        write_kicad_board_without_tracks_except(&source, &output, &["DVP_*".to_string()]).unwrap();
+    assert_eq!(counts, [3, 2]);
+    let written = parse(&fs::read_to_string(&output).unwrap()).unwrap();
+    let nets: Vec<String> = written
+        .children()
+        .iter()
+        .filter(|item| matches!(item.head(), Some("segment" | "arc" | "via")))
+        .map(|item| encode(item.child("net").unwrap()))
+        .collect();
+    assert_eq!(
+        nets,
+        vec!["(net 1)", "(net \"/DVP_Y2\")", "(net \"/DVP_Y2\")"]
+    );
+    // Without nets to keep: every track goes, as before.
+    let counts = write_kicad_board_without_tracks_except(&source, &output, &[]).unwrap();
+    assert_eq!(counts, [0, 5]);
+    fs::remove_dir_all(&directory).unwrap();
+}

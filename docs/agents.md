@@ -679,7 +679,16 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     aside, where that opens nothing (no hard bound: a placement that puts
     the net's pads further apart than the maximum leaves it over). The
     verdict's `lengths` says per net what came of it. Only where the
-    project has such a rule; elsewhere nothing changes.
+    project has such a rule; elsewhere nothing changes. In a layout the
+    placer keeps every two pins of such a net within 0.8 of the maximum
+    (`length_maxima`, on by default: docs/config-reference.md); it knows no
+    minimum, so it may put the parts closer than the meanders have room
+    for (trial 6's firestarter, DVP_BUS 25 to 27 mm: the camera connector
+    9 mm from the module, 4 of 10 nets short). A minimum the meanders do
+    not reach: route those nets by hand and route again (the board's own
+    tracks are kept), or keep the designer's with `strip-kicad-tracks
+    --keep-nets` (Other commands); the `length_out_of_range` action says
+    which.
 - **Router options in layout mode.** The same file goes in the router
   config position:
   `pcb-maker layout-kicad-board <dir> <id> <out> router.json layout.json`.
@@ -1673,9 +1682,15 @@ Score the designer's board and yours side by side.
   reassigns interchangeable pins to shorten the ratsnest, board and
   schematic together, without routing ([pin-swap.md](pin-swap.md)); the
   layout does the same with `swappable` or `pin_swaps`.
-- `pcb-maker strip-kicad-tracks <source.kicad_pcb> <output.kicad_pcb>`
+- `pcb-maker strip-kicad-tracks <source.kicad_pcb> <output.kicad_pcb> [--keep-nets <net>[,<net>...]]`
   removes tracks, vias and small zones (copper pours stay): a designer's
-  board as the benchmarks hand it to the router.
+  board as the benchmarks hand it to the router. `--keep-nets` (KiCad
+  wildcards, the sheet path's leading `/` optional; since 2026-11-04)
+  keeps those nets' tracks, arcs and vias, which route mode then keeps
+  as pre-routed nets: trial 6's firestarter, route mode on the designer's
+  placement left 6 of its 10 DVP nets under the 25 mm minimum of
+  `DVP_Bus_Length_Matching`; `--keep-nets 'DVP_*'` on the designer's
+  board, then `route-kicad-board` on it: complete, all ten within.
 - `pcb-maker strip-kicad-copper <source.kicad_pcb> <output.kicad_pcb> [report.json]`
   removes tracks, vias, copper zones and copper graphics: the bare
   placement.

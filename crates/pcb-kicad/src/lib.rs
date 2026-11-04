@@ -162,6 +162,7 @@ pub use board_router::{
     KiCadViaInPad, KiCadViaInPadEntry, KiCadViaInPadFootprint, KiCadViaInPadReport,
     admit_reference_vias_in_pads, bench_kicad_search, dump_kicad_pour_map,
     keep_whole_input_warnings, measure_pours, route_kicad_board, write_kicad_board_without_tracks,
+    write_kicad_board_without_tracks_except,
 };
 pub use project_rules::{
     KiCadProjectMinimums, KiCadRuleOverride, preflight_overrides, resolve_project_rules,

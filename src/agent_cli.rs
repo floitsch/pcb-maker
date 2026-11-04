@@ -1624,7 +1624,13 @@ fn checked_simple(command: &str, arguments: &[String]) -> Result<(), Failure> {
             Ok(())
         }
         "strip-kicad-tracks" => {
-            count(2..=2)?;
+            count(2..=4)?;
+            if arguments.len() > 2 && (arguments[2] != "--keep-nets" || arguments.len() != 4) {
+                return Err(Failure::Usage(
+                    "strip-kicad-tracks takes only --keep-nets <net>[,<net>...] after the two boards"
+                        .into(),
+                ));
+            }
             check_file(&arguments[0])
         }
         "strip-kicad-copper" => {
@@ -2027,7 +2033,7 @@ pub const AGENT_COMMANDS: [(&str, &str, &str); 14] = [
     (
         "strip-kicad-tracks",
         "removes tracks and vias from a board (copper zones stay)",
-        "usage: pcb-maker strip-kicad-tracks <source.kicad_pcb> <output.kicad_pcb>\n\n  <source.kicad_pcb>  the board to read.\n  <output.kicad_pcb>  the board to write (may be the source).",
+        "usage: pcb-maker strip-kicad-tracks <source.kicad_pcb> <output.kicad_pcb> [--keep-nets <net>[,<net>...]]\n\n  <source.kicad_pcb>  the board to read.\n  <output.kicad_pcb>  the board to write (may be the source).\n  --keep-nets N       keep the tracks, arcs and vias of these nets (KiCad wildcards, the sheet\n                      path's leading / optional: 'DVP_*'), so that route-kicad-board keeps them\n                      and routes the rest (a designer's length-matched bus).",
     ),
     (
         "strip-kicad-copper",

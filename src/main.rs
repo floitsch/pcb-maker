@@ -644,14 +644,37 @@ pub(crate) fn run(arguments: Vec<String>) -> Result<(), String> {
             Ok(())
         }
         "strip-kicad-tracks" => {
-            let usage = "usage: pcb-maker strip-kicad-tracks <source.kicad_pcb> <output.kicad_pcb>";
+            let usage = "usage: pcb-maker strip-kicad-tracks <source.kicad_pcb> <output.kicad_pcb> [--keep-nets <net>[,<net>...]]";
             let source = arguments.next().ok_or_else(|| usage.to_string())?;
             let output = arguments.next().ok_or_else(|| usage.to_string())?;
-            if arguments.next().is_some() {
-                return Err(usage.into());
+            let mut keep_nets: Vec<String> = Vec::new();
+            while let Some(argument) = arguments.next() {
+                match argument.as_str() {
+                    "--keep-nets" => keep_nets.extend(
+                        arguments
+                            .next()
+                            .ok_or_else(|| usage.to_string())?
+                            .split(',')
+                            .map(str::trim)
+                            .filter(|net| !net.is_empty())
+                            .map(str::to_string),
+                    ),
+                    _ => return Err(usage.into()),
+                }
             }
-            pcb_kicad::write_kicad_board_without_tracks(Path::new(&source), Path::new(&output))?;
-            println!("wrote {output} without tracks and vias; copper pours kept");
+            let [kept, removed] = pcb_kicad::write_kicad_board_without_tracks_except(
+                Path::new(&source),
+                Path::new(&output),
+                &keep_nets,
+            )?;
+            if keep_nets.is_empty() {
+                println!("wrote {output} without tracks and vias; copper pours kept");
+            } else {
+                println!(
+                    "wrote {output}: kept {kept} tracks, arcs and vias of the nets {} and removed {removed} others; copper pours kept (route-kicad-board keeps the kept ones and routes the rest)",
+                    keep_nets.join(", ")
+                );
+            }
             Ok(())
         }
         "strip-kicad-copper" => {

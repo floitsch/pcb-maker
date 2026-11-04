@@ -87,14 +87,67 @@ pub fn bench_kicad_search(
 /// where copper is poured is a design decision like the placement, and the
 /// router connects to pours instead of replacing them by tracks.
 pub fn write_kicad_board_without_tracks(source: &Path, destination: &Path) -> Result<(), String> {
+    write_kicad_board_without_tracks_except(source, destination, &[]).map(|_| ())
+}
+
+/// `write_kicad_board_without_tracks`, keeping the tracks, arcs and vias of
+/// the nets `keep_nets` names (KiCad wildcards, `*` and `?`; a net's
+/// sheet path's leading `/` may be left out), so that route mode keeps
+/// them and routes the rest: a designer's length-matched bus (fresh-agent
+/// trial 6's firestarter: route mode left 6 of the ten DVP nets under
+/// their 25 mm minimum, the designer's own meanders meet it). Returns the
+/// tracks, arcs and vias kept and removed.
+pub fn write_kicad_board_without_tracks_except(
+    source: &Path,
+    destination: &Path,
+    keep_nets: &[String],
+) -> Result<[usize; 2], String> {
     let text = fs::read_to_string(source)
         .map_err(|error| format!("failed to read {}: {error}", source.display()))?;
     let mut pcb = parse(&text)?;
     let board_area = polygon_area(&outline::board_loops(&pcb)?.outline);
+    // Nets by number, for boards before KiCad 10 (`(net 3)`).
+    let numbered: BTreeMap<String, String> = pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("net"))
+        .filter_map(|net| {
+            let children = net.children();
+            Some((
+                children.get(1)?.atom()?.to_string(),
+                children.get(2)?.atom()?.to_string(),
+            ))
+        })
+        .collect();
+    let kept = |item: &Expr| {
+        let Some(net) = item
+            .child("net")
+            .and_then(|net| net.children().get(1).and_then(Expr::atom))
+        else {
+            return false;
+        };
+        let name = numbered.get(net).map_or(net, String::as_str);
+        keep_nets.iter().any(|pattern| {
+            crate::board_placer::glob_matches(pattern, name)
+                || name
+                    .strip_prefix('/')
+                    .is_some_and(|bare| crate::board_placer::glob_matches(pattern, bare))
+        })
+    };
     let Expr::List(items) = &mut pcb else {
         return Err("PCB root is not a list".into());
     };
-    items.retain(|item| !matches!(item.head(), Some("segment" | "arc" | "via")));
+    let before = items.len();
+    let mut counts = [0, 0];
+    items.retain(|item| {
+        if !matches!(item.head(), Some("segment" | "arc" | "via")) {
+            return true;
+        }
+        let keep = kept(item);
+        counts[usize::from(!keep)] += 1;
+        keep
+    });
+    debug_assert_eq!(before - items.len(), counts[1]);
     // Small filled zones are hand-drawn copper, i.e. routing; only pours
     // covering a good part of the board are kept.
     items.retain(|item| {
@@ -117,5 +170,6 @@ pub fn write_kicad_board_without_tracks(source: &Path, destination: &Path) -> Re
             .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
     }
     fs::write(destination, format!("{}\n", encode(&pcb)))
-        .map_err(|error| format!("failed to write {}: {error}", destination.display()))
+        .map_err(|error| format!("failed to write {}: {error}", destination.display()))?;
+    Ok(counts)
 }
