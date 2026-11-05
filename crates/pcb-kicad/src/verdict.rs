@@ -1882,7 +1882,9 @@ fn narrowed_action(narrowed: &[crate::board_router::KiCadNarrowedClass]) -> Opti
         .iter()
         .filter(|class| class.class != "Default")
         .collect();
-    let first = chosen.first()?;
+    if chosen.is_empty() {
+        return None;
+    }
     let nets: usize = narrowed.iter().map(|class| class.nets.len()).sum();
     let mm = |value: f64| {
         let text = format!("{value:.4}");
@@ -1907,12 +1909,45 @@ fn narrowed_action(narrowed: &[crate::board_router::KiCadNarrowedClass]) -> Opti
             )
         })
         .collect();
+    // Beside Default's width: a class no wider is a width chosen for its
+    // signals (an impedance), a wider one a current to carry (trial 7's
+    // Sisu: RF_ANT 0.1422 and Power_VBATT_3V8 0.5 beside Default's 0.15).
+    let default = narrowed
+        .iter()
+        .find(|class| class.class == "Default")
+        .map(|class| class.class_width_mm);
+    let names = |classes: Vec<&&crate::board_router::KiCadNarrowedClass>| {
+        classes
+            .iter()
+            .map(|class| class.class.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let (signal, power): (Vec<_>, Vec<_>) = chosen
+        .iter()
+        .partition(|class| default.is_none_or(|width| class.class_width_mm <= width + 1.0e-6));
+    let kinds = match (default, signal.is_empty(), power.is_empty()) {
+        (Some(_), false, false) => format!(
+            "a class no wider than Default's ({}) is likely a controlled impedance, a wider one ({}) a current to carry",
+            names(signal.clone()),
+            names(power.clone())
+        ),
+        (Some(_), true, false) => format!(
+            "a class wider than Default's ({}) is likely a current to carry",
+            names(power.clone())
+        ),
+        _ => format!(
+            "a class's own width ({}) may be a controlled impedance or a current to carry",
+            names(signal.clone())
+        ),
+    };
+    let example = signal.first().or(power.first()).expect("a class");
     Some(format!(
-        "the narrow-signal step routed {nets} nets below their class's track width, which KiCad's DRC does not check (no finding says it; verdict.narrowed_classes): {}. Where a class's width is a controlled impedance (an RF line, a single-ended 50 ohm net) keep it with a custom rule giving the width as opt, which the step keeps, in the board's .kicad_dru: (rule \"{} width\" (condition \"A.hasNetclass('{}')\") (constraint track_width (opt {}mm))) (a new file starts with (version 1)); or turn the step off with \"use_narrow_signals\": false in the router config (every net at its class's width; connections may stay open)",
+        "the narrow-signal step routed {nets} nets below their class's track width, which KiCad's DRC does not check (no finding says it; verdict.narrowed_classes): {}. {kinds}: keep a class's width with a custom rule giving it as opt, which the step keeps, in the board's .kicad_dru: (rule \"{} width\" (condition \"A.hasNetclass('{}')\") (constraint track_width (opt {}mm))) (a new file starts with (version 1)); or turn the step off with \"use_narrow_signals\": false in the router config (every net at its class's width; connections may stay open)",
         listed.join("; "),
-        first.class,
-        first.class,
-        mm(first.class_width_mm),
+        example.class,
+        example.class,
+        mm(example.class_width_mm),
     ))
 }
 
@@ -4766,6 +4801,7 @@ mod tests {
             ("MODEM_USB_P", vec!["USB"]),
             ("SDA", vec!["Default"]),
             ("SCL", vec!["Default"]),
+            ("CHARGE_IN_P", vec!["Power_VBATT_3V8"]),
         ]
         .into_iter()
         .map(|(net, classes)| {
@@ -4780,6 +4816,7 @@ mod tests {
             ("RF_ANT", 0.1422),
             ("RF_ANT_INT", 0.1102),
             ("USB", 0.1),
+            ("Power_VBATT_3V8", 0.5),
         ]
         .into_iter()
         .map(|(class, width)| (class.to_string(), [Some(width), Some(0.15)]))
@@ -4788,6 +4825,7 @@ mod tests {
             "RF_ANT" => 0.1422,
             "RF_ANT_INT" => 0.1102,
             "USB" => 0.1,
+            "Power_VBATT_3V8" => 0.5,
             _ => 0.15,
         };
         let nets: Vec<(String, f64)> = net_classes.keys().map(|net| (net.clone(), 0.1)).collect();
@@ -4801,6 +4839,7 @@ mod tests {
             summary,
             [
                 ("RF_ANT", 0.1422, 2),
+                ("Power_VBATT_3V8", 0.5, 1),
                 ("RF_ANT_INT", 0.1102, 1),
                 ("Default", 0.15, 2)
             ]
@@ -4808,7 +4847,7 @@ mod tests {
         let action = narrowed_action(&narrowed).expect("a class other than Default");
         assert!(
             action.starts_with(
-                "the narrow-signal step routed 5 nets below their class's track width, which KiCad's DRC does not check"
+                "the narrow-signal step routed 6 nets below their class's track width, which KiCad's DRC does not check"
             ),
             "{action}"
         );
@@ -4817,6 +4856,14 @@ mod tests {
             "(rule \"RF_ANT width\" (condition \"A.hasNetclass('RF_ANT')\") (constraint track_width (opt 0.1422mm)))"
         ));
         assert!(action.contains("\"use_narrow_signals\": false"));
+        // The impedance classes told from the power class by Default's
+        // width; the example rule is an impedance class's.
+        assert!(
+            action.contains(
+                "a class no wider than Default's (RF_ANT, RF_ANT_INT) is likely a controlled impedance, a wider one (Power_VBATT_3V8) a current to carry"
+            ),
+            "{action}"
+        );
         // Default's signals alone narrowed: the step's purpose, no action;
         // the verdict still lists them.
         let default_only: Vec<_> = narrowed
@@ -4833,7 +4880,7 @@ mod tests {
             verdict
                 .next_actions
                 .iter()
-                .any(|line| line.starts_with("the narrow-signal step routed 5"))
+                .any(|line| line.starts_with("the narrow-signal step routed 6"))
         );
     }
 
