@@ -483,6 +483,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "differential pairs: per negotiation iteration and after the hard repair, each link's state, conflicts and search work, and the links given up or standing again (docs/router.md, \"Giving up on a link\").",
     ),
     (
+        "PCB_ROUTER_PAIRS_WHY",
+        Kind::Diagnostic,
+        "differential pairs: per link that falls back for its stubs the geometry (`pairs why: stub ...`: the pad, the stub's end, the run's start and direction, what the pad's copper reaches: its end, other pads, the link's other end, or nothing), per finding that refuses a link's copper what of it is hit (the run, an end's jog, a via) and by what (`[partner]`: the pair's other net), per link whose stubs were routed after the attempt the outcome, and per write a summary (docs/router.md, \"Stubs and copper\").",
+    ),
+    (
         "PCB_ROUTER_DEBUG",
         Kind::Diagnostic,
         "the router's verbose lines (failed searches, the resolution, what blocks a stub, lattice details).",

@@ -11,6 +11,54 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-05 (a pair's stubs and its copper: the stubs routed after the attempt, the copper's alternatives)
+
+Branch pair-stubs (`build/bin/pcb-maker-pairs5-m`; outputs in
+build/pairs5/). The diagnosis (docs/router.md, "Stubs and copper",
+`PCB_ROUTER_PAIRS_WHY=1`) with x1912's writer on right_io, left_io and
+jetson, route mode on the designer's placements and one layout each at
+seed 1, every attempt's write: of 220 stubs that did not reach their run
+162 belong to a pair's net the attempt left open (131 with no track at
+the pad; crossed ends far more often), 53 to a pad the router joined
+another way (through other pads 34, to the link's other end, merged
+into one terminal with this end, 16, short of it 3), 5 reached the run through another
+pad of their net (the check did not follow pads); every copper refusal
+but one is between the pair's own two nets (a via pair in a turn, a
+hairpin, a short jog; 38 pairs). Built (diff_pairs.rs, the writer; the
+plan and the negotiation unchanged): a stub reaches its end through the
+net's other pads, not the link's other end's pad (`stub_joined`); the
+stubs a link with holding copper lacks are routed after the attempt,
+pad to stub end with every route and every holding link's copper kept
+and the other nets' pours as they are (`repair_stubs`), the pad's old
+way cut where the stub closes a loop with it (`cut_old_connection`), a
+net still open completed by the fallback; the run's copper first as the
+router routed it, then alternatives whose two nets keep their gap
+(`centrelines`: vias spread, despiked, layer changes moved off turns by
+`vias_on_straights`, longer jogs straightened; `own_copper_clear`) tried
+in turn where the check refuses it, a moved one alone refused where it
+meets a link on its route; `diff_pairs.stubs_routed`. Measured:
+on the same routes (route mode at 600 s, x1912's writer and
+this one in one binary) links coupled 19 -> 21 on jetson, 4 -> 8 on
+right_io, 1 -> 2 on left_io, none lost; route mode at the task budget on
+the designer's placements, pairs coupled / partly and KiCad unconnected,
+x1912 -> this: jetson 18 / 2 -> 19 / 2, 14 -> 15; right_io 4 / 0 -> 4 /
+2, 35 -> 35; left_io 3 / 0 -> 4 / 0, 93 -> 92; one layout each at seed
+1: jetson 8 / 1 -> 9 / 1, 23 -> 23; right_io 1 / 2 -> 1 / 3, 23 -> 23;
+left_io 7 / 2 -> 7 / 4, 26 -> 30 (seed 101, run for this: 6 / 3 -> 8 / 4, 33 -> 32); the expansion tier's 25
+pair boards at 30 s: links 18 -> 26, pairs 7 -> 11, partly 10 -> 12,
+unconnected 669 -> 670, passes 10 -> 10, CPU 951 -> 955 s side by side.
+The repair's first form kept only the pairs' pours on its board and cut
+the atmega32u4 board's GND pour (its pass lost); with the other nets'
+pours it does not. In by the rule (coupled up on every board,
+unconnected within seed noise); no switch. Identity: video's and
+MegaDrive's place checks (router defaults and `diff_pairs` on) and
+EMG_DAQ's route (fingerprints) byte for byte x1912's. Tests
+`a_hairpin_in_a_links_route_is_straightened_before_its_tracks_are_offset`,
+`a_links_layer_change_in_a_turn_moves_onto_a_straight_piece`,
+`a_routed_run_with_a_via_before_a_short_diagonal_gets_a_clean_centreline`,
+`a_stub_through_another_pad_of_its_net_reaches_the_run`,
+`a_stub_the_attempt_left_out_is_routed_after_it`,
+`copper_moved_off_the_route_is_refused_alone_where_it_meets_a_link_on_its_route`.
 ## Committed on 2026-11-05 (the anneal skipped: stage 1 fails, the seed-1 result was a draw)
 
 Branch anneal-skipped-screen (`build/bin/pcb-maker-diag1-g` for both

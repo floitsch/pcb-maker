@@ -3364,7 +3364,9 @@ the first end; at a layer change each net gets a via `dv` (up to
 `dv / 0.7`) out along the bisector; short jogs join the tracks to the
 stubs' ends where those lie further out (the ends keep the router's
 clearance, wider than a gap below it); where the link carries the stubs,
-they are part of its copper. The links' copper is checked
+they are part of its copper (since 2026-11-05 of several centrelines
+the first whose two nets keep their gap from each other, the others in
+turn where it is refused: "Stubs and copper" below). The links' copper is checked
 with `verify` against the board and every route near it (a finding
 between a pair's own two nets counts only below their gap); a link with
 another finding is refused. What holds is written as tracks and vias of
@@ -3402,7 +3404,11 @@ a link's two ends into one terminal, so it may route a pad to the other
 end, or leave it open at the budget, and phase 2 then wrote the run as an
 island: left_io's J22_TX1 pair was "coupled" with neither pad joined);
 otherwise it falls back as a refused link ("a pad's stub does not reach
-the run"; 30 of the rule boards' 97 links with x1797). A kept link's stub that ends
+the run"; 30 of the rule boards' 97 links with x1797). Since 2026-11-05
+a stub reaches its end through the net's other pads on the way (an ESD
+diode's pin) but not through the link's other end's pad, and a stub the
+attempt left out is routed after it before the link falls back ("Stubs
+and copper" below). A kept link's stub that ends
 elsewhere on its end's copper gets a track to that end, where the run's
 jog starts (`join_stub_ends`; else KiCad finds the jog dangling). After
 the fallback, a failed link's stub is pruned from its end past a via
@@ -3676,6 +3682,191 @@ x1911's, route mode on EMG_DAQ_ADS1292 is byte for byte with equal
 fingerprints, and the expansion tier's 25 pair boards in route mode at
 30 s with `diff_pairs` on route byte for byte as x1911 (`pcb-maker-pairs4-h`).
 
+**Stubs and copper (2026-11-05, branch pair-stubs).** Two reasons a
+link falls back recur in every measured run whatever the placement and
+the negotiation: "a pad's stub does not reach the run" (5 to 11 links a
+run on right_io, left_io and jetson, 18 to 23 on left_io with pair rows)
+and "its copper is ... from ..." (3 to 5). *The diagnosis*
+(`PCB_ROUTER_PAIRS_WHY=1`: per link that falls back for its stubs the
+pad, the stub's end, the run's start and direction and what the pad's
+copper reaches; per finding that refuses copper what of the link it is
+on and what it hits, `[partner]` for the pair's other net; per write a
+`pairs why: written` summary), x1912's writer (a binary with the lines
+alone, its boards byte for byte x1912's) on the three boards in route
+mode on the designer's placement at the task budget (1500 s of work) and
+in one layout each at seed 1, every attempt's write counted
+(build/pairs5/Dwhy-*, L-x1912-*):
+
+| cause | designer's placements | layouts, seed 1 | of them at a crossed end |
+| --- | ---: | ---: | ---: |
+| the pair's net open at the attempt's end, no track at the pad | 50 | 81 | 90 of 131 |
+| the net open, the pad's copper going elsewhere (other pads, the link's far end) or ending short | 22 | 9 | 7 of 31 |
+| the net routed, the pad joined through other pads (the connector's other row, an ESD part, the part at the run's far end) | 11 | 23 | 17 of 34 |
+| the net routed, the pad joined to the link's other end (merged into one terminal with this end) | 12 | 4 | 5 of 16 |
+| the net routed, the pad's copper ending short of the end | 1 | 2 | 0 of 3 |
+| the stub reaching the run through another pad of its net on the way (the check followed tracks and vias from the pad, not pads: right_io's ETH_MDI pairs through U501/U502) | 5 | 0 | 5 of 5 |
+| all | 101 | 119 | |
+
+The open nets are the most (162 of 220): the stub is a connection of
+the pair's net like any other, and at the attempt's end its net is open
+there; a crossed end, whose stubs must cross (with a via, or round a
+pad), is open far more often than a straight one. Every copper refusal
+but one is between the pair's own two nets (38 pairs over the six runs'
+attempts; the one other, left_io's HUB_DS2, its run 0.03 mm inside
+J22_CC2's clearance): the run's offset tracks follow the router's centreline,
+and where that centreline changes layer in a turn, turns back on itself
+or jogs aside for less than the offset, the two vias land on the other
+net's track (jetson's PCIE1_TX0: a via 0.14 mm into the partner's
+track, AMLing2's USB2: a layer change followed by a 0.14 mm diagonal),
+or the inner track folds across the outer. Phase 4's hairpin removal and
+the vias spread out (`despiked`, `VIA_SPREADS`) did that, but only with
+the crossovers on (off by default).
+
+*The fixes* (in diff_pairs.rs, the writer: the plan and the negotiation
+are as they were):
+
+- **Centrelines.** A routed link's copper is first, as before, the
+  route as it is with its vias where the router put them; where the check
+  refuses it, the next of several other coppers whose two nets keep their
+  gap from each other (`own_copper_clear`, the check's rule between a
+  pair's nets) is checked, in turn, until one holds (`centrelines`): the
+  route with its vias spread out where they come too near the other net
+  (`VIA_SPREADS`, before only with the crossovers on), without hairpins
+  and short jogs (`despiked` at 2.5 offsets, before only with the
+  crossovers on), with each layer change in a turn moved back along the
+  segment before it (or on along the one after it) by two via offsets
+  and a width (`vias_on_straights`), both, and with the jogs straightened
+  at 5 and 10 offsets. Those were not checked by the router: where such
+  copper meets a link's that lies on its route, it alone is refused
+  (`LinkCopper::moved`; so is a link whose stubs are still to route), not
+  both as before. On the same routes (jetson's designer placement at 600 s of
+  work, x1912's writer, by a switch of the branch's binary checked byte
+  for byte against x1912 on the drone carrier and since removed, and
+  this one: the attempts are the same up to the first write,
+  build/pairs5/same/) a first version (the cleanest copper
+  first, the vias spread by default, both of two meeting links refused)
+  gained three links and lost three that the route as it is had coupled;
+  this one gains two and loses none (19 -> 21 links, 17 -> 19 pairs
+  coupled).
+- **A stub through a pad.** A stub reaches its end through the net's
+  other pads and kept copper on the way (`stub_joined`), not through the
+  link's other end's pad (a route from the pad to that pad and on to
+  this end's stub makes the run a loop beside it).
+- **The stubs routed after the attempt** (`repair_stubs`). A link whose
+  copper holds and whose stubs do not all reach the run is not given up
+  at once: each missing stub is routed from its pad to its stub's end on
+  a board where every route and every holding link's copper is kept, the
+  pair's net with those two terminals alone (its other pads and its
+  merged pads out, so that the route cannot end elsewhere), one stub per
+  net a round, the other nets' pours as they are (a stub crossing a pour
+  pays as in the attempt; without them the atmega32u4 board's stub dove
+  under its run on B.Cu and left a GND island, its pass lost). Where
+  every stub routes and reaches its end, the link is kept and the pad's
+  old way to the run (to the other end, through other pads) goes where
+  the stub closes a loop with it (`cut_old_connection`, then
+  `prune_dangling`); a pair whose net was open goes to the fallback,
+  which completes it around the link. Its work is the fallback's
+  (`work_seconds`, charged to the ladder); the verdict's
+  `diff_pairs.stubs_routed` counts the stubs.
+
+A pair point with a ground pin between P and N (HDMI connectors) and
+ESD diodes without a second pair point are not these causes: they are
+"fewer than two parts side by side" (jetson 34 of its 75 pairs), left
+as they were.
+
+*Measured* (the router's `{"diff_pairs": true}`, run.py at the pinned
+reference rates, `--jobs 1 --threads 4`, at most two at a time beside two
+stage-1 screens and the nightly; outputs in build/pairs5/; x1912's rows
+by a binary with the `pairs why` lines alone, its boards byte for byte
+x1912's). Pairs: found / coupled / partly / fallen back; links coupled
+of planned; the reasons per link ("stub": a pad's stub does not reach
+the run, "copper": its copper too close, "no path": the coupled run not
+routed, no path in the negotiation, "no room": the hard repair found no
+room, "close": the launches too close, "no launch": no launch clear of
+the pads, "side": fewer than two parts side by side); stubs routed after
+the attempt in the board kept; KiCad unconnected;
+`diff_pair_gap_out_of_range`; CPU seconds (the load ran from 30 down to
+5 over the morning and x1912's route-mode rows ran first, so CPU is no
+comparison between rows; the pinned pair on the expansion tier below
+is):
+
+| board, placement | run | pairs | links | reasons | stubs routed | unconnected | gap | CPU s |
+| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: |
+| jetson, the designer's | x1912 | 75 / 18 / 2 / 55 | 20/82 | no path 26, copper 14, close 10, stub 6, no room 5, no launch 1 | 0 | 14 | 0 | 1978 |
+|  | pairs5 | 75 / 19 / 2 / 54 | 21/82 | no path 26, copper 19, close 10, no room 5, no launch 1 | 1 | 15 | 0 | 1217 |
+| right_io, the designer's | x1912 | 21 / 4 / 0 / 17 | 4/23 | close 6, no path 6, side 6, stub 4, no room 2, copper 1 | 0 | 35 | 59 | 1887 |
+|  | pairs5 | 21 / 4 / 2 / 15 | 6/23 | close 6, no path 6, side 6, copper 2, no room 2, stub 1 | 0 | 35 | 49 | 1926 |
+| left_io, the designer's | x1912 | 39 / 3 / 0 / 36 | 3/41 | stub 14, no path 11, no room 6, side 5, close 4, no launch 3 | 0 | 93 | 35 | 3412 |
+|  | pairs5 | 39 / 4 / 0 / 35 | 5/41 | no path 11, stub 9, no room 6, side 5, close 4, copper 3, no launch 3 | 2 | 92 | 38 | 1827 |
+| jetson, seed 1 | x1912 | 75 / 8 / 1 / 66 | 9/43 | side 34, no room 19, stub 6, copper 5, no path 4 | 0 | 23 | 0 | 1320 |
+|  | pairs5 | 75 / 9 / 1 / 65 | 10/43 | side 34, no room 19, copper 9, no path 4, stub 1 | 0 | 23 | 0 | 1373 |
+| right_io, seed 1 | x1912 | 21 / 1 / 2 / 18 | 3/12 | side 14, no room 4, stub 4, no path 1 | 0 | 23 | 59 | 1570 |
+|  | pairs5 | 21 / 1 / 3 / 17 | 4/12 | side 14, no room 4, stub 2, no path 1, copper 1 | 1 | 23 | 61 | 1443 |
+| left_io, seed 1 | x1912 | 39 / 7 / 2 / 30 | 9/32 | stub 16, side 15, no path 3, no room 2, copper 2 | 0 | 26 | 115 | 1665 |
+|  | pairs5 | 39 / 7 / 4 / 28 | 11/32 | side 15, stub 10, copper 6, no path 3, no room 2 | 2 | 30 | 119 | 1505 |
+| left_io, seed 101 | x1912 | 39 / 6 / 3 / 30 | 9/34 | stub 17, side 12, no path 5, no room 3 | 0 | 33 | 120 | 2812 |
+|  | pairs5 | 39 / 8 / 4 / 27 | 13/34 | side 12, stub 9, no path 5, copper 4, no room 3 | 4 | 32 | 133 | 2774 |
+
+*On the same routes* (route mode at 600 s of work, x1912's writer and
+this one on one binary, build/pairs5/same/: the attempts are alike up
+to the first write): jetson's designer placement 19 -> 21 links, 17 / 2
+-> 19 / 2 pairs, right_io's 4 -> 8 links, 4 / 0 -> 4 / 4, left_io's
+1 -> 2 links, 1 / 0 -> 1 / 1; no link coupled before is lost. Of the
+stubs the repair tried there 3 of 21 routed: on these dense boards most
+open nets stay open with everything else fixed (left_io's layout: 6 of
+38). *Route mode on the expansion tier's 25 pair boards* at 30 s
+(`--jobs 2 --threads 1`, x1912 and this branch side by side): links
+coupled 18 -> 26, pairs coupled 7 -> 11, partly 10 -> 12, unconnected
+669 -> 670 (MSign 82 -> 83: one more piece of its three-layer GND pour
+cut off, KiCad's zone items 4 -> 5, on the same route with four stubs
+routed after it), passes 10 -> 10, CPU 951 -> 955 s.
+An earlier build of the copper's alternatives and the stub check
+without the repair gave 18 -> 21 links and 7 -> 8 pairs with unconnected
+and passes as x1912's; the rest came with the repair. With the repair's board keeping only the pairs' pours
+the atmega32u4 board's stub dove under its run on B.Cu and left a GND
+island (0 -> 1 unconnected, its pass lost): the other nets' pours stay
+in the repair's board, and it routes elsewhere (0 unconnected, the pair
+coupled). *Identity*: without pairs nothing changes: video's and
+MegaDrive's place checks with the default router settings and with
+`diff_pairs` on, and route mode on EMG_DAQ_ADS1292 with its
+fingerprints, byte for byte x1912's.
+
+*The decision.* These are fixes to the pair model, not switches, and
+they are on: on the same routes no coupled link is lost and every board
+gains (jetson +2 links, right_io +4, left_io +1); on the full runs links
+coupled rise on every measured board (jetson's designer placement 20 ->
+21, right_io's 4 -> 6, left_io's 3 -> 5; the seed-1 layouts 9 -> 10, 3
+-> 4, 9 -> 11, left_io's seed 101 9 -> 13; the expansion tier 18 -> 26) and coupled pairs rise or
+stay with more partly coupled (jetson 18 -> 19 and 8 -> 9, left_io's
+designer placement 3 -> 4, right_io 4 / 0 -> 4 / 2 and 1 / 2 -> 1 / 3,
+left_io's seed 1 7 / 2 -> 7 / 4, seed 101 6 / 3 -> 8 / 4); KiCad's unconnected moved by -1 to +4
+(jetson's designer placement 14 -> 15, left_io's seed-1 layout 26 -> 30,
+and at seed 101, run for this, 33 -> 32), within what one placement does from seed to seed and run to
+run (left_io at seed 1: 37 with x1907, 26 with x1912; 22 to 48 across
+pairs4's variants), each a different
+attempt kept once the writer changes the work (jetson's designer
+placement: 727 s of work left after the first attempt against 717, the
+later rungs on other deadlines); `diff_pair_gap_out_of_range` 59 -> 49 and 59 -> 61 on
+right_io, 35 -> 38, 115 -> 119 and 120 -> 133 on left_io (more of it
+coupled, more pieces KiCad checks). No part was left out: the
+one fix that hurt a board in its first form (the repair without the
+other nets' pours, the atmega32u4 board's pass) was changed, not
+dropped. No new switch.
+
+*What is left.* Most stubs that do not reach are nets the attempt left
+open (162 of 220), and on the dense boards the repair routes few of
+them after the attempt (3 of 21 on the same routes, 6 of 38 in left_io's
+layout): the room is gone by then; that is the negotiation's (the links'
+stubs as connections that must route, or their ends placed where the
+stubs are short), not the writer's. Crossed ends are open far more
+often than straight ones; the crossover in the lead (off) is the model's
+answer, a repaired stub at a crossed end dives under the run. Partner
+refusals remain where a layer change sits in the run's lead
+(`vias_on_straights` leaves the first and last two points alone:
+right_io's HUB_DS4) and at turns sharper than 90 degrees next to a via.
+A pair point with a ground pin between P and N (HDMI) and an ESD part
+without a second pair point are the "side" reason, untouched here.
+
 **The verdict.** `diff_pairs` in `board-router.json` and the verdict:
 `on`, `default` (`rules`: the project's rules ask; `off`: nothing asks;
 `explicit`: the setting or `PCB_ROUTER_DIFF_PAIRS`), `reason` (the rule
@@ -3688,7 +3879,9 @@ coupled run: KiCad's measure), `skew_mm`, `meanders`, `skews` (2026-10-25,
 was not routed, by cause; "Runs not routed at the task budget" below),
 `given_up` (2026-11-05: of those, the links the negotiation gave up with
 `diff_pair_give_up`, their cause "given up in the negotiation: no room"
-or "...: no path"; "Giving up on a link" above), `pair_vias`, `return_vias`, `return_net` (2026-10-26, "Return vias"
+or "...: no path"; "Giving up on a link" above), `stubs_routed`
+(2026-11-05: the stubs routed after the attempt, "Stubs and copper"
+above), `pair_vias`, `return_vias`, `return_net` (2026-10-26, "Return vias"
 below), `work_seconds` (the fallback's), and in
 board-router.json per pair its nets, width, gap, source and why links
 fell back (`fewer than two parts with the pair's pads side by side`,

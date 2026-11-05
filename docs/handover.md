@@ -971,6 +971,7 @@ Diagnostics (stderr unless said; the result does not change):
 - `PCB_ROUTER_DIFF_PAIRS_DEBUG`: differential pairs: prints each launch, each link's path, the copper refused with the reason, each stub straightened or not, and the fallback's work.
 - `PCB_ROUTER_BUS_WHY`: bus bundles: prints every bus found and every member broken out of its bundle.
 - `PCB_ROUTER_LINK_TRACE`: differential pairs: per negotiation iteration and after the hard repair, each link's state, conflicts and search work, and the links given up or standing again (docs/router.md, "Giving up on a link").
+- `PCB_ROUTER_PAIRS_WHY`: differential pairs: per link that falls back for its stubs the geometry (`pairs why: stub ...`: the pad, the stub's end, the run's start and direction, what the pad's copper reaches: its end, other pads, the link's other end, or nothing), per finding that refuses a link's copper what of it is hit (the run, an end's jog, a via) and by what (`[partner]`: the pair's other net), per link whose stubs were routed after the attempt the outcome, and per write a summary (docs/router.md, "Stubs and copper").
 - `PCB_ROUTER_DEBUG`: the router's verbose lines (failed searches, the resolution, what blocks a stub, lattice details).
 - `PCB_ROUTER_DUMP`: `x0,y0,x1,y1`: prints that region of the lattice per layer (static blocks, own pads, occupancy, where vias may not go).
 - `PCB_ROUTER_FINGERPRINT`: a hash of the routing state at each phase (determinism and byte-identity checks; compare as a multiset when attempts run side by side).
