@@ -69,8 +69,10 @@ def units(arguments):
     on = json.loads(arguments.on)
     extra = on_environment(arguments.on_env)
     result = []
-    for seed in SEEDS:
-        for board in sorted(DENSE, key=lambda b: -estimate(b)[1]):
+    seeds = [int(seed) for seed in arguments.seeds.split(",")] if arguments.seeds else SEEDS
+    boards = [b for b in DENSE if not arguments.boards or b.split("__")[-1] in arguments.boards.split(",")]
+    for seed in seeds:
+        for board in sorted(boards, key=lambda b: -estimate(b)[1]):
             for side in arguments.sides.split(","):
                 placer = {"seed": seed, **(on if side == "on" else {})}
                 name = f"dense-s{seed}-{side}-{board.split('__')[-1]}"
@@ -93,6 +95,8 @@ def main():
                         "(one off side for several on sides, each in the off side's directory under its own --out)")
     parser.add_argument("--on-env", action="append", metavar="KEY=VALUE",
                         help="an environment variable for the on side only (repeatable)")
+    parser.add_argument("--seeds", help="placer seeds, comma-separated (default: 1,101,201,301,401)")
+    parser.add_argument("--boards", help="boards by their last name part, comma-separated (default: all eleven)")
     parser.add_argument("--slots", type=int, default=5)
     parser.add_argument("--slots-file", help="a file holding the slots, read again every 20 s (to share the "
                         "machine's layout limit with other runs)")
