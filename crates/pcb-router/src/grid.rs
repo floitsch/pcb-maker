@@ -195,7 +195,17 @@ pub struct Grid {
 /// to a pad fenced in on all four sides count (the inside of a BGA), where
 /// the channel is the only way in; between the pads of a connector row it is
 /// a shortcut that must not move the lattice off the pad centres.
-fn tight_channels(board: &Board) -> Vec<(usize, f64, f64)> {
+///
+/// And a pocket's corridor (2026-11-05, docs/router.md "Corridors of
+/// pocketed pads"): a channel between two pads of one part, with less than
+/// half of the widest pitch `widest` of play, at whose mouth lies a third
+/// pad of the part without a legal node of its own on some lattice
+/// (`own_region_is_narrow`). OpenFC's U10 (an X2SON-6 with custom pads)
+/// holds its +3.3V and GND pads in pockets between its corner pads; the
+/// only ways out are the gaps between the corner pads, which the class's
+/// 0.09 mm track with 0.09 mm clearance passes only within 15 and 30 um of
+/// their centre lines.
+fn tight_channels(board: &Board, widest: f64) -> Vec<(usize, f64, f64)> {
     let width = board
         .classes
         .iter()
@@ -214,11 +224,20 @@ fn tight_channels(board: &Board) -> Vec<(usize, f64, f64)> {
     if !width.is_finite() || !clearance.is_finite() {
         return Vec::new();
     }
-    let pads: Vec<(Point, Aabb, f64)> = board
+    let terminals: Vec<(NetId, &crate::board::Terminal)> = board
         .nets
         .iter()
-        .flat_map(|net| net.terminals.iter())
-        .map(|terminal| {
+        .enumerate()
+        .flat_map(|(net, description)| {
+            description
+                .terminals
+                .iter()
+                .map(move |terminal| (net as NetId, terminal))
+        })
+        .collect();
+    let pads: Vec<(Point, Aabb, f64)> = terminals
+        .iter()
+        .map(|(_, terminal)| {
             let pad = &board.obstacles[terminal.pad];
             (
                 terminal.anchor,
@@ -284,10 +303,21 @@ fn tight_channels(board: &Board) -> Vec<(usize, f64, f64)> {
             sides.iter().all(|side| *side)
         })
         .collect();
+    // Each part's terminals, for the pockets' corridors.
+    let mut parts: std::collections::HashMap<&str, Vec<usize>> = std::collections::HashMap::new();
+    for (index, (_, terminal)) in terminals.iter().enumerate() {
+        let part = label_part(&terminal.label);
+        if !part.is_empty() {
+            parts.entry(part).or_default().push(index);
+        }
+    }
+    let mut narrow: std::collections::HashMap<(usize, usize), bool> =
+        std::collections::HashMap::new();
+    let reach = width / 2.0 + clearance;
     let mut channels = Vec::new();
     for (index, (_, aabb, pad_clearance)) in pads.iter().enumerate() {
         for &(other, axis, positive) in &neighbours[index] {
-            if other <= index || !(enclosed[index] || enclosed[other]) {
+            if other <= index {
                 continue;
             }
             let (_, other_aabb, other_clearance) = &pads[other];
@@ -302,10 +332,139 @@ fn tight_channels(board: &Board) -> Vec<(usize, f64, f64)> {
             if free < width + 0.005 {
                 continue;
             }
-            channels.push((axis, (near + far) / 2.0, (free - width) / 2.0));
+            let slack = (free - width) / 2.0;
+            if !(enclosed[index] || enclosed[other]) {
+                // A pocket's corridor: the slot between the two pads of
+                // one part (across the channel, where both pads face each
+                // other), grown by a track's reach, holds a third pad of
+                // the part whose own region is narrow.
+                let part = label_part(&terminals[index].1.label);
+                if slack >= widest / 2.0
+                    || part.is_empty()
+                    || part != label_part(&terminals[other].1.label)
+                {
+                    continue;
+                }
+                let across = 1 - axis;
+                let low = aabb.minimum[across].max(other_aabb.minimum[across]);
+                let high = aabb.maximum[across].min(other_aabb.maximum[across]);
+                if low > high {
+                    continue;
+                }
+                let mut slot = Aabb {
+                    minimum: [0.0; 2],
+                    maximum: [0.0; 2],
+                };
+                slot.minimum[axis] = near;
+                slot.maximum[axis] = far;
+                slot.minimum[across] = low;
+                slot.maximum[across] = high;
+                let slot = slot.inflated(reach);
+                let pocket = parts[part].iter().any(|&third| {
+                    third != index
+                        && third != other
+                        && pads[third].1.intersects(slot)
+                        && *narrow.entry((third, axis)).or_insert_with(|| {
+                            own_region_is_narrow(
+                                board,
+                                terminals[third],
+                                axis,
+                                width,
+                                clearance,
+                                widest,
+                            )
+                        })
+                });
+                if !pocket {
+                    continue;
+                }
+            }
+            channels.push((axis, (near + far) / 2.0, slack));
         }
     }
     channels
+}
+
+/// The part a terminal's label names: the text before its first `.` or
+/// space (`U10.5`).
+fn label_part(label: &str) -> &str {
+    label.split_once(['.', ' ']).map_or(label, |(part, _)| part)
+}
+
+/// Whether a terminal's own region (the points well inside its contact,
+/// or its pad, where a track of `width` keeps `clearance` from every other
+/// net's copper, keepouts and holes on its layers) is empty or spans less
+/// than `widest` along `axis`: some lattice phase then gives it no legal
+/// node of its own, and it leaves by escape stubs. Sampled every 10 um;
+/// a pad of more than 40 000 samples is wide.
+fn own_region_is_narrow(
+    board: &Board,
+    (net, terminal): (NetId, &crate::board::Terminal),
+    axis: usize,
+    width: f64,
+    clearance: f64,
+    widest: f64,
+) -> bool {
+    const STEP: f64 = 0.01;
+    const DEPTH: f64 = 0.02;
+    let shape = terminal
+        .contact
+        .as_ref()
+        .unwrap_or(&board.obstacles[terminal.pad].shape);
+    let bounds = shape.aabb();
+    let counts = [
+        ((bounds.maximum[0] - bounds.minimum[0]) / STEP).floor() as usize + 1,
+        ((bounds.maximum[1] - bounds.minimum[1]) / STEP).floor() as usize + 1,
+    ];
+    if counts[0] * counts[1] > 40_000 {
+        return false;
+    }
+    let reach = width / 2.0 + clearance.max(board.hole_clearance);
+    let near: Vec<(&crate::board::Obstacle, f64)> = board
+        .obstacles
+        .iter()
+        .filter(|obstacle| {
+            obstacle.net != Some(net)
+                && obstacle.blocks_tracks
+                && obstacle.layers & terminal.layers != 0
+                && obstacle
+                    .shape
+                    .aabb()
+                    .intersects(bounds.inflated(reach + obstacle.clearance))
+        })
+        .map(|obstacle| {
+            let required = width / 2.0
+                + match obstacle.kind {
+                    ObstacleKind::Copper => clearance.max(obstacle.clearance),
+                    ObstacleKind::Keepout => obstacle.clearance,
+                    ObstacleKind::Hole => board.hole_clearance.max(obstacle.clearance),
+                };
+            (obstacle, required)
+        })
+        .collect();
+    let mut extent = [f64::INFINITY, f64::NEG_INFINITY];
+    for y in 0..counts[1] {
+        for x in 0..counts[0] {
+            let point = [
+                bounds.minimum[0] + x as f64 * STEP,
+                bounds.minimum[1] + y as f64 * STEP,
+            ];
+            let inside = shape.contains(point)
+                && [(DEPTH, 0.0), (-DEPTH, 0.0), (0.0, DEPTH), (0.0, -DEPTH)]
+                    .iter()
+                    .all(|(dx, dy)| shape.contains([point[0] + dx, point[1] + dy]));
+            if inside
+                && near.iter().all(|(obstacle, required)| {
+                    obstacle.shape.distance_to_point(point) >= *required
+                })
+            {
+                extent[0] = extent[0].min(point[axis]);
+                extent[1] = extent[1].max(point[axis]);
+            }
+        }
+    }
+    // Empty: the extent is infinitely negative.
+    extent[1] - extent[0] < widest
 }
 
 impl Grid {
@@ -418,7 +577,8 @@ impl Grid {
                 bounds.maximum[axis] = bounds.maximum[axis].max(*value);
             }
         }
-        let channels = tight_channels(board);
+        let widest = candidates.iter().copied().fold(0.0, f64::max);
+        let channels = tight_channels(board, widest);
         if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
             eprintln!(
                 "lattice: {} tight channels, {} pad anchors",

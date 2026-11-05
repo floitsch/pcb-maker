@@ -1911,6 +1911,8 @@ pub fn route(board: &Board, config: &Config) -> RoutingResult {
 }
 
 #[cfg(test)]
+mod corridor_tests;
+#[cfg(test)]
 mod rule_tests;
 #[cfg(test)]
 mod span_tests;
