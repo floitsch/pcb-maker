@@ -1182,6 +1182,9 @@ pub struct Scratch {
     /// The searched net's neck zones as a mask (`ZoneMask`), rebuilt by
     /// each search of a net with zones.
     neck_mask: ZoneMask,
+    /// The tile planner's arrays (`plan_corridor`), started afresh by each
+    /// plan.
+    planner: planner::PlannerArrays,
     /// The routed bus member's lane (`bundles`; inactive otherwise).
     lane: bundles::Lane,
     expansions: u64,
@@ -1227,6 +1230,7 @@ impl Scratch {
             + self.own_claimed.capacity() * 4
             + self.corridor.as_ref().map_or(0, Vec::capacity)
             + self.neck_mask.bytes()
+            + self.planner.bytes()
     }
 
     fn fits(&self, states: usize, cells: usize) -> bool {

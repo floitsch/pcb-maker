@@ -907,6 +907,11 @@ fn a_walled_in_pad_does_not_stop_the_rest_of_its_net() {
 /// One layer: net A along y = 10 from x = 3 over 15 to 27, nets B and
 /// C straight across its right half at x = 19 and 23.
 fn crossed_net() -> Router {
+    crossed_net_on(1)
+}
+
+/// `crossed_net` on `layers` layers (the pads through all of them).
+fn crossed_net_on(layers: usize) -> Router {
     let class = RuleClass {
         trace_width: 0.25,
         clearance: 0.2,
@@ -935,7 +940,7 @@ fn crossed_net() -> Router {
             ));
             terminals.push(Terminal {
                 anchor: *at,
-                layers: 1,
+                layers: (1 << layers) - 1,
                 pad: obstacles.len() - 1,
                 contact: None,
                 label,
@@ -948,7 +953,7 @@ fn crossed_net() -> Router {
         });
     }
     let board = Board {
-        layer_count: 1,
+        layer_count: layers,
         outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],
         edge_clearance: 0.1,
         hole_clearance: 0.25,
@@ -976,6 +981,208 @@ fn crossed_net() -> Router {
         ..Config::default()
     };
     Router::new(&board, &config)
+}
+
+/// The tile planner as it was until 2026-11-05 (its arrays new at each
+/// plan): the reference of `the_planner_plans_as_with_new_arrays`.
+#[allow(clippy::too_many_arguments)]
+fn planner_reference(
+    router: &Router,
+    net: NetId,
+    net_state: &NetState,
+    sources: &[Node],
+    targets: &[(Node, u16)],
+    hard: bool,
+    margin: usize,
+    own_claimed: Option<&[u32]>,
+) -> Option<Vec<bool>> {
+    let class = router.board.nets[net as usize].class;
+    let layers = router.board.layer_count;
+    let tiles = router.tiles_x * router.tiles_y;
+    let tile_of = |cell: u32| {
+        (cell as usize / router.grid.nx / TILE) * router.tiles_x
+            + (cell as usize % router.grid.nx) / TILE
+    };
+    let mut is_target = vec![false; tiles * layers];
+    let mut endpoint = vec![false; tiles];
+    for (node, _) in targets {
+        is_target[node.layer as usize * tiles + tile_of(node.cell)] = true;
+        endpoint[tile_of(node.cell)] = true;
+    }
+    let tile_mm = (TILE as f64 * router.grid.pitch) as f32;
+    let mut cost = vec![f32::INFINITY; tiles * layers];
+    let mut from = vec![u32::MAX; tiles * layers];
+    let mut heap = KeyHeap::default();
+    for node in sources {
+        let state = node.layer as usize * tiles + tile_of(node.cell);
+        endpoint[tile_of(node.cell)] = true;
+        if cost[state] > 0.0 {
+            cost[state] = 0.0;
+            heap.push(state as u64);
+        }
+    }
+    let enter = |layer: usize, tile: usize| -> Option<f32> {
+        let routable = router.tile_routable[class * layers + layer][tile];
+        if routable == 0 && !endpoint[tile] {
+            return None;
+        }
+        let mut claimed = router.tile_claimed[router.map_index(class, layer)][tile];
+        if let Some(own) = own_claimed {
+            claimed = claimed.saturating_sub(own[layer * tiles + tile]);
+        }
+        let fill = (claimed as f32 / routable.max(1) as f32).min(1.0);
+        if hard && fill >= 1.0 && !endpoint[tile] {
+            return None;
+        }
+        let covered = if net_state.plane.is_empty() {
+            router.tile_covered[layer][tile]
+        } else {
+            0.0
+        };
+        Some(
+            (1.0 + 12.0 * fill * fill * fill)
+                * (1.0 + router.tile_history[layer][tile])
+                * (1.0 + (router.layer_cut[layer] - 1.0) * covered),
+        )
+    };
+    let mut reached = None;
+    while let Some(key) = heap.pop() {
+        let state = (key & u32::MAX as u64) as usize;
+        let here = f32::from_bits((key >> 32) as u32);
+        if here > cost[state] {
+            continue;
+        }
+        if is_target[state] {
+            reached = Some(state);
+            break;
+        }
+        let (layer, tile) = (state / tiles, state % tiles);
+        let (x, y) = (tile % router.tiles_x, tile / router.tiles_x);
+        let mut relax = |next: usize, step: f32, heap: &mut KeyHeap| {
+            let total = here + step;
+            if total < cost[next] {
+                cost[next] = total;
+                from[next] = state as u32;
+                heap.push(((total.to_bits() as u64) << 32) | next as u64);
+            }
+        };
+        for (direction, (dx, dy)) in DIRECTIONS.iter().enumerate() {
+            let (tx, ty) = (x as i64 + *dx as i64, y as i64 + *dy as i64);
+            if tx < 0 || ty < 0 || tx >= router.tiles_x as i64 || ty >= router.tiles_y as i64 {
+                continue;
+            }
+            let next_tile = ty as usize * router.tiles_x + tx as usize;
+            let Some(factor) = enter(layer, next_tile) else {
+                continue;
+            };
+            let step = router.direction_cost[layer][direction] / router.grid.pitch as f32 * tile_mm;
+            relax(layer * tiles + next_tile, step * factor, &mut heap);
+        }
+        for other in (0..layers).filter(|other| *other != layer) {
+            if let Some(factor) = enter(other, tile) {
+                relax(
+                    other * tiles + tile,
+                    router.config.via_cost as f32 * factor,
+                    &mut heap,
+                );
+            }
+        }
+    }
+    let mut state = reached?;
+    let mut corridor = vec![false; tiles];
+    loop {
+        let tile = state % tiles;
+        let (x, y) = (tile % router.tiles_x, tile / router.tiles_x);
+        for ty in y.saturating_sub(margin)..=(y + margin).min(router.tiles_y - 1) {
+            for tx in x.saturating_sub(margin)..=(x + margin).min(router.tiles_x - 1) {
+                corridor[ty * router.tiles_x + tx] = true;
+            }
+        }
+        if from[state] == u32::MAX {
+            break;
+        }
+        state = from[state] as usize;
+    }
+    Some(corridor)
+}
+
+#[test]
+fn the_planner_plans_as_with_new_arrays() {
+    use planner::PlannerArrays;
+    // `plan_corridor` with the arrays it keeps from plan to plan
+    // (`PlannerArrays`) against the planner with new arrays at each plan:
+    // random ends on two and three layers, tiles claimed by routed nets,
+    // a history, pour cover, hard plans, the net's own claims and margins.
+    let mut state = 0xa409_3822_299f_31d0u64;
+    let mut next = |below: u64| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state % below
+    };
+    for layers in [2, 3] {
+        let mut router = crossed_net_on(layers);
+        for net in 0..3 {
+            router.route_net_seq(net, 0.0, false, 1.0);
+            router.stamp(net);
+        }
+        let tiles = router.tiles_x * router.tiles_y;
+        assert!(
+            router
+                .tile_claimed
+                .iter()
+                .any(|claims| claims.iter().any(|c| *c > 0))
+        );
+        for layer in 0..layers {
+            for tile in 0..tiles {
+                router.tile_history[layer][tile] = next(4) as f32 * 0.75;
+                if !router.tile_covered[layer].is_empty() {
+                    router.tile_covered[layer][tile] = next(3) as f32 * 0.5;
+                }
+            }
+        }
+        let cells = router.grid.cells() as u64;
+        let mut arrays = PlannerArrays::default();
+        let mut found = 0;
+        for round in 0..300 {
+            let node = |next: &mut dyn FnMut(u64) -> u64| Node {
+                layer: next(layers as u64) as u8,
+                cell: next(cells) as u32,
+            };
+            let sources: Vec<Node> = (0..1 + next(6)).map(|_| node(&mut next)).collect();
+            let targets: Vec<(Node, u16)> = (0..1 + next(40))
+                .map(|_| (node(&mut next), next(5) as u16))
+                .collect();
+            let hard = round % 3 == 0;
+            let margin = next(4) as usize;
+            let own: Vec<u32> = (0..layers * tiles).map(|_| next(30) as u32).collect();
+            let own_claimed = (round % 2 == 0).then_some(own.as_slice());
+            let net = next(3) as NetId;
+            let planned = router.plan_corridor(
+                &mut arrays,
+                net,
+                &router.nets[net as usize],
+                &sources,
+                &targets,
+                hard,
+                margin,
+                own_claimed,
+            );
+            let reference = planner_reference(
+                &router,
+                net,
+                &router.nets[net as usize],
+                &sources,
+                &targets,
+                hard,
+                margin,
+                own_claimed,
+            );
+            found += planned.is_some() as usize;
+            assert_eq!(planned, reference, "{layers} layers, round {round}");
+        }
+        assert!(found > 100, "{found} plans found");
+    }
 }
 
 /// Every conflict the negotiation counts names the nets that cause it

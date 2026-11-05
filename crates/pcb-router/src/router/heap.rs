@@ -55,6 +55,17 @@ pub(super) struct KeyHeap {
 }
 
 impl KeyHeap {
+    /// Empty, as a new heap, its room kept.
+    pub(super) fn clear(&mut self) {
+        self.groups.clear();
+        self.len = 0;
+        self.hole = false;
+    }
+
+    pub(super) fn bytes(&self) -> usize {
+        self.groups.capacity() * std::mem::size_of::<KeyGroup>()
+    }
+
     #[inline(always)]
     pub(super) fn slot(&mut self, q: usize) -> &mut u64 {
         &mut self.groups[q >> 2].0[q & 3]

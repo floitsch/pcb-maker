@@ -444,7 +444,9 @@ impl Router {
                 // SNSP-CPU-01 unconverged: some nets need the wide detour.
                 let margin = (1 + reroutes / 6).min(10);
                 for margin in [margin, margin + 3] {
+                    let mut arrays = std::mem::take(&mut scratch.planner);
                     let corridor = self.plan_corridor(
+                        &mut arrays,
                         net,
                         net_state,
                         &tree,
@@ -453,6 +455,7 @@ impl Router {
                         margin,
                         scratch.own_active.then_some(scratch.own_claimed.as_slice()),
                     );
+                    scratch.planner = arrays;
                     let Some(corridor) = corridor else {
                         break;
                     };

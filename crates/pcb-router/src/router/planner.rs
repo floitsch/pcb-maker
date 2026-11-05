@@ -16,6 +16,7 @@ impl Router {
     )]
     pub(super) fn plan_corridor(
         &self,
+        arrays: &mut PlannerArrays,
         net: NetId,
         net_state: &NetState,
         sources: &[Node],
@@ -31,21 +32,38 @@ impl Router {
             (cell as usize / self.grid.nx / TILE) * self.tiles_x
                 + (cell as usize % self.grid.nx) / TILE
         };
-        let mut is_target = vec![false; tiles * layers];
-        let mut endpoint = vec![false; tiles];
+        arrays.reset(tiles, layers);
+        let PlannerArrays {
+            is_target,
+            endpoint,
+            cost,
+            from,
+            entry_kind,
+            entry_factor,
+            steps,
+            heap,
+        } = arrays;
         for (node, _) in targets {
-            is_target[node.layer as usize * tiles + tile_of(node.cell)] = true;
-            endpoint[tile_of(node.cell)] = true;
+            let tile = tile_of(node.cell);
+            is_target[node.layer as usize * tiles + tile] = true;
+            endpoint[tile] = true;
         }
         let tile_mm = (TILE as f64 * self.grid.pitch) as f32;
-        let mut cost = vec![f32::INFINITY; tiles * layers];
-        let mut from = vec![u32::MAX; tiles * layers];
+        // A step's cost per layer and direction, before the entered tile's
+        // factor (the same expression as at each step until 2026-11-05).
+        steps.clear();
+        steps.extend((0..layers).map(|layer| {
+            std::array::from_fn::<f32, 8, _>(|direction| {
+                self.direction_cost[layer][direction] / self.grid.pitch as f32 * tile_mm
+            })
+        }));
+        let via_step = self.config.via_cost as f32;
         // Keys (cost bits, state) as one word, popped in the order of
         // (cost, state) pairs (non-negative floats order as their bits).
-        let mut heap = KeyHeap::default();
         for node in sources {
-            let state = node.layer as usize * tiles + tile_of(node.cell);
-            endpoint[tile_of(node.cell)] = true;
+            let tile = tile_of(node.cell);
+            let state = node.layer as usize * tiles + tile;
+            endpoint[tile] = true;
             if cost[state] > 0.0 {
                 cost[state] = 0.0;
                 heap.push(state as u64);
@@ -53,7 +71,7 @@ impl Router {
         }
         // How expensive a tile is: free tiles cost their size; a full tile
         // is nearly a wall (a real wall when routing hard).
-        let enter = |layer: usize, tile: usize| -> Option<f32> {
+        let enter = |layer: usize, tile: usize, endpoint: &[bool]| -> Option<f32> {
             let routable = self.tile_routable[class * layers + layer][tile];
             if routable == 0 && !endpoint[tile] {
                 return None;
@@ -79,24 +97,27 @@ impl Router {
         };
         // What `enter` gives each (layer, tile), computed once: a tile is
         // entered from up to eight neighbours and the other layers.
-        const UNKNOWN: u8 = 0;
-        const WALL: u8 = 1;
-        const KNOWN: u8 = 2;
-        let mut entry_kind = vec![UNKNOWN; tiles * layers];
-        let mut entry_factor = vec![0.0f32; tiles * layers];
-        let mut enter_once = |layer: usize, tile: usize| -> Option<f32> {
-            let index = layer * tiles + tile;
-            match entry_kind[index] {
-                WALL => None,
-                KNOWN => Some(entry_factor[index]),
-                _ => {
-                    let factor = enter(layer, tile);
-                    entry_kind[index] = if factor.is_some() { KNOWN } else { WALL };
-                    entry_factor[index] = factor.unwrap_or(0.0);
-                    factor
+        macro_rules! enter_once {
+            ($layer:expr, $tile:expr) => {{
+                let (layer, tile): (usize, usize) = ($layer, $tile);
+                let index = layer * tiles + tile;
+                match entry_kind[index] {
+                    ENTRY_WALL => None,
+                    ENTRY_KNOWN => Some(entry_factor[index]),
+                    _ => {
+                        let factor = enter(layer, tile, endpoint);
+                        entry_kind[index] = if factor.is_some() {
+                            ENTRY_KNOWN
+                        } else {
+                            ENTRY_WALL
+                        };
+                        entry_factor[index] = factor.unwrap_or(0.0);
+                        factor
+                    }
                 }
-            }
-        };
+            }};
+        }
+        let (tiles_x, tiles_y) = (self.tiles_x as i64, self.tiles_y as i64);
         let mut reached = None;
         while let Some(key) = heap.pop() {
             let state = (key & u32::MAX as u64) as usize;
@@ -109,34 +130,34 @@ impl Router {
                 break;
             }
             let (layer, tile) = (state / tiles, state % tiles);
-            let (x, y) = (tile % self.tiles_x, tile / self.tiles_x);
-            let mut relax = |next: usize, step: f32, heap: &mut KeyHeap| {
-                let total = here + step;
+            let (x, y) = ((tile % self.tiles_x) as i64, (tile / self.tiles_x) as i64);
+            let layer_steps = &steps[layer];
+            for (direction, (dx, dy)) in DIRECTIONS.iter().enumerate() {
+                let (tx, ty) = (x + *dx as i64, y + *dy as i64);
+                if tx < 0 || ty < 0 || tx >= tiles_x || ty >= tiles_y {
+                    continue;
+                }
+                let next_tile = (ty * tiles_x + tx) as usize;
+                let Some(factor) = enter_once!(layer, next_tile) else {
+                    continue;
+                };
+                let next = layer * tiles + next_tile;
+                let total = here + layer_steps[direction] * factor;
                 if total < cost[next] {
                     cost[next] = total;
                     from[next] = state as u32;
                     heap.push(((total.to_bits() as u64) << 32) | next as u64);
                 }
-            };
-            for (direction, (dx, dy)) in DIRECTIONS.iter().enumerate() {
-                let (tx, ty) = (x as i64 + *dx as i64, y as i64 + *dy as i64);
-                if tx < 0 || ty < 0 || tx >= self.tiles_x as i64 || ty >= self.tiles_y as i64 {
-                    continue;
-                }
-                let next_tile = ty as usize * self.tiles_x + tx as usize;
-                let Some(factor) = enter_once(layer, next_tile) else {
-                    continue;
-                };
-                let step = self.direction_cost[layer][direction] / self.grid.pitch as f32 * tile_mm;
-                relax(layer * tiles + next_tile, step * factor, &mut heap);
             }
             for other in (0..layers).filter(|other| *other != layer) {
-                if let Some(factor) = enter_once(other, tile) {
-                    relax(
-                        other * tiles + tile,
-                        self.config.via_cost as f32 * factor,
-                        &mut heap,
-                    );
+                if let Some(factor) = enter_once!(other, tile) {
+                    let next = other * tiles + tile;
+                    let total = here + via_step * factor;
+                    if total < cost[next] {
+                        cost[next] = total;
+                        from[next] = state as u32;
+                        heap.push(((total.to_bits() as u64) << 32) | next as u64);
+                    }
                 }
             }
         }
@@ -156,5 +177,67 @@ impl Router {
             state = from[state] as usize;
         }
         Some(corridor)
+    }
+}
+
+/// `PlannerArrays::entry_kind`: not asked yet, no entry, a factor known.
+const ENTRY_UNKNOWN: u8 = 0;
+const ENTRY_WALL: u8 = 1;
+const ENTRY_KNOWN: u8 = 2;
+
+/// The tile planner's arrays (`plan_corridor`), kept in the thread's
+/// scratch from plan to plan: until 2026-11-05 each plan allocated six
+/// arrays of the tile graph and its heap (a plan a search, 22 000 a
+/// route of a dense board; the fifth router round, docs/profiling.md).
+/// Each plan starts them afresh (`reset`), so a plan finds what it found
+/// with new ones.
+#[derive(Default)]
+pub(super) struct PlannerArrays {
+    /// Per (layer, tile): a target tile on that layer.
+    is_target: Vec<bool>,
+    /// Per tile: a source's or a target's (entered even when full).
+    endpoint: Vec<bool>,
+    /// Per (layer, tile): the cost so far and the state it came from.
+    cost: Vec<f32>,
+    from: Vec<u32>,
+    /// Per (layer, tile): `enter`'s answer once asked (`ENTRY_*`, the
+    /// factor).
+    entry_kind: Vec<u8>,
+    entry_factor: Vec<f32>,
+    /// Per layer and direction: a step's cost before the tile's factor.
+    steps: Vec<[f32; 8]>,
+    heap: KeyHeap,
+}
+
+impl PlannerArrays {
+    /// The arrays of a tile graph of `tiles` tiles and `layers` layers,
+    /// as new ones.
+    fn reset(&mut self, tiles: usize, layers: usize) {
+        let states = tiles * layers;
+        let fresh = |values: &mut Vec<_>, length: usize, value| {
+            values.clear();
+            values.resize(length, value);
+        };
+        fresh(&mut self.is_target, states, false);
+        fresh(&mut self.endpoint, tiles, false);
+        self.cost.clear();
+        self.cost.resize(states, f32::INFINITY);
+        self.from.clear();
+        self.from.resize(states, u32::MAX);
+        self.entry_kind.clear();
+        self.entry_kind.resize(states, ENTRY_UNKNOWN);
+        self.entry_factor.clear();
+        self.entry_factor.resize(states, 0.0);
+        self.heap.clear();
+    }
+
+    /// What they hold (the memory profile).
+    pub(super) fn bytes(&self) -> usize {
+        self.is_target.capacity()
+            + self.endpoint.capacity()
+            + 4 * (self.cost.capacity() + self.from.capacity() + self.entry_factor.capacity())
+            + self.entry_kind.capacity()
+            + 32 * self.steps.capacity()
+            + self.heap.bytes()
     }
 }
