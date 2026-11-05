@@ -11,6 +11,35 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-05 (the race over skeletons on by default, with its budget: OpenFC's lost pass was the short tier's)
+
+Branch skeleton-race-4 (`build/bin/pcb-maker-skel4-b`; outputs in
+build/skel4/). OpenFC at the task budget (600 s of placement work; the
+tasks set no budgets of their own), ten seeds, x1917: plain 10 of 10
+strict, `{"skeleton_race": {}}` 10 of 10 (skeletons at level 2 to 4, no
+fallback; 4157 against 3641 CPU s). At the short tier's 200 s the
+skeleton's 100 s let `skip_to_tight` jump to level 7 on 2 of 8 probed
+seeds and the race keeps those (all ten short rows level 7, 7 of 10
+strict). Probes of the skeleton phase on 21 board budgets (the short
+tier at 200 s, the dense boards and OpenFC at 600 s): the skip fires on
+OpenFC at 200 s and on protoesp at 600 s (4 of 10 seeds, its gain); a
+multiple of the first level's work separates nothing (MegaDrive's level 0
+takes up to 248 s, video's 304, WLED's 74 at 200 s). The rule:
+`skeleton_race.min_work_seconds` 500 (OpenFC walks from 474 s): below it
+every seed places plain, byte for byte the switch off's;
+`board-placer.json`'s `skeleton_race` reports `budget_ok`, `work_seconds`
+and `min_work_seconds`. `skeleton_race` is on by default (`null` turns it
+off). Every stage-2 row ran at 600 s: stage 2 stands (BETTER, -12.1 %, p
+0.002). The three short-tier boards that rose by one with the race, at
+600 s, seeds 1 and 101: 12 to 13 unconnected, strict 2 to 3
+(framework_mobo's seed 1 completes). On the rule's binary: OpenFC's ten seeds at the short budget 10 of 10 strict, the short tier 7 of 12 strict and 21 unconnected, every row's placement digest the race off's (`budget_ok` false at 200 s). Identity: place checks
+of DSP-ADAU1452 and split72_left with `null` and with the default at 100 s
+byte for byte x1918's off; at 600 s the default x1918's `{}`. Tests
+`the_race_places_by_skeleton_from_its_least_work_on`,
+`below_its_least_work_the_race_places_plain`. docs/placer.md "The
+skeleton's budget (2026-11-05)", handover (state, open problem 4, the
+defaults), agents.md, config reference.
+
 ## Committed on 2026-11-05 (the remapper trial's leftovers: hot spots name their pads)
 
 Branch remapper-leftovers. The three agent-flow items left from the

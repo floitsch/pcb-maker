@@ -32,7 +32,13 @@ used to be here; code comments and docs that cite `docs/handover.md,
   phase-free: a pad whose escape nodes the lattice pockets leaves by a
   stub off the lattice (`corridor_escapes`, on; open problem 4). With
   it OpenFC strict over ten seeds: plain 10 of 10, the skeleton race 7
-  of 10 (pour islands); the tiers unchanged.
+  of 10 (pour islands) at the short tier's budget, 10 of 10 at the task
+  budget; the tiers unchanged.
+- **The race over skeletons on by default (branch skeleton-race-4,
+  2026-11-05)**, where a seed's placement work is at least 500 s (the
+  task budget's 600: on; the short tier's 200: plain, byte for byte):
+  OpenFC's lost pass was the short budget's skip to the tight levels
+  (open problem 4; placer.md "The skeleton's budget").
 - **Placement since 2026-11-03.** Two measurements say where the gap is.
   Pinning the designer's non-passive parts (a median 28 % of the movable
   parts) recovers a median 0.92 of the designer's first-route advantage
@@ -45,13 +51,12 @@ used to be here; code comments and docs that cite `docs/handover.md,
   anneal loses the fine one while it lowers our objective (the 4in1 and
   Glasgow without it: 142 against 174 and 95 against 149 first-route
   open terminals; "Where the arrangement is lost (2026-11-04)"). The
-  race over skeletons (`skeleton_race`, off) passes the full protocol on
+  race over skeletons (`skeleton_race`) passes the full protocol on
   the dense boards (stage 2 KiCad unconnected -12.1 %, p 0.002; video
-  -33 %, protoesp -40 %) but loses OpenFC's strict pass on four of five
-  seeds, so it stays off ("The fixes, and stage 1 again (2026-11-05)");
-  that pass rests on one pad (U10.5) the router reaches only when U10's
-  centre line falls on its lattice, under U2 or not ("A far-side pad
-  under fine pitch, and what it was (2026-11-05)"). On by default since: the room
+  -33 %, protoesp -40 %) and is **on by default since 2026-11-05** where
+  a seed's placement work reaches 500 s: OpenFC's lost strict pass was the
+  short tier's budget (at the task budget 10 of 10 strict in both arms;
+  "The skeleton's budget (2026-11-05)"). Also on by default since: the room
   around dog-boned grid arrays (`bga_room`: Glasgow 343 to 262
   unconnected over three seeds; "Room around grid arrays") and the
   courtless rule (two footprints without a courtyard keep the boxes of
@@ -427,8 +432,21 @@ then the rest.
      the race **7 of 10**, U10.5 connected on all 20; the race's three
      losses are pour islands (+5V on In3.Cu, GND on B.Cu, GND F.Cu and
      In1.Cu not joined). The short tier with the race keeps its 7 strict
-     passes (unconnected 21 to 24 on three failing boards). The race's
-     default is open again on these numbers (the supervisor's call). Measured and not taken: `join_pins` 0 (fixes
+     passes (unconnected 21 to 24 on three failing boards).
+     **On by default since 2026-11-05 with a budget rule** (placer.md
+     "The skeleton's budget (2026-11-05)"): OpenFC's loss is the budget's.
+     At the task budget (600 s of placement work) OpenFC passes strictly
+     on ten of ten seeds in both arms, its skeletons walking to levels 2
+     to 4; at the short tier's 200 s the skeleton's 100 s make
+     `skip_to_tight` jump to level 7 on a quarter of the seeds and the
+     race keeps those. Of 21 probed board budgets the skip fires on two:
+     OpenFC at 200 s (the loss) and protoesp at 600 s (its gain), so the
+     rule is a budget, not "the skeleton walks": the race runs where a
+     seed's placement work is at least `min_work_seconds` 500 (OpenFC
+     walks from 474 s), else every seed places plain
+     (`skeleton_race.budget_ok` false). Every stage-2 row ran at 600 s, so
+     stage 2 stands; the short tier is the plain placement's.
+     Measured and not taken: `join_pins` 0 (fixes
      SNSP-CPU-01 and split72_left, loses the 4in1-mini: +3.0 % against
      the race).
    - **(b) The fine arrangement: the anneal's objective.** On the 4in1
@@ -860,17 +878,19 @@ experiments (2026-11-04)" below):
   only its own decoupling under it on the far side. Glasgow 343 -> 262
   unconnected over three seeds, its first route -20 % over five; nothing
   else moves. `"bga_room": false` turns it off.
-- `skeleton_race` (placer): **off** (2026-11-05; docs/placer.md, "A race
-  over skeletons (2026-11-04)" and "The fixes, and stage 1 again
-  (2026-11-05)"; `{}` for the defaults `room` 1, `work_share` 0.5,
-  `join_pins` 8, `plain_share` 0): each seed places every part but the
-  free passives first, then the passives around the held skeleton; under
-  it the global placement's stall stop and turns that fit the board.
-  Stage 2 BETTER (-12.1 %, p 0.002) but OpenFC's strict pass lost on four
-  of five seeds: not a default. A level guard (a plain probe's level
-  bounding the skeleton's phases; placer.md "The level guard
-  (2026-11-05)") was built, measured and removed: OpenFC 7 of 10 strict
-  against off's 9 of 10, protoesp's gain gone.
+- `skeleton_race` (placer): **on** since 2026-11-05 where a seed's
+  placement work is at least `min_work_seconds` (500 s; docs/placer.md,
+  "A race over skeletons (2026-11-04)", "The fixes, and stage 1 again
+  (2026-11-05)" and "The skeleton's budget (2026-11-05)"; defaults `room`
+  1, `work_share` 0.5, `join_pins` 8, `plain_share` 0; `null` turns it
+  off): each seed places every part but the free passives first, then
+  the passives around the held skeleton; under it the global placement's
+  stall stop and turns that fit the board. Stage 2 BETTER (-12.1 %, p
+  0.002, no dense strict pass lost); OpenFC at the task budget 10 of 10
+  strict in both arms. Below 500 s (the short tier's 200 s) every seed
+  places plain, byte for byte the switch off's (`board-placer.json`'s
+  `skeleton_race.budget_ok`). A level guard (placer.md "The level guard
+  (2026-11-05)") was built, measured and removed.
 - `pad_exits` (placer): **off** (2026-11-04; `PCB_PLACER_PAD_EXITS`;
   docs/placer.md, "Pads without a way out (2026-11-04)"): after each
   seed the router's test of every pad's way out, and the parts that close

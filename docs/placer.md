@@ -7118,8 +7118,9 @@ Script: `experiments/placement-gap/partialcopy.py` (`prepare`, `run`,
 The experiment "Which placement decisions matter" named: the designer's
 non-passive parts pinned recover a median 0.92 of the designer's
 first-route advantage, and our objective accepts that arrangement, so
-the search does not reach it. `skeleton_race` (placer option, off by
-default; `{}` for the defaults; code `crates/pcb-placer/src/skeleton.rs`,
+the search does not reach it. `skeleton_race` (placer option, off at
+first; on by default since 2026-11-05 where a seed's placement work
+reaches 500 s, "The skeleton's budget (2026-11-05)" below; code `crates/pcb-placer/src/skeleton.rs`,
 the class rule `crates/pcb-kicad/src/board_placer/skeleton.rs`) places
 each seed of the race in two phases and lets the layout's race rank the
 seeds' placements as it ranks any (RUDY, the three best probed, the
@@ -7906,6 +7907,154 @@ corridors' ends: the placement's) and on all 20 layouts of OpenFC's ten
 seeds in both arms. Plain 10 of 10 strict, the race 7 of 10; the race's
 three losses are pour islands, not U10. The short tier with the race
 keeps its 7 strict passes.
+
+## The skeleton's budget (2026-11-05)
+
+Branch skeleton-race-4. The question left by the level guard and the
+corridor stubs: is OpenFC's lost strict pass a budget artefact? Stage 2
+ran at the task budget, where every board places with 600 s of work (the
+layout's `total_seconds` 1500, the placement 40 % of it; the tasks set no
+budget of their own, and the estimates sidecar sizes only memory and
+seconds for the ledger). The short tier runs at a third: 200 s of
+placement, of which the skeleton gets half, 100 s a seed.
+
+**OpenFC at the task budget** (ten seeds, layouts, x1917, both arms from
+one binary, `build/skel4/step1`; KiCad unconnected / strict, the kept
+placement's skeleton level):
+
+| seed | plain | `{"skeleton_race": {}}` |
+| --- | --- | --- |
+| 1 | 0 / pass | 0 / pass (level 4) |
+| 101 | 0 / pass | 0 / pass (3) |
+| 201 | 0 / pass | 0 / pass (3) |
+| 301 | 0 / pass | 0 / pass (4) |
+| 401 | 0 / pass | 0 / pass (3) |
+| 501 | 0 / pass | 0 / pass (4) |
+| 601 | 0 / pass | 0 / pass (3) |
+| 701 | 0 / pass | 0 / pass (3) |
+| 801 | 0 / pass | 0 / pass (2) |
+| 901 | 0 / pass | 0 / pass (4) |
+| in all | 10 of 10, 4157 CPU s | 10 of 10, 3641 CPU s |
+
+No seed fell back. The kept skeletons seat at level 2 to 4 (final wire
+798 to 1247 mm, plain 974 to 1159); at the short tier's budget all ten
+kept placements were level-7 skeletons (`build/lat1/openfc10-skel`, 7 of
+10 strict). The loss is the budget's.
+
+**The mechanism** (probes: the skeleton phase alone, its levels' work
+logged per seed, one thread, placer seed 1 and the race's seeds that
+follow it, the nightly's prepared sources; a probe build not kept,
+`build/skel4/probe`). `skip_to_tight` jumps to the tight levels when
+more parts are without room than a level's passes seat (more than three
+on these boards) and the work left is less than twice the last level's
+for each level before the tight one. OpenFC's skeleton level 0 takes 14
+to 18 s of work (the global placement 1 to 2 s more) and leaves 1 to 7
+parts without room; with 100 s, 82 s left is less than 2 x 16 s x 6
+levels, so a seed that leaves four or more goes to level 7. Per board
+(the skeleton phase at the placement budget its tier gives it; level 0's
+work, the seeds that skipped, the levels seated at, and the least
+placement budget at which every probed seed passes the skip's test,
+2 x (work through level 0 + 2 x level 0's work x the levels before the
+tight one), where the test can fire at all):
+
+| board | placement | seeds | level 0 s | skipped | levels | walks from |
+| --- | ---: | ---: | --- | ---: | --- | ---: |
+| OpenFC | 200 | 8 | 14 to 17 | 2 | 1 (4), 3 (2), 7 (2) | 433 |
+| OpenFC | 600 | 16 | 14 to 18 | 0 | 1 to 4 | 474 |
+| protoesp | 600 | 10 | 33 to 42 | 4 | 2 (6), 5 (2), 6 (2) | 738 |
+| Glasgow revC3 | 600 | 5 | 15 to 20 | 0 | 7 (walked) | never fires |
+| video | 600 | 3 | 19 to 304 | 0 | 0 | never fires |
+| OpenESC 4in1 | 600 | 16 | 7 to 14 | 0 | 4, 5 | never fires |
+| OpenESC 4in1-mini | 600 | 16 | 12 to 17 | 0 | 7 (its fitting level) | never fires |
+| DSP-ADAU1452 | 600 | 16 | 10 to 11 | 0 | 0 | never fires |
+| MegaDrive | 600 | 3 | 139 to 248 | 0 | 0, 2 | never fires |
+| SNSP-CPU-01 | 600 | 16 | 12 to 18 | 0 | 0 | never fires |
+| split72_left | 600 | 15 | 27 to 30 | 0 | 0 | never fires |
+| MIDAS-MK1.1-revA | 200 | 4 | 18 to 20 | 0 | 4, 5, 9 | never fires (3 without room) |
+| reCamera_S101 | 200 | 7 | 10 to 16 | 0 | 5 | never fires |
+| WLED_Matrix | 200 | 3 | 40 to 74 | 0 | 0, 1 | never fires |
+| USB_Keypad | 200 | 16 | 8 to 11 | 0 | 0 | never fires |
+| framework_mobo_lefthalf | 200 | 16 | 3.5 | 0 | 1, 3 | never fires |
+| 0xCB-1337, USB_Cable_Tester, spell_tome | 200 | 16 | under 3 | 0 | 0 to 1 | never fires |
+
+(eternal-keypad and Blue_Line have no passives the skeleton leaves out,
+urchin places its two sub-boards and the panel and SmartSpin2k
+place their copies, without skeletons.) Of 21 board-budget pairs the
+skip fires on two: OpenFC at 200 s, where it costs the strict pass, and
+protoesp at 600 s, where it is the gain (the level guard's `skips` gave
+it back: -38.9 % to -2.5 %). So the rule cannot be "the skeleton walks":
+protoesp would need 738 s. Nor a multiple of the first level's work,
+which the race measures anyway: level 0 alone takes up to 248 s on
+MegaDrive and 304 s on video at 600 s (both better with the race), and
+74 s on WLED at 200 s; between OpenFC's ratio at 200 s (budget / work
+through level 0: 11 to 13) and protoesp's at 600 s (14 to 18) there is no
+margin. Per part does not separate them either (level 0 takes 0.12 to
+0.7 s per skeleton part).
+
+**The rule** (`skeleton_race.min_work_seconds`, 500 by default, no new
+switch): the race places by skeleton where a seed's placement work (every
+seed of a race has the placement's) is at least 500 s; below it every
+seed places plain, as with the switch off, and `board-placer.json`'s
+`skeleton_race` says `budget_ok: false` with the seed's `work_seconds`
+and `min_work_seconds` (no work limit: the race runs). 500 is the round
+number above OpenFC's walking point (474 s over 24 probed seeds) and
+below the task budget's 600. What it turns off: every board at the short
+tier's 200 s (all twelve) and any layout below 1250 s of `total_seconds`;
+what it leaves on: every row measured at the task budget (stage 1, stage
+2, the sweep). The stage-2 rows stand as measured: all 55 on rows ran at
+budget scale 1, each placed with the layout's whole placement budget
+(`layout: placing (0 s, work 0 s)`: no outline sizing took any of it),
+so 600 s of work a seed, `budget_ok` on every one; place checks at 600 s
+of DSP-ADAU1452 and split72_left with the race wrote the same boards on
+x1918 and on the rule's binary (`build/skel4/ident`).
+
+**The three short-tier boards that rose by one with the race**, at the
+task budget, seeds 1 and 101 (x1917, `build/skel4/step1`; KiCad
+unconnected, plain / race):
+
+| board | seed 1 | seed 101 | strict passes | CPU s |
+| --- | --- | --- | --- | --- |
+| framework_mobo_lefthalf | 1 / 0 | 0 / 0 | 1 / 2 | 941 / 404 |
+| MIDAS-MK1.1-revA | 2 / 3 | 0 / 0 | 1 / 1 | 1568 / 2128 |
+| reCamera_S101 | 4 / 6 | 5 / 4 | 0 / 0 | 511 / 628 |
+
+12 unconnected plain, 13 with the race; strict passes 2 and 3
+(framework_mobo's seed 1 completes with the race). The skeletons seat at
+level 3 (framework_mobo) and 5 (MIDAS, reCamera), as at 200 s, without
+fallbacks: the race moves the counts within each board's seed spread
+(reCamera 4 to 6, MIDAS 0 to 3; reCamera's open pads are its microphone
+MIC1's either way). At the task budget the race loses no pass on them.
+
+**Judged on the rule's binary** (`pcb-maker-skel4-b`: main x1918 with
+the rule and the default on; `build/skel4/step4`):
+
+| run | the default (the race, its rule) | `"skeleton_race": null` | placements |
+| --- | --- | --- | --- |
+| OpenFC, ten seeds at the short budget | 10 of 10 strict, 0 unconnected | 10 of 10, 0 | the same digest on all ten, `budget_ok` false (200 s) |
+| the short tier (12 boards, 2 x 2) | 7 of 12 strict, 21 unconnected, 1144 vias, 21486 mm | the same on every row | the same digest on all twelve (urchin places its sub-boards: no race) |
+
+The short tier is the plain placement's again (the race with no rule:
+21 to 24 unconnected, `build/lat1/short-b-skel`), and OpenFC keeps its
+ten strict passes.
+
+**Identity.** With the switch off (`"skeleton_race": null`) and with the
+default at 100 s of work (under the rule), place checks of DSP-ADAU1452
+and split72_left wrote the boards x1918 writes with the race off, byte
+for byte; at 600 s the default wrote x1918's boards with
+`{"skeleton_race": {}}`.
+
+**Decision: `skeleton_race` on by default** with `min_work_seconds` 500.
+Stage 2 stands (BETTER, -12.1 %, p 0.002; no dense strict pass lost; its
+rows are the rule's), OpenFC passes strictly on ten of ten seeds in both
+arms at the task budget, and the short tier and OpenFC at its budget are
+the plain placement's. `"skeleton_race": null` turns it off. CPU:
+OpenFC's and the three boards' 32 layouts 3.9 CPU hours, the probes and
+the place checks 0.8, the short tier and OpenFC's short rows 2.4.
+
+What is left: the skip is still the lever on both sides of the rule
+(protoesp's gain at 600 s, OpenFC's loss at 200 s); a board between them
+at a budget near 500 s is not measured. SNSP-CPU-01 stays the race's loser
+(+34 % at stage 2, weight 11).
 
 ## Footprints without a courtyard, and their slots (2026-11-04)
 

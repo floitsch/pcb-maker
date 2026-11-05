@@ -856,7 +856,28 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
      parts as unplaced, up to the layout's placement budget (600 s of
      work per seed by default; urchin's 80 parts on 80 x 40 mm without
      rows: about seven minutes); `PCB_PLACER_WORK_SECONDS=60` gives a
-     quicker answer.
+     quicker answer (placed plain: see the race over skeletons below).
+     **The race over skeletons** (on by default since 2026-11-05;
+     docs/placer.md, "A race over skeletons" and "The skeleton's budget"):
+     each seed places the skeleton first (every part but the free
+     two-pad resistors, capacitors, inductors, ferrites and fuses), then
+     the passives around it, held. It runs where a seed's placement work
+     is at least `min_work_seconds` (500 s): the layout's default budget
+     gives 600, so a layout or a place check at the defaults places by
+     skeleton; a layout with `total_seconds` under 1250 or a place check
+     with `PCB_PLACER_WORK_SECONDS` under 500 places plain, as with the
+     race off (a quick check then answers for the plain placement, not
+     the layout's). `board-placer.json`'s `skeleton_race` says what ran:
+     `budget_ok` (false: every seed plain), `work_seconds` (the seed's
+     placement work) and `min_work_seconds`; for the kept seed
+     `skeleton_parts`, `absent` (the passives left out), `held`,
+     `fitting_level`, `skeleton_level` and `level` (the relaxation levels
+     its skeleton and its passives seated at: 0 is full halos, 7 and later
+     tight bodies), `fallback` and `fallback_kept` (the skeleton or the
+     passives left parts without a place and the seed was placed plain);
+     over the kept seeds `seeds_fallback` and each phase's work. Turn it
+     off with `"skeleton_race": null` in the placer settings (layout:
+     under `placer`), e.g. to compare with the plain placement.
      `<out>/board-placer.json` reports every constraint, `unplaced`,
      `hints`, `utilization` and `room`; `unplaced_parts` has each
      unplaced or illegal movable part with what holds it (`held_by`) and,

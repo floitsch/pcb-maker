@@ -285,9 +285,11 @@ pub struct KiCadBoardPlacerConfig {
     /// `max_bank` 16 (docs/placer.md, "Bus-group moves (2026-10-26)").
     #[serde(default)]
     pub bus_groups: Option<KiCadBusGroups>,
-    /// A race over skeletons (off by default; `{}` for the defaults;
-    /// docs/placer.md, "A race over skeletons (2026-11-04)" and "The fixes,
-    /// and stage 1 again (2026-11-05)"): each seed places the skeleton
+    /// A race over skeletons (on since 2026-11-05 where a seed's placement
+    /// work reaches `min_work_seconds`; `null` turns it off; docs/placer.md,
+    /// "A race over skeletons (2026-11-04)", "The fixes, and stage 1 again
+    /// (2026-11-05)" and "The skeleton's budget (2026-11-05)"): each seed
+    /// places the skeleton
     /// first, every part but the free passives (two-pad resistors,
     /// capacitors, inductors, ferrites and fuses by reference or
     /// footprint, and resistor or capacitor arrays; `skeleton_passive`),
@@ -304,9 +306,13 @@ pub struct KiCadBoardPlacerConfig {
     /// top. Its global placements stop where their overflow stalls and
     /// never turn a part longer than the board. `plain_share` of the seeds
     /// place plain (0: none). The race ranks the seeds' placements as it
-    /// ranks any. Not on panels of copies or sub-boards. Defaults: `room`
-    /// 1, `work_share` 0.5, `join_pins` 8, `plain_share` 0.
-    #[serde(default)]
+    /// ranks any. Below `min_work_seconds` of placement work (the short
+    /// tier's 200 s) every seed places plain, as with the switch off: with
+    /// half of 200 s OpenFC's skeleton skips to the tight levels on a
+    /// quarter of its seeds and the race keeps those. Not on panels of
+    /// copies or sub-boards. Defaults: `room` 1, `work_share` 0.5,
+    /// `join_pins` 8, `plain_share` 0, `min_work_seconds` 500.
+    #[serde(default = "default_skeleton_race")]
     pub skeleton_race: Option<KiCadSkeletonRace>,
     /// Differential pairs' series parts as rows of two (off unless set;
     /// following the router's `diff_pairs` was measured and not taken:
@@ -491,7 +497,7 @@ impl Default for KiCadBoardPlacerConfig {
             escape_demand: default_escape_demand(),
             ratsnest_crossings: default_ratsnest_crossings(),
             bus_groups: None,
-            skeleton_race: None,
+            skeleton_race: default_skeleton_race(),
             pair_rows: None,
             guidance_router: None,
             via_in_pad_far_side: true,
@@ -556,6 +562,10 @@ impl Default for KiCadEscapeDemand {
             fixed_share: Some(0.6),
         }
     }
+}
+
+fn default_skeleton_race() -> Option<KiCadSkeletonRace> {
+    Some(KiCadSkeletonRace::default())
 }
 
 fn default_ratsnest_crossings() -> Option<KiCadRatsnestCrossings> {

@@ -23,8 +23,27 @@ pub struct KiCadSkeletonRace {
     pub join_pins: usize,
     /// Share of the race's seeds placed plain (the whole board at once, as
     /// with the switch off), the others by skeleton: the race then ranks
-    /// both kinds (`plain_seed`). 0: every seed by skeleton.
+    /// both kinds (`plain_share`). 0: every seed by skeleton.
     pub plain_share: f64,
+    /// The least work of a seed's placement (seconds; every seed of a race
+    /// has the placement's) at which the race places by skeleton: below it
+    /// every seed places plain, as with the switch off (`budget_ok`). At
+    /// the short tier's 200 s the skeleton's half of a seed's work makes
+    /// OpenFC's skeleton skip to the tight levels (`skip_to_tight`) on a
+    /// quarter of its seeds, and the race keeps those; it walks its levels
+    /// on every seed from about 475 s (docs/placer.md, "The skeleton's
+    /// budget (2026-11-05)").
+    pub min_work_seconds: f64,
+}
+
+/// The least placement work at which the race runs its skeletons
+/// (`KiCadSkeletonRace::min_work_seconds`).
+pub const SKELETON_MIN_WORK_SECONDS: f64 = 500.0;
+
+/// Whether a seed's placement work (`None`: unlimited) lets the race place
+/// by skeleton (`KiCadSkeletonRace::min_work_seconds`).
+pub(crate) fn budget_ok(work_seconds: Option<f64>, min_work_seconds: f64) -> bool {
+    work_seconds.is_none_or(|seconds| seconds >= min_work_seconds)
 }
 
 /// Whether seed `offset` of a race over skeletons places plain: the seeds
@@ -43,6 +62,7 @@ impl Default for KiCadSkeletonRace {
             work_share: settings.work_share,
             join_pins: settings.join_pins,
             plain_share: 0.0,
+            min_work_seconds: SKELETON_MIN_WORK_SECONDS,
         }
     }
 }
@@ -164,6 +184,13 @@ pub(crate) fn passive_mask(pcb: &Expr, components: usize) -> Vec<bool> {
 /// seed's two phases.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct KiCadSkeletonRaceReport {
+    /// Whether the placement's work (`work_seconds`, the seed's: every seed
+    /// of the race has it) reached `min_work_seconds`: the seeds were
+    /// placed by skeleton; else plain, as with the switch off, and the
+    /// fields below are the plain race's (no skeleton, every seed plain).
+    pub budget_ok: bool,
+    pub work_seconds: Option<f64>,
+    pub min_work_seconds: f64,
     /// Footprints the class rule calls passives, and those the skeleton
     /// left out (the rest a constraint names, or fixed).
     pub passives: usize,
@@ -204,7 +231,13 @@ pub struct KiCadSkeletonRaceReport {
 }
 
 impl KiCadSkeletonRaceReport {
-    pub(crate) fn of(passive: &[bool], kept: &core::Placement, seeds: &[&core::Placement]) -> Self {
+    pub(crate) fn of(
+        race: &KiCadSkeletonRace,
+        work_seconds: Option<f64>,
+        passive: &[bool],
+        kept: &core::Placement,
+        seeds: &[&core::Placement],
+    ) -> Self {
         let seconds = |work: u64| work as f64 / core::work_per_second();
         let report = kept.skeleton.clone().unwrap_or_default();
         let reports: Vec<core::skeleton::Report> = seeds
@@ -212,6 +245,9 @@ impl KiCadSkeletonRaceReport {
             .filter_map(|placement| placement.skeleton.clone())
             .collect();
         Self {
+            budget_ok: budget_ok(work_seconds, race.min_work_seconds),
+            work_seconds,
+            min_work_seconds: race.min_work_seconds,
             passives: passive.iter().filter(|passive| **passive).count(),
             absent: report.absent,
             skeleton_parts: report.skeleton_parts,
@@ -374,6 +410,8 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         assert!(results[0].skeleton_race.is_none());
         let report = results[1].skeleton_race.clone().expect("the race's report");
+        // No work limit: the race places by skeleton.
+        assert!(report.budget_ok && report.work_seconds.is_none());
         // R1-R4 and C1, C2 are the passives; the two chips the skeleton,
         // both held; the four series resistors' nets joined.
         assert_eq!(report.passives, 6);
@@ -389,6 +427,68 @@ mod tests {
             + report.seeds_fallback_work_seconds;
         assert!((phases - results[1].seeds_work_seconds).abs() < 1e-6);
         assert_eq!(results[1].seeds, 2);
+    }
+
+    #[test]
+    fn the_race_places_by_skeleton_from_its_least_work_on() {
+        assert!(budget_ok(None, SKELETON_MIN_WORK_SECONDS));
+        assert!(budget_ok(Some(600.0), SKELETON_MIN_WORK_SECONDS));
+        assert!(budget_ok(Some(500.0), 500.0));
+        assert!(!budget_ok(Some(499.9), 500.0));
+        // The short tier's placement (a third of the layout's 600 s).
+        assert!(!budget_ok(Some(200.0), SKELETON_MIN_WORK_SECONDS));
+        assert!(budget_ok(Some(200.0), 0.0));
+        let race: KiCadSkeletonRace = serde_json::from_str("{}").unwrap();
+        assert_eq!(race.min_work_seconds, SKELETON_MIN_WORK_SECONDS);
+    }
+
+    #[test]
+    fn below_its_least_work_the_race_places_plain() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "pcb-maker-skeleton-budget-{}-{nonce}",
+            std::process::id()
+        ));
+        let source = root.join("source");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("board.kicad_pcb"), board()).unwrap();
+        let place = |name: &str, race: Option<KiCadSkeletonRace>| {
+            let config = KiCadBoardPlacerConfig {
+                placement_seeds: 2,
+                work_seconds: Some(30.0),
+                skeleton_race: race,
+                ..KiCadBoardPlacerConfig::default()
+            };
+            let result = place_kicad_board(&source, "board", &root.join(name), &config).unwrap();
+            let board = fs::read_to_string(root.join(name).join("board.kicad_pcb")).unwrap();
+            (result, board)
+        };
+        let (off, off_board) = place("off", None);
+        let (short, short_board) = place("short", Some(KiCadSkeletonRace::default()));
+        let (on, _) = place(
+            "on",
+            Some(KiCadSkeletonRace {
+                min_work_seconds: 30.0,
+                ..KiCadSkeletonRace::default()
+            }),
+        );
+        let _ = fs::remove_dir_all(&root);
+        assert!(off.skeleton_race.is_none());
+        // 30 s of work, under the race's 500: every seed plain, the board
+        // the switch off writes.
+        let report = short.skeleton_race.expect("the race's report");
+        assert!(!report.budget_ok);
+        assert_eq!(report.work_seconds, Some(30.0));
+        assert!(report.kept_plain && report.seeds_plain == short.seeds);
+        assert_eq!(report.skeleton_parts, 0);
+        assert_eq!(short_board, off_board);
+        // At its least work the race places by skeleton.
+        let report = on.skeleton_race.expect("the race's report");
+        assert!(report.budget_ok && !report.kept_plain);
+        assert_eq!((report.skeleton_parts, report.held), (2, 2));
     }
 
     #[test]

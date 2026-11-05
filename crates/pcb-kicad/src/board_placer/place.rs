@@ -494,7 +494,9 @@ pub fn place_kicad_board(
     let pool_work = std::cell::Cell::new(0u64);
     let seeds_work = std::cell::Cell::new(0u64);
     let seeds_run = std::cell::Cell::new(0u64);
-    // The race over skeletons: the passives by the class rule.
+    // The race over skeletons: the passives by the class rule; its seeds
+    // by skeleton where the placement's work reaches the race's least
+    // (`min_work_seconds`), else plain, as with the switch off.
     let skeleton_race = config
         .skeleton_race
         .as_ref()
@@ -504,6 +506,7 @@ pub fn place_kicad_board(
                 race.settings(),
                 passive_mask(&pcb, lowered.problem.components.len()),
                 race.plain_share,
+                skeleton::budget_ok(config.work_seconds, race.min_work_seconds),
             )
         });
     let place_seeds = |problem: &core::Problem| -> Vec<(u64, core::Placement)> {
@@ -527,7 +530,7 @@ pub fn place_kicad_board(
                     (Some(copies), _) => self::panel::place_copies(problem, copies, &seeded),
                     (None, Some(sub)) => crate::sub_boards::place_sub_boards(problem, sub, &seeded),
                     (None, None) => match &skeleton_race {
-                        Some((settings, passive, share))
+                        Some((settings, passive, share, true))
                             if !skeleton::plain_seed(offset, *share) =>
                         {
                             core::skeleton::place_skeleton(
@@ -623,8 +626,10 @@ pub fn place_kicad_board(
         .unwrap_or(0) as f64
         / core::work_per_second();
     let seeds_placed = placements.len();
-    let skeleton_race_report = skeleton_race.as_ref().map(|(_, passive, _)| {
+    let skeleton_race_report = skeleton_race.as_ref().map(|(_, passive, _, _)| {
         KiCadSkeletonRaceReport::of(
+            config.skeleton_race.as_ref().expect("the race's settings"),
+            config.work_seconds,
             passive,
             &placements[0],
             &placements.iter().collect::<Vec<_>>(),
