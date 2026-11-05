@@ -7628,6 +7628,132 @@ on the dense boards: equal by the statistic, it may keep OpenFC's plain
 seed). CPU for stage 2: 125 343 s (34.8 CPU hours); the short tier and
 OpenFC's pairs 8 929 s more (5 892 and 3 037).
 
+### The level guard (2026-11-05)
+
+Branch skeleton-race-3. The guard the decision above named: a skeleton
+seed's phases no tighter than the plain placement. Binaries
+`build/bin/pcb-maker-skel3-{a,c}` (main's router) and `-ob` (the guard on
+main's placer with `-k`'s router, so that its layouts route as stage 2's;
+place checks: off and `{"level_guard": "off"}` byte-identical to `-k`'s
+on DSP-ADAU1452 and split72_left, off identical to x1916; its protoesp
+off rows equal x1911's first routes, 145 / 102 / 80 / 103 / 120). Place
+checks in `build/skel3-place`, OpenFC's rows in `build/skel3-openfc`,
+protoesp's in `build/skel3-pilot`.
+
+**Why OpenFC's skeleton seats at level 7.** Not its geometry: the skip to
+the tight levels (`skip_to_tight`), which a phase's share of the work
+triggers. At the short tier (`total_seconds` 500, the placement's 200)
+the skeleton gets 100 s. Its level 0 (halo 1) leaves 5 parts without room
+(the MCU U2, its body grown by its passives' room and its 4 mm halo, and
+edge-held test pads J8, J12, J25, J53, J55 at their 0.65 mm halos), the
+level took 16 s, and 82 s left is less than twice 16 s for each of the six
+levels before the first tight one: on to level 7 (tight bodies, the
+inset edge, far-side pads may overlap). The passives skip the same way
+("10 parts without room, 150 s of work left, a level 31 s: on to level
+7"). A place check with the default work (the skeleton's 300 s) seats
+every skeleton at level 1 to 4 in 16 to 22 s and the passives at 2 to 4.
+The plain placement walks: of its seeds two thirds seat at level 1 (halo
+0.5), a third at level 4 (no halo, least spacing), and off's race kept a
+level-4 seed on all five rows. The tight placement is the shorter (final
+wire 537 to 785 mm against 994 to 1034; the designer's 509), so the race
+keeps it.
+
+**What the router does not finish**: on every failing row, on and off
+alike, one connection, the +3.3V pad 5 of U10 (an SN74LVC1G3157, X2SON-6
+1.0 x 0.8 mm, on B.Cu) to U2's +3.3V pins (an RP2354B, QFN-80 at 0.4 mm,
+on F.Cu) or to R14 or R33 beside it; on two rows a GND pour island too.
+At level 7 the skeleton puts U10 under U2 (seed 1: U10's pad 5 at
+144.37, 90.17, U2's pad 69 at 144.32, 90.21), where no via fits between
+U2's pads. Off loses the same connection on seed 801 (below): a cramped
+spot the board has, which the tight skeleton finds four times in five.
+
+**The levels across the boards** (the kept placement; skeleton phase /
+final / off's, by `board-placer.json`):
+
+| board | skeleton | final | off | the guard would hold it |
+| --- | --- | --- | --- | --- |
+| OpenFC (short) | 7 | 7 | 4 | yes |
+| framework_mobo (short) | 1 | 7 | 1 to 2 | yes (passives) |
+| USB_Keypad, WLED_Matrix (short) | 0 | 5 | 3, 1 | yes (passives) |
+| MIDAS-MK1.1 (short) | 5 | 5 | 4 | yes |
+| 0xCB-1337 (short) | 1 | 1 | 0 | walk only |
+| reCamera (short) | 5 | 5 | 5 | no |
+| protoesp | 5 to 6 | 5 to 6 | 1 to 2 | yes |
+| video | 0 | 1 or 5 | 3 | on 3 of 5 rows (passives) |
+| OpenESC 4in1 | 4 | 7 | 7 | no |
+| 4in1-mini, Glasgow | 7 | 7 to 9 | 7 to 9 | no |
+| MegaDrive | 2 | 2 | 2 | no |
+| DSP-ADAU1452, split72_left, SNSP-CPU-01 | 0 | 0 | 0 | no |
+
+protoesp's tight skeletons come from the same skip, with work to spare:
+of nine seeds in a place check, four skipped ("7 parts without room, 263
+s of work left, a level 36 s: on to level 5", the fine grid without
+spacing; protoesp has no tight bodies) and five seated at level 2; the
+race kept a skipped one (skeleton wire 2821 to 3096 mm against 3691 to
+4354). The guard holds its winner back. SNSP-CPU-01's loss (level 0 on
+both sides) it does not touch.
+
+**The guard** (`skeleton_race.level_guard`): the race's first seed is also
+placed plain beside the seeds (a probe, not among them; its work on the
+clock as one more seed of the pool), and its relaxation level bounds the
+skeleton seeds' phases (`Config::level_bound`, `LevelBound`: a phase
+asks for it only once its first level left parts without room, and
+waits for the probe then). `walk`: no level past the bound runs; a phase
+that would leave parts without room there falls back to the plain seed
+as the switch off places it. `skips`: no skip past the bound, the walk
+level by level free. The report gives `plain_level`,
+`probe_work_seconds`, `seeds_bounded` and `bounded`.
+
+**OpenFC**, the short tier's task and budget, strict passes (KiCad
+unconnected 0 and no new strict finding), seeds 1 to 401 and 501 to 901:
+
+| side | 1 to 401 | 501 to 901 | in all | failing seeds |
+| --- | --- | --- | --- | --- |
+| off | 5 | 4 | 9 of 10 | 801 |
+| on, unguarded (`-k`) | 1 | | 1 of 5 | 1, 201, 301, 401 |
+| `skips` | 4 | 3 | 7 of 10 | 101, 501, 601 |
+| `walk` | 4 | 3 | 7 of 10 | 301, 501, 601 |
+| `plain_share` 0.5 | 2 | | 2 of 5 | 101, 301, 401 |
+| `skips` with `pad_exits` | 4 | | 4 of 5 | 101 |
+
+Every failure is U10's +3.3V. With `skips` the kept skeletons seat at
+level 2 to 4 (final wire 798 to 1157 mm); the bound held three or four
+of the five to seven seeds back (the probe at level 1 on four rows, 3 on
+one). With `walk` the bounded seeds fall back to the plain seed, charged
+on top (85 to 136 s of the pool against off's 80 to 110), so the race
+keeps three to five seeds against off's six, and on seeds 301, 501 and
+601 the plain seed it kept loses U10. The mixed race keeps the level-7
+skeleton on all five rows (the unguarded race's placements, byte for
+byte): its plain seeds never win the ranking there. `pad_exits` on top
+of `skips` changes nothing: its test finds no closed pad on any of the
+five rows (U10's pad 5 has a way out on the statics), the placements are
+`skips`' own and seed 101 loses U10 again.
+
+**protoesp**, stage 1 with `skips` (first-route open terminals, off /
+on): 145 / 121, 102 / 94, 80 / 101, 103 / 131, 120 / 89: -2.5 %, p 0.37,
+NOT BETTER; unguarded it was -38.9 % (145 / 75 ... 120 / 66). The guard
+gives back protoesp's whole gain: the gain is the skip to the fine grid.
+
+**Decision.** The guard is no default and the switch stays off: in
+every form the guard (and the mixed race) loses OpenFC's strict pass on
+some seeds (7 of 10 against off's 9 of 10), and it takes protoesp's gain
+(weight 30 at stage 1, 50 at stage 2, its -38.9 % and -40.1 % the second
+largest contribution). Stage 1 and stage 2 with the guard were not run:
+the OpenFC condition fails whatever they show. `level_guard` stays in the
+code, `off` by default (the switch's `{}` is stage 2's, byte for byte).
+
+What the numbers say instead: the level is the lever on both boards, the
+skip to the tight levels winning on protoesp (and video) at the dense
+budget and losing on OpenFC at a third of it; and OpenFC's strict pass
+rests on one connection off loses too. Next candidate: OpenFC's U10 spot
+itself, a far-side part whose pad needs a via where the near side's
+fine-pitch pads leave none (the placer's legality, or a test like
+`pad_exits`' that asks for a via's room beside the pad, not only a path
+on the statics, which `pad_exits` finds open), so that the race's tighter
+placements no longer meet it; then the short tier and OpenFC's ten seeds
+with the switch as stage 2 measured it. CPU: the place checks 0.8 CPU
+hours, OpenFC's 35 rows and protoesp's 10 4.1.
+
 ## Footprints without a courtyard, and their slots (2026-11-04)
 
 Fresh agent trial 4 (docs/reviews/2026-11-04-fresh-agent-trial-4.md,

@@ -379,13 +379,23 @@ then the rest.
      the 4in1 -16 %, Glasgow -12.5 %; SNSP-CPU-01 +34 % (weight 11);
      no dense strict pass lost. **Not a default**: the short tier's OpenFC
      passes strictly on five of five seeds off and one of five on (its
-     skeleton seats only at level 7, the placement much tighter). Next:
-     the skeleton only where its level is no tighter than the plain
-     placement's, or the mixed race (`plain_share` 0.5: equal to the pure
-     race at stage 1, may keep OpenFC's plain seed); then the short tier
-     and OpenFC's five pairs before stage 2 again. Measured and not
-     taken: `join_pins` 0 (fixes SNSP-CPU-01 and split72_left, loses the
-     4in1-mini: +3.0 % against the race).
+     skeleton seats only at level 7, the placement much tighter).
+     **The level guard (2026-11-05, placer.md "The level guard"), not
+     taken**: OpenFC's level 7 is the skip to the tight levels
+     (`skip_to_tight`) that the skeleton's half of the work triggers at
+     the short tier's budget, and protoesp's winning skeletons skip the
+     same way (to the fine grid). Bounding the phases by a plain probe's
+     level (`level_guard` `skips` or `walk`) keeps OpenFC's strict pass
+     on 7 of 10 seeds against off's 9 of 10, the mixed race on 2 of 5,
+     and `skips` gives back protoesp's gain (-2.5 % against -38.9 %).
+     Every OpenFC failure, off's seed 801 too, is one connection: U10's
+     +3.3V pad (X2SON-6 on B.Cu) where it sits under U2's 0.4 mm pins.
+     Next: that spot (a far-side pad that needs a via's room where the
+     near side's fine pitch leaves none; `pad_exits` finds it open), then
+     the short tier and OpenFC's ten seeds with the switch as stage 2
+     measured it. Measured and not taken: `join_pins` 0 (fixes
+     SNSP-CPU-01 and split72_left, loses the 4in1-mini: +3.0 % against
+     the race).
    - **(b) The fine arrangement: the anneal's objective.** On the 4in1
      and Glasgow the anneal lowers our objective while it costs routes:
      without it our pipeline leaves 142 against 174 and 95 against 149
@@ -822,7 +832,10 @@ experiments (2026-11-04)" below):
   free passives first, then the passives around the held skeleton; under
   it the global placement's stall stop and turns that fit the board.
   Stage 2 BETTER (-12.1 %, p 0.002) but OpenFC's strict pass lost on four
-  of five seeds: not a default.
+  of five seeds: not a default. `level_guard` (`off` by default; `skips`,
+  `walk`: a plain probe's level bounds the skeleton's phases; placer.md
+  "The level guard (2026-11-05)") measured and not taken: OpenFC 7 of 10
+  strict against off's 9 of 10, protoesp's gain gone.
 - `pad_exits` (placer): **off** (2026-11-04; `PCB_PLACER_PAD_EXITS`;
   docs/placer.md, "Pads without a way out (2026-11-04)"): after each
   seed the router's test of every pad's way out, and the parts that close
