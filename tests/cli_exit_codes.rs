@@ -596,6 +596,120 @@ fn a_removed_diagnostic_names_its_replacement() {
     }
 }
 
+/// The remapper trial's board has eight lines and eight arcs on Edge.Cuts,
+/// which the removed grid router's diagnostics refused while the router
+/// read it. The commands an agent inspects with now share the router's
+/// outline lowering: on the three-pad board with round corners (radius
+/// 2 mm, lines and arcs as KiCad writes them) they all run, describe's
+/// outline follows the arcs, and the removed commands name their
+/// replacement rather than the outline.
+#[test]
+fn the_diagnostic_commands_read_an_outline_with_arcs() {
+    let root = scratch("arc-outline");
+    let project = project(&root);
+    let board = project.join("t.kicad_pcb");
+    let text = fs::read_to_string(&board).unwrap();
+    let rect = "(gr_rect (start 0 0) (end 20 20) (stroke (width 0.05) (type default)) (layer \"Edge.Cuts\"))";
+    assert!(text.contains(rect));
+    let edge = "(stroke (width 0.05) (type default)) (layer \"Edge.Cuts\"))";
+    let (near, far) = (0.585786, 19.414214);
+    let rounded = [
+        format!("(gr_line (start 2 0) (end 18 0) {edge}"),
+        format!("(gr_arc (start 18 0) (mid {far} {near}) (end 20 2) {edge}"),
+        format!("(gr_line (start 20 2) (end 20 18) {edge}"),
+        format!("(gr_arc (start 20 18) (mid {far} {far}) (end 18 20) {edge}"),
+        format!("(gr_line (start 18 20) (end 2 20) {edge}"),
+        format!("(gr_arc (start 2 20) (mid {near} {far}) (end 0 18) {edge}"),
+        format!("(gr_line (start 0 18) (end 0 2) {edge}"),
+        format!("(gr_arc (start 0 2) (mid {near} {near}) (end 2 0) {edge}"),
+    ]
+    .join("\n  ");
+    fs::write(&board, text.replace(rect, &rounded)).unwrap();
+    let json = |output: &Output| -> serde_json::Value {
+        assert_eq!(code(output), 0, "{}", stderr(output));
+        serde_json::from_slice(&output.stdout).unwrap()
+    };
+    let described = json(
+        &binary()
+            .args(["describe-kicad-board", &project.display().to_string(), "t"])
+            .output()
+            .unwrap(),
+    );
+    let outline = &described["outline"];
+    assert_eq!(outline["from_footprints"], false, "{outline}");
+    assert!((outline["width"].as_f64().unwrap() - 20.0).abs() < 1.0e-6);
+    assert!((outline["height"].as_f64().unwrap() - 20.0).abs() < 1.0e-6);
+    // The arcs as segments: more than the rectangle's corners, none of
+    // them at a corner the round edge cuts off.
+    let points = outline["points"].as_array().unwrap();
+    assert!(points.len() > 8, "{outline}");
+    assert!(
+        points.iter().all(|point| {
+            let [x, y] = [point[0].as_f64().unwrap(), point[1].as_f64().unwrap()];
+            x.min(20.0 - x) + y.min(20.0 - y) > 0.5
+        }),
+        "{outline}"
+    );
+    let path = board.display().to_string();
+    for command in ["inspect-kicad-board", "inspect-kicad-connections"] {
+        json(&binary().args([command, &path]).output().unwrap());
+    }
+    json(
+        &binary()
+            .args(["score-kicad-board", &project.display().to_string(), "t"])
+            .output()
+            .unwrap(),
+    );
+    // A route of it, and inspect-routing-run on the result.
+    let run = root.join("run");
+    let output = binary()
+        .env("PCB_SKIP_NATIVE", "1")
+        .env("PCB_ROUTER_SEED", "0")
+        .args([
+            "route-kicad-board",
+            &project.display().to_string(),
+            "t",
+            &run.display().to_string(),
+            "auto",
+            "--strip",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        matches!(code(&output), 0 | 1),
+        "{}: {}",
+        code(&output),
+        stderr(&output)
+    );
+    let diagnosis = json(
+        &binary()
+            .args([
+                "inspect-routing-run",
+                &run.display().to_string(),
+                "--terminal",
+                "J3:1",
+            ])
+            .output()
+            .unwrap(),
+    );
+    let net = &diagnosis["nets"][0];
+    assert_eq!(net["components"].as_array().unwrap().len(), 1, "{net}");
+    assert_eq!(net["counts"]["missing_links"], 0, "{net}");
+    // The removed diagnostics on this board: their replacement, not an
+    // outline error.
+    for command in ["inspect-kicad-terminal-access", "inspect-kicad-routing-cut"] {
+        let output = binary()
+            .args([command, &path, "/TARGET", "out.json"])
+            .output()
+            .unwrap();
+        assert_eq!(code(&output), 2, "{command}: {}", stderr(&output));
+        let message = stderr(&output);
+        assert!(message.contains("inspect-routing-run"), "{message}");
+        assert!(!message.contains("gr_rect or an unambiguous"), "{message}");
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn a_pinned_work_rate_is_applied_and_recorded() {
     let root = scratch("rate");

@@ -1674,7 +1674,13 @@ They say where nets fought, not why.
 research grid router (they read only an outline of one `gr_rect` or one
 loop of `gr_line`s). Called, they exit 2 with one line naming this
 command as the replacement (`--terminal REF:PAD`, `--net`); there is no
-access probe or cut today.
+access probe or cut today. The commands that read an outline
+(`describe-kicad-board`, `score-kicad-board`, `inspect-kicad-board`,
+`inspect-kicad-connections`) share the router's lowering (lines, arcs,
+rectangles, polygons, circles and curves, the remapper's round corners
+included), and this one does not read the outline at all; the test
+`the_diagnostic_commands_read_an_outline_with_arcs` runs them all on a
+board with round corners.
 
 Two nets of the remapper trial's board (jfedor2/hid-remapper, two RP2040s
 at 0.4 mm pitch, 0.2 mm tracks and clearances; the trial's deep run, 300 s
