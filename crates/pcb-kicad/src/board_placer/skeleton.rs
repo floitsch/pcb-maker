@@ -158,7 +158,8 @@ pub struct KiCadSkeletonRaceReport {
     /// The kept placement: the movable parts in its skeleton, those held
     /// while the passives were placed, the nets joined through passives,
     /// the parts grown and the room they took (mm²), the passives' area no
-    /// part took, the levels of the two phases, the skeleton's wirelength
+    /// part took, the first level at which the whole board fits by area
+    /// (the skeleton's first), the levels of the two phases, the skeleton's wirelength
     /// and whether the fallback (a whole placement) ran and was kept.
     pub skeleton_parts: usize,
     pub held: usize,
@@ -166,6 +167,7 @@ pub struct KiCadSkeletonRaceReport {
     pub grown: usize,
     pub room_mm2: f64,
     pub unowned_mm2: f64,
+    pub fitting_level: usize,
     pub skeleton_level: usize,
     pub level: usize,
     pub skeleton_wirelength_mm: f64,
@@ -200,6 +202,7 @@ impl KiCadSkeletonRaceReport {
             grown: report.grown,
             room_mm2: report.room_mm2,
             unowned_mm2: report.unowned_mm2,
+            fitting_level: report.fitting_level,
             skeleton_level: report.skeleton_level,
             level: report.level,
             skeleton_wirelength_mm: report.skeleton_wirelength,

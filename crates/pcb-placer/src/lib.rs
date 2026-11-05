@@ -1065,6 +1065,28 @@ pub fn level_problems(problem: &Problem, config: &Config) -> Vec<(LevelShape, Pr
         .collect()
 }
 
+/// The first relaxation level at which the parts' bodies and spacing fit
+/// the board by area (`overfull`), from `config.first_level` on, as `place`
+/// walks the levels (the last level where none does, and the first where
+/// no level can: `hopeless`). The race over skeletons places its skeleton
+/// from here: at a level where the whole board is overfull, a skeleton's
+/// gaps cannot hold the passives (the OpenESC 4in1-mini fits only with
+/// tight bodies, and its skeleton, placed at level 1, left its passives no
+/// room on 13 of 15 seeds).
+pub fn first_fitting_level(problem: &Problem, config: &Config) -> usize {
+    let (fitted, _) = fit_halos(problem, config.maximum_utilization);
+    let (levels, courtyard_level) = relaxation_levels(&fitted);
+    let count = levels.len();
+    let first = config.first_level.min(count - 1);
+    let relax = |level: usize| relax_level(&fitted, config, level, courtyard_level, levels[level]);
+    if side_overfull(&relax(count - 1), false) || strips_overfull(&relax(count - 1)) {
+        return first;
+    }
+    (first..count)
+        .find(|level| *level + 1 == count || !overfull(&relax(*level)))
+        .unwrap_or(count - 1)
+}
+
 pub fn place(problem: &Problem, config: &Config) -> Placement {
     let (mut fitted, fit_scale) = fit_halos(problem, config.maximum_utilization);
     fitted.constraints.link_pairs();

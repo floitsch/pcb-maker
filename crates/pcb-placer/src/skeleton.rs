@@ -68,6 +68,9 @@ pub struct Report {
     pub skeleton_work: u64,
     pub passive_work: u64,
     pub fallback_work: u64,
+    /// The first level at which the whole board's bodies fit by area
+    /// (`first_fitting_level`): the skeleton's first level.
+    pub fitting_level: usize,
     /// The relaxation levels the skeleton and the passives ended at.
     pub skeleton_level: usize,
     pub level: usize,
@@ -328,6 +331,8 @@ pub fn owned_room(problem: &Problem, absent: &[bool], room: f64) -> (Vec<f64>, f
     }
     let mut kept = vec![0.0; count];
     let mut unowned = 0.0;
+    let debug = std::env::var_os("PCB_PLACER_DEBUG").is_some();
+    let mut unowned_by: std::collections::BTreeMap<String, f64> = Default::default();
     for (index, owned) in owners.iter().enumerate() {
         if !is_absent(index) {
             continue;
@@ -339,12 +344,25 @@ pub fn owned_room(problem: &Problem, absent: &[bool], room: f64) -> (Vec<f64>, f
             .collect();
         if takers.is_empty() {
             unowned += area(index);
+            if debug {
+                let names: Vec<&str> = owned
+                    .iter()
+                    .map(|owner| problem.components[*owner].name.as_str())
+                    .collect();
+                *unowned_by.entry(names.join("+")).or_default() += area(index);
+            }
             continue;
         }
         let share = area(index) / takers.len() as f64;
         for owner in takers {
             kept[owner] += share;
         }
+    }
+    if debug && !unowned_by.is_empty() {
+        let mut by: Vec<(String, f64)> = unowned_by.into_iter().collect();
+        by.sort_by(|a, b| b.1.total_cmp(&a.1));
+        by.truncate(12);
+        eprintln!("placer: skeleton: the area no part owns, by owners: {by:?}");
     }
     (kept, unowned)
 }
@@ -580,6 +598,10 @@ pub fn place_skeleton(
     first.work_limit = config
         .work_limit
         .map(|limit| ((limit as f64 * settings.work_share) as u64).max(1));
+    // Not at a level where the whole board is overfull: the passives' room
+    // is part of the board's (`first_fitting_level`).
+    report.fitting_level = crate::first_fitting_level(problem, config);
+    first.first_level = first.first_level.max(report.fitting_level);
     let skeleton = place(&skeleton_problem, &first);
     if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
         eprintln!(
@@ -601,14 +623,14 @@ pub fn place_skeleton(
     };
     // A skeleton with parts left without a legal place (an overfull one,
     // or one whose share of the work ran out before a level seated them):
-    // the seed is placed whole with the work left. Video's skeletons at
-    // full halos left one or two memory modules without a place on 5 of
-    // 6 seeds, and the passives' placement with them movable from the next
-    // level on failed on all 5 (docs/placer.md, "A race over skeletons").
+    // the seed is placed whole, the plain seed's placement with its full
+    // work (`config`), charged on top of the skeleton's. With the work
+    // left instead, video's fallbacks after a skeleton that left memory
+    // modules out (5 of 6 seeds at full halos) got half the budget, and on
+    // seed 301 none seated U12, U14 and U19 (docs/placer.md, "A race over
+    // skeletons"): the plain placement needs the whole of it there.
     if skeleton.overfull || !skeleton.unplaced.is_empty() || !skeleton.illegal.is_empty() {
-        let mut whole = config.clone();
-        whole.work_limit = left(skeleton.work);
-        let mut placement = place(problem, &whole);
+        let mut placement = place(problem, config);
         report.fallback = true;
         report.fallback_kept = true;
         report.fallback_work = placement.work;
@@ -644,11 +666,23 @@ pub fn place_skeleton(
         );
     }
     let mut placement = judged(problem, passives, &skeleton, &held);
+    if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
+        let names = |parts: &[usize]| -> Vec<&str> {
+            parts
+                .iter()
+                .map(|part| problem.components[*part].name.as_str())
+                .collect()
+        };
+        eprintln!(
+            "placer: skeleton and passives judged whole: unplaced {:?}, illegal {:?}",
+            names(&placement.unplaced),
+            names(&placement.illegal)
+        );
+    }
     let mut used = skeleton.work + report.passive_work;
     if !placement.unplaced.is_empty() || !placement.illegal.is_empty() {
-        let mut whole = config.clone();
-        whole.work_limit = left(used);
-        let fallback = place(problem, &whole);
+        // The plain seed's placement, at its full work, as above.
+        let fallback = place(problem, config);
         report.fallback = true;
         report.fallback_work = fallback.work;
         used += fallback.work;
@@ -667,9 +701,13 @@ pub fn place_skeleton(
 }
 
 /// The passives' placement made a placement of `problem`: the relaxation
-/// with each held part's halo the smaller of the skeleton's and the
-/// passives' (the skeleton's level is never looser than the passives':
-/// `Config::first_level`), the parts on the board's marks of both, and the
+/// with each held and each fixed part's halo the smaller of the skeleton's
+/// and the passives' (the skeleton's level is never looser than the
+/// passives': `Config::first_level`; a held part and a fixed one were
+/// judged against each other in the skeleton alone, and the passives'
+/// placement, both fixed there, did not: with the passives' halos on the
+/// fixed parts, video's skeletons were judged illegal at a memory module
+/// beside a fixed connector), the parts on the board's marks of both, and the
 /// illegal parts, constraints and wirelength judged on `problem` with it.
 fn judged(
     problem: &Problem,
@@ -692,8 +730,9 @@ fn judged(
         .iter()
         .zip(&skeletons)
         .zip(held)
-        .map(|((passive, skeleton), held)| {
-            if *held {
+        .zip(&problem.components)
+        .map(|(((passive, skeleton), held), component)| {
+            if *held || component.fixed {
                 passive.min(*skeleton)
             } else {
                 *passive
@@ -720,6 +759,29 @@ fn judged(
     relaxed.constraints.link_pairs();
     relaxed.sync_followers(&mut placement.poses);
     placement.illegal = legal::illegal_components(&relaxed, &placement.poses);
+    if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
+        let poses = &placement.poses;
+        for &index in &placement.illegal {
+            let mut met: Vec<String> = Vec::new();
+            if !legal::is_legal(&relaxed, poses, index, poses[index], std::iter::empty()) {
+                met.push("outline or hard constraint".into());
+            }
+            for other in 0..relaxed.components.len() {
+                if other != index
+                    && let Some(kind) =
+                        legal::conflict_kind(&relaxed, poses, index, poses[index], other)
+                {
+                    met.push(format!("{} {kind}", relaxed.components[other].name));
+                }
+            }
+            eprintln!(
+                "placer: judged whole: illegal {} (held {}): {}",
+                relaxed.components[index].name,
+                held[index],
+                met.join(", ")
+            );
+        }
+    }
     placement.constraints = crate::constraints::report(&relaxed, &placement.poses);
     placement.wirelength_final = problem.wirelength(&placement.poses);
     placement
@@ -954,6 +1016,59 @@ mod tests {
     }
 
     #[test]
+    fn a_held_part_beside_a_fixed_one_is_judged_at_the_skeletons_halos() {
+        // J1 fixed with a 1 mm halo, U1 held 0.5 mm from it: legal at the
+        // skeleton's level (no halos), as the passives' placement never
+        // judged the two (both fixed there) and gave J1 its halo back.
+        let (mut problem, passive) = board();
+        let header = problem.components.len() - 1;
+        problem.components[header].halo = 1.0;
+        let spots = [
+            [6.25, 15.0],
+            [20.0, 15.0],
+            [30.0, 5.0],
+            [30.0, 9.0],
+            [30.0, 13.0],
+            [30.0, 17.0],
+            [30.0, 21.0],
+            [30.0, 25.0],
+            [35.0, 5.0],
+            [2.0, 15.0],
+        ];
+        let mut placement = place(&problem, &Config::new());
+        for (pose, spot) in placement.poses.iter_mut().zip(spots) {
+            *pose = Pose {
+                position: spot,
+                angle: 0.0,
+            };
+        }
+        placement.relaxation.halos = None;
+        placement.relaxation.spacing = problem.spacing;
+        let mut skeleton = placement.clone();
+        placement.relaxation.halo_scale = 1.0;
+        placement.relaxation.small_halo_scale = 1.0;
+        skeleton.relaxation.halo_scale = 0.0;
+        skeleton.relaxation.small_halo_scale = 0.0;
+        let absent = absent_parts(&problem, &passive);
+        let held: Vec<bool> = (0..problem.components.len())
+            .map(|index| !absent[index] && !problem.components[index].fixed)
+            .collect();
+        assert!(held[0] && !held[header]);
+        let judged = judged(&problem, placement.clone(), &skeleton, &held);
+        assert!(judged.illegal.is_empty(), "{:?}", judged.illegal);
+        let halos = judged.relaxation.halos.as_ref().expect("merged halos");
+        assert_eq!(halos[header], 0.0);
+        // At the passives' halos alone the two meet.
+        let mut relaxed = problem.clone();
+        placement.relaxation.apply(&mut relaxed);
+        let illegal = legal::illegal_components(&relaxed, &placement.poses);
+        assert!(
+            illegal.contains(&0) && illegal.contains(&header),
+            "{illegal:?}"
+        );
+    }
+
+    #[test]
     fn the_better_placement_by_the_races_key_is_kept() {
         let (problem, _) = board();
         let placed = place(&problem, &Config::new());
@@ -965,6 +1080,73 @@ mod tests {
         let mut longer = placed.clone();
         longer.wirelength_final += 1.0;
         assert!(key(&placed) < key(&longer));
+    }
+
+    #[test]
+    fn a_skeleton_that_leaves_parts_out_falls_back_to_the_plain_seed_at_full_work() {
+        // The owners' room a hundred times the passives' bodies: U1 and U2
+        // grow past the board and the skeleton cannot seat them. The seed
+        // is then the plain seed's placement with the whole work limit (not
+        // what the skeleton left of it), and its work is both phases'.
+        let (problem, passive) = board();
+        let unlimited = place(&problem, &Config::new());
+        let mut config = Config::new();
+        config.work_limit = Some(unlimited.work);
+        let plain = place(&problem, &config);
+        let settings = Settings {
+            room: 100.0,
+            ..Settings::default()
+        };
+        let placement = place_skeleton(&problem, &config, &passive, &[], &settings);
+        let report = placement.skeleton.clone().expect("a report");
+        assert!(report.fallback && report.fallback_kept);
+        assert_eq!(report.held, 0);
+        assert!(report.skeleton_work > 0);
+        assert_eq!(placement.poses, plain.poses);
+        assert_eq!(report.fallback_work, plain.work);
+        assert_eq!(placement.work, report.skeleton_work + plain.work);
+        assert!(placement.unplaced.is_empty() && placement.illegal.is_empty());
+    }
+
+    #[test]
+    fn the_skeleton_starts_where_the_whole_board_fits() {
+        // On 40 x 30 mm everything fits at the first level.
+        let (problem, passive) = board();
+        let config = Config::new();
+        assert_eq!(crate::first_fitting_level(&problem, &config), 0);
+        // On 8 x 9 mm with a short header, the bodies with their spacing
+        // (91 mm2) and without it (79) need more than the board; their
+        // tight bodies (42) fit: the first tight level.
+        let mut small = problem.clone();
+        small.outline = vec![[0.0, 0.0], [8.0, 0.0], [8.0, 9.0], [0.0, 9.0]];
+        let header = small.components.len() - 1;
+        small.components[header].body_size = [2.5, 8.0];
+        for pin in small.components[header].pins.iter_mut() {
+            pin.offset = [0.0, 0.0];
+        }
+        small.poses[header].position = [1.5, 4.5];
+        for component in &mut small.components[..header] {
+            let tight = if component.body_size[0] > 2.0 {
+                [1.5, 1.5]
+            } else {
+                [0.5, 0.25]
+            };
+            component.tight = Some([-tight[0], -tight[1], tight[0], tight[1]]);
+        }
+        let shapes = crate::level_problems(&small, &config);
+        let tight = shapes
+            .iter()
+            .position(|(shape, _)| shape.tight)
+            .expect("a tight level");
+        assert!(tight > 0);
+        assert_eq!(crate::first_fitting_level(&small, &config), tight);
+        let mut later = config.clone();
+        later.first_level = tight + 1;
+        assert_eq!(crate::first_fitting_level(&small, &later), tight + 1);
+        let placement = place_skeleton(&small, &config, &passive, &[], &Settings::default());
+        let report = placement.skeleton.clone().expect("a report");
+        assert_eq!(report.fitting_level, tight);
+        assert!(report.skeleton_level >= tight);
     }
 
     #[test]
