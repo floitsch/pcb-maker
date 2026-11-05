@@ -547,6 +547,7 @@ mod tests {
 
     #[test]
     fn a_via_of_a_span_is_written_with_its_kind_and_layers() {
+        crate::note_net_names(&parse("(kicad_pcb (net 1 \"A\"))").unwrap());
         let names: Vec<String> = table(4).names;
         let span = |top: usize, bottom: usize, micro: bool| core::ViaSpan {
             top,

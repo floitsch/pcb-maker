@@ -584,6 +584,23 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     let in (Glasgow: 343 -> 262 unconnected over three seeds). Arrays
     whose inner balls leave by vias in their pads or on the surface keep
     no room.
+  - `blind_vias` (DEFAULT_PLACEHOLDER; docs/router.md "Blind, buried and
+    micro vias"): on a board of three or more layers that allows them,
+    a via that joins two layers pierces only the shortest allowed span
+    holding both, so the layers it skips stay free for other nets, and
+    is written as KiCad's blind, buried or micro via (KiCad's DRC
+    accepts them: copper and a hole on their span only). What allows a
+    span: `via_spans` in the router file (`["F.Cu-In1.Cu:micro",
+    "In1.Cu-In4.Cu"]`, or the keywords `"blind"`, `"buried"`,
+    `"micro"`), else the designer's own vias of those spans on the board
+    or the `--reference` board (board-router.json's
+    `rules.via_spans_designer` lists them), else a KiCad 6 or 7
+    project's "allow blind/buried vias" and "allow micro vias". KiCad 8
+    and later have no such switch: on a fresh board say `via_spans`
+    yourself, and only when the fab builds them (they cost extra
+    laminations). Pour nets keep through vias; a BGA's dog-bone takes
+    the shortest span to a layer it can route on (a micro via at the
+    project's micro via size). `PCB_ROUTER_BLIND_VIAS=1` forces it on.
   - `automatic_planes` (default true): a board with four or more copper
     layers and no pours gets ground as a plane on the first inner layer
     and the supply rail with the most pads on the last inner layer, as a

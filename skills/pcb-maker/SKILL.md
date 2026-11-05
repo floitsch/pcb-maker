@@ -130,7 +130,12 @@ AC-coupling or series parts in a `row` of two (or the placer's `"pair_rows": tru
 default, which rows them itself at the pair's pitch, facing the pair's ends); `verdict.diff_pairs`
 says which coupled and why the others fell back; every route of a layout plans them, so the
 board kept is coupled whichever stage made it: no route-mode pass on the `placed` board is needed;
-on a dense board with many pairs the links cost connections, so compare with a layout without them).
+on a dense board with many pairs the links cost connections, so compare with a layout without them). Blind,
+buried and micro vias (`"blind_vias": true`, DEFAULT_PLACEHOLDER): a via then pierces only the shortest span the
+board allows, written as KiCad's blind/buried/micro via; the spans come from `via_spans`
+(`["F.Cu-In1.Cu:micro", "In1.Cu-In2.Cu"]`, or `"blind"`, `"buried"`, `"micro"`), else the designer's own
+such vias (board or `--reference`), else a KiCad 6/7 project's switches; KiCad 8+ has no switch, so on a
+fresh board name `via_spans` only when the fab builds them.
 
 ## Pre-routed nets
 
