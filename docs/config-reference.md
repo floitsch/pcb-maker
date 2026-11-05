@@ -41,8 +41,8 @@ The environment variables are indexed in the hand-over
 | [Layout settings: silkscreen](#layout-settings-silkscreen) | 1 | 1 | 0 | 1 | 1 |
 | [Layout settings: race_probe](#layout-settings-race_probe) | 3 | 3 | 0 | 3 | 3 |
 | [Layout settings: move_descent](#layout-settings-move_descent) | 7 | 7 | 0 | 7 | 0 |
-| [Placer core](#placer-core) | 11 | - | 0 | 11 | - |
-| [Placer core: global](#placer-core-global) | 9 | - | 0 | 9 | - |
+| [Placer core](#placer-core) | 13 | - | 0 | 13 | - |
+| [Placer core: global](#placer-core-global) | 10 | - | 0 | 10 | - |
 | [Placer core: anneal](#placer-core-anneal) | 8 | - | 0 | 8 | - |
 
 ## Router settings
@@ -505,6 +505,8 @@ The `move_descent` object of the layout settings (an experiment, off when absent
 | `kicad_last_level` | `bool` | `false` | the KiCad layer | KiCad's legality at the last level (where courtyards may touch): courtyards touch where the pads keep the copper clearance pad to pad, an unheld part's pads keep the edge margin, the board's silkscreen marks the project does not rate an error over a part are no obstacle, and a lead through the board keeps the copper clearance from the far side's pads (docs/placer.md, "The legality model against KiCad", the molecules). |
 | `pad_exits` | `Option<exits::PadExits>` | unset | - | Pads without a way out (`exits`, docs/placer.md "Pads without a way out (2026-11-04)"): after the placement, the router's test of every pad's way out on the statics, and moves or turns of the parts whose pads another part or the edge closes. Off (`None`) by default. |
 | `first_level` | `usize` | `0` | - | The first relaxation level the placement tries (`relaxation_levels`; the last if there are fewer): the race over skeletons places the passives from the skeleton's level on, so that the held skeleton is legal at theirs (`skeleton`). 0 by default: every level. |
+| `start` | `Option<std::sync::Arc<Start>>` | unset | the KiCad layer | A diagnostic start (`PCB_PLACER_START`, docs/placer.md "Where the arrangement is lost (2026-11-04)"): the stages from `Start::stage` on run from given poses (the designer's). `None` by default: the placer's own start. |
+| `skip_anneal` | `bool` | `false` | the KiCad layer | A diagnostic (`PCB_PLACER_SKIP_ANNEAL`, docs/placer.md "Where the arrangement is lost (2026-11-04)"): no anneal at any level, each level's legaliser seats the global placement's poses (or the start's). Off by default. |
 
 ## Placer core: global
 
@@ -521,6 +523,7 @@ The `move_descent` object of the layout settings (an experiment, off when absent
 | `global.rotation_net_limit` | `usize` | `24` | - | Nets with more pins are ignored when choosing rotations. |
 | `global.frame_interval` | `usize` | `5` | - | Every this many iterations the poses are kept as a frame (for animations); 0 keeps none but the last. |
 | `global.seed` | `u64` | `1` | `seed` | Seed of the start's noise: the parts start near the fixed parts' pin centroid (or the board's centre), the fillers anywhere. |
+| `global.warm` | `Option<std::sync::Arc<Vec<bool>>>` | unset | - | A diagnostic warm start (`crate::Start`): per component, whether it starts at its pose's centre without the start's noise. `None`: every part from the start point. |
 
 ## Placer core: anneal
 

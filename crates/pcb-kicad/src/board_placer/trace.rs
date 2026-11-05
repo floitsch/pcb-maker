@@ -169,7 +169,6 @@ pub(super) fn trace_placements(
     config: &core::Config,
     path: &Path,
 ) -> Result<(), String> {
-    let anneal = &config.anneal;
     // The global placement's own problem (the fitted halos of its level).
     let global_problem = core::global_problem(&lowered.problem, config);
     let designer = match std::env::var_os("PCB_PLACER_DESIGNER") {

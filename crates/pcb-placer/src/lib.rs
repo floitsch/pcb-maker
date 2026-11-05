@@ -1891,7 +1891,6 @@ mod start_tests {
             edge_margin: 0.5,
             min_spacing: 0.2,
             far_side_pads_only: false,
-            shared_halos: false,
             escape: None,
             crossings: None,
             pieces: Vec::new(),
@@ -2003,7 +2002,6 @@ mod start_tests {
     #[test]
     fn the_objective_splits_the_wirelength_and_sees_overlap() {
         let (problem, spread) = board();
-        let config = anneal::AnnealConfig::default();
         let apart = anneal::objective(&problem, &spread);
         let sum: f64 = apart.wirelength.iter().sum();
         assert!((sum - problem.wirelength(&spread)).abs() < 1.0e-9);
