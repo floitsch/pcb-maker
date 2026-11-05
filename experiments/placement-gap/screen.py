@@ -7,6 +7,7 @@ on the eleven dense boards with `stop_after_first_route` (docs/benchmarks.md,
 "The ladder of placer measurements (2026-10-28)").
 
     screen.py --out DIR --off-binary PATH --on-binary PATH --on '{"align_rows": {}}' [--slots 5]
+    screen.py --out DIR --off-binary PATH --on-binary PATH --on '{}' --on-env PCB_PLACER_SKIP_ANNEAL=1
     benchmarks/agent-tasks/placer_ab.py compare --metric first_open \\
         --off DIR/dense-s*-off-* --on DIR/dense-s*-on-*
 
@@ -14,11 +15,15 @@ One run.py per (seed, side, board) at --jobs 1 --threads 2 (a layout is
 the same at any job count), at most `--slots` in flight, the largest
 expected layouts first, each with --expected-gb from the board's measured
 layout peak (benchmarks/agent-tasks/estimates.json). Units with a `.done`
-file are skipped (restartable).
+file are skipped (restartable). `--on-env KEY=VALUE` (repeatable) sets an
+environment variable for the on side's run.py and its binary only (a
+switch read from the environment, not a settings key); the off side runs
+with those variables unset.
 """
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -41,8 +46,28 @@ def estimate(board):
     return round(entry["peak_rss_mb"] / 1024 + 0.05, 1), entry["seconds"]
 
 
+def on_environment(pairs):
+    """The on side's environment additions from `--on-env KEY=VALUE` items."""
+    result = {}
+    for pair in pairs or []:
+        key, separator, value = pair.partition("=")
+        if not separator or not key:
+            raise ValueError(f"--on-env wants KEY=VALUE, not {pair!r}")
+        result[key] = value
+    return result
+
+
+def environment(base, extra):
+    """`base` with `extra` applied (a value of None removes the variable)."""
+    result = {key: value for key, value in base.items() if key not in extra}
+    result.update({key: value for key, value in extra.items() if value is not None})
+    return result
+
+
 def units(arguments):
+    """(name, command, environment changes: None unsets) per unit, in the order to start them."""
     on = json.loads(arguments.on)
+    extra = on_environment(arguments.on_env)
     result = []
     for seed in SEEDS:
         for board in sorted(DENSE, key=lambda b: -estimate(b)[1]):
@@ -54,7 +79,7 @@ def units(arguments):
                            "--tasks", str(TASKS), "--only", board, "--binary", binary, "--jobs", "1",
                            "--threads", "2", "--expected-gb", str(estimate(board)[0]),
                            "--placer", json.dumps(placer), "--layout", json.dumps({"stop_after_first_route": True})]
-                result.append((name, command))
+                result.append((name, command, extra if side == "on" else dict.fromkeys(extra)))
     return result
 
 
@@ -66,6 +91,8 @@ def main():
     parser.add_argument("--on", required=True, help="the on side's placer settings, as JSON")
     parser.add_argument("--sides", default="off,on", help="the sides to run: off,on (the default), off or on "
                         "(one off side for several on sides, each in the off side's directory under its own --out)")
+    parser.add_argument("--on-env", action="append", metavar="KEY=VALUE",
+                        help="an environment variable for the on side only (repeatable)")
     parser.add_argument("--slots", type=int, default=5)
     parser.add_argument("--slots-file", help="a file holding the slots, read again every 20 s (to share the "
                         "machine's layout limit with other runs)")
@@ -75,8 +102,9 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     queue = [u for u in units(arguments) if not (out / f"{u[0]}.done").exists()]
     if arguments.dry_run:
-        for name, command in queue:
-            print(name, " ".join(command))
+        for name, command, extra in queue:
+            changes = " ".join(f"-u {k}" if v is None else f"{k}={v}" for k, v in sorted(extra.items()))
+            print(name, changes, " ".join(command))
         return
     running = {}
     while queue or running:
@@ -93,9 +121,11 @@ def main():
             except ValueError:
                 pass
         while queue and len(running) < slots:
-            name, command = queue.pop(0)
+            name, command, extra = queue.pop(0)
             log = open(out / f"{name}.out", "w")
-            running[name] = (subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT), log)
+            env = environment(os.environ, extra) if extra else None
+            running[name] = (subprocess.Popen(command, cwd=ROOT, stdout=log, stderr=subprocess.STDOUT, env=env),
+                             log)
             print(time.strftime("%H:%M:%S"), "start", name, flush=True)
         time.sleep(20)
     print(time.strftime("%H:%M:%S"), "pool empty", flush=True)
