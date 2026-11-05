@@ -42,7 +42,10 @@ used to be here; code comments and docs that cite `docs/handover.md,
   race over skeletons (`skeleton_race`, off) passes the full protocol on
   the dense boards (stage 2 KiCad unconnected -12.1 %, p 0.002; video
   -33 %, protoesp -40 %) but loses OpenFC's strict pass on four of five
-  seeds, so it stays off ("The fixes, and stage 1 again (2026-11-05)"). On by default since: the room
+  seeds, so it stays off ("The fixes, and stage 1 again (2026-11-05)");
+  that pass rests on one pad (U10.5) the router reaches only when U10's
+  centre line falls on its lattice, under U2 or not ("A far-side pad
+  under fine pitch, and what it was (2026-11-05)"). On by default since: the room
   around dog-boned grid arrays (`bga_room`: Glasgow 343 to 262
   unconnected over three seeds; "Room around grid arrays") and the
   courtless rule (two footprints without a courtyard keep the boxes of
@@ -389,11 +392,26 @@ then the rest.
      on 7 of 10 seeds against off's 9 of 10, the mixed race on 2 of 5,
      and `skips` gives back protoesp's gain (-2.5 % against -38.9 %).
      Every OpenFC failure, off's seed 801 too, is one connection: U10's
-     +3.3V pad (X2SON-6 on B.Cu) where it sits under U2's 0.4 mm pins.
-     Next: that spot (a far-side pad that needs a via's room where the
-     near side's fine pitch leaves none; `pad_exits` finds it open), then
-     the short tier and OpenFC's ten seeds with the switch as stage 2
-     measured it. Measured and not taken: `join_pins` 0 (fixes
+     +3.3V pad 5 (X2SON-6 on B.Cu). **Not the spot under U2**
+     (2026-11-05, placer.md "A far-side pad under fine pitch, and what it
+     was"): on 3 of the 15 failing rows U10 sits under U2's pins, on 8 it
+     is 0.7 to 10.6 mm from U2's field; U10's pads have no legal lattice
+     node of their own and pad 5 leaves its pocket only through a 0.3 mm
+     corridor between U10's corner pads, which the 0.09 mm class passes
+     within about 15 um of its centre, and the lattice chooser does not
+     steer to it (`tight_channels` counts enclosed pads only). Moving
+     U10 by 0.02 to 0.05 mm onto the router's lattice connects it on four
+     of five failing placements (two under U2's pins); the fifth sits
+     under two large F.Cu test pads. `pad_exits` never tested the pad
+     (+3.3V has a connected pour). The via-room census of the night (106
+     boards): pads the other side boxes in are open 2.5 times as often
+     (78 of 539) but lie on four boards (the OpenRX panel, the two
+     OpenESCs, the PolyKybd molecules); no placement rule was built.
+     Next: the router's lattice for such pads (the chooser counting the
+     corridors of pads without a legal node, or escapes that follow a
+     part's corridor, or the layout's last move putting such a part on
+     the lattice), then OpenFC's ten seeds and the short tier with the
+     switch as stage 2 measured it. Measured and not taken: `join_pins` 0 (fixes
      SNSP-CPU-01 and split72_left, loses the 4in1-mini: +3.0 % against
      the race).
    - **(b) The fine arrangement: the anneal's objective.** On the 4in1

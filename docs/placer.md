@@ -7729,7 +7729,8 @@ keeps three to five seeds against off's six, and on seeds 301, 501 and
 skeleton on all five rows (the unguarded race's placements, byte for
 byte): its plain seeds never win the ranking there. `pad_exits` on top
 of `skips` changes nothing: its test finds no closed pad on any of the
-five rows (U10's pad 5 has a way out on the statics), the placements are
+five rows (it never tests U10's pad 5: a pour net's; see the next
+section), the placements are
 `skips`' own and seed 101 loses U10 again.
 
 **protoesp**, stage 1 with `skips` (first-route open terminals, off /
@@ -7757,6 +7758,142 @@ on the statics, which `pad_exits` finds open), so that the race's tighter
 placements no longer meet it; then the short tier and OpenFC's ten seeds
 with the switch as stage 2 measured it. CPU: the place checks 0.8 CPU
 hours, OpenFC's 35 rows and protoesp's 10 4.1.
+
+## A far-side pad under fine pitch, and what it was (2026-11-05)
+
+Branch far-side-via-room. The level guard's next candidate: OpenFC's
+U10 (SN74LVC1G3157, X2SON-6 1.0 x 0.8 mm, B.Cu), whose +3.3V pad 5 is
+the one connection every failing OpenFC row leaves open, was taken to
+sit under U2 (RP2354B, QFN-80 at 0.4 mm, F.Cu) where no via fits
+between U2's pins. The package was a placement rule for that spot (a
+far-side part whose pad needs a via keeps a via's room from the near
+side's fine-pitch pins). The diagnosis says the spot is not the cause,
+so the rule was not built. Scripts: `experiments/via-room/census.py`
+(the census), `experiments/via-room/shift.py` (a project with one part
+moved); the route checks' inputs and outputs in the agent's scratch, the
+rows in `build/skel2-short/openfc` and `build/skel3-openfc`.
+
+**Where U10 sits on the rows.** Of the 45 OpenFC rows of rounds 2 and 3
+(the short tier's task and budget; off, on, `skips`, `walk`, the mixed
+race, `pad_exits`), 15 leave U10's pad 5 open, and every one of the 15
+leaves only that (and on three a GND pour island). U10 lies within 0.3 mm
+of a U2 pin on 3 of the 15 (seed 1 on, 801 off, 501 `skips`), inside
+U2's pin field 1.3 to 4.7 mm from a pin on 4, and 0.7 to 10.6 mm away
+from U2's field on 8 (on seed 101 `skips` nothing is over it on F.Cu within 1
+mm). Of the 30 rows that connect it, 2 have U10 0.08 mm from U2's pins
+(seed 1 `skips` and `pad_exits`) and 6 more lie within U2's field. Under U2
+is neither needed nor enough. On the night's OpenFC placement (x1909,
+complete) U10 sits under U2's field too, and U2 takes none of pad 5's
+via room (below).
+
+**`pad_exits` never asked.** `ExitProbe::closed_pads` tests only pads of
+nets no connected pour carries; +3.3V has a connected pour on In3.Cu, so
+U10's pad 5 was never tested ("finds it open" in the level guard's
+section is a pad not looked at).
+
+**What the router does.** Route mode on the rows' result placements
+(tracks stripped, the task's router config, a 300 s ladder, x1916, 2
+threads) reproduces the open pad on every failing row tried (seeds 1 and 201
+on, 101 `skips`, 601 `walk`, 801 off), on every rung and lattice: `plane
+stubs +3.3V: 44 fixed branches, 44 of 45 terminals connected`, also on
+the empty board, and at 0.075 mm. With `PCB_ROUTER_DEBUG` the cause
+shows: U10's six pads (custom shapes, four corner pads and two
+triangles, with a 0.1 mm outline) have no legal lattice node of their
+own and leave by escape stubs; pad 5's eight escape nodes all lie among
+U10's own pads, and the way out of that pocket is a corridor between
+U10's corner pads (0.3 mm) that the class's 0.09 mm track with 0.09 mm
+clearance passes only within about 15 um of its centre line. The
+lattice chooser does not steer to it: `tight_channels` counts only
+channels next to a pad enclosed on all four sides (a BGA's inner balls),
+and U10's pads are not. So pad 5 connects where U10's centre line
+happens to fall on a lattice line, and stays open where it does not;
+the router's later rungs (other pitches, other phases) can find it with
+more budget (seed 601 `walk` at a 900 s ladder: complete).
+
+**The test**: the same placements with U10 alone moved by 0.02 to 0.05
+mm so that its centre line lies on the lattice the router chose (route
+mode as above; KiCad unconnected items):
+
+| placement | U10 against U2 | as placed | U10 on the lattice | the other axis |
+| --- | --- | --- | --- | --- |
+| seed 1 on | under the pins (pad 69, 0.06 mm) | U10.5 open | complete (x -0.02 mm; y +0.035 too) | |
+| seed 801 off | under the pins (0.18 mm) | U10.5 open | complete (x -0.025) | U10.5 open (y +0.025) |
+| seed 101 `skips` | 10.6 mm away | U10.5 open | complete (y -0.025) | U10.5 open (x -0.025) |
+| seed 601 `walk` | 4.4 mm away | U10.5 open | complete (x +0.05) | U10.5 open (y +0.025) |
+| seed 201 on | under J15 and J18 (2.2 x 1.6 mm test pads, F.Cu) | U10.5 and U10.6 open, a GND island | U10.5 and U10.6 open (y -0.05; the lattice there is 0.125 mm) | |
+
+Four of five failing placements route completely when U10 moves onto
+the lattice by at most 0.05 mm, two of them with U10 under U2's pins;
+the moves along the wrong axis change nothing. The one that stays open,
+seed 201 on, is the case the package was about: U10 under two large
+F.Cu test pads with no via site within twice the reach below. The off
+side's own failure (seed 801) is the lattice too.
+
+**The census** (the night of 2026-11-05, x1909, the sweep's 106 result
+boards; per SMD pad whose net has copper on another layer, pad boxes,
+the class's via and clearance from the project; reach R = via diameter
++ 2 clearances from the pad's box, 0.53 mm on OpenFC; a via site: a
+via centre within reach whose disc keeps the clearance from every other
+net's pad on any layer and from the board edge's box and lies in no SMD
+pad of the net; "the own side alone leaves one": a site exists when the
+other side's SMD pads are left out; a fine-pitch field: the pad box of
+another-side part with 8 or more SMD pads at a median pitch of 0.5 mm or
+less; open: among KiCad's unconnected items):
+
+| pads | count | open | share open | boards |
+| --- | ---: | ---: | ---: | ---: |
+| every pad that needs a via | 27888 | 1643 | 5.9 % | 98 |
+| the net has no other pad on the pad's side | 1696 | 56 | 3.3 % | 47 |
+| under an other-side fine-pitch field | 1492 | 103 | 6.9 % | 51 |
+| a via site within R | 27199 | 1548 | 5.7 % | 98 |
+| no via site within R | 689 | 95 | 13.8 % | 48 |
+| none within R, the own side alone leaves one | 539 | 78 | 14.5 % | 39 |
+| ... and under a fine-pitch field | 142 | 22 | 15.5 % | 23 |
+| none within 2R, the own side alone leaves one | 125 | 20 | 16.0 % | 18 |
+| ... and under a fine-pitch field | 26 | 6 | 23.1 % | 8 |
+
+A pad the other side boxes in is open about 2.5 times as often as one
+with a via site, so the class exists, but it is small and lies on a few
+boards: of the 78 open pads boxed in by the other side, 26 are the
+OpenRX panel's (radio ICs and ESP32s over each other on both sides of
+its copies), 17 and 10 the two OpenESCs' (FET gates under the other
+side's FETs), 24 the PolyKybd molecule panels' (J1's pins under C7 and
+LED1, the same spot in every copy) and 1 split72_left's; 33 boards have
+such pads and none open. Under a fine-pitch field with no site within
+2R: 26 pads, 6 open, on 8 boards. 78 is 4.6 % of the night's 1705 open
+pads. OpenFC's own U10.5 on the night's placement: 0.09 mm2 of via room
+within R, the same with U2 left out, under U2's field, connected.
+
+**Decision: no rule.** The spot the package named is not what loses
+OpenFC's pass: U10's pad 5 fails as often away from U2 as under it, and
+moving U10 onto the router's lattice by 0.05 mm or less connects it
+under U2's pins too. A placement rule keeping far-side via pads off
+fine-pitch fields would not have changed the failing rows away from U2
+and would bind the dense two-sided boards (the OpenESCs, whose
+4in1-mini fits only with tight bodies) for a class of 22 to 78 open pads
+concentrated on four boards. Nothing was built into the placer; the
+three measurements of the package (OpenFC's ten seeds, the short tier,
+stage 1) were not run, since no default changed. Tried in passing on
+the router side and removed: escape stubs straight from a pocketed pad
+to nodes beyond its part (U10's pad 5 has none: its corridor turns, a
+straight stub from its anchor cannot follow it; only U12's pads, an
+X2SON-4, took them).
+
+**What it means for the skeleton race.** OpenFC's lost pass is not a
+placement the race makes worse in kind: U10's pad connects or not by
+where its centre line falls against the router's lattice, on the plain
+placement (seed 801) as on the skeleton's. Why the skeleton's rows miss
+it more often (14 of 35 rows over its variants against off's 1 of 10,
+one-sided Fisher p 0.08) is
+not established: the tight levels' 0.1 mm grid against the plain
+placement's poses is a suspect, not measured. The lever is the router's:
+a lattice chooser that counts the corridors of pads with no legal node
+of their own (U10's, at 15 um of play), or escape stubs that follow a
+part's corridor, or the layout's last move putting such a part on the
+board's lattice (a shift under half a pitch, legal at the placement's
+spacing). With that, the race's OpenFC rows are to be measured again
+(ten seeds, both arms, the short tier's budget). CPU: the route checks
+about 2 CPU hours, the census 10 CPU minutes.
 
 ## Footprints without a courtyard, and their slots (2026-11-04)
 

@@ -11,6 +11,35 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-05 (OpenFC's U10: not the spot under U2 but the router's lattice; no via-room rule)
+
+Branch far-side-via-room; no binary change (the router's outer escapes,
+tried as `pcb-maker-via2-a`, removed). Scripts
+`experiments/via-room/census.py` and `shift.py`. docs/placer.md, "A
+far-side pad under fine pitch, and what it was (2026-11-05)", has the
+tables.
+
+- **Diagnosis**: of the 15 OpenFC rows (of 45, rounds 2 and 3) that
+  leave U10's +3.3V pad 5 open, U10 sits under U2's pins on 3 and 0.7 to
+  10.6 mm from U2's field on 8. U10's custom pads have no legal lattice
+  node; pad 5's escapes form a pocket among U10's own pads whose way out
+  is a 0.3 mm corridor the 0.09 mm class passes within about 15 um of its
+  centre, and `tight_channels` does not steer the lattice to it. Route
+  mode reproduces the open pad on five failing placements; U10 moved
+  0.02 to 0.05 mm onto the lattice connects it on four (two under U2's
+  pins; moves along the other axis do not), the fifth lies under two
+  large F.Cu test pads. `pad_exits` never tested the pad (a poured net).
+- **Census** (the night of 2026-11-05, 106 boards): pads that need a via
+  and that the other side's pads leave no via site within reach (0.53 mm
+  on OpenFC) are open on 78 of 539 (14.5 %, against 5.7 % with a site),
+  on four boards (the OpenRX panel 26, the OpenESC 4in1-mini 17 and 4in1
+  10, the PolyKybd molecule panels 24); under a fine-pitch field with no
+  site within twice the reach, 6 of 26.
+- **No rule built**: the named spot does not decide OpenFC; the next
+  lever is the router's lattice for such pads, then OpenFC's ten seeds
+  and the short tier with `skeleton_race` as stage 2 measured it. CPU
+  about 2 hours (route checks).
+
 ## Committed on 2026-11-05 (the race over skeletons, round 3: the level guard, built, measured and removed; skeleton_race stays off)
 
 Branch skeleton-race-3; binaries `build/bin/pcb-maker-skel3-{a,c}` (main's
