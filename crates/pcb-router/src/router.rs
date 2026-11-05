@@ -967,6 +967,69 @@ fn diagonal_extra(radius: f64, pitch: f64) -> Vec<(i32, i32)> {
     offsets
 }
 
+/// Which nodes of a box lie inside any of a net's neck zones, a bit a node:
+/// the search asks `zone_class`'s question at every step near the zones,
+/// and a net with a zone at each of its narrow pads (Glasgow's ground: two
+/// hundred) had each step scan them all (2 % of a dense board's
+/// instructions; the fifth router round, docs/profiling.md). Built for the
+/// searched net at the start of each search, into the thread's scratch.
+#[derive(Default)]
+struct ZoneMask {
+    /// The box's corner and size in nodes.
+    x0: usize,
+    y0: usize,
+    width: usize,
+    /// Row-major over the box.
+    bits: Vec<u64>,
+}
+
+impl ZoneMask {
+    /// The mask of `zones` over their bounding box `(x0, y0, x1, y1)`
+    /// (every zone inside it).
+    fn build(
+        &mut self,
+        zones: &[(usize, usize, usize, usize)],
+        bounds: (usize, usize, usize, usize),
+    ) {
+        let (x0, y0, x1, y1) = bounds;
+        self.x0 = x0;
+        self.y0 = y0;
+        self.width = x1 - x0 + 1;
+        let words = (self.width * (y1 - y0 + 1)).div_ceil(64);
+        self.bits.clear();
+        self.bits.resize(words, 0);
+        for &(zx0, zy0, zx1, zy1) in zones {
+            for y in zy0..=zy1 {
+                let row = (y - y0) * self.width;
+                let (first, last) = (row + zx0 - x0, row + zx1 - x0);
+                let (first_word, last_word) = (first / 64, last / 64);
+                let low = u64::MAX << (first % 64);
+                let high = u64::MAX >> (63 - last % 64);
+                if first_word == last_word {
+                    self.bits[first_word] |= low & high;
+                } else {
+                    self.bits[first_word] |= low;
+                    for word in &mut self.bits[first_word + 1..last_word] {
+                        *word = u64::MAX;
+                    }
+                    self.bits[last_word] |= high;
+                }
+            }
+        }
+    }
+
+    /// Whether the node `(x, y)` of the box lies in a zone.
+    #[inline(always)]
+    fn contains(&self, x: usize, y: usize) -> bool {
+        let bit = (y - self.y0) * self.width + (x - self.x0);
+        self.bits[bit / 64] & (1 << (bit % 64)) != 0
+    }
+
+    fn bytes(&self) -> usize {
+        self.bits.capacity() * 8
+    }
+}
+
 /// `Router::class_at` for a node given by its coordinates: the neck class
 /// inside one of the net's neck zones, else the net's class.
 #[inline]
@@ -1121,6 +1184,9 @@ pub struct Scratch {
     own_active: bool,
     generation: u16,
     corridor: Option<Vec<bool>>,
+    /// The searched net's neck zones as a mask (`ZoneMask`), rebuilt by
+    /// each search of a net with zones.
+    neck_mask: ZoneMask,
     /// The routed bus member's lane (`bundles`; inactive otherwise).
     lane: bundles::Lane,
     expansions: u64,
@@ -1165,6 +1231,7 @@ impl Scratch {
             + self.own_set.capacity() * 8
             + self.own_claimed.capacity() * 4
             + self.corridor.as_ref().map_or(0, Vec::capacity)
+            + self.neck_mask.bytes()
     }
 
     fn fits(&self, states: usize, cells: usize) -> bool {

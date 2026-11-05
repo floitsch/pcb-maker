@@ -188,6 +188,46 @@ fn stamps_ahead_pair_each_stamp_with_the_one_ahead() {
 }
 
 #[test]
+fn the_zone_mask_answers_as_the_zones() {
+    // `ZoneMask` (the search's neck zones as bits over their box) against
+    // `zone_class`'s scan at every node of the box and around it: zones of
+    // one node, of rows crossing words, overlapping, at the box's edges,
+    // and a mask reused for a smaller box.
+    let mut state = 0x243f_6a88_85a3_08d3u64;
+    let mut next = |below: usize| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        (state % below as u64) as usize
+    };
+    let mut mask = ZoneMask::default();
+    for round in 0..40 {
+        let count = 1 + next(if round % 2 == 0 { 4 } else { 60 });
+        let zones: Vec<(usize, usize, usize, usize)> = (0..count)
+            .map(|_| {
+                let (x, y) = (next(300), next(200));
+                let (w, h) = (next(if round % 3 == 0 { 1 } else { 140 }), next(30));
+                (x, y, x + w, y + h)
+            })
+            .collect();
+        let bounds = zones.iter().fold((usize::MAX, usize::MAX, 0, 0), |b, z| {
+            (b.0.min(z.0), b.1.min(z.1), b.2.max(z.2), b.3.max(z.3))
+        });
+        mask.build(&zones, bounds);
+        for y in bounds.1..=bounds.3 {
+            for x in bounds.0..=bounds.2 {
+                let class = if mask.contains(x, y) { 1 } else { 0 };
+                assert_eq!(
+                    class,
+                    zone_class(0, 1, &zones, x, y),
+                    "round {round} at ({x}, {y})"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn a_tiny_budget_has_the_guard_floor_before_its_wall_guard() {
     // Batch_1 in route mode: a budget of 0.2 s used to be cut by the
     // guard at 0.8 s, inside its first pour analysis.

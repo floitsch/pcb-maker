@@ -248,11 +248,23 @@ impl Router {
             .fold((usize::MAX, usize::MAX, 0, 0), |b, z| {
                 (b.0.min(z.0), b.1.min(z.1), b.2.max(z.2), b.3.max(z.3))
             });
+        // The zones as a mask over that box (`ZoneMask`: `zone_class`'s
+        // answer, a bit a node).
+        let mut neck_mask = std::mem::take(&mut scratch.neck_mask);
+        if necks && neck_class.is_some() {
+            neck_mask.build(&net_state.neck_zones, zone_box);
+        }
         let class_xy = |x: usize, y: usize| match neck_class {
             Some(neck)
                 if x >= zone_box.0 && y >= zone_box.1 && x <= zone_box.2 && y <= zone_box.3 =>
             {
-                zone_class(class, neck, &net_state.neck_zones, x, y)
+                let answer = if neck_mask.contains(x, y) {
+                    neck
+                } else {
+                    class
+                };
+                debug_assert_eq!(answer, zone_class(class, neck, &net_state.neck_zones, x, y));
+                answer
             }
             _ => class,
         };
@@ -786,6 +798,7 @@ impl Router {
 
         scratch.heap = heap;
         scratch.lane = lane;
+        scratch.neck_mask = neck_mask;
         if let Some(started) = timed {
             use std::sync::atomic::Ordering::Relaxed;
             self.profile
