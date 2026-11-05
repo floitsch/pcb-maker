@@ -228,6 +228,44 @@ fn the_zone_mask_answers_as_the_zones() {
 }
 
 #[test]
+fn the_reached_element_is_the_target_maps() {
+    // `reached_element` (a scan of the search's targets from the end)
+    // against the map of the targets the search kept until 2026-11-05:
+    // every target inserted in order, a node listed twice keeping the
+    // last element; asked for every target node.
+    let cells = 1000;
+    let mut state = 0x1319_8a2e_0370_7344u64;
+    let mut next = |below: u64| {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        state % below
+    };
+    for round in 0..50 {
+        let count = 1 + next(if round % 2 == 0 { 8 } else { 400 }) as usize;
+        let targets: Vec<(Node, u16)> = (0..count)
+            .map(|_| {
+                let node = Node {
+                    layer: next(3) as u8,
+                    cell: next(if round % 3 == 0 { 20 } else { cells as u64 }) as u32,
+                };
+                (node, next(30) as u16)
+            })
+            .collect();
+        let mut map = StateMap::default();
+        for (node, element) in &targets {
+            map.insert(node.layer as u32 * cells as u32 + node.cell, *element);
+        }
+        for (key, element) in &map {
+            assert_eq!(
+                route_net::reached_element(&targets, *key as usize, cells),
+                *element
+            );
+        }
+    }
+}
+
+#[test]
 fn a_tiny_budget_has_the_guard_floor_before_its_wall_guard() {
     // Batch_1 in route mode: a budget of 0.2 s used to be cut by the
     // guard at 0.8 s, inside its first pour analysis.

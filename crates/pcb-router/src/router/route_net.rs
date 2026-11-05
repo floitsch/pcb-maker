@@ -39,6 +39,18 @@ impl Router {
         found
     }
 
+    /// The element (terminal or component) of the target at `state` that a
+    /// search of `targets` reached: the last entry at that node, as the
+    /// search's map of its targets kept it. Until 2026-11-05 every search
+    /// put each of its targets in a hash map for this one lookup (the
+    /// other components' nodes, thousands a search: 2 % of a dense
+    /// board's instructions; the fifth router round, docs/profiling.md).
+    /// A target the hard search left out (`escape_is_free`) is never
+    /// reached, and the test is the same for every entry of a node.
+    pub(super) fn reached_element(&self, targets: &[(Node, u16)], state: usize) -> u16 {
+        reached_element(targets, state, self.grid.cells())
+    }
+
     /// Debug: with `PCB_ROUTER_DUMP=x0,y0,x1,y1` (mm), prints the lattice
     /// of that region per layer: `#` static block, `x` the nets' own
     /// pads, `.` free, a digit the occupancy, `*` an occupied node of one
@@ -575,7 +587,7 @@ impl Router {
                 .get(&(first as u32))
                 .copied()
                 .unwrap_or(NO_TERMINAL);
-            let reached = scratch.targets[&(last as u32)] as usize;
+            let reached = self.reached_element(&targets, last) as usize;
             for node in &path[1..] {
                 if let std::collections::hash_map::Entry::Vacant(entry) =
                     scratch.tree.entry(self.state(*node) as u32)
@@ -689,7 +701,7 @@ impl Router {
                     .get(&(first as u32))
                     .copied()
                     .unwrap_or(NO_TERMINAL);
-                let reached = scratch.targets[&(last as u32)] as usize;
+                let reached = self.reached_element(&targets, last) as usize;
                 for node in &path[1..] {
                     if let std::collections::hash_map::Entry::Vacant(entry) =
                         scratch.tree.entry(self.state(*node) as u32)
@@ -836,7 +848,7 @@ impl Router {
                 .copied()
                 .unwrap_or(NO_TERMINAL);
             let (reached, end_terminal) = if scratch.nodes[last].is_target(scratch.generation) {
-                let element = scratch.targets[&(last as u32)] as usize;
+                let element = self.reached_element(&targets, last) as usize;
                 (
                     element,
                     if element < terminal_count {
@@ -883,4 +895,14 @@ impl Router {
 /// Whether a bus bundle ablation's variable is set.
 fn bus_ablation(name: &str) -> bool {
     std::env::var_os(name).is_some()
+}
+
+/// `Router::reached_element` on a lattice of `cells` nodes a layer.
+pub(super) fn reached_element(targets: &[(Node, u16)], state: usize, cells: usize) -> u16 {
+    targets
+        .iter()
+        .rev()
+        .find(|(node, _)| node.layer as usize * cells + node.cell as usize == state)
+        .map(|(_, element)| *element)
+        .expect("a search reaches one of its targets")
 }

@@ -89,8 +89,9 @@ impl Router {
             }
             scratch.own_via_near = near;
         }
-        scratch.targets.clear();
-        for (node, element) in targets {
+        // (The element of the target reached is looked up afterwards in
+        // `targets`: `Router::reached_element`.)
+        for (node, _) in targets {
             if hard && !self.escape_is_free(scratch, net_state, net, *node) {
                 continue;
             }
@@ -103,7 +104,6 @@ impl Router {
             target.cost = f32::INFINITY;
             target.slot = SLOT_UNQUEUED;
             target.since_via = TARGET_MARK;
-            scratch.targets.insert(state as u32, *element);
         }
 
         // Without a short list of target points, guide the search with an

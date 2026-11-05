@@ -1160,11 +1160,6 @@ const _: () = assert!(std::mem::size_of::<SearchNode>() == 12);
 #[derive(Default)]
 pub struct Scratch {
     nodes: Vec<SearchNode>,
-    /// The current search's targets, with the element (terminal or
-    /// component) each belongs to. A map, not an array per state: a
-    /// thread's scratch is the biggest part of a large board's footprint,
-    /// and targets and trees are a few thousand nodes of millions.
-    targets: StateMap,
     /// The routed net's tree, which lives across the searches of one net:
     /// its nodes, with the terminal of each (`NO_TERMINAL` for a track).
     tree: StateMap,
@@ -1260,7 +1255,6 @@ impl Scratch {
         let counters = std::mem::replace(self, arrays);
         let Scratch {
             nodes,
-            targets,
             tree,
             own_via_near,
             heap,
@@ -1275,7 +1269,6 @@ impl Scratch {
         } = std::mem::take(self);
         *self = Scratch {
             nodes,
-            targets,
             tree,
             own_via_near,
             heap,
