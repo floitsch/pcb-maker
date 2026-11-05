@@ -11,6 +11,29 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-11-05 (nightly: layout sweep v32, matched designer tier)
+
+Written by the nightly from `build/nightly/2026-11-05/` (main 93162bd;
+[benchmarks.md](benchmarks.md#layout-sweep-v32-2026-11-05)). The guard
+held: every stage ran, no row was cut or killed, the sweep has at least
+100 rows with a result.
+
+- **Layout sweep v32**: **61 of 109 pass the strict rule** (61 per
+  type), 2165 unconnected in all, strict errors 36, 3 without a result.
+  Against the nightly of 2026-11-04: better 12, same 82, worse 12,
+  strict passes 61 -> 61 (gained jetson-nano-baseboard; lost Explorer).
+- **Medians against the designer's**: vias x0.71, length x1.05, open
+  0.000 (mean 0.084), bends x1.10, stair-steps +49, crossings +1.
+- **Matched designer tier** (budget scale 0.673): 68 strict passes (71
+  per type); over the 100 target boards placement 76 %, routing 24 % of
+  the open connections.
+- **Placement costs most** on video (+209: 210 / 1), Batch_1 (+109: 112
+  / 3), OpenESC-30x30 4in1 (+104: 119 / 15), protoesp (+80: 81 / 1),
+  glasgow revC3 (+72: 87 / 15).
+- **Worse beyond noise**: katia 40 -> 62, poly_kb_molecule_4x5 272 ->
+  294, PCB-Modular-Multi-Protocol-Hub Hub 18 -> 26, link 2 -> 8,
+  RP2040_base 35 -> 39, Explorer 0 -> 1, ghoul 0 -> 1.
+
 ## Committed on 2026-11-05 (giving up on a pair's link; diff_pair_give_up stays off, the pairs' check removed)
 
 Branch pair-links-give-up (`build/bin/pcb-maker-pairs4-f`, `-g`, `-h`;
