@@ -286,22 +286,26 @@ pub struct KiCadBoardPlacerConfig {
     #[serde(default)]
     pub bus_groups: Option<KiCadBusGroups>,
     /// A race over skeletons (off by default; `{}` for the defaults;
-    /// docs/placer.md, "A race over skeletons (2026-11-04)"): each seed
-    /// places the skeleton first, every part but the free passives (two-pad
-    /// resistors, capacitors, inductors, ferrites and fuses by reference or
+    /// docs/placer.md, "A race over skeletons (2026-11-04)" and "The fixes,
+    /// and stage 1 again (2026-11-05)"): each seed places the skeleton
+    /// first, every part but the free passives (two-pad resistors,
+    /// capacitors, inductors, ferrites and fuses by reference or
     /// footprint, and resistor or capacitor arrays; `skeleton_passive`),
     /// the passives absent and each skeleton part's body grown by the area
     /// of the passives it owns (`room` times their tight bodies, else
-    /// their bodies, with the least spacing), the two nets of a two-pin passive one net where both have
-    /// at most `join_pins` pins and no pour carries either; then holds the
-    /// skeleton and places the passives around it, from the skeleton's
-    /// relaxation level on. The skeleton takes at most `work_share` of the
-    /// seed's work, the passives the rest; where the skeleton or the
-    /// passives leave parts without a legal place the seed is placed whole
-    /// with the work left. The race
-    /// ranks the seeds' placements as it ranks any. Not on panels of
-    /// copies or sub-boards. Defaults: `room` 1, `work_share` 0.5,
-    /// `join_pins` 8.
+    /// their bodies, with the least spacing), the two nets of a two-pin
+    /// passive one net where both have at most `join_pins` pins and no
+    /// pour carries either, from the first level at which the whole board
+    /// fits by area; then holds the skeleton and places the passives
+    /// around it, from the skeleton's relaxation level on. The skeleton
+    /// takes at most `work_share` of the seed's work, the passives the
+    /// rest; where the skeleton or the passives leave parts without a
+    /// legal place the seed is placed plain with its full work, charged on
+    /// top. Its global placements stop where their overflow stalls and
+    /// never turn a part longer than the board. `plain_share` of the seeds
+    /// place plain (0: none). The race ranks the seeds' placements as it
+    /// ranks any. Not on panels of copies or sub-boards. Defaults: `room`
+    /// 1, `work_share` 0.5, `join_pins` 8, `plain_share` 0.
     #[serde(default)]
     pub skeleton_race: Option<KiCadSkeletonRace>,
     /// Differential pairs' series parts as rows of two (off unless set;

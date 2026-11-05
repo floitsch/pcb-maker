@@ -44,6 +44,8 @@ pub struct GlobalConfig {
     /// left the wires no say (docs/placer.md, "A race over skeletons").
     /// On under the race over skeletons (`skeleton::place_skeleton`).
     pub stall_iterations: usize,
+    /// The factor on the least overflow so far that a new overflow must
+    /// fall below to count as progress (`stall_iterations`).
     pub stall_factor: f64,
     /// Rotations never turn a body to an angle at which it is longer than
     /// the board on either axis while another angle fits (off by default;

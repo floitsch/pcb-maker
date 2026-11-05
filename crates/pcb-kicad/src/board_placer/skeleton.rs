@@ -21,6 +21,18 @@ pub struct KiCadSkeletonRace {
     /// A two-pin passive joins its two nets in the skeleton where both have
     /// at most this many pins and no pour carries either (0: none).
     pub join_pins: usize,
+    /// Share of the race's seeds placed plain (the whole board at once, as
+    /// with the switch off), the others by skeleton: the race then ranks
+    /// both kinds (`plain_seed`). 0: every seed by skeleton.
+    pub plain_share: f64,
+}
+
+/// Whether seed `offset` of a race over skeletons places plain: the seeds
+/// spread `share` of the race evenly, the first by skeleton (offsets 1, 3,
+/// 5, ... at 0.5).
+pub(crate) fn plain_seed(offset: u64, share: f64) -> bool {
+    let share = share.clamp(0.0, 1.0);
+    ((offset + 1) as f64 * share).floor() > (offset as f64 * share).floor()
 }
 
 impl Default for KiCadSkeletonRace {
@@ -30,6 +42,7 @@ impl Default for KiCadSkeletonRace {
             room: settings.room,
             work_share: settings.work_share,
             join_pins: settings.join_pins,
+            plain_share: 0.0,
         }
     }
 }
@@ -183,6 +196,11 @@ pub struct KiCadSkeletonRaceReport {
     pub seeds_passive_work_seconds: f64,
     pub seeds_fallback_work_seconds: f64,
     pub seeds_fallback: usize,
+    /// Of the kept seeds, those placed plain (`plain_share`), and whether
+    /// the kept placement is one (then the fields above describing the
+    /// kept placement's skeleton are zero).
+    pub seeds_plain: usize,
+    pub kept_plain: bool,
 }
 
 impl KiCadSkeletonRaceReport {
@@ -215,6 +233,8 @@ impl KiCadSkeletonRaceReport {
             seeds_passive_work_seconds: seconds(reports.iter().map(|r| r.passive_work).sum()),
             seeds_fallback_work_seconds: seconds(reports.iter().map(|r| r.fallback_work).sum()),
             seeds_fallback: reports.iter().filter(|r| r.fallback).count(),
+            seeds_plain: seeds.iter().filter(|seed| seed.skeleton.is_none()).count(),
+            kept_plain: kept.skeleton.is_none(),
         }
     }
 }
@@ -222,6 +242,15 @@ impl KiCadSkeletonRaceReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn plain_seeds_spread_their_share_over_the_race() {
+        let plain = |share: f64| -> Vec<bool> { (0..6).map(|k| plain_seed(k, share)).collect() };
+        assert_eq!(plain(0.0), [false; 6]);
+        assert_eq!(plain(0.5), [false, true, false, true, false, true]);
+        assert_eq!(plain(1.0), [true; 6]);
+        assert_eq!(plain(1.0 / 3.0), [false, false, true, false, false, true]);
+    }
 
     #[test]
     fn two_pad_passives_by_reference_or_footprint() {

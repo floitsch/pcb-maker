@@ -503,6 +503,7 @@ pub fn place_kicad_board(
             (
                 race.settings(),
                 passive_mask(&pcb, lowered.problem.components.len()),
+                race.plain_share,
             )
         });
     let place_seeds = |problem: &core::Problem| -> Vec<(u64, core::Placement)> {
@@ -526,14 +527,20 @@ pub fn place_kicad_board(
                     (Some(copies), _) => self::panel::place_copies(problem, copies, &seeded),
                     (None, Some(sub)) => crate::sub_boards::place_sub_boards(problem, sub, &seeded),
                     (None, None) => match &skeleton_race {
-                        Some((settings, passive)) => core::skeleton::place_skeleton(
-                            problem,
-                            &seeded,
-                            passive,
-                            &lowered.poured,
-                            settings,
-                        ),
-                        None => core::place(problem, &seeded),
+                        Some((settings, passive, share))
+                            if !skeleton::plain_seed(offset, *share) =>
+                        {
+                            core::skeleton::place_skeleton(
+                                problem,
+                                &seeded,
+                                passive,
+                                &lowered.poured,
+                                settings,
+                            )
+                        }
+                        // The plain seeds of a mixed race (`plain_share`)
+                        // place as with the switch off.
+                        _ => core::place(problem, &seeded),
                     },
                 }
             },
@@ -616,7 +623,7 @@ pub fn place_kicad_board(
         .unwrap_or(0) as f64
         / core::work_per_second();
     let seeds_placed = placements.len();
-    let skeleton_race_report = skeleton_race.as_ref().map(|(_, passive)| {
+    let skeleton_race_report = skeleton_race.as_ref().map(|(_, passive, _)| {
         KiCadSkeletonRaceReport::of(
             passive,
             &placements[0],
