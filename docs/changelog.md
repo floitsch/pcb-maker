@@ -46,6 +46,48 @@ the tables.
   of 4), Glasgow and the 4in1, and the short tier (12 of 12 placed and
   result boards, every fingerprint line).
 
+## Committed on 2026-11-05 (a pair's stubs in the plan: crossovers on where the link carries the stubs, room for a crossing)
+
+Branch pair-stub-connections (`build/bin/pcb-maker-pairs6-i`; outputs in
+build/pairs6/). The diagnosis (docs/router.md, "A pair's stubs in the
+plan"; `PCB_ROUTER_PAIRS_WHY=1`'s new `pairs why: open` lines) on pairs5's
+six runs with x1913 (its boards byte for byte): 147 stubs of open nets;
+none left untried as joined (a router's stub's pad is always a terminal
+of its own), 78 at crossed ends, 54 of them walled in by the plan's copper
+(45 with no path even through other nets' copper: the crossed end launched
+0.65 mm from the pads, no room for the crossing's via), the straight ones
+blocked by other nets' routes (25), the plan (15), the partner (11), the
+link's own route (6), room only after the attempt (8). A new diagnostic,
+`PCB_ROUTER_PAIRS_REACH=1`, routes every router's stub on the planned
+board alone (x1913: 6 of jetson's 78, 20 of left_io's 92, 11 of right_io's
+34 unreachable). Built (diff_pairs.rs, the plan): the crossover in a
+crossed end's lead on by default (`CROSSOVERS_BY_DEFAULT`, the switch
+`PCB_ROUTER_DIFF_PAIRS_CROSSOVER` gone), only where the link carries the
+stubs to it (a crossover with the router's stubs walled in the ch32v003
+board's D+ pad); a crossed end without one keeps room for the router's
+crossing via between the pads and the run's start (`Lead::Crossing`,
+`CROSSING_ROOM`: a via, its clearances and a track). Measured, x1913 ->
+this (pairs coupled / partly, links, unconnected): the designer's
+placements jetson 19 / 2 -> 25 / 2, 21 -> 27, 15 -> 10; right_io 4 / 2
+-> 4 / 3, 6 -> 7, 35 -> 36; left_io 4 / 0 -> 7 / 0, 5 -> 8, 92 -> 78; the
+layouts jetson seed 1 9 / 1 -> 11 / 4, 10 -> 15, 23 -> 23; left_io seed 1
+7 / 4 -> 8 / 3, 11 -> 12, 30 -> 37; seed 101 8 / 4 -> 12 / 5, 13 -> 17,
+32 -> 38; right_io seeds 1, 101 and 7 1 / 3 -> 0 / 3, 3 / 3 -> 2 / 3,
+1 / 2 -> 2 / 2, links 4 -> 3, 7 -> 6, 3 -> 5, unconnected 23 -> 25, 12 ->
+12, 21 -> 12; the expansion tier's 25 pair boards at 30 s: links 26 -> 28,
+pairs 11 -> 15, unconnected 670 -> 591, passes 10 -> 10 (ausign won,
+brickpico lost). Open stubs on the six runs 147 -> 101, crossed 78 -> 17.
+In, no switch: right_io's layouts are judged seed noise (three seeds, 14
+-> 14 links), left_io's layouts' +7 and +6 unconnected within its seed
+range; said so in router.md. Built, measured, left out: the pairs' nets
+after the links in the hard repair (no effect: the designer placements
+byte for byte or one link's reasons apart) and launches whose router's
+stubs reach their ends straight (`approach_clear`: the tier's links 30 ->
+26, the drone carrier 4 -> 63 unconnected). Identity: video's and
+MegaDrive's place checks (router defaults and `diff_pairs` on) and
+EMG_DAQ's route (fingerprints) byte for byte x1913's. Tests
+`a_crossover_is_planned_only_where_the_link_carries_its_stubs`,
+`a_crossed_end_without_a_crossover_leaves_room_for_the_crossing`.
 ## Committed on 2026-11-05 (a pair's stubs and its copper: the stubs routed after the attempt, the copper's alternatives)
 
 Branch pair-stubs (`build/bin/pcb-maker-pairs5-m`; outputs in

@@ -3324,7 +3324,10 @@ order there against the run's: the positive pad on the side the run
 gives the negative net) the stubs must cross, which only the router
 can (with a via): that end's stubs stay the router's, its launch the
 closest; the second end, unless only the second end's stubs are
-straight.
+straight. Since 2026-11-05 such an end gets a crossover in its lead where
+the link carries the stubs to it, and otherwise the closest start that
+leaves the router's crossing via room beyond the pads ("A pair's stubs in
+the plan" below).
 
 **The links in the negotiation** (`plan_pairs`, after each lowering of
 a rung's board). Each link is a net of the route: its track the pair's
@@ -3867,6 +3870,209 @@ right_io's HUB_DS4) and at turns sharper than 90 degrees next to a via.
 A pair point with a ground pin between P and N (HDMI) and an ESD part
 without a second pair point are the "side" reason, untouched here.
 
+**A pair's stubs in the plan (2026-11-05, branch pair-stub-connections).**
+The stubs that do not reach their run are mostly nets the attempt left
+open ("Stubs and copper": 162 of 220 with x1912's writer). *The
+diagnosis* (`PCB_ROUTER_PAIRS_WHY=1`, its `pairs why: open` lines, x1913
+with the lines alone, its boards byte for byte x1913's, build/pairs6/Ddiag-*
+and Ldiag-*; the same six runs as "Stubs and copper": route mode on the
+designer's placements of jetson, right_io and left_io at 1500 s of work and
+one layout each at seed 1, every attempt's write counted). The connection
+model first: a stub the link does not carry is a connection the negotiation
+must close. Its pad stays a terminal of the pair's net (only the pads whose
+stubs the link carries are merged into the run's terminal, and those never
+lack a stub), the run's two ends one terminal, so the router routes the pad
+to the run as it routes any terminal; no stub is left untried because its
+pad counts as joined. Per open stub the line tells (a) the end's kind
+(crossed: the pads' order against the stubs' ends', the stubs must cross
+there with a via; straight), (b) what the hard repair recorded for the net
+(`Diagnostics::repair`: joined in the negotiation through others' copper,
+incomplete, no path even through others' copper, skipped by the work
+deadline, not taken up), and (c) what keeps the pad from its stub's end in
+the attempt's state: the pad routed to the end alone on the planned board
+with every route of the attempt, in a window of 3 mm round the two, then
+again with the other nets' routes, the link's own route, the partner's
+routes and the plan's copper (the leads, the stubs' ends, the carried
+stubs, other links') taken away in turn, the first that frees it named:
+
+| what keeps the pad from its end | end | joined in the negotiation | incomplete | no path | skipped | not taken up | all |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| the plan's copper (or nothing frees it) | crossed | 4 | 2 | 45 | 0 | 3 | 54 |
+| the plan's copper | straight | 11 | 4 | 0 | 0 | 0 | 15 |
+| the other nets' routes | crossed | 11 | 0 | 0 | 2 | 0 | 13 |
+| the other nets' routes | straight | 24 | 0 | 0 | 1 | 0 | 25 |
+| the partner's routes | crossed | 5 | 0 | 0 | 0 | 0 | 5 |
+| the partner's routes | straight | 6 | 4 | 0 | 1 | 0 | 11 |
+| the link's own route | crossed | 4 | 0 | 0 | 0 | 1 | 5 |
+| the link's own route | straight | 4 | 0 | 0 | 0 | 2 | 6 |
+| nothing: room after the attempt | straight | 3 | 0 | 0 | 2 | 3 | 8 |
+| the pad merged into another terminal of its net | both | 0 | 4 | 1 | 0 | 0 | 5 |
+| all | | 72 | 14 | 46 | 6 | 9 | 147 |
+
+(147 open stubs in the six runs: jetson's designer placement 14, right_io's 2,
+left_io's 54; the layouts 10, 9 and 58.) Two findings. *Crossed ends walled
+in by the plan* (54, 45 of them with no path even through other nets'
+copper; nearly all in left_io's layout, its USB-C receptacles J22 and J23
+and the hub's TX pairs): the crossed end's launch is the closest clear one
+(0.65 mm from the pads on J22_TX1), its stubs' ends an end offset apart and
+the lead in front, so the via the crossing needs has no room between the
+pads and the ends. *Straight ends* are open mostly where other nets'
+routes, the partner's or the link's own route took the way in the
+negotiation and the hard repair found none (25 + 11 + 6 + 8), and where the
+plan's copper walls them in (15): the planned board alone (the reach check
+below) shows those ends reachable from their pads only past the run's lead
+or round other links' copper, typically a stub of 1 to 4 mm past a QFN's
+neighbouring pins and its decoupling capacitors (left_io's U1700, U2000).
+
+*The plan's own check* (`PCB_ROUTER_PAIRS_REACH=1`, a diagnostic: per
+plan, per stub the router is to route, the pad routed to its stub's end on
+the planned board alone, before any route; where it does not reach, the
+first of the link's lead, the partner's plan copper, the other links' plan
+copper and the board's other pads whose removal frees it, with what lies
+near the straight stub). On the designer's placements of x1913's plan:
+jetson 6 of its 78 router's stubs do not reach, left_io 20 of 92,
+right_io 11 of 34 (crossed ends 2, 9 and 1 of them); the straight ones
+mostly past the run's lead (a stub of 1 to 4 mm whose straight line passes
+other nets' pads), and right_io's ETH_MDI pairs where the launch turned by a
+right angle and one pad lies behind the other along the run. With the
+fix below: jetson 6 of 42, left_io 14 of 82 (crossed 1), right_io 11 of
+36 (crossed 1).
+
+*The fix* (the plan; the negotiation's connections, the search, its data
+and its hot loop as they were):
+
+- **The crossover, on, where the link carries the stubs to it**
+  (`crossovers()`, `CROSSOVERS_BY_DEFAULT` true; the setting
+  `PCB_ROUTER_DIFF_PAIRS_CROSSOVER` gone). A crossed end's crossover
+  ("Polarity", "The safe crossover") is planned only where straight stubs
+  from the pads to its stubs' ends keep every clearance (`Launch::fixed`):
+  a crossover whose stubs the router routes walls the pads in (on the
+  expansion tier the ch32v003 board's D+ pad had no legal node beside the
+  crossover's copper, its net open, its link lost). On the designer's
+  placements (the first plan) 23 of jetson's 25 crossed links get one, 7
+  of left_io's 14, 3 of right_io's 5.
+- **Room for the crossing** (`Lead::Crossing`, `CROSSING_ROOM`). A crossed
+  end without a crossover keeps its stubs the router's and its launch the
+  closest whose start lies at least a via, its clearance on both sides and
+  a track (`via + 2 c + w`, 1.2 mm at 0.2/0.2/0.6) beyond the pads' stubs'
+  starts along the run: the router's stubs cross there with a via, which
+  had no room at 0.65 mm (left_io's J22).
+
+Built and measured, left out: **the pairs' nets after the links in the
+hard repair** (`repair_ranks`: the nets the repair takes up, links first
+as before, then the nets with a stub's end, "pair run", then the rest;
+before, the pairs' nets came in the routing order among the others, and
+on jetson's designer placement the repair's work deadline skipped six
+open stubs' nets). With it the designer placements of jetson and left_io
+routed byte for byte as without it, or one link's reasons apart (left_io:
+81 against 78 unconnected), and the expansion tier as without it but
+MSign (74 against 73): no evidence it helps, so out. And **ends a route
+reaches** (a launch whose
+router's stubs have the last two tracks and clearances of their straight
+line clear, `approach_clear`, preferred over a closer one without). On
+the plan's own check it cut jetson's unreachable stubs from 6 to 2, but on
+the expansion tier (route mode, 30 s, with the crossovers) it moved
+launches further out: links coupled 30 -> 26, the drone carrier 4 -> 63
+unconnected (another rung kept), the ch32v003 board's launches too close
+for a run (its link lost); out by the rule.
+
+*Measured* (the router's `{"diff_pairs": true}`, run.py at the pinned
+reference rates, `--jobs 1 --threads 4`, at most two at a time beside the
+skeleton race; outputs in build/pairs6/: x1913's rows are pairs5's
+pcb-maker-pairs5-m (its boards byte for byte x1913's: the diagnosis
+reruns, build/pairs6/Ddiag-* and Ldiag-*, wrote the same boards), right_io
+at seeds 101 and 7 run for this with x1913; "pairs6" is
+`pcb-maker-pairs6-i`, the code as committed). Pairs: found / coupled /
+partly / fallen back; links coupled of planned; links falling back for
+"a pad's stub does not reach the run" (stub) and for their copper
+(copper); stubs routed after the attempt; coupled links through a
+crossover; KiCad unconnected; `diff_pair_gap_out_of_range`; CPU seconds
+(the load differed between the rows, x1913's from the morning's pairs5):
+
+| board, placement | run | pairs | links | stub | copper | stubs routed | crossovers | unconnected | gap | CPU s |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| jetson, the designer's | x1913 | 75 / 19 / 2 / 54 | 21/82 | 0 | 19 | 1 | 0 | 15 | 0 | 1216.8 |
+|  | pairs6 | 75 / 25 / 2 / 48 | 27/82 | 0 | 13 | 3 | 9 | 10 | 0 | 1802.5 |
+| right_io, the designer's | x1913 | 21 / 4 / 2 / 15 | 6/23 | 1 | 2 | 0 | 0 | 35 | 49 | 1926.4 |
+|  | pairs6 | 21 / 4 / 3 / 14 | 7/23 | 2 | 1 | 3 | 2 | 36 | 50 | 1623.9 |
+| left_io, the designer's | x1913 | 39 / 4 / 0 / 35 | 5/41 | 9 | 3 | 2 | 0 | 92 | 38 | 1827.0 |
+|  | pairs6 | 39 / 7 / 0 / 32 | 8/41 | 9 | 1 | 3 | 3 | 78 | 51 | 1644.3 |
+| jetson, seed 1 | x1913 | 75 / 9 / 1 / 65 | 10/43 | 1 | 9 | 0 | 0 | 23 | 0 | 1373.0 |
+|  | pairs6 | 75 / 11 / 4 / 60 | 15/53 | 1 | 13 | 0 | 5 | 23 | 0 | 1350.1 |
+| right_io, seed 1 | x1913 | 21 / 1 / 3 / 17 | 4/12 | 2 | 1 | 1 | 0 | 23 | 61 | 1443.0 |
+|  | pairs6 | 21 / 0 / 3 / 18 | 3/12 | 0 | 3 | 0 | 0 | 25 | 55 | 1512.7 |
+| left_io, seed 1 | x1913 | 39 / 7 / 4 / 28 | 11/32 | 10 | 6 | 2 | 0 | 30 | 119 | 1504.5 |
+|  | pairs6 | 39 / 8 / 3 / 28 | 12/30 | 2 | 7 | 3 | 5 | 37 | 122 | 1570.3 |
+| left_io, seed 101 | x1913 | 39 / 8 / 4 / 27 | 13/34 | 9 | 4 | 4 | 0 | 32 | 133 | 2774.0 |
+|  | pairs6 | 39 / 12 / 5 / 22 | 17/34 | 5 | 1 | 3 | 9 | 38 | 87 | 1469.6 |
+| right_io, seed 101 | x1913 | 21 / 3 / 3 / 15 | 7/12 | 1 | 3 | 4 | 0 | 12 | 47 | 1674.1 |
+|  | pairs6 | 21 / 2 / 3 / 16 | 6/12 | 1 | 1 | 2 | 1 | 12 | 79 | 1617.7 |
+| right_io, seed 7 | x1913 | 21 / 1 / 2 / 18 | 3/12 | 1 | 3 | 0 | 0 | 21 | 67 | 1527.0 |
+|  | pairs6 | 21 / 2 / 2 / 17 | 5/12 | 1 | 2 | 1 | 1 | 12 | 62 | 1116.4 |
+
+The open stubs of the six runs the diagnosis used (the pairs' `pairs why:
+open` lines): 147 -> 101 (jetson's designer placement 14 -> 19, right_io's
+2 -> 14, left_io's 54 -> 37, the seed-1 layouts 10 -> 5, 9 -> 9, 58 ->
+17); crossed ends 78 -> 17, with no path in the negotiation 46 -> 1; the
+straight ones 69 -> 84 (more links routed, more stubs to reach). *Route
+mode on the expansion tier's 25 pair boards* at 30 s (`--jobs 2 --threads
+1`; x1913 is pairs5's XP-pairs5-m): links coupled 26 -> 28, pairs coupled
+11 -> 15, partly 12 -> 11, unconnected 670 -> 591 (Wonkle 419 -> 355,
+MSign 83 -> 73, the drone carrier 10 -> 5), passes 10 -> 10 (ausign 1 ->
+0 unconnected, its pass won; brickpico 0 -> 1, its pass lost, 9 -> 8
+links: its crossed links are not routed either way, the crossovers' copper
+moved its attempt), crossovers 0 -> 5, CPU 955 -> 744 s side by side on
+different loads. *Identity*: without pairs nothing changes: video's and
+MegaDrive's place checks with the default router settings and with
+`diff_pairs` on, and route mode on EMG_DAQ_ADS1292 with its six
+fingerprints, byte for byte x1913's (build/pairs6/ident/).
+
+*The pieces apart* (the same runs): the crossovers alone (the
+crossing room off) on the designer's placements: jetson 20 / 3 coupled /
+partly, 23 links, 12 unconnected; left_io 1 / 1, 2 links, 109
+unconnected (x1913 5 links, 92), so the crossing room carries left_io;
+on the expansion tier the crossovers alone gave 30 links and 16 pairs and
+the crossing room took the drone carrier's links 7 -> 4 (another attempt
+kept) and gave MSign one (28 and 15 together). The hard repair's order on
+top of both changed nothing (above).
+
+*The decision.* Fixes to the pair model, no switch: on. Coupled links rise
+on every board but right_io's layouts, and coupled pairs with them:
+jetson's designer placement 21 -> 27 links (19 / 2 -> 25 / 2 pairs, 15 ->
+10 unconnected), left_io's 5 -> 8 (4 -> 7 pairs, 92 -> 78), right_io's
+6 -> 7 (4 / 2 -> 4 / 3, 35 -> 36); the seed-1 layouts of jetson 10 -> 15
+(9 / 1 -> 11 / 4, 23 -> 23) and left_io 11 -> 12 (7 / 4 -> 8 / 3, 30 ->
+37), left_io's seed 101 13 -> 17 (8 / 4 -> 12 / 5, 32 -> 38); the tier
+26 -> 28 links, 11 -> 15 pairs, 670 -> 591 unconnected. Right_io's layouts
+went 4 -> 3 and 7 -> 6 links at seeds 1 and 101 (one pair fewer each), so
+a third seed was run: at seed 7 3 -> 5 links (1 / 2 -> 2 / 2, 21 -> 12
+unconnected); over the three seeds 14 -> 14 links, the pairs lost and won
+on links no crossover or crossing room touched (seed 1: none of its links
+crossed in either run, the layouts apart from the first route on: 50
+against 62 open), so seed noise. Unconnected: left_io's layouts +7 and
++6 (at seed 1 the pairs' nets 23 -> 21, the rest GND and power pieces; at
+seed 101 the pairs' nets 16 -> 26 with 4 more pairs coupled), within what
+one placement moves from seed to seed and build to build (left_io at seed
+1: 37 with x1907, 26 with x1912, 22 to 48 across pairs4's variants); the
+rest fall or hold. The rule's letter ("every measured board") fails on
+right_io's seeds 1 and 101; it is judged as noise on the three seeds, and
+said so here. The two pieces left out are out by the rule (the approach)
+or for want of evidence (the order).
+
+*What is left.* The open stubs now are straight ends (84 of 101): other
+nets' routes (23), the plan's copper (20: the run's lead in front of an
+end whose straight stub passes other pads, a launch turned by a right
+angle with one pad behind the other, right_io's ETH_MDI pairs), the
+partner's routes (18) and room left after the attempt (13); ends a route
+reaches need a launch check that does not move launches out (the approach
+did, and cost links), or a stub reserved in the negotiation. Crossed ends
+without a crossover (left_io 7 of 14 crossed links) route their crossing
+with a via in the room now kept; a crossover where the router routes the
+stubs walls the pads in (the pads' entries would have to be kept clear).
+Right_io's and left_io's gap findings (diff_pair_gap_out_of_range) move
+with the copper written (left_io's seed 101 133 -> 87, right_io's seed
+101 47 -> 79).
+
 **The verdict.** `diff_pairs` in `board-router.json` and the verdict:
 `on`, `default` (`rules`: the project's rules ask; `off`: nothing asks;
 `explicit`: the setting or `PCB_ROUTER_DIFF_PAIRS`), `reason` (the rule
@@ -3987,7 +4193,7 @@ expansion tier's 46 boards (no board's rules ask) are identical to x1798,
 rows and routed boards byte for byte. Tables: docs/changelog.md,
 "Committed on 2026-10-24 (differential pairs: the coupled share)".
 
-**Polarity (2026-10-25; off by default; made safe 2026-10-27, still off: "The safe crossover" below).** A link is *crossed* where the
+**Polarity (2026-10-25; off by default; made safe 2026-10-27, still off: "The safe crossover" below; on since 2026-11-05 where the link carries the stubs to the crossover: "A pair's stubs in the plan" above).** A link is *crossed* where the
 pads' order at one end is against the run's (the positive pad on the side
 the run gives the negative net). Two remedies exist. *A swap at the part*
 (P and N exchanged on the part's pins where the schematic allows it) needs
@@ -4405,7 +4611,9 @@ narrowed the pairs' nets below their `inDiffPair()` width rule (70 of
 their tracks at 0.15 mm, track_width 19 -> 89): the narrow-signal step
 does not know the pairs' width rule, crossovers or not.
 
-**Not the default.** Coupled links rise at both budgets, and at 300 s
+**Not the default** (until 2026-11-05: the crossover is on since, only
+where the link carries the stubs to it, "A pair's stubs in the plan"
+above; the switch `PCB_ROUTER_DIFF_PAIRS_CROSSOVER` is gone). Coupled links rise at both budgets, and at 300 s
 errors, unconnected and gap findings fall too, but at 30 s errors (+41,
 right_io +57) and gap findings (+2, left_io +7) rise in total: the switch
 stays (`PCB_ROUTER_DIFF_PAIRS_CROSSOVER=1`, `CROSSOVERS_BY_DEFAULT`),
