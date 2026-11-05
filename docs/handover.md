@@ -266,10 +266,10 @@ ladder's judge), 5, then the rest.
    BETTER (on), the race's ripped count BETTER at nine pairs (on); judged
    before it and not taken: bus-group moves (the objective falls, routing
    does not), `legality: "kicad"`, `decoupling_near`; built and off
-   earlier: `routing_room`, `shared_halos`,
+   earlier: `shared_halos`,
    `anneal_far_side_gaps`; removed on 2026-10-16: `replicate_channels`,
    `supply_via_room`, `bus_rows`; removed on 2026-11-04 (below,
-   "Removed experiments (2026-11-04)"): `routing_demand`. The legaliser is not the lever (4 %);
+   "Removed experiments (2026-11-04)"): `routing_demand`, `routing_room`. The legaliser is not the lever (4 %);
    removing halos loses routing; more seeds do not close it (the
    designer's placement routes the OpenESC 4in1 to 15 open where ours
    leaves 88). Untested: exit blockage (the fan-out assignment) as a placement
@@ -852,6 +852,18 @@ details are:
   (docs/todo.md, "Crowded boards"), and it did not move the dense boards
   (docs/benchmarks.md, the placement gap). The global placement's
   `routing_layers` and `track_pitch`, read only by it, go too.
+- `routing_room` (placer, with `routing_room_share`, `_floor`, `_most`,
+  `_all_parts`; off): after a seed's placement each part's halo rescaled
+  by the RUDY demand around it within the same halo area, then annealed
+  again. Measured 2026-10-14: it never fired on video, the OpenESC 4in1
+  and hackrf; on the five boards where it fired, passes over 15 runs off
+  11, share 1.0 9, all parts 11, share 0.75 9, share 0.5 9; the quick
+  tier 22 to 24 passes, unconnected 22 both, vias -3.7 %: within the
+  seed noise. docs/placer.md, "Routing room from congestion (measured
+  2026-10-14, off)"; changelog 2026-10-14, "the routing-room agent";
+  scripts experiments/routing-room/. The race's `routing_room_failed`
+  rank goes with it; the per-part halos (`Relaxation::halos`) stay, the
+  skeleton race sets them.
 
 ## Gotchas
 

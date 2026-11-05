@@ -261,6 +261,11 @@ OpenESC boards, both SNSPs and zpn (the kept seed, x652's placer):
 
 ## Routing room from congestion (measured 2026-10-14, off)
 
+**Removed on 2026-11-04** (`routing_room` with `routing_room_share`,
+`_floor`, `_most`, `_all_parts`; `crates/pcb-placer/src/room.rs`;
+`Relaxation::halos` stays for the skeleton race; docs/handover.md,
+"Removed experiments (2026-11-04)"). The measurements are kept as they were.
+
 `routing_room` (placer option, off): after a seed is placed with the
 pin-count halos, each movable part's halo becomes its pin-count halo
 times `factor * demand / median demand` (RUDY around the part's body

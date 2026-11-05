@@ -3316,7 +3316,6 @@ pub(crate) fn place_sub_boards(
     let mut relaxation: Option<pcb_placer::Relaxation> = None;
     let mut unplaced: Vec<usize> = Vec::new();
     let mut overfull = false;
-    let mut routing_room_failed = false;
     let mut frames = Vec::new();
     let mut global_iterations = 0;
     let mut global_overflow: f64 = 0.0;
@@ -3347,7 +3346,6 @@ pub(crate) fn place_sub_boards(
         }
         unplaced.extend(placed.unplaced.iter().copied());
         overfull |= placed.overfull;
-        routing_room_failed |= placed.routing_room_failed;
         global_iterations += placed.global_iterations;
         global_overflow = global_overflow.max(placed.global_overflow);
         frames.extend(placed.frames.iter().cloned());
@@ -3410,7 +3408,6 @@ pub(crate) fn place_sub_boards(
         relaxation,
         work: pcb_placer::work() - started,
         stage_poses: vec![("sub-boards", held), ("final", poses.clone())],
-        routing_room_failed,
         overfull,
         level: 0,
         skeleton: None,

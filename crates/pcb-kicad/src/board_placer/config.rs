@@ -276,27 +276,6 @@ pub struct KiCadBoardPlacerConfig {
     /// The annealer keeps the legality test's gaps across the board
     /// (`core::anneal::AnnealConfig::legal_far_side`). Off by default.
     pub anneal_far_side_gaps: bool,
-    /// Routing room from congestion (`core::room`): after a placement with
-    /// the pin-count halos, each part's halo is scaled by the routing
-    /// demand (RUDY, nets a pour carries left out) around it relative to
-    /// the board's median, within the same halo area, and the parts anneal
-    /// again from there. Off by default.
-    #[serde(default)]
-    pub routing_room: bool,
-    /// Share of the pin-count halos' area the routing-room halos take.
-    #[serde(default = "default_routing_room_share")]
-    pub routing_room_share: f64,
-    /// Parts with less demand than this share of the median get no halo.
-    #[serde(default = "default_routing_room_floor")]
-    pub routing_room_floor: f64,
-    /// The largest factor on a part's pin-count halo.
-    #[serde(default = "default_routing_room_most")]
-    pub routing_room_most: f64,
-    /// Every part's pin-count halo is scaled by its demand, also where the
-    /// level left it none (`core::room::RoutingRoom::all_parts`); false:
-    /// only the halos the level kept are redistributed.
-    #[serde(default = "default_routing_room_all_parts")]
-    pub routing_room_all_parts: bool,
     /// Placements tried with different seeds (in parallel); the best is
     /// kept: fewest illegal parts, least missed constraints, least wire.
     pub placement_seeds: usize,
@@ -586,11 +565,6 @@ impl Default for KiCadBoardPlacerConfig {
             solder_mask_to_copper_mm: None,
             shared_halos: false,
             anneal_far_side_gaps: false,
-            routing_room: false,
-            routing_room_share: default_routing_room_share(),
-            routing_room_floor: default_routing_room_floor(),
-            routing_room_most: default_routing_room_most(),
-            routing_room_all_parts: default_routing_room_all_parts(),
             placement_seeds: 3,
             orientation_search: true,
             legality: KiCadPlacerLegality::Model,
@@ -613,42 +587,6 @@ impl Default for KiCadBoardPlacerConfig {
             pad_exits: None,
         }
     }
-}
-
-fn default_routing_room_share() -> f64 {
-    1.0
-}
-
-fn default_routing_room_floor() -> f64 {
-    0.5
-}
-
-fn default_routing_room_most() -> f64 {
-    2.0
-}
-
-fn default_routing_room_all_parts() -> bool {
-    true
-}
-
-/// The placer's routing-room settings (`KiCadBoardPlacerConfig::routing_room`):
-/// every net is demand but those a pour carries.
-pub(super) fn routing_room(
-    config: &KiCadBoardPlacerConfig,
-    lowered: &LoweredPlacement,
-) -> Option<core::room::RoutingRoom> {
-    config.routing_room.then(|| core::room::RoutingRoom {
-        net_demand: lowered
-            .poured
-            .iter()
-            .map(|poured| if *poured { 0.0 } else { 1.0 })
-            .collect(),
-        share: config.routing_room_share,
-        floor: config.routing_room_floor,
-        most: config.routing_room_most,
-        all_parts: config.routing_room_all_parts,
-        ..Default::default()
-    })
 }
 
 fn default_edge_keep_mm() -> f64 {

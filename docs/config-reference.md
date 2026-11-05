@@ -34,14 +34,14 @@ The environment variables are indexed in the hand-over
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 13 | - | 4 | 13 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 69 | - | 0 | 69 | - |
-| [Placer settings](#placer-settings) | 65 | 58 | 7 | 65 | 38 |
+| [Placer settings](#placer-settings) | 60 | 53 | 7 | 60 | 35 |
 | [Layout settings](#layout-settings) | 22 | 22 | 0 | 22 | 14 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 2 |
 | [Layout settings: free_dimension](#layout-settings-free_dimension) | 11 | 11 | 0 | 11 | 4 |
 | [Layout settings: silkscreen](#layout-settings-silkscreen) | 1 | 1 | 0 | 1 | 1 |
 | [Layout settings: race_probe](#layout-settings-race_probe) | 3 | 3 | 0 | 3 | 3 |
 | [Layout settings: move_descent](#layout-settings-move_descent) | 7 | 7 | 0 | 7 | 0 |
-| [Placer core](#placer-core) | 13 | - | 0 | 13 | - |
+| [Placer core](#placer-core) | 12 | - | 0 | 12 | - |
 | [Placer core: global](#placer-core-global) | 9 | - | 0 | 9 | - |
 | [Placer core: anneal](#placer-core-anneal) | 9 | - | 0 | 9 | - |
 
@@ -384,11 +384,6 @@ The placer config file of `place-kicad-board`, and the `placer` object of the la
 | `solder_mask_to_copper_mm` | `Option<f64>` | unset | router.md | The project's `solder_mask_to_copper_clearance`: covered copper keeps it from a mask opening. Read from the project when not given. |
 | `shared_halos` | `bool` | `false` | placer.md | Neighbours keep the larger of their routing halos between them, not the sum (`core::Problem::shared_halos`). |
 | `anneal_far_side_gaps` | `bool` | `false` | placer.md | The annealer keeps the legality test's gaps across the board (`core::anneal::AnnealConfig::legal_far_side`). Off by default. |
-| `routing_room` | `bool` | `false` | placer.md | Routing room from congestion (`core::room`): after a placement with the pin-count halos, each part's halo is scaled by the routing demand (RUDY, nets a pour carries left out) around it relative to the board's median, within the same halo area, and the parts anneal again from there. Off by default. |
-| `routing_room_share` | `f64` | `1.0` | placer.md | Share of the pin-count halos' area the routing-room halos take. |
-| `routing_room_floor` | `f64` | `0.5` | - | Parts with less demand than this share of the median get no halo. |
-| `routing_room_most` | `f64` | `2.0` | - | The largest factor on a part's pin-count halo. |
-| `routing_room_all_parts` | `bool` | `true` | placer.md | Every part's pin-count halo is scaled by its demand, also where the level left it none (`core::room::RoutingRoom::all_parts`); false: only the halos the level kept are redistributed. |
 | `placement_seeds` | `usize` | `3` | placer.md | Placements tried with different seeds (in parallel); the best is kept: fewest illegal parts, least missed constraints, least wire. |
 | `orientation_search` | `bool` | `true` | placer.md | The placement's orientation search starts from a canonical pose (`core::orient`): every movable part that may turn at the first of its angle options (in a fixed order), so that the placement is the same whether the board holds 0 degrees (an import from a schematic) or the designer's angles (a stack). On; off: the parts start at the angles the board holds. |
 | `legality` | `KiCadPlacerLegality` | `"model"` | placer.md | What the levels whose spacing is the rules' least call legal: `"model"` (the default) or `"kicad"` (`KiCadPlacerLegality`). |
@@ -511,7 +506,6 @@ The `move_descent` object of the layout settings (an experiment, off when absent
 | `maximum_utilization` | `f64` | `0.6` | `maximum_utilization` | Halos shrink until bodies plus margins fit into this share of the free board area. |
 | `overlap_far_side_pads` | `bool` | `false` | `overlap_far_side_pads` | Where courtyards may overlap (the tight levels), let a part's body reach over other parts' pads on its side, keeping only copper apart (katia's connectors partly over the switches' hot-swap socket pads, as its designer placed them). Off by default: a socket is a body. |
 | `work_limit` | `Option<u64>` | unset | `work_seconds` | Placement work (see `work`) after which no further level or anneal stage starts; the best placement so far stands. |
-| `routing_room` | `Option<room::RoutingRoom>` | unset | the KiCad layer | Routing room from congestion (`room`): after placing with the pin-count halos, each part's halo is rescaled by the routing demand around it, within the same halo area, and the placement is annealed again from there. Off (`None`) by default. |
 | `orientation_search` | `bool` | `true` | `orientation_search` | The orientation search starts from a canonical pose (`orient`): angle options in a fixed order, every movable part that may turn at the first of them, so that the placement does not depend on the angles the board held (0 degrees from an import, the designer's in a stack). Off: the parts start at the angles they hold, options in the order given (the placer before 2026-10-15). |
 | `bus_groups` | `Option<groups::Settings>` | unset | `bus_groups` | Bus-group moves (`groups`, docs/placer.md "Bus-group moves (2026-10-26)"): banks of parts on one bus and parts with their passives move, turn, trade places and reorder as units in the anneal and the refinement. Off (`None`) by default. |
 | `kicad_legality` | `bool` | `false` | `legality` | KiCad's legality at the levels whose spacing is the rules' least (`Constraints::pad_clearance`): what KiCad's DRC accepts of a designer's placement there, rather than bodies kept the copper clearance apart. Off by default (docs/placer.md, "The legality model against KiCad"). |

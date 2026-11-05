@@ -18,7 +18,6 @@ pub mod guidance;
 pub mod legal;
 pub mod orient;
 pub mod problem;
-pub mod room;
 pub mod skeleton;
 pub mod view;
 
@@ -45,11 +44,6 @@ pub struct Config {
     /// Placement work (see `work`) after which no further level or anneal
     /// stage starts; the best placement so far stands.
     pub work_limit: Option<u64>,
-    /// Routing room from congestion (`room`): after placing with the
-    /// pin-count halos, each part's halo is rescaled by the routing demand
-    /// around it, within the same halo area, and the placement is annealed
-    /// again from there. Off (`None`) by default.
-    pub routing_room: Option<room::RoutingRoom>,
     /// The orientation search starts from a canonical pose (`orient`):
     /// angle options in a fixed order, every movable part that may turn at
     /// the first of them, so that the placement does not depend on the
@@ -98,7 +92,6 @@ impl Config {
             maximum_utilization: 0.6,
             overlap_far_side_pads: false,
             work_limit: None,
-            routing_room: None,
             orientation_search: true,
             bus_groups: None,
             kicad_legality: false,
@@ -133,11 +126,6 @@ pub struct Placement {
     /// The poses after each stage (global, annealed, legal, final), for
     /// the measurement of where wirelength goes (`PCB_PLACER_TRACE`).
     pub stage_poses: Vec<(&'static str, Vec<Pose>)>,
-    /// Routing room was asked for and could not seat every part with its
-    /// halos: the placement has the pin-count halos. Such a placement
-    /// ranks after those with routing room (its shorter wires are the
-    /// halos it did not get).
-    pub routing_room_failed: bool,
     /// Even the tightest bodies need more area than a side has: no
     /// packing places every part, and the placer said so at once.
     pub overfull: bool,
@@ -177,7 +165,8 @@ pub struct Relaxation {
     /// KiCad's legality at this level (`Constraints::pad_clearance`).
     pub pad_clearance: bool,
     /// Per component, the halo the placement gave it, where it is not the
-    /// pin-count halo times the scales (`Config::routing_room`).
+    /// pin-count halo times the scales (the skeleton race's merged halos,
+    /// `skeleton`).
     pub halos: Option<std::sync::Arc<Vec<f64>>>,
     /// The parts that lie on the board's marks, having found no room off
     /// them (`Constraints::on_marks`).
@@ -872,19 +861,6 @@ fn finish(
     }
 }
 
-/// Debugging aid: the area the movable parts' halos take.
-fn halos_area(problem: &Problem) -> f64 {
-    problem
-        .components
-        .iter()
-        .filter(|component| !component.fixed && component.hollow.is_empty())
-        .map(|component| {
-            let (width, height) = (component.body_size[0], component.body_size[1]);
-            (width + 2.0 * component.halo) * (height + 2.0 * component.halo) - width * height
-        })
-        .sum()
-}
-
 /// A relaxation level of `place`: halo scale, spacing scale, grid, edge
 /// inset, tight bodies, edge copper, edge margin, and the factor on the
 /// halos of parts with fewer than `MANY_PINS` pins.
@@ -1055,12 +1031,6 @@ pub fn level_problems(problem: &Problem, config: &Config) -> Vec<(LevelShape, Pr
 }
 
 pub fn place(problem: &Problem, config: &Config) -> Placement {
-    // The pin-count halos as asked for, before the board's fit.
-    let requested: Vec<f64> = problem
-        .components
-        .iter()
-        .map(|component| component.halo)
-        .collect();
     let (mut fitted, fit_scale) = fit_halos(problem, config.maximum_utilization);
     fitted.constraints.link_pairs();
     let wirelength_initial = fitted.wirelength(&fitted.poses);
@@ -1551,7 +1521,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
             relaxation.on_marks = relaxed.constraints.on_marks.clone();
         }
     }
-    let (unplaced, mut poses, mut relaxed) = best.expect("at least one relaxation level ran");
+    let (unplaced, mut poses, relaxed) = best.expect("at least one relaxation level ran");
     let wirelength_legal = problem.wirelength(&poses);
     let mut stage_poses = vec![("global", global_poses.clone())];
     if let Some(annealed) = best_annealed {
@@ -1577,115 +1547,6 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
             "placer: refinement and relation repair {:.1}s",
             finishing.elapsed().as_secs_f64()
         );
-    }
-    // Routing room: the halos follow the routing demand around each part
-    // at this placement, and the parts anneal again from here.
-    let room_halos = match &config.routing_room {
-        Some(room)
-            if unplaced.is_empty()
-                && relaxed
-                    .components
-                    .iter()
-                    .any(|component| !component.fixed && component.halo > 0.0)
-                && !out_of_budget() =>
-        {
-            let halos = room::halos(&relaxed, &poses, room, &requested);
-            let unchanged = relaxed
-                .components
-                .iter()
-                .zip(&halos)
-                .all(|(component, halo)| component.halo == *halo);
-            (!unchanged).then_some(halos)
-        }
-        _ => None,
-    };
-    let mut routing_room_failed = false;
-    if let Some(mut halos) = room_halos {
-        let room_mark = mark();
-        let mut roomy = relaxed.clone();
-        for (component, halo) in roomy.components.iter_mut().zip(&halos) {
-            component.halo = *halo;
-        }
-        let mut again = poses.clone();
-        // From a legal placement: small moves only.
-        let mut reheated = anneal_config.clone();
-        reheated.initial_radius = reheated.initial_radius.min(0.02);
-        anneal::anneal(&roomy, &mut again, &reheated);
-        facing::turn_to_face(&mut roomy, &mut again);
-        let annealed = again.clone();
-        let mut failed = legal::legalize(&roomy, &mut again);
-        if !failed.is_empty() {
-            let mut retry = annealed;
-            let still = legal::legalize_first(&roomy, &mut retry, &failed);
-            if still.len() < failed.len() {
-                again = retry;
-                failed = still;
-            }
-        }
-        // The few parts still without room fall back to their halo at the
-        // level, then to none (they are where the demand gathered them);
-        // the others stay where they are.
-        let unseated = failed.len();
-        for fallback in [true, false] {
-            if failed.is_empty() || failed.len() > (relaxed.components.len() / 50).max(3) {
-                break;
-            }
-            for index in &failed {
-                let halo = if fallback {
-                    relaxed.components[*index].halo.min(halos[*index])
-                } else {
-                    0.0
-                };
-                halos[*index] = halo;
-                roomy.components[*index].halo = halo;
-            }
-            let keep: Vec<usize> = (0..roomy.components.len())
-                .filter(|index| !failed.contains(index))
-                .collect();
-            let mut retry = again.clone();
-            let still = legal::legalize_keeping(&roomy, &mut retry, &failed, &keep);
-            if still.len() < failed.len() {
-                again = retry;
-                failed = still;
-            }
-        }
-        if debug {
-            eprintln!(
-                "placer: routing room: {unseated} parts without room after legalizing; halo area {:.0} to {:.0} mm2, {} parts without halo (before {}); {} failed",
-                halos_area(&relaxed),
-                halos_area(&roomy),
-                roomy
-                    .components
-                    .iter()
-                    .filter(|component| !component.fixed && component.halo == 0.0)
-                    .count(),
-                relaxed
-                    .components
-                    .iter()
-                    .filter(|component| !component.fixed && component.halo == 0.0)
-                    .count(),
-                failed.len()
-            );
-        }
-        if failed.is_empty() {
-            finish(
-                &roomy,
-                &mut again,
-                config.refine_passes,
-                bus_groups.as_deref(),
-                debug,
-            );
-            relaxed.sync_followers(&mut poses);
-            stage_poses.push(("pin_halos", poses.clone()));
-            poses = again;
-            relaxed = roomy;
-            if let Some(relaxation) = relaxation.as_mut() {
-                relaxation.halos = Some(std::sync::Arc::new(halos));
-            }
-        } else {
-            routing_room_failed = true;
-        }
-        phase_line(debug, "routing room", room_mark);
     }
     // Pads without a way out: the router's test of the placement, and
     // the moves that open the pads other parts close.
@@ -1762,7 +1623,6 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         relaxation: relaxation.expect("at least one relaxation level ran"),
         work: work() - work_started,
         stage_poses,
-        routing_room_failed,
         overfull: overfull_sides,
         exits,
         level: best_level,

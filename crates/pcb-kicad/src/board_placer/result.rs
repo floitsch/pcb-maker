@@ -205,8 +205,8 @@ pub struct KiCadBoardPlacerResult {
     /// The same, as (the mark's place among the board's marks, the part).
     #[serde(skip)]
     pub attached_mark_pairs: Vec<(usize, usize)>,
-    /// Per footprint, the halo the placement gave it where routing room
-    /// set the halos (`core::Relaxation::halos`).
+    /// Per footprint, the halo the placement gave it where the skeleton
+    /// race merged the halos (`core::Relaxation::halos`).
     #[serde(skip)]
     pub halos: Option<std::sync::Arc<Vec<f64>>>,
     /// The other seeds' legal placements (poses, relaxation and how far

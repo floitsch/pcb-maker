@@ -851,7 +851,7 @@ fn copies_of_a_tabbed_panel_keep_their_parts() {
 }
 
 #[test]
-fn routing_room_leaves_the_poured_nets_out_of_the_demand() {
+fn the_lowering_marks_the_poured_nets() {
     // GND has a zone; A and B do not.
     let pcb = parse(
         r#"(kicad_pcb
@@ -883,17 +883,6 @@ fn routing_room_leaves_the_poured_nets_out_of_the_demand() {
     };
     assert!(lowered.poured[net_of("R1", 1)], "{:?}", lowered.poured);
     assert!(!lowered.poured[net_of("R1", 0)] && !lowered.poured[net_of("R2", 1)]);
-    // Off by default; on, the demand leaves GND out.
-    assert!(routing_room(&config, &lowered).is_none());
-    let on = KiCadBoardPlacerConfig {
-        routing_room: true,
-        routing_room_share: 0.75,
-        ..config
-    };
-    let room = routing_room(&on, &lowered).unwrap();
-    assert_eq!(room.net_demand[net_of("R1", 1)], 0.0);
-    assert_eq!(room.net_demand[net_of("R1", 0)], 1.0);
-    assert_eq!(room.share, 0.75);
 }
 
 #[test]

@@ -435,7 +435,6 @@ pub fn place_kicad_board(
         .map(|seconds| (seconds.max(0.0) * core::work_per_second()) as u64);
     placer_config.overlap_far_side_pads = config.overlap_far_side_pads;
     placer_config.anneal.legal_far_side = config.anneal_far_side_gaps;
-    placer_config.routing_room = routing_room(config, &lowered);
     placer_config.orientation_search = config.orientation_search;
     placer_config.bus_groups = config.bus_groups.as_ref().map(KiCadBusGroups::settings);
     placer_config.kicad_legality = config.legality == KiCadPlacerLegality::Kicad;
@@ -589,7 +588,6 @@ pub fn place_kicad_board(
                 closed,
                 placement.relaxation.courtyard_spacing as usize,
                 placement.relaxation.on_marks.len(),
-                placement.routing_room_failed as usize,
                 missed,
                 placement.wirelength_final,
             )
