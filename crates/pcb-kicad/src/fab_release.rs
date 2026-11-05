@@ -100,6 +100,51 @@ pub struct KiCadFabFile {
     pub sha256: String,
 }
 
+/// The next action for parts without an LCSC part number: how many BOM
+/// lines that is (the numbers to find) and where the number goes, by where
+/// the BOM came from. Without a schematic beside the board (a layout's
+/// result) the symbol's field and Update PCB from Schematic cannot be
+/// followed there (trial 7: MIDAS-MK2's 207 parts on 78 lines).
+pub(crate) fn lcsc_action(manifest: &KiCadFabRelease) -> Option<String> {
+    if manifest.without_lcsc.is_empty() {
+        return None;
+    }
+    let shown = manifest.without_lcsc.len().min(10);
+    let lines = match manifest.without_lcsc_lines {
+        0 => String::new(),
+        1 => " on 1 BOM line".to_string(),
+        lines => format!(" on {lines} BOM lines (value and footprint: one number each)"),
+    };
+    let how = if manifest.bom_source.as_deref() == Some("schematic") {
+        format!(
+            "a field {} on the symbols, then Update PCB from Schematic and release again",
+            manifest
+                .lcsc_field
+                .as_deref()
+                .map_or("LCSC".to_string(), |field| format!("\"{field}\""))
+        )
+    } else {
+        format!(
+            "the BOM comes from the board's footprints (no schematic beside it): a property {} on each footprint (KiCad's board editor, footprint properties; or the symbol's field in the project it came from, Update PCB from Schematic and lay out again), then release again",
+            crate::fab_export::BOARD_LCSC_PROPERTIES
+                .iter()
+                .map(|name| format!("\"{name}\""))
+                .collect::<Vec<_>>()
+                .join(" or ")
+        )
+    };
+    Some(format!(
+        "{} parts{lines} have no LCSC part number, which JLCPCB's assembly needs ({how}): {}{} (fab-manifest.json's without_lcsc lists them)",
+        manifest.without_lcsc.len(),
+        manifest.without_lcsc[..shown].join(", "),
+        if shown < manifest.without_lcsc.len() {
+            ", ..."
+        } else {
+            ""
+        }
+    ))
+}
+
 /// `fab-manifest.json`.
 #[derive(Clone, Debug, Serialize)]
 pub struct KiCadFabRelease {
@@ -120,6 +165,9 @@ pub struct KiCadFabRelease {
     pub lcsc_field: Option<String>,
     /// Parts without an LCSC part number on the board.
     pub without_lcsc: Vec<String>,
+    /// The BOM lines (value and footprint) of those parts: the part
+    /// numbers to find.
+    pub without_lcsc_lines: usize,
     /// The zip of the Gerbers and drill files: what a fab's upload takes.
     pub zip: Option<String>,
     pub files: Vec<KiCadFabFile>,
@@ -584,6 +632,7 @@ pub fn fab_kicad_board(
         bom_source: None,
         lcsc_field: None,
         without_lcsc: Vec::new(),
+        without_lcsc_lines: 0,
         zip: None,
         files: Vec::new(),
         skipped: Vec::new(),
@@ -763,6 +812,7 @@ pub fn fab_kicad_board(
     // value, footprint and part number; else the board's footprints.
     let board_bom = crate::fab_export::board_bom(&pcb);
     manifest.without_lcsc = board_bom.without_lcsc.clone();
+    manifest.without_lcsc_lines = board_bom.lines_without_lcsc;
     let bom = assembly.join(format!("{board_id}-bom.csv"));
     if schematic.is_file() {
         let lcsc = lcsc_field(directory);
@@ -970,15 +1020,7 @@ pub fn fab_verdict_lines(
             ));
             actions.extend(manifest.findings.iter().cloned());
         }
-        if !manifest.without_lcsc.is_empty() {
-            let shown = manifest.without_lcsc.len().min(10);
-            actions.push(format!(
-                "{} parts have no LCSC part number, which JLCPCB's assembly needs (an LCSC field on the symbol, then Update PCB from Schematic): {}{} (fab-manifest.json's without_lcsc lists them)",
-                manifest.without_lcsc.len(),
-                manifest.without_lcsc[..shown].join(", "),
-                if shown < manifest.without_lcsc.len() { ", ..." } else { "" }
-            ));
-        }
+        actions.extend(lcsc_action(manifest));
         actions.push(
             "check the rotations of polarised parts in the fab's placement preview: library orientations differ between KiCad and assemblers".into(),
         );
@@ -1248,6 +1290,7 @@ mod tests {
             bom_source: None,
             lcsc_field: None,
             without_lcsc: Vec::new(),
+            without_lcsc_lines: 0,
             zip: None,
             files: Vec::new(),
             skipped: Vec::new(),
@@ -1314,6 +1357,55 @@ mod tests {
                 .iter()
                 .all(|action| action.starts_with(crate::verdict::INPUT_TAG))
         );
+    }
+
+    #[test]
+    fn parts_without_an_lcsc_number_are_told_where_it_goes_by_the_boms_source() {
+        // Trial 7's MIDAS-MK2 layout: no schematic beside the result, 207
+        // parts on 78 lines; the action said "an LCSC field on the symbol,
+        // then Update PCB from Schematic", which that release cannot do.
+        let mut manifest = KiCadFabRelease {
+            schema_version: 1,
+            board_id: "b".into(),
+            profile: KiCadFabProfile::Jlcpcb,
+            kicad_version: None,
+            released: true,
+            drc: KiCadFabDrc::default(),
+            erc: None,
+            layers: Vec::new(),
+            bom_source: Some("board".into()),
+            lcsc_field: None,
+            without_lcsc: (1..=12).map(|n| format!("R{n}")).collect(),
+            without_lcsc_lines: 3,
+            zip: None,
+            files: Vec::new(),
+            skipped: Vec::new(),
+            findings: Vec::new(),
+        };
+        let action = lcsc_action(&manifest).expect("parts without a number");
+        assert!(
+            action.starts_with(
+                "12 parts on 3 BOM lines (value and footprint: one number each) have no LCSC part number"
+            ),
+            "{action}"
+        );
+        assert!(
+            action.contains("a property \"LCSC\" or \"LCSC Part\""),
+            "{action}"
+        );
+        assert!(action.contains("R1, R2,"), "{action}");
+        assert!(action.ends_with(", ... (fab-manifest.json's without_lcsc lists them)"));
+        // From a schematic: its field, on the symbols.
+        manifest.bom_source = Some("schematic".into());
+        manifest.lcsc_field = Some("LCSC Part".into());
+        let action = lcsc_action(&manifest).unwrap();
+        assert!(
+            action
+                .contains("(a field \"LCSC Part\" on the symbols, then Update PCB from Schematic"),
+            "{action}"
+        );
+        manifest.without_lcsc.clear();
+        assert!(lcsc_action(&manifest).is_none());
     }
 
     #[test]

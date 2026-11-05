@@ -174,7 +174,8 @@ its own holes: `footprint_note` gives the custom rule for the board's
 `<id>-gerbers.zip` (upload this), `assembly/` (position file, BOM),
 `netlist/`, `<id>.step`, and `fab-manifest.json` (every file's sha256, the
 DRC and ERC counts, KiCad's version). `--profile jlcpcb` adds JLCPCB's BOM
-and placement columns; `--layers` picks the Gerber layers. The board is judged on its
+and placement columns (parts without an LCSC number: a footprint property `LCSC` when no schematic
+is beside the board, the release's next action says which BOM lines); `--layers` picks the Gerber layers. The board is judged on its
 own (every part and zone the board's); `--input <project-dir>` (the project it was laid
 out from) judges it as the layout's verdict did, and names the findings between parts
 kept where the input has them. `drc-kicad-board` takes `--input` too.

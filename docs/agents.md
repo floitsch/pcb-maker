@@ -1542,14 +1542,23 @@ is a fab release gated by KiCad's DRC:
   <project-dir>` against the board it was laid out from; a short or a
   clearance between two nets always blocks), `erc` (errors, warnings, library warnings),
   `layers`, `bom_source`, `lcsc_field`, `without_lcsc` (parts without an
-  LCSC part number), `zip`, `skipped`, `findings`, and `files`: every file
+  LCSC part number; `without_lcsc_lines`, their BOM lines), `zip`, `skipped`, `findings`, and `files`: every file
   with its `kind`, `bytes` and `sha256`. `verdict.json` adds
   `fab_release` (released, findings allowed, files, zip, manifest).
 - **`--profile jlcpcb`**: the layers of JLCPCB's KiCad guide (both pastes
   and silkscreens always), and beside kicad-cli's files
   `assembly/<board-id>-bom-jlcpcb.csv` (`Comment,Designator,Footprint,JLCPCB
-  Part #`, every designator listed) and
+  Part #`, every designator listed; with a schematic: without one, a
+  layout's result, `<board-id>-bom.csv` itself has these columns and no
+  second BOM is written) and
   `assembly/<board-id>-cpl-jlcpcb.csv` (`Designator,Mid X,Mid Y,Layer,Rotation`).
+  Parts without an LCSC part number get a next action with the BOM lines
+  they make (the numbers to find: MIDAS-MK2's 207 parts are 78 lines) and
+  where the number goes (since 2026-11-06, trial 7): with a schematic its
+  field on the symbols and Update PCB from Schematic; without one a
+  footprint property `LCSC` (or `LCSC Part`, `LCSC Part #`, `JLCPCB Part
+  #`, `JLC`, `LCSC#`) on the board's footprints, which the board's BOM
+  reads (`without_lcsc_lines` in fab-manifest.json).
   KiCad's Gerber names (Protel extensions) are the ones JLCPCB's guide
   uses. JLCPCB's rotation offsets per package are not applied: check
   polarised parts in their placement preview.

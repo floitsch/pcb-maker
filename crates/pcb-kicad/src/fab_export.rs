@@ -173,6 +173,7 @@ pub fn export_kicad_fab(
         csv: bom,
         lines,
         without_lcsc,
+        ..
     } = board_bom(&pcb);
     let bom_path = output.join(format!("{board_id}-bom.csv"));
     fs::write(&bom_path, bom).map_err(|error| error.to_string())?;
@@ -204,7 +205,20 @@ pub(crate) struct BoardBom {
     pub lines: usize,
     /// Parts without an LCSC part number.
     pub without_lcsc: Vec<String>,
+    /// Lines without one: the part numbers to find.
+    pub lines_without_lcsc: usize,
 }
+
+/// The footprint properties the board's BOM reads an LCSC part number
+/// from (`board_bom`).
+pub(crate) const BOARD_LCSC_PROPERTIES: [&str; 6] = [
+    "LCSC",
+    "LCSC Part",
+    "LCSC Part #",
+    "JLCPCB Part #",
+    "JLC",
+    "LCSC#",
+];
 
 /// The bill of materials of `pcb`'s footprints: one line per value,
 /// footprint and LCSC part number (a footprint property `LCSC`, `LCSC
@@ -255,14 +269,7 @@ pub(crate) fn board_bom(pcb: &Expr) -> BoardBom {
             .and_then(Expr::atom)
             .unwrap_or("");
         let package = package.rsplit(':').next().unwrap_or(package).to_string();
-        let lcsc = property(&[
-            "LCSC",
-            "LCSC Part",
-            "LCSC Part #",
-            "JLCPCB Part #",
-            "JLC",
-            "LCSC#",
-        ]);
+        let lcsc = property(&BOARD_LCSC_PROPERTIES);
         lines
             .entry((property(&["Value"]), package, lcsc))
             .or_default()
@@ -270,6 +277,7 @@ pub(crate) fn board_bom(pcb: &Expr) -> BoardBom {
     }
     let mut bom = String::from("Comment,Designator,Footprint,JLCPCB Part #\n");
     let mut without_lcsc = Vec::new();
+    let mut lines_without_lcsc = 0;
     for ((value, package, lcsc), mut references) in lines.clone() {
         references.sort_by_key(|reference| {
             let digits: String = reference
@@ -286,6 +294,7 @@ pub(crate) fn board_bom(pcb: &Expr) -> BoardBom {
         });
         if lcsc.is_empty() {
             without_lcsc.extend(references.iter().cloned());
+            lines_without_lcsc += 1;
         }
         bom.push_str(&format!(
             "{},{},{},{}\n",
@@ -299,5 +308,6 @@ pub(crate) fn board_bom(pcb: &Expr) -> BoardBom {
         csv: bom,
         lines: lines.len(),
         without_lcsc,
+        lines_without_lcsc,
     }
 }
