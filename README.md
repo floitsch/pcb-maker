@@ -44,11 +44,14 @@ Not finished, but already useful.
   `--reference` the designer's board when the nets cannot tell the
   boards apart); the project's custom rules (`.kicad_dru`), each reported
   as applied, approximated or beyond the router, `length` and `skew`
-  rules met by meanders on the layout's own routes too; filled and
-  capped vias in a BGA's enclosed pads where the designer's board has
-  vias in that footprint's pads, or where you name the part
-  (`via_in_pad`). Without a reference, findings that are the input's own
-  (a fixed connector over the edge, a fiducial's mask over the
+  rules kept by meanders on the layout's own routes too where the route
+  has room beside it (a minimum inside a dense bus can stay short; the
+  verdict says which nets and by how much); filled and capped vias in a
+  BGA's enclosed pads where the designer's board has vias in that
+  footprint's pads, or where you name the part (`via_in_pad`), and
+  dog-bone fan-outs for a BGA's inner balls where the class's via does
+  not fit between them. Without a reference, findings that are the
+  input's own (a fixed connector over the edge, a fiducial's mask over the
   designer's zone) do not fail the run, and the verdict gives the custom
   rule or the exclusion that makes KiCad accept them.
 - **At scale, on the designer's placement:** 5 834 boards harvested from
@@ -78,8 +81,8 @@ Not finished, but already useful.
   Freerouting's CPU
   ([table](docs/benchmarks.md#freerouting-against-our-cold-route-x738-2026-10-15)).
 - **Open-source boards, PCBench / PCBWorld D3** (617 boards, prepared the
-  way PCBWorld prepares them): pcb-maker routes 601 (97 %) clean,
-  PCBench's Freerouting run 526 (85 %); vias about half and copper 93 % of
+  way PCBWorld prepares them; measured 2026-09-29): pcb-maker routes 601
+  (97 %) clean, PCBench's Freerouting run 526 (85 %); vias about half and copper 93 % of
   the designers' boards. On the 114 D3 agent tasks 110 are laid out clean,
   median 9 s.
 - **Not there yet.**
@@ -87,13 +90,19 @@ Not finished, but already useful.
     starved thermal reliefs on dense boards and as pads routed by tracks
     that KiCad would have joined through the fill.
   - Placement: dense boards (a video board, ESC-class four-in-one
-    controllers, a SNES motherboard) stay 70-200 connections short where
-    our router routes the designer's own placement clean or nearly so
-    (video 202 open against 1, SNSP-CPU-01 111 against 35, the OpenESC
-    4in1 88 against 15; nightly 2026-11-03); the gap is the placement,
-    not the number of seeds tried or the legaliser.
+    controllers, a SNES motherboard, Glasgow) stay 60-200 connections
+    short of what our router leaves on the designer's own placement
+    (video 202 open against 1, Glasgow 127 against 55, SNSP-CPU-01 97
+    against 35, the OpenESC 4in1 88 against 15; nightly 2026-11-04). The
+    gap is the arrangement of the active parts as a whole, not the
+    number of seeds tried: our global placement does not find the
+    designer's coarse arrangement, and on two of the densest boards
+    measured (the 4in1, Glasgow) our anneal loses the fine one
+    ([docs/placer.md](docs/placer.md#where-the-arrangement-is-lost-2026-11-04)).
   - Features: differential pairs are routed coupled by default only in
-    route mode, and only where the project's rules ask for them; the placer does not
+    route mode, and only where the project's rules ask for them (a
+    layout couples them with the router's `diff_pairs`, at a cost in
+    connections on dense boards); the placer does not
     choose sides by itself (constraints put parts on the back); pin
     swapping is opt-in.
 
@@ -281,10 +290,12 @@ reduction pass and an exact geometric verifier before KiCad sees them.
 global placer in the ePlace/RePlAce tradition: footprints are charges,
 their density field is solved on a grid, nets pull with a smooth wirelength
 model, and every part keeps a halo sized to the tracks that must escape it.
-Global placement is followed by annealing on rotations and positions and a
-legalisation step. The **layout loop** ([docs/coupling.md](docs/coupling.md))
-then routes, reads the congestion back into the halos, and tries footprint
-moves that reduce open connections.
+Global placement is followed by annealing on rotations and positions, a
+legalisation step and a refinement; up to 16 seeds are placed, and a race
+routes the most promising three briefly and keeps the one that routes
+best. The **layout loop** ([docs/coupling.md](docs/coupling.md)) then
+routes, and tries footprint moves where the router's congestion history
+says nets fought for room, kept when open connections fall.
 
 **Verification** is never skipped. Both the router and the placer keep their
 own exact checks, and every board that leaves the tool has been through
