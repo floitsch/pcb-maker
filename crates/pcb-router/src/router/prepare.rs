@@ -110,6 +110,11 @@ impl Router {
             }
             if nodes.is_empty() {
                 self.escape_nodes(net, terminal, &mut nodes, &mut escapes);
+                // Escape nodes in a pocket the lattice closes: a corridor
+                // stub off the lattice (`corridor_escape`).
+                if !nodes.is_empty() {
+                    self.corridor_escape(net, terminal, &mut nodes, &mut escapes, &mut counts);
+                }
             }
             let reach = nodes
                 .iter()

@@ -25,6 +25,7 @@ mod coarse;
 mod config;
 /// Read-only tile views of the negotiation, for the congestion model.
 pub mod congestion;
+mod corridors;
 mod dive;
 mod driver;
 mod escapes;
@@ -70,6 +71,7 @@ pub use build::{
 };
 pub use coarse::{ParkedRouter, RipUpSaved};
 pub use config::Config;
+pub use corridors::corridor_escapes_override;
 pub use escapes::exact_escapes_override;
 pub use give_up::{GiveUpRule, NO_PATH, NO_ROOM, ReleasedNet};
 pub use pad_exits::{ClosedPad, ExitBlocker, ExitProbe, ProbeCounts, label_part, work_nanos};

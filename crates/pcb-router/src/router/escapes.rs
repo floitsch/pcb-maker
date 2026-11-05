@@ -346,7 +346,7 @@ impl Router {
 
     /// The nearest nodes of samples half a pitch apart along a stub off the
     /// lattice's lines (stamped with the snapping margin).
-    fn sampled_stub_cells(&self, polyline: &[crate::geometry::Point]) -> Vec<u32> {
+    pub(super) fn sampled_stub_cells(&self, polyline: &[crate::geometry::Point]) -> Vec<u32> {
         let mut cells: Vec<u32> = Vec::new();
         for pair in polyline.windows(2) {
             let length = crate::geometry::distance(pair[0], pair[1]);

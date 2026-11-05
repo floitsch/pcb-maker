@@ -149,6 +149,14 @@ pub struct Config {
     /// connections fewer open and three passes more than off, no new
     /// error either way.
     pub exact_escape_stubs: bool,
+    /// Corridor stubs (`Router::corridor_escape`, docs/router.md
+    /// "Corridors of pocketed pads"): a pad without a legal node of its
+    /// own whose escape nodes lie in a pocket the lattice closes leaves by
+    /// a stub off the lattice through the way out the lattice misses (a
+    /// corridor between its part's pads that a track passes only near its
+    /// centre line: OpenFC's U10), to a legal node beyond. On by default;
+    /// `PCB_ROUTER_CORRIDOR_ESCAPES=0` turns it off (A/B on one binary).
+    pub corridor_escapes: bool,
     /// The pour model as the measurement of a written board takes it
     /// (`measured_board`'s starved thermals, its solid step, and
     /// dump-pour-map), closer to KiCad's DRC than routing's: a pad merged
@@ -377,6 +385,7 @@ impl Default for Config {
             pour_whole_rip_up: true,
             escape_stub_mm: 0.0,
             exact_escape_stubs: super::escapes::exact_escapes_override().unwrap_or(true),
+            corridor_escapes: super::corridors::corridor_escapes_override().unwrap_or(true),
             min_spokes: 2,
             measured_thermals: std::env::var_os("PCB_ROUTER_MEASURED_THERMALS").is_some(),
             global_routing: false,

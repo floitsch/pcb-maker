@@ -242,3 +242,35 @@ fn the_lattice_passes_a_pockets_corridor_on_every_offset() {
         );
     }
 }
+
+#[test]
+fn a_pocketed_pad_routes_on_every_lattice_offset() {
+    // With corridor stubs U10.5 connects whatever the part's offset
+    // against the lattice; without them only where a node row falls in a
+    // corridor and the pocket's nodes reach it.
+    let open_at = |corridor_escapes: bool| {
+        let config = Config {
+            pitches: vec![0.1],
+            corridor_escapes,
+            ..Config::default()
+        };
+        let mut open = Vec::new();
+        for step in 0..10 {
+            let dy = step as f64 * 0.01;
+            let board = pocketed_part(dy);
+            let result = crate::route(&board, &config);
+            let violations = crate::verify(&board, &result.routes);
+            assert!(violations.is_empty(), "dy {dy}: {violations:?}");
+            if result.status[0] != NetStatus::Routed {
+                open.push((dy, result.grid.origin));
+            }
+        }
+        open
+    };
+    let open = open_at(true);
+    assert!(
+        open.is_empty(),
+        "U10.5 open at (dy, lattice origin) {open:?}"
+    );
+    assert!(!open_at(false).is_empty());
+}
