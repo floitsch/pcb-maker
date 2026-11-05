@@ -18,7 +18,7 @@ in `build/diag1-stages/`. docs/placer.md, "Where the arrangement is lost
 (2026-11-04)", has the method, the tables and the recommendation.
 
 - **Instruments, no behaviour change with them off** (place checks of the
-  4in1 and Glasgow byte for byte x1904's and x1905's): the placer's
+  4in1 and Glasgow byte for byte x1904's, x1905's and x1908's): the placer's
   trace (`PCB_PLACER_TRACE`) gives per seed its number, whether it was
   kept, every part's pose after each stage, the objective split by term
   (`anneal::objective`) and the global placement's overflow at each

@@ -8295,7 +8295,7 @@ binary `build/bin/pcb-maker-diag1-a` (main x1904 plus this package).
 
 **The instruments.** No behaviour changes with them off (the place
 checks of the 4in1 and Glasgow with the dump off are x1904's and
-x1905's byte for byte, and with the trace on too).
+x1905's and, on the rebased head, x1908's byte for byte, and with the trace on too).
 
 - `PCB_PLACER_TRACE=<file>` (with `PCB_PLACER_DESIGNER=<board>`) now
   says per seed its number and whether the placer kept it, every movable
