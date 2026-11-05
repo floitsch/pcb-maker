@@ -303,9 +303,17 @@ pub struct KiCadBoardPlacerConfig {
     /// legal place the seed is placed plain with its full work, charged on
     /// top. Its global placements stop where their overflow stalls and
     /// never turn a part longer than the board. `plain_share` of the seeds
-    /// place plain (0: none). The race ranks the seeds' placements as it
-    /// ranks any. Not on panels of copies or sub-boards. Defaults: `room`
-    /// 1, `work_share` 0.5, `join_pins` 8, `plain_share` 0.
+    /// place plain (0: none). The level guard (`level_guard`, docs/placer.md
+    /// "The level guard (2026-11-05)"; `off` by default, measured and not
+    /// taken): the race's first seed is also placed plain beside the seeds
+    /// (a probe, not among them) and its relaxation level bounds a skeleton
+    /// seed's two phases: `skips`, no phase skips to the tight levels past
+    /// it (its share of the work triggers the skip; the walk level by level
+    /// is free); `walk`, no phase walks past it (a phase that would falls
+    /// back to the plain placement). The race ranks the seeds' placements
+    /// as it ranks any. Not on panels of copies or sub-boards. Defaults:
+    /// `room` 1, `work_share` 0.5, `join_pins` 8, `plain_share` 0,
+    /// `level_guard` `off`.
     #[serde(default)]
     pub skeleton_race: Option<KiCadSkeletonRace>,
     /// Differential pairs' series parts as rows of two (off unless set;

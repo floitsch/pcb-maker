@@ -75,6 +75,12 @@ pub struct Config {
     /// passives from the skeleton's level on, so that the held skeleton is
     /// legal at theirs (`skeleton`). 0 by default: every level.
     pub first_level: usize,
+    /// The tightest relaxation level the placement may walk to
+    /// (`LevelBound`): past it no level runs, and the parts without room
+    /// there stay unplaced (`Placement::bounded`). The race over skeletons
+    /// bounds its two phases by the plain placement's level
+    /// (`skeleton::Settings::level_guard`). `None` by default: every level.
+    pub level_bound: Option<LevelBound>,
     /// A diagnostic start (`PCB_PLACER_START`, docs/placer.md "Where the
     /// arrangement is lost (2026-11-04)"): the stages from `Start::stage`
     /// on run from given poses (the designer's). `None` by default: the
@@ -85,6 +91,103 @@ pub struct Config {
     /// level's legaliser seats the global placement's poses (or the
     /// start's). Off by default.
     pub skip_anneal: bool,
+}
+
+/// A bound on the relaxation levels a placement walks (`Config::level_bound`):
+/// a level known at once, or one another thread sets later (the race over
+/// skeletons' plain probe, placed beside its seeds). A placement asks for
+/// it only when it would walk past its first level, and then waits until
+/// it is set; the bound is the same whenever it comes, so the placement
+/// does not depend on the threads. A bound dropped unset (its setter
+/// failed) bounds nothing.
+#[derive(Clone)]
+pub struct LevelBound {
+    state: std::sync::Arc<(std::sync::Mutex<Option<usize>>, std::sync::Condvar)>,
+    /// What the bound holds: the walk itself (no level past it runs), or
+    /// only the skip to the tight levels (`skip_to_tight` goes no further
+    /// than the bound; the walk level by level is free).
+    pub walk: bool,
+}
+
+impl LevelBound {
+    /// A bound on the walk known now.
+    pub fn at(level: usize) -> Self {
+        let bound = Self::pending();
+        bound.set(level);
+        bound
+    }
+
+    /// A bound on the walk set later (`set`).
+    pub fn pending() -> Self {
+        Self {
+            state: std::sync::Arc::new((std::sync::Mutex::new(None), std::sync::Condvar::new())),
+            walk: true,
+        }
+    }
+
+    /// The same bound on the skip to the tight levels alone.
+    pub fn skips_only(mut self) -> Self {
+        self.walk = false;
+        self
+    }
+
+    /// Sets the bound (the first value stands) and wakes the placements
+    /// waiting for it.
+    pub fn set(&self, level: usize) {
+        let (value, ready) = &*self.state;
+        let mut value = value
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if value.is_none() {
+            *value = Some(level);
+        }
+        ready.notify_all();
+    }
+
+    /// The bound, once set (waits until then).
+    pub fn wait(&self) -> usize {
+        let (value, ready) = &*self.state;
+        let mut value = value
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        loop {
+            if let Some(level) = *value {
+                return level;
+            }
+            value = ready
+                .wait(value)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
+    }
+
+    /// The bound if set, without waiting.
+    pub fn get(&self) -> Option<usize> {
+        *self
+            .state
+            .0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+impl std::fmt::Debug for LevelBound {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("LevelBound")
+            .field("level", &self.get())
+            .field("walk", &self.walk)
+            .finish()
+    }
+}
+
+/// Sets a pending `LevelBound` to no bound (`usize::MAX`) when dropped
+/// unset, so that no placement waits for a setter that failed.
+pub struct LevelBoundSetter(pub LevelBound);
+
+impl Drop for LevelBoundSetter {
+    fn drop(&mut self) {
+        self.0.set(usize::MAX);
+    }
 }
 
 /// Where a diagnostic start (`Config::start`) enters the pipeline.
@@ -126,6 +229,7 @@ impl Config {
             kicad_last_level: false,
             pad_exits: None,
             first_level: 0,
+            level_bound: None,
             start: None,
             skip_anneal: false,
         }
@@ -168,6 +272,11 @@ pub struct Placement {
     /// The race over skeletons' account of this placement (`skeleton`),
     /// where it ran.
     pub skeleton: Option<skeleton::Report>,
+    /// `Config::level_bound` held the walk back: it stopped there with
+    /// parts still without room (they are `unplaced`), the next level
+    /// tighter than the bound, or (a bound on the skips alone) a skip to
+    /// the tight levels past it did not happen.
+    pub bounded: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -1240,6 +1349,20 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
     });
     let mut last_level_work: Option<u64> = None;
     let mut skipping_to_tight = false;
+    // The walk stopped at `Config::level_bound` with parts without room.
+    let mut bounded = false;
+    // The bound, asked for once a level ran and the walk would go on
+    // (`LevelBound::wait`): a placement that seats at its first level
+    // never waits.
+    let mut bound: Option<usize> = None;
+    let bound_of = |bound: &mut Option<usize>| -> usize {
+        *bound.get_or_insert_with(|| {
+            config
+                .level_bound
+                .as_ref()
+                .map_or(usize::MAX, LevelBound::wait)
+        })
+    };
     for (
         level,
         (halo_scale, spacing_scale, grid, inset, tight, edge_copper, edge_rule, small_factor),
@@ -1252,6 +1375,24 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         }
         // Past the caller's deadline the best placement so far stands.
         if best.is_some() && out_of_budget() {
+            break;
+        }
+        // Not past the level bound (`Config::level_bound`): the parts
+        // still without room stay unplaced. The first level runs whatever
+        // the bound.
+        if best.is_some()
+            && config.level_bound.as_ref().is_some_and(|bound| bound.walk)
+            && level > bound_of(&mut bound)
+        {
+            bounded = best
+                .as_ref()
+                .is_some_and(|(failed, _, _)| !failed.is_empty());
+            if debug {
+                eprintln!(
+                    "placer: level {level} is past the bound {}: the walk stops",
+                    bound_of(&mut bound)
+                );
+            }
             break;
         }
         // Many parts still without room and too little work left to try
@@ -1273,6 +1414,21 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
                 level_work,
                 first_tight - level,
             )
+            && (config.level_bound.is_none() || {
+                // Not past the level bound: the walk goes on level by
+                // level instead.
+                let within = first_tight <= bound_of(&mut bound);
+                if !within {
+                    bounded = true;
+                    if debug {
+                        eprintln!(
+                            "placer: no skip to level {first_tight}, past the bound {}",
+                            bound_of(&mut bound)
+                        );
+                    }
+                }
+                within
+            })
         {
             skipping_to_tight = true;
             if debug {
@@ -1695,6 +1851,7 @@ pub fn place(problem: &Problem, config: &Config) -> Placement {
         exits,
         level: best_level,
         skeleton: None,
+        bounded,
     }
 }
 

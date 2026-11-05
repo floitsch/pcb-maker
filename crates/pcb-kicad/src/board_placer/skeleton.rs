@@ -25,6 +25,39 @@ pub struct KiCadSkeletonRace {
     /// with the switch off), the others by skeleton: the race then ranks
     /// both kinds (`plain_seed`). 0: every seed by skeleton.
     pub plain_share: f64,
+    /// The level guard (docs/placer.md, "The level guard (2026-11-05)"):
+    /// the race's first seed is also placed plain beside the seeds (a
+    /// probe, not among them), and its relaxation level bounds both phases
+    /// of every skeleton seed. `walk`: no phase walks to a tighter level; a
+    /// skeleton or passives that would seat only there fall back to the
+    /// plain placement. `skips`: no phase skips to the tight levels
+    /// (`skip_to_tight`, which a phase's share of the work triggers) past
+    /// it; the walk level by level is free. `off` (the default): no probe,
+    /// no bound. Measured on OpenFC and protoesp and not taken: both modes
+    /// lose OpenFC's strict pass on some seeds and `skips` gives up
+    /// protoesp's gain, which is the skip to the tight levels.
+    pub level_guard: KiCadLevelGuard,
+}
+
+/// `KiCadSkeletonRace::level_guard`.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum KiCadLevelGuard {
+    #[default]
+    Off,
+    Skips,
+    Walk,
+}
+
+impl KiCadLevelGuard {
+    /// The bound the race's probe sets, where the guard is on.
+    pub(crate) fn bound(self) -> Option<core::LevelBound> {
+        match self {
+            Self::Off => None,
+            Self::Skips => Some(core::LevelBound::pending().skips_only()),
+            Self::Walk => Some(core::LevelBound::pending()),
+        }
+    }
 }
 
 /// Whether seed `offset` of a race over skeletons places plain: the seeds
@@ -43,6 +76,7 @@ impl Default for KiCadSkeletonRace {
             work_share: settings.work_share,
             join_pins: settings.join_pins,
             plain_share: 0.0,
+            level_guard: KiCadLevelGuard::default(),
         }
     }
 }
@@ -201,10 +235,23 @@ pub struct KiCadSkeletonRaceReport {
     /// kept placement's skeleton are zero).
     pub seeds_plain: usize,
     pub kept_plain: bool,
+    /// The level guard (`level_guard`): the plain probe's relaxation level
+    /// (the bound; `None` without the guard) and work (seconds), the kept
+    /// seeds whose skeleton or passives stopped at the bound and fell back
+    /// to the plain placement, and whether the kept placement's did.
+    pub plain_level: Option<usize>,
+    pub probe_work_seconds: f64,
+    pub seeds_bounded: usize,
+    pub bounded: bool,
 }
 
 impl KiCadSkeletonRaceReport {
-    pub(crate) fn of(passive: &[bool], kept: &core::Placement, seeds: &[&core::Placement]) -> Self {
+    pub(crate) fn of(
+        passive: &[bool],
+        kept: &core::Placement,
+        seeds: &[&core::Placement],
+        probe: Option<(usize, u64)>,
+    ) -> Self {
         let seconds = |work: u64| work as f64 / core::work_per_second();
         let report = kept.skeleton.clone().unwrap_or_default();
         let reports: Vec<core::skeleton::Report> = seeds
@@ -235,6 +282,10 @@ impl KiCadSkeletonRaceReport {
             seeds_fallback: reports.iter().filter(|r| r.fallback).count(),
             seeds_plain: seeds.iter().filter(|seed| seed.skeleton.is_none()).count(),
             kept_plain: kept.skeleton.is_none(),
+            plain_level: probe.map(|(level, _)| level),
+            probe_work_seconds: probe.map_or(0.0, |(_, work)| seconds(work)),
+            seeds_bounded: reports.iter().filter(|r| r.bounded).count(),
+            bounded: report.bounded,
         }
     }
 }
@@ -242,6 +293,85 @@ impl KiCadSkeletonRaceReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_level_guard_is_off_by_default_and_reported() {
+        let race: KiCadSkeletonRace = serde_json::from_str("{}").expect("the defaults");
+        assert_eq!(race.level_guard, KiCadLevelGuard::Off);
+        assert!(race.level_guard.bound().is_none());
+        assert!(
+            KiCadLevelGuard::Skips
+                .bound()
+                .is_some_and(|bound| !bound.walk)
+        );
+        for (text, guard) in [
+            ("off", KiCadLevelGuard::Off),
+            ("skips", KiCadLevelGuard::Skips),
+            ("walk", KiCadLevelGuard::Walk),
+        ] {
+            let race: KiCadSkeletonRace =
+                serde_json::from_str(&format!(r#"{{"level_guard": "{text}"}}"#)).expect(text);
+            assert_eq!(race.level_guard, guard);
+        }
+        assert!(
+            KiCadLevelGuard::Walk
+                .bound()
+                .is_some_and(|bound| bound.walk)
+        );
+        let mut kept = core::Placement {
+            poses: Vec::new(),
+            frames: Vec::new(),
+            global_iterations: 0,
+            global_overflow: 0.0,
+            wirelength_initial: 0.0,
+            wirelength_global: 0.0,
+            wirelength_legal: 0.0,
+            wirelength_final: 0.0,
+            unplaced: Vec::new(),
+            illegal: Vec::new(),
+            constraints: Vec::new(),
+            relaxation: core::Relaxation {
+                spacing: 0.0,
+                grid: 0.1,
+                halo_scale: 0.0,
+                small_halo_scale: 0.0,
+                edge_inset: false,
+                tight: false,
+                edge_copper: false,
+                edge_rule: 0.0,
+                courtyard_spacing: false,
+                pad_clearance: false,
+                halos: None,
+                on_marks: Vec::new(),
+            },
+            work: 0,
+            stage_poses: Vec::new(),
+            overfull: false,
+            exits: None,
+            level: 4,
+            skeleton: Some(core::skeleton::Report {
+                bounded: true,
+                fallback: true,
+                fallback_kept: true,
+                ..Default::default()
+            }),
+            bounded: false,
+        };
+        let mut other = kept.clone();
+        other.skeleton = Some(core::skeleton::Report::default());
+        let work = (2.0 * core::work_per_second()) as u64;
+        let report =
+            KiCadSkeletonRaceReport::of(&[true, false], &kept, &[&kept, &other], Some((4, work)));
+        assert_eq!(report.plain_level, Some(4));
+        assert!((report.probe_work_seconds - 2.0).abs() < 1e-9);
+        assert_eq!(report.seeds_bounded, 1);
+        assert!(report.bounded);
+        kept.skeleton = None;
+        let unguarded = KiCadSkeletonRaceReport::of(&[true], &kept, &[&kept], None);
+        assert_eq!(unguarded.plain_level, None);
+        assert_eq!(unguarded.seeds_bounded, 0);
+        assert!(!unguarded.bounded && unguarded.kept_plain);
+    }
 
     #[test]
     fn plain_seeds_spread_their_share_over_the_race() {

@@ -81,6 +81,12 @@ pub struct Report {
     /// passives did, the better of the two kept: `fallback_kept`).
     pub fallback: bool,
     pub fallback_kept: bool,
+    /// The level bound (`Config::level_bound`: the race's plain probe's
+    /// level, the guard) held a phase back (`Placement::bounded`): on the
+    /// walk, the phase stopped there with parts without room and the seed
+    /// fell back to the plain placement as the switch off places it; on
+    /// the skips alone, a skip to the tight levels past it did not happen.
+    pub bounded: bool,
 }
 
 /// The passives the skeleton leaves out: `passive` parts that move, have
@@ -576,7 +582,11 @@ fn key(placement: &Placement) -> (usize, f64, f64) {
 /// of the two phases'), its illegal parts and constraints judged on it.
 /// Where the skeleton leaves parts without a legal place, the seed is
 /// placed whole with the work left; where the passives find none around
-/// the skeleton, too, and the better kept.
+/// the skeleton, too, and the better kept. A `Config::level_bound` (the
+/// race's level guard: the plain placement's level) bounds both phases,
+/// not the whole placement: a phase that would walk to a tighter level
+/// stops with parts without room, and the seed is the plain placement
+/// (`Report::bounded`).
 pub fn place_skeleton(
     problem: &Problem,
     config: &Config,
@@ -589,14 +599,25 @@ pub fn place_skeleton(
     // alone, as a default, they did not change the first route of the
     // three boards they move (video, protoesp, the 0xCB panel: +2.7 %, p
     // 0.62), and video's skeletons fit only with them.
+    let unsettled = config;
     let mut settled = config.clone();
     settled.global.stall_iterations = settled.global.stall_iterations.max(100);
     settled.global.fit_turns = true;
     let config = &settled;
+    // The plain seed's placement (no passive absent, and the fallback):
+    // never bounded. Where the level bound on the walk sent the seed
+    // back, the plain race's own (`unsettled`: without the race's stall
+    // stop and fitting turns, as with the switch off).
+    let mut plain = config.clone();
+    plain.level_bound = None;
+    let plain = &plain;
+    let mut unsettled = unsettled.clone();
+    unsettled.level_bound = None;
+    let unsettled = &unsettled;
     let mut report = Report::default();
     let absent = absent_parts(problem, passive);
     if !absent.iter().any(|absent| *absent) {
-        let mut placement = place(problem, config);
+        let mut placement = place(problem, plain);
         report.passive_work = placement.work;
         report.level = placement.level;
         placement.skeleton = Some(report);
@@ -623,6 +644,8 @@ pub fn place_skeleton(
         );
     }
     report.skeleton_work = skeleton.work;
+    report.bounded = skeleton.bounded;
+    let walk_bound = config.level_bound.as_ref().is_some_and(|bound| bound.walk);
     report.skeleton_level = skeleton.level;
     report.skeleton_wirelength = skeleton.wirelength_final;
     let left = |used: u64| {
@@ -639,7 +662,8 @@ pub fn place_skeleton(
     // seed 301 none seated U12, U14 and U19 (docs/placer.md, "A race over
     // skeletons"): the plain placement needs the whole of it there.
     if skeleton.overfull || !skeleton.unplaced.is_empty() || !skeleton.illegal.is_empty() {
-        let mut placement = place(problem, config);
+        let walk_bounded = skeleton.bounded && walk_bound;
+        let mut placement = place(problem, if walk_bounded { unsettled } else { plain });
         report.fallback = true;
         report.fallback_kept = true;
         report.fallback_work = placement.work;
@@ -665,6 +689,8 @@ pub fn place_skeleton(
     second.first_level = skeleton.level;
     let passives = place(&holding, &second);
     report.passive_work = passives.work;
+    let passives_bounded = passives.bounded;
+    report.bounded |= passives_bounded;
     if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
         eprintln!(
             "placer: passives placed: level {}, {} unplaced, {} illegal, work {:.0} s",
@@ -691,7 +717,8 @@ pub fn place_skeleton(
     let mut used = skeleton.work + report.passive_work;
     if !placement.unplaced.is_empty() || !placement.illegal.is_empty() {
         // The plain seed's placement, at its full work, as above.
-        let fallback = place(problem, config);
+        let walk_bounded = passives_bounded && walk_bound;
+        let fallback = place(problem, if walk_bounded { unsettled } else { plain });
         report.fallback = true;
         report.fallback_work = fallback.work;
         used += fallback.work;
@@ -1191,5 +1218,107 @@ mod tests {
             report.skeleton_work + report.passive_work + report.fallback_work
         );
         assert!(placement.unplaced.is_empty() && placement.illegal.is_empty());
+    }
+
+    /// The 40 x 30 mm board on 9 x 30 mm with the spacing 0.8 mm: the
+    /// plain placement walks past its first levels (to the fine grid) and
+    /// seats every part there.
+    fn narrow() -> (Problem, Vec<bool>) {
+        let (mut problem, passive) = board();
+        problem.outline = vec![[0.0, 0.0], [9.0, 0.0], [9.0, 30.0], [0.0, 30.0]];
+        problem.poses[9].position = [1.5, 15.0];
+        problem.spacing = 0.8;
+        (problem, passive)
+    }
+
+    #[test]
+    fn a_level_bound_stops_the_walk_with_the_parts_without_room() {
+        let (problem, _) = narrow();
+        let config = Config::new();
+        let plain = place(&problem, &config);
+        assert!(plain.unplaced.is_empty() && plain.level > 0 && !plain.bounded);
+        // Bounded at its own level, or looser: the same placement.
+        for bound in [plain.level, plain.level + 1, usize::MAX] {
+            let mut bounded = config.clone();
+            bounded.level_bound = Some(crate::LevelBound::at(bound));
+            let placement = place(&problem, &bounded);
+            assert_eq!(placement.poses, plain.poses);
+            assert!(!placement.bounded);
+        }
+        // Bounded tighter: the walk stops, parts without room.
+        let mut bounded = config.clone();
+        bounded.level_bound = Some(crate::LevelBound::at(plain.level - 1));
+        let placement = place(&problem, &bounded);
+        assert!(placement.bounded);
+        assert!(!placement.unplaced.is_empty());
+        assert!(placement.level < plain.level);
+        // A bound on the skips alone leaves the walk free: without a work
+        // limit no skip is due, and the placement is the unbounded one.
+        let mut skips = config.clone();
+        skips.level_bound = Some(crate::LevelBound::at(0).skips_only());
+        let free = place(&problem, &skips);
+        assert_eq!(free.poses, plain.poses);
+        assert!(!free.bounded);
+        // A bound another thread sets later: the same placement.
+        let pending = crate::LevelBound::pending();
+        let mut waiting = config.clone();
+        waiting.level_bound = Some(pending.clone());
+        let later = std::thread::scope(|scope| {
+            let handle = scope.spawn(|| place(&problem, &waiting));
+            pending.set(plain.level - 1);
+            handle.join().expect("the bounded placement")
+        });
+        assert_eq!(later.poses, placement.poses);
+        assert_eq!(later.unplaced, placement.unplaced);
+    }
+
+    #[test]
+    fn a_level_bound_set_once_and_released_when_its_setter_fails() {
+        let bound = crate::LevelBound::pending();
+        assert_eq!(bound.get(), None);
+        bound.set(3);
+        bound.set(5);
+        assert_eq!(bound.wait(), 3);
+        let unset = crate::LevelBound::pending();
+        drop(crate::LevelBoundSetter(unset.clone()));
+        assert_eq!(unset.wait(), usize::MAX);
+        let set = crate::LevelBound::pending();
+        {
+            let setter = crate::LevelBoundSetter(set.clone());
+            setter.0.set(2);
+        }
+        assert_eq!(set.wait(), 2);
+    }
+
+    #[test]
+    fn a_skeleton_bounded_by_the_plain_level_falls_back_to_the_plain_placement() {
+        let (problem, passive) = narrow();
+        let settled = Config::new();
+        let unguarded = place_skeleton(&problem, &settled, &passive, &[], &Settings::default());
+        let report = unguarded.skeleton.clone().expect("a report");
+        assert!(!report.bounded);
+        // Bounded at the level the unguarded race reached or looser: the
+        // same placement.
+        let mut config = settled.clone();
+        config.level_bound = Some(crate::LevelBound::at(unguarded.level));
+        let same = place_skeleton(&problem, &config, &passive, &[], &Settings::default());
+        assert_eq!(same.poses, unguarded.poses);
+        assert!(!same.skeleton.expect("a report").bounded);
+        // Bounded at the first level: a phase that walks past it stops,
+        // and the seed is the plain placement (unbounded), charged on top.
+        config.level_bound = Some(crate::LevelBound::at(0));
+        let guarded = place_skeleton(&problem, &config, &passive, &[], &Settings::default());
+        let report = guarded.skeleton.clone().expect("a report");
+        // (The skeleton of the two ICs seats only at level 6, as the
+        // whole board does.)
+        assert_eq!(unguarded.level, 6);
+        assert!(report.bounded && report.fallback && report.fallback_kept);
+        assert_eq!(report.skeleton_level, 0);
+        // The plain placement as the switch off places it (not settled).
+        let off = place(&problem, &Config::new());
+        assert_eq!(guarded.poses, off.poses);
+        assert_eq!(report.fallback_work, off.work);
+        assert_eq!(guarded.work, report.skeleton_work + off.work);
+        assert!(guarded.unplaced.is_empty() && guarded.illegal.is_empty());
     }
 }
