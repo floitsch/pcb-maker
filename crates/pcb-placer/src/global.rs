@@ -36,6 +36,14 @@ pub struct GlobalConfig {
     pub stop_overflow: f64,
     /// Iterations of the global placement at most.
     pub max_iterations: usize,
+    /// The global placement stops where the overflow has not fallen below
+    /// `stall_factor` times its least so far for this many iterations (0:
+    /// never): the density has settled where it can. Video's memory
+    /// modules held the overflow at 0.07 to 0.12 from iteration 200 to the
+    /// cap of 1500 while the density weight grew by 10^15, which left the
+    /// wires no say (docs/placer.md, "A race over skeletons").
+    pub stall_iterations: usize,
+    pub stall_factor: f64,
     /// Growth of the density weight per iteration.
     pub lambda_growth: f64,
     /// Iterations between discrete rotation updates.
@@ -61,6 +69,8 @@ impl Default for GlobalConfig {
             whitespace_fill: 0.0,
             stop_overflow: 0.04,
             max_iterations: 1500,
+            stall_iterations: 100,
+            stall_factor: 0.98,
             lambda_growth: 1.03,
             rotation_interval: 15,
             rotation_net_limit: 24,
@@ -578,6 +588,8 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
     let mut previous: Option<(Vec<Point>, Vec<Point>)> = None;
     let mut lambda = 0.0;
     let mut overflow = 1.0;
+    // The least overflow so far (by `stall_factor`) and its iteration.
+    let mut least = (f64::INFINITY, 0usize);
     let mut frames = Vec::new();
     let mut iterations = 0;
     let mut density = vec![0.0; n * n];
@@ -857,6 +869,18 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
         if overflow <= config.stop_overflow && iteration > 20 {
             break;
         }
+        if overflow < least.0 * config.stall_factor {
+            least = (overflow, iteration);
+        }
+        if config.stall_iterations > 0 && iteration >= least.1 + config.stall_iterations {
+            if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
+                eprintln!(
+                    "placer: global placement stalled: overflow {overflow:.3}, its least {:.3} at iteration {} of {iterations}",
+                    least.0, least.1
+                );
+            }
+            break;
+        }
     }
     frames.push(Frame {
         iteration: iterations,
@@ -898,6 +922,8 @@ pub fn choose_rotations(
         }
     }
     let mut changed = false;
+    let bounds = problem.bounds();
+    let size = [bounds[2] - bounds[0], bounds[3] - bounds[1]];
     for (body, index) in movable.iter().enumerate() {
         let component = &problem.components[*index];
         if component.angle_options.len() < 2 || component.pins.is_empty() {
@@ -932,14 +958,34 @@ pub fn choose_rotations(
                 })
                 .sum()
         };
+        // Never an angle at which the body is longer than the board on
+        // either axis while another angle fits: no density settles there
+        // and no legal place exists (video's 116 x 8 mm memory modules
+        // turned upright on its 107 mm high board).
+        let fits = |angle: f64| {
+            let half = component.half_extent(angle);
+            2.0 * half[0] <= size[0] + 1.0e-9 && 2.0 * half[1] <= size[1] + 1.0e-9
+        };
+        let some_fit = component.angle_options.iter().any(|angle| fits(*angle));
+        let allowed = |angle: f64| !some_fit || fits(angle);
         let original = poses[*index];
-        let mut best = (cost(poses), original);
+        let mut best = (
+            if allowed(original.angle) {
+                cost(poses)
+            } else {
+                f64::INFINITY
+            },
+            original,
+        );
         if let Some((escape, members)) = escape {
             // The quarter turn that points the dense sides at free space
             // wins when its wirelength is close to the shortest.
-            let mut options = vec![(best.0, original)];
+            let mut options = Vec::new();
+            if allowed(original.angle) {
+                options.push((best.0, original));
+            }
             for angle in &component.angle_options {
-                if (angle - original.angle).abs() < 1.0e-9 {
+                if (angle - original.angle).abs() < 1.0e-9 || !allowed(*angle) {
                     continue;
                 }
                 poses[*index] = Pose {
@@ -976,7 +1022,7 @@ pub fn choose_rotations(
             continue;
         }
         for angle in &component.angle_options {
-            if (angle - original.angle).abs() < 1.0e-9 {
+            if (angle - original.angle).abs() < 1.0e-9 || !allowed(*angle) {
                 continue;
             }
             poses[*index] = Pose {
