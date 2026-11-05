@@ -4,7 +4,8 @@
 # found in the LICENSE file.
 """Stage 1 of the placer protocol for a placer switch: the five seed pairs
 on the eleven dense boards with `stop_after_first_route` (docs/benchmarks.md,
-"The ladder of placer measurements (2026-10-28)").
+"The ladder of placer measurements (2026-10-28)"); with `--full`, stage 2:
+the same units as full layouts.
 
     screen.py --out DIR --off-binary PATH --on-binary PATH --on '{"align_rows": {}}' [--slots 5]
     screen.py --out DIR --off-binary PATH --on-binary PATH --on '{}' --on-env PCB_PLACER_SKIP_ANNEAL=1
@@ -80,7 +81,9 @@ def units(arguments):
                 command = [sys.executable, str(ROOT / "benchmarks/agent-tasks/run.py"), str(Path(arguments.out) / name),
                            "--tasks", str(TASKS), "--only", board, "--binary", binary, "--jobs", "1",
                            "--threads", "2", "--expected-gb", str(estimate(board)[0]),
-                           "--placer", json.dumps(placer), "--layout", json.dumps({"stop_after_first_route": True})]
+                           "--placer", json.dumps(placer)]
+                if not arguments.full:
+                    command += ["--layout", json.dumps({"stop_after_first_route": True})]
                 result.append((name, command, extra if side == "on" else dict.fromkeys(extra)))
     return result
 
@@ -97,6 +100,8 @@ def main():
                         help="an environment variable for the on side only (repeatable)")
     parser.add_argument("--seeds", help="placer seeds, comma-separated (default: 1,101,201,301,401)")
     parser.add_argument("--boards", help="boards by their last name part, comma-separated (default: all eleven)")
+    parser.add_argument("--full", action="store_true",
+                        help="full layouts (stage 2 of the protocol), not stopped after the first route")
     parser.add_argument("--slots", type=int, default=5)
     parser.add_argument("--slots-file", help="a file holding the slots, read again every 20 s (to share the "
                         "machine's layout limit with other runs)")

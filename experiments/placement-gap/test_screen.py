@@ -17,9 +17,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import screen  # noqa: E402
 
 
-def arguments(on_env=None, sides="off,on"):
+def arguments(on_env=None, sides="off,on", seeds=None, boards=None, full=False):
     return argparse.Namespace(on="{}", on_env=on_env, sides=sides, out="/nonexistent/out",
-                              off_binary="/bin/off", on_binary="/bin/on")
+                              off_binary="/bin/off", on_binary="/bin/on", seeds=seeds, boards=boards,
+                              full=full)
 
 
 class OnEnvironment(unittest.TestCase):
@@ -49,6 +50,16 @@ class Units(unittest.TestCase):
             else:
                 self.assertEqual(extra, {"PCB_PLACER_SKIP_ANNEAL": None})
                 self.assertIn("/bin/off", command)
+
+    def test_seeds_and_boards_select_and_full_layouts_run_on(self):
+        result = screen.units(arguments(seeds="1,101", boards="video,protoesp"))
+        self.assertEqual(sorted(name for name, _, _ in result),
+                         sorted(f"dense-s{seed}-{side}-{board}" for seed in (1, 101) for side in ("off", "on")
+                                for board in ("video", "protoesp")))
+        for _, command, _ in result:
+            self.assertIn('{"stop_after_first_route": true}', command)
+        for _, command, _ in screen.units(arguments(seeds="1", boards="video", full=True)):
+            self.assertNotIn("--layout", command)
 
     def test_no_environment(self):
         for _, _, extra in screen.units(arguments(sides="on")):
