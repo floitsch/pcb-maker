@@ -127,8 +127,11 @@ parts; the verdict names the part when such pads stay open), `diff_pairs` (route
 the pairs where the project's `.kicad_dru` asks for them; a layout only with `"diff_pairs": true`;
 a pair couples between two parts whose pads of the pair lie side by side, so keep a pair's
 AC-coupling or series parts in a `row` of two (or the placer's `"pair_rows": true`, off by
-default, which rows them itself at the pair's pitch, facing the pair's ends); `verdict.diff_pairs`
-says which coupled and why the others fell back; every route of a layout plans them, so the
+default, which rows them itself at the pair's pitch, facing the pair's ends; a part's two pads with a
+ground pin between them count for a pair with no other link, as on an HDMI receptacle or ESD part);
+`verdict.diff_pairs`
+says which coupled and why the others fell back (`skews[].uncoupled_mm`: each coupled pair's length
+off its coupled run); every route of a layout plans them, so the
 board kept is coupled whichever stage made it: no route-mode pass on the `placed` board is needed;
 on a dense board with many pairs the links cost connections, so compare with a layout without them,
 and with `"diff_pair_give_up": true`, which gives a link with no room up in the negotiation and routes

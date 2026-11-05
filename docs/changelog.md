@@ -11,6 +11,42 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-05 (a pair point across a pin; split ends and launches turned for their stubs measured and left out)
+
+Branch pair-points (`build/bin/pcb-maker-pairs7-p1`, the code as
+committed; outputs in build/pairs7/). The diagnosis (docs/router.md, "A
+pair point across a pin"; `PCB_ROUTER_PAIRS_WHY=1`'s new `pairs why: side`
+line) of the "fewer than two parts side by side" pairs on x1915's ten
+placements: 140 pairs, 96 with one pair point and the others on series
+parts the placement put apart, 14 with the other part's pads further than
+3 mm apart (a USB switch), 30 with a ground pin between a part's two pads
+(HDMI ESD and redriver parts, HDMI receptacles); no diff_pair_uncoupled
+rule on jetson or ducktop2, so a run to a split end near the far pads is
+legal for the 67 that would get a run from pin points and split ends. Built and in, no switch: a pair with no link
+otherwise takes a part's pads across a pin as a pair point
+(`PointKind::Pin`), unless the pin would be walled in by the stubs and the
+run's lead (`walled_pin`, a flood fill: MSign's 0.4 mm USB muxes, 107 vs 73
+unconnected at 30 s when planned); the verdict's `skews` carry each coupled
+pair's `uncoupled_mm`. Measured, x1915 -> pins (coupled / partly pairs,
+unconnected): jetson seed 1 11 / 4 -> 21 / 2, 23 -> 21; seed 101 11 / 3 ->
+12 / 2, 29 -> 42; right_io seeds 1, 101, 7 0 / 3 -> 2 / 3, 2 / 3 -> 3 / 3,
+2 / 2 -> 4 / 2, 25 -> 31, 12 -> 14, 12 -> 15; the designer placements and
+left_io's layouts byte for byte x1915's; the expansion tier's 25 pair
+boards at 30 s: links 28 -> 29, pairs 15 / 11 -> 16 / 11, unconnected 591
+-> 585, passes 10 -> 10. Built, measured, left out: split ends (the run
+from a pair's one pair point to the nearest other pads within 5 mm, the
+tails uncoupled): coupled pairs up on eight runs (right_io seed 101 2 ->
+11, left_io seed 1 8 -> 13, the tier 15 -> 18) but left_io's designer
+placement 7 -> 3 (6 -> 3 and 5 -> 5 at 1550 and 1450 s of work) and its
+seed 101 12 -> 11; launches turned for their stubs (a plan-time reach
+check, the cheapest clear start no further from the pads whose stubs
+reach): jetson's designer placement 25 -> 21 coupled pairs, 1 of 30
+unreachable stubs freed. Identity: video's and MegaDrive's place checks
+(router defaults and `diff_pairs` on) and EMG_DAQ's route (fingerprints)
+byte for byte x1915's, and on the rebased head x1917's. Tests
+`a_pair_without_a_link_takes_pads_across_a_pin_as_a_pair_point`,
+`a_pin_point_whose_pin_would_be_walled_in_makes_no_run`.
+
 ## Committed on 2026-11-05 (corridor stubs: OpenFC's U10.5 connects whatever the lattice; the chooser's corridors built and not taken)
 
 Branch lattice-corridors; binaries `build/bin/pcb-maker-lat1-a` (the

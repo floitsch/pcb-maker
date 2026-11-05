@@ -3282,8 +3282,10 @@ reported `applied`.
 **Pair points and links.** A positive and a negative pad of one part
 (the labels' reference), at most 3 mm apart, nearest first, with no
 other net's copper on the line between their centres (a GND pin between
-D+ and D-, or an ESD part's pins across its body, are no pair point),
-are a pair point. So is (phase 4) a pad of each of two two-pad parts
+D+ and D-, or an ESD part's pins across its body, are no pair point;
+since 2026-11-05 a part's pads across a pin are, for a pair that has no
+link otherwise, where the pin keeps a way out: "A pair point across a
+pin" below), are a pair point. So is (phase 4) a pad of each of two two-pad parts
 whose other pads lie as close (at most 3 mm: the pair's AC-coupling or
 series capacitors, resistors, ESD diodes side by side), taken after the
 pair points of one part: the pair couples from its connector up to the
@@ -4075,6 +4077,214 @@ Right_io's and left_io's gap findings (diff_pair_gap_out_of_range) move
 with the copper written (left_io's seed 101 133 -> 87, right_io's seed
 101 47 -> 79).
 
+**A pair point across a pin (2026-11-05, branch pair-points; split ends
+and launches turned for their stubs built, measured, left out).** The
+largest remaining fall-back is "fewer than two parts with the pair's pads
+side by side" (x1915: jetson's layouts 26 and 35 of 75 pairs, ducktop2's
+5 to 14 of 21 and 39). *The diagnosis* (`PCB_ROUTER_PAIRS_WHY=1`'s new
+`pairs why: side` line: per pair without a link its pads by part, its pair
+points, the pads of one part with another net's copper between them and
+whose, those of one part further apart, and per positive pad the nearest
+negative pad of another part; the first plan of each of x1915's
+placements: jetson's designer placement and seed-1 layout, pairs4's
+seed-101 layout, ducktop2's designer placements and pairs6's layouts at
+seeds 1, 101 and 7; build/pairs7/side/, shapes.py and shapes2.py):
+
+| shape | pairs | a run with a pin point | with a split end too |
+| --- | ---: | ---: | ---: |
+| one pair point; the other pads on series parts (AC-coupling capacitors, series resistors, ESD diodes) the placement put apart | 96 | 0 | 40 (their nearest pads at most 5 mm apart) |
+| one pair point; the other part's positive and negative pads further apart (more than 3 mm: a USB switch with D+ and D- across its body, ducktop2's U2013) | 14 | 0 | (in the 40) |
+| a part's pads with another net's pin between them (a ground pin: jetson's HDMI ESD and redriver parts IC18 and IC2, ducktop2's HDMI receptacle J30 and J24) | 30 | 17 (with a second pair point: a link as any) | 27 (10 more with a split end) |
+| all | 140 | 17 | 67 |
+
+(Jetson's designer placement has none; per placement with split ends:
+ducktop2's designer placements 5 and 6 pairs, 3 and 3 with a run; jetson's
+layouts 26 and 35, 16 and 8; left_io's layouts 14 and 12, 4 and 7;
+right_io's 14, 14 and 14, 6, 12 and 8.) The 73 left are series parts
+further apart than 5 mm, the placer's to keep side by side (`pair_rows`).
+*Legal?* KiCad checks a pair's gap only where two of its segments run
+coupled (`diff_pair_gap_out_of_range` pairs P and N segments whose
+projections overlap with nothing between them) and counts the rest as
+uncoupled length, checked only against a `diff_pair_uncoupled` maximum:
+neither ducktop2 nor jetson sets one (their rules are gaps and widths), so
+a run from the one pair point to a point near the far pads, the last
+millimetres uncoupled, was legal for all 67; the plan checked the planned
+tails against such a maximum where a project sets one.
+
+*Built*, for a pair that has no link as before (every other pair's plan is
+as it was):
+
+- **A pair point across a pin** (`PointKind::Pin`; in): a part's positive
+  and negative pads at most 3 mm apart with another net's copper on the
+  line between them (`straddles`), nearest first, after the side-by-side
+  ones. Its launch is any pair point's (from between the pads along their
+  normal, out of the part; its stubs the router's where straight ones do
+  not clear the pin). *The pin kept clear* (`walled_pin`): the pin must
+  get out of a window of 1.5 mm round it (`grid_reaches`: a flood fill at
+  0.05 mm of a track of the pair's width, at the neck width within 1.5 mm
+  of a narrow pad, from the pad's own cells, every other net's copper at
+  its clearance) past straight stubs from the pads to their ends and the
+  run's lead; else no run, and the pair's `why` says "the pin between its
+  pads (U17.4) would be walled in by its stubs". On the expansion tier's
+  MSign the two USB muxes (UQFN-10 at 0.4 mm, D+ and D- across a ground
+  pin, another pair beside them) were such pins: planned, MSign's route
+  left 107 against x1915's 73 unconnected at 30 s, and 105 to 142 against
+  42 to 86 at 26 to 34 s; with the check neither is planned (86, 74, 57,
+  42: x1915's). Jetson's IC2 and IC18 and ducktop2's J30 and J24 keep a
+  way out.
+- **A split end** (built, measured, left out): where the pair points were
+  then of one part, the nearest positive and negative pads not in a pair
+  point, at most 5 mm apart and at least 3 mm from the pair point, ended
+  the run; its launch started between the two pads toward the link's
+  other end, its stubs the router's (the *tails*: ordinary connections of
+  the pair's nets in the same attempt), a crossed split end like any
+  crossed end, and the run refused where a `diff_pair_uncoupled` maximum
+  was below the planned tails. Reported per pair as `split`, with
+  `split_ends` and `split_coupled`.
+- **Launches turned for their stubs** (B; built, measured, left out).
+  The straight-end stubs the negotiation leaves open (84 of x1915's 101 on
+  pairs6's six runs) are partly the plan's: the reach check
+  (`PCB_ROUTER_PAIRS_REACH`) finds on the designer placements' first plans
+  6 of jetson's 42 router's stubs, 13 of left_io's 88 and 11 of right_io's
+  46 that do not reach their ends on the planned board alone (straight
+  ends 6, 13 and 10), mostly freed without the link's own lead (pads 1 to
+  4 mm behind the run's start, the straight stub past other pads or the
+  partner's pad, the lead closing the way in from the front) or walled in
+  by a part's other pads (right_io's RJ45 J500: a launch turned a right
+  angle, one pad behind the other). Built: the check at plan time
+  (`grid_reaches` from each pad to its stub's end past every other net's
+  copper, the run's lead and the other stub's end; against the router's
+  trial on the same plans it catches 25 of the 30 straight stubs the
+  router does not reach, and calls 21 of the 120 it does unreachable; the
+  reach check's lines now carry its verdict, `grid`), and where the chosen
+  launch's stubs did not both reach, the cheapest other clear start *no
+  further from the pads* (any angle, the positive pad on the same side, at
+  most 12 tried) whose stubs did. Pulling a launch back along its
+  direction is not possible: its start is already the first clear one
+  along it, and its lead the shortest the run allows (the reserve plus two
+  steps: at 0.2/0.2 mm about 0.65 mm), so a lead in front of a stub cannot
+  come closer.
+- **Reported** (in): per coupled pair in the verdict's `skews` its
+  `uncoupled_mm` (the longer net's length less the coupled run, KiCad's
+  uncoupled length; before only in board-router.json's `pairs`).
+  `PCB_ROUTER_PAIRS_WHY` prints `pairs why: points` (a pair's pair points
+  by kind), `pairs why: side` (a pair still without a link) and `pairs
+  why: walled`. The verdict's next action for a `diff_pair_*` finding
+  names the pin rule beside "side by side".
+
+*Measured* (the router's `{"diff_pairs": true}`, run.py at the pinned
+reference rates, `--jobs 1 --threads 4`, two runs at a time beside other
+work; outputs in build/pairs7/). "x1915" is pairs6's `pcb-maker-pairs6-i`
+(build/pairs6/), whose boards x1915 writes byte for byte (jetson's designer
+placement routed by both here: the same board; router round 5 changed no
+route), and x1915 itself for jetson's seed-101 layout and the left_io
+designer placement at 1450 and 1550 s (its spread); "pins" is
+`pcb-maker-pairs7-p1` (the code as committed: it routes the expansion
+tier's four changed boards byte for byte as the committed build), "pins +
+split" `pcb-maker-pairs7-a5` (with split ends; jetson's designer row is
+pairs7-a2, the same code there), "pins + split + B" `pcb-maker-pairs7-a7`
+with the launches turned for their stubs. Pairs: found / coupled / partly
+/ fallen back; links coupled of planned; the reasons per pair ("side":
+fewer than two parts side by side, "stub": a pad's stub does not reach the
+run, "copper": its copper too close, "no path", "no room": the run not
+routed, "close": the launches too close, "no launch"); split ends coupled
+of planned; `uncoupled_mm` (summed over the coupled pairs; of it the split
+pairs'); KiCad unconnected; `diff_pair_gap_out_of_range`; CPU seconds
+(loads differed; the jetson designer pair x1915 / pins ran side by side):
+
+| board, placement | run | pairs | links | reasons | split ends | uncoupled mm (split pairs) | unconnected | gap | CPU s |
+| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: |
+| jetson, the designer's | x1915 | 75 / 25 / 2 / 48 | 27/82 | no path 27, copper 13, close 10, no room 4, no launch 1 | 0/0 | 130 (0) | 10 | 0 | 1665.8 |
+|  | pins | 75 / 25 / 2 / 48 | 27/82 | no path 27, copper 13, close 10, no room 4, no launch 1 | 0/0 | 130 (0) | 10 | 0 | 1689.7 |
+|  | pins + split | 75 / 25 / 2 / 48 | 27/82 | no path 27, copper 13, close 10, no room 4, no launch 1 | 0/0 | 130 (0) | 10 | 0 | 1689.7 |
+|  | pins + split + B | 75 / 21 / 2 / 52 | 23/82 | no path 29, copper 14, close 11, no room 4, no launch 1 | 0/0 | 115 (0) | 13 | 0 | 1341.1 |
+| right_io, the designer's | x1915 | 21 / 4 / 3 / 14 | 7/23 | close 6, no path 6, side 6, stub 2, no room 1, copper 1 | 0/0 | 104 (0) | 36 | 50 | 1623.9 |
+|  | pins | 21 / 4 / 3 / 14 | 7/23 | close 6, no path 6, side 6, stub 2, no room 1, copper 1 | 0/0 | 104 (0) | 36 | 50 | 1962.5 |
+|  | pins + split | 21 / 6 / 4 / 11 | 10/26 | no path 7, close 6, side 3, no room 1, copper 1, stub 1 | 2/3 | 121 (11) | 34 | 42 | 1746.7 |
+|  | pins + split + B | 21 / 6 / 4 / 11 | 10/26 | no path 7, close 6, side 3, no room 1, copper 1, stub 1 | 2/3 | 121 (11) | 34 | 42 | 1957.5 |
+| left_io, the designer's | x1915 | 39 / 7 / 0 / 32 | 8/41 | no path 11, stub 9, side 5, close 4, no launch 4, no room 4, copper 1 | 0/0 | 147 (0) | 78 | 51 | 1644.3 |
+|  | pins | 39 / 7 / 0 / 32 | 8/42 | no path 11, stub 9, close 5, side 4, no launch 4, no room 4, copper 1 | 0/0 | 147 (0) | 78 | 51 | 1499.0 |
+|  | pins + split | 39 / 3 / 1 / 35 | 4/44 | no path 12, stub 11, close 5, no room 5, no launch 4, copper 3, side 2 | 0/2 | 27 (0) | 85 | 40 | 1686.9 |
+|  | pins + split + B | 39 / 4 / 1 / 34 | 5/44 | no path 12, no room 7, stub 7, close 5, copper 4, no launch 4, side 2 | 0/2 | 124 (0) | 87 | 30 | 1595.0 |
+| left_io, the designer's at 1450 s | x1915 | 39 / 5 / 1 / 33 | 6/41 | no path 11, stub 8, no room 6, side 5, close 4, no launch 4, copper 2 | 0/0 | 127 (0) | 90 | 56 | 1418.5 |
+|  | pins + split | 39 / 5 / 1 / 33 | 6/44 | no path 12, stub 8, close 5, copper 5, no launch 4, no room 4, side 2 | 0/2 | 115 (0) | 93 | 43 | 1376.3 |
+| left_io, the designer's at 1550 s | x1915 | 39 / 6 / 0 / 33 | 7/41 | no path 11, stub 8, no room 6, side 5, close 4, no launch 4, copper 1 | 0/0 | 132 (0) | 80 | 40 | 1495.4 |
+|  | pins + split | 39 / 3 / 1 / 35 | 4/44 | no path 12, stub 11, close 5, no room 5, no launch 4, copper 3, side 2 | 0/2 | 27 (0) | 85 | 40 | 1306.5 |
+| jetson, seed 1 | x1915 | 75 / 11 / 4 / 60 | 15/53 | side 26, copper 13, no path 12, no room 11, stub 1, no launch 1 | 0/0 | 202 (0) | 23 | 0 | 1350.1 |
+|  | pins | 75 / 21 / 2 / 52 | 23/47 | side 30, no room 13, copper 5, no path 4, no launch 2 | 0/0 | 369 (0) | 21 | 0 | 1165.2 |
+|  | pins + split | 75 / 24 / 1 / 50 | 26/69 | no path 17, no room 15, side 10, copper 8, no launch 2, stub 1 | 2/10 | 547 (75) | 27 | 0 | 1128.6 |
+| jetson, seed 101 | x1915 | 75 / 11 / 3 / 61 | 16/45 | side 35, no room 17, copper 6, no path 5, not routed (other) 1 | 0/0 | 121 (0) | 29 | 0 | 1010.5 |
+|  | pins | 75 / 12 / 2 / 61 | 15/51 | side 29, no room 22, copper 5, no path 4, close 3, not routed (other) 1, no launch 1 | 0/0 | 180 (0) | 42 | 0 | 1321.8 |
+|  | pins + split | 75 / 13 / 2 / 60 | 15/65 | no room 26, side 14, copper 12, no path 7, stub 2, not routed (other) 1, no launch 1, close 1 | 1/9 | 257 (3) | 47 | 0 | 1069.3 |
+| right_io, seed 1 | x1915 | 21 / 0 / 3 / 18 | 3/12 | side 14, no room 5, copper 3, no path 1 | 0/0 | 71 (0) | 25 | 55 | 1512.7 |
+|  | pins | 21 / 2 / 3 / 16 | 5/14 | side 12, no room 6, no path 2, stub 1 | 0/0 | 154 (0) | 31 | 43 | 1648.4 |
+|  | pins + split | 21 / 3 / 2 / 16 | 5/18 | side 8, no room 8, no path 2, stub 2, no launch 1 | 2/3 | 130 (26) | 28 | 45 | 1351.2 |
+| right_io, seed 101 | x1915 | 21 / 2 / 3 / 16 | 6/12 | side 14, no room 4, stub 1, copper 1 | 0/0 | 290 (0) | 12 | 79 | 1617.7 |
+|  | pins | 21 / 3 / 3 / 15 | 7/14 | side 12, stub 3, copper 2, no room 2 | 0/0 | 288 (0) | 14 | 89 | 1725.0 |
+|  | pins + split | 21 / 11 / 2 / 8 | 15/24 | copper 4, no room 3, side 2, close 1, no path 1 | 6/9 | 546 (104) | 14 | 97 | 1566.4 |
+| right_io, seed 7 | x1915 | 21 / 2 / 2 / 17 | 5/12 | side 14, no path 4, copper 2, stub 1 | 0/0 | 319 (0) | 12 | 62 | 1116.4 |
+|  | pins | 21 / 4 / 2 / 15 | 7/14 | side 12, no path 4, close 1, stub 1, copper 1 | 0/0 | 258 (0) | 15 | 42 | 1148.8 |
+|  | pins + split | 21 / 8 / 2 / 11 | 11/20 | side 6, copper 4, no path 4, close 1 | 4/6 | 457 (141) | 16 | 41 | 1432.4 |
+| left_io, seed 1 | x1915 | 39 / 8 / 3 / 28 | 12/30 | side 14, copper 7, no path 4, no room 4, stub 2, not routed (other) 1 | 0/0 | 421 (0) | 37 | 122 | 1570.3 |
+|  | pins | 39 / 8 / 3 / 28 | 12/30 | side 14, copper 7, no path 4, no room 4, stub 2, not routed (other) 1 | 0/0 | 421 (0) | 37 | 122 | 1497.7 |
+|  | pins + split | 39 / 13 / 7 / 19 | 20/39 | copper 9, side 8, stub 5, no room 3, no path 2 | 6/7 | 651 (29) | 21 | 81 | 1256.6 |
+| left_io, seed 101 | x1915 | 39 / 12 / 5 / 22 | 17/34 | side 12, no path 7, stub 5, no room 4, copper 1 | 0/0 | 406 (0) | 38 | 87 | 1469.6 |
+|  | pins | 39 / 12 / 5 / 22 | 17/34 | side 12, no path 7, stub 5, no room 4, copper 1 | 0/0 | 406 (0) | 38 | 87 | 1109.7 |
+|  | pins + split | 39 / 11 / 5 / 23 | 16/41 | no path 8, no room 6, copper 6, side 5, stub 5 | 4/7 | 335 (25) | 40 | 93 | 1342.9 |
+
+*Route mode on the expansion tier's 25 pair boards* at 30 s (`--jobs 2
+--threads 1`): x1915 28 links, 15 pairs coupled, 11 partly, 591
+unconnected, 10 passes; pins 29, 16, 11, 585 (ZSWatch 2 -> 3 with a pair
+coupled across its connector's pin, node_v6 18 -> 11 with its pin pair
+planned and not coupled), 10 passes; pins and split ends 30, 18, 10, 586
+(the Eurorack module and ducktop2's bms a pair more each; MSign 73 -> 71),
+10 passes; and B on top 32, 18, 11, 538 (MSign 71 -> 23, brickpico a link
+more), 10 passes. MSign's 30 s route swings by tens with any change of the
+plan (15 to 142 unconnected across this package's variants at 26 to 34 s).
+*Identity*: without pairs nothing changes: video's and MegaDrive's place
+checks with the default router settings and with `diff_pairs` on, and
+route mode on EMG_DAQ_ADS1292 with its six fingerprints, byte for byte
+x1915's (build/pairs7/ident/), and on the head rebased onto main (x1917,
+the corridor escape stubs) byte for byte x1917's (build/pairs7/ident17/;
+the four changed tier boards route there as before the rebase).
+
+*The decision.* **Pins in**, no switch: where a pin point changes the plan
+coupled pairs rise (jetson's layouts 11 -> 21 and 11 -> 12, right_io's 0
+-> 2, 2 -> 3, 2 -> 4, the tier 15 -> 16), and everywhere else the boards
+are x1915's byte for byte (the designer placements: no pin pair there, or
+left_io's J24 whose launches are too close; left_io's layouts). KiCad's
+unconnected moved -2, +13, +6, +2 and +3 on the five layouts it changed
+(the tier -6): every new link is a net of the negotiation and costs room,
+the known price of the pairs (jetson seed 101 left 44 with x1907 and 29
+with x1915; right_io seed 7 21 with x1913 and 12 with pairs6), so within
+what one placement moves from build to build, said so here.
+**Split ends out**: they couple the most (right_io's seed 101 11 pairs
+against 2, left_io's seed 1 13 / 7 against 8 / 3, right_io's designer
+placement 6 / 4 against 4 / 3, jetson seed 1 24 against 21 with pins) but
+cost left_io's designer placement 7 -> 3 coupled pairs (8 -> 4 links, 78
+-> 85 unconnected), and at 1450 and 1550 s of work 5 -> 5 and 6 -> 3: its
+two split links (USBC1_DP and PD1's host pair at the USB switch) never
+coupled and four pairs coupled before lost theirs (no room, copper, a
+stub); left_io's seed 101 lost one (12 -> 11). A piece that helps some
+boards and hurts another stays out: the code is gone, the numbers stay.
+**B out**: on the designer placements it turned 3 of jetson's launches and
+4 of left_io's, none of right_io's, and cost jetson 4 coupled pairs (25 ->
+21, 10 -> 13 unconnected), left_io +1 pair (3 -> 4, 85 -> 87); on the plan's
+own check it freed 1 of the 30 unreachable straight stubs and lost one on
+left_io. The bounded alternatives rarely exist; the grid check stays as the
+reach diagnostic's `grid` verdict.
+
+*What is left.* The "side" pairs now are series parts the placement put
+apart (73 of the 140 diagnosed, more than 5 mm apart; with split ends 40
+more pairs would get a run): the placer's (`pair_rows`, off), or split ends
+with a gate that keeps them off a board as dense as left_io's (where its
+two split links never coupled and displaced four coupled pairs): an open
+item with the numbers above. Straight-end stubs the negotiation leaves
+open stay as pairs6 left them: their way in is mostly other nets' routes,
+the partner's and the room after the attempt, and the plan's part (the
+lead in front, a part's pins round the pad) has no closer launch; a stub
+reserved in the negotiation is the open item.
+
 **The verdict.** `diff_pairs` in `board-router.json` and the verdict:
 `on`, `default` (`rules`: the project's rules ask; `off`: nothing asks;
 `explicit`: the setting or `PCB_ROUTER_DIFF_PAIRS`), `reason` (the rule
@@ -4082,7 +4292,7 @@ and the net it holds for, or why nothing asks; route mode reports it on
 every board), and with the switch on `found`, `coupled` (every link), `partly_coupled`, `fallen_back`,
 `links`, `links_coupled`, `crossed`, `crossovers` (2026-10-25), `coupled_mm`, `uncoupled_mm`
 (after the route, per coupled pair the longer net's tracks less the
-coupled run: KiCad's measure), `skew_mm`, `meanders`, `skews` (2026-10-25,
+coupled run: KiCad's measure), `skew_mm`, `meanders`, `skews` (per coupled pair; with its `uncoupled_mm` since 2026-11-05; 2026-10-25,
 "Skew and length" below), `not_routed` (2026-10-26: the links whose run
 was not routed, by cause; "Runs not routed at the task budget" below),
 `given_up` (2026-11-05: of those, the links the negotiation gave up with
