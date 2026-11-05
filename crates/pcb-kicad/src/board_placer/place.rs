@@ -504,89 +504,47 @@ pub fn place_kicad_board(
                 race.settings(),
                 passive_mask(&pcb, lowered.problem.components.len()),
                 race.plain_share,
-                race.level_guard,
             )
         });
-    // The guard's plain probe (`level_guard`): its level and work.
-    let probe_report: std::cell::Cell<Option<(usize, u64)>> = std::cell::Cell::new(None);
-    let seeded_config = |offset: u64| -> core::Config {
-        let mut seeded = placer_config.clone();
-        seeded.global.seed = config.seed + offset;
-        seeded.anneal.seed = seeded.anneal.seed.wrapping_add(offset);
-        // The pad-exits repair is a whole board's (its test names parts by
-        // the board's indices): not inside a panel's copies or a held
-        // sub-board.
-        if copies.is_some() || held_sub_boards.is_some() {
-            seeded.pad_exits = None;
-        }
-        seeded
-    };
     let place_seeds = |problem: &core::Problem| -> Vec<(u64, core::Placement)> {
-        // The race over skeletons' level guard: the plain placement of the
-        // race's first seed (as with the switch off) is placed beside the
-        // seeds, and its level bounds both phases of every skeleton seed
-        // (`core::LevelBound`): a skeleton that would seat only at a
-        // tighter level, or passives that would, leave parts without room
-        // and the seed is placed plain (the fallback). Where the skeletons
-        // seat no tighter, the race is the unguarded one: the probe is not
-        // among its seeds.
-        let guard = skeleton_race
-            .as_ref()
-            .and_then(|(_, _, _, guard)| guard.bound());
-        let (race, probe) = std::thread::scope(|scope| {
-            let probe = guard.as_ref().map(|bound| {
-                let setter = core::LevelBoundSetter(bound.clone());
-                let mut probe_config = seeded_config(0);
-                // The level is the probe's answer: no exits repair.
-                probe_config.pad_exits = None;
-                scope.spawn(move || {
-                    let placement = core::place(problem, &probe_config);
-                    setter.0.set(placement.level);
-                    (placement.level, placement.work)
-                })
-            });
-            let race = race_seeds(
-                seeds,
-                minimum_seeds,
-                placer_config.work_limit,
-                threads,
-                |placement: &core::Placement| placement.work,
-                |offset| {
-                    let mut seeded = seeded_config(offset);
-                    match (&copies, &held_sub_boards) {
-                        (Some(copies), _) => self::panel::place_copies(problem, copies, &seeded),
-                        (None, Some(sub)) => {
-                            crate::sub_boards::place_sub_boards(problem, sub, &seeded)
+        let race = race_seeds(
+            seeds,
+            minimum_seeds,
+            placer_config.work_limit,
+            threads,
+            |placement: &core::Placement| placement.work,
+            |offset| {
+                let mut seeded = placer_config.clone();
+                seeded.global.seed = config.seed + offset;
+                seeded.anneal.seed = seeded.anneal.seed.wrapping_add(offset);
+                // The pad-exits repair is a whole board's (its test
+                // names parts by the board's indices): not inside a
+                // panel's copies or a held sub-board.
+                if copies.is_some() || held_sub_boards.is_some() {
+                    seeded.pad_exits = None;
+                }
+                match (&copies, &held_sub_boards) {
+                    (Some(copies), _) => self::panel::place_copies(problem, copies, &seeded),
+                    (None, Some(sub)) => crate::sub_boards::place_sub_boards(problem, sub, &seeded),
+                    (None, None) => match &skeleton_race {
+                        Some((settings, passive, share))
+                            if !skeleton::plain_seed(offset, *share) =>
+                        {
+                            core::skeleton::place_skeleton(
+                                problem,
+                                &seeded,
+                                passive,
+                                &lowered.poured,
+                                settings,
+                            )
                         }
-                        (None, None) => match &skeleton_race {
-                            Some((settings, passive, share, _))
-                                if !skeleton::plain_seed(offset, *share) =>
-                            {
-                                seeded.level_bound = guard.clone();
-                                core::skeleton::place_skeleton(
-                                    problem,
-                                    &seeded,
-                                    passive,
-                                    &lowered.poured,
-                                    settings,
-                                )
-                            }
-                            // The plain seeds of a mixed race (`plain_share`)
-                            // place as with the switch off.
-                            _ => core::place(problem, &seeded),
-                        },
-                    }
-                },
-            );
-            let probe = probe.map(|handle| handle.join().expect("the guard's plain probe"));
-            (race, probe)
-        });
-        // The probe ran beside the seeds: on the clock as one more of
-        // them (the pool's makespan or its own work, the longer).
-        let probe_work = probe.map_or(0, |(_, work)| work);
-        if probe.is_some() {
-            probe_report.set(probe);
-        }
+                        // The plain seeds of a mixed race (`plain_share`)
+                        // place as with the switch off.
+                        _ => core::place(problem, &seeded),
+                    },
+                }
+            },
+        );
         // The pad-exits repair's work (`pad_exits`), booked apart from the
         // seeds' (the seeds kept do not depend on it): on the clock as the
         // reference machine's pool runs it beside them.
@@ -597,7 +555,7 @@ pub fn place_kicad_board(
             .collect();
         pool_work.set(
             pool_work.get()
-                + race.pool_work.max(probe_work)
+                + race.pool_work
                 + self::seed_race::pool_makespan(&exits_works, REFERENCE_THREADS),
         );
         seeds_work.set(
@@ -607,8 +565,7 @@ pub fn place_kicad_board(
                     .iter()
                     .map(|(_, placement)| placement.work)
                     .sum::<u64>()
-                + exits_works.iter().sum::<u64>()
-                + probe_work,
+                + exits_works.iter().sum::<u64>(),
         );
         seeds_run.set(seeds_run.get() + race.run);
         let mut placements: Vec<(u64, core::Placement)> = race
@@ -666,12 +623,11 @@ pub fn place_kicad_board(
         .unwrap_or(0) as f64
         / core::work_per_second();
     let seeds_placed = placements.len();
-    let skeleton_race_report = skeleton_race.as_ref().map(|(_, passive, _, _)| {
+    let skeleton_race_report = skeleton_race.as_ref().map(|(_, passive, _)| {
         KiCadSkeletonRaceReport::of(
             passive,
             &placements[0],
             &placements.iter().collect::<Vec<_>>(),
-            probe_report.get(),
         )
     });
     let placement = placements.remove(0);

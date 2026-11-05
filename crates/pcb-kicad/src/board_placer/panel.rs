@@ -1942,7 +1942,6 @@ pub(crate) fn place_copies(
         overfull: first.overfull || overfull,
         level: first.level,
         skeleton: None,
-        bounded: false,
         poses,
         exits: None,
     }

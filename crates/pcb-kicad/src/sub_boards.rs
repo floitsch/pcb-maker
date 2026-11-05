@@ -3401,7 +3401,6 @@ pub(crate) fn place_sub_boards(
         overfull,
         level: 0,
         skeleton: None,
-        bounded: false,
         poses,
         exits: None,
     }
