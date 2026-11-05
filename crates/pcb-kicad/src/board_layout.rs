@@ -1174,8 +1174,10 @@ fn placement_digest(
 /// The placement's share of a layout's budget: 40 % of `total_seconds`
 /// (the race after it leaves the final route `RACE_MIN_FINAL_SHARE` at
 /// least).
+pub const PLACEMENT_SHARE: f64 = 0.4;
+
 pub fn placement_budget(config: &KiCadBoardLayoutConfig) -> f64 {
-    0.4 * config.total_seconds.max(0.0)
+    PLACEMENT_SHARE * config.total_seconds.max(0.0)
 }
 
 /// The placer's configuration as a layout gives it, before the outline is
@@ -2112,7 +2114,7 @@ pub fn layout_kicad_board(
         // What the race did until 2026-10-25 (the 40 % gate, its probes
         // uncharged), for the report: whether each probe would have been
         // dropped, and the placement it would have kept.
-        let gate = 0.4 * config.total_seconds;
+        let gate = PLACEMENT_SHARE * config.total_seconds;
         let mut gated_work = work - probe_work[1..].iter().sum::<f64>();
         let mut gated_best = race[0];
         let mut kept_gated = labels[0];

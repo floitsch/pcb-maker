@@ -867,8 +867,18 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
      skeleton; a layout with `total_seconds` under 1250 or a place check
      with `PCB_PLACER_WORK_SECONDS` under 500 places plain, as with the
      race off (a quick check then answers for the plain placement, not
-     the layout's). `board-placer.json`'s `skeleton_race` says what ran:
-     `budget_ok` (false: every seed plain), `work_seconds` (the seed's
+     the layout's). `board-placer.json`'s `skeleton_race` says what ran,
+     first in one line, `summary` (since 2026-11-06, trial 7; also on
+     stderr as `placer: skeleton race: ...`): `not run: each seed's
+     placement had 200 s of work, under min_work_seconds (500 s), so all
+     3 seeds placed plain, ... a layout's total_seconds of 1250 or more
+     ...`, or `ran: the kept seed placed its skeleton of 68 parts first
+     (level 3) and its 129 passives around it (level 3); 12 of 12 seeds
+     placed by skeleton (0 fell back to a plain placement); ...`
+     (MIDAS-MK2 at 500 and 1500 s); on a panel of copies or sub-boards
+     the race does not run and the block is absent (the stderr line says
+     so). Then `budget_ok` (false: every seed plain, and the level fields
+     below 0 for that reason, not full halos), `work_seconds` (the seed's
      placement work) and `min_work_seconds`; for the kept seed
      `skeleton_parts`, `absent` (the passives left out), `held`,
      `fitting_level`, `skeleton_level` and `level` (the relaxation levels

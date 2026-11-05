@@ -635,6 +635,21 @@ pub fn place_kicad_board(
             &placements.iter().collect::<Vec<_>>(),
         )
     });
+    match &skeleton_race_report {
+        Some(report) => eprintln!("placer: skeleton race: {}", report.summary),
+        // On, but a panel's copies or held sub-boards place each piece on
+        // its own: the race is a whole board's.
+        None if config.skeleton_race.is_some() => eprintln!(
+            "placer: skeleton race: not run: the board is placed as {} (the race places a \
+             whole board); board-placer.json has no skeleton_race",
+            if copies.is_some() {
+                "a panel's copies"
+            } else {
+                "a panel's sub-boards"
+            }
+        ),
+        None => {}
+    }
     let placement = placements.remove(0);
     let panel_copies = copies
         .as_ref()

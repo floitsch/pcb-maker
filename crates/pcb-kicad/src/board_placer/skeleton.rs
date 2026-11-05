@@ -5,6 +5,7 @@
 //! the rule lives. The placement is `pcb_placer::skeleton`'s.
 
 use super::*;
+use crate::board_layout::PLACEMENT_SHARE as LAYOUT_PLACEMENT_SHARE;
 use pcb_placer as core;
 use serde::{Deserialize, Serialize};
 
@@ -228,6 +229,76 @@ pub struct KiCadSkeletonRaceReport {
     /// kept placement's skeleton are zero).
     pub seeds_plain: usize,
     pub kept_plain: bool,
+    /// What the race did, in one line (also on stderr as `placer: skeleton
+    /// race: ...`): whether the seeds placed by skeleton, and if not why
+    /// and what would turn it on; else what the kept seed did (its levels,
+    /// a fallback) and how many seeds fell back.
+    #[serde(default)]
+    pub summary: String,
+}
+
+impl KiCadSkeletonRaceReport {
+    /// `summary`: one line on what ran (trial 7: a short budget's race was
+    /// told only by `budget_ok: false` and zero levels, which read as
+    /// "seated at full halos").
+    fn summarize(&self, seeds: usize) -> String {
+        if !self.budget_ok {
+            let work = self.work_seconds.unwrap_or(0.0);
+            return format!(
+                "not run: each seed's placement had {work:.0} s of work, under min_work_seconds \
+                 ({:.0} s), so all {seeds} seeds placed plain, as with \"skeleton_race\": null \
+                 (the levels below are 0 for that reason); to place by skeleton give the \
+                 placement {:.0} s or more: a layout's total_seconds of {:.0} or more (the \
+                 placement takes {:.0} % of it; a place check takes its layout.json's), or \
+                 lower skeleton_race.min_work_seconds",
+                self.min_work_seconds,
+                self.min_work_seconds,
+                (self.min_work_seconds / LAYOUT_PLACEMENT_SHARE).ceil(),
+                LAYOUT_PLACEMENT_SHARE * 100.0,
+            );
+        }
+        let by_skeleton = seeds - self.seeds_plain;
+        let seeds_line = format!(
+            "{by_skeleton} of {seeds} seeds placed by skeleton ({} fell back to a plain \
+             placement){}",
+            self.seeds_fallback,
+            if self.seeds_plain > 0 {
+                format!(", {} plain (plain_share)", self.seeds_plain)
+            } else {
+                String::new()
+            }
+        );
+        let levels = "levels: 0 is full halos, each further level shrinks halos and spacing, \
+                      the last ones the bodies (tight)";
+        if self.kept_plain {
+            return format!(
+                "ran: the kept seed is one placed plain (plain_share); {seeds_line}; the fields \
+                 of the kept seed's skeleton are 0"
+            );
+        }
+        let kept = if self.fallback_kept {
+            format!(
+                "the kept seed's skeleton ({} parts, level {}) or its passives left parts \
+                 without a place, so it was placed plain (fallback_kept)",
+                self.skeleton_parts, self.skeleton_level
+            )
+        } else {
+            format!(
+                "the kept seed placed its skeleton of {} parts first (level {}) and its {} \
+                 passives around it (level {}{})",
+                self.skeleton_parts,
+                self.skeleton_level,
+                self.absent,
+                self.level,
+                if self.fallback {
+                    "; a fallback ran and was not kept"
+                } else {
+                    ""
+                }
+            )
+        };
+        format!("ran: {kept}; {seeds_line}; {levels}")
+    }
 }
 
 impl KiCadSkeletonRaceReport {
@@ -271,7 +342,14 @@ impl KiCadSkeletonRaceReport {
             seeds_fallback: reports.iter().filter(|r| r.fallback).count(),
             seeds_plain: seeds.iter().filter(|seed| seed.skeleton.is_none()).count(),
             kept_plain: kept.skeleton.is_none(),
+            summary: String::new(),
         }
+        .with_summary(seeds.len())
+    }
+
+    fn with_summary(mut self, seeds: usize) -> Self {
+        self.summary = self.summarize(seeds);
+        self
     }
 }
 
@@ -489,6 +567,73 @@ mod tests {
         let report = on.skeleton_race.expect("the race's report");
         assert!(report.budget_ok && !report.kept_plain);
         assert_eq!((report.skeleton_parts, report.held), (2, 2));
+    }
+
+    #[test]
+    fn the_race_says_in_one_line_what_ran_and_why_not() {
+        // Trial 7's MIDAS-MK2 at total_seconds 500: 200 s a seed, plain.
+        let short = KiCadSkeletonRaceReport {
+            budget_ok: false,
+            work_seconds: Some(200.0),
+            min_work_seconds: SKELETON_MIN_WORK_SECONDS,
+            passives: 131,
+            seeds_plain: 3,
+            kept_plain: true,
+            ..KiCadSkeletonRaceReport::default()
+        }
+        .with_summary(3);
+        assert!(
+            short.summary.starts_with(
+                "not run: each seed's placement had 200 s of work, under min_work_seconds \
+                 (500 s), so all 3 seeds placed plain"
+            ),
+            "{}",
+            short.summary
+        );
+        // The lever: the layout's budget that gives the placement 500 s.
+        assert!(
+            short.summary.contains("total_seconds of 1250 or more"),
+            "{}",
+            short.summary
+        );
+        // At the default budget: the kept seed's skeleton and levels.
+        let ran = KiCadSkeletonRaceReport {
+            budget_ok: true,
+            work_seconds: Some(600.0),
+            min_work_seconds: SKELETON_MIN_WORK_SECONDS,
+            passives: 131,
+            absent: 129,
+            skeleton_parts: 68,
+            held: 68,
+            skeleton_level: 3,
+            level: 3,
+            seeds_fallback: 1,
+            ..KiCadSkeletonRaceReport::default()
+        }
+        .with_summary(12);
+        assert!(
+            ran.summary.starts_with(
+                "ran: the kept seed placed its skeleton of 68 parts first (level 3) and its 129 \
+                 passives around it (level 3); 12 of 12 seeds placed by skeleton (1 fell back \
+                 to a plain placement)"
+            ),
+            "{}",
+            ran.summary
+        );
+        let fell_back = KiCadSkeletonRaceReport {
+            fallback: true,
+            fallback_kept: true,
+            ..ran.clone()
+        }
+        .with_summary(12);
+        assert!(
+            fell_back
+                .summary
+                .contains("so it was placed plain (fallback_kept)")
+        );
+        // The serialized report carries it.
+        let json = serde_json::to_value(&ran).unwrap();
+        assert_eq!(json["summary"], ran.summary.as_str());
     }
 
     #[test]
