@@ -385,7 +385,7 @@ then the rest.
      (`skip_to_tight`) that the skeleton's half of the work triggers at
      the short tier's budget, and protoesp's winning skeletons skip the
      same way (to the fine grid). Bounding the phases by a plain probe's
-     level (`level_guard` `skips` or `walk`) keeps OpenFC's strict pass
+     level (a `level_guard`, `skips` or `walk`, built and removed) keeps OpenFC's strict pass
      on 7 of 10 seeds against off's 9 of 10, the mixed race on 2 of 5,
      and `skips` gives back protoesp's gain (-2.5 % against -38.9 %).
      Every OpenFC failure, off's seed 801 too, is one connection: U10's
@@ -832,10 +832,10 @@ experiments (2026-11-04)" below):
   free passives first, then the passives around the held skeleton; under
   it the global placement's stall stop and turns that fit the board.
   Stage 2 BETTER (-12.1 %, p 0.002) but OpenFC's strict pass lost on four
-  of five seeds: not a default. `level_guard` (`off` by default; `skips`,
-  `walk`: a plain probe's level bounds the skeleton's phases; placer.md
-  "The level guard (2026-11-05)") measured and not taken: OpenFC 7 of 10
-  strict against off's 9 of 10, protoesp's gain gone.
+  of five seeds: not a default. A level guard (a plain probe's level
+  bounding the skeleton's phases; placer.md "The level guard
+  (2026-11-05)") was built, measured and removed: OpenFC 7 of 10 strict
+  against off's 9 of 10, protoesp's gain gone.
 - `pad_exits` (placer): **off** (2026-11-04; `PCB_PLACER_PAD_EXITS`;
   docs/placer.md, "Pads without a way out (2026-11-04)"): after each
   seed the router's test of every pad's way out, and the parts that close

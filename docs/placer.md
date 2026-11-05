@@ -7628,13 +7628,16 @@ on the dense boards: equal by the statistic, it may keep OpenFC's plain
 seed). CPU for stage 2: 125 343 s (34.8 CPU hours); the short tier and
 OpenFC's pairs 8 929 s more (5 892 and 3 037).
 
-### The level guard (2026-11-05)
+### The level guard (2026-11-05): built, measured and removed
 
 Branch skeleton-race-3. The guard the decision above named: a skeleton
-seed's phases no tighter than the plain placement. Binaries
+seed's phases no tighter than the plain placement. It was built as
+`skeleton_race.level_guard`, measured below, and removed again (no
+switch off by default without a documented use, the rule of
+2026-11-04); the numbers stay. Binaries
 `build/bin/pcb-maker-skel3-{a,c}` (main's router) and `-ob` (the guard on
 main's placer with `-k`'s router, so that its layouts route as stage 2's;
-place checks: off and `{"level_guard": "off"}` byte-identical to `-k`'s
+place checks: off and the guard set off byte-identical to `-k`'s
 on DSP-ADAU1452 and split72_left, off identical to x1916; its protoesp
 off rows equal x1911's first routes, 145 / 102 / 80 / 103 / 120). Place
 checks in `build/skel3-place`, OpenFC's rows in `build/skel3-openfc`,
@@ -7693,16 +7696,16 @@ race kept a skipped one (skeleton wire 2821 to 3096 mm against 3691 to
 4354). The guard holds its winner back. SNSP-CPU-01's loss (level 0 on
 both sides) it does not touch.
 
-**The guard** (`skeleton_race.level_guard`): the race's first seed is also
+**The guard** (`skeleton_race.level_guard`, as built): the race's first seed is also
 placed plain beside the seeds (a probe, not among them; its work on the
 clock as one more seed of the pool), and its relaxation level bounds the
-skeleton seeds' phases (`Config::level_bound`, `LevelBound`: a phase
+skeleton seeds' phases (a bound in the placer's configuration: a phase
 asks for it only once its first level left parts without room, and
 waits for the probe then). `walk`: no level past the bound runs; a phase
 that would leave parts without room there falls back to the plain seed
 as the switch off places it. `skips`: no skip past the bound, the walk
-level by level free. The report gives `plain_level`,
-`probe_work_seconds`, `seeds_bounded` and `bounded`.
+level by level free. The report gave the probe's level and work and
+the seeds the bound held back.
 
 **OpenFC**, the short tier's task and budget, strict passes (KiCad
 unconnected 0 and no new strict finding), seeds 1 to 401 and 501 to 901:
@@ -7739,8 +7742,9 @@ every form the guard (and the mixed race) loses OpenFC's strict pass on
 some seeds (7 of 10 against off's 9 of 10), and it takes protoesp's gain
 (weight 30 at stage 1, 50 at stage 2, its -38.9 % and -40.1 % the second
 largest contribution). Stage 1 and stage 2 with the guard were not run:
-the OpenFC condition fails whatever they show. `level_guard` stays in the
-code, `off` by default (the switch's `{}` is stage 2's, byte for byte).
+the OpenFC condition fails whatever they show. `level_guard`, its probe
+and its report fields are removed (the switch's `{}` is stage 2's, byte
+for byte, as before).
 
 What the numbers say instead: the level is the lever on both boards, the
 skip to the tight levels winning on protoesp (and video) at the dense

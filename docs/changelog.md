@@ -11,10 +11,10 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
-## Committed on 2026-11-05 (the race over skeletons, round 3: the level guard, measured and not taken; skeleton_race stays off)
+## Committed on 2026-11-05 (the race over skeletons, round 3: the level guard, built, measured and removed; skeleton_race stays off)
 
 Branch skeleton-race-3; binaries `build/bin/pcb-maker-skel3-{a,c}` (main's
-router) and `-ob` (the guard with `-k`'s router, so that its layouts
+router; `-d` after the removal) and `-ob` (the guard with `-k`'s router, so that its layouts
 route as stage 2's); place checks in `build/skel3-place`, OpenFC's rows
 in `build/skel3-openfc`, protoesp's in `build/skel3-pilot`.
 docs/placer.md, "The level guard (2026-11-05)", has the tables.
@@ -26,24 +26,19 @@ docs/placer.md, "The level guard (2026-11-05)", has the tables.
   the same way. protoesp's winning skeletons are the same skip (four of
   nine seeds, to the fine grid). Every OpenFC failure, off's too, is the
   +3.3V pad of U10 (X2SON-6, B.Cu) under or beside U2 (QFN-80 at 0.4 mm).
-- **`skeleton_race.level_guard`** (`off` by default; `skips`, `walk`):
+- **`skeleton_race.level_guard`, built and removed** (`skips`, `walk`):
   the race's first seed placed plain beside the seeds as a probe, its
-  level bounding both phases of every skeleton seed (`pcb_placer::
-  LevelBound`, `Config::level_bound`, `Placement::bounded`; a phase
-  waits for the bound only once its first level left parts without
-  room); `walk` falls back to the plain seed as the switch off places it.
-  board-placer.json's `skeleton_race` gives `plain_level`,
-  `probe_work_seconds`, `seeds_bounded`, `bounded`. Tests
-  a_level_bound_stops_the_walk_with_the_parts_without_room,
-  a_level_bound_set_once_and_released_when_its_setter_fails,
-  a_skeleton_bounded_by_the_plain_level_falls_back_to_the_plain_placement,
-  the_level_guard_is_off_by_default_and_reported.
+  level bounding both phases of every skeleton seed; `walk` fell back to
+  the plain seed as the switch off places it. Removed after the
+  measurement with its probe, its report fields and its tests (no
+  switch off by default without a documented use).
 - **Measured**: OpenFC strict passes over ten seeds: off 9, `skips` 7,
   `walk` 7; the mixed race 2 of 5, `skips` with `pad_exits` 4 of 5 (no
   closed pad found). protoesp stage 1 with `skips` -2.5 % (p 0.37)
   against the unguarded -38.9 %. Not a default; stage 1 and 2 with the
-  guard not run (the OpenFC condition fails). Identity: off and `{}`
-  byte-identical to x1916 (DSP-ADAU1452, split72_left place checks).
+  guard not run (the OpenFC condition fails). Identity after the
+  removal: off and `{}` byte-identical to x1916 (DSP-ADAU1452,
+  split72_left place checks).
   CPU 4.9 hours.
 
 ## Committed on 2026-11-05 (the race over skeletons, round 2: BETTER by the full protocol, blocked by OpenFC; skeleton_race stays off)
