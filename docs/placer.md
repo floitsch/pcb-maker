@@ -7552,11 +7552,81 @@ skeletons: `plain_share` stays 0.
 **Decision for stage 2**: `skeleton_race` `{}` as measured (`join_pins`
 8, `plain_share` 0, the stall stop and the fitting turns under it).
 
-**Stage 2** (started 2026-11-05 09:59, off; 13:02, on): the full protocol in
-`build/skel2-full` (`screen.py --full`, both sides `pcb-maker-skel2-k`,
-x1910 with the fixes and the stall stop under the switch, which writes the
-same boards as `-j` on and as x1911 off), six layouts in flight.
- Its verdict follows here.
+**Stage 2** (the full protocol: the eleven dense boards at the task
+budgets, full layouts, seeds 1 to 401, `screen.py --full`, both sides
+`pcb-maker-skel2-k` (x1910 with the fixes, the stall stop under the
+switch; off is main's placement byte for byte), at most six in flight,
+`build/skel2-full`, 2026-11-05 09:59 to 16:57). KiCad unconnected, off /
+on:
+
+| Board | s1 | s101 | s201 | s301 | s401 | median | relative (weight) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| OpenESC 4in1 | 119 / 109 | 125 / 77 | 81 / 80 | 124 / 97 | 98 / 83 | 119 / 83 | -16.3 % (58) |
+| OpenESC 4in1-mini | 77 / 77 | 87 / 75 | 81 / 103 | 58 / 58 | 66 / 66 | 77 / 75 | +2.2 % (71) |
+| DSP-ADAU1452 | 3 / 0 | 5 / 0 | 6 / 0 | 10 / 1 | 3 / 0 | 5 / 0 | -37.1 % (4) |
+| MegaDrive | 125 / 105 | 100 / 133 | 108 / 111 | 100 / 131 | 141 / 100 | 108 / 111 | +0.9 % (21) |
+| 0xCB panel | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | (weight 0) |
+| split72_left | 20 / 5 | 33 / 21 | 16 / 18 | 21 / 21 | 4 / 27 | 20 / 21 | -1.4 % (29) |
+| protoesp | 81 / 30 | 58 / 41 | 44 / 37 | 63 / 26 | 61 / 31 | 61 / 31 | -40.1 % (50) |
+| Glasgow revC3 | 87 / 73 | 86 / 85 | 102 / 66 | 89 / 63 | 96 / 82 | 89 / 73 | -12.5 % (88) |
+| SmartSpin2k | 51 / 51 | 40 / 40 | 24 / 24 | 37 / 37 | 90 / 90 | 40 / 40 | 0 (3) |
+| SNSP-CPU-01 | 97 / 157 | 44 / 73 | 57 / 63 | 59 / 75 | 55 / 85 | 57 / 75 | +34.0 % (11) |
+| video | 210 / 106 | 208 / 131 | 141 / 112 | 157 / 57 | 189 / 99 | 189 / 106 | -33.3 % (16) |
+
+- **BETTER**: weighted -12.1 % (the noise file's 90 % interval -17.8 to
+  -6.5 %), sign-flip p 0.002, the noise file's p 0.000; sum of medians
+  765 to 615 (-19.6 %); every pair sum falls (870 to 713, 786 to 676,
+  660 to 614, 718 to 566, 803 to 663). Six boards better, three worse,
+  two equal.
+- **The full layouts follow the first routes**: video better on all
+  five seeds (median 189 to 106), protoesp on all five (61 to 31),
+  DSP-ADAU1452 complete on four of five (0 unconnected; off 3 to 10),
+  the 4in1 on all five, Glasgow on four. split72_left's first-route loss
+  (+28.8 %) washes out in the full layout (-1.4 %); SNSP-CPU-01 stays the
+  loser (+34.0 %, all five seeds), its weight 11.
+- **Strict passes**: off 5 (the panel's five), on 6 (the panel's five
+  and DSP-ADAU1452's seed 1); none lost. DSP-ADAU1452's other complete
+  on rows carry new KiCad findings (seeds 101, 201, 401: one to three
+  pad clearance and one or two solder-mask bridges, all between the
+  through-hole capacitor C306 or a neighbour and the fixed fiducials
+  FID2/FID4, whose pads ask 1.1 mm: a legality gap the placer has
+  without the switch too, which the denser passives' placement hits;
+  off's rows are incomplete there, so none counts against a pass). Rows
+  with a DRC error: off 7 (protoesp's five clearance errors,
+  split72_left's two), on 6 (DSP-ADAU1452's three, split72_left's three).
+- **CPU**: off 66 212 s, on 59 131 s (34.8 CPU hours for the 110
+  layouts); per board on is cheaper on nine of eleven (protoesp 1271 to
+  1008 s, Glasgow 1226 to 969), dearer on DSP-ADAU1452 (1408 to 1465).
+  The layouts' work is the same budget on both sides (1106 to 1532 s;
+  the 4in1-mini's 1106 to 1240: its fallbacks' charge).
+
+**The short tier** (the protocol's other condition: no strict pass
+lost; `--tier short`, 3 x 2, both sides `-k`, `build/skel2-short`): off
+7 strict passes, on 6. OpenFC (OpenFC-Lite) passes off and leaves 2
+unconnected on. At the five seed pairs on that board alone (the tier's
+task and budget, `build/skel2-short/openfc`): off passes strictly on all
+five, on on one (seed 101; 2, 1, 2 and 1 unconnected on the others).
+The condition fails. On OpenFC the skeleton (82 parts, 79 passives
+absent) seats only at level 7 and the passives with it, and the kept
+placement is much tighter than off's (final wire 537 to 785 mm against
+994 to 1034): at a third of the budget the router does not finish. The
+short tier's other boards: unconnected 21 off, 26 on (framework_mobo
+1 to 2, MIDAS-MK1.1 1 to 2, reCamera 4 to 5), USB_Keypad's new findings
+5 to 9; CPU 2841 against 3051 s.
+
+**Decision.** Stage 2 is BETTER at p 0.002 (-12.1 %), but the switch
+loses OpenFC's strict pass on four of five seeds, so by the rule
+(benchmarks.md, "Measurement discipline: placer defaults", 4) it is no
+default: `skeleton_race` stays off. What is left: a skeleton that seats
+only at a tight level packs a small board tighter than the plain
+placement (OpenFC), which the race does not see since all its seeds are
+skeletons. Candidates, each a stage-1 and short-tier question: the
+skeleton only where its level is no tighter than the plain placement's
+(the race's first plain seed, or `first_fitting_level` of the skeleton
+problem itself against the whole's), or the mixed race (measured above
+on the dense boards: equal by the statistic, it may keep OpenFC's plain
+seed). CPU for stage 2: 125 343 s (34.8 CPU hours); the short tier and
+OpenFC's pairs 8 929 s more (5 892 and 3 037).
 
 ## Footprints without a courtyard, and their slots (2026-11-04)
 

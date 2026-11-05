@@ -39,9 +39,10 @@ used to be here; code comments and docs that cite `docs/handover.md,
   anneal loses the fine one while it lowers our objective (the 4in1 and
   Glasgow without it: 142 against 174 and 95 against 149 first-route
   open terminals; "Where the arrangement is lost (2026-11-04)"). The
-  race over skeletons (`skeleton_race`, off) passes stage 1 at -12.4 %
-  (p 0.001) but left video's seed 301 without a legal placement ("A
-  race over skeletons (2026-11-04)"). On by default since: the room
+  race over skeletons (`skeleton_race`, off) passes the full protocol on
+  the dense boards (stage 2 KiCad unconnected -12.1 %, p 0.002; video
+  -33 %, protoesp -40 %) but loses OpenFC's strict pass on four of five
+  seeds, so it stays off ("The fixes, and stage 1 again (2026-11-05)"). On by default since: the room
   around dog-boned grid arrays (`bga_room`: Glasgow 343 to 262
   unconnected over three seeds; "Room around grid arrays") and the
   courtless rule (two footprints without a courtyard keep the boxes of
@@ -103,8 +104,9 @@ used to be here; code comments and docs that cite `docs/handover.md,
   boards; the skeleton race's took 23.7 CPU hours for both arms) and
   then by the full protocol (benchmarks.md, "Measurement discipline:
   placer defaults", "The ladder of placer measurements"). The current
-  bet is the skeleton race (its stage 1 again with video's fallback
-  fixed, then the full protocol); the next question is the anneal's
+  bet was the skeleton race: BETTER by the full protocol on the dense
+  boards, blocked by OpenFC's lost strict pass (a skeleton that seats only
+  at a tight level packs a small board tighter than the plain placement); the next question is the anneal's
   judge (the stage-1 screen without the anneal, `PCB_PLACER_SKIP_ANNEAL`,
   is running). **No more single-term levers**: the day's (the net
   weightings, rows of repeated parts, length minima, pair rows) moved
@@ -360,18 +362,30 @@ then the rest.
      It decides video and SNSP-CPU-01: the global placement started from
      the designer's poses leaves 69 first-route open terminals on video
      against our 304, and 22 on SNSP against the designer's 23. The bet
-     on it is the race over skeletons (`skeleton_race`, off; "A race over
-     skeletons (2026-11-04)"): stage 1 -12.4 % (p 0.001; the 4in1
-     -19.9 %, DSP-ADAU1452 -48 %, protoesp -46.7 %, Glasgow -18.1 %, each
-     better on all five seeds; split72_left +28.8 %, SNSP-CPU-01
-     +11.6 %), but video's seed 301 found no legal placement and video's
-     skeleton fell back on 14 of its 15 seeds. **A defect beside it:
-     video's global placement never meets its stop** (1500 iterations at
-     an overflow of 0.10 to 0.12, from the designer's arrangement too,
-     whose overflow in the global's model is 0.000: 116 x 8 mm memory
-     modules on 4.9 x 1.7 mm bins in a notched outline), which is also
-     why video's skeleton does not fit. Both are in flight ("Working on
-     it").
+     on it is the race over skeletons (`skeleton_race`, off; placer.md,
+     "A race over skeletons (2026-11-04)" and "The fixes, and stage 1
+     again (2026-11-05)"). Fixed on 2026-11-05: the fallback is the plain
+     seed at its full work; the skeleton starts at the first level where
+     the whole board fits; held and fixed parts are judged at the smaller
+     halos; under the switch the global placement stops where its
+     overflow stalls and never turns a part longer than the board (video's
+     global never met its stop: SIM72 modules turned upright, ten parts
+     turning back and forth every 15 iterations; the stall stop alone, as
+     a default, NOT BETTER on its three boards, +2.7 %, p 0.62). Stage 1
+     against main: -8.9 %, p 0.007, no seed refused (video -28.9 %).
+     **Stage 2: BETTER**, KiCad unconnected -12.1 % (p 0.002, the noise
+     file's 0.000), every pair sum falls, 765 to 615 summed medians; video
+     189 to 106, protoesp 61 to 31, DSP-ADAU1452 complete on four seeds,
+     the 4in1 -16 %, Glasgow -12.5 %; SNSP-CPU-01 +34 % (weight 11);
+     no dense strict pass lost. **Not a default**: the short tier's OpenFC
+     passes strictly on five of five seeds off and one of five on (its
+     skeleton seats only at level 7, the placement much tighter). Next:
+     the skeleton only where its level is no tighter than the plain
+     placement's, or the mixed race (`plain_share` 0.5: equal to the pure
+     race at stage 1, may keep OpenFC's plain seed); then the short tier
+     and OpenFC's five pairs before stage 2 again. Measured and not
+     taken: `join_pins` 0 (fixes SNSP-CPU-01 and split72_left, loses the
+     4in1-mini: +3.0 % against the race).
    - **(b) The fine arrangement: the anneal's objective.** On the 4in1
      and Glasgow the anneal lowers our objective while it costs routes:
      without it our pipeline leaves 142 against 174 and 95 against 149
@@ -611,20 +625,9 @@ then the rest.
 
 ## Working on it
 
-**In flight on 2026-11-05** (four packages, each in its own worktree;
+**In flight on 2026-11-05** (two packages, each in its own worktree;
 what each decides):
 
-- **The skeleton race, round 2** (branch skeleton-race-2,
-  `../pcb-maker-skel2`; open problem 4 (a)). The fallback of a skeleton
-  that leaves parts out becomes the plain seed at its full work, the
-  skeleton starts at the first level where the whole board fits by area,
-  and the global placement stops where its overflow has stalled for 100
-  iterations, never turning a body longer than the board while another
-  angle fits (video's memory modules held it at 0.07 to 0.12 up to the
-  1500-iteration cap). Then stage 1 again (the eleven dense boards, five
-  seed pairs, `stop_after_first_route`) and, if it holds with every row
-  placed, the full protocol. Decides whether `skeleton_race` becomes the
-  default, and whether video's global placement converges.
 - **Pair links given up** (branch pair-links-give-up,
   `../pcb-maker-pairs4`; open problem 15). A pair's link that costs
   connections is given up in the negotiation, the pairs are checked at
@@ -813,11 +816,13 @@ experiments (2026-11-04)" below):
   unconnected over three seeds, its first route -20 % over five; nothing
   else moves. `"bga_room": false` turns it off.
 - `skeleton_race` (placer): **off** (2026-11-05; docs/placer.md, "A race
-  over skeletons (2026-11-04)"; `{}` for the defaults `room` 1,
-  `work_share` 0.5, `join_pins` 8): each seed places every part but the
-  free passives first, then the passives around the held skeleton.
-  Stage 1 -12.4 % (p 0.001), but video's seed 301 found no legal
-  placement; round 2 is in flight ("Working on it").
+  over skeletons (2026-11-04)" and "The fixes, and stage 1 again
+  (2026-11-05)"; `{}` for the defaults `room` 1, `work_share` 0.5,
+  `join_pins` 8, `plain_share` 0): each seed places every part but the
+  free passives first, then the passives around the held skeleton; under
+  it the global placement's stall stop and turns that fit the board.
+  Stage 2 BETTER (-12.1 %, p 0.002) but OpenFC's strict pass lost on four
+  of five seeds: not a default.
 - `pad_exits` (placer): **off** (2026-11-04; `PCB_PLACER_PAD_EXITS`;
   docs/placer.md, "Pads without a way out (2026-11-04)"): after each
   seed the router's test of every pad's way out, and the parts that close

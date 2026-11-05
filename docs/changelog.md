@@ -11,6 +11,61 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-05 (the race over skeletons, round 2: BETTER by the full protocol, blocked by OpenFC; skeleton_race stays off)
+
+Branch skeleton-race-2; binaries `build/bin/pcb-maker-skel2-{a..l}`
+(`-j` stage 1, `-k` stage 2 and the short tier, `-l` the mixed race);
+place checks in `build/skel2-place`, screens in `build/skel2-scr*`,
+stage 2 in `build/skel2-full`, the short tier in `build/skel2-short`.
+docs/placer.md, "The fixes, and stage 1 again (2026-11-05)", has the
+tables.
+
+- **Fixes under the switch**: a skeleton that leaves parts out, or
+  passives without room, fall back to the plain seed at its full work
+  (charged on top; before, with the work left, video's seed 301 found no
+  legal placement); the skeleton starts at `first_fitting_level`, the
+  first level where the whole board fits by area (the 4in1-mini's
+  passives found room on 8 of 16 kept seeds, 3 of 15 before); held and
+  fixed parts are judged at the smaller of the two phases' halos (video's
+  skeletons that fit were judged illegal beside fixed connectors); the
+  global placement's `stall_iterations` (100) and `fit_turns` (on under
+  `skeleton_race` only). New setting `plain_share` (a mixed race, off);
+  `board-placer.json`'s `skeleton_race` gains `fitting_level`,
+  `seeds_plain`, `kept_plain`. `screen.py` gains `--seeds`, `--boards`
+  and `--full`.
+- **Video's global placement**: it never met its stop because the
+  rotations turned its 116 x 8 mm SIM72 modules upright on the 107 mm
+  high board and turned about ten parts back and forth every 15
+  iterations, each turn resetting the momentum; frozen, the overflow
+  still held at 0.08 to 0.10 (the modules). The stall stop ends it at
+  240 to 530 iterations. Alone, as a default, it changes video, protoesp
+  and the 0xCB panel only and is NOT BETTER there (stage 1 +2.7 %, p
+  0.62), so it lives under the switch; with the switch off the placement
+  is main's byte for byte.
+- **Stage 1** (11 dense boards x 5 pairs, first route): against main's
+  default weighted -8.9 % (p 0.007), every pair sum falls, no seed
+  refused; video -28.9 % (better on every seed), protoesp -38.9 %,
+  DSP-ADAU1452 -48 %; split72_left +28.8 %, SNSP-CPU-01 +11.6 %.
+  Measured and not taken: `join_pins` 0 (the joined nets are what costs
+  split72_left and SNSP-CPU-01, but the 4in1-mini loses 14.8 %: +3.0 %
+  against the race), a mixed race at `plain_share` 0.5 (-9.1 % against
+  main on four seeds, the race's -9.3 %; protoesp gives up its gain), the
+  skeleton without the anneal (dropped: the anneal-skip screen failed).
+- **Stage 2** (110 full layouts, 34.8 CPU hours): **BETTER**, KiCad
+  unconnected weighted -12.1 % (sign-flip p 0.002, the noise file's
+  0.000), sum of medians 765 to 615, every pair sum falls; video 189 to
+  106, protoesp 61 to 31, DSP-ADAU1452 0 on four seeds, the 4in1 -16.3 %,
+  Glasgow -12.5 %; SNSP-CPU-01 +34 %. Dense strict passes 5 to 6.
+- **Not a default**: the short tier loses OpenFC (strict on 5 of 5 seeds
+  off, 1 of 5 on; its skeleton seats only at level 7 and packs the board
+  much tighter). `skeleton_race` stays off; next: the skeleton only where
+  its level is no tighter than the plain placement's, or the mixed race,
+  judged at stage 1 and on the short tier.
+- Tests: the full-work fallback equals the plain placement; the first
+  fitting level; a held part beside a fixed one judged at the skeleton's
+  halos; the stall stop (and no change where the global converges); the
+  turns that fit; the plain seeds' spread; screen.py's options.
+
 ## Committed on 2026-11-05 (the fifth router round: the search's neck zones as a mask, its targets without a hash map, the planner's arrays kept; the same routes, 2.9 % less router CPU)
 
 Branch router-cpu-round-5 (three commits); the head on main 73102548
