@@ -42,7 +42,8 @@ placer.md stay, headed as removed.
 - **Kept**: everything on by default (`exact_escape_stubs`, `bga_fanout`,
   `bga_room`, the anneal's crossings, ...), the agent-facing levers with
   a documented use (`decoupling_near`, `via_in_pad`, `pad_exits`,
-  `pair_rows`, `length_minima`, `length_reroute`, `diff_pairs`),
+  `pair_rows`, `length_minima`, `length_reroute`, `diff_pairs`,
+  `skeleton_race`),
   `stop_after_first_route`, the trouble repair's knobs as one family, the
   diagnostics.
 - 6 989 lines of Rust removed, 485 added (the census test, the reduced
