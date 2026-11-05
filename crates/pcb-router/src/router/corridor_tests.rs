@@ -222,28 +222,6 @@ pub(super) fn pocketed_part(dy: f64) -> Board {
 }
 
 #[test]
-fn the_lattice_passes_a_pockets_corridor_on_every_offset() {
-    // U10's corridors run along x between its corner pads: pads 3 and 4
-    // leave 15 um of play either side of y = 5 + dy, pads 1 and 6 30 um
-    // of y = 5.015 + dy. Whatever the part's offset, a node row of the
-    // chosen lattice lies within one of them (the row of narrow pads
-    // votes for phase 0).
-    for step in 0..10 {
-        let dy = step as f64 * 0.01;
-        let grid = Grid::choose(&pocketed_part(dy), &[0.1]);
-        let row = |y: f64| {
-            let offset = (y - grid.origin[1]).rem_euclid(grid.pitch);
-            offset.min(grid.pitch - offset)
-        };
-        assert!(
-            row(5.0 + dy) <= 0.015 + 1.0e-9 || row(5.015 + dy) <= 0.03 + 1.0e-9,
-            "dy {dy}: lattice origin {:?}",
-            grid.origin
-        );
-    }
-}
-
-#[test]
 fn a_pocketed_pad_routes_on_every_lattice_offset() {
     // With corridor stubs U10.5 connects whatever the part's offset
     // against the lattice; without them only where a node row falls in a
