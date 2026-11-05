@@ -247,7 +247,7 @@ impl KiCadSkeletonRaceReport {
             return format!(
                 "not run: each seed's placement had {work:.0} s of work, under min_work_seconds \
                  ({:.0} s), so all {seeds} seeds placed plain, as with \"skeleton_race\": null \
-                 (the levels below are 0 for that reason); to place by skeleton give the \
+                 (its level fields are 0 for that reason); to place by skeleton give the \
                  placement {:.0} s or more: a layout's total_seconds of {:.0} or more (the \
                  placement takes {:.0} % of it; a place check takes its layout.json's), or \
                  lower skeleton_race.min_work_seconds",

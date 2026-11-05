@@ -1414,6 +1414,9 @@ pub struct KiCadRunFacts {
     pub corridors: Option<crate::KiCadCorridors>,
     /// A layout's placement race, when it ran.
     pub race: Option<crate::board_layout::KiCadRaceReport>,
+    /// The placement's race over skeletons (board-placer.json's
+    /// `skeleton_race`), when the placer ran with it on.
+    pub skeleton_race: Option<crate::board_placer::KiCadSkeletonRaceReport>,
     /// The router file's values below the project's minimum that the run
     /// allowed, with what became of them.
     pub rule_overrides: Vec<crate::run_diagnosis::KiCadOverrideOutcome>,
@@ -1842,6 +1845,31 @@ fn via_in_pad_actions(facts: &KiCadRunFacts) -> Vec<String> {
 /// (the quick tier's designer boards; rp2350-dual-usb's designer 86 %).
 pub const DECOUPLING_SHARE: f64 = 0.6;
 
+/// The next action for a layout left with open connections whose
+/// placement ran without the race over skeletons for want of budget
+/// (`budget_ok` false): the default budget's placement is another one, so
+/// a larger `total_seconds` is a lever (trial 7: MIDAS-MK2 at
+/// total_seconds 500 left 1 unconnected, at the default 1500 none).
+fn skeleton_budget_action(facts: &KiCadRunFacts) -> Option<String> {
+    let race = facts
+        .skeleton_race
+        .as_ref()
+        .filter(|race| !race.budget_ok)?;
+    let open = facts
+        .native
+        .as_ref()
+        .map_or(facts.unconnected_terminals, |native| native.unconnected);
+    if !facts.routes || open == 0 {
+        return None;
+    }
+    Some(format!(
+        "the placement ran without the race over skeletons (skeleton_race: {:.0} s of placement work a seed, under its min_work_seconds {:.0} s; every seed plain): a layout with total_seconds {:.0} or more (the default 1500) places by skeleton, another placement to try against these open connections",
+        race.work_seconds.unwrap_or(0.0),
+        race.min_work_seconds,
+        (race.min_work_seconds / crate::board_layout::PLACEMENT_SHARE).ceil()
+    ))
+}
+
 /// The next action for nets the narrow-signal step routed below their
 /// class's width, where a class other than Default is among them (a width
 /// the designer chose for those nets, such as a controlled impedance):
@@ -2042,6 +2070,7 @@ impl KiCadRunFacts {
             first_route_only: false,
             corridors: None,
             race: None,
+            skeleton_race: None,
             rule_overrides: Vec::new(),
             bus_groups: None,
             panel_copies: None,
@@ -2277,6 +2306,11 @@ pub struct KiCadVerdict {
     /// did not run.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub race: Option<crate::board_layout::KiCadRaceReport>,
+    /// Placements and layouts: what the placer's race over skeletons did,
+    /// in one line (board-placer.json's `skeleton_race.summary`; absent
+    /// when the race was off or the board a panel).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skeleton_race: Option<String>,
     /// The router file's values below the project's minimum that the run
     /// routed with (`allow_below_project_minimum`), each with the value
     /// requested, the project's minimum and its source, the value routed
@@ -2812,6 +2846,7 @@ fn next_actions(
         actions.push(pour_action(pour));
     }
     actions.extend(narrowed_action(&facts.narrowed));
+    actions.extend(skeleton_budget_action(facts));
     actions.extend(facts.decoupling.as_ref().and_then(|decoupling| {
         decoupling_action(
             decoupling,
@@ -4425,6 +4460,10 @@ pub(crate) fn judge_at(
         moves: facts.moves.clone(),
         corridors: facts.corridors.clone(),
         race: facts.race.clone(),
+        skeleton_race: facts
+            .skeleton_race
+            .as_ref()
+            .map(|race| race.summary.clone()),
         bus_groups: facts.bus_groups.clone(),
         panel_copies: facts.panel_copies.clone(),
         sub_boards: facts.sub_boards.clone(),
@@ -4658,6 +4697,46 @@ mod tests {
         facts.routed_connections = 54;
         facts.native = Some(native);
         facts
+    }
+
+    #[test]
+    fn a_layout_left_open_without_the_skeleton_race_names_the_budget_that_runs_it() {
+        // Trial 7's MIDAS-MK2 at total_seconds 500: 200 s of placement
+        // work a seed, plain; 1 unconnected (none at the default 1500).
+        let race = crate::board_placer::KiCadSkeletonRaceReport {
+            budget_ok: false,
+            work_seconds: Some(200.0),
+            min_work_seconds: 500.0,
+            summary: "not run: ...".into(),
+            ..Default::default()
+        };
+        let mut facts = routed(DrcTally {
+            unconnected: 1,
+            ..DrcTally::default()
+        });
+        facts.command = "layout-kicad-board".into();
+        facts.skeleton_race = Some(race.clone());
+        let verdict = judge(&facts);
+        assert_eq!(verdict.skeleton_race.as_deref(), Some("not run: ..."));
+        assert!(
+            verdict.next_actions.iter().any(|line| line.starts_with(
+                "the placement ran without the race over skeletons (skeleton_race: 200 s of placement work a seed, under its min_work_seconds 500 s; every seed plain): a layout with total_seconds 1250 or more"
+            )),
+            "{:?}",
+            verdict.next_actions
+        );
+        // Complete, or placed by skeleton: nothing to say.
+        facts.native = Some(DrcTally::default());
+        assert!(skeleton_budget_action(&facts).is_none());
+        facts.native = Some(DrcTally {
+            unconnected: 1,
+            ..DrcTally::default()
+        });
+        facts.skeleton_race = Some(crate::board_placer::KiCadSkeletonRaceReport {
+            budget_ok: true,
+            ..race
+        });
+        assert!(skeleton_budget_action(&facts).is_none());
     }
 
     #[test]

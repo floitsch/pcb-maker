@@ -842,6 +842,7 @@ fn placement_facts(command: &str, report: &serde_json::Value) -> KiCadRunFacts {
     facts.work_seconds = report["work_seconds"].as_f64();
     facts.cut = pcb_kicad::wall_cuts();
     facts.room = serde_json::from_value(report["room"].clone()).ok();
+    facts.skeleton_race = serde_json::from_value(report["skeleton_race"].clone()).ok();
     facts
 }
 
@@ -1034,6 +1035,7 @@ fn layout(arguments: Vec<String>) -> Result<KiCadRunStatus, Failure> {
         .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
         .unwrap_or_default();
     facts.room = serde_json::from_value(placed["room"].clone()).ok();
+    facts.skeleton_race = serde_json::from_value(placed["skeleton_race"].clone()).ok();
     // The routed placement's (the race may keep another than the
     // placer's first-ranked).
     facts.closed_pads = result
