@@ -3473,7 +3473,208 @@ jetson's first route leaves 60 open on the same placement where it left
 2 (43 link nets, most not routed in the end), and the layout keeps 23
 and 44 unconnected where it kept 0 and 9. With `diff_pairs` a layout
 pays route mode's price of the pairs in every stage; the open item is
-the router's (links that cannot route given up early).
+the router's (links that cannot route given up early): since 2026-11-05
+they are ("Giving up on a link" below).
+
+**Giving up on a link (2026-11-05).** *The diagnosis* (jetson-nano-
+baseboard seed 1, x1907's code with a trace, `PCB_ROUTER_LINK_TRACE=1`:
+per negotiation iteration and after the hard repair each link's state,
+conflicts and search work; the same board as x1907's, 23 unconnected).
+The kept placement plans 43 links. In its first route (the race's probe,
+then the resumed negotiation, iterations 10 to 24 at the price cap) 6 to
+11 of the 43 links are settled at any time; at the negotiation's end 9
+are, 4 have no path even through other nets' copper from the first
+iteration (CSI_C_CLK, CSI_C_D0, CSI_C_D1, CSI_D_D1: `blocked`, out of the
+negotiation for good), and 30 are in conflict in every iteration, their
+conflicts not falling (PCIE0_RX2's 235 cells to 103, PCIE0_TX0's 90 to
+125). The links' searches are 55 of the negotiation's 204 s of search
+work (27 % for 43 of about 400 nets) and 74 of 261 s with the repair;
+the 21 links not routed in the end took 51 s of it. The hard repair,
+links first, routes 13 of the 30 (22 routed, 21 not: "the hard repair
+found no room" 17, "no path" 4); of the 22 the board written couples 9
+(6 a pad's stub does not reach the run, 5 copper refused). The negotiation
+converges around them: 164 to 179 nets stay in conflict at the cap from
+iteration 4 to 24 (about 130 of them not links), where the same placement
+without the plan leaves 2 open after its first route; the race's ripped
+count of the kept placement is 655 with the plan, 76 without. The pairs'
+nets then: 33 pairs fall back and the fallback (45 s of work) routes
+their 66 nets with everything else kept: 33 routed, 14 already joined, 19
+left with 32 terminals open. The narrow-signal attempt the layout keeps
+is the same story (25 of 43 links not routed, 21 of them in conflict
+through all 33 iterations, links 90 of 401 s of the negotiation's search
+work); its fallback routes 49 of the 66 nets, 9 already joined, 8 left
+with 8 open: KiCad's 23 unconnected.
+
+*The give-up* (`GiveUp` in pcb-router's board.rs, the rule and the
+release in router/give_up.rs; the settings' `diff_pair_give_up`, else
+`PCB_ROUTER_DIFF_PAIRS_GIVE_UP=1`; **off by default**, the measurement
+below). A board whose adapter can say what a net stands in for
+carries it in `Board::attachment`'s `give_up`; pcb-kicad's pairs' plan does
+(`PairPlan`: every link is optional, and `net_with_links` makes a pair's
+net as `plan_pairs` lowers it with only the links still standing: its
+pads as lowered, each standing link's stubs' ends added and merged).
+After every negotiation iteration (not the via reduction's) each link
+counts the round (`GiveUpRecord`): settled (complete without a conflict)
+starts it afresh; *pathless* (incomplete without a conflict, the
+negotiation's search found no path even through other nets' copper:
+`NetState::blocked`, out of the negotiation for good) gives it up at
+once ("no path"); *in conflict* counts a round unsettled and its lowest
+conflict count so far, once the price of sharing has reached
+`min_present` (100; below it the negotiation is still sorting the nets
+out and the links that settle later are in conflict too). After
+`min_rounds` (8) such rounds a link whose conflicts have not fallen below
+their lowest for `stall_rounds` (4) goes ("no room"), and every link goes
+after `max_rounds` (16) (`GiveUpRule`,
+`PCB_ROUTER_GIVE_UP=min,stall,pathless,max[,present]`). A
+link given up loses its copper and is no net of the route any more
+(`released`: not routable, `Trivial` in the statuses, so no open count
+holds it; the ripped count, the probes' standing and the score do not
+see it); its pair's two nets take their terminals without it
+(`GiveUp::released`: the pads as lowered, the other links' run ends still
+merged), lose their copper and are prepared again, and the next
+iteration routes them uncoupled, in the same attempt. The link's lead and
+the stubs' ends stay in the static maps (the lead as the link's copper,
+the ends as the pair's own): the maps are not rebuilt. A move's trial
+board, planned again, is given up on alike before `Router::update`
+compares its nets (`with_releases`), so the moves still apply.
+*The retry*: in the hard repair, once the nets in conflict are ripped up
+and before they are routed again (`resolve_remaining`, `retry_released`),
+each link given up for want of room (its fewest conflicts first) is tried
+once more as the repair tries a link: its pair's nets lose their copper
+and take their terminals with the link again (`GiveUp::standing`), the
+link is routed hard, then the pair's nets; where all three complete and
+the pair's nets leave no more terminals open than before, the link
+stands again, else everything goes back as it was; within a quarter of
+the negotiation's work (at least 10 s), not in a move's trial. Reported:
+the verdict's and board-router.json's `diff_pairs.given_up` (links given
+up), their cause in `not_routed` "given up in the negotiation: no room"
+or "...: no path", the pair's `why` "the coupled run was not routed
+(given up in the negotiation: ...)", the router's `Diagnostics::released`
+(net, reason, iteration, work). A pair whose links not kept were all
+given up and whose nets the attempt routed needs no fallback (its 5 %
+is not spent). `PCB_ROUTER_LINK_TRACE=1` prints the trace the diagnosis
+used, and each link given up or standing again.
+
+*The rule, measured* (jetson seed 1, the layout as pairs3 ran it, rounds
+counted from the first iteration; the first two without the retry): at
+4, 3 and 10 rounds every link but five goes in the race's probes (38 of
+43, most at the fourth round), the first route leaves 15 open, the
+layout ends with 0 unconnected and 2 pairs coupled; a retry after the
+repair (every net fixed) found room for none, the retry in the repair
+after the rip-up for 6 (still 2 coupled); at 12, 5 and 24 rounds 25 given
+up, 75 open after the first route, 12 unconnected after the
+narrow-signal attempt and its pours-as-tracks attempt, 7 coupled and 1
+partly; at 8, 4 and 16 with the retry: 26 given up, 3 standing again, 4
+unconnected, 9 coupled and 1 partly (x1907: 23, 8 and 1). That rule on
+the other five runs (the table below, "8, 4, 16") held jetson seed 101
+(44 -> 7 unconnected, 5 -> 6 coupled) and right_io, but cost left_io 4
+and 5 of its 6 coupled pairs and 11 and 23 connections: ducktop2's links
+settle later (the final ladder's attempts raise the price by 1.5 an
+iteration, a layout's first route by 2), and counted from the first
+iteration they went before they could. Counted from the price of 100
+(the rule's default) a link has its first rounds free on every rung: the 8th
+counted round comes at iteration 21 of a ladder's attempt, 15 of a
+layout's first route. The links that end coupled are not told apart by
+their conflicts: on x1907's trace of the narrow-signal attempt 4 of the
+9 links coupled in the end were in conflict in nearly every one of its
+33 iterations and routed by the hard repair, the other 5 settled only
+after 10 to 22, while 21 links in conflict throughout never routed; so
+the rule trades coupled links for connections, and when it counts
+decides where.
+
+**A pairs' check at the first route (2026-11-05; built, measured,
+removed).** The fallback for a layout whose planned first route leaves
+far more open than an unplanned one would was built as a check after the
+race: the kept placement probed again without the plan (the same work,
+counted as the race counts: open terminals after the rip-up), and where
+the planned probe left more than ten and a quarter more open terminals,
+the layout went on with the unplanned router, its later stages lowering
+without the plan and only the final ladder planning the pairs. Measured
+on jetson seed 1 with the give-up at 4, 3 and 10 rounds: the planned
+probe left 574 open terminals (38 links given up by then), the unplanned
+76, so the layout went on uncoupled and ended at 0 unconnected with no
+pair coupled (its first route left 2 open, so no ladder ran), where the
+same layout with the plan ended at 0 unconnected with 2 pairs coupled
+(the planned first route left 15 open), and at 8, 4 and 16 rounds at 4
+with 9. A 75 s probe does not predict the first route once links can be
+given up: the planned negotiation is slower to settle, not worse at its
+end. It gave the wrong answer and nothing used it, so it was removed
+(no switch without a documented use). The better test compares after the
+first route (a planned and an unplanned first route of the kept
+placement), which costs a second first route: an open item.
+
+**Measured** (2026-11-05, as pairs3 measured: the router's
+`{"diff_pairs": true}`, run.py at the pinned reference rates, `--jobs 1
+--threads 4`, two layouts at a time; outputs in build/pairs4/). "x1907"
+is pairs3's "off" row (`pair_rows` off, x1907's default; build/pairs3/),
+"8, 4, 16" the give-up with its rounds counted from the first iteration
+(`pcb-maker-pairs4-f`), "gated" the same rounds counted from the price of
+100 (`pcb-maker-pairs4-g`, the code as committed with
+`diff_pair_give_up: true`). Pairs: found / coupled / partly / fallen
+back; links coupled of planned; the reasons per pair ("side": fewer than
+two parts side by side, "stub": a pad's stub does not reach the run,
+"copper": its copper too close, "gave up": given up in the negotiation,
+"no room": the hard repair found no room); links given up; KiCad
+unconnected; `diff_pair_gap_out_of_range`; CPU seconds (the machine's
+load differed between the runs, up to 43 against pairs3's 17 to 34);
+the router's open terminals after the first route:
+
+| board, seed | run | pairs | links | reasons (pairs) | given up | unconnected | gap | CPU s | first open |
+| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: |
+| jetson, 1 | x1907 | 75 / 8 / 1 / 66 | 9/43 | side 34, no room 19, stub 5 | 0 | 23 | 0 | 1440 | 60 |
+|  | 8, 4, 16 | 75 / 9 / 1 / 65 | 10/43 | side 34, gave up: no room 22, copper 5 | 26 | 4 | 0 | 1606 | 159 |
+|  | gated | 75 / 9 / 1 / 65 | 10/43 | side 34, gave up: no room 21, stub 5 | 25 | 10 | 0 | 1808 | 263 |
+| jetson, 101 | x1907 | 75 / 5 / 3 / 67 | 9/45 | side 35, no room 23, stub 5 | 0 | 44 | 0 | 1551 | 110 |
+|  | 8, 4, 16 | 75 / 6 / 2 / 67 | 8/47 | side 33, gave up: no room 24, stub 5 | 27 | 7 | 0 | 1392 | 43 |
+|  | gated | 75 / 5 / 2 / 68 | 7/45 | side 35, gave up: no room 28, stub 4 | 32 | 16 | 0 | 1566 | 75 |
+| right_io, 1 | x1907 | 21 / 1 / 2 / 18 | 3/12 | side 14, no room 4, stub 4 | 0 | 23 | 59 | 2026 | 50 |
+|  | 8, 4, 16 | 21 / 1 / 2 / 18 | 3/12 | side 14, gave up: no room 5, gave up: no path 1 | 9 | 19 | 47 | 1446 | 56 |
+|  | gated | 21 / 1 / 1 / 19 | 2/12 | side 14, gave up: no room 6, gave up: no path 1 | 10 | 16 | 56 | 1354 | 71 |
+| right_io, 101 | x1907 | 21 / 1 / 2 / 18 | 3/12 | side 14, stub 5, no room 1 | 0 | 14 | 45 | 1962 | 48 |
+|  | 8, 4, 16 | 21 / 1 / 1 / 19 | 2/12 | side 14, gave up: no room 6 | 10 | 14 | 86 | 1639 | 44 |
+|  | gated | 21 / 0 / 2 / 19 | 2/12 | side 14, gave up: no room 5, stub 3 | 6 | 13 | 60 | 1565 | 47 |
+| left_io, 1 | x1907 | 39 / 6 / 3 / 30 | 9/33 | stub 13, side 12, no room 6 | 0 | 37 | 81 | 2117 | 88 |
+|  | 8, 4, 16 | 39 / 2 / 1 / 36 | 3/31 | side 14, gave up: no room 14, stub 9 | 16 | 48 | 69 | 1778 | 109 |
+|  | gated | 39 / 5 / 3 / 31 | 8/32 | side 15, stub 10, gave up: no room 8 | 12 | 22 | 141 | 2122 | 92 |
+| left_io, 101 | x1907 | 39 / 6 / 4 / 29 | 11/33 | side 13, stub 13, no room 4 | 0 | 30 | 95 | 2712 | 95 |
+|  | 8, 4, 16 | 39 / 1 / 4 / 34 | 5/36 | side 14, gave up: no room 13, stub 9 | 20 | 53 | 91 | 1948 | 99 |
+|  | gated | 39 / 3 / 2 / 34 | 5/34 | gave up: no room 14, side 12, stub 9 | 20 | 46 | 86 | 1839 | 120 |
+
+Without the plan the same layouts leave jetson 0 and 9 unconnected
+(pairs2, "before off"). The give-up counted from the first iteration
+brings jetson to 4 and 7 with as many pairs coupled (9 and 6 against 8
+and 5) and holds right_io, but costs left_io 4 and 5 of its 6 coupled
+pairs and 11 and 23 connections. Gated, jetson comes to 10 and 16 (23 and
+44 at x1907) with 9 and 5 coupled, right_io to 16 and 13 (23 and 14) with
+one pair fewer on seed 101 (1 -> 0, partly 2 -> 2), left_io seed 1 to 22
+(37) with one pair fewer (6 -> 5); but left_io seed 101 loses 3 of its 6
+coupled pairs and 16 connections (30 -> 46), and the gap findings rise on
+two of the four ducktop runs (left_io seed 1 81 -> 141, right_io seed 101
+45 -> 60). By the brief's
+rule (jetson's unconnected near its unplanned count with its coupled
+pairs at or above x1907's, ducktop2 losing at most one coupled pair) the
+give-up does not go in by default: **`diff_pair_give_up` is off**, a
+setting (and `PCB_ROUTER_DIFF_PAIRS_GIVE_UP=1`) for a board that loses
+connections to its pairs. What blocks it: left_io's links settle late and
+in its dense ladder attempts a link given up is mostly not re-coupled by
+the retry (left_io seed 101: 20 given up, 5 links coupled against 11),
+and jetson's unconnected stays above its unplanned count (10 and 16
+against 0 and 9): the links stay in the negotiation until the price is
+high and cost the first route as before (seed 1: 263 open after it where
+x1907 left 60; the narrow-signal attempt recovers most). *Route mode* on the expansion
+tier's 25 boards with pairs at 30 s with `diff_pairs` on (`--jobs 4
+--threads 1`; against pairs3-b's rows, which x1907 routes): counted from
+the first iteration, unconnected 669 -> 677 (AMLing2's drone carrier 10
+-> 14, Miniboard 9 -> 13), links coupled 18 -> 18, pairs coupled 7 -> 8,
+passes 10 -> 10 (ch32v003's one pair given up, its pass kept); gated,
+every board's unconnected, pass, links and pairs as before, only
+brickpico routed otherwise (11 links given up, vias 52 -> 32): at 30 s
+the price rarely reaches 100. **Identity**: with the give-up off (the
+default) and without pairs nothing changes: video's and MegaDrive's place checks with the
+default router settings and with `diff_pairs` on are byte for byte
+x1911's, route mode on EMG_DAQ_ADS1292 is byte for byte with equal
+fingerprints, and the expansion tier's 25 pair boards in route mode at
+30 s with `diff_pairs` on route byte for byte as x1911 (`pcb-maker-pairs4-h`).
 
 **The verdict.** `diff_pairs` in `board-router.json` and the verdict:
 `on`, `default` (`rules`: the project's rules ask; `off`: nothing asks;
@@ -3485,7 +3686,9 @@ every board), and with the switch on `found`, `coupled` (every link), `partly_co
 coupled run: KiCad's measure), `skew_mm`, `meanders`, `skews` (2026-10-25,
 "Skew and length" below), `not_routed` (2026-10-26: the links whose run
 was not routed, by cause; "Runs not routed at the task budget" below),
-`pair_vias`, `return_vias`, `return_net` (2026-10-26, "Return vias"
+`given_up` (2026-11-05: of those, the links the negotiation gave up with
+`diff_pair_give_up`, their cause "given up in the negotiation: no room"
+or "...: no path"; "Giving up on a link" above), `pair_vias`, `return_vias`, `return_net` (2026-10-26, "Return vias"
 below), `work_seconds` (the fallback's), and in
 board-router.json per pair its nets, width, gap, source and why links
 fell back (`fewer than two parts with the pair's pads side by side`,

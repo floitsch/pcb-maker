@@ -11,6 +11,57 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-05 (giving up on a pair's link; diff_pair_give_up stays off, the pairs' check removed)
+
+Branch pair-links-give-up (`build/bin/pcb-maker-pairs4-f`, `-g`, `-h`;
+outputs in build/pairs4/). The diagnosis (docs/router.md, "Giving up on a
+link", `PCB_ROUTER_LINK_TRACE=1`): on jetson seed 1 the first route plans
+43 links, 6 to 11 settled at any time; 4 have no path from the first
+iteration and 30 are in conflict in every iteration at the price cap,
+their conflicts not falling; the links take 27 % of the negotiation's
+search work (55 of 204 s), the 21 never routed 51 s; 164 to 179 nets stay
+in conflict (about 130 not links) where the unplanned placement leaves 2
+open; the 33 pairs that fall back are routed by the fallback (45 s of
+work), 19 of their 66 nets left with 32 terminals open. Built: the router
+gives up a net that stands in for others (`GiveUp` in the board's
+attachment, pcb-kicad's `PairPlan`): a link without any path at once, one
+whose conflicts have not fallen below their lowest for 4 of at least 8
+rounds counted from the price of sharing 100, every one after 16
+(`GiveUpRule`, `PCB_ROUTER_GIVE_UP`); its pair's nets take their pads back
+(`net_with_links`) and route uncoupled in the same attempt; the hard
+repair tries each once more after its rip-up (`retry_released`); moves'
+trial boards are given up on alike (`with_releases`); the verdict's
+`diff_pairs.given_up` and the cause "given up in the negotiation: no
+room" / "no path". Measured at the
+pinned rates on jetson, right_io and left_io, seeds 1 and 101: counted
+from the first iteration the give-up took jetson from 23 and 44
+unconnected to 4 and 7 with as many pairs coupled but cost left_io 4 and
+5 of its 6 coupled pairs; gated by the price, jetson 10 and 16 (9 and 5
+coupled; x1907 8 and 5), right_io 16 and 13 (23, 14), left_io seed 1 22
+(37) one pair fewer, left_io seed 101 46 (30) with 3 of 6 coupled pairs
+lost: by the rule the give-up stays off (`diff_pair_give_up`, unset off,
+`PCB_ROUTER_DIFF_PAIRS_GIVE_UP=1`; jetson's 23 -> 10 is its documented
+use). A pairs' check at the first route (the kept placement probed
+without the plan as well, the layout going on uncoupled where the plan's
+probe leaves far more open) was built and measured: it gave the wrong
+answer on jetson (the planned probe 574 open terminals against 76, the
+planned first route then 15 against 2; going on uncoupled coupled none),
+so it was removed; the result is in router.md ("A pairs' check at the
+first route"), the better test (after the first route) an open item.
+Route mode on the expansion tier's 25 pair
+boards at 30 s with `diff_pairs` on: gated, every row's unconnected,
+pass and pairs as x1907's (brickpico's vias 52 -> 32). Identity with the
+give-up off: video's and MegaDrive's place checks (router defaults
+and `diff_pairs` on), EMG_DAQ's route (fingerprints) and the expansion
+tier's 25 pair boards in route mode with `diff_pairs` on byte for byte
+against x1911. Tests:
+`a_link_whose_conflicts_stop_falling_is_given_up_after_the_stall`,
+`a_link_without_a_path_goes_at_once_and_a_settled_round_starts_afresh`,
+`a_link_without_a_path_is_given_up_and_its_nets_route_without_it`,
+`a_link_given_up_stands_again_where_the_repair_finds_it_room`
+(router/give_up.rs), `a_link_given_up_gives_the_pairs_nets_their_pads_back`
+(diff_pairs.rs).
+
 ## Committed on 2026-11-05 (blind, buried and micro vias; blind_vias stays off)
 
 Branch blind-vias (`build/bin/pcb-maker-via1-a`; outputs in
