@@ -44,7 +44,7 @@ def rows_of(directory):
 
 
 def board_of(directory, name):
-    for sub in ("route", "layout"):
+    for sub in ("route", "layout/result"):
         found = glob.glob(os.path.join(directory, name, sub, "*.kicad_pcb"))
         if found:
             return found[0]
