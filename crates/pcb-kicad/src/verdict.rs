@@ -3426,7 +3426,7 @@ fn pairs_summary(pairs: Option<&crate::KiCadDiffPairs>, why: &BTreeMap<String, u
         ));
     }
     if why.contains_key(SIDE_BY_SIDE) {
-        text.push_str("; a pair couples only between two parts whose pads of the pair lie side by side (at most 3 mm apart): in a layout keep each pair's series or AC-coupling parts side by side (a row of the two, constraints.md)");
+        text.push_str("; a pair couples only between two parts whose pads of the pair lie side by side (at most 3 mm apart; for a pair with no such link, a part's two pads with a ground pin between them count where the pin keeps a way out): in a layout keep each pair's series or AC-coupling parts side by side (a row of the two, constraints.md)");
     }
     text
 }

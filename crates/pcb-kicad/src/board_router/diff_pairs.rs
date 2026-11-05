@@ -127,6 +127,10 @@ pub struct KiCadPairSkew {
     pub negative: String,
     /// The two nets' lengths (positive, negative), millimetres.
     pub lengths_mm: [f64; 2],
+    /// The longer net's length less the coupled run's (KiCad's uncoupled
+    /// length: the stubs and the router's ways to the pads).
+    #[serde(default)]
+    pub uncoupled_mm: f64,
     pub skew_mm: f64,
     /// The skew the pair is matched to: the custom rules' `skew` maximum,
     /// else the pair's gap.
@@ -319,8 +323,10 @@ struct Pair {
     /// The board's hole clearance and hole to hole.
     hole_clearance: f64,
     hole_to_hole: f64,
-    /// Pair points: (positive terminal, negative terminal).
+    /// Pair points: (positive terminal, negative terminal), and what each
+    /// is (`PointKind`).
     points: Vec<(usize, usize)>,
+    kinds: Vec<PointKind>,
     /// Links between pair points of different parts: indices into
     /// `points`.
     links: Vec<(usize, usize)>,
@@ -328,6 +334,88 @@ struct Pair {
     /// the pair's nets, if any.
     max_skew: Option<f64>,
     length: Option<(f64, Option<f64>, f64)>,
+}
+
+/// What makes a pair point (`Pair::points`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PointKind {
+    /// A positive and a negative pad side by side: of one part, nothing
+    /// between them, or of two two-pad parts side by side.
+    Side,
+    /// A positive and a negative pad of one part with another net's pin
+    /// between them (an HDMI connector's or an ESD part's ground pin): a
+    /// pair point only for a pair that has no link otherwise. The launch
+    /// keeps the pin clear; the router routes the stubs round it.
+    Pin,
+}
+
+/// Whether pairs without a link get pair points across a pin
+/// (`PointKind::Pin`): a test's override (to see a board as before), else
+/// on.
+fn extended_points() -> bool {
+    EXTENDED.with(|cell| cell.get()).unwrap_or(true)
+}
+
+thread_local! {
+    /// A test's override of `extended_points` (this thread only).
+    static EXTENDED: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
+}
+
+/// A minimum spanning tree over a pair's pair points (Prim), where pair
+/// points of one part are joined first (at no cost) and by ordinary
+/// routing (a USB-C receptacle's two rows): only links between parts are
+/// coupled.
+fn spanning_links(p: &core::Net, n: &core::Net, points: &[(usize, usize)]) -> Vec<(usize, usize)> {
+    let reference = |label: &str| {
+        label
+            .rsplit_once('.')
+            .map_or(label, |(part, _)| part)
+            .to_string()
+    };
+    let middle = |point: &(usize, usize)| {
+        scale(
+            add(p.terminals[point.0].anchor, n.terminals[point.1].anchor),
+            0.5,
+        )
+    };
+    let part = |index: usize| {
+        let point = &points[index];
+        let (part_p, part_n) = (
+            reference(&p.terminals[point.0].label),
+            reference(&n.terminals[point.1].label),
+        );
+        if part_p == part_n {
+            part_p
+        } else {
+            format!("{part_p}+{part_n}")
+        }
+    };
+    let mut links = Vec::new();
+    if points.len() >= 2 {
+        let mut inside = vec![false; points.len()];
+        inside[0] = true;
+        for _ in 1..points.len() {
+            let mut best: Option<(f64, usize, usize)> = None;
+            for (i, a) in points.iter().enumerate().filter(|(i, _)| inside[*i]) {
+                for (j, b) in points.iter().enumerate().filter(|(j, _)| !inside[*j]) {
+                    let length = if part(i) == part(j) {
+                        0.0
+                    } else {
+                        core::geometry::distance(middle(a), middle(b))
+                    };
+                    if best.is_none_or(|(known, _, _)| length < known) {
+                        best = Some((length, i, j));
+                    }
+                }
+            }
+            let (_, i, j) = best.expect("a point outside");
+            inside[j] = true;
+            if part(i) != part(j) {
+                links.push((i, j));
+            }
+        }
+    }
+    links
 }
 
 impl Pair {
@@ -517,51 +605,62 @@ fn find_pairs(board: &core::Board, config: &KiCadBoardRouterConfig) -> Vec<Pair>
             }
         }
         points.sort();
-        // A minimum spanning tree over the pair points (Prim), where pair
-        // points of one part are joined first (at no cost) and by ordinary
-        // routing (a USB-C receptacle's two rows): only links between
-        // parts are coupled.
-        let middle = |point: &(usize, usize)| {
-            scale(
-                add(p.terminals[point.0].anchor, n.terminals[point.1].anchor),
-                0.5,
-            )
-        };
-        let part = |point: &(usize, usize)| {
-            let (part_p, part_n) = (
-                reference(&p.terminals[point.0].label),
-                reference(&n.terminals[point.1].label),
-            );
-            if part_p == part_n {
-                part_p
-            } else {
-                format!("{part_p}+{part_n}")
-            }
-        };
-        let mut links = Vec::new();
-        if points.len() >= 2 {
-            let mut inside = vec![false; points.len()];
-            inside[0] = true;
-            for _ in 1..points.len() {
-                let mut best: Option<(f64, usize, usize)> = None;
-                for (i, a) in points.iter().enumerate().filter(|(i, _)| inside[*i]) {
-                    for (j, b) in points.iter().enumerate().filter(|(j, _)| !inside[*j]) {
-                        let length = if part(a) == part(b) {
-                            0.0
-                        } else {
-                            core::geometry::distance(middle(a), middle(b))
-                        };
-                        if best.is_none_or(|(known, _, _)| length < known) {
-                            best = Some((length, i, j));
-                        }
+        let mut kinds = vec![PointKind::Side; points.len()];
+        let mut links = spanning_links(p, n, &points);
+        // A pair with no link (fewer than two parts with its pads side by
+        // side): its pads of one part with another net's pin between them
+        // are a pair point too (docs/router.md, "A pair point across a
+        // pin").
+        if links.is_empty() && extended_points() {
+            let mut pins: Vec<(f64, usize, usize)> = Vec::new();
+            for (a, ta) in p.terminals.iter().enumerate() {
+                for (b, tb) in n.terminals.iter().enumerate() {
+                    let span = core::geometry::distance(ta.anchor, tb.anchor);
+                    if span <= PAIR_POINT_SPAN
+                        && span > EPSILON
+                        && reference(&ta.label) == reference(&tb.label)
+                        && ta.layers & tb.layers != 0
+                        && !used_p.contains(&a)
+                        && !used_n.contains(&b)
+                        && straddles(board, ta, tb, [positive, negative])
+                    {
+                        pins.push((span, a, b));
                     }
                 }
-                let (_, i, j) = best.expect("a point outside");
-                inside[j] = true;
-                if part(&points[i]) != part(&points[j]) {
-                    links.push((i, j));
+            }
+            pins.sort_by(|x, y| x.0.total_cmp(&y.0).then(x.1.cmp(&y.1)).then(x.2.cmp(&y.2)));
+            for (_, a, b) in pins {
+                if !used_p.contains(&a) && !used_n.contains(&b) {
+                    used_p.insert(a);
+                    used_n.insert(b);
+                    points.push((a, b));
+                    kinds.push(PointKind::Pin);
                 }
             }
+            links = spanning_links(p, n, &points);
+        }
+        if links.is_empty() && pairs_why() {
+            side_why(board, &parts, [positive, negative], &points);
+        }
+        if pairs_why() && kinds.iter().any(|kind| *kind != PointKind::Side) {
+            let described: Vec<String> = points
+                .iter()
+                .zip(&kinds)
+                .map(|(&(a, b), kind)| {
+                    format!(
+                        "{kind:?} {} {} {:.2} mm",
+                        p.terminals[a].label,
+                        n.terminals[b].label,
+                        core::geometry::distance(p.terminals[a].anchor, n.terminals[b].anchor)
+                    )
+                })
+                .collect();
+            eprintln!(
+                "pairs why: points {}: {} links; {}",
+                p.name,
+                links.len(),
+                described.join(", ")
+            );
         }
         pairs.push(Pair {
             positive,
@@ -576,6 +675,7 @@ fn find_pairs(board: &core::Board, config: &KiCadBoardRouterConfig) -> Vec<Pair>
             hole_clearance: board.hole_clearance,
             hole_to_hole: board.hole_to_hole,
             points,
+            kinds,
             links,
             max_skew,
             length,
@@ -615,6 +715,84 @@ fn series_parts(
         (Some(far_a), Some(far_b)) => core::geometry::distance(far_a, far_b) <= PAIR_POINT_SPAN,
         _ => false,
     }
+}
+
+/// `PCB_ROUTER_PAIRS_WHY`: for a pair without a link ("fewer than two
+/// parts with the pair's pads side by side") its pads, pair points, the
+/// pads of one part with another net's copper between them (and whose),
+/// those of one part further apart, and per positive pad the nearest
+/// negative pad of another part, as one JSON line (`pairs why: side`).
+fn side_why(
+    board: &core::Board,
+    parts: &BTreeMap<String, Vec<Point>>,
+    nets: [core::NetId; 2],
+    points: &[(usize, usize)],
+) {
+    let (p, n) = (&board.nets[nets[0] as usize], &board.nets[nets[1] as usize]);
+    let reference = |label: &str| {
+        label
+            .rsplit_once('.')
+            .map_or(label, |(part, _)| part)
+            .to_string()
+    };
+    let pads_of = |label: &str| parts.get(&reference(label)).map_or(0, Vec::len);
+    let mut straddled = Vec::new();
+    let mut far = Vec::new();
+    let mut loose = Vec::new();
+    for ta in &p.terminals {
+        let mut nearest: Option<(f64, &core::Terminal)> = None;
+        for tb in &n.terminals {
+            let span = core::geometry::distance(ta.anchor, tb.anchor);
+            if reference(&ta.label) == reference(&tb.label) {
+                if span <= PAIR_POINT_SPAN {
+                    let between: Vec<String> = board
+                        .obstacles
+                        .iter()
+                        .filter(|obstacle| {
+                            obstacle.kind == core::ObstacleKind::Copper
+                                && obstacle.layers & ta.layers & tb.layers != 0
+                                && obstacle.net.is_none_or(|net| !nets.contains(&net))
+                                && obstacle.shape.distance_to_segment(ta.anchor, tb.anchor)
+                                    < EPSILON
+                        })
+                        .map(|obstacle| {
+                            let net = obstacle.net.map_or("-".to_string(), |net| {
+                                board.nets[net as usize].name.clone()
+                            });
+                            format!("{} ({net})", obstacle.label)
+                        })
+                        .collect();
+                    if !between.is_empty() {
+                        straddled.push(serde_json::json!([ta.label, tb.label, span, between]));
+                    }
+                } else if span <= 3.0 * PAIR_POINT_SPAN {
+                    far.push(serde_json::json!([ta.label, tb.label, span]));
+                }
+            } else if nearest.is_none_or(|(known, _)| span < known) {
+                nearest = Some((span, tb));
+            }
+        }
+        if let Some((span, tb)) = nearest {
+            loose.push(serde_json::json!([
+                ta.label,
+                tb.label,
+                span,
+                pads_of(&ta.label),
+                pads_of(&tb.label)
+            ]));
+        }
+    }
+    let line = serde_json::json!({
+        "positive": p.name,
+        "negative": n.name,
+        "p": p.terminals.iter().map(|t| format!("{}/{}", t.label, pads_of(&t.label))).collect::<Vec<_>>(),
+        "n": n.terminals.iter().map(|t| format!("{}/{}", t.label, pads_of(&t.label))).collect::<Vec<_>>(),
+        "points": points.iter().map(|&(a, b)| [p.terminals[a].label.clone(), n.terminals[b].label.clone()]).collect::<Vec<_>>(),
+        "straddled": straddled,
+        "far": far,
+        "loose": loose,
+    });
+    eprintln!("pairs why: side {line}");
 }
 
 /// Whether another net's copper lies between two pads (a pin between
@@ -1097,6 +1275,300 @@ fn crossover(
         }
     }
     None
+}
+
+/// `grid_reaches`' grid pitch (half the router's lattice).
+const REACH_PITCH: f64 = 0.05;
+/// Round a narrow pad the router necks its tracks down this far (its
+/// `neck_reach`, the default).
+const REACH_NECK: f64 = 1.5;
+/// The room round the pad (and the goal) `grid_reaches` looks in.
+const REACH_MARGIN: f64 = 1.5;
+
+/// Whether a track of the pair's width can go from the pad of `terminal`
+/// (of `polarity`) to `to` on `layers`, past the obstacles `near` and the
+/// `extra` shapes (with their clearance; a name each for the diagnostics):
+/// `grid_reaches` (`PCB_ROUTER_PAIRS_REACH`'s `grid` verdict).
+fn stub_reaches(
+    board: &core::Board,
+    near: &[usize],
+    pair: &Pair,
+    (terminal, polarity): (&core::Terminal, usize),
+    to: Point,
+    layers: core::LayerMask,
+    extra: &[(core::Shape, f64, &str)],
+) -> bool {
+    let nets = [pair.positive, pair.negative];
+    grid_reaches(
+        board,
+        near,
+        pair,
+        (terminal.pad, terminal.anchor),
+        (Some(nets[polarity]), Some(nets[1 - polarity])),
+        Some(to),
+        layers,
+        extra,
+    )
+}
+
+/// At a pair point across a pin (`PointKind::Pin`): the first pin between
+/// the pads (another net's copper on the line between their centres) that
+/// gets no way out (`grid_reaches` to its window's border) past straight
+/// stubs from the pads to their ends and the run's lead at `found`: a
+/// ground pin between a fine-pitch part's D+ and D- whose only way out lay
+/// between them (MSign's UQFN USB muxes).
+fn walled_pin(
+    board: &core::Board,
+    pair: &Pair,
+    class: &core::RuleClass,
+    (p, n): (&core::Terminal, &core::Terminal),
+    found: &Launch,
+) -> Option<String> {
+    let nets = [pair.positive, pair.negative];
+    let half = pair.width / 2.0;
+    let stubs = [
+        core::Shape::Capsule {
+            start: p.anchor,
+            end: found.stub_ends[0],
+            radius: half,
+        },
+        core::Shape::Capsule {
+            start: n.anchor,
+            end: found.stub_ends[1],
+            radius: half,
+        },
+        core::Shape::Capsule {
+            start: found.reserved,
+            end: found.at,
+            radius: class.trace_width / 2.0,
+        },
+    ];
+    let extra = [
+        (stubs[0].clone(), pair.clearance, "the positive stub"),
+        (stubs[1].clone(), pair.clearance, "the negative stub"),
+        (
+            stubs[2].clone(),
+            class.clearance.max(pair.clearance),
+            "the run's lead",
+        ),
+    ];
+    scanned(board.obstacles.len());
+    board
+        .obstacles
+        .iter()
+        .enumerate()
+        .filter(|(_, obstacle)| {
+            obstacle.kind == core::ObstacleKind::Copper
+                && obstacle.layers & p.layers & n.layers & found.layers != 0
+                && obstacle.net.is_none_or(|net| !nets.contains(&net))
+                && obstacle.shape.distance_to_segment(p.anchor, n.anchor) < EPSILON
+        })
+        .find(|(index, obstacle)| {
+            let bounds = obstacle.shape.aabb();
+            let centre = scale(add(bounds.minimum, bounds.maximum), 0.5);
+            let near = obstacles_near(board, centre, REACH_MARGIN + 1.0);
+            !grid_reaches(
+                board,
+                &near,
+                pair,
+                (*index, centre),
+                (obstacle.net, None),
+                None,
+                found.layers,
+                &extra,
+            )
+        })
+        .map(|(_, obstacle)| obstacle.label.clone())
+}
+
+/// A flood fill on a grid of `REACH_PITCH`: a track of the pair's width from the
+/// pad `pad` (an obstacle, its anchor `from`) of net `own` (`other` kept
+/// at the pair's gap) to `goal`, or where there is none, out of the window
+/// round the pad (`REACH_MARGIN`): a pin that does not get out is walled in.
+#[allow(clippy::too_many_arguments)]
+fn grid_reaches(
+    board: &core::Board,
+    near: &[usize],
+    pair: &Pair,
+    (pad_index, from): (usize, Point),
+    (own, other): (Option<core::NetId>, Option<core::NetId>),
+    goal: Option<Point>,
+    layers: core::LayerMask,
+    extra: &[(core::Shape, f64, &str)],
+) -> bool {
+    let to = goal.unwrap_or(from);
+    let half = pair.width / 2.0;
+    let low = [
+        from[0].min(to[0]) - REACH_MARGIN,
+        from[1].min(to[1]) - REACH_MARGIN,
+    ];
+    let high = [
+        from[0].max(to[0]) + REACH_MARGIN,
+        from[1].max(to[1]) + REACH_MARGIN,
+    ];
+    let columns = ((high[0] - low[0]) / REACH_PITCH).ceil() as usize + 1;
+    let rows = ((high[1] - low[1]) / REACH_PITCH).ceil() as usize + 1;
+    let cell = |column: usize, row: usize| {
+        [
+            low[0] + column as f64 * REACH_PITCH,
+            low[1] + row as f64 * REACH_PITCH,
+        ]
+    };
+    // Per cell: 0 free, else what blocks it (`sources`, from 1).
+    let mut blocked = vec![0u32; columns * rows];
+    let mut sources: Vec<String> = Vec::new();
+    let mut tests = 0usize;
+    // Round a pad narrower than the track and its clearance the router
+    // routes at the neck width (its `neck_reach` of the pad's anchor).
+    let pad_bounds = board.obstacles[pad_index].shape.aabb();
+    let narrow = (pad_bounds.maximum[0] - pad_bounds.minimum[0])
+        .min(pad_bounds.maximum[1] - pad_bounds.minimum[1])
+        < pair.width + pair.clearance;
+    let neck_half = board.neck_width.min(pair.width) / 2.0;
+    let necked = |at: Point| {
+        narrow && (at[0] - from[0]).abs() <= REACH_NECK && (at[1] - from[1]).abs() <= REACH_NECK
+    };
+    // Blocks the cells within `keep` and half the track's width of `shape`.
+    let mut block = |shape: &core::Shape, keep: f64, blocked: &mut Vec<u32>, source: u32| {
+        let reach = keep + half;
+        let bounds = shape.aabb();
+        if bounds.maximum[0] + reach < low[0]
+            || bounds.minimum[0] - reach > high[0]
+            || bounds.maximum[1] + reach < low[1]
+            || bounds.minimum[1] - reach > high[1]
+        {
+            return;
+        }
+        let first = |value: f64, origin: f64| {
+            ((value - reach - origin) / REACH_PITCH).floor().max(0.0) as usize
+        };
+        let last = |value: f64, origin: f64, count: usize| {
+            (((value + reach - origin) / REACH_PITCH).ceil().max(0.0) as usize).min(count - 1)
+        };
+        for row in first(bounds.minimum[1], low[1])..=last(bounds.maximum[1], low[1], rows) {
+            for column in
+                first(bounds.minimum[0], low[0])..=last(bounds.maximum[0], low[0], columns)
+            {
+                let index = row * columns + column;
+                if blocked[index] == 0 {
+                    tests += 1;
+                    let at = cell(column, row);
+                    let width = if necked(at) { neck_half } else { half };
+                    if shape.distance_to_point(at) < keep + width {
+                        blocked[index] = source;
+                    }
+                }
+            }
+        }
+    };
+    for &index in near {
+        let obstacle = &board.obstacles[index];
+        if obstacle.layers & layers == 0
+            || index == pad_index
+            || (own.is_some() && obstacle.net == own)
+        {
+            continue;
+        }
+        // The pad's mask opening is left by its stub.
+        if obstacle.kind == core::ObstacleKind::Keepout
+            && obstacle.label.starts_with("solder mask opening")
+            && obstacle.shape.contains(from)
+        {
+            continue;
+        }
+        let mut keep = keep_from(board, obstacle, pair.clearance);
+        if other.is_some() && obstacle.net == other {
+            keep = keep.min(pair.gap);
+        }
+        sources.push(obstacle.label.clone());
+        block(&obstacle.shape, keep, &mut blocked, sources.len() as u32);
+    }
+    for (shape, keep, label) in extra {
+        sources.push(label.to_string());
+        block(shape, *keep, &mut blocked, sources.len() as u32);
+    }
+    // The board's edge.
+    sources.push("the edge".into());
+    let edge_source = sources.len() as u32;
+    for (a, b) in core::geometry::polygon_edges(&board.outline) {
+        let edge = core::Shape::Capsule {
+            start: a,
+            end: b,
+            radius: 0.0,
+        };
+        block(&edge, board.edge_clearance, &mut blocked, edge_source);
+    }
+    tested(tests + board.outline.len());
+    // A flood fill from the pad's free cells.
+    let pad = &board.obstacles[pad_index].shape;
+    let mut queue = std::collections::VecDeque::new();
+    let mut seen = vec![false; columns * rows];
+    for row in 0..rows {
+        for column in 0..columns {
+            let index = row * columns + column;
+            // The pad's own cells, blocked or not: a track leaves a pad
+            // from inside it (the router's pad exits).
+            if pad.contains(cell(column, row)) {
+                seen[index] = true;
+                queue.push_back((column, row));
+            }
+        }
+    }
+    if queue.is_empty() {
+        // A pad smaller than a cell: the cell at its anchor.
+        let column = (((from[0] - low[0]) / REACH_PITCH).round() as usize).min(columns - 1);
+        let row = (((from[1] - low[1]) / REACH_PITCH).round() as usize).min(rows - 1);
+        seen[row * columns + column] = true;
+        queue.push_back((column, row));
+    }
+    let seeds = queue.len();
+    let mut closest = f64::INFINITY;
+    let mut walls: BTreeSet<u32> = BTreeSet::new();
+    while let Some((column, row)) = queue.pop_front() {
+        let distance = core::geometry::distance(cell(column, row), to);
+        let out =
+            goal.is_none() && (column == 0 || row == 0 || column + 1 == columns || row + 1 == rows);
+        if out || (goal.is_some() && distance <= LAUNCH_CONTACT) {
+            return true;
+        }
+        closest = closest.min(distance);
+        for (dc, dr) in [
+            (1i64, 0i64),
+            (-1, 0),
+            (0, 1),
+            (0, -1),
+            (1, 1),
+            (1, -1),
+            (-1, 1),
+            (-1, -1),
+        ] {
+            let (c, r) = (column as i64 + dc, row as i64 + dr);
+            if c < 0 || r < 0 || c >= columns as i64 || r >= rows as i64 {
+                continue;
+            }
+            let index = r as usize * columns + c as usize;
+            if blocked[index] != 0 {
+                walls.insert(blocked[index]);
+                continue;
+            }
+            if !seen[index] {
+                seen[index] = true;
+                queue.push_back((c as usize, r as usize));
+            }
+        }
+    }
+    if debug() {
+        eprintln!(
+            "diff pair reach {}: {seeds} seeds, closest {closest:.3} of {:.3}; walls {:?}",
+            board.obstacles[pad_index].label,
+            core::geometry::distance(from, to),
+            walls
+                .iter()
+                .map(|wall| sources[*wall as usize - 1].as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+    false
 }
 
 /// A launch for a link at the pair point of pads `p` and `n` toward
@@ -2060,6 +2532,28 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
                     ));
                     continue;
                 }
+            }
+            // At a pair point across a pin the pin must keep a way out past
+            // the stubs and the run's lead (`walled_pin`).
+            if let Some(pin) = [(&launch_a, 0usize), (&launch_b, 1)]
+                .into_iter()
+                .filter(|(_, end)| pair.kinds[[a, b][*end]] == PointKind::Pin)
+                .find_map(|(found, end)| {
+                    walled_pin(board, pair, &envelope, (&ends[end].0, &ends[end].1), found)
+                })
+            {
+                if pairs_why() {
+                    eprintln!(
+                        "pairs why: walled {}: link {}, {pin}",
+                        board.nets[pair.positive as usize].name,
+                        link + 1
+                    );
+                }
+                entries[index].why.push(format!(
+                    "link {}: the pin between its pads ({pin}) would be walled in by its stubs",
+                    link + 1
+                ));
+                continue;
             }
             let mut terminals = Vec::new();
             let mut stub_ends = [[[0.0; 2]; 2]; 2];
@@ -4672,6 +5166,21 @@ fn plan_reach_check(board: &core::Board, plan: &PairPlan, config: &KiCadBoardRou
                     .iter()
                     .find(|(_, gone)| trial_reaches(board, net, (&terminal, target), *gone, config))
                     .map_or("not even alone with its partner", |(name, _)| *name);
+                // The plan's own check (`stub_reaches`) on the planned board.
+                let near = obstacles_near(
+                    board,
+                    pad,
+                    core::geometry::distance(pad, target.anchor) + REACH_MARGIN + 1.0,
+                );
+                let grid = stub_reaches(
+                    board,
+                    &near,
+                    pair,
+                    (&terminal, polarity),
+                    target.anchor,
+                    target.layers,
+                    &[],
+                );
                 let start = link.starts[end];
                 let outward = unit(sub(link.launches[end], start));
                 // What lies near the straight line from the pad to the end.
@@ -4712,7 +5221,7 @@ fn plan_reach_check(board: &core::Board, plan: &PairPlan, config: &KiCadBoardRou
                     format!("({:.2}, {:.2})", dot(v, outward), cross(outward, v))
                 };
                 eprintln!(
-                    "pairs reach: {} link {} end {} ({} end, {:.3} mm): {verdict}; along/across the run from its start: pad {}, partner's pad {}, stub end {}, partner's end {}; near the straight stub: {near:?}",
+                    "pairs reach: {} link {} end {} ({} end, {:.3} mm): {verdict}; grid {}; along/across the run from its start: pad {}, partner's pad {}, stub end {}, partner's end {}; near the straight stub: {near:?}",
                     board.nets[net as usize].name,
                     link.link + 1,
                     ["a", "b"][end],
@@ -4722,6 +5231,7 @@ fn plan_reach_check(board: &core::Board, plan: &PairPlan, config: &KiCadBoardRou
                         "straight"
                     },
                     core::geometry::distance(pad, target.anchor),
+                    if grid { "reaches" } else { "does not" },
                     local(pad),
                     local(link.pads[end][1 - polarity]),
                     local(target.anchor),
@@ -6232,6 +6742,7 @@ pub(crate) fn measure_uncoupled(report: &mut KiCadDiffPairs, pcb: &Expr) {
             meander_mm: pair.meander_mm,
             pair_vias: pair.pair_vias,
             return_vias: pair.return_vias,
+            uncoupled_mm: 0.0,
         });
     }
     report.uncoupled_mm = 0.0;
@@ -6247,6 +6758,13 @@ pub(crate) fn measure_uncoupled(report: &mut KiCadDiffPairs, pcb: &Expr) {
         let uncoupled = (longer - pair.coupled_mm).max(0.0);
         pair.uncoupled_mm = Some(uncoupled);
         report.uncoupled_mm += uncoupled;
+        if let Some(skew) = report
+            .skews
+            .iter_mut()
+            .find(|skew| skew.positive == pair.positive && skew.negative == pair.negative)
+        {
+            skew.uncoupled_mm = uncoupled;
+        }
     }
 }
 
@@ -6326,6 +6844,150 @@ mod tests {
         let (a, b) = pair.links[0];
         let ends = [labels[a].as_str(), labels[b].as_str()];
         assert!(ends.contains(&"U2.1"), "{ends:?}");
+    }
+
+    /// Two pairs whose pads lie side by side on one part only (U2): S
+    /// across a ground pin on another (U1, an HDMI connector's or an ESD
+    /// part's pins), T apart on two series parts (R1, R2, `apart` mm).
+    fn one_point_board(apart: f64) -> String {
+        format!(
+            r#"(kicad_pcb (version 20241229) (generator "pcbnew")
+  (general (thickness 1.6)) (paper "A4")
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+  (gr_rect (start 0 0) (end 40 24) (stroke (width 0.05) (type default)) (layer "Edge.Cuts"))
+  (footprint "test" (layer "F.Cu") (at 18 10)
+    (property "Reference" "U1" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0 0) (size 1 0.3) (layers "F.Cu") (net "/S+"))
+    (pad "2" smd rect (at 0 0.5) (size 1 0.3) (layers "F.Cu") (net "/GND"))
+    (pad "3" smd rect (at 0 1) (size 1 0.3) (layers "F.Cu") (net "/S-")))
+  (footprint "test" (layer "F.Cu") (at 34 10)
+    (property "Reference" "U2" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0 0) (size 1 0.3) (layers "F.Cu") (net "/S+"))
+    (pad "2" smd rect (at 0 0.5) (size 1 0.3) (layers "F.Cu") (net "/S-"))
+    (pad "3" smd rect (at 0 4) (size 1 0.3) (layers "F.Cu") (net "/T+"))
+    (pad "4" smd rect (at 0 4.5) (size 1 0.3) (layers "F.Cu") (net "/T-")))
+  (footprint "test" (layer "F.Cu") (at 10 14)
+    (property "Reference" "R1" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0.5 0) (size 0.5 0.5) (layers "F.Cu") (net "/T+"))
+    (pad "2" smd rect (at -0.5 0) (size 0.5 0.5) (layers "F.Cu") (net "/A")))
+  (footprint "test" (layer "F.Cu") (at 10 {})
+    (property "Reference" "R2" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0.5 0) (size 0.5 0.5) (layers "F.Cu") (net "/T-"))
+    (pad "2" smd rect (at -0.5 0) (size 0.5 0.5) (layers "F.Cu") (net "/B")))
+  (footprint "test" (layer "F.Cu") (at 3 22)
+    (property "Reference" "J5" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net "/GND"))))
+"#,
+            14.0 + apart
+        )
+    }
+
+    fn one_point_pairs(
+        apart: f64,
+        extended: bool,
+    ) -> (core::Board, KiCadBoardRouterConfig, Vec<Pair>) {
+        let pcb = parse(&one_point_board(apart)).unwrap();
+        let (_, config) = lowered();
+        let board = lower(&pcb, &config, true).unwrap().board;
+        EXTENDED.with(|cell| cell.set(Some(extended)));
+        let pairs = find_pairs(&board, &config);
+        EXTENDED.with(|cell| cell.set(None));
+        (board, config, pairs)
+    }
+
+    fn pair_named<'a>(board: &core::Board, pairs: &'a [Pair], name: &str) -> &'a Pair {
+        pairs
+            .iter()
+            .find(|pair| board.nets[pair.positive as usize].name.ends_with(name))
+            .unwrap()
+    }
+
+    /// A pair with no link otherwise (one part with its pads side by side)
+    /// takes a part's pads with a ground pin between them as a pair point:
+    /// the run goes from U2 to U1.
+    #[test]
+    fn a_pair_without_a_link_takes_pads_across_a_pin_as_a_pair_point() {
+        let (board, _, pairs) = one_point_pairs(4.0, false);
+        assert!(pair_named(&board, &pairs, "S+").links.is_empty());
+        let (board, _, pairs) = one_point_pairs(4.0, true);
+        let pair = pair_named(&board, &pairs, "S+");
+        assert_eq!(pair.kinds, [PointKind::Side, PointKind::Pin]);
+        assert_eq!(pair.links.len(), 1);
+        let p = &board.nets[pair.positive as usize];
+        let labels: Vec<&str> = pair
+            .points
+            .iter()
+            .map(|&(a, _)| p.terminals[a].label.as_str())
+            .collect();
+        assert_eq!(labels, ["U2.1", "U1.1"]);
+        // A pair with a link keeps its points: the original board's U1 is
+        // no pair point (`pair_points_are_pads_side_by_side_and_links_join_parts`).
+        // T's other pads lie on two series parts 4 mm apart: still no link
+        // (a split end there was built and measured, and left out).
+        let pair = pair_named(&board, &pairs, "T+");
+        assert_eq!(pair.kinds, [PointKind::Side]);
+        assert!(pair.links.is_empty());
+    }
+
+    /// A pin between a pair point's pads must keep a way out past the
+    /// stubs and the run's lead: U1's ground pin (1 mm long pads, room on
+    /// its far side) does, U9's (a 0.4 mm pitch row with other nets' pins
+    /// beside and behind it, MSign's USB muxes) does not, and that pair
+    /// point makes no run.
+    #[test]
+    fn a_pin_point_whose_pin_would_be_walled_in_makes_no_run() {
+        let (mut board, config, _) = one_point_pairs(4.0, true);
+        EXTENDED.with(|cell| cell.set(Some(true)));
+        plan_pairs(&mut board, &config);
+        let plan = plan_of(&board).unwrap();
+        let entry = plan
+            .entries
+            .iter()
+            .find(|entry| entry.positive.ends_with("S+"))
+            .unwrap();
+        assert!(entry.why.is_empty(), "{entry:?}");
+        assert_eq!(entry.links, 1);
+        let walled = one_point_board(4.0).replace(
+            r#"  (footprint "test" (layer "F.Cu") (at 18 10)
+    (property "Reference" "U1" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0 0) (size 1 0.3) (layers "F.Cu") (net "/S+"))
+    (pad "2" smd rect (at 0 0.5) (size 1 0.3) (layers "F.Cu") (net "/GND"))
+    (pad "3" smd rect (at 0 1) (size 1 0.3) (layers "F.Cu") (net "/S-")))"#,
+            r#"  (footprint "test" (layer "F.Cu") (at 18 10)
+    (property "Reference" "U9" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at -0.4 0) (size 0.2 0.6) (layers "F.Cu") (net "/X1"))
+    (pad "2" smd rect (at 0 0) (size 0.2 0.6) (layers "F.Cu") (net "/S+"))
+    (pad "3" smd rect (at 0.4 0) (size 0.2 0.6) (layers "F.Cu") (net "/GND"))
+    (pad "4" smd rect (at 0.8 0) (size 0.2 0.6) (layers "F.Cu") (net "/S-"))
+    (pad "5" smd rect (at 1.2 0) (size 0.2 0.6) (layers "F.Cu") (net "/X2"))
+    (pad "6" smd rect (at 0.4 -0.75) (size 1.8 0.6) (layers "F.Cu") (net "/X3")))"#,
+        );
+        assert_ne!(walled, one_point_board(4.0));
+        let pcb = parse(&walled).unwrap();
+        let mut board = lower(&pcb, &config, true).unwrap().board;
+        let pair = pair_named(&board, &find_pairs(&board, &config), "S+").clone();
+        assert_eq!(pair.kinds, [PointKind::Side, PointKind::Pin]);
+        plan_pairs(&mut board, &config);
+        EXTENDED.with(|cell| cell.set(None));
+        let plan = plan_of(&board).unwrap();
+        let entry = plan
+            .entries
+            .iter()
+            .find(|entry| entry.positive.ends_with("S+"))
+            .unwrap();
+        assert!(
+            entry
+                .why
+                .iter()
+                .any(|why| why.contains("U9.3") && why.contains("walled in")),
+            "{entry:?}"
+        );
+        assert!(
+            !plan
+                .links
+                .iter()
+                .any(|link| plan.pairs[link.pair].positive == pair.positive)
+        );
     }
 
     /// Two two-pad parts side by side on the pair (its AC-coupling
@@ -6617,7 +7279,9 @@ mod tests {
     }
 
     /// A move that changes the pairs' plan (here a pair point gone: U2's
-    /// pads apart) changes the nets the router holds: `Router::update`
+    /// pads apart, and U1's, so that no pair point across a pin takes its
+    /// place)
+    /// changes the nets the router holds: `Router::update`
     /// refuses the board with `UPDATE_NEEDS_SAME_NETS`, which a layout's
     /// moves take for a move not to make (not an error of the layout).
     #[test]
@@ -6628,12 +7292,17 @@ mod tests {
             ..config
         };
         let (board, _) = lower_for_route(&parse(BOARD).unwrap(), &on, true).unwrap();
-        let apart = BOARD.replace(
-            r#"(pad "2" smd rect (at 0 0.5) (size 1 0.3) (layers "F.Cu") (net "/D-")))
+        let apart = BOARD
+            .replace(
+                r#"(pad "2" smd rect (at 0 0.5) (size 1 0.3) (layers "F.Cu") (net "/D-")))
   (footprint "test" (layer "F.Cu") (at 18 4)"#,
-            r#"(pad "2" smd rect (at 0 5.5) (size 1 0.3) (layers "F.Cu") (net "/D-")))
+                r#"(pad "2" smd rect (at 0 5.5) (size 1 0.3) (layers "F.Cu") (net "/D-")))
   (footprint "test" (layer "F.Cu") (at 18 4)"#,
-        );
+            )
+            .replace(
+                r#"(pad "3" smd rect (at 0 1) (size 1 0.3) (layers "F.Cu") (net "/D-")))"#,
+                r#"(pad "3" smd rect (at 0 6) (size 1 0.3) (layers "F.Cu") (net "/D-")))"#,
+            );
         assert_ne!(apart, BOARD);
         let (moved, _) = lower_for_route(&parse(&apart).unwrap(), &on, true).unwrap();
         assert_ne!(moved.nets.len(), board.nets.len());
