@@ -188,6 +188,16 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "overrides the router's `exact_escape_stubs` (`0` off, anything else on; on by default since 2026-10-26): escape stubs stamp exactly (along a lattice line as lattice nodes, oblique ones by their measured footprint) and a pad leaves by straight stubs along a lattice line where it has any; off, the stubs stamp the lattice's discs grown by the snapping error (docs/router.md, \"Fine-pitch escapes\").",
     ),
     (
+        "PCB_ROUTER_CORRIDOR_ESCAPES",
+        Kind::Switch,
+        "overrides the router's `corridor_escapes` (`0` off, anything else on; on by default since 2026-11-05): a pad without a legal node of its own whose escape nodes lie in a pocket the lattice closes leaves by a corridor stub off the lattice, a path through the region its track keeps its clearances in to a legal node beyond the pocket (OpenFC's U10.5; docs/router.md, \"Corridors of pocketed pads (2026-11-05)\").",
+    ),
+    (
+        "PCB_ROUTER_CORRIDOR_CENSUS",
+        Kind::Diagnostic,
+        "set: the router prints one `corridor census:` line per escape pad and lattice on stderr (its escape nodes' pocket open or closed on the lattice, and whether a corridor stub leaves it); `experiments/corridors/census.py` reads them (docs/router.md, \"Corridors of pocketed pads (2026-11-05)\").",
+    ),
+    (
         "PCB_ROUTER_BGA_FANOUT",
         Kind::Switch,
         "overrides the router's `bga_fanout` (`0` off, anything else on; on by default): before routing, the inner balls of every grid array (those no track between the outer balls serves) whose net's own via does not fit a diagonal gap get a stub and a through via in a diagonal gap, the largest of the class's and the project's via sizes that keeps every clearance, as fixed copper of the ball's net that its route may end on; written only where the route uses it; the placer keeps the far side free under those vias (docs/router.md, \"Prepared fan-outs for BGAs (2026-11-04)\").",

@@ -7895,6 +7895,18 @@ spacing). With that, the race's OpenFC rows are to be measured again
 (ten seeds, both arms, the short tier's budget). CPU: the route checks
 about 2 CPU hours, the census 10 CPU minutes.
 
+**Built (2026-11-05, docs/router.md "Corridors of pocketed pads").** The
+chooser's corridors (a) were built and not taken: they put a node row on
+U10's corridor but the pocket meets it through a diagonal squeeze the
+other axis decides (U10.5 open on two more skeleton placements). Corridor
+stubs (b), a path off the lattice from the pad through the corridor to a
+legal node beyond, are on: U10.5 connects on 14 of the 15 placements in
+route mode (the race's seed 201 is closed by R34 and Card1 at the
+corridors' ends: the placement's) and on all 20 layouts of OpenFC's ten
+seeds in both arms. Plain 10 of 10 strict, the race 7 of 10; the race's
+three losses are pour islands, not U10. The short tier with the race
+keeps its 7 strict passes.
+
 ## Footprints without a courtyard, and their slots (2026-11-04)
 
 Fresh agent trial 4 (docs/reviews/2026-11-04-fresh-agent-trial-4.md,

@@ -11,6 +11,40 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-05 (corridor stubs: OpenFC's U10.5 connects whatever the lattice; the chooser's corridors built and not taken)
+
+Branch lattice-corridors; binaries `build/bin/pcb-maker-lat1-a` (the
+chooser's corridors) and `pcb-maker-lat1-b` (corridor stubs, the
+change). Outputs in `build/lat1`; the census script
+`experiments/corridors/census.py`. docs/router.md, "Corridors of
+pocketed pads (2026-11-05)", has the tables.
+
+- **Census** (route mode on the night's 109 placements,
+  `PCB_ROUTER_CORRIDOR_CENSUS`): 923 pads without a legal node of their
+  own on 37 boards (50 footprints, mostly QFN rows); the lattice closes
+  the escape nodes' pocket of 2, one with a way out off the lattice
+  (OpenFC's U10.5), one without (ghoul's net tie NT3.2); none at 0.075
+  mm; at 0.05 mm four of RP2040_base's QFN-56 pads with no way out
+  (an exact-fit row the path's margin does not pass). One footprint,
+  not a class.
+- **The chooser's corridors** (`tight_channels` counting a channel
+  between two pads of a part with a narrow third pad at its mouth),
+  built and removed: a node row on U10's corridor for every offset, but
+  U10.5 still open on the race's seeds 101 and 401 (the pocket meets the
+  corridor through a diagonal squeeze the other axis decides).
+- **Corridor stubs** (`router/corridors.rs`, `Config::corridor_escapes`,
+  on; `PCB_ROUTER_CORRIDOR_ESCAPES=0` off): a pocket the lattice closes
+  is left by a path off the lattice (5 um raster, exact clearances,
+  straightened) to a legal node beyond. OpenFC's 15 placements in route
+  mode: strict 9 to 13, unconnected 7 to 3, U10.5 connected on 14 (the
+  race's seed 201 is closed by R34 and Card1: the placement's). The
+  short tier, the fingerprints and the expansion tier route identically;
+  CPU -0.9 % on RP2040_base (a pinned pair, identical result).
+- **The skeleton race with the stubs**: OpenFC over ten seeds, plain 10
+  of 10 strict, the race 7 of 10 (U10.5 connected on all 20; the race's
+  losses are pour islands); the short tier with the race keeps its 7
+  strict passes (unconnected 21 to 24).
+
 ## Committed on 2026-11-05 (OpenFC's U10: not the spot under U2 but the router's lattice; no via-room rule)
 
 Branch far-side-via-room; no binary change (the router's outer escapes,

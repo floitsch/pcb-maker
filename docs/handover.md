@@ -27,6 +27,12 @@ used to be here; code comments and docs that cite `docs/handover.md,
   night before); the expansion tier 24 of 46 strict (558 unconnected),
   the short tier 7 of 12 strict (22; MIDAS-MK1.1-revA lost its pass, in
   the sweep too), the fingerprints identical.
+- **Corridor stubs (branch lattice-corridors, 2026-11-05).** OpenFC's
+  U10.5, the one connection behind every lost OpenFC pass, connects
+  phase-free: a pad whose escape nodes the lattice pockets leaves by a
+  stub off the lattice (`corridor_escapes`, on; open problem 4). With
+  it OpenFC strict over ten seeds: plain 10 of 10, the skeleton race 7
+  of 10 (pour islands); the tiers unchanged.
 - **Placement since 2026-11-03.** Two measurements say where the gap is.
   Pinning the designer's non-passive parts (a median 28 % of the movable
   parts) recovers a median 0.92 of the designer's first-route advantage
@@ -407,11 +413,22 @@ then the rest.
      boards): pads the other side boxes in are open 2.5 times as often
      (78 of 539) but lie on four boards (the OpenRX panel, the two
      OpenESCs, the PolyKybd molecules); no placement rule was built.
-     Next: the router's lattice for such pads (the chooser counting the
-     corridors of pads without a legal node, or escapes that follow a
-     part's corridor, or the layout's last move putting such a part on
-     the lattice), then OpenFC's ten seeds and the short tier with the
-     switch as stage 2 measured it. Measured and not taken: `join_pins` 0 (fixes
+     **Corridor stubs (2026-11-05, router.md "Corridors of pocketed
+     pads")**: where a pad's escape nodes lie in a pocket the lattice
+     closes, a path off the lattice (5 um raster, exact clearances,
+     straightened) leads from the pad through the corridor to a legal
+     node beyond (`corridor_escapes`, on). The chooser counting the
+     corridors was built and not taken (the pocket meets the corridor
+     through a diagonal squeeze the other axis decides). The census of
+     the night's 109 placements: 923 escape pads on 37 boards, one pocket
+     the lattice closes with a way out (U10.5): one footprint, not a
+     class; the tiers and fingerprints route identically, CPU within
+     noise. OpenFC's ten seeds with the stubs: plain **10 of 10** strict,
+     the race **7 of 10**, U10.5 connected on all 20; the race's three
+     losses are pour islands (+5V on In3.Cu, GND on B.Cu, GND F.Cu and
+     In1.Cu not joined). The short tier with the race keeps its 7 strict
+     passes (unconnected 21 to 24 on three failing boards). The race's
+     default is open again on these numbers (the supervisor's call). Measured and not taken: `join_pins` 0 (fixes
      SNSP-CPU-01 and split72_left, loses the 4in1-mini: +3.0 % against
      the race).
    - **(b) The fine arrangement: the anneal's objective.** On the 4in1
@@ -941,6 +958,7 @@ Switches and experiment hooks (change the result):
 - `PCB_ROUTER_NO_STRAIGHTEN`: turns the router's straightening off (`straighten`, on since 2026-10-23): after the via reduction and the thermal spoke repairs, stair-steps and jogs taken out of the signal nets' paths where the clearance allows (docs/router.md, "Straightening"; for attributing rows).
 - `PCB_ROUTER_TROUBLE`: overrides the router's `trouble_repair` (`0` off, anything else on): the trouble-makers' repair after the hard repair (an open net routed through others at a price, the nets it displaces routed again hard, kept when the open terminals drop; docs/experiments/human-level-routing.md).
 - `PCB_ROUTER_EXACT_ESCAPES`: overrides the router's `exact_escape_stubs` (`0` off, anything else on; on by default since 2026-10-26): escape stubs stamp exactly (along a lattice line as lattice nodes, oblique ones by their measured footprint) and a pad leaves by straight stubs along a lattice line where it has any; off, the stubs stamp the lattice's discs grown by the snapping error (docs/router.md, "Fine-pitch escapes").
+- `PCB_ROUTER_CORRIDOR_ESCAPES`: overrides the router's `corridor_escapes` (`0` off, anything else on; on by default since 2026-11-05): a pad without a legal node of its own whose escape nodes lie in a pocket the lattice closes leaves by a corridor stub off the lattice, a path through the region its track keeps its clearances in to a legal node beyond the pocket (OpenFC's U10.5; docs/router.md, "Corridors of pocketed pads (2026-11-05)").
 - `PCB_ROUTER_BGA_FANOUT`: overrides the router's `bga_fanout` (`0` off, anything else on; on by default): before routing, the inner balls of every grid array (those no track between the outer balls serves) whose net's own via does not fit a diagonal gap get a stub and a through via in a diagonal gap, the largest of the class's and the project's via sizes that keeps every clearance, as fixed copper of the ball's net that its route may end on; written only where the route uses it; the placer keeps the far side free under those vias (docs/router.md, "Prepared fan-outs for BGAs (2026-11-04)").
 - `PCB_ROUTER_BLIND_VIAS`: overrides the router's `blind_vias` (`0` off, anything else on; off by default): where the board allows via spans short of the stack (`via_spans`, the designer's blind, buried and micro vias, a KiCad 6 or 7 project's switches), a via takes the shortest allowed span holding the two layers it joins, copper and a hole only there, written as KiCad's blind, buried or micro via; a BGA's dog-bone takes the shortest span to a routable layer (docs/router.md, "Blind, buried and micro vias (2026-11-05)").
 - `PCB_LAYOUT_MOVE_DESCENT`: overrides the layout's `move_descent` (`0` off, anything else on with layout.json's settings or the defaults): the move descent after the first route (docs/experiments/move-descent.md).
@@ -997,6 +1015,7 @@ Switches and experiment hooks (change the result):
 
 Diagnostics (stderr unless said; the result does not change):
 
+- `PCB_ROUTER_CORRIDOR_CENSUS`: set: the router prints one `corridor census:` line per escape pad and lattice on stderr (its escape nodes' pocket open or closed on the lattice, and whether a corridor stub leaves it); `experiments/corridors/census.py` reads them (docs/router.md, "Corridors of pocketed pads (2026-11-05)").
 - `PCB_ROUTER_TROUBLE_WHY`: the trouble-makers' repair prints every exchange's outcome (kept, or why refused; a refusal names the nets left in conflict and what their conflicts name), and after the repair the crossing census: every open pad of a fine-pitch row, what closes its straight ways out, and whether a row neighbour's target crosses its own (docs/router.md, "Crossings decided in the repair (2026-11-03)").
 - `PCB_ROUTER_BGA_FANOUT_WHY`: the prepared fan-outs (`bga_fanout`) print each grid array's plan once a process: pitch, rows and columns, the rings that leave on the surface, the inner balls, the dog-bones planned by via size, the balls kept (a via in the pad) and those no gap fits.
 - `PCB_ROUTER_NET_WORK`: `<file>`: the search expansions per net over the process (every router, every phase), written to the file as JSON at each router's finish; the last write holds the whole run (docs/router.md, "Prepared fan-outs for BGAs (2026-11-04)").

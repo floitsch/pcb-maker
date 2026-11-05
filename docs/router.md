@@ -3139,7 +3139,9 @@ thermals at scale" names); KiCad checks those boards, so nothing acts on
 them. The test fixture f1 closes its last connection with it (its
 goldens updated). `exact_escape_stubs: false` in the router settings
 or `PCB_ROUTER_EXACT_ESCAPES=0` turns it off. Open: an exact
-hard-repair test for oblique stubs.
+hard-repair test for oblique stubs. Where a pad's escape nodes lie in a pocket the
+lattice closes, a corridor stub leaves it off the lattice: "Corridors
+of pocketed pads (2026-11-05)" below.
 
 ## Pin-row cost (2026-10-23)
 
@@ -6792,6 +6794,184 @@ the plane it pierces); the `.kicad_dru`'s via-type rules kept rather
 than reported (`disallow through_via`, layer rules per via type); the
 placer's far side under a dog-bone whose span does not reach it; the
 search's CPU (the via step's per-target spans).
+
+## Corridors of pocketed pads (2026-11-05)
+
+Branch lattice-corridors; binary `build/bin/pcb-maker-lat1-b` (the
+change), against x1916 (main). The diagnosis is docs/placer.md's "A
+far-side pad under fine pitch, and what it was (2026-11-05)": OpenFC's
+U10 (SN74LVC1G3157, X2SON-6 with custom pads, B.Cu) holds its +3.3V pad
+5 in a pocket between its corner pads. A custom pad joins only through
+its anchor (`Terminal::contact`, a 0.01 mm disc), so none of U10's pads
+has a legal lattice node of its own and each leaves by escape stubs to
+nearby legal nodes. Pad 5's lie in the pocket, and the pocket's ways
+out are the gaps between the corner pads (pads 3 and 4: 0.30 mm, 15 um
+of play either side of the centre line for the class's 0.09 mm track
+with 0.09 mm clearance; pads 1 and 6: 0.33 mm, 30 um), which the pocket
+meets through a diagonal squeeze past pad 2's corner. Whether the pad
+connects is the lattice's phase against U10's position on both axes.
+
+**The census** (`experiments/corridors/census.py`; route mode on the
+night's 109 placements, x1909's nightly of 2026-11-05, with
+`PCB_ROUTER_CORRIDOR_CENSUS=1`, which prints one line per escape pad and
+lattice: its escape nodes' pocket on the lattice open or closed, and
+whether a corridor stub, below, leaves it; the first router built on
+each lattice, the bare placement; open: among KiCad's unconnected items
+of the night's result). Escape pads are what the router's lattice does
+not hold: pads without a legal node of their own on the lattice.
+
+| pads (the night's placements) | regular lattice (0.1 mm mostly) | 0.075 mm | 0.05 mm |
+| --- | ---: | ---: | ---: |
+| escape pads (no legal node of their own) | 923 on 37 boards, 50 footprints (145 open) | 756 on 31 boards | 652 on 25 boards |
+| their escape nodes' pocket closed on the lattice | 2 (OpenFC's U10.5, ghoul's NT3.2) | 0 | 4 (RP2040_base's U19, QFN-56) |
+| ... a corridor stub leaves it | 1 (U10.5; connected in the night's result) | 0 | 0 |
+| ... no way out off the lattice either | 1 (NT3.2, a net tie; connected) | 0 | 4 (2 open) |
+
+The finer columns route each of the 37 boards with escape pads at that
+pitch alone (`grid_pitches_mm`, as the ladder's finer rungs). The escape
+pads are mostly fine-pitch QFN rows and their likes (RP2040's QFN-56 on
+five boards, an LFCSP-72, a QFN-24, an LQFP-176, the RP2354B, the
+OpenRX's X2SON-4); their 145 open pads are dense boards' open
+connections, not pockets: every one of them leaves its pocket on the
+regular lattice. At 0.05 mm four of RP2040_base's QFN-56 pads (0.4 mm
+pitch with tracks and clearance that fit the row exactly) have one or a
+few escape nodes walled in and no way out at 5 um either: the path
+search keeps a margin of at least 0.5 um, and an exact fit has none.
+Open: a last margin of zero (as `stub_is_clear`'s fit) for such rows,
+not built (the finer rungs rarely run and the tiers did not ask).
+
+**One footprint, not a class.** On the night's placements the lattice
+closes one pad's pocket that a path off the lattice leaves: OpenFC's
+U10.5 (on the regular lattice; the night's result connected it on a
+later rung). Which pads a fix touches is therefore OpenFC's U10 and
+parts like it (custom pads joined at their anchors, pockets between
+their own pads); the tiers below route identically. The OpenFC rows say
+how often the phase decides there: on the 15 OpenFC placements of the
+skeleton rounds U10.5 is open on 6 under x1916.
+
+**(a) The lattice chooser counting the corridors** (its own commit on
+the branch, removed in the next but one): `tight_channels` also counted a channel between
+two pads of one part with less than half the widest pitch of play at
+whose mouth lies a third pad of the part without a legal node of its own
+(`own_region_is_narrow`, sampled at 10 um). It puts a node row on one of
+U10's corridors for every offset of the part (its test), but the pad
+stays open: the pocket reaches the corridor through a diagonal squeeze
+the other axis's phase decides, and U10's own GND corridor (pads 1 and
+3, along the other axis) pulled that phase where the squeeze is closed.
+In route mode on OpenFC's placements it left U10.5 open on three of the
+five skeleton placements (seeds 101, 201 and 401; table below). One axis per
+channel cannot describe a two-dimensional pocket; not taken.
+
+**(b) Corridor stubs** (`router/corridors.rs`, `Config::corridor_escapes`,
+on; `PCB_ROUTER_CORRIDOR_ESCAPES=0` turns them off). After a single-layer
+pad's escape stubs, its escape nodes' pocket is flooded on the lattice
+(the class's legal nodes and steps, its neck class's where it has one):
+open when it reaches a node 1 mm beyond the pad's box, a node where the
+net's via may stand or another pad of the net (as `pad_exits`). Where it
+is closed, a path is searched off the lattice: breadth first on a 5 um
+raster of that window through the points where the net's track (its
+width, else its neck) keeps every other net's copper, keepout and hole
+at the clearances `stub_is_clear` asks, with a margin (10, 5, 2, 0.5 um,
+the widest that finds one, so the path keeps to a corridor's middle),
+from the pad's anchor to the first raster point at a legal node outside
+the pocket whose own pocket is open. The path is straightened (from each
+corner the farthest point a straight segment reaches with the exact
+clearances), checked with `stub_is_clear` and `stub_keeps_edge`, and
+kept as the pad's escape to that node: a polyline, stamped by its
+measured footprint and written as copper like the bent stubs. OpenFC's
+U10.5 leaves by a stub of three or four points through the corridor
+between pads 1 and 6. The work is counted with the terminals' (the
+flood's nodes as tests, the raster's distance tests as edges); pads
+whose pocket is open pay the flood only (it stops at its first node
+beyond the window, a via site or another pad of the net). The fixture
+(`router/corridor_tests.rs`: U10's pads as the board file has them, one
+layer, a row of narrow pads voting the lattice's phase, U10 moved by 0
+to 0.09 mm against it): open on five of ten offsets without the stubs,
+connected on all ten with them, no verify violation.
+
+*OpenFC's placements in route mode* (the 15 placements of the skeleton
+rounds: the race's five, `build/skel2-short/openfc/s*-on`, and plain
+ten, `s*-off` there and `build/skel3-openfc/s*-off`; tracks stripped,
+the task's router config at the short tier's budget, 400 s of ladder
+work, 1 x 2; KiCad unconnected / strict pass / U10.5):
+
+| placement | x1916 (main) | (a) the chooser (lat1-a) | (b) corridor stubs (lat1-b) |
+| --- | --- | --- | --- |
+| skeleton seed 1 | 2 / no / open | 0 / pass / connected | 0 / pass / connected |
+| skeleton seed 101 | 1 / no / open | 1 / no / open | 0 / pass / connected |
+| skeleton seed 201 | 1 / no / open | 1 / no / open | 1 / no / open (no way out) |
+| skeleton seed 301 | 1 / no / open | 1 / no / connected (USB1.A7 open) | 2 / no / connected (D1-A open, a GND island) |
+| skeleton seed 401 | 1 / no / open | 1 / no / open | 0 / pass / connected |
+| plain seeds 1 to 701, 901 | 0 / pass each | 0 / pass each | 0 / pass each |
+| plain seed 801 | 1 / no / open | 0 / pass / connected | 0 / pass / connected |
+| total | 7 unconnected, 9 strict | 4, 11 | 3, 13 |
+
+Vias 2342 / 2284 / 2319, length 28807 / 29094 / 28842 mm. On the
+race's seed 201 U10 sits beside R34 (B.Cu, 0201) and Card1's GND pad:
+both corridors end against them and no via fits in the pocket; the
+path search finds no way out at 5 um either (the census line says
+"none"). It is the placement's, not the lattice's: the diagnosis's fifth
+row. Seed 301 connects U10.5 and loses D1-A (R16 to D1 on F.Cu, over U10)
+in the same budget; its GND island on B.Cu was in the race's own row
+before.
+
+*What else moves* (x1916 against lat1-b):
+
+| run | x1916 | lat1-b |
+| --- | --- | --- |
+| the short tier, layouts at its budget (12 boards, 2 x 2) | 7 of 12 strict, 21 unconnected, 1144 vias, 21486 mm | the same on every row |
+| the fingerprints (route mode, v16 placements, 1 x 4, a quarter of the budget) | 2 pass (1 strict), 42 unconnected, 1562 vias | the same on every row |
+| the expansion tier (route mode, 46 boards, 30 s, 4 x 1) | 24 of 46 strict, 558 unconnected, 4256 vias | the same on every row |
+
+The short tier's OpenFC row (seed 1, plain) connects U10.5 either way.
+*CPU* (pinned pairs, both at once on cores 4,5,20,21 and 6,7,22,23,
+then swapped; route mode, 2 threads, KiCad's check skipped; user CPU
+seconds): RP2040_base (85 escape pads, the night's placement, 300 s of
+ladder work; identical result) x1916 270.6 and 301.0 against 268.3 and
+298.5 (-0.9 % and -0.8 %, within the pair's noise); OpenFC's plain seed
+801 (400 s) x1916 276.6 and 313.2 against 159.9 and 172.7: the ladder
+stops when the board is complete instead of trying further rungs for
+U10.5.
+
+**Decision: corridor stubs on** (the rule: OpenFC's pad connects on
+every placement, the short and expansion tiers lose no strict pass and
+do not rise in unconnected, CPU within a few percent). U10.5 connects on
+14 of the 15 placements in route mode and on all 20 layouts below; the
+one it does not is the race's seed 201, which no router change opens
+(no way out at 5 um; the placement's). The tiers and the fingerprints
+route identically, CPU within the pair's noise.
+
+*The skeleton race with the stubs* (OpenFC, ten seeds, layouts at the
+short tier's task and budget, main plus the stubs (lat1-b), both arms
+from the same binary, 2 threads each; KiCad unconnected / strict):
+
+| seed | plain | `{"skeleton_race": {}}` |
+| --- | --- | --- |
+| 1 | 0 / pass | 0 / pass |
+| 101 | 0 / pass | 0 / pass |
+| 201 | 0 / pass | 1 / no: a +5V island on In3.Cu |
+| 301 | 0 / pass | 1 / no: a GND island on B.Cu |
+| 401 | 0 / pass | 0 / pass |
+| 501 | 0 / pass | 0 / pass |
+| 601 | 0 / pass | 0 / pass |
+| 701 | 0 / pass | 0 / pass |
+| 801 | 0 / pass | 0 / pass |
+| 901 | 0 / pass | 1 / no: GND on F.Cu and In1.Cu not joined |
+| strict passes | **10 of 10** (main: 9 of 10, seed 801 U10.5) | **7 of 10** (main: 1 of 5 in round 2, every loss U10.5) |
+
+U10.5 connects on every row of both arms. The race's three losses are
+pours, not U10: route mode on the race's placements of seeds 201 and 901
+completes with the stubs (seed 901 without them leaves U10.5 open);
+seed 301's GND island on B.Cu stays in route mode with and without the
+stubs and was in round 2's row of that seed beside U10.5. *The short
+tier with the race* (12 boards, lat1-b, `{"skeleton_race": {}}` against
+the plain arm, layouts at its budget): **7 of 12 strict both, every
+strict pass kept** (the same seven boards); unconnected 21 to 24
+(framework_mobo_lefthalf 1 to 2, MIDAS-MK1.1-revA 1 to 2, reCamera_S101
+4 to 5, none of them passing either way), vias 1144 to 1032, length
+21486 to 20204 mm. Whether the race becomes the default is the placer's
+decision (docs/placer.md, "A race over skeletons"): OpenFC no longer
+loses it to the lattice; it loses three of ten seeds to pour islands.
 
 ## Known limits / next steps
 
