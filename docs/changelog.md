@@ -11,6 +11,39 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-05 (blind, buried and micro vias; blind_vias stays off)
+
+Branch blind-vias (`build/bin/pcb-maker-via1-a`; outputs in
+`build/via1/`). The census (`experiments/blind-vias/census.py`): none
+of the 109 task boards uses a blind, buried or micro via or allows one
+beyond two two-layer boards' KiCad 7 switches; KiCad 8+ has no such
+switch. The expansion intake has 97 boards with such vias outside
+KiCad's QA files, a handful with real spans (OpenAIO-Whoop's 1+6+1,
+fpga_large, HUB, kvm-carrier, Celltap, tomu-fpga). The router
+(`blind_vias`, `via_spans`, `PCB_ROUTER_BLIND_VIAS`): a via takes the
+shortest allowed span holding the two layers it joins, with a via map
+per layer and class and per-layer static via blocks, the verifier and
+the connectivity by a via's layers, written as `(via blind|buried|micro
+...)`; the spans from `via_spans`, the designer's vias (board or
+`--reference`) or a KiCad 6/7 project's switches; a micro via at its
+own size within the class's; pour nets keep through vias; the BGA
+dog-bone takes the shortest span to a routable layer. KiCad accepted
+every via written. Route mode at the task budget: fpga_large 360 to 275
+KiCad unconnected, OpenAIO-Whoop 135 to 117, the others equal, no new
+finding; the fingerprints identical with the switch forced on. Layout:
+kvm-carrier_r9 27 to 28 at one seed, the other three equal; CPU +6 to
++77 %. Off by the evidence rule. Tests
+a_via_takes_the_shortest_allowed_span_that_holds_both_layers,
+a_spans_kind_and_validity_follow_the_stack,
+a_board_whose_lower_layers_are_closed_routes_over_the_wall_with_micro_vias_only_where_allowed,
+the_verifier_holds_a_via_of_a_span_to_its_own_layers,
+the_keywords_name_the_spans_of_the_stack,
+a_micro_via_keeps_the_boards_minimums_and_stays_within_the_class_via,
+the_designers_vias_of_a_span_are_counted_by_span_and_kind,
+the_spans_follow_the_switch_the_settings_and_the_designer,
+a_via_of_a_span_is_written_with_its_kind_and_layers,
+a_kicad_7_projects_switches_allow_the_spans_they_name,
+a_dog_bone_takes_the_shortest_span_to_a_routable_layer.
 ## Committed on 2026-11-05 (where the arrangement is lost: the global placement, and the anneal's judge)
 
 Branch placement-stages; binaries `build/bin/pcb-maker-diag1-*`; outputs

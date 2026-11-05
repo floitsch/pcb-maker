@@ -417,6 +417,18 @@ ladder's judge), 5, then the rest.
     one binary with the lever as an option. Open: a stage that keeps the
     placement's budget and cuts only the routing (a layout option not
     built; placer.md, "The quarter budget (2026-11-03)").
+14. **Blind, buried and micro vias** (`blind_vias`, off; docs/router.md,
+    "Blind, buried and micro vias (2026-11-05)"). The router routes a
+    via as the shortest span the board allows and KiCad accepts them,
+    but no task board allows a span (every via of the 109 designers'
+    boards is a through via, Glasgow's too), so the
+    measure is on the expansion intake's HDI boards: route mode gains
+    where they are hard (fpga_large 360 to 275 KiCad unconnected,
+    OpenAIO-Whoop 135 to 117), one layout seed loses one (kvm-carrier_r9
+    27 to 28). Open: stacked and staggered chains at one cell, spans for
+    pour nets (a 1+6+1 board disallows through vias), the micro via's own
+    size in the maps, the `.kicad_dru`'s via-type rules, the CPU of the
+    via step.
 
 ## Where things are
 
@@ -593,6 +605,11 @@ its doc comment):
   terminals after the rip-up of the conflicted branches, with a 2 %
   margin over the first-ranked placement; `"unfinished"` is the race
   before.
+- `blind_vias` (router): **off** (2026-11-05; `PCB_ROUTER_BLIND_VIAS`;
+  docs/router.md, "Blind, buried and micro vias"): where the board allows
+  spans (`via_spans`, the designer's own blind/buried/micro vias, a KiCad
+  6/7 project's switches), a via pierces only the shortest allowed span;
+  route mode gains on the HDI boards, a layout seed lost one connection.
 - `bga_fanout` (router): **on** since 2026-11-04 (`PCB_ROUTER_BGA_FANOUT`;
   docs/router.md, "Prepared fan-outs for BGAs"): the inner balls of a
   grid array whose net's via does not fit a diagonal gap get a dog-bone

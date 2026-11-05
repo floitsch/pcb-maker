@@ -6088,7 +6088,106 @@ board_router/via_spans.rs, `SpanModel` in the router):
   span's layers. (The placer's `far_side_balls` still keeps the far
   side free under every planned via.)
 
-MEASURE_PLACEHOLDER
+**Measured** (`build/bin/pcb-maker-via1-a`, main x1907 and the branch;
+route mode on the designer's placement with run.py, tracks stripped,
+the task budget, 1200 s of ladder work, one search thread, the
+designer's findings as the baseline; `experiments/blind-vias/tasks.py`
+writes the two lists, off: the router's settings unchanged, on:
+`blind_vias` and `via_spans` the designer's spans, which the stripped
+board no longer shows; `summary.py` the table; outputs in
+`build/via1/route-off`, `-on`). KiCad unconnected / strict pass / new
+strict findings / vias of the result by kind / length / CPU seconds
+(the machine loaded at 25 to 50 on 32 cores, two to eight jobs of
+other agents beside):
+
+| Board | off | on |
+| --- | --- | --- |
+| fpga_large (4 layers; micro F-In1, In1-In2, In2-B) | 360 / no / 0 / through 504 / 19 666 mm / 1766 s | **275** / no / 0 / micro 528, through 245 / 29 093 mm / 2318 s |
+| OpenAIO-Whoop (8 layers; micro F-In1, In6-B, buried In1-In6) | 135 / no / 0 / through 73 / 1314 s | **117** / no / 0 / micro 82, buried 18, through 56 / 1389 s |
+| kvm-carrier_r9 (6 layers; F-In1 ... In3-In4) | 37 / no / 0 / through 12 / 864 mm / 2473 s | 37 / no / 0 / blind 6, through 6 / 898 mm / 2970 s |
+| HUB (4 layers; F-In2, In1-B, F-In1) | 0 / yes / 0 / through 29 / 1099 mm / 86 s | 0 / yes / 0 / blind 10, through 23 / 1099 mm / 84 s |
+| Negative_Celltap_2027 (4 layers; F-In2, F-In1) | 0 / yes / 0 / through 22 / 2386 mm / 137 s | 0 / yes / 0 / blind 20, through 2 / 2386 mm / 130 s |
+| power_systems (4 layers; F-In1) | 0 / yes / 0 / through 24 / 600 mm / 6 s | 0 / yes / 0 / through 24 / 600 mm / 10 s |
+| tomu-fpga (4 layers; micro F-In1, In2-B, buried In1-In2) | 65 / no / 1 / 0 vias / 44 mm / 38 s | 65 / no / 1 / 0 vias / 44 mm / 49 s |
+
+KiCad's DRC accepts every via written: no finding of any via, hole,
+annular or drill type on any result (with the switch on as off), and no
+new strict finding anywhere. The gains are where the board is hard:
+fpga_large, the router's own synthetic CSG324 breakout to 324 test pads,
+routes 173 of 324 connections against 133 (85 fewer KiCad unconnected
+items), its micro vias leaving the array on In1.Cu while In2.Cu and
+B.Cu stay free under them; OpenAIO-Whoop routes 105 of 177 against 77
+(18 fewer KiCad items; its routed boards made kicad-cli 10.0.7's zone
+refill crash in the run, with the switch off as on, a crash that does
+not repeat: the numbers are kicad-cli's DRC with `--refill-zones` on
+each run's kept board, `route.partial`). The boards that route complete
+either way stay complete with fewer through vias (Celltap 22 to 2,
+HUB 29 to 23). kvm-carrier_r9 and tomu-fpga are blocked by something
+else: kvm routes 19 of 47 either way and stops early (the router finds
+no path for the rest whether or not its vias pierce every layer); tomu
+has no project file, and KiCad's 0.2 mm defaults on a board of 0201
+parts route 1 of 27. The cost is CPU in the searches: the via step tries
+each target layer's span apart (+31 % on fpga_large, +20 % on kvm, +6 %
+on OpenAIO; the same work budget, so the extra is the step's own
+price).
+
+OpenAIO-Whoop's `.kicad_dru` shows what a 1+6+1 HDI board asks beyond
+the spans: `disallow through_via` and `disallow blind_via` (only the
+laser vias and the buried core), and no tracks on its In1/In6 planes.
+The router reports such rules and does not keep them (`items_not_allowed`
+on the designer's own board too): with the switch on its through vias
+fall from 73 to 56 (17 of them GND's: a pour net keeps through vias), the
+rest is open.
+
+*Identity*: with no span allowed the router builds no per-layer maps
+and runs the search's old via step; with the switch forced on
+(`PCB_ROUTER_BLIND_VIAS=1`) the fingerprints (Castor, k30-SBC, jetson,
+Sisu; route mode from v16, 1 x 4, budget scale 0.25,
+`PCB_ROUTER_FINGERPRINT=1`) match x1907's line for line and the routed
+boards byte for byte (`build/via1/fp-x1907`, `fp-via1-a`); none of the
+109 task boards allows a span, so the sweep, the designer tier and the
+expansion tier cannot move.
+
+*The layout* (from_pcbench.py tasks of the four smaller boards: parts
+stacked, connectors on their edges, the layout budget of 1500 s, one job
+of two threads each side, the designer's spans in the router settings
+for on; `build/via1/layout-off`, `-on`):
+
+| Board | off | on |
+| --- | --- | --- |
+| kvm-carrier_r9 | 27 / no / 1 (starved_thermal) / through 17 / 863 mm / 3320 s | 28 / no / 1 (starved_thermal) / blind 15, through 6 / 888 mm / 3922 s |
+| HUB | 0 / yes / 0 / through 34 / 1328 mm / 247 s | 0 / yes / 0 / blind 10, through 23 / 1365 mm / 436 s |
+| Negative_Celltap_2027 | 0 / yes / 0 / through 40 / 2074 mm / 110 s | 0 / yes / 0 / blind 29, through 10 / 2070 mm / 148 s |
+| power_systems | 0 / yes / 0 / through 33 / 678 mm / 106 s | 0 / yes / 0 / through 33 / 678 mm / 106 s |
+
+kvm-carrier_r9's placement is the same board byte for byte either way
+(the placer does not see the spans); its route connects 28 of 47 by the
+router's count against 26, and KiCad counts one item more open (28
+against 27): one seed, inside a layout's noise, but not a gain.
+
+**Decision: off** (`blind_vias` unset). The evidence rule (on only if
+every board that allows the spans gains or stays and nothing else
+moves) holds in route mode (fpga_large 85 and OpenAIO-Whoop 18 KiCad
+items fewer, the others equal, no new finding, the fingerprints
+identical) but not in the layout (kvm-carrier_r9 27 to 28 at its one
+seed), and the cost is real (the search's CPU +6 to +31 % in route mode,
+HUB's layout +77 %, Celltap's +35 %). No task board allows a span, so
+the default moves no tier either way; an agent that wants them says so
+(`"blind_vias": true`, with `via_spans` on a board whose designer has no
+such via yet). `PCB_ROUTER_BLIND_VIAS=1` turns it on for a run.
+
+**What is left.** Stacked and staggered chains (a micro via on a
+buried one, F.Cu-In1.Cu-In6.Cu at one place, as OpenAIO-Whoop's
+designer stacks them: the search takes one via per cell; KiCad warns
+`holes_co_located` for a stack, a fab builds it filled and capped);
+spans for pour nets (their vias are through vias, which a 1+6+1 board's
+`disallow through_via` refuses: OpenAIO-Whoop's 17 GND through vias);
+the micro via's own size in the maps (a micro via is held to the
+class's via's clearance zone, so a smaller micro via frees no room in
+the plane it pierces); the `.kicad_dru`'s via-type rules kept rather
+than reported (`disallow through_via`, layer rules per via type); the
+placer's far side under a dog-bone whose span does not reach it; the
+search's CPU (the via step's per-target spans).
 
 ## Known limits / next steps
 

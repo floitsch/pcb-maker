@@ -584,7 +584,7 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
     let in (Glasgow: 343 -> 262 unconnected over three seeds). Arrays
     whose inner balls leave by vias in their pads or on the surface keep
     no room.
-  - `blind_vias` (DEFAULT_PLACEHOLDER; docs/router.md "Blind, buried and
+  - `blind_vias` (default false; off by the evidence of 2026-11-05; docs/router.md "Blind, buried and
     micro vias"): on a board of three or more layers that allows them,
     a via that joins two layers pierces only the shortest allowed span
     holding both, so the layers it skips stay free for other nets, and
