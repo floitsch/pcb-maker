@@ -11,6 +11,37 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-06 (fresh-agent trial 7: per-layer and impedance widths, a fab release, the skeleton race as an agent sees it)
+
+Branch fresh-agent-trial-7 (`build/bin/pcb-maker-ux14-a` to `-c`).
+[Trial 7](reviews/2026-11-06-fresh-agent-trial-7.md): a new agent took
+briskspirit's Sisu_SSE-9 (six layers, a `.kicad_dru` with USB widths and
+pair gaps on In1.Cu and In4.Cu only, USB kept off In2.Cu and In3.Cu,
+RF classes at 0.1422 and 0.1102 mm) through layouts and route mode,
+released ISSUIUC's MIDAS-MK2 layout with `fab-kicad-board --profile
+jlcpcb` (copper and drill identical to kicad-cli's own export), and read
+the skeleton race on MIDAS-MK2 at the default budget and at
+`total_seconds` 500. Reports and actions only; placement and routing
+unchanged.
+
+- **Narrowed classes**: `verdict.narrowed_classes` (board-router.json
+  `rules.narrowed`) lists the nets the narrow-signal step routed below
+  their class's width, and an action names the custom rule (`track_width`
+  `opt`) that keeps a class's width: the Sisu layouts wrote the RF
+  classes and a 0.5 mm power class at 0.1 mm, which KiCad's DRC does not
+  check; with the rule the RF classes kept theirs.
+- **Lengths**: a net routed only off a layer-limited rule's layers is not
+  checked by it nor of its skew group (it was "not routed ... among the
+  open connections"); the action says a net routed onto those layers
+  joins the group.
+- **Skeleton race**: `skeleton_race.summary` in board-placer.json, on
+  stderr and as `verdict.skeleton_race`, saying what ran or why not and
+  the `total_seconds` that runs it; a layout left open whose placement
+  ran plain for want of budget gets that as an action.
+- **Release**: the LCSC action counts BOM lines (`without_lcsc_lines`) and
+  says where the number goes when there is no schematic (a footprint
+  property `LCSC`); agents.md on `--profile jlcpcb` without a schematic.
+
 ## Committed on 2026-11-05 (what the routes look like: the aesthetics census; score-kicad-board reads a reversible pad's layer)
 
 Branch trace-aesthetics. The HN thread ranked routing quality second
