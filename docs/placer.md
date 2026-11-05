@@ -7362,6 +7362,202 @@ full five-pair protocol (layout mode, KiCad unconnected):
 4. Then the full protocol (five pairs in layout mode, KiCad
    unconnected, the short tier's strict passes).
 
+### The fixes, and stage 1 again (2026-11-05)
+
+Branch skeleton-race-2 (binaries `build/bin/pcb-maker-skel2-*`; place
+checks in `build/skel2-place`, the screens in `build/skel2-scr*`). Four
+changes, each from a place check that showed the defect:
+
+1. **The fallback is the plain seed at its full work.** A skeleton that
+   leaves parts out, or passives that find no room around it, now fall
+   back to `place(problem, config)` with the seed's whole work limit,
+   charged on top of the skeleton's (and the passives') work: the
+   fallback is the plain seed's placement, byte for byte. With the work
+   left (before), video's fallbacks got half the budget and on seed 301
+   none seated U12, U14 and U19; with the full work, video's seed 301
+   (place check, before fix 3) kept seed 302 as off does, its three
+   fallbacks' work equal to off's three seeds' (1355.87 s). The cost is
+   the skeleton's work on top: a seed that falls back takes up to 1.5
+   times a plain one, and the placement's charge to the layout (its
+   longest seed) grows with it (video's seed 1: 916 s against off's
+   614).
+2. **The skeleton starts where the whole board fits.**
+   `first_fitting_level` (lib.rs) is the first relaxation level at which
+   the whole board's bodies and spacing fit by area (`overfull`); the
+   skeleton's levels start there (`Config::first_level`), and the report
+   gives it as `fitting_level`. At a level where the whole board is
+   overfull, no gaps a skeleton leaves can hold its passives: the OpenESC
+   4in1-mini fits only with tight bodies (level 7), and its skeletons,
+   placed at level 1 before, left the passives no room on 13 of 15 kept
+   seeds. Tried and reverted: hollow parts growing their blocking boxes
+   and the unowned area handed to the growable parts on a passive's
+   nets (the mini's 231 mm² unowned is owned by its fixed J1 and U4 and
+   the 26 hollow MOSFETs); with all 310 mm² owned the passives found no
+   room on 3 of 3 seeds, against 4 of 6 with the area left free.
+3. **Held and fixed parts are judged at the smaller halos.** The
+   passives' placement holds the skeleton as fixed parts, and two fixed
+   parts are never judged against each other there; judged whole, a
+   fixed part had the passives' level's halo back while the held parts
+   beside it had been placed against its skeleton-level halo (none, on
+   video, whose halos fit at 0). Video's skeletons that fit were judged
+   illegal at a memory module or IC beside a fixed connector (W4 and W5
+   against BUS1, D4 against U8, P10 against P12) and fell back after
+   300 to 400 s of passives. Every part that did not move in the
+   passives' placement (held or fixed) now takes the smaller of the two
+   phases' halos.
+4. **Video's global placement settles** (`GlobalConfig::stall_iterations`
+   and `fit_turns`, on under `skeleton_race` only). The skeleton's global
+   placement on video, like the plain one, ran to its cap of 1500
+   iterations at an overflow of 0.07 to 0.12. A probe build (64 bins of
+   4.9 x 1.7 mm) found two causes. The rotations turned the 116 x 8 mm
+   SIM72 modules upright on the 107 mm high board (fixed: no turn to an
+   angle at which a body is longer than the board while another angle
+   fits). And every 15 iterations about ten parts turned back and forth
+   (U2 0 to 90 to 0, U17 180 to 0 to 180, C1, D4, P5, ...), each turn
+   resetting the momentum: without rotations the global converged in 170
+   iterations. Freezing a part that returns to an angle it held stopped
+   the turns, but not the overflow: from iteration 150 on it stayed at
+   0.08 to 0.10 while the density weight grew to 10^15, carried by the
+   modules (their bins' excess). The stall stop ends the global where
+   the overflow has not fallen below 0.98 times its least for 100
+   iterations: video's skeleton globals end at 280 to 300 iterations at
+   0.05 to 0.08, the plain ones at 240 to 530. Alone, as a default
+   (switch off), it changes three of the eleven dense boards, the three
+   whose global never met its stop (video, protoesp 1500 to 458
+   iterations, the 0xCB panel at overflow 0.62, 1500 to 203); the other
+   eight place byte for byte as before. Its own stage 1 against main's
+   default (x1911) on those three boards:
+
+| Board | s1 | s101 | s201 | s301 | s401 | median | relative (weight) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0xCB panel | 0 / 0 | 0 / 0 | 0 / 1 | 0 / 0 | 0 / 1 | 0 / 0 | (weight 0) |
+| protoesp | 145 / 109 | 102 / 83 | 80 / 108 | 103 / 124 | 120 / 141 | 103 / 109 | +2.7 % (30) |
+| video | 304 / 335 | 247 / 153 | 172 / 298 | 205 / 213 | 233 / 160 | 233 / 213 | -0.1 % (12) |
+
+   Weighted +2.7 %, sign-flip p 0.62, the noise file's 0.60: NOT
+   BETTER, not worse. It is no default: the stall stop and the turns
+   that fit are on under `skeleton_race` only (`place_skeleton` sets
+   them for all its placements, the fallback included), and with the
+   switch off the placement is main's (place checks at 100 s of work:
+   video, DSP-ADAU1452, split72_left byte-identical to x1911, protoesp to
+   x1909; with it on, the gated binary `-k` and the screen's `-j` wrote
+   the same boards on video, protoesp and the 4in1).
+
+**Video, after the fixes** (place checks, `-j`, full work): no seed
+refused at 1, 101 and 301; the kept placements are held skeletons (no
+fallback), their final wire 24911, 28228 and 23775 mm against off's
+27935, 23665 and 25103. In the stage-1 rows below, video's skeletons fell
+back on 2 of 16 kept seeds (14 of 15 before), the kept placement on
+none.
+
+**Stage 1** (the eleven dense boards at the task budgets with
+`stop_after_first_route`, seeds 1 to 401, `screen.py`, binary
+`pcb-maker-skel2-j` = x1910 with fixes 1 to 4, fix 4 on both sides;
+2026-11-05 02:18 to 09:33, four to six in flight beside the nightly):
+first-route open terminals, off (fix 4 alone) / on. On video, protoesp
+and the panel main's default (x1911) is the off side here; on the other
+eight boards the two are the same placements:
+
+| Board | s1 | s101 | s201 | s301 | s401 | median | relative (weight) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| OpenESC 4in1 | 174 / 216 | 182 / 176 | 151 / 116 | 207 / 163 | 176 / 149 | 176 / 163 | -7.8 % (48) |
+| OpenESC 4in1-mini | 149 / 149 | 145 / 141 | 132 / 156 | 108 / 108 | 123 / 123 | 132 / 141 | +2.8 % (99) |
+| DSP-ADAU1452 | 38 / 24 | 54 / 28 | 81 / 32 | 71 / 22 | 43 / 23 | 54 / 24 | -48.0 % (29) |
+| MegaDrive | 161 / 130 | 120 / 160 | 149 / 129 | 118 / 199 | 171 / 117 | 149 / 130 | +2.0 % (21) |
+| 0xCB panel | 0 / 0 | 0 / 0 | 0 / 1 | 0 / 0 | 0 / 1 | 0 / 0 | (weight 0) |
+| split72_left | 30 / 42 | 35 / 25 | 21 / 30 | 24 / 35 | 5 / 41 | 24 / 35 | +28.8 % (18) |
+| protoesp | 145 / 75 | 102 / 55 | 80 / 69 | 103 / 70 | 120 / 66 | 103 / 69 | -38.9 % (30) |
+| Glasgow revC3 | 138 / 123 | 111 / 107 | 102 / 90 | 122 / 73 | 101 / 107 | 111 / 107 | -8.7 % (70) |
+| SmartSpin2k | 51 / 51 | 43 / 43 | 33 / 33 | 46 / 46 | 90 / 90 | 46 / 46 | 0 (3) |
+| SNSP-CPU-01 | 107 / 179 | 65 / 96 | 78 / 74 | 66 / 85 | 153 / 96 | 78 / 96 | +11.6 % (4) |
+| video | 304 / 131 | 247 / 186 | 172 / 159 | 205 / 86 | 233 / 150 | 233 / 150 | -28.9 % (12) |
+
+- **Against main's default: BETTER**, weighted -8.9 % (the noise file's
+  90 % interval -14.3 to -3.1 %), sign-flip p 0.007, the noise file's
+  0.004; sum of medians 1106 to 961 (-13.1 %); every pair sum falls
+  (1297 to 1120, 1104 to 1017, 999 to 889, 1070 to 887, 1215 to 963).
+  Against the fix alone (fix 4 on both sides): -9.2 %, p 0.005 / 0.004,
+  BETTER. No seed refused on any board.
+- **Video turns**: better on all five seeds against main's default
+  (median 233 to 150, -28.9 %); it was -5.8 % with a refused seed.
+  protoesp and DSP-ADAU1452 better on every seed, Glasgow on four, the
+  4in1 on four (seed 1 216 against 174). The losers stay: split72_left
+  (+28.8 %, four of five) and SNSP-CPU-01 (+11.6 %, three of five);
+  MegaDrive and the 4in1-mini within their spread.
+- **The 4in1-mini**: the skeletons' passives found room on 8 of 16 kept
+  seeds (3 of 15 before), but where they did they legalised at the
+  courtyard level (9) or the rule-margin level (8), and the race ranks a
+  placement needing touching courtyards below one that does not: four of
+  five rows kept the plain fallback (level 7). The board stays where off
+  is (+2.8 %).
+- **Work**: the placement's charge to the layout (its longest seed),
+  mean of five rows, on against off: video 658 against 519 s (seed 1's
+  fallback: 916), the 4in1-mini 511 against 307, protoesp 245 against
+  100 (its skeleton is 83 % of its work), MegaDrive 394 against 350;
+  DSP-ADAU1452 134 against 196, SNSP-CPU-01 79 against 97, split72_left
+  174 against 257, Glasgow 523 against 601. CPU: off 43168 s, on 39542
+  s, main's default on three boards 9920 s.
+
+**split72_left and SNSP-CPU-01** (task 3). Debug place checks at seed 1:
+both phases run at level 0 and converge cheaply (the skeleton 15 to 60
+s, the passives 45 to 140 s of the seed's 600; no fallback), so the half
+of the work is not what binds, and the race keeps more seeds than off
+(24 against 16, 45 against 41). The race does not keep a plain seed
+when a skeleton's probe is worse: an on race has no plain seeds. The
+kept placements' final wire is longer than off's (split72_left 9153
+against about 8995 mm, SNSP-CPU-01 16377 against about 15500).
+Variants at seeds 1 and 101, first-route open terminals (off / on /
+`join_pins` 0 / `room` 0):
+
+| board | s1 | s101 |
+| --- | --- | --- |
+| split72_left | 30 / 42 / 32 / 34 | 35 / 25 / 31 / 44 |
+| SNSP-CPU-01 | 107 / 179 / 66 / 118 | 65 / 96 / 77 / 107 |
+
+The grown bodies are not it (`room` 0 is no better than on); the joined
+nets are, on these two: without them both boards come back to off. As a
+default they are not, over the eleven boards (`join_pins` 0 at five
+seeds, `build/skel2-scr-join0`; first-route open terminals):
+
+| Board | join_pins 0, s1 to s401 | median | against main's default |
+| --- | --- | ---: | ---: |
+| OpenESC 4in1 | 160 / 177 / 152 / 152 / 164 | 160 | -9.4 % |
+| OpenESC 4in1-mini | 158 / 121 / 183 / 154 / 147 | 154 | +14.8 % |
+| DSP-ADAU1452 | 26 / 33 / 29 / 36 / 27 | 29 | -41.3 % |
+| MegaDrive | 127 / 128 / 103 / 152 / 177 | 128 | -4.1 % |
+| split72_left | 32 / 31 / 28 / 27 / 29 | 29 | +15.9 % |
+| protoesp | 108 / 62 / 73 / 68 / 107 | 73 | -23.9 % |
+| Glasgow revC3 | 88 / 118 / 90 / 90 / 103 | 90 | -10.0 % |
+| SNSP-CPU-01 | 66 / 77 / 76 / 108 / 69 | 76 | -13.9 % |
+| video | 104 / 90 / 133 / 120 / 10 | 104 | -45.2 % |
+| weighted | | | -5.9 % (p 0.090 / 0.047: extend; against on +3.0 %, p 0.81) |
+
+(SmartSpin2k and the panel as on.) The sum of medians falls further
+(1106 to 889, against on's 961) and video's falls by half, but the
+weighted statistic, which weighs the 4in1-mini by 99 and Glasgow by 70,
+puts it behind on: the 4in1-mini loses 14.8 % without the joins, and
+protoesp keeps only half its gain. `join_pins` stays 8.
+
+**A mixed race** (`plain_share`, new: that share of the seeds placed
+plain, offsets 1, 3, 5 at 0.5, the race ranking both;
+`build/skel2-scr-mixed`, seeds 1 to 301, the fifth seed stopped for
+stage 2): against main's default weighted -9.1 % (p 0.008 / 0.006;
+on, on the same seeds, -9.3 %). It bounds split72_left (-6.2 %: its
+race kept the plain seed on three of four) and leaves the 4in1-mini
+where off is, but SNSP-CPU-01 stays worse (+10.0 %) and protoesp gives
+up its gain (-0.9 % against on's -38.9 %: the race kept plain seeds
+whose first route was worse). Not better than on, at half the
+skeletons: `plain_share` stays 0.
+
+**Decision for stage 2**: `skeleton_race` `{}` as measured (`join_pins`
+8, `plain_share` 0, the stall stop and the fitting turns under it).
+
+**Stage 2** (started 2026-11-05 09:59, off; 13:02, on): the full protocol in
+`build/skel2-full` (`screen.py --full`, both sides `pcb-maker-skel2-k`,
+x1910 with the fixes and the stall stop under the switch, which writes the
+same boards as `-j` on and as x1911 off), six layouts in flight.
+ Its verdict follows here.
+
 ## Footprints without a courtyard, and their slots (2026-11-04)
 
 Fresh agent trial 4 (docs/reviews/2026-11-04-fresh-agent-trial-4.md,
