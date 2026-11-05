@@ -24,14 +24,14 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 103 | 85 | 18 | 103 | 45 |
+| [Router settings](#router-settings) | 105 | 87 | 18 | 105 | 47 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 2 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 1 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
 | [Router settings: net_classes entries](#router-settings-net_classes-entries) | 6 | 6 | 0 | 6 | 1 |
 | [Router settings: connection rules](#router-settings-connection-rules) | 4 | 4 | 0 | 4 | 0 |
 | [Router report: rules](#router-report-rules) | 5 | - | 0 | 5 | - |
-| [Router report: rules from the project](#router-report-rules-from-the-project) | 13 | - | 4 | 13 | - |
+| [Router report: rules from the project](#router-report-rules-from-the-project) | 17 | - | 6 | 17 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 69 | - | 0 | 69 | - |
 | [Placer settings](#placer-settings) | 56 | 49 | 7 | 56 | 31 |
@@ -129,6 +129,8 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `escape_stub_mm` | `Option<f64>` | unset | router.md | Fixed escape stubs for fine-pitch pad rows, this long in mm (router `escape_stub_mm`; off by default). |
 | `exact_escape_stubs` | `Option<bool>` | unset | router.md | Escape stubs stamped exactly, straight ones along a lattice line first (router `exact_escape_stubs`; docs/router.md, "Fine-pitch escapes"): unset, the router's default (on since 2026-10-26); `PCB_ROUTER_EXACT_ESCAPES` overrides this. |
 | `bga_fanout` | `Option<bool>` | unset | router.md | Prepared fan-outs for BGAs (board_router/bga_fanout.rs; docs/router.md, "Prepared fan-outs for BGAs (2026-11-04)"): before routing, every ball of a grid array's inner rings (those no track between the outer balls serves) gets a stub and a via in a diagonal gap, the largest of the class's and the project's via sizes that keeps every clearance, fixed copper of the ball's net that its route may end on, on any layer; written only where the net's route uses it; an array whose class's via fits a gap is left to the search. Unset: on (since 2026-11-04); `PCB_ROUTER_BGA_FANOUT` overrides this. |
+| `blind_vias` | `Option<bool>` | unset | router.md | Blind, buried and micro vias (board_router/via_spans.rs; docs/router.md, "Blind, buried and micro vias (2026-11-05)"): the router routes each via as the shortest span the board allows that holds the two layers it joins, copper and a hole on those layers only (the others stay free), and writes it as KiCad's blind, buried or micro via. What allows a span: `via_spans`, else the designer's vias of that span on the board (or the `--reference` board) and a KiCad 6 or 7 project's `allow_blind_buried_vias` and `allow_microvias`. Unset: off; `PCB_ROUTER_BLIND_VIAS` overrides this. |
+| `via_spans` | `Option<Vec<String>>` | unset | router.md | The via spans the board allows, replacing the designer's and the project's (with `blind_vias` on): `F.Cu-In2.Cu` (blind or buried by its layers), `F.Cu-In1.Cu:micro` (a micro via, one dielectric deep), or a keyword: `blind` (every span from an outer layer to an inner one), `buried` (every span between inner layers), `micro` (one dielectric down from each outer layer). |
 | `fixed_plane_stubs` | `Option<bool>` | unset | router.md | Connect every pour-net pad to its plane by a fixed stub and via before the signals route (router `fixed_plane_stubs`). |
 | `trouble_repair` | `Option<bool>` | unset | router.md | The trouble-makers' repair after the hard repair (router `trouble_repair`; docs/experiments/human-level-routing.md): unset, the router's default; `PCB_ROUTER_TROUBLE` overrides this. |
 | `thermal_guard_cost` | `Option<f64>` | unset | router.md | Router `thermal_guard_cost`. |
@@ -245,6 +247,10 @@ The fields `project` flattens into `rules`; each is left out when empty. Source:
 | `rules.overrides` | `Vec<KiCadRuleOverride>` | Widths and clearances a router file asked for below the project's (`allow_below_project_minimum`): the run used them; KiCad's DRC holds the board to the project's. |
 | `rules.pad_clearance_mm` | `Option<f64>` | The largest clearance a custom rule asks between the pads of every two nets on some layer (the placer keeps parts at least that far apart, and at least the classes' largest: `largest_clearance`); a rule on some layers only reaches the router as a pair rule (`net_rules.clearances`), which no class shows. |
 | `rules.via_in_pad_designer` | `Vec<crate::board_router::KiCadViaInPadEntry>` | The footprints whose small SMD pads the board's own vias (or the `--reference` board's) lie in: the designer's sign that the fab fills and caps them, which lets the router put a via in those footprints' enclosed pads (`via_in_pad`; docs/router.md, "Vias in BGA pads"). |
+| `rules.via_spans_designer` | `Vec<crate::board_router::KiCadViaSpanEntry>` | The spans of the board's own blind, buried and micro vias (or the `--reference` board's): the designer's sign that the fab builds them, which allows those spans to the router (`blind_vias`; docs/router.md, "Blind, buried and micro vias (2026-11-05)"). |
+| `rules.via_spans_project` | `Vec<String>` | A KiCad 6 or 7 project's via switches (`allow_blind_buried_vias`, `allow_microvias`) as `via_spans` keywords. |
+| `rules.micro_via_minimums` | `crate::board_router::KiCadMicroViaMinimums` | The board's micro via minimums (board setup). |
+| `rules.micro_via_mm` | `Option<[f64; 2]>` | The default class's micro via (`microvia_diameter`, `microvia_drill`), where the project states it. |
 | `rules.via_sizes` | `Vec<[f64; 2]>` | The project's predefined via sizes (diameter, drill), for a via in a pad. |
 | `rules.via_minimums` | `[f64; 3]` | The board's via minimums: diameter, drill, annular width (board setup, custom rules on every via). |
 | `rules.net_classes` | `BTreeMap<String, Vec<String>>` | Per net (as the router names it): its classes, the highest priority first ("Default" for a net in none). |
