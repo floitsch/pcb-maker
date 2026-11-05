@@ -35,7 +35,9 @@ impl Router {
         board: &Board,
         partial: bool,
     ) -> Result<(usize, Vec<NetId>), String> {
-        let (board, neck_of, class_rules) = Self::with_neck_classes(board, &self.config);
+        // The nets given up so far are given up on the new board too.
+        let board = self.with_releases(board);
+        let (board, neck_of, class_rules) = Self::with_neck_classes(&board, &self.config);
         let board = &board;
         let same_rules = match (&class_rules, &self.class_rules) {
             (None, None) => true,
@@ -103,6 +105,7 @@ impl Router {
         self.nets = (0..self.board.nets.len())
             .map(|net| self.prepare_net(net as NetId))
             .collect();
+        self.keep_released();
         self.guard = self.thermal_guards();
         self.covered = vec![Vec::new(); layers];
         self.tile_covered = vec![vec![0.0; tiles]; layers];
@@ -121,6 +124,8 @@ impl Router {
         let mut changed = Vec::new();
         for (net, old) in previous.into_iter().enumerate() {
             let id = net as NetId;
+            // An optional net's rounds go on (`give_up_round`).
+            self.nets[net].give_up = old.give_up;
             let same_terminals = old.terminal_nodes == self.nets[net].terminal_nodes;
             let legal = same_terminals
                 && old

@@ -78,6 +78,13 @@ pub struct KiCadDiffPairs {
     /// after the repair").
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub not_routed: BTreeMap<String, usize>,
+    /// Of those, the links the negotiation gave up (`core::GiveUp`;
+    /// docs/router.md, "Giving up on a link"): their pairs' nets routed
+    /// uncoupled from then on, in the same attempt. Their cause in
+    /// `not_routed` is "given up in the negotiation: no room" or "...: no
+    /// path".
+    #[serde(default)]
+    pub given_up: usize,
     /// The fallback router's work (seconds of an idle machine), charged
     /// to the ladder.
     pub work_seconds: f64,
@@ -1381,6 +1388,10 @@ struct LinkPlan {
     /// fits): the run starts past it (`starts`), the stubs' ends are on the
     /// pads' sides.
     crossovers: [Option<Crossover>; 2],
+    /// Per end and polarity: the terminal of the pair's net at the stub's
+    /// end (`plan_pairs`), for the nets as they are with the link given up
+    /// (`GiveUp::released`: without it).
+    runs: [[core::Terminal; 2]; 2],
 }
 
 impl LinkPlan {
@@ -1412,6 +1423,150 @@ struct PairPlan {
     /// The plan's work (`plan_work_of` its obstacle tests), booked by the
     /// stage that lowered the board (`planned_work`).
     work_seconds: f64,
+}
+
+impl PairPlan {
+    /// The net of `polarity` (0 positive, 1 negative) of pair `pair` as
+    /// `plan_pairs` lowers it with only the links not in `released`: its
+    /// terminals as lowered, each such link's stubs' ends added and joined
+    /// with each other and with the pads whose stubs the link carries, then
+    /// merged (`merge_net_terminals`). With nothing released it is the net
+    /// as planned.
+    fn net_with_links(
+        &self,
+        board: &core::Board,
+        pair: usize,
+        polarity: usize,
+        released: &BTreeSet<core::NetId>,
+    ) -> Option<core::NetRewrite> {
+        let net = [self.pairs[pair].positive, self.pairs[pair].negative][polarity];
+        let (_, original) = self.originals.iter().find(|(owner, _)| *owner == net)?;
+        let mut description = original.clone();
+        let mut merged_pads: Vec<core::MergedPad> = self
+            .merged_pads
+            .iter()
+            .filter(|merged| merged.net == net)
+            .cloned()
+            .collect();
+        let mut terminal_copper: Vec<core::TerminalCopper> = self
+            .terminal_copper
+            .iter()
+            .filter(|extra| extra.net == net)
+            .copied()
+            .collect();
+        let mut parent: Vec<usize> = (0..description.terminals.len()).collect();
+        for link in self
+            .links
+            .iter()
+            .filter(|link| link.pair == pair && !released.contains(&link.net))
+        {
+            description.terminals.push(link.runs[0][polarity].clone());
+            description.terminals.push(link.runs[1][polarity].clone());
+            let count = description.terminals.len();
+            parent.extend(parent.len()..count);
+            let (a, b) = self.pairs[pair].links[link.link];
+            let points = [self.pairs[pair].points[a], self.pairs[pair].points[b]];
+            let mut joined = vec![count - 2, count - 1];
+            for (end, point) in points.into_iter().enumerate() {
+                if link.fixed[end] {
+                    joined.push([point.0, point.1][polarity]);
+                }
+            }
+            for item in &joined[1..] {
+                let (x, y) = (root(&mut parent, joined[0]), root(&mut parent, *item));
+                if x != y {
+                    parent[x.max(y)] = x.min(y);
+                }
+            }
+        }
+        let host_of: Vec<usize> = (0..parent.len()).map(|t| root(&mut parent, t)).collect();
+        merge_net_terminals(
+            net,
+            &mut description,
+            &mut merged_pads,
+            &mut terminal_copper,
+            &board.obstacles,
+            &host_of,
+        );
+        Some(core::NetRewrite {
+            net,
+            terminals: description.terminals,
+            merged_pads,
+            terminal_copper,
+        })
+    }
+}
+
+/// The links may be given up in the negotiation (docs/router.md, "Giving
+/// up on a link"): each is a net that stands in for the pair's two nets
+/// between the stubs' ends; given up, the pair's nets go back to their pads
+/// as lowered, joined by the links still standing.
+impl core::GiveUp for PairPlan {
+    fn optional(&self, net: core::NetId) -> bool {
+        net as usize >= self.nets && self.links.iter().any(|link| link.net == net)
+    }
+
+    fn released(&self, board: &core::Board, released: &[core::NetId]) -> Vec<core::NetRewrite> {
+        let released: BTreeSet<core::NetId> = released.iter().copied().collect();
+        let pairs: BTreeSet<usize> = self
+            .links
+            .iter()
+            .filter(|link| released.contains(&link.net))
+            .map(|link| link.pair)
+            .collect();
+        let mut rewrites = Vec::new();
+        for pair in pairs {
+            for polarity in 0..2 {
+                rewrites.extend(self.net_with_links(board, pair, polarity, &released));
+            }
+        }
+        rewrites
+    }
+
+    fn standing(
+        &self,
+        board: &core::Board,
+        net: core::NetId,
+        released: &[core::NetId],
+    ) -> Vec<core::NetRewrite> {
+        let released: BTreeSet<core::NetId> = released
+            .iter()
+            .copied()
+            .filter(|other| *other != net)
+            .collect();
+        let Some(link) = self.links.iter().find(|link| link.net == net) else {
+            return Vec::new();
+        };
+        (0..2)
+            .filter_map(|polarity| self.net_with_links(board, link.pair, polarity, &released))
+            .collect()
+    }
+}
+
+/// Whether the router may give up a pair's link in the negotiation
+/// (`core::GiveUp`, docs/router.md "Giving up on a link"): a test's
+/// override, else the settings' `diff_pair_give_up`, else
+/// `PCB_ROUTER_DIFF_PAIRS_GIVE_UP` (`1` or `0`), else `GIVE_UP_BY_DEFAULT`.
+fn give_up_links(config: &KiCadBoardRouterConfig) -> bool {
+    GIVE_UP.with(|cell| cell.get()).unwrap_or_else(|| {
+        config.diff_pair_give_up.unwrap_or_else(|| {
+            std::env::var("PCB_ROUTER_DIFF_PAIRS_GIVE_UP")
+                .map_or(GIVE_UP_BY_DEFAULT, |value| value == "1")
+        })
+    })
+}
+
+/// The links' give-up's default (`give_up_links`): off. Measured
+/// 2026-11-05 (docs/router.md, "Giving up on a link"): on jetson-nano-
+/// baseboard it brings the layout's unconnected from 23 and 44 to 10 and 16
+/// with as many pairs coupled, but on ducktop2's left_io seed 101 it costs
+/// 3 of 6 coupled pairs and 16 connections, beyond the evidence rule's one
+/// pair.
+const GIVE_UP_BY_DEFAULT: bool = false;
+
+thread_local! {
+    /// A test's override of `give_up_links` (this thread only).
+    static GIVE_UP: std::cell::Cell<Option<bool>> = const { std::cell::Cell::new(None) };
 }
 
 thread_local! {
@@ -1469,7 +1624,36 @@ fn plan_work_since(before: [u64; 2]) -> f64 {
 /// route may end on (`Board::terminal_copper`), as the board's own copper
 /// merges the pads it joins (`keep_existing_copper`).
 fn merge_terminals(board: &mut core::Board, net: core::NetId, host_of: &[usize]) {
-    let terminals = board.nets[net as usize].terminals.len();
+    let mut description = std::mem::replace(
+        &mut board.nets[net as usize],
+        core::Net {
+            name: String::new(),
+            class: 0,
+            terminals: Vec::new(),
+        },
+    );
+    merge_net_terminals(
+        net,
+        &mut description,
+        &mut board.merged_pads,
+        &mut board.terminal_copper,
+        &board.obstacles,
+        host_of,
+    );
+    board.nets[net as usize] = description;
+}
+
+/// `merge_terminals` on a net of its own: `description` is the net
+/// `net`, `merged_pads` and `terminal_copper` hold (at least) its entries.
+fn merge_net_terminals(
+    net: core::NetId,
+    description: &mut core::Net,
+    merged_pads: &mut Vec<core::MergedPad>,
+    terminal_copper: &mut Vec<core::TerminalCopper>,
+    obstacles: &[core::Obstacle],
+    host_of: &[usize],
+) {
+    let terminals = description.terminals.len();
     let mut renumbered = vec![usize::MAX; terminals];
     let mut next = 0;
     for terminal in 0..terminals {
@@ -1484,19 +1668,18 @@ fn merge_terminals(board: &mut core::Board, net: core::NetId, host_of: &[usize])
     let mut merged = Vec::new();
     for terminal in 0..terminals {
         if host_of[terminal] != terminal {
-            let description = &board.nets[net as usize].terminals[terminal];
+            let terminal_description = &description.terminals[terminal];
             merged.push(core::MergedPad {
                 net,
                 host: renumbered[host_of[terminal]],
-                pad: description.pad,
-                anchor: description.anchor,
-                layers: board.obstacles[description.pad].layers,
+                pad: terminal_description.pad,
+                anchor: terminal_description.anchor,
+                layers: obstacles[terminal_description.pad].layers,
                 padstack: false,
             });
         }
     }
-    for existing in board
-        .merged_pads
+    for existing in merged_pads
         .iter_mut()
         .filter(|existing| existing.net == net && existing.host < terminals)
     {
@@ -1504,18 +1687,18 @@ fn merge_terminals(board: &mut core::Board, net: core::NetId, host_of: &[usize])
         existing.host = renumbered[host_of[existing.host]];
     }
     for pad in &merged {
-        board.terminal_copper.push(core::TerminalCopper {
+        terminal_copper.push(core::TerminalCopper {
             net,
             terminal: pad.host,
             obstacle: pad.pad,
         });
     }
     let mut index = 0;
-    board.nets[net as usize].terminals.retain(|_| {
+    description.terminals.retain(|_| {
         index += 1;
         host_of[index - 1] == index - 1
     });
-    board.merged_pads.extend(merged);
+    merged_pads.extend(merged);
 }
 
 fn root(parent: &mut [usize], mut item: usize) -> usize {
@@ -1806,6 +1989,7 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
             }
             let mut terminals = Vec::new();
             let mut stub_ends = [[[0.0; 2]; 2]; 2];
+            let mut runs: [[Option<core::Terminal>; 2]; 2] = Default::default();
             for (end, found) in [&launch_a, &launch_b].into_iter().enumerate() {
                 let label = format!("pair launch {}{}", link + 1, ["a", "b"][end]);
                 // The lead past the stubs' ends: the terminal's copper; the
@@ -1864,8 +2048,7 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
                         add(found.start, scale(across, sign * pair.ends_offset()))
                     };
                     stub_ends[end][polarity] = at;
-                    let terminals = &mut board.nets[net as usize].terminals;
-                    terminals.push(core::Terminal {
+                    let run = core::Terminal {
                         anchor: at,
                         layers: found.layers,
                         pad: board.obstacles.len(),
@@ -1874,7 +2057,9 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
                             radius: LAUNCH_CONTACT,
                         }),
                         label: format!("pair run {}{}", link + 1, ["a", "b"][end]),
-                    });
+                    };
+                    board.nets[net as usize].terminals.push(run.clone());
+                    runs[end][polarity] = Some(run);
                     board.obstacles.push(core::Obstacle {
                         shape: core::Shape::Capsule {
                             start: at,
@@ -2028,6 +2213,7 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
                 fixed,
                 stubs: [launch_a.stubs, launch_b.stubs],
                 crossovers: [launch_a.crossover, launch_b.crossover],
+                runs: runs.map(|end| end.map(|run| run.expect("a run terminal per end and net"))),
             });
         }
     }
@@ -2050,6 +2236,7 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
     plan.pairs = pairs;
     plan.entries = entries;
     plan.work_seconds = plan_work_since(tests_before);
+
     if debug() {
         let [scans, near] = tests_so_far();
         eprintln!(
@@ -2061,7 +2248,11 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
             core::router::reference_time_scale()
         );
     }
-    board.attachment = core::Attachment(Some(std::sync::Arc::new(plan)));
+    let plan = std::sync::Arc::new(plan);
+    board.attachment = core::Attachment {
+        data: Some(plan.clone()),
+        give_up: give_up_links(config).then_some(plan),
+    };
 }
 
 /// Whether a route with `config` plans the pairs (`plan_pairs`): the
@@ -2080,7 +2271,7 @@ pub(crate) fn planned_work(board: &core::Board) -> f64 {
 fn plan_of(board: &core::Board) -> Option<std::sync::Arc<PairPlan>> {
     board
         .attachment
-        .0
+        .data
         .as_ref()
         .and_then(|any| any.clone().downcast::<PairPlan>().ok())
 }
@@ -2117,6 +2308,13 @@ pub(crate) fn lower_for_route(
 /// repair's budget or the attempt's work deadline ran out before it;
 /// Diagnostics, `repair`). The verdict's `not_routed` counts them.
 fn not_routed_cause(diagnostics: &core::Diagnostics, net: core::NetId) -> &'static str {
+    if let Some(entry) = diagnostics.released.iter().find(|entry| entry.net == net) {
+        return if entry.reason == core::router::NO_PATH {
+            "given up in the negotiation: no path"
+        } else {
+            "given up in the negotiation: no room"
+        };
+    }
     if diagnostics.dead_pads.iter().any(|dead| dead.net == net) {
         return "a launch has no legal node";
     }
@@ -2663,6 +2861,14 @@ pub(crate) fn finish_pairs(
         })
         .map(|link| (link.net, not_routed_cause(&result.diagnostics, link.net)))
         .collect();
+    // The links the negotiation gave up: their pairs' nets routed to the
+    // pads without them (no stubs to remove).
+    let given_up: BTreeSet<core::NetId> = result
+        .diagnostics
+        .released
+        .iter()
+        .map(|entry| entry.net)
+        .collect();
     for dead in &mut result.diagnostics.dead_pads {
         dead.net = pair_net(dead.net);
     }
@@ -2695,6 +2901,7 @@ pub(crate) fn finish_pairs(
             }
             let cause = causes.get(&plan_link.net).copied().unwrap_or("");
             *report.not_routed.entry(cause.to_string()).or_default() += 1;
+            report.given_up += usize::from(given_up.contains(&plan_link.net));
             entries[index].why.push(format!(
                 "link {}: the coupled run was not routed ({cause})",
                 link + 1
@@ -3015,7 +3222,7 @@ pub(crate) fn finish_pairs(
     for plan_link in plan
         .links
         .iter()
-        .filter(|link| !kept_nets.contains(&link.net))
+        .filter(|link| !kept_nets.contains(&link.net) && !given_up.contains(&link.net))
     {
         let pair = &plan.pairs[plan_link.pair];
         for end in (0..2).filter(|&end| !plan_link.fixed[end]) {
@@ -3043,6 +3250,20 @@ pub(crate) fn finish_pairs(
         straighten_stubs(&restored, result, &plan.pairs, plan_link);
         join_stub_ends(result, &plan.pairs, plan_link);
     }
+    // A pair whose links not kept were all given up in the negotiation,
+    // and whose nets the attempt routed without them, needs no fallback.
+    open_pairs.retain(|&index| {
+        let pair = &plan.pairs[index];
+        let routed = [pair.positive, pair.negative]
+            .iter()
+            .all(|&net| result.status[net as usize] == core::NetStatus::Routed);
+        !routed
+            || plan.links.iter().any(|link| {
+                link.pair == index
+                    && !kept_nets.contains(&link.net)
+                    && !given_up.contains(&link.net)
+            })
+    });
     // The fallback: the pairs' nets with a connection a link left open,
     // routed with everything else kept.
     if !open_pairs.is_empty() {
@@ -3051,7 +3272,7 @@ pub(crate) fn finish_pairs(
         for plan_link in plan
             .links
             .iter()
-            .filter(|link| !kept_nets.contains(&link.net))
+            .filter(|link| !kept_nets.contains(&link.net) && !given_up.contains(&link.net))
         {
             let pair = &plan.pairs[plan_link.pair];
             for end in (0..2).filter(|&end| !plan_link.fixed[end]) {
@@ -4419,6 +4640,12 @@ fn route_fallback(
             .extend(from.segments.iter().cloned());
         result.routes[net].vias.extend(from.vias.iter().cloned());
         result.status[net] = routed.status[net];
+        if debug() {
+            eprintln!(
+                "diff pair fallback: {} {:?}",
+                board.nets[net].name, routed.status[net]
+            );
+        }
     }
     routed.expansions as f64 / core::router::expansions_per_second()
         + routed.build_work
@@ -4911,7 +5138,7 @@ mod tests {
         plan_pairs(&mut board, &config);
         let plan = board
             .attachment
-            .0
+            .data
             .clone()
             .unwrap()
             .downcast::<PairPlan>()
@@ -4978,7 +5205,7 @@ mod tests {
         // The launches lie outside the pads, the run's ends beside them.
         let plan = board
             .attachment
-            .0
+            .data
             .clone()
             .unwrap()
             .downcast::<PairPlan>()
@@ -4993,6 +5220,88 @@ mod tests {
             for (end_point, pad) in [(p, pads[0]), (n, pads[1])] {
                 assert!(core::geometry::distance(end_point, pad) > 0.5);
             }
+        }
+    }
+
+    /// The links may be given up (`core::GiveUp`, with the settings'
+    /// `diff_pair_give_up`; off by default): with nothing released
+    /// a pair's net is as planned, with its link released it is the net as
+    /// lowered (its pads, no run ends, nothing merged), and a route of the
+    /// planned board whose link finds no room couples nothing but leaves
+    /// no connection of the pair open.
+    #[test]
+    fn a_link_given_up_gives_the_pairs_nets_their_pads_back() {
+        use pcb_router::GiveUp;
+        let (lowered_board, config) = lowered();
+        // Off by default: the plan offers no link to give up.
+        let mut board = lowered_board.clone();
+        plan_pairs(&mut board, &config);
+        assert!(board.attachment.give_up.is_none());
+        let config = KiCadBoardRouterConfig {
+            diff_pair_give_up: Some(true),
+            ..config
+        };
+        let mut board = lowered_board.clone();
+        plan_pairs(&mut board, &config);
+        let plan = plan_of(&board).unwrap();
+        assert!(board.attachment.give_up.is_some());
+        let link = plan.links[0].net;
+        assert!(plan.optional(link));
+        assert!(!plan.optional(plan.pairs[0].positive));
+        let labels = |terminals: &[core::Terminal]| -> Vec<String> {
+            terminals
+                .iter()
+                .map(|terminal| terminal.label.clone())
+                .collect()
+        };
+        for polarity in 0..2 {
+            let net = [plan.pairs[0].positive, plan.pairs[0].negative][polarity];
+            let planned = plan
+                .net_with_links(&board, 0, polarity, &BTreeSet::new())
+                .unwrap();
+            assert_eq!(
+                labels(&planned.terminals),
+                labels(&board.nets[net as usize].terminals)
+            );
+            let of_net = |merged: &[core::MergedPad]| -> Vec<(usize, usize)> {
+                merged
+                    .iter()
+                    .filter(|merged| merged.net == net)
+                    .map(|merged| (merged.host, merged.pad))
+                    .collect()
+            };
+            assert_eq!(of_net(&planned.merged_pads), of_net(&board.merged_pads));
+            let copper = |extras: &[core::TerminalCopper]| -> Vec<core::TerminalCopper> {
+                extras
+                    .iter()
+                    .filter(|extra| extra.net == net)
+                    .copied()
+                    .collect()
+            };
+            assert_eq!(
+                copper(&planned.terminal_copper),
+                copper(&board.terminal_copper)
+            );
+            assert!(!planned.merged_pads.is_empty());
+        }
+        // Standing again (`retry_released`): the nets as planned.
+        let standing = plan.standing(&board, link, &[link]);
+        assert_eq!(standing.len(), 2);
+        for rewrite in &standing {
+            assert_eq!(
+                labels(&rewrite.terminals),
+                labels(&board.nets[rewrite.net as usize].terminals)
+            );
+        }
+        let rewrites = plan.released(&board, &[link]);
+        assert_eq!(rewrites.len(), 2);
+        for rewrite in &rewrites {
+            assert_eq!(
+                labels(&rewrite.terminals),
+                labels(&lowered_board.nets[rewrite.net as usize].terminals)
+            );
+            assert!(rewrite.merged_pads.is_empty());
+            assert!(rewrite.terminal_copper.is_empty());
         }
     }
 
@@ -5186,7 +5495,7 @@ mod tests {
         let plan_of = |board: &core::Board| {
             board
                 .attachment
-                .0
+                .data
                 .clone()
                 .unwrap()
                 .downcast::<PairPlan>()
@@ -5207,7 +5516,7 @@ mod tests {
         plan_pairs(&mut board, &config);
         let plan = board
             .attachment
-            .0
+            .data
             .clone()
             .unwrap()
             .downcast::<PairPlan>()
@@ -5287,7 +5596,7 @@ mod tests {
             plan_pairs(&mut board, &config);
             let plan = board
                 .attachment
-                .0
+                .data
                 .clone()
                 .unwrap()
                 .downcast::<PairPlan>()

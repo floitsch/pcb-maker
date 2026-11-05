@@ -193,6 +193,16 @@ pub struct KiCadBoardRouterConfig {
     /// most pads; a net without a pour gets none.
     #[serde(default)]
     pub diff_pair_return_net: Option<String>,
+    /// Differential pairs: a link the negotiation finds no room or no path
+    /// for is given up there and its pair's nets route uncoupled from then
+    /// on, in the same attempt, and the hard repair tries it once more
+    /// (docs/router.md, "Giving up on a link"). Unset:
+    /// `PCB_ROUTER_DIFF_PAIRS_GIVE_UP` (`1` or `0`), else off (measured
+    /// 2026-11-05: jetson-nano-baseboard 23 and 44 unconnected down to 10
+    /// and 16 with as many pairs coupled, ducktop2's left_io 3 of its 6
+    /// coupled pairs lost on one seed).
+    #[serde(default)]
+    pub diff_pair_give_up: Option<bool>,
     /// Route mode: `diff_pairs` defaults by need (`diff_pairs_choice`);
     /// set by route-kicad-board, not read from a file (a layout's routes
     /// keep the default off).

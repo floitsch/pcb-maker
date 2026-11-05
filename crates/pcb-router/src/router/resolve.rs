@@ -37,13 +37,23 @@ impl Router {
             self.rip_up_conflicted(net);
             removed.push(net);
         }
+        // The links the negotiation gave up, tried once more where the
+        // nets in conflict have just been ripped up (`retry_released`), as
+        // the repair takes links first: within a quarter of what the
+        // negotiation took (at least 10 s); not in a layout's move trial.
+        if !self.in_trial {
+            self.retry_released(0.25 * self.negotiation_seconds.max(40.0));
+        }
         // Incomplete nets without conflicts keep what they have: the hard
         // search joins the rest to it. Ripped up, a big net's hard reroute
         // starts again from one pad among copper that no longer gives way
         // and can end far shorter (SNSP-CPU-01's GND: 147 of 199 pads
         // negotiated, 21 after the hard reroute).
         for net in order {
-            if !removed.contains(net) && !self.nets[*net as usize].complete {
+            if !removed.contains(net)
+                && !self.nets[*net as usize].complete
+                && !self.nets[*net as usize].released
+            {
                 if std::env::var_os("PCB_ROUTER_DEBUG").is_some() {
                     let state = &self.nets[*net as usize];
                     eprintln!(

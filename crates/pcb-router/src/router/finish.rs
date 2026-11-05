@@ -85,6 +85,7 @@ impl Router {
         // What the repair takes up, for the diagnostics.
         let entries: Vec<RepairEntry> = order
             .iter()
+            .filter(|&&net| !self.nets[net as usize].released)
             .filter_map(|&net| {
                 let complete = self.nets[net as usize].complete;
                 let conflicted = !self.conflicts(net).is_empty();
@@ -101,6 +102,9 @@ impl Router {
             self.resolve_remaining(order);
         }
         self.repair_entries = entries;
+        if super::negotiate::link_trace() {
+            self.trace_links(order, "repaired");
+        }
         for entry in &mut self.repair_entries {
             entry.skipped = if self.skip_resolve {
                 "not_run"

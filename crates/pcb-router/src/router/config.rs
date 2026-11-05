@@ -201,6 +201,11 @@ pub struct Config {
     /// Plan every connection on a coarse tile graph first and search the
     /// lattice only inside that corridor (widening it on failure).
     pub corridors: bool,
+    /// When the negotiation gives up a net that stands in for others
+    /// (`Board::attachment`'s `give_up`: a differential pair's link):
+    /// docs/router.md, "Giving up on a link". `PCB_ROUTER_GIVE_UP` sets it
+    /// as `min,stall,pathless,max[,present]` (an experiment's).
+    pub give_up: super::give_up::GiveUpRule,
     /// Cost factor for a trace step on a node covered by another net's
     /// pour, and for a via through one: cutting a plane is expensive.
     pub plane_cut_cost: f64,
@@ -391,6 +396,7 @@ impl Default for Config {
             cleanup_via_cost: 25.0,
             plane_via_cost: 2.0,
             corridors: true,
+            give_up: super::give_up::rule_override().unwrap_or_default(),
             parallel: true,
             via_reduction_rounds: 3,
             via_reduction_factor: 2.0,

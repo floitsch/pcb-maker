@@ -77,6 +77,9 @@ pub struct Diagnostics {
     /// incomplete or in conflict when the negotiation ended, with what the
     /// repair did with them. A record, not an input.
     pub repair: Vec<RepairEntry>,
+    /// The nets the negotiation gave up (`Board::attachment`'s `give_up`:
+    /// a differential pair's links), in the order they went, with why.
+    pub released: Vec<super::ReleasedNet>,
 }
 
 /// A net as the hard repair found it (`Diagnostics::repair`).

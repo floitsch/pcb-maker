@@ -114,7 +114,8 @@ impl Router {
                     .copied()
                     .filter(|net| {
                         let state = &self.nets[*net as usize];
-                        !(state.complete || state.blocked) || !self.conflicts(*net).is_empty()
+                        !(state.complete || state.blocked || state.released)
+                            || !self.conflicts(*net).is_empty()
                     })
                     .collect();
                 if self.config.verbose {
@@ -134,8 +135,11 @@ impl Router {
                 // attempts it starts).
                 self.first_iteration_expansions = self.scratch.expansions;
             }
-            let (conflicted, really_conflicted) =
+            let (mut conflicted, really_conflicted) =
                 self.end_iteration(order, iteration, pending.len(), present, started);
+            if !nested {
+                self.give_up_round(order, &mut conflicted, present);
+            }
             if conflicted.is_empty() {
                 stop = "conflict_free";
                 break;
@@ -309,8 +313,11 @@ impl Router {
         for batch in &cut.batches {
             self.route_batch(batch, cut.present, cut.growth);
         }
-        let (conflicted, _) =
+        let (mut conflicted, _) =
             self.end_iteration(order, cut.iteration, cut.pending, cut.present, started);
+        if !self.in_via_reduction {
+            self.give_up_round(order, &mut conflicted, cut.present);
+        }
         if !conflicted.is_empty() {
             if self.global.is_some() && cut.iteration % 2 == 1 {
                 let replan_started = std::time::Instant::now();
@@ -379,7 +386,9 @@ impl Router {
                 self.nets[*net as usize].stuck += 1;
             }
             if conflicts.is_empty()
-                && (self.nets[*net as usize].complete || self.nets[*net as usize].blocked)
+                && (self.nets[*net as usize].complete
+                    || self.nets[*net as usize].blocked
+                    || self.nets[*net as usize].released)
             {
                 continue;
             }
@@ -406,6 +415,9 @@ impl Router {
             conflicted.push(*net);
         }
         self.profile.conflicts += conflicts_started.elapsed().as_secs_f64();
+        if link_trace() {
+            self.trace_links(order, "iteration");
+        }
         self.mem_update();
         if let Some(hook) = self.frame_hook.clone() {
             hook(self.iterations, &self.snapshot());
@@ -464,6 +476,64 @@ impl Router {
             } else {
                 self.scratch.expansions - expansions_before > self.config.negotiation_expansions
             }
+    }
+}
+
+/// Whether the pairs' links are traced (`PCB_ROUTER_LINK_TRACE`): per
+/// negotiation iteration and after the hard repair, each link's state and
+/// the search work it took (a diagnosis's, docs/router.md "Giving up on a
+/// link").
+pub(super) fn link_trace() -> bool {
+    static TRACE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TRACE.get_or_init(|| std::env::var_os("PCB_ROUTER_LINK_TRACE").is_some())
+}
+
+impl Router {
+    /// Whether `net` is a differential pair's link (pcb-kicad's net whose
+    /// terminals are "pair launch" ones, route mode's `diff_pairs`).
+    pub(super) fn is_link(&self, net: NetId) -> bool {
+        self.board.nets[net as usize]
+            .terminals
+            .first()
+            .is_some_and(|terminal| terminal.label.starts_with("pair launch"))
+    }
+
+    /// The links' trace (`link_trace`) at `what`: per link its state and
+    /// its search work so far, and the links' share of the router's work.
+    pub(super) fn trace_links(&self, order: &[NetId], what: &str) {
+        let mut links = 0;
+        let mut settled = 0;
+        let mut work = 0u64;
+        for &net in order {
+            if !self.is_link(net) {
+                continue;
+            }
+            let state = &self.nets[net as usize];
+            let conflicts = self.conflicts(net).len();
+            links += 1;
+            settled += usize::from(state.complete && conflicts == 0);
+            work += state.expansions;
+            eprintln!(
+                "link trace: {what} {} {}: complete {} blocked {} routable {} conflicts {} stuck {} reroutes {} work {:.2} s",
+                self.iterations,
+                self.board.nets[net as usize].name,
+                state.complete,
+                state.blocked,
+                state.routable,
+                conflicts,
+                state.stuck,
+                state.reroutes,
+                state.expansions as f64 / expansions_per_second()
+            );
+        }
+        if links > 0 {
+            eprintln!(
+                "link trace: {what} {} summary: {settled} of {links} links settled, links' work {:.2} s of {:.2} s",
+                self.iterations,
+                work as f64 / expansions_per_second(),
+                self.work_seconds()
+            );
+        }
     }
 }
 

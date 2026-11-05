@@ -211,7 +211,8 @@ pub struct Board {
     pub terminal_copper: Vec<TerminalCopper>,
     /// What the adapter that lowered the board keeps with it to read back
     /// with the routes (route mode's differential pairs: how the coupled
-    /// runs' nets map back to the pairs); the router ignores it.
+    /// runs' nets map back to the pairs; the router ignores it), and the
+    /// nets a route may give up on (`GiveUp`: the pairs' links).
     pub attachment: Attachment,
     /// The via spans the board allows beside the through via (blind,
     /// buried and micro vias; docs/router.md, "Blind, buried and micro
@@ -301,18 +302,67 @@ impl Board {
     }
 }
 
-/// Data an adapter attaches to a board (`Board::attachment`): shared, and
-/// opaque to the router, which neither reads it nor keys its maps on it.
+/// Data an adapter attaches to a board (`Board::attachment`): shared. The
+/// router neither reads `data` nor keys its maps on it; `give_up` names the
+/// nets that stand in for others (a differential pair's coupled run, which
+/// joins the pair's two nets between its ends) and what those others
+/// become once the negotiation gives such a net up (`GiveUp`).
 #[derive(Clone, Default)]
-pub struct Attachment(pub Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>);
+pub struct Attachment {
+    pub data: Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
+    pub give_up: Option<std::sync::Arc<dyn GiveUp>>,
+}
 
 impl std::fmt::Debug for Attachment {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str(if self.0.is_some() {
-            "Attachment(..)"
-        } else {
-            "Attachment(None)"
+        formatter.write_str(match (&self.data, &self.give_up) {
+            (None, None) => "Attachment(None)",
+            (_, None) => "Attachment(..)",
+            _ => "Attachment(.., give_up)",
         })
+    }
+}
+
+/// Nets a route may give up on (`Attachment::give_up`; docs/router.md,
+/// "Giving up on a link"): each stands in for a connection of other nets
+/// (a differential pair's link joins the stubs' ends of the pair's two
+/// nets), so that given up, those nets route the connection themselves.
+pub trait GiveUp: Send + Sync {
+    /// Whether `net` may be given up.
+    fn optional(&self, net: NetId) -> bool;
+    /// The nets that change once every net of `released` is given up (all
+    /// of them so far, in the order they went), as they become: their
+    /// terminals, and every merged pad and terminal copper of theirs (which
+    /// replace the board's of those nets). The obstacles stay as they are.
+    fn released(&self, board: &Board, released: &[NetId]) -> Vec<NetRewrite>;
+    /// The nets `net` stands in for, as they are with it standing again
+    /// and every net of `released` (not `net`) given up.
+    fn standing(&self, board: &Board, net: NetId, released: &[NetId]) -> Vec<NetRewrite>;
+}
+
+/// A net as it becomes when the nets standing in for some of its
+/// connections are given up (`GiveUp::released`).
+#[derive(Clone, Debug)]
+pub struct NetRewrite {
+    pub net: NetId,
+    pub terminals: Vec<Terminal>,
+    pub merged_pads: Vec<MergedPad>,
+    pub terminal_copper: Vec<TerminalCopper>,
+}
+
+impl Board {
+    /// The board with `rewrites` applied: each net's terminals, merged pads
+    /// and terminal copper replaced (`GiveUp::released`).
+    pub fn rewrite_nets(&mut self, rewrites: &[NetRewrite]) {
+        for rewrite in rewrites {
+            self.nets[rewrite.net as usize].terminals = rewrite.terminals.clone();
+            self.merged_pads.retain(|merged| merged.net != rewrite.net);
+            self.merged_pads.extend(rewrite.merged_pads.iter().cloned());
+            self.terminal_copper
+                .retain(|extra| extra.net != rewrite.net);
+            self.terminal_copper
+                .extend(rewrite.terminal_copper.iter().copied());
+        }
     }
 }
 

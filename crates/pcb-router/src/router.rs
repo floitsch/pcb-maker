@@ -32,6 +32,7 @@ mod fanout;
 mod fill;
 mod finish;
 mod fixed;
+mod give_up;
 mod global;
 mod guards;
 pub(crate) mod hash;
@@ -70,6 +71,7 @@ pub use build::{
 pub use coarse::{ParkedRouter, RipUpSaved};
 pub use config::Config;
 pub use escapes::exact_escapes_override;
+pub use give_up::{GiveUpRule, NO_PATH, NO_ROOM, ReleasedNet};
 pub use pad_exits::{ClosedPad, ExitBlocker, ExitProbe, ProbeCounts, label_part, work_nanos};
 pub use pour_report::{PourLayerReport, StarvedThermal};
 pub use profile::{ProcessAccounting, build_totals, process_accounting};
@@ -398,6 +400,11 @@ struct NetState {
     /// A bus member broken out of its bundle (`bundles`): it found no
     /// path inside the bus's corridor and routes as any other net.
     bus_broken: bool,
+    /// Given up by the negotiation (`give_up_round`): not routable, not
+    /// routed again; the nets it stood in for route without it.
+    released: bool,
+    /// An optional net's rounds so far (`GiveUpRecord`).
+    give_up: give_up::GiveUpRecord,
 }
 
 /// An escape stub behind its node: the lattice nodes it covers, its width
@@ -1819,6 +1826,9 @@ pub struct Router {
     /// (`resolve_remaining`'s last call).
     repair_entries: Vec<RepairEntry>,
     repair_skipped: Vec<(NetId, &'static str)>,
+    /// The nets the negotiation gave up (`give_up_round`), in the order
+    /// they went (`Diagnostics::released`).
+    released: Vec<ReleasedNet>,
     /// Called after every negotiation iteration with the routing as it
     /// stands (animations, diagnostics).
     frame_hook: Option<FrameHook>,

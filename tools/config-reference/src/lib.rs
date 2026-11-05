@@ -298,6 +298,16 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "differential pairs: the fallback router's work deadline in seconds, which routes what the coupled runs left open (default 0.05 of the ladder's budget, at least 1 s; for experiments).",
     ),
     (
+        "PCB_ROUTER_DIFF_PAIRS_GIVE_UP",
+        Kind::Switch,
+        "differential pairs: `1` gives a link without a path, or whose conflicts stop falling, up in the negotiation: its pair's nets route uncoupled from then on, in the same attempt, and the hard repair tries it once more; where the settings name no `diff_pair_give_up` (default off: jetson-nano-baseboard's unconnected 23 and 44 down to 10 and 16, but ducktop2's left_io lost 3 of 6 coupled pairs on one seed; docs/router.md, \"Giving up on a link\").",
+    ),
+    (
+        "PCB_ROUTER_GIVE_UP",
+        Kind::Switch,
+        "the give-up's rounds as `min,stall,pathless,max[,present]` (default `8,4,1,16,100`): rounds in conflict count once the price of sharing has reached `present`; no link goes before `min` such rounds, then once its conflicts have not fallen below their lowest for `stall` rounds, and after `max` rounds whatever; a link without any path goes after `pathless` rounds (for experiments; docs/router.md, \"Giving up on a link\").",
+    ),
+    (
         "PCB_ROUTER_DIFF_PAIRS_CROSSOVER",
         Kind::Switch,
         "differential pairs: `1` gives a crossed link end a crossover in its lead (one net dives under the other, a via each side), with the links' hairpins removed and the kept links' via holes kept clear in the fallback (default off: more links coupled, more errors on the rule boards; docs/router.md, \"Polarity\"); since 2026-10-27 the crossover keeps room beside the neighbouring pairs' launches and a link's vias spread where they crowd the other net, measured again and still off (ducktop2's io boards worse at 30 s; \"The safe crossover\").",
@@ -466,6 +476,11 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "PCB_PROBES_SIDE_BY_SIDE",
         Kind::Switch,
         "`N`: at most N probes of the probe ladder at once (1: one after the other).",
+    ),
+    (
+        "PCB_ROUTER_LINK_TRACE",
+        Kind::Diagnostic,
+        "differential pairs: per negotiation iteration and after the hard repair, each link's state, conflicts and search work, and the links given up or standing again (docs/router.md, \"Giving up on a link\").",
     ),
     (
         "PCB_ROUTER_DEBUG",

@@ -396,6 +396,7 @@ impl Router {
             last_conflicted: Vec::new(),
             repair_entries: Vec::new(),
             repair_skipped: Vec::new(),
+            released: Vec::new(),
             probe_shapes: Arc::default(),
             mem_token: Default::default(),
             _lattice_user: LatticeUser::new((cells * board.layer_count, cells)),

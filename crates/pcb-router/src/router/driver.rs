@@ -478,6 +478,7 @@ impl Router {
             conflicted: self.last_conflicted.clone(),
             hot_spots,
             repair: self.repair_entries.clone(),
+            released: self.released.clone(),
         }
     }
 
@@ -485,7 +486,11 @@ impl Router {
         (0..self.board.nets.len())
             .map(|net| {
                 let state = &self.nets[net];
-                if self.board.nets[net].terminals.len() < 2 && state.plane.is_empty() {
+                // A net given up (`give_up_round`) has nothing left to
+                // connect: the nets it stood in for route without it.
+                if (self.board.nets[net].terminals.len() < 2 && state.plane.is_empty())
+                    || state.released
+                {
                     NetStatus::Trivial
                 } else if !state.routable {
                     NetStatus::Unreachable
