@@ -584,6 +584,15 @@ pub fn place_skeleton(
     poured: &[bool],
     settings: &Settings,
 ) -> Placement {
+    // The global placement's stall stop and its turns that fit the board
+    // (`GlobalConfig::stall_iterations`, `fit_turns`) are the race's own:
+    // alone, as a default, they did not change the first route of the
+    // three boards they move (video, protoesp, the 0xCB panel: +2.7 %, p
+    // 0.62), and video's skeletons fit only with them.
+    let mut settled = config.clone();
+    settled.global.stall_iterations = settled.global.stall_iterations.max(100);
+    settled.global.fit_turns = true;
+    let config = &settled;
     let mut report = Report::default();
     let absent = absent_parts(problem, passive);
     if !absent.iter().any(|absent| *absent) {

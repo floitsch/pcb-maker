@@ -37,13 +37,18 @@ pub struct GlobalConfig {
     /// Iterations of the global placement at most.
     pub max_iterations: usize,
     /// The global placement stops where the overflow has not fallen below
-    /// `stall_factor` times its least so far for this many iterations (0:
-    /// never): the density has settled where it can. Video's memory
-    /// modules held the overflow at 0.07 to 0.12 from iteration 200 to the
-    /// cap of 1500 while the density weight grew by 10^15, which left the
-    /// wires no say (docs/placer.md, "A race over skeletons").
+    /// `stall_factor` times its least so far for this many iterations (0,
+    /// the default: never): the density has settled where it can. Video's
+    /// memory modules held the overflow at 0.07 to 0.12 from iteration 200
+    /// to the cap of 1500 while the density weight grew by 10^15, which
+    /// left the wires no say (docs/placer.md, "A race over skeletons").
+    /// On under the race over skeletons (`skeleton::place_skeleton`).
     pub stall_iterations: usize,
     pub stall_factor: f64,
+    /// Rotations never turn a body to an angle at which it is longer than
+    /// the board on either axis while another angle fits (off by default;
+    /// on under the race over skeletons, with `stall_iterations`).
+    pub fit_turns: bool,
     /// Growth of the density weight per iteration.
     pub lambda_growth: f64,
     /// Iterations between discrete rotation updates.
@@ -69,8 +74,9 @@ impl Default for GlobalConfig {
             whitespace_fill: 0.0,
             stop_overflow: 0.04,
             max_iterations: 1500,
-            stall_iterations: 100,
+            stall_iterations: 0,
             stall_factor: 0.98,
+            fit_turns: false,
             lambda_growth: 1.03,
             rotation_interval: 15,
             rotation_net_limit: 24,
@@ -827,6 +833,7 @@ pub fn global_place(problem: &Problem, config: &GlobalConfig) -> GlobalResult {
                 &mut poses,
                 config.rotation_net_limit,
                 escape.zip(escape_members.as_deref()),
+                config.fit_turns,
             )
         {
             offsets = pin_offsets(&poses);
@@ -905,6 +912,7 @@ pub fn choose_rotations(
     poses: &mut [Pose],
     net_limit: usize,
     escape: Option<(&crate::escape::Escape, &[crate::escape::NetPins])>,
+    fit_turns: bool,
 ) -> bool {
     let nets = problem.net_weights.len();
     // Escape demand: the other parts' bodies where they are now.
@@ -967,7 +975,7 @@ pub fn choose_rotations(
             2.0 * half[0] <= size[0] + 1.0e-9 && 2.0 * half[1] <= size[1] + 1.0e-9
         };
         let some_fit = component.angle_options.iter().any(|angle| fits(*angle));
-        let allowed = |angle: f64| !some_fit || fits(angle);
+        let allowed = |angle: f64| !fit_turns || !some_fit || fits(angle);
         let original = poses[*index];
         let mut best = (
             if allowed(original.angle) {

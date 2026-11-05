@@ -432,8 +432,6 @@ impl Lcg {
 fn canned_placer_config() -> placer::Config {
     let mut config = placer::Config::new();
     config.global.max_iterations = PLACER_GLOBAL_ITERATIONS;
-    // The canned work is the same whatever its density does.
-    config.global.stall_iterations = 0;
     config.work_limit = Some(PLACER_UNITS);
     config
 }

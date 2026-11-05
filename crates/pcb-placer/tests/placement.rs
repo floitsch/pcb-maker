@@ -144,6 +144,73 @@ fn dense_board_still_becomes_legal() {
 }
 
 #[test]
+fn global_placement_stops_where_its_overflow_stalls() {
+    // Twelve 20 x 20 mm parts on 80 x 50 mm: no arrangement takes the
+    // overflow to the stop. Without the stall stop the placement runs to
+    // its cap; with it, it ends where the overflow stopped falling.
+    let mut problem = chain(12);
+    for component in &mut problem.components[2..] {
+        component.body_size = [20.0, 20.0];
+    }
+    let mut config = Config::new().global;
+    config.bins = 16;
+    config.max_iterations = 600;
+    let capped = pcb_placer::global::global_place(&problem, &config);
+    assert_eq!(capped.iterations, 600);
+    config.stall_iterations = 100;
+    let stalled = pcb_placer::global::global_place(&problem, &config);
+    assert!(stalled.iterations < 600, "{}", stalled.iterations);
+    // A chain that fits converges before any stall: the same placement.
+    let problem = chain(12);
+    let mut config = Config::new().global;
+    config.bins = 16;
+    let converged = pcb_placer::global::global_place(&problem, &config);
+    config.stall_iterations = 100;
+    let again = pcb_placer::global::global_place(&problem, &config);
+    assert!(converged.iterations < config.max_iterations);
+    assert_eq!(converged.iterations, again.iterations);
+    assert_eq!(converged.poses, again.poses);
+}
+
+#[test]
+fn turns_keep_a_body_that_fits_the_board_only_one_way() {
+    // R0 is 2 x 60 mm upright on a 50 mm high board: with `fit_turns`
+    // the rotations lay it down whatever the wire says; without, its pins
+    // across the chain keep it upright.
+    let mut problem = chain(4);
+    problem.components[2].body_size = [2.0, 60.0];
+    problem.components[2].pins[0].offset = [-0.5, 0.0];
+    problem.components[2].pins[1].offset = [0.5, 0.0];
+    let movable: Vec<usize> = (2..problem.components.len()).collect();
+    let centers: Vec<[f64; 2]> = movable
+        .iter()
+        .enumerate()
+        .map(|(slot, _)| [20.0 + 12.0 * slot as f64, 25.0])
+        .collect();
+    let mut poses = problem.poses.clone();
+    for (slot, index) in movable.iter().enumerate() {
+        poses[*index] = Pose {
+            position: problem.components[*index].position_for_center(centers[slot], 0.0),
+            angle: 0.0,
+        };
+    }
+    let mut free = poses.clone();
+    pcb_placer::global::choose_rotations(&problem, &movable, &centers, &mut free, 24, None, false);
+    assert!(
+        free[2].angle == 0.0 || free[2].angle == 180.0,
+        "{}",
+        free[2].angle
+    );
+    let mut fitted = poses.clone();
+    pcb_placer::global::choose_rotations(&problem, &movable, &centers, &mut fitted, 24, None, true);
+    assert!(
+        fitted[2].angle == 90.0 || fitted[2].angle == 270.0,
+        "{}",
+        fitted[2].angle
+    );
+}
+
+#[test]
 fn global_placement_starts_parts_where_a_start_says() {
     // A panel's copies: R0-R5 confined to the left half, R6-R11 to the
     // right; the right ones start at their region's centre instead of the
