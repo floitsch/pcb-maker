@@ -11,6 +11,50 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-05 (the remapper trial's leftovers: hot spots name their pads)
+
+Branch remapper-leftovers. The three agent-flow items left from the
+remapper trial (docs/reviews/2026-10-18-remapper-agent-diagnostic-trial.md),
+each checked against the code first:
+
+- **Contradictory overrides: done already** (2026-10-23 and 2026-10-25).
+  `project_rules::preflight_overrides` refuses a `net_classes`,
+  `default_rules` or `connection_rules` width or clearance below the
+  project's minimum before any work (exit 2, the source, requested and
+  project minimum with its source, the nets, and the lever
+  `allow_below_project_minimum`); allowed, the verdict's `rule_overrides`
+  gives requested, project minimum, routed with, emitted and native
+  required, and `describe-kicad-board` keeps the project's width beside
+  `class_track_width_mm`. Tests:
+  `classes_below_the_projects_minimum_are_refused_unless_allowed`,
+  `a_class_below_the_boards_minimum_is_refused_unless_allowed`,
+  `an_allowed_override_reports_what_was_written_and_found`. Rechecked on
+  the trial's narrow-four config and source: refused before any work.
+- **Diagnostics on arc outlines: done already, now tested.** The two
+  commands left with the grid router (2026-10-21) and name their
+  replacement (exit 2); the commands that read an outline share the
+  router's lowering. New test
+  `the_diagnostic_commands_read_an_outline_with_arcs`: the three-pad
+  board with round corners (four lines, four arcs) through
+  `describe-kicad-board` (the outline follows the arcs),
+  `score-kicad-board`, `inspect-kicad-board`,
+  `inspect-kicad-connections`, a route and `inspect-routing-run
+  --terminal`; the removed commands on it name the replacement. On the
+  harvest's Remapper v7 (eight lines, eight arcs), read-only, all of them
+  run.
+- **Hot spots' object links: the missing part built.** board-router.json's
+  hot spots carried their pads (ref, number, net, mm) and nets since
+  2026-10-25 and the action its nearest parts and the open link's `near`
+  since 2026-11-04; the action named no pad, and no net in conflict where
+  an open net was there. Now it names the tile's pads on the open nets
+  (else on the nets in conflict; four, nearest the tile's centre) and the
+  other nets in conflict: `hot spot 1 (diagnostics.hot_spots[1]: B.Cu at
+  104.50, 100.50, on the open nets +1V1; their pads in its tile U1:24
+  (104.90, 100.50); in conflict there with +3V3): the parts nearest it
+  ...` (`the_open_connections_hot_spot_names_the_parts_nearest_it`). "Too
+  dense for its layer count" is in no doc, skill or verdict string (only
+  in this file's history and placer.md's global model).
+
 ## Committed on 2026-11-05 (a pair point across a pin; split ends and launches turned for their stubs measured and left out)
 
 Branch pair-points (`build/bin/pcb-maker-pairs7-p1`, the code as

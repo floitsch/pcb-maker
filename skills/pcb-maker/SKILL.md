@@ -79,7 +79,8 @@ Clearances and shorts between fixed parts always count.
 On exit 1: where the first next action says the run searched at under half
 the reference's rate and the first route took the whole budget, rerun as it
 says (idle machine or the pinned rates) before anything else (SmartSpin2k: 475
-unconnected so, 51 pinned). The hot spot's action names its open link's far
+unconnected so, 51 pinned). The hot spot's action names its tile's pads on the open nets
+(`REF:NUMBER (x, y)`), the other nets in conflict there and its open link's far
 end with a `near` entry to paste. For open connections run `inspect-routing-run` first (above;
 with `--reference` its `reference.placement` says whether the designer's
 route is on this placement or, for a layout, on the designer's own, with

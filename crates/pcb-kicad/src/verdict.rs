@@ -1499,8 +1499,10 @@ pub struct KiCadNearPart {
 
 /// The hot spot the open connections' action names (`hot_spot_note`): its
 /// index in `diagnostics.hot_spots`, layer and point, the open nets among
-/// its pads' and copper's nets, the nets still in conflict there, and the
-/// parts whose bodies lie nearest its point (`HOT_SPOT_PARTS`).
+/// its pads' and copper's nets, the nets still in conflict there, the
+/// tile's pads on the open nets (else on the nets in conflict;
+/// `HOT_SPOT_NAMED_PADS`), and the parts whose bodies lie nearest its
+/// point (`HOT_SPOT_PARTS`).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct KiCadHotSpotNote {
     pub index: usize,
@@ -1508,6 +1510,10 @@ pub struct KiCadHotSpotNote {
     pub at: [f64; 2],
     pub open_nets: Vec<String>,
     pub conflicted_nets: Vec<String>,
+    /// The tile's pads on `open_nets` (else on `conflicted_nets`), nearest
+    /// its centre first: the remapper trial's hot spots had no object
+    /// links, and the action named parts but no pad.
+    pub pads: Vec<crate::board_router::KiCadHotSpotPad>,
     pub parts: Vec<KiCadNearPart>,
     /// An open connection of one of `open_nets` as KiCad names it
     /// (`open_link_of`), whose far end may lie elsewhere.
@@ -1638,6 +1644,10 @@ fn open_link_text(link: &KiCadOpenLink, command: &str, fixed: &BTreeSet<String>)
 /// How many parts a hot spot's note names.
 pub const HOT_SPOT_PARTS: usize = 5;
 
+/// How many of its tile's pads a hot spot's note names (the rest stay in
+/// `diagnostics.hot_spots[i].pads`).
+pub const HOT_SPOT_NAMED_PADS: usize = 4;
+
 /// Beyond this distance from a hot spot's point no part is called its
 /// neighbour (the open connections' hot spot action).
 pub const HOT_SPOT_REACH_MM: f64 = 5.0;
@@ -1739,12 +1749,34 @@ pub fn hot_spot_note(
             .then_with(|| crate::canonical_order::natural_cmp(&a.reference, &b.reference))
     });
     parts.truncate(HOT_SPOT_PARTS);
+    let open_nets = open_in(spot);
+    let named: BTreeSet<&str> = if open_nets.is_empty() {
+        &spot.links.conflicted_nets
+    } else {
+        &open_nets
+    }
+    .iter()
+    .map(|net| bare_net(net))
+    .collect();
+    let pads = spot
+        .links
+        .pads
+        .iter()
+        .filter(|pad| {
+            pad.net
+                .as_deref()
+                .is_some_and(|net| named.contains(bare_net(net)))
+        })
+        .take(HOT_SPOT_NAMED_PADS)
+        .cloned()
+        .collect();
     Some(KiCadHotSpotNote {
         index,
         layer: spot.layer.clone(),
         at: spot.at,
-        open_nets: open_in(spot),
+        open_nets,
         conflicted_nets: spot.links.conflicted_nets.clone(),
+        pads,
         parts,
         open_link: None,
     })
@@ -3002,13 +3034,41 @@ fn hot_spot_action(note: &KiCadHotSpotNote, command: &str, fixed: &BTreeSet<Stri
 /// The hot spot and the parts nearest it (`hot_spot_action` less its open
 /// link).
 fn hot_spot_parts_action(note: &KiCadHotSpotNote, command: &str) -> String {
-    let nets = if !note.open_nets.is_empty() {
+    let mut nets = if !note.open_nets.is_empty() {
         format!(", on the open nets {}", note.open_nets.join(", "))
     } else if !note.conflicted_nets.is_empty() {
         format!(", nets in conflict {}", note.conflicted_nets.join(", "))
     } else {
         String::new()
     };
+    // The tile's pads on those nets and the other nets in conflict there:
+    // what an agent acts on without opening the board (the remapper
+    // trial: hot spots without object links).
+    if !note.pads.is_empty() {
+        let pads: Vec<String> = note
+            .pads
+            .iter()
+            .map(|pad| {
+                format!(
+                    "{}:{} ({:.2}, {:.2})",
+                    pad.reference, pad.number, pad.at[0], pad.at[1]
+                )
+            })
+            .collect();
+        nets += &format!("; their pads in its tile {}", pads.join(", "));
+    }
+    if !note.open_nets.is_empty() {
+        let open: BTreeSet<&str> = note.open_nets.iter().map(|net| bare_net(net)).collect();
+        let others: Vec<&str> = note
+            .conflicted_nets
+            .iter()
+            .map(String::as_str)
+            .filter(|net| !open.contains(bare_net(net)))
+            .collect();
+        if !others.is_empty() {
+            nets += &format!("; in conflict there with {}", others.join(", "));
+        }
+    }
     let parts: Vec<String> = note
         .parts
         .iter()
@@ -7129,13 +7189,18 @@ mod tests {
             history: 30.0,
             bounds: [at[0] - 0.8, at[1] - 0.8, at[0] + 0.8, at[1] + 0.8],
             links: KiCadHotSpotLinks {
-                pads: vec![KiCadHotSpotPad {
-                    reference: "U1".into(),
-                    number: "23".into(),
-                    net: Some(nets[0].into()),
-                    at,
-                }],
-                pads_in_tile: 1,
+                // U1:23 on the first net, U1:24 on the second.
+                pads: nets
+                    .iter()
+                    .enumerate()
+                    .map(|(i, net)| KiCadHotSpotPad {
+                        reference: "U1".into(),
+                        number: (23 + i).to_string(),
+                        net: Some(net.to_string()),
+                        at: [at[0] + 0.4 * i as f64, at[1]],
+                    })
+                    .collect(),
+                pads_in_tile: nets.len(),
                 nets: nets.iter().map(|net| net.to_string()).collect(),
                 conflicted_nets: conflicted.iter().map(|net| net.to_string()).collect(),
             },
@@ -7149,6 +7214,14 @@ mod tests {
         let note = hot_spot_note(&spots, &open, Some(&board)).unwrap();
         assert_eq!(note.index, 1);
         assert_eq!(note.open_nets, ["+1V1"]);
+        // The tile's pad on the open net, not the one on +3V3.
+        assert_eq!(
+            note.pads
+                .iter()
+                .map(|pad| format!("{}:{}", pad.reference, pad.number))
+                .collect::<Vec<_>>(),
+            ["U1:24"]
+        );
         let named: Vec<(&str, &str)> = note
             .parts
             .iter()
@@ -7182,7 +7255,7 @@ mod tests {
             position("connections are open") + 1
         );
         assert!(
-            action.starts_with("hot spot 1 (diagnostics.hot_spots[1]: B.Cu at 104.50, 100.50, on the open nets +1V1): the parts nearest it on B.Cu are C16 (back, over it), U1 (back, 1.0 mm), C19 (back, 1.7 mm), SW21 (front, 3.5 mm)"),
+            action.starts_with("hot spot 1 (diagnostics.hot_spots[1]: B.Cu at 104.50, 100.50, on the open nets +1V1; their pads in its tile U1:24 (104.90, 100.50); in conflict there with +3V3): the parts nearest it on B.Cu are C16 (back, over it), U1 (back, 1.0 mm), C19 (back, 1.7 mm), SW21 (front, 3.5 mm)"),
             "{action}"
         );
         assert!(
@@ -7197,9 +7270,15 @@ mod tests {
             far.contains("no part's body or pad on B.Cu lies within 5 mm of it"),
             "{far}"
         );
-        // Without any open net in a hot spot: the worst one.
+        // Without any open net in a hot spot: the worst one, with its
+        // pads on the nets in conflict.
         let none = hot_spot_note(&spots, &BTreeSet::new(), None).unwrap();
         assert_eq!((none.index, none.parts.len()), (0, 0));
+        let text = hot_spot_action(&none, "layout-kicad-board", &BTreeSet::new());
+        assert!(
+            text.starts_with("hot spot 0 (diagnostics.hot_spots[0]: B.Cu at 20.00, 20.00, nets in conflict GND; their pads in its tile U1:23 (20.00, 20.00)): no part's body or pad lies on its layer"),
+            "{text}"
+        );
     }
 
     #[test]
@@ -7251,6 +7330,7 @@ mod tests {
             at: [108.45, 122.58],
             open_nets: vec!["Display/TMDS_D0_C_N".into()],
             conflicted_nets: Vec::new(),
+            pads: Vec::new(),
             parts: vec![KiCadNearPart {
                 reference: "J1".into(),
                 side: "front".into(),
