@@ -34,7 +34,12 @@ placer-profile-4, measured against main's x1885, 6a95300a) took the
 anneal's overlap sums and crossings, the legaliser's crossings, the
 cutouts' outlines and the race's ripped count: the same placements,
 the placement 1.4 % cheaper in CPU (geometric mean of the fifteen; video
-13.6 %), short of the round's target of 15 %.
+13.6 %), short of the round's target of 15 %. The fifth router round of
+2026-11-05 ("Router round 5" below: branch router-cpu-round-5, measured
+against main's 59025fb5) profiled route mode on six boards of the tiers
+and took the search's neck-zone scans and target map and the tile
+planner's allocations and out-of-line closures: the same routes in about
+3 % less CPU.
 
 ## How to profile
 
@@ -1123,6 +1128,269 @@ probe its questions, both the same.
   decode, the ring, the marks and the encode.
 - **The final pour measure's lattice** (anthracite 3.4 s of 6 s): a
   build of the written board's maps, which nothing shares.
+
+## Router round 5 (2026-11-05)
+
+The router's search and its lowering again, on six boards spanning the
+tiers: two dense (Glasgow revC3 and the OpenESC 30x30 4in1, on the
+designer's placement as the matched designer tier routes them), two
+large (jetson-nano-baseboard, k30-SBC) and two with pours and many
+layers (Castor and Pollux, Sisu SSE-9). Branch router-cpu-round-5: three
+code commits and this note, on main 59025fb5; binaries
+`build/bin/pcb-maker-cpu5-base` (main), `-c1`, `-c2b` and `-c3` (the
+commits one by one; `-c3` is the head's code); outputs, harness and
+scripts in `build/cpu5/`.
+
+### How
+
+perf could not be installed this time either (the package download was
+refused in the agent's sandbox). Two ways:
+
+- **Categories** (a throwaway build, branch router-cpu5-attr, not for
+  merging: the fourth round's call sites, recovered from its stash
+  87d539ba, and `pcb_router::attr` written again: thread CPU time
+  (`CLOCK_THREAD_CPUTIME_ID`) per category, summed over threads, printed
+  with `PCB_ROUTER_ATTR`; the search's expansions counted beside its
+  time). A second build split the search's set-up (everything before the
+  first pop) and the tile planner's allocations. One route per board at
+  the round's budget, two search threads on two CPUs of their own,
+  pinned rates, `PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`,
+  the machine's load 17 to 28 from other agents.
+- **Callgrind** (valgrind 3.25, a release build with line tables in
+  `target-exp-prof`) on routes of 15 s of work, one thread: Glasgow,
+  Castor and jetson (dumps part way, 120 to 165 G instructions each), for
+  the lines inside the search, the planner and the stamping.
+
+The boards: Castor, k30-SBC, jetson and Sisu as the fingerprints route
+them (the v16 placements, the tasks' router settings, 300 s of work: the
+quarter budget), Glasgow and the 4in1 from the nightly of 2026-11-05's
+designer tier (its stripped boards and router settings, the ladder at 300
+s of work instead of the tier's 1009.5). The pairs: `build/cpu5/pairs.py`
+(the fourth round's harness: the off binary on two CPUs, the on binary
+on their SMT siblings, started together inside one reservation of the
+ledger; the other orientation at the same time on two other cores; the
+router process's own CPU, utime + stime at its exit, kicad-cli left
+out), two search threads, pinned rates, the same switches.
+
+### Where a route's CPU goes (main 59025fb5, the categories)
+
+Route mode, one run per board under the timing build (two search threads
+on two CPUs of their own, the machine's load 17 to 28); shares of the
+router process's CPU, the categories nested as the code nests them ("-"
+where the category did not run; the set-up's and the planner's
+allocations from the second timing build, which routed the same):
+
+| category (% of the route's CPU) | Glasgow | 4in1 | jetson | k30-SBC | Castor | Sisu |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| route CPU s (the timing build) | 389 | 367 | 361 | 365 | 231 | 421 |
+| expansions (M); M per CPU second of search | 941; 2.79 | 959; 2.88 | 964; 3.20 | 855; 2.76 | 486; 2.66 | 972; 2.90 |
+| search | 86.8 | 90.6 | 83.3 | 84.8 | 79.2 | 79.7 |
+| of it: its set-up (before the first pop) | 3.6 | | 1.9 | | 0.5 | 1.6 |
+| tile planner (`plan_corridor`) | 4.5 | 2.5 | 7.1 | 6.8 | 2.6 | 5.0 |
+| of it: its six arrays' allocation | 0.40 | | 0.30 | | 0.08 | 0.27 |
+| stamping (`stamp`, `unstamp`) | 4.3 | 2.5 | 3.0 | 4.8 | 6.1 | 9.9 |
+| pour analyses | 1.06 | 1.33 | 0.19 | 1.35 | 8.48 | 0.76 |
+| of it: `kicad_spokes`, the labelling | 0.44, 0.08 | 0.08, 0.19 | 0.10, 0.03 | 0.81, 0.25 | 4.75, 1.57 | 0.02, 0.25 |
+| the negotiation's pour refresh (with its analyses) | 1.08 | 1.39 | 0.16 | 0.93 | 2.73 | 1.05 |
+| the ladder's probes (`probe`) | 53.6 | 55.4 | 43.8 | 56.9 | 22.1 | 48.0 |
+| the continuation (`resume_polished`) | 44.0 | 33.3 | 34.6 | 38.4 | 70.1 | 45.3 |
+| the negotiation | 75.7 | 81.0 | 62.4 | 74.8 | 47.3 | 69.0 |
+| hard repair (`resolve_remaining`) | 6.3 | 10.6 | 5.4 | 1.2 | 0.0 | 12.9 |
+| trouble repair | 1.7 | 2.5 | 2.7 | 0.0 | 0.0 | 3.7 |
+| of it: the saved nets (`save_net`, `restore_nets`) | 0.02 | 0.01 | 0.02 | - | - | 0.11 |
+| clean-up | 13.3 | 2.8 | 6.9 | 18.2 | 33.0 | 7.2 |
+| via reduction | 0.0 | 0.0 | 0.0 | 19.3 | 37.8 | 0.0 |
+| spoke repairs, straightening, stitching, manual spokes | 0.10 | 0.81 | 0.21 | 0.92 | 11.4 | 0.22 |
+| lowering (`lower`) | 0.05 | 0.05 | 0.31 | 0.04 | 0.05 | 0.04 |
+| via-in-pad plan | 0.07 | 0.06 | 1.09 | 0.00 | 0.01 | 0.22 |
+| the attempt's write | 0.03 | 0.09 | 0.23 | 0.01 | 0.04 | 0.02 |
+| the board's parse | 0.06 | 0.06 | 0.60 | 0.02 | 0.07 | 0.03 |
+| verification (`verify_with_rules`) | 0.03 | 0.11 | 0.27 | 0.01 | 0.02 | 0.02 |
+| the final pour measure (`measured_board`) | 0.27 | 0.58 | 0.77 | 0.39 | 0.96 | 1.32 |
+| starved-thermal repair | 0.00 | 0.00 | 0.50 | 0.02 | 0.00 | 0.00 |
+
+- **The search is 79 to 91 % of every route** at 2.7 to 3.2 million
+  expansions per CPU second (on two CPUs of their own; about three quarters
+  of that beside a busy SMT sibling, as in the pairs below). Inside it
+  (callgrind, Glasgow): the steps and the heap as before, the heuristic
+  6 to 8 % of the instructions; and two costs the earlier rounds' boards
+  did not show: `zone_class`'s scan of the net's neck zones at every step
+  near them (2.1 % of Glasgow's instructions, 0.6 % of Castor's) and the
+  hash map of each search's targets (its inserts 2.1 % of Glasgow's
+  instructions, 1.0 % of jetson's), both in the set-up or the steps.
+- **The tile planner** is the largest part outside the search: 2.5 to
+  7.1 %, 9 500 to 28 000 plans a route, each popping 4 000 to 6 300 of
+  its 6 300 to 12 400 (layer, tile) states (it has no heuristic: a plan
+  explores most of the board). Its closures were called out of line, a
+  step divided by the pitch, and its arrays were allocated per plan.
+- **Stamping** 2.5 to 9.9 % (Sisu most); the pour analyses 0.2 to 8.5 %
+  (Castor, of it `kicad_spokes` 4.75 %: the fourth round's windows).
+- **The lowering, the verifier, the ladder's copies are small**: the
+  lowering 0.04 to 0.31 % (with the via-in-pad plan at most 1.4 %,
+  jetson), the verifier at most 0.27 %, the board's parse at most 0.6 %,
+  the attempt's write at most 0.23 %, the trouble repair's saved nets
+  0.01 to 0.11 %; route mode has no race and its ladder no router copies
+  (each probe builds its own router on the shared static maps). The final
+  pour measure 0.3 to 1.3 %.
+
+### The changes (bit-identical)
+
+Three commits, each the same computation: the same answers in the same
+order, the same work booked (the search's expansions, the planner's and
+the pour analyses' counts are untouched), each with a unit test against
+the computation it replaces.
+
+1. **The search's neck zones as a mask** (`ZoneMask`, router.rs;
+   search.rs). A net routes at the neck width inside its neck zones, one
+   around each of its pads narrower than its track and clearance (a
+   fine-pitch part's), and every step near them asked `zone_class`,
+   which scans the net's zones in turn: a net with many fine-pitch pads
+   has as many zones, their bounding box covers much of the board, and
+   the steps of its searches scanned them all (2.1 % of Glasgow's
+   instructions, 0.6 % of Castor's). Each search of a net with zones now
+   marks them in a bit mask over their box (the thread's scratch,
+   reused; at most a bit a node of the lattice: 49 kB for Glasgow's 801
+   x 491 nodes) and a step reads one bit; outside the box nothing
+   changes. A debug assertion compares every answer with `zone_class`.
+   Test `the_zone_mask_answers_as_the_zones` (forty sets of one to sixty
+   zones, of one node to rows across several words, overlapping and at
+   the box's edges, a mask reused for smaller boxes: every node of the
+   box against `zone_class`).
+2. **The search's targets without a hash map**
+   (`Router::reached_element`, route_net.rs; search.rs). Each search put
+   each of its targets (the nodes of the net's other components:
+   thousands a search on a ground net) into a hash map from state to the
+   target's element, for one lookup after the search: which element the
+   path reached. The element is now found by scanning the search's own
+   target list from its end for the reached node: the last entry of a
+   node, as the map kept the last insert; a target the hard search
+   leaves out (`escape_is_free`) is never reached, and the test gives
+   every entry of a node the same answer. The scratch no longer holds
+   the map (its capacity was the largest target set seen). Test
+   `the_reached_element_is_the_target_maps` (fifty target lists, nodes
+   listed up to many times with other elements: every node's element
+   against the map filled as before).
+3. **The tile planner's arrays kept in the scratch** (`PlannerArrays`,
+   planner.rs; heap.rs `KeyHeap::clear`). The planner (a Dijkstra over
+   the tiles of 16 x 16 nodes and the layers, before each corridor
+   search: 9 500 to 28 000 plans a route, each popping 4 000 to 6 300 of
+   its 6 300 to 12 400 states on average) allocated six arrays of the
+   tile graph and a heap for every plan, called its entry cache and its
+   relaxation as closures out of line, and divided a direction's cost by
+   the pitch at every step. Its arrays and heap are now the thread's,
+   reset in place (`reset`: the values a new array had); a step's cost
+   before the tile's factor is computed once a plan per layer and
+   direction by the same expression (`steps`), the entry cache is
+   expanded inline, and a node's tile is computed once instead of twice.
+   The Dijkstra pops the same keys in the same order and returns the
+   same corridor. Test `the_planner_plans_as_with_new_arrays` (the
+   planner as it was, kept in the test as the reference; two and three
+   layers of `crossed_net`, tiles claimed by its routed nets, random
+   history and pour cover, hard plans, the net's own claims, margins 0
+   to 3; 600 plans through one set of arrays).
+
+Not taken: the stamping (2.5 to 9.9 %; the third round's notes stand:
+the varint decode and the look-ahead ring 2 to 4 % of Castor's
+instructions, the marking and the encoding as much, nothing that one
+change takes whole), the heuristic (6 to 8 % of the search's
+instructions, vectorised; the second round's inlining trial lost), the
+work-rate calibration at the start of every run (the fourth round's
+note: its measured rate is reported, so dropping it with pinned rates
+changes what a run writes), the planner's Dijkstra itself (an A*
+heuristic would pop a fraction of the tiles, but ties among equal-cost
+tile paths could resolve otherwise: other corridors, other routes; a
+protocol change, not this round's).
+
+### Measured (2026-11-05)
+
+Pinned pairs as in "How" (the off binary's first orientation first in
+each cell; peaks in MB; the routed board's SHA-256 and every fingerprint
+line compared in every pair). **Each commit on its own** (two pairs a
+board, both orientations at once; the machine's load 18 to 35):
+
+| board | `-c1` against the base | `-c2b` against `-c1` | `-c3` against `-c2b` |
+| --- | ---: | ---: | ---: |
+| Glasgow | -6.0, -3.1: -4.6 % | -3.4, -0.8: -2.1 % | -1.5, +0.2: -0.7 % |
+| 4in1 | -3.0, +4.4: +0.6 % | -7.3, -0.0: -3.7 % | -0.5, -0.1: -0.3 % |
+| jetson | -2.0, -0.2: -1.1 % | -1.3, +0.7: -0.3 % | -3.4, +0.2: -1.6 % |
+| k30-SBC | -1.8, -0.1: -1.0 % | -0.1, -0.7: -0.4 % | -2.3, +1.1: -0.6 % |
+| Castor | +0.1, -1.1: -0.5 % | -2.4, +1.8: -0.3 % | -1.8, +3.0: +0.6 % |
+| Sisu | -3.3, -1.9: -2.6 % | -1.1, +1.0: -0.1 % | -5.4, -0.3: -2.9 % |
+| geometric mean (12 pairs) | -1.5 % | -1.2 % | -0.9 % |
+
+**The three together** (`-c3` against the base, four pairs a board in two
+rounds, 10:40 to 11:28, the machine's load 13 to 47 from other agents'
+layouts; cells: the base's CPU seconds of the router process, the
+head's, the pairs' changes, their geometric mean, peak resident size):
+
+| board | base CPU s | head CPU s | pairs | CPU | base MB | head MB | identical |
+| --- | ---: | ---: | --- | ---: | ---: | ---: | --- |
+| Glasgow | 515.3 / 514.1 / 513.6 / 482.6 | 481.4 / 474.7 / 488.7 / 453.7 | -6.6, -7.7, -4.8, -6.0 | -6.3 % | 361 to 363 | 359 to 361 | yes (4 pairs, 5 fingerprint lines) |
+| 4in1 | 403.3 / 453.3 / 403.6 / 475.7 | 401.5 / 445.4 / 398.5 / 469.6 | -0.5, -1.8, -1.2, -1.3 | -1.2 % | 198 to 200 | 196 to 199 | yes (4 pairs, 19 fingerprint lines) |
+| jetson | 467.9 / 517.7 / 478.0 / 469.4 | 451.0 / 505.5 / 466.6 / 473.0 | -3.6, -2.4, -2.4, +0.7 | -1.9 % | 1167 to 1191 | 1172 to 1198 | yes (4 pairs, 5 fingerprint lines) |
+| k30-SBC | 491.1 / 464.9 / 470.2 / 456.7 | 480.2 / 452.5 / 467.6 / 444.1 | -2.2, -2.7, -0.6, -2.8 | -2.1 % | 623 to 630 | 628 to 634 | yes (4 pairs, 5 fingerprint lines) |
+| Castor | 199.5 / 308.9 / 224.0 / 285.7 | 193.4 / 310.8 / 220.2 / 298.8 | -3.1, +0.6, -1.7, +4.6 | +0.1 % | 369 to 382 | 372 to 379 | yes (4 pairs, 6 fingerprint lines) |
+| Sisu | 630.5 / 601.1 / 627.1 / 587.5 | 593.5 / 559.8 / 595.5 / 555.8 | -5.9, -6.9, -5.0, -5.4 | -5.8 % | 1052 to 1054 | 1056 to 1063 | yes (4 pairs, 5 fingerprint lines) |
+
+Over the six boards the router's CPU falls **2.9 %** as the geometric
+mean of the 24 pairs (the first round 3.2 %, the second 2.6 %): Glasgow
+-6.3 % and Sisu -5.8 % in every pair, k30-SBC -2.1 %, jetson -1.9 %, the
+4in1 -1.2 %, Castor +0.1 % (its second round at a load of 45: +0.6 and
++4.6 %; the first -3.1 and -1.7 %). The commits one by one sum to about
+the whole: the neck mask where nets have many neck zones (Glasgow,
+Sisu), the target map on the dense boards, the planner where it is
+largest (jetson, k30-SBC, Sisu). The timing build's second run (base and
+head with the attribution, side by side on SMT siblings) shows where:
+Glasgow's search set-up 19.9 to 10.9 s and its planner 24.2 to 20.0 s,
+jetson's 11.5 to 6.8 s and 38.5 to 30.0 s. Peak resident size is the
+same within the pairs' spread (the mask and the planner's arrays are at
+most a few hundred kB a thread).
+
+**Identical.** Every pair above (60 in all): the routed board's SHA-256
+(Glasgow fcb84fcf43f1, 4in1 4e0d0eab1716, jetson 943cf3c0a11e, k30-SBC
+9c02f96c4fe8, Castor dad3a6cb3787 as since the first round, Sisu
+9e0f8c22cfba) and every fingerprint line (as a sorted set). Each binary
+on short runs before its commit (40 s of work, unpinned): Glasgow, the
+4in1, Castor, Sisu and jetson the same boards and lines as the base. The
+branch rebased on main 73102548 (x1913; main changed only the pair
+plan's writer in diff_pairs.rs), built as
+`build/bin/pcb-maker-cpu5-final`, against x1913: the fingerprint set
+(`run.py` at the quarter budget, four threads: Castor, k30-SBC, jetson,
+Sisu) the same routed boards and the same 6, 5, 5 and 5 fingerprint
+lines; Glasgow and the 4in1 at 300 s of work the same boards and lines;
+the short tier (twelve boards, `run.py --tier short`, three at a time on
+two threads, `PCB_ROUTER_FINGERPRINT=1 PCB_ROUTER_NO_WALL_GUARD=1`) 12
+of 12 placed and result boards byte-identical with the same fingerprint
+lines (11 to 190 a board). Check mode has nothing new to keep
+identical: the mask's comparison with `zone_class` is a debug
+assertion, which books no work and draws nothing. `cargo test -p pcb-kicad -p pcb-router -p
+pcb-placer --lib` in debug mode (615, 135 and 72 tests) and
+`scripts/check.sh --fast` pass.
+
+**The work clock**: unchanged by construction (the same expansions, the
+same pour and planner work; the planner books nothing).
+
+### What is next
+
+- **The search** is 79 to 91 % of these routes. Its steps, heap and
+  heuristic are the four earlier rounds' (memory-bound, prefetched);
+  what this round found was in its set-up and its neck zones. What is
+  left of the set-up (1.3 to 2.2 % after) is the targets' marks in the
+  search nodes, the hard search's escape tests and the coarse distance
+  map.
+- **The tile planner** is still 2 to 6 %: a Dijkstra without a
+  heuristic that pops most of the board's tiles each plan. An A*
+  heuristic (the octile distance to the nearest target tile) would pop a
+  fraction, but equal-cost tile paths may resolve otherwise: other
+  corridors, other routes. That is a protocol change (the quick ladder
+  and the fingerprints), not a CPU round's.
+- **Stamping** 2.5 to 9.9 % (Sisu): the varint decode and the restamp's
+  look-ahead ring, the marking and encoding of every footprint for every
+  querying class; a restamp of only the branches that changed would be
+  the structural step (memory: the lists per branch).
+- **The work-rate calibration** at the start of every run, pinned rates
+  or not (seconds of CPU a run, outside the attributed categories): its
+  measured rate is reported, so it stays unless the reports may change.
 
 ## The layout round (2026-10-25)
 

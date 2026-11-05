@@ -11,6 +11,41 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-05 (the fifth router round: the search's neck zones as a mask, its targets without a hash map, the planner's arrays kept; the same routes, 2.9 % less router CPU)
+
+Branch router-cpu-round-5 (three commits); the head on main 73102548
+built as `build/bin/pcb-maker-cpu5-final`, measured as
+`build/bin/pcb-maker-cpu5-c3` against `-cpu5-base` (main 59025fb5);
+docs/profiling.md, "Router round 5 (2026-11-05)", has the profile and
+the tables.
+
+- **The profile** (a throwaway timing build, thread CPU per category;
+  callgrind on short routes; route mode at 300 s of work on Glasgow,
+  the OpenESC 4in1, jetson, k30-SBC, Castor and Sisu): the search is 79
+  to 91 % of every route at 2.7 to 3.2 M expansions per CPU second, the
+  tile planner 2.5 to 7.1 %, stamping 2.5 to 9.9 %, the pour analyses
+  0.2 to 8.5 % (Castor); the lowering (with the via-in-pad plan) at most
+  1.4 %, the verifier at most 0.3 %, the trouble repair's saved nets at
+  most 0.1 %, and route mode's ladder copies no router. Inside the
+  search two costs no earlier round's board showed: the scan of a net's
+  neck zones at every step near them (2.1 % of Glasgow's instructions)
+  and the hash map of each search's targets (2.1 %).
+- **The changes**: the searched net's neck zones as a bit mask over
+  their box (`ZoneMask`); the element a search reached looked up in its
+  own target list (`reached_element`) instead of a map of every target;
+  the tile planner's arrays and heap kept in the thread's scratch
+  (`PlannerArrays`), its step costs computed once a plan, its closures
+  inline. Each with a unit test against the computation it replaces
+  (the planner's old code kept in the test as the reference).
+- **Measured** (pinned pairs on SMT siblings, both orientations, 300 s
+  of work): -2.9 % as the geometric mean of 24 pairs on the six boards
+  (Glasgow -6.3 %, Sisu -5.8 %, k30-SBC -2.1 %, jetson -1.9 %, the 4in1
+  -1.2 %, Castor +0.1 %); the commits one by one -1.5, -1.2 and -0.9 %
+  (12 pairs each). Every pair's routed board and fingerprint lines
+  identical; on the rebased head against x1913: the fingerprint set (4
+  of 4), Glasgow and the 4in1, and the short tier (12 of 12 placed and
+  result boards, every fingerprint line).
+
 ## Committed on 2026-11-05 (a pair's stubs and its copper: the stubs routed after the attempt, the copper's alternatives)
 
 Branch pair-stubs (`build/bin/pcb-maker-pairs5-m`; outputs in
