@@ -303,13 +303,14 @@ ladder's judge), 5, then the rest.
    2026-11-03: the designer as teacher on the largest-gap boards, placer
    rules, panels of copies' frames (left out on 2026-10-28: SmartSpin2k
    118 to 89, but the 0xCB panel lost its strict pass), placer round 4.
-   Where the arrangement is lost (2026-11-04, docs/placer.md): in the
-   global placement, whose arrangement of the active parts is its
-   start's noise (a shuffle's distance from the designer's, the seeds
-   no nearer each other); the anneal, the legaliser and the refinement
-   keep a good start, and the designer's active parts as the global's
-   start end below our objective. The bet: a start for the active parts
-   (`Config::start`, the skeleton race).
+   Where the arrangement is lost (2026-11-04, docs/placer.md): the
+   global placement loses the coarse arrangement (its start's noise: a
+   shuffle's distance from the designer's; it decides video and SNSP),
+   and on the dense boards the anneal loses the fine one while it
+   lowers our objective (the 4in1 and Glasgow route better without it:
+   142 against 174, 95 against 149). The bet: a stage-1 screen without
+   the anneal (`PCB_PLACER_SKIP_ANNEAL`), alone and under
+   `skeleton_race`, then an objective judged by the route.
 5. **Starved thermals as the only failure** on complete boards (rosco,
    Castor, mackerel-30, k30, mackerel-08, Hub, PixelWave, BAGEL; counts
    fell to 0-5 since the spoke model). Since 2026-10-21

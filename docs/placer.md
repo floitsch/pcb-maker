@@ -8281,6 +8281,328 @@ pile up at the band's edge on Glasgow (15 within 1.5 to 2 mm, the
 designer 3), where the designer's channels run 6.6 mm (the median)
 before a part; blind and micro vias.
 
+## Where the arrangement is lost (2026-11-04)
+
+Pinning the designer's non-passive parts recovers a median 0.92 of the
+designer's first-route advantage ("Which placement decisions matter"),
+and our objective did not reject that arrangement. Which stage of our
+pipeline loses it, and is the designer's arrangement a fixed point of
+each stage? Measured on video, the OpenESC 4in1, Glasgow revC3 and
+SNSP-CPU-01 at layout seeds 1 and 101, place checks only (the layout's
+placement byte for byte: its seeds, its budget, the reference's rates),
+the inputs of the teach3 layouts (`build/teach3-pc/runs/*-ours-s*`),
+binary `build/bin/pcb-maker-diag1-a` (main x1904 plus this package).
+
+**The instruments.** No behaviour changes with them off (the place
+checks of the 4in1 and Glasgow with the dump off are x1904's and
+x1905's byte for byte, and with the trace on too).
+
+- `PCB_PLACER_TRACE=<file>` (with `PCB_PLACER_DESIGNER=<board>`) now
+  says per seed its number and whether the placer kept it, every movable
+  part's pose after the global placement, the anneal, the legaliser and
+  the refinement, the placer's objective split by term at each stage and
+  at the designer's poses (`anneal::objective`: the weighted half
+  perimeters of the nets of 2, 3-8 and 9+ pins, the overlap of the
+  bodies grown by halo and spacing, the relations, the hard constraints,
+  the crossings of the anneal's nets; at the placement's level and
+  without halos), and the global placement's density overflow at each
+  stage's poses, by its own model (`global_problem`) and at the level.
+- `PCB_PLACER_START=<board>` with `PCB_PLACER_START_STAGE`: `global`
+  (the global placement starts with the parts at the board's poses, no
+  start noise; `PCB_PLACER_START_PARTS=<file>` names the parts, as
+  partialcopy.py's `*.pinned.json`, the others start where they would),
+  `anneal` (no global placement: each level's anneal starts there),
+  `legalize` (no global placement and no anneal: each level's legaliser
+  seats the poses, the nearest legal spots, and the refinement follows).
+  `Config::start`, `StartStage`; a panel's copies and held sub-boards
+  ignore it. `PCB_PLACER_SKIP_ANNEAL` (`Config::skip_anneal`): no
+  anneal at any level, each level's legaliser seats the global
+  placement's poses.
+- `experiments/placement-gap/stages.py` (`run`, `route`, `table`; tests
+  `test_stages.py`): per seed and stage, over the active parts (the
+  `nonpassive` sets of teach3), the mean displacement from the
+  designer's body centres after the best rigid motion (rotation and
+  translation with the least mean distance), as a share of the
+  designer's spread (root mean square distance from the centroid; a
+  shuffle of the same parts is about 1.4), the Spearman correlation of
+  the pairwise distances (1: the same parts near the same parts; a
+  shuffle 0), the three nearest neighbours kept, and the half
+  perimeters by net size against the designer's. `route` lays out first
+  routes with partialcopy.py's machinery (every movable part pinned at
+  a place check's kept poses, or the designer's, layout seed 1,
+  `stop_after_first_route`). Output `build/diag1-stages/` (`tables.md`,
+  `stages.json`; `runs/`, `firstroute/`, `overflow/`).
+
+40 place checks (4 boards, 2 seeds, our start and four starts from the
+designer's poses), 17 630 CPU seconds (ours 478 a check, a start from
+the anneal 474, from the legaliser 333); 12 more without the anneal
+at seed 1 (4 749), 4 with the overflow (1 871) and 8 for the identity
+(4 501); 27 first routes (13 083), at most two at a time through run.py
+and the ledger with `--expected-gb` from estimates.json. In all 11.6
+CPU hours. Note: the anneal's seed does not depend on the layout seed
+(seed `k` of the race anneals with 7 + k at both layout seeds): the two
+layout seeds differ in the global placement's noise only, and the
+`anneal` and `legalize` starts give one placement at both.
+
+### Our pipeline, stage by stage
+
+Displacement share / pairwise correlation of the active parts against
+the designer's (kept seed; the mean over the seeds; how far the seeds
+agree with each other, pairwise):
+
+| board | seed | | global | anneal | legaliser | refinement |
+| --- | --- | --- | --- | --- | --- | --- |
+| video | 1 | kept | 1.10 / 0.03 | 0.80 / 0.19 | 0.72 / 0.30 | 0.69 / 0.31 |
+| | | seeds agree | 0.25 | 0.23 | 0.16 | 0.20 |
+| video | 101 | kept | 0.99 / 0.07 | 0.88 / 0.05 | 0.89 / 0.06 | 0.88 / 0.06 |
+| OpenESC 4in1 | 1 | kept | 0.86 / 0.31 | 0.71 / 0.39 | 0.71 / 0.39 | 0.70 / 0.40 |
+| | | the race's (seed 1) | 1.10 / 0.14 | 0.93 / 0.19 | 0.93 / 0.19 | 0.83 / 0.27 |
+| | | seeds agree | 0.20 | 0.19 | 0.18 | 0.20 |
+| OpenESC 4in1 | 101 | kept | 0.81 / 0.27 | 0.70 / 0.36 | 0.69 / 0.36 | 0.61 / 0.46 |
+| Glasgow | 1 | kept | 1.11 / 0.05 | 0.89 / 0.10 | 0.89 / 0.10 | 0.87 / 0.12 |
+| | | seeds agree | 0.14 | 0.22 | 0.20 | 0.21 |
+| Glasgow | 101 | kept | 1.14 / 0.07 | 0.88 / 0.11 | 0.88 / 0.11 | 0.86 / 0.12 |
+| SNSP-CPU-01 | 1 | kept | 0.78 / 0.33 | 0.67 / 0.45 | 0.67 / 0.44 | 0.67 / 0.41 |
+| | | seeds agree | 0.32 | 0.64 | 0.62 | 0.66 |
+| SNSP-CPU-01 | 101 | kept | 0.77 / 0.36 | 0.70 / 0.39 | 0.69 / 0.40 | 0.66 / 0.41 |
+
+The global placement leaves the active parts as far from the
+designer's arrangement as a shuffle on three of the four boards (share
+0.99 to 1.14, pairwise 0.03 to 0.07 on video and Glasgow, 0.27 to 0.36
+on the 4in1 and SNSP), and the seeds' global placements agree with each
+other no better (0.12 to 0.38): the arrangement the global placement
+makes is its start's noise. The anneal brings the parts
+closer (0.07 to 0.30: shorter wires around the same order) without
+changing which parts are near which (pairwise -0.02 to +0.16); the
+legaliser and the refinement move it by at most 0.08. The kept seed is
+as near as the mean of the seeds or nearer (the 4in1 at seed 101: 0.61
+against 0.84), and the race's pick on the 4in1 (seed 1) is farther
+than the placer's: no seed holds an arrangement near the designer's for
+a ranking to find.
+
+### From the designer's poses: fixed points
+
+Each stage started from the designer's poses (kept seed; the stage's
+own result, the final placement, and the final objective, the anneal's
+at the end of its schedule, against ours at the same seed):
+
+| board | start | the stage's result | final | objective / ours, seeds 1 and 101 |
+| --- | --- | --- | --- | --- |
+| video | global, all parts | 0.46 / 0.66 | 0.35 / 0.81 | 0.87, 0.82 |
+| video | global, the active parts | 0.37 / 0.81 | 0.31 / 0.85 | 0.90, 0.82 |
+| video | anneal | 0.17 / 0.96 | 0.25 / 0.82 | 0.71, 0.67 |
+| video | legaliser | 0.02 / 1.00 | 0.05 / 0.99 | 0.59, 0.55 |
+| OpenESC 4in1 | global, all parts | 0.22 / 0.90 | 0.24 / 0.88 | 0.58, 0.60 |
+| OpenESC 4in1 | global, the active parts | 0.34 / 0.79 | 0.26 / 0.86 | 0.78, 0.82 |
+| OpenESC 4in1 | anneal | 0.18 / 0.92 | 0.18 / 0.92 | 0.60, 0.62 |
+| OpenESC 4in1 | legaliser | 0.01 / 1.00 | 0.04 / 0.99 | 0.72, 0.74 |
+| Glasgow | global, all parts | 0.31 / 0.89 | 0.36 / 0.76 | 0.81, 0.83 |
+| Glasgow | global, the active parts | 0.27 / 0.93 | 0.41 / 0.68 | 1.00, 0.97 |
+| Glasgow | anneal | 0.25 / 0.86 | 0.26 / 0.85 | 0.84, 0.86 |
+| Glasgow | legaliser | 0.04 / 0.99 | 0.14 / 0.93 | 1.02, 1.05 |
+| SNSP-CPU-01 | global, all parts | 0.18 / 0.92 | 0.38 / 0.67 | 0.94, 0.99 |
+| SNSP-CPU-01 | global, the active parts | 0.31 / 0.88 | 0.40 / 0.67 | 0.96, 0.99 |
+| SNSP-CPU-01 | anneal | 0.32 / 0.76 | 0.35 / 0.74 | 0.95, 1.00 |
+| SNSP-CPU-01 | legaliser | 0.05 / 0.99 | 0.24 / 0.87 | 0.99, 1.04 |
+
+- **The legaliser** is a fixed point of the designer's arrangement
+  (0.01 to 0.05, pairwise 0.99 or more; the designer's poses are
+  illegal at our levels, 35 to 344 parts overlapping, and the active
+  parts move 0.1 to 3.4 mm on the mean to their nearest legal spots);
+  so is the refinement on video and the 4in1 (0.04, 0.05), which moves
+  it some on Glasgow and
+  SNSP (0.14, 0.24) while keeping its order (0.93, 0.87).
+- **The anneal** keeps it (0.17 to 0.32, pairwise 0.76 to 0.96) and
+  ends at or below our objective on all four (0.60 to 1.00). On the
+  4in1, Glasgow and SNSP it also ends below the legalised designer's
+  objective (0.60 against 0.72, 0.84 against 1.02, 0.95 against 0.99);
+  on video it ends above it (0.71 against 0.59) while moving the parts
+  0.25 away: its first stages' radius (6 % of 312 mm) and temperature
+  disturb a good start there. By the placement measures the anneal
+  keeps the designer's arrangement; the routes below say it loses its
+  fine part on the 4in1 and Glasgow.
+- **The global placement** is not a fixed point: from the designer's
+  poses it moves the parts 0.18 to 0.46 of the spread (pairwise 0.66 to
+  0.92), and most on video, where it never meets its stop (overflow
+  0.10 to 0.12 at the 1500-iteration cap from our start and from the
+  designer's, whose overflow in the global's own model is 0.000; on
+  video 116 x 8 mm memory modules lie on 4.9 x 1.7 mm bins in a notched
+  outline). But it keeps most of a good start: the final placements
+  from the designer's poses are 0.24 to 0.38 / 0.67 to 0.88 from it,
+  against 0.61 to 0.88 / 0.06 to 0.46 from ours, at objectives 0.58 to
+  0.99 of ours. Started with only the active parts at the designer's
+  poses and the passives from our start, it ends as close (0.26 to 0.45
+  / 0.66 to 0.86) at 0.78 to 1.00 of our objective: the active parts'
+  start carries the coarse arrangement.
+
+The global's own model judges the designer's arrangement too dense on
+two boards: its overflow there is 0.073 on the 4in1 and 0.087 on SNSP
+(the stop is 0.04; Glasgow 0.018, video 0.000), with the halos the
+global plans for; the 4in1's placement ends at the tight-body level
+without halos, where the designer's overflow is 0.004. Our own legal
+finals score 0.001 to 0.030 there.
+
+### The objective at the designer's arrangement and ours
+
+The placer's objective split by term (kept seed 1, the placement's
+level; the anneal's weights at the end of its schedule: overlap x 400,
+crossings x 3 mm, relations as weighted; mm of wire):
+
+| board | arrangement | wire 2 pins | 3-8 | 9+ | overlap (parts) | crossings | relations | total |
+| --- | --- | ---: | ---: | ---: | --- | ---: | ---: | ---: |
+| video | ours | 8674 | 13941 | 4602 | 0 (0) | 49764 | 2162 | 79143 |
+| video | the designer's poses | 6551 | 13086 | 3060 | 76368 (53) | 25953 | 15429 | 140447 |
+| video | designer's, legalised | 6626 | 13180 | 3099 | 334 (2) | 25503 | 14334 | 63075 |
+| video | designer's, legalised and refined | 6278 | 12594 | 3174 | 334 (2) | 24045 | 0 | 46425 |
+| OpenESC 4in1 | ours | 443 | 246 | 125 | 81 (8) | 570 | 10317 | 11783 |
+| OpenESC 4in1 | the designer's poses | 410 | 251 | 101 | 23113 (89) | 567 | 12711 | 37153 |
+| OpenESC 4in1 | designer's, legalised and refined | 344 | 206 | 90 | 187 (12) | 153 | 7544 | 8525 |
+| OpenESC 4in1 | designer's, annealed | 307 | 223 | 92 | 185 (10) | 132 | 6160 | 7100 |
+| Glasgow | ours | 1600 | 1213 | 79 | 192 (6) | 1518 | 123 | 4725 |
+| Glasgow | the designer's poses | 1935 | 913 | 82 | 19432 (35) | 2067 | 3767 | 28197 |
+| Glasgow | designer's, legalised and refined | 1774 | 949 | 84 | 264 (11) | 1641 | 99 | 4811 |
+| Glasgow | designer's, annealed | 1649 | 924 | 84 | 19 (2) | 1182 | 99 | 3957 |
+| SNSP-CPU-01 | ours | 3169 | 12348 | 175 | 2049 (21) | 12114 | 587 | 30441 |
+| SNSP-CPU-01 | the designer's poses | 3143 | 12041 | 124 | 1062969 (344) | 13887 | 10899 | 1103062 |
+| SNSP-CPU-01 | designer's, legalised and refined | 3341 | 11911 | 127 | 4636 (39) | 9885 | 233 | 30132 |
+| SNSP-CPU-01 | designer's, annealed | 2909 | 11131 | 122 | 4605 (43) | 10038 | 0 | 28804 |
+
+At its own poses the designer's arrangement costs more than ours on all
+four, by the overlap alone (35 to 344 parts meet at our levels, the
+halos and spacing we keep; SNSP keeps its full halos) and on video and
+the 4in1 by relations it misses (decoupling distances, 15 429 and
+12 711). Made legal at the least displacement and refined, it is
+cheaper than ours on video (0.59: half the crossings, 24 045 against
+49 764, and a fifth less wire) and the 4in1 (0.72: relations and
+crossings), and equal on Glasgow (1.02) and SNSP (0.99); annealed from
+there it is cheaper on all four (0.60 to 0.95). The objective is not
+wrong about the arrangement: where it is not indifferent it prefers the
+designer's, by crossings and the 2-pin and 9+ wires. (The overlap term
+of a legal placement is not zero: the anneal's grown rectangles are
+stricter than the legaliser's shapes, 6 to 23 of our parts.)
+
+### The routed outcome
+
+First-route open terminals (layout seed 1, `stop_after_first_route`,
+x1904 plus this package; every movable part pinned at the placement
+named, partialcopy.py's machinery; `ours` unpinned, the layout's own
+placement and race). "Designer's, legalised" is the legaliser's poses
+of the `legalize` start before the refinement (`stages.py route
+<unit>@legal`); "no anneal" is `PCB_PLACER_SKIP_ANNEAL` (each level's
+legaliser seats the global placement's poses, the refinement follows):
+
+| | video | OpenESC 4in1 | Glasgow | SNSP-CPU-01 |
+| --- | ---: | ---: | ---: | ---: |
+| ours | 304 | 174 | 149 * | 107 * |
+| ours, no anneal | 263 | 142 | 95 | - |
+| the designer's placement | 1 | 33 | 19 | 23 |
+| designer's, legalised | 0 | 61 | 53 | - |
+| designer's, legalised and refined | 1 | 56 | 93 | 34 |
+| designer's, annealed (and legalised, refined) | 45 | 149 | 81 | 54 |
+| global placement from the designer's poses, then ours | 69 | 163 | 112 | 22 |
+| global from the designer's active parts, no anneal | 208 | 120 | 80 | - |
+
+(* the skeleton race's stage-1 off rows at seed 1, `pcb-maker-skel1-e`,
+whose video and 4in1 rows equal this table's.) Each placement's
+objective against ours (the kept seed's final, as above) beside its
+route, on the two boards where they disagree:
+
+| 4in1 | legalised | refined | annealed | global, all | global, active, no anneal | ours, no anneal | ours |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| objective / ours | 1.10 | 0.72 | 0.60 | 0.58 | 0.72 | 1.70 | 1.00 |
+| first-route open | 61 | 56 | 149 | 163 | 120 | 142 | 174 |
+
+| Glasgow | legalised | refined | annealed | global, all | global, active, no anneal | ours, no anneal | ours |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| objective / ours | 2.05 | 1.02 | 0.84 | 0.81 | 1.12 | 1.31 | 1.00 |
+| first-route open | 53 | 93 | 81 | 112 | 80 | 95 | 149 |
+
+Three findings, by board:
+
+- **video and SNSP-CPU-01: the coarse arrangement is the gap.** The
+  designer's arrangement survives our legaliser and refinement whole
+  (0 and 1 open against the designer's 1; SNSP 34 against 23), and the
+  global placement started from it keeps most of the advantage (video
+  69 against our 304, a 0.78 share; SNSP 22, the designer's own). The
+  anneal from it keeps 0.85 on video. Here the stage that loses the
+  arrangement is the global placement from our start, and the
+  objective ranks the placements as the routes do (video: 0.59, 0.71,
+  0.87, 1.00 for 1, 45, 69, 304 open).
+- **The 4in1 and Glasgow: the fine arrangement is the gap, and every
+  stage that moves parts loses some of it.** Our legality alone costs
+  28 and 34 terminals (the designer's poses seated at our levels: 89
+  and 35 parts meet another there, 55 and 57 move more than 0.5 mm,
+  0.67 and 0.64 mm on the mean over all parts); on Glasgow the
+  refinement 40 more (it and its relation repair move 153 parts more
+  than 0.5 mm, 4.2 mm on the mean, while the relations, mostly the
+  decoupling capacitors' 2.5 mm, fall from 4293 to 99); the anneal from
+  the designer's poses ends at 149 and 81. The coarse arrangement survives all of it
+  (pairwise 0.85 to 0.92), the routes do not.
+- **On the 4in1 and Glasgow the anneal makes routing worse while it
+  lowers our objective**, from the designer's start (61 to 149 on the
+  4in1) and from ours: without the anneal our pipeline leaves 142
+  instead of 174 open on the 4in1 and 95 instead of 149 on Glasgow,
+  at objectives 1.70 and 1.31 of ours; the global placement from the
+  designer's active parts without the anneal 120 and 80 against 163 and
+  112 with it. By the rule set for this step, where the anneal moves
+  away while the objective falls, our objective is wrong after all:
+  on these dense boards (the 4in1's relations are 88 % of its
+  objective) wirelength, crossings and the decoupling relations reward
+  moves that cost routes.
+  On video ours without the anneal leaves 263 against 304 (inside
+  video's seed spread of 57), but from the designer's active parts the
+  legaliser alone seats the global placement's overlaps badly (208).
+
+### Decision
+
+| stage | from our start | from the designer's | routed (designer's start) | verdict |
+| --- | --- | --- | --- | --- |
+| global placement | a shuffle's distance (0.77 to 1.14 / 0.03 to 0.36), the seeds disagree as much (0.12 to 0.38) | moves 0.18 to 0.46 / 0.66 to 0.92 (video's never converges) | keeps video's (69) and SNSP's (22), loses the 4in1's and Glasgow's (163, 112) | **loses the coarse arrangement** (video, SNSP) |
+| anneal | 0.07 to 0.30 closer, the same order; without it the objective is 1.03 to 1.70 times ours | keeps it (0.17 to 0.32), objective 0.60 to 1.00 of ours | 45, 149, 81, 54; from our start without it 263, 142, 95 against 304, 174, 149 | **loses the fine arrangement at a lower objective** (4in1, Glasgow; also from our start) |
+| legaliser | moves 0.0 to 0.08 | a fixed point of the coarse arrangement (0.01 to 0.05) | 0, 61, 53: our legality costs 28 and 34 on the dense boards | keeps on video, costs on the 4in1 and Glasgow |
+| refinement | moves 0.0 to 0.08 | keeps the order (0.87 to 0.99) | Glasgow 53 to 93 (the decoupling repair), the 4in1 61 to 56 | costs on Glasgow |
+| race | the seeds equally far, its pick no nearer | - | - | cannot pick what no seed holds |
+
+**Recommendation.** Two losses, and no single stage: the global
+placement loses the coarse arrangement (its start's noise; it decides
+video and SNSP), and on the dense boards the anneal, judged by an
+objective that rewards what costs routes, loses the fine one (the
+4in1, Glasgow), with our legality and the refinement adding to it. The
+race over skeletons ("A race over skeletons", landed off while this ran)
+is (ii) and answers the first loss where its skeleton fits (stage 1
+-12.4 %: the 4in1 -19.9 %, Glasgow -18.1 %), but not on video, the
+largest gap, where the skeleton does not fit within its share and the
+global placement never converges. The next bet with the most evidence
+per cost is **(iv) the anneal's judge, starting with a stage-1 run of
+the pipeline without the anneal (`PCB_PLACER_SKIP_ANNEAL`, built here),
+alone and under `skeleton_race`**: it is a switch, not a feature; from
+our start it routed the 4in1 and Glasgow better (142 against 174, 95
+against 149) at objectives 1.70 and 1.31 times ours, and after the
+designer's active parts as the global start 120 and 80 against 163 and
+112 with the anneal (the seed spreads there are 8 and 3); video 263
+against 304, inside its spread. If the protocol confirms it, the
+anneal's objective is what to rebuild (the decoupling relations'
+weight, 88 % of the 4in1's objective; the crossings' weight; the
+overlap model stricter than the legaliser's), judged by the route, not
+the objective, since the objective is the part shown wrong. Cost: the
+stage-1 screen (`screen.py`, the eleven dense boards, five seed pairs,
+`stop_after_first_route`) is about 24 CPU hours per arm and nothing to
+build; stage 0 is this tool (the arrangement and the objective by
+stage, a first route per board). Not recommended: (i) a
+minimum-displacement legaliser in place of the anneal as a new
+feature: the existing legaliser already is one in effect (the
+designer's arrangement is its fixed point), so `PCB_PLACER_SKIP_ANNEAL`
+is (i)'s test at no cost, and what legality costs on the dense boards
+(28 and 34 open terminals) is our rules, not the displacement; (iii)
+the race's ranking: no seed holds the arrangement. Beside them, two
+defects to fix on their own: video's global placement never meets its
+stop (1500 iterations at overflow 0.10, also from an arrangement at
+0.000: 116 x 8 mm modules on 4.9 x 1.7 mm bins), which is also why
+video's skeleton does not fit, and the refinement's moves on Glasgow
+from the legalised designer's placement (40 open terminals, the
+decoupling relations' penalty the term that falls: a suspect to test
+with the relations off, not established).
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a
