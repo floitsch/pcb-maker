@@ -11,6 +11,30 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-05 (the anneal skipped: stage 1 fails, the seed-1 result was a draw)
+
+Branch anneal-skipped-screen (`build/bin/pcb-maker-diag1-g` for both
+sides; outputs in build/anneal1/). docs/placer.md, "The anneal skipped:
+stage 1 (2026-11-05)", has the tables. Stage 1 of the placer ladder for
+the pipeline without the anneal (`PCB_PLACER_SKIP_ANNEAL=1`, the
+diagnosis's switch) against the default: the eleven dense boards, five
+seed pairs, `stop_after_first_route`, 24.0 CPU hours. **NOT BETTER**:
+weighted +1.4 % (sign-flip p 0.653), sum of medians 1106 to 1228, four
+boards better and seven worse; seed 1 is the only pair whose sum falls
+(1288 to 1127). It holds on the 4in1 (-16.4 %, four of five seeds) and
+DSP-ADAU1452 (-29.7 %, five of five) and loses on MegaDrive (+29.4 %),
+split72_left (+28.8 %), video (+19.6 %) and SNSP-CPU-01 (+17.0 %);
+Glasgow's seed-1 gain (129 to 88) does not hold (-1.5 %). The seed-1
+traces: on the 4in1 the anneal buys and keeps the decoupling relations
+(5500 of the objective at the same seed) and packs passives against the
+ICs and MOSFETs (278 against 175 parts within 1 mm of their bodies), the
+extra open terminals on those passives; on Glasgow it buys wire and
+crossings, the extra open terminals on the BGA and the SC-70 parts'
+pin rows. No default changes; recommended instead of rebuilding the
+anneal's objective: a stage 1 of `constraint_weight` 10 (default 50)
+if the 4in1 and DSP-ADAU1452 are worth a lever. `screen.py --on-env
+KEY=VALUE` (an environment switch for the on side only; test_screen.py).
+
 ## Measured on 2026-11-05 (nightly: layout sweep v32, matched designer tier)
 
 Written by the nightly from `build/nightly/2026-11-05/` (main 93162bd;

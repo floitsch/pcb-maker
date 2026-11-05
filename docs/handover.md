@@ -381,10 +381,15 @@ then the rest.
      legality costs 28 and 34 terminals there (the designer's poses
      seated at our levels), and Glasgow's refinement 40 more (its
      relation repair moves 153 parts more than 0.5 mm: a suspect, not
-     established). The test: a stage-1 screen without the anneal
-     (`PCB_PLACER_SKIP_ANNEAL`, in flight), alone, then under the
-     skeleton race; if it holds, the objective rebuilt and judged by the
-     route, not by itself.
+     established). **Stage 1 without the anneal fails** (2026-11-05,
+     "The anneal skipped: stage 1"): weighted +1.4 %, p 0.653, seven of
+     eleven boards worse (MegaDrive +29 %, split72_left +29 %, video
+     +20 %); seed 1 was the only pair to improve, Glasgow's gain did not
+     hold (-1.5 %). It holds on the 4in1 (-16.4 %) and DSP-ADAU1452
+     (-29.7 %), where the anneal packs passives against the ICs under
+     the decoupling relations (weight 50). Not a rebuild of the
+     objective; the narrow lever left is the relations' weight
+     (`constraint_weight`, stage 1 at 10, nothing to build).
 
    Judged by the protocol and on: crossings in the anneal (-10.8 %,
    2026-10-28), the race's ripped count (-5.6 % at nine pairs,
@@ -620,15 +625,6 @@ what each decides):
   seed pairs, `stop_after_first_route`) and, if it holds with every row
   placed, the full protocol. Decides whether `skeleton_race` becomes the
   default, and whether video's global placement converges.
-- **The anneal's judge, stage 1** (branch anneal-skipped-screen,
-  `../pcb-maker-anneal1`; open problem 4 (b)). `screen.py --on-env
-  PCB_PLACER_SKIP_ANNEAL=1`: the pipeline without the anneal against
-  main's, the eleven dense boards at five seed pairs, first routes;
-  alone, then under the skeleton race. Decides whether the anneal's
-  objective is the next thing to rebuild (judged by the route): if the
-  pipeline without it routes better at stage 1, the 4in1's and
-  Glasgow's 142 against 174 and 95 against 149 were the objective's,
-  not their seeds'.
 - **Pair links given up** (branch pair-links-give-up,
   `../pcb-maker-pairs4`; open problem 15). A pair's link that costs
   connections is given up in the negotiation, the pairs are checked at

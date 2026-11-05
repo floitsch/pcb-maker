@@ -8603,6 +8603,151 @@ from the legalised designer's placement (40 open terminals, the
 decoupling relations' penalty the term that falls: a suspect to test
 with the relations off, not established).
 
+### The anneal skipped: stage 1 (2026-11-05)
+
+The seed-1 result above (without the anneal the 4in1 142 against 174
+first-route open terminals, Glasgow 95 against 149, video 263 against
+304) taken through stage 1 of the placer ladder (docs/benchmarks.md,
+"The ladder of placer measurements"): the eleven dense boards at the
+task budgets (tasks v7), `stop_after_first_route`, placer seeds 1, 101,
+201, 301 and 401, both sides on one binary (`pcb-maker-diag1-g`, x1908
+plus the diagnosis tools), off the default path, on
+`PCB_PLACER_SKIP_ANNEAL=1` (`screen.py --on '{}' --on-env
+PCB_PLACER_SKIP_ANNEAL=1 --slots 3`; `--on-env` is new: an environment
+switch for the on side, unset on the off side), one run.py per row at 2
+threads beside the nightly, `build/anneal1/stage1`, 2026-11-05 01:42 to
+09:21; 86 480 CPU seconds (24.0 CPU hours: off 43 306, on 43 174; the
+race fills the anneal's share of the budget with more seeds).
+**Identity**: with the variable unset the place checks of the 4in1 and
+Glasgow at seed 1 (the diagnosis's inputs, with the trace on) wrote
+x1908's boards byte for byte, and with it set the diagnosis's
+no-anneal boards (`-diag1-a`); the seed-1 rows of the 4in1 and Glasgow
+run again with `PCB_PLACER_TRACE` reproduced their open counts and
+placed boards byte for byte. `placer_ab.py compare --metric
+first_open`:
+
+| Board | s1 | s101 | s201 | s301 | s401 | median | relative (weight) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| OpenESC 4in1 | 174 / 131 | 182 / 171 | 151 / 115 | 207 / 143 | 176 / 182 | 176 / 143 | -16.4 % (48) |
+| OpenESC 4in1-mini | 149 / 145 | 145 / 140 | 132 / 133 | 108 / 144 | 123 / 152 | 132 / 144 | +8.0 % (99) |
+| DSP-ADAU1452 | 38 / 36 | 54 / 28 | 81 / 40 | 71 / 52 | 43 / 33 | 54 / 36 | -29.7 % (29) |
+| MegaDrive | 161 / 128 | 120 / 257 | 149 / 194 | 118 / 168 | 171 / 202 | 149 / 194 | +29.4 % (21) |
+| 0xCB panel | 0 / 0 | 0 / 0 | 0 / 1 | 0 / 0 | 0 / 0 | 0 / 0 | (weight 0) |
+| split72_left | 30 / 33 | 35 / 37 | 21 / 21 | 24 / 44 | 5 / 38 | 24 / 37 | +28.8 % (18) |
+| protoesp | 145 / 117 | 102 / 92 | 80 / 110 | 103 / 95 | 120 / 138 | 103 / 110 | +0.4 % (30) |
+| Glasgow revC3 | 129 / 88 | 111 / 104 | 108 / 105 | 122 / 146 | 101 / 115 | 111 / 105 | -1.5 % (70) |
+| SmartSpin2k | 51 / 43 | 43 / 65 | 33 / 40 | 46 / 33 | 90 / 59 | 46 / 43 | -9.9 % (3) |
+| SNSP-CPU-01 | 107 / 101 | 65 / 140 | 78 / 111 | 66 / 92 | 153 / 114 | 78 / 111 | +17.0 % (4) |
+| video | 304 / 305 | 247 / 386 | 172 / 222 | 205 / 216 | 233 / 337 | 233 / 305 | +19.6 % (12) |
+
+- **Stage 1 fails: NOT BETTER.** Weighted relative change +1.4 % (the
+  noise file's 90 % interval -4.1 to +7.2 %), sign-flip p 0.653, the
+  noise file's p 0.669; sum of medians 1106 to 1228 (+11.0 %); four
+  boards better, seven worse. The rule asks for a negative change at
+  p <= 0.25.
+- **The seed-1 result was seed 1's draw.** Seed 1 is the only pair whose
+  sum falls (1288 to 1127); the four others rise (1104 to 1420, 1005 to
+  1092, 1070 to 1133, 1215 to 1370). Glasgow's seed-1 gain (129 to 88)
+  does not hold (101 to 401: -7, -3, +24, +14; -1.5 %), video's 304 to
+  305 is equal at seed 1 and worse at the others (+19.6 %). (Glasgow's
+  149 in the table above is the skeleton race's off row, `-skel1-e`, a
+  binary before `bga_room`; at x1908 the layout's own seed-1 row is 129.
+  The 142 and 95 there are first routes with every part pinned at the
+  place check's poses; the layouts without the anneal leave 131 and 88.)
+- **Where it holds**: the 4in1 (-16.4 %, better on four of five seeds)
+  and DSP-ADAU1452 (-29.7 %, all five). **Where the anneal earns its
+  place**: MegaDrive (+29.4 %, four of five), split72_left (+28.8 %,
+  four of five), video (+19.6 %), SNSP-CPU-01 (+17.0 %), the 4in1-mini
+  (+8.0 %, the heaviest weight).
+
+**What the anneal buys on the 4in1 and Glasgow** (seed 1, the stage-1
+rows run again with `PCB_PLACER_TRACE`; the objective split by term as
+in "The objective at the designer's arrangement and ours", at the final
+poses; the race keeps another seed without the anneal: the 4in1 seed 3
+with it, 2 without; Glasgow 2 and 1):
+
+| board | | wire 2 pins | 3-8 | 9+ | overlap | crossings | relations | total |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4in1 | with the anneal (kept) | 443 | 246 | 125 | 81 | 570 | 10317 | 11783 |
+| 4in1 | without (kept) | 606 | 221 | 145 | 7 | 699 | 18357 | 20035 |
+| 4in1 | without - with, same seed (1; 2) | +195; +71 | -7; -71 | +14; +9 | -145; -227 | +345; +18 | +5512; +5853 | +5914; +5652 |
+| Glasgow | with the anneal (kept) | 1600 | 1213 | 79 | 192 | 1518 | 123 | 4725 |
+| Glasgow | without (kept) | 1788 | 1500 | 83 | 134 | 2442 | 235 | 6182 |
+| Glasgow | without - with, same seed (1; 2; 3) | +218; +167; +430 | +204; +371; +328 | -6; +2; +11 | +105; +20; +120 | +135; +762; +702 | +81; +60; +48 | +737; +1382; +1639 |
+
+(The 4in1's seed 3 without the anneal ends with 112 parts overlapping
+in the anneal's model and is left out.) On the 4in1 what the anneal buys
+and keeps is the decoupling relations (+5512 and +5853 of the totals'
++5914 and +5652 without it at the same seed) and some 2-pin wire. Within the anneal it buys
+more: on the kept seed the relations fall from 11 901 to 4522, and the
+legaliser gives 85 % of that back (10 395; the anneal ends with 70
+parts overlapping in its own model, 14.7 mm^2, which the legaliser
+pushes apart). On Glasgow the relations are met either way at the end
+(the refinement's relation repair does it without the anneal); the
+anneal buys wire (3-8 pins most) and crossings.
+
+Where the first route's open terminals sit (the same rows; the pads
+outside each open net's largest copper group, from
+`inspect-routing-run`; decoupling capacitors: two pads between ground
+and a rail with a pin on a part of eight pads or more; the placement
+measures of `experiments/placement-gap/metrics.py` on the placed
+board; with the anneal / without):
+
+| | 4in1 | Glasgow |
+| --- | ---: | ---: |
+| first-route open terminals | 174 / 131 | 129 / 88 |
+| open pads | 151 / 123 | 221 / 178 |
+| on decoupling capacitors | 20 / 12 | 61 / 62 |
+| on other parts of 2 or 3 pads | 53 / 37 | 25 / 23 |
+| on parts of 4 to 7 pads (Glasgow: the SC-70-6 parts 46 / 21) | 4 / 1 | 51 / 24 |
+| on parts of 8 pads or more | 74 / 73 | 84 / 69 |
+| of those, in a pin row another net's ratsnest line crosses | 27 / 33 | 62 / 43 |
+| the largest single part | U8 (driver) 12 / 5 | U30 (BGA-121) 58 / 40 |
+| ratsnest crossings | 268 / 387 | 947 / 952 |
+| pin-row crossings | 117 / 121 | 364 / 300 |
+| half perimeter, 2-pin nets (mm) | 557 / 752 | 1569 / 1788 |
+| parts within 1 mm of a body of 8 pads or more (summed) | 278 / 175 | 135 / 146 |
+| pads of other nets within 1 mm of a pad (mean, all pads / open pads) | 2.55 / 2.27, 3.72 / 3.43 | 2.10 / 2.02, 2.71 / 2.92 |
+| decoupling capacitor to the nearest supply pin (median, mm) | 6.4 / 6.5 | 5.6 / 9.5 |
+
+- **The 4in1**: the anneal packs passives against the ICs and
+  MOSFETs (parts within 1 mm of their bodies 278 against 175; around
+  the driver U8 21 against 8, 10 of them capacitors against 4), with
+  fewer ratsnest crossings (268 against 387) and shorter 2-pin wire;
+  the extra open terminals are on those passives (capacitors 30 against
+  17 open pads, resistors 43 against 32), not on the ICs' pin rows (74
+  against 73). The term behind it is the decoupling relations (weight
+  50 mm of wire per mm missed, 88 % of the objective) with the 2-pin
+  wire, at the tight level without routing halos.
+- **Glasgow**: the extra open terminals are on IC pads (U30's BGA 58
+  against 40, 18 parts within 1 mm of it against 13; the SC-70-6 parts
+  46 against 21 pads) whose pin rows the ratsnest crosses
+  more (pin-row crossings 364 against 300), while the ratsnest's
+  crossings are equal (947, 952) and the capacitors sit nearer their
+  pins (5.6 against 9.5 mm). The anneal's wire and crossing terms
+  arrange parts around the pins they serve and the pin rows pay. But on
+  Glasgow the effect is seed 1's alone (stage 1 -1.5 %).
+
+**What it says.** The anneal's objective is not wrong on the tier: the
+pipeline without it is worse on seven of eleven boards, by up to 29 %.
+The seed-1 finding that motivated this was one draw. What survives the
+five seeds is narrow: on the two boards dense with small passives
+around many ICs (the 4in1, DSP-ADAU1452) the anneal's packing costs
+routes on four and five of five seeds, and on the 4in1 the term that
+packs is the decoupling relations. **Recommendation** (no default
+changes): do not rebuild the anneal's objective. If the 4in1 and
+DSP-ADAU1452 are worth a lever, re-judge the relations' weight alone,
+not the anneal: stage 1 with `--on '{"constraint_weight": 10}'` (a
+placer key, default 50, nothing to build; it prices every relation, the
+user's near and relative constraints too, in the anneal, the legaliser's
+follow and the refinement's repair), judged as here (weighted change
+negative at p <= 0.25), watching that the boards the anneal helps
+(MegaDrive, split72_left, video, SNSP-CPU-01) do not lose with it. The
+skip-anneal run under `skeleton_race` (planned in handover open
+problem 4 (b)) is not worth its 24 CPU hours on this evidence. Glasgow's
+refinement (40 terminals from the legalised designer's placement) stays
+a separate suspect, untested.
+
 ## What went wrong on the way (kept as lessons)
 
 - A density target below 1 can never be met when every part is larger than a
