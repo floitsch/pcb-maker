@@ -2935,7 +2935,9 @@ nets go back to their old branches, the last changed first, until none
 has grown (counted per net, the pour analyses' work moved the route
 ladder's shares: flexypin's tracks rung 20.77 to 19.49 s). Eight step checks count as one
 expansion of work. `PCB_ROUTER_FINGERPRINT` prints a fingerprint after
-it.
+it. What it leaves and why (other nets' copper, pours and junctions),
+and a search for the rest built and left out: "What the routes look
+like (2026-11-05)" below.
 
 ## Fine-pitch escapes (2026-10-25)
 
@@ -7182,6 +7184,324 @@ strict pass kept** (the same seven boards); unconnected 21 to 24
 21486 to 20204 mm. Whether the race becomes the default is the placer's
 decision (docs/placer.md, "A race over skeletons"): OpenFC no longer
 loses it to the lattice; it loses three of ten seeds to pour islands.
+
+## What the routes look like (2026-11-05)
+
+The HN thread on AI PCB tools ranked "routing quality" second among its
+asks; our routes are judged by connectivity and DRC, and score-kicad-board's
+`aesthetics` (bends, stair-steps, pin-row crossings; docs/quality.md) was
+the only look at their shape. This census puts the measures a designer
+would name side by side, ours against the designer's route of the same
+board on the same placement.
+
+**The measures** (`experiments/aesthetics/census.py`, pcbnew's reader,
+the same code on both boards; per connection: per net of two pads or
+more its pads less one, the same for any routing of one netlist):
+
+- *bends*: score-kicad-board's rule (paths are a net's segments on one
+  layer between a pad of the net, a via, a junction or a free end; a
+  direction change of 5 degrees or more is a turn; turns of one sense
+  within 1 mm summing to at most 90 degrees are one bend);
+- *sharp bends*: bends of more than 95 degrees;
+- *jogs*: two bends within 2 mm that return to the first direction, alone
+  (a sidestep); *staircases*: three or more such bends in a chain, each
+  within 2 mm of the next (a diagonal drawn in steps). Together they are
+  score-kicad-board's stair-steps;
+- *pin-row crossings*: score-kicad-board's (another net's track across
+  the line between two adjacent SMD pads of one part), split at the
+  1.5 mm pitch `pin_row_cost` charges;
+- *vias*, and *layer changes*: a via or a through-hole pad where the
+  net's tracks meet on two layers or more (a stitching via or a via into
+  a pour is none);
+- *detour*: a net's track length over the Euclidean spanning tree of its
+  pads, over the nets without a zone that have tracks on both boards;
+- *parallel runs*: straight segments of two nets on one layer, parallel,
+  overlapping by 0.5 mm or more, at most 0.6 mm apart edge to edge;
+  *spacing spread*: per pair of nets and layer the length-weighted
+  standard deviation of that gap (a bus whose spacing wobbles), the
+  board's the mean over the pairs with 2 mm or more; *bundling*: the
+  parallel run over the board's track length (a designer runs buses side
+  by side).
+
+Bends and stair-steps agree with score-kicad-board's within a few bends
+(CyberKeeb2040's designer board: 1467 bends and 118 stair-steps here,
+1469 and 118 there; ours 1530 and 319 in both). Writing it
+showed score-kicad-board took an SMD pad's copper layer from its part's
+side; a reversible footprint's pads (the keyboards' hot-swap sockets)
+lie on the other side, so a back track was not cut at such a pad and a
+crossing between its pads was not seen. It now takes the layer the pad
+lists (`Pad::outer`, crates/pcb-kicad/src/quality.rs; test
+`a_reversible_footprints_pad_on_the_back_ends_a_back_path`): 20 of the
+142 boards below change (our eternal-keypad 0.966 to 0.651 bends per
+connection and 108 to 37 crossings, ErgoSNM 1.853 to 1.560 and 2 to 12),
+the medians against the designer's barely (bends x0.905 to x0.899,
+stair-steps +18 and crossings +0 the same).
+
+**The census** (the nightly of 2026-11-05, main 93162bd; the boards we
+route completely: nothing open by the router and no unconnected item by
+KiCad). Ranked by how far we are from the designer: the boards where
+ours is worse less those where it is better, over the boards; the ratio
+is ours over the designer's (of the medians; pooled: the counts summed
+over the boards over their connections).
+
+The designer tier (route mode on the designer's placement at budget scale
+0.673, 71 of 109 boards):
+
+| measure | boards | designer (median) | ours (median) | ours / designer, medians | pooled, designer / ours | ours worse / same / better | (worse - better) / boards |
+|---|---|---|---|---|---|---|---|
+| bundling | 71 | 0.225 | 0.086 | x0.38 | - | 63 / 0 / 8 | +0.77 |
+| jogs per connection | 71 | 0.119 | 0.182 | x1.53 | 0.241 / 0.235 | 46 / 1 / 24 | +0.31 |
+| layer changes per connection | 71 | 0.209 | 0.245 | x1.17 | 0.281 / 0.315 | 45 / 0 / 26 | +0.27 |
+| staircases per connection | 71 | 0.007 | 0.017 | x2.32 | 0.026 / 0.037 | 42 / 5 / 24 | +0.25 |
+| pin-row crossings per connection | 71 | 0.003 | 0.010 | x3.13 | 0.029 / 0.019 | 32 / 22 / 17 | +0.21 |
+| spacing spread (mm) | 69 | 0.036 | 0.040 | x1.12 | - | 36 / 0 / 33 | +0.04 |
+| bends per connection | 71 | 1.996 | 1.697 | x0.85 | 2.131 / 2.027 | 32 / 1 / 38 | -0.08 |
+| sharp bends per connection | 71 | 0.000 | 0.000 | - | 0.004 / 0.002 | 7 / 43 / 21 | -0.20 |
+| detour | 66 | 1.242 | 1.172 | x0.94 | - | 18 / 0 / 48 | -0.45 |
+| vias per connection | 71 | 0.466 | 0.271 | x0.58 | 0.582 / 0.316 | 12 / 0 / 59 | -0.66 |
+
+The expansion tier (route mode at 30 s, 23 of 46 boards):
+
+| measure | boards | designer (median) | ours (median) | ours / designer, medians | pooled, designer / ours | ours worse / same / better | (worse - better) / boards |
+|---|---|---|---|---|---|---|---|
+| bundling | 23 | 0.196 | 0.092 | x0.47 | - | 19 / 0 / 4 | +0.65 |
+| pin-row crossings per connection | 23 | 0.000 | 0.004 | - | 0.010 / 0.019 | 9 / 10 / 4 | +0.22 |
+| staircases per connection | 23 | 0.013 | 0.015 | x1.22 | 0.042 / 0.042 | 9 / 8 / 6 | +0.13 |
+| spacing spread (mm) | 20 | 0.036 | 0.035 | x0.97 | - | 11 / 0 / 9 | +0.10 |
+| layer changes per connection | 23 | 0.205 | 0.244 | x1.19 | 0.314 / 0.317 | 11 / 1 / 11 | +0.00 |
+| jogs per connection | 23 | 0.130 | 0.140 | x1.07 | 0.210 / 0.217 | 11 / 0 / 12 | -0.04 |
+| sharp bends per connection | 23 | 0.000 | 0.000 | - | 0.007 / 0.006 | 4 / 13 / 6 | -0.09 |
+| bends per connection | 23 | 1.810 | 1.399 | x0.77 | 2.221 / 1.914 | 8 / 0 / 15 | -0.30 |
+| vias per connection | 23 | 0.429 | 0.219 | x0.51 | 0.653 / 0.317 | 4 / 3 / 16 | -0.52 |
+| detour | 23 | 1.215 | 1.164 | x0.96 | - | 3 / 0 / 20 | -0.74 |
+
+Per board, ours (the designer's) per connection, detour, spread in mm and
+bundling as a share:
+
+<details><summary>The designer tier, 71 boards</summary>
+
+| board | conn | bends | sharp | jogs | stairs | cross | vias | changes | detour | spread | bundled |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| 0xCB-1337/1337-v4.0 | 165 | 1.61 (1.59) | 0.00 (0.00) | 0.19 (0.06) | 0.07 (0.01) | 0.04 (0.02) | 0.22 (0.33) | 0.13 (0.19) | - | 0.06 (0.01) | 0.08 (0.11) |
+| 0xCB-1337/panel | 660 | 1.43 (1.59) | 0.00 (0.00) | 0.17 (0.06) | 0.04 (0.01) | 0.02 (0.02) | 0.29 (0.33) | 0.16 (0.19) | - | 0.07 (0.02) | 0.07 (0.11) |
+| 0xCB-1337/pcb | 320 | 1.71 (1.48) | 0.00 (0.00) | 0.22 (0.18) | 0.05 (0.00) | 0.02 (0.00) | 0.35 (0.53) | 0.17 (0.21) | - | 0.06 (0.02) | 0.23 (0.34) |
+| 0xCB-1337/pcb-panel | 1280 | 1.70 (1.48) | 0.00 (0.00) | 0.16 (0.18) | 0.03 (0.00) | 0.03 (0.00) | 0.32 (0.53) | 0.33 (0.21) | - | 0.03 (0.02) | 0.09 (0.34) |
+| 0xCB-Static/0xcb-static | 221 | 1.49 (1.69) | 0.00 (0.00) | 0.14 (0.13) | 0.00 (0.00) | 0.00 (0.00) | 0.03 (0.15) | 0.13 (0.10) | 1.06 (1.10) | 0.02 (0.01) | 0.14 (0.33) |
+| explorer/Explorer | 558 | 1.47 (1.70) | 0.00 (0.00) | 0.08 (0.17) | 0.01 (0.03) | 0.01 (0.00) | 0.28 (1.89) | 0.32 (0.27) | 1.05 (1.20) | 0.03 (0.05) | 0.09 (0.25) |
+| Qfwfq/qfwfq | 298 | 0.65 (2.00) | 0.00 (0.01) | 0.07 (0.08) | 0.00 (0.00) | 0.00 (0.01) | 0.11 (0.21) | 0.30 (0.19) | 1.10 (1.13) | 0.06 (0.03) | 0.03 (0.15) |
+| bit-preserve/coco2 | 660 | 3.20 (3.94) | 0.00 (0.00) | 0.55 (0.62) | 0.02 (0.01) | 0.00 (0.00) | 0.43 (0.33) | 0.54 (0.49) | 1.15 (1.30) | 0.04 (0.05) | 0.14 (0.28) |
+| d20_pcb/d20_pcb | 69 | 2.94 (3.97) | 0.00 (0.00) | 0.23 (0.49) | 0.07 (0.12) | 0.07 (0.10) | 0.51 (0.67) | 0.48 (0.58) | 1.23 (1.35) | 0.06 (0.10) | 0.19 (0.28) |
+| spell_tome/spell_tome_bottom | 60 | 1.03 (1.20) | 0.00 (0.00) | 0.12 (0.05) | 0.02 (0.00) | 0.07 (0.00) | 0.27 (0.10) | 0.23 (0.10) | 1.11 (1.18) | 0.01 (0.02) | 0.03 (0.13) |
+| laptop/power | 462 | 1.31 (1.15) | 0.00 (0.00) | 0.18 (0.08) | 0.06 (0.02) | 0.01 (0.01) | 0.27 (0.36) | 0.19 (0.26) | 1.27 (1.32) | 0.04 (0.06) | 0.05 (0.26) |
+| USB_Cable_Tester/PCB | 206 | 2.54 (2.34) | 0.00 (0.04) | 0.39 (0.07) | 0.08 (0.00) | 0.01 (0.00) | 0.45 (0.53) | 0.46 (0.33) | 1.21 (1.39) | 0.05 (0.01) | 0.43 (0.22) |
+| Business-Cards/USB_Keypad | 199 | 1.30 (3.03) | 0.00 (0.02) | 0.11 (0.08) | 0.02 (0.00) | 0.09 (0.10) | 0.30 (0.39) | 0.33 (0.25) | 1.11 (1.26) | - | 0.14 (0.01) |
+| MyKiCad/framework_mobo_lefthalf | 182 | 1.30 (4.64) | 0.00 (0.01) | 0.11 (0.65) | 0.01 (0.13) | 0.05 (0.00) | 0.39 (1.12) | 0.43 (0.59) | 1.22 (1.57) | 0.06 (0.03) | 0.10 (0.31) |
+| MyKiCad/zpn_devboard | 573 | 1.62 (3.83) | 0.00 (0.01) | 0.20 (0.61) | 0.03 (0.13) | 0.01 (0.02) | 0.24 (0.52) | 0.22 (0.25) | 1.20 (1.47) | 0.04 (0.04) | 0.16 (0.57) |
+| mackerel-68k/mackerel-08-v1 | 564 | 2.48 (2.48) | 0.00 (0.00) | 0.34 (0.69) | 0.02 (0.00) | 0.00 (0.00) | 0.15 (0.37) | 0.30 (0.39) | 1.12 (1.15) | 0.02 (0.01) | 0.17 (0.13) |
+| mackerel-68k/mackerel-10-v1 | 740 | 2.73 (2.12) | 0.00 (0.00) | 0.32 (0.30) | 0.02 (0.00) | 0.00 (0.00) | 0.27 (0.27) | 0.44 (0.32) | 1.18 (1.21) | 0.03 (0.03) | 0.21 (0.23) |
+| mackerel-68k/mackerel-30-proto | 825 | 4.12 (2.20) | 0.00 (0.00) | 0.64 (0.29) | 0.07 (0.00) | 0.00 (0.00) | 0.36 (0.36) | 0.50 (0.39) | 1.21 (1.18) | 0.03 (0.04) | 0.22 (0.40) |
+| SmartSpin2k/SmartSpin2k_Panelized | 1647 | 1.40 (2.00) | 0.00 (0.01) | 0.09 (0.19) | 0.01 (0.03) | 0.00 (0.00) | 0.27 (0.68) | 0.29 (0.36) | 1.27 (1.40) | 0.04 (0.06) | 0.09 (0.13) |
+| eternal-keypad/eternal-keypad | 561 | 0.64 (0.51) | 0.01 (0.00) | 0.10 (0.02) | 0.01 (0.00) | 0.07 (0.03) | 0.11 (0.10) | 0.23 (0.09) | 1.06 (0.96) | 0.02 (0.01) | 0.05 (0.15) |
+| urchin/main | 262 | 0.75 (0.88) | 0.00 (0.00) | 0.08 (0.06) | 0.01 (0.00) | 0.01 (0.02) | 0.16 (0.20) | 0.17 (0.20) | 1.05 (1.11) | 0.01 (0.02) | 0.04 (0.07) |
+| atat-1800/ATAT1800 | 695 | 2.84 (1.82) | 0.00 (0.00) | 0.50 (0.12) | 0.07 (0.01) | 0.06 (0.01) | 0.33 (0.98) | 0.30 (0.24) | 1.09 (1.12) | 0.04 (0.05) | 0.07 (0.29) |
+| ULK/ULK | 320 | 1.23 (1.04) | 0.00 (0.00) | 0.17 (0.03) | 0.01 (0.01) | 0.11 (0.00) | 0.35 (0.20) | 0.10 (0.19) | 1.15 (1.10) | 0.02 (0.07) | 0.05 (0.15) |
+| ULK/ULK_sl_PG1316s | 362 | 1.01 (1.21) | 0.00 (0.00) | 0.10 (0.07) | 0.01 (0.01) | 0.04 (0.05) | 0.32 (0.17) | 0.12 (0.16) | 1.12 (1.13) | 0.01 (0.06) | 0.05 (0.14) |
+| hackrf/hackrf-one | 1233 | 2.26 (2.00) | 0.03 (0.01) | 0.23 (0.28) | 0.04 (0.04) | 0.00 (0.00) | 0.34 (0.40) | 0.20 (0.18) | 1.21 (1.41) | 0.04 (0.02) | 0.18 (0.63) |
+| OnBoard/E-Fidget-Lite | 66 | 1.70 (1.48) | 0.00 (0.00) | 0.12 (0.11) | 0.00 (0.00) | 0.03 (0.03) | 0.18 (0.30) | 0.17 (0.27) | 1.57 (1.49) | 0.08 (0.08) | 0.06 (0.07) |
+| OnBoard/keyboar_ | 278 | 3.93 (2.13) | 0.00 (0.00) | 0.63 (0.13) | 0.10 (0.01) | 0.03 (0.00) | 0.10 (0.16) | 0.23 (0.17) | 1.15 (1.32) | 0.01 (0.02) | 0.03 (0.15) |
+| OnBoard/krishveercard | 167 | 1.87 (2.08) | 0.01 (0.05) | 0.20 (0.17) | 0.00 (0.02) | 0.00 (0.01) | 0.40 (0.52) | 0.43 (0.46) | 1.15 (1.26) | 0.03 (0.05) | 0.08 (0.18) |
+| OnBoard/MotionCubeViewAllForces | 102 | 0.92 (1.37) | 0.00 (0.01) | 0.04 (0.05) | 0.01 (0.01) | 0.03 (0.04) | 0.22 (0.28) | 0.25 (0.21) | 1.30 (1.71) | 0.05 (0.05) | 0.06 (0.18) |
+| OnBoard/PixelWave | 1688 | 1.68 (1.19) | 0.00 (0.00) | 0.05 (0.35) | 0.00 (0.00) | 0.02 (0.36) | 0.40 (0.42) | 0.03 (0.04) | 1.19 (1.06) | 0.00 (0.03) | 0.10 (0.10) |
+| slab-pcb/interchange-pcb-right | 442 | 3.02 (2.30) | 0.00 (0.00) | 0.49 (0.16) | 0.08 (0.04) | 0.01 (0.02) | 0.73 (0.46) | 0.77 (0.37) | 1.18 (1.37) | 0.05 (0.03) | 0.08 (0.45) |
+| slab-pcb/slab-pcb-left | 420 | 2.60 (2.25) | 0.00 (0.00) | 0.42 (0.18) | 0.07 (0.01) | 0.00 (0.01) | 0.66 (0.57) | 0.72 (0.42) | 1.19 (1.38) | 0.03 (0.04) | 0.08 (0.32) |
+| silkscreen-pcb/silkscreen_pcb | 437 | 1.73 (2.37) | 0.00 (0.01) | 0.15 (0.27) | 0.02 (0.08) | 0.02 (0.01) | 0.24 (0.44) | 0.29 (0.31) | 1.30 (1.36) | 0.05 (0.06) | 0.19 (0.22) |
+| ISS-PCB/BAGEL-MK1 | 532 | 1.36 (0.85) | 0.00 (0.00) | 0.08 (0.08) | 0.04 (0.01) | 0.00 (0.00) | 0.29 (0.99) | 0.32 (0.21) | 1.29 (1.27) | 0.05 (0.06) | 0.10 (0.24) |
+| MIDAS-MK1.1/MIDAS-MK1.1-revA | 661 | 0.99 (0.79) | 0.00 (0.00) | 0.12 (0.04) | 0.01 (0.00) | 0.03 (0.01) | 0.23 (0.41) | 0.12 (0.19) | 1.44 (1.28) | 0.05 (0.04) | 0.15 (0.21) |
+| MIDAS-MK1/MIDAS-MK1-revA | 637 | 1.02 (0.83) | 0.00 (0.00) | 0.05 (0.05) | 0.01 (0.00) | 0.02 (0.00) | 0.22 (0.43) | 0.25 (0.20) | 1.17 (1.29) | 0.07 (0.04) | 0.09 (0.22) |
+| ISS-PCB/MIDAS-MK2 | 636 | 1.32 (0.85) | 0.00 (0.00) | 0.17 (0.05) | 0.02 (0.00) | 0.04 (0.01) | 0.27 (0.63) | 0.18 (0.23) | 1.43 (1.24) | 0.07 (0.05) | 0.10 (0.23) |
+| MIDAS-MK2.1/MIDAS-MK2.1-revA | 641 | 1.15 (0.85) | 0.00 (0.00) | 0.14 (0.05) | 0.02 (0.00) | 0.03 (0.01) | 0.28 (0.67) | 0.20 (0.22) | 1.28 (1.24) | 0.05 (0.05) | 0.11 (0.24) |
+| ligra/ligra_back | 168 | 0.63 (0.98) | 0.00 (0.00) | 0.01 (0.05) | 0.01 (0.03) | 0.01 (0.01) | 0.11 (1.49) | 0.08 (0.21) | 1.20 (1.28) | 0.02 (0.06) | 0.08 (0.42) |
+| jiran-ble-lite/jiran-ble-lite | 373 | 1.31 (1.55) | 0.00 (0.00) | 0.08 (0.07) | 0.00 (0.01) | 0.03 (0.01) | 0.21 (0.16) | 0.24 (0.23) | 1.15 (1.22) | 0.03 (0.03) | 0.07 (0.10) |
+| little-red-rover/little_red_rover | 228 | 2.67 (3.18) | 0.00 (0.00) | 0.30 (0.29) | 0.06 (0.12) | 0.00 (0.00) | 0.63 (0.75) | 0.60 (0.42) | 1.08 (1.05) | 0.06 (0.05) | 0.26 (0.39) |
+| M8SBC-486/homebrew_486 | 980 | 3.24 (7.51) | 0.00 (0.00) | 0.47 (1.22) | 0.02 (0.24) | 0.12 (0.14) | 0.45 (1.17) | 0.68 (0.95) | 1.14 (1.43) | 0.04 (0.05) | 0.18 (0.66) |
+| Neotron-Pico/neotron-pico | 713 | 2.30 (1.33) | 0.00 (0.00) | 0.23 (0.09) | 0.13 (0.00) | 0.03 (0.01) | 0.30 (0.50) | 0.20 (0.14) | 1.24 (1.30) | 0.03 (0.04) | 0.09 (0.08) |
+| Quanta75/Quanta75_BareRP2040_JLCPCBAoptimized | 475 | 1.58 (2.36) | 0.02 (0.00) | 0.12 (0.43) | 0.01 (0.00) | 0.00 (0.00) | 0.20 (0.20) | 0.25 (0.13) | 1.09 (1.22) | 0.03 (0.01) | 0.05 (0.34) |
+| Quanta75/Quanta75_RP2040Stamp_JLCPCBAoptimized | 431 | 1.19 (2.45) | 0.00 (0.00) | 0.10 (0.39) | 0.00 (0.00) | 0.00 (0.00) | 0.11 (0.34) | 0.09 (0.12) | - | 0.01 (0.01) | 0.03 (0.22) |
+| OpenMuscle-FlexGrid/OM-60-Flex | 141 | 0.72 (1.17) | 0.00 (0.00) | 0.04 (0.20) | 0.00 (0.03) | 0.00 (0.00) | 0.37 (0.85) | 0.45 (0.11) | 1.09 (1.14) | 0.01 (0.06) | 0.14 (0.39) |
+| OM-FlexGrid-Flex/OM-FlexGrid-Flex | 120 | 1.28 (1.81) | 0.00 (0.00) | 0.18 (0.28) | 0.01 (0.03) | 0.00 (0.00) | 0.66 (1.00) | 0.66 (0.03) | 1.17 (1.64) | 0.05 (0.03) | 0.20 (0.63) |
+| OpenFC-Lite/OpenFC | 337 | 1.67 (1.26) | 0.00 (0.02) | 0.17 (0.14) | 0.05 (0.01) | 0.03 (0.00) | 0.40 (1.77) | 0.31 (0.23) | 1.46 (1.34) | 0.04 (0.04) | 0.12 (0.10) |
+| rosco_m68k/kicad | 585 | 5.63 (4.36) | 0.02 (0.04) | 0.65 (0.70) | 0.06 (0.05) | 0.00 (0.00) | 0.64 (0.69) | 0.76 (0.71) | 1.30 (1.39) | 0.02 (0.05) | 0.19 (0.43) |
+| ergo-snm-keyboard/ErgoSNM_keyboard | 368 | 1.57 (1.67) | 0.00 (0.00) | 0.10 (0.03) | 0.01 (0.00) | 0.03 (0.01) | 0.08 (0.14) | 0.35 (0.31) | 1.29 (1.38) | 0.04 (0.05) | 0.05 (0.07) |
+| Telemetry/TelemetryOnboard | 346 | 1.23 (0.79) | 0.00 (0.00) | 0.10 (0.01) | 0.01 (0.00) | 0.01 (0.00) | 0.19 (0.78) | 0.28 (0.16) | 1.12 (1.14) | 0.03 (0.03) | 0.09 (0.36) |
+| capybully_keyboard/capybully | 421 | 0.88 (0.83) | 0.00 (0.00) | 0.04 (0.04) | 0.00 (0.00) | 0.00 (0.00) | 0.20 (0.14) | 0.21 (0.07) | 1.23 (1.34) | 0.03 (0.02) | 0.02 (0.18) |
+| le_chiffre_keyboard_stm32/stm32_chiffre_36keys | 478 | 1.14 (1.26) | 0.00 (0.00) | 0.12 (0.09) | 0.01 (0.01) | 0.01 (0.01) | 0.14 (0.40) | 0.28 (0.22) | 1.14 (1.13) | 0.04 (0.04) | 0.08 (0.34) |
+| le_chiffre_keyboard_stm32/stm32_hotswap_chiffre | 427 | 1.14 (1.29) | 0.01 (0.00) | 0.14 (0.09) | 0.01 (0.01) | 0.00 (0.01) | 0.13 (0.47) | 0.23 (0.23) | 1.13 (1.13) | 0.03 (0.03) | 0.08 (0.35) |
+| nonSNES/SNSP-CPU-1CHIP | 723 | 3.26 (3.96) | 0.00 (0.00) | 0.47 (0.47) | 0.13 (0.08) | 0.03 (0.00) | 0.71 (0.95) | 0.71 (0.45) | 1.31 (1.28) | 0.04 (0.06) | 0.21 (0.61) |
+| PolyKybd/poly_corne_split42_left | 991 | 2.16 (2.50) | 0.00 (0.00) | 0.22 (0.29) | 0.03 (0.05) | 0.01 (0.01) | 0.34 (0.76) | 0.41 (0.33) | 1.29 (1.28) | 0.05 (0.06) | 0.09 (0.34) |
+| PolyKybd/poly_kybd_split72_left | 1772 | 2.68 (2.34) | 0.00 (0.01) | 0.28 (0.22) | 0.13 (0.03) | 0.02 (0.03) | 0.43 (0.76) | 0.38 (0.33) | 1.28 (1.32) | 0.07 (0.05) | 0.14 (0.34) |
+| CharlieBoard/Blue_Line | 72 | 0.67 (0.99) | 0.00 (0.00) | 0.03 (0.06) | 0.00 (0.01) | 0.00 (0.00) | 0.36 (0.39) | 0.03 (0.01) | 1.05 (1.11) | - | 0.09 (0.01) |
+| computie/k30-SBC | 566 | 3.55 (4.35) | 0.00 (0.00) | 0.43 (0.37) | 0.01 (0.01) | 0.00 (0.00) | 0.66 (0.88) | 0.82 (0.70) | 1.14 (1.47) | 0.04 (0.05) | 0.22 (0.78) |
+| bumwings-kbd/bumwings_v001 | 270 | 2.06 (2.01) | 0.00 (0.00) | 0.26 (0.04) | 0.02 (0.01) | 0.00 (0.00) | 0.09 (0.47) | 0.09 (0.13) | 1.18 (1.12) | 0.00 (0.06) | 0.03 (0.02) |
+| bumwings-kbd/bumwings_v001_core | 368 | 1.85 (1.68) | 0.00 (0.00) | 0.21 (0.05) | 0.03 (0.01) | 0.00 (0.00) | 0.21 (0.41) | 0.19 (0.14) | 1.16 (1.13) | 0.04 (0.00) | 0.03 (0.16) |
+| bumwings-kbd/bumwings_v001_xiao | 293 | 2.20 (2.05) | 0.00 (0.00) | 0.27 (0.05) | 0.02 (0.01) | 0.00 (0.00) | 0.14 (0.48) | 0.14 (0.15) | 1.19 (1.12) | 0.05 (0.02) | 0.05 (0.16) |
+| bumwings-kbd/bumwings_v001_xiao_s | 176 | 2.19 (3.18) | 0.00 (0.00) | 0.23 (0.12) | 0.00 (0.00) | 0.00 (0.00) | 0.12 (0.72) | 0.17 (0.19) | 1.09 (1.15) | 0.06 (0.03) | 0.06 (0.19) |
+| bumwings-kbd/bumwings_v001R55_rp2040zero_sd | 165 | 2.05 (3.06) | 0.00 (0.00) | 0.20 (0.02) | 0.00 (0.00) | 0.00 (0.00) | 0.02 (0.53) | 0.10 (0.07) | 1.08 (1.20) | 0.04 (0.01) | 0.04 (0.23) |
+| bumwings-kbd/bumwings_v001R55_xiao_sd | 172 | 2.24 (3.12) | 0.00 (0.00) | 0.23 (0.06) | 0.01 (0.00) | 0.00 (0.00) | 0.13 (0.52) | 0.18 (0.11) | 1.10 (1.21) | 0.01 (0.01) | 0.04 (0.22) |
+| bumwings-kbd/bumwings_v001R64_nano_sd | 203 | 1.97 (2.80) | 0.00 (0.00) | 0.18 (0.09) | 0.01 (0.01) | 0.01 (0.00) | 0.05 (0.46) | 0.12 (0.09) | 1.09 (1.16) | 0.08 (0.00) | 0.02 (0.18) |
+| bumwings-kbd/bumwings_v001R64_rp2040zero_sd | 192 | 2.03 (3.11) | 0.00 (0.00) | 0.20 (0.09) | 0.00 (0.03) | 0.00 (0.00) | 0.02 (0.45) | 0.06 (0.05) | 1.09 (1.19) | 0.03 (0.00) | 0.05 (0.22) |
+| bumwings-kbd/bumwings_v001R64_xiao_sd | 206 | 2.26 (2.92) | 0.00 (0.00) | 0.20 (0.10) | 0.02 (0.00) | 0.01 (0.00) | 0.06 (0.42) | 0.12 (0.02) | 1.11 (1.19) | 0.07 (0.00) | 0.06 (0.21) |
+| keyboards/ghoul | 895 | 1.94 (1.38) | 0.00 (0.00) | 0.26 (0.19) | 0.08 (0.01) | 0.01 (0.01) | 0.42 (0.56) | 0.36 (0.35) | 1.21 (1.13) | 0.05 (0.04) | 0.12 (0.33) |
+| Castor_and_Pollux/mainboard | 443 | 2.05 (2.59) | 0.00 (0.00) | 0.23 (0.27) | 0.06 (0.02) | 0.01 (0.00) | 0.30 (0.81) | 0.19 (0.19) | 1.30 (1.36) | 0.05 (0.03) | 0.07 (0.16) |
+| CyberKeeb2040/MainBoard | 682 | 2.24 (2.15) | 0.00 (0.00) | 0.43 (0.16) | 0.03 (0.01) | 0.01 (0.01) | 0.20 (1.04) | 0.33 (0.41) | 1.12 (1.20) | 0.04 (0.03) | 0.15 (0.32) |
+
+</details>
+
+<details><summary>The expansion tier, 23 boards</summary>
+
+| board | conn | bends | sharp | jogs | stairs | cross | vias | changes | detour | spread | bundled |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| CleverHand-hardware/EMG_DAQ_ADS1292 | 48 | 2.46 (1.71) | 0.10 (0.02) | 0.19 (0.23) | 0.10 (0.10) | 0.00 (0.00) | 0.10 (0.46) | 0.08 (0.08) | 1.70 (1.17) | - | 0.11 (0.09) |
+| bloop-box-led-board-i2c/BloopBox_LED-Board-I2C | 13 | 1.38 (1.69) | 0.00 (0.00) | 0.00 (0.08) | 0.00 (0.00) | 0.00 (0.00) | 0.15 (0.15) | 0.00 (0.08) | 1.23 (1.25) | 0.01 (0.00) | 0.16 (0.34) |
+| bread-modular/noise | 56 | 1.27 (2.27) | 0.00 (0.00) | 0.11 (0.05) | 0.00 (0.00) | 0.00 (0.00) | 0.21 (0.62) | 0.32 (0.52) | 1.33 (1.61) | 0.02 (0.06) | 0.03 (0.09) |
+| minuet/light | 57 | 0.79 (0.75) | 0.00 (0.00) | 0.07 (0.05) | 0.00 (0.00) | 0.00 (0.02) | 0.16 (0.37) | 0.05 (0.11) | 1.14 (1.11) | - | 0.01 (0.02) |
+| christmas-cards/Julkort | 71 | 0.55 (0.72) | 0.00 (0.00) | 0.01 (0.03) | 0.00 (0.00) | 0.00 (0.00) | 0.39 (0.39) | 0.15 (0.17) | 1.11 (1.18) | - | 0.00 (0.00) |
+| rv003usb/ch32v003_rbo12864h-wfi | 53 | 1.08 (0.81) | 0.02 (0.00) | 0.02 (0.04) | 0.02 (0.00) | 0.02 (0.02) | 0.06 (0.40) | 0.13 (0.21) | 1.21 (1.21) | 0.00 (0.17) | 0.06 (0.08) |
+| Eurorack-Multi-Saturation-Module/Multi_saturation_module | 166 | 1.73 (3.74) | 0.00 (0.00) | 0.19 (0.22) | 0.02 (0.01) | 0.00 (0.00) | 0.04 (2.51) | 0.22 (0.67) | 1.09 (1.16) | 0.02 (0.05) | 0.04 (0.02) |
+| HomeAutomation/HB-UNI-SEN-BATT_ATMega1284P_E07-900MM10S_CO2_FUEL4EP | 174 | 2.12 (3.09) | 0.00 (0.01) | 0.28 (0.26) | 0.01 (0.06) | 0.02 (0.01) | 0.52 (0.83) | 0.42 (0.49) | 1.25 (1.46) | 0.02 (0.06) | 0.12 (0.31) |
+| OperationUrd/nixie_board | 249 | 2.28 (1.83) | 0.00 (0.00) | 0.43 (0.05) | 0.02 (0.00) | 0.13 (0.00) | 0.19 (0.19) | 0.19 (0.15) | 1.09 (1.12) | 0.01 (0.00) | 0.09 (0.02) |
+| mini48-keyboard/mini48-keyboard_v2_mx_choc | 320 | 2.98 (3.00) | 0.00 (0.00) | 0.50 (0.38) | 0.07 (0.04) | 0.01 (0.01) | 0.26 (0.22) | 0.24 (0.21) | 1.16 (1.25) | 0.01 (0.04) | 0.02 (0.23) |
+| yuiop/yuiop29re | 316 | 1.40 (1.94) | 0.00 (0.00) | 0.14 (0.20) | 0.02 (0.01) | 0.00 (0.00) | 0.43 (0.19) | 0.38 (0.13) | 1.10 (1.14) | 0.01 (0.01) | 0.09 (0.20) |
+| ADDITIONAL-PROJECT/TokayEdge_Lite_Platform | 399 | 1.16 (1.81) | 0.00 (0.00) | 0.06 (0.13) | 0.01 (0.02) | 0.04 (0.01) | 0.21 (0.83) | 0.25 (0.21) | 1.19 (1.36) | 0.04 (0.06) | 0.08 (0.19) |
+| snaphat-pcb/main_board | 269 | 0.95 (1.26) | 0.00 (0.01) | 0.10 (0.12) | 0.01 (0.01) | 0.02 (0.03) | 0.22 (0.27) | 0.17 (0.11) | 1.15 (1.20) | 0.04 (0.03) | 0.06 (0.13) |
+| MusicBrain/musicbrain-busboard | 444 | 4.03 (2.87) | 0.00 (0.04) | 0.56 (0.27) | 0.24 (0.02) | 0.00 (0.03) | 0.54 (0.46) | 0.53 (0.56) | 1.15 (1.20) | 0.04 (0.03) | 0.13 (0.17) |
+| ausign/3117_AUSIGN | 325 | 0.94 (0.84) | 0.00 (0.00) | 0.05 (0.03) | 0.01 (0.01) | 0.01 (0.01) | 0.26 (0.57) | 0.29 (0.11) | 1.16 (1.24) | 0.06 (0.02) | 0.03 (0.03) |
+| MakerTiles/Screen | 87 | 1.86 (2.56) | 0.00 (0.00) | 0.20 (0.31) | 0.03 (0.03) | 0.00 (0.07) | 0.41 (1.01) | 0.32 (0.38) | 1.20 (1.41) | 0.04 (0.07) | 0.18 (0.56) |
+| facade/facade60_daughterboard | 125 | 3.09 (2.48) | 0.00 (0.01) | 0.35 (0.24) | 0.04 (0.04) | 0.02 (0.00) | 0.82 (0.82) | 0.82 (0.36) | 1.81 (1.75) | 0.05 (0.03) | 0.30 (0.81) |
+| pcb/flexypin-esp32c3-wroom-jig | 129 | 1.48 (1.63) | 0.00 (0.00) | 0.14 (0.19) | 0.02 (0.10) | 0.02 (0.00) | 0.23 (0.26) | 0.26 (0.30) | 1.23 (1.42) | 0.03 (0.01) | 0.08 (0.47) |
+| brickpico/brickpico | 305 | 0.94 (0.84) | 0.00 (0.00) | 0.11 (0.04) | 0.01 (0.01) | 0.02 (0.01) | 0.09 (0.18) | 0.10 (0.09) | 1.21 (1.31) | 0.01 (0.05) | 0.07 (0.24) |
+| anthracite/anthracite-bottom | 476 | 1.41 (1.86) | 0.00 (0.00) | 0.10 (0.18) | 0.01 (0.05) | 0.00 (0.00) | 0.31 (1.08) | 0.36 (0.33) | 1.23 (1.34) | 0.05 (0.04) | 0.11 (0.30) |
+| atmega32u4-prototyping-board/atmega32u4-prototyping-board | 84 | 1.31 (1.56) | 0.00 (0.00) | 0.21 (0.11) | 0.01 (0.01) | 0.00 (0.00) | 0.13 (0.40) | 0.08 (0.06) | 1.14 (1.21) | 0.04 (0.03) | 0.15 (0.51) |
+| wanbeiyu/proto | 84 | 1.27 (1.57) | 0.00 (0.00) | 0.20 (0.07) | 0.04 (0.01) | 0.02 (0.00) | 0.18 (0.43) | 0.12 (0.08) | 1.15 (1.22) | 0.04 (0.03) | 0.15 (0.51) |
+| pcb-consortium/ICE40HX1K-TQ144 | 331 | 3.24 (5.63) | 0.06 (0.02) | 0.22 (0.76) | 0.03 (0.27) | 0.00 (0.00) | 0.58 (1.42) | 0.59 (0.97) | 1.14 (1.20) | 0.04 (0.06) | 0.19 (0.33) |
+
+</details>
+
+**What it says.** We are ahead of the designer on vias (x0.58), detour
+(x0.94: shorter) and bends (x0.85; the straightening's work), and level
+on sharp bends and the spacing of parallel runs. We are behind on:
+
+1. **Bundling, by far** (x0.38, worse on 63 of 71): 23 % of a designer's
+   track length runs beside another net within 0.6 mm, 9 % of ours
+   (156 m against 59 m of parallel run in all; the median gap 0.24 mm
+   against 0.30 mm). A designer lays a bus as a bundle; our tracks spread
+   over the free board. Nothing in the search draws a track to its
+   neighbour: a step costs its layer's direction cost times (1 + history)
+   times (1 + present x occupancy), and the history the negotiation
+   leaves on every contested node pushes the tracks apart
+   (router/search.rs, the step's cost). This is the look of an
+   autorouted board more than any bend.
+2. **Jogs and staircases** (x1.53 and x2.32 of the medians, worse on 46
+   and 42 boards; pooled level, homebrew_486's and PixelWave's designers
+   jog a lot): sidesteps of 0.1 to 2 mm in the middle of runs (of our
+   8122 jogs on the 71 boards 7763 are 45-degree pairs, 3281 between two
+   runs of 2 mm or more), the keyboards and the mackerel boards most
+   (keyboar_ 0.63 against 0.13, ATAT1800 0.50 against 0.12,
+   mackerel-30-proto 0.64 against 0.29). They come from the negotiation:
+   a 45-degree sidestep costs two `bend_cost` (0.1 mm per 45 degrees,
+   one lattice step) and 0.04 mm of length a diagonal step, so any
+   history or occupancy above about 0.3 mm on a lane moves the track over
+   and back. On keyboar_ the row nets run in lanes through the switch
+   footprints and bump 0.8 mm over the NPTH holes beside each hot-swap
+   pad, where the designer runs the row in a lane clear of them. The
+   straightening (above) cannot take what is left out: a diagnostic over
+   the 23 complete expansion boards (`PCB_ROUTER_STRAIGHTEN_WHY` in
+   experiments/aesthetics/straighten_search.patch, not on main) found
+   1288 stair-steps left in the straightened nets (18 more on pour nets, 2
+   on incomplete ones) and, for each, the furthest any window over it
+   got: a step blocked by other copper 492 (38 %), more nodes on another
+   net's pour 323 (25 %), no window (a junction or branch end of the net
+   inside) 306 (24 %), another pad's thermal guard, spoke corridor or
+   pin-row gap 120 (9 %), would go 47 (4 %: the pass's order), no
+   shortest shape that helps 0, past the span limits 28.
+3. **Layer changes** (x1.17, worse on 45): not the vias. Pooled over the
+   71 boards our vias change layers 8633 times, the designer's 8853; the
+   difference is through-hole pads used as a layer change (a track in on
+   one side, out on the other): 2277 of ours, 879 of the designer's.
+   That saves a via each and is no defect a reviewer would flag; it stays
+   as it is.
+4. **Pin-row crossings** (x3.13 of the medians, worse on 32, better on
+   17; pooled ours are fewer, PixelWave's designer crosses 601 times).
+   By the pads' pitch, ours (the designer's) over the 71 boards: up to
+   1.0 mm 28 (19), 1.0 to 1.5 mm 239 (168), 1.5 to 2.0 mm 116 (664), 2.0
+   to 2.6 mm 80 (29), wider 204 (118, mostly switch and hot-swap pads).
+   `pin_row_cost` (2 mm) charges up to 1.5 mm and is a cost, not a wall:
+   ours still has more there; from 2 mm up nothing is charged.
+
+**Built and left out: a search for the stair-steps the shapes cannot
+take.** The straightening tries two shapes per window (axis first,
+diagonal first). For each stair-step left after them a search over
+(node, arrival direction) in the window's box widened by 1 mm, from the
+corner three before to three after it, for the path with the least
+turning (100 axis steps a 45 degrees, nothing over 90 degrees) no longer
+than the run, under the same rules (every step free as `step_free`
+judges it, none of the net's other nodes, no new node in a guard,
+corridor or pin-row gap, no more pour) and kept when the window's bend
+score drops (experiments/aesthetics/straighten_search.patch,
+`search_window`). On the 23 complete expansion boards (route mode, 30 s,
+3 x 1): connectivity, vias and passes identical, length 52930 to 52927
+mm, bends 8768 to 8734, jogs 994 to 985, staircases 192 to 181. On three
+designer-tier boards with the largest jog gaps (budget scale 0.673):
+keyboar_ jogs 175 to 175, CyberKeeb2040 293 to 290, mackerel-30-proto
+525 to 506, the step checks 20 to 35 times the shapes' and CPU 172 to
+182, 227 to 240 and 257 to 277 s (+5 to +8 %). A post-pass against the
+other nets' copper has little left to take: what it would need moved is
+another net. Not merged.
+
+**Proposals**, none a pure post-pass:
+
+- *Bundling*: a discount for a step at the minimum spacing beside another
+  net's run in the same direction (a hug term in the step cost, in the
+  negotiation's last iterations or in the clean-up only), or a compaction
+  pass that shifts a run toward its neighbour where the lane is free
+  (push, as an interactive router's "tighten"). Either changes routes, so
+  connectivity and DRC must be measured; an estimate needs the
+  experiment. It is the gap that matters most.
+- *Jogs and staircases*: a bend-reduction round after the via reduction,
+  its twin: renegotiate the nets with stair-steps at a raised `bend_cost`
+  (the neighbours move too, which no single-net pass can do), keep the
+  round only if nothing opens, vias and length do not grow and the
+  stair-steps drop. What a raised bend cost does, measured with
+  `bend_cost_mm` 0.3 for the whole route (router settings, x3 the
+  default) against main: on the expansion
+  tier (46 boards, 30 s, 3 x 1, build/bin/pcb-maker-aes1-why: main
+  c0e5fca2 with an inert diagnostic, its rows as the nightly's) passes
+  24 to 21 (EMG_DAQ_ADS1292, facade60_daughterboard, anthracite-bottom
+  and ICE40HX1K-TQ144 left incomplete, magnetorquer_control_board
+  complete), unconnected 558 to 578, vias 4256 to 4381, length +0.4 %,
+  work 1140 to 1126 s; on the 19 boards complete in both bends 6521 to
+  5476 (designer 7033), jogs 823 to 660 (586), staircases 168 to 72
+  (71), layer changes 978 to 941 (912), crossings 80 to 83 (47), length
+  42010 to 41486 mm. On the three designer-tier boards (budget scale
+  0.673, all complete both ways): jogs 175/293/525 to 178/248/408
+  (designer 37/109/238), staircases 29/19/59 to 5/4/54, bends 1093/1530/
+  3399 to 1086/1340/2850, vias 28/138/301 to 38/152/270, CPU +18 to
+  +25 %. A raised bend cost in the whole route costs completion; as a
+  round after the board is complete that keeps only what opens nothing,
+  it would take most of the 20 % of jogs and half the staircases on the
+  boards it keeps, at the CPU of a renegotiation (the via reduction's
+  rounds are the model).
+- *Pin-row crossings*: charge the gaps from 1.5 to 2.6 mm too, but in the
+  clean-up's search and comparison only (`geometric_cost_of`, which keeps
+  a reroute only when cheaper all told), not in the negotiation, where
+  charging them cost 46 unconnected on the expansion tier (2026-10-23).
+  The clean-up never leaves a net open, so connectivity holds; it reroutes
+  one net against the others, so like the straightening it will be
+  blocked often. 2026-10-23's negotiation-wide charge took the expansion
+  tier's crossings 211 to 154; the clean-up alone would move a part of
+  that.
+
+`census.py tier <run.log>` measures any route-mode run against the
+designers (docs/benchmarks.md, "Route aesthetics census").
 
 ## Known limits / next steps
 

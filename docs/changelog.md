@@ -11,6 +11,57 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-05 (what the routes look like: the aesthetics census; score-kicad-board reads a reversible pad's layer)
+
+Branch trace-aesthetics. The HN thread ranked routing quality second
+among its asks; the routes had no measure of their look beside a
+designer's but score-kicad-board's bends, stair-steps and pin-row
+crossings. docs/router.md, "What the routes look like (2026-11-05)", has
+the measures, the tables per board and the proposals; docs/benchmarks.md,
+"Route aesthetics census", the tool.
+
+- **experiments/aesthetics/census.py** (tests
+  `experiments/aesthetics/test_census.py`, a fixture board): bends, sharp
+  bends, jogs, staircases, pin-row crossings (split at the charged 1.5
+  mm), vias, layer changes, detour over the pads' spanning tree, the
+  spacing spread of parallel runs and bundling, per board and per tier
+  (`tier <run.log>`: the rows routed completely, paired with the
+  designer's boards).
+- **The census** on the nightly of 2026-11-05 (the designer tier's 71
+  complete boards, the expansion tier's 23), ranked by (worse - better)
+  / boards: bundling x0.38 of the designer's (23 % of a designer's track
+  runs beside another net within 0.6 mm, 9 % of ours; worse on 63 of 71),
+  jogs x1.53 (46 worse), layer changes x1.17 (45 worse: through-hole
+  pads used as a layer change, 2277 against 879; our vias change layers
+  less often than the designer's), staircases x2.32 (42 worse), pin-row
+  crossings x3.13 of the medians (32 worse, 17 better); ahead on vias
+  x0.58, detour x0.94 and bends x0.85, level on sharp bends and spacing
+  spread. The expansion tier is closer: bundling x0.47, crossings the
+  only other gap.
+- **Why the jogs stay**: a diagnostic on the straightening (23 complete
+  expansion boards, not on main): of 1288 stair-steps left, 38 % blocked
+  by other copper, 25 % would cover more of another net's pour, 24 %
+  have a junction or branch end inside every window, 9 % a guard,
+  corridor or pin-row gap.
+- **Built and left out**: a search for each stair-step's window (least
+  turning, no longer, the straightening's rules;
+  experiments/aesthetics/straighten_search.patch): jogs 994 to 985 on
+  the 23 expansion boards, 175/293/525 to 175/290/506 on keyboar_,
+  CyberKeeb2040 and mackerel-30-proto, CPU +5 to +8 %; not merged.
+- **Measured for the proposal of a bend-reduction round**: `bend_cost_mm` 0.3 for the whole route
+  (x3): expansion tier passes 24 to 21, unconnected 558 to 578; on the 19
+  boards complete both ways jogs 823 to 660 (designer 586), staircases
+  168 to 72 (71), bends -16 %; three designer-tier boards jogs
+  175/293/525 to 178/248/408, CPU +18 to +25 %. Hence a round after
+  completion that keeps only what opens nothing, not a new default.
+- **score-kicad-board**: an SMD pad's layer is the one its layers list
+  names, not its part's side (`Pad::outer`, quality.rs; test
+  `a_reversible_footprints_pad_on_the_back_ends_a_back_path`): 20 of
+  the designer tier's 142 complete boards change (our eternal-keypad
+  bends per connection 0.966 to 0.651, crossings 108 to 37); the
+  nightly's medians against the designer's barely (bends x0.905 to
+  x0.899).
+
 ## Committed on 2026-11-05 (the race over skeletons on by default, with its budget: OpenFC's lost pass was the short tier's)
 
 Branch skeleton-race-4 (`build/bin/pcb-maker-skel4-b`; outputs in

@@ -5409,3 +5409,35 @@ U2 (aQFN-73, AC9, AC11, AC13).
 | ikajdan__katia__katia | 1 | 1 | C_0603_1608Metric 1 | - |
 | obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized | 1 | 1 | R_0603_1608Metric_Pad0.98x0.95mm_HandSolder 1 | - |
 | thpoll83__PolyKybd__poly_kybd_split72_left | 1 | 1 | RP2040-QFN-56 1 | - |
+
+## Route aesthetics census (2026-11-05)
+
+`experiments/aesthetics/census.py` measures how a routed board looks next
+to the designer's route of the same board: bends, sharp bends, jogs,
+staircases, pin-row crossings, vias, layer changes, detour over the
+pads' spanning tree, the spacing spread of parallel runs and bundling
+(definitions in docs/router.md, "What the routes look like (2026-11-05)",
+and the script's docstring). It reads boards with pcbnew (a few seconds
+a board; the 71 complete designer-tier boards in about five minutes) and
+runs nothing else.
+
+    python3 experiments/aesthetics/census.py board <board.kicad_pcb>
+    python3 experiments/aesthetics/census.py pair <designer.kicad_pcb> <ours.kicad_pcb>
+    python3 experiments/aesthetics/census.py tier <run.log> [<run dir>] [--json out.json]
+    python3 experiments/aesthetics/census.py table out.json
+
+`tier` takes any route-mode run on the designer's placement (the
+nightly's `designer.log` and `expansion.log`, or a run of yours with
+`--only`), keeps the rows routed completely (nothing open by the router,
+no unconnected item by KiCad: the measures of an incomplete route are
+not comparable), pairs `<run dir>/<task>/route/*.kicad_pcb` with the
+designer's board (the task's directory and board id, from the tasks file
+the log names) and prints two tables: per measure the medians, the
+pooled rates, ours over the designer's and the boards where ours is
+worse, the same or better, ranked by (worse - better) / boards; and per
+board ours with the designer's in brackets. Detour counts only the nets
+without a zone that have tracks on both boards. For a change to the
+router, run the two binaries on the same `--only` boards and compare the
+`--json` files (the 2026-11-05 runs: build/aes1/). Tests:
+`python3 -m pytest experiments/aesthetics/test_census.py` (synthetic
+paths and a fixture board, `fixtures/small.kicad_pcb`).

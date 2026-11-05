@@ -109,6 +109,10 @@ way on the designer's board and on ours:
 - **Stair-steps**: two bends within 2 mm (the straight run between them)
   that return to the direction before the first, counted without
   overlap.
+- **Layers**: an SMD pad lies on the copper layer its layers list names
+  (a reversible footprint's pads lie on the side its part is not; before
+  2026-11-05 the part's side was taken, docs/router.md, "What the routes
+  look like (2026-11-05)").
 - **Pin-row crossings**: a track of another net crossing the line
   between the centres of two adjacent SMD pads of one part (a part of
   three pads or more; adjacent: at most 1.25 times the closer pad's

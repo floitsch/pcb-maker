@@ -301,6 +301,9 @@ struct Pad {
     smd: bool,
     /// Whether the pad has copper (a paste-only aperture has none).
     copper: bool,
+    /// The one outer copper layer an SMD pad lists, if it lists one
+    /// (a reversible footprint's pads lie on the side its part is not).
+    outer: Option<&'static str>,
     /// The copper in the pad's own frame: its size, the radius of its
     /// corners (a circle's half its size), and its absolute angle.
     size: [f64; 2],
@@ -546,6 +549,21 @@ fn parts_of(pcb: &Expr, names: &NetNames) -> Result<Vec<Part>, String> {
                     .iter()
                     .filter_map(Expr::atom)
                     .any(|layer| layer.trim_matches('"').ends_with(".Cu")),
+                outer: {
+                    let layers: Vec<&str> = pad
+                        .child("layers")
+                        .map(Expr::children)
+                        .unwrap_or_default()
+                        .iter()
+                        .filter_map(Expr::atom)
+                        .map(|layer| layer.trim_matches('"'))
+                        .collect();
+                    match (layers.contains(&"F.Cu"), layers.contains(&"B.Cu")) {
+                        (true, false) => Some("F.Cu"),
+                        (false, true) => Some("B.Cu"),
+                        _ => None,
+                    }
+                },
                 power_pin: matches!(form_atom(pad, "pintype", 1), Some("power_in")),
                 function: {
                     let function = form_atom(pad, "pinfunction", 1).unwrap_or("");
@@ -1396,9 +1414,12 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
                         center: pad.center,
                         half: pad.half,
                         net: pad.net.clone(),
-                        layer: pad
-                            .smd
-                            .then(|| if part.back { "B.Cu" } else { "F.Cu" }.to_string()),
+                        // The layer the pad lists, else its part's side.
+                        layer: pad.smd.then(|| {
+                            pad.outer
+                                .unwrap_or(if part.back { "B.Cu" } else { "F.Cu" })
+                                .to_string()
+                        }),
                         part: index,
                     }
                 })
@@ -1608,6 +1629,38 @@ mod tests {
             .find(|plane| plane.net == "GND" && plane.layer == "B.Cu")
             .expect("the GND pour");
         assert_eq!(plane.cut_by_mm, 20.0);
+    }
+
+    #[test]
+    fn a_reversible_footprints_pad_on_the_back_ends_a_back_path() {
+        // A hot-swap socket's SMD pad on B.Cu of a part on the front (the
+        // keyboards' reversible footprints): a B.Cu track that passes
+        // through it on its way to SW2 ends a path there (its turn inside
+        // the pad is no bend), and a B.Cu track crossing between its pads
+        // is a pin-row crossing on B.Cu. Before 2026-11-05 the pad was
+        // taken to lie on the part's side (our eternal-keypad on the
+        // designer's placement: 0.966 bends per connection where there
+        // are 0.651, 108 pin-row crossings where there are 37).
+        let board = r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+            (gr_rect (start 0 0) (end 40 20) (layer "Edge.Cuts"))
+            (footprint "Socket" (layer "F.Cu") (at 10 10) (property "Reference" "SW1") (property "Value" "X")
+              (pad "1" smd rect (at -1 0) (size 0.6 1) (layers "B.Cu") (net "A"))
+              (pad "2" smd rect (at 0 0) (size 0.6 1) (layers "B.Cu") (net "B"))
+              (pad "3" smd rect (at 1 0) (size 0.6 1) (layers "B.Cu") (net "C")))
+            (footprint "Socket" (layer "F.Cu") (at 30 10) (property "Reference" "SW2") (property "Value" "X")
+              (pad "1" smd rect (at 0 0) (size 1 1) (layers "B.Cu") (net "A")))
+            (segment (start 2 4) (end 9 10) (width 0.25) (layer "B.Cu") (net "A"))
+            (segment (start 9 10) (end 30 10) (width 0.25) (layer "B.Cu") (net "A"))
+            (segment (start 10.5 5) (end 10.5 15) (width 0.25) (layer "B.Cu") (net "D")))"#;
+        let directory =
+            std::env::temp_dir().join(format!("pcb-maker-reversible-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(directory.join("b.kicad_pcb"), board).unwrap();
+        let report = score_kicad_board(&directory, "b");
+        fs::remove_dir_all(&directory).ok();
+        let aesthetics = report.unwrap().aesthetics;
+        assert_eq!((aesthetics.paths, aesthetics.bends), (3, 0));
+        assert_eq!(aesthetics.pin_row_crossings, 1);
     }
 
     #[test]

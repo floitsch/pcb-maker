@@ -1,0 +1,451 @@
+diff --git a/crates/pcb-router/src/router/finish.rs b/crates/pcb-router/src/router/finish.rs
+index 120e9c25..df29bd87 100644
+--- a/crates/pcb-router/src/router/finish.rs
++++ b/crates/pcb-router/src/router/finish.rs
+@@ -180,6 +180,9 @@ impl Router {
+         if self.config.straighten && self.config.cleanup_passes > 0 && !self.hopeless {
+             let mark = self.phase_mark();
+             self.straighten(order);
++            if std::env::var_os("PCB_ROUTER_STRAIGHTEN_WHY").is_some() {
++                self.explain_straighten(order);
++            }
+             self.phase_charge(2, mark);
+             if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
+                 eprintln!(
+diff --git a/crates/pcb-router/src/router/straighten.rs b/crates/pcb-router/src/router/straighten.rs
+index 9394bb37..aee2404b 100644
+--- a/crates/pcb-router/src/router/straighten.rs
++++ b/crates/pcb-router/src/router/straighten.rs
+@@ -33,6 +33,14 @@ const STAIR_MM: f64 = 2.0;
+ /// (mm).
+ const SPAN_CORNERS: usize = 8;
+ const SPAN_MM: f64 = 15.0;
++/// The search for a stair-step's window (`search_window`): how far beside
++/// the run it may go (mm), the largest box (nodes), and what 45 degrees of
++/// turning costs (axis steps).
++const SEARCH_MARGIN_MM: f64 = 1.0;
++const SEARCH_CELLS: usize = 40_000;
++const TURN_UNITS: u64 = 100;
++/// The corners either side of a stair-step's that its search window spans.
++const SEARCH_CORNERS: usize = 3;
+ 
+ /// The bends, stair-steps and total turning (in 45 degrees) of a run of
+ /// lattice steps given by their directions (`DIRECTIONS` indices).
+@@ -343,11 +351,261 @@ impl Router {
+                     }
+                 }
+             }
++            // No shortest shape helps: the stair-steps left, each by a
++            // search over its corners and SEARCH_CORNERS either side (one
++            // either side if that finds nothing).
++            for (first, last_turn) in stair_spans(&directions, pitch) {
++                let (Some(s), Some(e)) = (
++                    corners.iter().position(|c| *c == first),
++                    corners.iter().position(|c| *c == last_turn),
++                ) else {
++                    continue;
++                };
++                for reach in [SEARCH_CORNERS, 1] {
++                    let mut a = s.saturating_sub(reach);
++                    let mut b = (e + reach).min(last);
++                    // No branch end or junction inside, no longer than the
++                    // shapes' windows.
++                    while a < s && nodes[corners[a] + 1..corners[s]].iter().any(|n| fixed.contains(n)) {
++                        a += 1;
++                    }
++                    while b > e && nodes[corners[e]..corners[b]].iter().any(|n| fixed.contains(n)) {
++                        b -= 1;
++                    }
++                    while along[corners[b]] - along[corners[a]] > SPAN_MM && b - e > a.abs_diff(s) {
++                        b -= 1;
++                    }
++                    while along[corners[b]] - along[corners[a]] > SPAN_MM && a < s {
++                        a += 1;
++                    }
++                    let (i, j) = (corners[a], corners[b]);
++                    if a >= s
++                        || b <= e
++                        || along[j] - along[i] > SPAN_MM
++                        || nodes[i + 1..j].iter().any(|node| fixed.contains(node))
++                    {
++                        continue;
++                    }
++                    let (low, high) = (corners[a.saturating_sub(3)], corners[(b + 3).min(last)]);
++                    let score = bend_score(&directions[low..high], pitch);
++                    let Some(path) = self.search_window(
++                        net,
++                        &nodes,
++                        &directions,
++                        (i, j),
++                        taken,
++                        fixed,
++                        corridors,
++                        checks,
++                    ) else {
++                        continue;
++                    };
++                    let mut shape = Vec::with_capacity(path.len());
++                    let mut at = xy(&nodes[i]);
++                    for node in &path {
++                        let next = xy(node);
++                        shape.push(direction_of(next.0 - at.0, next.1 - at.1)?);
++                        at = next;
++                    }
++                    let candidate: Vec<u8> = directions[low..i]
++                        .iter()
++                        .chain(&shape)
++                        .chain(&directions[j..high])
++                        .copied()
++                        .collect();
++                    let length = |steps: &[u8]| {
++                        steps.iter().map(|d| if d % 2 == 1 { std::f64::consts::SQRT_2 } else { 1.0 }).sum::<f64>()
++                    };
++                    if bend_score(&candidate, pitch) >= score
++                        || length(&shape) > length(&directions[i..j]) + 1.0e-9
++                    {
++                        continue;
++                    }
++                    // No more nodes on other nets' pours.
++                    let window = &nodes[i + 1..j];
++                    let mut cut = 0isize;
++                    for node in &path[..path.len() - 1] {
++                        cut += self.guarded_and_cut(net, *node, corridors).1 as isize;
++                    }
++                    for node in window {
++                        cut -= self.guarded_and_cut(net, *node, corridors).1 as isize;
++                    }
++                    if cut > 0 {
++                        continue;
++                    }
++                    let mut next = nodes[..=i].to_vec();
++                    next.extend(&path);
++                    next.extend(&nodes[j + 1..]);
++                    nodes = next;
++                    changed = true;
++                    continue 'improve;
++                }
++            }
+             break;
+         }
+         changed.then_some(nodes)
+     }
+ 
++    /// The path from `nodes[i]` to `nodes[j]` with the least turning that
++    /// is no longer than the run between them (`search`'s stage of the
++    /// straightening): a search over (node, direction) in the window's box
++    /// widened by `SEARCH_MARGIN_MM`, a step costing its length and each
++    /// 45 degrees of turning, against the directions the run enters
++    /// `nodes[i]` and leaves `nodes[j]` with, `TURN_UNITS` lengths of an
++    /// axis step; no turn of more than 90 degrees. Every step is free as
++    /// `step_free` judges it, and a node may be none of the net's others
++    /// (the window's own excepted) nor in another net's thermal guard,
++    /// spoke corridor or pin-row gap unless the window was. None if the box
++    /// is larger than `SEARCH_CELLS` or nothing reaches.
++    #[allow(clippy::too_many_arguments)]
++    fn search_window(
++        &self,
++        net: NetId,
++        nodes: &[Node],
++        directions: &[u8],
++        (i, j): (usize, usize),
++        taken: &HashSet<Node>,
++        fixed: &HashSet<Node>,
++        corridors: &HashMap<(u8, u32), Vec<NetId>>,
++        checks: &mut u64,
++    ) -> Option<Vec<Node>> {
++        const AXIS: u64 = 1000;
++        const DIAGONAL: u64 = 1414;
++        let nx = self.grid.nx as i64;
++        let layer = nodes[i].layer;
++        let xy = |cell: u32| (cell as i64 % nx, cell as i64 / nx);
++        let margin = (SEARCH_MARGIN_MM / self.grid.pitch).ceil() as i64;
++        let (mut x0, mut y0, mut x1, mut y1) = (i64::MAX, i64::MAX, i64::MIN, i64::MIN);
++        for node in &nodes[i..=j] {
++            let (x, y) = xy(node.cell);
++            (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
++        }
++        let (x0, y0) = ((x0 - margin).max(0), (y0 - margin).max(0));
++        let x1 = (x1 + margin).min(self.grid.nx as i64 - 1);
++        let y1 = (y1 + margin).min(self.grid.ny as i64 - 1);
++        let width = x1 - x0 + 1;
++        let cells = (width * (y1 - y0 + 1)) as usize;
++        if cells > SEARCH_CELLS {
++            return None;
++        }
++        let local = |cell: u32| {
++            let (x, y) = xy(cell);
++            ((y - y0) * width + (x - x0)) as usize
++        };
++        let step_cost = |direction: u8| if direction % 2 == 1 { DIAGONAL } else { AXIS };
++        let turn_units = |a: u8, b: u8| {
++            let turn = (b as i32 - a as i32).rem_euclid(8);
++            turn.min(8 - turn) as u64
++        };
++        let cap: u64 = directions[i..j].iter().map(|d| step_cost(*d)).sum();
++        let enter = (i > 0).then(|| directions[i - 1]);
++        let leave = directions.get(j).copied().filter(|_| j + 1 < nodes.len());
++        let (tx, ty) = xy(nodes[j].cell);
++        let estimate = |cell: u32| {
++            let (x, y) = xy(cell);
++            let (dx, dy) = ((x - tx).abs() as u64, (y - ty).abs() as u64);
++            dx.min(dy) * DIAGONAL + (dx.max(dy) - dx.min(dy)) * AXIS
++        };
++        let window: HashSet<Node> = nodes[i + 1..j].iter().copied().collect();
++        let outside: HashSet<Node> = nodes[..=i].iter().chain(&nodes[j + 1..]).copied().collect();
++        let target = nodes[j];
++        // Whether the search may enter `node` (the target aside).
++        let allowed = |node: Node| {
++            if window.contains(&node) {
++                return true;
++            }
++            !(fixed.contains(&node)
++                || taken.contains(&node)
++                || outside.contains(&node)
++                || self.guarded_and_cut(net, node, corridors).0)
++        };
++        // Per state (local cell * 8 + arrival direction): the cost, the
++        // length and the state it came from.
++        let states = cells * 8;
++        let mut cost = vec![u64::MAX; states];
++        let mut length = vec![0u64; states];
++        let mut from = vec![u32::MAX; states];
++        let mut heap = std::collections::BinaryHeap::new();
++        let start = local(nodes[i].cell);
++        // The start's own state: its arrival direction is the run's, or
++        // any (none counts a turn) at the run's start.
++        let start_state = start * 8 + enter.unwrap_or(0) as usize;
++        cost[start_state] = 0;
++        heap.push(std::cmp::Reverse((estimate(nodes[i].cell), start_state as u64)));
++        let mut best: Option<(u64, usize)> = None;
++        while let Some(std::cmp::Reverse((f, state))) = heap.pop() {
++            let state = state as usize;
++            let g = cost[state];
++            if let Some((total, _)) = best
++                && f >= total
++            {
++                break;
++            }
++            let (cell_local, arrived) = (state / 8, (state % 8) as u8);
++            let cell = ((cell_local as i64 / width + y0) * nx + cell_local as i64 % width + x0) as u32;
++            if f != g + estimate(cell) {
++                continue; // a stale entry
++            }
++            if cell == target.cell {
++                let total = g + leave.map_or(0, |out| turn_units(arrived, out) * TURN_UNITS * AXIS);
++                if leave.is_none_or(|out| turn_units(arrived, out) <= 2)
++                    && best.is_none_or(|(known, _)| total < known)
++                {
++                    best = Some((total, state));
++                }
++                continue;
++            }
++            let first = state == start_state;
++            for direction in 0..8u8 {
++                let units = if first && enter.is_none() {
++                    0
++                } else {
++                    turn_units(arrived, direction)
++                };
++                if units > 2 {
++                    continue;
++                }
++                let new_length = length[state] + step_cost(direction);
++                *checks += 1;
++                let Some(next) = self.step_free(net, layer as usize, cell as usize, direction) else {
++                    continue;
++                };
++                let next = next as u32;
++                let (x, y) = xy(next);
++                if x < x0 || x > x1 || y < y0 || y > y1 || new_length + estimate(next) > cap {
++                    continue;
++                }
++                let node = Node { layer, cell: next };
++                if node != target && !allowed(node) {
++                    continue;
++                }
++                let next_state = local(next) * 8 + direction as usize;
++                let next_cost = g + step_cost(direction) + units * TURN_UNITS * AXIS;
++                if next_cost < cost[next_state] {
++                    cost[next_state] = next_cost;
++                    length[next_state] = new_length;
++                    from[next_state] = state as u32;
++                    heap.push(std::cmp::Reverse((next_cost + estimate(next), next_state as u64)));
++                }
++            }
++        }
++        let (_, mut state) = best?;
++        let mut path = Vec::new();
++        while state != start_state {
++            let cell_local = state / 8;
++            let cell = ((cell_local as i64 / width + y0) * nx + cell_local as i64 % width + x0) as u32;
++            path.push(Node { layer, cell });
++            state = from[state] as usize;
++            if state == u32::MAX as usize {
++                return None;
++            }
++        }
++        path.reverse();
++        // A path through one node twice is no path.
++        let distinct: HashSet<Node> = path.iter().copied().collect();
++        (distinct.len() == path.len() && !path[..path.len() - 1].contains(&nodes[i])).then_some(path)
++    }
++
+     /// The bend score of a branch's runs, summed.
+     fn branch_bends(&self, branch: &Branch) -> (usize, usize) {
+         let nx = self.grid.nx as i64;
+@@ -599,3 +857,155 @@ mod tests {
+         }
+     }
+ }
++
++// ---- temporary diagnostic (not for commit): why stair-steps stay ----
++/// Stair-steps of a run's directions as (first turn node, last turn node).
++fn stair_spans(directions: &[u8], pitch: f64) -> Vec<(usize, usize)> {
++    let step = |d: u8| if d % 2 == 1 { pitch * std::f64::consts::SQRT_2 } else { pitch };
++    let mut bends: Vec<(i32, f64, f64, usize, usize)> = Vec::new();
++    let mut along = 0.0;
++    for index in 1..directions.len() {
++        along += step(directions[index - 1]);
++        let turn = (directions[index] as i32 - directions[index - 1] as i32).rem_euclid(8);
++        let turn = if turn > 4 { turn - 8 } else { turn };
++        if turn == 0 {
++            continue;
++        }
++        match bends.last_mut() {
++            Some(last) if last.0.signum() == turn.signum() && along - last.2 < MERGE_MM && (last.0 + turn).abs() <= 2 => {
++                last.0 += turn;
++                last.2 = along;
++                last.4 = index;
++            }
++            _ => bends.push((turn, along, along, index, index)),
++        }
++    }
++    let mut out = Vec::new();
++    let mut index = 1;
++    while index < bends.len() {
++        let (first, second) = (bends[index - 1], bends[index]);
++        if first.0 + second.0 == 0 && second.1 - first.2 < STAIR_MM {
++            out.push((first.3, second.4));
++            index += 2;
++        } else {
++            index += 1;
++        }
++    }
++    out
++}
++
++
++impl Router {
++    /// Per stair-step of the run: the furthest stage any window over it got
++    /// (0 no window: fixed node or the run's end inside, 1 span, 2 no
++    /// shape better, 3 a step blocked, 4 touches the net, 5 guard or
++    /// corridor or pin row, 6 pour cut, 7 would go).
++    fn explain_run(&self, net: NetId, nodes: &[Node], taken: &HashSet<Node>, fixed: &HashSet<Node>,
++                   corridors: &HashMap<(u8, u32), Vec<NetId>>, tally: &mut [u64; 16]) {
++        let nx = self.grid.nx as i64;
++        let pitch = self.grid.pitch;
++        let layer = nodes[0].layer;
++        let xy = |node: &Node| (node.cell as i64 % nx, node.cell as i64 / nx);
++        let mut directions = Vec::new();
++        for pair in nodes.windows(2) {
++            let (a, b) = (xy(&pair[0]), xy(&pair[1]));
++            match direction_of(b.0 - a.0, b.1 - a.1) { Some(d) => directions.push(d), None => return }
++        }
++        let stairs = stair_spans(&directions, pitch);
++        if stairs.is_empty() { return; }
++        let mut corners = vec![0];
++        corners.extend((1..directions.len()).filter(|k| directions[k - 1] != directions[*k]));
++        corners.push(nodes.len() - 1);
++        let mut along = vec![0.0];
++        for d in &directions { along.push(along.last().unwrap() + if d % 2 == 1 { pitch * std::f64::consts::SQRT_2 } else { pitch }); }
++        let last = corners.len() - 1;
++        for (s, e) in stairs {
++            let mut best = 0usize;
++            // Whether a window without the span limits would get past them.
++            let mut unlimited = 0usize;
++            for a in 0..corners.len() {
++                for b in a + 2..corners.len() {
++                    let (i, j) = (corners[a], corners[b]);
++                    if !(i < s && j > e) { continue; }
++                    if nodes[i + 1..j].iter().any(|node| fixed.contains(node)) { continue; }
++                    let limited = along[j] - along[i] > SPAN_MM || b > a + SPAN_CORNERS;
++                    let mut stage = 1;
++                    let (low, high) = (corners[a.saturating_sub(3)], corners[(b + 3).min(last)]);
++                    let score = bend_score(&directions[low..high], pitch);
++                    let (from, to) = (xy(&nodes[i]), xy(&nodes[j]));
++                    for shape in shortest_shapes(to.0 - from.0, to.1 - from.1) {
++                        if shape[..] == directions[i..j] { continue; }
++                        let candidate: Vec<u8> = directions[low..i].iter().chain(&shape).chain(&directions[j..high]).copied().collect();
++                        if bend_score(&candidate, pitch) >= score { stage = stage.max(2); continue; }
++                        let mut cell = nodes[i].cell as usize;
++                        let mut path = Vec::new();
++                        let free = shape.iter().all(|direction| match self.step_free(net, layer as usize, cell, *direction) {
++                            Some(next) => { cell = next; path.push(Node { layer, cell: next as u32 }); true }
++                            None => false,
++                        });
++                        if !free || *path.last().unwrap() != nodes[j] { stage = stage.max(3); continue; }
++                        let interior = &path[..path.len() - 1];
++                        let window = &nodes[i + 1..j];
++                        if interior.iter().any(|node| fixed.contains(node) || (taken.contains(node) && !window.contains(node)) || nodes[..=i].contains(node) || nodes[j..].contains(node)) {
++                            stage = stage.max(4); continue;
++                        }
++                        let mut cut = 0isize;
++                        let mut enters = false;
++                        for node in interior {
++                            let (guarded, on_pour) = self.guarded_and_cut(net, *node, corridors);
++                            enters |= guarded && !window.contains(node);
++                            cut += on_pour as isize;
++                        }
++                        for node in window { cut -= self.guarded_and_cut(net, *node, corridors).1 as isize; }
++                        if enters { stage = stage.max(5); continue; }
++                        if cut > 0 { stage = stage.max(6); continue; }
++                        stage = 7;
++                    }
++                    if limited { unlimited = unlimited.max(stage); } else { best = best.max(stage); }
++                }
++            }
++            tally[best] += 1;
++            if unlimited > best && unlimited >= 7 { tally[8] += 1; }
++        }
++    }
++
++    pub(super) fn explain_straighten(&mut self, order: &[NetId]) {
++        let mut tally = [0u64; 16];
++        let mut corridors: HashMap<(u8, u32), Vec<NetId>> = HashMap::new();
++        for (layer, pour, lists, _) in self.spoke_corridors() {
++            for cell in lists.iter().flatten() {
++                let nets = corridors.entry((layer as u8, *cell as u32)).or_default();
++                if !nets.contains(&pour) { nets.push(pour); }
++            }
++        }
++        for &net in order {
++            let state = &self.nets[net as usize];
++            if !state.routable { continue; }
++            let stairs: usize = state.branches.iter().map(|b| self.branch_bends(b).1).sum();
++            let category = if !state.complete { 9 } else if !state.plane.is_empty() { 10 } else if state.branches.len() <= state.fixed { 11 } else { 12 };
++            tally[category] += stairs as u64;
++            if category != 12 { continue; }
++            // Fixed branches' stairs.
++            tally[13] += state.branches[..state.fixed].iter().map(|b| self.branch_bends(b).1).sum::<usize>() as u64;
++            let fixed: HashSet<Node> = state.branches.iter().filter(|b| !b.nodes.is_empty())
++                .flat_map(|b| [b.nodes[0], *b.nodes.last().unwrap()])
++                .chain(state.branches[..state.fixed].iter().flat_map(|b| b.nodes.iter().copied())).collect();
++            let taken: HashSet<Node> = state.branches.iter().flat_map(|b| b.nodes.iter().copied()).collect();
++            let branches = state.branches.clone();
++            let first = state.fixed;
++            self.unstamp(net);
++            for branch in branches.iter().skip(first) {
++                let mut start = 0;
++                for index in 1..=branch.nodes.len() {
++                    if index < branch.nodes.len() && branch.nodes[index].layer == branch.nodes[start].layer { continue; }
++                    let run = &branch.nodes[start..index];
++                    if run.len() > 2 { self.explain_run(net, run, &taken, &fixed, &corridors, &mut tally); }
++                    start = index;
++                }
++            }
++            self.stamp(net);
++        }
++        eprintln!("straighten why: stairs by net: incomplete {}, plane {}, all fixed {}, straightened nets {} (in fixed branches {}); per stair the furthest stage: no window {}, span only {}, no better shape {}, step blocked {}, touches the net {}, guard/corridor/pin row {}, pour cut {}, would go {}; past the span limits would go {}",
++            tally[9], tally[10], tally[11], tally[12], tally[13], tally[0], tally[1], tally[2], tally[3], tally[4], tally[5], tally[6], tally[7], tally[8]);
++    }
++}
