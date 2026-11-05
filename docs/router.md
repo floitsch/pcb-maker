@@ -5958,15 +5958,144 @@ ring-0 and ring-1 balls open on seed 1), which the designer's placement
 open problem 4.
 
 `bga_fanout: false` in the router settings or `PCB_ROUTER_BGA_FANOUT=0`
-turns it off. Open: blind and micro vias (a ring per layer pair, the
-canonical high-density fan-out; the router has through vias only), and
-the placer's room for the outer rings' escapes.
+turns it off. Open: the placer's room for the outer rings' escapes.
+Blind and micro vias for the dog-bones: "Blind, buried and micro vias
+(2026-11-05)" below.
+
+## Blind, buried and micro vias (2026-11-05)
+
+The question (from the BGA work: "with through vias only, at 0.8 mm only
+the outermost via ring escapes on each layer"): can the router use the
+via kinds an HDI board is built with, a via that pierces only some
+layers, so that the layers it skips stay free for other nets?
+
+**What KiCad allows.** KiCad 8 dropped the board setup's switches
+(`allow_blind_buried_vias`, `allow_microvias`): KiCad 10.0.7's design
+settings have neither (`pcbnew.BOARD_DESIGN_SETTINGS` holds only
+`m_MicroViasMinSize` and `m_MicroViasMinDrill`), so every board allows
+every kind as far as KiCad is concerned; whether the fab builds them is
+the designer's call. KiCad 6 and 7 projects still carry the switches in
+`board.design_settings.rules`. KiCad 10 writes `(via blind ...)`,
+`(via buried ...)` (both ends inner, new in 10) and `(via micro ...)`
+with the span's end layers in `(layers ...)`. What its DRC does with
+them, measured with kicad-cli 10.0.7 on a hand-made four-layer board
+(`build/via1/kdrc`, scratch): a via is copper and a hole on its span
+only (a track of another net on In2.Cu straight over a blind F.Cu-In1.Cu
+via: no finding); two vias of disjoint spans meet nowhere (a blind
+F.Cu-In1.Cu and a buried In2.Cu-B.Cu via of two nets at the same point:
+no clearance, hole-to-hole or co-location finding); vias whose spans
+share a layer keep hole-to-hole and the clearances, and two holes at
+one point sharing a layer (a stacked micro via on a buried one) are
+`holes_co_located`; a micro via takes `min_microvia_diameter` and
+`min_microvia_drill` instead of `min_via_diameter` and
+`min_through_hole_diameter`, and the board's `min_via_annular_width`
+like any via; nothing checks a micro via's depth (F.Cu-In2.Cu and
+F.Cu-B.Cu micro vias pass), so the one-dielectric rule is ours.
+
+**The census** (`experiments/blind-vias/census.py`, KiCad's pcbnew;
+`build/via1/census/`). The 109 task boards (the harvest under
+benchmarks/real/external/github; github-sch holds schematics only):
+
+| Layers | Boards | KiCad 6/7 switch `allow_blind_buried_vias` yes / no / absent (KiCad 8+) | `allow_microvias` yes | custom rules naming a via type | vias (through / blind / buried / micro) | grid arrays |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2 | 58 | 1 / 29 / 28 | 1 | 0 | all through | laptop keyboard U2, osprey U1 (0.5 mm aQFN-73s) |
+| 4 | 39 | 0 / 18 / 21 | 0 | 0 | all through | Glasgow revC3 U30 (BGA-121, 0.8 mm), vd-rd module U200 (BGA-96, 0.8 mm), BAGEL-MK1 and MK1.1 U102 (LGA-77, 0.5 mm), MIDAS-MK1 and MK1.1 U106 (TFBGA-153, 0.5 mm) |
+| 6 | 10 | 0 / 2 / 8 | 0 | 0 | all through | laptop motherboard U7, U13 (WLCSP-9, 0.4 mm) |
+| 8 | 2 | 0 / 1 / 1 | 0 | 0 | all through | - |
+
+No task board uses a blind, buried or micro via (every via of the 109
+designers' boards is a through via; koeg-board-pcb, which pcbnew cannot
+load, by its file: 417 through vias), no custom rule names a via type,
+and the only two projects whose switches allow them are two-layer
+boards (bumwings_v001_core allows blind and buried vias, Qfwfq micro
+vias), where every via is a through via anyway. Glasgow (four layers,
+KiCad 7, `allow_blind_buried_vias: false`) and the other grid-array
+boards are no near miss: their designers built them with through vias.
+So **no task board allows them**, and the measure below is on the
+expansion intake's boards that use them (benchmarks/expansion, the
+harvest of 5 834 boards): 227 of its 19 102 board files have a via of
+those kinds, 97 outside KiCad's own QA files, most of them copies or
+KiCad's demo (RoyalBlue54L, a "blind" via of the whole stack, i.e. a
+through via) or two-layer boards whose "micro" vias span both layers.
+Those with a real span (`build/via1/census-expansion/census.md`):
+
+| Board (expansion intake) | Layers | Vias: through / blind / buried / micro | Spans (count) |
+| --- | --- | --- | --- |
+| ahmadexp Open-Source-PC110 (two copies) | 10 | 2406 / 3682 / 0 / 0 | FC2-FC1 1729, BC1-BC2 1950 (user layer names) |
+| OpenDrone OpenAIO-Whoop | 8 | 0 / 0 / 465 / 2479 | F.Cu-In1.Cu 1239, In1.Cu-In6.Cu 465, In6.Cu-B.Cu 1240 (stacked: 1+6+1) |
+| shyba pardal fpga_large (csg324 breakout) | 4 | 0 / 0 / 0 / 604 | F.Cu-In1.Cu 448, In1.Cu-In2.Cu 147, In2.Cu-B.Cu 9 |
+| SJSU urc-electrical HUB | 4 | 46 / 521 / 0 / 0 | F.Cu-In2.Cu 366, In1.Cu-B.Cu 136, F.Cu-In1.Cu 14 |
+| knewter kvm-carrier (17 revisions and enclosures) | 6 | 13 to 135 / 167 to 494 / 0 / 0 to 20 | F.Cu-In1.Cu, In1.Cu-In2.Cu, In2.Cu-In3.Cu, In3.Cu-In4.Cu (r9: 151, 65, 21, 7) |
+| theacodes kicanvas tomu-fpga | 4 | 0 / 53 / 0 / 196 | F.Cu-In1.Cu 29, In1.Cu-In2.Cu 53, In2.Cu-B.Cu 167 |
+| SCFormulaElectric Negative_Celltap_2027 | 4 | 0 / 34 / 0 / 0 | F.Cu-In2.Cu 26, F.Cu-In1.Cu 8 |
+| Purdue PSPL power_systems | 4 | 4 / 6 / 0 / 0 | F.Cu-In1.Cu 6 |
+| a dozen more with 1 to 33 (arduino_uno_r3, the DSI interposer, Commo, ...) | 4 to 6 | | |
+
+The grid arrays among them: fpga_large's Xilinx CSG324 (a breakout of
+324 test pads, the router's synthetic example), tomu-fpga's iCE40UP5K
+WLCSP-30, kvm-carrier's csBGA-64 at 0.5 mm and OpenAIO-Whoop's LGA-48
+and LGA-14 at 0.5 mm.
+
+**The model** (`blind_vias`, router settings, `PCB_ROUTER_BLIND_VIAS`;
+board_router/via_spans.rs, `SpanModel` in the router):
+
+- *What allows a span*: the router settings' `via_spans`
+  (`F.Cu-In2.Cu`, `F.Cu-In1.Cu:micro`, or the keywords `blind`, `buried`,
+  `micro`), else the designer's own vias of a span on the board (or the
+  `--reference` board; `rules.via_spans_designer`, with their count and
+  most common size), else a KiCad 6 or 7 project's switches
+  (`rules.via_spans_project`). Kept: spans inside the stack, short of it,
+  two layers at least; a micro via one dielectric deep (a designer's
+  deeper "micro" via is taken as blind or buried). With the switch off,
+  on two layers or with nothing allowing a span, `Board::via_spans` is
+  empty and nothing below exists: the router's maps, its work and its
+  routes are those of before.
+- *The span of a via*: a via joins two layers; it takes the allowed span
+  with the fewest layers holding both (`Board::via_span`), else it is a
+  through via. Nets with a pour keep through vias (the pour model joins
+  a via to the net's planes on every layer). The search takes no second
+  via at the cell it just changed layers at (each would be a hole of its
+  own there, `holes_co_located`), and at a cell of the net's own via only
+  a via within that via's layers.
+- *Its occupancy*: each class gets a via map per layer beside its via
+  map (the union, which a through via reads): every item on a layer
+  stamps that layer's map too, a via stamps its pierced layers' maps,
+  traces and diagonal blocks only there. A via of a span reads the
+  static maps' per-layer via blocks (`StaticMaps::via_layers`) and the
+  per-layer maps of its layers (the most of them as its occupancy), the
+  pour cuts and thermal guards of its layers only. So its price is what
+  it occupies: a via that pierces two of six layers leaves the other
+  four to other nets' tracks and vias, and is blocked only by what is on
+  its own two.
+- *The rules kept*: a via's clearance, hole clearance and hole-to-hole
+  hold against what is on its layers; vias of disjoint spans are not
+  checked against each other (as KiCad); the exact verifier
+  (`verify.rs`) and the connectivity (`copper_components`) take a via's
+  layers; a micro via is written at its own size (the designer's most
+  common, else the project's `microvia_diameter`/`microvia_drill`, raised
+  to `min_microvia_diameter`, `min_microvia_drill` and the annular width)
+  where that is no larger than the classes' via, which the maps keep
+  clear (a smaller via inside a legal one is legal); blind and buried
+  vias take the class's via.
+- *Written*: `(via blind|buried|micro (at ...) ... (layers <top>
+  <bottom>) ...)`, the kind in the via's uuid.
+- *The BGA fan-out*: a dog-bone's via takes the shortest allowed span
+  from the ball's layer to a layer routable for the net (one its class
+  may use, not another net's exclusive plane), a micro via at its own
+  size, the site's clearances checked on that span's layers and against
+  the planned dog-bones whose spans meet it; else a through via as
+  before. The via's copper, its hole and the ball's terminal are on the
+  span's layers. (The placer's `far_side_balls` still keeps the far
+  side free under every planned via.)
+
+MEASURE_PLACEHOLDER
 
 ## Known limits / next steps
 
-- Through vias only: inner layers are routed (and take the automatic
-  planes on four or more layers), but there are no blind, buried or
-  micro vias.
+- Blind, buried and micro vias only where the board allows them and
+  `blind_vias` is on ("Blind, buried and micro vias (2026-11-05)"); no
+  stacked or staggered chains of them at one cell, pour nets keep
+  through vias.
 - Existing tracks and vias (route mode keeps them, `existing_tracks`) are
   fixed copper of their net; the pads a piece of them joins are merged
   into one terminal (`board_router/kept.rs`), so the connection counts as
