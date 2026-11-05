@@ -308,11 +308,6 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "the give-up's rounds as `min,stall,pathless,max[,present]` (default `8,4,1,16,100`): rounds in conflict count once the price of sharing has reached `present`; no link goes before `min` such rounds, then once its conflicts have not fallen below their lowest for `stall` rounds, and after `max` rounds whatever; a link without any path goes after `pathless` rounds (for experiments; docs/router.md, \"Giving up on a link\").",
     ),
     (
-        "PCB_ROUTER_DIFF_PAIRS_CROSSOVER",
-        Kind::Switch,
-        "differential pairs: `1` gives a crossed link end a crossover in its lead (one net dives under the other, a via each side), with the links' hairpins removed and the kept links' via holes kept clear in the fallback (default off: more links coupled, more errors on the rule boards; docs/router.md, \"Polarity\"); since 2026-10-27 the crossover keeps room beside the neighbouring pairs' launches and a link's vias spread where they crowd the other net, measured again and still off (ducktop2's io boards worse at 30 s; \"The safe crossover\").",
-    ),
-    (
         "PCB_ROUTER_DIFF_PAIRS_SKEW",
         Kind::Switch,
         "differential pairs: `0` turns off the meanders that match a coupled pair's two lengths to the rules' skew (else the pair's gap) or length (the skew is still measured and reported; docs/router.md, \"Skew and length\").",
@@ -485,7 +480,12 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
     (
         "PCB_ROUTER_PAIRS_WHY",
         Kind::Diagnostic,
-        "differential pairs: per link that falls back for its stubs the geometry (`pairs why: stub ...`: the pad, the stub's end, the run's start and direction, what the pad's copper reaches: its end, other pads, the link's other end, or nothing), per finding that refuses a link's copper what of it is hit (the run, an end's jog, a via) and by what (`[partner]`: the pair's other net), per link whose stubs were routed after the attempt the outcome, and per write a summary (docs/router.md, \"Stubs and copper\").",
+        "differential pairs: per link that falls back for its stubs the geometry (`pairs why: stub ...`: the pad, the stub's end, the run's start and direction, what the pad's copper reaches: its end, other pads, the link's other end, or nothing), per finding that refuses a link's copper what of it is hit (the run, an end's jog, a via) and by what (`[partner]`: the pair's other net), per link whose stubs were routed after the attempt the outcome, per write a summary (docs/router.md, \"Stubs and copper\"), and per stub of an open net what keeps its pad from its stub's end (`pairs why: open ...`: the end crossed or straight, the hard repair's record of the net, the first of the other nets' routes, the link's route, the partner's routes and the plan's copper whose removal lets the pad reach the end; \"A pair's stubs in the plan\").",
+    ),
+    (
+        "PCB_ROUTER_PAIRS_REACH",
+        Kind::Diagnostic,
+        "differential pairs: per pairs' plan, per stub the router is to route, whether its pad reaches its stub's end on the planned board alone (no route yet), and where not what frees it: the link's lead, the partner's plan copper, the other links' plan copper, or the board's other pads (`pairs reach: ...`, with the pads and ends along and across the run and what lies near the straight stub; docs/router.md, \"A pair's stubs in the plan\"). Slow: a route per stub per plan.",
     ),
     (
         "PCB_ROUTER_DEBUG",

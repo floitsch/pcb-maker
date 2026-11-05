@@ -276,24 +276,25 @@ fn skew_matching() -> bool {
     std::env::var("PCB_ROUTER_DIFF_PAIRS_SKEW").map_or(true, |value| value != "0")
 }
 
-/// Whether crossed ends get a crossover in their lead (`crossover`), the
-/// links' paths lose their hairpins (`despiked`) and the kept links' vias
-/// keep their holes' clearance in the fallback: `CROSSOVERS_BY_DEFAULT`,
-/// else `PCB_ROUTER_DIFF_PAIRS_CROSSOVER` (`1` or `0`). Off, a crossed
-/// end's stubs are the router's, as before 2026-10-25 (docs/router.md,
-/// "Polarity").
+/// Whether crossed ends get a crossover in their lead (`crossover`, where
+/// the link carries the stubs to it), the links' paths lose their hairpins
+/// (`despiked`) and the kept links' vias keep their holes' clearance in the
+/// fallback: a test's override, else `CROSSOVERS_BY_DEFAULT`.
 fn crossovers() -> bool {
-    CROSSOVERS.with(|cell| cell.get()).unwrap_or_else(|| {
-        std::env::var("PCB_ROUTER_DIFF_PAIRS_CROSSOVER")
-            .map_or(CROSSOVERS_BY_DEFAULT, |value| value == "1")
-    })
+    CROSSOVERS
+        .with(|cell| cell.get())
+        .unwrap_or(CROSSOVERS_BY_DEFAULT)
 }
 
-/// The crossovers' default (`crossovers`): off. Measured 2026-10-27 with
-/// the safe crossover (docs/router.md, "The safe crossover"): at 300 s
-/// better on the four small rule boards, at 30 s worse on ducktop2's
-/// left_io and right_io (errors and gap findings), so not the default.
-const CROSSOVERS_BY_DEFAULT: bool = false;
+/// The crossovers' default (`crossovers`): on since 2026-11-05 (pairs6),
+/// a crossover only where the link carries the stubs to it. Measured
+/// (docs/router.md, "A pair's stubs in the plan"): the crossed ends whose
+/// stubs the router could not cross (no room for a via between the pads
+/// and the run's start) were the most of the open stubs, and with the
+/// crossovers coupled links and pairs rise on the measured boards. Off
+/// before (2026-10-27, "The safe crossover": a crossover whose stubs the
+/// router routes walled in a pad).
+const CROSSOVERS_BY_DEFAULT: bool = true;
 
 thread_local! {
     /// A test's override of `crossovers` (this thread only).
@@ -709,6 +710,18 @@ fn clear_layers(
     free
 }
 
+/// What a launch's run start has in front of it (`launch`): a run whose
+/// stubs go straight to it, a crossover in its lead (`crossover`), or stubs
+/// that cross on their way to it, which the router routes with a via
+/// (a crossed end without a crossover): the start then keeps room for
+/// that via beyond the pads (`CROSSING_ROOM`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Lead {
+    Straight,
+    Crossover,
+    Crossing,
+}
+
 /// A launch: where a link's coupled run starts at a pair point, and where
 /// its net starts in the route.
 #[derive(Clone, Debug)]
@@ -925,6 +938,14 @@ fn stubs_clear(
     })
 }
 
+/// Where the stubs cross on their way to the run's start (a crossed end
+/// without a crossover, `Lead::Crossing`): how far beyond the pads' stubs'
+/// starts, along the run, the start lies at least, in vias with their
+/// clearance on both sides and a track: room for the via the router
+/// crosses with (pairs6: crossed ends launched 0.65 mm from the pads, no
+/// path for their stubs in the negotiation).
+const CROSSING_ROOM: f64 = 1.0;
+
 /// Whether a track of the pair's width from `at` to `to` on `layer`
 /// keeps its clearance from the obstacles `near`, the pair's own copper
 /// the pair's gap (either net may end there: where the pads' order crosses
@@ -1099,9 +1120,10 @@ fn launch(
     n: &core::Terminal,
     toward: Point,
     want_fixed: bool,
-    cross: bool,
+    lead_kind: Lead,
     neighbours: &[Neighbour],
 ) -> Option<Launch> {
+    let cross = lead_kind == Lead::Crossover;
     let middle = scale(add(p.anchor, n.anchor), 0.5);
     let mut normal = left(unit(sub(n.anchor, p.anchor)));
     let away = part_middle(board, &p.label, &n.label)
@@ -1125,6 +1147,7 @@ fn launch(
     let apart = pair.width / 2.0 + class.clearance + half;
     let reserve = ends_reach + (apart * apart - d * d).max(0.0).sqrt() + LAUNCH_STEP;
     let lead = (LEAD * d).max(reserve + 2.0 * LAUNCH_STEP);
+    let crossing_room = CROSSING_ROOM * (pair.via_diameter + 2.0 * pair.clearance + pair.width);
     let near = obstacles_near(
         board,
         middle,
@@ -1303,6 +1326,15 @@ fn launch(
                 stub_start(board, p, ends[0], pair.width),
                 stub_start(board, n, ends[1], pair.width),
             ];
+            // Stubs that cross keep room for the router's via between the
+            // pads and the start.
+            if lead_kind == Lead::Crossing
+                && stubs
+                    .iter()
+                    .any(|&stub| dot(sub(start, stub), outward) < crossing_room)
+            {
+                return None;
+            }
             let fixed = want_fixed
                 && stubs_clear(board, &near, pair, stubs, ends, layers)
                 && (0..=(reserve / LAUNCH_STEP).ceil() as usize).all(|sample| {
@@ -1849,9 +1881,17 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
                     let (p, n) = pads[end];
                     let (q, m) = pads[1 - end];
                     let toward = scale(add(q.anchor, m.anchor), 0.5);
-                    let Some(found) =
-                        launch(board, pair, &envelope, p, n, toward, true, false, &[])
-                    else {
+                    let Some(found) = launch(
+                        board,
+                        pair,
+                        &envelope,
+                        p,
+                        n,
+                        toward,
+                        true,
+                        Lead::Straight,
+                        &[],
+                    ) else {
                         continue;
                     };
                     let half = pair.width / 2.0;
@@ -1909,7 +1949,7 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
                 ),
             ];
             let middle = |end: usize| scale(add(ends[end].0.anchor, ends[end].1.anchor), 0.5);
-            let launch_at = |end: usize, want_fixed: bool, cross: bool| {
+            let launch_at = |end: usize, want_fixed: bool, lead_kind: Lead| {
                 launch(
                     board,
                     pair,
@@ -1918,19 +1958,25 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
                     &ends[end].1,
                     middle(1 - end),
                     want_fixed,
-                    cross,
+                    lead_kind,
                     &neighbours,
                 )
             };
             // Launches whose stubs the link carries where there are such,
             // else (or where those leave no run) the closest.
-            let mut launches = [launch_at(0, true, false), launch_at(1, true, false)];
+            let mut launches = [
+                launch_at(0, true, Lead::Straight),
+                launch_at(1, true, Lead::Straight),
+            ];
             let too_close = |launches: &[Option<Launch>; 2]| match launches {
                 [Some(a), Some(b)] => core::geometry::distance(a.at, b.at) < MINIMUM_RUN,
                 _ => false,
             };
             if too_close(&launches) && launches.iter().flatten().any(|found| found.fixed) {
-                launches = [launch_at(0, false, false), launch_at(1, false, false)];
+                launches = [
+                    launch_at(0, false, Lead::Straight),
+                    launch_at(1, false, Lead::Straight),
+                ];
             }
             let close = too_close(&launches);
             let [Some(mut launch_a), Some(mut launch_b)] = launches else {
@@ -1965,15 +2011,18 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
             // stubs the link carries first.
             let mut crossing = None;
             if crossed && crossovers() {
-                let at_b = launch_at(1, true, true);
-                let at_a = launch_at(0, true, true);
+                let at_b = launch_at(1, true, Lead::Crossover);
+                let at_a = launch_at(0, true, Lead::Crossover);
                 let far = |found: &Launch, other: &Launch| {
                     core::geometry::distance(found.at, other.at) >= MINIMUM_RUN
                 };
+                // Only where the link carries the stubs to it: a crossover
+                // whose stubs the router routes can wall in a pad with its
+                // copper (a dead pad, the stub's net open; pairs6).
                 let options = [
-                    at_b.filter(|found| far(found, &launch_a))
+                    at_b.filter(|found| found.fixed && far(found, &launch_a))
                         .map(|found| (1, found)),
-                    at_a.filter(|found| far(found, &launch_b))
+                    at_a.filter(|found| found.fixed && far(found, &launch_b))
                         .map(|found| (0, found)),
                 ];
                 let fixed_at = |end: usize, found: &Launch| {
@@ -1998,10 +2047,10 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
             } else if crossed {
                 // The crossed end's stubs are routed: its closest launch.
                 if side == launch_a.side {
-                    launch_b = launch_at(1, false, false).unwrap_or(launch_b);
+                    launch_b = launch_at(1, false, Lead::Crossing).unwrap_or(launch_b);
                     launch_b.fixed = false;
                 } else {
-                    launch_a = launch_at(0, false, false).unwrap_or(launch_a);
+                    launch_a = launch_at(0, false, Lead::Crossing).unwrap_or(launch_a);
                     launch_a.fixed = false;
                 }
                 if core::geometry::distance(launch_a.at, launch_b.at) < MINIMUM_RUN {
@@ -2272,6 +2321,9 @@ pub(crate) fn plan_pairs(board: &mut core::Board, config: &KiCadBoardRouterConfi
             plan.work_seconds,
             core::router::reference_time_scale()
         );
+    }
+    if std::env::var_os("PCB_ROUTER_PAIRS_REACH").is_some() {
+        plan_reach_check(board, &plan, config);
     }
     let plan = std::sync::Arc::new(plan);
     board.attachment = core::Attachment {
@@ -2969,6 +3021,29 @@ pub(crate) fn finish_pairs(
                 .map_or(0, |link| plan.pairs[link.pair].positive)
         }
     };
+    // `PCB_ROUTER_PAIRS_WHY`: the hard repair's record and the dead pads of
+    // the pairs' nets, before the links' are named for them.
+    let pair_repairs: BTreeMap<core::NetId, core::RepairEntry> = if pairs_why() {
+        result
+            .diagnostics
+            .repair
+            .iter()
+            .filter(|entry| (entry.net as usize) < plan.nets)
+            .map(|entry| (entry.net, entry.clone()))
+            .collect()
+    } else {
+        BTreeMap::new()
+    };
+    let pair_dead: Vec<String> = if pairs_why() {
+        result
+            .diagnostics
+            .dead_pads
+            .iter()
+            .map(|dead| format!("{}:{}", dead.net, dead.label))
+            .collect()
+    } else {
+        Vec::new()
+    };
     // Why each link not routed was not (`not_routed_cause`), before the
     // diagnostics name the pairs' nets for the links'.
     let causes: BTreeMap<core::NetId, &'static str> = plan
@@ -3234,6 +3309,44 @@ pub(crate) fn finish_pairs(
                         net,
                         (pair.width, reach(net)),
                     );
+                    if line.is_some() && result.status[net as usize] != core::NetStatus::Routed {
+                        let blocked = stub_blocked(
+                            board,
+                            (&result.routes, &link_routes),
+                            plan.obstacles,
+                            plan_link,
+                            (end, polarity),
+                            [pair.positive, pair.negative],
+                            config,
+                        );
+                        let repair = pair_repairs.get(&net).map_or_else(
+                            || "no repair entry".to_string(),
+                            |entry| {
+                                format!(
+                                    "complete {}, conflicted {}, skipped '{}'",
+                                    entry.complete, entry.conflicted, entry.skipped
+                                )
+                            },
+                        );
+                        let dead: Vec<&String> = pair_dead
+                            .iter()
+                            .filter(|dead| {
+                                dead.starts_with(&format!("{net}:"))
+                                    || dead.starts_with(&format!("{}:", plan_link.net))
+                            })
+                            .collect();
+                        eprintln!(
+                            "pairs why: open {} link {} end {} ({} end): {blocked}; repair: {repair}; dead pads {dead:?}",
+                            board.nets[net as usize].name,
+                            link + 1,
+                            ["a", "b"][end],
+                            if end_crossed(plan_link, end) {
+                                "crossed"
+                            } else {
+                                "straight"
+                            },
+                        );
+                    }
                     if let Some(line) = line {
                         eprintln!(
                             "pairs why: stub {} link {} end {} ({}): {line}",
@@ -4384,6 +4497,239 @@ fn stub_joined(
         );
     }
     false
+}
+
+/// Whether the pads' order at `end` of a link crosses the stubs' ends'
+/// (the stubs must cross there).
+fn end_crossed(link: &LinkPlan, end: usize) -> bool {
+    let outward = sub(link.launches[end], link.starts[end]);
+    let pads = cross(outward, sub(link.pads[end][0], link.pads[end][1]));
+    let ends = cross(outward, sub(link.ends[end][0], link.ends[end][1]));
+    pads * ends < 0.0
+}
+
+/// What a diagnosis trial takes off the board (`trial_reaches`): by the
+/// obstacle's index and the obstacle.
+type Gone<'a> = dyn Fn(usize, &core::Obstacle) -> bool + 'a;
+
+/// A trial for the diagnosis (`PCB_ROUTER_PAIRS_WHY`): whether `net`
+/// routes from `terminal` to `target` alone on `board` (other nets with no
+/// terminals, no pours), in a window around the two where it lies inside
+/// the board, with the obstacles `gone` takes moved off the board.
+fn trial_reaches(
+    board: &core::Board,
+    net: core::NetId,
+    (terminal, target): (&core::Terminal, &core::Terminal),
+    gone: &Gone<'_>,
+    config: &KiCadBoardRouterConfig,
+) -> bool {
+    let mut trial = board.clone();
+    trial.planes.clear();
+    for other in &mut trial.nets {
+        other.terminals.clear();
+    }
+    trial.merged_pads.retain(|merged| merged.net != net);
+    trial.terminal_copper.retain(|extra| extra.net != net);
+    trial.nets[net as usize].terminals = vec![terminal.clone(), target.clone()];
+    trial.attachment = core::Attachment::default();
+    let (pad, to) = (terminal.anchor, target.anchor);
+    let margin = 3.0;
+    let (low, high) = (
+        [pad[0].min(to[0]) - margin, pad[1].min(to[1]) - margin],
+        [pad[0].max(to[0]) + margin, pad[1].max(to[1]) + margin],
+    );
+    let window = vec![low, [high[0], low[1]], high, [low[0], high[1]]];
+    if window
+        .iter()
+        .all(|&corner| core::geometry::point_in_polygon(corner, &board.outline))
+    {
+        trial.outline = window;
+    }
+    for (index, obstacle) in trial.obstacles.iter_mut().enumerate() {
+        if obstacle.net != Some(net) && gone(index, obstacle) {
+            obstacle.shape = core::Shape::Circle {
+                center: [1.0e6, 1.0e6],
+                radius: 0.01,
+            };
+        }
+    }
+    let mut router_config = core_config(config);
+    router_config.verbose = false;
+    router_config.deadline_work = Some(2.0);
+    router_config.run_work = None;
+    core::route(&trial, &router_config).status[net as usize] == core::NetStatus::Routed
+}
+
+/// `PCB_ROUTER_PAIRS_WHY`: what keeps the stub of `polarity` at `end` of
+/// a link from its pad to its stub's end in the attempt's state: the pad
+/// routed to the end alone on the planned board with the attempt's routes
+/// (`routes`: the board's nets, then the links'), and again with what might
+/// block it taken away in turn: the other nets' routes, the link's own
+/// route, the partner's routes, the plan's copper (the leads, the stubs'
+/// ends, the carried stubs). The first that frees it is named.
+fn stub_blocked(
+    board: &core::Board,
+    (routes, link_routes): (&[core::NetRoute], &[core::NetRoute]),
+    planned_from: usize,
+    link: &LinkPlan,
+    (end, polarity): (usize, usize),
+    nets: [core::NetId; 2],
+    config: &KiCadBoardRouterConfig,
+) -> String {
+    let (net, partner) = (nets[polarity], nets[1 - polarity]);
+    let pad = link.pads[end][polarity];
+    let Some(terminal) = board.nets[net as usize]
+        .terminals
+        .iter()
+        .find(|terminal| core::geometry::distance(terminal.anchor, pad) < 1.0e-6)
+        .cloned()
+    else {
+        return "the pad is no terminal".into();
+    };
+    let target = link.runs[end][polarity].clone();
+    let mut all: Vec<core::NetRoute> = routes.to_vec();
+    all.extend(link_routes.iter().cloned());
+    let base_count = board.obstacles.len();
+    let trial = with_routes(board, &all);
+    let kind = |index: usize, obstacle: &core::Obstacle| -> usize {
+        let route = index >= base_count;
+        if route && obstacle.net == Some(link.net) {
+            2
+        } else if route && obstacle.net == Some(partner) {
+            3
+        } else if route {
+            1
+        } else if index >= planned_from {
+            4
+        } else {
+            0
+        }
+    };
+    let names = [
+        "routes with the attempt's copper",
+        "freed without the other nets' routes",
+        "freed without the link's route",
+        "freed without the partner's routes",
+        "freed without the plan's copper",
+    ];
+    for (step, name) in names.iter().enumerate() {
+        let gone = |index: usize, obstacle: &core::Obstacle| {
+            let k = kind(index, obstacle);
+            k != 0 && k <= step
+        };
+        if trial_reaches(&trial, net, (&terminal, &target), &gone, config) {
+            return (*name).to_string();
+        }
+    }
+    "not even on the bare board".into()
+}
+
+/// `PCB_ROUTER_PAIRS_REACH`: per stub the router is to route (a link end
+/// whose stubs the link does not carry), whether its pad reaches its stub's
+/// end on the planned board alone (no route yet: the pads, the keepouts and
+/// the plan's copper), and where it does not, what frees it: the link's own
+/// lead, its partner's copper of the link (the stub's end, a crossover),
+/// the other links' plan copper; else nothing does.
+fn plan_reach_check(board: &core::Board, plan: &PairPlan, config: &KiCadBoardRouterConfig) {
+    for link in &plan.links {
+        let pair = &plan.pairs[link.pair];
+        let nets = [pair.positive, pair.negative];
+        for end in (0..2).filter(|&end| !link.fixed[end]) {
+            for polarity in 0..2 {
+                let (net, partner) = (nets[polarity], nets[1 - polarity]);
+                let pad = link.pads[end][polarity];
+                let terminal = board.nets[net as usize]
+                    .terminals
+                    .iter()
+                    .find(|terminal| core::geometry::distance(terminal.anchor, pad) < 1.0e-6)
+                    .cloned();
+                let Some(terminal) = terminal else {
+                    continue;
+                };
+                let target = &link.runs[end][polarity];
+                let planned = |index: usize| index >= plan.obstacles;
+                let steps: [(&str, &Gone<'_>); 5] = [
+                    ("reaches", &|_, _| false),
+                    ("freed without the link's lead", &|index, obstacle| {
+                        planned(index) && obstacle.net == Some(link.net)
+                    }),
+                    (
+                        "freed without the partner's plan copper",
+                        &|index, obstacle| {
+                            planned(index)
+                                && (obstacle.net == Some(link.net) || obstacle.net == Some(partner))
+                        },
+                    ),
+                    ("freed without the other links' plan copper", &|index, _| {
+                        planned(index)
+                    }),
+                    (
+                        "freed without the board's other pads",
+                        &|index, obstacle| planned(index) || obstacle.net != Some(partner),
+                    ),
+                ];
+                let verdict = steps
+                    .iter()
+                    .find(|(_, gone)| trial_reaches(board, net, (&terminal, target), *gone, config))
+                    .map_or("not even alone with its partner", |(name, _)| *name);
+                let start = link.starts[end];
+                let outward = unit(sub(link.launches[end], start));
+                // What lies near the straight line from the pad to the end.
+                let mut near: Vec<String> = Vec::new();
+                if !verdict.starts_with("reaches") {
+                    let layer = target.layers;
+                    for obstacle in &board.obstacles {
+                        if obstacle.net == Some(net) || obstacle.layers & layer == 0 {
+                            continue;
+                        }
+                        let gap = obstacle
+                            .shape
+                            .distance_to_segment(link.stubs[end][polarity], target.anchor)
+                            - pair.width / 2.0;
+                        if gap < pair.clearance + 0.05 {
+                            near.push(format!(
+                                "{} [{}] {:.3}",
+                                obstacle.label,
+                                obstacle
+                                    .net
+                                    .map_or("-".to_string(), |owner| if owner == partner {
+                                        "partner".to_string()
+                                    } else if owner == link.net {
+                                        "link".to_string()
+                                    } else {
+                                        board
+                                            .nets
+                                            .get(owner as usize)
+                                            .map_or("?".into(), |n| n.name.clone())
+                                    }),
+                                gap
+                            ));
+                        }
+                    }
+                }
+                let local = |point: Point| {
+                    let v = sub(point, start);
+                    format!("({:.2}, {:.2})", dot(v, outward), cross(outward, v))
+                };
+                eprintln!(
+                    "pairs reach: {} link {} end {} ({} end, {:.3} mm): {verdict}; along/across the run from its start: pad {}, partner's pad {}, stub end {}, partner's end {}; near the straight stub: {near:?}",
+                    board.nets[net as usize].name,
+                    link.link + 1,
+                    ["a", "b"][end],
+                    if end_crossed(link, end) {
+                        "crossed"
+                    } else {
+                        "straight"
+                    },
+                    core::geometry::distance(pad, target.anchor),
+                    local(pad),
+                    local(link.pads[end][1 - polarity]),
+                    local(target.anchor),
+                    local(link.ends[end][1 - polarity]),
+                );
+            }
+        }
+    }
 }
 
 /// `PCB_ROUTER_PAIRS_WHY`: why the stub of `net` (`polarity`) at `end` of
@@ -6493,6 +6839,121 @@ mod tests {
         let meander = &copper.patterns[0];
         assert!((meander.added - entry.meander_mm).abs() < 1.0e-9);
         assert!(meander.amplitude <= 3.0 * 0.2 + 1.0e-9);
+    }
+
+    /// Without a crossover a crossed end's stubs cross on their way to the
+    /// run, which the router does with a via: the end's start keeps room
+    /// for it beyond the pads (`CROSSING_ROOM`), not the closest clear
+    /// start (pairs6: left_io's J22 launched 0.65 mm from its pads, the
+    /// stubs with no path in the negotiation).
+    #[test]
+    fn a_crossed_end_without_a_crossover_leaves_room_for_the_crossing() {
+        let crossed = BOARD.replace(
+            r#"(pad "1" smd rect (at 0 0) (size 1 0.3) (layers "F.Cu") (net "/D+"))
+    (pad "2" smd rect (at 0 0.5) (size 1 0.3) (layers "F.Cu") (net "/D-")))
+  (footprint "test" (layer "F.Cu") (at 18 4)"#,
+            r#"(pad "1" smd rect (at 0 0) (size 1 0.3) (layers "F.Cu") (net "/D-"))
+    (pad "2" smd rect (at 0 0.5) (size 1 0.3) (layers "F.Cu") (net "/D+")))
+  (footprint "test" (layer "F.Cu") (at 18 4)"#,
+        );
+        let pcb = parse(&crossed).unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        CROSSOVERS.with(|cell| cell.set(Some(false)));
+        let mut board = lower(&pcb, &config, true).unwrap().board;
+        plan_pairs(&mut board, &config);
+        CROSSOVERS.with(|cell| cell.set(None));
+        let plan = board
+            .attachment
+            .data
+            .clone()
+            .unwrap()
+            .downcast::<PairPlan>()
+            .unwrap();
+        let link_plan = plan
+            .links
+            .iter()
+            .find(|link| link.crossed)
+            .expect("a crossed link");
+        let pair = &plan.pairs[link_plan.pair];
+        let end = (0..2)
+            .find(|&end| end_crossed(link_plan, end))
+            .expect("a crossed end");
+        assert!(!link_plan.fixed[end]);
+        let outward = unit(sub(link_plan.launches[end], link_plan.starts[end]));
+        let room = CROSSING_ROOM * (pair.via_diameter + 2.0 * pair.clearance + pair.width);
+        for stub in link_plan.stubs[end] {
+            let along = dot(sub(link_plan.starts[end], stub), outward);
+            assert!(along >= room - 1.0e-9, "{along} from a pad, {room} wanted");
+        }
+    }
+
+    /// A crossover is planned only where the link carries the stubs from
+    /// the pads to it: at U2, whose stubs a GND pad between the pads' exits
+    /// keeps from going straight, the router's stubs would have to reach
+    /// round the crossover's copper (pairs6: the ch32v003 board's D+ pad
+    /// walled in, its net open), so U2's end gets none.
+    #[test]
+    fn a_crossover_is_planned_only_where_the_link_carries_its_stubs() {
+        let crossed = BOARD.replace(
+            r#"(pad "1" smd rect (at 0 0) (size 1 0.3) (layers "F.Cu") (net "/D+"))
+    (pad "2" smd rect (at 0 0.5) (size 1 0.3) (layers "F.Cu") (net "/D-")))
+  (footprint "test" (layer "F.Cu") (at 18 4)"#,
+            r#"(pad "1" smd rect (at 0 0) (size 1 0.3) (layers "F.Cu") (net "/D-"))
+    (pad "2" smd rect (at 0 0.5) (size 1 0.3) (layers "F.Cu") (net "/D+")))
+  (footprint "test" (layer "F.Cu") (at 33.25 10.25)
+    (property "Reference" "R9" (at 0 -2) (layer "F.SilkS"))
+    (pad "1" smd rect (at 0 0) (size 0.15 0.15) (layers "F.Cu") (net "/GND")))
+  (footprint "test" (layer "F.Cu") (at 18 4)"#,
+        );
+        assert_ne!(crossed, BOARD);
+        let pcb = parse(&crossed).unwrap();
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            ..KiCadBoardRouterConfig::default()
+        };
+        CROSSOVERS.with(|cell| cell.set(Some(true)));
+        let mut board = lower(&pcb, &config, true).unwrap().board;
+        plan_pairs(&mut board, &config);
+        CROSSOVERS.with(|cell| cell.set(None));
+        let plan = board
+            .attachment
+            .data
+            .clone()
+            .unwrap()
+            .downcast::<PairPlan>()
+            .unwrap();
+        let link_plan = plan
+            .links
+            .iter()
+            .find(|link| link.pads.iter().any(|pads| pads[0][0] > 33.0))
+            .expect("a link to U2");
+        assert!(link_plan.crossed);
+        let u2 = (0..2)
+            .find(|&end| link_plan.pads[end][0][0] > 33.0)
+            .unwrap();
+        assert!(!link_plan.fixed[u2], "U2's stubs are the router's");
+        assert!(link_plan.crossovers[u2].is_none(), "a crossover at U2");
+        for end in 0..2 {
+            if link_plan.crossovers[end].is_some() {
+                assert!(
+                    link_plan.fixed[end],
+                    "a crossover at end {end} without its stubs"
+                );
+            }
+        }
     }
 
     /// A crossed pair whose link falls back (its run not routed, or its
