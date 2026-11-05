@@ -1377,6 +1377,9 @@ pub struct KiCadRunFacts {
     pub diff_pair_why: BTreeMap<String, usize>,
     /// The length and skew rules' nets after the route (`KiCadNetLength`).
     pub lengths: Vec<crate::KiCadNetLength>,
+    /// The classes whose nets the narrow-signal step routed below the
+    /// class's width (`KiCadRulesSummary::narrowed`).
+    pub narrowed: Vec<crate::board_router::KiCadNarrowedClass>,
     /// The project's routing rules the router does not keep
     /// (`KiCadProjectRulesReport::unmodelled`).
     pub unmodelled_rules: Vec<String>,
@@ -1839,6 +1842,52 @@ fn via_in_pad_actions(facts: &KiCadRunFacts) -> Vec<String> {
 /// (the quick tier's designer boards; rp2350-dual-usb's designer 86 %).
 pub const DECOUPLING_SHARE: f64 = 0.6;
 
+/// The next action for nets the narrow-signal step routed below their
+/// class's width, where a class other than Default is among them (a width
+/// the designer chose for those nets, such as a controlled impedance):
+/// KiCad's DRC checks no class width, so nothing else says it (trial 7:
+/// Sisu's RF_ANT, 0.1422 mm, and RF_ANT_INT, 0.1102 mm, written at 0.1).
+/// The levers: a custom rule giving the class's width as opt (the step
+/// keeps a net whose width a rule gives, `ruled_widths`), or the step off.
+fn narrowed_action(narrowed: &[crate::board_router::KiCadNarrowedClass]) -> Option<String> {
+    let chosen: Vec<&crate::board_router::KiCadNarrowedClass> = narrowed
+        .iter()
+        .filter(|class| class.class != "Default")
+        .collect();
+    let first = chosen.first()?;
+    let nets: usize = narrowed.iter().map(|class| class.nets.len()).sum();
+    let mm = |value: f64| {
+        let text = format!("{value:.4}");
+        text.trim_end_matches('0').trim_end_matches('.').to_string()
+    };
+    let listed: Vec<String> = narrowed
+        .iter()
+        .map(|class| {
+            let shown = 3;
+            let mut names: Vec<String> = class.nets.iter().take(shown).cloned().collect();
+            if class.nets.len() > shown {
+                names.push(format!("{} more", class.nets.len() - shown));
+            }
+            format!(
+                "{} {} mm -> {} mm ({} net{}: {})",
+                class.class,
+                mm(class.class_width_mm),
+                mm(class.routed_width_mm),
+                class.nets.len(),
+                if class.nets.len() == 1 { "" } else { "s" },
+                names.join(", ")
+            )
+        })
+        .collect();
+    Some(format!(
+        "the narrow-signal step routed {nets} nets below their class's track width, which KiCad's DRC does not check (no finding says it; verdict.narrowed_classes): {}. Where a class's width is a controlled impedance (an RF line, a single-ended 50 ohm net) keep it with a custom rule giving the width as opt, which the step keeps, in the board's .kicad_dru: (rule \"{} width\" (condition \"A.hasNetclass('{}')\") (constraint track_width (opt {}mm))) (a new file starts with (version 1)); or turn the step off with \"use_narrow_signals\": false in the router config (every net at its class's width; connections may stay open)",
+        listed.join("; "),
+        first.class,
+        first.class,
+        mm(first.class_width_mm),
+    ))
+}
+
 /// The next action for a layout whose decoupling capacitors lie far from
 /// their supply pins (`DECOUPLING_SHARE`), naming the farthest pins that a
 /// capacitor could still serve: one of 1 uF or less on the pin's rail (a
@@ -1981,6 +2030,7 @@ impl KiCadRunFacts {
             diff_pairs: None,
             diff_pair_why: BTreeMap::new(),
             lengths: Vec::new(),
+            narrowed: Vec::new(),
             unmodelled_rules: Vec::new(),
             custom_rules: Vec::new(),
             input_warnings: Vec::new(),
@@ -2187,6 +2237,13 @@ pub struct KiCadVerdict {
     /// `note` why. Absent where the project has no such rule.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub lengths: Vec<crate::KiCadNetLength>,
+    /// The net classes whose nets the narrow-signal step routed below the
+    /// class's width (`class`, `class_width_mm`, `routed_width_mm`,
+    /// `nets`): KiCad's DRC does not check a class's width, so a
+    /// controlled-impedance class narrowed fails nothing. Absent when the
+    /// step did not run on the board written.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub narrowed_classes: Vec<crate::board_router::KiCadNarrowedClass>,
     /// The result-changing environment variables that were set
     /// (`RESULT_ENVIRONMENT`), with their values, and the binary's build
     /// (`pcb_maker_version`: commit and build date).
@@ -2754,6 +2811,7 @@ fn next_actions(
     for pour in facts.pours.iter().filter(|pour| pour.in_many_pieces()) {
         actions.push(pour_action(pour));
     }
+    actions.extend(narrowed_action(&facts.narrowed));
     actions.extend(facts.decoupling.as_ref().and_then(|decoupling| {
         decoupling_action(
             decoupling,
@@ -4361,6 +4419,7 @@ pub(crate) fn judge_at(
         repairs: facts.repairs.clone(),
         diff_pairs: facts.diff_pairs.clone(),
         lengths: facts.lengths.clone(),
+        narrowed_classes: facts.narrowed.clone(),
         environment: result_environment(),
         pours: facts.pours.clone(),
         moves: facts.moves.clone(),
@@ -4450,6 +4509,7 @@ pub fn route_facts(
         pairs
     });
     facts.lengths = result.lengths.clone();
+    facts.narrowed = result.rules.narrowed.clone();
     facts.vias_in_pads = result.vias_in_pads.clone();
     facts.open_nets = result
         .nets
@@ -4598,6 +4658,89 @@ mod tests {
         facts.routed_connections = 54;
         facts.native = Some(native);
         facts
+    }
+
+    #[test]
+    fn nets_the_narrow_signal_step_narrowed_are_named_by_class() {
+        // Trial 7's Sisu_SSE-9: RF_ANT (0.1422 mm) and RF_ANT_INT (0.1102)
+        // are impedance widths; the step wrote them at 0.1 like Default's
+        // 0.15 signals. USB is at its class's 0.1 and GND is a pour.
+        let net_classes: BTreeMap<String, Vec<String>> = [
+            ("/RF/ANT", vec!["RF_ANT"]),
+            ("Net-(IC1-RF1)", vec!["RF_ANT"]),
+            ("MODEM_ANT1", vec!["RF_ANT_INT"]),
+            ("MODEM_USB_P", vec!["USB"]),
+            ("SDA", vec!["Default"]),
+            ("SCL", vec!["Default"]),
+        ]
+        .into_iter()
+        .map(|(net, classes)| {
+            (
+                net.to_string(),
+                classes.into_iter().map(String::from).collect(),
+            )
+        })
+        .collect();
+        let class_values: BTreeMap<String, [Option<f64>; 2]> = [
+            ("Default", 0.15),
+            ("RF_ANT", 0.1422),
+            ("RF_ANT_INT", 0.1102),
+            ("USB", 0.1),
+        ]
+        .into_iter()
+        .map(|(class, width)| (class.to_string(), [Some(width), Some(0.15)]))
+        .collect();
+        let width = |net: &str| match net_classes[net][0].as_str() {
+            "RF_ANT" => 0.1422,
+            "RF_ANT_INT" => 0.1102,
+            "USB" => 0.1,
+            _ => 0.15,
+        };
+        let nets: Vec<(String, f64)> = net_classes.keys().map(|net| (net.clone(), 0.1)).collect();
+        let narrowed =
+            crate::board_router::narrowed_classes(&nets, width, &net_classes, &class_values);
+        let summary: Vec<(&str, f64, usize)> = narrowed
+            .iter()
+            .map(|class| (class.class.as_str(), class.class_width_mm, class.nets.len()))
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                ("RF_ANT", 0.1422, 2),
+                ("RF_ANT_INT", 0.1102, 1),
+                ("Default", 0.15, 2)
+            ]
+        );
+        let action = narrowed_action(&narrowed).expect("a class other than Default");
+        assert!(
+            action.starts_with(
+                "the narrow-signal step routed 5 nets below their class's track width, which KiCad's DRC does not check"
+            ),
+            "{action}"
+        );
+        assert!(action.contains("RF_ANT 0.1422 mm -> 0.1 mm (2 nets: /RF/ANT, Net-(IC1-RF1))"));
+        assert!(action.contains(
+            "(rule \"RF_ANT width\" (condition \"A.hasNetclass('RF_ANT')\") (constraint track_width (opt 0.1422mm)))"
+        ));
+        assert!(action.contains("\"use_narrow_signals\": false"));
+        // Default's signals alone narrowed: the step's purpose, no action;
+        // the verdict still lists them.
+        let default_only: Vec<_> = narrowed
+            .iter()
+            .filter(|class| class.class == "Default")
+            .cloned()
+            .collect();
+        assert!(narrowed_action(&default_only).is_none());
+        let mut facts = routed(DrcTally::default());
+        facts.narrowed = narrowed.clone();
+        let verdict = judge(&facts);
+        assert_eq!(verdict.narrowed_classes, narrowed);
+        assert!(
+            verdict
+                .next_actions
+                .iter()
+                .any(|line| line.starts_with("the narrow-signal step routed 5"))
+        );
     }
 
     #[test]

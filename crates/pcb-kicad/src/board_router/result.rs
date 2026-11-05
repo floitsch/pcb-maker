@@ -414,9 +414,85 @@ pub struct KiCadRulesSummary {
     pub narrowest_track_mm: f64,
     /// The neck-down width out of small pads.
     pub neck_width_mm: f64,
+    /// The nets the narrow-signal step routed below their class's width,
+    /// per class (absent when the step did not run or narrowed none):
+    /// KiCad's DRC does not check a class's width, so nothing else says it
+    /// (trial 7: Sisu's RF_ANT nets, 0.1422 mm for 50 ohms, written at
+    /// 0.1 mm).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub narrowed: Vec<KiCadNarrowedClass>,
     /// KiCad's defaults taken and the custom rules read, kept or skipped.
     #[serde(flatten)]
     pub project: crate::project_rules::KiCadProjectRulesReport,
+}
+
+/// A net class whose nets the narrow-signal step routed narrower than the
+/// class's width (`KiCadRulesSummary::narrowed`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct KiCadNarrowedClass {
+    /// The project's class that gives the nets their width ("Default" for
+    /// nets in none).
+    pub class: String,
+    pub class_width_mm: f64,
+    /// The width the step routed them at (the project's narrowest
+    /// predefined width, `narrow_signal_mm`).
+    pub routed_width_mm: f64,
+    /// The nets, as the router names them.
+    pub nets: Vec<String>,
+}
+
+/// The classes the narrow-signal step narrowed: per net of `nets` (name and
+/// routed width) whose width lies below its class's, grouped by the class
+/// (`net_classes`: a net's classes, the highest priority first;
+/// `class_values`: the classes' own widths), the classes other than Default
+/// first, each by its nets.
+pub(crate) fn narrowed_classes(
+    nets: &[(String, f64)],
+    class_width: impl Fn(&str) -> f64,
+    net_classes: &BTreeMap<String, Vec<String>>,
+    class_values: &BTreeMap<String, [Option<f64>; 2]>,
+) -> Vec<KiCadNarrowedClass> {
+    let mut classes: BTreeMap<(String, i64, i64), Vec<String>> = BTreeMap::new();
+    for (name, routed) in nets {
+        let width = class_width(name);
+        if *routed >= width - 1.0e-6 {
+            continue;
+        }
+        // The class whose width the net takes: the first by priority that
+        // states one.
+        let class = net_classes
+            .get(name)
+            .and_then(|names| {
+                names.iter().find(|class| {
+                    class_values
+                        .get(*class)
+                        .is_some_and(|values| values[0].is_some())
+                })
+            })
+            .cloned()
+            .unwrap_or_else(|| "Default".to_string());
+        let micro = |value: f64| (value * 1.0e6).round() as i64;
+        classes
+            .entry((class, micro(width), micro(*routed)))
+            .or_default()
+            .push(name.clone());
+    }
+    let mut narrowed: Vec<KiCadNarrowedClass> = classes
+        .into_iter()
+        .map(|((class, width, routed), nets)| KiCadNarrowedClass {
+            class,
+            class_width_mm: width as f64 / 1.0e6,
+            routed_width_mm: routed as f64 / 1.0e6,
+            nets,
+        })
+        .collect();
+    narrowed.sort_by_key(|class| {
+        (
+            class.class == "Default",
+            std::cmp::Reverse(class.nets.len()),
+        )
+    });
+    narrowed
 }
 
 impl KiCadRulesSummary {
@@ -435,6 +511,28 @@ impl KiCadRulesSummary {
                 0.0
             },
             neck_width_mm: board.neck_width,
+            narrowed: if config.use_narrow_signals == Some(true) {
+                let project = config.project_rules.clone().unwrap_or_default();
+                let nets: Vec<(String, f64)> = board
+                    .nets
+                    .iter()
+                    .map(|net| (net.name.clone(), board.classes[net.class].trace_width))
+                    .collect();
+                narrowed_classes(
+                    &nets,
+                    |name| {
+                        config
+                            .connection_rules
+                            .get(name)
+                            .or(config.default_rules.as_ref())
+                            .map_or(0.0, |rules| rules.trace_width_mm)
+                    },
+                    &project.net_classes,
+                    &project.class_values,
+                )
+            } else {
+                Vec::new()
+            },
             project: config.project_rules.clone().unwrap_or_default(),
         }
     }

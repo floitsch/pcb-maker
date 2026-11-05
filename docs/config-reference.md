@@ -30,7 +30,7 @@ The environment variables are indexed in the hand-over
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
 | [Router settings: net_classes entries](#router-settings-net_classes-entries) | 6 | 6 | 0 | 6 | 1 |
 | [Router settings: connection rules](#router-settings-connection-rules) | 4 | 4 | 0 | 4 | 0 |
-| [Router report: rules](#router-report-rules) | 5 | - | 0 | 5 | - |
+| [Router report: rules](#router-report-rules) | 6 | - | 0 | 6 | - |
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 17 | - | 6 | 17 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
 | [Router core](#router-core) | 71 | - | 0 | 71 | - |
@@ -231,6 +231,7 @@ Not a setting: the `rules` object of the router's report (`board-router.json`), 
 | `rules.connection_width_severity` | `Option<String>` | The project's severity of KiCad's connection_width findings, when its board setup has a minimum connection width. |
 | `rules.narrowest_track_mm` | `f64` | The narrowest track width of the nets' classes as routed. |
 | `rules.neck_width_mm` | `f64` | The neck-down width out of small pads. |
+| `rules.narrowed` | `Vec<KiCadNarrowedClass>` | The nets the narrow-signal step routed below their class's width, per class (absent when the step did not run or narrowed none): KiCad's DRC does not check a class's width, so nothing else says it (trial 7: Sisu's RF_ANT nets, 0.1422 mm for 50 ohms, written at 0.1 mm). |
 | `project` (flattened: the next table's keys) | `crate::project_rules::KiCadProjectRulesReport` | KiCad's defaults taken and the custom rules read, kept or skipped. |
 
 ## Router report: rules from the project
