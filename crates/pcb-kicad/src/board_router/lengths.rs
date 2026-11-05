@@ -375,6 +375,31 @@ pub(crate) fn match_lengths(
             counted.get(layer).copied().unwrap_or(false)
         })
     };
+    // A net the rule counts no copper of although it has some (routed off
+    // the rule's layers) or that has nothing to route (one pad): KiCad
+    // matches none of its items, so the rule does not check it, and in a
+    // skew rule it is not of the group (trial 7's Sisu_SSE-9: a rule on
+    // In1.Cu and In4.Cu, its USB nets on the outer layers were reported
+    // "not routed ... among the open connections").
+    let uncounted = |member: &KiCadLengthMember, routes: &[core::NetRoute]| -> Option<String> {
+        let id = *ids.get(member.net.as_str())?;
+        let route = &routes[id as usize];
+        let copper = !route.segments.is_empty()
+            || !route.vias.is_empty()
+            || fixed
+                .get(&id)
+                .is_some_and(|(tracks, vias)| !tracks.is_empty() || !vias.is_empty());
+        if copper {
+            Some(format!(
+                "routed off the rule's layers ({}): KiCad counts none of its copper for the rule, so the rule does not check it",
+                member.layers.join(", ")
+            ))
+        } else if pads_of(id).len() < 2 {
+            Some("a net of one pad: nothing to route, nothing the rule checks".into())
+        } else {
+            None
+        }
+    };
     // The groups a rule compares: a length rule's nets one by one, a skew
     // rule's all together (or each differential pair's two nets).
     let groups_of = |rule: &KiCadLengthRule| -> Vec<Vec<usize>> {
@@ -436,7 +461,8 @@ pub(crate) fn match_lengths(
                 let short = min.is_some_and(|min| length < min - ON_BOUND);
                 let id = ids.get(member.net.as_str()).copied();
                 if length <= 0.0 {
-                    entry.note = "no copper the rule counts (not routed)".into();
+                    entry.note = uncounted(member, &result.routes)
+                        .unwrap_or_else(|| "no copper the rule counts (not routed)".into());
                 } else if short && coupled.contains(&member.net) {
                     entry.note = "a coupled pair's net: the pairs' pass matches it".into();
                 } else if short
@@ -523,9 +549,15 @@ pub(crate) fn match_lengths(
                 entry.target_mm = target;
                 entry.min_mm = min;
                 entry.max_mm = max;
-                entry.within = length > 0.0
-                    && min.is_none_or(|min| length >= min - ON_BOUND)
-                    && max.is_none_or(|max| length <= max + ON_BOUND);
+                entry.within = if length > 0.0 {
+                    min.is_none_or(|min| length >= min - ON_BOUND)
+                        && max.is_none_or(|max| length <= max + ON_BOUND)
+                } else if let Some(note) = uncounted(&rule.nets[position], &result.routes) {
+                    entry.note = note;
+                    true
+                } else {
+                    false
+                };
                 if !entry.within
                     && entry.note.is_empty()
                     && max.is_some_and(|max| length > max + ON_BOUND)
@@ -1650,6 +1682,57 @@ mod tests {
         );
         assert!(patterns.is_empty() && lengths.is_empty());
         assert_eq!(again.routes.len(), before.len());
+    }
+
+    #[test]
+    fn a_net_routed_off_a_rules_layers_is_not_of_its_group() {
+        // Trial 7's Sisu_SSE-9: a skew rule on In1.Cu and In4.Cu over the
+        // USB class; nets routed on the outer layers only have no copper
+        // KiCad counts, so it checks nothing of them (the designer's board:
+        // 0 skew findings with 9 of 11 nets outside), where the report said
+        // "not routed" and the verdict "among the open connections".
+        let pcb = parse(BOARD).unwrap();
+        let inner = |net: &str| KiCadLengthMember {
+            layers: vec!["In1.Cu".into()],
+            ..member(net)
+        };
+        let config = KiCadBoardRouterConfig {
+            default_rules: Some(KiCadConnectionRoutingRules {
+                trace_width_mm: 0.2,
+                clearance_mm: 0.2,
+                via_size_mm: 0.6,
+                via_drill_mm: 0.3,
+            }),
+            length_rules: vec![KiCadLengthRule {
+                rule: "inner skew".into(),
+                constraint: "skew".into(),
+                max: Some(0.5),
+                nets: vec![member("A"), inner("B")],
+                ..KiCadLengthRule::default()
+            }],
+            ..KiCadBoardRouterConfig::default()
+        };
+        let board = lower(&pcb, &config, true).unwrap().board;
+        let mut result = core::route(&board, &core_config(&config));
+        let names: Vec<String> = vec!["F.Cu".into(), "B.Cu".into()];
+        let (_, lengths) = match_lengths(
+            &board,
+            &mut result,
+            &config,
+            &[0.0, 1.6],
+            &names,
+            &BTreeSet::new(),
+        );
+        let b = lengths.iter().find(|entry| entry.net == "B").unwrap();
+        assert_eq!(b.length_mm, 0.0);
+        assert!(b.within, "{b:?}");
+        assert!(
+            b.note.starts_with("routed off the rule's layers (In1.Cu)"),
+            "{b:?}"
+        );
+        assert_eq!(b.meander_mm, 0.0);
+        // A, the group's only counted net, is its own longest.
+        assert!(lengths.iter().all(|entry| entry.within), "{lengths:?}");
     }
 
     #[test]

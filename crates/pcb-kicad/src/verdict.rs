@@ -3505,6 +3505,21 @@ fn lengths_summary(lengths: &[crate::KiCadNetLength], route_mode: bool) -> Optio
             names(&under, true)
         ));
     }
+    // Nets with copper only off their rule's layers: KiCad's rule checks
+    // none of them, and a skew rule groups only those with copper there
+    // (trial 7's Sisu_SSE-9: In1.Cu and In4.Cu; six USB nets the route
+    // took onto In4.Cu joined the group of a 43 mm pair).
+    let off: Vec<&crate::KiCadNetLength> = lengths
+        .iter()
+        .filter(|entry| entry.note.starts_with("routed off the rule's layers"))
+        .collect();
+    if !off.is_empty() {
+        parts.push(format!(
+            "{} routed off their rule's layers ({}) are not checked by it: a rule with a layer condition counts only the copper on those layers, and a skew rule matches only the nets with copper there as one group, so a net routed onto them joins the group (keep it off those layers, by hand or with a disallow rule, and it leaves the group)",
+            off.len(),
+            names(&off, false)
+        ));
+    }
     Some(format!(
         "verdict.lengths: {} (each net's note says more)",
         parts.join("; ")
@@ -6154,6 +6169,45 @@ mod tests {
         assert_eq!(placement_rates_action("layout-kicad-board", &pinned), None);
         assert_eq!(search_rate_action("layout-kicad-board", &pinned), None);
         assert_eq!(placement_rates_action("place-kicad-board", &measured), None);
+    }
+
+    #[test]
+    fn nets_routed_off_a_skew_rules_layers_are_not_called_open() {
+        // Trial 7's Sisu_SSE-9 (route mode): the rule holds on In1.Cu and
+        // In4.Cu; MCU_USB_N/P routed on F.Cu were "not routed ... among the
+        // open connections", which they were not.
+        let entry = |net: &str, length: f64, within: bool, note: &str| crate::KiCadNetLength {
+            net: net.into(),
+            rule: "USB 90 ohm".into(),
+            constraint: "skew".into(),
+            length_mm: length,
+            target_mm: 43.19,
+            min_mm: Some(42.94),
+            max_mm: Some(43.44),
+            within,
+            note: note.into(),
+            ..Default::default()
+        };
+        let off = "routed off the rule's layers (In1.Cu, In4.Cu): KiCad counts none of its copper for the rule, so the rule does not check it";
+        let lengths = vec![
+            entry("MCU_USB_N", 0.0, true, off),
+            entry("MCU_USB_P", 0.0, true, off),
+            entry("MODEM_USB_N", 43.44, true, ""),
+            entry(
+                "RP_USB_PHY_N",
+                11.95,
+                false,
+                "no straight track with room for all of it (8.134 of 39.373 mm added)",
+            ),
+        ];
+        let summary = lengths_summary(&lengths, true).unwrap();
+        assert!(!summary.contains("not routed"), "{summary}");
+        assert!(
+            summary.contains(
+                "2 routed off their rule's layers (MCU_USB_N, MCU_USB_P) are not checked by it"
+            ) && summary.contains("a net routed onto them joins the group"),
+            "{summary}"
+        );
     }
 
     #[test]
