@@ -1,0 +1,59 @@
+{
+  "comment": "Per-board notes from reading the boards by hand (docs/router-ceiling.md). 'class' overrides the census's class where its rule is too coarse; the table marks it with *.",
+  "obsilab__Quanta75__Quanta75_BareRP2040_JLCPCBAoptimized": {
+    "class": "copper text extent",
+    "note": "every new finding is our I2C1-SDA track inside the '0bsilab' knockout plate as KiCad draws it (stand-in font, 4 mm past the cached glyphs)",
+    "second": null
+  },
+  "obsilab__Quanta75__Quanta75_RP2040Stamp_JLCPCBAoptimized": {
+    "class": "copper text extent",
+    "note": "the same plate (shorts, bridge) and 'Quanta75' in Urbanist SemiBold 0.105 mm from Row6",
+    "second": null
+  },
+  "transistorfet__computie__k30-SBC": {
+    "class": "starved thermal",
+    "note": "J1.39 starved only after the solid step's one round; one more round: clean (checked by hand)"
+  },
+  "tzarc__keyboards__ghoul": {
+    "class": "starved thermal",
+    "note": "RN3.3 starved only after the solid step's one round; three more rounds (RN3.1, RN3.2): clean (checked by hand)"
+  },
+  "MbFredys__PCB-Modular-Multi-Protocol-Hub__Hub": {
+    "class": "walled pad",
+    "note": "9 of 12: the X2SON-4 regulators' corner pads (U2, U3, U6), custom pads joined at a 0.148 mm anchor that lies within the class clearance of the centre pad: no legal node in the contact"
+  },
+  "briskspirit__Sisu_SSE-9__Sisu_SSE-9": {
+    "note": "16 of 18: dome-switch centre pads (4 mm) inside a 6.2 mm ring of another net, the designer's via in each; route mode admits only small pads. Also skew 5 (a USB skew rule over 5 nets)"
+  },
+  "ikajdan__katia__katia": {
+    "note": "input's: the halves' GND (the designer's too). Ours: USB_D's 0.4 mm clearance walls J7/J8's 0.5 mm row, a clearance the project rates a warning; the minimum-clearance step did not run (work)"
+  },
+  "byrantech__laptop__keyboard": {
+    "note": "U2 aQFN-73 inner pads: VSS_PA (F23) and RESET (AC9), whose way out is narrower than the class (the designer necks down to 0.127 mm)",
+    "class": "walled pad"
+  },
+  "byrantech__laptop__motherboard": {
+    "note": "WLCSP-9 U7/U13: the middle balls need a via in the pad and the designer's 0.4/0.3 via breaks the board's annular minimum (the designer's board has annular_width 199); the edge balls of power nets have no node"
+  },
+  "bismarx-v1__Sumec-MiniSumo__SUMEC_MK_IV": {
+    "note": "input's: R12/C19 swapped GND/SHLD as on the designer's board; IC2.11/IC3.11: a 0.45 mm pad no track of the High Power class (2.0 mm) enters"
+  },
+  "ebastler__osprey__osprey_rev_a": {
+    "note": "AE1.1, the antenna's feed, inside the footprint's own copper graphic; c2 at the aQFN"
+  },
+  "Seeed-Studio__OSHW-reCamera-Series__reCamera_S101_v1.1": {
+    "note": "MIC1's GND pads inside its own copper ring; the designer's board leaves 3 of them"
+  },
+  "hackclub__OnBoard__woagboard": {
+    "note": "an F.Cu GND zone piece the designer's board leaves apart too (two GND zones on F.Cu intersect)"
+  },
+  "Twisted-Fields__rp2040-motor-controller__RP2040_base": {
+    "note": "two RP2040 QFN-56 at 0.2/0.2 in a 0.4 mm row (an exact fit): 8 pads' escape pockets closed on the 0.1 mm lattice (no margin of zero), the rest crossing or closed ways"
+  },
+  "vd-rd__sbc_allwinner_a13__module": {
+    "note": "ddr-dm1 under the SoC; findings: a GND track in a keepout and its dangling end"
+  },
+  "CDFER__Business-Cards__WLED_Matrix": {
+    "note": "LDO1.2 (SOT-23) has no node; what walls it is not shown by the diagnostics"
+  }
+}
