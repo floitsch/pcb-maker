@@ -295,48 +295,25 @@ impl Router {
         }
         let emit_started = std::time::Instant::now();
         let mut status = self.statuses();
-        let (mut routes, mut stubs): (Vec<NetRoute>, Vec<Vec<usize>>) = (0..self.board.nets.len()
-            as NetId)
-            .map(|net| self.materialize(net))
-            .unzip();
-        // Stubs were only checked against fixed objects; drop any that comes
-        // too close to routed copper of another net, also by the rules
-        // beyond the classes (tuxkeychain: a 0.3 mm GND stub along a
-        // narrower pad, 0.104 mm from HPL's track and stub under a
-        // 0.127 mm rule between outer-layer tracks over classes of 0.1).
-        loop {
-            let mut offending: Vec<(usize, usize)> = Vec::new();
-            for violation in
-                crate::verify::verify_with_rules(&self.board, &routes, self.class_rules.as_deref())
-            {
-                let involved = violation
-                    .segment
-                    .map(|segment| (violation.net as usize, segment))
-                    .into_iter()
-                    .chain(
-                        violation
-                            .other_segment
-                            .map(|(net, segment)| (net as usize, segment)),
-                    );
-                for (net, segment) in involved {
-                    if stubs[net].contains(&segment) && !offending.contains(&(net, segment)) {
-                        offending.push((net, segment));
-                    }
-                }
-            }
-            if offending.is_empty() {
-                break;
-            }
-            offending.sort_by(|left, right| right.cmp(left));
-            for (net, segment) in offending {
-                routes[net].segments.remove(segment);
-                stubs[net].retain(|stub| *stub != segment);
-                for stub in &mut stubs[net] {
-                    if *stub > segment {
-                        *stub -= 1;
-                    }
-                }
-            }
+        let mut routes = Vec::with_capacity(self.board.nets.len());
+        let mut stubs = Vec::with_capacity(self.board.nets.len());
+        let mut escapes = Vec::with_capacity(self.board.nets.len());
+        for net in 0..self.board.nets.len() as NetId {
+            let (route, cosmetic, escape) = self.materialize_with_escapes(net);
+            routes.push(route);
+            stubs.push(cosmetic);
+            escapes.push(escape);
+        }
+        let necked = clear_stubs(
+            &self.board,
+            self.class_rules.as_deref(),
+            &mut routes,
+            &mut stubs,
+            &mut escapes,
+            &|net, layer| self.neck_width_on(self.board.nets[net].class, layer),
+        );
+        if necked > 0 && (self.config.verbose || std::env::var_os("PCB_ROUTER_DEBUG").is_some()) {
+            eprintln!("escape stubs: {necked} necked down off another net's copper");
         }
         // The emitted copper must join what the status says. A net routed
         // with tracks alone is checked as KiCad's connectivity sees it
@@ -575,4 +552,104 @@ impl Router {
         self.stamp(net);
         removed
     }
+}
+
+/// Clears what the emitted stubs crowd: they were checked against fixed
+/// copper only. A cosmetic pad-centre stub (`stubs`, per net its segment
+/// indices) that comes too close to routed copper of another net, also by
+/// the rules beyond the classes, is dropped (tuxkeychain: a 0.3 mm GND stub
+/// along a narrower pad, 0.104 mm from HPL's track and stub under a
+/// 0.127 mm rule between outer-layer tracks over classes of 0.1). An escape
+/// stub (`escapes`, per net per stub its segment indices) is the net's
+/// connection and stays, necked down to `neck_width(net, layer)`: two
+/// stubs off the lattice's lines meet only through their nearest nodes,
+/// which can lie at the clearance while the stubs do not (trial 7's Sisu:
+/// +3.3V and +1V1 left U7's 0.4 mm pitch pads by bent stubs at their
+/// class's 0.3 mm, 0.10 mm apart under its 0.15 mm, each stub's nodes
+/// 0.45 mm from the other stub). Of the two stubs of a finding one is
+/// necked, the other only if the finding stays. Returns the escape stubs
+/// necked.
+pub(super) fn clear_stubs(
+    board: &Board,
+    rules: Option<&crate::rules::ClassRules>,
+    routes: &mut [NetRoute],
+    stubs: &mut [Vec<usize>],
+    escapes: &mut [Vec<Vec<usize>>],
+    neck_width: &dyn Fn(usize, usize) -> f64,
+) -> usize {
+    let mut necked = 0;
+    loop {
+        let mut offending: Vec<(usize, usize)> = Vec::new();
+        let mut narrow: Vec<(usize, usize)> = Vec::new();
+        for violation in crate::verify::verify_with_rules(board, routes, rules) {
+            let involved: Vec<(usize, usize)> = violation
+                .segment
+                .map(|segment| (violation.net as usize, segment))
+                .into_iter()
+                .chain(
+                    violation
+                        .other_segment
+                        .map(|(net, segment)| (net as usize, segment)),
+                )
+                .collect();
+            let mut cosmetic = false;
+            for &(net, segment) in &involved {
+                if stubs[net].contains(&segment) {
+                    cosmetic = true;
+                    if !offending.contains(&(net, segment)) {
+                        offending.push((net, segment));
+                    }
+                }
+            }
+            if cosmetic {
+                continue;
+            }
+            // The escape stubs of the finding that a neck narrows.
+            let narrowable: Vec<(usize, usize)> = involved
+                .iter()
+                .filter_map(|&(net, segment)| {
+                    let stub = escapes[net]
+                        .iter()
+                        .position(|segments| segments.contains(&segment))?;
+                    escapes[net][stub]
+                        .iter()
+                        .any(|&index| {
+                            let piece = &routes[net].segments[index];
+                            neck_width(net, piece.layer) < piece.width - 1.0e-9
+                        })
+                        .then_some((net, stub))
+                })
+                .collect();
+            if narrowable.iter().any(|stub| narrow.contains(stub)) {
+                continue;
+            }
+            if let Some(&stub) = narrowable.first() {
+                narrow.push(stub);
+            }
+        }
+        if offending.is_empty() && narrow.is_empty() {
+            break;
+        }
+        for &(net, stub) in &narrow {
+            for &index in &escapes[net][stub] {
+                let piece = &mut routes[net].segments[index];
+                piece.width = piece.width.min(neck_width(net, piece.layer));
+            }
+            necked += 1;
+        }
+        offending.sort_by(|left, right| right.cmp(left));
+        for (net, segment) in offending {
+            routes[net].segments.remove(segment);
+            stubs[net].retain(|stub| *stub != segment);
+            for index in stubs[net]
+                .iter_mut()
+                .chain(escapes[net].iter_mut().flatten())
+            {
+                if *index > segment {
+                    *index -= 1;
+                }
+            }
+        }
+    }
+    necked
 }

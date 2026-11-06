@@ -22,11 +22,23 @@ impl Router {
 
     /// The copper of `net` and the indices of its cosmetic pad-centre stubs.
     pub(super) fn materialize(&self, net: NetId) -> (NetRoute, Vec<usize>) {
+        let (route, stubs, _) = self.materialize_with_escapes(net);
+        (route, stubs)
+    }
+
+    /// `materialize`, and per escape stub the branch ends use the indices
+    /// of its segments (`finish` necks one down where it comes too close
+    /// to another net's copper: `neck_crowded_escapes`).
+    pub(super) fn materialize_with_escapes(
+        &self,
+        net: NetId,
+    ) -> (NetRoute, Vec<usize>, Vec<Vec<usize>>) {
         let description = &self.board.nets[net as usize];
         let rules = self.board.classes[description.class];
         let state = &self.nets[net as usize];
         let mut route = NetRoute::default();
         let mut stubs = Vec::new();
+        let mut escapes: Vec<Vec<usize>> = Vec::new();
         let junctions = junction_nodes(&state.branches);
         for branch in &state.branches {
             let first = branch.nodes[0];
@@ -63,6 +75,9 @@ impl Router {
                     }
                 }
                 if let Some((_, width, polyline)) = state.escapes.get(&node) {
+                    escapes.push(
+                        (route.segments.len()..route.segments.len() + polyline.len() - 1).collect(),
+                    );
                     for pair in polyline.windows(2) {
                         route.segments.push(Segment {
                             layer: node.layer as usize,
@@ -168,7 +183,7 @@ impl Router {
                 width: *width,
             });
         }
-        (route, stubs)
+        (route, stubs, escapes)
     }
 
     pub(super) fn emit_run(

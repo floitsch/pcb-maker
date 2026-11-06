@@ -5962,3 +5962,97 @@ fn a_parked_router_unparks_as_it_was() {
     assert_eq!(restored_state(&router), restored_state(&whole));
     assert_eq!(router.hot_pours, whole.hot_pours);
 }
+
+/// Two bent escape stubs out of neighbouring pads of a 0.4 mm pitch row
+/// (0.8 x 0.2 mm), at their class's 0.3 mm under its 0.15 mm clearance:
+/// 0.10 mm apart (trial 7's Sisu, U7's +3.3V and +1V1).
+fn crowded_escapes() -> (Board, Vec<NetRoute>, Vec<Vec<Vec<usize>>>) {
+    let mut board = board(
+        1,
+        vec![
+            copper(rect([2.0, 5.0], [0.4, 0.1]), 0, "U7.50"),
+            copper(rect([2.0, 5.4], [0.4, 0.1]), 1, "U7.51"),
+        ],
+        vec![
+            Net {
+                name: "+3.3V".into(),
+                class: 0,
+                terminals: vec![terminal(0, [2.0, 5.0], "U7.50")],
+            },
+            Net {
+                name: "+1V1".into(),
+                class: 0,
+                terminals: vec![terminal(1, [2.0, 5.4], "U7.51")],
+            },
+        ],
+        Vec::new(),
+        Vec::new(),
+    );
+    board.classes[0].trace_width = 0.3;
+    board.classes[0].clearance = 0.15;
+    board.neck_width = 0.1;
+    let segment = |start: [f64; 2], end: [f64; 2]| Segment {
+        layer: 0,
+        start,
+        end,
+        width: 0.3,
+    };
+    let routes = vec![
+        NetRoute {
+            segments: vec![
+                segment([2.0, 5.0], [2.65, 5.0]),
+                segment([2.65, 5.0], [2.725, 4.7]),
+                segment([2.725, 4.7], [4.0, 4.7]),
+            ],
+            vias: Vec::new(),
+        },
+        NetRoute {
+            segments: vec![
+                segment([2.0, 5.4], [2.65, 5.4]),
+                segment([2.65, 5.4], [2.725, 5.7]),
+                segment([2.725, 5.7], [4.0, 5.7]),
+            ],
+            vias: Vec::new(),
+        },
+    ];
+    (board, routes, vec![vec![vec![0, 1]], vec![vec![0, 1]]])
+}
+
+#[test]
+fn an_escape_stub_crowding_another_nets_stub_is_necked_down() {
+    let (board, mut routes, mut escapes) = crowded_escapes();
+    assert!(!crate::verify::verify_with_rules(&board, &routes, None).is_empty());
+    let mut stubs = vec![Vec::new(), Vec::new()];
+    let necked = super::finish::clear_stubs(
+        &board,
+        None,
+        &mut routes,
+        &mut stubs,
+        &mut escapes,
+        &|_, _| 0.1,
+    );
+    assert_eq!(necked, 1);
+    assert!(crate::verify::verify_with_rules(&board, &routes, None).is_empty());
+    // One stub necked, the other and both lattice runs at the class width.
+    let widths: Vec<Vec<f64>> = routes
+        .iter()
+        .map(|route| route.segments.iter().map(|segment| segment.width).collect())
+        .collect();
+    assert_eq!(widths, vec![vec![0.1, 0.1, 0.3], vec![0.3, 0.3, 0.3]]);
+}
+
+#[test]
+fn an_escape_stub_already_at_its_neck_is_kept_as_it_is() {
+    let (board, mut routes, mut escapes) = crowded_escapes();
+    let necked = super::finish::clear_stubs(
+        &board,
+        None,
+        &mut routes,
+        &mut [Vec::new(), Vec::new()],
+        &mut escapes,
+        &|_, _| 0.3,
+    );
+    assert_eq!(necked, 0);
+    assert!(routes.iter().all(|route| route.segments.len() == 3
+        && route.segments.iter().all(|segment| segment.width == 0.3)));
+}
