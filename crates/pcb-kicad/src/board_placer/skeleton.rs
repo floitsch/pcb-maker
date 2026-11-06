@@ -276,6 +276,14 @@ impl KiCadSkeletonRaceReport {
                  of the kept seed's skeleton are 0"
             );
         }
+        if self.absent == 0 && !self.fallback {
+            return format!(
+                "ran without a skeleton: none of the {} passives was free (a constraint the user \
+                 wrote names each, or it is fixed), so the kept seed placed the whole board at \
+                 once (level {}) with the race's global settings; {seeds_line}",
+                self.passives, self.level
+            );
+        }
         let kept = if self.fallback_kept {
             format!(
                 "the kept seed's skeleton ({} parts, level {}) or its passives left parts \
@@ -508,6 +516,65 @@ mod tests {
     }
 
     #[test]
+    fn a_board_in_pieces_still_has_a_skeleton() {
+        // The board beside an empty second piece (zpn_devboard's two
+        // pieces), J1 locked on the first on the rail and ground: every
+        // movable part joins J1 by its nets and the lowering holds it on
+        // J1's piece (`keep_on_pieces`), a region the user did not write.
+        // The passives are still left out of the skeleton.
+        let j1 = r#"(footprint "Connector_PinHeader:PinHeader_1x02" (layer "F.Cu") (at 3 15) (locked yes) (property "Reference" "J1") (attr through_hole)
+                (fp_rect (start -1.5 -2.5) (end 1.5 2.5) (layer "F.CrtYd"))
+                (pad "1" smd rect (at 0 -1.27) (size 1.7 1.7) (layers "F.Cu") (net 9 "+3V3"))
+                (pad "2" smd rect (at 0 1.27) (size 1.7 1.7) (layers "F.Cu") (net 10 "GND")))"#;
+        let pcb = board().replacen(
+            r#"(gr_rect (start 0 0) (end 40 30) (layer "Edge.Cuts"))"#,
+            &format!(
+                r#"(gr_rect (start 0 0) (end 40 30) (layer "Edge.Cuts"))
+                   (gr_rect (start 50 0) (end 70 30) (layer "Edge.Cuts")) {j1}"#
+            ),
+            1,
+        );
+        let lowered =
+            lower_placement(&parse(&pcb).unwrap(), &KiCadBoardPlacerConfig::default()).unwrap();
+        let constraints = &lowered.problem.constraints;
+        assert_eq!(lowered.problem.pieces.len(), 2);
+        assert_eq!(constraints.regions.len(), 8);
+        assert_eq!(constraints.automatic_regions.len(), 8);
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!(
+            "pcb-maker-skeleton-pieces-{}-{nonce}",
+            std::process::id()
+        ));
+        let source = root.join("source");
+        fs::create_dir_all(&source).unwrap();
+        fs::write(source.join("board.kicad_pcb"), &pcb).unwrap();
+        let config = KiCadBoardPlacerConfig {
+            placement_seeds: 2,
+            skeleton_race: Some(KiCadSkeletonRace::default()),
+            ..KiCadBoardPlacerConfig::default()
+        };
+        let result = place_kicad_board(&source, "board", &root.join("on"), &config).unwrap();
+        let _ = fs::remove_dir_all(&root);
+        assert!(result.unplaced.is_empty() && result.illegal.is_empty());
+        let report = result.skeleton_race.expect("the race's report");
+        assert_eq!((report.passives, report.absent), (6, 6));
+        assert_eq!((report.skeleton_parts, report.held), (2, 2));
+        // The chips own the passives' room: a piece's region is no reason
+        // to keep a body as it is.
+        assert_eq!(report.grown, 2);
+        assert!(
+            report
+                .summary
+                .starts_with("ran: the kept seed placed its skeleton of 2 parts first"),
+            "{}",
+            report.summary
+        );
+    }
+
+    #[test]
     fn the_race_places_by_skeleton_from_its_least_work_on() {
         assert!(budget_ok(None, SKELETON_MIN_WORK_SECONDS));
         assert!(budget_ok(Some(600.0), SKELETON_MIN_WORK_SECONDS));
@@ -631,6 +698,27 @@ mod tests {
                 .summary
                 .contains("so it was placed plain (fallback_kept)")
         );
+        // No passive free of the user's constraints: no skeleton, said so.
+        let whole = KiCadSkeletonRaceReport {
+            absent: 0,
+            skeleton_parts: 0,
+            held: 0,
+            skeleton_level: 0,
+            level: 2,
+            seeds_fallback: 0,
+            ..ran.clone()
+        }
+        .with_summary(12);
+        assert!(
+            whole.summary.starts_with(
+                "ran without a skeleton: none of the 131 passives was free (a constraint the \
+                 user wrote names each, or it is fixed), so the kept seed placed the whole \
+                 board at once (level 2)"
+            ),
+            "{}",
+            whole.summary
+        );
+        assert!(!whole.summary.contains("skeleton of 0 parts"));
         // The serialized report carries it.
         let json = serde_json::to_value(&ran).unwrap();
         assert_eq!(json["summary"], ran.summary.as_str());

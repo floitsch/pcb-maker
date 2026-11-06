@@ -44,6 +44,11 @@ impl Default for Settings {
     }
 }
 
+/// The loosest relaxation level the passives' placement starts at
+/// (`relaxation_levels`' third: the many-pin parts' halos halved, none on
+/// the others, the passives among them).
+pub const PASSIVES_FIRST_LEVEL: usize = 2;
+
 /// What the race over skeletons did for one seed.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Report {
@@ -99,8 +104,12 @@ pub fn absent_parts(problem: &Problem, passive: &[bool]) -> Vec<bool> {
     for (part, _, _) in &constraints.edges {
         name(*part);
     }
+    // Not a region the tool gave (a piece of the outline): the passive is
+    // held on its piece in the passives' placement as by the outline.
     for (part, _) in &constraints.regions {
-        name(*part);
+        if !constraints.automatic_regions.contains(part) {
+            name(*part);
+        }
     }
     for (part, _, _) in &constraints.overhangs {
         name(*part);
@@ -209,7 +218,8 @@ pub fn joined_nets(
 /// Whether a skeleton part's body may grow by its passives' room: a
 /// movable part with one plain body (not hollow, with a courtyard of one
 /// shape or none, not a cutout) that no edge, region, overhang or row holds to its
-/// exact body.
+/// exact body (a region the tool gave, the outline's piece, holds it as
+/// the outline does: `Constraints::automatic_regions`).
 fn growable(problem: &Problem, index: usize) -> bool {
     let component = &problem.components[index];
     let constraints = &problem.constraints;
@@ -219,7 +229,8 @@ fn growable(problem: &Problem, index: usize) -> bool {
         && component.hollow.is_empty()
         && component.courtyards.len() <= 1
         && !constraints.edges.iter().any(|(part, _, _)| *part == index)
-        && !constraints.regions.iter().any(|(part, _)| *part == index)
+        && (constraints.automatic_regions.contains(&index)
+            || !constraints.regions.iter().any(|(part, _)| *part == index))
         && !constraints
             .overhangs
             .iter()
@@ -494,7 +505,9 @@ pub fn skeleton_problem(
                 "courtyards"
             } else if constraints.edges.iter().any(|(part, _, _)| *part == index) {
                 "edge"
-            } else if constraints.regions.iter().any(|(part, _)| *part == index) {
+            } else if !constraints.automatic_regions.contains(&index)
+                && constraints.regions.iter().any(|(part, _)| *part == index)
+            {
                 "region"
             } else if constraints
                 .overhangs
@@ -544,6 +557,12 @@ pub fn skeleton_problem(
         skeleton.constraints.relations.push(relation);
     }
     skeleton.constraints.automatic = kept_automatic;
+    // The absent parts' regions go too (only the tool's can name one: a
+    // user's keeps the part in the skeleton).
+    skeleton
+        .constraints
+        .regions
+        .retain(|(part, _)| !is_absent(*part));
     skeleton
         .constraints
         .kept
@@ -661,8 +680,16 @@ pub fn place_skeleton(
     }
     let mut second = config.clone();
     second.work_limit = left(skeleton.work);
-    // From the skeleton's level on: the held skeleton is legal there.
-    second.first_level = skeleton.level;
+    // From the skeleton's level on (the held skeleton is legal there), and
+    // no looser than the first level without the small parts' halos
+    // (`PASSIVES_FIRST_LEVEL`): at full halos the passives found no room
+    // around a skeleton grown by their tight bodies (vaio_re 26 to 36
+    // without room, jetson 86 to 109), and `skip_to_tight` sent them to
+    // the tight levels with the seed's whole work; the plain placement
+    // seats both boards at level 2 (docs/placer.md, "The first night
+    // (2026-11-06)"). A skeleton that skipped past it (protoesp's gain)
+    // keeps its level.
+    second.first_level = skeleton.level.max(PASSIVES_FIRST_LEVEL);
     let passives = place(&holding, &second);
     report.passive_work = passives.work;
     if std::env::var_os("PCB_PLACER_DEBUG").is_some() {
@@ -928,6 +955,54 @@ mod tests {
             .push((2, [0.0, 0.0, 40.0, 30.0]));
         let absent = absent_parts(&problem, &passive);
         assert!(!absent[2] && absent[3] && absent[6] && absent[7]);
+        // A region the tool gave (the outline's piece) does not: R2 stays
+        // absent, and its owner U1 still grows.
+        problem
+            .constraints
+            .regions
+            .push((3, [0.0, 0.0, 40.0, 30.0]));
+        problem
+            .constraints
+            .regions
+            .push((0, [0.0, 0.0, 40.0, 30.0]));
+        problem.constraints.automatic_regions.extend([0, 3]);
+        let absent = absent_parts(&problem, &passive);
+        assert!(!absent[2] && absent[3]);
+        assert!(growable(&problem, 0));
+        problem.constraints.automatic_regions.clear();
+        assert!(!absent_parts(&problem, &passive)[3]);
+        assert!(!growable(&problem, 0));
+    }
+
+    #[test]
+    fn the_passives_start_no_looser_than_without_small_halos() {
+        // On 40 x 30 mm the skeleton seats at full halos (level 0); the
+        // passives, with halos of their own, start at the first level
+        // without the small parts' halos, not at the skeleton's (vaio_re
+        // and jetson: the passives without room at full halos skipped to
+        // the tight levels).
+        let (mut problem, passive) = board();
+        for (index, component) in problem.components.iter_mut().enumerate() {
+            if passive[index] {
+                component.halo = 1.5;
+            }
+        }
+        let config = Config::new();
+        let placement = place_skeleton(&problem, &config, &passive, &[], &Settings::default());
+        let report = placement.skeleton.clone().expect("a report");
+        assert_eq!(report.skeleton_level, 0);
+        assert!(!report.fallback, "{report:?}");
+        assert_eq!(report.level, PASSIVES_FIRST_LEVEL);
+        assert_eq!(placement.relaxation.small_halo_scale, 0.0);
+        assert!(placement.unplaced.is_empty() && placement.illegal.is_empty());
+        // The level is the one without the small parts' halos.
+        let shapes = crate::level_problems(&problem, &config);
+        assert!(
+            shapes[..PASSIVES_FIRST_LEVEL]
+                .iter()
+                .all(|(shape, _)| shape.small_halo_scale > 0.0)
+        );
+        assert_eq!(shapes[PASSIVES_FIRST_LEVEL].0.small_halo_scale, 0.0);
     }
 
     #[test]

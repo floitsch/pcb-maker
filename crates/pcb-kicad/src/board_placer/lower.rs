@@ -353,6 +353,7 @@ pub(super) fn keep_on_pieces(problem: &mut core::Problem, footprints: usize) {
         {
             let piece = problem.pieces[*pieces.iter().next().expect("one piece")];
             problem.constraints.regions.push((part, piece));
+            problem.constraints.automatic_regions.insert(part);
         }
     }
 }

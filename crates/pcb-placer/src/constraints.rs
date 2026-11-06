@@ -189,6 +189,15 @@ pub struct Constraints {
     pub edges: Vec<(usize, Edge, f64)>,
     /// The body lies inside this box: [min x, min y, max x, max y].
     pub regions: Vec<(usize, [f64; 4])>,
+    /// The parts whose `regions` the tool gave them, not the user: on a
+    /// board whose outline is in pieces, the piece the fixed parts on its
+    /// nets sit on (the lowering's `keep_on_pieces`). The race over
+    /// skeletons treats such a region as the outline: it neither keeps a
+    /// passive in the skeleton nor stops a part's body from growing
+    /// (`skeleton::absent_parts`; zpn_devboard's two pieces gave every
+    /// part a region, and no skeleton ran, docs/placer.md "The first night
+    /// (2026-11-06)").
+    pub automatic_regions: BTreeSet<usize>,
     /// The part reaches beyond this board edge with the given box of its
     /// own frame ([min x, min y, max x, max y]; an antenna, a connector's
     /// mouth): that box lies outside the board, flush with the edge, and the

@@ -15,7 +15,8 @@ the same units as full layouts.
 One run.py per (seed, side, board) at --jobs 1 --threads 2 (a layout is
 the same at any job count), at most `--slots` in flight, the largest
 expected layouts first, each with --expected-gb from the board's measured
-layout peak (benchmarks/agent-tasks/estimates.json). Units with a `.done`
+layout peak (`--estimates`, default benchmarks/agent-tasks/estimates.json;
+the nightly's sidecar build/nightly/estimates.json is the freshest). Units with a `.done`
 file are skipped (restartable). `--on-env KEY=VALUE` (repeatable) sets an
 environment variable for the on side's run.py and its binary only (a
 switch read from the environment, not a settings key); the off side runs
@@ -42,8 +43,8 @@ DENSE = ["thpoll83__PolyKybd__poly_kybd_split72_left", "stonedDiscord__MegaDrive
 SEEDS = (1, 101, 201, 301, 401)
 
 
-def estimate(board):
-    entry = json.loads(ESTIMATES.read_text())["boards"][board]["layout"]
+def estimate(board, estimates=ESTIMATES):
+    entry = json.loads(Path(estimates).read_text())["boards"][board]["layout"]
     return round(entry["peak_rss_mb"] / 1024 + 0.05, 1), entry["seconds"]
 
 
@@ -73,15 +74,17 @@ def units(arguments):
     seeds = [int(seed) for seed in arguments.seeds.split(",")] if arguments.seeds else SEEDS
     boards = [b for b in DENSE if not arguments.boards or b.split("__")[-1] in arguments.boards.split(",")]
     for seed in seeds:
-        for board in sorted(boards, key=lambda b: -estimate(b)[1]):
+        for board in sorted(boards, key=lambda b: -estimate(b, arguments.estimates)[1]):
             for side in arguments.sides.split(","):
                 placer = {"seed": seed, **(on if side == "on" else {})}
                 name = f"dense-s{seed}-{side}-{board.split('__')[-1]}"
                 binary = arguments.on_binary if side == "on" else arguments.off_binary
                 command = [sys.executable, str(ROOT / "benchmarks/agent-tasks/run.py"), str(Path(arguments.out) / name),
                            "--tasks", str(TASKS), "--only", board, "--binary", binary, "--jobs", "1",
-                           "--threads", "2", "--expected-gb", str(estimate(board)[0]),
-                           "--placer", json.dumps(placer)]
+                           "--threads", "2", "--expected-gb", str(estimate(board, arguments.estimates)[0]),
+                           "--estimates", str(arguments.estimates), "--placer", json.dumps(placer)]
+                if arguments.reuse:
+                    command += ["--reuse", arguments.reuse]
                 if not arguments.full:
                     command += ["--layout", json.dumps({"stop_after_first_route": True})]
                 result.append((name, command, extra if side == "on" else dict.fromkeys(extra)))
@@ -105,6 +108,11 @@ def main():
     parser.add_argument("--slots", type=int, default=5)
     parser.add_argument("--slots-file", help="a file holding the slots, read again every 20 s (to share the "
                         "machine's layout limit with other runs)")
+    parser.add_argument("--estimates", default=str(ESTIMATES),
+                        help="the per-board estimates for --expected-gb and the ledger (default %(default)s; "
+                             "the nightly's sidecar is build/nightly/estimates.json)")
+    parser.add_argument("--reuse", help="run.py's --reuse cache directory (one binary on both sides: rows whose "
+                        "placement is the same reuse the earlier layout)")
     parser.add_argument("--dry-run", action="store_true")
     arguments = parser.parse_args()
     out = Path(arguments.out)
