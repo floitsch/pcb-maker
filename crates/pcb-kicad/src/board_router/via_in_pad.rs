@@ -238,6 +238,8 @@ pub(crate) struct PlannedVia {
     /// The pad's label (`U106.B2`), as the lowering names it.
     pub label: String,
     pub at: [f64; 2],
+    /// The pad's centre (the via's place but in a large pad: `sites`).
+    pub pad_at: [f64; 2],
     pub diameter: f64,
     pub drill: f64,
 }
@@ -645,10 +647,19 @@ pub(crate) fn far_side_vias(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Vec<
         let own = |other: usize| pads[other].footprint == footprint;
         let mut placed: Vec<([f64; 2], Option<String>, f64, f64)> = Vec::new();
         for &index in &enclosed {
-            if let Some(&[diameter, drill]) = sizes
-                .iter()
-                .find(|size| fits(**size, &pads, index, &[], &placed, config, &own))
-            {
+            if let Some(&[diameter, drill]) = sizes.iter().find(|size| {
+                fits(
+                    **size,
+                    &pads,
+                    index,
+                    pads[index].center,
+                    &[],
+                    &placed,
+                    &[],
+                    config,
+                    &own,
+                )
+            }) {
                 placed.push((pads[index].center, pads[index].net.clone(), diameter, drill));
                 vias.push(FarSideVia {
                     footprint,
@@ -665,6 +676,7 @@ pub(crate) fn far_side_vias(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Vec<
 fn plan_of(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Result<ViaInPadPlan, String> {
     let (footprints, pads) = board_pads(pcb, config)?;
     let vias = board_vias(pcb);
+    let keepouts = via_keepouts(pcb);
     let mut plan = ViaInPadPlan::default();
     for (footprint, (reference, name)) in footprints.iter().enumerate() {
         let enclosed = enclosed_of(config, &pads, footprint);
@@ -716,17 +728,35 @@ fn plan_of(pcb: &Expr, config: &KiCadBoardRouterConfig) -> Result<ViaInPadPlan, 
             let mut placed: Vec<([f64; 2], Option<String>, f64, f64)> = Vec::new();
             let mut refused = Vec::new();
             for &index in &open {
-                match sizes
-                    .iter()
-                    .find(|size| fits(**size, &pads, index, &vias, &placed, config, &|_| true))
-                {
-                    Some(&[diameter, drill]) => {
-                        placed.push((pads[index].center, pads[index].net.clone(), diameter, drill));
+                // The pad's centre first, then (a large pad) the places
+                // off it, nearest first.
+                let found = sites(&pads[index]).into_iter().find_map(|at| {
+                    sizes
+                        .iter()
+                        .find(|size| {
+                            fits(
+                                **size,
+                                &pads,
+                                index,
+                                at,
+                                &vias,
+                                &placed,
+                                &keepouts,
+                                config,
+                                &|_| true,
+                            )
+                        })
+                        .map(|size| (at, *size))
+                });
+                match found {
+                    Some((at, [diameter, drill])) => {
+                        placed.push((at, pads[index].net.clone(), diameter, drill));
                         entry.via_mm.get_or_insert([diameter, drill]);
                         entry.pads.push(pad_text(index));
                         plan.vias.push(PlannedVia {
                             label: format!("{reference}.{}", pads[index].number),
-                            at: pads[index].center,
+                            at,
+                            pad_at: pads[index].center,
                             diameter,
                             drill,
                         });
@@ -789,20 +819,93 @@ fn size_candidates(
     sizes
 }
 
-/// Whether a via of `size` at the centre of pad `index` keeps every rule:
+/// Where a via may go in `pad`: its centre, and in a large pad (2 mm
+/// across or more, as the vias-in-pads count's "small" leaves out) the
+/// points of a 0.05 mm raster on it, nearest the centre first. Sisu's dome
+/// switches hold the designer's vias 0.9 to 1.8 mm off their 4 mm pads'
+/// centres, clear of the LEDs on the back and of the modem's keepouts.
+fn sites(pad: &BoardPad) -> Vec<[f64; 2]> {
+    const STEP: f64 = 0.05;
+    let mut sites = vec![pad.center];
+    let bounds = pad.shape.aabb();
+    if (bounds.maximum[0] - bounds.minimum[0]).max(bounds.maximum[1] - bounds.minimum[1]) < 2.0 {
+        return sites;
+    }
+    let reach = [
+        ((bounds.maximum[0] - bounds.minimum[0]) / 2.0 / STEP).ceil() as i64 + 1,
+        ((bounds.maximum[1] - bounds.minimum[1]) / 2.0 / STEP).ceil() as i64 + 1,
+    ];
+    let mut off: Vec<(f64, [f64; 2])> = Vec::new();
+    for y in -reach[1]..=reach[1] {
+        for x in -reach[0]..=reach[0] {
+            if x == 0 && y == 0 {
+                continue;
+            }
+            let at = [
+                pad.center[0] + x as f64 * STEP,
+                pad.center[1] + y as f64 * STEP,
+            ];
+            if pad.shape.contains(at) {
+                off.push((distance(at, pad.center), at));
+            }
+        }
+    }
+    off.sort_by(|a, b| {
+        a.0.total_cmp(&b.0)
+            .then(a.1[0].total_cmp(&b.1[0]))
+            .then(a.1[1].total_cmp(&b.1[1]))
+    });
+    sites.extend(off.into_iter().map(|(_, at)| at));
+    sites
+}
+
+/// The board's rule areas that keep vias out (`(keepout (vias
+/// not_allowed))`, the board's and the footprints', whose zones the file
+/// holds in board coordinates): their outlines. Sisu's U11 (an LGA modem)
+/// keeps vias out of strips under it; a via in SW9's pad there was KiCad's
+/// items_not_allowed.
+fn via_keepouts(pcb: &Expr) -> Vec<core::Shape> {
+    let zones = pcb.children().iter().flat_map(|item| {
+        if item.head() == Some("footprint") {
+            item.children()
+                .iter()
+                .filter(|child| child.head() == Some("zone"))
+                .collect::<Vec<_>>()
+        } else if item.head() == Some("zone") {
+            vec![item]
+        } else {
+            Vec::new()
+        }
+    });
+    zones
+        .filter(|zone| {
+            zone.child("keepout")
+                .is_some_and(|keepout| form_atom(keepout, "vias", 1) == Some("not_allowed"))
+        })
+        .filter_map(|zone| {
+            let points = outline::pts_points(zone.child("polygon")?).ok()?;
+            (points.len() >= 3).then_some(core::Shape::Polygon { points })
+        })
+        .collect()
+}
+
+/// Whether a via of `size` at `at` in pad `index` keeps every rule:
 /// the drill inside the pad's copper; its copper the larger clearance of
 /// both from every other net's pad on any layer (a through via meets the
 /// back's parts too), from the board's other vias and from the vias placed
 /// before it (`placed`: centre, net, diameter, drill); its drill the hole
 /// clearance from that copper and the hole-to-hole spacing from every hole.
-/// Only the pads `consider` names count (all of them for the plan).
+/// Only the pads `consider` names count (all of them for the plan). Its
+/// copper stays out of `keepouts` (rule areas without vias).
 #[allow(clippy::too_many_arguments)]
 fn fits(
     [diameter, drill]: [f64; 2],
     pads: &[BoardPad],
     index: usize,
+    center: [f64; 2],
     vias: &[([f64; 2], f64, f64)],
     placed: &[([f64; 2], Option<String>, f64, f64)],
+    keepouts: &[core::Shape],
     config: &KiCadBoardRouterConfig,
     consider: &dyn Fn(usize) -> bool,
 ) -> bool {
@@ -810,8 +913,13 @@ fn fits(
     let radius = diameter / 2.0;
     let hole = drill / 2.0;
     let pad = &pads[index];
-    let center = pad.center;
     if !pad.shape.contains_disc(center, hole) {
+        return false;
+    }
+    if keepouts
+        .iter()
+        .any(|keepout| keepout.distance_to_point(center) < radius + SLACK)
+    {
         return false;
     }
     // Far enough that no rule reaches.
@@ -1447,6 +1555,41 @@ mod tests {
         assert!(closed.vias.is_empty());
         assert_eq!(closed.report.closed.len(), 2);
         assert_eq!(closed.report.closed[0].pads, ["1 (COL)"]);
+    }
+
+    #[test]
+    fn a_via_in_a_large_pad_moves_off_its_centre_for_the_back_and_keepouts() {
+        // Sisu's switches: an LED on the back under SW3's centre, and a
+        // keepout without vias over SW4's centre (U11's strips): the via
+        // goes off the centre, the nearest place that keeps both.
+        let pcb = parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+                 (gr_rect (start 0 0) (end 30 10) (layer "Edge.Cuts"))
+                 {} {} {}
+                 (footprint "LED" (layer "B.Cu") (at 15 5) (property "Reference" "D1")
+                   (pad "1" smd rect (at 0 0) (size 1 1) (layers "B.Cu") (net "LED"))
+                   (pad "2" smd rect (at 0 3) (size 1 1) (layers "B.Cu") (net "LED")))
+                 (zone (layers "F.Cu" "B.Cu") (keepout (tracks allowed) (vias not_allowed) (pads allowed) (copperpour allowed) (footprints allowed))
+                   (polygon (pts (xy 24 4) (xy 26 4) (xy 26 6) (xy 24 6))))
+                 (via (at 5 5) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net "COL")))"#,
+            dome("SW2", [5.0, 5.0]),
+            dome("SW3", [15.0, 5.0]),
+            dome("SW4", [25.0, 5.0])
+        ))
+        .unwrap();
+        let plan = plan(&pcb, &config(None, &pcb));
+        assert_eq!(planned(&plan), ["SW3.1", "SW4.1"]);
+        for via in &plan.vias {
+            let off = distance(via.at, via.pad_at);
+            assert!(off > 0.0 && off < 2.0 - 0.15, "{via:?}");
+        }
+        // Clear of the LED's pad (the via's radius and the 0.1 mm
+        // clearance) and of the keepout (its radius).
+        let led = core::Shape::rectangle([15.0, 5.0], [0.5, 0.5], 0.0);
+        let radius = |via: &PlannedVia| via.diameter / 2.0;
+        assert!(led.distance_to_point(plan.vias[0].at) >= radius(&plan.vias[0]) + 0.1 - 1.0e-6);
+        let keepout = core::Shape::rectangle([25.0, 5.0], [1.0, 1.0], 0.0);
+        assert!(keepout.distance_to_point(plan.vias[1].at) >= radius(&plan.vias[1]) - 1.0e-6);
     }
 
     #[test]

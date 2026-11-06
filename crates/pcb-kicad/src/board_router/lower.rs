@@ -977,8 +977,8 @@ fn lower_board(
                         .get(&label)
                         .and_then(|vias| {
                             vias.iter().find(|via| {
-                                (via.at[0] - lowered.center[0]).abs() < 1.0e-6
-                                    && (via.at[1] - lowered.center[1]).abs() < 1.0e-6
+                                (via.pad_at[0] - lowered.center[0]).abs() < 1.0e-6
+                                    && (via.pad_at[1] - lowered.center[1]).abs() < 1.0e-6
                             })
                         })
                         .filter(|_| net.is_some());
