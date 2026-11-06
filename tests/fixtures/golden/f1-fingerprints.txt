@@ -1,8 +1,9 @@
 fingerprint after bend round: a31a2f87b485691b
 fingerprint after clean-up: a31a2f87b485691b
+fingerprint after compaction: 324759db0eb353be
 fingerprint after straightening: ff07d7dd343c694e
 fingerprint after thermal spokes: a31a2f87b485691b
 fingerprint after via reduction: a31a2f87b485691b
 fingerprint before resolve: d12fe72ca1c1c3b6
-fingerprint before stitching +5V: ff07d7dd343c694e, 1 pieces, main 6, spoke islands []
-fingerprint before stitching GND: ff07d7dd343c694e, 5 pieces, main 14, spoke islands []
+fingerprint before stitching +5V: 324759db0eb353be, 1 pieces, main 6, spoke islands []
+fingerprint before stitching GND: 324759db0eb353be, 5 pieces, main 14, spoke islands []
