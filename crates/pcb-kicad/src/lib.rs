@@ -123,7 +123,8 @@ mod key_matrix;
 pub use key_matrix::{KiCadStarterHalf, KiCadStarterReport};
 mod netlist_import;
 pub use class_view::{
-    KiCadClassLayer, KiCadClassLayers, KiCadClassRow, note_designer_class_layers,
+    KiCadClassLayer, KiCadClassLayers, KiCadClassRow, KiCadControlledImpedance,
+    note_designer_class_layers,
 };
 pub use constraints_template::constraints_template;
 pub use describe::{KiCadBoardDescription, KiCadSwapCandidate, describe_kicad_board};

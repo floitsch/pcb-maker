@@ -175,6 +175,146 @@ pub struct KiCadFabRelease {
     pub skipped: Vec<String>,
     /// The first findings that blocked or were allowed, one line each.
     pub findings: Vec<String>,
+    /// The board's layer stack as its file gives it (Board Setup's
+    /// Physical Stackup, which the job file carries too): the board's
+    /// thickness, its copper finish and per layer its type, thickness,
+    /// material and dielectric constant. Absent where the board states
+    /// no stackup.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stackup: Option<KiCadFabStackup>,
+    /// What the fab's impedance control is for: the classes that look
+    /// like a controlled impedance (widths per layer from the custom
+    /// rules, or a class narrower than Default) and the custom rules'
+    /// track geometry on some layers only, with the action to order it.
+    /// Absent where nothing asks for it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub controlled_impedance: Option<crate::KiCadControlledImpedance>,
+    /// The polarised parts the assembler places (diodes, LEDs,
+    /// transistors, ICs, polarised capacitors; by reference and footprint
+    /// name): the parts whose rotation to check in the fab's placement
+    /// preview. Empty before the placement file is written.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub polarised_parts: Vec<String>,
+}
+
+/// A board's layer stack (`KiCadFabRelease::stackup`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct KiCadFabStackup {
+    /// The board's thickness (`general`'s), mm.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thickness_mm: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub copper_finish: Option<String>,
+    pub layers: Vec<KiCadFabStackupLayer>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct KiCadFabStackupLayer {
+    pub name: String,
+    /// KiCad's type: `copper`, `core`, `prepreg`, `Top Solder Mask`, ...
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thickness_mm: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub material: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub epsilon_r: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub loss_tangent: Option<f64>,
+}
+
+/// The stackup of `pcb` (`setup`'s `stackup`), `None` without one.
+pub(crate) fn board_stackup(pcb: &Expr) -> Option<KiCadFabStackup> {
+    let stackup = pcb.child("setup")?.child("stackup")?;
+    let number =
+        |item: &Expr, key: &str| form_atom(item, key, 1).and_then(|value| value.parse().ok());
+    let layers: Vec<KiCadFabStackupLayer> = stackup
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("layer"))
+        .map(|layer| KiCadFabStackupLayer {
+            name: layer
+                .children()
+                .get(1)
+                .and_then(Expr::atom)
+                .unwrap_or("")
+                .trim_matches('"')
+                .to_string(),
+            kind: form_atom(layer, "type", 1)
+                .unwrap_or("")
+                .trim_matches('"')
+                .to_string(),
+            thickness_mm: number(layer, "thickness"),
+            material: form_atom(layer, "material", 1)
+                .map(|value| value.trim_matches('"').to_string()),
+            epsilon_r: number(layer, "epsilon_r"),
+            loss_tangent: number(layer, "loss_tangent"),
+        })
+        .collect();
+    if layers.is_empty() {
+        return None;
+    }
+    Some(KiCadFabStackup {
+        thickness_mm: pcb
+            .child("general")
+            .and_then(|general| number(general, "thickness")),
+        copper_finish: form_atom(stackup, "copper_finish", 1)
+            .map(|value| value.trim_matches('"').to_string()),
+        layers,
+    })
+}
+
+/// Reference prefixes of polarised parts: diodes, LEDs, transistors,
+/// ICs.
+const POLARISED_PREFIXES: [&str; 8] = ["D", "LED", "LD", "CR", "ZD", "Q", "U", "IC"];
+
+/// Whether a part is polarised (its rotation matters to the assembler):
+/// by its reference's prefix (`POLARISED_PREFIXES`) or its footprint's
+/// name (a diode's or LED's library footprint, a polarised capacitor's:
+/// `CP_`, electrolytic, tantalum).
+pub(crate) fn polarised(reference: &str, footprint: &str) -> bool {
+    let prefix = reference.trim_end_matches(|c: char| c.is_ascii_digit() || c == '_');
+    let name = footprint.rsplit(':').next().unwrap_or(footprint);
+    let lower = name.to_ascii_lowercase();
+    POLARISED_PREFIXES.contains(&prefix)
+        || name.starts_with("D_")
+        || name.starts_with("LED_")
+        || name.starts_with("CP_")
+        || lower.contains("elec")
+        || lower.contains("tantal")
+        || lower.contains("polari")
+}
+
+/// The polarised parts (`polarised`) of `pcb` among `placed` (the
+/// position file's references), in natural order.
+fn polarised_parts(pcb: &Expr, placed: &BTreeSet<String>) -> Vec<String> {
+    let mut parts: Vec<String> = pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("footprint"))
+        .filter_map(|footprint| {
+            let reference = footprint_reference(footprint)?;
+            let name = footprint
+                .children()
+                .get(1)
+                .and_then(Expr::atom)
+                .unwrap_or("");
+            (placed.contains(&reference) && polarised(&reference, name.trim_matches('"')))
+                .then_some(reference)
+        })
+        .collect();
+    parts.sort_by(|a, b| crate::canonical_order::natural_cmp(a, b));
+    parts.dedup();
+    parts
+}
+
+/// The references of kicad-cli's position file (its `Ref` column).
+fn position_references(text: &str) -> BTreeSet<String> {
+    text.lines()
+        .skip(1)
+        .filter_map(|line| csv_columns(line).into_iter().next())
+        .filter(|reference| !reference.is_empty())
+        .collect()
 }
 
 /// Seconds an export may take (`PCB_KICAD_TIMEOUT` as for the checks,
@@ -637,6 +777,18 @@ pub fn fab_kicad_board(
         files: Vec::new(),
         skipped: Vec::new(),
         findings: Vec::new(),
+        stackup: board_stackup(&pcb),
+        controlled_impedance: crate::resolve_project_rules(
+            &directory.join(format!("{board_id}.kicad_pro")),
+            &board,
+        )
+        .ok()
+        .and_then(|config| config.project_rules)
+        .and_then(|report| {
+            let nets: Vec<String> = report.net_classes.keys().cloned().collect();
+            crate::class_view::controlled_impedance(&report, &nets)
+        }),
+        polarised_parts: Vec::new(),
     };
     // The checks: the board's DRC as drc-kicad-board runs it (cached,
     // without the global libraries, zones refilled), the schematic's ERC.
@@ -801,6 +953,10 @@ pub fn fab_kicad_board(
         ],
         "kicad-cli pcb export pos",
     )?;
+    manifest.polarised_parts = polarised_parts(
+        &pcb,
+        &position_references(&fs::read_to_string(&positions).unwrap_or_default()),
+    );
     if options.profile == KiCadFabProfile::Jlcpcb {
         let text = fs::read_to_string(&positions).map_err(|error| error.to_string())?;
         let cpl = assembly.join(format!("{board_id}-cpl-jlcpcb.csv"));
@@ -1021,9 +1177,17 @@ pub fn fab_verdict_lines(
             actions.extend(manifest.findings.iter().cloned());
         }
         actions.extend(lcsc_action(manifest));
-        actions.push(
-            "check the rotations of polarised parts in the fab's placement preview: library orientations differ between KiCad and assemblers".into(),
-        );
+        actions.extend(manifest.controlled_impedance.as_ref().map(|impedance| {
+            if manifest.profile == KiCadFabProfile::Jlcpcb {
+                format!(
+                    "{}; at JLCPCB, impedance control on the order with the stackup of theirs whose dielectrics match these",
+                    impedance.action
+                )
+            } else {
+                impedance.action.clone()
+            }
+        }));
+        actions.push(rotation_action(&manifest.polarised_parts));
         format!(
             "released{}: {} files, {}; {counts}",
             if drc.findings_allowed {
@@ -1068,6 +1232,25 @@ pub fn fab_verdict_lines(
         next_actions: crate::verdict::with_input_observations(actions, &observations),
         input_observations: observations,
     }
+}
+
+/// The release's line on the rotations to check: the polarised parts
+/// on the placement file, the first 20 named.
+fn rotation_action(parts: &[String]) -> String {
+    const SHOWN: usize = 20;
+    if parts.is_empty() {
+        return "check the rotations of polarised parts in the fab's placement preview: library orientations differ between KiCad and assemblers (none found by reference or footprint: diodes, LEDs, transistors, ICs, polarised capacitors)".into();
+    }
+    format!(
+        "check the rotations of the {} polarised parts in the fab's placement preview (library orientations differ between KiCad and assemblers; fab-manifest.json's polarised_parts): {}{}",
+        parts.len(),
+        parts[..parts.len().min(SHOWN)].join(", "),
+        if parts.len() > SHOWN {
+            format!(" and {} more", parts.len() - SHOWN)
+        } else {
+            String::new()
+        }
+    )
 }
 
 /// The kind of an exported file, by where it is and its name.
@@ -1295,6 +1478,9 @@ mod tests {
             files: Vec::new(),
             skipped: Vec::new(),
             findings: vec!["clearance: Pad 1 [A] of R31 on F.Cu at (1.00, 2.00); Pad 2 [B] of J1 on F.Cu at (1.10, 2.00)".into()],
+            stackup: None,
+            controlled_impedance: None,
+            polarised_parts: Vec::new(),
         };
         let refused = fab_verdict_lines(&manifest, Vec::new(), 0, false);
         assert_eq!(
@@ -1360,6 +1546,123 @@ mod tests {
     }
 
     #[test]
+    fn the_manifest_has_the_stackup_the_impedance_classes_and_the_polarised_parts() {
+        // Trial 7: Sisu_SSE-9's release carried its stackup only in the
+        // job file, said nothing of its impedance classes, and every
+        // release's rotation line named no part.
+        let (directory, _) = crate::class_view::tests::impedance_project("fab");
+        let text = fs::read_to_string(directory.join("board.kicad_pcb")).unwrap();
+        let pcb = parse(&text).unwrap();
+        let stackup = board_stackup(&pcb).unwrap();
+        assert_eq!(
+            (stackup.thickness_mm, stackup.copper_finish.as_deref()),
+            (Some(1.6), Some("ENIG"))
+        );
+        let prepreg = &stackup.layers[2];
+        assert_eq!(
+            (
+                prepreg.name.as_str(),
+                prepreg.kind.as_str(),
+                prepreg.thickness_mm,
+                prepreg.material.as_deref(),
+                prepreg.epsilon_r
+            ),
+            (
+                "dielectric 1",
+                "prepreg",
+                Some(0.0918),
+                Some("3313"),
+                Some(4.1)
+            )
+        );
+        assert_eq!(stackup.layers[1].kind, "copper");
+        assert_eq!(board_stackup(&parse("(kicad_pcb (setup))").unwrap()), None);
+        // The polarised parts on the placement file.
+        for (reference, footprint, expected) in [
+            ("D3", "Diode_SMD:D_SOD-123", true),
+            ("LED1", "LED_SMD:LED_0603_1608Metric", true),
+            ("U7", "Package_DFN_QFN:QFN-80", true),
+            ("Q2", "Package_TO_SOT_SMD:SOT-23", true),
+            ("C9", "Capacitor_Tantalum_SMD:CP_EIA-3216-18_Kemet-A", true),
+            ("C10", "Capacitor_SMD:C_0402_1005Metric", false),
+            ("R1", "Resistor_SMD:R_0402_1005Metric", false),
+            ("J1", "Connector_USB:USB_C_Receptacle", false),
+            ("TP1", "TestPoint:TestPoint_Pad_D1.0mm", false),
+        ] {
+            assert_eq!(polarised(reference, footprint), expected, "{reference}");
+        }
+        let board = r#"(kicad_pcb
+            (footprint "Diode_SMD:D_SOD-123" (property "Reference" "D10") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu")))
+            (footprint "Diode_SMD:D_SOD-123" (property "Reference" "D2") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu")))
+            (footprint "Diode_SMD:D_SOD-123" (property "Reference" "D3") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu")))
+            (footprint "Resistor_SMD:R_0402" (property "Reference" "R1") (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu"))))"#;
+        let positions = "Ref,Val,Package,PosX,PosY,Rot,Side\nD10,x,y,0,0,0,top\nD2,x,y,0,0,0,top\nR1,x,y,0,0,0,top\n";
+        // D3 is not on the placement file (DNP): not the assembler's.
+        let parts = polarised_parts(&parse(board).unwrap(), &position_references(positions));
+        assert_eq!(parts, ["D2", "D10"]);
+        let line = rotation_action(&parts);
+        assert_eq!(
+            line,
+            "check the rotations of the 2 polarised parts in the fab's placement preview (library orientations differ between KiCad and assemblers; fab-manifest.json's polarised_parts): D2, D10"
+        );
+        let many: Vec<String> = (1..=25).map(|n| format!("U{n}")).collect();
+        assert!(rotation_action(&many).ends_with("U19, U20 and 5 more"));
+        // The release's lines: the impedance order, then the rotations.
+        let report = crate::resolve_project_rules(
+            &directory.join("board.kicad_pro"),
+            &directory.join("board.kicad_pcb"),
+        )
+        .unwrap()
+        .project_rules
+        .unwrap();
+        let nets: Vec<String> = report.net_classes.keys().cloned().collect();
+        let mut manifest = KiCadFabRelease {
+            schema_version: 1,
+            board_id: "board".into(),
+            profile: KiCadFabProfile::Jlcpcb,
+            kicad_version: None,
+            released: true,
+            drc: KiCadFabDrc::default(),
+            erc: None,
+            layers: Vec::new(),
+            bom_source: Some("board".into()),
+            lcsc_field: None,
+            without_lcsc: Vec::new(),
+            without_lcsc_lines: 0,
+            zip: None,
+            files: Vec::new(),
+            skipped: Vec::new(),
+            findings: Vec::new(),
+            stackup: Some(stackup),
+            controlled_impedance: crate::class_view::controlled_impedance(&report, &nets),
+            polarised_parts: parts,
+        };
+        let lines = fab_verdict_lines(&manifest, Vec::new(), 0, false);
+        assert!(
+            lines.next_actions[0].starts_with(
+                "order impedance control on this stackup (fab-manifest.json's stackup, the job file's) for the classes RF, USB"
+            ),
+            "{:#?}",
+            lines.next_actions
+        );
+        assert!(lines.next_actions[1].starts_with("check the rotations of the 2 polarised parts"));
+        let json = serde_json::to_value(&manifest).unwrap();
+        assert_eq!(json["stackup"]["layers"][2]["material"], "3313");
+        assert_eq!(json["controlled_impedance"]["classes"][1]["class"], "USB");
+        assert_eq!(
+            json["controlled_impedance"]["rules"][0]["layers"],
+            serde_json::json!(["In1.Cu"])
+        );
+        assert_eq!(json["polarised_parts"], serde_json::json!(["D2", "D10"]));
+        // A board without them: no entries.
+        manifest.stackup = None;
+        manifest.controlled_impedance = None;
+        let json = serde_json::to_value(&manifest).unwrap();
+        assert!(json.get("stackup").is_none() && json.get("controlled_impedance").is_none());
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
     fn parts_without_an_lcsc_number_are_told_where_it_goes_by_the_boms_source() {
         // Trial 7's MIDAS-MK2 layout: no schematic beside the result, 207
         // parts on 78 lines; the action said "an LCSC field on the symbol,
@@ -1381,6 +1684,9 @@ mod tests {
             files: Vec::new(),
             skipped: Vec::new(),
             findings: Vec::new(),
+            stackup: None,
+            controlled_impedance: None,
+            polarised_parts: Vec::new(),
         };
         let action = lcsc_action(&manifest).expect("parts without a number");
         assert!(

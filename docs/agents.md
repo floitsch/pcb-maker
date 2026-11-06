@@ -1572,7 +1572,26 @@ is a fab release gated by KiCad's DRC:
   clearance between two nets always blocks), `erc` (errors, warnings, library warnings),
   `layers`, `bom_source`, `lcsc_field`, `without_lcsc` (parts without an
   LCSC part number; `without_lcsc_lines`, their BOM lines), `zip`, `skipped`, `findings`, and `files`: every file
-  with its `kind`, `bytes` and `sha256`. `verdict.json` adds
+  with its `kind`, `bytes` and `sha256`. Since 2026-11-06 (trial 7) also
+  `stackup` (Board Setup's Physical Stackup as the board file gives it,
+  which the Gerber job file carries too: `thickness_mm`, `copper_finish`
+  and per layer `name`, `kind` (`copper`, `prepreg`, `core`, the masks),
+  `thickness_mm`, `material`, `epsilon_r`, `loss_tangent`; absent where the
+  board states none), `controlled_impedance` (absent where nothing asks
+  for it: the classes that look like a controlled impedance, a class with
+  widths per layer from the custom rules or one narrower than Default, as
+  rows of `describe-kicad-board`'s `classes`, the custom rules' track
+  geometry on some layers only, `rules` (`track_width`, `diff_pair_gap`,
+  `diff_pair_width` with their bounds, `layers` and `condition`), and the
+  `action`, which the verdict's next actions repeat: order impedance
+  control on this stackup for those classes; Sisu_SSE-9's release names
+  RF_ANT, RF_ANT_INT and USB and its 3313 prepreg 0.0918 mm under the
+  outer layers), and `polarised_parts` (the polarised parts on the
+  placement file, by reference prefix `D`, `LED`, `LD`, `CR`, `ZD`, `Q`,
+  `U`, `IC` or by footprint name: a diode's `D_`, an LED's `LED_`, a
+  polarised capacitor's `CP_`, electrolytic or tantalum; the verdict's
+  rotation line names them, the first 20 with the rest counted: MIDAS-MK2's
+  40). `verdict.json` adds
   `fab_release` (released, findings allowed, files, zip, manifest).
 - **`--profile jlcpcb`**: the layers of JLCPCB's KiCad guide (both pastes
   and silkscreens always), and beside kicad-cli's files
@@ -1590,7 +1609,10 @@ is a fab release gated by KiCad's DRC:
   reads (`without_lcsc_lines` in fab-manifest.json).
   KiCad's Gerber names (Protel extensions) are the ones JLCPCB's guide
   uses. JLCPCB's rotation offsets per package are not applied: check
-  polarised parts in their placement preview.
+  the polarised parts the rotation line names in their placement preview.
+  A board with `controlled_impedance` needs impedance control on the
+  order, with the JLCPCB stackup whose dielectrics match the manifest's
+  `stackup` (the files are the same: MIDAS-MK2's release is 23 files).
 
 Exit 0 released, 1 refused, 2 usage or input errors (an output directory
 that exists, a layer the board does not define, an unknown profile), 4 a

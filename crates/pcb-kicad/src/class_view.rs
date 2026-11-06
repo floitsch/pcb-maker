@@ -430,6 +430,50 @@ pub(crate) fn class_layers_action(classes: &[KiCadClassLayers]) -> Option<String
     ))
 }
 
+/// What a fab's impedance control is for (`fab-manifest.json`'s
+/// `controlled_impedance`): the classes that look like an impedance
+/// (`KiCadClassRow::impedance`) and the custom rules' track geometry on
+/// some layers only.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct KiCadControlledImpedance {
+    pub classes: Vec<KiCadClassRow>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub rules: Vec<crate::project_rules::KiCadLayerGeometryRule>,
+    pub action: String,
+}
+
+/// `KiCadControlledImpedance` of a project's rules over the board's nets
+/// (as the router names them); `None` where nothing asks for it.
+pub(crate) fn controlled_impedance(
+    report: &KiCadProjectRulesReport,
+    nets: &[String],
+) -> Option<KiCadControlledImpedance> {
+    let default_width = report
+        .class_values
+        .get("Default")
+        .and_then(|values| values[0]);
+    let classes: Vec<KiCadClassRow> = class_rows(report, nets)
+        .into_iter()
+        .filter(|row| row.nets > 0 && row.impedance(default_width))
+        .collect();
+    if classes.is_empty() && report.layer_geometry_rules.is_empty() {
+        return None;
+    }
+    let names: Vec<&str> = classes.iter().map(|row| row.class.as_str()).collect();
+    Some(KiCadControlledImpedance {
+        action: format!(
+            "order impedance control on this stackup (fab-manifest.json's stackup, the job file's) for {}: the widths are the designer's for its dielectrics, and the fab adjusts them to its own",
+            if names.is_empty() {
+                "the custom rules' track geometry per layer".to_string()
+            } else {
+                format!("the classes {}", names.join(", "))
+            }
+        ),
+        classes,
+        rules: report.layer_geometry_rules.clone(),
+    })
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -627,6 +671,32 @@ pub(crate) mod tests {
             ),
             "{action}"
         );
+        fs::remove_dir_all(&directory).unwrap();
+    }
+
+    #[test]
+    fn the_impedance_classes_are_those_with_widths_per_layer_or_narrower_than_default() {
+        let (directory, project) = impedance_project("impedance");
+        let report = report_of(&directory, &project);
+        let nets: Vec<String> = ["RF_OUT", "SDA", "USB_DP", "VBAT"]
+            .map(String::from)
+            .to_vec();
+        let impedance = controlled_impedance(&report, &nets).unwrap();
+        let classes: Vec<&str> = impedance
+            .classes
+            .iter()
+            .map(|row| row.class.as_str())
+            .collect();
+        assert_eq!(classes, ["RF", "USB"]);
+        assert_eq!(impedance.rules.len(), 2);
+        assert!(
+            impedance
+                .action
+                .starts_with("order impedance control on this stackup")
+        );
+        // Without such classes or rules, nothing.
+        let plain = KiCadProjectRulesReport::default();
+        assert_eq!(controlled_impedance(&plain, &nets), None);
         fs::remove_dir_all(&directory).unwrap();
     }
 }

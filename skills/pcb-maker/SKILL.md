@@ -177,7 +177,10 @@ its own holes: `footprint_note` gives the custom rule for the board's
 `.kicad_dru` that makes KiCad accept them), `--allow-findings` overrides. Released (exit 0): `gerbers/` and
 `<id>-gerbers.zip` (upload this), `assembly/` (position file, BOM),
 `netlist/`, `<id>.step`, and `fab-manifest.json` (every file's sha256, the
-DRC and ERC counts, KiCad's version). `--profile jlcpcb` adds JLCPCB's BOM
+DRC and ERC counts, KiCad's version, the board's `stackup`, `controlled_impedance`
+where classes or rules set impedance widths (order impedance control on that stackup:
+a next action says so), `polarised_parts`, the parts whose rotation to check in the
+fab's placement preview, which the next action names). `--profile jlcpcb` adds JLCPCB's BOM
 and placement columns (parts without an LCSC number: a footprint property `LCSC` when no schematic
 is beside the board, the release's next action says which BOM lines); `--layers` picks the Gerber layers. The board is judged on its
 own (every part and zone the board's); `--input <project-dir>` (the project it was laid
