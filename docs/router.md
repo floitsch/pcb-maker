@@ -2682,10 +2682,12 @@ on a two-layer board with pours, by how much of the pours they lost
 "Why `plane_cut_cost` did nothing on the fence"), then vias and copper.
 
 After the rungs, the finer pitches and the best rung's seed rounds, a
-board still open gets one more attempt: the best attempt with signal nets
-at the project's narrowest predefined width (its width menu, when that is
-narrower than a class; poured nets, grounds and rails keep their class
-width), and with the board's minimum clearance when the project rates
+board still open gets one more attempt: the best attempt with the signal
+nets of the Default class at the project's narrowest predefined width (its
+width menu, when that is narrower than Default's; poured nets, grounds,
+rails, nets whose width a custom rule gives and, since 2026-11-06, every
+net of another class keep their class width: "The narrow-signal step's
+classes (2026-11-06)" below), and with the board's minimum clearance when the project rates
 clearance findings as warnings; or, with no narrower width, only the
 minimum clearance. In route mode the step has what is left of the
 ladder's work bound (below; until 2026-10-21 the ladder's budget plus a
@@ -2881,6 +2883,105 @@ the layout too (`kicad_check_seconds`, `kicad_checks_charged`,
 `layout: done` line). Route mode (no layout) counts none: its ladder is
 unchanged. The model, measured: docs/changelog.md, "Committed on
 2026-10-15 (KiCad check work)".
+
+### The narrow-signal step's classes (2026-11-06)
+
+Until 2026-11-06 the step narrowed every signal net whose class width lay
+above the menu's narrowest width, whatever the class. It exists for a wide
+Default (ohdsp's DSP board: 0.5 mm, its signals drawn at 0.135), but on
+trial 7's Sisu_SSE-9 (docs/reviews/2026-11-06-fresh-agent-trial-7.md) it
+also wrote the impedance classes RF_ANT (0.1422 mm, a 50 ohm microstrip)
+and RF_ANT_INT (0.1102 mm, a stripline) and the power classes Power_3V3
+(0.3) and Power_VBATT_3V8 (0.5) at the menu's 0.1 mm, which KiCad's DRC
+does not check. Now the step narrows the Default class only
+(`KiCadBoardRouterConfig::narrows_class_of`): a net whose width no class
+of the project other than Default gives (`project_rules::width_class`,
+the first of its classes by priority that states a width, as
+`rules.narrowed` attributes it; a class that sets only a clearance is
+Default's) and that routes at Default's width (a custom rule that changes
+its width keeps it, as an `opt` rule's net always did). Every class the
+designer named keeps its width, a class at Default's own width too (the
+A13 module's lcd-lines and usb-lines, katia's LED_DATA and USB_D, both
+0.127 and 0.2 like their Default): a class is a choice, and the reader
+cannot tell an impedance from a habit. Poured nets, grounds and rails keep
+theirs as before. A project whose only nets wider than the menu are in
+named classes has no step at all (`narrow_step_applies`): no reserve, no
+attempt (jetson-nano-baseboard, glasgow, SUMEC_MK_IV, koeg-board-pcb,
+capybully and the two chiffre boards of the tasks).
+
+**The census** (the 2026-11-05 nightly, main 93162bd9,
+over the 109 task boards: the old rule's nets from each project's
+lowering, the board written measured per net: a net counts as narrowed
+when more than half its copper is at the menu width below its class's;
+the scratch test that did it was not kept). The step applies to 34 boards.
+The old rule would narrow 5431 Default nets on 27 boards and 300 nets of
+named classes on 12: 154 in classes wider than Default (12 boards:
+jetson's impedance classes Z90_in, Z90_ext, Z100_in, Z100_ext and Z85_in
+at 0.25 mm beside Default's 0.125, 103 nets; ghoul's Switching and
+Power, Sisu's two power classes, katia's PWR, koeg's USB and PWR, the
+chiffre and capybully USB classes, SUMEC's Signal, glasgow's Power,
+Neotron's Power, the A13's power-lines), 55 narrower (Sisu's RF_ANT and
+RF_ANT_INT, katia's KEY at 0.15 beside 0.2) and 91 at Default's width
+(the A13 and katia classes above). The kept result came from the step on
+9 layouts (Sisu, katia, Hub, ohdsp, ATAT1800, the A13 module and glasgow
+by the attempt instead of the ladder; vaio_re and framework_mobo by the
+ladder's step) and 11 designer-tier routes (vaio_re, glasgow, Hub, Sisu,
+laptop keyboard, ATAT1800, Quanta75, ohdsp, two PolyKybd boards, the
+A13). Named classes were narrowed in the kept result on four boards,
+each in both tiers: Sisu (RF_ANT 8 nets, RF_ANT_INT 1, Power_3V3 5,
+Power_VBATT_3V8 2), the A13 module (lcd-lines 24, usb-lines 7,
+power-lines 2), katia (layout: LED_DATA 51, USB_D 4, PWR 6) and glasgow
+(Power: VUSB). None of the four rows passed (Sisu 18 and 21 unconnected,
+katia 62 and 15, the A13 3 and 1, glasgow 87 and 15): no board completed
+only by narrowing a named class, so there is no switch for the old rule.
+`"use_narrow_signals": false` still turns the step off.
+
+**Measured** (x1922, main a7ffdf79, against `build/bin/pcb-maker-narrow1-a`,
+the reference's work rates; runs `build/narrow1-*`):
+
+| Tier | Rows | Unconnected | Strict passes | Results |
+| --- | ---: | ---: | ---: | --- |
+| Short tier (layout, a third of the budget) | 12 | 21 -> 21 | 7 -> 7 | 12 boards byte for byte (0xCB-1337 and framework_mobo narrow Default only) |
+| Expansion tier (route, 30 s) | 46 | 558 -> 558 | 24 -> 24 | 46 byte for byte (epdInky and Miniboard narrow Default only) |
+| Fingerprints (route, 0.25) | 4 | 42 -> 42 | 1 -> 1 | every phase's fingerprint the same (jetson's step no longer applies, its 7.5 s reserve gone; Sisu's step did not run) |
+| Designer tier, the boards with named classes (route, 0.673) | 14 | 72 -> 75 | 4 -> 4 | 10 byte for byte; glasgow 15 -> 18, the A13, koeg, capybully the same counts |
+| Layouts of the boards that change (the task budget) | 10 | 195 -> 195 | 3 -> 4 | the placements byte for byte; capybully 6 -> 0 (a strict pass gained), Sisu 24 -> 20, the A13 6 -> 5, katia 62 -> 63, glasgow 73 -> 83; jetson, SUMEC, koeg, both chiffre byte for byte |
+
+The designer tier's boards (route mode): Sisu, Hub, ohdsp's DSP board, the
+A13 module, katia, glasgow, jetson, SUMEC_MK_IV, koeg-board-pcb,
+capybully, both chiffre boards, Neotron-Pico, ghoul. Hub (Default 0.2 ->
+0.15, 150 nets) and ohdsp (0.5 -> 0.135, 183 nets) narrow as before; on
+Sisu the step ran in both arms (45 open with the RF and power classes
+narrowed, 43 without) and the probed rung's continuation was kept in
+both. The A13 module's step was kept in both and routed its 90 Default
+nets at 0.1016, now with lcd-lines and usb-lines at 0.127 and power-lines
+at 0.2: one unconnected in both. glasgow's step narrowed one net (VUSB,
+class Power, 0.25 -> 0.15) and gained as a re-run of the best attempt
+with its reserve (234 s of work, 36 -> 30 router-open, KiCad 18 -> 15);
+without it the ladder ends at 769 s of its 1009 s, 18 unconnected. In
+the layouts the classes are kept where the step's attempt is the result:
+Sisu's RF_ANT (8 nets at 0.1422), RF_ANT_INT (MODEM_ANT1 at 0.1102),
+Power_3V3 (5 at 0.3) and Power_VBATT_3V8 (2 at 0.5), katia's KEY (92 nets
+at 0.15), LED_DATA, USB_D and PWR, the A13's three classes;
+`rules.narrowed` lists Default alone on each. glasgow's layout (123 open
+after the first route in both) runs the final ladder where it ran the
+narrow attempt instead of it (VUSB its one narrowed net): 73 -> 83, inside
+its seed spread (124 to 173 over nine seeds of x1828,
+benchmarks/agent-tasks/dense-noise.json); capybully's ladder kept 262 s
+for the step (at 0.2 mm its USB_data pair, 7 open) and now spends them on
+two more rungs, the second complete. CPU on a pinned pair (cores 0-3 against 4-7, route mode, the
+designer's placements, one board after the other, load 8 to 11): Sisu
+968 against 951 CPU s for 929 and 987 s of work (the step's attempt
+differs; per work second -7.7 %), ohdsp 713 against 731 for 861 s each
+(+2.6 %), both results byte for byte: within the pairs' noise.
+
+Decision: in by default. No tier lost a strict pass (the layouts gained
+one), the tiers' unconnected sums are equal but for the designer tier's
+glasgow (+3, the step's re-run gone with a step that narrowed one power
+net), and every named class keeps its width. A board whose connections
+need a named class narrower gets it from the designer's rules (the
+class's width in the project, or a custom `track_width` rule giving it as
+`opt`), not from the step.
 
 ## Via reduction
 

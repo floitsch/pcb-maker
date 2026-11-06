@@ -11,6 +11,41 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-06 (the narrow-signal step narrows the Default class only)
+
+Branch narrow-default-only (`build/bin/pcb-maker-narrow1-a`), trial 7's
+first open item. The ladder's narrow-signal step routed every signal net
+of a class wider than the project's narrowest menu width at that width,
+so Sisu_SSE-9's impedance classes (RF_ANT 0.1422 mm, RF_ANT_INT 0.1102)
+and power classes (Power_3V3 0.3, Power_VBATT_3V8 0.5) were written at
+0.1 mm, which KiCad's DRC does not check. Now it narrows the nets of the
+Default class only (no other class of the project gives their width,
+they route at Default's: `narrows_class_of`), and a project whose only
+nets wider than the menu lie in named classes has no step. docs/router.md,
+"The narrow-signal step's classes (2026-11-06)", has the census and the
+runs.
+
+- **Census** (the 2026-11-05 nightly, 109 task boards): the step applies
+  to 34; the old rule would narrow 300 nets of named classes on 12
+  boards (jetson's impedance classes at 0.25 mm beside its Default's
+  0.125 the most); named classes were narrowed in the kept result on
+  four boards (Sisu, the A13 module, katia, glasgow), none of which
+  passed: no board completed only that way, so no switch keeps the old
+  rule (`"use_narrow_signals": false` still turns the step off).
+- **Measured** against x1922: the short tier, the expansion tier and the
+  fingerprints byte for byte; the designer tier's 14 boards with named
+  classes 72 -> 75 unconnected (glasgow 15 -> 18: its step, one Power net
+  narrowed, was a re-run of the best attempt), strict passes 4 -> 4, ten
+  byte for byte; layouts of the ten boards that change 195 -> 195, strict
+  passes 3 -> 4 (capybully completes, Sisu 24 -> 20, katia 62 -> 63,
+  glasgow 73 -> 83 inside its seed spread); CPU on a pinned pair within
+  noise. In by default.
+- `verdict.narrowed_classes` and board-router.json's `rules.narrowed`
+  hold Default alone; the action for a named class stays as a guard
+  (agents.md, SKILL.md); tests
+  `the_narrow_step_narrows_only_the_default_class`, the step's
+  applicability tests amended; config reference regenerated.
+
 ## Committed on 2026-11-06 (fresh-agent trial 7: per-layer and impedance widths, a fab release, the skeleton race as an agent sees it)
 
 Branch fresh-agent-trial-7 (`build/bin/pcb-maker-ux14-a` to `-c`).

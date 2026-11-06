@@ -69,8 +69,8 @@ outline that fits), `outputs` (absolute paths), `cut`, `free_dimension`,
 `fab_release`; `custom_rules` (each `.kicad_dru` constraint: `applied`,
 `approximated`, `no_effect`, `unmodelled`, ...), `lengths` (the `length`
 and `skew` rules per net), `narrowed_classes` (classes the narrow-signal step routed below
-their width, which KiCad's DRC does not check: an impedance class there needs a `track_width`
-`opt` rule in the `.kicad_dru`), `sub_boards`, `ledger_wait_seconds` (the part of
+their width, which KiCad's DRC does not check; since 2026-11-06 only `Default`: every class the
+designer named, an impedance or a power class, keeps its width), `sub_boards`, `ledger_wait_seconds` (the part of
 `wall_seconds` spent waiting in the machine's memory ledger, not working). Without a reference (a layout's
 default) a footprint's own findings (`footprint_findings`) and the
 input's own edge clearances, mask bridges and courtyards of parts kept
