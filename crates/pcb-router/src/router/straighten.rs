@@ -170,7 +170,13 @@ impl Router {
     /// `search`'s step (the static map and its edge blocks, the other
     /// nets' clearance zones at the node and beside a diagonal, exclusive
     /// pours).
-    fn step_free(&self, net: NetId, layer: usize, cell: usize, direction: u8) -> Option<usize> {
+    pub(super) fn step_free(
+        &self,
+        net: NetId,
+        layer: usize,
+        cell: usize,
+        direction: u8,
+    ) -> Option<usize> {
         let nx = self.grid.nx;
         let (x, y) = self.grid.xy(cell);
         let (dx, dy) = crate::grid::DIRECTIONS[direction as usize];
@@ -225,7 +231,7 @@ impl Router {
     /// corridor of another net's pad (`corridors`, by layer and cell) or in
     /// a pin-row gap of other nets (`pin_row_foreign`), and whether on
     /// another net's pour.
-    fn guarded_and_cut(
+    pub(super) fn guarded_and_cut(
         &self,
         net: NetId,
         node: Node,
@@ -384,6 +390,21 @@ impl Router {
         changed.then_some(nodes)
     }
 
+    /// The pour pads' spoke corridors by layer and cell, with the pour
+    /// nets whose they are (`spoke_corridors`).
+    pub(super) fn corridor_map(&self) -> HashMap<(u8, u32), Vec<NetId>> {
+        let mut corridors: HashMap<(u8, u32), Vec<NetId>> = HashMap::new();
+        for (layer, pour, lists, _) in self.spoke_corridors() {
+            for cell in lists.iter().flatten() {
+                let nets = corridors.entry((layer as u8, *cell as u32)).or_default();
+                if !nets.contains(&pour) {
+                    nets.push(pour);
+                }
+            }
+        }
+        corridors
+    }
+
     /// The bend score of a branch's runs, summed.
     fn branch_bends(&self, branch: &Branch) -> (usize, usize) {
         let nx = self.grid.nx as i64;
@@ -425,15 +446,7 @@ impl Router {
         // The pour pads' spoke corridors: a path moved into one can starve
         // the pad's thermal (KiCad's starved_thermal; k30-SBC, one more
         // with the guards alone).
-        let mut corridors: HashMap<(u8, u32), Vec<NetId>> = HashMap::new();
-        for (layer, pour, lists, _) in self.spoke_corridors() {
-            for cell in lists.iter().flatten() {
-                let nets = corridors.entry((layer as u8, *cell as u32)).or_default();
-                if !nets.contains(&pour) {
-                    nets.push(pour);
-                }
-            }
-        }
+        let corridors = self.corridor_map();
         // The changed nets: (net, old branches, (bends, stairs) before and
         // after, runs).
         let mut changed: Vec<Changed> = Vec::new();

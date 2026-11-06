@@ -6243,3 +6243,146 @@ fn the_bend_round_takes_the_complete_nets_with_jogs() {
     router.nets[2].complete = false;
     assert_eq!(router.bend_round_nets(&order), vec![1]);
 }
+
+/// Net B straight along y = 10 from x = 2 to 15; net A from (5, 5) to
+/// (25, 12), one layer, 0.1 mm lattice.
+fn hug_board() -> Router {
+    let class = RuleClass {
+        trace_width: 0.25,
+        clearance: 0.2,
+        via_diameter: 0.6,
+        via_drill: 0.3,
+        layers: 0,
+    };
+    let nets: [(&str, Vec<[f64; 2]>); 2] = [
+        ("A", vec![[5.0, 5.0], [25.0, 12.0]]),
+        ("B", vec![[2.0, 10.0], [15.0, 10.0]]),
+    ];
+    let mut obstacles = Vec::new();
+    let mut board_nets = Vec::new();
+    for (id, (name, pads)) in nets.iter().enumerate() {
+        let mut terminals = Vec::new();
+        for (index, at) in pads.iter().enumerate() {
+            let label = format!("{name}.{index}");
+            obstacles.push(copper(
+                Shape::Circle {
+                    center: *at,
+                    radius: 0.3,
+                },
+                id as NetId,
+                &label,
+            ));
+            terminals.push(Terminal {
+                anchor: *at,
+                layers: 1,
+                pad: obstacles.len() - 1,
+                contact: None,
+                label,
+            });
+        }
+        board_nets.push(Net {
+            name: (*name).into(),
+            class: 0,
+            terminals,
+        });
+    }
+    let board = Board {
+        layer_count: 1,
+        outline: vec![[0.0, 0.0], [30.0, 0.0], [30.0, 20.0], [0.0, 20.0]],
+        edge_clearance: 0.1,
+        hole_clearance: 0.25,
+        hole_to_hole: 0.25,
+        classes: vec![class],
+        neck_width: 0.25,
+        obstacles,
+        nets: board_nets,
+        planes: Vec::new(),
+        solid_pads: Vec::new(),
+        isolated_pads: Vec::new(),
+        solid_pad_obstacles: Vec::new(),
+        isolated_pad_obstacles: Vec::new(),
+        pad_spokes: Default::default(),
+        merged_pads: Vec::new(),
+        no_via_pads: Vec::new(),
+        fill_passes: Vec::new(),
+        pin_row_gaps: Vec::new(),
+        terminal_copper: Vec::new(),
+        attachment: Default::default(),
+        via_spans: Vec::new(),
+    };
+    let config = Config {
+        pitches: vec![0.1],
+        ..Config::default()
+    };
+    Router::new(&board, &config)
+}
+
+/// A's route a Z: north from (5, 5) to y = 8.6, east to x = 25, north to
+/// (25, 12). The compaction slides the east run north along the Z's
+/// legs until the next step would break B's clearance (B's track and
+/// clearance keep A's centre at least 0.45 mm off y = 10): it runs beside
+/// B, with the ends, the length and the bends as they were.
+#[test]
+fn compaction_slides_a_run_beside_its_neighbour_and_keeps_length_and_ends() {
+    let mut router = hug_board();
+    router.route_net_seq(1, 0.0, false, 1.0);
+    router.stamp(1);
+    router.route_net_seq(0, 0.0, false, 1.0);
+    router.stamp(0);
+    assert!(router.nets[0].complete && router.nets[1].complete);
+    let at = |router: &Router, x: f64, y: f64| Node {
+        layer: 0,
+        cell: router.grid.nearest_node([x, y]).unwrap() as u32,
+    };
+    let nx = router.grid.nx as u32;
+    let start = at(&router, 5.0, 5.0);
+    let mut nodes = vec![start];
+    let step = |nodes: &mut Vec<Node>, dx: i32, dy: i32, count: usize| {
+        for _ in 0..count {
+            let last = nodes.last().unwrap().cell;
+            let cell = (last as i64 + dy as i64 * nx as i64 + dx as i64) as u32;
+            nodes.push(Node { layer: 0, cell });
+        }
+    };
+    step(&mut nodes, 0, 1, 36);
+    step(&mut nodes, 1, 0, 200);
+    step(&mut nodes, 0, 1, 34);
+    assert_eq!(*nodes.last().unwrap(), at(&router, 25.0, 12.0));
+    router.unstamp(0);
+    router.nets[0].branches.truncate(1);
+    router.nets[0].branches[0].nodes = nodes.clone();
+    let fixed: HashSet<Node> = [nodes[0], *nodes.last().unwrap()].into_iter().collect();
+    let taken: HashSet<Node> = nodes.iter().copied().collect();
+    let before = router.hug_of_path(0, &nodes);
+    assert_eq!(before, 0);
+    let mut work = super::compact::SlideWork::default();
+    let moved = router
+        .compact_run(0, &nodes, &taken, &fixed, &HashMap::new(), &mut work)
+        .expect("the run slides");
+    assert!(work.checks > 0 && work.loads > 0);
+    assert_eq!(moved.len(), nodes.len());
+    assert_eq!(
+        (moved[0], *moved.last().unwrap()),
+        (nodes[0], *nodes.last().unwrap())
+    );
+    // The east run moved north, beside B over B's length.
+    let middle = moved[moved.len() / 2];
+    let y = router.grid.center_of(middle.cell as usize)[1];
+    assert!(y > 9.0 && y < 9.6, "{y}");
+    // From x = 5 to B's end at 15: 100 steps.
+    assert!(router.hug_of_path(0, &moved) >= 90);
+    // Every step still free, as the hard search judges it.
+    for pair in moved.windows(2) {
+        let (a, b) = (pair[0].cell as i64, pair[1].cell as i64);
+        let n = nx as i64;
+        let direction = super::straighten::direction_of(b % n - a % n, b / n - a / n).unwrap();
+        assert_eq!(
+            router.step_free(0, 0, pair[0].cell as usize, direction),
+            Some(pair[1].cell as usize)
+        );
+    }
+    // A step more north would not be: the run is as close as B's
+    // clearance lets it.
+    let north = super::straighten::direction_of(0, 1).unwrap();
+    assert_eq!(router.step_free(0, 0, middle.cell as usize, north), None);
+}

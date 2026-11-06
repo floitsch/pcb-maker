@@ -199,6 +199,16 @@ impl Router {
                     self.fingerprint()
                 );
             }
+            // The runs slid beside other copper, on the shapes as they
+            // stay (compact.rs).
+            {
+                let mark = self.phase_mark();
+                self.compact(order);
+                self.phase_charge(2, mark);
+                if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
+                    eprintln!("fingerprint after compaction: {:016x}", self.fingerprint());
+                }
+            }
         }
         if self.config.verbose {
             eprintln!(

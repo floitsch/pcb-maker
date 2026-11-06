@@ -206,7 +206,7 @@ impl Router {
     /// spoke islands: what the stitching adds vias for (`stitch_pours`;
     /// `pour_stranded` counts the pads alone: with it, Castor's kept
     /// reroutes took the board from 240 to 244 vias at the stitching).
-    fn pour_islands(&self) -> Vec<usize> {
+    pub(super) fn pour_islands(&self) -> Vec<usize> {
         self.pour_net_ids()
             .into_iter()
             .map(|net| {
@@ -222,7 +222,7 @@ impl Router {
     }
 
     /// A net's branches put back as they were (complete, stamped).
-    fn put_back(&mut self, net: NetId, branches: Vec<Branch>) {
+    pub(super) fn put_back(&mut self, net: NetId, branches: Vec<Branch>) {
         let state = &mut self.nets[net as usize];
         state.branches = branches;
         state.connected.fill(true);
