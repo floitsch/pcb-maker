@@ -1465,6 +1465,7 @@ fn lower_board(
                         .map_or(no_net_clearance, |rules| rules.clearance_mm);
                     let mut copper_shapes = shapes.clone();
                     if item.head() == Some("gr_text") {
+                        copper_shapes = drawn_graphic_shapes(item)?;
                         copper_shapes.extend(cached_text_line_boxes(item)?);
                     }
                     copper_graphics.push(CopperGraphic {

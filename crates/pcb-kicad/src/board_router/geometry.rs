@@ -185,15 +185,19 @@ pub(crate) fn copper_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Str
     Ok(shapes)
 }
 
-/// The shapes of a board graphic on a mask layer as KiCad's bridge test
-/// sees them. KiCad draws a cached text's glyphs from the font, not from
-/// the cache, and a face it does not have is replaced (OpenESC's "ESC" in
-/// Tokyo on B.Mask, drawn in a stand-in 2 mm wider than its cache, over a
-/// track and a via that kept clear of the cached glyphs; the nine cached
-/// mask texts of the corpus reach 0.7 to 2.9 mm past their caches): the
-/// stroke font's box, which holds all nine within 0.06 mm, is part of the
-/// opening too.
-pub(super) fn mask_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, String> {
+/// The shapes of a board graphic as KiCad draws it, on a mask layer for
+/// its bridge test and on a copper layer for its clearance. KiCad draws a
+/// cached text's glyphs from the font, not from the cache, and a face it
+/// does not have is replaced (OpenESC's "ESC" in Tokyo on B.Mask, drawn in
+/// a stand-in 2 mm wider than its cache, over a track and a via that kept
+/// clear of the cached glyphs; the nine cached mask texts of the corpus
+/// reach 0.7 to 2.9 mm past their caches): the stroke font's box, which
+/// holds all nine within 0.06 mm, is part of the text too. On copper the
+/// same (Quanta75's '0bsilab' knockout plate in "Blrrpix Tweak", drawn in
+/// Noto Sans Bold: x 81.0 to 116.4 mm where the cache's glyphs span 84.8 to
+/// 112.8; our I2C1-SDA track inside it, clearance and mask bridges): a
+/// knockout text's plate covers the stroke font's box too.
+pub(super) fn drawn_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, String> {
     let mut shapes = copper_graphic_shapes(item)?;
     let cached = item.head() == Some("gr_text")
         && item.child("render_cache").is_some_and(|cache| {
@@ -202,10 +206,41 @@ pub(super) fn mask_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, Strin
                 .iter()
                 .any(|child| child.head() == Some("polygon"))
         });
-    if cached {
-        shapes.push(stroke_text_box(item)?);
+    if !cached {
+        return Ok(shapes);
     }
+    let stroke = stroke_text_box(item)?;
+    let knockout = item.child("layer").is_some_and(|layer| {
+        layer
+            .children()
+            .iter()
+            .skip(2)
+            .any(|child| child.atom() == Some("knockout"))
+    });
+    if knockout && !shapes.is_empty() {
+        let thickness = item
+            .child("effects")
+            .and_then(|effects| effects.child("font"))
+            .and_then(|font| form_f64(font, "thickness", 1).ok())
+            .unwrap_or(0.15);
+        let bounds = shapes
+            .iter()
+            .fold(stroke.aabb().inflated(thickness), |bounds, shape| {
+                bounds.union(shape.aabb())
+            });
+        let (low, high) = (bounds.minimum, bounds.maximum);
+        return Ok(vec![core::Shape::Polygon {
+            points: vec![low, [high[0], low[1]], high, [low[0], high[1]]],
+        }]);
+    }
+    shapes.push(stroke);
     Ok(shapes)
+}
+
+/// A board graphic on a mask layer as KiCad's bridge test sees it
+/// (`drawn_graphic_shapes`).
+pub(super) fn mask_graphic_shapes(item: &Expr) -> Result<Vec<core::Shape>, String> {
+    drawn_graphic_shapes(item)
 }
 
 /// A TrueType text on copper as KiCad 10.0.7 draws it: from the font

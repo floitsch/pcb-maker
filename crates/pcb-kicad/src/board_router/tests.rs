@@ -660,6 +660,44 @@ mod pour_request_tests {
     }
 
     #[test]
+    fn a_cached_knockout_text_on_copper_is_the_plate_kicad_draws_in_a_stand_in() {
+        // Quanta75's '0bsilab' on F.Cu in "Blrrpix Tweak" (not installed:
+        // KiCad 10.0.7 draws Noto Sans Bold): the cache's glyphs span x 84.8
+        // to 112.8 and y 84.2 to 91.0 mm, KiCad's plate x 81.01 to 116.35
+        // and y 82.78 to 91.89 (pcbnew's polygon). Our I2C1-SDA track
+        // ended at (80.48, 83.82) and bent at (81.20, 83.41), inside it:
+        // clearance 2 and mask bridges 5, every strict finding of the board.
+        let text = parse(
+            r#"(gr_text "0bsilab" (at 98.737484 88.106251 0) (layer "F.Cu" knockout)
+                 (effects (font (face "Blrrpix Tweak") (size 7 7) (thickness 0.6) (bold yes)))
+                 (render_cache "0bsilab" 0 (polygon (pts (xy 84.8 84.2) (xy 112.8 84.2) (xy 112.8 91.0) (xy 84.8 91.0)))))"#,
+        )
+        .unwrap();
+        let cached = copper_graphic_shapes(&text).unwrap();
+        assert!(!cached[0].contains([81.2, 83.41]));
+        let drawn = drawn_graphic_shapes(&text).unwrap();
+        assert_eq!(drawn.len(), 1);
+        for point in [[81.2, 83.41], [81.01, 88.0], [116.35, 88.0], [98.7, 91.5]] {
+            assert!(drawn[0].contains(point), "{point:?}");
+        }
+        // A plain cached text gets the stroke font's box beside its glyphs,
+        // as on a mask layer.
+        let plain = parse(
+            r#"(gr_text "MIDAS" (at 129.59 54.58 0) (layer "F.Cu")
+                 (effects (font (face "ROG Fonts") (size 2 2) (thickness 0.4) (bold yes)) (justify left bottom))
+                 (render_cache "MIDAS" 0 (polygon (pts (xy 130.0 52.5) (xy 138.0 52.5) (xy 138.0 54.0) (xy 130.0 54.0)))))"#,
+        )
+        .unwrap();
+        let drawn = drawn_graphic_shapes(&plain).unwrap();
+        assert_eq!(drawn.len(), 2);
+        // KiCad's polygon: x 129.85 to 138.68, y 52.21 to 54.26.
+        for point in [[129.85, 52.21], [138.68, 54.26], [138.68, 52.21]] {
+            assert!(drawn.iter().any(|shape| shape.contains(point)), "{point:?}");
+        }
+        assert_eq!(drawn.len(), mask_graphic_shapes(&plain).unwrap().len());
+    }
+
+    #[test]
     fn a_bottom_anchored_texts_descenders_hang_below_its_anchor() {
         // eurorack-pmod's "[apf.audio]" on F.Mask: KiCad's glyphs span x
         // 9.98 to 11.68 at (11.43, 57.15, 90), 0.25 mm past the anchor; a
@@ -3662,7 +3700,9 @@ mod lowering_gap_tests {
     fn a_cached_copper_text_is_a_box_per_line_and_a_footprint_graphics_net_no_net() {
         // TomKeddie's SAO sign: KiCad draws a TrueType copper text from the
         // installed font, its glyphs up to 0.92 mm off the cached ones;
-        // each cached line is copper as a box, the lines' gaps stay open.
+        // each cached line is copper as a box, and the stroke font's box
+        // around them all (a face KiCad does not have is drawn in a
+        // stand-in).
         // A footprint's polygon of net A is copper of no net to KiCad
         // 10.0.7 (clearance findings against its own pad and A's track).
         let pcb = parse(
@@ -3688,8 +3728,12 @@ mod lowering_gap_tests {
         let text = |start, end| against(&board, "A", start, end, "copper gr_text");
         // Between the glyphs of the first line: inside its box.
         assert!(text([10.0, 8.0], [10.0, 10.0]).is_some());
-        // Between the lines (boxes to 10.1 and from 11.5): clear.
-        assert!(text([5.0, 10.8], [15.0, 10.8]).is_none());
+        // Between the lines (boxes to 10.1 and from 11.5): inside the
+        // stroke font's box, which a cached text's copper holds since
+        // 2026-11-06 (`drawn_graphic_shapes`: KiCad draws a face it does
+        // not have in a stand-in, Quanta75's plate); beyond the box clear.
+        assert!(text([5.0, 10.8], [15.0, 10.8]).is_some());
+        assert!(text([5.0, 14.0], [15.0, 14.0]).is_none());
         let polygon = board
             .obstacles
             .iter()
