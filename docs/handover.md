@@ -302,7 +302,8 @@ default), 17 (pad exits, a stage-1 survivor), 12 (the near misses), 2
 (crossings at fine-pitch rows), 15 (the pairs' cost in a layout), 16
 (length minima without room), 1 (fill fidelity), 3 (the ladder's judge),
 5, 14 (blind vias: their chains, and no task board that allows a span),
-then the rest.
+then the rest. For the router alone, 18 (the router's ceiling, 2026-11-06)
+ranks what keeps the designer tier's 41 failing boards open.
 
 1. **Fill fidelity, what is left.** The starved-thermal census (44 boards,
    `experiments/pour-fidelity/census.py`) stands at 162 predicted, 7
@@ -347,11 +348,14 @@ then the rest.
    of boards (Hub, DSP-ADAU1452, koeg-board, zpn_devboard) probes tracks
    far ahead while a fresh connect attempt ends far better: the 75 s probe
    is too short there. If anything, a 30 s continuation per probed rung is
-   the judge to try. The ladder stops at the first complete rung whatever
-   its starved thermals (Castor: 20 starved kept against tracks' 12); rank
-   by (open, starved) before vias, and let a complete-but-starved rung be
-   rivalled. Details in [congestion-model.md](congestion-model.md) and the
-   changelog's 2026-10-13 sections.
+   the judge to try. On the designer tier's 27 boards with open items of
+   ours the kept attempt uses a median 15 % of the ladder's work and 28 %
+   goes to rungs that end far worse (router-ceiling.md, design 1). The
+   ladder stops at the first complete rung whatever its starved thermals
+   (Castor: 20 starved kept against tracks' 12); rank by (open, starved)
+   before vias, and let a complete-but-starved rung be rivalled. Details
+   in [congestion-model.md](congestion-model.md) and the changelog's
+   2026-10-13 sections.
 4. **Placement: 73 % of what stays open.** The matched designer tier of
    2026-11-04 routes the designer's placement of the 100 target boards to
    351 open connections where our layouts leave 1297: placement +946
@@ -524,7 +528,9 @@ then the rest.
    KiCad finds the board better): mackerel-30 and Castor pass; k30-SBC's
    solid pads cost an unconnected neighbour and are undone (docs/changelog.md,
    "net ties, same-number pads, starved thermals"). Left: pads where solid
-   does not help.
+   does not help, and the step's one round: on the designer tier a pad
+   starved only after it fails k30-SBC and ghoul alone (router-ceiling.md,
+   "Plain bugs").
 6. **Our open count against KiCad's.** The router counts connections per
    net, KiCad per missing pair; and the pour model's optimism adds. The
    pass rule trusts KiCad; the router's own count is for steering only.
@@ -693,6 +699,22 @@ then the rest.
     seven stay unconnected), and the race may keep another seed's
     placement with pads still closed (it does not rank by them). Left: the
     full protocol, after the current bet (one placement bet at a time).
+18. **The router's ceiling** (opened 2026-11-06;
+    [router-ceiling.md](router-ceiling.md)). The matched designer tier's
+    41 failures, per open item and finding: 10 are the input's (the
+    designer's own board leaves the same item), 5 the budget's (they
+    pass at two or three times the tier's work); of ours congestion
+    decides 13 (the stalled residue that single-net exchanges only
+    trade), pad access 5, fine-pitch rows 4 (and the second class of 11
+    more), and four plain bugs: the solid step runs once (k30-SBC and
+    ghoul pass with one and three more rounds, checked on the night's
+    boards), copper texts lowered from their render cache (both
+    Quanta75), large enclosed SMD pads without a via (Sisu), a custom
+    pad's anchor inside a neighbour's clearance (Hub). Designs: the
+    ladder's work to the leader with the residue renegotiated in a
+    window, and prepared fan-outs for fine-pitch rows (the BGA method).
+    Problems 1, 2, 3, 5 and 6 above are the parts of it that were open
+    before.
 
 ## Where things are
 

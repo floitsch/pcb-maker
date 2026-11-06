@@ -35,6 +35,9 @@ and killed; the designer tier's budget scale; the gap split over the
 target boards (`compare.py --gap --targets`); against the previous
 nightly that ran each stage, better / same / worse (compare.py) and the
 boards that gained or lost the pass.
+What keeps the matched designer tier's failing boards from the strict
+pass, per board, item and class (the night of 2026-11-06: 41 boards):
+[router-ceiling.md](router-ceiling.md).
 
 **How the nightly publishes** (since 2026-10-27). The sweep write-ups
 v19 to v21 were written by hand from the logs, so README.md and this

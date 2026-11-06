@@ -11,6 +11,53 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-11-06 (the router's ceiling: the designer tier's 41 failures)
+
+Branch router-ceiling; a census and two designs, no router code
+changed. docs/router-ceiling.md has the per-board table, the classes,
+the budget test and the designs; `experiments/router-ceiling/census.py`
+(tests beside it, hand notes in `notes.json`) reproduces it from the
+night's artifacts.
+
+- **The 41.** The nightly of 2026-11-06's matched designer tier (scale
+  0.647) fails 41 boards under the strict rule. Each KiCad unconnected
+  item gets one cause (the designer's own board has it; a pour island; a
+  designer's via in a pad the router may not use; a pad with no legal
+  start; a fine-pitch row the crossing census finds closed; congestion)
+  from the night's files, `inspect-routing-run --reference`, KiCad's DRC
+  of the designer's board, pcbnew on both boards and a WHY route of the
+  31 boards with open items (`PCB_ROUTER_TROUBLE_WHY`,
+  `PCB_ROUTER_PAIRS_WHY`, `PCB_ROUTER_CORRIDOR_CENSUS`; all 31 rows equal
+  to the night's).
+- **The ranking.** The input's 10 (the designer's board leaves the same
+  item: the five molecule panels, OpenRX's panel, katia, woagboard,
+  SUMEC, reCamera). The budget's 5 (at twice the tier's work video and
+  OpenAirScope pass, at three times koeg-board, the corne and BAGEL; 17
+  of the 27 boards with open items of ours do not move at all). Ours:
+  congestion 13 (the kept attempt stalls; 164 of 217 residue items are
+  exchanges that trade one open for another), pad access 5, fine-pitch
+  rows 4 (and the second class of 11), starved thermals 2, copper texts
+  2.
+- **Four plain bugs** (evidence in the doc): the solid step runs once
+  (k30-SBC and ghoul pass with one and three more rounds, checked with
+  KiCad on the night's boards); a copper text is lowered from its render
+  cache where KiCad draws a stand-in font 4 mm wider (both Quanta75); a
+  large SMD pad enclosed by a ring gets no via (Sisu, 16 of 18 items); a
+  custom pad's anchor inside a neighbour's clearance leaves no legal
+  start (Hub, 9 of 12).
+- **Designs** (not built): the ladder's work to the leader (its seed
+  rounds and finer pitch before the other pour modes' rungs, which the
+  probes gate) with the stalled residue renegotiated jointly in a window;
+  prepared fan-outs for fine-pitch rows, exact exits and a planned layer
+  change per crossing (the BGA fan-out's method). Estimates: up to 7 and
+  up to 5 passes, realistically 3 and 2; the plain bugs 4.
+- **Worse than the night before**: the corne and Glasgow lost the
+  narrow-signal step's board (since x1923 it narrows only Default: a
+  correctness win), SNSP-CPU-01 and molecule_5x2_shifted the smaller
+  budget scale (0.673 to 0.647).
+- Compute: 31 WHY routes at 970 s of work, 27 at 1950 s and 10 at 3000
+  s, at most three at once.
+
 ## Measured on 2026-11-06 (the skeleton race's passives start no looser than level 2, decided; an outline in pieces keeps its skeleton)
 
 Branch skeleton-race-5, not merged; docs/placer.md, "The passives' first
