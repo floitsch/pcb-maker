@@ -4170,6 +4170,10 @@ mod solid_starved_tests {
             Ok((self.report(&solid), self.starved(&solid)))
         }
 
+        fn keep(&mut self) -> Result<(), String> {
+            Ok(())
+        }
+
         fn restore(&mut self) -> Result<(), String> {
             self.restored += 1;
             Ok(())
@@ -4282,6 +4286,54 @@ mod solid_starved_tests {
             result.diagnostics.starved_thermals[0].pad,
             "Pad 15 [GND] of J1 on F.Cu"
         );
+
+        // ghoul: RN3.3 solid starves RN3.1 and RN3.2 (one starved thermal
+        // for two, nothing else new): on to the next round, which is the
+        // best board.
+        let mut kicad = ChainKiCad {
+            chain: vec![vec!["3"], vec!["1", "2"]],
+            harm: Vec::new(),
+            checked: Vec::new(),
+            restored: 0,
+        };
+        let mut result = super::super::KiCadBoardRouterResult {
+            native: Some(kicad.report(&[])),
+            ..Default::default()
+        };
+        result.diagnostics.starved_thermals = kicad.starved(&[]);
+        let mut pcb = connector();
+        let checks = solid_rounds(&mut result, &mut pcb, &mut kicad, SOLID_ROUNDS).unwrap();
+        assert_eq!((checks, kicad.restored), (2, 0));
+        assert!(result.diagnostics.starved_thermals.is_empty());
+        assert_eq!(result.native.as_ref().unwrap().drc_design_violations, 10);
+        let record = result.solid_starved.clone().unwrap();
+        assert!(record.kept && record.undone.is_empty());
+        assert_eq!(record.findings, [11, 10]);
+
+        // Starved thermals that only move from pad to pad: every round no
+        // better, the board before the step kept.
+        let mut kicad = ChainKiCad {
+            chain: vec![vec!["1"], vec!["2"], vec!["3"], vec!["4"], vec!["5"]],
+            harm: Vec::new(),
+            checked: Vec::new(),
+            restored: 0,
+        };
+        let mut result = super::super::KiCadBoardRouterResult {
+            native: Some(kicad.report(&[])),
+            ..Default::default()
+        };
+        result.diagnostics.starved_thermals = kicad.starved(&[]);
+        let mut pcb = connector();
+        let checks = solid_rounds(&mut result, &mut pcb, &mut kicad, SOLID_ROUNDS).unwrap();
+        assert_eq!((checks, kicad.restored), (SOLID_ROUNDS, 1));
+        assert!(solid_of(&pcb).is_empty());
+        assert_eq!(
+            result.diagnostics.starved_thermals[0].pad,
+            "Pad 1 [GND] of J1 on F.Cu"
+        );
+        let record = result.solid_starved.clone().unwrap();
+        assert!(!record.kept);
+        assert_eq!(record.undone, vec!["J1.1", "J1.2", "J1.3", "J1.4"]);
     }
 
     #[test]

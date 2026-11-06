@@ -1345,7 +1345,7 @@ pub(crate) fn add_solid_pad(
 pub(crate) const SOLID_ROUNDS: usize = 4;
 
 /// What the solid step needs of KiCad (`solid_rounds`): the check of a
-/// board and the way back to the board before it.
+/// board, and the best board so far to keep and go back to.
 pub(super) trait SolidChecker {
     /// Makes `pcb` the board and checks it: KiCad's report and its starved
     /// thermals.
@@ -1359,13 +1359,15 @@ pub(super) trait SolidChecker {
         ),
         String,
     >;
-    /// Goes back to the board (and its reports) before the last `check`.
+    /// Keeps the board as it is now (and its reports) as the best.
+    fn keep(&mut self) -> Result<(), String>;
+    /// Goes back to the board kept last (`keep`).
     fn restore(&mut self) -> Result<(), String>;
 }
 
 /// The checked board's files in its directory: `check` writes the board
-/// and runs KiCad's check there, `restore` puts back every file as it was
-/// before (and removes the ones the check wrote anew).
+/// and runs KiCad's check there, `keep` holds every file as it is,
+/// `restore` puts them back (and removes the files written since).
 struct BoardFiles<'a> {
     directory: &'a Path,
     board_id: &'a str,
@@ -1383,6 +1385,14 @@ impl SolidChecker for BoardFiles<'_> {
         ),
         String,
     > {
+        let board_path = self.directory.join(format!("{}.kicad_pcb", self.board_id));
+        fs::write(&board_path, format!("{}\n", encode(pcb)))
+            .map_err(|error| format!("failed to write {}: {error}", board_path.display()))?;
+        let after = verify_materialized_rung(self.directory, self.board_id)?;
+        Ok((after, starved_thermal_diagnostics(self.directory)))
+    }
+
+    fn keep(&mut self) -> Result<(), String> {
         self.kept.clear();
         for entry in fs::read_dir(self.directory).map_err(|error| error.to_string())? {
             let path = entry.map_err(|error| error.to_string())?.path();
@@ -1392,11 +1402,7 @@ impl SolidChecker for BoardFiles<'_> {
                 self.kept.push((path, bytes));
             }
         }
-        let board_path = self.directory.join(format!("{}.kicad_pcb", self.board_id));
-        fs::write(&board_path, format!("{}\n", encode(pcb)))
-            .map_err(|error| format!("failed to write {}: {error}", board_path.display()))?;
-        let after = verify_materialized_rung(self.directory, self.board_id)?;
-        Ok((after, starved_thermal_diagnostics(self.directory)))
+        Ok(())
     }
 
     fn restore(&mut self) -> Result<(), String> {
@@ -1416,11 +1422,11 @@ impl SolidChecker for BoardFiles<'_> {
 }
 
 /// `solid_starved_thermals` on a checked board: the pads KiCad finds
-/// starved get `(zone_connect 2)`, the board is checked again and kept when
-/// `solid_kept`, else restored; on a kept board the pads starved now are
-/// the next round's, up to `SOLID_ROUNDS` rounds (`solid_rounds`). Returns
-/// the KiCad checks it ran (0 to `SOLID_ROUNDS`). The layout runs it once,
-/// on the board it keeps (its own attempts' comparisons count the starved
+/// starved get `(zone_connect 2)` and the board is checked again, round
+/// after round (`solid_rounds`, at most `SOLID_ROUNDS`); the best board
+/// KiCad saw is kept (`solid_kept` against the best before). Returns the
+/// KiCad checks it ran (0 to `SOLID_ROUNDS`). The layout runs it once, on
+/// the board it keeps (its own attempts' comparisons count the starved
 /// thermals as KiCad found them).
 pub(crate) fn solidify_starved_thermals(
     result: &mut KiCadBoardRouterResult,
@@ -1442,16 +1448,22 @@ pub(crate) fn solidify_starved_thermals(
     solid_rounds(result, &mut pcb, &mut files, SOLID_ROUNDS)
 }
 
-/// The solid step's rounds on `pcb`, the board `result` describes: each
-/// round sets the pads KiCad found starved solid (only pads not solid
-/// already: a round that changes nothing ends the step), has `checker`
-/// check the board and keeps it when `solid_kept`; a round not kept is
-/// undone and ends the step. A solid pad changes the fill, and a pad
-/// beside it may be starved only on the board after the round (k30-SBC's
-/// J1.39), so a kept round is followed by another, up to `rounds`.
-/// `result.solid_starved` records every pad tried, whether a round was
-/// kept, the pads of the round undone, and KiCad's counts before the first
-/// round and after the last check. Returns the checks run.
+/// The solid step's rounds on `pcb`, the board `result` describes. Each
+/// round sets the pads KiCad found starved on the board before it solid
+/// (only pads not solid already: a round that changes nothing ends the
+/// step) and has `checker` check the board. A solid pad changes the fill,
+/// and the pads beside it may be starved only on the board after the
+/// round (k30-SBC's J1.39; ghoul's RN3.3, whose round starves RN3.1 and
+/// RN3.2 of the same array: one starved thermal for two, the next round
+/// none), so a round whose board has no more unconnected items and no
+/// finding more but starved thermals leads to the next, better than the
+/// best board or not; a round with anything else new ends the step. The
+/// board kept is the best KiCad saw (`solid_kept` against the best
+/// before, the board before the step first). `result.solid_starved`
+/// records every pad tried, whether the board kept has solid pads, the
+/// rounds checked, the pads of the rounds after the kept board's (undone),
+/// and KiCad's counts before the first round and on the last board
+/// checked. Returns the checks run.
 pub(super) fn solid_rounds(
     result: &mut KiCadBoardRouterResult,
     pcb: &mut Expr,
@@ -1469,8 +1481,19 @@ pub(super) fn solid_rounds(
     let spokes = counts(result.native.as_ref());
     let mut checks = 0;
     let mut record: Option<KiCadSolidStarved> = None;
+    // The best board's report, starved thermals and the board itself; the
+    // pads of the rounds after it.
+    let mut best = (
+        result.native.clone(),
+        result.diagnostics.starved_thermals.clone(),
+    );
+    let mut best_pcb = pcb.clone();
+    let mut after_best: Vec<String> = Vec::new();
+    // The board the next round starts from.
+    let mut current = best.clone();
+    let mut kept_once = false;
     for round in 1..=rounds {
-        let starved = solid_pads_of_findings(&result.diagnostics.starved_thermals);
+        let starved = solid_pads_of_findings(&current.1);
         if starved.is_empty() {
             break;
         }
@@ -1486,14 +1509,14 @@ pub(super) fn solid_rounds(
         if changed == 0 {
             break;
         }
-        // A solid pad changes the fill, which can cost more than it gains
-        // (k30-SBC's J1.14, a 0.41 mm card-connector pad set solid: its
-        // starved thermal gone, but J1.39 beside it unconnected twice).
-        let before = result.native.clone();
+        if !kept_once {
+            // The board before the step, to go back to.
+            checker.keep()?;
+            kept_once = true;
+        }
         // As the verdict names the starved pads (`starved_pad`).
-        let names: Vec<String> = result
-            .diagnostics
-            .starved_thermals
+        let names: Vec<String> = current
+            .1
             .iter()
             .map(|finding| crate::verdict::starved_pad(finding).pad)
             .collect::<std::collections::BTreeSet<_>>()
@@ -1501,9 +1524,6 @@ pub(super) fn solid_rounds(
             .collect();
         let (after, starved_after) = checker.check(&next)?;
         checks += 1;
-        // Kept when KiCad finds no more unconnected items and fewer
-        // findings (the starved thermals gone, nothing new).
-        let better = solid_kept(before.as_ref(), &after);
         let record = record.get_or_insert_with(|| KiCadSolidStarved {
             unconnected: [spokes[0], 0],
             findings: [spokes[1], 0],
@@ -1519,34 +1539,54 @@ pub(super) fn solid_rounds(
         let solid = counts(Some(&after));
         record.unconnected[1] = solid[0];
         record.findings[1] = solid[1];
-        if better {
+        let before = counts(current.0.as_ref());
+        // Nothing new but starved thermals: the findings grew by no more
+        // than the starved thermals did.
+        let only_thermals = solid[0] <= before[0]
+            && solid[1] as i64 - before[1] as i64
+                <= starved_after.len() as i64 - current.1.len() as i64;
+        if solid_kept(best.0.as_ref(), &after) {
+            best = (Some(after.clone()), starved_after.clone());
+            best_pcb = next.clone();
+            after_best.clear();
+            checker.keep()?;
             record.kept = true;
-            result.native = Some(after);
-            result.diagnostics.starved_thermals = starved_after;
-            *pcb = next;
             eprintln!(
-                "{changed} starved pads connected solid (round {round}): {} starved thermals left",
-                result.diagnostics.starved_thermals.len()
+                "{changed} starved pads connected solid (round {round}): kept, {} starved thermals left",
+                starved_after.len()
             );
         } else {
-            checker.restore()?;
-            record.undone = names;
+            after_best.extend(names.iter().cloned());
             eprintln!(
-                "{changed} starved pads connected solid (round {round}): not kept ({} unconnected, {} findings; before {}, {})",
-                after.selected_net_unconnected_items,
-                after.drc_design_violations,
-                before
-                    .as_ref()
-                    .map_or(0, |native| native.selected_net_unconnected_items),
-                before
-                    .as_ref()
-                    .map_or(0, |native| native.drc_design_violations),
+                "{changed} starved pads connected solid (round {round}): not better ({} unconnected, {} findings; best {}, {}){}",
+                solid[0],
+                solid[1],
+                counts(best.0.as_ref())[0],
+                counts(best.0.as_ref())[1],
+                if only_thermals {
+                    ", only starved thermals moved: on"
+                } else {
+                    ""
+                }
             );
+        }
+        if !only_thermals {
             break;
         }
+        current = (Some(after), starved_after);
+        *pcb = next;
     }
-    if record.is_some() {
-        result.solid_starved = record;
+    if let Some(record) = &mut record {
+        if !after_best.is_empty() {
+            checker.restore()?;
+        }
+        after_best.sort();
+        after_best.dedup();
+        record.undone = after_best;
+        result.native = best.0;
+        result.diagnostics.starved_thermals = best.1;
+        *pcb = best_pcb;
+        result.solid_starved = Some(record.clone());
     }
     Ok(checks)
 }
