@@ -468,8 +468,12 @@ then the rest.
      and its strict pass and stays BETTER (-12.3 %, p 0.002), and jetson
      recovers. But vaio_re only reaches 7 to 10 (plain 1 to 4: the
      level-0 attempt eats a third of the seed's work and half the race's
-     seeds), and MokyaLora stays at 1. Which of x1927, the fix and the
-     variant goes in is the supervisor's call.
+     seeds), and MokyaLora stays at 1. A second variant, a start level
+     by area with halos, never says more than level 0: `fit_halos` keeps
+     halos under 0.6 of the free area, and vaio_re's passives lack room
+     where it is, not in total. **Decided 2026-11-06: the fix**. DSP-ADAU1452's
+     loss is the known residual: its passives fitted at level 0. Taking it
+     back needs a test of where the passives' room lies.
      Measured and not taken: `join_pins` 0 (fixes
      SNSP-CPU-01 and split72_left, loses the 4in1-mini: +3.0 % against
      the race).
@@ -915,10 +919,11 @@ experiments (2026-11-04)" below):
   places plain, byte for byte the switch off's (`board-placer.json`'s
   `skeleton_race.budget_ok`). A level guard (placer.md "The level guard
   (2026-11-05)") was built, measured and removed. On branch
-  skeleton-race-5 (2026-11-06, not merged): the passives start no looser
+  skeleton-race-5 (2026-11-06, decided, to be merged): the passives start no looser
   than level 2 (`PASSIVES_FIRST_LEVEL`), and the regions the lowering
   gives an outline's pieces (`Constraints::automatic_regions`) do not
-  keep passives in the skeleton (placer.md "The passives' first level").
+  keep passives in the skeleton (placer.md "The passives' first level";
+  the known residual: DSP-ADAU1452's level-0 seat and its gain).
 - `pad_exits` (placer): **off** (2026-11-04; `PCB_PLACER_PAD_EXITS`;
   docs/placer.md, "Pads without a way out (2026-11-04)"): after each
   seed the router's test of every pad's way out, and the parts that close

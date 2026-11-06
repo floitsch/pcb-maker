@@ -11,7 +11,7 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
-## Measured on 2026-11-06 (the skeleton race's passives start no looser than level 2; an outline in pieces keeps its skeleton)
+## Measured on 2026-11-06 (the skeleton race's passives start no looser than level 2, decided; an outline in pieces keeps its skeleton)
 
 Branch skeleton-race-5, not merged; docs/placer.md, "The passives' first
 level (2026-11-06)".
@@ -42,8 +42,14 @@ level (2026-11-06)".
   0.002; video -37 %). jetson recovers (2, 3, 6 at three seeds) and
   zpn passes. vaio_re reaches only 7, 10, 7 (plain 1, 1, 4; the fix
   3, 3, 3) and MokyaLora stays at 1. protoesp's skip is the skeleton's,
-  from level 0 to 5, and is untouched. The choice between x1927, the
-  fix and the variant is left to the supervisor.
+  from level 0 to 5, and is untouched.
+- **Variant 2** (a start level by area with halos, probe): the area test
+  always says level 0. vaio_re's passives need 0.53 of the free area at
+  full halos, jetson's 0.59, DSP-ADAU1452's 0.05, and `fit_halos` keeps
+  every board under 0.6. It reproduces the first variant.
+- **Decision: the fix.** It gains two strict passes against x1927,
+  recovers vaio_re and jetson and improves SNSP-CPU-01. DSP-ADAU1452's
+  loss of the race's gain is the known residual.
 - **An outline in pieces**: `keep_on_pieces`' regions are the tool's
   (`Constraints::automatic_regions`). They no longer keep passives in
   the skeleton or stop bodies from growing (zpn_devboard: 0 -> 105 of

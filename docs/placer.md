@@ -8359,25 +8359,65 @@ Strict passes equal x1927's: 6, DSP-ADAU1452's seed 1 kept.
 On vaio_re the cost is the level-0 attempt itself: a third of the
 seed's work, and half the race's seeds. It does not meet the bar.
 
-**Decision: the supervisor's**, between three placements:
+**Variant 2: the passives' start by area** (a probe, not kept; its
+diff is `build/skel5/variant2-probe.diff`). Variant 2 starts the
+passives at the later of the skeleton's level and the first level at
+which the movable parts, with their halos and spacing, fit the area the
+held skeleton leaves (`free_areas`, the halos as `fit_halos` fits
+them), and keeps the variant's skip to level 2 as the fallback. The
+area test never says more than level 0. Movable area with halos over
+the free area, at levels 0, 1 and 2 (place checks at 600 s):
 
-| | x1927 (the race as it is) | the fix (level-2 start) | the variant (skip to 2) |
-| --- | --- | --- | --- |
-| vaio_re, jetson at seed 1 | 34, 17 | 3, 1 | 7, 2 |
-| MokyaLora, zpn_devboard | 1, mask bridge | pass, pass | 1, pass |
-| SNSP-CPU-01 (stage 2 median) | 75 | 49 | 75 |
-| DSP-ADAU1452 (stage 2 median, strict) | 0, 1 pass | 7, none | 0, 1 pass |
-| stage 2 composite against off | -12.1 %, p 0.002 | -12.7 %, p 0.001 | -12.3 %, p 0.002 |
+| board | level 0 | level 1 | level 2 |
+| --- | ---: | ---: | ---: |
+| vaio_re | 0.53 | 0.35 | 0.20 |
+| jetson-nano-baseboard | 0.59 (0.81 without the fitting's 0.625) | 0.44 | 0.31 |
+| MokyaLora | 0.34 | 0.21 | 0.12 |
+| video | 0.26 | 0.20 | 0.14 |
+| SNSP-CPU-01 | 0.13 | 0.10 | 0.09 |
+| DSP-ADAU1452 | 0.05 | 0.05 | 0.05 |
 
-The region fix holds in the fix's and the variant's code alike. This
-branch (skeleton-race-5) carries the fix. The variant is on
-skeleton-race-5-skip, a commit on top of the fix's code that replaces
-the level-2 start.
+`fit_halos` keeps every placement's halos under 0.6 of the free area,
+so by area the passives always fit at level 0. vaio_re's and jetson's
+passives find no room there because of where the room is: the
+skeleton's gaps are sized by their tight bodies. The total area is not
+the reason.
+- DSP-ADAU1452, SNSP-CPU-01, video and MokyaLora wrote x1927's boards.
+- vaio_re and jetson started at level 0 and reached level 2 only
+  through the skip, paying the level-0 attempt (passives 219 to 223 s
+  and 335 to 359 s): the first variant again.
+
+By the stop rule (vaio_re and jetson still start at level 0) it went no
+further. On these six boards a threshold between 0.34 and 0.53 would
+separate them, but that would be a number fitted to six boards, not an
+area test. It was not built.
+
+**Decision (the supervisor, 2026-11-06): the fix**, the level-2 start
+(`PASSIVES_FIRST_LEVEL`, this branch). Against x1927:
+- it gains two strict passes (MokyaLora, zpn_devboard);
+- it recovers vaio_re (34 to 3) and jetson (17 to 1) into the plain
+  placement's spread;
+- it improves SNSP-CPU-01 (stage 2 median 75 to 49, from the race's
+  loser to a gainer);
+- its stage 2 composite stays BETTER (-12.7 %, p 0.001) with no dense
+  strict pass lost against the race off.
+
+**The known residual is DSP-ADAU1452.** Its passives fitted at level 0
+and now seat at level 2, so the board loses the race's gain (stage 2
+median 0 to 7, all five seeds) and the race's one strict pass on it
+(seed 1). The first variant (the skip to level 2, branch
+skeleton-race-5-skip) keeps DSP-ADAU1452 but leaves vaio_re at 7 to 10
+and MokyaLora at 1. Variant 2 cannot tell DSP-ADAU1452 from vaio_re by
+area. A rule that keeps DSP's level-0 seat without paying vaio_re's
+level-0 attempt needs a test of where the passives' room lies (around
+their owners), not of how much there is. That is the next candidate if
+DSP-ADAU1452's loss is to be taken back.
 
 CPU: stage 1 14.9 CPU hours (110 rows, 34 of x1927's reused), stage 2
 15.6 (42 layouts), the six boards and their spreads 7.6 (22 layouts), the
 short tier 1.2, the place checks about 1; the variant 8.8 (20 stage-1
-rows, 13 layouts, 12 place checks); in all about 49 CPU hours, at most
+rows, 13 layouts, 12 place checks), variant 2's six place checks 0.3; in
+all about 49 CPU hours, at most
 six layouts at once, beside another agent's pair layouts.
 
 ## Footprints without a courtyard, and their slots (2026-11-04)
