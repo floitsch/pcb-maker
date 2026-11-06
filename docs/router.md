@@ -3131,6 +3131,144 @@ forced by other nets' copper (a net rerouted alone keeps 15 to 35 % of
 its reroutes) and needs the neighbours moved without a renegotiation's
 cost.
 
+## Pin-row gaps and compaction in the clean-up (2026-11-06)
+
+The census ("What the routes look like (2026-11-05)" below) left two gaps
+after the bend round: pin-row crossings (x3.1 of the designer's, most of
+them between pads wider than the 1.5 mm `pin_row_cost` charges) and
+bundling (x0.38: 9 % of our track length runs beside another net within
+0.6 mm, 23 % of a designer's). Both levers stay in the clean-up, where no
+net is left open.
+
+**Lever 1: the gaps from 1.5 to 2.6 mm, charged in the clean-up only.**
+The lowering lists them too (`PIN_ROW_CLEANUP_PITCH_MM`, lower.rs) as
+`PinRowGap::cleanup_only`. `mark_pin_rows` marks them after the gaps
+charged everywhere, so none takes a node of one; `pin_row_costs` gives
+them 0 (the negotiation routes as before: charged there they cost 46
+unconnected on 2026-10-23), `pin_row_cleanup_costs` the full
+`pin_row_cost` (2 mm). The search and the comparison (`geometric_cost_of`)
+take the clean-up's costs with `Router::cleanup_rows`, set by `clean_up`
+and the bend round. The straightening already lets no new path into a
+gap where the old one was not (`pin_row_foreign`, now these gaps too).
+The bend round keeps no reroute with a pin-row crossing more
+(`BendTally::crossings`: entries into another net's gap, `row_crossings`).
+
+Not in the via reduction's clean-up. Charged there too, CyberKeeb2040
+(designer placement at 0.673) went 137 to 151 vias: its round 1 ended at
+147 instead of 134 vias (the charge changed which reroutes the round's
+clean-up kept, and the round's renegotiation starts from them), and its
+crossings stayed 4. Without it the board is the base's measure for
+measure (build/aes2/d-novias). On the expansion tier the via reduction's
+share was most of the drop (crossings 64 to 37 with it, 57 without:
+nixie_board 30 to 5 against 30 to 25).
+
+**Lever 2: compaction** (router/compact.rs, `compact`, after the
+straightening, part of the clean-up's phase). A run's segment S between
+two segments of one direction D (a Z: D, S, D) slides along D: the leg
+before grows by what the one after loses, so the length, the bends, the
+vias and the ends stay as they were. For each Z of a complete signal
+net's runs (S at least 0.5 mm long, at most 1 mm sideways, the legs a
+step long at least) the pass finds the first slide that puts S on other
+nets' copper (the occupancy alone, a load a node); the three positions
+before it, the nearest first, are checked as the straightening checks a
+window (`step_free` for every step, none of the net's other nodes, no
+new node in another pad's guard, spoke corridor or pin-row gap, no more
+of another net's pour, no more bends, stair-steps, jogs or staircases on
+the run) and the first that runs beside other copper more than before
+(`hug_of_path`: steps whose node across the step is occupied, about the
+minimum spacing) is taken. After the pass, if a pour net has more islands
+(`pour_islands`) or the spoke model more starved pads, the shortest
+prefix of the changed nets that grows it ends with the culprit (by
+halving); it and the nets after it go back. Its work: eight step checks
+or 64 occupancy loads an expansion (CyberKeeb 63 078 checks, 0.6 M
+loads: about 18 000 expansions). The verbose line: `compaction: N nets,
+R runs slid, steps beside other copper B -> A, T nets taken back ...`.
+
+**Measured** (census counts on the routed boards by census.py's rules;
+build/aes2/; base build/bin/pcb-maker-aes2-base = main 7ae80293, lever 1
+alone build/bin/pcb-maker-aes2-h4 as committed, both levers
+build/bin/pcb-maker-aes2-r1; route mode). Crossings by the pads' pitch
+(up to 1.5 mm / 1.5 to 2.6 mm / wider), base / lever 1 / both:
+
+| boards | crossings | jogs | staircases | bends | vias | track (mm) | bundling | spacing spread (mm) |
+|---|---|---|---|---|---|---|---|---|
+| expansion tier, 30 s, the 23 complete boards | 11/64/8, 11/57/7, 11/57/7 | 971, 943, 938 | 189, 188, 187 | 8694, 8615, 8610 | 1452, 1437, 1437 | 52907, 52886, 52886 | 0.1058, 0.1041, 0.1076 | median 0.029, -, 0.029 |
+| designer tier at 0.673: keyboar_ | 0/7/0, the same, the same | 138, 138, 138 | 4, 4, 4 | 941, 941, 941 | 28, 28, 28 | 6781, 6781, 6781 | 0.0260, 0.0260, 0.0262 | 0.0088, -, 0.0093 |
+| CyberKeeb2040 | 0/4/0, the same, the same | 226, 226, 226 | 6, 6, 6 | 1345, 1345, 1345 | 137, 137, 137 | 13522, 13522, 13522 | 0.1568, 0.1568, 0.1574 | 0.0372, -, 0.0292 |
+| mackerel-30-proto | 0/0/0, the same, the same | 509, 509, 506 | 55, 55, 53 | 3364, 3364, 3364 | 301, 301, 301 | 22130, 22130, 22130 | 0.2246, 0.2246, 0.2398 | 0.0332, -, 0.0276 |
+
+Lever 1 changed four of the 23 complete expansion boards (crossings
+fewer on three: nixie_board 30 to 25, TokayEdge 12 to 10, snaphat's
+main_board 3 to 1; HB-UNI-SEN 3 to 5 with 90 to 79 vias) and left the
+three designer-tier boards as they were: their crossings (keyboar_'s 7,
+CyberKeeb's 4) are all between the castellated pads of a Pro Micro or a
+Pico module (2.54 mm), and every way out from under the module crosses
+one. Compaction raised the bundling on 15 of the 23 (lower on 2:
+atmega32u4-prototyping-board 0.168 to 0.164, 3117_AUSIGN 0.033 to
+0.032) and on all three designer-tier boards, with vias and track length
+the same on every one of the 26 and jogs fewer on 5, more on none. The
+census's ranking on the expansion tier, base against both levers: pin-row
+crossings pooled x1.77 to x1.60 of the designer's, bundling's median per
+board x0.43 to x0.48 (still worse on 19 of 23), jogs pooled x1.01 to
+x0.97, vias x0.49 to x0.48; on the three designer-tier boards bundling
+0.1713 to 0.1794 pooled, spacing spread x1.04 to x0.87.
+
+Completion and findings: the expansion tier 23 complete and 558
+unconnected in all three arms, strict passes 24 in all, every row's
+strict findings the same (bms, incomplete, 229 to 228 vias with both
+levers); the three designer-tier boards complete in all arms. The short
+tier at its budget (layout mode, one board at a time, 2 threads), base
+against both levers: 7/12 strict in both, 21 unconnected, 5 strict
+findings, vias 1149 to 1148, length 21432 to 21484 mm (eternal-keypad
+2988 to 3039 mm: its layout's later steps differ; complete and strict in
+both). The fingerprints (Castor, k30-SBC, jetson, Sisu at the quarter
+budget): the negotiation's ("before resolve") identical on all four,
+jetson, k30-SBC and Castor identical up to the compaction (lever 1
+changes nothing there), Sisu changed by lever 1 (374 vias against 373,
+5596 mm against 5597, 29 unconnected and its strict findings as
+before); Castor 240 vias and no finding, k30-SBC 343 vias and its one
+starved thermal, jetson 13 unconnected in both. The work: the expansion
+tier 1152 s, 1148 s, 1150 s; the designer three 911, 911, 912 s; the
+short tier 2899 s in both. CPU on pinned pairs (base on CPU 2, both
+levers on CPU 3 at once, designer placement at 0.673): CyberKeeb2040
+220.6 to 225.7 s, Castor 164.8 to 168.2 s (+2 %, the phases before the
+clean-up as different: the via reduction 146.1 against 150.6 s of wall
+clock for the same work); the clean-up's phase 38.7 against 38.3 s and
+16.9 against 17.1 s, the compaction 63 078 and 10 202 step checks (0.1
+to 0.2 % of the route's work).
+
+**Built and left out.**
+
+- *A hug discount in the search*: a step whose node across it is
+  occupied costs (1 - h) of itself (the heuristic scaled to stay below
+  the cheapest way). In `clean_up` at h = 0.01 with a tie-break (a
+  reroute as cheap as the old route kept when it hugs more with no jog,
+  staircase or crossing more), measured with lever 1 in the via
+  reduction: the designer three bundling 0.169 to 0.203, but length
+  +1.6 % (42400 to 43058 mm), staircases 71 to 76; the expansion tier
+  bundling 0.104 to 0.136, but unconnected 558 to 562 (Miniboard), jogs
+  more on 12 of 23 boards, length more on 10. The rerouted nets move the
+  via reduction and the bend round after them, so nothing holds by
+  construction. In the bend round at h = 0.2: bundling 0.169 to 0.182,
+  bends 5687 to 5798, keyboar_'s staircases 4 to 12. Neither in.
+- *Compaction inside the straightening*, every free slide within 1 mm
+  checked step by step: bundling on the designer three 0.169 to 0.185,
+  but the straightening's pour check took back whole nets with it
+  (musicbrain-busboard: 31 nets kept out, jogs 250 to 279, staircases
+  106 to 134) and it checked 2.4 M steps there against 0.14 M. A pass of
+  its own after the straightening, with its own pour check and the
+  occupancy scan first, took the musicbrain change out and its work to
+  0.1 M checks.
+
+**Decision.** Both in, no switch. Lever 1 improves the crossings on the
+boards it changes (3 of 4; the other 19 complete boards and the three
+designer-tier boards are untouched) and moves no pass, unconnected item
+or strict finding; vias and length fell. Compaction raises the bundling
+on 18 of the 26 complete boards measured at no cost in vias, length,
+jogs or connectivity by construction. Both close little of the gaps:
+what is left is the negotiation's (lanes spread by the history, tracks
+under modules), which a single-net pass after it cannot change.
+
 ## Straightening (2026-10-23)
 
 The search costs `bend_cost` (0.1 mm) per 45 degrees of direction change
@@ -3422,7 +3560,9 @@ copper layer with three SMD pads or more the pairs of pads adjacent as
 the measure pairs them (centres at most 1.25 times the closer pad's
 nearest-neighbour distance apart) and at most 1.5 mm apart
 (`PIN_ROW_PITCH_MM`: fine-pitch rows, SOIC and tighter; an SOT-23's
-1.9 mm and a 2.54 mm row are ordinary routing), with the two pads'
+1.9 mm and a 2.54 mm row are ordinary routing to the negotiation; the
+clean-up charges rows up to 2.6 mm since 2026-11-06, "Pin-row gaps and
+compaction in the clean-up"), with the two pads'
 nets: `Board::pin_row_gaps`. The router (`mark_pin_rows`, router/
 build.rs) marks per layer the nodes between the two centres within
 half of `pitch * (|nx| + |ny|)` of the line through them (n its normal):
@@ -7845,7 +7985,12 @@ another net. Not merged.
   pass that shifts a run toward its neighbour where the lane is free
   (push, as an interactive router's "tighten"). Either changes routes, so
   connectivity and DRC must be measured; an estimate needs the
-  experiment. It is the gap that matters most.
+  experiment. It is the gap that matters most. Built on 2026-11-06
+  ("Pin-row gaps and compaction in the clean-up" above): the discount
+  in the clean-up's or the bend round's search cost length, connections
+  or staircases and is left out; a compaction pass that slides a Z's
+  middle segment beside other copper (length, bends and vias unchanged)
+  took the expansion tier's bundling 0.104 to 0.108.
 - *Jogs and staircases*: a bend-reduction round after the via reduction,
   its twin: renegotiate the nets with stair-steps at a raised `bend_cost`
   (the neighbours move too, which no single-net pass can do), keep the
@@ -7882,7 +8027,10 @@ another net. Not merged.
   one net against the others, so like the straightening it will be
   blocked often. 2026-10-23's negotiation-wide charge took the expansion
   tier's crossings 211 to 154; the clean-up alone would move a part of
-  that.
+  that. Built on 2026-11-06 ("Pin-row gaps and compaction in the
+  clean-up" above): on the expansion tier's 23 complete boards the
+  crossings of 1.5 to 2.6 mm went 64 to 57 (37 with the charge in the
+  via reduction's clean-up too, which grew CyberKeeb2040's vias).
 
 `census.py tier <run.log>` measures any route-mode run against the
 designers (docs/benchmarks.md, "Route aesthetics census").

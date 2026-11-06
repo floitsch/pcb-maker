@@ -11,6 +11,50 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-06 (pin-row gaps to 2.6 mm and compaction in the clean-up)
+
+Branch pin-gaps-bundling. The census's two gaps left after the bend
+round: pin-row crossings (x3.1, most between pads wider than the 1.5 mm
+`pin_row_cost` charged) and bundling (x0.38). docs/router.md, "Pin-row
+gaps and compaction in the clean-up (2026-11-06)", has the rules and the
+measurements.
+
+- **Pin-row gaps from 1.5 to 2.6 mm in the clean-up** (lower.rs
+  `PIN_ROW_CLEANUP_PITCH_MM`, `PinRowGap::cleanup_only`; router
+  `pin_row_cleanup_costs`, `Router::cleanup_rows`): marked after the gaps
+  charged everywhere, free in the negotiation, `pin_row_cost` in the
+  clean-up's and the bend round's searches and comparisons, not in the
+  via reduction's clean-up (there it took CyberKeeb2040's vias 137 to
+  151 through the rounds); the bend round keeps no reroute with a
+  pin-row crossing more (`BendTally::crossings`). Expansion tier, 23
+  complete boards: crossings of 1.5 to 2.6 mm 64 to 57, jogs 971 to 943,
+  vias 1452 to 1437, length -21 mm; the three designer-tier boards
+  unchanged (their crossings are between a module's castellated pads).
+  Tests `a_cleanup_only_pin_row_gap_is_charged_by_the_clean_up_alone`,
+  `pin_row_gaps_pair_adjacent_smd_pads_of_a_row`, the keep rule's.
+- **Compaction** (router/compact.rs, `compact`, after the
+  straightening): a Z's middle segment slides along its legs beside other
+  nets' copper, length, bends, vias and ends unchanged by construction;
+  pour islands and starved pads checked after, a growth takes back the
+  culprit and the nets after it. Bundling 0.1041 to 0.1076 on the 23
+  complete expansion boards (higher on 15, lower on 2), 0.1713 to 0.1794
+  on keyboar_, CyberKeeb2040 and mackerel-30-proto; vias and length the
+  same on every board. Test
+  `compaction_slides_a_run_beside_its_neighbour_and_keeps_length_and_ends`.
+- **Built and left out**: a hug discount in the clean-up's search with a
+  tie-break (length +1.6 % on the designer three, 4 unconnected more on
+  the expansion tier) and in the bend round's (staircases and bends up);
+  compaction inside the straightening (its pour check took whole nets
+  back: musicbrain-busboard's jogs 250 to 279).
+- **Completion and cost**: the expansion tier 558 unconnected and 24
+  strict passes in all arms, strict findings the same; the short tier 7/12
+  strict, 21 unconnected and 5 strict findings in both; the fingerprints'
+  negotiation identical, connectivity, vias and strict findings as before
+  (Sisu 373 to 374 vias); work +0.2 % at most; CPU on pinned pairs +2 %
+  (CyberKeeb2040 220.6 to 225.7 s, Castor 164.8 to 168.2 s, the phases
+  before the clean-up as different).
+- docs: router.md (the new section; the census's proposals and "Pin-row
+  cost" amended), config-reference.md (`pin_row_cost`).
 ## Committed on 2026-11-06 (skew groups' layers; PolyKybd's stubs checked)
 
 Branch skew-group-layers (`build/bin/pcb-maker-skew1-a` to `-e`), two
