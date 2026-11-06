@@ -386,10 +386,11 @@ impl Router {
     }
 
     /// The points of a custom pad's `contact` where a track of `width` may
-    /// end (`stub_is_clear` and the edge), on a 5 um raster at least
+    /// end (`stub_is_clear`'s rule and the edge), on a raster of 5 um (a
+    /// sixtieth of the contact's extent where that is more) at least
     /// `CONTACT_DEPTH` inside it (KiCad joins a track whose end lies in the
     /// anchor), the farthest from the other nets' copper first; at most
-    /// four, apart by a raster step or more.
+    /// four, two raster steps apart or more.
     fn contact_starts(
         &self,
         net: NetId,
@@ -397,60 +398,70 @@ impl Router {
         contact: &crate::geometry::Shape,
         width: f64,
     ) -> Vec<crate::geometry::Point> {
-        const STEP: f64 = 0.005;
         const CONTACT_DEPTH: f64 = 0.01;
+        const NEAR: f64 = 2.0;
         let bounds = contact.aabb();
+        let extent =
+            (bounds.maximum[0] - bounds.minimum[0]).max(bounds.maximum[1] - bounds.minimum[1]);
+        let step = (extent / 60.0).max(0.005);
         let class_index = self.board.nets[net as usize].class;
-        // How far a track end at `point` keeps beyond what each obstacle
-        // asks (`stub_is_clear`'s rule), the least of them.
-        let slack =
-            |point: crate::geometry::Point| -> f64 {
-                self.board
-                    .obstacles
-                    .iter()
-                    .filter(|obstacle| {
-                        obstacle.net != Some(net)
-                            && obstacle.layers & (1 << layer) != 0
-                            && obstacle.blocks_tracks
-                            && obstacle.shape.aabb().inflated(2.0).intersects(
-                                crate::geometry::Aabb {
-                                    minimum: point,
-                                    maximum: point,
-                                },
-                            )
-                    })
-                    .map(|obstacle| {
-                        let required = width / 2.0
-                            + match obstacle.kind {
-                                crate::board::ObstacleKind::Copper => self.obstacle_clearance(
-                                    class_index,
-                                    crate::rules::TRACK,
-                                    obstacle,
-                                    layer,
-                                ),
-                                crate::board::ObstacleKind::Keepout => obstacle.clearance,
-                                crate::board::ObstacleKind::Hole => {
-                                    self.board.hole_clearance.max(obstacle.clearance)
-                                }
-                            };
-                        obstacle.shape.distance_to_point(point) - required
-                    })
-                    .fold(f64::INFINITY, f64::min)
-            };
+        // The obstacles a track end in the contact may come near, with what
+        // each asks of it (`stub_is_clear`'s rule).
+        let near: Vec<(&crate::board::Obstacle, f64)> = self
+            .board
+            .obstacles
+            .iter()
+            .filter(|obstacle| {
+                obstacle.net != Some(net)
+                    && obstacle.layers & (1 << layer) != 0
+                    && obstacle.blocks_tracks
+                    && obstacle.shape.aabb().intersects(bounds.inflated(NEAR))
+            })
+            .map(|obstacle| {
+                let required = width / 2.0
+                    + match obstacle.kind {
+                        crate::board::ObstacleKind::Copper => self.obstacle_clearance(
+                            class_index,
+                            crate::rules::TRACK,
+                            obstacle,
+                            layer,
+                        ),
+                        crate::board::ObstacleKind::Keepout => obstacle.clearance,
+                        crate::board::ObstacleKind::Hole => {
+                            self.board.hole_clearance.max(obstacle.clearance)
+                        }
+                    };
+                (obstacle, required)
+            })
+            .collect();
+        // How far a track end at `point` keeps beyond what the nearest
+        // obstacle asks; a mask opening around the point asks nothing (as
+        // in `stub_is_clear`).
+        let slack = |point: crate::geometry::Point| -> f64 {
+            near.iter()
+                .filter(|(obstacle, _)| {
+                    !(obstacle.kind == crate::board::ObstacleKind::Keepout
+                        && obstacle.label.starts_with("solder mask opening")
+                        && obstacle.shape.contains(point))
+                })
+                .map(|(obstacle, required)| obstacle.shape.distance_to_point(point) - required)
+                .fold(f64::INFINITY, f64::min)
+        };
         let mut found: Vec<(f64, crate::geometry::Point)> = Vec::new();
-        let columns = ((bounds.maximum[0] - bounds.minimum[0]) / STEP).ceil() as usize;
-        let rows = ((bounds.maximum[1] - bounds.minimum[1]) / STEP).ceil() as usize;
+        let columns = ((bounds.maximum[0] - bounds.minimum[0]) / step).ceil() as usize;
+        let rows = ((bounds.maximum[1] - bounds.minimum[1]) / step).ceil() as usize;
         for row in 0..=rows {
             for column in 0..=columns {
                 let point = [
-                    bounds.minimum[0] + column as f64 * STEP,
-                    bounds.minimum[1] + row as f64 * STEP,
+                    bounds.minimum[0] + column as f64 * step,
+                    bounds.minimum[1] + row as f64 * step,
                 ];
-                if contact.contains_disc(point, CONTACT_DEPTH)
-                    && self.stub_is_clear(net, layer, point, point, width)
-                    && self.stub_keeps_edge(point, point, width)
-                {
-                    found.push((slack(point), point));
+                if !contact.contains_disc(point, CONTACT_DEPTH) {
+                    continue;
+                }
+                let slack = slack(point);
+                if slack + STUB_FIT >= 0.0 && self.stub_keeps_edge(point, point, width) {
+                    found.push((slack, point));
                 }
             }
         }
@@ -463,7 +474,7 @@ impl Router {
         for (_, point) in found {
             if starts
                 .iter()
-                .all(|start| crate::geometry::distance(*start, point) >= 2.0 * STEP)
+                .all(|start| crate::geometry::distance(*start, point) >= 2.0 * step)
             {
                 starts.push(point);
                 if starts.len() == 4 {
