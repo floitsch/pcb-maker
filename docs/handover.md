@@ -447,6 +447,23 @@ then the rest.
      walks from 474 s), else every seed places plain
      (`skeleton_race.budget_ok` false). Every stage-2 row ran at 600 s, so
      stage 2 stands; the short tier is the plain placement's.
+     **The passives' first level (2026-11-06, branch skeleton-race-5,
+     placer.md "The passives' first level")**: the first night's losses
+     (vaio_re 34, jetson 17) were passives that started at the
+     skeleton's full halos, found no room and skipped to the tight
+     level. The fix starts them no looser than level 2
+     (`PASSIVES_FIRST_LEVEL`) and keeps a skeleton's later level
+     (protoesp unchanged). It brings vaio_re to 3 and jetson to 1 (both
+     inside the plain spread over three seeds), SNSP-CPU-01 to 61
+     (plain 97), and MokyaLora and zpn_devboard back to strict passes.
+     Stage 1 against the race as it is: -0.5 %, not worse. Stage 2's
+     composite against off: BETTER, -12.7 %, p 0.001, no dense strict
+     pass lost against off. SNSP-CPU-01 is now a gainer (-13.5 %), but
+     DSP-ADAU1452 loses the race's gain (0 to 7 open, all five seeds,
+     and its one strict pass). Also fixed: an outline in pieces no
+     longer turns the race off (zpn_devboard: its lowering's piece
+     regions counted as user constraints). Whether it goes in is the
+     supervisor's call.
      Measured and not taken: `join_pins` 0 (fixes
      SNSP-CPU-01 and split72_left, loses the 4in1-mini: +3.0 % against
      the race).
@@ -891,7 +908,11 @@ experiments (2026-11-04)" below):
   strict in both arms. Below 500 s (the short tier's 200 s) every seed
   places plain, byte for byte the switch off's (`board-placer.json`'s
   `skeleton_race.budget_ok`). A level guard (placer.md "The level guard
-  (2026-11-05)") was built, measured and removed.
+  (2026-11-05)") was built, measured and removed. On branch
+  skeleton-race-5 (2026-11-06, not merged): the passives start no looser
+  than level 2 (`PASSIVES_FIRST_LEVEL`), and the regions the lowering
+  gives an outline's pieces (`Constraints::automatic_regions`) do not
+  keep passives in the skeleton (placer.md "The passives' first level").
 - `pad_exits` (placer): **off** (2026-11-04; `PCB_PLACER_PAD_EXITS`;
   docs/placer.md, "Pads without a way out (2026-11-04)"): after each
   seed the router's test of every pad's way out, and the parts that close

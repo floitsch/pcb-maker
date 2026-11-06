@@ -299,7 +299,11 @@ pub struct KiCadBoardPlacerConfig {
     /// passive one net where both have at most `join_pins` pins and no
     /// pour carries either, from the first level at which the whole board
     /// fits by area; then holds the skeleton and places the passives
-    /// around it, from the skeleton's relaxation level on. The skeleton
+    /// around it, from the skeleton's relaxation level on but no looser
+    /// than the first level without the small parts' halos (2,
+    /// `PASSIVES_FIRST_LEVEL`; "The passives' first level (2026-11-06)").
+    /// A region the lowering gives an outline's piece keeps no passive in
+    /// the skeleton. The skeleton
     /// takes at most `work_share` of the seed's work, the passives the
     /// rest; where the skeleton or the passives leave parts without a
     /// legal place the seed is placed plain with its full work, charged on

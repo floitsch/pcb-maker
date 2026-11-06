@@ -898,7 +898,11 @@ pcb-maker layout-kicad-board <project-dir> <board-id> <out-dir> auto layout.json
      ...`, or `ran: the kept seed placed its skeleton of 68 parts first
      (level 3) and its 129 passives around it (level 3); 12 of 12 seeds
      placed by skeleton (0 fell back to a plain placement); ...`
-     (MIDAS-MK2 at 500 and 1500 s); on a panel of copies or sub-boards
+     (MIDAS-MK2 at 500 and 1500 s), or `ran without a skeleton: none of
+     the N passives was free (a constraint the user wrote names each, or
+     it is fixed), ...` where every passive is held by a constraint (a
+     region the tool gives an outline's piece does not count); on a
+     panel of copies or sub-boards
      the race does not run and the block is absent (the stderr line says
      so). The summary is also the verdict's `skeleton_race` (place check
      and layout), and a layout left with open connections whose placement

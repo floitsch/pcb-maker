@@ -11,6 +11,37 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Measured on 2026-11-06 (the skeleton race's passives start no looser than level 2; an outline in pieces keeps its skeleton)
+
+Branch skeleton-race-5, not merged; docs/placer.md, "The passives' first
+level (2026-11-06)".
+
+- **The fix**: `place_skeleton` starts the passives at the skeleton's
+  level or level 2, whichever is later (`PASSIVES_FIRST_LEVEL`). On
+  vaio_re and jetson the passives seat at level 2 within 121 and 101 s,
+  instead of skipping to the tight level with the seed's whole 600 s.
+  Protoesp and the 4in1 write the same boards as before.
+- **The six boards of the first night** at seed 1, x1927 -> fix:
+  vaio_re 34 -> 3, jetson 17 -> 1, SNSP-CPU-01 157 -> 61; MokyaLora
+  and zpn_devboard strict passes again; the USB_Cable_Tester passes in
+  both. vaio_re and jetson are inside the plain placement's spread over
+  seeds 1, 101 and 201.
+- **Stage 1** against the race as it is: -0.5 %, p 0.34, not worse. It
+  changes four boards; seven place byte for byte as before.
+- **Stage 2's composite** against the race off: BETTER, -12.7 %, p
+  0.001 (stage 2 as measured: -12.1 %). SNSP-CPU-01 -13.5 % (the race:
+  +34 %), video -43 %. DSP-ADAU1452 loses the race's gain (median 0 ->
+  7 open, all five seeds) and its strict pass on seed 1. Strict passes:
+  off 5, the race 6, the fix 5. Today's router reproduces stage 2's on
+  rows on 19 of 21. The decision is left to the supervisor.
+- **An outline in pieces**: `keep_on_pieces`' regions are the tool's
+  (`Constraints::automatic_regions`). They no longer keep passives in
+  the skeleton or stop bodies from growing (zpn_devboard: 0 -> 105 of
+  107 passives absent). A race with no free passive now says "ran
+  without a skeleton" instead of "skeleton of 0 parts".
+- The short tier is byte-identical. With `"skeleton_race": null` the
+  place checks are byte-identical to main. About 40 CPU hours.
+
 ## Committed on 2026-11-06 (a regression found by the pair work: the narrow step's classes)
 
 Branch pair-route-regression, measured, no code change (outputs in

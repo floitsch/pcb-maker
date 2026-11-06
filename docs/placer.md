@@ -8143,6 +8143,189 @@ Compute: 20 layouts with 17 360 CPU s, 4 routes with 3 540 CPU s, three
 place checks. At most three layouts ran at once, through the ledger
 with the nightly's estimates sidecar.
 
+### The passives' first level (2026-11-06)
+
+Branch skeleton-race-5. Binaries: `build/bin/pcb-maker-skel5-a` is the
+branch's code. `-ab` is the same code with a test-only switch:
+`SKEL5_OLD=1` gives x1927's placement back. Both arms then run on one
+binary, and run.py's `--reuse` skips the routes of rows whose placement
+did not change. With `SKEL5_OLD`, `-ab` wrote x1927's boards byte for
+byte (place checks of DSP-ADAU1452 and zpn_devboard). Everything is in
+`build/skel5/`.
+
+**The fix**, the candidate from the first night: in `place_skeleton`
+the passives start at the later of the skeleton's level and
+`PASSIVES_FIRST_LEVEL`.
+`PASSIVES_FIRST_LEVEL` is 2, the first level of `relaxation_levels`
+without the small parts' halos. A skeleton that seats past level 2
+keeps its own level, so protoesp's skip to the fine grid stays as it
+was.
+
+**The region bug.** On a board whose outline is in pieces,
+`keep_on_pieces` gives parts the piece of their nets' fixed parts as
+a region. Those parts are now listed in `Constraints::automatic_regions`,
+and such a region counts as the outline, not as a user constraint:
+- `absent_parts` leaves such a passive out of the skeleton;
+- `growable` lets such a part grow by its passives' room;
+- the skeleton problem drops the absent parts' regions.
+
+On zpn_devboard, 105 of 107 passives are now absent (0 before), and the
+skeleton of 50 parts seats at level 1. The summary has a line for a race
+in which no passive is free: "ran without a skeleton: none of the N
+passives was free ...", in place of "placed its skeleton of 0 parts".
+
+Tests:
+- `the_passives_start_no_looser_than_without_small_halos`: passives
+  with halos on a board whose skeleton seats at level 0 end at level 2;
+  without the fix they end at 0.
+- `a_board_in_pieces_still_has_a_skeleton`: two Edge.Cuts pieces, J1
+  locked on one, every movable part given its piece by the lowering;
+  6 of 6 passives absent, the two chips grown.
+- The `absent_parts` and summary tests extended.
+
+**Place checks** (600 s of work, 2 threads, pinned rates,
+`build/skel5/place`). Each cell gives the kept seed's skeleton and
+passive levels, the kept seed's work in seconds and the number of
+seeds in the pool:
+
+| board | x1927 | the fix | the passives' level, every seed (fix) |
+| --- | --- | --- | --- |
+| vaio_re | 0 / 7, 600 s, 3 seeds | 0 / 2, 121 s, 6 seeds | 2 |
+| jetson-nano-baseboard | 0 / 5, 600 s, 3 | 0 / 2, 101 s, 10 | 2 |
+| SNSP-CPU-01 | 0 / 0, 74 s, 9 | 0 / 2, 99 s, 9 | 2 |
+| MokyaLora | 0 / 1, 96 s, 9 | 0 / 2, 40 s, 16 | 2 |
+| USB_Cable_Tester PCB | 0 / 0, 3 s, 16 | 0 / 2, 3 s, 16 | 2 |
+| zpn_devboard | no skeleton (0 of 107 absent), 92 s | 1 / 2, 63 s, 11 | 2 |
+| DSP-ADAU1452 | 0 / 0, 131 s, 6 | 0 / 2, 131 s, 6 | 2 |
+| video | 0 / 1, 916 s (2 fallbacks) | 0 / 2, 916 s (2 fallbacks) | 2 |
+| protoesp | 5 / 5 | the same board | 2, 5, 6 as before |
+| OpenESC 4in1 | 4 / 7 | the same board | 7 |
+
+No seed has unplaced or illegal parts. On vaio_re and jetson the
+passives no longer skip: they seat at level 2 and the seed takes a
+fifth of its budget. On SNSP-CPU-01, DSP-ADAU1452 and the
+USB_Cable_Tester the passives fitted at level 0 before, and they now
+seat at level 2.
+
+**The six boards of the first night.** Layouts at the task budget,
+seed 1, 2 threads, the reference rates, tasks v7, `build/skel5/b`.
+KiCad unconnected, strict findings in brackets:
+
+| board | x1927 (the race as it is) | the fix | race off (seed 1) |
+| --- | --- | --- | --- |
+| vaio_re | 34 | 3 (mask bridge 1) | 1 (mask bridge 5) |
+| jetson-nano-baseboard | 17 | 1 | 0, pass |
+| SNSP-CPU-01 | 157 | 61 | 97 (nightly 11-05) |
+| MokyaLora | 1 | **0, pass** | 0, pass |
+| zpn_devboard | 0 (mask bridge 1) | **0, pass** | 0, pass |
+| USB_Cable_Tester PCB | 0, pass | 0, pass | 0, pass |
+
+x1927 reproduces the nightly's rows. On today's router the
+USB_Cable_Tester's connection-width finding is gone in both arms.
+vaio_re and jetson at seeds 1, 101 and 201 (KiCad unconnected, one
+binary):
+
+| board | race off | the fix |
+| --- | --- | --- |
+| vaio_re | 1, 1, 4 | 3, 3, 3 |
+| jetson-nano-baseboard | 0, 9, 1 | 1, 7, 2 |
+
+Both boards are back inside the plain placement's spread.
+
+**Stage 1** (the eleven dense boards, five seeds,
+`stop_after_first_route`). The fix against x1927, both arms with the
+race on. First-route open terminals, x1927 / fix:
+
+| Board | s1 | s101 | s201 | s301 | s401 | median | relative (weight) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| DSP-ADAU1452 | 24 / 32 | 28 / 28 | 32 / 19 | 22 / 46 | 23 / 36 | 24 / 32 | +9.7 % (29) |
+| split72_left | 42 / 35 | 25 / 28 | 30 / 10 | 27 / 24 | 33 / 30 | 30 / 28 | -14.9 % (18) |
+| SNSP-CPU-01 | 179 / 85 | 96 / 49 | 74 / 56 | 85 / 82 | 96 / 82 | 96 / 82 | -33.5 % (4) |
+| video | 131 / 193 | 186 / 172 | 159 / 109 | 86 / 29 | 150 / 178 | 150 / 172 | -2.0 % (12) |
+
+The other seven boards place byte for byte as before, with the same
+placement digest on every seed: 4in1, 4in1-mini, Glasgow, protoesp,
+the panel, SmartSpin2k, and MegaDrive except seed 401, whose first
+route is the same. Weighted -0.5 % (the noise file's 90 % interval
+-2.9 to +2.0 %), sign-flip p 0.339, the noise file's p 0.389: NOT
+BETTER and not worse. The bar was "not worse": the p for worse is
+about 0.6, above 0.25. x1927's first routes equal the stage-1 on rows
+of skel2-j on ten of eleven boards (split72_left differs at seeds 301
+and 401), so the race's placements are stage 2's. Placement digests
+do not compare across binaries: they differ there even where the
+placement is the same.
+
+**Stage 2.** The 21 rows whose placement the fix changes, as full
+layouts in both arms on `-ab` (`build/skel5/s2-fix`, `s2-old`): the
+four boards at five seeds and MegaDrive's seed 401.
+- *Today's router against stage 2's.* x1927's full rows equal
+  `build/skel2-full`'s on rows on 19 of 21 (KiCad unconnected).
+  split72_left differs at 201 (18 to 22) and 401 (27 to 26): +0.7 %
+  weighted. The composite is fair.
+- *The composite.* The fix's rows on the changed boards and
+  skel2-full's on rows elsewhere, against skel2-full's off rows. KiCad
+  unconnected, off / x1927 / fix, shown for the changed boards:
+
+| Board | s1 | s101 | s201 | s301 | s401 | median | relative, x1927 / fix |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| DSP-ADAU1452 | 3 / 0 / 7 | 5 / 0 / 5 | 6 / 0 / 4 | 10 / 1 / 15 | 3 / 0 / 12 | 5 / 0 / 7 | -37.1 % / +22.9 % (4) |
+| split72_left | 20 / 5 / 23 | 33 / 21 / 24 | 16 / 18 / 7 | 21 / 21 / 19 | 4 / 27 / 29 | 20 / 21 / 23 | -1.4 % / +5.4 % (29) |
+| SNSP-CPU-01 | 97 / 157 / 61 | 44 / 73 / 35 | 57 / 63 / 48 | 59 / 75 / 63 | 55 / 85 / 49 | 57 / 75 / 49 | +34.0 % / -13.5 % (11) |
+| video | 210 / 106 / 70 | 208 / 131 / 118 | 141 / 112 / 55 | 157 / 57 / 27 | 189 / 99 / 119 | 189 / 106 / 70 | -33.3 % / -43.0 % (16) |
+| MegaDrive s401 | 141 / 100 / 100 | | | | | | |
+
+- **The composite is BETTER**: weighted -12.7 % (the noise file's 90 %
+  interval -18.4 to -7.1 %), sign-flip p 0.001, the noise file's p
+  0.000. The sum of medians goes 765 to 562 (stage 2 as measured: 615),
+  and every pair sum falls (870 to 606, 786 to 633, 660 to 535, 718 to
+  536, 803 to 661). Stage 2 as measured was -12.1 %, p 0.002.
+- **SNSP-CPU-01 turns** from the race's loser (+34 %) into a gainer
+  (-13.5 %; against x1927 on every seed, median 75 to 49). Video gains
+  on four seeds of five (median 106 to 70).
+- **DSP-ADAU1452 loses the race's gain.** x1927 completes it on four
+  seeds and leaves 1 open on the fifth. The fix leaves 7, 5, 4, 15
+  and 12 open, every row with new clearance or mask-bridge findings of
+  the kinds the race's complete rows had. The cause is the passives at
+  level 2: at level 0 they fitted on every seed, and the race's gain on
+  this board was that looser seat. Its weight is 4, so the statistic
+  hardly sees it.
+- **Strict passes on the dense set**: off 5 (the panel's five), x1927 6
+  (also DSP-ADAU1452's seed 1), the fix 5. None is lost against the
+  race off. DSP-ADAU1452's one strict pass of the race is lost (7 open
+  on seed 1).
+
+**The short tier** (`--tier short`, its budget, `build/skel5/short-*`).
+x1927 and skel5-a write the same 24 boards byte for byte (placed and
+routed): 7 of 12 strict, 21 unconnected, 1148 vias. At 200 s the race
+places plain, and the fix does not touch that path.
+
+**Identity.** With `"skeleton_race": null`, skel5-a writes x1927's boards
+byte for byte on DSP-ADAU1452 and split72_left (place checks at 600 s).
+
+**Decision: left to the supervisor.** The rule for this package was:
+the fix goes in if (b) recovers vaio_re and jetson, (c) is not worse
+and (d) holds; if it recovers the losers but costs the gainers beyond
+noise, report both. That is the case here:
+- (b) recovers both boards into their spreads, and MokyaLora's and
+  zpn_devboard's strict passes come back.
+- (c) is not worse.
+- (d) holds against the race off: BETTER at p 0.001, no dense strict
+  pass lost against off.
+- But DSP-ADAU1452, a gainer, loses beyond its noise (all five seeds,
+  median 0 to 7) together with the race's one extra strict pass.
+
+A candidate that would keep both, not built: try the passives at the
+skeleton's level and, where too many find no room, go to level 2
+instead of the tight level. vaio_re and jetson would get their level-2
+seat, and DSP-ADAU1452 (level 0 on every seed) its old one. SNSP-CPU-01
+and video gain from level 2 even where level 0 fits, though, so that
+variant would give part of their gains back.
+
+CPU: stage 1 14.9 CPU hours (110 rows, 34 of x1927's reused), stage 2
+15.6 (42 layouts), the six boards and their spreads 7.6 (22 layouts), the
+short tier 1.2, the place checks about 1; in all about 40 CPU hours, at
+most six layouts at once, beside another agent's pair layouts.
+
 ## Footprints without a courtyard, and their slots (2026-11-04)
 
 Fresh agent trial 4 (docs/reviews/2026-11-04-fresh-agent-trial-4.md,
