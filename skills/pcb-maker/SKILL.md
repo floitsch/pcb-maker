@@ -17,7 +17,9 @@ docs/agents.md in the pcb-maker repository.
 1. From a schematic: `pcb-maker import-kicad-netlist <dir>/<name>.kicad_sch <project-dir> <id>`
    writes the board, `constraints.json` and `layout.json`.
 2. Look at the board: `pcb-maker describe-kicad-board <project-dir> <id>`
-   (parts, pads, nets, `REF:PAD` names for constraints); `--constraints-template <file>`
+   (parts, pads, nets with their class, `REF:PAD` names for constraints; `classes` as a table
+   with the custom rules' widths per layer, `custom_rules` with what the router keeps of each);
+   `--constraints-template <file>`
    writes a starter (the plug-in connectors' `edge`, the decoupling capacitors' `near`,
    an RF module's antenna at an edge where its footprint draws the keepout; read its comments).
 3. Say what the user wants in `<project-dir>/constraints.json` (below).

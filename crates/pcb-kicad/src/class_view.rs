@@ -431,7 +431,7 @@ pub(crate) fn class_layers_action(classes: &[KiCadClassLayers]) -> Option<String
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     /// A four-layer project: Default 0.2 mm, USB 0.1 mm with a 0.1 mm

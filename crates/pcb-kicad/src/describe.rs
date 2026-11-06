@@ -15,6 +15,22 @@ pub struct KiCadBoardDescription {
     pub copper_layers: Vec<String>,
     pub footprints: Vec<KiCadDescribedFootprint>,
     pub nets: Vec<KiCadDescribedNet>,
+    /// The project's net classes as a table: per class its track width
+    /// and clearance as the project states them, how many of the board's
+    /// nets are in it, and the custom rules' widths per layer and closed
+    /// layers for its nets (each net's class is in `nets`).
+    pub classes: Vec<crate::class_view::KiCadClassRow>,
+    /// The project's custom rules (`.kicad_dru`) as the router reads them:
+    /// every constraint with its `status` (`applied`, `approximated`,
+    /// `no_effect`, `not_routing`, `unmodelled`, `skipped`) and `detail`,
+    /// as a route's `verdict.custom_rules` gives them (a route adds what
+    /// the length, skew and pair rules did). Absent without such rules.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub custom_rules: Vec<crate::project_rules::KiCadCustomRuleReport>,
+    /// The project's routing rules the router does not keep, one line
+    /// each (KiCad still checks them). Absent without.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub unmodelled_rules: Vec<String>,
     /// Parts with several connected general-purpose pins: by the pad's
     /// function (`GPIO12`, `IO5`, `PA3`, `P0.13`), or, for a part whose
     /// pads name no function on the board, by the pin's electrical type
@@ -324,6 +340,9 @@ pub struct KiCadDescribedFootprint {
 #[derive(Clone, Debug, Serialize)]
 pub struct KiCadDescribedNet {
     pub name: String,
+    /// The net's class as KiCad names it (its highest-priority class,
+    /// "Default" for a net in none; `classes` has its values).
+    pub class: String,
     /// `REF:PAD` for every pad on the net.
     pub pads: Vec<String>,
     /// The net's rules as the project resolves them: its class's values
@@ -565,6 +584,11 @@ pub fn describe_kicad_board(
                 (value < resolved? - 1.0e-9).then_some(value)
             };
             KiCadDescribedNet {
+                class: report
+                    .map_or("Default", |report| {
+                        crate::class_view::net_class(report, &name)
+                    })
+                    .to_string(),
                 track_width_mm: rule.map(|rule| rule.trace_width_mm),
                 clearance_mm: rule.map(|rule| rule.clearance_mm),
                 class_track_width_mm: class_value(0, rule.map(|rule| rule.trace_width_mm)),
@@ -673,7 +697,18 @@ pub fn describe_kicad_board(
         crate::canonical_order::natural_cmp(&a.part, &b.part).then(a.unit.cmp(&b.unit))
     });
     swap_candidates.extend(typed_candidates);
+    // The rules as a route reads them: the length and skew rules kept by
+    // the length matching (on by default).
+    let report = rules
+        .as_ref()
+        .map(crate::board_router::with_lengths)
+        .and_then(|rules| rules.project_rules)
+        .unwrap_or_default();
+    let net_names: Vec<String> = nets.iter().map(|net| net.name.clone()).collect();
     Ok(KiCadBoardDescription {
+        classes: crate::class_view::class_rows(&report, &net_names),
+        custom_rules: report.custom_rules.clone(),
+        unmodelled_rules: report.unmodelled.clone(),
         board_id: board_id.into(),
         outline,
         copper_layers: layers.names.clone(),
@@ -694,6 +729,80 @@ pub fn describe_kicad_board(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_description_has_the_classes_each_nets_class_and_the_custom_rules() {
+        let (directory, _) = crate::class_view::tests::impedance_project("describe");
+        let description = describe_kicad_board(&directory, "board").unwrap();
+        let class_of = |name: &str| {
+            description
+                .nets
+                .iter()
+                .find(|net| net.name == name)
+                .unwrap()
+                .class
+                .clone()
+        };
+        assert_eq!(
+            [
+                class_of("USB_DP"),
+                class_of("RF_OUT"),
+                class_of("VBAT"),
+                class_of("SDA")
+            ],
+            ["USB", "RF", "PWR", "Default"]
+        );
+        // The classes as a table, Default first, with their nets counted.
+        let rows: Vec<(&str, Option<f64>, Option<f64>, usize)> = description
+            .classes
+            .iter()
+            .map(|row| {
+                (
+                    row.class.as_str(),
+                    row.track_width_mm,
+                    row.clearance_mm,
+                    row.nets,
+                )
+            })
+            .collect();
+        assert_eq!(
+            rows,
+            [
+                ("Default", Some(0.2), Some(0.2), 1),
+                ("PWR", Some(0.5), Some(0.2), 1),
+                ("RF", Some(0.12), Some(0.2), 1),
+                ("USB", Some(0.1), Some(0.15), 1)
+            ]
+        );
+        let usb = description
+            .classes
+            .iter()
+            .find(|row| row.class == "USB")
+            .unwrap();
+        assert_eq!(
+            usb.layer_widths_mm,
+            BTreeMap::from([("In1.Cu".to_string(), 0.1)])
+        );
+        assert_eq!(usb.disallowed_layers, ["In2.Cu"]);
+        // Every constraint of the .kicad_dru with what the router makes of
+        // it.
+        let rules: Vec<(&str, &str)> = description
+            .custom_rules
+            .iter()
+            .map(|rule| (rule.constraint.as_str(), rule.status.as_str()))
+            .collect();
+        assert!(rules.contains(&("disallow", "applied")), "{rules:?}");
+        assert!(
+            rules
+                .iter()
+                .any(|(constraint, _)| *constraint == "diff_pair_gap")
+        );
+        // In the JSON the table is small: no net list per class.
+        let json = serde_json::to_value(&description).unwrap();
+        assert_eq!(json["classes"][3]["layer_widths_mm"]["In1.Cu"], 0.1);
+        assert!(json["classes"][0].get("layer_widths_mm").is_none());
+        fs::remove_dir_all(&directory).unwrap();
+    }
 
     #[test]
     fn a_hierarchical_and_a_bare_net_of_one_name_stay_two_nets() {

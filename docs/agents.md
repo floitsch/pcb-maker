@@ -259,8 +259,30 @@ The file lists what constraints refer to:
   or locked, its `uuid` (which footprint
   an entry for a repeated reference means, [constraints.md](constraints.md)),
   and its pads with their nets;
-- every net with its pads (`REF:PAD`, the form `pin_of` takes) and its track
-  width and clearance;
+- every net with its pads (`REF:PAD`, the form `pin_of` takes), its
+  `class` (its highest-priority net class, `Default` for a net in none)
+  and its track width and clearance;
+- `classes` (since 2026-11-06, trial 7: the class widths were only numbers
+  per net, and an agent read the `.kicad_pro` to learn that 0.1422 mm was
+  a class): one row per class of the project, Default first, with its
+  `track_width_mm` and `clearance_mm` as the project states them, its
+  `nets` (how many of the board's nets are in it), and where custom rules
+  speak of its nets `layer_widths_mm` (the width a `track_width` rule sets
+  per layer, on some layers only: a controlled impedance per layer, such
+  as Sisu_SSE-9's USB at 0.1 mm on In1.Cu and In4.Cu) and
+  `disallowed_layers` (the layers a `disallow track` rule keeps them
+  off). A class narrower than Default is likely a controlled impedance, a
+  wider one a current to carry; nothing in KiCad ties a class without
+  such rules to a layer (a route's `verdict.class_layers` says where it
+  went);
+- `custom_rules` (since 2026-11-06): every constraint of the project's
+  `.kicad_dru` with its `status` as the router reads it (`applied`,
+  `approximated`, `no_effect`, `not_routing`, `unmodelled`, `skipped`)
+  and `detail`, the length and skew rules as the length matching keeps
+  them (a route's `verdict.custom_rules` is the same list, with the pair
+  rules `applied` where route mode routes the pairs coupled), and
+  `unmodelled_rules` (the routing rules the router does not keep, which
+  KiCad still checks);
 - `swap_candidates`: parts whose general-purpose pins the layout could
   reassign (see pin swapping below), by their pad functions or, where
   the board names none, by their pins' electrical types.
