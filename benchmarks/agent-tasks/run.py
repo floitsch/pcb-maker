@@ -1039,8 +1039,12 @@ def has_drc_command(binary):
 # put the parts. score-kicad-board's `vias_in_pads_at` (filled or not) on
 # the designer's board, one `via_in_pad` entry per part with its footprint
 # and its vias' most common size; a binary without the list (before
-# 2026-10-28) gives none, and the task's own `via_in_pad` wins. The sites
-# are kept per board file (its SHA-256) in VIA_SITES_CACHE: a panel's
+# 2026-10-28) gives none, and the task's own `via_in_pad` wins. A binary
+# of 2026-11-06 or later adds the vias in large SMD pads
+# (`vias_in_large_pads_at`: Sisu_SSE-9's dome switches, a 4 mm pad inside
+# another net's ring): evidence for the rule, which puts vias only in
+# enclosed pads. The sites are kept per board file (its SHA-256) in
+# VIA_SITES_CACHE, the large pads' under `large:<SHA-256>`: a panel's
 # score takes minutes.
 DESIGNER_VIAS_IN_PADS = {}
 VIA_SITES_CACHE = ROOT / "build" / "designer-vias-in-pads.json"
@@ -1055,13 +1059,25 @@ def lists_vias_in_pads(binary):
     its score-kicad-board reports `filled_vias_in_pads`, asked of an empty
     board once per binary. The cache below holds what newer binaries
     found; an older binary gets no entries from it."""
+    return "filled_vias_in_pads" in via_in_pad_probe(binary)
+
+
+def lists_vias_in_large_pads(binary):
+    """Whether `binary`'s score-kicad-board lists the vias in large SMD
+    pads (`vias_in_large_pads`, 2026-11-06 and later)."""
+    return "vias_in_large_pads" in via_in_pad_probe(binary)
+
+
+def via_in_pad_probe(binary):
+    """score-kicad-board's manufacturing keys on an empty board, once per
+    binary."""
     key = str(binary)
     if key not in VIA_IN_PAD_BINARIES:
         with tempfile.TemporaryDirectory() as directory:
             (Path(directory) / "probe.kicad_pcb").write_text(
                 '(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user)))\n')
             report = quality.score(binary, directory, "probe") or {}
-        VIA_IN_PAD_BINARIES[key] = "filled_vias_in_pads" in (report.get("manufacturing") or {})
+        VIA_IN_PAD_BINARIES[key] = set((report.get("manufacturing") or {}).keys())
     return VIA_IN_PAD_BINARIES[key]
 
 
@@ -1073,24 +1089,30 @@ def designer_via_sites(binary, directory, board_id):
         return None
     board = Path(directory) / f"{board_id}.kicad_pcb"
     digest = file_sha256(board)
+    large = lists_vias_in_large_pads(binary)
     with VIA_SITES_LOCK:
         try:
             cached = json.loads(VIA_SITES_CACHE.read_text())
         except (OSError, ValueError):
             cached = {}
-    if digest in cached:
+    if digest in cached and not large:
         return cached[digest]
+    if digest in cached and f"large:{digest}" in cached:
+        return cached[digest] + cached[f"large:{digest}"]
     report = quality.score(binary, directory, board_id) or {}
     manufacturing = report.get("manufacturing") or {}
     if "filled_vias_in_pads" not in manufacturing:
         return None
     sites = manufacturing.get("vias_in_pads_at") or []
+    large_sites = manufacturing.get("vias_in_large_pads_at") or []
     with VIA_SITES_LOCK:
         try:
             cached = json.loads(VIA_SITES_CACHE.read_text())
         except (OSError, ValueError):
             cached = {}
         cached[digest] = sites
+        if large:
+            cached[f"large:{digest}"] = large_sites
         try:
             VIA_SITES_CACHE.parent.mkdir(parents=True, exist_ok=True)
             temporary = VIA_SITES_CACHE.with_name(f"{VIA_SITES_CACHE.name}.{os.getpid()}.tmp")
@@ -1098,7 +1120,7 @@ def designer_via_sites(binary, directory, board_id):
             temporary.replace(VIA_SITES_CACHE)
         except OSError:
             pass
-    return sites
+    return sites + (large_sites if large else [])
 
 
 def designer_vias_in_pads(binary, directory, board_id):

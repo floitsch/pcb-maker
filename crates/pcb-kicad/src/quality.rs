@@ -165,6 +165,13 @@ pub struct KiCadManufacturing {
     /// how far its centre lies from the pad's.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub vias_in_pads_at: Vec<KiCadViaInPadSite>,
+    /// Vias in large SMD pads (`vias_in_large_smd_pads`), not counted
+    /// above: the designer's sign for the via-in-pad rule where such a pad
+    /// has no other way out (Sisu's dome switches, a 4 mm pad inside
+    /// another net's ring).
+    pub vias_in_large_pads: usize,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub vias_in_large_pads_at: Vec<KiCadViaInPadSite>,
     /// Two-pad parts of 0603 or smaller whose pads take tracks more than
     /// twice as wide on one side (tombstoning).
     pub tombstone_risk: Vec<String>,
@@ -229,10 +236,31 @@ pub(crate) fn vias_in_small_smd_pads(pcb: &Expr) -> Result<Vec<KiCadViaInPadSite
         .filter(|item| item.head() == Some("via"))
         .map(board_via)
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(sites_of(&parts, &vias))
+    Ok(sites_of(&parts, &vias, false))
 }
 
-fn sites_of(parts: &[Part], vias: &[BoardVia]) -> Vec<KiCadViaInPadSite> {
+/// The board's vias whose drill reaches into a large SMD pad's copper, as
+/// `vias_in_small_smd_pads` finds them in small ones (not an exposed
+/// pad's): no via-in-pad count (a large pad keeps its solder), but where
+/// such a pad has no other way out the designer's via in it is the
+/// via-in-pad rule's evidence (`designer_entries`): Sisu_SSE-9's dome
+/// switches SW2 to SW17, a 4 mm pad inside a 6.2 mm ring of another net,
+/// each with the designer's via.
+pub(crate) fn vias_in_large_smd_pads(pcb: &Expr) -> Result<Vec<KiCadViaInPadSite>, String> {
+    let names = NetNames::of(pcb);
+    let parts = parts_of(pcb, &names)?;
+    let vias = pcb
+        .children()
+        .iter()
+        .filter(|item| item.head() == Some("via"))
+        .map(board_via)
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(sites_of(&parts, &vias, true))
+}
+
+/// The vias in small SMD pads, or with `large` in large ones (the pads
+/// `vias_in_small_smd_pads` leaves out but exposed pads).
+fn sites_of(parts: &[Part], vias: &[BoardVia], large: bool) -> Vec<KiCadViaInPadSite> {
     let exposed: Vec<Vec<usize>> = parts.iter().map(exposed_pad).collect();
     let mut sites = Vec::new();
     for via in vias {
@@ -274,7 +302,7 @@ fn sites_of(parts: &[Part], vias: &[BoardVia]) -> Vec<KiCadViaInPadSite> {
                     }
                     _ => pad.half[0].max(pad.half[1]) < 1.0,
                 };
-                pad.smd && pad.copper && small && distance < via.drill / 2.0
+                pad.smd && pad.copper && small != large && distance < via.drill / 2.0
             });
         if let Some((part, pad)) = inside {
             sites.push(KiCadViaInPadSite {
@@ -1114,9 +1142,10 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
 
     // Manufacturing: vias in small SMD pads (`vias_in_small_smd_pads`),
     // filled and capped ones apart.
-    let vias_in_pads_at = sites_of(&parts, &board_vias);
+    let vias_in_pads_at = sites_of(&parts, &board_vias, false);
     let filled_vias_in_pads = vias_in_pads_at.iter().filter(|site| site.filled).count();
     let vias_in_pads = vias_in_pads_at.len() - filled_vias_in_pads;
+    let vias_in_large_pads_at = sites_of(&parts, &board_vias, true);
     let mut tombstone_risk = Vec::new();
     for part in parts
         .iter()
@@ -1164,6 +1193,8 @@ pub fn score_kicad_board(directory: &Path, board_id: &str) -> Result<KiCadQualit
         vias_in_pads,
         filled_vias_in_pads,
         vias_in_pads_at,
+        vias_in_large_pads: vias_in_large_pads_at.len(),
+        vias_in_large_pads_at,
         tombstone_risk,
         drc_note: drc.is_none().then(|| {
             format!(

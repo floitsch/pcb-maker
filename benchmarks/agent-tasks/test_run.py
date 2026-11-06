@@ -1948,8 +1948,44 @@ class DesignerViasInPads(unittest.TestCase):
         self.assertEqual(self.calls, 1)
         # A binary without the list gets nothing, not even from the cache.
         run.DESIGNER_VIAS_IN_PADS.clear()
-        run.VIA_IN_PAD_BINARIES["old"] = False
+        run.VIA_IN_PAD_BINARIES["old"] = set()
         self.assertEqual(run.designer_vias_in_pads("old", self.directory, "b"), [])
+
+    def test_a_binary_that_lists_vias_in_large_pads_adds_them(self):
+        # Sisu_SSE-9's dome switches: the designer's via in each 4 mm
+        # centre pad, which the small pads' list leaves out.
+        dome = {"part": "SW2", "footprint": "3210:SW_Dome_Nokia_3210", "pad": "1",
+                "diameter_mm": 0.6, "drill_mm": 0.3, "filled": False}
+        small = self.score
+
+        def score(binary, directory, board_id):
+            report = run.quality.score.__wrapped__(binary, directory, board_id)
+            if binary == "new":
+                report["manufacturing"]["vias_in_large_pads"] = 0 if board_id == "probe" else 1
+                if board_id != "probe":
+                    report["manufacturing"]["vias_in_large_pads_at"] = [dome]
+            return report
+        score.__wrapped__ = run.quality.score
+        run.quality.score = score
+        try:
+            # An older binary first: its cache entry has no large pads.
+            self.assertEqual([entry["part"] for entry in run.designer_vias_in_pads("old2", self.directory, "b")],
+                             ["U106"])
+            self.assertEqual(self.calls, 1)
+            entries = run.designer_vias_in_pads("new", self.directory, "b")
+            self.assertEqual([entry["part"] for entry in entries], ["SW2", "U106"])
+            self.assertEqual(entries[0]["via_mm"], [0.6, 0.3])
+            self.assertEqual(self.calls, 2)
+            # Both lists from the cache now; the older binary still the small pads'.
+            run.DESIGNER_VIAS_IN_PADS.clear()
+            self.assertEqual([entry["part"] for entry in run.designer_vias_in_pads("new", self.directory, "b")],
+                             ["SW2", "U106"])
+            run.DESIGNER_VIAS_IN_PADS.clear()
+            self.assertEqual([entry["part"] for entry in run.designer_vias_in_pads("old2", self.directory, "b")],
+                             ["U106"])
+            self.assertEqual(self.calls, 2)
+        finally:
+            run.quality.score = small
 
 
 if __name__ == "__main__":

@@ -129,13 +129,19 @@ impl KiCadViaInPadEntry {
 }
 
 /// The footprints whose small SMD pads the board's own vias lie in
-/// (score-kicad-board's vias in pads, filled or not), one entry per part
-/// with its footprint, its vias' most common size and `source` naming the
-/// pads: the designer's sign that the fab fills and caps such vias.
+/// (score-kicad-board's vias in pads, filled or not), or whose large SMD
+/// pads (`vias_in_large_smd_pads`: a dome switch's centre inside another
+/// net's ring), one entry per part with its footprint, its vias' most
+/// common size and `source` naming the pads: the designer's sign that the
+/// fab fills and caps such vias. The rule puts vias only in enclosed pads.
 pub(crate) fn designer_entries(pcb: &Expr, board: &str) -> Vec<KiCadViaInPadEntry> {
-    let Ok(sites) = crate::quality::vias_in_small_smd_pads(pcb) else {
+    let (Ok(mut sites), Ok(large)) = (
+        crate::quality::vias_in_small_smd_pads(pcb),
+        crate::quality::vias_in_large_smd_pads(pcb),
+    ) else {
         return Vec::new();
     };
+    sites.extend(large);
     let mut by_part: BTreeMap<(String, String), Vec<&crate::quality::KiCadViaInPadSite>> =
         BTreeMap::new();
     for site in &sites {
@@ -462,8 +468,9 @@ fn enclosed_of(config: &KiCadBoardRouterConfig, pads: &[BoardPad], footprint: us
             )
         })
     };
-    // Fewer than nine pads hold no enclosed pad (`enclosed_pads`): not
-    // worth a key.
+    // Fewer than nine pads hold an enclosed pad only inside another net's
+    // pad (`enclosed_pads`), a small raster where they do: not worth a
+    // key.
     if own.len() < 9 {
         return enclosed_pads(pads, &own, &class);
     }
@@ -851,11 +858,15 @@ fn distance(a: [f64; 2], b: [f64; 2]) -> f64 {
 /// net that no track leaves on their layer: every path from the pad out of
 /// the footprint's pad field, or to a place inside it where the net's own
 /// via fits (a BGA's empty middle), passes closer to another net's pad
-/// than the net's neck width's half plus the larger clearance. Only a pad
-/// whose centre lies strictly inside the box of the footprint's other
-/// pads' centres on its layer can be (a pad of an outer row has the open
-/// side), and an exposed pad never is. `class(net)` gives a net's
-/// narrowest track, its clearance and its via's diameter.
+/// than the net's neck width's half plus the larger clearance. On a layer
+/// of nine pads or more only a pad whose centre lies strictly inside the
+/// box of the footprint's other pads' centres on its layer can be (a pad
+/// of an outer row has the open side), and an exposed pad never is; on a
+/// layer of fewer, only a pad whose centre lies inside the box of another
+/// net's pad (`ringed`: a dome switch's centre pad inside the ring of its
+/// other contact, Sisu_SSE-9's SW2 to SW17, a 4 mm pad 0.4 mm inside a
+/// 6.2 mm ring). `class(net)` gives a net's narrowest track, its clearance
+/// and its via's diameter.
 fn enclosed_pads(
     pads: &[BoardPad],
     own: &[usize],
@@ -893,9 +904,21 @@ fn enclosed_pads(
             .copied()
             .filter(|&index| pads[index].layers & layer != 0)
             .collect();
-        if on_layer.len() < 9 {
-            continue;
-        }
+        // A pad field (a BGA's) or a footprint of a few pads, where a pad
+        // can only be shut in by another net's pad around it.
+        let field = on_layer.len() >= 9;
+        let ringed = |index: usize| {
+            let center = pads[index].center;
+            on_layer.iter().any(|&other| {
+                let bounds = pads[other].shape.aabb();
+                other != index
+                    && pads[other].net != pads[index].net
+                    && center[0] > bounds.minimum[0]
+                    && center[0] < bounds.maximum[0]
+                    && center[1] > bounds.minimum[1]
+                    && center[1] < bounds.maximum[1]
+            })
+        };
         let inside_box = |index: usize| {
             let others = on_layer.iter().filter(|&&other| other != index);
             let mut bounds = [
@@ -928,7 +951,11 @@ fn enclosed_pads(
                     && pads[index].layers == layer
                     && pads[index].net.is_some()
                     && !exposed.contains(&index)
-                    && inside_box(index)
+                    && if field {
+                        inside_box(index)
+                    } else {
+                        ringed(index)
+                    }
             })
             .collect();
         if candidates.is_empty() {
@@ -1362,6 +1389,64 @@ mod tests {
 
     fn planned(plan: &ViaInPadPlan) -> Vec<&str> {
         plan.vias.iter().map(|via| via.label.as_str()).collect()
+    }
+
+    /// Sisu_SSE-9's dome switch (3210:SW_Dome_Nokia_3210) at `at`: a 4 mm
+    /// centre pad on COL inside its other contact, a custom pad on ROW
+    /// whose anchor sits at (2.75, 0) and whose ring (radius 2.75, 0.7 mm
+    /// wide) runs 0.4 mm around the centre pad.
+    fn dome(reference: &str, at: [f64; 2]) -> String {
+        format!(
+            r#"(footprint "3210:SW_Dome_Nokia_3210" (at {} {}) (property "Reference" "{reference}")
+                 (pad "1" smd circle (at 0 0) (size 4 4) (layers "F.Cu" "F.Mask") (net "COL"))
+                 (pad "2" smd custom (at 2.75 0) (size 0.7 0.7) (layers "F.Cu" "F.Mask") (net "ROW")
+                   (options (clearance outline) (anchor circle))
+                   (primitives (gr_circle (center -2.75 0) (end 0 0) (width 0.7) (fill no)))))"#,
+            at[0], at[1]
+        )
+    }
+
+    #[test]
+    fn a_designer_via_in_a_large_pad_inside_another_nets_ring_admits_the_switches() {
+        // Sisu_SSE-9's SW2 to SW17: each centre pad holds the designer's
+        // via, 16 of its 18 open items without one (the pad's "small" rule
+        // and the nine pads of a field left them out).
+        let switches = format!("{} {}", dome("SW2", [5.0, 5.0]), dome("SW3", [15.0, 5.0]));
+        let pcb = parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+                 (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts"))
+                 {switches}
+                 (via (at 5 5) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net "COL")))"#
+        ))
+        .unwrap();
+        assert!(
+            crate::quality::vias_in_small_smd_pads(&pcb)
+                .unwrap()
+                .is_empty()
+        );
+        let designer = designer_entries(&pcb, "the board");
+        assert_eq!(designer.len(), 1);
+        assert_eq!(designer[0].part.as_deref(), Some("SW2"));
+        assert_eq!(designer[0].via_mm, Some([0.6, 0.3]));
+        let plan = plan(&pcb, &config(None, &pcb));
+        // SW2 keeps the designer's via, SW3 (the same footprint) gets one;
+        // the ring pads have their way out.
+        assert_eq!(planned(&plan), ["SW3.1"]);
+        assert_eq!(plan.vias[0].at, [15.0, 5.0]);
+        assert_eq!((plan.vias[0].diameter, plan.vias[0].drill), (0.6, 0.3));
+        assert_eq!(plan.report.footprints.len(), 2);
+        assert_eq!(plan.report.footprints[0].kept, ["1 (COL)"]);
+        assert_eq!(plan.report.footprints[1].pads, ["1 (COL)"]);
+        // Without the designer's via the switches are closed, not admitted.
+        let bare = parse(&format!(
+            r#"(kicad_pcb (layers (0 "F.Cu" signal) (2 "B.Cu" signal) (25 "Edge.Cuts" user))
+                 (gr_rect (start 0 0) (end 20 10) (layer "Edge.Cuts")) {switches})"#
+        ))
+        .unwrap();
+        let closed = super::plan(&bare, &config(None, &bare));
+        assert!(closed.vias.is_empty());
+        assert_eq!(closed.report.closed.len(), 2);
+        assert_eq!(closed.report.closed[0].pads, ["1 (COL)"]);
     }
 
     #[test]
