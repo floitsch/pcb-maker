@@ -128,6 +128,16 @@ pub const ENVIRONMENT: &[(&str, Kind, &str)] = &[
         "the router's `pin_row_cost` in millimetres where the settings name none (`pin_row_cost_mm`): the cost of another net's step between two adjacent SMD pads of a part's pin row (docs/router.md, \"Pin-row cost\"; for measuring other values).",
     ),
     (
+        "PCB_ROUTER_NO_BEND_ROUND",
+        Kind::Switch,
+        "turns the router's bend round off (`bend_round`, on since 2026-11-06): after the via reduction, each complete signal net with a jog or a staircase rerouted alone at a raised bend cost and kept only if it stays complete with no via more, at most 1 % longer and fewer jogs and staircases (docs/router.md, \"The bend round (2026-11-06)\"; a diagnostic, for A/B).",
+    ),
+    (
+        "PCB_ROUTER_BEND_ROUND_COST",
+        Kind::Switch,
+        "the router's `bend_round_cost`: the bend cost of the bend round's searches, in mm per 45 degrees (default 1.0; a diagnostic).",
+    ),
+    (
         "PCB_ROUTER_NO_STRAIGHTEN",
         Kind::Switch,
         "turns the router's straightening off (`straighten`, on since 2026-10-23): after the via reduction and the thermal spoke repairs, stair-steps and jogs taken out of the signal nets' paths where the clearance allows (docs/router.md, \"Straightening\"; for attributing rows).",

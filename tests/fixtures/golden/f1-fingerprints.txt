@@ -1,3 +1,4 @@
+fingerprint after bend round: a31a2f87b485691b
 fingerprint after clean-up: a31a2f87b485691b
 fingerprint after straightening: ff07d7dd343c694e
 fingerprint after thermal spokes: a31a2f87b485691b

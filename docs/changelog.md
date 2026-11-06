@@ -11,6 +11,49 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-06 (the bend round: jogs and staircases rerouted out after the via reduction)
+
+Branch bend-round. The census of 2026-11-05 named jogs (x1.53 of the
+designer's) and staircases (x2.32) as the first routing-quality lever.
+docs/router.md, "The bend round (2026-11-06)", has the rule and the
+measurements.
+
+- **The bend round** (router/bends.rs, `reduce_bends`; `Config::bend_round`
+  on, `bend_round_cost` 1.0 mm per 45 degrees, `bend_round_share` 0.05,
+  `bend_round_length` 0.01; `PCB_ROUTER_NO_BEND_ROUND` turns it off and
+  `PCB_ROUTER_BEND_ROUND_COST` sets the cost, diagnostics): once the board
+  is complete, after the via reduction and before the spoke repairs and
+  the straightening, each complete signal net with a jog or a staircase
+  (in the router's model by the census's rules, `jogs_and_staircases`)
+  is rerouted alone with the clean-up's search at the raised bend cost,
+  densest first, and kept only if it stays complete and out of conflict,
+  has no via more, is at most 1 % longer, no staircase more and fewer
+  jogs and staircases (`keep_bend_round`); every eight kept reroutes the
+  pour islands (`pour_islands`: stranded pads and spoke islands) and
+  starved pads are checked, and a growth takes back the culprit and all
+  after it (found by halving). Booked to the clean-up; within 5 % of the
+  route's work. Tests: `a_bend_round_is_kept_only_when_it_takes_steps_out_and_costs_nothing_else`,
+  `a_jog_is_a_chain_of_two_returning_bends_and_a_staircase_of_three_or_more`,
+  `the_bend_round_takes_the_complete_nets_with_jogs`.
+- **The renegotiation the census proposed, built and left out**: ripping
+  up the nets with steps and renegotiating them at 0.3 mm grew the vias
+  in every round (CyberKeeb2040 134 to 203 or 239, mackerel-30-proto 303
+  to 1096) and every round was reverted.
+- **Measured** (build/bend1/, the off arm the same binary with the
+  switch): the three designer-tier boards with the largest jog gaps
+  (keyboar_, CyberKeeb2040, mackerel-30-proto at 0.673) jogs 993 to 873,
+  staircases 107 to 65, bends 6022 to 5650, vias 467 to 466, length -10
+  mm, work +4.0 %; three dense boards at the task budget jogs 752 to
+  700, staircases 273 to 261, vias 1400 to 1401, work +2.0 %; the
+  expansion tier 24/46 and 558 unconnected in both arms, on its 23
+  complete boards jogs 994 to 971 and staircases 192 to 189 (fell on 10,
+  rose on none); the short tier 7/12 strict and 21 unconnected in both;
+  fingerprints: jetson and Sisu identical, Castor and k30-SBC changed with
+  connectivity, vias and strict findings as before. Costs tried: 0.3,
+  0.5, 1.0, 2.0 (2.0 better on CyberKeeb, worse on mackerel and
+  keyboar_'s staircases): 1.0. CPU on pinned pairs too noisy beside the nightly (+0 to +10 %, the phases before the round as different); the round's own wall clock is its work, 2 to 4 % of a row's CPU.
+- docs: router.md "The bend round (2026-11-06)" (and the census's
+  proposal amended), config-reference.md, handover.md's switches.
 ## Committed on 2026-11-06 (trial 7's agent-flow leftovers)
 
 Branch trial-7-leftovers (`build/bin/pcb-maker-ux15-a`, `-b`), the items

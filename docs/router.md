@@ -2992,6 +2992,145 @@ state is restored. This is where most of the via savings come from: the
 cleanup pass alone cannot remove a via, because a single net rerouted against
 all other copper is boxed in, while renegotiation lets the neighbours move.
 
+## The bend round (2026-11-06)
+
+The census ("What the routes look like (2026-11-05)" below) found our
+routes jog 1.5 times as often as the designer's and staircase 2.3 times,
+and proposed a bend-reduction round after the via reduction. It is on:
+`reduce_bends` (router/bends.rs, `Config::bend_round`;
+`PCB_ROUTER_NO_BEND_ROUND` turns it off, a diagnostic for A/B), part of
+the clean-up's phase, after the via reduction and before the thermal
+spoke repairs (which so see the routes as they stay) and the
+straightening.
+
+**What it does.** Once the board is complete (nothing open, no
+conflict), every complete signal net with a jog or a staircase (pour
+nets keep their stubs and skeleton) is ripped up and rerouted alone
+against all other copper with the clean-up's search (no history, no
+layer preference, the clean-up's via cost, exact) at `bend_round_cost`
+(1.0 mm per 45 degrees, ten times `bend_cost`). The nets go densest
+first (jogs and staircases per millimetre of the net: a reroute's work
+grows with the net's length, its gain with the steps). A reroute is kept
+by `keep_bend_round` on the net's own tally: still complete and out of
+conflict, no via more, at most `bend_round_length` (1 %) longer, no
+staircase more and fewer jogs and staircases together, all counted in
+the router's model by the census's rules (`jogs_and_staircases`: maximal
+chains of bends each returning to the direction the one before left
+within 2 mm, two a jog, three or more a staircase; the bends by the
+straightening's `bend_score` rule). Otherwise the old branches go back.
+Every eight reroutes kept, and at the end, the
+pour nets' islands (their pads off the main piece and their spoke
+islands, `pour_islands`: what the stitching adds vias for; with
+`pour_aware_polish`) and the pads the spoke model finds starved
+(`starved_pads`) are counted against the counts before the round; if one
+grew, the shortest prefix of the reroutes kept that grows it ends with
+the culprit, found by halving, and the culprit and every reroute after it
+go back, the last first. Each reroute was routed against those before
+it, so only a prefix is a state the round passed through: taking back
+one from the middle (the first version) left later reroutes routed over
+the culprit's old copper (0xCB panel: two nets in conflict); counting the
+stranded pads alone (`pour_stranded`) missed spoke islands, and Castor's
+stitching added 4 vias. If the board's tally then fails the rule, all go
+back. Its work is at most `bend_round_share` (5 %) of the route's work
+before it, and a third of what is left before the work deadline; the
+reroutes stop four pour checks' work before that, and the one under way
+finishes (poly_kybd_split72_left: 31.6 s of a budget of 23.5 s). It is the clean-up's work (phase
+2), and a trial without a clean-up (`cleanup_passes` 0: the layout's move
+trials) skips it. `PCB_ROUTER_FINGERPRINT` prints "fingerprint after bend round". The
+verbose line: `bend round at 1.00 mm: N nets with jogs, R rerouted, K
+kept, T taken back; open, vias, length, jogs, staircases before -> after;
+work of the budget (the route's work before it)`.
+
+**The renegotiation, measured first and left out.** The proposal was the
+via reduction's twin: rip up the nets with steps and renegotiate them at
+a raised bend cost so that their neighbours move too. On CyberKeeb2040
+(designer placement, budget scale 0.673; 101 nets with steps) at 0.3 mm:
+starting at the via reduction's price of sharing (0.5) the round left a
+connection open and vias 134 to 203 (jogs 276 to 261); at the price the
+negotiation reached (97) nothing opened but vias went 134 to 239 and
+length +3 % (jogs 276 to 204, staircases 38 to 14); mackerel-30-proto at
+the reached price: vias 303 to 1096, length +14 %. Every round failed the
+rule and was reverted, at 48 to 59 s of work. Ripping up a hundred nets
+at once and routing them back in batches, the first take the lanes of
+the later, which then change layers; the bend cost cannot win back what
+that costs. A net rerouted alone against the others moves into free
+space only, and keeps only what costs nothing.
+
+**Measured** (snapshot build/bin/pcb-maker-bend1-k: main 39b10b9f with
+the round; the off arm the same binary with `PCB_ROUTER_NO_BEND_ROUND`,
+whose fingerprints are the nightly's of 2026-11-05 byte for byte; runs
+in build/bend1/). Census counts (census.py, on the routed boards against
+the designer's), off / on:
+
+| boards | bends | jogs | staircases | crossings | vias | layer changes | track (mm) |
+|---|---|---|---|---|---|---|---|
+| designer tier at 0.673, keyboar_ | 1093 / 941 | 175 / 138 | 29 / 4 | 7 / 7 | 28 / 28 | 64 / 65 | 6796 / 6781 |
+| CyberKeeb2040 | 1530 / 1345 | 293 / 226 | 19 / 6 | 4 / 4 | 138 / 137 | 227 / 227 | 13522 / 13522 |
+| mackerel-30-proto | 3399 / 3364 | 525 / 509 | 59 / 55 | 0 / 0 | 301 / 301 | 409 / 409 | 22125 / 22130 |
+| the three (designer's) | 6022 / 5650 (3875) | 993 / 873 (384) | 107 / 65 (13) | 11 / 11 (6) | 467 / 466 (1048) | 700 / 701 (651) | 42443 / 42433 (43836) |
+| dense, task budget (scale 1.0), 0xCB panel | 943 / 910 | 109 / 100 | 25 / 18 | 13 / 13 | 192 / 193 | 105 / 103 | 4744 / 4739 |
+| SmartSpin2k_Panelized | 2300 / 2139 | 144 / 124 | 23 / 19 | 4 / 4 | 438 / 438 | 483 / 479 | 14251 / 14237 |
+| poly_kybd_split72_left | 4753 / 4707 | 499 / 476 | 225 / 224 | 38 / 38 | 770 / 770 | 682 / 682 | 17792 / 17788 |
+| expansion tier, the 23 complete boards | 8768 / 8694 | 994 / 971 | 192 / 189 | 85 / 83 | 1453 / 1452 | 1452 / 1451 | 52930 / 52907 |
+
+Jogs and staircases fell on every one of the six designer-placement
+boards and on 10 of the 23 complete expansion boards (13 the same, none
+more). The expansion tier's 30 s leave the round little: it ran on 15
+of the 46 boards, with budgets of 0.0 to 1.1 s. The census's ranking
+table on the three designer-tier boards, ours over the designer's
+(pooled): jogs x2.59 to x2.27, staircases x8.23 to x5.00, bends x1.55 to
+x1.46, vias x0.45 to x0.44, detour (median) 1.151 to 1.148; on the
+expansion tier jogs x1.03 to x1.01, staircases x0.99 to x0.98, bends
+x0.86 to x0.85, crossings x1.81 to x1.77.
+
+Completion and findings: the expansion tier 24/46 (strict 24) and 558
+unconnected in both arms, every row's pass, unconnected and strict
+findings the same (Multi_saturation_module 7 to 6 vias); the short tier
+at its budget (layout mode, one board at a time, 2 threads) 7/12 strict
+in both, 21 unconnected, 5 strict findings in both, vias 1144 to 1149
+(USB_Cable_Tester 84 to 89: its layout polishes twice, and the second
+polish's via reduction kept a round off (90 to 84) and none on (89));
+the six designer-placement boards complete and strict in both arms. The
+fingerprints (Castor, k30-SBC, jetson, Sisu at the quarter budget):
+jetson and Sisu identical (incomplete: no round), Castor and k30-SBC
+changed with connectivity, vias (240, 343) and strict findings (none,
+k30's one starved thermal) as before; Castor 5287 to 5285 mm.
+
+**Cost.** The round's work over the route's work before it: CyberKeeb
+9.9 of 316 s (3.1 %), keyboar_ 10.1 of 242 s (4.2 %), mackerel 15.1 of
+305 s (the cap), Castor (fingerprint) 6.4 of 131 s, k30-SBC 8.0 of 158 s,
+SmartSpin2k 7.6 of 370 s, 0xCB panel 2.8 of 124 s, poly_kybd 31.6 of
+500 s (budget 23.5 s: the last reroutes and checks run past it). The
+rows' work: the three designer-tier boards 876 to 911 s (+4.0 %), the
+dense three +2.0 to +2.1 %, the expansion tier 1140 to 1145 s (+0.4 %),
+the short tier 2877 to 2899 s (+0.8 %), the fingerprints Castor +3.7 %
+and k30-SBC +2.9 %. CPU on pinned pairs (off on CPU 2, on on CPU 3 at
+once, designer placement at 0.673): the CPU seconds swing with the nightly beside them (off on CPU 2, on on CPU 3: CyberKeeb 234 to 252 s, keyboar_ 220 to 220 s, mackerel 321 to 343 s, Castor 200 to 220 s; an earlier pair of the same round 289 to 293, 222 to 216, 303 to 310, 213 to 222 s), and the phases before the round, the same work in both arms, differ as much (Castor's via reduction 143 against 159 s of wall clock); the round's own wall clock is its work (the clean-up's phase on Castor 17.4 to 21.9 s for 5.9 s more of work, on CyberKeeb 32.4 to 39.5 s for 9.9 s): 2 to 4 % of a row's CPU.
+
+**What it was measured against.** At 0.3 mm (the first try) net by net
+without the cap the three designer-tier boards took jogs 993 to 903 and
+staircases 107 to 68; at 0.5 mm 886 and 66; at 1.0 mm 844 and 60; at 2.0
+mm (with the cap) CyberKeeb gained more (jogs 293 to 204) but mackerel
+less (525 to 502; 27 reroutes kept of 99 against 43 of 116 at 1.0) and
+keyboar_'s staircases fewer fell (29 to 8): 1.0 is the safe value. Three
+passes over the nets (the second over those with steps left) took
+CyberKeeb's model count from 276 to 226 against 233 in one, at 2.6 times
+the work: one pass. Sorted by the steps alone, mackerel's long nets took
+the cap (12 kept of 40 tried); by steps per millimetre 43 of 116. A
+global `bend_cost` of 0.3 (the census's measurement) took the three to
+834 jogs and 63 staircases, at +18 to 25 % CPU and three expansion-tier
+passes; the round gets near that at a fifth of the cost and opens
+nothing.
+
+**Decision.** In, on by default at 1.0 mm (`bend_round_cost`), within 5 %
+of the route's work. No tier lost a pass or gained an unconnected item;
+jogs and staircases fell on every designer-placement board measured and
+on no board rose. It closes a part of the gap: the three designer-tier
+boards still jog 2.3 times as often as their designers. What is left is
+forced by other nets' copper (a net rerouted alone keeps 15 to 35 % of
+its reroutes) and needs the neighbours moved without a renegotiation's
+cost.
+
 ## Straightening (2026-10-23)
 
 The search costs `bend_cost` (0.1 mm) per 45 degrees of direction change
@@ -7613,7 +7752,11 @@ another net. Not merged.
   round after the board is complete that keeps only what opens nothing,
   it would take most of the 20 % of jogs and half the staircases on the
   boards it keeps, at the CPU of a renegotiation (the via reduction's
-  rounds are the model).
+  rounds are the model). Built on 2026-11-06 as "The bend round" above:
+  the renegotiation grew the vias in every round and is left out; each
+  net with steps rerouted alone at 1.0 mm per 45 degrees, kept where it
+  costs nothing, took the three boards' jogs 993 to 873 and staircases
+  107 to 65 at +4 % work.
 - *Pin-row crossings*: charge the gaps from 1.5 to 2.6 mm too, but in the
   clean-up's search and comparison only (`geometric_cost_of`, which keeps
   a reroute only when cheaper all told), not in the negotiation, where

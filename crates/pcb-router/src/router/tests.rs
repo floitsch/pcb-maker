@@ -6056,3 +6056,57 @@ fn an_escape_stub_already_at_its_neck_is_kept_as_it_is() {
     assert!(routes.iter().all(|route| route.segments.len() == 3
         && route.segments.iter().all(|segment| segment.width == 0.3)));
 }
+
+/// The bend round takes the complete signal nets with a jog or a
+/// staircase, no other.
+#[test]
+fn the_bend_round_takes_the_complete_nets_with_jogs() {
+    let mut router = crossed_net();
+    for net in 0..3 {
+        router.route_net_seq(net, 0.0, false, 1.0);
+        router.stamp(net);
+    }
+    let order = [0, 1, 2];
+    // Each net as a straight line between its first and last pad (A
+    // along y = 10, B and C up x = 19 and 23).
+    let line = |router: &Router, from: [f64; 2], to: [f64; 2]| {
+        let (x0, y0) = router.grid.xy(router.grid.nearest_node(from).unwrap());
+        let (x1, y1) = router.grid.xy(router.grid.nearest_node(to).unwrap());
+        let steps = x1.abs_diff(x0).max(y1.abs_diff(y0));
+        (0..=steps)
+            .map(|step| {
+                let x = x0 + (x1 - x0) * step / steps;
+                let y = y0 + (y1 - y0) * step / steps;
+                Node {
+                    layer: 0,
+                    cell: router.grid.index(x, y) as u32,
+                }
+            })
+            .collect::<Vec<Node>>()
+    };
+    let ends = [
+        ([3.0, 10.0], [27.0, 10.0]),
+        ([19.0, 3.0], [19.0, 17.0]),
+        ([23.0, 3.0], [23.0, 17.0]),
+    ];
+    for (net, (from, to)) in ends.iter().enumerate() {
+        let nodes = line(&router, *from, *to);
+        router.nets[net].branches.truncate(1);
+        router.nets[net].branches[0].nodes = nodes;
+        assert!(router.nets[net].complete);
+    }
+    assert!((0..3).all(|net| router.net_jogs(net) == (0, 0)));
+    assert!(router.bend_round_nets(&order).is_empty());
+    // B and C step one column east for 1.5 mm and back: a sidestep out
+    // and one back, two jogs each.
+    for net in [1, 2] {
+        for node in &mut router.nets[net].branches[0].nodes[30..45] {
+            node.cell += 1;
+        }
+    }
+    assert_eq!(router.net_jogs(1), (2, 0));
+    assert_eq!(router.bend_tally().jogs, 4);
+    // An incomplete net is left as it is.
+    router.nets[2].complete = false;
+    assert_eq!(router.bend_round_nets(&order), vec![1]);
+}

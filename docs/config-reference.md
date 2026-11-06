@@ -24,16 +24,16 @@ The environment variables are indexed in the hand-over
 
 | Table | Fields | File keys | Internal | With a doc comment | Named in router.md or placer.md |
 |---|---|---|---|---|---|
-| [Router settings](#router-settings) | 106 | 88 | 18 | 106 | 51 |
+| [Router settings](#router-settings) | 106 | 88 | 18 | 106 | 53 |
 | [Router settings: topological](#router-settings-topological) | 8 | 8 | 0 | 8 | 2 |
 | [Router settings: pin_swap](#router-settings-pin_swap) | 5 | 5 | 0 | 5 | 1 |
 | [Router settings: add_pours entries](#router-settings-add_pours-entries) | 5 | 5 | 0 | 5 | 4 |
-| [Router settings: net_classes entries](#router-settings-net_classes-entries) | 6 | 6 | 0 | 6 | 1 |
+| [Router settings: net_classes entries](#router-settings-net_classes-entries) | 6 | 6 | 0 | 6 | 2 |
 | [Router settings: connection rules](#router-settings-connection-rules) | 4 | 4 | 0 | 4 | 0 |
 | [Router report: rules](#router-report-rules) | 6 | - | 0 | 6 | - |
 | [Router report: rules from the project](#router-report-rules-from-the-project) | 20 | - | 9 | 20 | - |
 | [Router report: custom_rules entries](#router-report-custom_rules-entries) | 4 | - | 0 | 3 | - |
-| [Router core](#router-core) | 71 | - | 0 | 71 | - |
+| [Router core](#router-core) | 75 | - | 0 | 75 | - |
 | [Placer settings](#placer-settings) | 56 | 49 | 7 | 56 | 31 |
 | [Layout settings](#layout-settings) | 21 | 21 | 0 | 21 | 13 |
 | [Layout settings: swappable entries](#layout-settings-swappable-entries) | 3 | 3 | 0 | 3 | 2 |
@@ -74,7 +74,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `via_reduction_present` | `Option<f64>` | unset | - | Price of sharing when a via reduction round starts. |
 | `exclusive_planes` | `Option<bool>` | unset | router.md | Keep other nets' tracks off inner-layer planes entirely. |
 | `exclusive_layers` | `Option<usize>` | unset | - | With exclusive planes: how many of a pour net's inner plane layers stay exclusive, the ones nearest the outer layers first (the stackups designers use: one solid ground layer under the top on four layers, In1 and In4 on six; ESC mini's GND covers In1-In4 and keeping all four left the signals two layers). The ladder sets it from the layer count when not given; `None` outside the ladder keeps every covered inner layer. |
-| `pour_islands` | `Option<bool>` | unset | - | Route pour-net pads the signals cut off from their pour during the negotiation (default on; see `pcb_router::Config::pour_islands`). |
+| `pour_islands` | `Option<bool>` | unset | router.md | Route pour-net pads the signals cut off from their pour during the negotiation (default on; see `pcb_router::Config::pour_islands`). |
 | `sub_board_nets` | `Option<bool>` | unset | router.md, placer.md | On a panel of different boards (an outline of two pieces or more once its tabs are taken out), each net whose pads lie on several pieces with no copper of its own joining them is routed as one net per piece (default on; docs/router.md, "Nets split by sub-board"). |
 | `kicad_spokes` | `Option<bool>` | unset | router.md | Thermal spokes as KiCad draws and counts them (default on; see `pcb_router::Config::kicad_spokes`). |
 | `manual_spokes` | `Option<bool>` | unset | router.md | Straight tracks from pads short of KiCad's two spokes into their pour (default on; see `pcb_router::Config::manual_spokes`). |
@@ -86,7 +86,7 @@ The router config file of `route-kicad-board` and `layout-kicad-board` (`auto` r
 | `min_connection_mm` | `Option<f64>` | unset | router.md | The board setup's minimum connection width (`rules.min_connection`) as a floor on every track width the router chooses: class widths, the narrow-signal width, neck-downs, stubs and spokes. Set from the project when KiCad's connection_width check reports at error or warning severity (error only with `PCB_MIN_CONNECTION_FLOOR=errors`; `project_rules::connection_width_floor`, `apply_width_floor`); `None`: no floor. |
 | `connection_width_severity` | `Option<String>` | unset | - | The project's severity of connection_width findings (`error`, `warning`, `ignore`), for the rules summary. |
 | `cleanup_via_cost_mm` | `Option<f64>` | unset | - | Router `cleanup_via_cost`: the via cost while cleaning up (default 25). |
-| `cleanup_passes` | `Option<usize>` | unset | - | Router `cleanup_passes`: passes of per-net shortening once the board is conflict free (default 4). |
+| `cleanup_passes` | `Option<usize>` | unset | router.md | Router `cleanup_passes`: passes of per-net shortening once the board is conflict free (default 4). |
 | `bend_cost_mm` | `Option<f64>` | unset | router.md | Router `bend_cost`: the cost per 45 degrees of direction change, in millimetres (default 0.1). |
 | `pin_row_cost_mm` | `Option<f64>` | unset | router.md | Router `pin_row_cost`: the cost of another net's step between two adjacent SMD pads of a part's pin row, in millimetres (default `PCB_ROUTER_PIN_ROW_COST`, else 2; 0: off). |
 | `diff_pairs` | `Option<bool>` | unset | router.md, placer.md | Differential pairs (docs/router.md, "Differential pairs"): nets KiCad pairs by name (`_P`/`_N`, `+`/`-`, `P`/`N`) route coupled at the pair's width and gap: each link between the pair's parts is a net of the route at the pair's envelope, negotiated with the other nets and offset into the two nets' tracks when written; the pads' stubs and what the coupled runs leave open are ordinary routing. Route mode only. Default by need: on where the project's custom rules ask for pairs (a `diff_pair_gap` or `diff_pair_uncoupled` constraint that holds for a net KiCad pairs), else off; `PCB_ROUTER_DIFF_PAIRS=1` (or `0`) decides where the settings name none. An explicit value always wins. |
@@ -204,7 +204,7 @@ One entry of `net_classes`. Source: `KiCadNetClassRequest` in [crates/pcb-kicad/
 | Key | Type | Default | Docs | Description |
 |---|---|---|---|---|
 | `net_classes[].name` | `String` | required | placer.md | The class's name in the `.kicad_pro` (not empty, not `Default`). |
-| `net_classes[].nets` | `Vec<String>` | required | - | Net names or KiCad wildcard patterns (`*`, `?`), with or without the sheet path's leading `/`. |
+| `net_classes[].nets` | `Vec<String>` | required | router.md | Net names or KiCad wildcard patterns (`*`, `?`), with or without the sheet path's leading `/`. |
 | `net_classes[].track_width_mm` | `Option<f64>` | optional | - | Track width of the class's nets (unset: what each net had). |
 | `net_classes[].clearance_mm` | `Option<f64>` | optional | - | Clearance of the class's nets (unset: what each net had). |
 | `net_classes[].via_diameter_mm` | `Option<f64>` | optional | - | Via diameter of the class's nets (unset: what each net had). |
@@ -314,6 +314,10 @@ One constraint of one rule of the project's `.kicad_dru`. Source: `KiCadCustomRu
 | `window_margin` | `f64` | `10.0` | - | Minimum search window margin around a net's terminals. |
 | `cleanup_passes` | `usize` | `4` | `cleanup_passes` | Passes of per-net shortening after the board is conflict free. |
 | `straighten` | `bool` | `true` (`false` with `PCB_ROUTER_NO_STRAIGHTEN`) | - | After the via reduction and the thermal spoke repairs, take stair-steps and jogs out of the signal nets' paths where the clearance allows (`straighten`: shortest octilinear paths between a run's corners with fewer bends; never longer, no via moves). |
+| `bend_round` | `bool` | `true` (`false` with `PCB_ROUTER_NO_BEND_ROUND`) | - | After the via reduction, reroute each complete signal net with a jog or a staircase alone against all other copper at `bend_round_cost` and keep the reroute only if the net stays complete, has no via more, is at most `bend_round_length` longer and has fewer jogs and staircases (`bends.rs`, the bend round; part of the clean-up: not in a trial without one). On; `PCB_ROUTER_NO_BEND_ROUND` turns it off (a diagnostic, for A/B). |
+| `bend_round_cost` | `f64` | `1.0` | - | The bend cost of the bend round's searches (mm per 45 degrees; `PCB_ROUTER_BEND_ROUND_COST` sets it, a diagnostic). |
+| `bend_round_share` | `f64` | `0.05` | - | The bend round's work at most, as a share of the route's work before it. |
+| `bend_round_length` | `f64` | `0.01` | - | The share of a net's length the bend round may add to it. |
 | `bus_bundles` | `bool` | `false` (`true` with `PCB_ROUTER_BUS_BUNDLES`) | - | Route buses as bundles (an experiment, off; docs/experiments/bus-bundles.md): four or more nets joining the same footprints route first, in pad order, inside one corridor planned for the bus's width, side by side; a member that cannot follow routes as any other net. `PCB_ROUTER_BUS_BUNDLES` turns it on. |
 | `bus_lane_cost` | `f64` | `1.5` | - | With `bus_bundles`: the factor on a bus member's trace step that does not lie beside a neighbouring member's copper (`PCB_ROUTER_BUS_LANE`, 1.5). |
 | `cleanup_via_cost` | `f64` | `25.0` | `cleanup_via_cost_mm` | Via cost while cleaning up. The existing route is always a fallback there, so a high value removes vias without risking completion. |

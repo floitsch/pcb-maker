@@ -18,6 +18,7 @@ use crate::board::{Board, LayerMask, NetId, NetRoute, RuleClass, Segment, Via};
 use crate::grid::{DIRECTIONS, Grid, SAFETY, StaticMaps};
 use crate::rules::ClassRules;
 mod batching;
+mod bends;
 mod build;
 mod bundles;
 mod cleanup;
@@ -266,7 +267,7 @@ const PARENT_SOURCE: u8 = 255;
 /// Side of a coarse tile, in lattice nodes (a power of two).
 const TILE: usize = 16;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 struct Branch {
     nodes: Vec<Node>,
     start_terminal: u16,

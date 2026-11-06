@@ -157,6 +157,18 @@ impl Router {
                 self.fingerprint()
             );
         }
+        // The bend round, part of the clean-up (a trial without one skips
+        // it), before the spoke repairs: they see the routes as they stay.
+        if self.config.cleanup_passes > 0 && !self.hopeless {
+            let started = std::time::Instant::now();
+            let mark = self.phase_mark();
+            self.reduce_bends(order);
+            self.phase_charge(2, mark);
+            self.profile.cleanup += started.elapsed().as_secs_f64();
+            if std::env::var_os("PCB_ROUTER_FINGERPRINT").is_some() {
+                eprintln!("fingerprint after bend round: {:016x}", self.fingerprint());
+            }
+        }
         // A repair for the final board, like the via reduction: a trial
         // (clean-up and via reduction off) skips it (PolyKybd left: 313 s
         // in the first route, mostly hard searches flooding the lattice).

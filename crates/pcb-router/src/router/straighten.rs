@@ -34,9 +34,10 @@ const STAIR_MM: f64 = 2.0;
 const SPAN_CORNERS: usize = 8;
 const SPAN_MM: f64 = 15.0;
 
-/// The bends, stair-steps and total turning (in 45 degrees) of a run of
-/// lattice steps given by their directions (`DIRECTIONS` indices).
-pub(super) fn bend_score(directions: &[u8], pitch: f64) -> (usize, usize, u32) {
+/// The bends of a run of lattice steps given by their directions
+/// (`DIRECTIONS` indices): (turn in 45 degrees, where it starts, where it
+/// ends, in mm along the run), and the total turning in 45 degrees.
+fn bends_along(directions: &[u8], pitch: f64) -> (Vec<(i32, f64, f64)>, u32) {
     let step = |direction: u8| {
         if direction % 2 == 1 {
             pitch * std::f64::consts::SQRT_2
@@ -44,7 +45,6 @@ pub(super) fn bend_score(directions: &[u8], pitch: f64) -> (usize, usize, u32) {
             pitch
         }
     };
-    // (turn in 45 degrees, where it starts, where it ends) along the run.
     let mut bends: Vec<(i32, f64, f64)> = Vec::new();
     let mut along = 0.0;
     let mut total = 0;
@@ -68,11 +68,23 @@ pub(super) fn bend_score(directions: &[u8], pitch: f64) -> (usize, usize, u32) {
             _ => bends.push((turn, along, along)),
         }
     }
+    (bends, total)
+}
+
+/// Whether two successive bends return to the first direction within
+/// `STAIR_MM`: a stair-step's pair.
+fn returns(first: (i32, f64, f64), second: (i32, f64, f64)) -> bool {
+    first.0 + second.0 == 0 && second.1 - first.2 < STAIR_MM
+}
+
+/// The bends, stair-steps and total turning (in 45 degrees) of a run of
+/// lattice steps given by their directions (`DIRECTIONS` indices).
+pub(super) fn bend_score(directions: &[u8], pitch: f64) -> (usize, usize, u32) {
+    let (bends, total) = bends_along(directions, pitch);
     let mut stairs = 0;
     let mut index = 1;
     while index < bends.len() {
-        let (first, second) = (bends[index - 1], bends[index]);
-        if first.0 + second.0 == 0 && second.1 - first.2 < STAIR_MM {
+        if returns(bends[index - 1], bends[index]) {
             stairs += 1;
             index += 2;
         } else {
@@ -82,8 +94,32 @@ pub(super) fn bend_score(directions: &[u8], pitch: f64) -> (usize, usize, u32) {
     (bends.len(), stairs, total)
 }
 
+/// The jogs and staircases of a run of lattice steps, the census's
+/// (experiments/aesthetics/census.py, `chains_of`): maximal chains of
+/// bends, each returning to the direction the one before it left within
+/// `STAIR_MM`; a chain of two is a jog (a step sideways), of three or more
+/// a staircase (a diagonal drawn in steps).
+pub(super) fn jogs_and_staircases(directions: &[u8], pitch: f64) -> (usize, usize) {
+    let (bends, _) = bends_along(directions, pitch);
+    let (mut jogs, mut staircases) = (0, 0);
+    let mut chain = 1;
+    for index in 1..=bends.len() {
+        if index < bends.len() && returns(bends[index - 1], bends[index]) {
+            chain += 1;
+            continue;
+        }
+        match chain {
+            2 => jogs += 1,
+            3.. => staircases += 1,
+            _ => {}
+        }
+        chain = 1;
+    }
+    (jogs, staircases)
+}
+
 /// The direction index of a unit step, if it is one.
-fn direction_of(dx: i64, dy: i64) -> Option<u8> {
+pub(super) fn direction_of(dx: i64, dy: i64) -> Option<u8> {
     crate::grid::DIRECTIONS
         .iter()
         .position(|(x, y)| *x as i64 == dx && *y as i64 == dy)

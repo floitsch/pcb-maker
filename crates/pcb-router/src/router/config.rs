@@ -190,6 +190,22 @@ pub struct Config {
     /// clearance allows (`straighten`: shortest octilinear paths between
     /// a run's corners with fewer bends; never longer, no via moves).
     pub straighten: bool,
+    /// After the via reduction, reroute each complete signal net with a
+    /// jog or a staircase alone against all other copper at
+    /// `bend_round_cost` and keep the reroute only if the net stays
+    /// complete, has no via more, is at most `bend_round_length` longer
+    /// and has fewer jogs and staircases (`bends.rs`, the bend round; part
+    /// of the clean-up: not in a trial without one). On;
+    /// `PCB_ROUTER_NO_BEND_ROUND` turns it off (a diagnostic, for A/B).
+    pub bend_round: bool,
+    /// The bend cost of the bend round's searches (mm per 45 degrees;
+    /// `PCB_ROUTER_BEND_ROUND_COST` sets it, a diagnostic).
+    pub bend_round_cost: f64,
+    /// The bend round's work at most, as a share of the route's work
+    /// before it.
+    pub bend_round_share: f64,
+    /// The share of a net's length the bend round may add to it.
+    pub bend_round_length: f64,
     /// Route buses as bundles (an experiment, off;
     /// docs/experiments/bus-bundles.md): four or more nets joining the same
     /// footprints route first, in pad order, inside one corridor planned
@@ -397,6 +413,13 @@ impl Default for Config {
             window_margin: 10.0,
             cleanup_passes: 4,
             straighten: std::env::var_os("PCB_ROUTER_NO_STRAIGHTEN").is_none(),
+            bend_round: std::env::var_os("PCB_ROUTER_NO_BEND_ROUND").is_none(),
+            bend_round_cost: std::env::var("PCB_ROUTER_BEND_ROUND_COST")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(1.0),
+            bend_round_share: 0.05,
+            bend_round_length: 0.01,
             bus_bundles: std::env::var_os("PCB_ROUTER_BUS_BUNDLES").is_some(),
             bus_lane_cost: std::env::var("PCB_ROUTER_BUS_LANE")
                 .ok()
