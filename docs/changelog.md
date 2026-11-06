@@ -11,6 +11,26 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-06 (a regression found by the pair work: the narrow step's classes)
+
+Branch pair-route-regression, measured, no code change (outputs in
+build/bisect1/). docs/router.md, "A regression found by the pair work
+(2026-11-06)", has the tables.
+
+- **Bisect** of x1927's loss against x1915 on left_io's designer placement
+  (route mode, pairs on, 1500 s, pinned rates): 78 unconnected and 7
+  coupled pairs on x1915, x1917, x1918 and x1922, 104 and 3 on x1923 to
+  x1927. The step is x1923 (eef5c662, the narrow-signal step narrows the
+  Default class only): x1922's kept attempt had POWER_HI (8 nets, 1.0 mm)
+  and POWER_MID (11, 0.6 mm) at 0.091 mm.
+- **Confirmed** on jetson's seed-1 placement in route mode: x1922 24
+  unconnected, 17 coupled (its kept step had 103 impedance-class nets at
+  0.125 of 0.25 mm), x1923 37 and 13, x1927 38 and 14; ducktop2's bms
+  without pairs at 1500 s completes before any step with both.
+- **Kept**: the old numbers came from writing power and impedance classes
+  below their widths. Pair numbers from before x1923 (pairs5 to pairs7)
+  are not a valid baseline.
+
 ## Committed on 2026-11-06 (split ends with a gate: built, measured, left out)
 
 Branch split-ends (`build/bin/pcb-maker-pairs8-g1` to `-g3`, outputs in

@@ -4848,7 +4848,79 @@ either way), not of the split end's own neighbourhood. The placer's side
 no split end. Seen on the way: x1927 routes these placements worse than
 x1915 did (left_io's designer placement 3 to 4 coupled and 101 to 111
 unconnected against 5 to 7 and 78 to 90; jetson's seed-1 layout 52 against
-23), a change between the two builds not looked into here.
+23): the narrow-signal step's Default-only rule of x1923, "A regression
+found by the pair work" below.
+
+**A regression found by the pair work (2026-11-06, branch
+pair-route-regression; measured, no code change).** The bisect of the
+gap "Split ends with a gate" saw between x1915 and x1927. Route mode on
+left_io's designer placement (pairs5's placement, `{"diff_pairs": true}`,
+1500 s of work, `PCB_WORK_RATE=3.15e6,150e6`, `--jobs 1 --threads 4`,
+three runs at a time; build/bisect1/, run1.sh, table.py). Pairs coupled
+(partly), the kept attempt (the narrow-signal step in every row; the
+ladder's first attempt, the probed rung's continuation, is the same in
+every row: 252 router-open, 806 s of work), `rules.narrowed`:
+
+| snapshot | KiCad unconnected | coupled | routed | kept attempt: open, work | narrowed classes |
+| --- | ---: | --- | --- | --- | --- |
+| x1915 (pair stubs in the plan) | 78 | 7 (0) | 165/220 | 180, 507 s | (not reported yet) |
+| x1917 (corridor escape stubs) | 78 | 7 (0) | 165/220 | 180, 507 s | |
+| x1918 (pin pair points) | 78 | 7 (0) | 165/220 | 180, 507 s | |
+| x1922 (trial 7 fixes) | 78 | 7 (0) | 165/220 | 180, 507 s | POWER_MID 11, POWER_HI 8, Default 121 |
+| **x1923 (narrow-signal step: Default only)** | **104** | **3 (1)** | 156/220 | 230, 517 s | Default 121 |
+| x1924 (escape stubs necked) | 104 | 3 (1) | 156/220 | 230, 517 s | Default 121 |
+| x1925 (the bend round) | 104 | 3 (1) | 156/220 | 230, 517 s | Default 121 |
+| x1926 (skew groups' layers) | 104 | 3 (1) | 156/220 | 230, 517 s | Default 121 |
+| x1927 (pin-row gaps, compaction) | 104 | 3 (1) | 156/220 | 230, 517 s | Default 121 |
+
+At pinned rates the runs repeat: x1915's and x1918's boards are byte for
+byte the same, x1915 gives pairs7's 78 and x1927 pairs8's 104; x1923 to
+x1927 write different copper (the bend round, the compaction) with the
+same counts. The step is x1922 -> x1923, commit eef5c662, "The
+narrow-signal step's classes (2026-11-06)" above.
+
+*Confirmed* on jetson's seed-1 placement (x1927's layout's placed board,
+build/bisect1/src) in route mode with pairs on at 1500 s, and on ducktop2's
+bms (the expansion tier's task, no pairs) at 1500 s (budget scale 50):
+
+| board | x1915 | x1922 | x1923 | x1927 |
+| --- | --- | --- | --- | --- |
+| jetson, seed-1 placement: unconnected, coupled (partly), kept attempt | 28, 15 (2), the first (56 open) | 24, 17 (2), the step (49 open; Z100_ext 40, Z90_in 29, Z100_in 20, Z90_ext 12, Z85_in 2 nets at 0.125 of 0.25 mm) | 37, 13 (2), the first (77 open; no step) | 38, 14 (2), the first (87 open) |
+| bms, the designer's placement | | 0, complete at 192 s of work, no step | 0, the same | |
+
+On jetson the step no longer applies at all (its impedance classes are its
+only nets wider than the menu): x1922's kept attempt was the step, with
+103 nets of the Z90, Z100 and Z85 classes at Default's 0.125 mm; x1923
+keeps the first attempt and spends the rest on rungs that open more (144).
+x1915 against x1922 (28 and 24, the first attempt 56 against 77
+router-open) is a change of the first attempt between them, not followed
+here. The layout's 52 (pairs8) is the same placement at the layout's
+smaller route budget. bms completes before any step, so at the task
+budget plain routing loses nothing there.
+
+*The mechanism.* Until x1922 the narrow-signal step narrowed every signal
+net above the menu's narrowest width whatever its class. On left_io its
+kept attempt routed all 8 POWER_HI nets (class 1.0 mm) and all 11
+POWER_MID nets (0.6 mm) at 0.091 mm: SYS_3V3 with 505 mm of copper at
+0.091, USB_PORT_5V 255 mm, PD1_VBUS_GATED 175 mm (DIFF_90 kept its 0.1796
+in both). Since x1923 (`narrows_class_of`) they keep their class widths
+(but for 0.1 mm necks at pads); the same attempt with about the same work
+(507 and 517 s) leaves 230 router-open instead of 180, and the wide power
+copper takes the room four coupled pairs had. The tiers did not show it:
+at 30 s the step rarely runs (narrow1's expansion tier was byte for byte,
+the step on two boards that narrow Default only), the census judged
+passes (left_io never passes), and ducktop2's io boards are not task
+boards.
+
+*The decision: x1923 stays.* x1915's 78 and jetson's 24 came from writing
+1 A power nets and 90 and 100 ohm impedance nets below their class widths,
+which KiCad's DRC does not check: the old baseline's flaw, not a gain. A
+step that narrows named classes partway (to Default's width) would still
+break the designer's power classes and is not proposed. *The consequence:*
+pair numbers from before x1923 (pairs5 to pairs7: left_io's designer
+placement at 78 to 90 unconnected with 5 to 7 coupled pairs, jetson's
+seed-1 layout at 23) are not a valid baseline; compare pair work against
+x1923 or later (pairs8's x1927 rows).
 
 **The verdict.** `diff_pairs` in `board-router.json` and the verdict:
 `on`, `default` (`rules`: the project's rules ask; `off`: nothing asks;
