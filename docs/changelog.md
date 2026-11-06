@@ -11,6 +11,48 @@ Sections are ordered by the date in their heading, newest first, and
 within one date by when they were written. At the end: the sweeps before
 v16 and the hand-over's summary of the week up to 2026-10-09 (binary x155).
 
+## Committed on 2026-11-06 (trial 7's agent-flow leftovers)
+
+Branch trial-7-leftovers (`build/bin/pcb-maker-ux15-a`, `-b`), the items
+fresh-agent trial 7 left open in the agent's flow
+(docs/reviews/2026-11-06-fresh-agent-trial-7.md, "Left open").
+
+- **`verdict.class_layers`** (route and layout): per net class with
+  tracks on the board written, the layers they went on (length, nets, the
+  custom rules' width there) and the designer's layers for it (the
+  `--reference`'s board, else the input's where it has tracks), with a
+  `warning` and one next action where a class went on a layer its width
+  is not for (a class with rule widths per layer on a layer they give no
+  width on and the designer does not use; a class narrower than Default
+  without layer rules on a layer the designer's board does not run it on,
+  else on both outer and inner layers); the lever is a `disallow track`
+  rule per layer. On the trial's Sisu_SSE-9 route: RF_ANT_INT (MODEM_ANT1,
+  the designer's stripline on In1.Cu) B.Cu 54.9 mm and RF_ANT In1.Cu
+  2.9 mm (the designer's In4.Cu and B.Cu) warned; USB's outer runs are
+  the designer's too, so not warned. The rules report keeps the
+  designer's widths per layer whether or not a rule changes the routing
+  (`Lowered::rule_layer_widths`), the layers a `disallow track` closes and
+  the rules' track geometry on some layers only.
+- **`describe-kicad-board`**: each net's `class`, `classes` as a table
+  (the project's width and clearance, the board's nets per class, the
+  rules' widths per layer and closed layers) and `custom_rules` as the
+  router reads them (with the length and skew rules as the length
+  matching keeps them) and `unmodelled_rules`. Sisu's description: 377 kB
+  for 368.
+- **`fab-manifest.json`**: `stackup` (the board file's Physical Stackup),
+  `controlled_impedance` (the impedance-looking classes, the rules' layer
+  geometry, the action to order impedance control on that stackup, which
+  the verdict repeats; at JLCPCB with their matching stackup) and
+  `polarised_parts`, which the rotation line names. MIDAS-MK2 released
+  again with `--profile jlcpcb`: 23 files as before, 40 polarised parts;
+  Sisu_SSE-9: RF_ANT, RF_ANT_INT and USB, the 3313 prepreg 0.0918 mm.
+- **Sisu's clearance** (router): two bent escape stubs out of U7's 0.4 mm
+  pitch pads at Power_3V3's 0.3 mm, 0.10 mm apart under 0.15, which the
+  negotiation could not see (each stub's nodes at exactly the clearance
+  radius from the other stub); the emission now necks such a stub down
+  (docs/router.md, "Stubs that meet only through their nodes"). The
+  pinned layout replayed: clearance 2 -> 0, internal violations 4 -> 0.
+
 ## Committed on 2026-11-06 (the narrow-signal step narrows the Default class only)
 
 Branch narrow-default-only (`build/bin/pcb-maker-narrow1-a`), trial 7's

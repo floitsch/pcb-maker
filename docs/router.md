@@ -3246,6 +3246,29 @@ hard-repair test for oblique stubs. Where a pad's escape nodes lie in a pocket t
 lattice closes, a corridor stub leaves it off the lattice: "Corridors
 of pocketed pads (2026-11-05)" below.
 
+**Stubs that meet only through their nodes** (2026-11-06, trial 7). Two
+bent stubs off the lattice's lines are tested against each other only
+through their nearest nodes (each stamps the nodes its exact geometry
+keeps away; the other's conflict test reads its own sampled nodes), and
+those nodes can lie exactly at the clearance radius while the stubs do
+not. Sisu_SSE-9's pinned layouts left +3.3V and +1V1 out of U7's 0.4 mm
+pitch pads (0.8 x 0.2 mm) on bent stubs at Power_3V3's 0.3 mm, 0.10 mm
+apart under its 0.15 mm: each stub's nodes 0.45 mm from the other stub,
+the radius, so the negotiation saw no conflict; the router's own check
+of the emitted copper found it (`internal_violations` 4, KiCad's
+`clearance` 2; the designer's board has none). The emission's stub
+check (`finish::clear_stubs`, which dropped cosmetic pad-centre stubs
+already) now necks such an escape stub down to its class's neck width
+on its layer (one stub of a finding; the other only if the finding
+stays): the connection is the same, the copper narrower near the pad.
+The same layout replayed: 1 stub necked in the first route and in the
+attempt, internal violations 0, KiCad's clearance 0, 20 unconnected as
+before. It changes the copper only where the check found an escape stub
+too close (2 of the 2026-11-05 nightly's 118 results had internal
+violations at all, PolyKybd's, not looked into). Tests
+`an_escape_stub_crowding_another_nets_stub_is_necked_down`,
+`an_escape_stub_already_at_its_neck_is_kept_as_it_is`.
+
 ## Pin-row cost (2026-10-23)
 
 score-kicad-board's pin-row crossings (docs/quality.md, "Aesthetics")
